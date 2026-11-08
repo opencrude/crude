@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,33 @@ func TestKittyImageImmutableInputAndBounds(t *testing.T) {
 	}
 	if (*KittyImage)(nil).ID() != 0 || new(KittyImage).ID() != 0 {
 		t.Fatal("zero resource must have zero ID")
+	}
+}
+
+func TestKittyRendererRevealsFirstImageOnce(t *testing.T) {
+	i := NewKittyImage([]byte("PNG bytes"))
+	var output bytes.Buffer
+	r := newCursedRenderer(&output, nil, 40, 10)
+	r.syncdUpdates = true
+	pair := ansi.SetModeSynchronizedOutput + ansi.ResetModeSynchronizedOutput
+	// Enter the alternate screen first, as Crude does before any file opens.
+	empty := NewView("empty")
+	empty.AltScreen = true
+	kittyFlush(t, r, empty)
+	output.Reset()
+	kittyFlush(t, r, kittyTestView(i))
+	if strings.Count(output.String(), pair) != 1 {
+		t.Fatalf("first image did not request exactly one extra pass: %q", output.String())
+	}
+	if strings.Index(output.String(), "a=p,U=1") > strings.Index(output.String(), pair) {
+		t.Fatal("extra pass preceded the placement")
+	}
+	output.Reset()
+	v := kittyTestView(i)
+	v.Images[0].Columns = 12
+	kittyFlush(t, r, v)
+	if strings.Contains(output.String(), pair) {
+		t.Fatal("placement update requested another reveal")
 	}
 }
 
@@ -158,6 +186,135 @@ func TestKittyRendererChunksBounded(t *testing.T) {
 				t.Fatal("chunked upload corrupted PNG data")
 			}
 		})
+	}
+}
+
+func TestKittyRendererSourceCropReconcilesWithoutReupload(t *testing.T) {
+	i := NewKittyImage([]byte("original transparent PNG"))
+	var output bytes.Buffer
+	r := newCursedRenderer(&output, nil, 40, 10)
+	v := kittyTestView(i)
+	v.Images[0].SourceX, v.Images[0].SourceY = 20, 30
+	v.Images[0].SourceWidth, v.Images[0].SourceHeight = 64, 48
+	kittyFlush(t, r, v)
+	commands := kittyAPCs(t, output.String())
+	want := fmt.Sprintf("a=p,U=1,i=%d,c=8,r=4,x=20,y=30,w=64,h=48,q=2,p=1", i.ID())
+	if len(commands) != 2 || commands[1] != want || !strings.HasPrefix(commands[0], "a=t,f=100,") {
+		t.Fatalf("crop did not upload original then place source rectangle: %q", commands)
+	}
+	_, encoded, _ := strings.Cut(commands[0], ";")
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || string(decoded) != "original transparent PNG" {
+		t.Fatalf("crop changed uploaded resource: %q, %v", decoded, err)
+	}
+	output.Reset()
+	kittyFlush(t, r, v)
+	if output.Len() != 0 {
+		t.Fatalf("unchanged crop wrote %q", output.String())
+	}
+
+	// Each crop field participates in image-only view equality and committed
+	// placement state; updating even one must replace the sole prototype.
+	for _, field := range []*int{&v.Images[0].SourceX, &v.Images[0].SourceY, &v.Images[0].SourceWidth, &v.Images[0].SourceHeight, &v.Images[0].Columns, &v.Images[0].Rows} {
+		output.Reset()
+		(*field)++
+		kittyFlush(t, r, v)
+		commands = kittyAPCs(t, output.String())
+		p := v.Images[0]
+		want = fmt.Sprintf("a=p,U=1,i=%d,c=%d,r=%d,x=%d,y=%d,w=%d,h=%d,q=2,p=1",
+			i.ID(), p.Columns, p.Rows, p.SourceX, p.SourceY, p.SourceWidth, p.SourceHeight)
+		if len(commands) != 1 || commands[0] != want || r.kittyImages[i.ID()] != p {
+			t.Fatalf("crop/geometry update skipped, reuploaded or failed to commit: %q", commands)
+		}
+	}
+
+	// Removing the crop explicitly replaces the cropped prototype with the
+	// original full-image placement, still using the same uploaded resource.
+	output.Reset()
+	v.Images[0] = KittyImagePlacement{Image: i, Columns: 8, Rows: 4}
+	kittyFlush(t, r, v)
+	commands = kittyAPCs(t, output.String())
+	if len(commands) != 1 || commands[0] != fmt.Sprintf("a=p,U=1,i=%d,c=8,r=4,q=2,p=1", i.ID()) {
+		t.Fatalf("zero crop did not restore original placement: %q", commands)
+	}
+}
+
+func TestKittyRendererInvalidSourceCropsIgnored(t *testing.T) {
+	for _, crop := range [][4]int{
+		{-1, 0, 2, 2}, {0, -1, 2, 2}, {0, 0, -1, 2}, {0, 0, 2, -1},
+		{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 2}, {0, 0, 2, 0},
+	} {
+		t.Run(fmt.Sprint(crop), func(t *testing.T) {
+			i := NewKittyImage([]byte("not uploaded"))
+			var output bytes.Buffer
+			r := newCursedRenderer(&output, nil, 40, 10)
+			v := kittyTestView(i)
+			v.Images[0].SourceX, v.Images[0].SourceY = crop[0], crop[1]
+			v.Images[0].SourceWidth, v.Images[0].SourceHeight = crop[2], crop[3]
+			kittyFlush(t, r, v)
+			if err := r.close(); err != nil {
+				t.Fatal(err)
+			}
+			if commands := kittyAPCs(t, output.String()); len(commands) != 0 {
+				t.Fatalf("invalid crop acquired ownership or emitted protocol: %q", commands)
+			}
+		})
+	}
+	if strconv.IntSize == 64 {
+		tooLarge := uint64(1) << 32
+		i := NewKittyImage([]byte("not uploaded"))
+		for _, crop := range [][4]int{
+			{int(tooLarge), 0, 1, 1}, {0, int(tooLarge), 1, 1},
+			{0, 0, int(tooLarge), 1}, {0, 0, 1, int(tooLarge)},
+		} {
+			p := KittyImagePlacement{Image: i, Columns: 1, Rows: 1,
+				SourceX: crop[0], SourceY: crop[1], SourceWidth: crop[2], SourceHeight: crop[3]}
+			if p.valid() {
+				t.Fatalf("crop exceeds protocol's uint32 field: %+v", p)
+			}
+		}
+	}
+}
+
+func TestKittyRendererCropFailureAndInvalidReplacement(t *testing.T) {
+	i := NewKittyImage([]byte("original PNG"))
+	var output bytes.Buffer
+	r := newCursedRenderer(&output, nil, 40, 10)
+	v := kittyTestView(i)
+	v.Images[0].SourceWidth, v.Images[0].SourceHeight = 64, 48
+	kittyFlush(t, r, v)
+	committed := r.kittyImages[i.ID()]
+	v.Images[0].SourceX = 3
+	r.w = kittyFailWriter{}
+	r.render(v)
+	if err := r.flush(false); err == nil {
+		t.Fatal("failed crop update was accepted")
+	}
+	if r.kittyImages[i.ID()] != committed || r.lastView.Images[0] != committed {
+		t.Fatal("failed write committed the new crop")
+	}
+	output.Reset()
+	r.w = &output
+	kittyFlush(t, r, v)
+	commands := kittyAPCs(t, output.String())
+	if len(commands) != 3 || !strings.HasPrefix(commands[0], "a=d,") ||
+		!strings.HasPrefix(commands[1], "a=t,") ||
+		commands[2] != fmt.Sprintf("a=p,U=1,i=%d,c=8,r=4,x=3,y=0,w=64,h=48,q=2,p=1", i.ID()) {
+		t.Fatalf("retry did not recreate the requested crop: %q", commands)
+	}
+	// An invalid earlier descriptor must not hide the valid later descriptor.
+	v.Images = append([]KittyImagePlacement{{Image: i, Columns: 8, Rows: 4, SourceX: -1}}, v.Images...)
+	output.Reset()
+	kittyFlush(t, r, v)
+	if commands := kittyAPCs(t, output.String()); len(commands) != 0 || r.kittyImages[i.ID()] != v.Images[1] {
+		t.Fatalf("invalid duplicate displaced a valid crop: %q", commands)
+	}
+	// If only an invalid replacement remains, drop the previously owned image.
+	v.Images = v.Images[:1]
+	output.Reset()
+	kittyFlush(t, r, v)
+	if output.String() != kittyDelete(i) || len(r.kittyImages) != 0 {
+		t.Fatalf("invalid replacement retained stale crop ownership: %q", output.String())
 	}
 }
 

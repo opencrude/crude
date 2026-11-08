@@ -59,6 +59,8 @@ func (m *App) currentNavLocation() (navLocation, bool) {
 	if v := m.editorView(tab.ID); v != nil {
 		loc.path = v.Path
 		loc.caret, loc.scrollY = v.Editor.Caret()
+	} else if isImageTab(tab) {
+		loc.path = tab.Resource.ID
 	}
 	return loc, true
 }

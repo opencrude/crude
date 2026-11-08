@@ -219,7 +219,7 @@ func (m *App) closePaneEditorTabs(owner paneMenuOwner, rightOnly bool) {
 			seen = true
 			continue
 		}
-		if seen && m.editorView(tab.ID) != nil {
+		if seen && (m.editorView(tab.ID) != nil || isImageTab(&tab)) {
 			ids = append(ids, tab.ID)
 		}
 	}
@@ -269,11 +269,19 @@ func (m *App) splitMainGroup(dir ui.Direction, before bool, tab window.TabID) wi
 // editors; any other tab leaves the new pane empty, ready for New Session or
 // Open File.
 func (m *App) splitEditor(dir ui.Direction, before bool) {
+	imagePath := ""
+	if active := m.Win.ActiveTab(); isImageTab(active) {
+		imagePath = active.Resource.ID
+	}
 	view := m.editorView(m.EditorState.ActiveTab)
 	if active := m.Win.ActiveTab(); active == nil || view == nil || active.ID != view.Tab {
 		view = nil
 	}
 	target := m.splitMainGroup(dir, before, 0)
+	if target != 0 && imagePath != "" {
+		m.editorCommands = append(m.editorCommands, m.openPaneFiles([]string{imagePath}, target))
+		return
+	}
 	if target != 0 && view != nil {
 		m.showDocument(view.Path, target, true)
 		m.focusMainGroup(target)
@@ -284,7 +292,12 @@ func (m *App) splitEditor(dir ui.Direction, before bool) {
 // split when there is none. The source tab stays where it is.
 func (m *App) openBeside(tab window.TabID, dir ui.Direction, before bool) {
 	view := m.editorView(tab)
-	if view == nil {
+	selected := m.Win.TabByID(tab)
+	imagePath := ""
+	if isImageTab(selected) {
+		imagePath = selected.Resource.ID
+	}
+	if view == nil && imagePath == "" {
 		return
 	}
 	target := m.Win.Neighbor(m.Win.GroupOf(tab), dir, before)
@@ -292,7 +305,9 @@ func (m *App) openBeside(tab window.TabID, dir ui.Direction, before bool) {
 		m.Win.SwitchTo(m.Win.IndexOf(tab))
 		target = m.splitMainGroup(dir, before, 0)
 	}
-	if target != 0 && m.showDocument(view.Path, target, true) != nil {
+	if target != 0 && imagePath != "" {
+		m.editorCommands = append(m.editorCommands, m.openPaneFiles([]string{imagePath}, target))
+	} else if target != 0 && m.showDocument(view.Path, target, true) != nil {
 		m.focusMainGroup(target)
 	}
 }
@@ -956,7 +971,7 @@ func (m *App) paneMenuSections(tab window.TabID) []ui.ContextMenuSection {
 	row := func(label, id string) ui.ContextMenuItem {
 		return ui.ContextMenuItem{Label: label, Detail: m.menuShortcut(ui.ActionID(id)), Action: run(id)}
 	}
-	file := m.editorView(tab) != nil
+	file := m.editorView(tab) != nil || isImageTab(m.Win.TabByID(tab))
 	sides := []struct{ edge, phrase string }{{"right", "to the right"}, {"down", "below"}, {"left", "to the left"}, {"up", "above"}}
 	split := []ui.ContextMenuItem{}
 	for _, side := range sides {

@@ -1780,6 +1780,10 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		m.closeGitReview(tab.ID)
 		return nil
 	}
+	if isImageTab(&tab) {
+		m.closeImageTab(tab.ID)
+		return nil
+	}
 
 	if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)

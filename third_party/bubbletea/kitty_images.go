@@ -51,10 +51,30 @@ func (i *KittyImage) ID() uint32 {
 type KittyImagePlacement struct {
 	Image         *KittyImage
 	Columns, Rows int
+
+	// SourceX, SourceY, SourceWidth and SourceHeight select a rectangle in
+	// original image pixels, relative to the PNG's top-left corner. All zero
+	// selects the entire image, preserving the default placement behavior.
+	// Otherwise the origin must be nonnegative and both sizes positive. Values
+	// must fit the protocol's unsigned 32-bit fields. The terminal intersects
+	// the rectangle with the image bounds; no new image is encoded or uploaded.
+	SourceX, SourceY, SourceWidth, SourceHeight int
 }
 
 func (p KittyImagePlacement) valid() bool {
-	return p.Image != nil && p.Image.id != 0 && len(p.Image.png) > 0 && p.Columns > 0 && p.Rows > 0
+	if p.Image == nil || p.Image.id == 0 || len(p.Image.png) == 0 || p.Columns <= 0 || p.Rows <= 0 {
+		return false
+	}
+	if !p.hasSourceRect() {
+		return true
+	}
+	return p.SourceX >= 0 && p.SourceY >= 0 && p.SourceWidth > 0 && p.SourceHeight > 0 &&
+		uint64(p.SourceX) <= 1<<32-1 && uint64(p.SourceY) <= 1<<32-1 &&
+		uint64(p.SourceWidth) <= 1<<32-1 && uint64(p.SourceHeight) <= 1<<32-1
+}
+
+func (p KittyImagePlacement) hasSourceRect() bool {
+	return p.SourceX != 0 || p.SourceY != 0 || p.SourceWidth != 0 || p.SourceHeight != 0
 }
 
 func kittyImagesEqual(a, b []KittyImagePlacement) bool {
@@ -156,11 +176,19 @@ func (s *cursedRenderer) reconcileKittyImages(placements []KittyImagePlacement, 
 			s.uploadKittyImage(p.Image)
 		}
 		if invalid || !uploaded || old != p {
+			if !invalid && len(s.kittyImages) == 0 {
+				s.kittyReveal = true
+			}
 			// A nonzero stable placement ID replaces geometry instead of adding
 			// ambiguous virtual prototypes. Placeholder underline zero selects
 			// this sole placement; no additional public descriptor is needed.
-			s.kittySequence("\x1b_Ga=p,U=1,i=" + strconv.FormatUint(uint64(p.Image.id), 10) +
-				",c=" + strconv.Itoa(p.Columns) + ",r=" + strconv.Itoa(p.Rows) + ",q=2,p=1\x1b\\")
+			opts := "\x1b_Ga=p,U=1,i=" + strconv.FormatUint(uint64(p.Image.id), 10) +
+				",c=" + strconv.Itoa(p.Columns) + ",r=" + strconv.Itoa(p.Rows)
+			if p.hasSourceRect() {
+				opts += ",x=" + strconv.Itoa(p.SourceX) + ",y=" + strconv.Itoa(p.SourceY) +
+					",w=" + strconv.Itoa(p.SourceWidth) + ",h=" + strconv.Itoa(p.SourceHeight)
+			}
+			s.kittySequence(opts + ",q=2,p=1\x1b\\")
 		}
 	}
 }

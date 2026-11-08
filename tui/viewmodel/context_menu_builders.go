@@ -628,8 +628,11 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	st.Sections = append(st.Sections, m.paneMenuSections(tab.ID)...)
 
 	// Get tab-specific info.
-	if m.isEditorTabTitle(tab.Title) {
-		path := m.editorPathFromTabTitle(tab.Title)
+	if m.isEditorTabTitle(tab.Title) || isImageTab(&tab) {
+		path := tab.Resource.ID
+		if path == "" {
+			path = m.editorPathFromTabTitle(tab.Title)
+		}
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Tab",
 			Items: []ui.ContextMenuItem{
@@ -649,8 +652,8 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					m.runDetachedAsyncCmd(m.beginUserTreeReveal(path, owner))
 				}},
 				{Label: desktopRevealLabel(), Action: func() {
-					current := m.Win.TabByTitle(tab.Title)
-					if current == nil || current.ID != tab.ID {
+					current := m.Win.TabByID(tab.ID)
+					if current == nil || current.Title != tab.Title || current.Resource != tab.Resource {
 						return
 					}
 					m.runDetachedAsyncCmd(m.revealTreePath(path, false))

@@ -166,6 +166,7 @@ func (m *App) relocateTreePath(path, newPath string) error {
 		}
 		m.retitleEditorWindowTab(item.oldPath, item.newPath, item.tab.Editor)
 	}
+	m.retargetImageTabs(path, newPath, msg.IsDir)
 	if len(retargets) > 0 {
 		m.markEditorGitStaleNow()
 	}
@@ -445,6 +446,7 @@ func (m *App) confirmTreeDelete() {
 	if tab, ok := m.EditorState.Tabs[path]; ok {
 		m.closeEditorTabForce(tab.Path)
 	}
+	m.closeImageTabsUnder(path)
 	m.Feedback.NotifyInfo("Deleted " + filepath.Base(path))
 }
 

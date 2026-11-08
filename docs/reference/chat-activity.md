@@ -900,9 +900,10 @@ Unicode-placeholder cells carry image identity and source coordinates through
 the ordinary compositor, so moving, resizing, clipping and overlapping windows
 use the same ownership and paint path as text. The single terminal writer uploads
 an immutable PNG once, replaces virtual geometry on resize, and deletes only its
-exact image IDs on close/reset/suspend. Decoding and JPEG/GIF-to-PNG preparation
-run off Update with the existing reference owner/epoch checks. Byte limits are
-64 MiB and decoded images are bounded to 32 million pixels.
+exact image IDs on close/reset/suspend. PNG, JPEG, GIF, WebP and BMP decoding and
+PNG preparation run off Update with the existing reference owner/epoch checks.
+GIF uses its first frame. Byte limits are 64 MiB and decoded images are bounded
+to 33,554,432 pixels.
 
 The earlier blockiness came from Crude's `▀` approximation (two nearest-neighbor
 source samples per character), not corrupt attachment bytes or Kitty settings.

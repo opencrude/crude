@@ -49,19 +49,30 @@ func (m *App) syncPointerTooltip(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// tooltipTargetAt asks the root control under the pointer for its tooltip.
-// Floating windows and dialogs above the shell hide it.
+// tooltipTargetAt asks the control in the topmost mounted host. Ordinary
+// dialogs still shield the shell; a pane window owns the same tab controls
+// as its docked counterpart and can expose their tooltips.
 func (m *App) tooltipTargetAt(x, y int) *tooltipTarget {
 	if m.rootHost == nil || m.overlayHost == nil {
 		return nil
 	}
+	host := m.rootHost
+	originX, originY := 0, 0
 	if m.windowManager != nil {
 		if fw := m.windowManager.WindowAt(x, y); fw != nil && fw.ID != string(ui.OverlayTooltip) {
-			return nil
+			if group, ok := paneGroupFromOverlay(ui.OverlayID(fw.ID)); ok {
+				host = m.paneWindowHost(group)
+				originX, originY = fw.Position()
+			} else {
+				return nil
+			}
 		}
 	}
-	id := m.rootHost.Hovered()
-	source, ok := m.rootHost.Component(id).(ui.TooltipSource)
+	if host == nil {
+		return nil
+	}
+	id := host.Hovered()
+	source, ok := host.Component(id).(ui.TooltipSource)
 	if !ok {
 		return nil
 	}
@@ -69,12 +80,12 @@ func (m *App) tooltipTargetAt(x, y int) *tooltipTarget {
 	if !ok {
 		return nil
 	}
-	rect, ok := m.rootHost.ScreenRect(id)
+	rect, ok := host.ScreenRect(id)
 	if !ok {
 		return nil
 	}
-	anchor.X += rect.X
-	anchor.Y += rect.Y
+	anchor.X += rect.X + originX
+	anchor.Y += rect.Y + originY
 	if !anchor.Contains(x, y) {
 		return nil
 	}
@@ -178,6 +189,8 @@ func (m *App) tabTooltip(id window.TabID) string {
 		return ""
 	}
 	switch {
+	case isImageTab(&tab):
+		return tab.Resource.ID
 	case m.isEditorTabTitle(tab.Title):
 		path := m.editorPathFromTabTitle(tab.Title)
 		if !filepath.IsAbs(path) && m.ws != nil && m.ws.RootPath() != "" {

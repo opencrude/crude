@@ -868,6 +868,9 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	if m.termDockOwnsKeys() && m.focusedPopup() == nil {
 		return m.dispatchTermDockPaste(msg)
 	}
+	if m.activeImageView() != nil && m.focusedPopup() == nil && m.focusTarget() == FocusInput {
+		return m, nil
+	}
 
 	switch m.focusTarget() {
 	case FocusEditor:

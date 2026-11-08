@@ -117,4 +117,21 @@ func (m *App) refreshReferenceGraphics() {
 	if m.referenceOverlay != nil {
 		m.configureReferenceGraphics(m.referenceOverlay.screen)
 	}
+	if m.mainPanes == nil {
+		return
+	}
+	changed := false
+	for _, view := range m.mainPanes.views {
+		if view.image != nil && m.configureImageGraphics(view.image) {
+			changed = true
+		}
+	}
+	if changed {
+		if m.rootHost != nil {
+			m.rootHost.MarkComponentPaint(m.mainPanes.ID())
+		}
+		for _, pane := range m.mainPanes.windows {
+			pane.fw.MarkContentDirty()
+		}
+	}
 }

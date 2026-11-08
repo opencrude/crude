@@ -67,7 +67,7 @@ func (m *App) isComparisonActive() bool {
 // component (a comparison or a surface moved out of the dock): keys, close
 // and chat visibility follow the host, not the composer or editor.
 func (m *App) hostTabActive() bool {
-	return m.isComparisonActive() || m.activePanelTabContent() != nil
+	return m.isComparisonActive() || m.activePanelTabContent() != nil || m.activeImageView() != nil
 }
 
 func (m *App) compareEditorWithDisk(ed *editor.Editor) tea.Cmd {

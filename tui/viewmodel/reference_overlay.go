@@ -1,19 +1,17 @@
 package viewmodel
 
 import (
-	"bytes"
-	tea "charm.land/bubbletea/v2"
 	"context"
 	"fmt"
 	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	"image/png"
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/sessiondb"
 	"crude/tui/chatprojection"
+	"crude/tui/imagepreview"
 	"crude/tui/screens/textoverlay"
 	"crude/tui/ui"
 	"crude/types/attachment"
@@ -108,34 +106,7 @@ func loadReferencePreview(state *referenceOverlayState) referenceContentLoadedMs
 		if err != nil {
 			return referenceContentLoadedMsg{owner: state, err: err}
 		}
-		config, _, err := image.DecodeConfig(bytes.NewReader(data))
-		if err == nil && (config.Width <= 0 || config.Height <= 0 || config.Width > (32*1024*1024)/config.Height) {
-			err = fmt.Errorf("image dimensions exceed the native preview limit")
-		}
-		if err != nil {
-			return referenceContentLoadedMsg{owner: state, err: err}
-		}
-		img, _, err := image.Decode(bytes.NewReader(data))
-		if ctx.Err() != nil {
-			err = ctx.Err()
-			img = nil
-		}
-		var resource *tea.KittyImage
-		if err == nil {
-			// Keep original PNG bytes; other decoded formats become PNG once on
-			// this existing off-UI read worker, never during Paint or resize.
-			if !bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n")) {
-				var encoded bytes.Buffer
-				err = png.Encode(&encoded, img)
-				data = encoded.Bytes()
-			}
-			if err == nil && ctx.Err() == nil {
-				resource = tea.NewKittyImage(data)
-			}
-		}
-		if ctx.Err() != nil {
-			err, img, resource = ctx.Err(), nil, nil
-		}
+		img, resource, err := imagepreview.Decode(ctx, data)
 		return referenceContentLoadedMsg{owner: state, image: img, resource: resource, readOnly: true, err: err}
 	}
 	content, readOnly, err := state.store.ReadReferenceContent(state.ref.ID)
