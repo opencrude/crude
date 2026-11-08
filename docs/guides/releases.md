@@ -9,7 +9,7 @@
 | Package | Build host | End-user requirements |
 |---|---|---|
 | Linux amd64 | Native Linux, cgo + pinned baseline-CPU libghostty-vt | x86-64, glibc 2.35+ policy baseline, Bash, curl, GNU tar and coreutils; inspect each local binary's actual symbol requirements |
-| Windows amd64 | Native Windows, cgo + Zig | Windows x64 with ConPTY, PowerShell 5.1+; only available when included and verified in that release |
+| Windows amd64 | Native Windows, cgo + Zig | Windows x64 with ConPTY, PowerShell 5.1+; the installer adds Git Bash for this user when the machine has none; only available when included and verified in that release |
 
 No macOS, ARM64, 32-bit or Alpine/musl release artifacts are advertised. The
 embedded terminal requires cgo; a stub-only build is not a release. See
@@ -70,7 +70,38 @@ an explicit version can select a prerelease.
 
 The installer prints one short line per step: the download, the program, the
 stop, the window and the next command. It does not print a licence essay, a
-terminal-font lecture or a list of optional tools.
+terminal-font lecture or a list of optional tools. The Git shell prints only
+when it could not be installed.
+
+Release files come from the GitHub API asset path first and the published
+download path second, because a network can carry one and fail the other. Each
+source gets three bounded attempts, and the pinned checksum decides what is
+accepted.
+
+### The Git shell
+
+Agent commands run in one shell. On Windows, Git Bash starts in about 40 ms and
+gives the agent the GNU tools it expects, so the installer makes sure one is
+present.
+
+- If the machine already has Git Bash where Crude looks for it, the installer
+  uses it and prints nothing.
+- If it is absent, the installer unpacks a pinned Git for Windows build into
+  `%LOCALAPPDATA%\Crude\git` for this user only. The folder is writable by the
+  user, so no elevation, no UAC prompt, no PATH entry and no system change
+  happens. It prints nothing.
+- The download has three bounded attempts. If all of them fail, the program
+  install still completes, and the installer prints one short notice: Crude
+  works best with Git Bash, where to get Git for Windows, and that Crude uses
+  it the next time it starts. The next run tries again.
+- The package is checked against a pinned SHA-256, unpacked beside the old copy,
+  started once to prove it is GNU bash, and moved into place in one step. A
+  failed check, unpack or start leaves no half-written shell, so Crude never
+  finds a broken one.
+
+Crude resolves this copy from its own path, so a user who installs nothing still
+gets a working shell. A Git Bash the user installed later wins, because it is
+found first.
 
 Consent is required on every installation and update. Without `--yes` an
 interactive terminal asks `Install anyway? [y/N]`. A piped or noninteractive
@@ -144,7 +175,9 @@ already installed.
   rolls back a failed update. The raw user PATH value and its registry kind and
   the process PATH are preserved. Machine PATH is never changed. Interrupted
   rollback keeps transaction preimages and refuses another update until you
-  inspect them.
+  inspect them. `LOCALAPPDATA/Crude/git` holds the Git shell for this user
+  when the machine has none. It is outside the program transaction, so a shell
+  failure never undoes a program install, and it deletes nothing else.
 - Neither installer deletes application data, changes a core image, or stops
   anything without the answer described above.
 
@@ -152,7 +185,8 @@ already installed.
 against real archives, checksums and file operations and replace only the
 network client. They cover consent, an idempotent PATH, update in place, damaged
 archives, path traversal, links, a busy program, a refused stop, the window
-entry and a window checksum refusal. Native release jobs also install and repeat
+entry, a window checksum refusal, and a Git shell that is present, installed,
+reused, or refused. Native release jobs also install and repeat
 the actual platform package. Portable PowerShell fixtures do not establish
 native Windows registry, shortcut, executable-lock or ConPTY acceptance.
 

@@ -82,3 +82,37 @@ func TestRequestedBashIsNeverTheWSLLauncher(t *testing.T) {
 		t.Fatalf("Auto agent shell = %+v; want Git Bash first", auto)
 	}
 }
+
+// The Windows installer installs Git Bash inside the user's own profile when
+// the machine has none. Crude must find it there without a PATH entry, or the
+// shell the user just paid for would be invisible.
+func TestInstallerGitBashIsDetected(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows shells")
+	}
+	dir, programs := t.TempDir(), t.TempDir()
+	for _, key := range []string{"ProgramW6432", "ProgramFiles(x86)", "SystemRoot", "ComSpec"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("ProgramFiles", programs)
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	fakeExecutable(t, dir, "bash.exe") // the WSL launcher's name on PATH
+	if shell, err := Requested("bash"); err == nil {
+		t.Fatalf("bash resolved to %q without Git Bash", shell.Path)
+	}
+	local := t.TempDir()
+	t.Setenv("LOCALAPPDATA", local)
+	bin := filepath.Join(local, "Crude", "git", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitBash := fakeExecutable(t, bin, "bash.exe")
+	shell, err := Requested("bash")
+	if err != nil || !strings.EqualFold(shell.Path, gitBash) || shell.ID != "git-bash" {
+		t.Fatalf("bash = %+v, %v; want the installer's Git Bash %q", shell, err, gitBash)
+	}
+	if auto := ResolveAgent(""); auto.ID != "git-bash" {
+		t.Fatalf("Auto agent shell = %+v; want the installer's Git Bash", auto)
+	}
+}

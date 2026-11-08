@@ -45,6 +45,17 @@ function Assert-Fails([scriptblock] $Action, [string] $Pattern) {
     throw "Expected failure matching '$Pattern', but the operation succeeded."
 }
 
+function Get-TestHash([string] $Path) {
+    # Some Windows PowerShell 5.1 installations have no Get-FileHash, so hash
+    # through the runtime exactly as the installer does.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '') }
+        finally { $sha.Dispose() }
+    } finally { $stream.Dispose() }
+}
+
 function Test-Case([string] $Name, [scriptblock] $Action) {
     try {
         & $Action
@@ -91,14 +102,14 @@ function New-Fixture([string] $Tag = 'v1.2.3', [string] $Repository = 'opencrude
     ) + $ExtraEntries
     $archive = Join-Path $directory $asset
     New-TestZip $archive $entries
-    $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hash = (Get-TestHash $archive).ToLowerInvariant()
     [IO.File]::WriteAllText((Join-Path $directory 'SHA256SUMS'), "$hash  $asset`n")
     $baseUrl = "https://github.com/$Repository/releases/download/$Tag"
     $metadata = @{
         tag_name = $Tag; draft = $false; prerelease = $Tag.Contains('-')
         assets = @(
-            @{ name = $asset; browser_download_url = "$baseUrl/$asset" },
-            @{ name = 'SHA256SUMS'; browser_download_url = "$baseUrl/SHA256SUMS" }
+            @{ name = $asset; browser_download_url = "$baseUrl/$asset"; url = "https://api.github.com/repos/$Repository/releases/assets/1001" },
+            @{ name = 'SHA256SUMS'; browser_download_url = "$baseUrl/SHA256SUMS"; url = "https://api.github.com/repos/$Repository/releases/assets/1002" }
         )
     }
     [IO.File]::WriteAllText((Join-Path $directory 'release.json'), ($metadata | ConvertTo-Json -Depth 5))
@@ -122,6 +133,9 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
         Attempts = 0; DownloadsFail = $false; TransientFailures = 0; ProbeCalls = 0
         UserPath = 'C:\Existing User Tools;%USERPROFILE%\custom'; UserWrites = 0
         PathWriteFailure = $false; FailAfterPathWrite = $false
+        GitShell = 'C:\Fixture\Git\bin\bash.exe'; GitPackage = $null; GitShaMismatch = $false
+        GitDownloadsFail = $false; GitTransientFailures = 0; GitExpandFails = $false; GitUnpackCalls = 0
+        PrimaryDownloadsFail = $false; ApiDownloadsFail = $false
     }
     $install = Join-Path $Fixture.Directory 'install with spaces'
     $savedPath = $env:Path
@@ -132,7 +146,7 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
     $env:APPDATA = Join-Path $Fixture.Directory 'appdata'
     function Assert-CrudePlatform { }
     function Get-CrudeSetupStatus { return [pscustomobject] @{ WindowsTerminal = $false; FontPresent = $false; FontsKnown = $false } }
-    function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes) {
+    function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds = 120) {
         $fixtureState.Attempts++
         $url = $Uri.AbsoluteUri
         # Uri escapes spaces only in local fixture paths, never in public URLs.
@@ -143,17 +157,54 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
             throw 'fixture network failure'
         }
         $fixture = $fixtureState.Fixture
+        if ($fixtureState.PrimaryDownloadsFail -and $url -like '*github.com/*/releases/download/*') {
+            throw 'fixture public download path unavailable'
+        }
+        if ($fixtureState.ApiDownloadsFail -and $url -like 'https://api.github.com/*/releases/assets/*') {
+            throw 'fixture API asset path unavailable'
+        }
         $api = "https://api.github.com/repos/$($fixture.Repository)/releases/"
         $download = "https://github.com/$($fixture.Repository)/releases/download/$($fixture.Tag)/"
         if ($url -ceq ($api + 'latest') -or $url -ceq ($api + 'tags/' + $fixture.Tag)) { $name = 'release.json' }
         elseif ($url -ceq ($download + 'SHA256SUMS')) { $name = 'SHA256SUMS' }
         elseif ($url -ceq ($download + $fixture.Asset)) { $name = $fixture.Asset }
+        elseif ($url -ceq ($api + 'assets/1002')) { $name = 'SHA256SUMS' }
+        elseif ($url -ceq ($api + 'assets/1001')) { $name = $fixture.Asset }
+        elseif ($url -like 'https://github.com/git-for-windows/git/*' -or $url -like 'https://api.github.com/repos/git-for-windows/git/*') {
+            if ($fixtureState.GitDownloadsFail -or $fixtureState.GitTransientFailures -gt 0) {
+                $fixtureState.GitTransientFailures--
+                [IO.File]::WriteAllText($Destination, 'incomplete response')
+                throw 'fixture Git Shell network failure'
+            }
+            if (-not $fixtureState.GitPackage) { throw "Unexpected fixture URL: $url" }
+            [IO.File]::Copy($fixtureState.GitPackage, $Destination, $true)
+            return
+        }
         else { throw "Unexpected fixture URL: $url" }
         $source = Join-Path $fixture.Directory $name
         if ((Get-Item -LiteralPath $source).Length -gt $MaximumBytes) { throw 'fixture response exceeds byte limit' }
         [IO.File]::Copy($source, $Destination, $true)
     }
     function Start-Sleep { param($Seconds) }
+    function Get-CrudeGitShell { return $fixtureState.GitShell }
+    $realGitPaths = ${function:Get-CrudeGitPaths}
+    function Get-CrudeGitPaths {
+        $paths = & $realGitPaths
+        if ($fixtureState.GitPackage) {
+            $paths.Asset = 'PortableGit-fixture.7z.exe'
+            $paths.Sha256 = if ($fixtureState.GitShaMismatch) { '0' * 64 } else { (Get-TestHash $fixtureState.GitPackage).ToLowerInvariant() }
+        }
+        return $paths
+    }
+    function Expand-CrudeGitShell([string] $Setup, [string] $Destination) {
+        $fixtureState.GitUnpackCalls++
+        if ($fixtureState.GitExpandFails) { throw 'fixture Git Shell package could not unpack' }
+        [void] [IO.Directory]::CreateDirectory((Join-Path $Destination 'bin'))
+        [IO.File]::WriteAllText((Join-Path $Destination 'bin\bash.exe'), 'fixture bash')
+    }
+    function Assert-CrudeGitShell([string] $Bash) {
+        Assert-True ([IO.File]::Exists($Bash)) 'A verified Git Shell must hold bin\bash.exe'
+    }
     function Get-CrudeCandidateVersion([string] $Executable) {
         $fixtureState.ProbeCalls++
         Assert-Equal ([IO.File]::ReadAllText($Executable)) "fixture executable $($fixtureState.Fixture.Tag)" 'The verified candidate must be the extracted archive executable'
@@ -190,7 +241,7 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
     # The only substituted production boundary in this smoke check is transport:
     # actual platform detection, package checks, native EXE probe, and filesystem
     # installation run unchanged. No user or machine environment is persisted.
-    function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes) {
+    function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds = 120) {
         $url = $Uri.AbsoluteUri
         switch -CaseSensitive ($url) {
             "https://api.github.com/repos/opencrude/crude/releases/tags/$Tag" { $name = 'release.json' }
@@ -219,12 +270,12 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
             Assert-True ([IO.File]::Exists((Join-Path $install $required))) "Real release must install '$required'"
         }
         Assert-True ([IO.Directory]::GetFiles((Join-Path $install 'licenses'), '*', [IO.SearchOption]::AllDirectories).Length -gt 0) 'Real release must install third-party notices'
-        $installedHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash
+        $installedHash = Get-TestHash $binary
         $sentinelTime = [DateTime]::UtcNow.AddDays(-2)
         [IO.File]::SetLastWriteTimeUtc($binary, $sentinelTime)
         Install-Crude -Yes -NoGui -Version $Tag -InstallDir $install -NoPath
         Assert-Equal (Get-Item -LiteralPath $binary).LastWriteTimeUtc $sentinelTime 'Identical real release must not replace installed executable'
-        Assert-Equal (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash $installedHash 'Repeat installation must preserve verified executable bytes'
+        Assert-Equal (Get-TestHash $binary) $installedHash 'Repeat installation must preserve verified executable bytes'
         Assert-Equal (Get-CrudeUserPath) $oldUser 'Real-release NoPath must not persist user PATH'
         Assert-Equal ([Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)) $oldMachine 'Real-release installation must not change machine PATH'
         Assert-Equal $env:Path $oldProcess 'Real-release NoPath must not change process PATH'
@@ -291,6 +342,100 @@ try {
                 Assert-True ($output -notmatch $absent) "Installer output must not lecture about '$absent'"
             }
             Assert-Equal $fixtureState.UserWrites 0 'A NoPath install must not mutate user settings'
+        }
+    }
+
+    Test-Case 'a present Git Bash is used without a download or a word' {
+        With-Fixture (New-Fixture) {
+            $output = ((Install-Crude -Yes -NoGui -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+            Assert-Equal @($fixtureState.Calls | Where-Object { $_ -like '*git-for-windows*' }).Count 0 'A present Git Shell must not be downloaded'
+            Assert-Equal $fixtureState.GitUnpackCalls 0 'A present Git Shell must not be unpacked'
+            Assert-True ($output -notmatch 'Git Shell') 'A present Git Shell must print nothing'
+        }
+    }
+
+    Test-Case 'a missing Git Bash is installed for this user, quietly, and reused' {
+        With-Fixture (New-Fixture) {
+            $package = Join-Path $fixtureState.Fixture.Directory 'PortableGit-fixture.7z.exe'
+            [IO.File]::WriteAllText($package, 'fixture git shell package')
+            $fixtureState.GitPackage = $package
+            $fixtureState.GitShell = $null
+            $output = ((Install-Crude -Yes -NoGui -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+            $paths = Get-CrudeGitPaths
+            Assert-True ([IO.File]::Exists($paths.Bash)) 'A missing Git Shell must be installed in the user profile'
+            Assert-Equal $fixtureState.GitUnpackCalls 1 'The Git Shell package must be unpacked once'
+            Assert-True ($output -notmatch 'Git Shell') 'A successful Git Shell install must print nothing'
+            Assert-True ($output -notmatch '(?i)uac|administrator|elevat') 'The Git Shell install must not mention elevation'
+            Assert-Equal @([IO.Directory]::GetDirectories($paths.Home, '.git-old-*')).Count 0 'No superseded Git Shell copy may remain'
+            # The next run finds the shell, so an update never pays for it again.
+            $fixtureState.GitShell = $paths.Bash
+            Install-Crude -Yes -NoGui -InstallDir $install -NoPath
+            Assert-Equal $fixtureState.GitUnpackCalls 1 'A later update must reuse the installed Git Shell'
+        }
+    }
+
+    Test-Case 'a failed Git Bash download keeps the program and states the next step once' {
+        With-Fixture (New-Fixture) {
+            $package = Join-Path $fixtureState.Fixture.Directory 'PortableGit-fixture.7z.exe'
+            [IO.File]::WriteAllText($package, 'fixture git shell package')
+            $fixtureState.GitPackage = $package
+            $fixtureState.GitShell = $null
+            $fixtureState.GitDownloadsFail = $true
+            $output = ((Install-Crude -Yes -NoGui -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+            Assert-True ([IO.File]::Exists((Join-Path $install 'crude.exe'))) 'A failed Git Shell must not undo the program install'
+            Assert-True ($output -match 'Git Shell\s+not installed\. Crude works best with Git Bash') 'A failed Git Shell must say Crude works best with Git Bash'
+            Assert-True ($output -match 'https://git-scm\.com/download/win') 'A failed Git Shell must name where to get it'
+            Assert-True ($output -match 'Crude uses it the next time it starts') 'A failed Git Shell must say when Crude uses it'
+            Assert-Equal ([regex]::Matches($output, 'Crude works best with Git Bash').Count) 1 'The Git Shell notice must appear once'
+            Assert-Equal @($fixtureState.Calls | Where-Object { $_ -like '*git-for-windows*' }).Count 6 'A flaky Git Shell must stop after three attempts per source'
+            Assert-True (-not [IO.Directory]::Exists((Get-CrudeGitPaths).Root)) 'A failed Git Shell must leave no half-written shell'
+            Assert-NoStaging $install
+        }
+    }
+
+    Test-Case 'release files use the API asset path before the published download path' {
+    With-Fixture (New-Fixture) {
+        # The published path is unavailable, yet the install must still finish:
+        # resolving the release already proved the API host answers.
+        $fixtureState.PrimaryDownloadsFail = $true
+        Install-Crude -Yes -NoGui -InstallDir $install -NoPath
+        Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'The API asset path must install the verified release'
+        Assert-Equal @($fixtureState.Calls | Where-Object { $_ -like 'https://api.github.com/repos/opencrude/crude/releases/assets/*' }).Count 2 'Both release files must come from the API asset path'
+        Assert-Equal @($fixtureState.Calls | Where-Object { $_ -like '*/releases/download/*' }).Count 0 'An answering API path must not fall back'
+    }
+}
+
+Test-Case 'an unavailable API asset path falls back to the published download path' {
+    With-Fixture (New-Fixture) {
+        $fixtureState.ApiDownloadsFail = $true
+        Install-Crude -Yes -NoGui -InstallDir $install -NoPath
+        Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'The published download path must still install the verified release'
+        Assert-True (@($fixtureState.Calls | Where-Object { $_ -like '*/releases/download/*' }).Count -ge 2) 'Both release files must come from the published download path'
+    }
+}
+
+Test-Case 'a flaky Git Bash download retries quietly and a bad package is refused' {
+        With-Fixture (New-Fixture) {
+            $package = Join-Path $fixtureState.Fixture.Directory 'PortableGit-fixture.7z.exe'
+            [IO.File]::WriteAllText($package, 'fixture git shell package')
+            $fixtureState.GitPackage = $package
+            $fixtureState.GitShell = $null
+            $fixtureState.GitTransientFailures = 1
+            $output = ((Install-Crude -Yes -NoGui -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+            Assert-True ([IO.File]::Exists((Get-CrudeGitPaths).Bash)) 'A transient Git Shell failure must retry and finish'
+            Assert-True ($output -notmatch 'Git Shell') 'A Git Shell that recovers must print nothing'
+        }
+        With-Fixture (New-Fixture) {
+            $package = Join-Path $fixtureState.Fixture.Directory 'PortableGit-fixture.7z.exe'
+            [IO.File]::WriteAllText($package, 'fixture git shell package')
+            $fixtureState.GitPackage = $package
+            $fixtureState.GitShell = $null
+            $fixtureState.GitShaMismatch = $true
+            $output = ((Install-Crude -Yes -NoGui -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+            Assert-Equal $fixtureState.GitUnpackCalls 0 'A Git Shell that fails its checksum must never be unpacked'
+            Assert-True (-not [IO.Directory]::Exists((Get-CrudeGitPaths).Root)) 'A refused Git Shell must leave no folder'
+            Assert-True ($output -match 'Crude works best with Git Bash') 'A refused Git Shell must still name the next step'
+            Assert-True ([IO.File]::Exists((Join-Path $install 'crude.exe'))) 'A refused Git Shell must not undo the program install'
         }
     }
 
@@ -545,7 +690,7 @@ try {
                 $fixture = $fixtureState.Fixture
                 $zip = [IO.Compression.ZipFile]::Open($fixture.Archive, [IO.Compression.ZipArchiveMode]::Update)
                 try { $zip.GetEntry($missing).Delete() } finally { $zip.Dispose() }
-                $hash = (Get-FileHash -LiteralPath $fixture.Archive -Algorithm SHA256).Hash
+                $hash = Get-TestHash $fixture.Archive
                 [IO.File]::WriteAllText((Join-Path $fixture.Directory 'SHA256SUMS'), "$hash *$($fixture.Asset)`n")
                 Assert-Fails { Install-Crude -Yes -NoGui -InstallDir $install -NoPath } 'missing root|missing third-party'
                 Assert-Equal $fixtureState.ProbeCalls 0 'Incomplete archive must not execute'
@@ -738,7 +883,7 @@ class VersionFixture {
                     $zip.GetEntry('crude.exe').Delete()
                     [void] [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $nativeExe, 'crude.exe')
                 } finally { $zip.Dispose() }
-                $hash = (Get-FileHash -LiteralPath $fixture.Archive -Algorithm SHA256).Hash
+                $hash = Get-TestHash $fixture.Archive
                 [IO.File]::WriteAllText((Join-Path $fixture.Directory 'SHA256SUMS'), "$hash  $($fixture.Asset)`n")
                 # Reload only the actual native probe, retaining the fixture HTTP
                 # and user PATH boundaries. The install function still uses all
