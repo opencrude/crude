@@ -156,7 +156,11 @@ func (m *App) beginUserTreeReveal(path string, owner paneMenuOwner) tea.Cmd {
 	state.mu.Lock()
 	sequence := state.treeControlSequence
 	state.mu.Unlock()
-	intent := &treeRevealIntent{treeRevealTraversal: traversal, workspace: m.ws, owner: owner, tabTitle: m.editorTabTitle(path),
+	tabTitle := m.editorTabTitle(path)
+	if tab := m.Win.TabByID(owner.tab); tab != nil && isImageTab(tab) {
+		tabTitle = tab.Title
+	}
+	intent := &treeRevealIntent{treeRevealTraversal: traversal, workspace: m.ws, owner: owner, tabTitle: tabTitle,
 		generation: m.workspaceSwitchGen.Load(), sequence: sequence, ctx: ctx, cancel: cancel}
 	m.treeReveal = intent
 	return m.continueUserTreeReveal(intent)

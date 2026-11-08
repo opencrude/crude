@@ -143,8 +143,7 @@ type App struct {
 	referenceOverlay            *referenceOverlayState
 	attachmentOpen              *attachmentOpenState
 	terminalImages              terminalImageState
-	imagePlacements             [1]tea.KittyImagePlacement
-	imagePlacementCount         int
+	imagePlacements             []tea.KittyImagePlacement
 	pastedTextRequests          []pastedTextStoredMsg
 	DirtyPromptPath             string
 	DirtyPromptChoice           int

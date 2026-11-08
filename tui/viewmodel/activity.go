@@ -11,6 +11,7 @@ import (
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/backgroundjobs"
+	"crude/tui/screens/imageviewer"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
@@ -381,6 +382,11 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	switch action.ID {
+	case imageviewer.CloseAction:
+		if m.activeImageView() != nil {
+			return m.handleAgentTabClose(m.Win.ActiveIndex())
+		}
+		return nil
 	case chatprojection.ChatAttachmentOpenActionID:
 		if payload, ok := action.Payload.(chatprojection.ChatAttachmentOpenPayload); ok {
 			return m.openChatAttachment(payload)

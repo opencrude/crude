@@ -16,6 +16,7 @@ are not restored.
 | `tui/viewmodel/main_panes.go` | Retained group controls and per-tab views, parent-local geometry, compact presentation, session-family chrome placement |
 | `tui/viewmodel/main_pane_actions.go` | Input policy, group activation, split/move/merge/resize commands, open/move beside, drop targets and preview, owner-bound file picker |
 | `tui/viewmodel/editor_views.go`, `tui/editor/linked_view.go` | File views: one document per path, any number of tabs showing it, linked editors that share one buffer |
+| `tui/viewmodel/image_files.go`, `tui/screens/imageviewer/` | Read-only raster image file tabs, independent viewport state and terminal image placements |
 | `tui/viewmodel/navigation_history.go` | Go Back / Go Forward places and their restore |
 | `tui/viewmodel/floating_panes.go` | Pane windows: one WM window per floating group, window/group focus agreement, host resolution for focus and geometry |
 | `tui/viewmodel/panel_placement.go` | Workspace surfaces (Git, Problems, Notices, Workspace, Memory, Board) placed in the dock, a main tab or a pane window |
@@ -59,6 +60,45 @@ first-to-second visual order. Removing an empty group collapses its parent and
 preserves the sibling subtree and sizing. Moving its last tab out also removes
 the empty source group. Merge All keeps the focused group's identity and
 selection and moves the other tabs into it without closing their resources.
+
+### Image files
+
+Opening a PNG, JPEG, GIF, WebP or BMP file uses the normal file-tab and pane
+routes, but never creates a text document or sends image bytes to a language
+server. SVG remains editable source. GIF shows its first frame. The image fits
+the pane at first; the right-aligned zoom-out, zoom-in and fit icons and the
+`-`, `+`/`=`, `0` keys change the view. Hover shows each icon's name and shortcut.
+The mouse wheel zooms around the pointer. Arrows and dragging pan a zoomed
+image; Shift+wheel and horizontal wheel pan sideways. The body shows pixel
+dimensions and zoom; Esc or Ctrl+W closes the tab.
+Zoom and pan are private to each view. Splitting a pane opens a separate view,
+and image tabs follow the normal move, window, close and remembered-pane paths.
+On restart or workspace return an image opens at Fit; floating windows are not
+restored.
+
+The connected core reads project bytes and explicitly external paths through
+their respective read authorities. The shell never interprets a remote path as
+a local file or retries a denied project read with external authority.
+Reads and bounded decoding run off Update. Inputs are limited to 64 MiB and
+33,554,432 decoded pixels; malformed and oversized files do not enter the text
+editor. A tab retains the image snapshot it opened. Close and open it again to
+see external changes. An explicit file-tree rename retargets the tab; deleting
+the file through the tree closes its image views.
+
+Kitty-capable terminals paint original pixels with measured cell geometry.
+Without confirmed support, true-color identity or usable geometry, the same
+viewport uses an alpha-composited half-block preview. At high zoom, native
+graphics also fall back when the exact source crop or grid cannot be represented
+without changing the image geometry. Each visible tab has its own immutable
+terminal resource so simultaneous panes may use different zoom levels. Images
+and attachment previews share terminal capability negotiation and the writer's
+exact resource lifecycle.
+
+On a Kitty terminal that can pause rendering, the frame that first shows an
+image can be composed before its graphics layers are visible. Crude then sends
+one empty synchronized update pair after that frame. This makes the terminal
+prepare the unchanged screen again; it never simulates input and does not repeat
+for later images or placement changes.
 
 ## Composition and focus
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -13,6 +14,7 @@ import (
 	"crude/fileio"
 	"crude/shellport"
 	"crude/tui/editor"
+	"crude/tui/imagepreview"
 	"crude/tui/window"
 	"crude/types"
 )
@@ -22,6 +24,9 @@ type paneFilePrepared struct {
 	buffer      *editor.Buffer
 	err         error
 	existing    bool
+	imageFile   bool
+	image       *paneImage
+	imageTab    window.TabID
 	recovery    clientstate.EditorRecoveryRecord
 	recoveryErr error
 	snapshot    *document.Snapshot
@@ -70,6 +75,19 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 	// Copy the caller-owned slice before asynchronous execution.
 	paths = append([]string(nil), paths...)
 	live, connected := m.ws.(shellport.LiveDocuments)
+	files, remoteFiles := m.ws.(shellport.ClientFiles)
+	root := m.ws.RootPath()
+	existingImages := make(map[string]window.TabID)
+	for _, path := range paths {
+		if imagepreview.SupportedPath(path) {
+			for _, tab := range m.Win.Tabs() {
+				if tab.Group == group && isImageTab(&tab) {
+					existingImages[tab.Resource.ID] = tab.ID
+				}
+			}
+			break
+		}
+	}
 	if connected {
 		if m.liveOpenRefs == nil || m.liveOpenRefs.owner != m.ws {
 			m.liveOpenRefs = &liveDocumentRefs{owner: m.ws, live: live, counts: make(map[string]int)}
@@ -77,9 +95,34 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 		msg.refs = m.liveOpenRefs
 	}
 	loadRecovery := m.prepareEditorRecovery()
-	return func() tea.Msg {
+	command := m.clientIOCommand(ctx, func(owner context.Context) tea.Msg {
+		ctx, cancel := context.WithTimeout(owner, 2*time.Minute)
+		defer cancel()
 		prepared := editor.NewBufferManager()
 		for _, path := range paths {
+			if imagepreview.SupportedPath(path) {
+				file := paneFilePrepared{path: path, imageFile: true}
+				if remoteFiles {
+					file.path = files.CanonicalClientPath(path)
+				} else {
+					abs, err := filepath.Abs(path)
+					file.err = err
+					if err == nil {
+						file.path = filepath.Clean(abs)
+					}
+				}
+				file.imageTab = existingImages[file.path]
+				if file.err == nil && file.imageTab == 0 {
+					if remoteFiles {
+						external := !clientPathWithinRoot(files.CanonicalClientPath(root), file.path)
+						file.image, file.err = preparePaneImage(ctx, files, file.path, external)
+					} else {
+						file.image, file.err = preparePaneImage(ctx, nil, file.path, false)
+					}
+				}
+				msg.files = append(msg.files, file)
+				continue
+			}
 			if connected {
 				s, err := msg.refs.open(ctx, path)
 				file := paneFilePrepared{path: s.Path, err: err, snapshot: &s}
@@ -103,6 +146,15 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 			msg.files = append(msg.files, file)
 		}
 		return msg
+	})
+	return func() tea.Msg {
+		result := command()
+		if result == nil {
+			// Several callers decorate the typed completion. A command cancelled
+			// before admission has no acquired resources or files to install.
+			return msg
+		}
+		return result
 	}
 }
 
@@ -143,6 +195,24 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	}
 	opened := false
 	for _, file := range msg.files {
+		if file.imageFile {
+			if file.imageTab != 0 {
+				current := m.Win.GroupTabByTitle(msg.group, imageTabTitle(file.path))
+				if current == nil || current.ID != file.imageTab {
+					continue
+				}
+			}
+			if file.err != nil {
+				if !msg.restoring {
+					m.Feedback.NotifyError("Could not open image. Check the file and try again.")
+				}
+				continue
+			}
+			if m.showPaneImage(file.path, msg.group, foreground, file.image) {
+				opened = true
+			}
+			continue
+		}
 		if file.snapshot != nil {
 			if file.err != nil {
 				if !msg.restoring {
@@ -205,7 +275,11 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if msg.activePath != "" {
 		// A restored pane reopens its last selected document, not simply the
 		// last file in the remembered order.
-		if tab := m.Win.GroupTabByTitle(msg.group, m.editorTabTitle(msg.activePath)); tab != nil {
+		tab := m.Win.GroupTabByTitle(msg.group, m.editorTabTitle(msg.activePath))
+		if tab == nil {
+			tab = m.Win.GroupTabByTitle(msg.group, imageTabTitle(msg.activePath))
+		}
+		if tab != nil {
 			if foreground {
 				m.Win.SwitchTo(m.Win.IndexOf(tab.ID))
 			} else {
@@ -253,7 +327,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 		}
 		ed.ScrollToCursor()
 	}
-	if tab := m.Win.ActiveTab(); msg.window && tab != nil && m.isEditorTabTitle(tab.Title) {
+	if tab := m.Win.ActiveTab(); msg.window && tab != nil && (m.isEditorTabTitle(tab.Title) || isImageTab(tab)) {
 		m.openTabInWindow(tab.ID)
 	}
 	if match := msg.landing; match != nil && m.EditorState.ActiveView == match.Path {

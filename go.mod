@@ -29,6 +29,7 @@ require (
 	github.com/tree-sitter/tree-sitter-javascript v0.23.1
 	github.com/tree-sitter/tree-sitter-python v0.25.0
 	github.com/tree-sitter/tree-sitter-typescript v0.23.3-0.20250130221139-75b3874edb2d
+	golang.org/x/image v0.44.0
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.50.1
 	mvdan.cc/sh/v3 v3.13.1

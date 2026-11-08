@@ -131,6 +131,8 @@ func (m *App) inspectShell() shellInspection {
 				t.Path = ed.FilePath()
 				t.Dirty = ed.Modified()
 				t.Revision = ed.Revision()
+			} else if isImageTab(&tab) {
+				t.Path = tab.Resource.ID
 			}
 			s.Tabs = append(s.Tabs, t)
 		}
@@ -475,7 +477,7 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 			return invalid(err)
 		}
 		ed := m.EditorState.Editor
-		if ed == nil || !ed.IsOpen() {
+		if ed == nil || !ed.IsOpen() || m.EditorState.ActiveView == "" {
 			return m.failShellControl(msg, control.Unavailable, "editor is unavailable")
 		}
 		if in.Line < 0 || in.Column < 0 || in.EndLine < 0 || in.EndColumn < 0 {
@@ -1264,6 +1266,9 @@ func (m *App) finishShellControl(done shellControlDoneMsg) tea.Cmd {
 		} else {
 			file := completion.files[0]
 			tab := m.Win.GroupTabByTitle(completion.group, m.editorTabTitle(file.path))
+			if file.imageFile {
+				tab = m.Win.GroupTabByTitle(completion.group, imageTabTitle(file.path))
+			}
 			if file.err != nil || tab == nil {
 				result.State = control.Failed
 				result.Fault = &control.Fault{Code: control.OperationFailed, Message: "file was not installed"}

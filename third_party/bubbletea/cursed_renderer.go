@@ -44,6 +44,7 @@ type cursedRenderer struct {
 	kittyImages    map[uint32]KittyImagePlacement // last successfully flushed resource set
 	kittyUncertain []KittyImagePlacement          // exact IDs possibly sent by a failed write
 	kittyInvalid   bool                           // clear/reset/screen switch requires reupload
+	kittyReveal    bool                           // first placement needs one extra pass
 	kittyTmux      bool
 }
 
@@ -558,6 +559,13 @@ func (s *cursedRenderer) flush(closing bool) error {
 			// Close synchronized output mode.
 			buf.WriteString(ansi.ResetModeSynchronizedOutput)
 		}
+		if s.kittyReveal {
+			// Kitty can compose the frame that introduces the first image before
+			// its graphics layers are visible. An empty synchronized pair makes
+			// it prepare the unchanged screen again, now with the image layers.
+			buf.WriteString(ansi.SetModeSynchronizedOutput)
+			buf.WriteString(ansi.ResetModeSynchronizedOutput)
+		}
 	} else if (shouldUpdateCursorVis && showCursor) || (hasUpdates && showCursor && didShowCursor) {
 		_, _ = buf.WriteString(ansi.SetModeTextCursorEnable)
 	}
@@ -578,6 +586,7 @@ func (s *cursedRenderer) flush(closing bool) error {
 	}
 
 	s.commitKittyImages(view.Images)
+	s.kittyReveal = false
 	s.lastView = &view
 	s.viewMu.Lock()
 	s.onMouseView = view.OnMouse

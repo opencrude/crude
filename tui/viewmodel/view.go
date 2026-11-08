@@ -1,8 +1,10 @@
 package viewmodel
 
 import (
+	"cmp"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -91,7 +93,7 @@ func (m *App) View() tea.View {
 func (m *App) newSurfaceTerminalView() tea.View {
 	v := m.newTerminalView("")
 	v.Surface = m.compositor.CurrentSurface()
-	v.Images = m.imagePlacements[:m.imagePlacementCount]
+	v.Images = m.imagePlacements
 	return v
 }
 
@@ -99,18 +101,33 @@ func (m *App) newSurfaceTerminalView() tea.View {
 // A coalesced View must retain the resources referenced by its retained cells
 // until a newly painted frame removes/replaces both together.
 func (m *App) captureTerminalImages() {
-	m.imagePlacementCount = 0
-	if m.overlayHost.IsOpen(ui.OverlayTextOverlay) {
-		if screen := m.sessionTextOverlay(); screen != nil {
-			if placement := screen.ImagePlacement(); placement.Image != nil {
-				m.imagePlacements[0] = placement
-				m.imagePlacementCount = 1
+	clear(m.imagePlacements)
+	m.imagePlacements = m.imagePlacements[:0]
+	if m.mainPanes != nil && m.Win != nil {
+		for group, g := range m.mainPanes.groups {
+			if _, visible := m.mainPanes.placements[group]; !visible && m.mainPanes.windows[group] == nil {
+				continue
+			}
+			if g == nil || g.view == nil || g.view.image == nil || g.body.Empty() {
+				continue
+			}
+			if placement := g.view.image.ImagePlacement(); placement.Image != nil {
+				m.imagePlacements = append(m.imagePlacements, placement)
 			}
 		}
 	}
-	if m.imagePlacementCount == 0 {
-		m.imagePlacements[0] = tea.KittyImagePlacement{}
+	if m.overlayHost.IsOpen(ui.OverlayTextOverlay) {
+		if screen := m.sessionTextOverlay(); screen != nil {
+			if placement := screen.ImagePlacement(); placement.Image != nil {
+				m.imagePlacements = append(m.imagePlacements, placement)
+			}
+		}
 	}
+	// Map iteration order must not turn an unchanged set into a new terminal
+	// publication. Sort by immutable resource ID without exporting pane lists.
+	slices.SortFunc(m.imagePlacements, func(a, b tea.KittyImagePlacement) int {
+		return cmp.Compare(a.Image.ID(), b.Image.ID())
+	})
 }
 
 func (m *App) newTerminalView(output string) tea.View {
@@ -366,6 +383,11 @@ func (m *App) syncRootFocus() {
 		case FocusInput:
 			if m.emptyPaneActive() {
 				id = m.ensureMainPanes().group(m.Win.ActiveGroup()).empty.ID()
+			} else if image := m.activeImageView(); image != nil {
+				id = image.ID()
+				if current := m.mainHost().Focused(); strings.HasPrefix(string(current), string(image.ID())+"/") {
+					id = current
+				}
 			} else if view := m.activeGitReview(); view != nil {
 				id = view.screen.DocumentID()
 				if current := m.rootHost.Focused(); strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
@@ -759,6 +781,9 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 			ui.ActionSeg("panel.next"),
 			ui.ActionSeg("panel.close"),
 		}
+	}
+	if m.activeImageView() != nil && m.focusTarget() == FocusInput && !m.terminalOwnsKeys() {
+		return "", imageViewerHelpSegments()
 	}
 	switch m.focusTarget() {
 	case FocusTree:

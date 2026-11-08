@@ -8,6 +8,7 @@ import (
 
 	"crude/shellport"
 
+	"crude/tui/imagepreview"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -129,6 +130,17 @@ func (m *App) openAgentInWindow(agentID string) {
 // openFileInWindow opens a file's editor tab in its own window. A live
 // (core-backed) document lands asynchronously and floats when it lands.
 func (m *App) openFileInWindow(path string) tea.Cmd {
+	if imagepreview.SupportedPath(path) {
+		cmd := m.openPaneFiles([]string{path}, m.Win.DockedGroup())
+		if cmd == nil {
+			return nil
+		}
+		return func() tea.Msg {
+			msg := cmd().(paneFilesOpenedMsg)
+			msg.window = true
+			return msg
+		}
+	}
 	if _, connected := m.ws.(shellport.LiveDocuments); connected {
 		if tab := m.EditorState.Tabs[path]; tab == nil || !tab.Editor.IsOpen() {
 			cmd := m.openPaneFiles([]string{path}, m.Win.DockedGroup())

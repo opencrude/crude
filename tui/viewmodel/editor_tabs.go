@@ -11,6 +11,7 @@ import (
 
 	"crude/shellport"
 	"crude/tui/editor"
+	"crude/tui/imagepreview"
 	"crude/tui/window"
 )
 
@@ -33,6 +34,10 @@ func (m *App) editorPathFromTabTitle(title string) string {
 // is selected, or a view is added there. A file open elsewhere is not pulled
 // out of its pane; the new view shares its document.
 func (m *App) openEditorTab(path string) (tea.Cmd, error) {
+	if imagepreview.SupportedPath(path) {
+		m.editorCommands = append(m.editorCommands, m.openPaneFiles([]string{path}, m.Win.ActiveGroup()))
+		return nil, nil
+	}
 	if _, connected := m.ws.(shellport.LiveDocuments); connected {
 		if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor.IsOpen() {
 			m.activateEditorTab(path)
@@ -438,6 +443,10 @@ func (m *App) retitleEditorWindowTab(oldPath, newPath string, ed *editor.Editor)
 func (m *App) closeEditorViews(ids []window.TabID) {
 	m.pendingTabClose = nil
 	for i, id := range ids {
+		if isImageTab(m.Win.TabByID(id)) {
+			m.closeImageTab(id)
+			continue
+		}
 		v := m.editorView(id)
 		if v == nil {
 			continue

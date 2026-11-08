@@ -6,6 +6,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/input"
 	"crude/tui/rendering"
+	"crude/tui/screens/imageviewer"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shellinput"
@@ -63,6 +64,7 @@ type mainPaneView struct {
 	chat                         *shellchat.Screen
 	input                        *shellinput.Screen
 	editor                       *shelleditor.Screen
+	image                        *imageviewer.Screen
 	deck                         *deckMount
 	reflowContentW, reflowInnerW int
 	chatSource, chatGeneration   uint64
@@ -372,6 +374,11 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 		if content := m.termDock.Panel(tab.Resource.ID); content != nil && m.placementOf(tab.Resource.ID) == placeTab {
 			g.add(content, body)
 		}
+	case isImageTab(tab):
+		if g.view != nil && g.view.image != nil {
+			g.view.image.SetTokens(m.rootHost.Tokens())
+			g.add(g.view.image, body)
+		}
 	case m.isEditorTabTitle(tab.Title):
 		ed := m.editorForTab(tab.ID)
 		g.view.editor.Bind(ed)
@@ -528,6 +535,9 @@ func (p *mainPaneLayout) SetTokens(t *ui.TokenSet) {
 		if v.editor != nil {
 			v.editor.SetTheme(p.app.Theme)
 			v.editor.SetTokens(t)
+		}
+		if v.image != nil {
+			v.image.SetTokens(t)
 		}
 	}
 	for _, v := range p.agentViews {

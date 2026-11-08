@@ -74,6 +74,7 @@ on return or restart. Header telemetry follows the focused group.
 | Split/move/merge/open/new/resize/focus/close | Shortcuts above; tab context menu for split/move/merge | Registry-backed operations retain modal and terminal input ownership |
 | Too-small terminal | Automatic compact layout | Preserves the recursive tree and selection; shows focused group only, restores all groups on enlargement |
 | Close agent tab | Tab × / close action | Minimizes, never terminates; explicit Terminate is separate |
+| Image file viewer | File tree or Open File in Pane; wheel or `+`/`-` zoom, `0` fits, arrows / drag pan, Shift+wheel pans sideways, Esc or Ctrl+W closes | Mouse zoom keeps the source point under the pointer where bounds permit. Read-only PNG, JPEG, GIF first frame, WebP and BMP tabs; SVG remains source. Independent pane views use Kitty pixels when supported and a cell preview otherwise. Close and reopen to read external file changes. |
 
 Main chats retain independent projections, including per-main-agent inline
 subpane embedding. A session family has one composer/deck owner even with root
