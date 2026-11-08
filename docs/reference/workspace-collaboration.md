@@ -150,6 +150,12 @@ admission already committed them. This closes both entry/subscription gaps
 without replaying previously admitted history on the next wait. Normal safe-boundary
 context admission remains the only delivery authority.
 
+The `wait` tool uses the same addressed-event observation for its timed delay.
+An event ends the delay early and remains available for normal delivery; an
+ordinary timeout and cancellation retain their existing results. Unaddressed
+events do not interrupt it. If no collaboration store or caller identity is
+available, the delay remains cancellable by its caller.
+
 ## Work requests
 
 The immutable journal is the single request authority, not another scheduler.
