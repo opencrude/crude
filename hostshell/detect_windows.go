@@ -30,6 +30,11 @@ func detect() []ttypes.TerminalShell {
 	if git, err := exec.LookPath("git.exe"); err == nil {
 		gitBash = append(gitBash, filepath.Join(filepath.Dir(filepath.Dir(git)), "bin", "bash.exe"))
 	}
+	// The Windows installer puts a Git Bash in the user's own profile when the
+	// machine has none. It is private to Crude and needs no PATH entry.
+	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+		gitBash = append(gitBash, filepath.Join(local, "Crude", "git", "bin", "bash.exe"))
+	}
 	add("git-bash", "Git Bash", firstExecutable(nil, gitBash), []string{"--login"}, []string{"-i"})
 	add("wsl", "WSL", firstExecutable(nil, systemPaths("wsl.exe")), nil, nil)
 	return shells

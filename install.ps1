@@ -105,12 +105,13 @@ function Assert-CrudeHttps([Uri] $Uri) {
     }
 }
 
-function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes) {
+function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds = 120) {
     $clock = [Diagnostics.Stopwatch]::StartNew()
+    $limit = $TimeoutSeconds * 1000
     for ($redirect = 0; $redirect -le 5; $redirect++) {
         Assert-CrudeHttps $Uri
-        $remaining = 120000 - [int] $clock.ElapsedMilliseconds
-        if ($remaining -le 0) { throw 'Download exceeded the 120-second attempt limit.' }
+        $remaining = $limit - [int] $clock.ElapsedMilliseconds
+        if ($remaining -le 0) { throw "Download exceeded the $TimeoutSeconds-second attempt limit." }
         $request = [Net.HttpWebRequest] [Net.WebRequest]::Create($Uri)
         $request.Method = 'GET'
         $request.UserAgent = 'Crude-Release-Installer'
@@ -137,14 +138,14 @@ function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $
             $buffer = New-Object byte[] 65536
             [long] $total = 0
             while ($true) {
-                $remaining = 120000 - [int] $clock.ElapsedMilliseconds
-                if ($remaining -le 0) { throw 'Download exceeded the 120-second attempt limit.' }
+                $remaining = $limit - [int] $clock.ElapsedMilliseconds
+                if ($remaining -le 0) { throw "Download exceeded the $TimeoutSeconds-second attempt limit." }
                 if ($inputStream.CanTimeout) { $inputStream.ReadTimeout = [Math]::Min(30000, $remaining) }
                 $read = $inputStream.Read($buffer, 0, $buffer.Length)
                 if ($read -eq 0) { break }
                 $total += $read
-                if ($total -gt $MaximumBytes -or $clock.ElapsedMilliseconds -gt 120000) {
-                    throw 'Download exceeded the size or 120-second attempt limit.'
+                if ($total -gt $MaximumBytes -or $clock.ElapsedMilliseconds -gt $limit) {
+                    throw "Download exceeded the size or $TimeoutSeconds-second attempt limit."
                 }
                 $outputStream.Write($buffer, 0, $read)
             }
@@ -160,11 +161,11 @@ function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $
     }
 }
 
-function Get-CrudeDownload([Uri] $Uri, [string] $Destination, [long] $MaximumBytes = 536870912) {
+function Get-CrudeDownload([Uri] $Uri, [string] $Destination, [long] $MaximumBytes = 536870912, [int] $TimeoutSeconds = 120) {
     Assert-CrudeHttps $Uri
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         try {
-            Invoke-CrudeDownloadAttempt $Uri $Destination $MaximumBytes
+            Invoke-CrudeDownloadAttempt $Uri $Destination $MaximumBytes $TimeoutSeconds
             return
         } catch {
             if ([IO.File]::Exists($Destination)) { [IO.File]::Delete($Destination) }
@@ -193,16 +194,50 @@ function Get-CrudeRelease([string] $Repository, [string] $Version, [string] $Wor
     }
     $assetName = "crude_${tag}_windows_amd64.zip"
     $baseUrl = "https://github.com/$Repository/releases/download/$tag"
+    $assetUrls = @{}
     foreach ($name in @($assetName, 'SHA256SUMS')) {
         $assets = @($release.assets | Where-Object { $_.name -ceq $name })
         if ($assets.Count -ne 1) { throw "Release '$tag' must contain exactly one '$name' asset; found $($assets.Count)." }
         if ($assets[0].browser_download_url -cne "$baseUrl/$name") { throw "Release asset '$name' has an unexpected download URL." }
+        # The public download path can fail while the API asset path still
+        # serves the same bytes. Keep it as a second source for this exact name.
+        if (([string] $assets[0].url) -cmatch '^https://api\.github\.com/repos/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*/releases/assets/[0-9]+$') {
+            $assetUrls[$name] = [string] $assets[0].url
+        }
     }
-    return [pscustomobject] @{ Tag = $tag; AssetName = $assetName; BaseUrl = $baseUrl }
+    return [pscustomobject] @{ Tag = $tag; AssetName = $assetName; BaseUrl = $baseUrl; AssetUrls = $assetUrls }
+}
+
+function Get-CrudeReleaseFile($Release, [string] $Name, [string] $Destination, [long] $MaximumBytes) {
+    # Resolving the release already proved that api.github.com answers, and the
+    # published download path can fail on a network that carries every other
+    # GitHub request. So try the API asset first and keep the published path as
+    # the second source. The pinned checksum still decides what is accepted.
+    $sources = @()
+    if ($Release.AssetUrls -and $Release.AssetUrls.ContainsKey($Name)) { $sources += $Release.AssetUrls[$Name] }
+    $sources += "$($Release.BaseUrl)/$Name"
+    $failure = $null
+    foreach ($source in $sources) {
+        try {
+            Get-CrudeDownload $source $Destination $MaximumBytes
+            return
+        } catch {
+            $failure = $_.Exception.Message
+            if ([IO.File]::Exists($Destination)) { [IO.File]::Delete($Destination) }
+        }
+    }
+    throw $failure
 }
 
 function Get-CrudeHash([string] $Path) {
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+    # Windows PowerShell 5.1 can be present without the module that carries
+    # Get-FileHash, so hash the bytes with the runtime itself.
+    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try { return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    } finally { $stream.Dispose() }
 }
 
 function Assert-CrudeChecksum([string] $Archive, [string] $Checksums, [string] $AssetName) {
@@ -530,6 +565,146 @@ function Stop-CrudeProcess([string] $Executable, [switch] $Force) {
     Write-CrudeStep (Mark 'check') 'Stop' 'Crude is closed'
 }
 
+function Get-CrudeGitPaths {
+    # Git Bash is what makes an agent command fast and reliable on Windows.
+    # A copy installed for this user only needs no elevation and no PATH entry.
+    $crudeHome = Join-Path $env:LOCALAPPDATA 'Crude'
+    $root = Join-Path $crudeHome 'git'
+    return [pscustomobject] @{
+        Home = $crudeHome
+        Root = $root
+        Version = '2.56.0.4'
+        Asset = 'PortableGit-2.56.0.4-64-bit.7z.exe'
+        # The API asset path is tried first because resolving a Crude release has
+        # already proved that api.github.com answers. The pinned checksum still
+        # decides what is accepted.
+        AssetApi = 'https://api.github.com/repos/git-for-windows/git/releases/assets/677312658'
+        Sha256 = 'b1f3e52216e2ed6882d1bebfd4d3fdf319bec40d2edbbf9fd26ec4fd3fce7ed1'
+        Bash = Join-Path $root 'bin\bash.exe'
+    }
+}
+
+function Get-CrudeGitShell {
+    # The user's own Git Bash is used first, exactly as Crude finds it.
+    # System32\bash.exe starts WSL, so a PATH bash is never used.
+    $bases = @($env:ProgramFiles, $env:ProgramW6432, ${env:ProgramFiles(x86)}, (Join-Path $env:LOCALAPPDATA 'Programs'))
+    foreach ($base in $bases) {
+        if (-not $base) { continue }
+        $candidate = Join-Path $base 'Git\bin\bash.exe'
+        if ([IO.File]::Exists($candidate)) { return $candidate }
+    }
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($git -and $git.Source) {
+        $candidate = Join-Path (Split-Path (Split-Path $git.Source -Parent) -Parent) 'bin\bash.exe'
+        if ([IO.File]::Exists($candidate)) { return $candidate }
+    }
+    $paths = Get-CrudeGitPaths
+    if ([IO.File]::Exists($paths.Bash)) { return $paths.Bash }
+    return $null
+}
+
+function Expand-CrudeGitShell([string] $Setup, [string] $Destination) {
+    # The pinned package is a 7-Zip self-extractor. -o names the folder and -y
+    # answers every prompt, so it unpacks without a window and without a click.
+    [void] [IO.Directory]::CreateDirectory($Destination)
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $Setup
+    $start.Arguments = '-o"' + $Destination + '" -y'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $start
+    try {
+        if (-not $process.Start()) { throw 'The Git Shell package did not start.' }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(300000)) {
+            $process.Kill()
+            [void] $process.WaitForExit(5000)
+            throw 'The Git Shell package did not finish unpacking in five minutes.'
+        }
+        if ($process.ExitCode -ne 0) { throw 'The Git Shell package could not unpack.' }
+        [void] $stdout.Wait(5000)
+        [void] $stderr.Wait(5000)
+    } finally { $process.Dispose() }
+    if (-not [IO.File]::Exists((Join-Path $Destination 'bin\bash.exe'))) {
+        throw 'The Git Shell package is missing bin\bash.exe.'
+    }
+}
+
+function Assert-CrudeGitShell([string] $Bash) {
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $Bash
+    $start.Arguments = '--version'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $start
+    try {
+        if (-not $process.Start()) { throw 'The new Git Shell did not start.' }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill()
+            [void] $process.WaitForExit(5000)
+            throw 'The new Git Shell did not answer in 30 seconds.'
+        }
+        if ($process.ExitCode -ne 0) { throw 'The new Git Shell failed its start check.' }
+        if (-not $stdout.Wait(5000) -or -not $stderr.Wait(5000)) { throw 'The new Git Shell did not close its output.' }
+        if ($stdout.GetAwaiter().GetResult() -notmatch 'GNU bash') { throw 'The new Git Shell is not GNU bash.' }
+    } finally { $process.Dispose() }
+}
+
+function Install-CrudeGitShell([string] $WorkDir) {
+    # A shell that is already present needs no work and no words.
+    if (Get-CrudeGitShell) { return 'present' }
+    $paths = Get-CrudeGitPaths
+    $unpack = Join-Path $paths.Home ('.git-' + [Guid]::NewGuid().ToString('N'))
+    $previous = Join-Path $paths.Home ('.git-old-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [void] [IO.Directory]::CreateDirectory($paths.Home)
+        $setup = Join-Path $WorkDir $paths.Asset
+        # This package is larger than a Crude release, so it gets a longer
+        # bounded attempt. It is still three attempts per source, and the
+        # public path can fail while the API asset path still works.
+        $failure = $null
+        $downloaded = $false
+        foreach ($source in @($paths.AssetApi, "https://github.com/git-for-windows/git/releases/download/v$($paths.Version)/$($paths.Asset)")) {
+            try {
+                Get-CrudeDownload $source $setup 268435456 600
+                $downloaded = $true
+                break
+            } catch {
+                $failure = $_.Exception.Message
+                if ([IO.File]::Exists($setup)) { [IO.File]::Delete($setup) }
+            }
+        }
+        if (-not $downloaded) { throw $failure }
+        if ((Get-CrudeHash $setup) -cne $paths.Sha256) { throw 'The downloaded Git Shell does not match its pinned checksum.' }
+        Expand-CrudeGitShell $setup $unpack
+        Assert-CrudeGitShell (Join-Path $unpack 'bin\bash.exe')
+        # Put the new copy in place in one move, so a failure never leaves a
+        # half-written shell that Crude would find on its next start.
+        if ([IO.Directory]::Exists($paths.Root)) { [IO.Directory]::Move($paths.Root, $previous) }
+        try {
+            [IO.Directory]::Move($unpack, $paths.Root)
+        } catch {
+            if ([IO.Directory]::Exists($previous) -and -not [IO.Directory]::Exists($paths.Root)) { [IO.Directory]::Move($previous, $paths.Root) }
+            throw
+        }
+        if ([IO.Directory]::Exists($previous)) { try { [IO.Directory]::Delete($previous, $true) } catch { } }
+        return 'installed'
+    } catch {
+        return 'missing'
+    } finally {
+        if ([IO.Directory]::Exists($unpack)) { try { [IO.Directory]::Delete($unpack, $true) } catch { } }
+    }
+}
+
 function Get-CrudeWindowPaths {
     $windowHome = Join-Path $env:LOCALAPPDATA 'Crude'
     return [pscustomobject] @{
@@ -797,8 +972,8 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         $windowPlan = Confirm-CrudeWindow -Gui:$Gui -NoGui:$NoGui
         $archive = Join-Path $work $release.AssetName
         $checksums = Join-Path $work 'SHA256SUMS'
-        Get-CrudeDownload "$($release.BaseUrl)/SHA256SUMS" $checksums 4194304
-        Get-CrudeDownload "$($release.BaseUrl)/$($release.AssetName)" $archive
+        Get-CrudeReleaseFile $release 'SHA256SUMS' $checksums 4194304
+        Get-CrudeReleaseFile $release $release.AssetName $archive 536870912
         Assert-CrudeChecksum $archive $checksums $release.AssetName
         $payload = Join-Path $work 'payload'
         $relativeFiles = @(Expand-CrudeArchive $archive $payload)
@@ -823,6 +998,11 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         Set-CrudeFiles $files
         if ($path) { Set-CrudePath $path }
         Write-CrudeStep (Mark 'check') 'Program' (Join-Path $InstallDir 'crude.exe')
+        if ((Install-CrudeGitShell -WorkDir $work) -eq 'missing') {
+            Write-CrudeStep (Mark 'warn') 'Git Shell' 'not installed. Crude works best with Git Bash.'
+            Write-Host '              Get Git for Windows from https://git-scm.com/download/win.'
+            Write-Host '              Crude uses it the next time it starts.'
+        }
         Install-CrudeWindow -InstallDir $InstallDir -Payload $payload -WorkDir $work -Plan $windowPlan
         Write-Host ''
         Write-Host "Crude $($release.Tag) is ready."
