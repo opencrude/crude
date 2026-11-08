@@ -174,8 +174,27 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			}
 			s.logger.Info("TOOL", "wait", "seconds", seconds)
 			dur := time.Duration(seconds * float64(time.Second))
+			identity, _ := ctx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
+			if store := s.CollaborationStore(); store != nil && identity.AgentID != "" {
+				observation, err := s.waitForCollaborationDuration(ctx, store, nil, dur)
+				if err != nil {
+					return tools.ToolResult{}, err
+				}
+				switch observation.Status {
+				case "timeout_no_match":
+					return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
+				case "caller_interrupted":
+					return tools.ToolResult{Content: "Wait cancelled"}, nil
+				case "directed_event":
+					return tools.ToolResult{Content: "Wait ended early because an event is ready. The runtime will deliver it normally."}, nil
+				default:
+					return collaborationResult(observation, nil), nil
+				}
+			}
+			timer := time.NewTimer(dur)
+			defer timer.Stop()
 			select {
-			case <-time.After(dur):
+			case <-timer.C:
 				return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
 			case <-ctx.Done():
 				return tools.ToolResult{Content: "Wait cancelled"}, nil

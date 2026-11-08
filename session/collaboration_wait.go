@@ -39,6 +39,14 @@ type collaborationWaitStore interface {
 }
 
 func (s *Session) waitForCollaboration(ctx context.Context, store collaborationWaitStore, params map[string]any) (any, error) {
+	timeout := getIntParam(params, "timeout_seconds")
+	if timeout <= 0 {
+		timeout = 60
+	}
+	return s.waitForCollaborationDuration(ctx, store, params, time.Duration(timeout)*time.Second)
+}
+
+func (s *Session) waitForCollaborationDuration(ctx context.Context, store collaborationWaitStore, params map[string]any, timeout time.Duration) (collaborationWaitObservation, error) {
 	agentID := getStrParam(params, "agent_id")
 	runID := getStrParam(params, "run_id")
 	artifactID := getStrParam(params, "artifact_id")
@@ -49,14 +57,10 @@ func (s *Session) waitForCollaboration(ctx context.Context, store collaborationW
 	// Models reach for exactly this, so it is a supported wait, not an error.
 	nextEvent := agentID == "" && runID == "" && artifactID == ""
 	if nextEvent && identity.AgentID == "" {
-		return nil, fmt.Errorf("agent_wait without agent_id, run_id or artifact_id waits for the next event addressed to you, and this call has no agent identity; name the agent, run or report to wait for")
-	}
-	timeout := getIntParam(params, "timeout_seconds")
-	if timeout <= 0 {
-		timeout = 60
+		return collaborationWaitObservation{}, fmt.Errorf("agent_wait without agent_id, run_id or artifact_id waits for the next event addressed to you, and this call has no agent identity; name the agent, run or report to wait for")
 	}
 	started := time.Now()
-	waitCtx, stopWait := context.WithDeadlineCause(ctx, started.Add(time.Duration(timeout)*time.Second), errCollaborationWaitElapsed)
+	waitCtx, stopWait := context.WithDeadlineCause(ctx, started.Add(timeout), errCollaborationWaitElapsed)
 	defer stopWait()
 	if err := ctx.Err(); err != nil {
 		return collaborationWaitObservation{Status: "caller_interrupted", Reason: context.Cause(ctx).Error()}, nil
@@ -74,7 +78,7 @@ func (s *Session) waitForCollaboration(ctx context.Context, store collaborationW
 			if errors.Is(context.Cause(waitCtx), errCollaborationWaitElapsed) {
 				return collaborationWaitObservation{Status: "timeout_no_match", Reason: "the wait duration elapsed before the initial collaboration snapshot could be read", Guidance: "No fresh snapshot was available; retry only if another observation is still required.", ElapsedMs: time.Since(started).Milliseconds(), ObservedAt: time.Now(), Source: "wait_control"}, nil
 			}
-			return nil, err
+			return collaborationWaitObservation{}, err
 		}
 		snapshot = initial.Snapshot
 		if len(initial.Events) != 0 {
@@ -240,7 +244,7 @@ func (s *Session) waitForCollaboration(ctx context.Context, store collaborationW
 			if errors.Is(context.Cause(waitCtx), errCollaborationWaitElapsed) {
 				return collaborationWaitTimeoutSnapshot(ctx, observeAll, last, started), nil
 			}
-			return nil, err
+			return collaborationWaitObservation{}, err
 		}
 		last = result
 		if ready {

@@ -422,7 +422,7 @@ var AgentTools = []ToolDef{
 		Function: ToolFuncDef{
 			Name: "wait",
 			Description: "Pause execution for a specified number of seconds. " +
-				"The agent loop BLOCKS during this time — no other work happens. " +
+				"An addressed event or cancellation can end the wait early; normal delivery remains unchanged. " +
 				"Use for: rate-limiting API calls or deliberate delays between operations. " +
 				"Do not wait for background commands: their completion, failure or timeout is delivered automatically as a command_outcome event.",
 			Parameters: json.RawMessage(`{
