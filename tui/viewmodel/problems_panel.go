@@ -49,7 +49,8 @@ func (m *App) problemsModel() problems.Model {
 		}
 	}
 	insights := m.ws.LSPMgr().ProjectInsights()
-	return problems.Model{Problems: list, Checked: insights.DiagnosticsObserved > 0 || len(list) > 0, Status: m.problemsStatus(insights)}
+	return problems.Model{Problems: list, Checked: insights.DiagnosticsObserved > 0 || len(list) > 0, Status: m.problemsStatus(insights),
+		Refresh: insights.Language.Action == ttypes.LanguageActionNone}
 }
 
 func problemSeverity(severity int) problems.Severity {
@@ -122,6 +123,16 @@ func plural(n int, noun string) string {
 	return noun + "s"
 }
 
+// refreshProblems restarts the workspace's language servers through the one
+// restart owner. Each new server process checks the project again and the
+// stopped servers' results for unopened files go away.
+func (m *App) refreshProblems() tea.Cmd {
+	command := m.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Action: "lsp:restart-all"})
+	m.Feedback.NotifyInfo("Language servers restart. Problems update when they check the project.")
+	m.syncWorkspacePanels()
+	return command
+}
+
 // openProblem goes to the problem only when its result batch is still the
 // current one.
 func (m *App) openProblem(msg problems.OpenMsg) {
@@ -162,10 +173,22 @@ func (m *App) problemsMenuAt(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Copy", Detail: "Ctrl+C", Action: func() { m.copyToClipboard(screen.SelectionText()) }},
 			{Label: "Copy all", Action: func() { m.copyToClipboard(screen.AllText()) }},
 		}},
-		{Items: []ui.ContextMenuItem{
-			{Label: screen.Model().Status.ActionLabel, Action: func() {
-				m.runDetachedAsyncCmd(m.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Action: screen.Model().Status.Action}))
-			}},
-		}},
+		m.problemsStatusMenu(screen.Model()),
 	}}
+}
+
+// problemsStatusMenu holds the header links: Refresh and the status action.
+func (m *App) problemsStatusMenu(model problems.Model) ui.ContextMenuSection {
+	var items []ui.ContextMenuItem
+	if model.Refresh {
+		items = append(items, ui.ContextMenuItem{Label: "Refresh", Detail: "Restart language servers", Action: func() {
+			m.runDetachedAsyncCmd(m.refreshProblems())
+		}})
+	}
+	if model.Status.ActionLabel != "" {
+		items = append(items, ui.ContextMenuItem{Label: model.Status.ActionLabel, Action: func() {
+			m.runDetachedAsyncCmd(m.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Action: model.Status.Action}))
+		}})
+	}
+	return ui.ContextMenuSection{Items: items}
 }

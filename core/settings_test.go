@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crude/hostshell"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -178,7 +179,7 @@ func TestSettingsFetchCarriesCoreHostTerminalShells(t *testing.T) {
 	if err := coreprotocol.Decode(run(context.Background()).Payload, &out); err != nil {
 		t.Fatal(err)
 	}
-	if want := workspace.DetectTerminalShells(); len(want) == 0 || !reflect.DeepEqual(out.TerminalShells, want) {
+	if want := hostshell.Detect(); len(want) == 0 || !reflect.DeepEqual(out.TerminalShells, want) {
 		t.Fatalf("fetched shells = %+v; want %+v", out.TerminalShells, want)
 	}
 }

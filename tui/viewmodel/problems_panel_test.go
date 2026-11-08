@@ -70,4 +70,8 @@ func TestProblemsPaneJourney(t *testing.T) {
 	if got := strings.Join(labels, ","); got != "Go to problem,Copy,Copy all,"+app.problemsModel().Status.ActionLabel {
 		t.Fatalf("Problems menu = %s", got)
 	}
+	// Refresh restarts servers; it is not offered while they cannot run here.
+	if app.problemsModel().Refresh || strings.Contains(paint, "Refresh") {
+		t.Fatal("Refresh is offered in a folder where language servers cannot run")
+	}
 }

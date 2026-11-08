@@ -166,6 +166,9 @@ func (l *lspReplica) StartForWorkspace(root string) {
 	l.send(coreprotocol.LSPStartForWorkspace, coreprotocol.LSPRequest{Path: root})
 }
 func (l *lspReplica) Stop() { l.send(coreprotocol.LSPStop, coreprotocol.LSPRequest{}) }
+func (l *lspReplica) Refresh(root string) {
+	l.send(coreprotocol.LSPRefresh, coreprotocol.LSPRequest{Path: root})
+}
 
 // Return indicates local admission for a known server, not a synchronous RPC
 // acknowledgement. Core snapshots retain the authoritative resulting health.

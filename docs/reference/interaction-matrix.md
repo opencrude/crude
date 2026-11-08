@@ -307,6 +307,7 @@ clears old markers. Shells never add a local Git resolver or project watcher.
 | Copy | Ctrl+C; right-click **Copy** / **Copy all** | One plain line per problem: `path:line:col  severity  message  (source)` |
 | Filter | Tab moves between list and filter; Down from the filter returns to the list | Matches file, folder, message and source |
 | Language status | Header link at the right edge | Shows how many language servers run, start or stopped with an error, or the state that needs the user and its next step (**Trust folder**, **Start language servers**, **Language settings**) |
+| Refresh problems | **Refresh** link before the status action, or the Problems context menu | Restarts the workspace's language servers through the one restart owner (`lsp:restart-all`). Shown only while servers can run. A new server process drops results that an old one kept after the files changed (for example `missing metadata` after an import cycle was fixed on disk). This explicit re-check also removes the stopped servers' results for unopened files; automatic restarts keep them as out of date. |
 
 ## Pane windows
 

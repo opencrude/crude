@@ -117,6 +117,47 @@ func TestHeaderShowsCountsAndLanguageStatus(t *testing.T) {
 	}
 }
 
+// Refresh sits before the status action in the header and on the narrow
+// status row, and each link sends its own action.
+func TestRefreshLinkRestartsLanguageServers(t *testing.T) {
+	model := fixture()
+	model.Refresh = true
+	screen, host := mount(t, 160, 8, model)
+	screen.SetDockHeaderInset(10)
+	host.MarkLayout()
+	header := paint(host, 160, 8)[0]
+	if !strings.Contains(header, "2 language servers running · Refresh · Language settings") {
+		t.Fatalf("header = %q", header)
+	}
+	for _, tc := range []struct {
+		rect ui.Rect
+		want string
+	}{{screen.refresh, RefreshAction}, {screen.link, "language:settings"}} {
+		result := host.Handle(tea.MouseClickMsg{X: tc.rect.X + 1, Y: tc.rect.Y, Button: tea.MouseLeft})
+		if result.Cmd == nil {
+			t.Fatalf("%s link is not clickable", tc.want)
+		}
+		if msg, ok := result.Cmd().(ActionMsg); !ok || msg.Action != tc.want {
+			t.Fatalf("link sent %#v, want %s", msg, tc.want)
+		}
+	}
+
+	narrow, narrowHost := mount(t, 81, 12, model)
+	narrow.SetDockHeaderInset(10)
+	narrowHost.MarkLayout()
+	lines := paint(narrowHost, 81, 12)
+	if !strings.Contains(lines[listTop], "· Refresh · Language settings") || strings.Contains(lines[0], "Refresh") {
+		t.Fatalf("narrow status row = %q, header = %q", lines[listTop], lines[0])
+	}
+	result := narrowHost.Handle(tea.MouseClickMsg{X: narrow.refresh.X + 1, Y: narrow.refresh.Y, Button: tea.MouseLeft})
+	if result.Cmd == nil {
+		t.Fatal("Refresh on the status row is not clickable")
+	}
+	if msg, ok := result.Cmd().(ActionMsg); !ok || msg.Action != RefreshAction {
+		t.Fatalf("status-row Refresh sent %#v", msg)
+	}
+}
+
 func TestEmptyStatesSpeakPlainly(t *testing.T) {
 	for _, tc := range []struct {
 		model Model

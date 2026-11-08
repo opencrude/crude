@@ -150,7 +150,7 @@ func TestWindowsInteractiveCommandsUseExactJobOwnership(t *testing.T) {
 			manager := NewAsyncCommandManager()
 			defer manager.CloseAndWait()
 			result, err := manager.StartInteractive(t.Context(), InteractiveOptions{
-				Command: windowsAsyncHelperCommand("parent-hold", ""), Shell: "cmd.exe", TTY: tty,
+				Command: windowsAsyncHelperCommand("parent-hold", ""), Shell: SystemShell(), TTY: tty,
 			}, 100*time.Millisecond, 1000)
 			if err != nil || result.SessionID == 0 {
 				t.Fatalf("TODO(Windows): interactive pipe/ConPTY command failed: %+v error=%v", result, err)

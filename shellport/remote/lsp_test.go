@@ -63,7 +63,8 @@ func TestLSPMutationsQueueWithoutRPC(t *testing.T) {
 	l.NotifyWatchedFilesChanged(context.Background(), "a.go", 2)
 	l.SetActiveFile("a.go")
 	l.Stop()
-	for i := 0; i < 3; i++ {
+	l.Refresh("root")
+	for i := 0; i < 4; i++ {
 		if fn, ok := w.services.pop(); !ok || fn == nil {
 			t.Fatal("mutation not queued", i)
 		}

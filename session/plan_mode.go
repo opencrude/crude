@@ -12,6 +12,7 @@ import (
 	"crude/safety"
 	"crude/sessiondb"
 	"crude/tools"
+	"crude/types/command"
 )
 
 // planModeKey persists Plan mode with the conversation, so resume and fork
@@ -94,7 +95,7 @@ func planModeTools(defs []tools.ToolDef, metadata func(string) (tools.ToolMetada
 }
 
 // planModeRefusal explains why a Plan mode call cannot run, or returns nil.
-func planModeRefusal(tool string, params map[string]any, metadata func(string) (tools.ToolMetadata, bool), lg *logger.Logger) error {
+func planModeRefusal(tool string, params map[string]any, metadata func(string) (tools.ToolMetadata, bool), lg *logger.Logger, syntax command.Syntax) error {
 	if !planModeAllows(tool, metadata) {
 		return fmt.Errorf("[PLAN MODE] %s changes the workspace or carries out work, and the user has Plan mode on. Explore read-only and put this step in the proposed plan instead", tool)
 	}
@@ -114,7 +115,9 @@ func planModeRefusal(tool string, params map[string]any, metadata func(string) (
 	if command == "" {
 		return nil
 	}
-	if result := safety.CheckCommandSafety(command, lg); result.Risk != safety.RiskSafe {
+	policy := safety.DefaultCommandPolicy()
+	policy.Syntax = safety.CallSyntax(tool, getStrParam(params, "shell"), syntax)
+	if result := safety.CheckCommandSafetyWithPolicy(command, lg, policy); result.Risk != safety.RiskSafe {
 		return fmt.Errorf("[PLAN MODE] %q is not a read-only command (risk: %s, %s), and the user has Plan mode on. Use read-only commands to explore and put this step in the proposed plan instead", command, result.Risk, result.Reason)
 	}
 	return nil

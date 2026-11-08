@@ -4,10 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -19,8 +15,10 @@ import (
 // InteractiveOptions configures Codex's exec_command on the existing command
 // manager. Its process ownership and shutdown authority are shared with all jobs.
 type InteractiveOptions struct {
-	Command, CWD, Shell string
-	Login, TTY          bool
+	Command, CWD string
+	// Shell is a shell the model named explicitly; zero is the agent shell.
+	Shell      command.Shell
+	Login, TTY bool
 }
 
 type InteractiveResult = command.Result
@@ -76,45 +74,14 @@ func interactiveRetrieval(descriptor OutputDescriptor, info AsyncCmdInfo, firstO
 	return header
 }
 
-func buildInteractiveCommand(ctx context.Context, opts InteractiveOptions, tempDir string) (*exec.Cmd, func(), error) {
-	shell := opts.Shell
-	if shell == "" {
-		shell = os.Getenv("SHELL")
-	}
-	if shell == "" {
-		if runtime.GOOS == "windows" {
-			shell = "powershell.exe"
-		} else {
-			shell = "/bin/sh"
-		}
-	}
-	var args []string
-	switch strings.ToLower(strings.TrimSuffix(filepath.Base(shell), ".exe")) {
-	case "cmd":
-		args = []string{"/D", "/S", "/C", opts.Command}
-	case "powershell", "pwsh":
-		args = []string{"-Command", opts.Command}
-		if !opts.Login {
-			args = append([]string{"-NoProfile"}, args...)
-		}
-	default:
-		flag := "-c"
-		if opts.Login {
-			flag = "-lc"
-		}
-		args = []string{flag, opts.Command}
-	}
-	cmd := setProcessGroupCmd(ctx, shell, args...)
-	cmd.Dir = opts.CWD
-	cmd.Env = commandEnvironmentWithTemp(cmd.Env, tempDir)
-	return cmd, func() {}, nil
-}
-
+// StartInteractive runs exec_command. An empty Shell is the agent command
+// shell; Login starts a POSIX shell as a login shell. PowerShell never loads
+// the user's profile (see shellCommand).
 func (m *AsyncCommandManager) StartInteractive(ctx context.Context, opts InteractiveOptions, yield time.Duration, maxTokens int) (InteractiveResult, error) {
 	if err := ctx.Err(); err != nil {
 		return InteractiveResult{}, err
 	}
-	uc, err := m.startUntracked(opts.Command, opts.CWD, 0, &opts)
+	uc, err := m.startUntracked(nil, opts.Command, opts.CWD, 0, &opts)
 	if err != nil {
 		return InteractiveResult{}, err
 	}

@@ -161,5 +161,5 @@ func (a *Agent) parallelCommandAllowed(call provider.ToolCall) bool {
 	if getStr(params, "sandbox_permissions") == "require_escalated" {
 		return false
 	}
-	return safety.CheckCommandSafetyWithPolicy(getStr(params, "cmd"), a.logger, a.CommandPolicy).Risk == safety.RiskSafe
+	return safety.CheckCommandSafetyWithPolicy(getStr(params, "cmd"), a.logger, a.CommandPolicyFor(call.Function.Name, params)).Risk == safety.RiskSafe
 }

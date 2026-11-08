@@ -1,6 +1,6 @@
 # Windows agent commands lose their meaning (2026-11-07)
 
-> Status: RESOLVED 2026-11-07. Contract:
+> Status: RESOLVED 2026-11-07; decision superseded 2026-11-08. Contract:
 > [background commands](../reference/background-commands.md#lifetime-and-termination).
 
 ## Reported
@@ -50,7 +50,28 @@ fragility was the parse difference, not the file.
 - A Go POSIX interpreter (`mvdan.cc/sh`, used by go-task) runs bash syntax
   without bash, but Unix tools such as `grep` and `head` still do not exist.
 
-Decision: keep cmd.exe as the one Windows contract (always present, fastest,
-documented) with the translation above. Git Bash as an optional interpreter is
-a separate product decision; it changes the prompt contract, path semantics
-and tool warnings, and is not needed to make cmd.exe dependable.
+Decision (2026-11-07, superseded on 2026-11-08): keep cmd.exe as the one
+Windows contract with the translation above.
+
+## Superseded: one configurable agent shell (2026-11-08)
+
+The user asked that agents run complex inline commands as on Linux, that the
+prompt never describe cmd.exe while another shell runs commands, and that the
+shell be chosen in Settings › Agents. Measured defects of the cmd.exe-only
+contract:
+
+- `exec_command` ran PowerShell and the other tools ran cmd.exe, while the
+  prompt described cmd.exe for both.
+- Bash parsing rated PowerShell commands such as
+  `git --version @(Remove-Item a); type x; & {Remove-Item b}` safe; PowerShell
+  deleted both directories.
+- Git Bash with `-c` changed backslashes: the MSYS runtime re-parses the
+  Windows command line.
+
+Fix: Settings › Agents › Main Agent › Command shell; Auto prefers Git Bash,
+then PowerShell 7 (the order Claude Code uses). Execution, command review and
+the prompt read one resolved shell. Bash emulation inside PowerShell
+(`ps-bash`) was rejected: its own production review reproduced an archive
+path escape, and command review would still read text in a language that the
+executing shell does not speak. Contract:
+[background commands](../reference/background-commands.md).

@@ -333,6 +333,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openProblem(msg)
 		return m, nil
 	case problems.ActionMsg:
+		if msg.Action == problems.RefreshAction {
+			return m, m.refreshProblems()
+		}
 		return m, m.handleStatusOverviewNavigate(statusoverview.NavigateMsg{Action: msg.Action})
 	case statusoverview.CopySummaryMsg:
 		m.copyToClipboard(statusSummaryText(msg.Item))

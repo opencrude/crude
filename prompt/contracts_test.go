@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"crude/types/command"
 	"encoding/xml"
 	"os"
 	"path/filepath"
@@ -128,10 +129,8 @@ func TestPlanningAndOperatingModeContracts(t *testing.T) {
 }
 
 func TestRootPromptEnvironmentIsStableAndModelNeutral(t *testing.T) {
-	t.Setenv("SHELL", "/bin/cache-prefix-one")
-	first := BuildRoot(RootOptions{MultiAgent: true, Model: "gpt-6-sol"})
-	t.Setenv("SHELL", "/bin/cache-prefix-two")
-	second := BuildRoot(RootOptions{MultiAgent: true, Model: "claude-opus"})
+	first := BuildRoot(RootOptions{MultiAgent: true, Model: "gpt-6-sol", Shell: command.Shell{ID: "bash", Label: "Bash", Path: "/bin/cache-prefix-one", Syntax: command.SyntaxPOSIX}})
+	second := BuildRoot(RootOptions{MultiAgent: true, Model: "claude-opus", Shell: command.Shell{ID: "bash", Label: "Bash", Path: "/bin/cache-prefix-two", Syntax: command.SyntaxPOSIX}})
 	if first == second {
 		t.Fatal("stable environment changes were not reflected")
 	}

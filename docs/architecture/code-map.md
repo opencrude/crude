@@ -41,6 +41,7 @@ detailed contracts.
 | `collaboration/` | Durable agents/runs, directed delivery, reports, claims and controls. |
 | `capability/`, `skills/`, `mcpclient/`, `cranemcp/` | Capability discovery/acquisition/grants, skill loading, MCP client transport, Crude's own MCP control server. |
 | `safety/` | Command safety assessment and permission policy. |
+| `hostshell/` | Installed-shell inventory on the core's machine and the agent command shell resolver. |
 | `retry/` | The single automatic-cooldown contract (five-minute ceiling). |
 | `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
 | `perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection; no sampling or state owner. |

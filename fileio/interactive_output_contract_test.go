@@ -12,13 +12,15 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"crude/types/command"
 )
 
-func interactiveContractCommand(mode string) (string, string) {
+func interactiveContractCommand(mode string) (string, command.Shell) {
 	if runtime.GOOS == "windows" {
-		return fmt.Sprintf(`set CRUDE_INTERACTIVE_CONTRACT_HELPER=%s&&"%s" -test.run=^TestInteractiveContractHelperProcess$`, mode, strings.ReplaceAll(os.Args[0], `"`, `""`)), "cmd.exe"
+		return fmt.Sprintf(`set CRUDE_INTERACTIVE_CONTRACT_HELPER=%s&&"%s" -test.run=^TestInteractiveContractHelperProcess$`, mode, strings.ReplaceAll(os.Args[0], `"`, `""`)), SystemShell()
 	}
-	return fmt.Sprintf("CRUDE_INTERACTIVE_CONTRACT_HELPER=%s %q -test.run=^TestInteractiveContractHelperProcess$", mode, os.Args[0]), "/bin/sh"
+	return fmt.Sprintf("CRUDE_INTERACTIVE_CONTRACT_HELPER=%s %q -test.run=^TestInteractiveContractHelperProcess$", mode, os.Args[0]), shTestShell
 }
 
 func TestInteractiveContractHelperProcess(t *testing.T) {

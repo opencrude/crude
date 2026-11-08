@@ -11,7 +11,7 @@ import (
 func lspMethod(method string) bool {
 	switch method {
 	case coreprotocol.LSPSnapshotMethod, coreprotocol.LSPNotifyWatchedFilesChanged,
-		coreprotocol.LSPSetActiveFile, coreprotocol.LSPStartForWorkspace, coreprotocol.LSPStop,
+		coreprotocol.LSPSetActiveFile, coreprotocol.LSPStartForWorkspace, coreprotocol.LSPStop, coreprotocol.LSPRefresh,
 		coreprotocol.LSPRestartServer, coreprotocol.LSPStopServer,
 		coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover,
 		coreprotocol.LSPRequestSignatureHelp:
@@ -62,7 +62,7 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 		if service == nil {
 			return fault(request, "lsp_unavailable", "workspace language service is unavailable")
 		}
-		if request.Method == coreprotocol.LSPStartForWorkspace && in.Path != "" && in.Path != root {
+		if (request.Method == coreprotocol.LSPStartForWorkspace || request.Method == coreprotocol.LSPRefresh) && in.Path != "" && in.Path != root {
 			return fault(request, "invalid_request", "LSP root must match attached workspace")
 		}
 		if request.Method == coreprotocol.LSPNotifyWatchedFilesChanged && documents != nil {
@@ -90,6 +90,8 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 		service.StartForWorkspace(root)
 	case coreprotocol.LSPStop:
 		service.Stop()
+	case coreprotocol.LSPRefresh:
+		service.Refresh(root)
 	case coreprotocol.LSPRestartServer:
 		out.Applied = service.RestartServer(in.ServerID)
 	case coreprotocol.LSPStopServer:

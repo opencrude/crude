@@ -1139,6 +1139,20 @@ func (m *LSPManager) Close() {
 	m.joinAssembly(5 * time.Second)
 }
 
+// Refresh is the user's explicit request to check the project again: every
+// language server restarts, and the results the stopped servers reported for
+// files no editor holds are removed. A new server reports only files that
+// still have problems, so without the removal a file fixed since the old
+// report would keep its out-of-date error forever. Automatic restarts (watch
+// recovery, settings changes) keep those results as out of date instead.
+func (m *LSPManager) Refresh(root string) {
+	m.mu.Lock()
+	m.stopLocked()
+	m.removeProjectFactsLocked(func(ttypes.InsightBoundary) bool { return true })
+	m.mu.Unlock()
+	m.StartForWorkspace(root)
+}
+
 func (m *LSPManager) RestartServer(id string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

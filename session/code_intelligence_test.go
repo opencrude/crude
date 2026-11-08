@@ -210,7 +210,7 @@ func TestLSPToolFollowsSessionOverrideOverWorkspace(t *testing.T) {
 }
 
 // Agents name the identifier; the tool converts it to the protocol's UTF-16
-// column; target ranges remain unversioned zero-based UTF-16.
+// column and reports locations back as 1-based characters.
 func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	_, live, service, root := codeIntelFixture(t, true)
 	path := filepath.Join(root, "a.go")
@@ -228,9 +228,9 @@ func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
 	if len(service.positions) != 1 || service.positions[0] != [2]int{1, 11} {
 		t.Fatalf("protocol position = %v, want line 1 col 11", service.positions)
 	}
-	if !strings.Contains(result.Content, `path "a.go"; link=false; target range 2:0-2:27; selection 2:5-2:6`) ||
-		!strings.Contains(result.Content, `Queried source quote (not a target-version claim): "func y() int { return 1 }"`) {
-		t.Fatalf("definition result = %q", result.Content)
+	// The answer is one-based and in characters: line 3, column 6 is y.
+	if want := "definition a.go:2:11: 1 location\n  a.go:3:6  func y() int { return 1 }"; strings.TrimPrefix(result.Content, bufferNote(ttypes.LSPProbeView{BufferDiffers: true})) != want {
+		t.Fatalf("definition result = %q, want %q", result.Content, want)
 	}
 	if strings.Contains(result.Content, "DECOY") {
 		t.Fatal("independent disk read escaped source authority")
@@ -277,24 +277,20 @@ func TestLSPNavigationKindsAndQualifiedAnswers(t *testing.T) {
 					!slices.Equal(service.includeDeclarations, []bool{kind == "references"}) {
 					t.Fatalf("wrong navigation dispatch: kinds=%v positions=%v include=%v", service.kinds, service.positions, service.includeDeclarations)
 				}
-				for _, want := range []string{
-					"Navigation " + kind + ": " + answer, "query zero-based UTF-16 0:11", `Source "a.go"`,
-					`workspace "workspace-1"`, fmt.Sprintf("document %q", filepath.Join(root, "a.go")), `lifetime "canonical-1"`,
-					`kind "canonical", revision 41`, "synchronized source wire version 7", `Provider "gopls": instance "producer-1", tool "gopls-fixture"`,
-					`context "module-1" generation 2`, fmt.Sprintf("root %q", root), `Unknown input: "Build graph unknown"`,
-					"destination semantic freshness are unverified", "Target listing limit: 50 rows", "standard LSP targets are unversioned",
-				} {
-					if !strings.Contains(result.Content, want) {
-						t.Fatalf("missing %q:\n%s", want, result.Content)
+				words := strings.ReplaceAll(kind, "-", " ")
+				want := map[string]string{
+					"null":        words + " a.go:1:11: the language server returned no result.",
+					"empty":       words + " a.go:1:11: no locations.",
+					"unsupported": words + " a.go:1:11: the language server does not support " + words + ".",
+					"targets":     words + " a.go:1:11: 1 location\n  unknown.go:5:4\nColumns in other files count UTF-16 units.",
+				}[answer]
+				if got := strings.TrimPrefix(result.Content, bufferNote(ttypes.LSPProbeView{BufferDiffers: true})); got != want {
+					t.Fatalf("answer = %q, want %q", got, want)
+				}
+				for _, absent := range []string{"Provider", "instance", "generation", "Unknown input", "wire version", "canonical"} {
+					if strings.Contains(result.Content, absent) {
+						t.Fatalf("navigation repeats provenance %q:\n%s", absent, result.Content)
 					}
-				}
-				want := map[string]string{"null": "literal null", "empty": "empty target list", "unsupported": "does not advertise support",
-					"targets": "link=true; target range 4:2-4:9; selection 4:3-4:5; origin 0:11-0:12 (queried source)"}[answer]
-				if answer == "targets" && kind == "references" {
-					want = "link=false; target range 4:2-4:9; selection 4:3-4:5"
-				}
-				if !strings.Contains(result.Content, want) || strings.Contains(result.Content, "found no") {
-					t.Fatalf("answer distinction lost:\n%s", result.Content)
 				}
 			})
 		}
@@ -361,13 +357,13 @@ func TestLSPNavigationListingDoesNotReadTargetsAndHasExplicitLimit(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"52 targets returned", "external target (not read)", `unavailable: "only local file URIs are supported"`,
-		"target range 20:100-20:110; selection 20:102-20:105", "50. URI", "2 more not shown (limit 50 rows)", "No destination files were read"} {
+	for _, want := range []string{"52 locations", "private.go:21:103 (outside the workspace)", "https://example.invalid/source (cannot open: only local file URIs are supported)",
+		"local.go:1:2\n", "file:///row-49", "… 2 more not shown"} {
 		if !strings.Contains(result.Content, want) {
 			t.Fatalf("missing %q:\n%s", want, result.Content)
 		}
 	}
-	for _, absent := range []string{"SENTINEL", "51. URI", "row-50", "row-51", "Queried source quote"} {
+	for _, absent := range []string{"SENTINEL", "row-50", "row-51"} {
 		if strings.Contains(result.Content, absent) {
 			t.Fatalf("unexpected %q:\n%s", absent, result.Content)
 		}
@@ -400,10 +396,20 @@ func TestLSPDiagnosticsReportSeverityAndCleanFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Fact fact-a.go:", "source revision 41", "Partial context:", "a.go: 1 error (gopls)", "2:9 error undefined: y [compiler UndeclaredName]", "var x = y", "b.go: 0 diagnostics at requested severity (gopls)", "not a clean-project verdict"} {
+	for _, want := range []string{"a.go: 1 error (gopls)", "2:9 error undefined: y [compiler UndeclaredName]", "var x = y", "b.go: no problems at the requested severity (gopls)"} {
 		if !strings.Contains(result.Content, want) {
 			t.Fatalf("diagnostics lack %q:\n%s", want, result.Content)
 		}
+	}
+	// Provenance identities belong to the details reader. They made each file
+	// cost four lines of identifiers that no agent acts on.
+	for _, absent := range []string{"Fact ", "fact-a.go", "source revision", "Partial context", "generation", "producer", "clean-project"} {
+		if strings.Contains(result.Content, absent) {
+			t.Fatalf("diagnostics repeat provenance %q:\n%s", absent, result.Content)
+		}
+	}
+	if lines := strings.Count(result.Content, "\n") + 1; lines != 4 || strings.Count(result.Content, "unsaved editor text") != 2 {
+		t.Fatalf("two files took %d lines; want a summary per file, the error and its source line:\n%s", lines, result.Content)
 	}
 	if strings.Contains(result.Content, "hint only") {
 		t.Fatal("default severity floor reported hints")
@@ -423,7 +429,7 @@ func TestLSPUnversionedFactsNeverQuoteDiskOrWithdrawExactPostEditReport(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Fact fact-a.go:", "unversioned", "UTF-16 10 (source unverified)"} {
+	for _, want := range []string{"did not confirm which file version", "1:10 (UTF-16 column)"} {
 		if !strings.Contains(result.Content, want) {
 			t.Fatalf("missing %q: %s", want, result.Content)
 		}

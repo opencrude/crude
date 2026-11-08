@@ -1,6 +1,6 @@
 //go:build windows
 
-package workspace
+package hostshell
 
 import (
 	"os"
@@ -10,11 +10,10 @@ import (
 	ttypes "crude/types"
 )
 
-// DetectTerminalShells lists installed shells in Auto preference order:
-// PowerShell 7 before Windows PowerShell 5.1, which ships with every Windows
-// but is no longer developed, then Command Prompt. Git Bash and WSL are offered
-// but never chosen automatically.
-func DetectTerminalShells() []ttypes.TerminalShell {
+// detect lists the shells installed on this machine: PowerShell 7 before
+// Windows PowerShell 5.1, which ships with every Windows but is no longer
+// developed, then Command Prompt, Git Bash and WSL.
+func detect() []ttypes.TerminalShell {
 	var shells []ttypes.TerminalShell
 	add := func(id, label string, path string, loginArgs, args []string) {
 		if path != "" {
@@ -24,11 +23,7 @@ func DetectTerminalShells() []ttypes.TerminalShell {
 	programFiles := []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramW6432"), os.Getenv("ProgramFiles(x86)")}
 	add("pwsh", "PowerShell 7", firstExecutable([]string{"pwsh.exe"}, installedPaths(programFiles, `PowerShell\7\pwsh.exe`, `PowerShell\7-preview\pwsh.exe`)), nil, nil)
 	add("powershell", "Windows PowerShell", firstExecutable([]string{"powershell.exe"}, systemPaths(`WindowsPowerShell\v1.0\powershell.exe`)), nil, nil)
-	cmd := os.Getenv("ComSpec")
-	if !isFile(cmd) {
-		cmd = firstExecutable([]string{"cmd.exe"}, systemPaths("cmd.exe"))
-	}
-	add("cmd", "Command Prompt", cmd, nil, nil)
+	add("cmd", "Command Prompt", commandPromptPath(), nil, nil)
 	gitBash := installedPaths(append(programFiles, filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs")), `Git\bin\bash.exe`)
 	// System32\bash.exe is the WSL launcher, so Git Bash is located from its
 	// installation or from git.exe (Git\cmd\git.exe), never from PATH bash.
@@ -38,6 +33,13 @@ func DetectTerminalShells() []ttypes.TerminalShell {
 	add("git-bash", "Git Bash", firstExecutable(nil, gitBash), []string{"--login"}, []string{"-i"})
 	add("wsl", "WSL", firstExecutable(nil, systemPaths("wsl.exe")), nil, nil)
 	return shells
+}
+
+func commandPromptPath() string {
+	if path := os.Getenv("ComSpec"); isFile(path) {
+		return path
+	}
+	return firstExecutable([]string{"cmd.exe"}, systemPaths("cmd.exe"))
 }
 
 func installedPaths(roots []string, relatives ...string) []string {

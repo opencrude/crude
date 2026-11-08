@@ -46,7 +46,9 @@ func (s *Session) prepareCapabilityPackage(ctx context.Context, live *agent.Agen
 			manager.Cleanup(handle)
 		}
 	}
-	started, err := manager.StartUntracked(command, live.WorkDir, 0)
+	// preparationCommandLine quotes for SystemShell, so the agent command
+	// shell choice never changes how a package is prepared.
+	started, err := manager.StartUntrackedIn(fileio.SystemShell(), command, live.WorkDir, 0)
 	if err != nil {
 		return false, tools.ToolResult{}, fmt.Errorf("start MCP package preparation: %w", err)
 	}

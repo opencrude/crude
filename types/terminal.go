@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+
+	"crude/types/command"
 )
 
 // Terminal shell selections. Concrete shell IDs come from TerminalShell
@@ -71,6 +73,62 @@ func CloneTerminalSettings(s TerminalSettings) TerminalSettings {
 	s.Args = slices.Clone(s.Args)
 	s.Environment = maps.Clone(s.Environment)
 	return s
+}
+
+// AgentShellAuto is the stored Auto choice for agent commands; empty means
+// the same.
+const AgentShellAuto = "auto"
+
+// agentShellAutoOrder is Auto's preference for agent commands. Bash comes
+// first because models write bash most reliably and it starts fastest (Git
+// Bash about 60 ms against 300 ms or more for PowerShell). Without bash,
+// PowerShell 7 comes before Windows PowerShell 5.1, which drops embedded
+// double quotes in arguments to native programs. Command Prompt is last.
+var agentShellAutoOrder = []string{"git-bash", "bash", "pwsh", "powershell", "cmd"}
+
+// AgentShellAutoChoice is the shell that Auto resolves to, if any is detected.
+func AgentShellAutoChoice(shells []TerminalShell) (TerminalShell, bool) {
+	for _, id := range agentShellAutoOrder {
+		if index := slices.IndexFunc(shells, func(shell TerminalShell) bool { return shell.ID == id }); index >= 0 {
+			return shells[index], true
+		}
+	}
+	for _, shell := range shells {
+		if shell.ID != "wsl" {
+			return shell, true
+		}
+	}
+	return TerminalShell{}, false
+}
+
+// ResolveAgentShell selects the agent command shell from the shells detected
+// on the core's machine. A chosen shell that is not installed stays chosen and
+// reports why it cannot run; it is never silently replaced.
+func ResolveAgentShell(choice string, shells []TerminalShell) command.Shell {
+	from := func(shell TerminalShell) command.Shell {
+		return command.Shell{ID: shell.ID, Label: shell.Label, Path: shell.Path, Syntax: command.SyntaxFor(shell.ID)}
+	}
+	if choice == "" || choice == AgentShellAuto {
+		if shell, ok := AgentShellAutoChoice(shells); ok {
+			return from(shell)
+		}
+		return command.Shell{ID: "sh", Label: "sh", Path: "sh", Syntax: command.SyntaxPOSIX}
+	}
+	if choice == "wsl" {
+		return command.Shell{ID: choice, Label: "WSL", Syntax: command.SyntaxPOSIX,
+			Unavailable: "Agent commands cannot run in WSL because WSL uses a separate file system. Choose another shell in Settings › Agents › Main Agent › Command shell."}
+	}
+	index := slices.IndexFunc(shells, func(shell TerminalShell) bool { return shell.ID == choice })
+	if index < 0 {
+		return command.Shell{ID: choice, Label: choice, Syntax: command.SyntaxFor(choice),
+			Unavailable: fmt.Sprintf("Agent commands cannot run. The command shell %q is not installed on this computer. Install it, or choose another shell in Settings › Agents › Main Agent › Command shell.", choice)}
+	}
+	return from(shells[index])
+}
+
+// AgentShellChoices lists the detected shells agents can use.
+func AgentShellChoices(shells []TerminalShell) []TerminalShell {
+	return slices.DeleteFunc(slices.Clone(shells), func(shell TerminalShell) bool { return shell.ID == "wsl" })
 }
 
 // ResolveTerminalLaunch selects the executable and arguments for a new

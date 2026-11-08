@@ -165,3 +165,48 @@ func TestProjectProducerRespectsTrustPauseAndRoot(t *testing.T) {
 	m2.StartForWorkspace(root2)
 	startedProject(t, m2, r2)
 }
+
+// Refresh is how the user clears results a server got wrong, for example
+// stale "missing metadata" errors after an import cycle was fixed on disk. The
+// new server reports only the files that still have problems, so a result of
+// the stopped server must not stay in Problems as an out-of-date error.
+// Stop alone keeps the results visible as out of date.
+func TestRefreshReplacesTheStoppedServersProjectResults(t *testing.T) {
+	m, r, root, producer := projectFixture(t)
+	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	first := startedProject(t, m, r)
+	util, main := filepath.Join(root, "util.go"), filepath.Join(root, "main.go")
+	first.emitUnopened(util, LSPDiagnostic{Message: "could not import crude/fileio", Severity: model.DiagError})
+	first.emitUnopened(main, LSPDiagnostic{Message: "still wrong", Severity: model.DiagError})
+
+	m.Stop()
+	if batch, ok := m.FileDiagnostics(util); !ok || batch.State != model.InsightStale {
+		t.Fatalf("stopped server's result = %+v present=%v; want it kept as out of date", batch, ok)
+	}
+	m.StartForWorkspace(root)
+	awaitLSP(t, func() bool { return len(r.snapshot()) == 2 })
+
+	m.Refresh(root)
+	if _, ok := m.FileDiagnostics(util); ok {
+		t.Fatal("Refresh kept a result of the stopped server; the new server does not report clean files")
+	}
+	awaitLSP(t, func() bool {
+		clients := r.snapshot()
+		if len(clients) != 3 {
+			return false
+		}
+		clients[2].mu.Lock()
+		defer clients[2].mu.Unlock()
+		return clients[2].started && clients[2].unopened != nil
+	})
+	r.snapshot()[2].emitUnopened(main, LSPDiagnostic{Message: "still wrong", Severity: model.DiagError})
+	if _, ok := m.FileDiagnostics(util); ok {
+		t.Fatal("a result of the stopped server came back after Refresh")
+	}
+	if batch, ok := m.FileDiagnostics(main); !ok || batch.State == model.InsightStale || len(batch.Diagnostics) != 1 {
+		t.Fatalf("new server's result = %+v present=%v", batch, ok)
+	}
+	if summary := m.ProjectInsights(); summary.Errors != 1 || summary.FilesAffected != 1 {
+		t.Fatalf("summary after Refresh = %+v; want only the current error", summary)
+	}
+}

@@ -749,6 +749,9 @@ func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
 	capture := newRequestCapture(t, "cwd-model", sse)
 	cfg := mediaAttributionConfig(capture.server.URL, "cwd-model", "openai")
+	if runtime.GOOS == "windows" {
+		cfg.Agents.Shell = "cmd" // the test commands are cmd.exe command lines
+	}
 	home := t.TempDir()
 
 	sessA, err := NewWithSessionDir("cwd-e2e-a", cfg, home, filepath.Join(t.TempDir(), "sessions-a"))
@@ -833,6 +836,9 @@ func TestE2ERelativePathsResolveAgainstWorkspaceRoot(t *testing.T) {
 	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
 	capture := newRequestCapture(t, "cwd-model", sse)
 	cfg := mediaAttributionConfig(capture.server.URL, "cwd-model", "openai")
+	if runtime.GOOS == "windows" {
+		cfg.Agents.Shell = "cmd" // the test commands are cmd.exe command lines
+	}
 	home := t.TempDir()
 
 	sessA, err := NewWithSessionDir("rel-a", cfg, home, filepath.Join(t.TempDir(), "sessions-a"))

@@ -36,7 +36,7 @@ func TestWindowsInteractiveConsoleStreamsAreCaptured(t *testing.T) {
 	defer cancel()
 	result, err := manager.StartInteractive(ctx, InteractiveOptions{
 		Command: "echo INTERACTIVE_STDOUT_READY&echo INTERACTIVE_STDERR_READY 1>&2",
-		Shell:   "cmd.exe", TTY: true, CWD: t.TempDir(),
+		Shell:   SystemShell(), TTY: true, CWD: t.TempDir(),
 	}, 100*time.Millisecond, 1000)
 	if err != nil {
 		t.Fatal(err)

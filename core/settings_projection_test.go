@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crude/hostshell"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -65,7 +66,7 @@ func TestSettingsCaptureAndPreparationBypassHeldSQL(t *testing.T) {
 	if err := coreprotocol.Decode(run(t.Context()).Payload, &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Effective.Editor.TabSize != 8 || !reflect.DeepEqual(out.TerminalShells, workspace.DetectTerminalShells()) {
+	if out.Effective.Editor.TabSize != 8 || !reflect.DeepEqual(out.TerminalShells, hostshell.Detect()) {
 		t.Fatal("worker did not deliver detached committed settings with core-host shells")
 	}
 }

@@ -280,6 +280,7 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |
 | `RequestHover` | 1 | reads | yes | lsp.hover |
 | `RequestSignatureHelp` | current | reads | yes: detached qualified parameter information | lsp.signature_help |
+| `Refresh` | 1 | mutates | yes | lsp.refresh (explicit Restart language servers / Problems Refresh only) |
 | `RestartServer` | 1 | mutates | yes | lsp.restart_server |
 | `ServerHealthSnapshots` | 3 | reads | yes | LSP state topic replica |
 | `ServerReady` | 2 | reads | yes | LSP state topic replica |

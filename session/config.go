@@ -73,6 +73,8 @@ type AgentsConfig struct {
 	MaxConcurrent int                           `json:"max_concurrent,omitempty"`
 	Profiles      map[string]ProfileConfig      `json:"profiles,omitempty"`
 	AgentProfiles map[string]AgentProfileConfig `json:"agent_profiles,omitempty"`
+	// Shell is the agent command shell; empty is Auto.
+	Shell string `json:"shell,omitempty"`
 }
 
 type AgentProfileConfig = ttypes.AgentProfileSettings
@@ -598,7 +600,7 @@ func AgentDefaultsSettings(agents AgentsConfig) ttypes.AgentsSettings {
 	EnsureAgentsDefaults(&cfg.Agents)
 	prof, name := activeProfileCfg(cfg)
 	out := ttypes.AgentsSettings{ActiveProfile: name, Enabled: cfg.IsMultiAgentEnabled(), MaxConcurrent: cfg.Agents.MaxConcurrent,
-		Categories: make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles)}
+		Categories: make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles), Shell: cfg.Agents.Shell}
 	for role, cat := range prof.Categories {
 		out.Categories[role] = catConfigToSettings(cat)
 	}
@@ -649,6 +651,7 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		ActiveProfile: ap,
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
 		Categories:    make(map[string]ttypes.CategorySettings),
+		Shell:         cfg.Agents.Shell,
 	}
 	for k := range activeProf.Categories {
 		agentsSettings.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))
@@ -735,6 +738,8 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	// after the last named agent is removed. Retaining the old map would make
 	// already-running sessions keep showing deleted profiles.
 	cfg.Agents.AgentProfiles = ttypes.CloneAgentProfiles(agents.AgentProfiles)
+	// The shell is a complete projection too: empty restores Auto.
+	cfg.Agents.Shell = agents.Shell
 	if len(agents.Categories) == 0 && agents.ActiveProfile == "" &&
 		agents.MaxConcurrent == 0 {
 		return

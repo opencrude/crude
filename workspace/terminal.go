@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/hostshell"
 	"errors"
 	"fmt"
 	"io"
@@ -393,7 +394,7 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 	command, args := opts.Command, opts.Args
 	if command == "" {
 		var err error
-		if command, args, err = ttypes.ResolveTerminalLaunch(settings, DetectTerminalShells()); err != nil {
+		if command, args, err = ttypes.ResolveTerminalLaunch(settings, hostshell.Detect()); err != nil {
 			return TerminalInfo{}, err
 		}
 	}

@@ -26,6 +26,10 @@ func agentControlPath(category int, id string) string {
 	if role == "" {
 		return ""
 	}
+	if id == fieldAgentShell {
+		// One shell runs every agent's commands; it is not a role setting.
+		return "agents.shell"
+	}
 	leaf := map[string]string{fieldConnection: "account_id", fieldModel: "Model", fieldThinkingEffort: "ThinkingEffort", "agent-description": "Description", "agent-instructions": "Instructions", fieldCtxWindow: "ModelContextWindow", fieldMaxOutput: "ModelMaxOutput", fieldTemperature: "ModelTemperature", fieldTopP: "ModelTopP", fieldContextCompaction: "context_compaction_percent", "context-retention-tokens": "context_retention_tokens", fieldServiceTier: "service_tier", fieldMultiAgent: "multi_agent", fieldMaxSubAgents: "MaxConcurrent"}[id]
 	if strings.HasPrefix(id, fieldModalityPrefix) {
 		leaf = "ModelModalities"
@@ -52,6 +56,9 @@ func (s *WorkspaceSettingsSurface) controlField(id ui.ComponentID) (*ui.FieldSta
 			leaf := strings.TrimPrefix(path, "agents.categories.default.")
 			if path == "" {
 				return field, "agents.unknown"
+			}
+			if field.ID == fieldAgentShell {
+				return field, path
 			}
 			container := "categories"
 			if s.agents.roleIndex < 0 {
@@ -125,6 +132,9 @@ func (s *WorkspaceSettingsSurface) agentDraftAuthority() bool {
 			after.Agents.Enabled = ui.BoolFieldValue(c.draft.Field(fieldMultiAgent))
 			if field := c.draft.Field(fieldMaxSubAgents); field != nil {
 				after.Agents.MaxConcurrent = maxSubAgentsValue(field)
+			}
+			if shell, ok := agentShellChoice(c.draft); ok {
+				after.Agents.Shell = shell
 			}
 		}
 	} else {
