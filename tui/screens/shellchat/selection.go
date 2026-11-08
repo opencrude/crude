@@ -301,7 +301,7 @@ func (s *Screen) disclosureRowAt(globalLine int) string {
 		if leafID := row.LeafToggles[line]; leafID != "" {
 			return leafID
 		}
-		if row.Toggle && (row.ToggleAny || row.ToggleLine >= 0 && line == row.ToggleLine) {
+		if row.Toggle && (row.ToggleAny || row.ToggleLine >= 0 && line >= row.ToggleLine) {
 			return row.ID
 		}
 		return ""

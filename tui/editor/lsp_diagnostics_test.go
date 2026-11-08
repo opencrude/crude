@@ -150,3 +150,104 @@ func TestLSPDiagnosticsCannotHoverOrPaintOldTextAfterEditAndUndo(t *testing.T) {
 		t.Fatal("new exact-source diagnostics unavailable after undo")
 	}
 }
+
+func TestMouseDiagnosticHoverStaysWithinExactDiagnosticSet(t *testing.T) {
+	e := newInlayTestEditor(t, "abcdefghijklmnop")
+	setTestDiagnostics(e, []LSPDiagnostic{
+		{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "error"},
+		{Line: 0, Col: 5, EndCol: 8, Severity: DiagWarning, Message: "warning"},
+		{Line: 0, Col: 13, EndCol: 16, Severity: DiagHint, Message: "hint"},
+	})
+	renderTestInlays(e, 40, 8, false)
+	x := e.gutterWidth()
+	for _, tc := range []struct {
+		col, anchor int
+		messages    []string
+	}{
+		{4, 2, []string{"error"}}, {3, 2, []string{"error"}},
+		{6, 5, []string{"error", "warning"}}, {7, 5, []string{"error", "warning"}},
+		{9, 8, []string{"error"}}, {11, 8, []string{"error"}},
+		{12, 0, nil}, {15, 13, []string{"hint"}},
+	} {
+		e.refreshMouseHover(x+tc.col, 0)
+		got := e.HoverState()
+		if !reflect.DeepEqual(got.Messages, tc.messages) || len(tc.messages) > 0 && got.Col != tc.anchor {
+			t.Fatalf("col %d: %+v; want anchor %d messages %v", tc.col, got, tc.anchor, tc.messages)
+		}
+	}
+}
+
+// A moving pointer within one issue must not rebuild its message list or scan
+// every diagnostic on each cell. Include a dense publication in the benchmark.
+func BenchmarkDiagnosticHoverWithinSpan(b *testing.B) {
+	e := newInlayTestEditor(b, "abcdefghijklmnop")
+	ds := make([]LSPDiagnostic, 1000)
+	for i := range ds {
+		ds[i] = LSPDiagnostic{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "diagnostic"}
+	}
+	e.SetDiagnostics(testDiagnosticFacts(e, ds))
+	renderTestInlays(e, 40, 8, false)
+	x := e.gutterWidth()
+	e.refreshMouseHover(x+3, 0)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e.refreshMouseHover(x+3+i%8, 0)
+	}
+}
+
+func TestDiagnosticHoverAnchorWhenSpanStartsOffscreen(t *testing.T) {
+	e := newInlayTestEditor(t, "abcdefghijklmnop")
+	setTestDiagnostics(e, []LSPDiagnostic{{Line: 0, Col: 1, EndCol: 15, Severity: DiagInfo, Message: "info"}})
+	renderTestInlays(e, 40, 8, false)
+	e.scrollX = 5
+	x := e.gutterWidth()
+	e.refreshMouseHover(x+2, 0)
+	first := e.HoverState()
+	if first.Col != 7 || len(first.Messages) != 1 {
+		t.Fatalf("offscreen anchor: %+v", first)
+	}
+	e.refreshMouseHover(x+4, 0)
+	if got := e.HoverState(); got.Col != first.Col {
+		t.Fatalf("anchor moved within range: %+v", got)
+	}
+}
+
+func BenchmarkDiagnosticHoverPrevious(b *testing.B) {
+	e := newInlayTestEditor(b, "abcdefghijklmnop")
+	ds := make([]LSPDiagnostic, 1000)
+	for i := range ds {
+		ds[i] = LSPDiagnostic{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "diagnostic"}
+	}
+	e.SetDiagnostics(testDiagnosticFacts(e, ds))
+	renderTestInlays(e, 40, 8, false)
+	x := e.gutterWidth()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		px := x + 3 + i%8
+		if e.inlineInsertionAt(px, 0) {
+			e.ClearHover()
+			continue
+		}
+		pos, ok := e.mouseToPosition(px, 0)
+		if !ok {
+			e.ClearHover()
+			continue
+		}
+		diags := e.diagnosticsAt(pos.Line, pos.Col)
+		if len(diags) == 0 {
+			e.ClearHover()
+			continue
+		}
+		msgs := make([]string, 0, len(diags))
+		severity := 0
+		for _, d := range diags {
+			msgs = append(msgs, d.Message)
+			if d.Severity > severity {
+				severity = d.Severity
+			}
+		}
+		e.SetHover(px, 0, pos.Line, pos.Col, severity, msgs)
+	}
+}

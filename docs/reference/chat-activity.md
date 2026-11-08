@@ -2,7 +2,7 @@
 
 > Status: Current — activity grouping and audit/disclosure contract.
 
-The canonical conversation is the audit log. The chat renderer projects it into a compact, reversible activity view; it never deletes, rewrites, or persists presentation-only groups. Both live events and resumed session snapshots enter the same renderer. A group is a run of adjacent eligible calls (or completed thoughts) between visible boundaries; it may contain active calls until they finish. Its stable identity comes from its first message, not from a transient render index. Click its summary to inspect its original calls in chronological order, and click an individual eligible call to inspect its existing full output. The original result, command, input, permission tag, duration, and child identity remain available.
+The canonical conversation is the audit log. The chat renderer projects it into a compact, reversible activity view; it never deletes, rewrites, or persists presentation-only groups. Both live events and resumed session snapshots enter the same renderer. A group is a run of adjacent eligible calls (or completed thoughts) between visible boundaries; it may contain active calls until they finish. Its stable identity comes from its first message, not from a transient render index. Click any visible line of its compact summary to inspect its original calls in chronological order, and click an individual eligible call to inspect its existing full output. Dragging still selects text; leading spacing is not a disclosure target. The original result, command, input, permission tag, duration, and child identity remain available.
 
 ## Nested scroll ownership
 

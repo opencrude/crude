@@ -137,7 +137,7 @@ func TestDiagnosticHoverIsPassiveLiteralAndReusesTheSamePublication(t *testing.T
 		t.Fatalf("diagnostic message controls were interpreted or original text lost: %q", text)
 	}
 	for i := 0; i < 10; i++ {
-		_, cmd = app.Update(tea.MouseMotionMsg{X: cx, Y: cy})
+		_, cmd = app.Update(tea.MouseMotionMsg{X: cx - i%8, Y: cy})
 		runAppCommand(t, app, cmd)
 	}
 	if app.overlayHost.Window(ui.OverlayDiagHover) != fw || frame.Body() != area || area.Value() != text {
