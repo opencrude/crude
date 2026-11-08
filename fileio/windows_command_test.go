@@ -1,7 +1,6 @@
 package fileio
 
 import (
-	"context"
 	"errors"
 	"runtime"
 	"strings"
@@ -40,9 +39,9 @@ func TestWindowsCommandsKeepPercentSignsEndToEnd(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("cmd.exe semantics")
 	}
-	out, err := NewLocalExec().Execute(context.Background(), `for %i in (a%20b 50%) do echo [%i]`, ExecOptions{CWD: t.TempDir()})
-	if err != nil {
-		t.Fatalf("%v: %s", err, out)
+	out, code := runIn(t, SystemShell(), `for %i in (a%20b 50%) do echo [%i]`, t.TempDir())
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
 	}
 	if strings.TrimSpace(out) != "[a%20b]\n[50%]" {
 		t.Fatalf("cmd.exe output %q", out)

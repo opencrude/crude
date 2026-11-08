@@ -25,8 +25,32 @@
 - Background-job columns are content-sized with terminal-width helpers.
   Optional PID/exit telemetry yields before handles are shortened; elapsed labels
   use whole seconds (`2m 05s`, `1h 03m 09s`), never fractional seconds.
-- Windows agent commands run from a temporary `.cmd` file (cmd `/C` strips
-  quotes unpredictably), but keep their command-line meaning:
+- **One agent command shell.** Settings › Agents › Main Agent › Command shell
+  (`agents.shell`; empty is Auto) chooses the shell for every agent's
+  commands: blocking, background, `exec_command` and sub-agents. Auto is the
+  first installed of Git Bash → bash → PowerShell 7 → Windows PowerShell →
+  Command Prompt; WSL is never offered because it runs in a separate file
+  system. `hostshell.ResolveAgent` resolves the choice for each command, so a
+  settings change applies to the next command. A chosen shell that is not
+  installed is never replaced: the command fails with the Settings path, and the
+  prompt says commands cannot run. `fileio.shellCommand` is the only place that
+  turns an agent command into a process:
+  - Git Bash on Windows runs the command from a temporary `.sh` file. Passing it
+    with `-c` goes through the Windows command line, which the MSYS runtime
+    re-parses: `a\b\\c` became `a\b\c` and a `sed 's/\\/\//g'` expression broke.
+    The file keeps the command byte for byte. Other POSIX shells use `-c`.
+  - PowerShell runs a temporary UTF-8 `.ps1` file with `-NoLogo -NoProfile
+    -NonInteractive -ExecutionPolicy Bypass -File`. `-Command` and
+    `-EncodedCommand` write errors as CLIXML when output is redirected; the
+    script's prologue turns off progress records and colors and its epilogue
+    gives the exit status of the last statement (native exit code, or 1 for a
+    failed cmdlet).
+  - MCP package preparation quotes for `fileio.SystemShell` (cmd.exe on
+    Windows, bash or sh elsewhere) and never uses the agent shell.
+  - `exec_command` may name another installed shell; `bash` on Windows is Git
+    Bash, never the WSL launcher on PATH.
+- Command Prompt agent commands run from a temporary `.cmd` file (cmd `/C`
+  strips quotes unpredictably), but keep their command-line meaning:
   `fileio.windowsBatchScript` keeps `%NAME%` for defined variables (environment,
   cmd dynamic variables, `set` in the same script, `:~` and `:x=y` forms) and
   doubles every other `%`, so URLs (`%20`), format strings (`%H`) and loop

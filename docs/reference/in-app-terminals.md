@@ -98,8 +98,10 @@ from the effective settings it was given (`Workspace.applySettingsProjection` �
 terminal, and `startTerminalIO` receives an explicit command, arguments and
 environment with no fallback of its own.
 
-`workspace.DetectTerminalShells` runs on the core's machine (which may be remote
-over `--ssh`) and returns installed shells in **Auto** preference order:
+`hostshell.Detect` runs on the core's machine (which may be remote over
+`--ssh`) and returns installed shells in **Auto** preference order. Agent
+commands use the same inventory with their own Auto order (see
+[background commands](background-commands.md)):
 
 | Platform | Auto order | Also offered |
 |---|---|---|
@@ -510,7 +512,7 @@ stdout/stderr appears only in the captured tool/background-job channel.
   create/input/resize/control/rows run on the actor's `terminalLane`, never
   behind document/file/LSP effects on `resourceLane`. The core resolves an
   ordinary new terminal's shell from effective `TerminalSettings` with
-  `workspace.DetectTerminalShells` (Auto: PowerShell 7 → Windows PowerShell →
+  `hostshell.Detect` (Auto: PowerShell 7 → Windows PowerShell →
   cmd; `$SHELL` first on Unix); `startTerminalIO` has no shell fallback. A
   missing selected shell fails with guidance, never a silent substitute. The
   detected list is core-host metadata (`AppSettings.TerminalShells`, `json:"-"`).

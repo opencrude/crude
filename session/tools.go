@@ -38,6 +38,7 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 	}
 
 	a.AsyncMgr = s.asyncMgr
+	a.CommandShell = s.agentShell
 	a.WorkDir = s.WorkDir()
 	s.bindContinuity(a, s.db, s.sessionID)
 	s.bindGuidanceCache(a)
@@ -104,18 +105,14 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 		}
 		switch tool {
 		case "exec_command", "write_stdin":
-			policy := safety.DefaultCommandPolicy()
-			if s.cfg != nil {
-				policy = safety.CommandPolicyFromSettings(s.cfg.Safety)
-			}
-			return executeCodexCommand(ctx, s.asyncMgr, root, tool, params, policy)
+			return executeCodexCommand(ctx, s.asyncMgr, root, tool, params, s.commandPolicy(tool, params))
 		case "update_plan", "get_plan":
 			return s.executePlanTool(ctx, tool, params)
 		case "get_goal", "create_goal", "update_goal":
 			return s.executeGoalTool(ctx, tool, params)
 		case "async_execute_command":
 			command := getStrParam(params, "command")
-			if sr := safety.CheckCommandSafety(command, s.logger); sr.Risk.IsAlwaysBlocked() {
+			if sr := safety.CheckCommandSafetyWithPolicy(command, s.logger, s.commandPolicy(tool, params)); sr.Risk.IsAlwaysBlocked() {
 				return tools.ToolResult{}, fmt.Errorf("[SAFETY BLOCK] %s", sr.Reason)
 			}
 			handle := getStrParam(params, "handle")
@@ -293,11 +290,7 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	}
 
 	if !s.YoloEnabled() {
-		policy := safety.DefaultCommandPolicy()
-		if s.cfg != nil {
-			policy = safety.CommandPolicyFromSettings(s.cfg.Safety)
-		}
-		sr := safety.CheckCommandSafetyWithPolicy(cmd, s.logger, policy)
+		sr := safety.CheckCommandSafetyWithPolicy(cmd, s.logger, s.commandPolicy("execute_command", params))
 		if sr.Risk.IsAlwaysBlocked() {
 			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 			s.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)

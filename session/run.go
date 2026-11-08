@@ -943,7 +943,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	baseToolFn := ag.ToolFn
 	ag.ToolFn = func(toolCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if planMode {
-			if err := planModeRefusal(tool, params, ag.ToolMetadata, s.logger); err != nil {
+			if err := planModeRefusal(tool, params, ag.ToolMetadata, s.logger, s.agentShell().Syntax); err != nil {
 				return tools.ToolResult{}, err
 			}
 		}

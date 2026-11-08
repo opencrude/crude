@@ -67,6 +67,7 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-06 | Every offered code action must reach a usable outcome. Command actions run once through the server; a server apply-edit is captured and reviewed like an ordinary edit, and a browser or informational result is shown to the user. Listing a provider action as unsupported is acceptable only when the protocol shape itself is unsupported. | User |
 | 2026-11-06 | Formatting must exist as explicit editor commands: Format Document for the current buffer and Format Project for saved files. They reuse the one catalog formatter owner, one transactional writer and one Local History safety snapshot; they do not add a second formatter or file writer. | User |
 | 2026-11-04 | An untargeted wait can correctly wait for the agent's own background command. Its chat title must describe waiting for an update, not imply that another agent exists. | User |
+| 2026-11-08 | Problems gets a manual **Refresh** (restart the workspace's language servers), and a restart must not leave the old server's results as permanent out-of-date rows. The agent `lsp` tool reports one line per file and one-based locations; provenance identities stay in the diagnostic details reader. | User |
 | 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
 
 ### Open decisions

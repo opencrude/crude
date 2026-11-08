@@ -70,12 +70,22 @@ type Status struct {
 	ActionLabel string
 }
 
+// RefreshAction is the ActionMsg of the Refresh link: restart the language
+// servers so that every one checks the project again. A server can keep a
+// wrong result after the files are fixed; only a new server process drops it.
+const RefreshAction = "problems:refresh"
+
+const refreshLabel = "Refresh"
+
 // Model is everything the pane shows.
 type Model struct {
 	Problems []Problem
 	// Checked is false until any check produced results.
 	Checked bool
 	Status  Status
+	// Refresh shows the Refresh link. It is off while language servers cannot
+	// run, because the status action is then the next step.
+	Refresh bool
 }
 
 // OpenMsg asks the owner to show the problem in its file.
@@ -110,6 +120,7 @@ type Screen struct {
 	query     string
 	inset     int
 	link      ui.Rect // the status action, screen-local
+	refresh   ui.Rect // the Refresh link, screen-local
 	// band puts the language status on its own row above the list when it
 	// does not fit beside the filter and counts; it is never cut short there.
 	band  bool
@@ -268,7 +279,7 @@ func (s *Screen) updateBand() {
 	if s.statusWidth() > 0 {
 		need += 3
 	}
-	s.band = s.model.Status.ActionLabel != "" && width > 0 && left+need > right
+	s.band = len(s.statusLinks()) > 0 && width > 0 && left+need > right
 	s.list.top = 0
 	if s.band {
 		s.list.top = 1
@@ -291,17 +302,53 @@ func (s *Screen) countsWidth() int {
 	return w
 }
 
-// statusWidth is the status text, its separator and the action label.
+type statusLink struct{ label, action string }
+
+// statusLinks are the header links: Refresh, then the status action.
+func (s *Screen) statusLinks() []statusLink {
+	var links []statusLink
+	if s.model.Refresh {
+		links = append(links, statusLink{refreshLabel, RefreshAction})
+	}
+	if s.model.Status.ActionLabel != "" {
+		links = append(links, statusLink{s.model.Status.ActionLabel, s.model.Status.Action})
+	}
+	return links
+}
+
+func linksWidth(links []statusLink) int {
+	w := 0
+	for i, link := range links {
+		if i > 0 {
+			w += 3
+		}
+		w += rendering.VisibleWidth(link.label)
+	}
+	return w
+}
+
+// statusWidth is the status text and its links, joined by " · ".
 func (s *Screen) statusWidth() int {
-	status, action := s.model.Status.Text, s.model.Status.ActionLabel
-	if action == "" {
+	links := s.statusLinks()
+	if len(links) == 0 {
 		return 0
 	}
-	w := rendering.VisibleWidth(action)
-	if status != "" {
+	w := linksWidth(links)
+	if status := s.model.Status.Text; status != "" {
 		w += rendering.VisibleWidth(status) + 3
 	}
 	return w
+}
+
+// linkAt is the action of the header link at a screen-local point.
+func (s *Screen) linkAt(x, y int) (string, bool) {
+	switch {
+	case s.refresh.W > 0 && s.refresh.Contains(x, y):
+		return RefreshAction, true
+	case s.link.W > 0 && s.link.Contains(x, y):
+		return s.model.Status.Action, true
+	}
+	return "", false
 }
 
 // shownProblems are the problems that pass the filter, in display order.
@@ -377,7 +424,7 @@ func (s *Screen) paintHeader(buf *surface.CellBuffer, x, y, width int) {
 	t := s.tokens
 	bg := t.Color(ui.ColorBg)
 	left, right := s.headerSpan(width)
-	s.link = ui.Rect{}
+	s.link, s.refresh = ui.Rect{}, ui.Rect{}
 	if right <= left {
 		return
 	}
@@ -398,36 +445,49 @@ func (s *Screen) paintHeader(buf *surface.CellBuffer, x, y, width int) {
 	s.paintStatus(buf, x, y, right-s.statusWidth(), right, 0)
 }
 
-// paintStatus writes "status · Action" ending at right, or the status from
-// left when it is on its own row. row is the screen-local row of the link.
+// paintStatus writes "status · Refresh · Action" ending at right, or from left
+// when it is on its own row, where only the status text is shortened. row is
+// the screen-local row of the links.
 func (s *Screen) paintStatus(buf *surface.CellBuffer, x, y, left, right, row int) {
 	t := s.tokens
 	bg := t.Color(ui.ColorBg)
-	status, action := s.model.Status.Text, s.model.Status.ActionLabel
-	if action == "" {
+	links := s.statusLinks()
+	if len(links) == 0 {
 		return
 	}
 	role := ui.ColorMuted
 	if s.model.Status.Attention {
 		role = ui.ColorWarning
 	}
-	actionW := rendering.VisibleWidth(action)
-	actionX := max(left, right-actionW)
+	cx := max(left, right-s.statusWidth())
 	if s.band {
-		actionX = left
-		if status != "" {
-			text := rendering.TruncateVisual(status, max(0, right-left-actionW-3), "…")
-			buf.WriteString(x+left, y, text, t.Color(role), bg, 0)
-			cx := left + rendering.VisibleWidth(text)
-			buf.WriteString(x+cx+1, y, "·", t.Color(ui.ColorMuted), bg, 0)
-			actionX = cx + 3
-		}
-	} else if status != "" {
-		buf.WriteString(x+left, y, status, t.Color(role), bg, 0)
-		buf.WriteString(x+actionX-2, y, "·", t.Color(ui.ColorMuted), bg, 0)
+		cx = left
 	}
-	s.link = ui.Rect{X: actionX, Y: row, W: actionW, H: 1}
-	buf.WriteString(x+actionX, y, action, t.Color(ui.ColorAccent2), bg, cell.AttrUnderline)
+	if status := s.model.Status.Text; status != "" {
+		text := status
+		if s.band {
+			text = rendering.TruncateVisual(status, max(0, right-left-linksWidth(links)-3), "…")
+		}
+		buf.WriteString(x+cx, y, text, t.Color(role), bg, 0)
+		cx += rendering.VisibleWidth(text)
+		buf.WriteString(x+cx+1, y, "·", t.Color(ui.ColorMuted), bg, 0)
+		cx += 3
+	}
+	for i, link := range links {
+		if i > 0 {
+			buf.WriteString(x+cx+1, y, "·", t.Color(ui.ColorMuted), bg, 0)
+			cx += 3
+		}
+		w := rendering.VisibleWidth(link.label)
+		rect := ui.Rect{X: cx, Y: row, W: w, H: 1}
+		if link.action == RefreshAction {
+			s.refresh = rect
+		} else {
+			s.link = rect
+		}
+		buf.WriteString(x+cx, y, link.label, t.Color(ui.ColorAccent2), bg, cell.AttrUnderline)
+		cx += w
+	}
 }
 
 type countPart struct {
@@ -481,10 +541,10 @@ func severityRole(s Severity) ui.SemanticColor {
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && s.link.W > 0 &&
-		s.link.Contains(ctx.LocalX, ctx.LocalY) {
-		action := s.model.Status.Action
-		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ActionMsg{Action: action} }}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+		if action, ok := s.linkAt(ctx.LocalX, ctx.LocalY); ok {
+			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ActionMsg{Action: action} }}
+		}
 	}
 	// Keys the filter does not use reach here: Tab and Down go to the list.
 	if evt.IsKey() && (evt.Key.Code == tea.KeyTab || evt.Key.Code == tea.KeyDown) {
@@ -733,10 +793,9 @@ func (l *list) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{}
 		}
 		if y < 0 && !l.pressing {
-			// The status band: only its action link acts.
+			// The status band: only its links act.
 			lr := l.Bounds()
-			if link := l.owner.link; link.W > 0 && link.Contains(lr.X+ctx.LocalX, lr.Y+ctx.LocalY) {
-				action := l.owner.model.Status.Action
+			if action, ok := l.owner.linkAt(lr.X+ctx.LocalX, lr.Y+ctx.LocalY); ok {
 				return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ActionMsg{Action: action} }}
 			}
 			return ui.EventResult{Handled: true}

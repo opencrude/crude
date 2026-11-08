@@ -674,6 +674,14 @@ workspace/app field to Auto restores the default, not the last explicit value.
 Sub-agents start minimized in the shell; see
 [main view panes](main-view-panes.md#new-agents-surface-a-tab-immediately).
 
+**One command shell runs every agent's commands.** Main Agent settings hold
+**Command shell** (`agents.shell`): Auto (shown with the shell it resolves to)
+or a shell detected on the core's machine. Auto is stored as absent and
+prefers Git Bash, then PowerShell 7. A choice from another machine stays
+selected as `name (not installed)`. Role pages and Terminal settings do not
+change it; terminals keep their own shell. See
+[background commands](background-commands.md).
+
 **Auto permissions are an explicit, bounded opt-in.** Settings → Agents →
 Auto Review Agent selects an explicit account and model; blank values never
 silently inherit the main model. Its Review tab owns thinking effort, response

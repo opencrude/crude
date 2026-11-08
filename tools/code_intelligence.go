@@ -9,10 +9,10 @@ var CodeIntelligenceTool = ToolDef{
 	Function: ToolFuncDef{
 		Name: "lsp",
 		Description: "Ask the workspace's language servers about source code. " +
-			"diagnostics: shared source-qualified diagnostic batches with fact identity, revision, producer and explicit coverage limits. Quiescence and zero reported diagnostics are not a complete-project verdict. " +
+			"diagnostics: one summary line per file, then each problem as line:column, severity, message and its source line. A file with no problems says so; that is not a verdict on the whole project. " +
 			"definition / type-definition / implementation / references / hover: resolve the identifier named by symbol on a 1-based line. References include declarations. " +
 			"symbols: outline of a file's declarations. " +
-			"Navigation preserves source/provider/context qualification, null/empty/unsupported distinctions and unversioned zero-based UTF-16 target ranges, with at most 50 rows shown and no destination reads. Results quote only the immutable source actually queried.",
+			"Locations are 1-based path:line:column, at most 50, with the source line when it is in the queried file. Other files are not read, so their columns count UTF-16 units. A result says when the server returned nothing, no locations, or does not support the request.",
 		Parameters: json.RawMessage(`{
 			"type":"object",
 			"properties":{

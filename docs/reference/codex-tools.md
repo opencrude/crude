@@ -69,8 +69,9 @@ update does not implicitly approve deletion or an outside move destination.
 ## Runtime integration
 
 GPT command-enabled agents also receive native `exec_command` and `write_stdin`
-interfaces. These use the existing per-agent command manager, with shell/login
-selection, pipes or PTY, numeric session IDs, yielding, stdin continuation,
+interfaces. These use the existing per-agent command manager and the agent
+command shell from Settings › Agents, with an explicit `shell` argument for
+another installed shell and login selection, pipes or PTY, numeric session IDs, yielding, stdin continuation,
 output budgets, cancellation, and shutdown ownership. Unix uses PTY and Windows
 uses ConPTY; Windows runtime behavior requires Windows verification beyond
 cross-compilation. Existing command tools remain available. Requests for

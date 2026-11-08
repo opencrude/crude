@@ -1,6 +1,7 @@
 package session
 
 import (
+	"crude/types/command"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -134,12 +135,29 @@ func TestPlanModeRefusesMutationsAtExecution(t *testing.T) {
 		{"update_plan", map[string]any{}, true},
 		{"crude_control", map[string]any{}, true},
 	} {
-		err := planModeRefusal(test.tool, test.params, nil, nil)
+		err := planModeRefusal(test.tool, test.params, nil, nil, command.SyntaxPOSIX)
 		if (err != nil) != test.refused {
 			t.Errorf("%s %v: refusal = %v, want refused %v", test.tool, test.params, err, test.refused)
 		}
 		if err != nil && !strings.Contains(err.Error(), "[PLAN MODE]") {
 			t.Errorf("%s refusal does not name Plan mode: %v", test.tool, err)
 		}
+	}
+}
+
+// PowerShell runs code inside @( ), { } and after <# #> that bash parsing
+// does not see, so Plan mode must not accept such a command as read-only.
+func TestPlanModeReadsCommandsInTheAgentShellSyntax(t *testing.T) {
+	for _, cmd := range []string{"git status @(Remove-Item src)", "type README.md; & {Remove-Item src}", "git status <# x #> ; Remove-Item src"} {
+		if err := planModeRefusal("execute_command", map[string]any{"command": cmd}, nil, nil, command.SyntaxPowerShell); err == nil {
+			t.Errorf("Plan mode accepted %q in PowerShell", cmd)
+		}
+	}
+	if err := planModeRefusal("execute_command", map[string]any{"command": "git status"}, nil, nil, command.SyntaxPowerShell); err != nil {
+		t.Errorf("plain read-only PowerShell command refused: %v", err)
+	}
+	// exec_command may name its own shell; the gate reads that shell's syntax.
+	if err := planModeRefusal("exec_command", map[string]any{"cmd": "git status @(Remove-Item src)", "shell": "pwsh"}, nil, nil, command.SyntaxPOSIX); err == nil {
+		t.Error("Plan mode accepted hidden PowerShell code for an explicit pwsh shell")
 	}
 }

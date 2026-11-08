@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"crude/hostshell"
 	"sync"
 	"time"
 
@@ -39,7 +40,7 @@ func (a *actor) startStateTopics() {
 	// resume boundary, without a fabricated publication or a reset on reconnect.
 	a.topic.hub.seq = 1
 	a.states.slots = make(map[string]*stateSlot, len(workspaceStateTopics))
-	a.states.shells = workspace.DetectTerminalShells() // factory worker, before actor publication
+	a.states.shells = hostshell.Detect() // factory worker, before actor publication
 	for _, topic := range workspaceStateTopics {
 		slot := &stateSlot{wake: make(chan struct{}, 1)}
 		a.states.slots[topic] = slot

@@ -16,7 +16,7 @@ func TestInteractiveExecPipesAndPTY(t *testing.T) {
 			defer mgr.CloseAndWait()
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			result, err := mgr.StartInteractive(ctx, InteractiveOptions{Command: "printf ready; read x; printf 'reply:%s' \"$x\"", Shell: "/bin/sh", TTY: tty}, 50*time.Millisecond, 1000)
+			result, err := mgr.StartInteractive(ctx, InteractiveOptions{Command: "printf ready; read x; printf 'reply:%s' \"$x\"", Shell: shTestShell, TTY: tty}, 50*time.Millisecond, 1000)
 			if err != nil || result.SessionID == 0 || !strings.Contains(result.Output, "ready") {
 				t.Fatalf("start %+v %v", result, err)
 			}
@@ -30,7 +30,7 @@ func TestInteractiveExecPipesAndPTY(t *testing.T) {
 
 func TestInteractiveExecCancellationAndShutdown(t *testing.T) {
 	mgr := NewAsyncCommandManager()
-	result, err := mgr.StartInteractive(t.Context(), InteractiveOptions{Command: "sleep 60", Shell: "/bin/sh"}, time.Millisecond, 1000)
+	result, err := mgr.StartInteractive(t.Context(), InteractiveOptions{Command: "sleep 60", Shell: shTestShell}, time.Millisecond, 1000)
 	if err != nil || result.SessionID == 0 {
 		t.Fatalf("%+v %v", result, err)
 	}
@@ -55,7 +55,7 @@ func TestInteractiveExecRetainsTruncatedOutputWithExactRetrieval(t *testing.T) {
 	defer cancel()
 	result, err := mgr.StartInteractive(ctx, InteractiveOptions{
 		Command: "printf '%05000d' 0",
-		Shell:   "/bin/sh",
+		Shell:   shTestShell,
 	}, time.Second, 100)
 	if err != nil {
 		t.Fatal(err)

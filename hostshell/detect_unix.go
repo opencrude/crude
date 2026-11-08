@@ -1,6 +1,6 @@
 //go:build unix
 
-package workspace
+package hostshell
 
 import (
 	"os"
@@ -14,10 +14,10 @@ import (
 
 var unixShellLabels = map[string]string{"zsh": "Zsh", "bash": "Bash", "fish": "Fish", "sh": "sh", "nu": "Nushell", "ksh": "Korn shell", "tcsh": "tcsh"}
 
-// DetectTerminalShells lists installed shells in Auto preference order: the
-// user's login shell ($SHELL) first, then the platform's conventional default
-// (zsh on macOS, bash elsewhere) and the remaining common shells.
-func DetectTerminalShells() []ttypes.TerminalShell {
+// detect lists installed shells: the user's login shell ($SHELL) first, then
+// the platform's conventional default (zsh on macOS, bash elsewhere) and the
+// remaining common shells.
+func detect() []ttypes.TerminalShell {
 	order := []string{"bash", "zsh", "fish", "sh"}
 	if runtime.GOOS == "darwin" {
 		order = []string{"zsh", "bash", "fish", "sh"}

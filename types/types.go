@@ -200,6 +200,9 @@ type AgentsSettings struct {
 	MaxConcurrent int
 	Categories    map[string]CategorySettings
 	AgentProfiles map[string]AgentProfileSettings `json:"agent_profiles,omitempty"`
+	// Shell is the agent command shell: AgentShellAuto (or empty) or a
+	// detected TerminalShell ID. It applies to every agent's commands.
+	Shell string `json:"shell,omitempty"`
 }
 
 // AgentProfileSettings is a named, reusable specialization of a built-in role.

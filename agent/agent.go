@@ -14,9 +14,22 @@ import (
 	"crude/safety"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/command"
 	"crude/types/control"
 	"crude/types/reasoning"
 )
+
+// CommandPolicyFor is the command review policy for one command tool call: the
+// configured policy, read in the syntax of the shell that will run the call.
+func (a *Agent) CommandPolicyFor(tool string, params map[string]any) safety.CommandPolicy {
+	policy := a.CommandPolicy
+	agentSyntax := command.SyntaxPOSIX
+	if a.CommandShell != nil {
+		agentSyntax = a.CommandShell().Syntax
+	}
+	policy.Syntax = safety.CallSyntax(tool, getStr(params, "shell"), agentSyntax)
+	return policy
+}
 
 type AgentEvent struct {
 	Type     string
@@ -62,10 +75,13 @@ type Agent struct {
 	AgentID                AgentID
 	// RunID is the immutable durable owner of this instance's effects. Never
 	// discover a replacement run from current inventory during tool execution.
-	RunID              string
-	TurnGeneration     uint64
-	Policy             safety.Policy
-	CommandPolicy      safety.CommandPolicy
+	RunID          string
+	TurnGeneration uint64
+	Policy         safety.Policy
+	CommandPolicy  safety.CommandPolicy
+	// CommandShell resolves the shell that runs this agent's commands now.
+	// Command review uses its syntax; nil is a POSIX shell.
+	CommandShell       func() command.Shell
 	PermissionReviewer PermissionReviewer
 	Depth              int
 	ParentID           AgentID

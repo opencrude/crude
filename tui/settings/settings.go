@@ -1287,6 +1287,8 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 				m.agentsEnabled(), "Allow delegation to other agents."),
 			optionalNumberField(fieldMaxSubAgents, "Concurrent sub-agents", m.maxSubAgents(), "agents",
 				"How many sub-agents may run at once; more wait for a free slot. Auto is 4.", 1, types.MaxConcurrentSubAgents),
+			ui.SeparatorFieldState("commands", "Commands"),
+			m.agentShellField(),
 		)
 	}
 	return formModel(fields...)
@@ -2439,7 +2441,11 @@ func (m *Model) visibleCategoryIndices() []int {
 		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron {
 			continue
 		}
+		// The Main Agent's own fields (model, thinking, command shell, …)
+		// are found through the Agents catalog that holds them.
+		mainField := false
 		if index == catMain {
+			mainField = query != "" && m.categoryMatches(catMain, category, query)
 			index, category = catAgents, m.categories[catAgents]
 		}
 		if index == catAccounts && m.Scope() != types.SettingsScopeApplication {
@@ -2448,7 +2454,7 @@ func (m *Model) visibleCategoryIndices() []int {
 		if exactCategory >= 0 && index != exactCategory {
 			continue
 		}
-		if query == "" || m.categoryMatches(index, category, query) {
+		if query == "" || mainField || m.categoryMatches(index, category, query) {
 			indices = append(indices, index)
 		}
 	}
@@ -2712,6 +2718,9 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 	}
 	if field := m.categories[catMain].Form.Field(fieldMaxSubAgents); field != nil {
 		agents.MaxConcurrent = maxSubAgentsValue(field)
+	}
+	if shell, ok := agentShellChoice(m.categories[catMain].Form); ok {
+		agents.Shell = shell
 	}
 }
 

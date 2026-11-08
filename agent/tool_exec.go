@@ -369,7 +369,8 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		if tc.Function.Name == "write_stdin" {
 			cmd = getStr(params, "chars")
 		}
-		sr := safety.CheckCommandSafetyWithPolicy(cmd, a.logger, a.CommandPolicy)
+		policy := a.CommandPolicyFor(tc.Function.Name, params)
+		sr := safety.CheckCommandSafetyWithPolicy(cmd, a.logger, policy)
 		if getStr(params, "sandbox_permissions") == "require_escalated" || (tc.Function.Name == "write_stdin" && cmd != "\x03") {
 			if !sr.Risk.IsAlwaysBlocked() {
 				sr.Risk = safety.RiskUnknown

@@ -118,7 +118,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 		case 6:
 			name, params = "execute_command", map[string]any{"command": readFilesCommand("dirty.txt", "accepted.txt", "overlap.txt")}
 		case 7:
-			name, params = "exec_command", map[string]any{"cmd": "pwd; cat overlap.txt", "yield_time_ms": 1000}
+			name, params = "exec_command", map[string]any{"cmd": readFilesCommand("overlap.txt"), "yield_time_ms": 1000}
 		case 8, 9:
 			// A parent-supplied absolute path must not redirect a managed child
 			// into the logical checkout, even though absolute reads are allowed.
@@ -163,6 +163,9 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	cfg.Agents.AgentProfiles = map[string]AgentProfileConfig{}
 	cfg.Agents.AgentProfiles["native"] = AgentProfileConfig{Category: CategoryCrafter, AccountID: "account", Model: "gpt-5.3-codex"}
+	if runtime.GOOS == "windows" {
+		cfg.Agents.Shell = "cmd" // the test commands are cmd.exe command lines
+	}
 	home := t.TempDir()
 	directory := filepath.Join(home, "sessions")
 	s, err := NewWithSessionDir("worktree-parent", cfg, home, directory)

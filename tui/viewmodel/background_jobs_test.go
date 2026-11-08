@@ -68,6 +68,9 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	profile.Categories[session.CategoryDefault] = main
 	config.Agents.Profiles[config.Agents.ActiveProfile] = profile
 	config.Memory = types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}
+	if runtime.GOOS == "windows" {
+		config.Agents.Shell = "cmd" // the helper command is a cmd.exe command line
+	}
 	wsOf(app).SessionsByID = make(map[string]*workspace.Session)
 	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	owner, err := wsOf(app).CreateSession(config, home)

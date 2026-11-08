@@ -3,53 +3,19 @@ package fileio
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
 	"crude/logger"
+
 	"github.com/charmbracelet/x/ansi"
 )
-
-// windowsCommandWarning checks for common patterns that fail on Windows and
-// returns a warning string that should be prepended to the command output.
-func windowsCommandWarning(cmd string) string {
-	lower := strings.ToLower(cmd)
-	var warnings []string
-
-	// Unix-only tools that don't exist on Windows.
-	unixTools := []string{"head", "tail", "grep", "awk", "sed", "cat", "ls", "tr", "cut", "sort", "uniq", "xargs", "find", "wc", "tee", "diff", "comm"}
-	for _, tool := range unixTools {
-		// Look for the tool as a pipe target or at the start of the command.
-		if strings.Contains(lower, "| "+tool) || strings.Contains(lower, "|"+tool) ||
-			strings.HasPrefix(lower, tool+" ") || strings.HasPrefix(lower, tool+"\t") {
-			warnings = append(warnings, fmt.Sprintf("'%s' is a Unix-only tool and does not exist on Windows", tool))
-		}
-	}
-
-	// echo on Windows does not read stdin; piping to it silently discards data.
-	if strings.Contains(lower, "| echo") || strings.Contains(lower, "|echo") {
-		warnings = append(warnings, "piping to 'echo' will not work on Windows — echo does not read stdin")
-	}
-
-	if len(warnings) == 0 {
-		return ""
-	}
-	return "[WINDOWS WARNING] " + strings.Join(warnings, "; ") + "\n\n"
-}
-
-type ExecOptions struct {
-	CWD            string
-	TimeoutSeconds int
-}
 
 type DirEntry struct {
 	Name    string
@@ -67,7 +33,6 @@ type GrepMatch struct {
 }
 
 type Executer interface {
-	Execute(ctx context.Context, cmd string, opts ExecOptions) (string, error)
 	ListDir(path string) ([]DirEntry, error)
 	GlobFiles(baseDir, pattern string, includeHidden bool) ([]string, error)
 	GrepFiles(pattern, baseDir string, recursive, includeHidden bool) ([]GrepMatch, error)
@@ -83,98 +48,6 @@ func NewLocalExec() *LocalExec {
 
 func NewLocalExecWithLogger(lg *logger.Logger) *LocalExec {
 	return &LocalExec{logger: lg}
-}
-
-// shellForExec chooses the interpreter for agent commands. Bash comes first
-// because command lines written for this agent use bash semantics (`source`/`.`
-// with BASH_SOURCE, `[[ ]]`, arrays) and this repository's own scripts are
-// bash; the user's login shell and POSIX sh are fallbacks for hosts without
-// bash. Windows commands never reach here (they run through cmd /C).
-func shellForExec() (string, []string) {
-	if bash, err := exec.LookPath("bash"); err == nil {
-		return bash, []string{"-c"}
-	}
-	if userShell := strings.TrimSpace(os.Getenv("SHELL")); userShell != "" {
-		if resolved, err := exec.LookPath(userShell); err == nil {
-			return resolved, []string{"-c"}
-		}
-	}
-	return "sh", []string{"-c"}
-}
-
-func (l *LocalExec) Execute(ctx context.Context, cmd string, opts ExecOptions) (string, error) {
-	var c *exec.Cmd
-
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if opts.TimeoutSeconds > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(opts.TimeoutSeconds)*time.Second)
-		defer cancel()
-	}
-
-	var warning string
-	if runtime.GOOS == "windows" {
-		warning = windowsCommandWarning(cmd)
-		// On Windows we write the command to a temporary .cmd batch file and
-		// execute that instead of passing the string directly to cmd /C.
-		// This avoids cmd's first-and-last-quote-stripping behaviour which
-		// mangles arguments that contain quotes (e.g. curl URLs, python -c
-		// code strings, curl -w format specifiers). windowsBatchScript keeps
-		// the command-line meaning of percent signs and refuses line breaks
-		// inside quotes.
-		script, err := windowsBatchScript(cmd, os.Environ())
-		if err != nil {
-			return "", err
-		}
-		tmp, err := os.CreateTemp("", "crude_*.cmd")
-		if err != nil {
-			return "", fmt.Errorf("prepare windows command: %w", err)
-		}
-		batPath := tmp.Name()
-		if _, err := tmp.WriteString(script); err != nil {
-			tmp.Close()
-			os.Remove(batPath)
-			return "", fmt.Errorf("prepare windows command: %w", err)
-		}
-		tmp.Close()
-		defer os.Remove(batPath)
-		c = exec.CommandContext(ctx, "cmd", "/C", batPath)
-	} else {
-		shell, args := shellForExec()
-		c = exec.CommandContext(ctx, shell, append(args, cmd)...)
-	}
-
-	if opts.CWD != "" {
-		c.Dir = opts.CWD
-	}
-	setHiddenCmdSysProcAttr(c)
-
-	start := time.Now()
-	var buf bytes.Buffer
-	c.Stdout = &buf
-	c.Stderr = &buf
-	err := c.Run()
-	out := buf.String()
-	out = strings.ReplaceAll(out, "\r\n", "\n")
-	out = strings.ReplaceAll(out, "\r", "")
-	dur := time.Since(start).Milliseconds()
-	if warning != "" {
-		out = warning + out
-	}
-	if l.logger != nil {
-		if err != nil {
-			exitCode := -1
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
-			}
-			l.logger.Warn("COMMAND", "exec_failed", "cmd_len", len(cmd), "timeout", opts.TimeoutSeconds, "latency_ms", dur, "out_len", len(out), "exit_code", exitCode, "cwd", opts.CWD)
-		} else {
-			l.logger.Info("COMMAND", "exec_ok", "cmd_len", len(cmd), "timeout", opts.TimeoutSeconds, "latency_ms", dur, "out_len", len(out), "cwd", opts.CWD)
-		}
-	}
-	return out, err
 }
 
 func (l *LocalExec) ListDir(path string) ([]DirEntry, error) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"crude/fileio"
+	"crude/hostshell"
 	"crude/safety"
 	"crude/tools"
 )
@@ -46,8 +47,14 @@ func executeCodexCommand(ctx context.Context, mgr *fileio.AsyncCommandManager, r
 		} else if !filepath.IsAbs(cwd) {
 			cwd = filepath.Join(root, cwd)
 		}
+		options := fileio.InteractiveOptions{Command: command, CWD: cwd, Login: tools.GetBoolArgAny(params, "login", true), TTY: tools.GetBoolArgAny(params, "tty", false)}
+		if name := getStrParam(params, "shell"); name != "" {
+			if options.Shell, err = hostshell.Requested(name); err != nil {
+				return tools.ToolResult{Content: "Error: " + err.Error()}, err
+			}
+		}
 		wait := max(250, min(tools.GetIntArgAny(params, "yield_time_ms", 10000), 30000))
-		result, err = mgr.StartInteractive(ctx, fileio.InteractiveOptions{Command: command, CWD: cwd, Shell: getStrParam(params, "shell"), Login: tools.GetBoolArgAny(params, "login", true), TTY: tools.GetBoolArgAny(params, "tty", false)}, time.Duration(wait)*time.Millisecond, maxTokens)
+		result, err = mgr.StartInteractive(ctx, options, time.Duration(wait)*time.Millisecond, maxTokens)
 	}
 	if err != nil && result.OutputDescriptor.Status == "" {
 		return tools.ToolResult{Content: "Error: " + err.Error()}, err

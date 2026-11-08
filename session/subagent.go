@@ -664,6 +664,8 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	r.session.bindAgentPermissionPolicy(a)
 	childTempDir := r.childTempDir(spec.ID)
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
+	a.AsyncMgr.SetShell(r.session.agentShell)
+	a.CommandShell = r.session.agentShell
 	r.session.observeCommandOutcomes(a.AsyncMgr, string(spec.ID))
 	if err := a.AsyncMgr.SetTempDir(childTempDir); err != nil {
 		if subDB != nil {
@@ -801,7 +803,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
 		ProfileInstructions: profileInstructions, WorkDir: spec.ExecutionRoot,
 		ExecutionID: spec.ExecutionID, Isolation: spec.Isolation,
-		TempDir: childTempDir, Model: spec.Model,
+		TempDir: childTempDir, Model: spec.Model, Shell: r.session.agentShell(),
 	})
 	ownerData, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: profileInstructions})
 	if err != nil {
@@ -1156,6 +1158,8 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	r.session.bindAgentPermissionPolicy(live)
 	childTempDir := r.childTempDir(spec.ID)
 	live.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
+	live.AsyncMgr.SetShell(r.session.agentShell)
+	live.CommandShell = r.session.agentShell
 	r.session.observeCommandOutcomes(live.AsyncMgr, string(spec.ID))
 	recoveryAsync = live.AsyncMgr
 	if err := live.AsyncMgr.SetTempDir(childTempDir); err != nil {
@@ -1252,7 +1256,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
 		ProfileInstructions: owner.ProfileInstructions, WorkDir: live.WorkDir,
 		ExecutionID: spec.ExecutionID, Isolation: spec.Isolation,
-		TempDir: childTempDir, Model: spec.Model,
+		TempDir: childTempDir, Model: spec.Model, Shell: r.session.agentShell(),
 	})
 	if err := r.mgr.Register(handle); err != nil {
 		r.interruptSubAgentAttempt(handle)
@@ -2291,7 +2295,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 				return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] interactive input requires execute permission")
 			}
 			if command != "" {
-				safetyRes := safety.CheckCommandSafety(command, r.session.logger)
+				safetyRes := safety.CheckCommandSafetyWithPolicy(command, r.session.logger, handle.Agent.CommandPolicyFor(tool, params))
 				if safetyRes.Risk != safety.RiskSafe {
 					return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed", command, safetyRes.Risk, safetyRes.Reason)
 				}
@@ -2750,7 +2754,7 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 	switch tool {
 	case "async_execute_command":
 		command := getStrParam(params, "command")
-		if sr := safety.CheckCommandSafetyWithPolicy(command, r.session.logger, handle.Agent.CommandPolicy); sr.Risk.IsAlwaysBlocked() {
+		if sr := safety.CheckCommandSafetyWithPolicy(command, r.session.logger, handle.Agent.CommandPolicyFor(tool, params)); sr.Risk.IsAlwaysBlocked() {
 			return tools.ToolResult{}, fmt.Errorf("[SAFETY BLOCK] %s", sr.Reason)
 		}
 		handleName := getStrParam(params, "handle")
@@ -2824,7 +2828,7 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 
 	isReadOnlyExec := a.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !a.Policy.AllowedCapabilities[safety.CanExecute]
 	if !r.session.YoloEnabled() {
-		sr := safety.CheckCommandSafetyWithPolicy(cmd, r.session.logger, a.CommandPolicy)
+		sr := safety.CheckCommandSafetyWithPolicy(cmd, r.session.logger, a.CommandPolicyFor("execute_command", params))
 		if sr.Risk.IsAlwaysBlocked() {
 			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 			r.session.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)

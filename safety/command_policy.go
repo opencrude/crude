@@ -6,6 +6,7 @@ import (
 
 	"crude/logger"
 	"crude/types"
+	"crude/types/command"
 )
 
 type CommandRule struct {
@@ -19,6 +20,10 @@ type CommandPolicy struct {
 	ScriptExecutionRisk CommandRisk
 	Rules               []CommandRule
 	NotifyDangerous     bool
+	// Syntax is the language of the shell that will run the command. The
+	// checker parses bash; other syntaxes add the checks that bash parsing
+	// cannot see. Empty is POSIX.
+	Syntax command.Syntax
 }
 
 func DefaultCommandPolicy() CommandPolicy {
@@ -75,7 +80,11 @@ func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
 }
 
 func CheckCommandSafetyWithPolicy(cmd string, lg *logger.Logger, policy CommandPolicy) *CommandSafetyResult {
-	result := checkCommandSafetyBase(cmd, lg)
+	checked := cmd
+	if policy.Syntax == command.SyntaxPowerShell {
+		checked = withoutPowerShellLiteralAssignments(cmd)
+	}
+	result := checkCommandSafetyBase(checked, lg)
 	if result.Risk.IsAlwaysBlocked() {
 		return result
 	}
@@ -104,6 +113,13 @@ func CheckCommandSafetyWithPolicy(cmd string, lg *logger.Logger, policy CommandP
 			result.Reason = "Configured command rule " + rule.Pattern + ": " + rule.Risk.String()
 			break
 		}
+	}
+	// After the rules: a rule names the commands the checker saw, so it cannot
+	// vouch for code that the checker could not see.
+	if policy.Syntax == command.SyntaxPowerShell && riskRank(result.Risk) < riskRank(RiskUnknown) && powerShellRunsHiddenCode(cmd) {
+		result.Risk = RiskUnknown
+		result.MatchedRule = ""
+		result.Reason = "PowerShell runs code in parentheses, braces, block comments and & calls. Crude cannot check that code, so it needs approval."
 	}
 	result.ConfirmationRequired = riskRank(result.Risk) >= riskRank(policy.ConfirmAt) && result.Risk != RiskSafe
 	return result

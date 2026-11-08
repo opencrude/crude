@@ -156,6 +156,27 @@ func (m *App) startLSPForWorkspace() {
 	}
 }
 
+// refreshLSP restarts every language server as the user's explicit re-check.
+// It is the one owner of "Restart language servers" and Problems Refresh.
+func (m *App) refreshLSP() {
+	m.closeSignatureHelp()
+	if m.lspRequestCancel != nil {
+		m.lspRequestCancel()
+		m.lspRequestCancel = nil
+		m.lspRequestCtx = nil
+	}
+	if m.ws.LSPMgr() == nil {
+		return
+	}
+	wsDir := "."
+	if m.ws.RootPath() != "" {
+		wsDir = m.ws.RootPath()
+	}
+	m.ws.LSPMgr().Refresh(wsDir)
+	m.drainLSPDiagnostics()
+	m.syncFileTreeDiagnosticsFromLSP()
+}
+
 // StopLSP shuts down all LSP server connections.
 func (m *App) StopLSP() {
 	m.closeSignatureHelp()

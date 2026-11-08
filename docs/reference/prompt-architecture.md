@@ -56,7 +56,12 @@ missing scope/import/signature/edit-history/project inputs stay labelled partial
 FIM adapters use explicit prefix/suffix fields and never choose a chat fallback
 themselves. The current builders are prerequisites, not an enabled editor service.
 
-The stable environment projection includes the exact session-owned
+The stable environment projection names the resolved agent command shell in
+`<shell>` and describes only that shell's syntax in `<platform_guidance>`:
+bash for Git Bash, PowerShell for PowerShell 7 or 5.1, cmd.exe for Command
+Prompt. It never describes cmd.exe while another shell runs commands. The shell
+is part of the root prompt cache key, so a settings change rebuilds the prompt.
+It also includes the exact session-owned
 `temporary_directory`, also exported to command processes as `CRUDE_TEMP_DIR`.
 The canonical tool contract tells agents to redirect noisy transient output there
 and inspect bounded ranges rather than injecting whole logs into model context.

@@ -13,6 +13,7 @@ const (
 	LSPSetActiveFile             = "lsp.set_active_file"
 	LSPStartForWorkspace         = "lsp.start_for_workspace"
 	LSPStop                      = "lsp.stop"
+	LSPRefresh                   = "lsp.refresh"
 	LSPRestartServer             = "lsp.restart_server"
 	LSPStopServer                = "lsp.stop_server"
 	LSPRequestDocumentSymbols    = "lsp.document_symbols"

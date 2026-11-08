@@ -437,26 +437,38 @@ var severityNames = map[int]string{1: "error", 2: "warning", 3: "info", 4: "hint
 func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, floor int, view ttypes.LSPProbeView, errorsOnly bool) string {
 	diags := filterDiagnostics(batch.Diagnostics, floor)
 	var b strings.Builder
-	b.WriteString(bufferNote(view))
 	display := displayLSPPath(root, path)
 	server := ""
 	if view.Server != "" {
 		server = " (" + view.Server + ")"
 	}
 	if batch.ID == "" {
-		fmt.Fprintf(&b, "%s: no diagnostic publication observed%s; project cleanliness is unverified.\n", display, server)
+		fmt.Fprintf(&b, "%s: the language server%s has not reported this file yet; call again to re-check.\n", display, server)
 		return b.String()
 	}
-	fmt.Fprintf(&b, "Fact %s: %s, %s, source revision %d; context %s generation %d; producer %s.\n", batch.ID, batch.State, batch.Binding, batch.Boundary.Source.Revision, batch.Boundary.Context.ID, batch.Boundary.Context.Generation, batch.Boundary.Producer.InstanceID)
-	if len(batch.Boundary.Context.UnknownInputs) > 0 {
-		fmt.Fprintf(&b, "  Partial context: %s\n", strings.Join(batch.Boundary.Context.UnknownInputs, "; "))
+	// One line per file. Fact identities, context hashes and the fixed list
+	// of unknown inputs stay in the diagnostic details reader: they cost every
+	// agent tokens and change nothing it does. Only qualifications that change
+	// how to read the result are written.
+	var notes []string
+	if batch.State == ttypes.InsightStale {
+		notes = append(notes, "out of date")
+	}
+	if batch.Binding != "exact-version" {
+		notes = append(notes, "the server did not confirm which file version it checked")
 	}
 	if batch.Detail != "" {
-		fmt.Fprintf(&b, "  %s\n", batch.Detail)
+		notes = append(notes, strings.TrimSuffix(strings.TrimSpace(batch.Detail), "."))
 	}
-	b.WriteString("  Observed source only; this is not a complete project check.\n")
+	if view.BufferDiffers {
+		notes = append(notes, "checked the unsaved editor text, not the file on disk")
+	}
+	note := ""
+	if len(notes) > 0 {
+		note = " — " + strings.Join(notes, "; ")
+	}
 	if len(diags) == 0 {
-		fmt.Fprintf(&b, "%s: 0 diagnostics at requested severity%s (not a clean-project verdict)\n", display, server)
+		fmt.Fprintf(&b, "%s: no problems at the requested severity%s%s\n", display, server, note)
 		return b.String()
 	}
 	counts := map[string]int{}
@@ -473,7 +485,7 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 			summary = append(summary, fmt.Sprintf("%d %s", n, label))
 		}
 	}
-	fmt.Fprintf(&b, "%s: %s%s\n", display, strings.Join(summary, ", "), server)
+	fmt.Fprintf(&b, "%s: %s%s%s\n", display, strings.Join(summary, ", "), server, note)
 	lines := sourceLines{}
 	if batch.HasExactSource() && batch.Boundary.Source == view.Source {
 		lines = probeSourceLines(view)
@@ -494,7 +506,9 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 		message := strings.ReplaceAll(strings.TrimSpace(d.Message), "\n", " ")
 		coordinate := fmt.Sprintf("%d:%d", d.Line+1, lines.column(path, d.Line, d.Col))
 		if _, ok := lines[path]; !ok {
-			coordinate = fmt.Sprintf("%d:UTF-16 %d (source unverified)", d.Line+1, d.Col+1)
+			// Without the checked source the column is the server's UTF-16
+			// offset, which differs from characters after non-ASCII text.
+			coordinate = fmt.Sprintf("%d:%d (UTF-16 column)", d.Line+1, d.Col+1)
 		}
 		fmt.Fprintf(&b, "  %s %s%s%s\n", coordinate, severity, message, origin)
 		if quote := lines.quote(path, d.Line); quote != "" {
@@ -504,66 +518,67 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 	return b.String()
 }
 
+// formatNavigation lists the answer the way an agent uses it: one-based
+// path:line:column per location, with the source line when the queried source
+// contains it. Destination files are never read; a location in another file
+// keeps the server's UTF-16 column. Provenance identities stay in the
+// diagnostic details reader.
 func formatNavigation(root string, result ttypes.LSPNavigation, view ttypes.LSPProbeView) string {
 	var b strings.Builder
 	b.WriteString(bufferNote(view))
-	source, producer, context := result.Boundary.Source, result.Boundary.Producer, result.Boundary.Context
-	fmt.Fprintf(&b, "Navigation %s: %s; query zero-based UTF-16 %d:%d; includeDeclaration=%t.\n",
-		result.Kind, result.Answer, result.Line, result.Col, result.IncludeDeclaration)
-	fmt.Fprintf(&b, "Source %q: workspace %q, document %q, lifetime %q, kind %q, revision %d; synchronized source wire version %d.\n",
-		displayLSPPath(root, source.Path), source.WorkspaceGeneration, source.DocumentID, source.Lifetime, source.Kind, source.Revision, result.WireVersion)
-	fmt.Fprintf(&b, "Provider %q: instance %q, tool %q; context %q generation %d, root %q.\n",
-		producer.Provider, producer.InstanceID, producer.ToolIdentity, context.ID, context.Generation, context.Root)
-	for _, unknown := range context.UnknownInputs {
-		fmt.Fprintf(&b, "Unknown input: %q\n", unknown)
-	}
-	b.WriteString("Observed query only; complete project context and destination semantic freshness are unverified.\n")
-	fmt.Fprintf(&b, "Target listing limit: %d rows. Target positions are zero-based UTF-16; standard LSP targets are unversioned. No destination files were read.\n", maxLSPLocations)
-	switch result.Answer {
-	case ttypes.LSPNavigationNull:
-		b.WriteString("Provider returned literal null for this query (not an empty list or unsupported operation).\n")
-	case ttypes.LSPNavigationEmpty:
-		b.WriteString("Provider returned an empty target list for this query (not a whole-project absence claim).\n")
-	case ttypes.LSPNavigationUnsupported:
-		b.WriteString("This provider does not advertise support for this operation; no target query answer is available.\n")
-	case ttypes.LSPNavigationTargets:
-		fmt.Fprintf(&b, "%d targets returned:\n", len(result.Targets))
-	}
+	source := result.Boundary.Source
 	lines := sourceLines{}
 	if source.DocumentID != "" && source == view.Source {
 		lines = probeSourceLines(view)
 	}
+	query := fmt.Sprintf("%s %s:%d:%d", strings.ReplaceAll(result.Kind, "-", " "), displayLSPPath(root, source.Path), result.Line+1, lines.column(source.Path, result.Line, result.Col))
+	switch result.Answer {
+	case ttypes.LSPNavigationNull:
+		fmt.Fprintf(&b, "%s: the language server returned no result.", query)
+		return b.String()
+	case ttypes.LSPNavigationEmpty:
+		fmt.Fprintf(&b, "%s: no locations.", query)
+		return b.String()
+	case ttypes.LSPNavigationUnsupported:
+		fmt.Fprintf(&b, "%s: the language server does not support %s.", query, strings.ReplaceAll(result.Kind, "-", " "))
+		return b.String()
+	}
+	fmt.Fprintf(&b, "%s: %d %s\n", query, len(result.Targets), map[bool]string{true: "location", false: "locations"}[len(result.Targets) == 1])
+	utf16 := false
 	for i, target := range result.Targets {
 		if i == maxLSPLocations {
-			fmt.Fprintf(&b, "… %d more not shown (limit %d rows)\n", len(result.Targets)-i, maxLSPLocations)
+			fmt.Fprintf(&b, "  … %d more not shown\n", len(result.Targets)-i)
 			break
 		}
-		fmt.Fprintf(&b, "%d. URI %q", i+1, target.URI)
-		if target.Path != "" {
-			fmt.Fprintf(&b, "; path %q", displayLSPPath(root, target.Path))
+		start := target.Selection.Start
+		if target.Path == "" {
+			fmt.Fprintf(&b, "  %s", target.URI)
+		} else {
+			_, known := lines[target.Path]
+			column := start.Character + 1
+			if known {
+				column = lines.column(target.Path, start.Line, start.Character)
+			} else {
+				utf16 = true
+			}
+			fmt.Fprintf(&b, "  %s:%d:%d", displayLSPPath(root, target.Path), start.Line+1, column)
 		}
-		if target.UnavailableReason != "" {
-			fmt.Fprintf(&b, "; unavailable: %q", target.UnavailableReason)
-		}
-		if target.External {
-			b.WriteString("; external target (not read)")
-		}
-		fmt.Fprintf(&b, "; link=%t; target range %s; selection %s", target.Link, navigationRangeText(target.Range), navigationRangeText(target.Selection))
-		if target.Origin != nil {
-			fmt.Fprintf(&b, "; origin %s (queried source)", navigationRangeText(*target.Origin))
-		}
-		b.WriteByte('\n')
-		if target.UnavailableReason == "" && target.Path == source.Path {
-			if quote := lines.quote(target.Path, target.Selection.Start.Line); quote != "" {
-				fmt.Fprintf(&b, "  Queried source quote (not a target-version claim): %q\n", quote)
+		switch {
+		case target.UnavailableReason != "":
+			fmt.Fprintf(&b, " (cannot open: %s)", target.UnavailableReason)
+		case target.External:
+			b.WriteString(" (outside the workspace)")
+		default:
+			if quote := lines.quote(target.Path, start.Line); quote != "" {
+				fmt.Fprintf(&b, "  %s", quote)
 			}
 		}
+		b.WriteByte('\n')
+	}
+	if utf16 {
+		b.WriteString("Columns in other files count UTF-16 units.\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
-}
-
-func navigationRangeText(r ttypes.LSPNavigationRange) string {
-	return fmt.Sprintf("%d:%d-%d:%d", r.Start.Line, r.Start.Character, r.End.Line, r.End.Character)
 }
 
 func formatSymbols(root, path string, symbols []ttypes.LSPSymbol, view ttypes.LSPProbeView) string {

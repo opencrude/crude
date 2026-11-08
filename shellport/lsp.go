@@ -62,6 +62,9 @@ type LSPService interface {
 	// Stop is safe on Update: admission stops immediately; the worker owns
 	// teardown.
 	Stop()
+	// Refresh is the user's explicit re-check: every server restarts and the
+	// stopped servers' results for files no editor holds are removed.
+	Refresh(root string)
 	StopServer(id string) bool
 	Version() uint64
 }

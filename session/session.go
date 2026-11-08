@@ -525,6 +525,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		workspaceCfg:        workspaceCfg,
 		sessionOverrides:    make(map[string]sessiondb.AgentSettingOverride),
 	}
+	asyncMgr.SetShell(sess.agentShell)
 
 	if err := sess.loadQueuedInputs(); err != nil {
 		return nil, err
@@ -776,6 +777,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	}
 	workspaceAgent := s.selectedMainAgent == CategoryAeron
 	s.mu.Unlock()
+	shell := s.agentShell()
 	s.systemPromptMu.Lock()
 	defer s.systemPromptMu.Unlock()
 	if s.systemPrompts == nil {
@@ -789,7 +791,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	if multiAgent {
 		catalog = agentProfileCatalog(cfg)
 	}
-	key := fmt.Sprintf("%t:%t:%t:%s:%s:%s:%s", multiAgent, planMode, workspaceAgent, model, instructions, catalog, root)
+	key := fmt.Sprintf("%t:%t:%t:%s:%s:%s:%s:%+v", multiAgent, planMode, workspaceAgent, model, instructions, catalog, root, shell)
 	if prompt, ok := s.systemPrompts[key]; ok {
 		return prompt
 	}
@@ -798,7 +800,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	// switch even when execution itself is correctly re-rooted.
 	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{
 		MultiAgent: multiAgent, PlanMode: planMode, WorkDir: root, TempDir: s.TempDir(), Model: model,
-		WorkspaceAgent: workspaceAgent,
+		WorkspaceAgent: workspaceAgent, Shell: shell,
 	})
 	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
 	s.systemPrompts[key] = prompt

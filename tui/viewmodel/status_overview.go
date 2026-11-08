@@ -952,8 +952,7 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		m.StopLSP()
 		return nil
 	case action == "lsp:restart-all":
-		m.StopLSP()
-		m.startLSPForWorkspace()
+		m.refreshLSP()
 		return nil
 	case strings.HasPrefix(action, "copy:blame:"):
 		m.copyToClipboard(strings.TrimPrefix(action, "copy:blame:"))

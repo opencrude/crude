@@ -221,7 +221,7 @@ func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits
 				path[1] = "max_concurrent"
 			case "ActiveProfile":
 				path[1] = "active_profile"
-			case "agent_profiles":
+			case "agent_profiles", "shell":
 			default:
 				return fmt.Errorf("unknown agent setting")
 			}

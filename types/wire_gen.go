@@ -837,8 +837,8 @@ func (z *AgentStatusSnapshot) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AgentsSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 5
-	o = append(o, 0x95)
+	// array header, size 6
+	o = append(o, 0x96)
 	o = msgp.AppendBool(o, z.Enabled)
 	o = msgp.AppendString(o, z.ActiveProfile)
 	o = msgp.AppendInt(o, z.MaxConcurrent)
@@ -868,6 +868,7 @@ func (z *AgentsSettings) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
+	o = msgp.AppendString(o, z.Shell)
 	return
 }
 
@@ -883,8 +884,8 @@ func (z *AgentsSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 5 {
-		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
 		return
 	}
 	z.Enabled, bts, err = msgp.ReadBoolBytes(bts)
@@ -976,6 +977,11 @@ func (z *AgentsSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			z.AgentProfiles[za0003] = za0004
 		}
 	}
+	z.Shell, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Shell")
+		return
+	}
 	o = bts
 	return
 }
@@ -996,6 +1002,7 @@ func (z *AgentsSettings) Msgsize() (s int) {
 			s += msgp.StringPrefixSize + len(za0003) + za0004.Msgsize()
 		}
 	}
+	s += msgp.StringPrefixSize + len(z.Shell)
 	return
 }
 

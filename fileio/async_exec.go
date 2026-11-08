@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -217,6 +216,7 @@ type AsyncCommandManager struct {
 	autoCounter int
 	closing     bool
 	tempDir     string
+	shell       func() command.Shell
 	startWg     sync.WaitGroup
 	logger      *logger.Logger
 	// settleObserver reports tracked commands' terminal states to their owner.
@@ -385,41 +385,6 @@ func commandEnvironmentWithTemp(existing []string, tempDir string) []string {
 	return append(environment, replacement)
 }
 
-func buildCommand(ctx context.Context, command string, cwd string, tempDir string) (*exec.Cmd, func(), error) {
-	if runtime.GOOS == "windows" {
-		environment := commandEnvironmentWithTemp(nil, tempDir)
-		script, err := windowsBatchScript(command, environment)
-		if err != nil {
-			return nil, nil, err
-		}
-		tmp, err := os.CreateTemp(tempDir, "crude_*.cmd")
-		if err != nil {
-			return nil, nil, fmt.Errorf("prepare windows command: %w", err)
-		}
-		batPath := tmp.Name()
-		if _, err := tmp.WriteString(script); err != nil {
-			tmp.Close()
-			os.Remove(batPath)
-			return nil, nil, fmt.Errorf("prepare windows command: %w", err)
-		}
-		tmp.Close()
-		c := setProcessGroupCmd(ctx, "cmd", "/C", batPath)
-		if cwd != "" {
-			c.Dir = cwd
-		}
-		c.Env = environment
-		return c, func() { _ = os.Remove(batPath) }, nil
-	}
-
-	shell, args := shellForExec()
-	c := setProcessGroupCmd(ctx, shell, append(args, command)...)
-	if cwd != "" {
-		c.Dir = cwd
-	}
-	c.Env = commandEnvironmentWithTemp(c.Env, tempDir)
-	return c, func() {}, nil
-}
-
 func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds int) (*AsyncCmdInfo, error) {
 	m.mu.Lock()
 	if m.closing {
@@ -432,9 +397,10 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	}
 	m.reserved[handle] = true
 	m.startWg.Add(1)
-	tempDir := m.tempDir
+	tempDir, resolve := m.tempDir, m.shell
 	m.mu.Unlock()
 	defer m.startWg.Done()
+	shell := resolveShell(resolve)
 	releaseReservation := func() {
 		m.mu.Lock()
 		delete(m.reserved, handle)
@@ -446,7 +412,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, cleanup, err := buildCommand(ctx, command, cwd, tempDir)
+	c, cleanup, err := shellCommand(ctx, shell, command, cwd, tempDir, false)
 	if err != nil {
 		cancel()
 		releaseReservation()
@@ -729,33 +695,40 @@ type UntrackedCmd struct {
 	logger *logger.Logger
 }
 
+// StartUntracked runs an agent command line in the manager's agent shell.
 func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds int) (*UntrackedCmd, error) {
-	return m.startUntracked(command, cwd, timeoutSeconds, nil)
+	return m.startUntracked(nil, command, cwd, timeoutSeconds, nil)
 }
 
-func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds int, interactive *InteractiveOptions) (*UntrackedCmd, error) {
+// StartUntrackedIn runs a command line that its caller quoted for shell, such
+// as SystemShell, independently of the agent command shell.
+func (m *AsyncCommandManager) StartUntrackedIn(shell command.Shell, line, cwd string, timeoutSeconds int) (*UntrackedCmd, error) {
+	return m.startUntracked(&shell, line, cwd, timeoutSeconds, nil)
+}
+
+func (m *AsyncCommandManager) startUntracked(shell *command.Shell, command, cwd string, timeoutSeconds int, interactive *InteractiveOptions) (*UntrackedCmd, error) {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
 		return nil, errors.New("async command manager is closing")
 	}
 	m.startWg.Add(1)
-	tempDir := m.tempDir
+	tempDir, resolve := m.tempDir, m.shell
 	m.mu.Unlock()
 	defer m.startWg.Done()
+	if interactive != nil && interactive.Shell.Path != "" {
+		shell = &interactive.Shell
+	} else if shell == nil {
+		resolved := resolveShell(resolve)
+		shell = &resolved
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	if timeoutSeconds > 0 {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	var c *exec.Cmd
-	var cleanup func()
-	var err error
-	if interactive == nil {
-		c, cleanup, err = buildCommand(ctx, command, cwd, tempDir)
-	} else {
-		c, cleanup, err = buildInteractiveCommand(ctx, *interactive, tempDir)
-	}
+	login := interactive != nil && interactive.Login
+	c, cleanup, err := shellCommand(ctx, *shell, command, cwd, tempDir, login)
 	if err != nil {
 		cancel()
 		return nil, err

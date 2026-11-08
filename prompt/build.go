@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"crude/types/command"
 )
 
 type RootOptions struct {
@@ -15,6 +17,8 @@ type RootOptions struct {
 	Model    string
 	// WorkspaceAgent adds the contract of the workspace's permanent Aeron.
 	WorkspaceAgent bool
+	// Shell is the resolved agent command shell the environment describes.
+	Shell command.Shell
 }
 
 func BuildRoot(options RootOptions) string {
@@ -46,7 +50,7 @@ func BuildRoot(options RootOptions) string {
 		ProjectGuidanceContract,
 		PlanningContract,
 		MemoryContract,
-		stableEnvironment(options.WorkDir, options.TempDir),
+		stableEnvironment(options.WorkDir, options.TempDir, options.Shell),
 		`</crude_agent>`,
 	}, func(section string) bool { return section == "" }), "\n")
 }
@@ -104,6 +108,8 @@ type ChildOptions struct {
 	WorkDir             string
 	TempDir             string
 	Model               string
+	// Shell is the resolved agent command shell the environment describes.
+	Shell command.Shell
 }
 
 // childContract is the role a child plays; a verifier judges instead of
@@ -152,7 +158,7 @@ func BuildChild(options ChildOptions) (systemPrompt, assignment string) {
 		fmt.Sprintf(`<report_contract required="true"><rule>Call publish_report with kind="final" exactly once before ending and address it to parent %s.</rule><rule>publish_report is the required child return channel and remains available outside optional task-tool allowlists. An explicit denial is an invalid launch configuration, not permission to bypass a tool boundary.</rule><rule>Include the execution ID, root and mode from your execution_context, findings, changes, tests, unresolved risks, exact paths, immediate parent actions, and a recommended disposition: integrate, discard, or Keep with a reason. Shared mode with an empty ID has no separate checkout; report that without inventing an ID. If execution metadata is unavailable, say so and notify the parent; never guess an identity or infer mode from a path.</rule><rule>A chat response or interim report is not the required final report.</rule></report_contract>`, XMLText(options.ParentID)),
 		planning,
 		fmt.Sprintf(`<profile_instructions>%s</profile_instructions>`, XMLText(options.ProfileInstructions)),
-		stableEnvironment(options.WorkDir, options.TempDir),
+		stableEnvironment(options.WorkDir, options.TempDir, options.Shell),
 		`</crude_sub_agent>`,
 	}, "\n")
 	assignment = fmt.Sprintf(`<delegated_assignment id="%s" parent_id="%s" parent_turn="%d">

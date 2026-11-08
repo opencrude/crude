@@ -1099,7 +1099,12 @@ The editor header shows its live one-based cursor position and total buffer line
 count, plus error and warning counts or that status label. The count follows the
 focused file and includes the final empty line after a line terminator. The
 Problems footer shows counts and marks restricted or stopped services as off,
-and failures as errors. Workspace health shows counts or the manager's status
+and failures as errors. **Refresh** in the Problems header (and **Restart
+language servers**) restarts every server and removes the results the stopped
+servers reported for files no editor holds, because a new server reports only
+files that still have problems. Automatic restarts and Stop keep those results
+visible as out of date until a server replaces them.
+Workspace health shows counts or the manager's status
 message and routes its next action to the existing trust, settings or server
 controls. No result is a clean-project claim. Diagnostic provenance remains in
 the diagnostic details reader under **Details**, not in Problems rows.
@@ -1111,6 +1116,13 @@ qualified source remain labelled raw UTF-16 positions without guessed disk
 quotes. Automatic post-edit probes obey the same session, role-tool and read-policy
 admission as explicit calls; a later revocation drops queued notices instead of
 delivering or replaying them on the next model step.
+The agent `lsp` tool writes one summary line per file, then each problem as
+one-based `line:column`, severity, message and source line; navigation writes
+one-based `path:line:column` locations. A qualification that changes how to read
+the answer (out of date, unconfirmed file version, unsaved editor text, a column
+counted in UTF-16 units) is written on that line. Fact identities, context
+hashes and unknown-input lists stay in the diagnostic details reader: printing
+them cost four lines per file that no agent acted on.
 Root-bound workspace Trust and shared LSP process admission are implemented.
 General destination qualification, completion/hover fact contracts,
 project modeling, broader analysis work classes, pressure management and native

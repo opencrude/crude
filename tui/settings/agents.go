@@ -503,6 +503,9 @@ func (c *agentCatalog) apply() bool {
 			if field := c.draft.Field(fieldMaxSubAgents); field != nil {
 				c.model.agents.MaxConcurrent = maxSubAgentsValue(field)
 			}
+			if shell, ok := agentShellChoice(c.draft); ok {
+				c.model.agents.Shell = shell
+			}
 		}
 		if c.model.agents.Categories == nil {
 			c.model.agents.Categories = map[string]types.CategorySettings{}

@@ -258,6 +258,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		contextGeneration:    contextGeneration,
 		contextReason:        contextReason,
 	}
+	asyncMgr.SetShell(sess.agentShell)
 	openRecoveries, err := sessiondb.LoadOpenRecoveryCheckpoints(db, meta.ID)
 	if err != nil {
 		_ = lg.Close()

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crude/hostshell"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,7 +18,6 @@ import (
 	"crude/session"
 	"crude/types"
 	captypes "crude/types/capability"
-	"crude/workspace"
 )
 
 // A keyed entity digest is opaque even for low-entropy credentials. Revisions
@@ -290,7 +290,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 				return fault(request, "cancelled", "settings observation cancelled")
 			}
 			observed := out
-			observed.TerminalShells = workspace.DetectTerminalShells()
+			observed.TerminalShells = hostshell.Detect()
 			return response(request, observed)
 		}, nil, true
 	case coreprotocol.SessionSettingsRead:
