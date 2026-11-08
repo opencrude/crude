@@ -405,6 +405,12 @@ try {
     }
 }
 
+Test-Case 'an API asset URL asks for bytes, never for JSON' {
+    . $installer
+    Assert-Equal (Get-CrudeAccept ([Uri] 'https://api.github.com/repos/opencrude/crude/releases/assets/1001')) 'application/octet-stream' 'An API asset URL must ask for bytes alone, or GitHub answers with metadata'
+    Assert-Equal (Get-CrudeAccept ([Uri] 'https://github.com/opencrude/crude/releases/download/v1.2.3/crude_v1.2.3_windows_amd64.zip')) 'application/vnd.github+json, application/octet-stream;q=0.9, */*;q=0.8' 'A download URL keeps the release header'
+}
+
 Test-Case 'an unavailable API asset path falls back to the published download path' {
     With-Fixture (New-Fixture) {
         $fixtureState.ApiDownloadsFail = $true
