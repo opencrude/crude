@@ -85,6 +85,9 @@ type Renderer struct {
 	activityRecentStart  int
 	activityRecentRounds map[string]bool
 	activityRoundFirst   map[string]int
+	commandOrigins       map[string]commandOrigin
+	commandSettlements   map[string]commandSettlement
+	commandRefs          map[string][]string
 	exportSnapshot       MessageRowsSnapshot
 	exportRevision       uint64
 	exportWidth          int
@@ -1277,7 +1280,7 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 		leafToggles = group.leafRows
 	} else if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
 		subPaneID = msg.SubPaneID
-		contextBoundary = msg.LifecyclePhase == "history_restored" || isManualCompaction(*msg)
+		contextBoundary = msg.LifecyclePhase == "history_restored" || isManualCompaction(*msg) && !settledCompaction(*msg)
 		if r.hasDisclosure(msg) {
 			toggleLine = 0
 			toggleAny = r.disclosureState(msg) == DisclosureExpanded

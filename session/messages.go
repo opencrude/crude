@@ -11,6 +11,7 @@ import (
 	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/command"
+	"crude/types/toolresult"
 )
 
 func childAgentIDFromResult(text string) string {
@@ -29,11 +30,12 @@ type displayMetaTracker struct {
 	pendingPermTool string
 }
 
-func (t *displayMetaTracker) updateToolCall(toolID, name, args string) {
-	m, ok := t.metas[toolID]
+func (t *displayMetaTracker) updateToolCall(toolID, internalID, name, args string) {
+	key := toolCallKey(toolID, internalID)
+	m, ok := t.metas[key]
 	if !ok {
 		m = &sessiondb.DisplayMeta{}
-		t.metas[toolID] = m
+		t.metas[key] = m
 	}
 	m.ToolName = name
 	m.ToolArgs = args
@@ -53,11 +55,12 @@ func (t *displayMetaTracker) updateToolCall(toolID, name, args string) {
 	}
 }
 
-func (t *displayMetaTracker) updateToolResult(toolID, name, result, status string, durMs int64, estTokens, linesAdded, linesRemoved int) {
-	m, ok := t.metas[toolID]
+func (t *displayMetaTracker) updateToolResult(toolID, internalID, name, result, status string, durMs int64, estTokens, linesAdded, linesRemoved int) {
+	key := toolCallKey(toolID, internalID)
+	m, ok := t.metas[key]
 	if !ok {
 		m = &sessiondb.DisplayMeta{}
-		t.metas[toolID] = m
+		t.metas[key] = m
 	}
 	m.ToolStatus = status
 	if name != "" {
@@ -88,11 +91,12 @@ func (t *displayMetaTracker) updateToolResult(toolID, name, result, status strin
 	}
 }
 
-func (t *displayMetaTracker) updateToolProgress(toolID, name, phase, detail, label string, linesAdded, linesRemoved, estTokens int) {
-	m, ok := t.metas[toolID]
+func (t *displayMetaTracker) updateToolProgress(toolID, internalID, name, phase, detail, label string, linesAdded, linesRemoved, estTokens int) {
+	key := toolCallKey(toolID, internalID)
+	m, ok := t.metas[key]
 	if !ok {
 		m = &sessiondb.DisplayMeta{}
-		t.metas[toolID] = m
+		t.metas[key] = m
 	}
 	snapshot := ensureToolSnapshot(m)
 	snapshot.Role = "tool"
@@ -115,12 +119,13 @@ func (t *displayMetaTracker) setPendingPermTag(tool, tag string) {
 	t.pendingPermTool = tool
 }
 
-func (t *displayMetaTracker) setPermTag(toolID, tool, tag string) {
+func (t *displayMetaTracker) setPermTag(toolID, internalID, tool, tag string) {
+	key := toolCallKey(toolID, internalID)
 	if toolID != "" {
-		m, ok := t.metas[toolID]
+		m, ok := t.metas[key]
 		if !ok {
 			m = &sessiondb.DisplayMeta{}
-			t.metas[toolID] = m
+			t.metas[key] = m
 		}
 		m.PermTag = tag
 		ensureToolSnapshot(m).PermTag = tag
@@ -168,7 +173,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 					role = "error"
 				}
 				meta.Snapshots = []ttypes.ConversationMessage{{
-					InternalID: "reply:" + message.ToolCallID, Role: role, Content: message.Content.String(), Time: now,
+					InternalID: "reply:" + toolResultKey(message), Role: role, Content: message.Content.String(), Time: now,
 					TurnGeneration: meta.TurnGeneration, ProviderID: meta.ProviderID, AccountID: meta.AccountID, ModelID: meta.ModelID,
 				}}
 			}
@@ -178,18 +183,25 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		applyTurnIdentity(snapshot, meta)
 		snapshot.InternalID = internalID
 		snapshot.Role = "tool"
-		snapshot.Content = message.Content.String()
+		// A recovery archive deliberately excludes display-only fields. Reuse
+		// the already committed, settled display snapshot in that case; do not
+		// reconstruct user evidence from model text with its private hints.
+		if message.DisplayContent != "" {
+			snapshot.Content = message.DisplayContent
+		} else if snapshot.ToolOutcome.State == "" {
+			snapshot.Content = message.Content.String()
+		}
+		snapshot.ToolOutcome = toolresult.Outcome{}
+		if message.ToolOutcome != nil {
+			snapshot.ToolOutcome = *message.ToolOutcome
+		}
 		snapshot.Time = now
 		snapshot.ToolID = message.ToolCallID
 		snapshot.ToolStatus = persistedToolStatus(message, meta.ToolStatus)
 		if snapshot.ToolStatus == "" {
 			snapshot.ToolStatus = "success"
 		}
-		if snapshot.ToolStatus == "error" {
-			snapshot.ToolPreviewPhase = "error"
-		} else {
-			snapshot.ToolPreviewPhase = "done"
-		}
+		snapshot.ToolPreviewPhase = snapshot.ToolOutcome.PreviewPhase(snapshot.ToolStatus == "error")
 		if snapshot.ToolName == "" {
 			snapshot.ToolName = meta.ToolName
 		}
@@ -248,6 +260,12 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 	return meta
 }
 
+// toolOutcomeFromEvent reads only the execution owner's typed result facts.
+func toolOutcomeFromEvent(data map[string]any) toolresult.Outcome {
+	outcome, _ := data["outcome"].(toolresult.Outcome)
+	return outcome
+}
+
 func cloneCollaborationAttribution(input *provider.CollaborationAttribution) *provider.CollaborationAttribution {
 	if input == nil {
 		return nil
@@ -302,12 +320,30 @@ func applyCanonicalToolOperands(snapshot *ttypes.ConversationMessage, rawArgs st
 	}
 }
 
+// Tool result metadata belongs to Crude's operation, not a reusable provider ID.
+func toolCallKey(toolID, internalID string) string {
+	if internalID != "" {
+		return internalID
+	}
+	return toolID
+}
+
+func toolResultKey(message provider.ChatMessage) string {
+	if message.ToolOutcome != nil {
+		return toolCallKey(message.ToolCallID, message.ToolOutcome.CallID)
+	}
+	return message.ToolCallID
+}
+
 func toolCallArgsIndex(messages []provider.ChatMessage) map[string]string {
 	index := make(map[string]string)
 	for _, message := range messages {
 		for _, call := range message.ToolCalls {
 			if call.ID != "" {
 				index[call.ID] = call.Function.Arguments
+			}
+			if call.InternalID != "" {
+				index[call.InternalID] = call.Function.Arguments
 			}
 		}
 	}
@@ -409,10 +445,11 @@ func backfillMissingToolResults(msgs []provider.ChatMessage) []provider.ChatMess
 					continue
 				}
 				result = append(result, provider.ChatMessage{
-					Role:       "tool",
-					ToolCallID: call.ID,
-					Content:    provider.TextContent("[cancelled] Operation cancelled by user"),
-					ToolError:  true,
+					Role:        "tool",
+					ToolCallID:  call.ID,
+					Content:     provider.TextContent("[cancelled] Operation cancelled by user"),
+					ToolError:   true,
+					ToolOutcome: &toolresult.Outcome{State: toolresult.Cancelled, CallID: call.InternalID},
 				})
 			}
 			i = j - 1

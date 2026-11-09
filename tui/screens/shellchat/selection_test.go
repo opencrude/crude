@@ -222,8 +222,8 @@ func TestRenderedCompactPlanEveryLineExpands(t *testing.T) {
 			r.AppendMessage(message)
 		}
 		rows, _, h := r.ExportMessageRows(width)
-		if len(rows) != 1 || !rows[0].Toggle || len(rows[0].Lines) < 4 {
-			t.Fatalf("compact plan lacks multiline disclosure: %+v", rows)
+		if len(rows) != 1 || !rows[0].Toggle || len(rows[0].Lines) != 2 {
+			t.Fatalf("compact plan is not one title and a spacer with disclosure: %+v", rows)
 		}
 		screen := New(th)
 		screen.SetMessages(rows, PaintParams{Compose: ComposeParams{InnerW: width - th.Spacing.PadLR*2, PadLR: th.Spacing.PadLR, Theme: th}})

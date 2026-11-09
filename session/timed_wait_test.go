@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"crude/collaboration"
+	"crude/prompt"
 	"crude/tools"
 )
 
@@ -17,7 +18,8 @@ func TestTimedWaitLeavesAddressedEventsForDelivery(t *testing.T) {
 			event := collaborationWaitCommunication(t, store, recipient, sender, kind)()
 			ctx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: recipient.ID})
 			result, err := s.buildToolFn(false, nil, nil)(ctx, "wait", map[string]any{"seconds": 30.0})
-			if err != nil || !strings.Contains(result.Content, "ended early") {
+			if err != nil || result.Content != "An event is ready." || result.AgentHint != prompt.HintWaitDirected ||
+				strings.Contains(result.Content, result.AgentHint) {
 				t.Fatalf("wait result = %q, %v", result.Content, err)
 			}
 			page, err := store.Page(t.Context(), collaboration.PageQuery{RecipientID: recipient.ID, Unadmitted: true})
@@ -51,19 +53,19 @@ func TestTimedWaitWakesForNewCommandOutcome(t *testing.T) {
 	publish := collaborationWaitCommunication(t, store, recipient, sender, "command")
 	ctx := context.WithValue(t.Context(), tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: recipient.ID})
 	type answer struct {
-		content string
-		err     error
+		result tools.ToolResult
+		err    error
 	}
 	done := make(chan answer, 1)
 	go func() {
 		result, err := s.buildToolFn(false, nil, nil)(ctx, "wait", map[string]any{"seconds": 30.0})
-		done <- answer{result.Content, err}
+		done <- answer{result, err}
 	}()
 	event := publish()
 	select {
 	case result := <-done:
-		if result.err != nil || !strings.Contains(result.content, "ended early") {
-			t.Fatalf("wait result = %q, %v", result.content, result.err)
+		if result.err != nil || result.result.Content != "An event is ready." || result.result.AgentHint != prompt.HintWaitDirected {
+			t.Fatalf("wait result = %+v, %v", result.result, result.err)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("command outcome did not interrupt the timed wait")

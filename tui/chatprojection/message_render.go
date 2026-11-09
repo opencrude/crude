@@ -549,7 +549,34 @@ func thinkingPreviewBody(content string, display reasoning.Display) string {
 }
 
 func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
-	return renderNoticeMessage(msg, ctx, "Turn failed", ui.ColorError)
+	if ctx.innerW <= 0 {
+		return messageLines{}
+	}
+	reason, details, _ := strings.Cut(strings.TrimSpace(msg.Content), "\n")
+	title := tools.ToolTitle{Action: "Turn failed", Metadata: tools.CollapseLine(reason), Failed: true}
+	header := paintToolTitle(title, types.ToolStatusError, false, true, ctx.spinFrame, "")
+	var suffix []RowSpan
+	if msg.Content != "" {
+		glyph := " ▸"
+		if ctx.disclosure == DisclosureExpanded {
+			glyph = " ▾"
+		}
+		suffix = []RowSpan{{Text: glyph, Role: ui.ColorMuted}}
+	}
+	var out messageLines
+	lines := wrapCompactToolTitle(header, ctx.innerW, suffix)
+	if ctx.disclosure == DisclosureExpanded {
+		header.Spans = append(header.Spans, suffix...)
+		lines = wrapToolTitle(header, ctx.innerW)
+	}
+	for _, line := range lines {
+		out.lines = append(out.lines, line.PlainText())
+		out.native = append(out.native, line)
+	}
+	if ctx.disclosure == DisclosureExpanded {
+		out.appendPlainToolBody("execute_command", details, ctx.innerW, ctx.height, false, true)
+	}
+	return out
 }
 
 func renderNoticeMessage(msg types.ChatMessage, ctx renderContext, title string, role ui.SemanticColor) messageLines {
@@ -721,10 +748,18 @@ func lifecycleMessageFrameSensitive(msg types.ChatMessage) bool {
 // row. Live events and resumed records carry the same trigger, so both paths
 // paint the same form.
 func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
-	if !isManualCompaction(msg) {
+	if !isManualCompaction(msg) || settledCompaction(msg) {
 		return renderAutomaticCompactionMessage(msg, ctx)
 	}
 	return renderManualCompactionMessage(msg, ctx)
+}
+
+func settledCompaction(msg types.ChatMessage) bool {
+	switch msg.LifecyclePhase {
+	case "compaction_completed", "compaction_cancelled", "compaction_interrupted", "compaction_failed":
+		return true
+	}
+	return false
 }
 
 func isManualCompaction(msg types.ChatMessage) bool {
@@ -756,7 +791,7 @@ func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) 
 	case "compaction_failed":
 		title.Action, title.Failed = "Compaction failed", true
 		status, active = types.ToolStatusError, false
-		detail = strings.TrimSpace(msg.Content)
+		detail, _, _ = strings.Cut(strings.TrimSpace(msg.Content), "\n")
 		if detail == "" {
 			detail = "original context kept"
 		}
@@ -785,9 +820,33 @@ func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) 
 		}
 	}
 	out := messageLines{frameSensitive: active}
-	for _, line := range wrapToolTitle(paintToolTitle(title, status, active, !active, ctx.spinFrame, ""), ctx.innerW) {
+	header := paintToolTitle(title, status, active, !active, ctx.spinFrame, "")
+	var suffix []RowSpan
+	if !active && (msg.Content != "" || msg.LifecycleBeforeTokens > 0) {
+		glyph := " ▸"
+		if ctx.disclosure == DisclosureExpanded {
+			glyph = " ▾"
+		}
+		suffix = []RowSpan{{Text: glyph, Role: ui.ColorMuted}}
+	}
+	lines := wrapCompactToolTitle(header, ctx.innerW, suffix)
+	if active || ctx.disclosure == DisclosureExpanded {
+		header.Spans = append(header.Spans, suffix...)
+		lines = wrapToolTitle(header, ctx.innerW)
+	}
+	for _, line := range lines {
 		out.lines = append(out.lines, line.PlainText())
 		out.native = append(out.native, line)
+	}
+	if !active && ctx.disclosure == DisclosureExpanded {
+		body := msg.Content
+		if first, rest, _ := strings.Cut(strings.TrimSpace(body), "\n"); first == detail {
+			body = rest
+		}
+		if msg.LifecycleBeforeTokens > 0 {
+			body += fmt.Sprintf("\nSource: %d tokens\nKept: %d tokens", msg.LifecycleBeforeTokens, msg.LifecycleAfterTokens)
+		}
+		out.appendPlainToolBody("", strings.TrimSpace(body), ctx.innerW, ctx.height, false, true)
 	}
 	return out
 }

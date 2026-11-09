@@ -28,7 +28,8 @@ func TestNativePatchPaintsBothFilesAndPartialFailure(t *testing.T) {
 			if strings.Contains(painted, "```") {
 				t.Fatalf("diff fences leaked: %s", painted)
 			}
-			if failed && (!strings.Contains(painted, "later hunk failed") || !strings.Contains(painted, "committed")) {
+			plain := strings.Join(strings.Fields(strings.ReplaceAll(painted, "│", " ")), " ")
+			if failed && (!strings.Contains(plain, "later hunk failed") || !strings.Contains(painted, "committed")) {
 				t.Fatalf("partial mutation hidden: %s", painted)
 			}
 		}

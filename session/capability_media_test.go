@@ -59,7 +59,7 @@ func TestCapabilityMediaAdmissionEvidenceAndErrors(t *testing.T) {
 			if (len(result.Attachments) > 0) == tc.deny {
 				t.Fatalf("attachments=%d denial=%v", len(result.Attachments), tc.deny)
 			}
-			for _, want := range []string{"retained text", "file:///never-open", "external_prompt", "Result unknown:"} {
+			for _, want := range []string{"retained text", "file:///never-open", "external_prompt", "Remote operation effects are unknown."} {
 				if !strings.Contains(result.Content, want) {
 					t.Fatalf("lost %q", want)
 				}

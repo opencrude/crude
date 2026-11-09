@@ -9,9 +9,11 @@ import (
 
 	"crude/agent"
 	"crude/fileio"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
+	"crude/types/toolresult"
 )
 
 // asyncPromotionThreshold is how long a synchronous execute_command may run
@@ -90,7 +92,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
-				return tools.ToolResult{Content: "Turn cancelled before tool execution."}, err
+				return tools.ToolResult{Content: "Turn cancelled before tool execution.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, err
 			}
 		}
 		resolveRelativeParamsAtRoot(root, tool, params)
@@ -140,7 +142,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			}
 			info, ok := s.asyncMgr.Check(handle)
 			if !ok {
-				return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handle)}, nil
+				return tools.ToolResult{}, fmt.Errorf("async command %q was not found", handle)
 			}
 			return tools.ToolResult{Content: FormatCommandStatus(*info)}, nil
 
@@ -184,9 +186,9 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 				case "timeout_no_match":
 					return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
 				case "caller_interrupted":
-					return tools.ToolResult{Content: "Wait cancelled"}, nil
+					return tools.ToolResult{Content: "Wait cancelled", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, nil
 				case "directed_event":
-					return tools.ToolResult{Content: "Wait ended early because an event is ready. The runtime will deliver it normally."}, nil
+					return tools.ToolResult{Content: "An event is ready.", AgentHint: rootprompt.HintWaitDirected}, nil
 				default:
 					return collaborationResult(observation, nil), nil
 				}
@@ -197,7 +199,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			case <-timer.C:
 				return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
 			case <-ctx.Done():
-				return tools.ToolResult{Content: "Wait cancelled"}, nil
+				return tools.ToolResult{Content: "Wait cancelled", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, nil
 			}
 
 		case "execute_command":

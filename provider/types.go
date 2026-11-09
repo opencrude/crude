@@ -6,6 +6,7 @@ import (
 	"crude/types/command"
 	"crude/types/control"
 	"crude/types/reasoning"
+	"crude/types/toolresult"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -358,30 +359,33 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 }
 
 type ChatMessage struct {
-	InternalID        string                    `json:"internal_id,omitempty"`
-	DisplayContent    string                    `json:"display_content,omitempty"`
-	ReferenceLabels   []string                  `json:"reference_labels,omitempty"`
-	Attachments       []attachment.Target       `json:"attachments,omitempty"`
-	Role              string                    `json:"role"`
-	Origin            MessageOrigin             `json:"origin,omitempty"`
-	Visibility        MessageVisibility         `json:"visibility,omitempty"`
-	Content           MessageContent            `json:"content"`
-	ReasoningContent  string                    `json:"reasoning_content,omitempty"`
-	Reasoning         string                    `json:"reasoning,omitempty"`
-	Refusal           string                    `json:"refusal,omitempty"`
-	ToolCalls         []ToolCall                `json:"tool_calls,omitempty"`
-	ToolCallID        string                    `json:"tool_call_id,omitempty"`
-	CacheControl      *CacheControl             `json:"cache_control,omitempty"`
-	ReasoningDetails  []json.RawMessage         `json:"reasoning_details,omitempty"`
-	ReasoningDuration time.Duration             `json:"reasoning_duration,omitempty"`
-	ReasoningDisplay  reasoning.Display         `json:"reasoning_display,omitempty"`
-	ProviderItems     []ProviderItem            `json:"provider_items,omitempty"`
-	ReplayScope       string                    `json:"replay_scope,omitempty"`
-	ReplaySourceModel string                    `json:"replay_source_model,omitempty"`
-	ReplayPrefixHash  string                    `json:"replay_prefix_hash,omitempty"`
-	ResponseReference *ResponseReference        `json:"response_reference,omitempty"`
-	ToolError         bool                      `json:"tool_error,omitempty"`
-	Collaboration     *CollaborationAttribution `json:"collaboration,omitempty"`
+	InternalID        string              `json:"internal_id,omitempty"`
+	DisplayContent    string              `json:"display_content,omitempty"`
+	ReferenceLabels   []string            `json:"reference_labels,omitempty"`
+	Attachments       []attachment.Target `json:"attachments,omitempty"`
+	Role              string              `json:"role"`
+	Origin            MessageOrigin       `json:"origin,omitempty"`
+	Visibility        MessageVisibility   `json:"visibility,omitempty"`
+	Content           MessageContent      `json:"content"`
+	ReasoningContent  string              `json:"reasoning_content,omitempty"`
+	Reasoning         string              `json:"reasoning,omitempty"`
+	Refusal           string              `json:"refusal,omitempty"`
+	ToolCalls         []ToolCall          `json:"tool_calls,omitempty"`
+	ToolCallID        string              `json:"tool_call_id,omitempty"`
+	CacheControl      *CacheControl       `json:"cache_control,omitempty"`
+	ReasoningDetails  []json.RawMessage   `json:"reasoning_details,omitempty"`
+	ReasoningDuration time.Duration       `json:"reasoning_duration,omitempty"`
+	ReasoningDisplay  reasoning.Display   `json:"reasoning_display,omitempty"`
+	ProviderItems     []ProviderItem      `json:"provider_items,omitempty"`
+	ReplayScope       string              `json:"replay_scope,omitempty"`
+	ReplaySourceModel string              `json:"replay_source_model,omitempty"`
+	ReplayPrefixHash  string              `json:"replay_prefix_hash,omitempty"`
+	ResponseReference *ResponseReference  `json:"response_reference,omitempty"`
+	ToolError         bool                `json:"tool_error,omitempty"`
+	// Optional and immutable: ordinary history must not pay the inline size of
+	// five tool-result strings on every checkpoint copy.
+	ToolOutcome   *toolresult.Outcome       `json:"tool_outcome,omitempty"`
+	Collaboration *CollaborationAttribution `json:"collaboration,omitempty"`
 }
 
 func (m ChatMessage) ContentString() string {

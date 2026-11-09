@@ -85,7 +85,7 @@ func activityEligible(msg *types.ChatMessage) bool {
 	// Tool errors are boundaries, even if the transport reported success but
 	// returned an explicit failure in its payload.
 	if msg.ToolStatus == types.ToolStatusSuccess {
-		if result, ok := toolargs.ParseCommandResult(msg.ToolName, types.StripToolHint(msg.Content)); ok && (result.Cancelled || result.Failed() || result.OutputDescriptor.Status == "running" && msg.ToolName != "read_async_output") {
+		if result, ok := toolargs.ParseCommandResult(msg.ToolName, msg.Content); ok && (result.Cancelled || result.Failed() || result.OutputDescriptor.Status == "running" && msg.ToolName != "read_async_output") {
 			return false
 		}
 		content := strings.TrimSpace(msg.Content)
@@ -317,6 +317,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 	if r.activityBatches == nil {
 		r.activityBatches = make(map[string][]*types.ChatMessage)
 	}
+	from = r.indexCommandEvidence(canonical, from, changed)
 	if r.activityMessages == nil || from == 0 {
 		r.activityMessages = make(map[string]*types.ChatMessage)
 		r.activityParallel = make(map[string]bool)
@@ -346,6 +347,10 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 			}
 			if len(batch) > 0 {
 				for _, child := range batch {
+					child = r.projectCommandEvidence(child)
+					if child == nil {
+						continue
+					}
 					messages = append(messages, child)
 					r.activityParallel[child.InternalID] = true
 					r.activityMessages[child.InternalID] = child
@@ -356,8 +361,10 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 				continue
 			}
 		}
-		messages = append(messages, msg)
-		r.activityMessages[msg.InternalID] = msg
+		if projected := r.projectCommandEvidence(msg); projected != nil {
+			messages = append(messages, projected)
+			r.activityMessages[projected.InternalID] = projected
+		}
 	}
 	r.activityFlat, r.activityFlatStart = messages, starts
 	// First flat index of each tool round. Prefix entries stay exact; an entry

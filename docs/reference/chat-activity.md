@@ -41,7 +41,7 @@ focus or crossing modal boundaries.
 | Treatment | Tools |
 | --- | --- |
 | Aggregate after success | `exec_command`, `write_stdin`, `execute_command`, `async_execute_command`, `check_async_command`, `read_async_output`, `read_file`, `list_directory`, `glob_files`, `grep_files`, `web_search`, `web_fetch`, `arxiv_search`, `recall_memory`, `search_history`, `wait`, `agent_list`, `agent_inspect`, `agent_wait`, `board_read`, `artifact_read` |
-| Always visible | `apply_patch`, `edit_file`, `write_file`, `delete_file`, `move_file`, `copy_file`, `update_plan`, `get_plan`, `agent_start`, `agent_send`, `agent_respond`, `agent_control`, `publish_report`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
+| Separate rows (settled results closed) | `apply_patch`, `edit_file`, `write_file`, `delete_file`, `move_file`, `copy_file`, `update_plan`, `get_plan`, `agent_start`, `agent_send`, `agent_respond`, `agent_control`, `publish_report`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
 
 Unknown tools stay visible until intentionally classified. A failed or cancelled call, a child failure reported by an otherwise successful poll, and any required user action remain visible as boundaries. A background command's successful *start* is not evidence that the background job finished; label it as started, not completed. Never imply that all calls passed solely because their tool transport succeeded.
 
@@ -85,7 +85,7 @@ their exact identity/arguments/results in disclosure. Semantic titles use the
 query, capability ID, recipient/type, thread, URI, prompt or adapted tool name;
 they never expose a raw JSON argument envelope. Dynamic operations stay visible
 unless explicitly classified. A remote mutation interrupted after dispatch is
-Result unknown, not success, and is never blindly replayed.
+Outcome unknown, not success, and is never blindly replayed.
 
 Activated skill instructions and MCP resource/prompt attachments retain their
 source attribution; they are not human instructions or permission. Directed peer
@@ -96,11 +96,9 @@ to other agents with active attached runs and paints one bounded broadcast heade
 it never targets finished history, wakes idle agents or grants access.
 
 Board, Memory/History, Capabilities and MCP share one semantic result-section
-contract. Compact rows show useful body text, named participants/resources,
-revision or count facts, and source/lifecycle metadata, not bare JSON or a
-per-field character-budget ellipsis. Preview bodies wrap to the actual cell
-width; large pages show two or three complete entry headings with bounded body
-rows and an explicit remaining-entry/full-text disclosure hint. Expansion keeps
+contract. Settled rows show the operation, operand, factual outcome/reason and
+one disclosure control. They are closed by default, including failures and
+mutations. Expanded bodies wrap to the actual cell width. Expansion keeps
 every retained body and evidence field, exact revisions/IDs, attributed authors,
 Board roster/cursor/pagination and the readable request. Publication results
 distinguish pending/admitting/admitted delivery from request disposition and run
@@ -127,8 +125,9 @@ limits still apply: history search and compact memory evidence arrive with
 backend-bounded snippets, and binary content is described, not rendered as a
 document or dumped as base64.
 
-File edits, writes, and patches remain separate and show their full tinted diff
-by default; users can explicitly collapse them. Plan cards keep their own layout.
+File edits, writes, patches and plan operations remain separate, closed rows.
+Expansion reveals their full tinted diff or canonical plan view. An empty active
+plan lookup says “No active plan”; it is not an invalid plan payload.
 Raw and unclassified active thinking keep their stream and pane promotion. Promotion transfers the
 body without changing its transcript identity or position. When thinking ends,
 the body returns to that slot and the temporary pane/projection is released.
@@ -531,16 +530,29 @@ not change table widths, wrapping, selection text, or the painted transcript.
 
 ## Tool leaves and titles
 
-- A tool failure may end with one model-facing hint for the next call
-  (`prompt.WithToolHint`, text owned by `prompt/`). Rows never show it: every
-  tool row, live, hydrated and in sub-agent panes, renders the content before
-  `types.ToolHintSeparator` (`types.StripToolHint`). The model still receives
-  the full result.
+- `types/toolresult.Outcome` carries success, failure, denial, cancellation,
+  not-run or uncertainty facts. Status/preview mappings are shared. A word such
+  as “cancelled” inside diagnostics never supplies a lifecycle state.
+- `ToolResult.Content` is display evidence; `AgentHint` is private model advice
+  owned by `prompt/`. Only `tools.ResultContentParts` composes that advice into
+  provider input. Session snapshots persist display evidence and the outcome;
+  rendering and copying never strip instructions by spelling or separators.
+  Literal “Hint:” text from a file remains evidence. Native patcher errors
+  contain facts only, including partial commits and exact failed search text.
+- Every settled tool row defaults closed. Its title carries one operation,
+  operand and outcome/reason; expansion retains complete diagnostics, diffs,
+  requests and receipts. Long closed titles use at most two terminal rows;
+  expansion restores the full title and evidence. Unknown effects stay visible
+  while closed. Pending approvals/questions and recovery controls stay usable.
+- Run errors and settled manual/automatic compaction use that same compact
+  outcome anatomy, not separate failure cards. Active manual compaction keeps
+  its stage view. Notifications route to the transcript instead of repeating
+  the same full diagnostic.
 - Activity groups and parallel batches share one staged tool-leaf projection.
   Expansion reveals hidden branches in place; it never replaces the tree with
   standalone legacy rows. Execution events carry exact tool arguments, not
   formatted/truncated summaries. Native command JSON envelopes are decoded only
-  at presentation; file edits/writes/patches stay separate and default-open.
+  at presentation; file edits/writes/patches stay separate and default-closed.
   **Never print a raw JSON tool-argument envelope in any tool title, status,
   compact pane, or batch leaf.** `tools.SummarizeArgs` is the single semantic
   operand authority for live events, child projections, and resumed snapshots.
@@ -761,7 +773,7 @@ implementation is copied or depended on.
   visible preview budget; counting omitted visual rows must not highlight them.
   The 24-row preview stops building rows at its budget, and its "+N more
   changes" footer counts hidden diff lines, not wrapped screen rows.
-- File edits render expanded by default, so a row lexes at most
+- Expanding a file edit lexes at most
   `diffSyntaxSyncBytes` (1 KiB) of diff text on the UI goroutine. Larger files
   paint at once with their diff bands and fallback colors while one background
   worker lexes them (`tui/chatprojection/diff_syntax.go`, a bounded cache keyed
@@ -930,6 +942,34 @@ or missing identity open an honest unavailable preview rather than guessing a
 current-store reference. Attachment content is not copied into replicated chat
 rows; original reference storage remains its owner.
 
-The activity projector uses canonical role, outcome, duration, tool name, and stable IDs. It should not infer call completion from spinner frames or rely on wall-clock rendering order. A `reply` becomes an assistant progress message (not a second tool row) when its tool result is delivered; recovery projects that same result with the same `reply:<tool-id>` identity. Parallel results are presented in provider call order on both paths. Persist the child agent ID and result identity, including synchronous waits, so recovered parent rows link to the same child review pane as live ones; the child pane owns its display name and outcome. If any source lacks those facts, show an honest standalone row rather than guessing identity or success.
+The activity projector uses canonical role, outcome, duration, tool name, and stable IDs.
+A late command settlement updates its exact originating call once, using the
+process lifetime ID (PID plus start instant), never a reused handle or matching
+command text. Its original result and immutable completion excerpt remain in
+disclosure; both journal records remain canonical and independently delivered.
+Independent operations with identical diagnostics remain separate.
+Live correlation and checkpoint metadata use that same internal call identity,
+not the provider's call ID. A provider can reuse its ID on a retry: both rows,
+their original operands, durations and permission decisions must remain intact.
+The projector does not infer completion from spinner frames or wall-clock order.
+A `reply` becomes an assistant progress message, not a second tool row, when its
+result is delivered. Recovery projects that same result with the same
+`reply:<internal-call-id>` identity. Parallel results keep provider call order on
+both paths. Persist the child agent ID and result identity, including synchronous
+waits, so recovered parent rows link to the same child review pane as live ones.
+The child pane owns its display name and outcome. Missing facts produce an honest
+standalone row, never guessed identity or success.
 
 Regressions must compare the rendered live event journey to a session's recovered snapshots: active vs settled, communication boundaries, parallel calls, expansion/copy and disclosure, failure/cancellation, children, resize/scroll, and a settled transcript with many calls. The visible summary may be compact; expanding it must never lose the original audit trail.
+
+### Model-result token sample (2026-11-09)
+
+A deterministic `tiktoken 0.13.0` / `o200k_base` count compared the exact result
+templates against commit `3ec1cdff`, with identical factual operands and every
+private hint included. The six result bodies totalled **390 → 216 tokens
+(44.6% fewer)**: safety block 93 → 40, human command denial 81 → 31, file denial
+60 → 28, required-parameter validation 36 → 14, panic 29 → 31, and a failed edit
+search 91 → 72. Panic guidance grew by two tokens to keep an explicit no-replay
+warning. This is a fixed result-text sample, not a claim about whole-session
+billing, other tokenizers, or savings from hiding UI rows. Command retrieval
+continues to use retained raw-byte pages; disclosure does not change model input.

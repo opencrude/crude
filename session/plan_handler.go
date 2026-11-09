@@ -11,6 +11,7 @@ import (
 	"crude/plan"
 	ccrude "crude/tools"
 	"crude/types/activity"
+	"crude/types/toolresult"
 )
 
 // planStore lazily constructs the session-scoped plan store. It is safe for
@@ -110,13 +111,16 @@ func getPlanTool(ctx context.Context, store *plan.Store, sessionID string, param
 			return ccrude.ToolResult{}, aerr
 		}
 		if active == nil {
-			return ccrude.ToolResult{Content: `{"error":"no_active_plan"}`}, nil
+			return ccrude.ToolResult{Content: `{"plan":null}`, Outcome: toolresult.Outcome{State: toolresult.Succeeded, Code: "no_active_plan", Summary: "No active plan"}}, nil
 		}
 		return ccrude.ToolResult{Content: mustPlanJSON(*active)}, nil
 	}
 	p, gerr := store.Get(ctx, planID)
 	if gerr != nil {
-		return ccrude.ToolResult{Content: `{"error":"plan_not_found"}`}, nil
+		if !errors.Is(gerr, plan.ErrNotFound) {
+			return ccrude.ToolResult{}, gerr
+		}
+		return ccrude.ToolResult{Content: `{"error":"plan_not_found"}`, Outcome: toolresult.Outcome{State: toolresult.Failed, Summary: "Plan not found"}}, gerr
 	}
 	if includeHistory {
 		events, eerr := store.Events(ctx, planID)

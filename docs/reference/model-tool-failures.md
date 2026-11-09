@@ -86,8 +86,28 @@ only result was "tool … is not available to this agent".
 model sometimes dropped or changed the prefix, and sometimes invented a name.
 
 **Fix.** When the rejected name ends with the name of an available tool, the
-error names that tool (`closestToolHint` in `agent/tool_exec.go`). The runtime
+model-only hint names that tool (`closestToolHint` in `agent/tool_exec.go`). The runtime
 never runs a different tool from the one called. Invented names get no hint.
 
 **Test.** `TestUnavailableToolNamesTheClosestTool` in
 `agent/tool_hint_test.go`.
+
+## Repair hints leaked through real edit failures (fixed 2026-11-09)
+
+**Failure.** Native errors contained both trailing “Hint:” text and uppercase
+patcher advice. Presentation-only string filtering missed some producers and
+did not prove live/resumed parity.
+
+**Fix.** Patcher errors contain factual diagnostics only. Native tool results
+return model advice separately as `AgentHint`; provider composition retains it
+without changing ordinary tool-result roles. Typed outcomes and display evidence
+are preserved through live events, checkpoints and SQLite display snapshots.
+
+**Tests.** `TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume` runs real
+failed edit/read tools and a native parallel patch/read batch through Session,
+App ingress and SQLite hydration at 80 and 160 columns, closed and expanded.
+`TestLiteralHintTextInEvidenceRemainsReadable` prevents removing actual source
+text merely because it contains “Hint:”.
+The opt-in capture journey checks each last-presented shell surface before the
+next transition. A fresh paint helper is not a valid oracle: it can conceal a
+missed repaint in the captured UI.

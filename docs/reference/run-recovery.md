@@ -544,3 +544,12 @@ These are deterministic local failure simulations, not a guarantee that every
 remote gateway reports trustworthy status codes or that an unavailable service
 will become reachable. Permanent/unknown faults and uncertain tool effects stay
 actionable rather than becoming blind infinite retries.
+
+### Compact result evidence
+
+Tool uncertainty is a typed tool outcome, not a run-level failure. It keeps the
+agent loop runnable and preserves the existing rule against replaying effects.
+Closed rows keep “outcome unknown” visible; expansion exposes the complete
+evidence. Recoverable run incidents keep their Continue run/Retry now control
+reachable without expansion. Source hints are model-only; recovery, retry
+accounting, incident generation fences and original diagnostics are unchanged.

@@ -78,6 +78,7 @@ run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkChatFind' ./tui/screens/shellchat
 run_bench '^BenchmarkFooterOverflowPaint$' ./tui/screens/shellfooter
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
+run_bench '^BenchmarkDenseCommandSettlementPresentedFrame$' ./tui/chatprojection
 run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview
 run_bench '^BenchmarkGitDiffLongLine(Paint|FarRightPaint)$' ./tui/screens/gitdiff
 run_bench '^BenchmarkOpenIndexedHistory$' ./localhistory

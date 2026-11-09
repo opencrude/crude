@@ -51,7 +51,11 @@ func TestGoalToolRowsRenderGoalNotJSON(t *testing.T) {
 					if strings.Contains(text, `{"`) || strings.Contains(text, `"goal"`) {
 						t.Fatalf("goal row shows raw JSON:\n%s", text)
 					}
-					for _, want := range tc.want {
+					wantText := tc.want
+					if disclosure == DisclosureCollapsed {
+						wantText = tc.want[:1] // the operation; complete goal facts are disclosed below
+					}
+					for _, want := range wantText {
 						if !strings.Contains(text, want) {
 							t.Fatalf("goal row lacks %q:\n%s", want, text)
 						}

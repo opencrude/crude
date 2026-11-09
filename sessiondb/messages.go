@@ -425,6 +425,7 @@ func persistedMessageEqual(a, b persistedMessage) bool {
 func transcriptPersistedProjection(value persistedMessage) persistedMessage {
 	m := value.Message
 	m.DisplayContent = ""
+	m.ToolOutcome = nil
 	m.ReferenceLabels = nil
 	m.Attachments = nil
 	m.Refusal = ""
@@ -491,45 +492,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 			return nil, nil, fmt.Errorf("sessiondb: load messages scan: %w", err)
 		}
 
-		m := provider.ChatMessage{
-			InternalID: r.InternalID.String,
-			Role:       r.Role,
-			Origin:     provider.MessageOrigin(r.Origin),
-			Visibility: provider.MessageVisibility(r.Visibility),
-		}
-		if r.Collaboration.Valid && r.Collaboration.String != "" {
-			var attribution provider.CollaborationAttribution
-			if json.Unmarshal([]byte(r.Collaboration.String), &attribution) == nil {
-				m.Collaboration = &attribution
-			}
-		}
-		m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
-
-		if r.ReasoningContent.Valid {
-			m.ReasoningContent = r.ReasoningContent.String
-		}
-		if r.Reasoning.Valid {
-			m.Reasoning = r.Reasoning.String
-		}
-		if r.ToolCallID.Valid {
-			m.ToolCallID = r.ToolCallID.String
-		}
-		if r.ToolCalls.Valid && r.ToolCalls.String != "" {
-			_ = json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls)
-		}
-		m.ToolError = r.ToolError != 0
-		if r.ProviderItems.Valid && r.ProviderItems.String != "" {
-			_ = json.Unmarshal([]byte(r.ProviderItems.String), &m.ProviderItems)
-		}
-		if r.CacheControl.Valid && r.CacheControl.String != "" {
-			var cc provider.CacheControl
-			if json.Unmarshal([]byte(r.CacheControl.String), &cc) == nil {
-				m.CacheControl = &cc
-			}
-		}
-		if m.Role == "tool" && r.ToolResult.Valid && r.ContentType.String != "multipart" {
-			m.Content = provider.TextContent(r.ToolResult.String)
-		}
+		m := messageWithMetaFromRow(&r).Msg
 
 		msgs = append(msgs, m)
 		turns = append(turns, r.TurnNumber)
@@ -634,6 +597,12 @@ func messageWithMetaFromRow(r *MessageRow) MessageWithMeta {
 		}
 	}
 	m.DisplayContent = meta.DisplayContent
+	if m.Role == "tool" && len(meta.Snapshots) == 1 {
+		if outcome := meta.Snapshots[0].ToolOutcome; outcome.State != "" {
+			m.ToolOutcome = &outcome
+		}
+		m.DisplayContent = meta.Snapshots[0].Content
+	}
 	m.ReferenceLabels = append([]string(nil), meta.ReferenceLabels...)
 	m.Attachments = append([]attachment.Target(nil), meta.Attachments...)
 

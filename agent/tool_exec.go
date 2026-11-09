@@ -11,10 +11,12 @@ import (
 
 	"crude/codexio"
 	"crude/metrics"
+	"crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/toolresult"
 )
 
 type execResult struct {
@@ -24,6 +26,7 @@ type execResult struct {
 	name      string
 	result    tools.ToolResult
 	toolError bool
+	duration  time.Duration
 	// failure marks a tool whose effects are uncertain (it panicked). Later
 	// serialized calls of the same batch are skipped, but the run continues:
 	// the model receives the error and inspects state before acting again.
@@ -63,7 +66,7 @@ func closestToolHint(name string, defs []tools.ToolDef) string {
 	if match == "" {
 		return ""
 	}
-	return fmt.Sprintf(" The closest available tool is %q. Call it by the exact name in your tool list, including its prefix.", match)
+	return prompt.HintClosestTool(match)
 }
 
 func validateRequiredParams(toolName string, params map[string]any, defs []tools.ToolDef) string {
@@ -93,13 +96,13 @@ func validateRequiredParams(toolName string, params map[string]any, defs []tools
 		}
 	}
 	if len(empty) > 0 {
-		return fmt.Sprintf("Error: tool %q has empty required parameter(s): %s. You MUST provide a non-empty value for each required parameter. Call %s again with %s filled in.", toolName, strings.Join(empty, ", "), toolName, strings.Join(empty, ", "))
+		return fmt.Sprintf("Error: tool %q has empty required parameter(s): %s", toolName, strings.Join(empty, ", "))
 	}
 	if toolName == "edit_file" {
 		old, oldOK := params["old_string"].(string)
 		replacement, newOK := params["new_string"].(string)
 		if oldOK && newOK && old == replacement {
-			return "Error: no changes to make: old_string and new_string are exactly the same. Do not call edit_file unless the replacement differs."
+			return "Error: no changes to make: old_string and new_string are exactly the same."
 		}
 	}
 	return ""
@@ -129,7 +132,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	for _, indexed := range nonBlocking {
 		a.logger.Debug("AGENT", "goroutine_start", "tool", indexed.call.Function.Name, "step", step)
 		go func(indexed indexedToolCall) {
-			result := a.executeOneToolCallSafely(ctx, indexed.call, emit, nil, lastReply)
+			result := a.executeOneToolCall(ctx, indexed.call, emit, nil, lastReply)
 			result.index = indexed.index
 			send(result)
 		}(indexed)
@@ -140,12 +143,14 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 			var uncertain error
 			for _, indexed := range blocking {
 				if uncertain != nil {
-					send(execResult{index: indexed.index, id: indexed.call.ID, name: indexed.call.Function.Name,
-						result: tools.ToolResult{Content: "Not executed: an earlier tool failed with uncertain effects."}, toolError: true})
+					skipped := execResult{index: indexed.index, toolError: true,
+						result: tools.ToolResult{Content: "Not executed: an earlier tool failed with uncertain effects.",
+							Outcome: toolresult.Outcome{State: toolresult.NotRun, Summary: "An earlier tool has unknown effects."}, AgentHint: prompt.HintUncertain}}
+					send(a.publishToolResult(indexed.call, skipped, emit))
 					continue
 				}
 				a.logger.Debug("AGENT", "blocking_start", "tool", indexed.call.Function.Name, "step", step)
-				result := a.executeOneToolCallSafely(ctx, indexed.call, emit, blockResolveCh, lastReply)
+				result := a.executeOneToolCall(ctx, indexed.call, emit, blockResolveCh, lastReply)
 				result.index = indexed.index
 				uncertain = result.failure
 				send(result)
@@ -156,42 +161,57 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	return ch
 }
 
-func (a *Agent) executeOneToolCallSafely(
+func (a *Agent) executeOneToolCall(
 	ctx context.Context,
 	tc provider.ToolCall,
 	emit func(AgentEvent),
 	blockResolveCh <-chan ttypes.BlockResponse,
 	lastReply *string,
 ) (result execResult) {
-	if err := ctx.Err(); err != nil {
-		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled before tool execution."}, toolError: true}
-	}
-	defer toolRuns.Since(tc.Function.Name, time.Now())
+	started := time.Now()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			message := fmt.Sprintf("Error: tool %q panicked: %v. Its effects are uncertain: inspect the affected state before relying on or retrying it.", tc.Function.Name, recovered)
+			message := fmt.Sprintf("Error: tool %q panicked: %v", tc.Function.Name, recovered)
 			a.logger.Error("TOOL", "panic", "name", tc.Function.Name, "error", recovered)
-			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-				"internal_id": tc.InternalID,
-				"tool_id":     tc.ID,
-				"name":        tc.Function.Name,
-				"phase":       "error",
-			}})
-			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-				"internal_id": tc.InternalID,
-				"tool_id":     tc.ID,
-				"name":        tc.Function.Name,
-				"result":      message,
-				"error":       "true",
-			}})
-			result = execResult{
-				id: tc.ID, name: tc.Function.Name,
-				result: tools.ToolResult{Content: message}, toolError: true,
-				failure: &toolPanicError{message: message},
-			}
+			result = execResult{id: tc.ID, name: tc.Function.Name, toolError: true,
+				result: tools.ToolResult{Content: message, AgentHint: prompt.HintUncertain,
+					Outcome: toolresult.Outcome{State: toolresult.Uncertain, Summary: "Effects are unknown. Check the affected state."}},
+				failure: &toolPanicError{message: message}}
 		}
+		if result.duration == 0 {
+			result.duration = time.Since(started)
+		}
+		result = a.publishToolResult(tc, result, emit)
+
 	}()
-	return a.executeOneToolCall(ctx, tc, emit, blockResolveCh, lastReply)
+	if err := ctx.Err(); err != nil {
+		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled before tool execution.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
+	}
+	defer toolRuns.Since(tc.Function.Name, time.Now())
+	return a.executeToolCall(ctx, tc, emit, blockResolveCh, lastReply)
+}
+
+// publishToolResult is the only completion projection for executed calls.
+// The returned value is also used to compose the immutable provider result.
+func (a *Agent) publishToolResult(tc provider.ToolCall, result execResult, emit func(AgentEvent)) execResult {
+	result.id, result.name = tc.ID, tc.Function.Name
+	result.result = tools.SettleResult(tc.Function.Name, result.result, result.toolError)
+	result.result.Outcome.CallID = tc.InternalID
+	if tc.Function.Name == "reply" {
+		return result
+	} // accepted in request order
+	data := map[string]any{
+		"internal_id": tc.InternalID, "tool_id": tc.ID, "name": tc.Function.Name,
+		"result": result.result.Content, "outcome": result.result.Outcome,
+		"tool_dur_ms":     result.duration.Milliseconds(),
+		"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
+		"lines_added":     result.result.Added, "lines_removed": result.result.Removed,
+	}
+	if result.toolError {
+		data["error"] = "true"
+	}
+	emit(AgentEvent{Type: "tool_result", Data: data})
+	return result
 }
 
 func isPotentiallyBlocking(name string) bool {
@@ -215,7 +235,7 @@ func isPotentiallyBlocking(name string) bool {
 	}
 }
 
-func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan ttypes.BlockResponse, lastReply *string) execResult {
+func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan ttypes.BlockResponse, lastReply *string) execResult {
 	internalID := tc.InternalID
 	blockID := internalID
 	if blockID == "" {
@@ -233,19 +253,6 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"name":        tc.Function.Name,
 			"args":        tc.Function.Arguments,
 		}})
-		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-			"internal_id": internalID,
-			"tool_id":     tc.ID,
-			"name":        tc.Function.Name,
-			"phase":       "error",
-		}})
-		emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-			"internal_id": internalID,
-			"tool_id":     tc.ID,
-			"name":        tc.Function.Name,
-			"result":      errResult,
-			"error":       "true",
-		}})
 		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errResult}, toolError: true}
 	}
 
@@ -253,14 +260,20 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	if validationDefs == nil {
 		validationDefs = tools.ForModel(tools.AgentTools, a.Model)
 	}
-	errMsg := ""
+	errMsg, errHint := "", ""
+	var errOutcome toolresult.Outcome
 	if a.FilteredTools != nil && findToolDef(tc.Function.Name, validationDefs) == nil {
-		errMsg = fmt.Sprintf("Error: tool %q is not available to this agent.", tc.Function.Name) + closestToolHint(tc.Function.Name, validationDefs)
+		errMsg = fmt.Sprintf("Error: tool %q is not available to this agent.", tc.Function.Name)
+		errHint = closestToolHint(tc.Function.Name, validationDefs)
 	} else {
 		errMsg = validateRequiredParams(tc.Function.Name, params, validationDefs)
 	}
 	if errMsg == "" && tc.Function.Name == "apply_patch" {
 		errMsg = a.validatePatchPermissions(params)
+		if errMsg != "" {
+			errHint = prompt.HintDenied
+			errOutcome.State = toolresult.Denied
+		}
 	}
 	if errMsg == "" {
 		metadata, known := tools.NativeMetadata(tc.Function.Name)
@@ -269,6 +282,8 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}
 		if strings.HasPrefix(tc.Function.Name, "mcp__") && (!known || !PolicyAllowsMetadata(a.Policy, metadata)) {
 			errMsg = "Error: dynamic tool is unknown or denied by the effective agent policy."
+			errHint = prompt.HintDenied
+			errOutcome.State = toolresult.Denied
 		}
 	}
 	if errMsg != "" {
@@ -279,20 +294,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"name":        tc.Function.Name,
 			"args":        tc.Function.Arguments,
 		}})
-		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-			"internal_id": internalID,
-			"tool_id":     tc.ID,
-			"name":        tc.Function.Name,
-			"phase":       "error",
-		}})
-		emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-			"internal_id": internalID,
-			"tool_id":     tc.ID,
-			"name":        tc.Function.Name,
-			"result":      errMsg,
-			"error":       "true",
-		}})
-		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
+		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: errHint, Outcome: errOutcome}, toolError: true}
 	}
 
 	if tc.Function.Name == "reply" {
@@ -307,15 +309,9 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	if tc.Function.Name == "question" && blockResolveCh != nil {
 		questionsJSON, questionErr := normalizeQuestionRequest(params)
 		if questionErr != nil {
-			errResult := "Error: invalid question request: " + questionErr.Error() + ". Call question again with a valid questions array."
+			errResult := "Error: invalid question request: " + questionErr.Error()
 			emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 				"internal_id": internalID, "tool_id": tc.ID, "name": "question", "args": formatToolArgs(params),
-			}})
-			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-				"internal_id": internalID, "tool_id": tc.ID, "name": "question", "phase": "error",
-			}})
-			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-				"internal_id": internalID, "tool_id": tc.ID, "name": "question", "result": errResult, "error": "true",
 			}})
 			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: errResult}, toolError: true}
 		}
@@ -337,28 +333,12 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		if !ok {
 			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			result := "Question interrupted because the active turn was cancelled."
-			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-				"internal_id": internalID,
-				"tool_id":     tc.ID,
-				"name":        "question",
-				"result":      result,
-				"error":       "true",
-			}})
-			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result}, toolError: true}
+			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result, Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
 		}
 		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 		result, resultError := questionBlockResult(resp)
-		resultData := map[string]any{
-			"internal_id": internalID,
-			"tool_id":     tc.ID,
-			"name":        "question",
-			"result":      result,
-		}
-		if resultError {
-			resultData["error"] = "true"
-		}
-		emit(AgentEvent{Type: "tool_result", Data: resultData})
-		return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result}, toolError: resultError}
+
+		return execResult{id: tc.ID, name: "question", result: result, toolError: resultError}
 	}
 
 	if tc.Function.Name == "execute_command" || tc.Function.Name == "async_execute_command" || tc.Function.Name == "exec_command" || (tc.Function.Name == "write_stdin" && getStr(params, "chars") != "") {
@@ -383,22 +363,9 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			}})
 		}
 		if sr.Risk.IsAlwaysBlocked() {
-			errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
+			errMsg := fmt.Sprintf("Command blocked: %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 			a.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
-			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-				"internal_id": internalID,
-				"tool_id":     tc.ID,
-				"name":        tc.Function.Name,
-				"phase":       "error",
-			}})
-			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-				"internal_id": internalID,
-				"tool_id":     tc.ID,
-				"name":        tc.Function.Name,
-				"result":      errMsg,
-				"error":       "true",
-			}})
-			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 		}
 		autoAllowed := false
 		if !a.yoloEnabled() && sr.NeedsConfirmation() {
@@ -424,28 +391,15 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 			if !ok {
 				emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
-				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
+				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
 			}
 			resp := response.Value
 			emitPermissionDecision(emit, tc, resp)
 			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			if resp == "deny" {
-				errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
+				errMsg := fmt.Sprintf("Command denied by the user.\nReason: %s", sr.Reason)
 				a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
-				emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-					"internal_id": internalID,
-					"tool_id":     tc.ID,
-					"name":        tc.Function.Name,
-					"phase":       "error",
-				}})
-				emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-					"internal_id": internalID,
-					"tool_id":     tc.ID,
-					"name":        tc.Function.Name,
-					"result":      errMsg,
-					"error":       "true",
-				}})
-				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
+				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 			}
 			a.logger.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", "execute_command")
 			if resp == "always" {
@@ -529,28 +483,15 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 		if !ok {
 			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
-			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
 		}
 		resp := response.Value
 		emitPermissionDecision(emit, tc, resp)
 		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 		if resp == "deny" {
-			errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
+			errMsg := fmt.Sprintf("%s operation denied by the user.\nTarget: %s", fileOp, fileTarget)
 			a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
-			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-				"internal_id": internalID,
-				"tool_id":     tc.ID,
-				"name":        tc.Function.Name,
-				"phase":       "error",
-			}})
-			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
-				"internal_id": internalID,
-				"tool_id":     tc.ID,
-				"name":        tc.Function.Name,
-				"result":      errMsg,
-				"error":       "true",
-			}})
-			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 		}
 		a.logger.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
 		if resp == "always" && tc.Function.Name == "apply_patch" {
@@ -723,10 +664,10 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			result, toolErr = a.ToolFn(approvedContext, tc.Function.Name, params)
 		} else {
 			if tc.Function.Name == "crude_control" {
-				result = tools.ToolResult{Content: "Crude control operation was denied or cancelled. Do not retry or broaden the requested operation; use an available adequate method."}
+				result = tools.ToolResult{Content: "Crude control operation was not approved.", AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}
 				toolErr = errors.New("crude control operation not approved")
 			} else {
-				result = tools.ToolResult{Content: "Capability change was denied or cancelled. Do not retry or expand permissions; use an available adequate method."}
+				result = tools.ToolResult{Content: "Capability change was not approved.", AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}
 				toolErr = errors.New("capability change not approved")
 			}
 			break
@@ -738,7 +679,15 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			result.ContentParts = append(result.ContentParts, provider.ContentPart{Type: "text", Text: result.Content})
 		}
 	}
-	toolFailed := toolErr != nil || IsToolError(result.Content)
+	toolFailed := toolErr != nil
+	if result.Outcome.State != "" {
+		toolFailed = toolFailed || result.Outcome.Status(false) == "error"
+	} else {
+		toolFailed = toolFailed || IsToolError(result.Content)
+	}
+	if toolErr != nil && result.Outcome.Summary == "" {
+		result.Outcome.Summary = tools.ResultReason(toolErr.Error())
+	}
 	if tc.Function.Name == "publish_report" && !toolFailed && getStr(params, "kind") == "final" {
 		a.reportPublished = true
 	}
@@ -794,35 +743,12 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}})
 	}
 
-	resultData := map[string]any{
-		"internal_id":     internalID,
-		"tool_id":         tc.ID,
-		"name":            tc.Function.Name,
-		"result":          result.Content,
-		"tool_dur_ms":     toolDur,
-		"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
-	}
-	if tc.Function.Name == "apply_patch" || tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" {
-		resultData["lines_added"] = result.Added
-		resultData["lines_removed"] = result.Removed
-	}
-	if toolFailed {
-		resultData["error"] = "true"
-		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
-			"internal_id": internalID,
-			"tool_id":     tc.ID,
-			"name":        tc.Function.Name,
-			"phase":       "error",
-		}})
-	}
-	emit(AgentEvent{Type: "tool_result", Data: resultData})
-
 	var panicErr *toolPanicError
 	var failure error
 	if errors.As(toolErr, &panicErr) {
 		failure = panicErr
 	}
-	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed, failure: failure}
+	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed, failure: failure, duration: time.Duration(toolDur) * time.Millisecond}
 }
 
 func emitPermissionDecision(emit func(AgentEvent), tc provider.ToolCall, response string) {
@@ -965,29 +891,31 @@ func normalizeQuestionRequest(params map[string]any) ([]byte, error) {
 	return json.Marshal(questions)
 }
 
-func questionBlockResult(response ttypes.BlockResponse) (string, bool) {
+func questionBlockResult(response ttypes.BlockResponse) (tools.ToolResult, bool) {
 	switch response.Outcome {
 	case ttypes.BlockAnswered:
 		if strings.TrimSpace(response.Value) == "" {
-			return "Question was answered without any selected or written response. Ask again with clearer options if the answer is required.", true
+			return tools.ToolResult{Content: "No answer was supplied.", AgentHint: prompt.HintQuestionRequired}, true
 		}
 		if response.AttributionKind == "agent" || response.AttributionKind == "external" {
-			return fmt.Sprintf("Answer supplied by %s %q, not by the human user:\n%s", response.AttributionKind, response.AttributionID, response.Value), false
+			return tools.ToolResult{Content: fmt.Sprintf("Answer supplied by %s %q, not by the human user:\n%s", response.AttributionKind, response.AttributionID, response.Value)}, false
 		}
-		return response.Value, false
+		return tools.ToolResult{Content: response.Value}, false
 	case ttypes.BlockUserCancelled:
+		result := tools.ToolResult{Content: "The user cancelled this question without answering.",
+			Outcome: toolresult.Outcome{State: toolresult.Cancelled}, AgentHint: prompt.HintQuestionRequired}
 		if response.AttributionKind == "agent" || response.AttributionKind == "external" {
-			return fmt.Sprintf("The %s %q cancelled this task question without a human answer. Do not treat this as human approval.", response.AttributionKind, response.AttributionID), true
+			result.Content = fmt.Sprintf("The %s %q cancelled this question without a human answer.", response.AttributionKind, response.AttributionID)
 		}
-		return "The user cancelled this question without answering. Continue only if the missing answer is not required; otherwise explain what information is still needed.", true
+		return result, true
 	case ttypes.BlockValidationError:
 		detail := strings.TrimSpace(response.Detail)
 		if detail == "" {
 			detail = "the question payload could not be rendered"
 		}
-		return "Question request validation failed: " + detail + ". Fix the payload and call question again.", true
+		return tools.ToolResult{Content: "Question request validation failed: " + detail}, true
 	default:
-		return "Question request failed because its completion outcome was invalid. Call question again.", true
+		return tools.ToolResult{Content: "Question request failed because its completion outcome was invalid."}, true
 	}
 }
 

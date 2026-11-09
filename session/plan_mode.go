@@ -97,7 +97,7 @@ func planModeTools(defs []tools.ToolDef, metadata func(string) (tools.ToolMetada
 // planModeRefusal explains why a Plan mode call cannot run, or returns nil.
 func planModeRefusal(tool string, params map[string]any, metadata func(string) (tools.ToolMetadata, bool), lg *logger.Logger, syntax command.Syntax) error {
 	if !planModeAllows(tool, metadata) {
-		return fmt.Errorf("[PLAN MODE] %s changes the workspace or carries out work, and the user has Plan mode on. Explore read-only and put this step in the proposed plan instead", tool)
+		return fmt.Errorf("plan mode does not allow %s", tool)
 	}
 	command := getStrParam(params, "command")
 	switch tool {
@@ -105,7 +105,7 @@ func planModeRefusal(tool string, params map[string]any, metadata func(string) (
 		command = getStrParam(params, "cmd")
 	case "write_stdin":
 		if chars := getStrParam(params, "chars"); chars != "" && chars != "\x03" {
-			return fmt.Errorf("[PLAN MODE] interactive input can change the workspace, and the user has Plan mode on")
+			return fmt.Errorf("plan mode does not allow interactive input")
 		}
 		return nil
 	case "execute_command", "async_execute_command":
@@ -118,7 +118,7 @@ func planModeRefusal(tool string, params map[string]any, metadata func(string) (
 	policy := safety.DefaultCommandPolicy()
 	policy.Syntax = safety.CallSyntax(tool, getStrParam(params, "shell"), syntax)
 	if result := safety.CheckCommandSafetyWithPolicy(command, lg, policy); result.Risk != safety.RiskSafe {
-		return fmt.Errorf("[PLAN MODE] %q is not a read-only command (risk: %s, %s), and the user has Plan mode on. Use read-only commands to explore and put this step in the proposed plan instead", command, result.Risk, result.Reason)
+		return fmt.Errorf("plan mode does not allow this command: %s", result.Reason)
 	}
 	return nil
 }

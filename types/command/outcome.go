@@ -2,7 +2,10 @@
 // persistence and presentation without coupling consumers to process managers.
 package command
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type Outcome struct {
 	Handle      string        `json:"handle"`
@@ -16,9 +19,20 @@ type Outcome struct {
 	ExitKnown   bool          `json:"exit_known"`
 	OutputBytes int           `json:"output_bytes"`
 	Error       string        `json:"error,omitempty"`
+	TimedOut    bool          `json:"timed_out,omitempty"`
+	Uncertain   bool          `json:"uncertain,omitempty"`
 	// Output is a bounded immutable excerpt captured at settlement. It survives
 	// session/core restart even when the live process manager no longer exists.
 	Output *Result `json:"output,omitempty"`
+}
+
+// ExecutionID is independent of a reusable handle and of promotion to async.
+// Missing owner evidence cannot identify a command and never permits a merge.
+func ExecutionID(pid int, started time.Time) string {
+	if pid <= 0 || started.IsZero() {
+		return ""
+	}
+	return fmt.Sprintf("process:%d:%d", pid, started.UnixNano())
 }
 
 func Clone(value *Outcome) *Outcome {

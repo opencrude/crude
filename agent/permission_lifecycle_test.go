@@ -12,6 +12,7 @@ import (
 	"crude/safety"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/toolresult"
 )
 
 func newPermissionLifecycleAgent(t *testing.T) *Agent {
@@ -100,7 +101,7 @@ func TestExplicitPermissionDenialHasDistinctLifecycleEvent(t *testing.T) {
 	if decision != "denied" {
 		t.Fatalf("permission decision = %q, want denied", decision)
 	}
-	if !strings.Contains(result.result.Content, "user denied") {
+	if result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "denied by the user") {
 		t.Fatalf("denial result = %q", result.result.Content)
 	}
 }
@@ -163,7 +164,7 @@ func TestHumanPermissionResponsesAlwaysReleaseExactBlock(t *testing.T) {
 				if called != wantExecution || decided != (choice != "cancel") {
 					t.Errorf("called=%v decided=%v for %s", called, decided, choice)
 				}
-				if choice == "deny" && !strings.Contains(result.result.Content, "user denied") {
+				if choice == "deny" && (result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "denied by the user")) {
 					t.Errorf("lost explicit rejection: %q", result.result.Content)
 				}
 			})
@@ -243,8 +244,8 @@ func TestQuestionValidationFailureIsNotUserCancellation(t *testing.T) {
 		Outcome: ttypes.BlockValidationError,
 		Detail:  "header is missing",
 	})
-	if !isError || !strings.Contains(result, "validation failed") || strings.Contains(result, "user cancelled") {
-		t.Fatalf("validation result = %q, error=%v", result, isError)
+	if !isError || !strings.Contains(result.Content, "validation failed") || strings.Contains(result.Content, "user cancelled") {
+		t.Fatalf("validation result = %+v, error=%v", result, isError)
 	}
 }
 
@@ -268,7 +269,7 @@ func TestLocalScriptUsesConfigurableConfirmationInsteadOfBlindBlock(t *testing.T
 		}
 		responses <- ttypes.BlockResponse{RequestID: "internal-command", Outcome: ttypes.BlockAnswered, Value: "deny"}
 	}, responses, new(string))
-	if !blocked || !strings.Contains(result.result.Content, "user denied") {
+	if !blocked || result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "denied by the user") {
 		t.Fatalf("script confirmation blocked=%v result=%q", blocked, result.result.Content)
 	}
 }
@@ -282,7 +283,7 @@ func TestHardBlockedCommandEmitsPersistentSafetyAlert(t *testing.T) {
 			alerted = true
 		}
 	}, nil, new(string))
-	if !alerted || !result.toolError || !strings.Contains(result.result.Content, "SAFETY") {
+	if !alerted || !result.toolError || result.result.Outcome.State != toolresult.Denied || !strings.Contains(result.result.Content, "Command blocked") {
 		t.Fatalf("blocked alert=%v result=%#v", alerted, result)
 	}
 }

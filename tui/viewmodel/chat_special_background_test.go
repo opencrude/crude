@@ -45,7 +45,8 @@ func specialChatBackgroundCases() []struct {
 				ToolInput: `{"recipient_ids":["child"],"kind":"note","body":"Please review parser ownership."}`,
 				Content:   `{"event":{"id":"note-1","sequence":1,"sender_id":"root","sender_name":"Rebecca","recipients":[{"id":"child","name":"Asha"}],"origin":"peer","kind":"peer_note","body":"Please review parser ownership."},"deliveries":[{"id":"delivery-1","recipient_id":"child","state":"pending","version":1}]}`,
 			}},
-			want: []string{"Sent workspace message", "review parser"},
+			expand: "send",
+			want:   []string{"Sent workspace message", "review parser"},
 		},
 		{
 			name: "board",
@@ -54,7 +55,8 @@ func specialChatBackgroundCases() []struct {
 				ToolInput: `{"since":0}`,
 				Content:   `{"events":[{"sender_name":"Asha","recipients":[{"id":"root","name":"Rebecca"}],"kind":"peer_reply","body":"Board evidence is ready."}],"cursor":1,"snapshot":1}`,
 			}},
-			want: []string{"Read workspace history", "Board evidence"},
+			expand: "board",
+			want:   []string{"Read workspace history", "Board evidence"},
 		},
 		{
 			name: "expanded thought",
@@ -108,6 +110,9 @@ func TestSpecialChatBlocksPaintFullWidthAndResumeIdentically(t *testing.T) {
 					if c.expand != "" {
 						renderer.ToggleDisclosure(c.expand)
 					}
+					if c.name == "mixed activity tree" {
+						renderer.ToggleDisclosure("board")
+					}
 					app.paintShellFrame()
 					live := app.mainSurf.Buffer().Clone()
 					tokens := ui.NewTokenSet(app.Theme)
@@ -152,6 +157,9 @@ func TestSpecialChatBlocksPaintFullWidthAndResumeIdentically(t *testing.T) {
 					recovered.syncAgentMessages(state.ID, false)
 					if c.expand != "" {
 						recovered.subPaneProjections.GetExisting(state.ID).renderer.ToggleDisclosure(c.expand)
+					}
+					if c.name == "mixed activity tree" {
+						recovered.subPaneProjections.GetExisting(state.ID).renderer.ToggleDisclosure("board")
 					}
 					recovered.paintShellFrame()
 					resumed := recovered.mainSurf.Buffer()

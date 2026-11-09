@@ -127,17 +127,17 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 							text := strings.Join(lrows[0].Lines, "\n")
 							// Wrapping inserts chrome/newlines, not ellipses or lost words.
 							plain := strings.Join(strings.Fields(strings.ReplaceAll(text, "│", " ")), " ")
-							want := c.preview
 							if expanded {
-								want = c.detail
 								if !strings.Contains(text, "Request") {
 									t.Fatalf("request evidence inaccessible: %s", text)
 								}
+								for _, want := range []string{c.preview, c.detail} {
+									if !strings.Contains(plain, want) {
+										t.Fatalf("missing useful %q: %s", want, text)
+									}
+								}
 							}
-							if !strings.Contains(plain, want) {
-								t.Fatalf("missing useful %q: %s", want, text)
-							}
-							if strings.Contains(text, `{"`) || strings.Contains(text, `"recipient_availability"`) || strings.Contains(text, "<skill ") || strings.Contains(text, "…") {
+							if strings.Contains(text, `{"`) || strings.Contains(text, `"recipient_availability"`) || strings.Contains(text, "<skill ") || expanded && strings.Contains(text, "…") {
 								t.Fatalf("bare envelope or arbitrary elision: %s", text)
 							}
 						}
@@ -175,15 +175,16 @@ func TestStructuredFamilyParallelLeavesSharePresentation(t *testing.T) {
 			rrows, _, _ := resumed.ExportMessageRows(200)
 			assertSameRows(t, "batch compact", rows[0], rrows[0])
 			text := strings.Join(rows[0].Lines, "\n")
-			if !strings.Contains(text, c.preview) || strings.Contains(text, `{"`) {
-				t.Fatalf("batch lost useful semantic preview: %s", text)
+			if !strings.Contains(text, "▸") || strings.Contains(text, `{"`) {
+				t.Fatalf("batch lost compact semantic title/disclosure: %s", text)
 			}
 			r.ToggleDisclosure("batch:0")
 			resumed.ToggleDisclosure("batch:0")
 			rows, _, _ = r.ExportMessageRows(200)
 			rrows, _, _ = resumed.ExportMessageRows(200)
 			assertSameRows(t, "batch expanded", rows[0], rrows[0])
-			if !strings.Contains(strings.Join(rows[0].Lines, "\n"), c.detail) {
+			text = strings.Join(rows[0].Lines, "\n")
+			if !strings.Contains(text, c.detail) || !strings.Contains(text, c.preview) {
 				t.Fatalf("batch evidence inaccessible: %+v", rows)
 			}
 		})
@@ -227,8 +228,8 @@ func TestStructuredFamilyPaintClickAndCopyJourney(t *testing.T) {
 			}
 			mount()
 			painted := bufferPlain(screen.PaintTestBuffer(width, h))
-			if !strings.Contains(painted, c.preview) {
-				t.Fatalf("useful compact evidence did not paint: %s", painted)
+			if !strings.Contains(painted, "▸") {
+				t.Fatalf("compact result has no painted disclosure: %s", painted)
 			}
 			ctx := ui.EventContext{LocalX: th.Spacing.PadLR + 3, LocalY: rows[0].ToggleLine}
 			_ = screen.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: ctx.LocalY, Button: tea.MouseLeft}))
@@ -240,7 +241,7 @@ func TestStructuredFamilyPaintClickAndCopyJourney(t *testing.T) {
 			rows, _, h = renderer.ExportMessageRows(width)
 			mount()
 			painted = bufferPlain(screen.PaintTestBuffer(width, h))
-			if !strings.Contains(painted, c.detail) {
+			if !strings.Contains(painted, c.detail) || !strings.Contains(painted, c.preview) {
 				t.Fatalf("expanded evidence did not paint: %s", painted)
 			}
 			ctx.LocalX, ctx.LocalY = th.Spacing.PadLR, 1

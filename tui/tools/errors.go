@@ -9,10 +9,9 @@ import (
 // ToolErrorReason renders a short, human reason for a tool failure whose
 // payload is structured. Planning tools answer with canonical JSON addressed to
 // the model; a row must never dump that payload at the user, so the failure
-// reads as "<tool> failed" followed by the reason. Edit-tool failures carry prose plus a
-// trailing "Hint: …" line addressed to the model's next call, so their row keeps
-// only the first line as the reason. Returns "" when the content carries no
-// recognizable reason (plain-text errors keep their own message).
+// reads as "<tool> failed" followed by the reason. Prose failures use the first
+// factual line. Model guidance is kept in ToolResult.AgentHint, never here.
+// Returns "" when the content carries no recognizable reason.
 func ToolErrorReason(tool, content string) string {
 	if tool == "multi_tool_use.parallel" {
 		var batch struct {
@@ -65,8 +64,7 @@ func ToolErrorReason(tool, content string) string {
 	}
 }
 
-// isEditFailureTool reports file-mutation tools whose failures pair a one-line
-// reason with a model-facing hint.
+// isEditFailureTool identifies native prose failures with a first-line reason.
 func isEditFailureTool(name string) bool {
 	switch name {
 	case "edit_file", "write_file":
@@ -77,8 +75,7 @@ func isEditFailureTool(name string) bool {
 }
 
 // editFailureReason compacts an edit-tool failure into its reason line: the
-// first line with the "Error: " label removed. The hint line that follows is an
-// instruction for the model's retry, never row content.
+// first line with the "Error: " label removed. Advice is not part of this input.
 func editFailureReason(content string) string {
 	text := strings.TrimSpace(content)
 	if !strings.HasPrefix(text, "Error:") {

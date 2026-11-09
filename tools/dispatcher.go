@@ -19,15 +19,17 @@ import (
 	"crude/prompt"
 	"crude/provider"
 	"crude/textencoding"
+	"crude/types/toolresult"
 )
 
 // readFileHint wraps a read_file error. For a missing file it names real
 // candidates from the nearest existing directory, so a guessed path costs one
 // failed call instead of a list_directory round trip and another guess.
-func readFileHint(err error, path string) string {
+func readFileHint(err error, path string) (result ToolResult) {
+	defer func() { result.Outcome = fileFailureOutcome(err) }()
 	msg := "Error: " + err.Error()
 	if !errors.Is(err, fs.ErrNotExist) || path == "" {
-		return msg
+		return ToolResult{Content: msg}
 	}
 	dir, want := filepath.Dir(path), strings.ToLower(filepath.Base(path))
 	for dir != "" && dir != filepath.Dir(dir) {
@@ -39,7 +41,7 @@ func readFileHint(err error, path string) string {
 	}
 	entries, readErr := os.ReadDir(dir)
 	if readErr != nil {
-		return prompt.WithToolHint(msg, prompt.HintDiscoverNames)
+		return ToolResult{Content: msg, AgentHint: prompt.HintDiscoverNames}
 	}
 	stem := strings.TrimSuffix(want, filepath.Ext(want))
 	var close, other []string
@@ -63,9 +65,9 @@ func readFileHint(err error, path string) string {
 		candidates = candidates[:12]
 	}
 	if len(candidates) == 0 {
-		return prompt.WithToolHint(msg, prompt.HintEmptyDirectory(dir))
+		return ToolResult{Content: msg, AgentHint: prompt.HintEmptyDirectory(dir)}
 	}
-	return prompt.WithToolHint(msg, prompt.HintNearbyEntries(dir, candidates))
+	return ToolResult{Content: msg, AgentHint: prompt.HintNearbyEntries(dir, candidates)}
 }
 
 func GetStrArg(args map[string]any, key string, defaultVal string) string {
@@ -136,6 +138,9 @@ func GetFloatArgAny(args map[string]any, key string, defaultVal float64) float64
 
 type ToolResult struct {
 	Content string
+	// AgentHint is appended only to provider input, never display evidence.
+	AgentHint string
+	Outcome   toolresult.Outcome
 	// ContentParts is the canonical ordered multimodal result, when supplied.
 	// Content remains display/search evidence; encoders never stringify media.
 	ContentParts []provider.ContentPart
@@ -219,7 +224,7 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		}
 		content, encoding, err := reader.ReadText(path)
 		if err != nil {
-			result = ToolResult{Content: readFileHint(err, path)}
+			result = readFileHint(err, path)
 			break
 		}
 		if encoded {
@@ -249,7 +254,7 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		}
 		oldContent, encoding, readErr := writer.ReadText(path)
 		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-			result = ToolResult{Content: readFileHint(readErr, path)}
+			result = readFileHint(readErr, path)
 			break
 		}
 		if err := writer.WriteTracked(path, content, mutationPreparer(opts)); err != nil {
@@ -285,11 +290,11 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		}
 		orig, encoding, err := writer.ReadText(path)
 		if err != nil {
-			result = ToolResult{Content: readFileHint(err, path)}
+			result = readFileHint(err, path)
 			break
 		}
 		if err := writer.PatchTracked(path, []fileio.SearchReplace{{Search: oldString, Replace: newString}}, mutationPreparer(opts)); err != nil {
-			result = ToolResult{Content: prompt.WithToolHint(fmt.Sprintf("Error: %v", err), prompt.HintVerifyEditContent)}
+			result = ToolResult{Content: fmt.Sprintf("Error: %v", err), AgentHint: prompt.HintVerifyEditContent, Outcome: fileFailureOutcome(err)}
 			break
 		}
 		// Render text, never the encoded byte image, in the result's diff.
@@ -508,6 +513,13 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 	return result
 }
 
+func fileFailureOutcome(err error) toolresult.Outcome {
+	for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(err) {
+		err = cause
+	}
+	return toolresult.Outcome{State: toolresult.Failed, Summary: ResultReason(err.Error())}
+}
+
 // tryDocRead attempts to convert a binary document file to Markdown
 // and format it for display (with offset/limit support, line-based).
 // Returns the formatted content and true if the conversion succeeded,
@@ -604,7 +616,7 @@ func noChangeEditResult(oldString, newString string) ToolResult {
 	if oldString == newString {
 		reason = "no changes to make: old_string and new_string are exactly the same"
 	}
-	return ToolResult{Content: prompt.WithToolHint("Error: "+reason, prompt.HintNoChangeEdit)}
+	return ToolResult{Content: "Error: " + reason, AgentHint: prompt.HintNoChangeEdit}
 }
 
 // displayPath renders path relative to root when it lies inside it, so search

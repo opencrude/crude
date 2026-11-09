@@ -442,3 +442,13 @@ general task-quality, token, latency, or cost improvement.
   compaction and normal turns share one authoritative active context. Resume
   admits old evidence passively with zero provider/tool/child replay; genuinely
   new peer input may wake the attached idle root.
+
+### Compact result projection
+
+Board, memory and peer-operation results share the settled, closed-by-default
+tool projection. Expansion retains exact identities, revisions, delivery state,
+attribution, pagination and full retained bodies. Wait repair advice is a
+model-only result channel; observation and delivery remain separate. Joining
+command presentation by process lifetime identity never acknowledges, prunes,
+replays or consumes a journal event. A failed observed run is not a failed wait
+transport and is never painted as a successful run.

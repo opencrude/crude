@@ -109,7 +109,7 @@ func TestRelativePathsInStreamingAndFailedRows(t *testing.T) {
 	r.SyncMessages([]types.ChatMessage{failed}, 4, 0)
 	rows, _, _ = r.ExportMessageRows(200)
 	text := strings.Join(rows[0].Lines, "\n")
-	if !strings.Contains(text, "Read File failed src/a.go") || !strings.Contains(text, "Error: denied absolute path /project/src/a.go") {
+	if !strings.Contains(text, "Read File failed src/a.go") || !strings.Contains(text, "denied absolute path /project/src/a.go") {
 		t.Fatalf("failure lost its relative title or literal diagnostics: %s", text)
 	}
 }
@@ -202,17 +202,12 @@ func TestRelativeToolTitlesMatchLiveAndHydratedEvidence(t *testing.T) {
 			// Only tools with disclosure need a second inspection. The retained
 			// result is never shortened along with the title.
 			if lrows[0].Toggle {
-				if tc.tool == "apply_patch" {
-					if text := strings.Join(lrows[0].Lines, "\n"); !strings.Contains(text, tc.evidence) {
-						t.Fatalf("default-open patch evidence missing %q: %s", tc.evidence, text)
-					}
-				}
 				left.ToggleDisclosure(lrows[0].ID)
 				right.ToggleDisclosure(rrows[0].ID)
 				lrows, _, _ = left.ExportMessageRows(200)
 				rrows, _, _ = right.ExportMessageRows(200)
 				assertSameRows(t, "relative expanded", lrows[0], rrows[0])
-				if text := strings.Join(lrows[0].Lines, "\n"); tc.tool != "apply_patch" && !strings.Contains(text, tc.evidence) {
+				if text := strings.Join(lrows[0].Lines, "\n"); !strings.Contains(text, tc.evidence) {
 					t.Fatalf("expanded evidence missing %q: %s", tc.evidence, text)
 				}
 			}

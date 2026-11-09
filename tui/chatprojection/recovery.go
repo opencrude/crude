@@ -89,6 +89,9 @@ func recoveryHeader(message types.ChatMessage, ctx renderContext) PaintLine {
 	prefix := "│ " + marker + " "
 	actionable := status.CanRetry()
 	actionText := " (Retry now)"
+	if status.State == recovery.NeedsAttention || status.State == recovery.Interrupted {
+		actionText = " (Continue run)"
+	}
 	suffix := " " + chevron
 	if actionable {
 		suffix = actionText + suffix

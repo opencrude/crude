@@ -11,8 +11,8 @@ import (
 // MarshalMsg implements msgp.Marshaler
 func (z *AsyncCmdInfo) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 12
-	o = append(o, 0x9c)
+	// array header, size 14
+	o = append(o, 0x9e)
 	o = msgp.AppendString(o, z.Handle)
 	o = msgp.AppendString(o, z.Command)
 	o = msgp.AppendString(o, z.CWD)
@@ -27,6 +27,8 @@ func (z *AsyncCmdInfo) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendDuration(o, z.Duration)
 	o = msgp.AppendInt(o, z.ExitCode)
 	o = msgp.AppendString(o, z.Error)
+	o = msgp.AppendBool(o, z.TimedOut)
+	o = msgp.AppendBool(o, z.Uncertain)
 	o = msgp.AppendInt(o, z.OutputBytes)
 	if z.SettledOutput == nil {
 		o = msgp.AppendNil(o)
@@ -52,8 +54,8 @@ func (z *AsyncCmdInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 12 {
-		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+	if zb0001 != 14 {
+		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
 		return
 	}
 	z.Handle, bts, err = msgp.ReadStringBytes(bts)
@@ -106,6 +108,16 @@ func (z *AsyncCmdInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Error")
 		return
 	}
+	z.TimedOut, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TimedOut")
+		return
+	}
+	z.Uncertain, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Uncertain")
+		return
+	}
 	z.OutputBytes, bts, err = msgp.ReadIntBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "OutputBytes")
@@ -133,7 +145,7 @@ func (z *AsyncCmdInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *AsyncCmdInfo) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Handle) + msgp.StringPrefixSize + len(z.Command) + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + (*command.Status)(&z.Status).Msgsize() + msgp.TimeSize + msgp.TimeSize + msgp.DurationSize + msgp.IntSize + msgp.StringPrefixSize + len(z.Error) + msgp.IntSize
+	s = 1 + msgp.StringPrefixSize + len(z.Handle) + msgp.StringPrefixSize + len(z.Command) + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + (*command.Status)(&z.Status).Msgsize() + msgp.TimeSize + msgp.TimeSize + msgp.DurationSize + msgp.IntSize + msgp.StringPrefixSize + len(z.Error) + msgp.BoolSize + msgp.BoolSize + msgp.IntSize
 	if z.SettledOutput == nil {
 		s += msgp.NilSize
 	} else {

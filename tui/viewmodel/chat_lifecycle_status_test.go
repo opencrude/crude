@@ -227,7 +227,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	rows := renderer.ExportMessageRowsSnapshot(100).Rows
 	statusRow, thinkingRow := -1, -1
 	for index, row := range rows {
-		if row.ContextBoundary {
+		if strings.Contains(strings.Join(row.Lines, "\n"), "Compacted context") {
 			statusRow = index
 		}
 		if strings.Contains(strings.Join(row.Lines, "\n"), "first second") {
@@ -237,7 +237,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	if statusRow < 0 || thinkingRow <= statusRow {
 		t.Fatalf("paint projection order status=%d thinking=%d", statusRow, thinkingRow)
 	}
-	if rows[statusRow].ContextBoundaryStart != 1 || len(rows[thinkingRow].Lines) < 2 || strings.TrimSpace(rows[thinkingRow].Lines[0]) != "" {
+	if rows[statusRow].ContextBoundary || len(rows[statusRow].Lines) < 2 || strings.TrimSpace(rows[statusRow].Lines[0]) != "" || len(rows[thinkingRow].Lines) < 2 || strings.TrimSpace(rows[thinkingRow].Lines[0]) != "" {
 		t.Fatalf("mandatory inter-object spacing missing: boundary=%+v thinking=%+v", rows[statusRow], rows[thinkingRow])
 	}
 }

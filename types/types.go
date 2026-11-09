@@ -12,6 +12,7 @@ import (
 	"crude/types/attachment"
 	"crude/types/reasoning"
 	"crude/types/recovery"
+	"crude/types/toolresult"
 )
 
 // ConversationMessage is the presentation-neutral canonical message shared by
@@ -32,24 +33,25 @@ type ConversationMessage struct {
 	ModelID         string                             `json:"model_id,omitempty"`
 	Collaboration   *provider.CollaborationAttribution `json:"collaboration,omitempty"`
 
-	ToolName            string        `json:"tool_name,omitempty"`
-	ToolArgs            string        `json:"tool_args,omitempty"`
-	ToolCommand         string        `json:"tool_command,omitempty"`
-	ToolInput           string        `json:"tool_input,omitempty"`
-	ToolScope           string        `json:"tool_scope,omitempty"`
-	ToolID              string        `json:"tool_id,omitempty"`
-	ToolRoundID         string        `json:"tool_round_id,omitempty"`
-	ToolStatus          string        `json:"tool_status,omitempty"`
-	ToolIndex           int           `json:"tool_index,omitempty"`
-	ToolProgressPhase   string        `json:"tool_progress_phase,omitempty"`
-	ToolProgressMessage string        `json:"tool_progress_message,omitempty"`
-	ToolProgressLabel   string        `json:"tool_progress_label,omitempty"`
-	ToolPreviewPhase    string        `json:"tool_preview_phase,omitempty"`
-	ToolEstTokens       int           `json:"tool_est_tokens,omitempty"`
-	ToolLinesAdded      int           `json:"tool_lines_added,omitempty"`
-	ToolLinesRemoved    int           `json:"tool_lines_removed,omitempty"`
-	ToolStartTime       time.Time     `json:"tool_start_time,omitempty"`
-	ToolDuration        time.Duration `json:"tool_duration,omitempty"`
+	ToolName            string             `json:"tool_name,omitempty"`
+	ToolArgs            string             `json:"tool_args,omitempty"`
+	ToolCommand         string             `json:"tool_command,omitempty"`
+	ToolInput           string             `json:"tool_input,omitempty"`
+	ToolScope           string             `json:"tool_scope,omitempty"`
+	ToolID              string             `json:"tool_id,omitempty"`
+	ToolRoundID         string             `json:"tool_round_id,omitempty"`
+	ToolStatus          string             `json:"tool_status,omitempty"`
+	ToolOutcome         toolresult.Outcome `json:"tool_outcome,omitempty,omitzero"`
+	ToolIndex           int                `json:"tool_index,omitempty"`
+	ToolProgressPhase   string             `json:"tool_progress_phase,omitempty"`
+	ToolProgressMessage string             `json:"tool_progress_message,omitempty"`
+	ToolProgressLabel   string             `json:"tool_progress_label,omitempty"`
+	ToolPreviewPhase    string             `json:"tool_preview_phase,omitempty"`
+	ToolEstTokens       int                `json:"tool_est_tokens,omitempty"`
+	ToolLinesAdded      int                `json:"tool_lines_added,omitempty"`
+	ToolLinesRemoved    int                `json:"tool_lines_removed,omitempty"`
+	ToolStartTime       time.Time          `json:"tool_start_time,omitempty"`
+	ToolDuration        time.Duration      `json:"tool_duration,omitempty"`
 
 	ThinkingActive         bool              `json:"thinking_active,omitempty"`
 	ThinkingInterrupted    bool              `json:"thinking_interrupted,omitempty"`
@@ -914,6 +916,7 @@ type ChatMessage struct {
 	ToolID      string
 	ToolRoundID string
 	ToolStatus  string
+	ToolOutcome toolresult.Outcome
 	ToolIndex   int
 
 	ToolProgressPhase   string

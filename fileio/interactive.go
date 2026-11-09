@@ -174,7 +174,8 @@ func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, ma
 	if outputEnd > outputStart {
 		descriptor.ShownRanges = []OutputRange{{StartByte: outputStart, EndByte: outputEnd}}
 	}
-	result := InteractiveResult{Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, WallTimeSeconds: time.Since(start).Seconds(), Output: output, OutputDescriptor: descriptor}
+	result := InteractiveResult{ExecutionID: command.ExecutionID(info.PID, info.StartedAt), Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, WallTimeSeconds: time.Since(start).Seconds(), Output: output, OutputDescriptor: descriptor, TimedOut: info.TimedOut, Uncertain: info.Uncertain}
+	result.Cancelled = info.Status == AsyncKilled && !info.TimedOut
 	tokens := (utf8.RuneCountInString(output) + 3) / 4
 	firstOmitted := outputEnd
 	byteBudget := maxTokens * 4

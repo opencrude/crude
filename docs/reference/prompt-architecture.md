@@ -434,8 +434,13 @@ searched-for capability (`RuntimeCapabilities`). When another agent of the
 session makes a capability usable, the next request carries a context-only
 `RuntimeCapabilityShared` notice (see
 [capabilities](capabilities.md#sharing-within-a-session)). Tool-failure hints
-are model instruction text too: `prompt/tool_hints.go` owns them and their
-separator, and presentation strips them from rows.
+are model instruction text too: `prompt/tool_hints.go` owns them. Producers
+return them as `ToolResult.AgentHint`, separate from factual display evidence.
+The provider composition boundary appends the hint to ordinary text without
+changing a text-only tool result into a media message. Display snapshots carry
+only facts and typed outcomes; no renderer strips instructions from prose.
+Native JSON objects keep their machine-readable fields and receive an extra
+`agent_hint` field only in model input, never JSON followed by unparseable prose.
 
 `prompt/` owns extraction wording and the checkpoint envelope; it does not own
 turn completion, plans, child execution or command lifetime. Session/file owners

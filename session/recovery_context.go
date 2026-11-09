@@ -11,6 +11,7 @@ import (
 
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/types/toolresult"
 )
 
 // reconcileInterruptedTools closes only missing outcomes, never rerunning a
@@ -43,7 +44,8 @@ func reconcileInterruptedTools(messages []provider.ChatMessage, evidence ...prov
 				}
 				result = append(result, provider.ChatMessage{
 					Role: "tool", ToolCallID: call.ID, ToolError: true,
-					Content: provider.TextContent("Outcome unknown: execution was interrupted before a durable result was recorded. This call has not been replayed."),
+					ToolOutcome: &toolresult.Outcome{State: toolresult.Uncertain, CallID: call.InternalID, Summary: "Effects are unknown. Check the affected state."},
+					Content:     provider.TextContent("Outcome unknown: execution was interrupted before a durable result was recorded. This call has not been replayed."),
 				})
 			}
 		}
@@ -171,6 +173,9 @@ func (s *Session) restoreRecoveryTranscript(checkpoint *sessiondb.RecoveryCheckp
 	for _, message := range archive {
 		for _, call := range message.ToolCalls {
 			names[call.ID] = call.Function.Name
+			if call.InternalID != "" {
+				names[call.InternalID] = call.Function.Name
+			}
 		}
 	}
 	when := checkpoint.Status.UpdatedAt
@@ -237,7 +242,7 @@ func (s *Session) restoreRecoveryTranscript(checkpoint *sessiondb.RecoveryCheckp
 			meta.ContextOnly, meta.DisplayRole = true, "hidden_runtime_context"
 		}
 		if message.Role == "tool" {
-			meta.ToolName, meta.ToolArgs = names[message.ToolCallID], args[message.ToolCallID]
+			meta.ToolName, meta.ToolArgs = names[toolResultKey(message)], args[toolResultKey(message)]
 			if message.ToolError {
 				meta.ToolStatus = "error"
 			}
@@ -245,7 +250,7 @@ func (s *Session) restoreRecoveryTranscript(checkpoint *sessiondb.RecoveryCheckp
 		if message.Role == "assistant" || message.Role == "tool" {
 			meta.TurnGeneration = checkpoint.Status.Generation
 		}
-		meta = canonicalizeDisplayMeta(message, meta, args[message.ToolCallID], i, when)
+		meta = canonicalizeDisplayMeta(message, meta, args[toolResultKey(message)], i, when)
 		metas = append(metas, meta)
 		turns = append(turns, s.turnNumber)
 		times = append(times, when.UnixNano())

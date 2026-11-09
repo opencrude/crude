@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"crude/tui/screens/decision"
+	"strings"
 	"testing"
 
 	"crude/tui/ui"
@@ -83,7 +84,11 @@ func TestAgentFailurePublishesOneNoticeForItsActualOwner(t *testing.T) {
 		cmd()
 	}
 	notices := app.ws.Status().Notifications(false)
-	if len(notices) != 1 || notices[0].Owner.ID != "background" || notices[0].Detail != "history sync failed" {
+	if len(notices) != 1 || notices[0].Owner.ID != "background" || strings.Contains(notices[0].Detail, "history sync failed") || len(notices[0].Actions) != 1 || notices[0].Actions[0].ID != "status.switch" {
 		t.Fatalf("diagnostic was duplicated or attributed to foreground: %+v", notices)
+	}
+	messages := app.ws.AgentMgr().Get("background").State.Messages.Messages()
+	if len(messages) == 0 || messages[len(messages)-1].Content != "history sync failed" {
+		t.Fatal("the canonical transcript lost the original diagnostic")
 	}
 }

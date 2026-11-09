@@ -15,8 +15,8 @@ import (
 type DisclosureState uint8
 
 const (
-	// DisclosureCollapsed is the compact form: a budgeted preview body for
-	// tools, a single summary row for completed thinking and subpanes.
+	// DisclosureCollapsed shows a title and bounded reason for tools, or one
+	// summary row for completed thinking and subpanes. Evidence stays closed.
 	DisclosureCollapsed DisclosureState = iota
 	// DisclosureExpanded shows the full retained body.
 	DisclosureExpanded
@@ -42,12 +42,14 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 //   - active/interrupted thinking always shows its stream;
 //   - completed thinking collapses to a single "Thought" row;
 //   - completed subpane placeholders collapse to the pane summary;
-//   - completed tools keep a budgeted preview body (full only on toggle).
+//   - settled tools and diagnostics show only their title until expanded.
 func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	switch {
 	case isCommandOutcome(msg):
 		return DisclosureCollapsed
 	case msg.Recovery != nil:
+		return DisclosureCollapsed
+	case msg.Role == types.RoleError || settledCompaction(*msg):
 		return DisclosureCollapsed
 	case msg.Role == types.RoleThinking:
 		if r.thinkingBodyOnly {
@@ -63,9 +65,6 @@ func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	case msg.SubPaneID != "":
 		return DisclosureCollapsed
 	case msg.Role == types.RoleTool:
-		if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch" {
-			return DisclosureExpanded
-		}
 		return DisclosureCollapsed
 	}
 	return DisclosureExpanded
@@ -172,6 +171,10 @@ func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
 		return true
 	case msg.Recovery != nil:
 		return true
+	case msg.Role == types.RoleError:
+		return msg.Content != ""
+	case settledCompaction(*msg):
+		return msg.Content != "" || msg.LifecycleBeforeTokens > 0
 	case msg.Role == types.RoleThinking:
 		return msg.Content != "" && (msg.ThinkingDisplay.Kind.HasCompactPreview() || !msg.ThinkingActive && !msg.ThinkingInterrupted)
 	case msg.SubPaneID != "":

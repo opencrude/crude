@@ -291,7 +291,7 @@ func parseCollaborationWaitOutcome(content string) collaborationWaitOutcome {
 			agent.CurrentRunID == ""
 		return collaborationWaitOutcome{
 			operand: subAgentIdentityLabel(agent.Name, agent.ID, agent.Category),
-			summary: agent.Name + " · " + string(agent.State),
+			summary: string(agent.State),
 			known:   true,
 			success: success,
 			failed:  agent.State == collaboration.AgentClosed || agent.Presence == collaboration.RuntimeUnresponsive,

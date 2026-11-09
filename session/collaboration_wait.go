@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"crude/collaboration"
+	"crude/prompt"
 	"crude/tools"
 )
 
@@ -15,7 +16,7 @@ type collaborationWaitObservation struct {
 	ElapsedMs  int64                   `json:"elapsed_ms"`
 	Unmet      []string                `json:"unmet_conditions,omitempty"`
 	Reason     string                  `json:"reason,omitempty"`
-	Guidance   string                  `json:"guidance,omitempty"`
+	Guidance   string                  `json:"-"`
 	Agent      *collaboration.Agent    `json:"agent,omitempty"`
 	Run        *collaboration.Run      `json:"run,omitempty"`
 	Artifact   *collaboration.Artifact `json:"artifact,omitempty"`
@@ -76,7 +77,7 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 				return collaborationWaitObservation{Status: "caller_interrupted", Reason: context.Cause(ctx).Error(), ElapsedMs: time.Since(started).Milliseconds(), ObservedAt: time.Now(), Source: "wait_control"}, nil
 			}
 			if errors.Is(context.Cause(waitCtx), errCollaborationWaitElapsed) {
-				return collaborationWaitObservation{Status: "timeout_no_match", Reason: "the wait duration elapsed before the initial collaboration snapshot could be read", Guidance: "No fresh snapshot was available; retry only if another observation is still required.", ElapsedMs: time.Since(started).Milliseconds(), ObservedAt: time.Now(), Source: "wait_control"}, nil
+				return collaborationWaitObservation{Status: "timeout_no_match", Reason: "the wait duration elapsed before the initial collaboration snapshot could be read", Guidance: prompt.HintWaitNoSnapshot, ElapsedMs: time.Since(started).Milliseconds(), ObservedAt: time.Now(), Source: "wait_control"}, nil
 			}
 			return collaborationWaitObservation{}, err
 		}
@@ -173,7 +174,7 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 				result.Status = "needs_attention"
 			}
 			result.Reason = "an addressed event requires normal runtime handling"
-			result.Guidance = "The runtime delivers this event at its normal safe boundary; waiting does not consume it. Inspect the exact event and lifecycle state before continuing."
+			result.Guidance = prompt.HintWaitDirected
 		}
 		return nil
 	}
@@ -198,7 +199,7 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 			if !ready || runID == "" && artifactID == "" {
 				result.Status = "needs_attention"
 				result.Reason = "the agent stopped and needs attention: " + recovery.Summary
-				result.Guidance = "Address the cause, then agent_control operation continue (or cancel) with the returned recovery_id and recovery_generation."
+				result.Guidance = prompt.HintWaitRecovery
 				return result, true, nil
 			}
 		}
@@ -212,7 +213,7 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 				result.Status, result.Reason = "offline", "the exact agent runtime is offline"
 			}
 			if result.Status != "ready" && (!ready || runID == "" && artifactID == "") {
-				result.Guidance = "Inspect or explicitly resume/reopen the exact agent before waiting again."
+				result.Guidance = prompt.HintWaitAvailability
 				return result, true, nil
 			}
 		}
@@ -228,7 +229,7 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 		if !parking && result.Run != nil && result.Run.State.Terminal() {
 			result.Status = "terminal_without_match"
 			result.Reason = "the exact run is terminal but another requested condition remains unmet"
-			result.Guidance = "Inspect the terminal outcome and unmet conditions; report publication is separate from run completion."
+			result.Guidance = prompt.HintWaitTerminal
 			return result, true, nil
 		}
 		return result, false, nil
@@ -269,6 +270,7 @@ func (s *Session) waitForCollaborationDuration(ctx context.Context, store collab
 func collaborationWaitTimeoutSnapshot(ctx context.Context, observe func(context.Context) (collaborationWaitObservation, bool, error), last collaborationWaitObservation, started time.Time) collaborationWaitObservation {
 	finalCtx, stop := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer stop()
+	freshness := ""
 	if final, ready, err := observe(finalCtx); err == nil {
 		if ready {
 			return final
@@ -279,17 +281,22 @@ func collaborationWaitTimeoutSnapshot(ctx context.Context, observe func(context.
 		last.ElapsedMs = time.Since(started).Milliseconds()
 		return last
 	} else {
-		last.Guidance = "The returned facts are the last completed collaboration-store observation; the final refresh did not complete within its bounded grace period."
+		freshness = "The final refresh did not complete. The returned facts are from the last completed observation."
+		last.Guidance = prompt.HintWaitSnapshot
 	}
 	if last.ObservedAt.IsZero() {
 		last.ObservedAt = time.Now()
 		last.Source = "wait_control"
-		last.Guidance = "No collaboration-store observation completed within the wait budget; no stored facts are being presented as fresh."
+		freshness = "No observation completed. Stored facts are unavailable."
+		last.Guidance = prompt.HintWaitNoSnapshot
 	}
 	last.Status = "timeout_no_match"
 	last.Reason = "the wait duration elapsed without all exact conditions becoming true"
+	if freshness != "" {
+		last.Reason += ". " + freshness
+	}
 	if last.Guidance == "" {
-		last.Guidance = "Use the returned exact snapshot to decide whether to wait again or take another action."
+		last.Guidance = prompt.HintWaitSnapshot
 	}
 	last.ElapsedMs = time.Since(started).Milliseconds()
 	return last

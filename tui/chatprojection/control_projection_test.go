@@ -36,7 +36,16 @@ func TestControlAndClaimsRenderedParity(t *testing.T) {
 				for _, disclosure := range []DisclosureState{DisclosureCollapsed, DisclosureExpanded} {
 					rows := renderToolMessageLines(candidate, theme.DefaultDark(), 100, 100, 100, 0, 24, "done", disclosure)
 					text := strings.Join(rows.lines, "\n")
-					if !strings.Contains(text, tc.want) || strings.Contains(text, `{"`) {
+					want := tc.want
+					if disclosure == DisclosureCollapsed {
+						switch tc.name {
+						case "agent_update_claims":
+							want = "1 owned path"
+						case "agent_narrow_claims":
+							want = "0 owned paths"
+						}
+					}
+					if !strings.Contains(text, want) || strings.Contains(text, `{"`) {
 						t.Fatalf("unreadable result: %s", text)
 					}
 					if disclosure == DisclosureCollapsed {

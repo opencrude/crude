@@ -40,6 +40,9 @@ func (s *Session) PendingSubAgentSnapshots() []SubAgentSnapshot {
 		for _, message := range archive {
 			for _, call := range message.ToolCalls {
 				names[call.ID] = call.Function.Name
+				if call.InternalID != "" {
+					names[call.InternalID] = call.Function.Name
+				}
 			}
 		}
 		for i, message := range archive {
@@ -52,12 +55,12 @@ func (s *Session) PendingSubAgentSnapshots() []SubAgentSnapshot {
 				meta.ContextOnly, meta.DisplayRole = true, "hidden_runtime_context"
 			}
 			if message.Role == "tool" {
-				meta.ToolName, meta.ToolArgs = names[message.ToolCallID], args[message.ToolCallID]
+				meta.ToolName, meta.ToolArgs = names[toolResultKey(message)], args[toolResultKey(message)]
 				if message.ToolError {
 					meta.ToolStatus = "error"
 				}
 			}
-			meta = canonicalizeDisplayMeta(message, meta, args[message.ToolCallID], i, status.StartedAt)
+			meta = canonicalizeDisplayMeta(message, meta, args[toolResultKey(message)], i, status.StartedAt)
 			snapshot.Messages = append(snapshot.Messages, sessiondb.MessageWithMeta{
 				Msg: message, Meta: meta, Turn: 1, CreatedAt: status.StartedAt.UnixNano(),
 			})

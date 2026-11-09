@@ -105,6 +105,12 @@
   waking the idle agent). Never make agents poll or `wait` for completion.
   Explicit kills, exits already returned inline or by an exec-session call, and
   `RetainSettled` output retention are not reported again.
+- Initial results and later settlements carry the same process lifetime ID
+  (PID plus start instant). The transcript joins a settlement to that exact
+  originating call and keeps both results in disclosure. A reused handle never
+  joins different processes; journal delivery and read cursors are unchanged.
+  Timeout, cancellation and unverified process-tree shutdown are typed facts,
+  not guesses from an error string.
 - Command outcomes carry typed immutable command evidence through the journal,
   live conversation and SQLite display snapshots. Their chat projection shares
   ordinary tool title ink/disclosure and normal background, with a static title

@@ -72,7 +72,7 @@ func TestPlanningAdaptersReplaceCleanGoalAndPreserveHistory(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err = s.executePlanTool(t.Context(), "get_plan", map[string]any{})
-			if err != nil || result.Content != `{"error":"no_active_plan"}` || s.PlanActivity() != nil {
+			if err != nil || result.Content != `{"plan":null}` || result.Outcome.Code != "no_active_plan" || s.PlanActivity() != nil {
 				t.Fatalf("closed plan remains: %s %v", result.Content, err)
 			}
 		})

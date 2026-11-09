@@ -74,16 +74,20 @@ func TestPatchFailureColorsOnlyActionAndIndicator(t *testing.T) {
 	}
 }
 
-func TestWriteDefaultsExpandedAndCanCollapse(t *testing.T) {
+func TestWriteDefaultsCollapsedAndCanExpand(t *testing.T) {
 	r := newActivityRenderer()
 	msg := types.ChatMessage{InternalID: "write", Role: "tool", ToolName: "write_file", ToolArgs: "new.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: "Written 2 lines\n+package fixture\n+var X = true"}
 	r.SyncMessages([]types.ChatMessage{msg}, 1, 0)
-	if r.disclosureState(r.sync.MsgByID["write"]) != DisclosureExpanded {
-		t.Fatal("file write hidden by default")
+	if r.disclosureState(r.sync.MsgByID["write"]) != DisclosureCollapsed {
+		t.Fatal("file write is not compact by default")
 	}
 	r.ToggleDisclosure("write")
-	if r.disclosureState(r.sync.MsgByID["write"]) != DisclosureCollapsed {
-		t.Fatal("default-open write cannot be collapsed")
+	if r.disclosureState(r.sync.MsgByID["write"]) != DisclosureExpanded {
+		t.Fatal("compact write cannot be expanded")
+	}
+	rows, _, _ := r.ExportMessageRows(100)
+	if !strings.Contains(strings.Join(rows[0].Lines, "\n"), "var X = true") {
+		t.Fatal("expansion lost the write evidence")
 	}
 }
 
@@ -106,7 +110,7 @@ func TestToolLabelColorsSurviveWrapping(t *testing.T) {
 				if header.Spans[2].Role != tc.title {
 					t.Fatalf("title lost stable semantic color: %+v", header.Spans)
 				}
-				lines := buildToolTitleLines(msg, tc.phase, frame, 30, DisclosureCollapsed)
+				lines := buildToolTitleLines(msg, tc.phase, frame, 30, DisclosureExpanded)
 				if len(lines) < 2 {
 					t.Fatal("fixture does not exercise wrapped continuation rows")
 				}

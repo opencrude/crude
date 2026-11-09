@@ -56,8 +56,8 @@ func TestNoChangeEditResultIsFailure(t *testing.T) {
 		if result.Added != 0 || result.Removed != 0 {
 			t.Fatalf("no-change result counted lines: +%d -%d", result.Added, result.Removed)
 		}
-		if !strings.Contains(result.Content, "Hint: ") {
-			t.Fatalf("no-change result needs a model-facing hint: %q", result.Content)
+		if result.AgentHint == "" || strings.Contains(result.Content, "Hint: ") {
+			t.Fatalf("no-change result needs private repair guidance: %+v", result)
 		}
 	}
 }

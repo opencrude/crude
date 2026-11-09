@@ -114,7 +114,7 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 			uncertain = r.failure
 		}
 		progressMu.Lock()
-		ordered[r.index] = map[string]any{"recipient_name": r.name, "result": r.result.Content, "error": r.toolError, "added": r.result.Added, "removed": r.result.Removed}
+		ordered[r.index] = map[string]any{"recipient_name": r.name, "result": r.result.Content, "error": r.toolError, "outcome": r.result.Outcome, "added": r.result.Added, "removed": r.result.Removed}
 		attachments[r.index] = r.result.Attachments
 		orderedParts[r.index] = tools.ResultContentParts(r.result)
 		publish()

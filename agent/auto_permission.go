@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
+	"crude/types/toolresult"
 )
 
 // PermissionReview is advisory and request-local. Unknown/error decisions
@@ -23,7 +25,7 @@ func (a *Agent) reviewPermission(ctx context.Context, tc provider.ToolCall, para
 	}
 	review := a.PermissionReviewer(ctx, tc, params, risk, emit)
 	if ctx.Err() != nil {
-		return false, &execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission review interrupted because the active turn was cancelled."}, toolError: true}
+		return false, &execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission review interrupted because the active turn was cancelled.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
 	}
 	if review.Decision != "allow" && review.Decision != "deny" {
 		return false, nil
@@ -36,7 +38,6 @@ func (a *Agent) reviewPermission(ctx context.Context, tc provider.ToolCall, para
 	if review.Decision == "allow" {
 		return true, nil
 	}
-	message := fmt.Sprintf("[SAFETY BLOCK] The automatic permission reviewer denied this operation (not a human denial). Reason: %s. Do not retry variants to bypass the decision; ask the user or choose a safer approach.", review.Reason)
-	emit(AgentEvent{Type: "tool_result", Data: map[string]any{"internal_id": tc.InternalID, "tool_id": tc.ID, "name": tc.Function.Name, "result": message, "error": "true"}})
-	return false, &execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: message}, toolError: true}
+	message := fmt.Sprintf("Automatic reviewer denied this operation. Reason: %s", review.Reason)
+	return false, &execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: message, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 }

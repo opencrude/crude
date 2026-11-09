@@ -297,7 +297,7 @@ func validateExecutionWriteTargets(root, privateDir string, targets []string) er
 			allowedRoot = privateDir
 		}
 		if !pathInside(allowedRoot, target) {
-			return fmt.Errorf("write to %q is outside the execution checkout %q; use a checkout-relative path or explicit shared execution. Nothing was changed", target, root)
+			return fmt.Errorf("write to %q is outside the execution checkout %q. Nothing was changed", target, root)
 		}
 		// Check existing ancestors as well as lexical spelling, including targets
 		// that do not exist yet. A symlink inside a checkout is not an escape hatch.

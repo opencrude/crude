@@ -15,6 +15,7 @@ import (
 
 	"crude/provider"
 	"crude/tools"
+	"crude/types/toolresult"
 )
 
 func writeChatSSE(w http.ResponseWriter, content, finishReason string) {
@@ -917,8 +918,8 @@ func TestRunContainsToolPanicAndContinuesTheLoop(t *testing.T) {
 			break
 		}
 	}
-	if panicResult == nil || !panicResult.ToolError ||
-		!strings.Contains(panicResult.ContentString(), "panicked") || !strings.Contains(panicResult.ContentString(), "effects are uncertain") {
+	if panicResult == nil || !panicResult.ToolError || panicResult.ToolOutcome == nil ||
+		panicResult.ToolOutcome.State != toolresult.Uncertain || !strings.Contains(panicResult.ContentString(), "panicked") || !strings.Contains(panicResult.ContentString(), "Do not replay an operation that may have committed") {
 		t.Fatalf("panic tool result = %+v", panicResult)
 	}
 }

@@ -158,6 +158,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.ToolID == incoming.ToolID &&
 		current.ToolRoundID == incoming.ToolRoundID &&
 		current.ToolStatus == incoming.ToolStatus &&
+		current.ToolOutcome == incoming.ToolOutcome &&
 		current.ToolIndex == incoming.ToolIndex &&
 		current.ToolProgressPhase == incoming.ToolProgressPhase &&
 		current.ToolProgressMessage == incoming.ToolProgressMessage &&

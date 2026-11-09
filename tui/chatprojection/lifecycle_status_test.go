@@ -139,7 +139,7 @@ func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
 	}
 }
 
-func TestCompactionTerminalFormsKeepTableGeometry(t *testing.T) {
+func TestCompactionTerminalFormsStayCompactAndDiscloseEvidence(t *testing.T) {
 	for _, phase := range []string{"compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted"} {
 		msg := types.ChatMessage{
 			InternalID: "compact", Role: types.RoleStatus, LifecyclePhase: phase,
@@ -154,14 +154,15 @@ func TestCompactionTerminalFormsKeepTableGeometry(t *testing.T) {
 		}
 		msg.ModelID = "aeron/model"
 		rendered := renderCompactionMessage(msg, renderContext{contentWidth: 76, innerW: 92})
-		if len(rendered.native) != 6 || strings.TrimSpace(rendered.native[0].PlainText()) != "" || strings.TrimSpace(rendered.native[5].PlainText()) != "" {
-			t.Fatalf("%s geometry=%d lines=%q", phase, len(rendered.native), rendered.lines)
+		if len(rendered.native) != 1 || !strings.Contains(rendered.lines[0], "▸") {
+			t.Fatalf("%s is not compact with disclosure: %q", phase, rendered.lines)
 		}
-		joined := strings.Join(rendered.lines, "\n")
-		stageVisible := strings.Contains(joined, "Capturing state") || phase == "compaction_completed" && strings.Contains(joined, "Active context ready")
-		if !strings.Contains(joined, "Crude aeron/model") || !stageVisible ||
-			(!strings.Contains(joined, "original context retained") && phase != "compaction_completed") {
-			t.Fatalf("%s table=%q", phase, joined)
+		expanded := renderCompactionMessage(msg, renderContext{contentWidth: 76, innerW: 92, disclosure: DisclosureExpanded})
+		joined := strings.Join(expanded.lines, "\n")
+		for _, want := range []string{"network connection stalled", "155955", "10476"} {
+			if !strings.Contains(joined, want) {
+				t.Fatalf("%s lost %q: %s", phase, want, joined)
+			}
 		}
 	}
 }
@@ -204,7 +205,11 @@ func TestAutomaticCompactionPaintsAsOneToolRow(t *testing.T) {
 			Content: test.reason, ModelID: "aeron/model",
 		}
 		rendered := renderCompactionMessage(msg, renderContext{innerW: 100, contentWidth: 84})
-		if len(rendered.lines) != 1 || rendered.lines[0] != test.want {
+		want := test.want
+		if settledCompaction(msg) && (msg.Content != "" || msg.LifecycleBeforeTokens > 0) {
+			want += " ▸"
+		}
+		if len(rendered.lines) != 1 || rendered.lines[0] != want {
 			t.Fatalf("%s/%s lines = %q, want [%q]", test.phase, trigger, rendered.lines, test.want)
 		}
 		if rendered.frameSensitive != test.animate || lifecycleMessageFrameSensitive(msg) != test.animate {
@@ -229,7 +234,7 @@ func TestAutomaticCompactionRowHasNoContextBoundaryRules(t *testing.T) {
 	if len(rows) != 1 || rows[0].ContextBoundary || len(rows[0].Lines) != 2 || strings.TrimSpace(rows[0].Lines[0]) != "" {
 		t.Fatalf("automatic compaction rows = %+v", rows)
 	}
-	if got := rows[0].Lines[1]; got != "│ ● Compacted context 156.0K → ~10.5K" {
+	if got := rows[0].Lines[1]; got != "│ ● Compacted context 156.0K → ~10.5K ▸" {
 		t.Fatalf("automatic compaction line = %q", got)
 	}
 	spans := rows[0].Native[1].Spans
@@ -292,7 +297,7 @@ func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
 		ToolPreviewPhase: types.ToolPreviewDone,
 		ToolArgs:         path,
 		ToolLivedAdded:   21, ToolDuration: 50 * time.Millisecond,
-	}, types.ToolPreviewDone, 0, 52, DisclosureCollapsed)
+	}, types.ToolPreviewDone, 0, 52, DisclosureExpanded)
 	var operand, plain strings.Builder
 	for _, line := range lines {
 		if line.VisibleWidth() > 52 {
@@ -328,17 +333,27 @@ func TestSubAgentToolLabelsDistinguishRunningAndFailure(t *testing.T) {
 }
 
 func TestCompactAgentWaitKeepsNameAndIdentityWithoutJSON(t *testing.T) {
-	msg := &types.ChatMessage{Role: types.RoleTool, ToolName: "agent_wait", ToolArgs: "agent-8f21",
+	msg := &types.ChatMessage{InternalID: "wait", Role: types.RoleTool, ToolName: "agent_wait", ToolArgs: "agent-8f21",
 		ToolInput:  `{"agent_id":"agent-8f21"}`,
 		Content:    `{"id":"agent-8f21","name":"Lily sub Dawn","category":"researcher","state":"available","presence":"attached","runtime_epoch":1}`,
 		ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone}
-	lines, _ := NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*types.ChatMessage{msg}, 42, 0)
+	r := NewRenderer(theme.DefaultDark())
+	r.AppendMessage(*msg)
+	lines, _ := r.BuildSubPaneToolLines([]*types.ChatMessage{msg}, 42, 0)
 	var text strings.Builder
 	for _, line := range lines {
 		text.WriteString(line.PlainText())
 	}
-	if !strings.Contains(text.String(), "Lily sub Dawn") || !strings.Contains(text.String(), "Researcher") || !strings.Contains(text.String(), "agent-8f21") || strings.Contains(text.String(), `"agent_id"`) {
+	if !strings.Contains(text.String(), "Lily sub Dawn") || strings.Contains(text.String(), `"agent_id"`) {
 		t.Fatalf("compact agent wait label: %q", text.String())
+	}
+	expanded := renderToolMessageLines(*msg, theme.DefaultDark(), 42, 42, 42, 0, 24, types.ToolPreviewDone, DisclosureExpanded)
+	text.Reset()
+	for _, line := range expanded.native {
+		text.WriteString(line.PlainText())
+	}
+	if !strings.Contains(text.String(), "agent-8f21") || !strings.Contains(text.String(), "Researcher") {
+		t.Fatal("expanded agent wait lost its exact identity")
 	}
 }
 

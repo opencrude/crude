@@ -610,7 +610,8 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 		if err := m.await(func(v *controlVisualModel) error {
 			s := v.navigation
 			if s == nil || !s.shown || s.result == nil || !s.screen.InList() || !v.overlayHost.IsOpen(navigationOverlay) {
-				return fmt.Errorf("native %s chooser not visible:\n%s", kind, ansi.Strip(v.View().RenderContent()))
+				return fmt.Errorf("native %s chooser not visible: state=%+v result=%+v error=%v invocation=%+v\n%s",
+					kind, s, m.lastResult, m.lastResultErr, m.invocation, ansi.Strip(v.View().RenderContent()))
 			}
 			if v.EditorState.Editor.FilePath() != filepath.Join(m.root, sourceName) {
 				return fmt.Errorf("listing silently chose/opened a target")
