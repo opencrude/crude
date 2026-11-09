@@ -160,7 +160,7 @@ func (m *App) handleWorkspaceSwitchInput(msg tea.Msg) (bool, tea.Cmd) {
 	}
 	// Only the switch's own decision dialog may consume input while preparing.
 	// An unrelated dirty-close dialog is never adopted or cancelled by a switch.
-	if intent.prompt != nil && m.DirtyPromptPath == intent.prompt.FilePath() {
+	if intent.prompt != nil && m.DirtyPromptPath == editorDocumentKey(intent.prompt) {
 		return false, nil
 	}
 	switch event := msg.(type) {
@@ -185,7 +185,7 @@ func (m *App) cancelRemoteWorkspaceSwitch(notify bool) {
 	m.workspaceAttachSequence++
 	m.workspaceAttachCancel, m.workspaceAttachPending = nil, false
 	m.workspaceSwitchIntent = nil
-	if intent != nil && intent.prompt != nil && m.DirtyPromptPath == intent.prompt.FilePath() {
+	if intent != nil && intent.prompt != nil && m.DirtyPromptPath == editorDocumentKey(intent.prompt) {
 		path := m.DirtyPromptPath
 		m.overlayHost.Close(ui.OverlayDirtyClose)
 		m.rearmAfterDelayAutosave(path)
@@ -217,10 +217,16 @@ func (m *App) workspaceSwitchEditorPending(ed *editor.Editor) (bool, error) {
 		if state.err != nil {
 			return false, state.err
 		}
+		if save := m.untitledSave; save != nil && save.workspace == m.ws &&
+			save.generation == m.workspaceSwitchGen.Load() && save.editor == ed.Primary() {
+			// The save decision is not settled until the picker is cancelled
+			// or its exact first-save result has been installed.
+			return true, nil
+		}
 		if live, ok := m.ws.(shellport.LiveDocuments); ok && state.owner != live.DocumentOwner() {
 			state.sync = true
 		}
-		if state.busy || state.sync || !state.topicReady || state.save || state.undo != nil || state.closeView || state.closeAfter {
+		if state.busy || state.sync || !state.topicReady || state.save || state.reload || state.undo != nil || state.closeView || state.closeAfter {
 			return true, nil
 		}
 	} else if ed.Modified() {

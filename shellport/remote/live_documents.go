@@ -6,6 +6,7 @@ import (
 	"crude/coreprotocol"
 	"crude/document"
 	"crude/shellport"
+	"crude/textencoding"
 	"crude/workspace"
 	"errors"
 	"sync"
@@ -13,6 +14,9 @@ import (
 )
 
 var _ shellport.LiveDocuments = (*Workspace)(nil)
+var _ shellport.UntitledDocuments = (*Workspace)(nil)
+var _ shellport.UntitledDocumentSaver = (*Workspace)(nil)
+var _ shellport.UntitledOverwriteReviewer = (*Workspace)(nil)
 
 func (w *Workspace) DocumentOwner() document.Owner {
 	client, _ := w.conn()
@@ -30,6 +34,43 @@ func (w *Workspace) OpenDocument(ctx context.Context, path string) (document.Sna
 	}
 	return out, err
 }
+func (w *Workspace) CreateUntitledDocument(ctx context.Context) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.call(ctx, coreprotocol.DocumentCreateUntitled, &coreprotocol.Empty{}, &out)
+	if err == nil {
+		w.registerDocumentTopic(out.ID, out.Path)
+	}
+	return out, err
+}
+func (w *Workspace) OpenUntitledDocument(ctx context.Context, id string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.call(ctx, coreprotocol.DocumentOpenUntitled, &coreprotocol.DocumentReadRequest{ID: id}, &out)
+	if err == nil {
+		w.registerDocumentTopic(out.ID, out.Path)
+	}
+	return out, err
+}
+func (w *Workspace) SaveUntitledDocument(ctx context.Context, id string, revision uint64, directory, name string, encoding textencoding.Encoding, requestID string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentSaveUntitled,
+		&coreprotocol.DocumentSaveUntitledRequest{ID: id, Revision: revision, Directory: directory, Name: name, Encoding: encoding}, &out)
+	return out, err
+}
+
+func (w *Workspace) PrepareUntitledOverwrite(ctx context.Context, id string, revision uint64, directory, name string, encoding textencoding.Encoding) (workspace.ReviewedEditPreview, error) {
+	var out coreprotocol.ReviewedEditReply
+	err := w.callCancellable(ctx, coreprotocol.DocumentReviewUntitled,
+		&coreprotocol.DocumentSaveUntitledRequest{ID: id, Revision: revision, Directory: directory, Name: name, Encoding: encoding}, &out)
+	return out.Preview, err
+}
+
+func (w *Workspace) ReadUntitledOverwrite(ctx context.Context, id, digest string) (workspace.UntitledOverwriteComparison, error) {
+	var out coreprotocol.UntitledComparisonReply
+	err := w.callCancellable(ctx, coreprotocol.DocumentCompareUntitled,
+		&coreprotocol.ReviewedEditRequest{ID: id, Digest: digest}, &out)
+	return out.Comparison, err
+}
+
 func (w *Workspace) SyncDocument(ctx context.Context, id string, after uint64) (document.SyncResult, error) {
 	var out document.SyncResult
 	err := w.call(ctx, coreprotocol.DocumentSync, coreprotocol.DocumentSyncRequest{ID: id, After: after}, &out)
@@ -142,7 +183,12 @@ func (w *Workspace) startDocumentTopicLocked(client *coreclient.Client, id, path
 		if reopen {
 			var snapshot document.Snapshot
 			_, workspaceID := w.conn()
-			if err := client.Call(ctx, workspaceID, coreprotocol.DocumentOpen, &coreprotocol.DocumentOpenRequest{Path: path}, &snapshot); err != nil {
+			method := coreprotocol.DocumentOpen
+			var input coreprotocol.Value = &coreprotocol.DocumentOpenRequest{Path: path}
+			if document.IsUntitledID(id) {
+				method, input = coreprotocol.DocumentOpenUntitled, &coreprotocol.DocumentReadRequest{ID: id}
+			}
+			if err := client.Call(ctx, workspaceID, method, input, &snapshot); err != nil {
 				w.reportFailure("Reopen document", err)
 				return
 			}
@@ -232,9 +278,20 @@ func (w *Workspace) SaveDocumentRequest(ctx context.Context, id string, revision
 	err := w.documentCall(ctx, requestID, coreprotocol.DocumentSave, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Reason: reason}, &out)
 	return out, err
 }
+
+func (w *Workspace) SaveDocumentEncodingRequest(ctx context.Context, id string, revision uint64, encoding textencoding.Encoding, requestID string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentSave, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Reason: workspace.DocumentSaveManual, Encoding: &encoding}, &out)
+	return out, err
+}
 func (w *Workspace) FormatDocumentRequest(ctx context.Context, id string, revision uint64, requestID string) (document.Snapshot, error) {
 	var out document.Snapshot
 	err := w.documentCall(ctx, requestID, coreprotocol.DocumentFormat, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision}, &out)
+	return out, err
+}
+func (w *Workspace) ReloadDocumentRequest(ctx context.Context, id string, revision uint64, requestID string) (document.Snapshot, error) {
+	var out document.Snapshot
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentReload, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision}, &out)
 	return out, err
 }
 func (w *Workspace) DocumentSnapshotReceipt(ctx context.Context, requestID string) (document.Snapshot, bool, error) {
@@ -245,7 +302,7 @@ func (w *Workspace) DocumentSnapshotReceipt(ctx context.Context, requestID strin
 	if receipt.State != "completed" {
 		return document.Snapshot{}, false, nil
 	}
-	if receipt.WorkspaceID != w.id || receipt.RequestID != requestID || (receipt.Method != coreprotocol.DocumentSave && receipt.Method != coreprotocol.DocumentFormat) {
+	if receipt.WorkspaceID != w.id || receipt.RequestID != requestID || (receipt.Method != coreprotocol.DocumentSave && receipt.Method != coreprotocol.DocumentSaveUntitled && receipt.Method != coreprotocol.DocumentFormat && receipt.Method != coreprotocol.DocumentReload) {
 		return document.Snapshot{}, true, document.ErrRequest
 	}
 	if receipt.Response.Error != nil {

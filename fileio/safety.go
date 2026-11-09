@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"crude/logger"
+	"crude/textencoding"
 )
 
 var (
@@ -34,6 +35,9 @@ func safetyLogIf(fn func(lg *logger.Logger)) {
 const binaryProbeSize = 512
 
 func IsBinary(data []byte) bool {
+	if _, marked := textencoding.DetectBOM(data); marked {
+		return false
+	}
 	probe := data
 	if len(probe) > binaryProbeSize {
 		probe = probe[:binaryProbeSize]

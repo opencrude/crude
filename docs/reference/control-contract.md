@@ -16,6 +16,15 @@ the returned command ID and exact arguments. Discovery grants no authority.
 The catalog includes settings, sessions, managed executions, shared documents,
 files, Git, Local History, terminals, bounded performance/runtime diagnostics and
 shell tree/panes/tabs/editor/panels.
+`document.new` creates recoverable unnamed text without a file. The exact
+identity can be read, edited, reopened with `document.open_untitled`, and saved
+to a new destination with `document.save_untitled`. First save never overwrites
+an existing file. A named `document.save` can explicitly select a supported
+encoding; omitted encoding preserves the current choice. Conversion uses the
+same retained preimage and reviewed writer as the editor. `document.reload`
+changes canonical text from saved bytes, not disk, and preserves replaced text
+in author undo. Pathless edits have no invented file claim; first save acquires
+the destination claim. The ordinary result/receipt rules still apply.
 A descriptor's presence does not prove every product component supports every
 verb. Inspect live availability and exact schemas; unsupported controls fail
 explicitly. [Managed executions](managed-executions.md) describes isolation and

@@ -18,6 +18,7 @@ import (
 	"crude/logger"
 	"crude/prompt"
 	"crude/provider"
+	"crude/textencoding"
 )
 
 // readFileHint wraps a read_file error. For a missing file it names real
@@ -207,90 +208,28 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 			lg.Info("TOOL", "result", "tool", tool, "path", path, "redirected", "list_directory", "latency_ms", time.Since(start).Milliseconds())
 			break
 		}
-		if ed != nil {
-			if encoded {
-				content, err := ed.Read(path)
-				if err != nil {
-					if _, ok := err.(*fileio.BinaryFileError); ok {
-						conv, convOk := tryDocRead(path, offset, limit, lg)
-						if convOk {
-							result = ToolResult{Content: conv}
-							lg.Info("TOOL", "doc_converted", "path", path)
-							break
-						}
-						if docconv.SupportedExt(strings.ToLower(filepath.Ext(path))) {
-							result = ToolResult{Content: conv}
-							break
-						}
-						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
-						lg.Warn("TOOL", "binary_file", "path", path)
-						break
-					}
-					result = ToolResult{Content: readFileHint(err, path)}
-					lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-					break
-				}
-				result = ToolResult{Content: formatReadFile(path, content, offset, limit)}
-			} else {
-				content, err := ed.ReadRaw(path)
-				if err != nil {
-					if _, ok := err.(*fileio.BinaryFileError); ok {
-						conv, convOk := tryDocRead(path, offset, limit, lg)
-						if convOk {
-							result = ToolResult{Content: conv}
-							lg.Info("TOOL", "doc_converted", "path", path)
-							break
-						}
-						if docconv.SupportedExt(strings.ToLower(filepath.Ext(path))) {
-							result = ToolResult{Content: conv}
-							break
-						}
-						result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
-						lg.Warn("TOOL", "binary_file", "path", path)
-						break
-					}
-					result = ToolResult{Content: readFileHint(err, path)}
-					lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-					break
-				}
-				result = ToolResult{Content: formatReadFile(path, content, offset, limit)}
-			}
-		} else {
-			path := GetStrArg(params, "path", "")
-			ext := strings.ToLower(filepath.Ext(path))
-			if docconv.SupportedExt(ext) {
-				conv, convOk := tryDocRead(path, offset, limit, lg)
-				if convOk {
-					result = ToolResult{Content: conv}
-					lg.Info("TOOL", "doc_converted", "path", path)
-					break
-				}
-				result = ToolResult{Content: conv}
-				break
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				result = ToolResult{Content: readFileHint(err, path)}
-				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-				break
-			}
-			if fileio.IsBinary(data) {
-				conv, convOk := tryDocRead(path, offset, limit, lg)
-				if convOk {
-					result = ToolResult{Content: conv}
-					lg.Info("TOOL", "doc_converted", "path", path)
-					break
-				}
-				if docconv.SupportedExt(strings.ToLower(filepath.Ext(path))) {
-					result = ToolResult{Content: conv}
-					break
-				}
-				result = ToolResult{Content: fmt.Sprintf("Error: binary file detected: %s (%d bytes) — cannot read binary files, use execute_command instead", path, len(data))}
-				lg.Warn("TOOL", "binary_file", "path", path)
-				break
-			}
-			result = ToolResult{Content: formatReadFile(path, string(data), offset, limit)}
+		if docconv.SupportedExt(strings.ToLower(filepath.Ext(path))) {
+			content, _ := tryDocRead(path, offset, limit, lg)
+			result = ToolResult{Content: content}
+			break
 		}
+		reader := ed
+		if reader == nil {
+			reader = fileio.NewEditor("", lg)
+		}
+		content, encoding, err := reader.ReadText(path)
+		if err != nil {
+			result = ToolResult{Content: readFileHint(err, path)}
+			break
+		}
+		if encoded {
+			content = fileio.EncodeHashlines(content)
+		}
+		result = ToolResult{Content: formatReadFile(path, content, offset, limit)}
+		if encoding != textencoding.UTF8 {
+			result.Content = "Encoding: " + encoding.Label() + "\n" + result.Content
+		}
+
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "write_file":
@@ -300,42 +239,28 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		if content != "" && len([]rune(content)) > 200 {
 			lg.Debug("DISPATCH", "content_preview", "first_80", string([]rune(content)[:80])+"…")
 		}
-		oldContent := ""
-		existing, err := os.ReadFile(path)
-		if err == nil {
-			oldContent = string(existing)
-		}
-		if ed != nil {
-			if err := ed.WriteTracked(path, content, mutationPreparer(opts)); err != nil {
-				if _, ok := err.(*fileio.BinaryFileError); ok {
-					result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
-					lg.Warn("TOOL", "binary_file", "path", path)
-					break
-				}
-				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-				break
-			}
-			lines := strings.Count(content, "\n") + 1
-			result = formatWriteResult(path, lines, oldContent, content)
-		} else {
+		writer := ed
+		if writer == nil {
 			if mutationPreparer(opts) != nil {
 				result = ToolResult{Content: "Error: mutation receipt requires an editor"}
 				break
 			}
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-				break
-			}
-			if err := fileio.WriteFile(path, []byte(content), 0o644); err != nil {
-				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-				break
-			}
-			lines := strings.Count(content, "\n") + 1
-			result = formatWriteResult(path, lines, oldContent, content)
+			writer = fileio.NewEditor("", lg)
 		}
+		oldContent, encoding, readErr := writer.ReadText(path)
+		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+			result = ToolResult{Content: readFileHint(readErr, path)}
+			break
+		}
+		if err := writer.WriteTracked(path, content, mutationPreparer(opts)); err != nil {
+			result = ToolResult{Content: "Error: " + err.Error()}
+			break
+		}
+		result = formatWriteResult(path, strings.Count(content, "\n")+1, oldContent, content)
+		if encoding != textencoding.UTF8 {
+			result.Content += "\nEncoding: " + encoding.Label() + " (preserved)"
+		}
+
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "edit_file":
@@ -350,59 +275,38 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		if len([]rune(oldString)) > 80 {
 			lg.Debug("DISPATCH", "old_preview", "first_80", string([]rune(oldString)[:80])+"…")
 		}
-		orig := ""
-		if ed != nil {
-			origData, _ := ed.ReadRaw(path)
-			orig = origData
-			ops := []fileio.SearchReplace{{Search: oldString, Replace: newString}}
-			if err := ed.PatchTracked(path, ops, mutationPreparer(opts)); err != nil {
-				if _, ok := err.(*fileio.BinaryFileError); ok {
-					result = ToolResult{Content: fmt.Sprintf("Error: %v", err)}
-					break
-				}
-				result = ToolResult{Content: prompt.WithToolHint(fmt.Sprintf("Error: %v", err), prompt.HintVerifyEditContent)}
-				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-				break
-			}
-			newData, _ := os.ReadFile(path)
-			replaced := string(newData)
-			if replaced == orig {
-				result = noChangeEditResult(oldString, newString)
-				lg.Warn("TOOL", "edit_no_change", "tool", tool, "path", path)
-				break
-			}
-			result = formatEditResult(path, 1, orig, replaced)
-		} else {
+		writer := ed
+		if writer == nil {
 			if mutationPreparer(opts) != nil {
 				result = ToolResult{Content: "Error: mutation receipt requires an editor"}
 				break
 			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				result = ToolResult{Content: prompt.WithToolHint(fmt.Sprintf("Error: %v", err), prompt.HintVerifyEditContent)}
-				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-				break
-			}
-			orig = string(data)
-			count := strings.Count(orig, oldString)
-			if count == 0 {
-				result = ToolResult{Content: prompt.WithToolHint("Error: old_string not found in "+path, prompt.HintVerifyEditContent)}
-				lg.Warn("TOOL", "old_string_not_found", "path", path)
-				break
-			}
-			replaced := strings.ReplaceAll(orig, oldString, newString)
-			if replaced == orig {
-				result = noChangeEditResult(oldString, newString)
-				lg.Warn("TOOL", "edit_no_change", "tool", tool, "path", path)
-				break
-			}
-			if err := fileio.WriteFile(path, []byte(replaced), 0o644); err != nil {
-				result = ToolResult{Content: "Error: " + err.Error()}
-				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-				break
-			}
-			result = formatEditResult(path, count, orig, replaced)
+			writer = fileio.NewEditor("", lg)
 		}
+		orig, encoding, err := writer.ReadText(path)
+		if err != nil {
+			result = ToolResult{Content: readFileHint(err, path)}
+			break
+		}
+		if err := writer.PatchTracked(path, []fileio.SearchReplace{{Search: oldString, Replace: newString}}, mutationPreparer(opts)); err != nil {
+			result = ToolResult{Content: prompt.WithToolHint(fmt.Sprintf("Error: %v", err), prompt.HintVerifyEditContent)}
+			break
+		}
+		// Render text, never the encoded byte image, in the result's diff.
+		replaced, _, err := writer.ReadText(path)
+		if err != nil {
+			result = ToolResult{Content: "File changed, but its new contents could not be read: " + err.Error()}
+			break
+		}
+		if replaced == orig {
+			result = noChangeEditResult(oldString, newString)
+			break
+		}
+		result = formatEditResult(path, 1, orig, replaced)
+		if encoding != textencoding.UTF8 {
+			result.Content += "\nEncoding: " + encoding.Label() + " (preserved)"
+		}
+
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "delete_file":

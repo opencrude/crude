@@ -155,3 +155,50 @@ func TestEditorRecoveryBrowserExplicitRestorePreservesShared(t *testing.T) {
 		t.Fatal("Esc changed draft or retained modal")
 	}
 }
+
+func TestUntitledRecoveryListingHidesIdentityAndDoesNotGuessLocation(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	one := newRemoteJourneyShell(t, runtime, root)
+	runAppCommand(t, one.app, one.app.createPaneUntitled(one.app.Win.ActiveGroup()))
+	ed := one.app.EditorState.Editor
+	ed.InsertRune('x')
+	draft, _ := ed.ExportDocumentRecovery()
+	raw, err := json.Marshal(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := clientstate.Open(filepath.Join(t.TempDir(), "private.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	attachment, err := store.Acquire(context.Background(), "browser-profile", clientstate.AcquireOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ed.DocumentState().DocumentID
+	for _, key := range []string{id, id + "#discard-backup-1"} {
+		_, err := store.SaveEditorRecovery(context.Background(), attachment, clientstate.EditorRecoveryKey{
+			ClientID: attachment.ClientID, WorkspaceID: "workspace", Path: key,
+		}, 0, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	two := newRemoteJourneyShell(t, runtime, root)
+	if err := two.app.ConfigureComposerDrafts(store, attachment, "workspace"); err != nil {
+		t.Fatal(err)
+	}
+	listed := two.app.OpenEditorRecoveryBrowser()().(editorRecoveryBrowserMsg)
+	_, _ = two.app.handleEditorRecoveryBrowserMessage(listed)
+	items := listed.p.list.Items()
+	if len(items) != 2 {
+		t.Fatalf("missing retained drafts: %+v", items)
+	}
+	for _, item := range items {
+		if item.Label != "Editor draft" || strings.Contains(item.Detail, id) || strings.Contains(item.Detail, "Not saved to a file") {
+			t.Fatalf("listing exposed an internal identity or guessed a saved location: %+v", item)
+		}
+	}
+}

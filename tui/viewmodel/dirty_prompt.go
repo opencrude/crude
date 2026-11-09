@@ -145,7 +145,7 @@ func (m *App) rearmAfterDelayAutosave(path string) {
 		return
 	}
 	tab := m.EditorState.Tabs[path]
-	if tab == nil || tab.Editor == nil || !tab.Editor.Modified() {
+	if tab == nil || tab.Editor == nil || tab.Editor.FilePath() == "" || !tab.Editor.Modified() {
 		return
 	}
 	if m.DirtyPromptPath == path {

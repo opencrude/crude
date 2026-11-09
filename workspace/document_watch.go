@@ -3,7 +3,6 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -172,6 +171,11 @@ func (s *DocumentService) reconcileLocked(id string) error {
 	if d == nil || s.closed {
 		return nil
 	}
+	// A watcher overflow may request reconciliation for every document. An
+	// unnamed document has no disk preimage to read or conflict with.
+	if d.snapshot.Path == "" {
+		return nil
+	}
 	original := d
 	d = stageDocument(d)
 	if d.relocation != nil {
@@ -181,7 +185,7 @@ func (s *DocumentService) reconcileLocked(id string) error {
 		}
 		return nil
 	}
-	text, exists, err := readLiveDocument(d.snapshot.Path)
+	disk, err := readLiveDocument(d.snapshot.Path)
 	if err != nil {
 		d.snapshot.Conflict = true
 		persistErr := s.persistDocument(d)
@@ -192,7 +196,7 @@ func (s *DocumentService) reconcileLocked(id string) error {
 		}
 		return errors.Join(err, persistErr)
 	}
-	hash := sha256.Sum256(text)
+	text, exists, hash := disk.Text, disk.Exists, disk.Hash
 	if !exists && d.snapshot.DiskExists && d.relocation == nil {
 		// Removal is not a text edit. Preserve the retained text and history;
 		// a save cannot silently recreate a deliberately removed resource.
@@ -208,8 +212,10 @@ func (s *DocumentService) reconcileLocked(id string) error {
 	if d.diskIntent != nil && hash == d.diskIntent.Hash && exists == d.diskIntent.Exists {
 		d.snapshot.Saved = bytes.Clone(text)
 		d.snapshot.DiskHash = hash
+		d.snapshot.Encoding = disk.Encoding
+		d.snapshot.SavedEncoding = disk.Encoding
 		d.snapshot.DiskExists = exists
-		d.snapshot.Dirty = !bytes.Equal(d.snapshot.Text, text)
+		d.snapshot.Dirty = d.snapshot.ContentDirty()
 		d.snapshot.Conflict = false
 		d.diskIntent = nil
 	} else if hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists && d.diskIntent == nil {
@@ -228,6 +234,8 @@ func (s *DocumentService) reconcileLocked(id string) error {
 		} else {
 			d.snapshot.Saved = bytes.Clone(text)
 			d.snapshot.DiskHash = hash
+			d.snapshot.Encoding = disk.Encoding
+			d.snapshot.SavedEncoding = disk.Encoding
 			d.snapshot.DiskExists = exists
 			d.snapshot.Dirty = false
 			d.snapshot.Conflict = false

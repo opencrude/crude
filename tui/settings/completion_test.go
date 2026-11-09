@@ -49,7 +49,7 @@ func TestCompletionSettingsNativeInputSparseSaveAndReset(t *testing.T) {
 			host.Layout()
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
-			if paint := bufferPlain(buf); !strings.Contains(paint, "Suggest while typing") || !strings.Contains(paint, "Off") {
+			if paint := bufferPlain(buf); !strings.Contains(paint, "Show as you type") || !strings.Contains(paint, "Off") {
 				t.Fatalf("changed preference is not visible:\n%s", paint)
 			}
 			got := m.AppSettings().LSP

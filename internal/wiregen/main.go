@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
+	"hash"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -161,7 +162,9 @@ func run() error {
 	// These opaque primitives deliberately own their encoding rather than a
 	// generated tuple. Their semantics must be negotiated just as strictly.
 	primitives = append(primitives, "types/jsondoc/jsondoc.go")
-	sort.Strings(primitives)
+	sort.Slice(primitives, func(i, j int) bool {
+		return filepath.ToSlash(primitives[i]) < filepath.ToSlash(primitives[j])
+	})
 	for _, source := range primitives {
 		if strings.HasSuffix(source, "_test.go") {
 			continue
@@ -170,8 +173,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(digest, "runtime %s %d\n", source, len(data))
-		digest.Write(data)
+		writeRuntimeSchemaInput(digest, source, data, filepath.Separator)
 	}
 	for _, path := range paths {
 		out, err := generate(path, files[path], reach.byPkg[path])
@@ -189,6 +191,13 @@ func run() error {
 	}
 	// The cohort includes codecs and Schema, so publish it last.
 	return writeCohort(".")
+}
+
+func writeRuntimeSchemaInput(digest hash.Hash, source string, data []byte, separator rune) {
+	// Names, like contents, must identify the same source on every host.
+	name := strings.ReplaceAll(source, string(separator), "/")
+	fmt.Fprintf(digest, "runtime %s %d\n", name, len(data))
+	digest.Write(data)
 }
 
 // writeRegistry lists every generated type for the codec property tests.

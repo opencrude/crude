@@ -7,9 +7,9 @@ import (
 
 func TestCommitMessageDiffIsBoundedAndNamesBinaryFiles(t *testing.T) {
 	diff := commitMessageDiff([]GitComparison{
-		{Path: "a.go", Before: "one\n", After: "two\n", BeforePresent: true, AfterPresent: true},
+		{Path: "a.go", Before: []byte("one\n"), After: []byte("two\n"), BeforePresent: true, AfterPresent: true},
 		{Path: "logo.png", Binary: true, BeforePresent: true, AfterPresent: true},
-		{Path: "big.txt", After: strings.Repeat("x\n", 20000), AfterPresent: true},
+		{Path: "big.txt", After: []byte(strings.Repeat("x\n", 20000)), AfterPresent: true},
 	})
 	for _, want := range []string{"-one", "+two", "Binary file logo.png changed", "New file big.txt", "diff truncated"} {
 		if !strings.Contains(diff, want) {

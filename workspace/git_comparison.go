@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"crude/fileio"
+	"crude/textencoding"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -36,18 +36,20 @@ type GitComparison struct {
 	OriginalPath   string
 	BaseLabel      string
 	TargetLabel    string
-	Before         string
-	After          string
-	Fingerprint    string
-	Area           GitChangeArea
-	Binary         bool
-	Untracked      bool
-	Deleted        bool
-	BeforePresent  bool
-	AfterPresent   bool
-	BeforeMode     uint32
-	AfterMode      uint32
-	Historical     bool
+	// Before and After are exact original bytes used by Git mutations. Readers
+	// use TextVersions; decoded display text never becomes a mutation preimage.
+	Before        []byte
+	After         []byte
+	Fingerprint   string
+	Area          GitChangeArea
+	Binary        bool
+	Untracked     bool
+	Deleted       bool
+	BeforePresent bool
+	AfterPresent  bool
+	BeforeMode    uint32
+	AfterMode     uint32
+	Historical    bool
 }
 
 type GitCommitReview struct {
@@ -232,18 +234,29 @@ func (state *gitReviewState) worktreeStatus(ctx context.Context) (git.Status, er
 
 func gitComparisonIdentity(comparison GitComparison) string {
 	return gitReviewDigest(comparison.RepositoryRoot, comparison.Path, comparison.OriginalPath,
-		comparison.Before, comparison.After,
+		string(comparison.Before), string(comparison.After),
 		fmt.Sprintf("%d:%t:%t:%d:%d", comparison.Area, comparison.BeforePresent, comparison.AfterPresent, comparison.BeforeMode, comparison.AfterMode))
 }
 
 func gitReviewComparison(root, rel string, area GitChangeArea, before, after gitReviewFile, base, target string) GitComparison {
+	_, _, beforeErr := textencoding.DecodeText([]byte(before.text))
+	_, _, afterErr := textencoding.DecodeText([]byte(after.text))
 	return GitComparison{
 		RepositoryRoot: root, Path: rel, AbsolutePath: filepath.Join(root, filepath.FromSlash(rel)),
-		Area: area, BaseLabel: base, TargetLabel: target, Before: before.text, After: after.text,
+		Area: area, BaseLabel: base, TargetLabel: target, Before: []byte(before.text), After: []byte(after.text),
 		BeforePresent: before.present, AfterPresent: after.present, BeforeMode: uint32(before.mode), AfterMode: uint32(after.mode),
-		Binary:    fileio.IsBinary([]byte(before.text)) || fileio.IsBinary([]byte(after.text)) || !utf8.ValidString(before.text) || !utf8.ValidString(after.text),
+		Binary:    fileio.IsBinary([]byte(before.text)) || fileio.IsBinary([]byte(after.text)) || beforeErr != nil || afterErr != nil,
 		Untracked: area == GitAreaUntracked, Deleted: before.present && !after.present,
 	}
+}
+
+func (c GitComparison) TextVersions() (before, after string, beforeEncoding, afterEncoding textencoding.Encoding, err error) {
+	b, be, err := textencoding.DecodeText(c.Before)
+	if err != nil {
+		return "", "", be, textencoding.UTF8, err
+	}
+	a, ae, err := textencoding.DecodeText(c.After)
+	return string(b), string(a), be, ae, err
 }
 
 func gitReviewPath(root, rel, absolute string) (string, error) {
@@ -404,13 +417,13 @@ func gitReviewDiskFile(ctx context.Context, root, rel string) (gitReviewFile, er
 
 func (s *GitService) StageReviewed(ctx context.Context, comparison GitComparison) error {
 	return s.mutateReviewed(ctx, comparison, true, func() (string, filemode.FileMode, bool, error) {
-		return comparison.After, filemode.FileMode(comparison.AfterMode), comparison.AfterPresent, nil
+		return string(comparison.After), filemode.FileMode(comparison.AfterMode), comparison.AfterPresent, nil
 	})
 }
 
 func (s *GitService) UnstageReviewed(ctx context.Context, comparison GitComparison) error {
 	return s.mutateReviewed(ctx, comparison, false, func() (string, filemode.FileMode, bool, error) {
-		return comparison.Before, filemode.FileMode(comparison.BeforeMode), comparison.BeforePresent, nil
+		return string(comparison.Before), filemode.FileMode(comparison.BeforeMode), comparison.BeforePresent, nil
 	})
 }
 

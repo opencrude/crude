@@ -106,6 +106,11 @@ them; they are not a template for language-specific modules.
 
 ## Current checkpoint
 
+General file editing and encoding are owned by
+[Editor file workflows](editor-file-workflows.md). Protocol fingerprint
+acceptance is owned by [Core protocol v2](core-protocol-v2.md#wire-fingerprint-parity).
+They are not checkpoints of autonomous code intelligence.
+
 **Immediate correction: automatic completion (2026-11-09).**
 
 Goal: typing a name or member expression in the connected editor produces useful
@@ -133,11 +138,35 @@ from the same producer and document lifetime; current semantic interaction still
 requires exact source. The original connected presentation test and full editor
 suite pass without weakening their assertions.
 The full workspace suite passes in exhaustive shards after the aggregate
-180-second run timed out. The viewmodel suite still reports the previously
-observed external-image test failure. The latest full benchmark gate passes
-without changed ceilings (4 MiB recovery image: 32,220 B / 141 allocations).
-Native visual acceptance is still open: the Windows capture driver refused to
-activate its dedicated window before sending input. No capture window remains.
+180-second run timed out. The previously reported Windows external-image test
+compared a native-separator path with the connected core's slash-normalized tab
+identity. A Linux backslash-input regression reproduced that mismatch; the test
+now checks the canonical identity and verifies that a denied link opened no
+tab. Native Windows rerun remains open. The latest full benchmark gate passes
+on Linux without changed ceilings (4 MiB recovery image: 21,206 B / 142
+allocations; editor paint: 84 / 146 allocations).
+
+Linux captures at 160×40 and 80×24 now cover automatic typing and Tab acceptance,
+rename and code-action dismissal, diagnostic severity and reading, and the
+Code Intelligence settings. A real installed-gopls completion journey passed
+all eight observation phases at both sizes, with provider cleanup and clean
+exit. A connected workspace Settings capture at both sizes verified pointer
+Save, zero delay, Enter acceptance, published settings and an unchanged private
+draft.
+The original oversized completion frame is now content-sized, and the
+constrained Settings labels and acceptance value remain readable. Native Windows
+visual acceptance is still open: its capture driver refused to activate the
+dedicated window before input. Linux captures do not close that platform gate.
+
+The Linux repository suite is not green. The viewmodel package reached its
+180-second aggregate timeout; the test active at timeout passes alone. Four
+package-root shards covering its 1,475 then-discovered test names pass, with
+ordinary opt-in skips retained. A session worktree test also fails because this
+machine's Budgie login script changes the command's working directory; it
+passes in a diagnostic run with `DESKTOP_SESSION` unset. That does not turn the
+original run into a pass.
+The subsequent editor-file milestone removed the unused
+`fileio/async_exec_unix.go` no-op; the Linux whole-repository lint rerun passes.
 
 **Immediate correction: concise editor messages (2026-11-09).**
 

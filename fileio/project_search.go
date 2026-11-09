@@ -1,8 +1,8 @@
 package fileio
 
 import (
-	"bytes"
 	"context"
+	"crude/textencoding"
 	"crude/textsearch"
 	"fmt"
 	"io/fs"
@@ -114,14 +114,18 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
-		if readErr != nil || bytes.IndexByte(data[:min(len(data), 512)], 0) >= 0 {
+		var decoded []byte
+		if readErr == nil && !IsBinary(data) {
+			decoded, _, readErr = textencoding.DecodeText(data)
+		}
+		if readErr != nil || IsBinary(data) {
 			if nameMatched && len(suggestions) < maxProjectSearchResults {
 				suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
 			}
 			return nil
 		}
 
-		text := string(data)
+		text := string(decoded)
 		lines := strings.Split(text, "\n")
 		starts := make([]int, len(lines))
 		for i := 1; i < len(lines); i++ {

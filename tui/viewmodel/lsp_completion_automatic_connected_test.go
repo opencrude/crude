@@ -192,6 +192,43 @@ func TestConnectedCompletionSettingsApplyWithoutRestartAndPreserveManualRequest(
 	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "privateValue" && eds[1].Value() == "privateValue" })
 }
 
+func TestConnectedSuggestionSettingsSaveByPointer(t *testing.T) {
+	shells, _, _, _, _ := newTypingCompletionFixture(t, "pr")
+	app := shells[0].app
+	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	app.openWorkspaceSettings()
+	parent := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
+	body := app.settingsSurface(parent)
+	selectSettingsCategory(t, body, "Code Intelligence")
+	body.FocusForm()
+	var form *ui.Form
+	for _, child := range body.Children() {
+		if candidate, ok := child.(*ui.Form); ok && candidate.ID() == settingsui.WorkspaceSettingsFormID {
+			form = candidate
+		}
+	}
+	if form == nil || !form.FocusField("auto-complete") {
+		t.Fatal("automatic suggestions setting is not reachable")
+	}
+	app.paintShellFrame()
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: ' ', Text: " "})
+	col, row := settingsTextCell(t, parent, "[ Save ]")
+	x, y := parent.Position()
+	for _, msg := range []tea.Msg{
+		tea.MouseMotionMsg{X: x + col + 3, Y: y + row},
+		tea.MouseClickMsg{X: x + col + 3, Y: y + row, Button: tea.MouseLeft},
+		tea.MouseReleaseMsg{X: x + col + 3, Y: y + row, Button: tea.MouseLeft},
+	} {
+		_, cmd := app.Update(msg)
+		runAppCommand(t, app, cmd)
+	}
+	if body.Model().SaveError() != "" || len(body.Model().Edits()) != 0 {
+		t.Fatalf("clicking Save did not save the suggestion setting: error=%q edits=%+v",
+			body.Model().SaveError(), body.Model().Edits())
+	}
+	remoteJourneyUntil(t, shells, func() bool { return !shells[1].app.ws.LSPMgr().Settings().AutoComplete })
+}
+
 func TestConnectedCompletionNarrowsAfterMoreTypingAndBackspace(t *testing.T) {
 	shells, eds, _, _, _ := newTypingCompletionFixture(t, "pr")
 	app := shells[0].app
@@ -225,4 +262,32 @@ func TestConnectedCompletionPeerEditRetiresTheOldInsertion(t *testing.T) {
 	if app.Input.Value() != "private draft" {
 		t.Fatal("peer invalidation changed the private input draft")
 	}
+}
+
+func TestConnectedAutomaticCompletionKeepsShortSuggestionsCompact(t *testing.T) {
+	shells, eds, _, _, _ := newTypingCompletionFixture(t, "pr")
+	app := shells[0].app
+	app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: 'i', Text: "i"})
+	remoteJourneyUntil(t, shells, func() bool { return app.completion != nil && app.completion.screen != nil })
+
+	for _, size := range [][2]int{{160, 40}, {80, 24}, {160, 40}} {
+		app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		app.View()
+		fw := app.overlayHost.Window(ui.OverlayCompletion)
+		if fw == nil {
+			t.Fatal("resizing closed the current suggestions")
+		}
+		w, h := fw.Size()
+		if w > 76 || h > 10 {
+			t.Fatalf("%dx%d: two short suggestions obscure the editor with a %dx%d chooser",
+				size[0], size[1], w, h)
+		}
+		completionRequireText(t, app, []string{"privateValue", "printValue", "No documentation available.", "Tab"}, nil)
+		if eds[0].Value() != "pri" || app.Input.Value() != "private draft" {
+			t.Fatal("showing or resizing suggestions changed the source or private draft")
+		}
+	}
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyTab})
+	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "privateValue" && eds[1].Value() == "privateValue" })
 }

@@ -228,6 +228,9 @@ func lspUnset(s LSPSettings) bool {
 }
 
 func NormalizeEditorSettings(s EditorSettings) EditorSettings {
+	if !s.NewFileEncoding.Valid() {
+		s.NewFileEncoding = ""
+	}
 	switch s.AutoSave {
 	case AutoSaveOff, AutoSaveAfterDelay, AutoSaveEditorFocusChange, AutoSaveTerminalFocusLoss:
 	default:

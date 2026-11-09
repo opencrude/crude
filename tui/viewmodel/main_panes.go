@@ -598,7 +598,7 @@ func (g *mainPaneGroup) Layout(ctx ui.LayoutContext, r ui.Rect) {
 func (*mainPaneGroup) Paint(*surface.CellBuffer, int, int, ui.PaintContext) {}
 func (*mainPaneGroup) Handle(ui.EventContext, ui.Event) ui.EventResult      { return ui.EventResult{} }
 func (g *mainPaneGroup) HandleAction(_ ui.EventContext, a ui.Action) ui.EventResult {
-	if a.ID == "tabs.new" {
+	if a.ID == "tabs.new" || a.ID == "tabs.new-buffer" {
 		a.Payload = g.id
 	}
 	return ui.EventResult{Handled: true, Action: &a}

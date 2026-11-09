@@ -18,7 +18,7 @@ func change(path, before, after string, area workspace.GitChangeArea) workspace.
 	c := workspace.GitChange{Path: path, AbsolutePath: "/repo/" + path, Area: area, Code: "M"}
 	return workspace.GitChangeComparison{Change: c, Comparison: workspace.GitComparison{
 		RepositoryRoot: "/repo", Path: path, AbsolutePath: "/repo/" + path, Area: area,
-		Before: before, After: after, BeforePresent: true, AfterPresent: true, Fingerprint: "fp-" + path,
+		Before: []byte(before), After: []byte(after), BeforePresent: true, AfterPresent: true, Fingerprint: "fp-" + path,
 	}}
 }
 
@@ -143,7 +143,7 @@ func TestReviewFileIntentCarriesExactComparison(t *testing.T) {
 
 func TestReviewCommitIsReadOnly(t *testing.T) {
 	screen := New(theme.DefaultDark())
-	files := gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "a.go", Before: "x\n", After: "y\n", BeforePresent: true, AfterPresent: true, Historical: true}})
+	files := gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "a.go", Before: []byte("x\n"), After: []byte("y\n"), BeforePresent: true, AfterPresent: true, Historical: true}})
 	screen.ShowCommit(workspace.GitCommitEvidence{Commit: workspace.GitCommitSummary{ShortHash: "abc1234", Subject: "Fix it"}}, files)
 	host, text := render(t, screen, 140, 30)
 	if !strings.Contains(text, "abc1234") || !strings.Contains(text, "Fix it") || strings.Contains(text, "Discard") || strings.Contains(text, " Stage ") {

@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"crude/fileio"
 	"crude/localhistory"
+	"crude/textencoding"
 
 	"github.com/go-git/go-git/v5"
 )
@@ -458,14 +458,15 @@ func (s *GitService) ConflictFile(ctx context.Context, path string) (GitConflict
 	if err != nil {
 		return GitConflictFile{}, err
 	}
-	if !utf8.Valid(data) {
-		return GitConflictFile{}, fmt.Errorf("%s is binary; resolve it in a terminal with git checkout --ours/--theirs", clean[0])
+	text, encoding, err := textencoding.DecodeText(data)
+	if err != nil || fileio.IsBinary(data) {
+		return GitConflictFile{}, fmt.Errorf("%s is not readable text; open it with the correct encoding before resolving conflicts", clean[0])
 	}
-	segments, err := ParseGitConflicts(string(data))
+	segments, err := ParseGitConflicts(string(text))
 	if err != nil {
 		return GitConflictFile{}, fmt.Errorf("%s: %w", clean[0], err)
 	}
-	return GitConflictFile{Path: clean[0], AbsolutePath: absolute, Fingerprint: gitContentFingerprint(string(data)), Segments: segments}, nil
+	return GitConflictFile{Path: clean[0], AbsolutePath: absolute, Fingerprint: gitContentFingerprint(string(data)), Encoding: encoding, Segments: segments}, nil
 }
 
 // ResolveGitConflict writes the resolved text of a conflicted file and marks
@@ -483,6 +484,10 @@ func (workspace *Workspace) ResolveGitConflict(ctx context.Context, path, finger
 		return "", ErrGitReviewStale
 	}
 	resolved, err := ResolveGitConflicts(file.Segments, choices)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := textencoding.EncodeText([]byte(resolved), file.Encoding)
 	if err != nil {
 		return "", err
 	}
@@ -520,7 +525,7 @@ func (workspace *Workspace) ResolveGitConflict(ctx context.Context, path, finger
 	if err != nil {
 		return safety.ID, err
 	}
-	if err := fileio.WriteAtomicChecked(file.AbsolutePath, []byte(resolved), info.Mode().Perm(), verify); err != nil {
+	if err := fileio.WriteAtomicChecked(file.AbsolutePath, encoded, info.Mode().Perm(), verify); err != nil {
 		return safety.ID, err
 	}
 	return safety.ID, service.run(ctx, "add", "--", file.Path)

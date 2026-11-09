@@ -50,14 +50,20 @@ const maxTrackedMutationBytes int64 = 256 << 20
 // the shared low-level commit primitive for workspace mutation services; policy
 // and precondition ownership stay with the caller.
 func WriteAtomicChecked(path string, data []byte, perm os.FileMode, precommit func() error) error {
-	return replaceAtomic(path, data, perm, nil, precommit, false)
+	return replaceAtomic(path, data, perm, nil, precommit, false, false)
+}
+
+// WriteAtomicNewChecked publishes a new file without ever replacing an entry
+// created by another writer after the precondition check.
+func WriteAtomicNewChecked(path string, data []byte, perm os.FileMode, precommit func() error) error {
+	return replaceAtomic(path, data, perm, nil, precommit, false, true)
 }
 
 func writeAtomicChecked(path string, data []byte, perm os.FileMode, lg *logger.Logger, precommit func() error) error {
-	return replaceAtomic(path, data, perm, lg, precommit, true)
+	return replaceAtomic(path, data, perm, lg, precommit, true, false)
 }
 
-func replaceAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger, precommit func() error, createParents bool) error {
+func replaceAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger, precommit func() error, createParents, newOnly bool) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("atomic write: resolve path: %w", err)
@@ -116,7 +122,19 @@ func replaceAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger
 		}
 	}
 
-	if err := CommitAtomicFile(tmpName, abs); err != nil {
+	commit := CommitAtomicFile
+	if newOnly {
+		commit = func(from, to string) error {
+			if err := moveDirectoryNoReplace(from, to); err != nil {
+				return fmt.Errorf("atomic write: create %s: %w", to, err)
+			}
+			if err := syncParentDirectory(filepath.Dir(to)); err != nil {
+				return committedWriteError{err: fmt.Errorf("atomic write: sync parent of %s: %w", to, err)}
+			}
+			return nil
+		}
+	}
+	if err := commit(tmpName, abs); err != nil {
 		if lg != nil {
 			lg.Error("ATOMIC", "commit_failed", "tmp", tmpName, "path", abs, "error", err.Error())
 		}

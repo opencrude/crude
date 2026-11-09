@@ -110,7 +110,7 @@ func discardGitReviewedDisk(ctx context.Context, service *GitService, store *loc
 	if filemode.FileMode(comparison.BeforeMode) == filemode.Executable {
 		mode = 0755
 	}
-	if err := fileio.WriteAtomicChecked(comparison.AbsolutePath, []byte(comparison.Before), mode, verify); err != nil {
+	if err := fileio.WriteAtomicChecked(comparison.AbsolutePath, comparison.Before, mode, verify); err != nil {
 		return safety.ID, err
 	}
 	return safety.ID, nil

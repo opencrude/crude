@@ -131,7 +131,7 @@ func TestPreparedChangesReachPanelAndReview(t *testing.T) {
 		t.Fatal("reveal was consumed before the file was prepared")
 	}
 	app.gitPrepareGen++
-	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Path: "a.go", Before: "a\n", After: "b\n", BeforePresent: true, AfterPresent: true}}})
+	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Path: "a.go", Before: []byte("a\n"), After: []byte("b\n"), BeforePresent: true, AfterPresent: true}}})
 	app.applyGitChangesPrepared(gitChangesPreparedMsg{workspace: app.workspaceSwitchGen.Load(), generation: app.gitPrepareGen, files: files})
 	if len(app.gitPanel.PreparedList()) != 1 || view.screen.Source() != gitreview.SourceChanges {
 		t.Fatal("prepared set did not reach the panel")
@@ -172,7 +172,7 @@ func TestGitReviewKeysReachTheReviewThroughTheShell(t *testing.T) {
 	app.gitPanel.SetSnapshot(gitDockSnapshot(app.ws.RootPath(), change))
 	app.openGitReview("", "")
 	review := app.activeGitReview().screen
-	review.ShowChanges(gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Path: "a.go", Before: "a\n", After: "b\n", BeforePresent: true, AfterPresent: true, Fingerprint: "fp"}}}), "main")
+	review.ShowChanges(gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Path: "a.go", Before: []byte("a\n"), After: []byte("b\n"), BeforePresent: true, AfterPresent: true, Fingerprint: "fp"}}}), "main")
 	app.paintShellFrame()
 	if app.rootHost.Focused() != review.DocumentID() {
 		t.Fatalf("review focus=%s", app.rootHost.Focused())
@@ -212,8 +212,8 @@ func TestGitReviewsAreIndependentTabs(t *testing.T) {
 	}
 	app.gitPrepareGen++
 	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{
-		{Change: a, Comparison: workspace.GitComparison{Path: "src/a.go", Before: "x\n", After: "y\n", BeforePresent: true, AfterPresent: true}},
-		{Change: b, Comparison: workspace.GitComparison{Path: "src/b.go", Before: "x\n", After: "z\n", BeforePresent: true, AfterPresent: true}},
+		{Change: a, Comparison: workspace.GitComparison{Path: "src/a.go", Before: []byte("x\n"), After: []byte("y\n"), BeforePresent: true, AfterPresent: true}},
+		{Change: b, Comparison: workspace.GitComparison{Path: "src/b.go", Before: []byte("x\n"), After: []byte("z\n"), BeforePresent: true, AfterPresent: true}},
 	})
 	app.applyGitChangesPrepared(gitChangesPreparedMsg{workspace: app.workspaceSwitchGen.Load(), generation: app.gitPrepareGen, files: files})
 	for name, view := range map[string]*gitReviewView{"a": first, "b": second, "all": all} {

@@ -307,6 +307,58 @@ func TestDocumentationNativeScrollingSelectionCopyAndTyping(t *testing.T) {
 	expectAction(t, key(host, tea.KeyEsc), ActionClose, "original-A")
 }
 
+func TestMeasuredChooserGrowsForDocumentationAndKeepsItReadable(t *testing.T) {
+	s := New(nil, "invocation-original", []Entry{
+		{ID: "first", Label: "first"},
+		{ID: "second", Label: "second"},
+	}, "")
+	cs := ui.Constraints{MaxW: 70, MaxH: 12}
+	short := s.Measure(ui.LayoutContext{}, cs)
+	if short.W > 70 || short.H > 8 {
+		t.Fatalf("two short rows need a compact chooser, got %+v", short)
+	}
+	host := mount(s, short.W, short.H)
+	_, output := painted(host, short.W, short.H)
+	for _, want := range []string{"first", "second", "No documentation available.", "Tab"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("compact chooser hides %q:\n%s", want, output)
+		}
+	}
+
+	long := strings.Repeat("A longer documentation line.\n", 30) + "final documentation sentinel"
+	if !s.SetDocumentation("invocation-original", "first", "", long, "") {
+		t.Fatal("current row rejected its documentation")
+	}
+	grown := s.Measure(ui.LayoutContext{}, cs)
+	if grown.H <= short.H || grown.H > cs.MaxH {
+		t.Fatalf("documentation must grow within its bounds: short=%+v long=%+v", short, grown)
+	}
+	host.Resize(grown.W, grown.H)
+	host.Layout()
+	for range 12 {
+		expectNoIntent(t, host.Handle(tea.KeyPressMsg{Code: tea.KeyPgDown, Mod: tea.ModCtrl}))
+	}
+	_, output = painted(host, grown.W, grown.H)
+	if !strings.Contains(output, "final documentation sentinel") || s.SelectedID() != "first" {
+		t.Fatalf("paging did not reach the complete selected documentation:\n%s", output)
+	}
+	expectAction(t, key(host, tea.KeyDown), ActionSelection, "second")
+	if next := s.Measure(ui.LayoutContext{}, cs); next != short {
+		t.Fatalf("selecting the short row did not restore compact geometry: got %+v, want %+v", next, short)
+	}
+}
+
+func TestMeasuredChooserDoesNotAllocateForUnchangedContent(t *testing.T) {
+	s := New(nil, "invocation-original", []Entry{{
+		ID: "first", Label: "first", Documentation: strings.Repeat("A long documentation line.\n", 300),
+	}}, "")
+	cs := ui.Constraints{MaxW: 106, MaxH: 12}
+	s.Measure(ui.LayoutContext{}, cs)
+	if got := testing.AllocsPerRun(100, func() { s.Measure(ui.LayoutContext{}, cs) }); got != 0 {
+		t.Fatalf("unchanged chooser measurement allocated %.1f times per frame", got)
+	}
+}
+
 func TestNativeListViewportAndInvalidIdentity(t *testing.T) {
 	rows := make([]Entry, 80)
 	for i := range rows {

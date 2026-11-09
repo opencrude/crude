@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"crude/textencoding"
 	"errors"
 	"fmt"
 	"strings"
@@ -39,6 +40,11 @@ type liveEditorState struct {
 	topic                                   *shellport.LiveDocumentsChangedMsg
 	topicReady                              bool
 	pushedRevision                          uint64
+	saveDirectory, saveName                 string
+	saveEncoding                            textencoding.Encoding
+	convertEncoding                         *textencoding.Encoding
+	reload                                  bool
+	firstSavePath                           string
 }
 
 // Only the exclusive post-program flush can supply this alternative source
@@ -61,7 +67,31 @@ type liveDocumentRefs struct {
 func (r *liveDocumentRefs) open(ctx context.Context, path string) (document.Snapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	s, err := r.live.OpenDocument(ctx, path)
+	var s document.Snapshot
+	var err error
+	if document.IsUntitledID(path) {
+		untitled, ok := r.owner.(shellport.UntitledDocuments)
+		if !ok {
+			return document.Snapshot{}, errors.New("unnamed documents are unavailable")
+		}
+		s, err = untitled.OpenUntitledDocument(ctx, path)
+	} else {
+		s, err = r.live.OpenDocument(ctx, path)
+	}
+	if err == nil {
+		r.counts[s.ID]++
+	}
+	return s, err
+}
+
+func (r *liveDocumentRefs) createUntitled(ctx context.Context) (document.Snapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	untitled, ok := r.owner.(shellport.UntitledDocuments)
+	if !ok {
+		return document.Snapshot{}, errors.New("unnamed documents are unavailable")
+	}
+	s, err := untitled.CreateUntitledDocument(ctx)
 	if err == nil {
 		r.counts[s.ID]++
 	}
@@ -85,22 +115,24 @@ func (r *liveDocumentRefs) releaseCmd(id string) tea.Cmd {
 }
 
 type liveEditorResult struct {
-	owner      shellport.Workspace
-	generation uint64
-	ed         *editor.Editor
-	state      *liveEditorState
-	kind       string
-	receipt    document.Receipt
-	sync       document.SyncResult
-	snapshot   document.Snapshot
-	undo       *editor.DocumentUndoIntent
-	err        error
-	requestID  string
-	settled    bool
+	owner        shellport.Workspace
+	generation   uint64
+	ed           *editor.Editor
+	state        *liveEditorState
+	kind         string
+	receipt      document.Receipt
+	sync         document.SyncResult
+	snapshot     document.Snapshot
+	undo         *editor.DocumentUndoIntent
+	err          error
+	requestID    string
+	saveRevision uint64
+	settled      bool
 }
 
 func (m *App) installLiveEditor(s document.Snapshot) error {
-	if tab := m.EditorState.Tabs[s.Path]; tab != nil && tab.Editor.IsOpen() {
+	key := documentEditorKey(s)
+	if tab := m.EditorState.Tabs[key]; tab != nil && tab.Editor.IsOpen() {
 		return nil
 	}
 	live := m.ws.(shellport.LiveDocuments)
@@ -118,11 +150,11 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 	state := &liveEditorState{owner: live.DocumentOwner()}
 	m.liveEditors[ed] = state
 	ed.SetOnDocumentUndo(func(intent editor.DocumentUndoIntent) { state.undo = &intent })
-	ed.SetOnDocumentEdited(func() { m.onEditorContentChanged(ed, s.Path, "") })
+	ed.SetOnDocumentEdited(func() { m.onEditorContentChanged(ed, ed.FilePath(), "") })
 	ed.SetOnContentChanged(func(path, text string) { m.onEditorContentChanged(ed, path, text) })
 	ed.SetOnTyping(func(key tea.KeyPressMsg) { m.onEditorTyping(ed, key) })
 	m.BufferMgr.InstallPrepared(ed.DocumentBuffer())
-	m.EditorState.Tabs[s.Path] = NewEditorTab(s.Path, ed)
+	m.EditorState.Tabs[key] = NewEditorTab(key, ed)
 	if msg, ok := m.pendingInsights[s.ID]; ok {
 		delete(m.pendingInsights, s.ID)
 		m.applyDocumentInsight(msg)
@@ -172,7 +204,7 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 		}
 		if previous := state.uncertain; previous != nil {
 			lookup, ok := m.ws.(shellport.LiveDocumentReceipts)
-			if previous.kind == "save" || previous.kind == "format" {
+			if previous.kind == "save" || previous.kind == "save-untitled" || previous.kind == "format" || previous.kind == "reload" {
 				_, ok = m.ws.(shellport.LiveDocumentCommands)
 			}
 			if !ok || time.Now().Before(state.recoverDue) {
@@ -189,7 +221,7 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 				once.Do(func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
-					if captured.kind == "save" || captured.kind == "format" {
+					if captured.kind == "save" || captured.kind == "save-untitled" || captured.kind == "format" || captured.kind == "reload" {
 						captured.snapshot, captured.settled, captured.err = snapshotCommands.DocumentSnapshotReceipt(ctx, captured.requestID)
 					} else {
 						captured.receipt, captured.settled, captured.err = lookup.DocumentReceipt(ctx, captured.requestID)
@@ -242,7 +274,8 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 		if ds.Conflict != nil && !errors.Is(ds.Conflict, editor.ErrDocumentPending) {
 			continue
 		}
-		if m.editorSettings.AutoSave == types.AutoSaveAfterDelay && !state.due.IsZero() && !time.Now().Before(state.due) && m.DirtyPromptPath != ed.FilePath() {
+		reloadPrompt := m.editorReload != nil && m.editorReload.editor.Primary() == ed.Primary()
+		if !reloadPrompt && !state.reload && ed.FilePath() != "" && m.editorSettings.AutoSave == types.AutoSaveAfterDelay && !state.due.IsZero() && !time.Now().Before(state.due) && m.DirtyPromptPath != ed.FilePath() {
 			state.save, state.reason = true, workspace.DocumentSaveAfterDelay
 			state.due = time.Time{}
 		}
@@ -270,6 +303,17 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			msg.requestID = id
 			operation = func(ctx context.Context) {
 				msg.receipt, msg.err = live.UndoDocument(ctx, ds.DocumentID, id, intent.ExpectedRevision, intent.Redo)
+			}
+		case state.reload && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
+			reloader, ok := m.ws.(shellport.DocumentEncodingSaver)
+			state.reload = false
+			if !ok {
+				m.liveEditorFailure(state, errors.New("reloading is unavailable"))
+				continue
+			}
+			msg.kind, msg.requestID = "reload", fmt.Sprintf("reload-%x", rand.Uint64())
+			operation = func(ctx context.Context) {
+				msg.snapshot, msg.err = reloader.ReloadDocumentRequest(ctx, ds.DocumentID, ds.Revision, msg.requestID)
 			}
 		case state.formatOnly && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			formatter, ok := m.ws.(shellport.LiveDocumentFormatter)
@@ -312,6 +356,34 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			msg.requestID = fmt.Sprintf("save-%x", rand.Uint64())
 			reason := state.reason
 			snapshotCommands, _ := msg.owner.(shellport.LiveDocumentCommands)
+			directory, name, encoding := state.saveDirectory, state.saveName, state.saveEncoding
+			state.saveDirectory, state.saveName = "", ""
+			if directory != "" {
+				saver, ok := msg.owner.(shellport.UntitledDocumentSaver)
+				if !ok {
+					m.failUntitledSave(ed, "Cannot save in this workspace.")
+					continue
+				}
+				msg.kind = "save-untitled"
+				msg.saveRevision = ds.Revision
+				operation = func(ctx context.Context) {
+					msg.snapshot, msg.err = saver.SaveUntitledDocument(ctx, ds.DocumentID, ds.Revision, directory, name, encoding, msg.requestID)
+				}
+				break
+			}
+			if selected := state.convertEncoding; selected != nil {
+				saver, ok := msg.owner.(shellport.DocumentEncodingSaver)
+				state.convertEncoding = nil
+				if !ok {
+					m.liveEditorFailure(state, errors.New("encoding conversion is unavailable"))
+					continue
+				}
+				encoding := *selected
+				operation = func(ctx context.Context) {
+					msg.snapshot, msg.err = saver.SaveDocumentEncodingRequest(ctx, ds.DocumentID, ds.Revision, encoding, msg.requestID)
+				}
+				break
+			}
 			operation = func(ctx context.Context) {
 				if snapshotCommands != nil {
 					msg.snapshot, msg.err = snapshotCommands.SaveDocumentRequest(ctx, ds.DocumentID, ds.Revision, reason, msg.requestID)
@@ -320,7 +392,7 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 				}
 			}
 		case state.closeView && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
-			m.closeEditorTabForce(ed.FilePath())
+			m.closeEditorTabForce(editorDocumentKey(ed))
 			m.continuePendingTabClose()
 			continue
 		}
@@ -423,9 +495,15 @@ func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd 
 		if !state.sync {
 			ed.CompleteDocumentHistorySync()
 		}
+		if state.firstSavePath != "" && ed.FilePath() == state.firstSavePath {
+			m.finishUntitledSave(ed)
+		}
+		if !ed.IsOpen() {
+			continue
+		}
 		if state.closeAfter && !ed.Modified() {
 			m.overlayHost.Close(ui.OverlayDirtyClose)
-			m.closeEditorTabForce(ed.FilePath())
+			m.closeEditorTabForce(editorDocumentKey(ed))
 			m.continuePendingTabClose()
 		}
 	}
@@ -475,14 +553,24 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 		// Keep the exact outstanding projection; never replay under a fresh ID.
 		var fault *coreprotocol.Fault
 		definitive := (errors.As(msg.err, &fault) && fault.Code != "outcome_uncertain") || errors.Is(msg.err, document.ErrOwner) || errors.Is(msg.err, document.ErrRequest)
-		if !definitive && (msg.kind == "save" || msg.kind == "format") && !msg.settled {
+		if msg.kind == "save-untitled" && msg.settled && !definitive {
+			state.err = msg.err
+			m.uncertainUntitledSave(ed)
+			return
+		}
+		if !definitive && (msg.kind == "save" || msg.kind == "save-untitled" || msg.kind == "format" || msg.kind == "reload") && !msg.settled {
 			retained := msg
 			state.uncertain = &retained
 			state.recoverDue = time.Now().Add(time.Second)
+			if msg.kind == "save-untitled" {
+				m.pendingUntitledSave(ed)
+				return
+			}
 			m.liveEditorFailure(state, msg.err)
 			return
 		}
-		if msg.kind == "edit" || msg.kind == "undo" {
+		switch msg.kind {
+		case "edit", "undo":
 			if !definitive {
 				retained := msg
 				state.uncertain = &retained
@@ -491,7 +579,17 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 				return
 			}
 			msg.receipt = document.Receipt{DocumentID: ed.DocumentState().DocumentID, RequestID: msg.requestID, Error: msg.err.Error()}
-		} else {
+		case "save-untitled":
+			message := "Could not save. Check the folder and file name."
+			if fault != nil && fault.Code == "destination_exists" {
+				if m.prepareUntitledOverwrite(ed, msg.saveRevision) {
+					return
+				}
+				message = "Cannot replace this file safely. Choose a new name."
+			}
+			m.failUntitledSave(ed, message)
+			return
+		default:
 			m.liveEditorFailure(state, msg.err)
 			return
 		}
@@ -526,7 +624,7 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 			state.sync = false
 			ed.CompleteDocumentHistorySync()
 		}
-	case "format":
+	case "format", "reload":
 		// Fetch the authoritative change group and rebase any typing that
 		// arrived while formatting. A snapshot replacement would lose it.
 		if state.notifyFormat {
@@ -573,8 +671,14 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 				m.liveEditorFailure(state, err)
 			}
 		}
-	case "save":
+	case "save", "save-untitled":
 		if msg.snapshot.Revision < ed.DocumentState().Revision {
+			if msg.kind == "save-untitled" {
+				state.firstSavePath = msg.snapshot.Path
+				if ed.FilePath() == state.firstSavePath {
+					m.finishUntitledSave(ed)
+				}
+			}
 			break
 		}
 		if err := ed.AcceptDocumentSnapshot(msg.snapshot); err != nil {
@@ -585,9 +689,13 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 			m.liveEditorFailure(state, err)
 			return
 		}
+		if msg.kind == "save-untitled" {
+			m.finishUntitledSave(ed)
+			break
+		}
 		if state.closeAfter && !ed.Modified() {
 			m.overlayHost.Close(ui.OverlayDirtyClose)
-			m.closeEditorTabForce(ed.FilePath())
+			m.closeEditorTabForce(editorDocumentKey(ed))
 			m.continuePendingTabClose()
 		} else if state.closeAfter {
 			// Typing after the save capture belongs to a later revision.

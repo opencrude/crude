@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"crude/textencoding"
 	"errors"
 	"fmt"
 	"io"
@@ -21,10 +22,11 @@ import (
 type localDiffBaseline string
 
 const (
-	localDiffDisk   localDiffBaseline = "disk"
-	localDiffSaved  localDiffBaseline = "saved"
-	localDiffShared localDiffBaseline = "shared"
-	localDiffLimit                    = 64 << 20
+	localDiffDisk        localDiffBaseline = "disk"
+	localDiffSaved       localDiffBaseline = "saved"
+	localDiffShared      localDiffBaseline = "shared"
+	localDiffReplacement localDiffBaseline = "replacement"
+	localDiffLimit                         = 64 << 20
 )
 
 // A local comparison owns immutable evidence, never another live buffer. Tab
@@ -39,6 +41,7 @@ type localDiffView struct {
 	sequence                 uint64
 	cancel                   context.CancelFunc
 	notice                   string
+	returnSave               *untitledSaveOwner
 }
 
 type localDiffPreparedMsg struct {
@@ -94,7 +97,7 @@ func (m *App) openLocalDiff(ed *editor.Editor, baseline localDiffBaseline) tea.C
 		screen := localdiff.NewWithID(m.Theme, ui.ComponentID(fmt.Sprintf("localdiff/%d", tab.ID)))
 		screen.SetFocusHandler(m.rootHost.Focus)
 		view = &localDiffView{tab: tab.ID, returnTab: returnTab, source: ed, sourceID: ed.BufferID(), baseline: baseline, screen: screen}
-		if baseline == localDiffShared {
+		if baseline == localDiffShared || baseline == localDiffReplacement {
 			screen.SetRefreshEnabled(false)
 		}
 		m.localDiffs[tab.ID] = view
@@ -110,17 +113,16 @@ func (m *App) localDiffSourceLive(view *localDiffView) bool {
 	if view == nil || view.source == nil || !view.source.IsOpen() || view.source.BufferID() != view.sourceID || m.EditorState == nil {
 		return false
 	}
-	tab := m.EditorState.Tabs[view.source.FilePath()]
+	tab := m.EditorState.Tabs[editorDocumentKey(view.source)]
 	return tab != nil && tab.Editor == view.source
 }
 
 func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
-	if !m.localDiffSourceLive(view) {
-		view.screen.SetError(errors.New("source editor is closed; this snapshot is retained, but cannot be refreshed"))
+	if view.baseline == localDiffShared || view.baseline == localDiffReplacement {
 		return nil
 	}
-	if view.baseline == localDiffShared {
-		view.screen.SetNotice("Immutable shared/private comparison · reopen Resolve Shared Editor Changes for current versions")
+	if !m.localDiffSourceLive(view) {
+		view.screen.SetError(errors.New("source editor is closed; this snapshot is retained, but cannot be refreshed"))
 		return nil
 	}
 	if view.cancel != nil {
@@ -134,7 +136,7 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 	baseline := view.baseline
 	var saved []byte
 	if baseline == localDiffSaved {
-		buffer := m.BufferMgr.Get(snapshot.Path)
+		buffer := m.BufferMgr.Get(editorDocumentKey(view.source))
 		if buffer == nil || buffer.ID != snapshot.ID {
 			cancel()
 			view.cancel = nil
@@ -156,6 +158,9 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 			} else {
 				before, err = readLocalDiffDisk(ctx, snapshot.Path)
 			}
+			if err == nil {
+				before, _, err = textencoding.DecodeText(before)
+			}
 		}
 		if err == nil && (len(before) > localDiffLimit || len(snapshot.Data) > localDiffLimit) {
 			err = errors.New("comparison exceeds the 64 MiB per-version limit")
@@ -164,6 +169,31 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 			msg.prepared, err = diffview.PrepareContext(ctx, diffview.Comparison{Path: snapshot.Path, BeforeLabel: label, AfterLabel: fmt.Sprintf("Editor snapshot · revision %d", snapshot.Revision), Before: string(before), After: string(snapshot.Data)})
 		}
 		msg.err = err
+		return msg
+	})
+}
+
+// openSnapshotComparison shares the same tab, layout, reader and async
+// preparation as saved/disk comparisons. The supplied versions are immutable.
+func (m *App) openSnapshotComparison(ed *editor.Editor, baseline localDiffBaseline, comparison diffview.Comparison, revision uint64) tea.Cmd {
+	_ = m.openLocalDiff(ed, baseline)
+	view := m.activeLocalDiff()
+	if view == nil {
+		return nil
+	}
+	if view.cancel != nil {
+		view.cancel()
+	}
+	view.sequence++
+	ctx, cancel := m.sourceControlContext()
+	view.cancel = cancel
+	view.screen.SetLoading(true)
+	view.screen.SetNotice("Read-only comparison.")
+	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(),
+		widthGen: m.comparisonWidthGen, revision: revision, diskGeneration: ed.DiskGeneration()}
+	return m.comparisonCommand(cancel, func() tea.Msg {
+		defer cancel()
+		msg.prepared, msg.err = diffview.PrepareContext(ctx, comparison)
 		return msg
 	})
 }
@@ -231,7 +261,7 @@ func (m *App) applyLocalDiffPrepared(msg localDiffPreparedMsg) {
 // layout/paint, and never silently replace the evidence while the user reads it.
 func (m *App) syncLocalDiffFreshness() {
 	for _, view := range m.localDiffs {
-		if view.baseline == localDiffShared {
+		if view.baseline == localDiffShared || view.baseline == localDiffReplacement {
 			continue
 		}
 		notice := "Read-only snapshot · Refresh to compare the latest versions"
@@ -262,6 +292,7 @@ func (m *App) closeLocalDiff(id window.TabID) {
 	m.Win.CloseTabByID(id)
 	m.handleTabSwitch()
 	m.forceFrame()
+	m.restoreUntitledSave(view.returnSave)
 }
 
 func (m *App) cancelLocalDiffs() {
@@ -293,6 +324,10 @@ func (m *App) handleLocalDiffAction(action ui.Action) (tea.Cmd, bool) {
 		case localdiff.ActionClose:
 			m.closeLocalDiff(view.tab)
 		case localdiff.ActionOpenSource:
+			if view.returnSave != nil {
+				m.closeLocalDiff(view.tab)
+				return nil, true
+			}
 			if !m.localDiffSourceLive(view) {
 				view.screen.SetError(errors.New("source editor is closed; open the file explicitly to start a new editor lifetime"))
 				return nil, true

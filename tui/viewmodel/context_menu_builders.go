@@ -44,6 +44,9 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// already provides context, and the items speak for themselves)
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		Items: []ui.ContextMenuItem{
+			{Label: "File encoding", Disabled: ed.ReadOnly(), Action: func() {
+				m.runDetachedAsyncCmd(m.openEncodingMenu(ed))
+			}},
 			{Label: "Copy", Detail: "Ctrl+C", Disabled: !m.EditorState.Editor.HasSelection(), Action: func() {
 				m.copyEditorSelection()
 			}},

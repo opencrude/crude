@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"crude/textencoding"
+	"crypto/sha256"
 	"fmt"
 	"reflect"
 	"slices"
@@ -132,7 +134,7 @@ func TestDiagnosticPaintMapsLineChangesAndClearsOnPublication(t *testing.T) {
 		t.Fatal("empty new publication retained provisional underline")
 	}
 	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError}})
-	ed.ApplyDisk([]byte("package replacement\n"))
+	ed.ApplyDisk([]byte("package replacement\n"), textencoding.UTF8, sha256.Sum256([]byte("package replacement\n")))
 	if len(ed.lineDiagnostics(2)) != 0 {
 		t.Fatal("replacement retained unrelated diagnostic paint")
 	}

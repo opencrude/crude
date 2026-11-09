@@ -3,28 +3,35 @@ package coreprotocol
 import (
 	"crude/document"
 	"crude/terminalvt"
+	"crude/textencoding"
 	"crude/workspace"
 )
 
 const (
-	DocumentOpen    = "document.open"
-	DocumentRead    = "document.read"
-	DocumentSync    = "document.sync"
-	DocumentClose   = "document.close"
-	DocumentEdit    = "document.edit"
-	DocumentUndo    = "document.undo"
-	DocumentRedo    = "document.redo"
-	DocumentSave    = "document.save"
-	DocumentFormat  = "document.format"
-	ProjectFormat   = "project.format"
-	TerminalList    = "terminal.list"
-	TerminalCreate  = "terminal.create"
-	TerminalRows    = "terminal.rows"
-	TerminalControl = "terminal.control"
-	TerminalRelease = "terminal.release"
-	TerminalInput   = "terminal.input"
-	TerminalResize  = "terminal.resize"
-	TerminalClose   = "terminal.close"
+	DocumentOpen            = "document.open"
+	DocumentCreateUntitled  = "document.create_untitled"
+	DocumentOpenUntitled    = "document.open_untitled"
+	DocumentSaveUntitled    = "document.save_untitled"
+	DocumentReviewUntitled  = "document.review_untitled_overwrite"
+	DocumentCompareUntitled = "document.compare_untitled_overwrite"
+	DocumentRead            = "document.read"
+	DocumentSync            = "document.sync"
+	DocumentClose           = "document.close"
+	DocumentEdit            = "document.edit"
+	DocumentUndo            = "document.undo"
+	DocumentRedo            = "document.redo"
+	DocumentSave            = "document.save"
+	DocumentReload          = "document.reload"
+	DocumentFormat          = "document.format"
+	ProjectFormat           = "project.format"
+	TerminalList            = "terminal.list"
+	TerminalCreate          = "terminal.create"
+	TerminalRows            = "terminal.rows"
+	TerminalControl         = "terminal.control"
+	TerminalRelease         = "terminal.release"
+	TerminalInput           = "terminal.input"
+	TerminalResize          = "terminal.resize"
+	TerminalClose           = "terminal.close"
 )
 
 type DocumentOpenRequest struct {
@@ -47,6 +54,14 @@ type DocumentRevisionRequest struct {
 	ID       string                       `json:"id"`
 	Revision uint64                       `json:"revision"`
 	Reason   workspace.DocumentSaveReason `json:"reason,omitempty"`
+	Encoding *textencoding.Encoding       `json:"encoding,omitempty"`
+}
+type DocumentSaveUntitledRequest struct {
+	ID        string                `json:"id"`
+	Directory string                `json:"directory"`
+	Name      string                `json:"name"`
+	Revision  uint64                `json:"revision"`
+	Encoding  textencoding.Encoding `json:"encoding"`
 }
 type ProjectFormatRequest struct {
 	RequestID string `json:"request_id,omitempty"`

@@ -220,6 +220,65 @@ refresh after success without dropping the query/replacement draft.
   `workspace.DocumentSaveService` is the one autosave-deadline and disk-commit
   authority. Editor, PieceTable, watchers, and LSP must never write files or
   maintain competing dirty flags.
+- An unnamed connected document has a core-owned identity and no disk path.
+  Its edits, undo history and shared views use the ordinary document owner.
+  Automatic saves do not schedule or write it. Its first manual Save asks for a
+  folder, file name and encoding in the shared Settings-style Form. The floating
+  Save File window has one title and one action row. A successful create retains the document identity and
+  joins the ordinary named-file save and autosave paths. An existing target needs
+  a Cancel-default Replace / Compare / Cancel confirmation, exact native preimage
+  checks and a retained Local History copy. Compare opens the existing main-area
+  comparison tab only on request; closing it returns to the same name, folder and
+  encoding. Targets that cannot meet that review's safety
+  bounds are refused without changing the draft or file.
+- Empty-rail double click creates one unnamed file in that pane. New Unnamed File
+  in the palette and the empty-pane menu reach the same owner. The tab rail's `+`
+  still creates a session; ordinary tab clicks and drags keep their semantics.
+
+### File encoding
+
+`textencoding` owns the strict byte/text boundary. Document text, editor offsets,
+search matches, language-source leases and diffs use canonical UTF-8. Disk hashes,
+preimages, receipts, Local History and Git mutations use exact encoded bytes.
+Dirty state includes the saved encoding as well as text identity, without
+exporting the file on each paint or keystroke.
+
+Supported disk formats are UTF-8, UTF-8 BOM, UTF-16 LE and UTF-16 BE.
+The compact BOM label stays readable in constrained Settings windows.
+UTF-16 requires a BOM. No component guesses legacy codepages, replaces malformed
+characters or changes line endings during conversion. UTF-32 is explicitly
+refused, not mistaken for UTF-16. Streaming readers validate split codepoints and
+surrogate pairs. An unreadable file does not abort search of other files.
+
+The editor header shows the current encoding. It and **File Encoding** in the
+palette or editor menu open the standard native menu:
+
+- **Save text with encoding** preserves text and author undo, uses the normal
+  serialized editor queue and the existing reviewed writer's retained preimage.
+  The current reviewed-replacement limits apply, including project containment
+  and the 2 MiB safety bound. It does not format or show a second diff.
+- **Reload from disk** writes nothing. A Cancel-default confirmation protects
+  unsaved text; the replacement is an ordinary undo group. Autosave cannot write
+  the draft while that decision or reload is pending. Failed reads retain it.
+  Reload detects the saved bytes; it is not a legacy-encoding override.
+
+**New file encoding** is one application/workspace preference, defaulting to
+UTF-8. It applies when the core creates an unnamed file. Existing files keep
+their encoding, and Save File can override the new-file default.
+
+Text tools use the same codec with their ordinary arguments and preserve an
+existing file's encoding. Tool read/edit results identify non-default encodings;
+their displayed diffs contain decoded text. Project replacement/formatting and
+Git hunk staging re-encode at the mutation boundary. Managed execution baselines
+and integration/undo retain the encoded file image, including one-sided
+encoding changes. Git comparison transport uses byte fields, including JSON's
+base64 representation, rather than lossy JSON strings.
+
+Encoding selection for BOM-less UTF-16 or legacy codepages is not implemented.
+These limits are not evidence of VS Code or JetBrains parity.
+
+### Gutter and automatic saves
+
 - Git gutter state is structured HEAD-to-buffer hunks, never reparsed rendered
   patches. Paint derives current-line rails and exact deletion boundaries from
   those hunks; diagnostics, numbers, change rails, and source spacing keep
@@ -815,7 +874,10 @@ not once per tick or painted frame.
 Ctrl+Space and automatic suggestions share one canonical completion
 invocation. The native caret-anchored WindowFrame contains a List with standard
 kind glyphs and detail, plus passive selected-row documentation. Wide frames put
-the reader beside the list; constrained frames stack it below. Up/Down, paging,
+the reader beside the list; constrained frames stack it below. The frame grows
+for the visible suggestions and selected documentation within screen limits;
+overflow stays scrollable. Measurement is reused until content or constraints
+change. Up/Down, paging,
 Home/End and pointer selection use that one List. Ctrl+PgUp/PgDn pages the native
 read-only TextArea without moving the selected completion; pointer selection and
 Ctrl+C copy inert text. Ordinary typing reaches the editor exactly once, retires

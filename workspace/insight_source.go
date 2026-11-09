@@ -3,13 +3,13 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"crude/textencoding"
 	"crypto/rand"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sync/atomic"
-	"unicode/utf8"
 
 	"crude/document"
 	"crude/fileio"
@@ -41,6 +41,9 @@ func (s *DocumentService) analysisIdentityLocked(d *liveDocument) types.InsightS
 }
 
 func (s *DocumentService) observeAnalysisLocked(d *liveDocument) {
+	if d.snapshot.Path == "" {
+		return
+	}
 	ref := s.analysisIdentityLocked(d)
 	changed := false
 	if s.Insight != nil {
@@ -173,6 +176,18 @@ func sameAnalysisDisk(a, b os.FileInfo) bool {
 // Validate both the opened handle and its path before returning bounded bytes.
 // A symlink/replacement or write during observation is not an immutable source.
 func readAnalysisDisk(path string) ([]byte, os.FileInfo, error) {
+	raw, info, err := readSourceBytes(path)
+	if err != nil {
+		return nil, info, err
+	}
+	text, _, err := textencoding.DecodeText(raw)
+	if len(text) > document.MaxBytes {
+		return nil, info, document.ErrLimit
+	}
+	return text, info, err
+}
+
+func readSourceBytes(path string) ([]byte, os.FileInfo, error) {
 	if err := fileio.CheckDirectoryNoSymlinks(filepath.Dir(path)); err != nil {
 		return nil, nil, err
 	}
@@ -218,9 +233,6 @@ func readAnalysisDisk(path string) ([]byte, os.FileInfo, error) {
 	}
 	if len(text) > document.MaxBytes {
 		return nil, before, document.ErrLimit
-	}
-	if !utf8.Valid(text) {
-		return nil, before, errors.New("document is not UTF-8")
 	}
 	return text, after, nil
 }

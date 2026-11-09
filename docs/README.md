@@ -160,10 +160,13 @@ documents to read before changing each area.
 - [Core and shell separation](plans/core-shell-separation.md) — remaining native
   Windows, distinct-host and resource-baseline acceptance.
 - [Autonomous code intelligence](plans/autonomous-code-intelligence.md) —
-  the active IDE plan: assembly-first discovery, acquisition, evaluation and
+  assembly-first discovery, acquisition, evaluation and
   activation, with coverage-qualified, resource-governed editor and agent
   views. Its top sections hold the rules, decisions, stage status and current
   checkpoint.
+- [Editor file workflows](plans/editor-file-workflows.md): unnamed buffers,
+  Save File, IDE-wide encoding, meaningful preferences and semantic controls,
+  with terminal-sized interaction and recovery acceptance.
 - [Code-intelligence setup](plans/code-intelligence-setup.md): how Crude
   finds, asks for, installs and accounts for code-intelligence tools,
   separate from workspace trust. Blocked by the rejected setup-page design,

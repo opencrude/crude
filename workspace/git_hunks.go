@@ -10,6 +10,7 @@ import (
 	"crude/fileio"
 	"crude/localhistory"
 	"crude/textdiff"
+	"crude/textencoding"
 
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 )
@@ -24,20 +25,38 @@ type GitHunkRange struct {
 
 // applyGitHunk returns Before with this hunk's After lines in place.
 func applyGitHunk(comparison GitComparison, hunk GitHunkRange) (string, error) {
-	before, after := textdiff.Lines(comparison.Before), textdiff.Lines(comparison.After)
+	old, next, encoding, targetEncoding, err := comparison.TextVersions()
+	if err != nil {
+		return "", err
+	}
+	if !comparison.BeforePresent {
+		encoding = targetEncoding
+	}
+	before, after := textdiff.Lines(old), textdiff.Lines(next)
 	if err := hunk.validate(len(before), len(after)); err != nil {
 		return "", err
 	}
-	return strings.Join(before[:hunk.OldStart], "") + strings.Join(after[hunk.NewStart:hunk.NewEnd], "") + strings.Join(before[hunk.OldEnd:], ""), nil
+	text := strings.Join(before[:hunk.OldStart], "") + strings.Join(after[hunk.NewStart:hunk.NewEnd], "") + strings.Join(before[hunk.OldEnd:], "")
+	encoded, err := textencoding.EncodeText([]byte(text), encoding)
+	return string(encoded), err
 }
 
 // revertGitHunk returns After with this hunk's Before lines restored.
 func revertGitHunk(comparison GitComparison, hunk GitHunkRange) (string, error) {
-	before, after := textdiff.Lines(comparison.Before), textdiff.Lines(comparison.After)
+	old, next, sourceEncoding, encoding, err := comparison.TextVersions()
+	if err != nil {
+		return "", err
+	}
+	if !comparison.AfterPresent {
+		encoding = sourceEncoding
+	}
+	before, after := textdiff.Lines(old), textdiff.Lines(next)
 	if err := hunk.validate(len(before), len(after)); err != nil {
 		return "", err
 	}
-	return strings.Join(after[:hunk.NewStart], "") + strings.Join(before[hunk.OldStart:hunk.OldEnd], "") + strings.Join(after[hunk.NewEnd:], ""), nil
+	text := strings.Join(after[:hunk.NewStart], "") + strings.Join(before[hunk.OldStart:hunk.OldEnd], "") + strings.Join(after[hunk.NewEnd:], "")
+	encoded, err := textencoding.EncodeText([]byte(text), encoding)
+	return string(encoded), err
 }
 
 func (hunk GitHunkRange) validate(beforeN, afterN int) error {
@@ -66,8 +85,8 @@ func (s *GitService) StageHunk(ctx context.Context, comparison GitComparison, hu
 		if err != nil {
 			return "", 0, false, err
 		}
-		if text == comparison.After {
-			return comparison.After, filemode.FileMode(comparison.AfterMode), comparison.AfterPresent, nil
+		if text == string(comparison.After) {
+			return string(comparison.After), filemode.FileMode(comparison.AfterMode), comparison.AfterPresent, nil
 		}
 		mode := filemode.FileMode(comparison.BeforeMode)
 		if !comparison.BeforePresent {
@@ -88,8 +107,8 @@ func (s *GitService) UnstageHunk(ctx context.Context, comparison GitComparison, 
 		if err != nil {
 			return "", 0, false, err
 		}
-		if text == comparison.Before {
-			return comparison.Before, filemode.FileMode(comparison.BeforeMode), comparison.BeforePresent, nil
+		if text == string(comparison.Before) {
+			return string(comparison.Before), filemode.FileMode(comparison.BeforeMode), comparison.BeforePresent, nil
 		}
 		mode := filemode.FileMode(comparison.AfterMode)
 		if !comparison.AfterPresent {

@@ -304,9 +304,12 @@ func (m *App) buildGitDiscardFrame(change workspace.GitChange) *ui.ComponentWidg
 	if m.gitDiscardPreview != nil {
 		comparison := m.gitDiscardPreview.Comparison
 		detail = fmt.Sprintf("%s\n%s → %s\nReviewed fingerprint: %s\nA mandatory Local History safety snapshot preserves the removed bytes.\nRecover through Local History. Changed file/index/HEAD aborts.", change.Path, comparison.TargetLabel, comparison.BaseLabel, comparison.Fingerprint)
-		before := strings.SplitN(comparison.After, "\n", 4)
-		after := strings.SplitN(comparison.Before, "\n", 4)
-		detail += "\nDisk: " + strings.Join(before[:min(3, len(before))], " / ") + "\nIndex: " + strings.Join(after[:min(3, len(after))], " / ")
+		old, next, _, _, err := comparison.TextVersions()
+		if err == nil && !comparison.Binary {
+			before := strings.SplitN(next, "\n", 4)
+			after := strings.SplitN(old, "\n", 4)
+			detail += "\nDisk: " + strings.Join(before[:min(3, len(before))], " / ") + "\nIndex: " + strings.Join(after[:min(3, len(after))], " / ")
+		}
 	}
 	return ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
 		Title:          "Discard Changes",

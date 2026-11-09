@@ -27,3 +27,7 @@ type ReviewedEditReply struct {
 	Preview workspace.ReviewedEditPreview
 	Result  workspace.ReviewedEditResult
 }
+
+type UntitledComparisonReply struct {
+	Comparison workspace.UntitledOverwriteComparison
+}

@@ -2,7 +2,6 @@ package fileio
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"io/fs"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/textencoding"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -337,17 +337,23 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden 
 
 		probe := make([]byte, 512)
 		n, _ := f.Read(probe)
-		if bytes.IndexByte(probe[:n], 0) >= 0 {
+		if IsBinary(probe[:n]) {
 			return nil
 		}
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return nil
 		}
 
-		scanner := bufio.NewScanner(f)
+		encoding, _ := textencoding.DetectBOM(probe[:n])
+		reader, err := textencoding.NewReader(f, encoding)
+		if err != nil {
+			return nil
+		}
+		scanner := bufio.NewScanner(reader)
 		const maxScanTokenSize = 1024 * 1024 // 1MB
-		buf := make([]byte, maxScanTokenSize)
+		buf := make([]byte, 32*1024)
 		scanner.Buffer(buf, maxScanTokenSize)
+		fileStart := len(results)
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
@@ -362,6 +368,12 @@ func (l *LocalExec) GrepFiles(pattern, baseDir string, recursive, includeHidden 
 					break
 				}
 			}
+		}
+		if err := scanner.Err(); err != nil {
+			// An unreadable or malformed file is not evidence for matches and
+			// must not abort a repository-wide search of other files.
+			results = results[:fileStart]
+			return nil
 		}
 		return nil
 	}

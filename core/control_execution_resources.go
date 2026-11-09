@@ -87,6 +87,27 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 	encode := func(raw []byte, err error) error { request.Payload = raw; return err }
 	check := func(raw string, missing bool) (string, error) { return controlCheckedPath(root, raw, missing) }
 	switch request.Method {
+	case coreprotocol.DocumentCreateUntitled, coreprotocol.DocumentOpenUntitled:
+		// Pathless documents have no file claim. The resource owner validates
+		// the exact identity and attachment before it creates or opens a view.
+	case coreprotocol.DocumentSaveUntitled:
+		var in coreprotocol.DocumentSaveUntitledRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return request, nil, err
+		}
+		directory, err := check(in.Directory, false)
+		if err != nil {
+			return request, nil, err
+		}
+		in.Directory = directory
+		path, err := check(filepath.Join(directory, in.Name), true)
+		if err != nil {
+			return request, nil, err
+		}
+		paths = []string{path}
+		if err := encode(payload(request, in)); err != nil {
+			return request, nil, err
+		}
 	case coreprotocol.DocumentOpen:
 		var in coreprotocol.DocumentOpenRequest
 		if err := decodeRequest(request, &in); err != nil {
@@ -100,7 +121,7 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 		raw, err := payload(request, in)
 		request.Payload = raw
 		return request, nil, err
-	case coreprotocol.DocumentRead, coreprotocol.DocumentEdit, coreprotocol.DocumentSave, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentFormat:
+	case coreprotocol.DocumentRead, coreprotocol.DocumentEdit, coreprotocol.DocumentSave, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentFormat, coreprotocol.DocumentReload:
 		var in struct {
 			ID string `json:"id"`
 		}
@@ -115,6 +136,9 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 		snapshot, err := a.ws.LiveDocuments.Snapshot(in.ID)
 		if err != nil {
 			return request, nil, err
+		}
+		if snapshot.Path == "" {
+			return request, nil, nil
 		}
 		path, err := check(snapshot.Path, false)
 		if err != nil {

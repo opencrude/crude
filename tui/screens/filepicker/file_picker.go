@@ -3,6 +3,7 @@ package filepicker
 
 import (
 	"context"
+	"crude/textencoding"
 	"errors"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,7 @@ const (
 	ScrollbarID  ui.ComponentID = "filepicker/scrollbar"
 	ActionsID    ui.ComponentID = "filepicker/actions"
 	FolderNameID ui.ComponentID = "filepicker/folder-name"
+	SaveFormID   ui.ComponentID = "filepicker/save-form"
 )
 
 type Mode uint8
@@ -43,6 +45,8 @@ const (
 	ModeFolder
 	// ModeOpenFile selects one document directly, without attach selections.
 	ModeOpenFile
+	// ModeSaveFile chooses a destination folder and a new file name.
+	ModeSaveFile
 )
 
 // Entry is the small neutral adapter accepted by the existing workspace
@@ -102,6 +106,9 @@ type SelectMsg struct {
 	Path     string
 	Paths    []string
 	Folder   bool
+	Save     bool
+	Name     string
+	Encoding textencoding.Encoding
 	Epoch    uint64
 	Sequence uint64
 }
@@ -203,6 +210,8 @@ type Screen struct {
 	createPending    bool
 	createUnknown    bool
 	createParent     string
+	savePending      bool
+	saveUnknown      bool
 
 	model        *filetree.FileTreeModel
 	browseModel  *filetree.FileTreeModel
@@ -211,6 +220,9 @@ type Screen struct {
 	showHidden   bool
 	filter       *pickerFilter
 	folderName   *ui.TextField
+	saveModel    *ui.FormModel
+	saveForm     *ui.Form
+	saveStatus   *ui.Label
 	breadcrumb   *pickerBreadcrumb
 	tree         *pickerTree
 	scrollbar    *ui.ScrollbarControl
@@ -280,6 +292,7 @@ func New(th *theme.Theme) *Screen {
 	s.folderName = ui.NewTextField(FolderNameID, tokens)
 	s.folderName.SetPlaceholder("Folder name")
 	s.folderName.SetSubmitAction("filepicker.create.submit")
+	s.initSaveForm()
 	s.breadcrumb = &pickerBreadcrumb{
 		Base:   ui.NewBase(BreadcrumbID),
 		owner:  s,
@@ -302,6 +315,8 @@ func (s *Screen) Open(root string, mode Mode, entries []Entry) {
 	s.discardAsyncDirectoryLoad()
 	s.openEpoch++
 	s.mode = mode
+	s.actions.SetAlignEnd(true)
+	s.actions.SetShowRule(mode == ModeSaveFile)
 	s.root = cleanAbs(root)
 	s.current = s.root
 	s.active = true
@@ -310,6 +325,10 @@ func (s *Screen) Open(root string, mode Mode, entries []Entry) {
 	s.createPending = false
 	s.createUnknown = false
 	s.createParent = ""
+	s.savePending = false
+	s.saveUnknown = false
+	s.SetSaveOptions("", textencoding.UTF8)
+	s.lockSaveForm(false)
 	s.folderName.SetValue("")
 	s.folderName.SetReadOnly(false)
 	s.selected = make(map[string]bool)
@@ -582,6 +601,31 @@ func (s *Screen) ClearPathSearch() bool {
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 func (s *Screen) FocusFilter()                            { s.focusID(FilterID) }
 func (s *Screen) FocusTree()                              { s.focusID(ListID) }
+func (s *Screen) FocusSaveName() {
+	s.saveForm.FocusFirst()
+	s.focusID(SaveFormID)
+}
+
+// SetSavePending keeps the exact destination mounted while its save settles.
+func (s *Screen) SetSavePending(pending bool, message string) {
+	if s == nil || !s.active || s.mode != ModeSaveFile {
+		return
+	}
+	s.savePending, s.errText = pending, message
+	s.lockSaveForm(pending)
+	s.rebuildActions()
+	s.sync()
+}
+
+// SetSaveUncertain keeps Cancel available but prevents a new save request.
+func (s *Screen) SetSaveUncertain(message string) {
+	if s == nil || !s.active || s.mode != ModeSaveFile {
+		return
+	}
+	s.savePending, s.saveUnknown, s.errText = false, true, message
+	s.lockSaveForm(true)
+	s.sync()
+}
 
 func (s *Screen) focusID(id ui.ComponentID) {
 	if s != nil && s.focus != nil {
@@ -594,7 +638,7 @@ func (s *Screen) IsCurrentIntent(epoch, sequence uint64) bool {
 }
 
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.filter, s.folderName, s.breadcrumb, s.tree, s.scrollbar, s.actions}
+	return []ui.Component{s.filter, s.folderName, s.saveForm, s.saveStatus, s.breadcrumb, s.tree, s.scrollbar, s.actions}
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -607,6 +651,8 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	}
 	s.filter.SetTokens(tokens)
 	s.folderName.SetTokens(tokens)
+	s.saveForm.SetTokens(tokens)
+	s.saveStatus.SetTokens(tokens)
 	s.breadcrumb.SetTokens(tokens)
 	s.tree.SetTokens(tokens)
 	s.scrollbar.SetTokens(tokens)
@@ -623,8 +669,10 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
+	s.saveStatus.Layout(ctx, ui.Rect{})
 	content := ui.Rect{W: r.W, H: maxInt(0, r.H-1)}
 	if s.creating {
+		s.saveForm.Layout(ctx, ui.Rect{})
 		s.filter.Layout(ctx, ui.Rect{})
 		s.tree.Layout(ctx, ui.Rect{})
 		s.scrollbar.Layout(ctx, ui.Rect{})
@@ -635,11 +683,21 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		return
 	}
 	s.folderName.Layout(ctx, ui.Rect{})
+	s.saveForm.Layout(ctx, ui.Rect{})
 	const headerRows = 3
 	filterY, breadcrumbY, treeY := headerRows, headerRows+2, headerRows+4
+	if s.mode == ModeSaveFile {
+		filterY, breadcrumbY, treeY = 0, 2, 4
+	}
 	s.filter.Layout(ctx, pickerRect(content, 1, filterY, r.W-2, 1))
 	s.breadcrumb.Layout(ctx, pickerRect(content, 1, breadcrumbY, r.W-2, 1))
-	treeH := maxInt(0, r.H-treeY-2)
+	reserved := 0
+	if s.mode == ModeSaveFile {
+		reserved = 6
+		s.saveForm.Layout(ctx, pickerRect(content, 1, r.H-7, r.W-2, 3))
+		s.saveStatus.Layout(ctx, pickerRect(content, 1, r.H-3, r.W-2, 1))
+	}
+	treeH := maxInt(0, r.H-treeY-2-reserved)
 	if s.model != nil {
 		s.model.Update(filetree.TreeHeightMsg{Height: treeH})
 	}
@@ -652,7 +710,11 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	s.tree.Layout(ctx, pickerRect(content, 1, treeY, r.W-1-barW, treeH))
 	s.scrollbar.Layout(ctx, pickerRect(content, r.W-barW, treeY, barW, treeH))
-	s.actions.Layout(ctx, pickerRect(r, 0, r.H-1, r.W, 1))
+	actionH := 1
+	if s.mode == ModeSaveFile {
+		actionH = min(2, r.H)
+	}
+	s.actions.Layout(ctx, pickerRect(r, 0, r.H-actionH, r.W, actionH))
 	s.sync()
 }
 
@@ -673,9 +735,12 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	accent := s.tokens.Color(ui.ColorAccent)
 	muted := s.tokens.Color(ui.ColorMuted)
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+	if s.mode == ModeSaveFile && !s.creating {
+		return
+	}
 	x := ox + r.X + 1
 	y := oy + r.Y
-	if r.W > 2 && r.H > 0 {
+	if s.mode != ModeSaveFile && r.W > 2 && r.H > 0 {
 		x = buf.WriteString(x, y, rendering.TruncateVisual("◆ crude", r.W-2, "…"), accent, bg, cell.AttrBold)
 	}
 	label := "ATTACH FILES"
@@ -687,13 +752,19 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	case ModeOpenFile:
 		label = "OPEN FILE"
 		subtitle = "Choose a file to open in this pane · fuzzy-search as you type"
+	case ModeSaveFile:
+		label = "SAVE FILE"
+		subtitle = "Choose a folder and enter a file name"
 	}
 	if s.creating {
 		label = "NEW FOLDER"
 		subtitle = "Create a folder inside the chosen location"
 	}
 	if r.H > 0 && x < ox+r.X+r.W-1 {
-		buf.WriteString(x, y, rendering.TruncateVisual("  "+label, ox+r.X+r.W-1-x, "…"), fg, bg, cell.AttrBold)
+		if s.mode != ModeSaveFile {
+			label = "  " + label
+		}
+		buf.WriteString(x, y, rendering.TruncateVisual(label, ox+r.X+r.W-1-x, "…"), fg, bg, cell.AttrBold)
 	}
 	if r.H > 1 && r.W > 2 {
 		buf.WriteString(ox+r.X+1, y+1, rendering.TruncateVisual(subtitle, r.W-2, "…"), muted, bg, 0)
@@ -726,6 +797,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 
 func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.IsKey() {
+		if s.savePending {
+			return ui.EventResult{Handled: true}
+		}
 		if s.creating {
 			switch {
 			case evt.Key.Code == tea.KeyEsc:
@@ -757,12 +831,23 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
+	case "form.cancel":
+		return s.cancel()
+	case "form.exit.backward":
+		s.FocusTree()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "form.exit.forward":
+		s.actions.FocusFirst()
+		s.focusID(ActionsID)
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "filepicker.new-folder":
 		return s.beginCreateFolder()
 	case "filepicker.create.submit":
 		return s.submitCreateFolder()
 	case "filepicker.create.cancel":
 		return s.cancelCreateFolder()
+	case "filepicker.save.submit":
+		return s.confirm()
 	case "filepicker.entry.activate":
 		if s.AsyncDirectoryLoading() {
 			return ui.EventResult{Handled: true}
@@ -793,6 +878,11 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "filepicker.cancel":
 		return s.cancel()
 	case "actionbar.exit.backward":
+		if s.mode == ModeSaveFile {
+			s.saveForm.FocusLast()
+			s.focusID(SaveFormID)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
 		if s.creating {
 			s.focusID(FolderNameID)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
@@ -818,6 +908,9 @@ func (s *Screen) Semantics() ui.Semantics {
 	if s.mode == ModeOpenFile {
 		return ui.Semantics{Role: ui.RoleDialog, Label: "Open File", Value: s.current}
 	}
+	if s.mode == ModeSaveFile {
+		return ui.Semantics{Role: ui.RoleDialog, Label: "Save File", Value: s.current}
+	}
 	return ui.Semantics{Role: ui.RoleDialog, Label: "File picker", Value: s.current}
 }
 
@@ -831,6 +924,8 @@ func (s *Screen) rebuildActions() {
 		primary = "Open Workspace"
 	case ModeOpenFile:
 		primary = "Open File"
+	case ModeSaveFile:
+		primary = "Save"
 	}
 	if s.creating {
 		if s.actionConfig != "create" {
@@ -850,6 +945,9 @@ func (s *Screen) rebuildActions() {
 		entry, ok := s.Selected()
 		enabled = ok && !entry.IsDir
 	}
+	if s.mode == ModeSaveFile {
+		enabled = !s.savePending && !s.saveUnknown
+	}
 	config := primary
 	if s.actionConfig != config {
 		buttons := []ui.ActionBarButton{
@@ -864,6 +962,7 @@ func (s *Screen) rebuildActions() {
 		s.actionConfig = config
 	}
 	s.actions.SetEnabled("filepicker.select", s.active && !s.AsyncDirectoryLoading() && enabled)
+	s.actions.SetEnabled("filepicker.cancel", !s.savePending)
 	s.actions.SetEnabled("filepicker.new-folder", s.active && !s.AsyncDirectoryLoading())
 }
 
@@ -881,13 +980,20 @@ func (s *Screen) sync() {
 		}
 		s.breadcrumb.SetPath(path)
 		status := s.statusText()
-		if s.creating {
+		if s.creating || s.mode == ModeSaveFile && s.errText != "" {
 			status = ""
 		}
 		s.breadcrumb.SetStatus(status)
 	}
 	if s.actions != nil {
 		s.rebuildActions()
+	}
+	if s.saveStatus != nil {
+		s.saveStatus.SetText(s.errText)
+		s.saveStatus.SetColorRole(ui.ColorError)
+		if s.savePending {
+			s.saveStatus.SetColorRole(ui.ColorMuted)
+		}
 	}
 }
 
@@ -1011,6 +1117,14 @@ func (s *Screen) requestFileActivation(path string) tea.Cmd {
 			return nil
 		}
 		return s.selectPath(cleanAbs(path), nil, false).Cmd
+	}
+	if s.mode == ModeSaveFile {
+		s.SetSaveOptions(filepath.Base(path), s.SaveEncoding())
+		s.FocusSaveName()
+		if parent := filepath.Dir(path); parent != s.current {
+			return s.navigate(parent).Cmd
+		}
+		return nil
 	}
 	if s.mode != ModeFile {
 		return nil
@@ -1140,8 +1254,23 @@ func (s *Screen) CompleteCreateFolderFor(intent IntentToken, err error) bool {
 func (s *Screen) ConfirmSelection() ui.EventResult { return s.confirm() }
 
 func (s *Screen) confirm() ui.EventResult {
-	if s == nil || !s.active || s.creating || s.AsyncDirectoryLoading() {
+	if s == nil || !s.active || s.creating || s.savePending || s.saveUnknown || s.AsyncDirectoryLoading() {
 		return ui.EventResult{Handled: true}
+	}
+	if s.mode == ModeSaveFile {
+		name := s.SaveName()
+		if err := projectpath.ValidateFileName(name); err != nil {
+			s.errText = "Cannot save: " + err.Error() + ". Enter a valid name."
+			s.sync()
+			s.FocusSaveName()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
+		intent, ok := s.nextIntent()
+		if !ok {
+			return ui.EventResult{Handled: true}
+		}
+		message := SelectMsg{Target: s, Path: s.current, Name: name, Encoding: s.SaveEncoding(), Save: true, Epoch: intent.Epoch, Sequence: intent.Sequence}
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
 	}
 	if s.mode == ModeFolder {
 		if entry, ok := s.Selected(); ok && entry.IsDir {
@@ -1173,8 +1302,16 @@ func (s *Screen) selectPath(path string, paths []string, folder bool) ui.EventRe
 }
 
 func (s *Screen) cancel() ui.EventResult {
-	if s == nil || !s.active {
+	if s == nil || !s.active || s.savePending {
 		return ui.EventResult{Handled: true}
+	}
+	if s.mode == ModeSaveFile {
+		intent, ok := s.nextIntent()
+		if !ok {
+			return ui.EventResult{Handled: true}
+		}
+		message := CancelMsg{Target: s, Epoch: intent.Epoch, Sequence: intent.Sequence}
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
 	}
 	// Cancel pending directory ownership before changing the Escape ladder.
 	// A failed/canceled root read restores the previous actionable projection.
@@ -1232,7 +1369,7 @@ func (s *Screen) navigateParent() ui.EventResult {
 }
 
 func (s *Screen) nextIntent() (IntentToken, bool) {
-	if s == nil || !s.active {
+	if s == nil || !s.active || s.savePending {
 		return IntentToken{}, false
 	}
 	s.releasePendingChildLoad()
@@ -1276,6 +1413,9 @@ func (p *pickerFilter) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCo
 func (p *pickerFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil {
 		return p.field.Handle(ctx, evt)
+	}
+	if p.owner.savePending {
+		return ui.EventResult{Handled: true}
 	}
 	if evt.IsKey() {
 		key := evt.Key
@@ -1330,7 +1470,7 @@ func (s *Screen) confirmFiltered() ui.EventResult {
 		if node.IsDir {
 			return s.navigate(node.Path)
 		}
-		if s.mode == ModeOpenFile {
+		if s.mode == ModeOpenFile || s.mode == ModeSaveFile {
 			cmd := s.model.ToggleExpandOrSelect()
 			s.sync()
 			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
@@ -1390,6 +1530,9 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil || p.owner.model == nil {
 		return ui.EventResult{}
 	}
+	if p.owner.savePending {
+		return ui.EventResult{Handled: true}
+	}
 	if p.owner.AsyncDirectoryLoading() && (!evt.IsKey() || evt.Key.Code != tea.KeyEsc) {
 		return ui.EventResult{Handled: true}
 	}
@@ -1412,6 +1555,8 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if key.Code == tea.KeyTab {
 			if key.Mod.Contains(tea.ModShift) {
 				p.owner.FocusFilter()
+			} else if p.owner.mode == ModeSaveFile {
+				p.owner.FocusSaveName()
 			} else {
 				p.owner.focusID(ActionsID)
 			}
@@ -1466,7 +1611,7 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		node := p.nodeAt(ctx.LocalY)
 		now := time.Now()
 		doubleClick := node != nil && node.Path == p.lastClickPath && now.Sub(p.lastClickAt) <= 500*time.Millisecond
-		if node != nil && (node.IsDir || p.owner.mode == ModeOpenFile) {
+		if node != nil && (node.IsDir || p.owner.mode == ModeOpenFile || p.owner.mode == ModeSaveFile) {
 			p.lastClickPath = node.Path
 			p.lastClickAt = now
 		} else {
@@ -1481,7 +1626,7 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			}
 			return ui.EventResult{Handled: true, Cmd: p.owner.requestFileActivation(node.Path), Invalidate: ui.InvalidatePaint}
 		}
-		if node != nil && !node.IsDir && p.owner.mode == ModeOpenFile {
+		if node != nil && !node.IsDir && (p.owner.mode == ModeOpenFile || p.owner.mode == ModeSaveFile) {
 			p.owner.nextIntent()
 			p.owner.model.Select(node.Path)
 			p.owner.sync()

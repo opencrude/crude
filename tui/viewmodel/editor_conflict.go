@@ -96,10 +96,20 @@ func (m *App) OpenLiveEditorConflict(ed *editor.Editor) tea.Cmd {
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.overlayHost.Open(liveConflictOverlay, fw, ui.ModalDialogPolicy(), nil)
 	id, path := ed.DocumentState().DocumentID, ed.FilePath()
+	untitled, _ := m.ws.(shellport.UntitledDocuments)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, err := live.OpenDocument(ctx, path) // restored attachment must own a view first
+		var err error
+		if document.IsUntitledID(id) {
+			if untitled != nil {
+				_, err = untitled.OpenUntitledDocument(ctx, id)
+			} else {
+				err = errors.New("unnamed document is unavailable")
+			}
+		} else {
+			_, err = live.OpenDocument(ctx, path) // restored attachment must own a view first
+		}
 		var s document.SyncResult
 		if err == nil {
 			s, err = live.SyncDocument(ctx, id, 0)
@@ -259,31 +269,14 @@ func (m *App) applyLiveConflict(msg liveConflictMsg) tea.Cmd {
 	return nil
 }
 func sameLiveSnapshot(a, b document.Snapshot) bool {
-	return a.ID == b.ID && a.Path == b.Path && a.Revision == b.Revision && a.DiskHash == b.DiskHash && a.DiskExists == b.DiskExists && a.Conflict == b.Conflict && bytes.Equal(a.Text, b.Text) && bytes.Equal(a.Saved, b.Saved)
+	return a.ID == b.ID && a.Path == b.Path && a.Encoding == b.Encoding && a.SavedEncoding == b.SavedEncoding && a.Revision == b.Revision && a.DiskHash == b.DiskHash && a.DiskExists == b.DiskExists && a.Conflict == b.Conflict && bytes.Equal(a.Text, b.Text) && bytes.Equal(a.Saved, b.Saved)
 }
 
 // compareLiveEditorSnapshot installs detached evidence into the existing native
 // comparison tab; it does not read disk or consume the live source draft.
 func (m *App) compareLiveEditorSnapshot(ed *editor.Editor, s document.Snapshot, draft []byte, revision uint64) tea.Cmd {
-	_ = m.openLocalDiff(ed, localDiffShared)
-	view := m.activeLocalDiff()
-	if view == nil {
-		return nil
-	}
-	if view.cancel != nil {
-		view.cancel()
-		view.cancel = nil
-	}
-	view.sequence++
-	ctx, cancel := m.sourceControlContext()
-	view.cancel = cancel
-	view.screen.SetLoading(true)
-	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), widthGen: m.comparisonWidthGen, revision: revision, diskGeneration: ed.DiskGeneration()}
-	path := ed.FilePath()
-	before, after := string(s.Text), string(draft)
-	return m.comparisonCommand(cancel, func() tea.Msg {
-		defer cancel()
-		msg.prepared, msg.err = diffview.PrepareContext(ctx, diffview.Comparison{Path: path, BeforeLabel: fmt.Sprintf("Shared snapshot · revision %d", s.Revision), AfterLabel: fmt.Sprintf("Private draft · revision %d", revision), Before: before, After: after})
-		return msg
-	})
+	return m.openSnapshotComparison(ed, localDiffShared, diffview.Comparison{
+		Path: ed.FilePath(), BeforeLabel: fmt.Sprintf("Shared snapshot · revision %d", s.Revision),
+		AfterLabel: fmt.Sprintf("Private draft · revision %d", revision), Before: string(s.Text), After: string(draft),
+	}, revision)
 }

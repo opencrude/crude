@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
+	"crude/textencoding"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types"
@@ -29,6 +30,7 @@ type editorSaveState struct {
 
 type editorSaveResultMsg struct {
 	result              workspace.DocumentSaveResult
+	text                []byte
 	workspaceGeneration uint64
 	state               *editorSaveState
 }
@@ -69,7 +71,7 @@ func (m *App) requestActiveEditorFormat() tea.Cmd {
 		return nil
 	}
 	if state := m.liveEditors[ed.Primary()]; state != nil {
-		if state.busy || state.save || state.formatOnly || state.closeView {
+		if state.busy || state.save || state.formatOnly || state.reload || state.closeView {
 			if m.Feedback != nil {
 				m.Feedback.NotifyInfo("Wait for the current file operation to finish.")
 			}
@@ -142,8 +144,16 @@ func (m *App) handleProjectFormatResult(msg projectFormatResultMsg) {
 		m.Feedback.NotifyError("Could not format the project: " + msg.err.Error())
 		return
 	}
+	unreadable := ""
+	if n := msg.result.SkippedUnreadable; n > 0 {
+		noun := "files"
+		if n == 1 {
+			noun = "file"
+		}
+		unreadable = fmt.Sprintf(" Skipped %d unreadable %s. Check the file encoding.", n, noun)
+	}
 	if msg.result.Changed == 0 {
-		m.Feedback.NotifyInfo("No formatting changes were needed.")
+		m.Feedback.NotifyInfo("No files were formatted." + unreadable)
 		return
 	}
 	message := fmt.Sprintf("Formatted %d files.", msg.result.Changed)
@@ -151,6 +161,7 @@ func (m *App) handleProjectFormatResult(msg projectFormatResultMsg) {
 		message += fmt.Sprintf(" Skipped %d open files; use Format Document for those.", msg.result.SkippedOpen)
 	}
 	message += " You can restore the files from Local History."
+	message += unreadable
 	m.Feedback.NotifyInfo(message)
 }
 
@@ -204,6 +215,7 @@ type editorDiskResultMsg struct {
 	generation     uint64
 	diskGeneration uint64
 	data           []byte
+	encoding       textencoding.Encoding
 	hash           [32]byte
 	err            error
 	missing        bool
@@ -217,7 +229,12 @@ func (m *App) refreshEditorDiskCmd(ed *editor.Editor) tea.Cmd {
 		if missing {
 			err = nil
 		}
-		return editorDiskResultMsg{ed: ed, revision: revision, generation: generation, diskGeneration: diskGeneration, data: data, hash: sha256.Sum256(data), err: err, missing: missing}
+		hash := sha256.Sum256(data)
+		var encoding textencoding.Encoding
+		if err == nil {
+			data, encoding, err = textencoding.DecodeText(data)
+		}
+		return editorDiskResultMsg{ed: ed, revision: revision, generation: generation, diskGeneration: diskGeneration, data: data, encoding: encoding, hash: hash, err: err, missing: missing}
 	}
 }
 
@@ -247,7 +264,7 @@ func (m *App) applyEditorDisk(msg editorDiskResultMsg) {
 		return
 	}
 	if !ed.Modified() {
-		ed.ApplyDisk(msg.data)
+		ed.ApplyDisk(msg.data, msg.encoding, msg.hash)
 	} else {
 		m.markEditorDiskConflict(ed, "File changed on disk; local edits retained. Compare before saving.")
 	}
@@ -275,7 +292,11 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 		m.refreshFindReplacePopup()
 	}
 	if state := m.liveEditors[ed.Primary()]; state != nil {
-		state.due = time.Now().Add(time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond)
+		if ed.FilePath() != "" {
+			state.due = time.Now().Add(time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond)
+		} else {
+			state.due = time.Time{}
+		}
 		m.markEditorGitDirty(time.Now())
 		return
 	}
@@ -293,7 +314,7 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 		m.ws.Documents().Cancel(ed.BufferID())
 		return
 	}
-	if m.editorSettings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() && m.DirtyPromptPath != filePath {
+	if filePath != "" && m.editorSettings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() && m.DirtyPromptPath != filePath {
 		delay := time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond
 		m.ws.Documents().Schedule(ed.BufferID(), filePath, ed.Revision(), delay)
 	}
@@ -314,7 +335,19 @@ func (m *App) requestEditorSave(ed *editor.Editor, reason workspace.DocumentSave
 }
 
 func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.DocumentSaveReason, closeAfter, format bool) tea.Cmd {
+	if ed == nil {
+		return nil
+	}
+	if ed.FilePath() == "" {
+		if reason == workspace.DocumentSaveManual {
+			m.openUntitledSave(ed, closeAfter)
+		}
+		return nil
+	}
 	if state := m.liveEditors[ed.Primary()]; state != nil {
+		if reason != workspace.DocumentSaveManual && (state.reload || m.editorReload != nil && m.editorReload.editor.Primary() == ed.Primary()) {
+			return nil
+		}
 		state.save, state.reason, state.closeAfter = true, reason, closeAfter
 		state.format = format && reason == workspace.DocumentSaveManual && m.editorSettings.FormatOnSave
 		if state.uncertain == nil {
@@ -384,8 +417,13 @@ func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.Do
 	generation := m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		defer cancel()
-		result := service.Save(ctx, request)
-		return editorSaveResultMsg{result: result, workspaceGeneration: generation, state: state}
+		encoded, err := textencoding.EncodeText(snapshot.Data, snapshot.Encoding)
+		request.Data = encoded
+		result := workspace.DocumentSaveResult{Request: request, Err: err}
+		if err == nil {
+			result = service.Save(ctx, request)
+		}
+		return editorSaveResultMsg{result: result, text: snapshot.Data, workspaceGeneration: generation, state: state}
 	}
 }
 
@@ -419,7 +457,7 @@ func (m *App) handleEditorSaveResult(msg editorSaveResultMsg) tea.Cmd {
 		return nil
 	}
 	if result.Committed || result.Unchanged {
-		tab.Editor.AcceptSave(result.Request.Revision, result.DiskHash, result.Request.Data)
+		tab.Editor.AcceptSave(result.Request.Revision, result.DiskHash, msg.text)
 	}
 	if result.Err != nil {
 		state.err = result.Err
@@ -486,7 +524,7 @@ func (m *App) applyEditorSettings(settings types.EditorSettings) {
 			state.pending = false
 			state.cancel()
 		}
-		if settings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() {
+		if ed.FilePath() != "" && settings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() {
 			m.ws.Documents().Schedule(ed.BufferID(), ed.FilePath(), ed.Revision(), time.Duration(settings.AutoSaveDelay)*time.Millisecond)
 		}
 	}

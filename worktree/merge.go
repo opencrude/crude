@@ -10,6 +10,7 @@ import (
 
 	"crude/document"
 	"crude/textdiff"
+	"crude/textencoding"
 )
 
 func sourceDigest(p PlanDelta) string {
@@ -24,6 +25,9 @@ func sourceDigest(p PlanDelta) string {
 func TextEdits(before, after []byte) ([]document.Edit, error) {
 	if !utf8.Valid(before) || !utf8.Valid(after) || bytes.IndexByte(before, 0) >= 0 || bytes.IndexByte(after, 0) >= 0 {
 		return nil, errors.New("non-text merge")
+	}
+	if bytes.Equal(before, after) {
+		return nil, nil
 	}
 	lines := textdiff.Lines(string(before))
 	edits := []document.Edit{}
@@ -61,6 +65,49 @@ func TextEdits(before, after []byte) ([]document.Edit, error) {
 		return nil, errors.New("incomplete diff")
 	}
 	return edits, nil
+}
+
+// MergeTextBytes rebases text edits while retaining the independently selected
+// disk encoding. Two conflicting encoding changes are a real merge conflict;
+// a one-sided conversion does not prevent merging unrelated text edits.
+func MergeTextBytes(base, proposed, current []byte) ([]byte, error) {
+	b, be, err := textencoding.DecodeText(base)
+	if err != nil {
+		return nil, err
+	}
+	p, pe, err := textencoding.DecodeText(proposed)
+	if err != nil {
+		return nil, err
+	}
+	c, ce, err := textencoding.DecodeText(current)
+	if err != nil {
+		return nil, err
+	}
+	encoding := ce
+	if ce == be {
+		encoding = pe
+	} else if pe != be && pe != ce {
+		return nil, errors.New("both versions changed the file encoding")
+	}
+	wanted, err := TextEdits(b, p)
+	if err != nil {
+		return nil, err
+	}
+	newer, err := TextEdits(b, c)
+	if err != nil {
+		return nil, err
+	}
+	rebased, err := document.Rebase(wanted, newer)
+	if err != nil {
+		return nil, err
+	}
+	if len(rebased) != 0 {
+		c, _, err = document.Apply(c, rebased)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return textencoding.EncodeText(c, encoding)
 }
 
 type Conflict struct {
@@ -102,21 +149,9 @@ func (s *Service) resolve(ctx context.Context, id string, docs map[string]Docume
 			if current == nil || ch.Before == nil || ch.After == nil || current.Mode != ch.Before.Mode || ch.After.Mode != ch.Before.Mode {
 				return PlanDelta{}, &Conflict{ch.Path, ch.Before, current, ch.After}
 			}
-			wanted, e := TextEdits(ch.Before.Data, ch.After.Data)
+			result, e := MergeTextBytes(ch.Before.Data, ch.After.Data, current.Data)
 			if e != nil {
-				return PlanDelta{}, &Conflict{ch.Path, ch.Before, current, ch.After}
-			}
-			newer, e := TextEdits(ch.Before.Data, current.Data)
-			if e != nil {
-				return PlanDelta{}, &Conflict{ch.Path, ch.Before, current, ch.After}
-			}
-			rebased, e := document.Rebase(wanted, newer)
-			if e != nil {
-				return PlanDelta{}, &Conflict{ch.Path, ch.Before, current, ch.After}
-			}
-			result, _, e := document.Apply(current.Data, rebased)
-			if e != nil {
-				return PlanDelta{}, fmt.Errorf("merge %s: %w", ch.Path, e)
+				return PlanDelta{}, fmt.Errorf("%w: %v", &Conflict{ch.Path, ch.Before, current, ch.After}, e)
 			}
 			f := clone(*ch.After)
 			f.Data = result

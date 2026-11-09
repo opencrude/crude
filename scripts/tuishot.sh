@@ -11,6 +11,7 @@
 #   record:<seconds>        lossless native video of this exact window (FFMPEG_BIN)
 #   type:<literal text>       type:main.go
 #   click:<col>,<row>[,<btn>] cell coords, btn 1=left 2=mid 3=right 4=whlup 5=whldn
+#   doubleclick:<col>,<row>   two left clicks 120 ms apart at one cell
 #   move:<col>,<row>          move pointer only (hover test)
 #   down:<col>,<row>          hold left button (stationary drag acceptance)
 #   up:<col>,<row>            release left button at the final endpoint
@@ -279,6 +280,10 @@ for step in "$@"; do
       b="${b:-1}"
       xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click "$b"
       sleep "$STEP_WAIT"; shot "click-${c}_${r}_${b}" ;;
+    doubleclick:*)
+      IFS=',' read -r c r <<<"${step#doubleclick:}"
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click --repeat 2 --delay 120 1
+      sleep "$STEP_WAIT"; shot "doubleclick-${c}_${r}" ;;
     move:*)
       IFS=',' read -r c r <<<"${step#move:}"
       xdotool mousemove --sync "$(px "$c")" "$(py "$r")"

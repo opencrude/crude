@@ -74,6 +74,9 @@ func (e *Editor) ExportDocumentRecovery() (DocumentRecovery, bool) {
 }
 
 func (r DocumentRecovery) Validate() error {
+	if !r.Canonical.Encoding.Valid() || !r.Canonical.SavedEncoding.Valid() {
+		return document.ErrRevision
+	}
 	if len(r.PendingGroups) != 0 && len(r.PendingGroups) != len(r.Pending) {
 		return document.ErrRevision
 	}
@@ -88,7 +91,7 @@ func (r DocumentRecovery) Validate() error {
 			return document.ErrLimit
 		}
 	}
-	if r.Version != 1 || r.Path == "" || r.Path != r.Canonical.Path || r.Canonical.ID == "" || r.Canonical.Revision == 0 || r.ScrollX < 0 || r.ScrollY < 0 {
+	if r.Version != 1 || r.Path == "" && !document.IsUntitledID(r.Canonical.ID) || r.Path != r.Canonical.Path || r.Canonical.ID == "" || r.Canonical.Revision == 0 || r.ScrollX < 0 || r.ScrollY < 0 {
 		return document.ErrRevision
 	}
 	for _, text := range [][]byte{r.Canonical.Text, r.Canonical.Saved, r.OptimisticText} {
@@ -138,7 +141,9 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 		}
 	}
 	p := e.documentProjection
-	if p == nil || p.snapshot.Path != r.Path || p.snapshot.ID != r.Canonical.ID || len(p.pending) != 0 || p.inflight != nil {
+	pathMatches := p != nil && (p.snapshot.Path == r.Path ||
+		r.Path == "" && document.IsUntitledID(r.Canonical.ID))
+	if !pathMatches || p.snapshot.ID != r.Canonical.ID || len(p.pending) != 0 || p.inflight != nil {
 		return ErrDocumentPending
 	}
 	matching := p.snapshot.Revision == r.Canonical.Revision && bytes.Equal(p.snapshot.Text, r.Canonical.Text)

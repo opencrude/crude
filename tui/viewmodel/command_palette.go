@@ -529,6 +529,10 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 			}
 		}
 		m.startNewFileInTree(dir)
+	case "file.newBuffer":
+		return m.createPaneUntitled(m.Win.ActiveGroup())
+	case "file.encoding":
+		return m.openEncodingMenu(m.EditorState.Editor)
 
 	case "editor.privateRecovery":
 		return m.OpenEditorRecoveryBrowser()

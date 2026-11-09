@@ -146,10 +146,10 @@ func TestGitComparisonStageAndDiscardUseGitConversion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if comparison.Before != "# Title\r\n\r\none\r\ntwo\r\nthree\r\n" || comparison.After != edited {
-		t.Fatalf("working comparison is not in checkout form: before=%q after=%q", comparison.Before, comparison.After)
+	if string(comparison.Before) != "# Title\r\n\r\none\r\ntwo\r\nthree\r\n" || string(comparison.After) != edited {
+		t.Fatalf("working comparison is not in checkout form: before=%q after=%q", string(comparison.Before), string(comparison.After))
 	}
-	if hunks := textdiff.ReviewHunks(comparison.Before, comparison.After); len(hunks) != 1 || hunks[0].OldStart != 3 ||
+	if hunks := textdiff.ReviewHunks(string(comparison.Before), string(comparison.After)); len(hunks) != 1 || hunks[0].OldStart != 3 ||
 		strings.Join(hunks[0].OldLines, "") != "two\r\n" || strings.Join(hunks[0].NewLines, "") != "TWO\r\n" {
 		t.Fatalf("one-line edit review hunks = %#v", hunks)
 	}
@@ -210,7 +210,7 @@ func TestGitHunkStageKeepsRepositoryLineEndings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hunks := textdiff.ReviewHunks(comparison.Before, comparison.After)
+	hunks := textdiff.ReviewHunks(string(comparison.Before), string(comparison.After))
 	if len(hunks) != 2 {
 		t.Fatalf("hunks = %#v", hunks)
 	}

@@ -56,7 +56,11 @@ func (s *ExecutionService) Create(ctx context.Context, request worktree.Request)
 		return worktree.Context{}, errors.New("unfinished integration requires explicit recovery before execution creation")
 	}
 	if request.SourceContextID == "" {
-		request.Documents = s.documents.executionDocumentsLocked()
+		documents, err := s.documents.executionDocumentsLocked()
+		if err != nil {
+			return worktree.Context{}, err
+		}
+		request.Documents = documents
 	} else {
 		request.Documents = nil
 	}
@@ -86,7 +90,11 @@ func (s *ExecutionService) Review(ctx context.Context, id string) (worktree.Plan
 	if err := s.checkoutDocumentsLocked(id); err != nil {
 		return worktree.PlanDelta{}, err
 	}
-	return s.Resolve(ctx, id, s.documents.executionDocumentsLocked())
+	documents, err := s.documents.executionDocumentsLocked()
+	if err != nil {
+		return worktree.PlanDelta{}, err
+	}
+	return s.Resolve(ctx, id, documents)
 }
 
 func (s *ExecutionService) ReviewDiscard(ctx context.Context, id string) (worktree.PlanDelta, error) {

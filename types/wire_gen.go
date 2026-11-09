@@ -4127,8 +4127,8 @@ func (z EditorPredictionProtocol) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *EditorSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 10
+	o = append(o, 0x9a)
 	o = msgp.AppendInt(o, z.TabSize)
 	o = msgp.AppendBool(o, z.WordWrap)
 	o = msgp.AppendBool(o, z.LineNumbers)
@@ -4138,6 +4138,11 @@ func (z *EditorSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendInt(o, z.AutoSaveDelay)
 	o = msgp.AppendString(o, z.RenderWhitespace)
 	o = msgp.AppendBool(o, z.FormatOnSave)
+	o, err = z.NewFileEncoding.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "NewFileEncoding")
+		return
+	}
 	return
 }
 
@@ -4153,8 +4158,8 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 10 {
+		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
 		return
 	}
 	z.TabSize, bts, err = msgp.ReadIntBytes(bts)
@@ -4206,13 +4211,18 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "FormatOnSave")
 		return
 	}
+	bts, err = z.NewFileEncoding.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "NewFileEncoding")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *EditorSettings) Msgsize() (s int) {
-	s = 1 + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize
+	s = 1 + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize + z.NewFileEncoding.Msgsize()
 	return
 }
 

@@ -1,6 +1,7 @@
 package fileio
 
 import (
+	"crude/textencoding"
 	"crude/textsearch"
 	"fmt"
 	"os"
@@ -82,7 +83,11 @@ func PlanProjectReplaceWithReader(matches []ProjectSearchMatch, query, replaceme
 		if err != nil {
 			return out, skipped, fmt.Errorf("read %s: %w", g.rel, err)
 		}
-		old := string(data)
+		text, encoding, err := textencoding.DecodeText(data)
+		if err != nil {
+			return out, skipped, fmt.Errorf("decode %s: %w", g.rel, err)
+		}
+		old := string(text)
 		total += len(data)
 		if total > 16<<20 {
 			return nil, skipped, fmt.Errorf("replacement review exceeds 16 MiB; narrow the search")
@@ -94,11 +99,15 @@ func PlanProjectReplaceWithReader(matches []ProjectSearchMatch, query, replaceme
 		if n == 0 || next == old {
 			continue
 		}
+		encoded, err := textencoding.EncodeText([]byte(next), encoding)
+		if err != nil {
+			return out, skipped, fmt.Errorf("encode %s: %w", g.rel, err)
+		}
 		out = append(out, ProjectFileReplacement{
 			Path:         path,
 			RelativePath: g.rel,
-			OldContent:   old,
-			NewContent:   next,
+			OldContent:   string(data),
+			NewContent:   string(encoded),
 			Count:        n,
 		})
 	}

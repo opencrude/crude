@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"crude/codexio"
+	"crude/textencoding"
 )
 
 // CodexChange describes a committed path image, including commits preceding a
@@ -94,7 +95,11 @@ func (e *Editor) ApplyCodexPatch(ctx context.Context, root string, patch *codexi
 				return changes, fmt.Errorf("Failed to read file to update %s: %w", op.Path, err)
 			}
 			before := regularState(data, info.Mode())
-			content, updateErr := mode.Update(op.Path, string(data), op.Diff)
+			text, encoding, decodeErr := textencoding.DecodeText(data)
+			if decodeErr != nil {
+				return changes, decodeErr
+			}
+			content, updateErr := mode.Update(op.Path, string(text), op.Diff)
 			if updateErr != nil {
 				return changes, updateErr
 			}
@@ -105,10 +110,14 @@ func (e *Editor) ApplyCodexPatch(ctx context.Context, root string, patch *codexi
 					return changes, err
 				}
 			}
-			err = e.writeBytesTracked(dest, []byte(content), tracked(path, &before))
+			encoded, encodeErr := textencoding.EncodeText([]byte(content), encoding)
+			if encodeErr != nil {
+				return changes, encodeErr
+			}
+			err = e.writeBytesTracked(dest, encoded, tracked(path, &before))
 			if err == nil && op.MoveTo != "" {
 				if filepath.Clean(dest) == path {
-					before.Bytes = []byte(content)
+					before.Bytes = encoded
 				}
 				err = e.deleteTracked(path, tracked(path, &before))
 			}

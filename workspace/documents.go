@@ -3,6 +3,8 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"crude/textencoding"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -86,6 +88,9 @@ func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager
 	if s.stateErr == nil {
 		_ = s.recoverRelocationsLocked()
 		for id, d := range s.docs {
+			if d.snapshot.Path == "" {
+				continue
+			}
 			if d.relocation != nil {
 				// An ambiguous move preserves a readable retained document even
 				// when its old parent directory no longer exists.
@@ -152,11 +157,11 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 		if len(s.docs) >= documentCountLimit {
 			return document.Snapshot{}, document.ErrLimit
 		}
-		text, exists, err := readLiveDocument(path)
+		disk, err := readLiveDocument(path)
 		if err != nil {
 			return document.Snapshot{}, err
 		}
-		d = &liveDocument{snapshot: document.Snapshot{ID: path, Path: path, Revision: 1, Text: text, Saved: bytes.Clone(text), DiskHash: sha256.Sum256(text), DiskExists: exists}, owners: make(map[document.Owner]bool), undo: make(map[document.Owner][]documentUndoUnit), redo: make(map[document.Owner][]documentUndoUnit), requests: make(map[string]documentRequest)}
+		d = &liveDocument{snapshot: document.Snapshot{ID: path, Path: path, Revision: 1, Text: disk.Text, Saved: bytes.Clone(disk.Text), Encoding: disk.Encoding, SavedEncoding: disk.Encoding, DiskHash: disk.Hash, DiskExists: disk.Exists}, owners: make(map[document.Owner]bool), undo: make(map[document.Owner][]documentUndoUnit), redo: make(map[document.Owner][]documentUndoUnit), requests: make(map[string]documentRequest)}
 		if err := s.persistDocument(d); err != nil {
 			return document.Snapshot{}, err
 		}
@@ -172,6 +177,15 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 	} else if err := s.watch.add(filepath.Dir(path)); err != nil {
 		return document.Snapshot{}, err
 	}
+	if err := s.attachDocumentOwnerLocked(owner, d); err != nil {
+		return document.Snapshot{}, err
+	}
+	return cloneDocument(d.snapshot), nil
+}
+
+// attachDocumentOwnerLocked shares the exact owner and language-view lifecycle
+// between named and unnamed documents. The caller holds s.mu.
+func (s *DocumentService) attachDocumentOwnerLocked(owner document.Owner, d *liveDocument) error {
 	if owner.Epoch > s.ownerEpoch(owner.ClientID) {
 		for _, live := range s.docs {
 			for previous := range live.owners {
@@ -186,26 +200,117 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 	s.ownerMu.Lock()
 	if s.detached[owner] || owner.Epoch < s.epochs[owner.ClientID] {
 		s.ownerMu.Unlock()
-		return document.Snapshot{}, document.ErrOwner
+		return document.ErrOwner
 	}
 	s.epochs[owner.ClientID] = owner.Epoch
 	d.owners[owner] = true
 	s.ownerMu.Unlock()
 	source := s.analysisIdentityLocked(d)
-	if !d.lspOpen && s.lsp != nil {
+	if d.snapshot.Path != "" && !d.lspOpen && s.lsp != nil {
 		s.lsp.OpenFile(context.Background(), source, string(d.snapshot.Text))
 		d.lspOpen = true
 	}
 	s.Insight.observeLocked(d)
+	return nil
+}
+
+// CreateUntitled creates a durable shared text document without a filesystem
+// path. Automatic and ordinary saves cannot assign it a destination.
+func (s *DocumentService) CreateUntitled(owner document.Owner, encoding textencoding.Encoding) (document.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.idleFenced {
+		return document.Snapshot{}, context.Canceled
+	}
+	if s.stateErr != nil {
+		return document.Snapshot{}, s.stateErr
+	}
+	if !encoding.Valid() {
+		return document.Snapshot{}, errors.New("unsupported file encoding")
+	}
+	if !s.admitOwner(owner) {
+		return document.Snapshot{}, document.ErrOwner
+	}
+	if len(s.docs) >= documentCountLimit {
+		return document.Snapshot{}, document.ErrLimit
+	}
+	names := make(map[string]bool)
+	for _, existing := range s.docs {
+		if existing.snapshot.Path == "" {
+			names[existing.snapshot.Name] = true
+		}
+	}
+	number := 1
+	for names[fmt.Sprintf("Untitled-%d", number)] {
+		number++
+	}
+	id := "untitled:" + rand.Text()
+	d := &liveDocument{snapshot: document.Snapshot{
+		ID: id, Name: fmt.Sprintf("Untitled-%d", number), Encoding: encoding, SavedEncoding: encoding, Revision: 1, DiskHash: sha256.Sum256(nil),
+	}, owners: make(map[document.Owner]bool), undo: make(map[document.Owner][]documentUndoUnit),
+		redo: make(map[document.Owner][]documentUndoUnit), requests: make(map[string]documentRequest)}
+	if err := s.persistDocument(d); err != nil {
+		return document.Snapshot{}, err
+	}
+	s.docs[id] = d
+	if err := s.attachDocumentOwnerLocked(owner, d); err != nil {
+		return document.Snapshot{}, err
+	}
 	return cloneDocument(d.snapshot), nil
 }
 
-func readLiveDocument(path string) ([]byte, bool, error) {
-	text, info, err := readAnalysisDisk(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
+// OpenUntitled reopens the exact retained identity, even if a prior first save
+// assigned it a path while this client was detached.
+func (s *DocumentService) OpenUntitled(owner document.Owner, id string) (document.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.idleFenced {
+		return document.Snapshot{}, context.Canceled
 	}
-	return text, info != nil, err
+	if s.stateErr != nil {
+		return document.Snapshot{}, s.stateErr
+	}
+	if !s.admitOwner(owner) {
+		return document.Snapshot{}, document.ErrOwner
+	}
+	if !document.IsUntitledID(id) {
+		return document.Snapshot{}, document.ErrRequest
+	}
+	d := s.docs[id]
+	if d == nil {
+		return document.Snapshot{}, os.ErrNotExist
+	}
+	if d.snapshot.Path != "" {
+		if err := s.watch.add(filepath.Dir(d.snapshot.Path)); err != nil {
+			return document.Snapshot{}, err
+		}
+	}
+	if err := s.attachDocumentOwnerLocked(owner, d); err != nil {
+		return document.Snapshot{}, err
+	}
+	return cloneDocument(d.snapshot), nil
+}
+
+type documentDiskSource struct {
+	Text     []byte
+	Encoding textencoding.Encoding
+	Hash     [32]byte
+	Exists   bool
+}
+
+func readLiveDocument(path string) (documentDiskSource, error) {
+	raw, info, err := readSourceBytes(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return documentDiskSource{Hash: sha256.Sum256(nil)}, nil
+	}
+	if err != nil {
+		return documentDiskSource{}, err
+	}
+	text, encoding, err := textencoding.DecodeText(raw)
+	if len(text) > document.MaxBytes {
+		err = document.ErrLimit
+	}
+	return documentDiskSource{Text: text, Encoding: encoding, Hash: sha256.Sum256(raw), Exists: info != nil}, err
 }
 
 func cloneDocument(s document.Snapshot) document.Snapshot {
@@ -343,7 +448,7 @@ func (s *DocumentService) commit(d *liveDocument, c document.Change) (int, error
 	}
 	d.snapshot.Text = text
 	d.snapshot.Revision++
-	d.snapshot.Dirty = !bytes.Equal(text, d.snapshot.Saved)
+	d.snapshot.Dirty = d.snapshot.ContentDirty()
 	d.journal = append(d.journal, documentOperation{revision: d.snapshot.Revision, edits: append([]document.Edit(nil), c.Edits...), inverse: inverse, owner: c.Owner, group: c.GroupID, change: cloneChange(c)})
 	d.historyBytes += weight
 	return len(d.journal) - 1, nil
@@ -439,7 +544,7 @@ func (s *DocumentService) history(redo bool, owner document.Owner, id, requestID
 			result = append(result, len(trial.journal)-1)
 		}
 		d.snapshot = trial.snapshot
-		d.snapshot.Dirty = !bytes.Equal(d.snapshot.Text, d.snapshot.Saved)
+		d.snapshot.Dirty = d.snapshot.ContentDirty()
 		d.journal = trial.journal
 		d.historyBytes = trial.historyBytes
 		from[author(owner)] = stack[:len(stack)-1]
@@ -501,14 +606,21 @@ func effectiveDocumentHistory(journal []documentOperation) ([]documentOperation,
 // No formatting or synthetic text change occurs. The mutex fences edits through
 // the checked commit, so its savepoint cannot acknowledge newer text.
 func (s *DocumentService) Save(ctx context.Context, owner document.Owner, id string, revision uint64, reason DocumentSaveReason) (document.Snapshot, error) {
+	return s.save(ctx, owner, id, revision, reason, nil)
+}
+
+func (s *DocumentService) save(ctx context.Context, owner document.Owner, id string, revision uint64, reason DocumentSaveReason, expectedEncoding *textencoding.Encoding) (document.Snapshot, error) {
 	s.mu.Lock()
 	defer func() { s.mu.Unlock(); s.changed(id) }()
 	d, err := s.owned(owner, id)
 	if err != nil {
 		return document.Snapshot{}, err
 	}
-	if revision != d.snapshot.Revision {
+	if revision != d.snapshot.Revision || expectedEncoding != nil && d.snapshot.Encoding != *expectedEncoding {
 		return cloneDocument(d.snapshot), document.ErrRevision
+	}
+	if d.snapshot.Path == "" {
+		return cloneDocument(d.snapshot), errors.New("save the document with a file name")
 	}
 	if s.saves == nil {
 		return cloneDocument(d.snapshot), fmt.Errorf("document disk authority is not configured")
@@ -536,8 +648,15 @@ func (s *DocumentService) Save(ctx context.Context, owner document.Owner, id str
 	}
 	// Durable intent precedes disk effects, retaining exact evidence if the final
 	// savepoint transaction fails or the core crashes between the two commits.
+	data, err := textencoding.EncodeText(d.snapshot.Text, d.snapshot.Encoding)
+	if err != nil {
+		return cloneDocument(d.snapshot), err
+	}
+	if len(data) > document.MaxBytes {
+		return cloneDocument(d.snapshot), document.ErrLimit
+	}
 	intent := stageDocument(d)
-	intent.diskIntent = &documentDiskIntent{Revision: revision, Hash: sha256.Sum256(d.snapshot.Text), Exists: true}
+	intent.diskIntent = &documentDiskIntent{Revision: revision, Hash: sha256.Sum256(data), Exists: true}
 	if err := s.persistDocument(intent); err != nil {
 		return cloneDocument(d.snapshot), err
 	}
@@ -545,10 +664,11 @@ func (s *DocumentService) Save(ctx context.Context, owner document.Owner, id str
 	if s.lsp != nil && d.lspOpen {
 		s.lsp.NotifyFileSave(ctx, d.snapshot.Path, string(d.snapshot.Text), reason, true)
 	}
-	r := s.saves.Save(ctx, DocumentSaveRequest{BufferID: id, Path: d.snapshot.Path, Data: bytes.Clone(d.snapshot.Text), Revision: revision, ExpectedHash: d.snapshot.DiskHash, ExpectedExist: d.snapshot.DiskExists, Reason: reason})
+	r := s.saves.Save(ctx, DocumentSaveRequest{BufferID: id, Path: d.snapshot.Path, Data: data, Revision: revision, ExpectedHash: d.snapshot.DiskHash, ExpectedExist: d.snapshot.DiskExists, Reason: reason})
 	trial := stageDocument(d)
 	if r.Committed || r.Unchanged {
 		trial.snapshot.Saved = bytes.Clone(d.snapshot.Text)
+		trial.snapshot.SavedEncoding = trial.snapshot.Encoding
 		trial.snapshot.DiskHash = r.DiskHash
 		trial.snapshot.DiskExists = true
 		trial.snapshot.Dirty = false
@@ -634,7 +754,7 @@ func (s *DocumentService) Close() {
 		if s.saves != nil {
 			s.saves.Cancel(id)
 		}
-		if s.lsp != nil {
+		if s.lsp != nil && d.lspOpen {
 			s.lsp.CloseFile(context.Background(), d.snapshot.Path)
 		}
 	}
@@ -649,6 +769,33 @@ func (s *DocumentService) CloseView(owner document.Owner, id string) error {
 	d, err := s.owned(owner, id)
 	if err != nil {
 		return err
+	}
+	// An untouched unnamed document has no work to retain. Releasing its last
+	// view must also free its durable identity and document-capacity slot.
+	if d.snapshot.Path == "" && !d.snapshot.Dirty && d.diskIntent == nil && len(d.owners) == 1 {
+		if s.stateDB != nil {
+			tx, err := s.stateDB.Begin()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = tx.Rollback() }()
+			for _, table := range []string{"workspace_document_deltas", "workspace_document_heads", "workspace_documents"} {
+				if _, err := tx.Exec("DELETE FROM "+table+" WHERE id=?", id); err != nil {
+					return err
+				}
+			}
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+		}
+		s.closeCodeActionsLocked(owner, id)
+		s.closeInlayViewsLocked(owner, id)
+		s.closeCompletionViewsLocked(owner, id)
+		delete(d.owners, owner)
+		s.closeLanguageView(d)
+		delete(s.docs, id)
+		delete(s.stateSizes, id)
+		return nil
 	}
 	s.closeCodeActionsLocked(owner, id)
 	s.closeInlayViewsLocked(owner, id)

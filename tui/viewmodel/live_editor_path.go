@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/document"
 	"crude/tui/editor"
 	"errors"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 // path into private tab indexes; no shell watcher or LSP writer is created.
 func (m *App) retargetLiveEditor(ed *editor.Editor) error {
 	next := ed.DocumentPath()
-	old := ed.FilePath()
+	old := editorDocumentKey(ed)
 	if next == "" || next == old {
 		return nil
 	}
@@ -42,10 +43,12 @@ func (m *App) retargetLiveEditor(ed *editor.Editor) error {
 
 // Preflight the same Update-owned indexes retargetLiveEditor will mutate.
 func (m *App) preflightLiveEditorPath(ed *editor.Editor, next string) error {
-	if !filepath.IsAbs(next) || filepath.Clean(next) != next {
+	if next == "" && document.IsUntitledID(ed.DocumentState().DocumentID) {
+		next = ed.DocumentState().DocumentID
+	} else if !filepath.IsAbs(next) || filepath.Clean(next) != next {
 		return errors.New("canonical document path must be absolute and clean")
 	}
-	old := ed.FilePath()
+	old := editorDocumentKey(ed)
 	tab := m.EditorState.Tabs[old]
 	if tab == nil || tab.Editor != ed {
 		return errors.New("shared editor path owner changed")

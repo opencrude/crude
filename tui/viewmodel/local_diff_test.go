@@ -164,7 +164,7 @@ func TestGitReviewAndLocalDiffPaintInIndependentGroups(t *testing.T) {
 	right := app.Win.SplitGroup(left, ui.Horizontal, false)
 	app.focusMainGroup(right)
 	app.openGitReview("", "") // no background Git work needed for this projection fixture
-	app.activeGitReview().screen.ShowChanges(gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "git.txt", BaseLabel: "HEAD", TargetLabel: "Index", Before: "old git content\n", After: "new git content\n", Fingerprint: "fixture", BeforePresent: true, AfterPresent: true}}), "main")
+	app.activeGitReview().screen.ShowChanges(gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "git.txt", BaseLabel: "HEAD", TargetLabel: "Index", Before: []byte("old git content\n"), After: []byte("new git content\n"), Fingerprint: "fixture", BeforePresent: true, AfterPresent: true}}), "main")
 	app.activeGitReview().screen.SetPresentation(gitdiff.Split)
 	_ = app.View()
 	paneJourneyRequireText(t, app, left, "local distinct content")

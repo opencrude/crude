@@ -2,6 +2,7 @@ package shellport
 
 import (
 	"context"
+	"crude/textencoding"
 
 	"crude/coreprotocol"
 	"crude/document"
@@ -18,6 +19,26 @@ type LiveDocuments interface {
 	UndoDocument(context.Context, string, string, uint64, bool) (document.Receipt, error)
 	SaveDocument(context.Context, string, uint64, workspace.DocumentSaveReason) (document.Snapshot, error)
 	CloseDocument(context.Context, string) error
+}
+
+// UntitledDocuments creates or reopens a pathless canonical document. It is an
+// optional port so other workspace implementations do not invent local files.
+type UntitledDocuments interface {
+	CreateUntitledDocument(context.Context) (document.Snapshot, error)
+	OpenUntitledDocument(context.Context, string) (document.Snapshot, error)
+}
+
+// UntitledDocumentSaver saves the exact canonical revision once under the
+// retained request identity; the original receipt settles uncertain outcomes.
+type UntitledDocumentSaver interface {
+	SaveUntitledDocument(context.Context, string, uint64, string, string, textencoding.Encoding, string) (document.Snapshot, error)
+}
+
+// UntitledOverwriteReviewer prepares an owner-bound preview; applying and
+// inspecting it use the shared ReviewedEdits transaction and receipt.
+type UntitledOverwriteReviewer interface {
+	PrepareUntitledOverwrite(context.Context, string, uint64, string, string, textencoding.Encoding) (workspace.ReviewedEditPreview, error)
+	ReadUntitledOverwrite(context.Context, string, string) (workspace.UntitledOverwriteComparison, error)
 }
 
 // LiveDocumentFormatter formats an exact core revision as one author-owned edit

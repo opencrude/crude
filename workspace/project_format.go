@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/textencoding"
 	"crypto/rand"
 	"errors"
 	"os"
@@ -22,10 +23,11 @@ const (
 // format. Open documents are skipped because their live text has a different
 // owner; the user can format those with Format Document.
 type FormatProjectResult struct {
-	Changed          int
-	SkippedOpen      int
-	Files            []string
-	SafetySnapshotID string
+	Changed           int
+	SkippedOpen       int
+	SkippedUnreadable int
+	Files             []string
+	SafetySnapshotID  string
 }
 
 // FormatProject formats saved files with the catalog formatter for each file's
@@ -47,7 +49,16 @@ func (w *Workspace) FormatProject(ctx context.Context) (FormatProjectResult, err
 			result.SkippedOpen++
 			return nil
 		}
-		formatted, err := FormatDocument(ctx, path, data)
+		text, encoding, err := textencoding.DecodeText(data)
+		if err != nil {
+			result.SkippedUnreadable++
+			return nil
+		}
+		formatted, err := FormatDocument(ctx, path, text)
+		if err != nil {
+			return err
+		}
+		formatted, err = textencoding.EncodeText(formatted, encoding)
 		if err != nil {
 			return err
 		}

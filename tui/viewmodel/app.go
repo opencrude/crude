@@ -212,6 +212,8 @@ type App struct {
 	terminalBlurred bool
 	mainPanes       *mainPaneLayout
 	paneFilePicker  *paneFilePickerOwner
+	untitledSave    *untitledSaveOwner
+	editorReload    *editorReloadPrompt
 	paneFileOpenSeq uint64
 	// paneRestoreCeiling accepts the pane opens queued by one layout
 	// restoration. A later deliberate open raises paneFileOpenSeq above it
@@ -777,29 +779,43 @@ func (m *App) openFilePickerWindow() {
 	m.overlayHost.Close(ui.OverlayFilePicker)
 
 	folderMode := m.FilePicker.Mode() == filepickerscreen.ModeFolder
+	saveMode := m.FilePicker.Mode() == filepickerscreen.ModeSaveFile
 	w, h := fitFloatingSize(m.width, m.height, 96, 28, 60, 18)
 	title := "Attach Files"
 	if folderMode {
 		title = "New Workspace"
+	} else if saveMode {
+		title = "Save File"
+	}
+	role := ui.FrameWindow
+	if saveMode {
+		role = ui.FrameDialog
 	}
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "filepicker-frame"),
-		ui.FrameWindow,
+		role,
 		title,
 		m.FilePicker,
 		nil,
-		true,
+		!saveMode,
 		w,
 		h,
 	)
+	if saveMode {
+		frame.Frame().SetIcon(ui.ConfirmPromptInfo.Icon())
+	}
 	m.FilePicker.SetFocusHandler(frame.Focus)
-	m.FilePicker.FocusFilter()
+	if saveMode {
+		m.FilePicker.FocusSaveName()
+	} else {
+		m.FilePicker.FocusFilter()
+	}
 	win := wm.NewFloatingWindow(string(ui.OverlayFilePicker), title, frame,
 		w, h,
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
-		wm.WithClosable(true),
+		wm.WithClosable(!saveMode),
 		wm.WithResizable(true),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
@@ -810,6 +826,19 @@ func (m *App) openFilePickerWindow() {
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayFilePicker, win, ui.ModalDialogPolicy(), func() {
 		m.paneFilePicker = nil
+		if owner := m.untitledSave; owner != nil {
+			m.overlayHost.Close(untitledOverwriteOverlay)
+			if p := owner.review; p != nil {
+				if p.cancel != nil {
+					p.cancel()
+				}
+				m.releaseUntitledReview(p)
+			}
+			if intent := m.workspaceSwitchIntent; intent != nil && intent.prompt == owner.editor {
+				intent.saving = false
+			}
+			m.untitledSave = nil
+		}
 		m.invalidatePathSearch(m.FilePicker)
 		m.invalidateDirectoryAsyncLoad(m.FilePicker)
 		m.FilePicker.Close()

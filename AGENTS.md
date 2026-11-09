@@ -14,11 +14,17 @@ change plus a map to the detailed contracts. Area-specific contracts live in
 3. Discover code with search tools over the repository. Ignore `.claude/`,
    `third_party/` (unless the change is there) and build output.
 
-## Active focus: the IDE plan
+## Active plans by responsibility
 
 Remove this section when the plan below is no longer active.
 
-Current product work is
+General editor file work is tracked in
+[Editor file workflows](docs/plans/editor-file-workflows.md).
+Read its current checkpoint and integration criteria before changing unnamed
+buffers, file encoding or Save File. Keep work in the plan owned by the feature;
+autonomous code intelligence is not a catch-all IDE backlog.
+
+Language-intelligence work is tracked in
 [autonomous code intelligence](docs/plans/autonomous-code-intelligence.md).
 Before any work on language support, language servers, diagnostics, Problems,
 project discovery or tool acquisition, read its top four sections: **How to
@@ -95,6 +101,12 @@ sufficient.
 - Correctness includes focus/capture, loading/empty/error states, confirmations,
   recovery, discoverability and clear status. A backend API without usable
   product UX is not a finished feature.
+- Integrate each feature with its related system capabilities: meaningful
+  application/workspace preferences and inheritance, semantic self-control,
+  shared commands, persistence and recovery. Do not add settings for internal
+  mechanics or duplicate an existing control. Verify the whole interaction
+  within terminal bounds, with the shared UI assets and Settings as the form
+  reference; a desktop-shaped design clipped into a terminal is not accepted.
 - **Talk to the user like a production IDE.** Every user-visible word follows
   [user language](docs/reference/user-language.md): ASD-STE100 sentences,
   the state and the next step, no internal state names or zero counters. Ask

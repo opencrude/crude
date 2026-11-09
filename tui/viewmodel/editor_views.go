@@ -2,10 +2,28 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"crude/document"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"
 )
+
+func documentEditorKey(s document.Snapshot) string {
+	if s.Path == "" {
+		return s.ID
+	}
+	return s.Path
+}
+
+func editorDocumentKey(ed *editor.Editor) string {
+	if ed == nil {
+		return ""
+	}
+	if ed.FilePath() == "" {
+		return ed.DocumentState().DocumentID
+	}
+	return ed.FilePath()
+}
 
 // Documents and views.
 //

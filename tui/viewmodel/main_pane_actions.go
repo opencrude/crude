@@ -123,6 +123,9 @@ func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 	group := m.Win.ActiveGroup()
 	owner := m.paneOwner(0, group)
 	menu := &ui.ContextMenuState{Title: "Pane", Sections: []ui.ContextMenuSection{{}}}
+	menu.Sections[0].Items = append(menu.Sections[0].Items, ui.ContextMenuItem{Label: "New unnamed file", Action: owner.action(m, func() {
+		m.runDetachedAsyncCmd(m.createPaneUntitled(group))
+	})})
 	for _, action := range []struct{ label, id string }{
 		{"New session", "pane.new-session"}, {"Open file", "pane.open-file"},
 		{"Split right", "pane.split-right"}, {"Split down", "pane.split-down"},
@@ -581,7 +584,7 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 		return nil, false
 	}
 	switch a.ID {
-	case "tabs.new", "pane.new-session", "pane.open-file":
+	case "tabs.new", "tabs.new-buffer", "pane.new-session", "pane.open-file":
 		group, ok := a.Payload.(window.GroupID)
 		if !ok {
 			group = m.Win.ActiveGroup()
@@ -590,6 +593,9 @@ func (m *App) handleMainPaneAction(a *ui.Action) (tea.Cmd, bool) {
 			return nil, true
 		}
 		m.focusMainGroup(group)
+		if a.ID == "tabs.new-buffer" {
+			return m.createPaneUntitled(group), true
+		}
 		if a.ID == "pane.open-file" {
 			m.openPaneFilePicker(group)
 			return nil, true
