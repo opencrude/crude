@@ -4,6 +4,7 @@ import (
 	"context"
 	"crude/coreprotocol"
 	"crude/fileio"
+	"crude/textencoding"
 	"errors"
 )
 
@@ -34,7 +35,7 @@ func (a *actor) prepareProjectReplace(request coreprotocol.Request) (func(contex
 			}
 			if docs != nil {
 				if s, ok := docs.SnapshotIfOpen(path); ok {
-					return s.Text, nil
+					return textencoding.EncodeText(s.Text, s.Encoding)
 				}
 			}
 			chunk, err := readFileChunk(ctx, root, coreprotocol.FileReadRequest{Path: path, Limit: coreprotocol.MaxFileChunk})

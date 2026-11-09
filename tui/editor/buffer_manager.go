@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"crude/document"
+	"crude/textencoding"
 	"crude/types"
 )
 
@@ -34,11 +36,12 @@ type Buffer struct {
 
 	buf *PieceTable
 
-	diskHash       [sha256.Size]byte
-	diskExists     bool
-	diskGeneration uint64
-	dirty          bool
-	savepoint      textSnapshot
+	diskHash                [sha256.Size]byte
+	diskExists              bool
+	diskGeneration          uint64
+	dirty                   bool
+	savepoint               textSnapshot
+	encoding, savedEncoding textencoding.Encoding
 
 	diags   types.InsightDiagnostics
 	diagsMu sync.RWMutex
@@ -92,6 +95,7 @@ type BufferSnapshot struct {
 	ID             string
 	Path           string
 	Data           []byte
+	Encoding       textencoding.Encoding
 	Revision       uint64
 	ExpectedHash   [sha256.Size]byte
 	ExpectedExists bool
@@ -103,7 +107,7 @@ func (b *Buffer) Snapshot() BufferSnapshot {
 	}
 	return BufferSnapshot{
 		ID: b.ID, Path: b.Path, Data: b.buf.Bytes(), Revision: b.buf.Revision(),
-		ExpectedHash: b.diskHash, ExpectedExists: b.diskExists,
+		ExpectedHash: b.diskHash, ExpectedExists: b.diskExists, Encoding: b.encoding,
 	}
 }
 
@@ -115,6 +119,7 @@ func (b *Buffer) AcceptSave(revision uint64, diskHash [sha256.Size]byte, data []
 	}
 	b.diskHash = diskHash
 	b.diskExists = true
+	b.savedEncoding = b.encoding
 	b.diskGeneration++
 	current := b.buf.snapshotText()
 	if b.buf.Revision() == revision {
@@ -138,7 +143,7 @@ func (b *Buffer) ReplaceContents(text string) {
 
 // IsDirty returns true if the buffer has unsaved changes.
 func (b *Buffer) IsDirty() bool {
-	return b != nil && b.dirty
+	return b != nil && (b.dirty || b.encoding != b.savedEncoding)
 }
 
 func (b *Buffer) NoteEdit() {
@@ -155,9 +160,28 @@ func newBuffer(pt *PieceTable, path string, exists bool) *Buffer {
 }
 
 // ApplyDisk replaces the shared text, not the PieceTable identity held by views.
-func (b *Buffer) ApplyDisk(data []byte) {
+func (b *Buffer) ApplyDisk(data []byte, encoding textencoding.Encoding, hash [sha256.Size]byte) {
+	b.encoding = encoding
 	b.buf.ReplaceAll(string(data))
-	b.AcceptSave(b.buf.Revision(), sha256.Sum256(data), data)
+	b.AcceptSave(b.buf.Revision(), hash, data)
+}
+
+func loadBuffer(path string) (*Buffer, error) {
+	raw, err := os.ReadFile(path)
+	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	text, encoding, err := textencoding.DecodeText(raw)
+	if err != nil {
+		return nil, err
+	}
+	pt := NewPieceTable()
+	pt.ReplaceAll(string(text))
+	pt.filePath = path
+	b := newBuffer(pt, path, exists)
+	b.encoding, b.savedEncoding, b.diskHash = encoding, encoding, sha256.Sum256(raw)
+	return b, nil
 }
 
 func (b *Buffer) MatchesDisk(hash [sha256.Size]byte) bool { return b.diskExists && b.diskHash == hash }
@@ -222,13 +246,10 @@ func (m *BufferManager) OpenFile(path string) (*Buffer, error) {
 	}
 	m.mu.RUnlock()
 
-	pt := NewPieceTable()
-	if err := pt.Load(abs); err != nil {
+	buf, err := loadBuffer(abs)
+	if err != nil {
 		return nil, err
 	}
-	_, statErr := os.Stat(abs)
-	exists := statErr == nil
-	buf := newBuffer(pt, abs, exists)
 
 	m.mu.Lock()
 	// Double-check after acquiring write lock.
@@ -267,10 +288,14 @@ func (m *BufferManager) InstallPrepared(prepared *Buffer) *Buffer {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if existing := m.buffers[prepared.Path]; existing != nil {
+	key := prepared.Path
+	if key == "" {
+		key = prepared.ID
+	}
+	if existing := m.buffers[key]; existing != nil {
 		return existing
 	}
-	m.buffers[prepared.Path] = prepared
+	m.buffers[key] = prepared
 	return prepared
 }
 
@@ -283,9 +308,13 @@ func (m *BufferManager) Close(id string) {
 }
 
 func (m *BufferManager) Retarget(oldPath, newPath string) error {
-	oldAbs, err := filepath.Abs(oldPath)
-	if err != nil {
-		return err
+	oldAbs := oldPath
+	if !document.IsUntitledID(oldPath) {
+		var err error
+		oldAbs, err = filepath.Abs(oldPath)
+		if err != nil {
+			return err
+		}
 	}
 	newAbs, err := filepath.Abs(newPath)
 	if err != nil {

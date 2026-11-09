@@ -67,7 +67,7 @@ func lines(n int, replace map[int]string) string {
 func comparisonItem(path, before, after string, area workspace.GitChangeArea) workspace.GitChangeComparison {
 	return workspace.GitChangeComparison{
 		Change: workspace.GitChange{Path: path, AbsolutePath: "/repo/" + path, Area: area, Code: "M"},
-		Comparison: workspace.GitComparison{Path: path, AbsolutePath: "/repo/" + path, Area: area, Before: before, After: after,
+		Comparison: workspace.GitComparison{Path: path, AbsolutePath: "/repo/" + path, Area: area, Before: []byte(before), After: []byte(after),
 			BeforePresent: true, AfterPresent: true, Fingerprint: "fp:" + path},
 	}
 }

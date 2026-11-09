@@ -76,10 +76,10 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 		ui.BoolFieldState("inlay-hints", "Inlay hints", lsp.InlayHints, "Default Off—read-only inline param/type; advertised providers; no commands/edits"),
 		ui.SeparatorFieldState("completion-behavior", "Suggestions"),
 		ui.BoolFieldState("completions", "Code suggestions", lsp.Completions, "Suggest functions, variables and members from the language server."),
-		ui.BoolFieldState("auto-complete", "Suggest while typing", lsp.AutoComplete, "Show suggestions as you type. When off, use Ctrl+Space."),
+		ui.BoolFieldState("auto-complete", "Show as you type", lsp.AutoComplete, "Show suggestions as you type. When off, use Ctrl+Space."),
 		lspNumberField("completion-delay", "Suggestion delay", "ms", lsp.CompletionDelay(), 60000, "Wait this long after typing. Zero shows suggestions without a delay."),
-		ui.SegmentedFieldState("completion-accept", "Accept suggestion with", []ui.FormOption{
-			{ID: "tab", Label: "Tab"}, {ID: "enter", Label: "Enter"}, {ID: "tab-enter", Label: "Tab or Enter"},
+		ui.SegmentedFieldState("completion-accept", "Accept with", []ui.FormOption{
+			{ID: "tab", Label: "Tab"}, {ID: "enter", Label: "Enter"}, {ID: "tab-enter", Label: "Tab / Enter"},
 		}, lsp.CompletionAcceptance(), "Choose the key that inserts the selected suggestion."),
 		ui.SeparatorFieldState("diagnostic-display", "Diagnostics display"),
 		severity,

@@ -43,10 +43,10 @@ func TestGitHunkStageAndUnstageTouchOnlyThatHunk(t *testing.T) {
 		t.Fatal(err)
 	}
 	staged := reviewCompare(t, service, "file.txt", GitAreaStaged)
-	if staged.After != hunkText(map[int]string{2: "two"}) {
-		t.Fatalf("index after staging the first hunk:\n%s", staged.After)
+	if string(staged.After) != hunkText(map[int]string{2: "two"}) {
+		t.Fatalf("index after staging the first hunk:\n%s", string(staged.After))
 	}
-	if remaining := reviewCompare(t, service, "file.txt", GitAreaWorking); remaining.Before != staged.After || !strings.Contains(remaining.After, "twenty") {
+	if remaining := reviewCompare(t, service, "file.txt", GitAreaWorking); string(remaining.Before) != string(staged.After) || !strings.Contains(string(remaining.After), "twenty") {
 		t.Fatal("working comparison did not keep the second hunk unstaged")
 	}
 	if err := service.StageHunk(t.Context(), working, first); !errors.Is(err, ErrGitReviewStale) {

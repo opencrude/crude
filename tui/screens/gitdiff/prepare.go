@@ -203,12 +203,19 @@ func prepareBody(ctx context.Context, file *File) error {
 		file.Note = fmt.Sprintf("Binary file · %s → %s", byteSize(len(comparison.Before)), byteSize(len(comparison.After)))
 		return nil
 	}
-	if err := diffview.ValidateComparison(comparison.Before, comparison.After); err != nil {
+	before, after, beforeEncoding, afterEncoding, err := comparison.TextVersions()
+	if err != nil {
 		file.Note = err.Error()
 		return nil
 	}
-	file.before, file.after = textdiff.Lines(comparison.Before), textdiff.Lines(comparison.After)
-	if comparison.Before == comparison.After {
+	// File.Comparison retains exact bytes for stage/discard. Only this worker's
+	// detached presentation uses decoded text.
+	if err := diffview.ValidateComparison(before, after); err != nil {
+		file.Note = err.Error()
+		return nil
+	}
+	file.before, file.after = textdiff.Lines(before), textdiff.Lines(after)
+	if before == after {
 		switch {
 		case !comparison.BeforePresent && comparison.AfterPresent:
 			file.Note = "New empty file"
@@ -216,6 +223,8 @@ func prepareBody(ctx context.Context, file *File) error {
 			file.Note = "Deleted empty file"
 		case comparison.BeforeMode != comparison.AfterMode:
 			file.Note = fmt.Sprintf("File mode changed %06o → %06o · contents identical", comparison.BeforeMode, comparison.AfterMode)
+		case beforeEncoding != afterEncoding:
+			file.Note = fmt.Sprintf("Encoding changed: %s to %s", beforeEncoding.Label(), afterEncoding.Label())
 		case len(file.after) == 0 && comparison.Untracked:
 			file.Note = "New empty file"
 		case len(file.after) == 0:
@@ -225,24 +234,23 @@ func prepareBody(ctx context.Context, file *File) error {
 		}
 		return nil
 	}
-	var err error
 	if file.beforeSource, err = diffview.PrepareSourceLinesContext(ctx, file.before); err != nil {
 		return err
 	}
 	if file.afterSource, err = diffview.PrepareSourceLinesContext(ctx, file.after); err != nil {
 		return err
 	}
-	if len(comparison.Before)+len(comparison.After) <= syntaxByteLimit {
+	if len(before)+len(after) <= syntaxByteLimit {
 		name := comparison.Path
 		var err error
-		if file.beforeSyntax, err = diffview.PrepareSyntaxContext(ctx, name, comparison.Before); err != nil {
+		if file.beforeSyntax, err = diffview.PrepareSyntaxContext(ctx, name, before); err != nil {
 			return err
 		}
-		if file.afterSyntax, err = diffview.PrepareSyntaxContext(ctx, name, comparison.After); err != nil {
+		if file.afterSyntax, err = diffview.PrepareSyntaxContext(ctx, name, after); err != nil {
 			return err
 		}
 	}
-	file.blocks = buildBlocks(textdiff.ReviewHunks(comparison.Before, comparison.After), len(file.before), len(file.after))
+	file.blocks = buildBlocks(textdiff.ReviewHunks(before, after), len(file.before), len(file.after))
 	for _, block := range file.blocks {
 		for _, line := range block.lines {
 			if err := ctx.Err(); err != nil {

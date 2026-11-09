@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"crude/textencoding"
 )
 
 // GitConflictChoice is how one conflict region is resolved.
@@ -41,6 +43,7 @@ type GitConflictFile struct {
 	Path         string
 	AbsolutePath string
 	Fingerprint  string
+	Encoding     textencoding.Encoding
 	Segments     []GitConflictSegment
 }
 

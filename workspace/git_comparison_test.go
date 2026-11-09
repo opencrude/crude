@@ -73,10 +73,10 @@ func TestGitComparisonSeparatesHeadIndexAndDisk(t *testing.T) {
 	reviewWrite(t, root, "file.txt", "Disk\n")
 	staged := reviewCompare(t, service, "file.txt", GitAreaStaged)
 	working := reviewCompare(t, service, "file.txt", GitAreaWorking)
-	if staged.Before != "HEAD\n" || staged.After != "Index\n" || staged.BaseLabel != "HEAD" || staged.TargetLabel != "Index (staged)" {
+	if string(staged.Before) != "HEAD\n" || string(staged.After) != "Index\n" || staged.BaseLabel != "HEAD" || staged.TargetLabel != "Index (staged)" {
 		t.Fatalf("staged comparison=%+v", staged)
 	}
-	if working.Before != "Index\n" || working.After != "Disk\n" || working.TargetLabel != "Working tree (disk)" {
+	if string(working.Before) != "Index\n" || string(working.After) != "Disk\n" || working.TargetLabel != "Working tree (disk)" {
 		t.Fatalf("working comparison=%+v", working)
 	}
 	if staged.Fingerprint == "" || staged.Fingerprint == working.Fingerprint {
@@ -86,14 +86,14 @@ func TestGitComparisonSeparatesHeadIndexAndDisk(t *testing.T) {
 		t.Fatal(err)
 	}
 	restaged := reviewCompare(t, service, "file.txt", GitAreaStaged)
-	if restaged.After != "Disk\n" {
+	if string(restaged.After) != "Disk\n" {
 		t.Fatalf("staged unseen bytes: %q", restaged.After)
 	}
 	if err := service.UnstageReviewed(context.Background(), restaged); err != nil {
 		t.Fatal(err)
 	}
 	unstaged := reviewCompare(t, service, "file.txt", GitAreaWorking)
-	if unstaged.Before != "HEAD\n" || unstaged.After != "Disk\n" {
+	if string(unstaged.Before) != "HEAD\n" || string(unstaged.After) != "Disk\n" {
 		t.Fatalf("unstage changed disk content or failed to reset index: %+v", unstaged)
 	}
 }
@@ -124,7 +124,7 @@ func TestGitComparisonStagingRejectsStaleDiskIndexAndHead(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "preview":
-				comparison.After = "not the reviewed content"
+				comparison.After = []byte("not the reviewed content")
 			}
 			before, err := os.ReadFile(filepath.Join(root, ".git", "index"))
 			if err != nil {
@@ -163,7 +163,7 @@ func TestGitComparisonUntrackedDeletedBinaryAndUnborn(t *testing.T) {
 	}
 	reviewWrite(t, root, "binary.dat", "a\x00b")
 	binary := reviewCompare(t, service, "binary.dat", GitAreaUntracked)
-	if !binary.Binary || binary.After != "a\x00b" {
+	if !binary.Binary || string(binary.After) != "a\x00b" {
 		t.Fatalf("binary comparison=%+v", binary)
 	}
 	if err := service.StageReviewed(context.Background(), binary); err != nil {
@@ -220,11 +220,11 @@ func TestGitCommitStagedUsesExactStagedSetAndInspectsEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if evidence.Message != message || len(evidence.Comparisons) != 1 || evidence.Comparisons[0].After != "reviewed staged\n" || !evidence.Comparisons[0].Historical {
+	if evidence.Message != message || len(evidence.Comparisons) != 1 || string(evidence.Comparisons[0].After) != "reviewed staged\n" || !evidence.Comparisons[0].Historical {
 		t.Fatalf("commit evidence=%+v", evidence)
 	}
 	remaining := reviewCompare(t, service, "nested/feature.txt", GitAreaWorking)
-	if remaining.After != "newer working text\n" || remaining.Before != "reviewed staged\n" {
+	if string(remaining.After) != "newer working text\n" || string(remaining.Before) != "reviewed staged\n" {
 		t.Fatalf("commit consumed working bytes: %+v", remaining)
 	}
 	if err := service.CommitStaged(context.Background(), []string{"nested/feature.txt"}, "repeat"); !errors.Is(err, ErrGitReviewStale) {
@@ -322,10 +322,10 @@ func TestGitCompareChangesReadsOneSnapshotAndIsolatesFailures(t *testing.T) {
 	for _, result := range results {
 		byPath[result.Change.Path] = result
 	}
-	if got := byPath["file.txt"]; got.Err != nil || got.Comparison.After != "edited\n" {
+	if got := byPath["file.txt"]; got.Err != nil || string(got.Comparison.After) != "edited\n" {
 		t.Fatalf("working comparison=%+v", got)
 	}
-	if got := byPath["added.txt"]; got.Err != nil || got.Comparison.Area != GitAreaStaged || got.Comparison.After != "brand new\n" {
+	if got := byPath["added.txt"]; got.Err != nil || got.Comparison.Area != GitAreaStaged || string(got.Comparison.After) != "brand new\n" {
 		t.Fatalf("staged comparison=%+v", got)
 	}
 	if byPath["../escape"].Err == nil {

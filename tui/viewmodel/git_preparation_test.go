@@ -131,7 +131,7 @@ func TestGitPreparationTimeoutRetryAndCleanTransition(t *testing.T) {
 			<-ctx.Done()
 			return nil, ctx.Err()
 		}
-		return []workspace.GitChangeComparison{{Change: changes[0], Comparison: workspace.GitComparison{Path: change.Path, Before: "old\n", After: "fresh marker\n", BeforePresent: true, AfterPresent: true, Fingerprint: "fresh"}}}, nil
+		return []workspace.GitChangeComparison{{Change: changes[0], Comparison: workspace.GitComparison{Path: change.Path, Before: []byte("old\n"), After: []byte("fresh marker\n"), BeforePresent: true, AfterPresent: true, Fingerprint: "fresh"}}}, nil
 	}}}
 	app.sourceControlTimeout = 20 * time.Millisecond
 	msg := app.prepareGitChanges()()
@@ -163,7 +163,7 @@ func TestGitPreparationSupersedesWithoutPublishingOldEvidence(t *testing.T) {
 	app.gitPrepareGen = 1
 	app.gitPrepareCancel = func() {}
 	app.prepareGitChanges()
-	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Before: "old", After: "stale"}}})
+	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Before: []byte("old"), After: []byte("stale")}}})
 	app.applyGitChangesPrepared(gitChangesPreparedMsg{workspace: app.workspaceSwitchGen.Load(), generation: 1, files: files})
 	if len(app.gitPanel.PreparedList()) != 0 {
 		t.Fatal("superseded evidence became visible")
@@ -206,7 +206,7 @@ func TestComparisonSearchDeliveredThroughAppAfterFocusChangeAndClose(t *testing.
 	change := workspace.GitChange{Path: "a.txt", Area: workspace.GitAreaWorking, Code: "M"}
 	app.openGitFileReview(change)
 	view := app.activeGitReview()
-	view.screen.ShowChanges(gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{After: "needle\n"}}}), "main")
+	view.screen.ShowChanges(gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{After: []byte("needle\n")}}}), "main")
 	app.paintShellFrame()
 	app.Update(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
 	for _, r := range "needle" {
@@ -241,7 +241,7 @@ func TestGitPreparationWorkspaceBoundaryRejectsLateWork(t *testing.T) {
 	app.gitPrepareInFlight = true
 	cancelled := false
 	app.gitPrepareCancel = func() { cancelled = true }
-	old := gitChangesPreparedMsg{workspace: app.workspaceSwitchGen.Load(), generation: 5, files: gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{After: "old workspace"}}})}
+	old := gitChangesPreparedMsg{workspace: app.workspaceSwitchGen.Load(), generation: 5, files: gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{After: []byte("old workspace")}}})}
 	app.beginWorkspaceSwitch()
 	app.applyGitChangesPrepared(old)
 	if !cancelled || app.gitPrepareInFlight || len(app.gitPanel.PreparedList()) != 0 {

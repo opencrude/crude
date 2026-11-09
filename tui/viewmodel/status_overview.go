@@ -199,6 +199,7 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 		}
 	}
 	if strings.HasPrefix(target, "editor:") && m.EditorState.Editor != nil {
+		segments = append(segments, shellheader.Segment{Text: m.EditorState.Editor.DocumentState().Encoding.Label(), Role: ui.ColorMuted, Action: "editor-encoding", TargetID: target, Priority: 1})
 		if blame := m.EditorState.Editor.CursorBlameSummary(); blame != "" {
 			segments = append(segments, shellheader.Segment{Text: blame, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 4})
 		}

@@ -64,7 +64,7 @@ func TestPanelGroupsChangesAndPreviewsSelection(t *testing.T) {
 	panel.SetSnapshot(snapshot(staged("README.md"), working("src/main.go"), working("src/util.go")))
 	panel.SetPrepared(gitdiff.PrepareChanges([]workspace.GitChangeComparison{{
 		Change:     staged("README.md"),
-		Comparison: workspace.GitComparison{Path: "README.md", Area: workspace.GitAreaStaged, Before: "old\n", After: "new title\n", BeforePresent: true, AfterPresent: true},
+		Comparison: workspace.GitComparison{Path: "README.md", Area: workspace.GitAreaStaged, Before: []byte("old\n"), After: []byte("new title\n"), BeforePresent: true, AfterPresent: true},
 	}}))
 	_, text := mount(t, panel, 140, 20)
 	for _, want := range []string{"Changes 3", "History", "Branches", "main", "Staged  1", "Changes  2", "Unstage all", "Stage all", "main.go", "src", "✓ Commit 1", "new title"} {

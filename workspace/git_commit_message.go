@@ -114,7 +114,15 @@ func commitMessageDiff(comparisons []GitComparison) string {
 		case !comparison.AfterPresent:
 			fmt.Fprintf(&out, "Deleted file %s\n", path)
 		}
-		diff := udiff.Unified("a/"+path, "b/"+path, comparison.Before, comparison.After)
+		before, after, oldEncoding, newEncoding, err := comparison.TextVersions()
+		if err != nil {
+			fmt.Fprintf(&out, "Cannot decode %s: %v\n", path, err)
+			continue
+		}
+		if oldEncoding != newEncoding {
+			fmt.Fprintf(&out, "%s encoding changed from %s to %s\n", path, oldEncoding.Label(), newEncoding.Label())
+		}
+		diff := udiff.Unified("a/"+path, "b/"+path, before, after)
 		if len(diff) > commitMessageFileLimit {
 			diff = diff[:commitMessageFileLimit] + "\n… diff truncated\n"
 		}

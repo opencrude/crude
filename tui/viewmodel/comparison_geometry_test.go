@@ -120,7 +120,7 @@ func TestComparisonGeometryGitSharesSourcesAndRejectsOlderCalibration(t *testing
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	change := workspace.GitChange{Path: "geometry.txt", Area: workspace.GitAreaWorking}
-	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Before: "old", After: strings.Repeat("☰", 4096), Fingerprint: "fixture"}}})
+	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Before: []byte("old"), After: []byte(strings.Repeat("☰", 4096)), Fingerprint: "fixture"}}})
 	app.gitPanel.SetPrepared(files)
 	app.openGitFileReview(change)
 	source := files[0].SourceGeometry()[1]
@@ -151,7 +151,7 @@ func TestComparisonGeometryFailedWorkspaceSwitchRestartsCancelledPass(t *testing
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	change := workspace.GitChange{Path: "geometry.txt", Area: workspace.GitAreaWorking}
-	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Before: "old", After: strings.Repeat("☰", 4096), Fingerprint: "fixture"}}})
+	files := gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Before: []byte("old"), After: []byte(strings.Repeat("☰", 4096)), Fingerprint: "fixture"}}})
 	app.gitPanel.SetPrepared(files)
 	app.openGitFileReview(change)
 	source := files[0].SourceGeometry()[1]

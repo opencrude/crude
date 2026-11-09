@@ -317,22 +317,36 @@ func TestImageFileConnectedCoreReadsProjectBytes(t *testing.T) {
 }
 
 func TestImageFileConnectedExternalAndDeniedProjectLink(t *testing.T) {
-	root := t.TempDir()
-	external := writeImageFixture(t, t.TempDir(), "external.png")
-	link := filepath.Join(root, "linked.png")
-	if err := os.Symlink(external, link); err != nil {
-		t.Skipf("cannot create symlink on this host: %v", err)
-	}
-	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:9")
-	shell := newRemoteJourneyShell(t, runtime, root)
-	app := shell.app
-	openImageFromTree(t, app, link)
-	if app.Win.TabByTitle(imageTabTitle(link)) != nil {
-		t.Fatal("a rejected project link was retried as an external read")
-	}
-	openImageFromTree(t, app, external)
-	if tab := app.Win.ActiveTab(); !isImageTab(tab) || tab.Resource.ID != external {
-		t.Fatalf("explicit external image did not open through the connected core: %+v", tab)
+	for _, tc := range []struct {
+		name  string
+		input func(string) string
+	}{
+		{"native", func(path string) string { return path }},
+		{"slash", func(path string) string { return strings.ReplaceAll(path, "\\", "/") }},
+		{"backslash", func(path string) string { return strings.ReplaceAll(path, "/", "\\") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			external := writeImageFixture(t, t.TempDir(), "external.png")
+			link := filepath.Join(root, "linked.png")
+			if err := os.Symlink(external, link); err != nil {
+				t.Skipf("cannot create symlink on this host: %v", err)
+			}
+			runtime := remoteJourneyRuntime(t, "http://127.0.0.1:9")
+			shell := newRemoteJourneyShell(t, runtime, root)
+			app := shell.app
+			before := app.Win.TabCount()
+			openImageFromTree(t, app, tc.input(link))
+			if app.Win.TabCount() != before || app.Win.TabByTitle(imageTabTitle(filepath.ToSlash(link))) != nil {
+				t.Fatal("a rejected project link was retried as an external read")
+			}
+			openImageFromTree(t, app, tc.input(external))
+			want := filepath.ToSlash(external)
+			if tab := app.Win.ActiveTab(); !isImageTab(tab) || tab.Resource.ID != want ||
+				tab.Title != imageTabTitle(want) || tab.DisplayTitle != "external.png" {
+				t.Fatalf("explicit external image did not open through the connected core: %+v", tab)
+			}
+		})
 	}
 }
 

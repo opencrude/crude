@@ -425,6 +425,19 @@ provider join and clean product exit separately. Native frame accounting include
 boot and non-sleep actions, not sleeps or a post-exit frame. These deterministic
 local regressions do not close adaptive workflow, device or complete-context gates.
 
+Automatic suggestion settings also have a connected native capture fixture:
+`TestCompletionSettingsVisualAcceptance`, with
+`CRUDE_VISUAL_COMPLETION_SETTINGS=1`, the compiled viewmodel test binary, and
+`CRUDE_COMPLETION_SETTINGS_VISUAL_RESULT` set to a private result file. F6 opens
+the Code Intelligence page; it does not change a setting. On Linux at 80×24, use
+`wheel:60,14,6`, `click:58,8`, `click:58,10`, `key:ctrl+a`, `type:0`,
+`click:55,12`, and `click:58,20`. At 160×40, use `wheel:95,25,6`,
+`click:77,12`, `click:78,14`, `key:ctrl+a`, `type:0`, `click:81,16`, and
+`click:124,32`. Inspect the actual geometry first, allow the save to settle,
+and finish with `quit:F9`. Require `passed=true` in the separate result and a
+clean exit: it verifies Off, zero delay, Enter,
+published settings, no unsaved edits, and the unchanged private draft.
+
 Diagnostic readers use `TestDiagnosticDetailsVisualHeadless` with the installed
 gopls and framed core at 160x40 and 80x24. An independently authored anonymous
 struct causes a long compiler message. Its original notification, canonical
@@ -577,6 +590,8 @@ before input: a capture driver finishing is not product success.
 After every capture, close the dedicated Crude window. Keep `KEEP_OPEN=0` for
 normal captures; after an explicit `KEEP_OPEN=1` review, close it and verify no
 `CrudeShot`/`CrudeShot-*` window remains (`xdotool search --class CrudeShot`).
+Use `doubleclick:col,row` for a native two-click gesture. It sends both clicks
+120 ms apart before taking a screenshot, so capture I/O cannot split the gesture.
 
 For stationary pointer acceptance, `down:col,row`, `move:col,row`, `sleep:1`,
 `shot:held`, and `up:col,row` keep the same button down across steps. Compare the

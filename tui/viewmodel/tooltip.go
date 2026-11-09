@@ -193,6 +193,13 @@ func (m *App) tabTooltip(id window.TabID) string {
 		return tab.Resource.ID
 	case m.isEditorTabTitle(tab.Title):
 		path := m.editorPathFromTabTitle(tab.Title)
+		if ed := m.editorForTab(id); ed != nil && ed.FilePath() == "" {
+			path = ed.BaseTitle()
+			if tab.State == window.TabModified {
+				return path + "\nUnsaved changes"
+			}
+			return path
+		}
 		if !filepath.IsAbs(path) && m.ws != nil && m.ws.RootPath() != "" {
 			path = filepath.Join(m.ws.RootPath(), path)
 		}

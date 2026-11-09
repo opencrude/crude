@@ -48,6 +48,14 @@ type editorRecoveryBrowserMsg struct {
 	err            error
 }
 
+func (m *App) recoveryEditorTab(snapshot document.Snapshot) *EditorTab {
+	if document.IsUntitledID(snapshot.ID) {
+		tab, _ := m.editorTabByBufferID(snapshot.ID, snapshot.Path)
+		return tab
+	}
+	return m.EditorState.Tabs[snapshot.Path]
+}
+
 func (p *editorRecoveryBrowser) Children() []ui.Component {
 	return []ui.Component{p.list, p.detail, p.actions}
 }
@@ -167,7 +175,14 @@ func (m *App) handleEditorRecoveryBrowserMessage(raw tea.Msg) (bool, tea.Cmd) {
 				kind = "Discard backup"
 			}
 			label := path.Base(strings.ReplaceAll(r.Key.Path, "\\", "/"))
-			items = append(items, ui.ListItem{ID: r.Key.Path, Label: label, Detail: fmt.Sprintf("%s · r%d · %d bytes · %s", kind, r.Revision, r.Bytes, r.Key.Path), Payload: r})
+			detail := r.Key.Path
+			source, _, _ := strings.Cut(r.Key.Path, "#discard-backup-")
+			if document.IsUntitledID(source) {
+				// An untitled-origin identity remains stable after first save.
+				// The listing has metadata only, so it cannot assert a path.
+				label, detail = "Editor draft", "Preview to see its location"
+			}
+			items = append(items, ui.ListItem{ID: r.Key.Path, Label: label, Detail: fmt.Sprintf("%s · r%d · %d bytes · %s", kind, r.Revision, r.Bytes, detail), Payload: r})
 		}
 		p.list.SetItems(items)
 		p.detail.SetValue("Showing up to 128 private records. Select a row and Preview to load its original path and retained text. Open draft never publishes edits; an already-open editor is compared, never replaced. Close changes nothing.")
@@ -209,7 +224,7 @@ func (m *App) handleEditorRecoveryBrowserMessage(raw tea.Msg) (bool, tea.Cmd) {
 			}
 			if result.err == nil {
 				key := info.Key
-				key.Path = result.draft.Path
+				key.Path = recoveryKeyForDocument(result.draft.Canonical)
 				source, err := p.client.store.LoadEditorRecovery(ctx, p.client.attachment, key)
 				if err != nil && !errors.Is(err, clientstate.ErrNotFound) {
 					result.err = err
@@ -231,7 +246,11 @@ func (m *App) handleEditorRecoveryBrowserMessage(raw tea.Msg) (bool, tea.Cmd) {
 			}
 			text = text[:end] + "\n[Preview clipped; Copy retains complete draft]"
 		}
-		p.detail.SetValue(fmt.Sprintf("Original path: %s\nPrivate record revision: %d\nConflict: %s\nNo edits, saves, or old commands are sent automatically.\n\n%s", p.draft.Path, p.record.Revision, p.draft.Conflict, text))
+		location := p.draft.Path
+		if location == "" {
+			location = p.draft.Canonical.Name + " (not saved to a file)"
+		}
+		p.detail.SetValue(fmt.Sprintf("Original path: %s\nPrivate record revision: %d\nConflict: %s\nNo edits, saves, or old commands are sent automatically.\n\n%s", location, p.record.Revision, p.draft.Conflict, text))
 		refresh()
 	case "copy":
 		if !p.busy && len(p.record.Payload) > 0 {
@@ -247,7 +266,7 @@ func (m *App) handleEditorRecoveryBrowserMessage(raw tea.Msg) (bool, tea.Cmd) {
 			refresh()
 			return true, nil
 		}
-		if tab := m.EditorState.Tabs[p.draft.Path]; tab != nil && tab.Editor.IsOpen() {
+		if tab := m.recoveryEditorTab(p.draft.Canonical); tab != nil && tab.Editor.IsOpen() {
 			ed := tab.Editor
 			p.busy = true
 			p.sequence++
@@ -270,7 +289,7 @@ func (m *App) handleEditorRecoveryBrowserMessage(raw tea.Msg) (bool, tea.Cmd) {
 		seq := p.sequence
 		record := p.record
 		key := record.Key
-		key.Path = p.draft.Path
+		key.Path = recoveryKeyForDocument(p.draft.Canonical)
 		expected := p.sourceRevision
 		refresh()
 		return true, func() tea.Msg {
@@ -281,20 +300,20 @@ func (m *App) handleEditorRecoveryBrowserMessage(raw tea.Msg) (bool, tea.Cmd) {
 		}
 	case "staged":
 		p.busy = false
-		if tab := m.EditorState.Tabs[p.draft.Path]; tab != nil && tab.Editor.IsOpen() {
+		if tab := m.recoveryEditorTab(p.draft.Canonical); tab != nil && tab.Editor.IsOpen() {
 			p.detail.SetValue("Editor opened while staging. Its draft is unchanged; choose Compare. The staged private recovery is retained.")
 			refresh()
 			return true, nil
 		}
 		m.overlayHost.Close(editorRecoveryBrowserOverlay)
-		cmd, err := m.openEditorTab(p.draft.Path)
+		cmd, err := m.openEditorTab(recoveryKeyForDocument(p.draft.Canonical))
 		if err != nil {
 			m.showOperationFailure("Editor draft could not open", err.Error())
 		}
 		return true, cmd
 	case "compared":
 		p.busy = false
-		if !msg.ed.IsOpen() || m.EditorState.Tabs[p.draft.Path] == nil || m.EditorState.Tabs[p.draft.Path].Editor != msg.ed {
+		if tab := m.recoveryEditorTab(p.draft.Canonical); !msg.ed.IsOpen() || tab == nil || tab.Editor != msg.ed {
 			return true, nil
 		}
 		m.overlayHost.Close(editorRecoveryBrowserOverlay)

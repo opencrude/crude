@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"crude/textencoding"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"unicode/utf8"
 
 	"crude/document"
 )
@@ -60,16 +60,19 @@ func (s *DocumentService) MutateFiles(ctx context.Context, op FileOperation, pat
 		if d == nil {
 			continue
 		}
-		if d.snapshot.Dirty || d.snapshot.Conflict || d.diskIntent != nil || !bytes.Equal(d.snapshot.Text, []byte(edit.OldContent)) {
+		before, _, beforeErr := textencoding.DecodeText([]byte(edit.OldContent))
+		if beforeErr != nil || d.snapshot.Dirty || d.snapshot.Conflict || d.diskIntent != nil || !bytes.Equal(d.snapshot.Text, before) ||
+			d.snapshot.DiskHash != sha256.Sum256([]byte(edit.OldContent)) {
 			return fail(fmt.Errorf("cannot edit %s: shared text has unsaved changes or a stale preimage; save/reconcile the shared document and review the edit again", edit.Path))
 		}
-		if len(edit.NewContent) > document.MaxBytes || !utf8.ValidString(edit.NewContent) {
-			return fail(fmt.Errorf("cannot edit shared document %s: replacement must be UTF-8 within the document size limit", edit.Path))
+		after, _, decodeErr := textencoding.DecodeText([]byte(edit.NewContent))
+		if len(edit.NewContent) > document.MaxBytes || len(after) > document.MaxBytes || decodeErr != nil {
+			return fail(fmt.Errorf("cannot edit shared document %s: replacement must be valid text within the document size limit", edit.Path))
 		}
 		// Prove reconciliation can retain a complete disk-change operation before
 		// any effect, rather than discovering journal capacity after publication.
 		trial := stageDocument(d)
-		_, err := s.commit(trial, document.Change{DocumentID: d.snapshot.ID, RequestID: "disk", BaseRevision: d.snapshot.Revision, Edits: []document.Edit{{Start: 0, End: len(d.snapshot.Text), Text: edit.NewContent}}})
+		_, err := s.commit(trial, document.Change{DocumentID: d.snapshot.ID, RequestID: "disk", BaseRevision: d.snapshot.Revision, Edits: []document.Edit{{Start: 0, End: len(d.snapshot.Text), Text: string(after)}}})
 		if err != nil {
 			return fail(err)
 		}
@@ -86,7 +89,7 @@ func (s *DocumentService) MutateFiles(ctx context.Context, op FileOperation, pat
 	}
 	if result.Err == nil {
 		for _, edit := range edits {
-			if d := s.documentAtPath(filepath.Clean(edit.Path)); d != nil && (d.snapshot.Conflict || !bytes.Equal(d.snapshot.Text, []byte(edit.NewContent))) {
+			if d := s.documentAtPath(filepath.Clean(edit.Path)); d != nil && (d.snapshot.Conflict || d.snapshot.DiskHash != sha256.Sum256([]byte(edit.NewContent))) {
 				result.Err = fmt.Errorf("disk edit committed but shared document %s requires reconciliation; do not replay the edit", edit.Path)
 				result.Detail = "disk changed; shared publication uncertain"
 				break
@@ -99,6 +102,9 @@ func (s *DocumentService) MutateFiles(ctx context.Context, op FileOperation, pat
 // Identity is retained separately from the current disk path. No ID aliases are
 // accepted by path consumers: a moved document is found only at Snapshot.Path.
 func (s *DocumentService) documentAtPath(path string) *liveDocument {
+	if path == "" {
+		return nil
+	}
 	for _, d := range s.docs {
 		if d.snapshot.Path == path {
 			return d
@@ -146,7 +152,7 @@ func documentPreimage(path string) (documentPathPreimage, error) {
 		}
 	}
 	if info.Mode().IsRegular() {
-		text, _, err := readLiveDocument(path)
+		text, _, err := readSourceBytes(path)
 		if err != nil {
 			return p, err
 		}

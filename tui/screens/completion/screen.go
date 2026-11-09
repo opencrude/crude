@@ -54,6 +54,12 @@ type Screen struct {
 	hint       *ui.Label
 	renderedID string // documentation projection key, never selection authority
 	acceptance string
+	measureAt  ui.Constraints
+	measureRev uint64
+	contentRev uint64
+	measure    ui.Size
+	measured   bool
+	hasDetails bool
 }
 
 // New retains a detached display snapshot. It never dispatches initial requests.
@@ -152,9 +158,12 @@ func (s *Screen) SetDocumentation(invocation, itemID, detail, documentation, sta
 
 func (s *Screen) prepareDocumentation() {
 	s.renderedID = s.SelectedID()
+	s.contentRev++
+	s.hasDetails = false
 	value := "No completion selected."
 	if i, ok := s.byID[s.SelectedID()]; ok && i >= 0 {
 		e := s.entries[i]
+		s.hasDetails = e.Detail != "" || e.Documentation != ""
 		var b strings.Builder
 		b.WriteString(literal(e.Label))
 		if e.Detail != "" {
@@ -202,7 +211,31 @@ func (s *Screen) Children() []ui.Component {
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: 100, H: 18})
+	if s.measured && s.measureAt == cs && s.measureRev == s.contentRev {
+		return s.measure
+	}
+	preferredW := 70
+	if s.hasDetails {
+		preferredW = 106
+	}
+	w := cs.ClampSize(ui.Size{W: preferredW}).W
+	listRows := max(1, len(s.entries))
+	docW := w
+	if w >= 80 {
+		docW = w - w*2/5 - 1
+	}
+	docRows := s.text.VisualLineCount(max(1, docW))
+	bodyH := max(min(listRows, 8), min(docRows, 8))
+	if w < 80 {
+		bodyH = min(listRows, 5) + 1 + min(docRows, 6)
+	}
+	h := bodyH + 1 // keyboard hint
+	if s.caption.Text() != "" {
+		h++
+	}
+	s.measure = cs.ClampSize(ui.Size{W: w, H: h})
+	s.measureAt, s.measureRev, s.measured = cs, s.contentRev, true
+	return s.measure
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -221,7 +254,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		docRect = ui.Rect{X: listRect.W + 1, Y: captionH, W: w - listRect.W - 1, H: bodyH}
 	} else if bodyH > 1 {
 		gap := min(1, bodyH-2)
-		listRect.H = (bodyH - gap) / 2
+		listRect.H = min(max(1, len(s.entries)), (bodyH-gap)/2)
 		docRect = ui.Rect{Y: captionH + listRect.H + gap, W: w, H: bodyH - listRect.H - gap}
 	}
 	barW := 0

@@ -855,6 +855,17 @@ focus reporting; Crude does not infer window blur from idle time. Workspace Off
 is an explicit override of application On. The palette's Enable/Disable Auto
 Save actions write only that workspace override.
 
+**New file encoding** (`editor.new_file_encoding`) is an application/workspace
+preference for newly created unnamed files. Its UTF-8 default, explicit UTF-8
+override and absence/inheritance are distinct. Other choices are UTF-8 BOM,
+UTF-16 LE and UTF-16 BE. Save File can change that document's choice; changing
+the preference never converts an existing file. The native field, semantic
+`settings.fields`/`settings.set`/`settings.reset`, sparse save and live reset use
+the same owner. See [file encoding](editor.md#file-encoding).
+
+No autosave mode schedules, names or writes an unnamed file. The same document
+becomes eligible only after its first explicit save.
+
 All automatic modes persist the exact buffer snapshot: no formatting, import
 organization, reload, cursor movement, selection change, or success toast.
 Format on manual save applies only to explicit saves. Shared editor buffers own
@@ -1070,11 +1081,11 @@ store.
 The **Suggestions** group on Code Intelligence contains:
 
 - **Code suggestions** (`lsp.completions`): the completion feature gate.
-- **Suggest while typing** (`lsp.auto_complete`): automatic function, variable and
+- **Show as you type** (`lsp.auto_complete`): automatic function, variable and
   member suggestions. Off leaves explicit Ctrl+Space requests available.
 - **Suggestion delay** (`lsp.completion_delay_ms`): milliseconds after typing,
   default 200. An explicit zero means immediate, not an inherited default.
-- **Accept suggestion with** (`lsp.completion_accept`): Tab, Enter or Tab or Enter
+- **Accept with** (`lsp.completion_accept`): Tab, Enter or Tab / Enter
   (default). The choice applies only while a suggestion list is open; normal
   indentation, newlines and snippet navigation keep their existing owners.
 

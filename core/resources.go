@@ -2,11 +2,14 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/document"
+	"crude/projectpath"
 	"crude/terminalvt"
 	"crude/workspace"
 )
@@ -27,6 +30,67 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 		return responseValue(request, value)
 	}
 	switch request.Method {
+	case coreprotocol.DocumentCompareUntitled:
+		var input coreprotocol.ReviewedEditRequest
+		if err := decodeRequest(request, &input); err != nil {
+			return bad(err)
+		}
+		return func(ctx context.Context) coreprotocol.Response {
+			value, err := docs.ReadUntitledOverwrite(ctx, owner, input.ID, input.Digest)
+			return ok(&coreprotocol.UntitledComparisonReply{Comparison: value}, err)
+		}, true
+	case coreprotocol.DocumentCreateUntitled:
+		var input coreprotocol.Empty
+		if err := decodeRequest(request, &input); err != nil {
+			return bad(err)
+		}
+		encoding := a.ws.EffectiveAppSettings().Editor.NewFileEncoding
+		return func(context.Context) coreprotocol.Response {
+			value, err := docs.CreateUntitled(owner, encoding)
+			return ok(wire(value), err)
+		}, true
+	case coreprotocol.DocumentOpenUntitled:
+		var input coreprotocol.DocumentReadRequest
+		if err := decodeRequest(request, &input); err != nil {
+			return bad(err)
+		}
+		return func(context.Context) coreprotocol.Response {
+			value, err := docs.OpenUntitled(owner, input.ID)
+			return ok(wire(value), err)
+		}, true
+	case coreprotocol.DocumentSaveUntitled, coreprotocol.DocumentReviewUntitled:
+		var input coreprotocol.DocumentSaveUntitledRequest
+		if err := decodeRequest(request, &input); err != nil {
+			return bad(err)
+		}
+		if err := projectpath.ValidateFileName(input.Name); err != nil {
+			return bad(err)
+		}
+		if !filepath.IsAbs(input.Directory) || !filepath.IsLocal(input.Name) {
+			return bad(fmt.Errorf("choose an absolute folder and a valid file name"))
+		}
+		if request.Method == coreprotocol.DocumentReviewUntitled {
+			if a.ws.LocalHistory == nil || a.ws.FileOps == nil {
+				return bad(errors.New("safe file replacement is unavailable"))
+			}
+			return func(ctx context.Context) coreprotocol.Response {
+				value, err := docs.PrepareUntitledOverwrite(ctx, owner, input.ID, input.Revision, filepath.Join(input.Directory, input.Name), input.Encoding)
+				if err != nil {
+					return fault(request, "review_failed", err.Error())
+				}
+				return response(request, coreprotocol.ReviewedEditReply{Preview: value})
+			}, true
+		}
+		return func(ctx context.Context) coreprotocol.Response {
+			value, err := docs.SaveUntitled(ctx, owner, input.ID, input.Revision, filepath.Join(input.Directory, input.Name), input.Encoding)
+			if errors.Is(err, workspace.ErrDocumentSaveUncertain) {
+				return fault(request, "outcome_uncertain", err.Error())
+			}
+			if errors.Is(err, workspace.ErrDocumentConflict) {
+				return fault(request, "destination_exists", "A file or open document uses this name.")
+			}
+			return ok(wire(value), err)
+		}, true
 	case coreprotocol.DocumentOpen:
 		var input coreprotocol.DocumentOpenRequest
 		if err := decodeRequest(request, &input); err != nil {
@@ -79,17 +143,32 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			}
 			return result
 		}, true
-	case coreprotocol.DocumentFormat, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave:
+	case coreprotocol.DocumentFormat, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave, coreprotocol.DocumentReload:
 		var input coreprotocol.DocumentRevisionRequest
 		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
+		if input.Encoding != nil && (request.Method != coreprotocol.DocumentSave || !input.Encoding.Valid()) {
+			return bad(errors.New("encoding applies only to a save with a supported file encoding"))
+		}
+		store, files := a.ws.LocalHistory, a.ws.FileOps
 		return func(ctx context.Context) coreprotocol.Response {
+			if request.Method == coreprotocol.DocumentReload {
+				value, err := docs.Reload(ctx, owner, input.ID, request.ID, input.Revision)
+				return ok(wire(value), err)
+			}
 			if request.Method == coreprotocol.DocumentFormat {
 				value, err := docs.Format(ctx, owner, input.ID, request.ID, input.Revision)
 				return ok(wire(value), err)
 			}
 			if request.Method == coreprotocol.DocumentSave {
+				if input.Encoding != nil {
+					value, err := docs.SaveWithEncoding(ctx, owner, input.ID, input.Revision, *input.Encoding, store, files)
+					if errors.Is(err, workspace.ErrDocumentSaveUncertain) {
+						return fault(request, "outcome_uncertain", err.Error())
+					}
+					return ok(wire(value), err)
+				}
 				value, err := docs.Save(ctx, owner, input.ID, input.Revision, input.Reason)
 				return ok(wire(value), err)
 			}
@@ -234,7 +313,8 @@ func resourceMutation(method string) bool {
 	switch method {
 	case coreprotocol.DocumentRead, coreprotocol.DocumentSync, coreprotocol.TerminalList, coreprotocol.TerminalRows:
 		return false
-	case coreprotocol.DocumentOpen, coreprotocol.DocumentClose, coreprotocol.DocumentFormat, coreprotocol.DocumentEdit, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave, coreprotocol.ProjectFormat,
+	case coreprotocol.DocumentOpen, coreprotocol.DocumentCreateUntitled, coreprotocol.DocumentOpenUntitled, coreprotocol.DocumentSaveUntitled, coreprotocol.DocumentReviewUntitled,
+		coreprotocol.DocumentClose, coreprotocol.DocumentFormat, coreprotocol.DocumentEdit, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave, coreprotocol.DocumentReload, coreprotocol.ProjectFormat,
 		coreprotocol.TerminalCreate, coreprotocol.TerminalControl, coreprotocol.TerminalRelease, coreprotocol.TerminalInput, coreprotocol.TerminalResize, coreprotocol.TerminalClose:
 		return true
 	}

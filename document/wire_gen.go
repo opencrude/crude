@@ -329,10 +329,21 @@ func (z *Receipt) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 11
-	o = append(o, 0x9b)
+	// array header, size 14
+	o = append(o, 0x9e)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.Path)
+	o = msgp.AppendString(o, z.Name)
+	o, err = z.Encoding.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Encoding")
+		return
+	}
+	o, err = z.SavedEncoding.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "SavedEncoding")
+		return
+	}
 	o = msgp.AppendUint64(o, z.Revision)
 	o = msgp.AppendString(o, z.AnalysisGeneration)
 	o = msgp.AppendString(o, z.AnalysisLifetime)
@@ -365,8 +376,8 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 11 {
-		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
+	if zb0001 != 14 {
+		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -377,6 +388,21 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	z.Path, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Path")
+		return
+	}
+	z.Name, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Name")
+		return
+	}
+	bts, err = z.Encoding.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Encoding")
+		return
+	}
+	bts, err = z.SavedEncoding.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SavedEncoding")
 		return
 	}
 	z.Revision, bts, err = msgp.ReadUint64Bytes(bts)
@@ -446,7 +472,7 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Snapshot) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Path) + msgp.Uint64Size + msgp.StringPrefixSize + len(z.AnalysisGeneration) + msgp.StringPrefixSize + len(z.AnalysisLifetime) + msgp.BytesPrefixSize + len(z.Text) + msgp.BytesPrefixSize + len(z.Saved) + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize)) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.Name) + z.Encoding.Msgsize() + z.SavedEncoding.Msgsize() + msgp.Uint64Size + msgp.StringPrefixSize + len(z.AnalysisGeneration) + msgp.StringPrefixSize + len(z.AnalysisLifetime) + msgp.BytesPrefixSize + len(z.Text) + msgp.BytesPrefixSize + len(z.Saved) + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize)) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
 	return
 }
 

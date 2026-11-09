@@ -1,9 +1,9 @@
 package editor
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"math/rand/v2"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +13,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
 
+	"crude/textencoding"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
@@ -269,7 +270,7 @@ func NewPreview(th *theme.Theme, path, text string, firstLine int) *Editor {
 	e.readOnly = true
 	e.filePath = path
 	e.title = filepath.Base(path)
-	e.buffer.ApplyDisk([]byte(text))
+	e.buffer.ApplyDisk([]byte(text), textencoding.UTF8, sha256.Sum256([]byte(text)))
 	e.open = true
 	e.cursorBlink.MarkActivity()
 	if firstLine > 1 {
@@ -284,45 +285,15 @@ func (e *Editor) ReadOnly() bool { return e.readOnly }
 func (e *Editor) SetLineNumbers(visible bool) { e.hideLineNumbers = !visible }
 
 func (e *Editor) Open(path string) error {
-	e.detachDocument()
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	e.filePath = abs
-	e.title = filepath.Base(abs)
-
-	buf := NewPieceTable()
-	err = buf.Load(abs)
+	buffer, err := loadBuffer(abs)
 	if err != nil {
 		return err
 	}
-	e.buf = buf
-	e.ClearGitAnnotation()
-	_, statErr := os.Stat(abs)
-	e.buffer = newBuffer(buf, abs, statErr == nil)
-
-	e.cursor = Position{Line: 0, Col: 0}
-	e.scrollX = 0
-	e.scrollY = 0
-	e.buf.changes = nil
-	e.buf.changeIndex = 0
-	e.scrollModel = ui.NewScrollModel()
-	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
-	e.hScrollModel = ui.NewScrollModel()
-	e.hSbCtrl = ui.NewScrollbarControl("editor/h-scrollbar", e.hScrollModel, e.tokens)
-	e.hSbCtrl.SetDirection(ui.Horizontal)
-	e.hSbCtrl.SetPointerTargetSize(1)
-	e.hScrollbarVisible = false
-	e.open = true
-	e.cursorBlink.MarkActivity()
-	e.ClearSelection()
-	e.ClearHover()
-	e.invalidateEditorCaches()
-	e.markDocumentWidthAll()
-	e.initChroma()
-	e.startWatching()
-
+	e.OpenBuffer(buffer)
 	return nil
 }
 
@@ -444,13 +415,13 @@ func (e *Editor) Retarget(path string) error {
 	return nil
 }
 
-func (e *Editor) ApplyDisk(data []byte) {
+func (e *Editor) ApplyDisk(data []byte, encoding textencoding.Encoding, hash [sha256.Size]byte) {
 	if e.buffer == nil {
 		return
 	}
 	e.CancelSnippet()
 	e.CancelPointerCapture()
-	e.buffer.ApplyDisk(data)
+	e.buffer.ApplyDisk(data, encoding, hash)
 	e.buf.changes = nil
 	e.buf.changeIndex = 0
 	e.cursor.Line = min(e.cursor.Line, max(0, e.LineCount()-1))

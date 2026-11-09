@@ -13,17 +13,20 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"crude/document"
 	"crude/fileio"
 	"crude/localhistory"
+	"crude/textencoding"
 	"crude/worktree"
 )
 
-func (s *DocumentService) executionDocumentsLocked() map[string]worktree.Document {
+func (s *DocumentService) executionDocumentsLocked() (map[string]worktree.Document, error) {
 	result := map[string]worktree.Document{}
 	for _, d := range s.docs {
+		if d.snapshot.Path == "" {
+			continue
+		}
 		p, err := filepath.Rel(s.root, d.snapshot.Path)
 		if err != nil || p == ".." || strings.HasPrefix(p, ".."+string(filepath.Separator)) {
 			continue
@@ -32,9 +35,13 @@ func (s *DocumentService) executionDocumentsLocked() map[string]worktree.Documen
 		if info, err := os.Lstat(d.snapshot.Path); err == nil {
 			mode = uint32(info.Mode().Perm())
 		}
-		result[filepath.ToSlash(p)] = worktree.Document{Revision: d.snapshot.Revision, Exists: true, Data: bytes.Clone(d.snapshot.Text), Mode: mode}
+		data, err := textencoding.EncodeText(d.snapshot.Text, d.snapshot.Encoding)
+		if err != nil {
+			return nil, err
+		}
+		result[filepath.ToSlash(p)] = worktree.Document{Revision: d.snapshot.Revision, Exists: true, Data: data, Mode: mode}
 	}
-	return result
+	return result, nil
 }
 
 // IntegrationStatus is passive durable evidence. Prepared means an interrupted
@@ -325,7 +332,11 @@ func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.
 	if c.Mode != worktree.Isolated {
 		return worktree.Receipt{}, errors.New("shared execution has no separate integration destination")
 	}
-	if err = service.ValidateDestination(ctx, plan, s.executionDocumentsLocked()); err != nil {
+	documents, err := s.executionDocumentsLocked()
+	if err != nil {
+		return worktree.Receipt{}, err
+	}
+	if err = service.ValidateDestination(ctx, plan, documents); err != nil {
 		return worktree.Receipt{}, err
 	}
 	if len(plan.Changes) == 0 {
@@ -360,19 +371,27 @@ func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.
 			if (actual != nil) != d.snapshot.DiskExists || (actual != nil && sha256.Sum256(actual.Data) != d.snapshot.DiskHash) {
 				return worktree.Receipt{}, fmt.Errorf("accepted document disk changed: %s", ch.Path)
 			}
-			if ch.After == nil || !utf8.Valid(ch.After.Data) || ch.Before == nil || ch.Before.Mode != ch.After.Mode {
+			if ch.After == nil || ch.Before == nil || ch.Before.Mode != ch.After.Mode {
 				return worktree.Receipt{}, fmt.Errorf("open document deletion/mode/nontext needs comparison: %s", ch.Path)
 			}
-			edits, err := worktree.TextEdits(d.snapshot.Text, ch.After.Data)
+			text, encoding, err := textencoding.DecodeText(ch.After.Data)
+			if err != nil {
+				return worktree.Receipt{}, err
+			}
+			edits, err := worktree.TextEdits(d.snapshot.Text, text)
 			if err != nil {
 				return worktree.Receipt{}, err
 			}
 			trial := stageDocument(d)
-			index, err := s.commit(trial, document.Change{DocumentID: d.snapshot.ID, RequestID: id, Owner: owner, BaseRevision: d.snapshot.Revision, GroupID: id, Edits: edits})
-			if err != nil {
-				return worktree.Receipt{}, err
+			if len(edits) != 0 {
+				index, err := s.commit(trial, document.Change{DocumentID: d.snapshot.ID, RequestID: id, Owner: owner, BaseRevision: d.snapshot.Revision, GroupID: id, Edits: edits})
+				if err != nil {
+					return worktree.Receipt{}, err
+				}
+				trial.undo[author(owner)] = append(trial.undo[author(owner)], documentUndoUnit{index})
 			}
-			trial.undo[author(owner)] = append(trial.undo[author(owner)], documentUndoUnit{index})
+			trial.snapshot.Encoding = encoding
+			trial.snapshot.Dirty = trial.snapshot.ContentDirty()
 			delete(trial.redo, author(owner))
 			b, err := encodeDocument(d)
 			if err != nil {
@@ -425,7 +444,11 @@ func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.
 	if err = history.store.RecordAgentOperation(ctx, localhistory.AgentOperation{ID: id, SessionID: sessionID, MessageID: id, AgentID: plan.Owner.AgentID, Source: "execution_apply", Paths: paths}); err != nil {
 		return worktree.Receipt{}, err
 	}
-	if err = service.ValidateDestination(ctx, plan, s.executionDocumentsLocked()); err != nil {
+	documents, err = s.executionDocumentsLocked()
+	if err != nil {
+		return worktree.Receipt{}, err
+	}
+	if err = service.ValidateDestination(ctx, plan, documents); err != nil {
 		_ = history.store.CompleteAgentOperation(id, false)
 		return worktree.Receipt{}, err
 	}
@@ -483,7 +506,11 @@ func (s *DocumentService) applyExecution(ctx context.Context, service *worktree.
 	// Everything below is metadata publication, never grounds to roll back an
 	// already accepted group. The durable receipt recovers lost replies exactly.
 	err = history.store.CompleteAgentOperation(id, true)
-	err = errors.Join(err, service.RecordIntegration(ctx, plan, j.Receipt, s.executionDocumentsLocked()))
+	documents, encodeErr := s.executionDocumentsLocked()
+	err = errors.Join(err, encodeErr)
+	if encodeErr == nil {
+		err = errors.Join(err, service.RecordIntegration(ctx, plan, j.Receipt, documents))
+	}
 	err = errors.Join(err, history.store.CloseMessageScope(sessionID, id, safety.ID, include, nil, time.Now()))
 	return j.Receipt, err
 }
@@ -571,26 +598,18 @@ func (s *DocumentService) undoExecution(ctx context.Context, service *worktree.S
 			if ch.After == nil || d.snapshot.Conflict || d.diskIntent != nil || d.relocation != nil {
 				return worktree.Receipt{}, fmt.Errorf("undo document comparison required: %s", ch.Path)
 			}
-			current = &worktree.File{Type: "file", Mode: ch.After.Mode, Data: d.snapshot.Text}
+			encoded, err := textencoding.EncodeText(d.snapshot.Text, d.snapshot.Encoding)
+			if err != nil {
+				return worktree.Receipt{}, err
+			}
+			current = &worktree.File{Type: "file", Mode: ch.After.Mode, Data: encoded}
 		}
 		target := ch.Before
 		if !sameExecutionFile(current, ch.After) {
 			if current == nil || ch.After == nil || ch.Before == nil || current.Mode != ch.After.Mode || ch.Before.Mode != ch.After.Mode {
 				return worktree.Receipt{}, fmt.Errorf("undo comparison required: %s", ch.Path)
 			}
-			wanted, e := worktree.TextEdits(ch.After.Data, ch.Before.Data)
-			if e != nil {
-				return worktree.Receipt{}, e
-			}
-			later, e := worktree.TextEdits(ch.After.Data, current.Data)
-			if e != nil {
-				return worktree.Receipt{}, e
-			}
-			rebased, e := document.Rebase(wanted, later)
-			if e != nil {
-				return worktree.Receipt{}, e
-			}
-			text, _, e := document.Apply(current.Data, rebased)
+			text, e := worktree.MergeTextBytes(ch.After.Data, ch.Before.Data, current.Data)
 			if e != nil {
 				return worktree.Receipt{}, e
 			}
@@ -604,14 +623,22 @@ func (s *DocumentService) undoExecution(ctx context.Context, service *worktree.S
 				return worktree.Receipt{}, errors.New("open document deletion cannot be undone here")
 			}
 			trial := stageDocument(d)
-			edits, e := worktree.TextEdits(current.Data, target.Data)
+			text, encoding, e := textencoding.DecodeText(target.Data)
 			if e != nil {
 				return worktree.Receipt{}, e
 			}
-			_, e = s.commit(trial, document.Change{DocumentID: d.snapshot.ID, Owner: document.Owner{ClientID: id, Epoch: 1}, RequestID: id + "-undo", BaseRevision: d.snapshot.Revision, Edits: edits})
+			edits, e := worktree.TextEdits(d.snapshot.Text, text)
 			if e != nil {
 				return worktree.Receipt{}, e
 			}
+			if len(edits) != 0 {
+				_, e = s.commit(trial, document.Change{DocumentID: d.snapshot.ID, Owner: document.Owner{ClientID: id, Epoch: 1}, RequestID: id + "-undo", BaseRevision: d.snapshot.Revision, Edits: edits})
+				if e != nil {
+					return worktree.Receipt{}, e
+				}
+			}
+			trial.snapshot.Encoding = encoding
+			trial.snapshot.Dirty = trial.snapshot.ContentDirty()
 			delete(trial.undo, document.Owner{ClientID: id})
 			live = append(live, d)
 			staged = append(staged, trial)

@@ -17,6 +17,7 @@ import (
 	"crude/localhistory"
 	"crude/shellport"
 	"crude/textdiff"
+	"crude/textencoding"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/surface"
 	"crude/tui/ui"
@@ -224,7 +225,15 @@ func projectReplacementPreview(edits []fileio.ProjectFileReplacement, skipped in
 	for _, edit := range edits {
 		count += edit.Count
 		fmt.Fprintf(&detail, "%s · %d replacements\n", edit.RelativePath, edit.Count)
-		for _, h := range textdiff.Hunks(edit.OldContent, edit.NewContent) {
+		before, _, err := textencoding.DecodeText([]byte(edit.OldContent))
+		if err != nil {
+			return "", err
+		}
+		after, _, err := textencoding.DecodeText([]byte(edit.NewContent))
+		if err != nil {
+			return "", err
+		}
+		for _, h := range textdiff.Hunks(string(before), string(after)) {
 			fmt.Fprintf(&detail, "@@ line %d @@\n", h.OldStart+1)
 			for _, line := range h.OldLines {
 				detail.WriteString("- " + strings.TrimSuffix(line, "\n") + "\n")
@@ -246,7 +255,8 @@ func (m *App) validateProjectReplacement(edits []fileio.ProjectFileReplacement) 
 			if tab := m.EditorState.Tabs[filepath.Clean(edit.Path)]; tab != nil && tab.Editor != nil {
 				ed := tab.Editor
 				state := ed.DocumentState()
-				if ed.Modified() || ed.Value() != edit.OldContent || state.PendingEdits > 0 || state.InFlight || state.UndoPending || state.Conflict != nil {
+				before, _, err := textencoding.DecodeText([]byte(edit.OldContent))
+				if err != nil || ed.Modified() || ed.Value() != string(before) || state.PendingEdits > 0 || state.InFlight || state.UndoPending || state.Conflict != nil {
 					return fmt.Errorf("save or reconcile %s, then search and review again", edit.RelativePath)
 				}
 			}

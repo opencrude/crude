@@ -135,6 +135,16 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if prompt := m.editorReload; prompt != nil {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			if handled, cmd := m.confirmModalInput(editorReloadOverlay, key, false, prompt.activate); handled {
+				return m, cmd
+			}
+		}
+	}
+	if handled, cmd := m.handleUntitledOverwriteInput(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.handleHistorySafetyConfirmInput(msg); handled {
 		return m, cmd
 	}
@@ -242,6 +252,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case liveEditorResult:
 		m.applyLiveEditorResult(msg)
 		return m, nil
+	case untitledOverwritePrepared:
+		m.applyUntitledOverwritePrepared(msg)
+		return m, nil
+	case untitledOverwriteResult:
+		return m, m.applyUntitledOverwriteResult(msg)
 	case liveConflictMsg:
 		return m, m.applyLiveConflict(msg)
 	case gitMessageEditorMsg:
@@ -390,6 +405,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleWorkspacePanel(termdock.PanelNotices)
 		case "tabs":
 			m.openTabStats(msg.TargetID)
+		case "editor-encoding":
+			if m.EditorState.Editor != nil && msg.TargetID == "editor:"+m.EditorState.ActiveView {
+				return m, m.openEncodingMenu(m.EditorState.Editor)
+			}
 		case "git":
 			return m, m.toggleGitPanel()
 		case "goal":
@@ -1139,6 +1158,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if !msg.ValidFor(m.FilePicker) {
 			break
 		}
+		if msg.Save {
+			m.submitUntitledSave(msg)
+			break
+		}
 		m.invalidatePathSearch(msg.Target)
 		m.invalidateDirectoryAsyncLoad(msg.Target)
 		paneOwner := m.paneFilePicker
@@ -1864,7 +1887,11 @@ func (m *App) handleTabSwitch() {
 			}
 		}
 		if prevEditorPath != m.EditorState.ActiveView && m.ws.LSPMgr() != nil {
-			m.ws.LSPMgr().SetActiveFile(m.EditorState.ActiveView)
+			path := ""
+			if m.EditorState.ActiveView != "" && m.EditorState.Editor != nil {
+				path = m.EditorState.Editor.FilePath()
+			}
+			m.ws.LSPMgr().SetActiveFile(path)
 		}
 		if prevEditorPath != m.EditorState.ActiveView || prevEditor != m.EditorState.Editor || prevAgentID != m.AgentView.ActiveID() {
 			m.closeCompletionPopup()

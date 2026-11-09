@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/document"
 	"crude/tui/ui"
 	"crude/tui/window"
 )
@@ -234,6 +235,9 @@ func (m *App) buildRememberedPaneTree(node *viewMemoryPaneNode, group window.Gro
 // rememberedEditorPath keeps restoration inside this workspace. A stale path
 // from another project or a corrupted profile is ignored, never opened.
 func (m *App) rememberedEditorPath(path string) (string, bool) {
+	if document.IsUntitledID(path) && m.ws != nil {
+		return path, true
+	}
 	if path == "" || len(path) > maxRememberedPanePath || !filepath.IsAbs(path) || m.ws == nil {
 		return "", false
 	}

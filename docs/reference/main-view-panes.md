@@ -33,7 +33,8 @@ Agents, sessions and other resources keep one tab: opening them selects it.
 
 ### File views
 
-`EditorState.Tabs` keeps one entry per open document (by path) whose editor is
+`EditorState.Tabs` keeps one entry per open document (by path, or by the
+core's untitled identity before first save) whose editor is
 the document's primary view; `EditorState.Views` maps every file tab to its
 view. The first view uses the primary editor; each further view is
 `editor.NewLinkedView` of it. Linked views share the piece table, buffer,
@@ -187,6 +188,9 @@ editor/chat facts. Workspace status remains workspace-owned.
   short of the bar's bottom rule or hangs past it. Keyboard focus still fills
   the label band with the accent chip. `ui.Tabs` alone paints the continuous
   baseline beneath the action; that row does not activate **+**.
+- Double-clicking the empty label band after **+** opens an unnamed buffer in
+  that pane. It does not change the **+** New Session action. The buffer has no
+  disk path until the user saves it.
 
 ## Keyboard and palette routes
 
@@ -202,6 +206,7 @@ editor/chat facts. Workspace status remains workspace-owned.
 | Previous / next tab in focused group | Ctrl+[ / Ctrl+] |
 | Grow / shrink focused group's containing split | Ctrl+Alt+= / Ctrl+Alt+- |
 | New session in focused group | Ctrl+Alt+N; group **+**; Ctrl+T then N or + |
+| New unnamed buffer | Double-click the empty part of the main tab rail |
 | Empty pane New Session / Open File | N / O; Tab or Shift+Tab chooses, Enter/Space activates |
 | Close an empty group | Ctrl+W, or palette Close Empty Pane; never closes a populated group through this operation |
 | Split an empty pane or move a tab to a new left/right/upper/lower split | Command palette and tab context menu; moving is one preview-validated placement including sole-tab source collapse |

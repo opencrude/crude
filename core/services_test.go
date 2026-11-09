@@ -62,7 +62,7 @@ func TestGitServiceFacadeWireAndReviewedMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if comparison.After != "reviewed bytes\n" {
+	if string(comparison.After) != "reviewed bytes\n" {
 		t.Fatalf("wrong content: %+v", comparison)
 	}
 	if err := service.StageReviewed(ctx, comparison); err != nil {

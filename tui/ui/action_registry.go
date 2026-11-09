@@ -334,6 +334,8 @@ var defaultActions = []*ActionDef{
 	},
 
 	// ─── File ────────────────────────────────────────────────────────
+	{ID: "file.newBuffer", Label: "New Unnamed File", Description: "edit a new file and choose its name when saving", Icon: "□", Category: "File"},
+	{ID: "file.encoding", Label: "File Encoding", Description: "inspect the current encoding or save text with another encoding", Icon: "≡", Category: "File"},
 	{
 		ID:           "file.save",
 		Label:        "Save",

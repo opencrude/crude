@@ -4,7 +4,9 @@ package shelltabs
 import (
 	"fmt"
 	"strconv"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -48,6 +50,8 @@ type Screen struct {
 	newButton  *newSessionButton
 	newEnabled bool
 	barFocused bool
+	emptyClick time.Time
+	emptyX     int
 }
 
 // New creates a shell tab bar screen.
@@ -244,9 +248,20 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.newButton.Layout(ui.LayoutContext{}, ui.Rect{X: x, W: buttonW, H: min(1, max(0, r.H))})
 }
 
-func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s.newEnabled && s.barFocused && evt.Kind == ui.EventKey && (evt.Key.String() == "+" || evt.Key.String() == "n") {
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "tabs.new"}}
+	}
+	if s.newEnabled && evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft &&
+		ctx.LocalY == 0 && ctx.LocalX >= s.newButton.Bounds().X+s.newButton.Bounds().W {
+		now := time.Now()
+		double := !s.emptyClick.IsZero() && ctx.LocalX == s.emptyX && now.Sub(s.emptyClick) <= 500*time.Millisecond
+		s.emptyClick, s.emptyX = now, ctx.LocalX
+		if double {
+			s.emptyClick = time.Time{}
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "tabs.new-buffer"}}
+		}
+		return ui.EventResult{Handled: true}
 	}
 	return ui.EventResult{}
 }
@@ -257,8 +272,9 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 func (s *Screen) Paint(*surface.CellBuffer, int, int, ui.PaintContext) {}
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	s.emptyClick = time.Time{}
 	switch action.ID {
-	case "tabs.activate", "tabs.close", "tabs.enter", "tabs.drag", "tabs.drop", "tabs.reorder", "tabs.new":
+	case "tabs.activate", "tabs.close", "tabs.enter", "tabs.drag", "tabs.drop", "tabs.reorder", "tabs.new", "tabs.new-buffer":
 		return ui.EventResult{Handled: true, Action: &action}
 	}
 	return ui.EventResult{Action: &action}

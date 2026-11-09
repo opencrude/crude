@@ -32,6 +32,8 @@ type documentDiskIntent struct {
 	Revision uint64
 	Hash     [32]byte
 	Exists   bool
+	// Target is set only for a first save whose result was not yet settled.
+	Target string
 }
 type durableDocument struct {
 	Version    int
@@ -111,7 +113,10 @@ func (s *DocumentService) attachState(db *sql.DB) error {
 		if err = gob.NewDecoder(bytes.NewReader(data)).Decode(&saved); err != nil {
 			return err
 		}
-		if saved.Version != documentStateVersion || saved.Snapshot.ID != id || !filepath.IsAbs(id) || filepath.Clean(id) != id || !filepath.IsAbs(saved.Snapshot.Path) || filepath.Clean(saved.Snapshot.Path) != saved.Snapshot.Path || len(saved.Snapshot.Text) > document.MaxBytes || len(saved.Snapshot.Saved) > document.MaxBytes || len(saved.Journal) > documentHistoryLimit {
+		validID := document.IsUntitledID(id) || filepath.IsAbs(id) && filepath.Clean(id) == id
+		validPath := saved.Snapshot.Path == "" && document.IsUntitledID(id) && saved.Snapshot.Name != "" ||
+			filepath.IsAbs(saved.Snapshot.Path) && filepath.Clean(saved.Snapshot.Path) == saved.Snapshot.Path
+		if saved.Version != documentStateVersion || saved.Snapshot.ID != id || !validID || !validPath || !saved.Snapshot.Encoding.Valid() || !saved.Snapshot.SavedEncoding.Valid() || len(saved.Snapshot.Text) > document.MaxBytes || len(saved.Snapshot.Saved) > document.MaxBytes || len(saved.Journal) > documentHistoryLimit {
 			return fmt.Errorf("invalid document checkpoint: %s", id)
 		}
 		if intent := saved.Relocation; intent != nil {

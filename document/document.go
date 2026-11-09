@@ -2,7 +2,10 @@
 package document
 
 import (
+	"bytes"
+	"crude/textencoding"
 	"errors"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -23,13 +26,39 @@ type Owner struct {
 }
 type Snapshot struct {
 	ID, Path string
-	Revision uint64
+	// Name is the display name of a document without a disk path.
+	Name          string
+	Encoding      textencoding.Encoding
+	SavedEncoding textencoding.Encoding
+	Revision      uint64
 	// Runtime analysis identity is published with canonical text, never used as
 	// an edit revision or permission token and never reused after a core restart.
 	AnalysisGeneration, AnalysisLifetime string
 	Text, Saved                          []byte
 	DiskHash                             [32]byte
 	DiskExists, Dirty, Conflict          bool
+}
+
+// ContentDirty compares the canonical savepoint, including its disk format.
+// Shell paint uses the retained Buffer projection instead of exporting text.
+func (s Snapshot) ContentDirty() bool {
+	return s.Encoding != s.SavedEncoding || !bytes.Equal(s.Text, s.Saved)
+}
+
+// IsUntitledID identifies the core-generated identity of an untitled document.
+// The identity remains stable after its first save; Path determines whether it
+// currently has a disk destination.
+func IsUntitledID(id string) bool {
+	const prefix = "untitled:"
+	if !strings.HasPrefix(id, prefix) || len(id) < len(prefix)+26 || len(id) > len(prefix)+256 {
+		return false
+	}
+	for _, ch := range id[len(prefix):] {
+		if (ch < 'A' || ch > 'Z') && (ch < '2' || ch > '7') {
+			return false
+		}
+	}
+	return true
 }
 
 // Edit offsets are UTF-8 byte boundaries in the same pre-change snapshot.

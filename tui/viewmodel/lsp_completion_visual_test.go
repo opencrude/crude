@@ -482,12 +482,9 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 					docs = area.Value()
 				}
 			}
-			status := "Documentation: initial"
-			if m.resolveSupported {
-				status = "Documentation: resolved"
-			}
 			if !strings.Contains(docs, marker) || strings.Contains(docs, absent) ||
-				!strings.Contains(docs, status) || !strings.Contains(paint, marker) ||
+				strings.Contains(docs, "Documentation: initial") || strings.Contains(docs, "Documentation: resolved") ||
+				!strings.Contains(paint, marker) ||
 				strings.Contains(paint, absent) || !strings.Contains(paint, "Completions") {
 				return fmt.Errorf("selected native documentation leaked/missing: docs=%q\n%s", docs, paint)
 			}

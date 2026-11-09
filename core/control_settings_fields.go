@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"crude/textencoding"
 	"crude/types/control"
 )
 
@@ -87,6 +88,13 @@ func controlFieldSchema(t reflect.Type, path string) map[string]any {
 	}
 	if e, ok := enums[leaf]; ok {
 		schema["enum"] = e
+	}
+	if path == "editor.new_file_encoding" {
+		var choices []string
+		for _, encoding := range textencoding.Choices() {
+			choices = append(choices, string(encoding))
+		}
+		schema["enum"] = choices
 	}
 	// Role-level choices differ from account protocol values such as "default".
 	if leaf == "service_tier" && (strings.HasPrefix(path, "agents.") ||

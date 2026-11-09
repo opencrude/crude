@@ -1,6 +1,7 @@
 package gitdiff
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"time"
@@ -223,7 +224,7 @@ func sameFiles(a, b []File) bool {
 	for index := range a {
 		x, y := &a[index], &b[index]
 		if x.Key != y.Key || x.Note != y.Note || x.Comparison.Fingerprint != y.Comparison.Fingerprint ||
-			x.Comparison.Before != y.Comparison.Before || x.Comparison.After != y.Comparison.After {
+			!bytes.Equal(x.Comparison.Before, y.Comparison.Before) || !bytes.Equal(x.Comparison.After, y.Comparison.After) {
 			return false
 		}
 	}

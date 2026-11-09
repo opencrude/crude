@@ -293,7 +293,7 @@ func (s *DocumentService) loadDocumentDeltas() error {
 		if err != nil {
 			return err
 		}
-		d.snapshot.Dirty = !bytes.Equal(d.snapshot.Text, d.snapshot.Saved)
+		d.snapshot.Dirty = d.snapshot.ContentDirty()
 	}
 	if err = rows.Err(); err != nil {
 		return err

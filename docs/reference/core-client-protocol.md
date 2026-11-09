@@ -265,6 +265,10 @@ only the detached reviewed-edit evidence crosses to the shell.
 exactly equal `buildinfo.ProtocolBuild`. Incompatible peers are refused before
 application traffic, not adapted.
 
+The schema fingerprint includes the generated codecs and the exact runtime
+primitive bytes. Runtime paths use slash directory separators in the fingerprint
+on every host; native path separators do not change wire identity.
+
 The build cohort is a full 64-hex SHA-256 of platform-independent production
 source, not the native image ID. `internal/wiregen/` includes all platform/tag
 alternatives, checked-in local forks, embedded assets, prompt templates, module
@@ -635,7 +639,23 @@ Accepted unsaved text, savepoints, history and exact receipts persist in the
 workspace SQLite store. Structural checkpoints and append-only command deltas
 restore data without executing historical commands. This does not promise an
 uninterrupted turn after core failure. Document IDs stay stable across rename;
-Path is mutable metadata. Durable batch intents fence rename, preserve dirty
+Path is mutable metadata. An untitled document has a stable core identity but
+no path, disk watcher or language-server file until its first explicit save.
+Its accepted text and history are checkpointed like other shared documents.
+First save creates a new destination with a no-replace commit and keeps that
+identity. For an eligible existing project file, a separate owner-bound review
+retains its preimage, verifies it again and uses the shared reviewed-edit
+transaction. Its receipt and safety snapshot survive uncertain outcomes.
+Save requests carry the selected encoding; snapshots retain current and saved
+encoding separately. `document.compare_untitled_overwrite` reads the exact
+owner/digest-bound before/after text for the optional comparison, without another
+disk read. `document.save` with an explicit encoding uses the same reviewed
+replacement owner, not a second writer. `document.reload` reads saved bytes
+without writing; replaced text remains in author undo.
+Canonical text and positions are UTF-8, while hashes, preimages and byte APIs
+stay encoded. `GitComparison.Before` and `.After` are byte fields so both binary
+and JSON control transports preserve every byte.
+Durable batch intents fence rename, preserve dirty
 unsaved text and protect conflicted deletes. Core owns one project watcher and
 lazy document-directory watching; connected shells do not watch/read project
 source files. File browse/catalog/read and replace-plan RPCs use core paths.

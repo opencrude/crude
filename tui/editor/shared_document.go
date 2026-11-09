@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/document"
+	"crude/textencoding"
 	"crude/types"
 )
 
@@ -154,12 +155,13 @@ type DocumentUndoIntent struct {
 }
 
 type DocumentState struct {
-	DocumentID            string
-	Revision              uint64
-	PendingEdits          int
-	InFlight, UndoPending bool
-	HistoryQueued         bool
-	Conflict              error
+	DocumentID              string
+	Revision                uint64
+	Encoding, SavedEncoding textencoding.Encoding
+	PendingEdits            int
+	InFlight, UndoPending   bool
+	HistoryQueued           bool
+	Conflict                error
 }
 
 func (e *Editor) detachDocument() {
@@ -201,6 +203,9 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 	e.buf = pt
 	e.buffer = newBuffer(pt, s.Path, s.DiskExists)
 	e.filePath, e.title = s.Path, filepath.Base(s.Path)
+	if s.Path == "" && document.IsUntitledID(s.ID) && s.Name != "" {
+		e.title, e.buffer.Title = s.Name, s.Name
+	}
 	e.buffer.ID = s.ID
 	e.installDocumentBaseline(s)
 	s.Text = bytes.Clone(s.Text)
@@ -236,6 +241,7 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 }
 
 func (e *Editor) installDocumentBaseline(s document.Snapshot) {
+	e.buffer.encoding, e.buffer.savedEncoding = s.Encoding, s.SavedEncoding
 	savepoint := snapshotBytes(s.Saved)
 	// The private Save receipt and ordered topic can describe the same baseline.
 	// Re-observing it is not another disk mutation: that would invalidate a
@@ -263,9 +269,12 @@ func (e *Editor) SetOnDocumentUndo(fn func(DocumentUndoIntent)) {
 func (e *Editor) DocumentState() DocumentState {
 	p := e.documentProjection
 	if p == nil {
+		if e.buffer != nil {
+			return DocumentState{Encoding: e.buffer.encoding, SavedEncoding: e.buffer.savedEncoding}
+		}
 		return DocumentState{}
 	}
-	return DocumentState{DocumentID: p.snapshot.ID, Revision: p.snapshot.Revision, PendingEdits: len(p.pending), InFlight: p.inflight != nil, UndoPending: p.undoPending, HistoryQueued: p.historySync || len(p.historyQueue) > 0, Conflict: p.conflict}
+	return DocumentState{DocumentID: p.snapshot.ID, Revision: p.snapshot.Revision, Encoding: p.snapshot.Encoding, SavedEncoding: p.snapshot.SavedEncoding, PendingEdits: len(p.pending), InFlight: p.inflight != nil, UndoPending: p.undoPending, HistoryQueued: p.historySync || len(p.historyQueue) > 0, Conflict: p.conflict}
 }
 
 // DocumentSnapshot is the detached canonical baseline, excluding optimistic edits.
@@ -805,7 +814,9 @@ func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, change
 	if state.ID != p.snapshot.ID {
 		return nil, document.ErrOwner
 	}
-	if state.Revision == 0 || state.Path == "" || !filepath.IsAbs(state.Path) || filepath.Clean(state.Path) != state.Path || len(state.Text) != 0 {
+	validPath := state.Path == "" && document.IsUntitledID(state.ID) && state.Name != "" ||
+		filepath.IsAbs(state.Path) && filepath.Clean(state.Path) == state.Path
+	if state.Revision == 0 || !validPath || len(state.Text) != 0 {
 		return nil, document.ErrRevision
 	}
 	if len(state.Saved) > document.MaxBytes || !utf8.Valid(state.Saved) || !savepoint && len(state.Saved) != 0 {
@@ -887,6 +898,7 @@ func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, change
 		if savepoint {
 			plan.snapshot.DiskHash, plan.snapshot.DiskExists = state.DiskHash, state.DiskExists
 		}
+		plan.snapshot.Encoding, plan.snapshot.SavedEncoding = state.Encoding, state.SavedEncoding
 	}
 	plan.snapshot.Text = text
 	if savepoint {
@@ -926,8 +938,10 @@ func (e *Editor) CommitDocumentUpdate(plan *PreparedDocumentUpdate) error {
 	}
 	e.snippetApplying = false
 	e.commitSnippetPeer(plan.snippet)
+	baselineChanged := p.snapshot.DiskExists != plan.snapshot.DiskExists || p.snapshot.DiskHash != plan.snapshot.DiskHash
 	p.snapshot = plan.snapshot
-	if plan.savepoint {
+	e.buffer.encoding, e.buffer.savedEncoding = plan.snapshot.Encoding, plan.snapshot.SavedEncoding
+	if plan.savepoint || baselineChanged {
 		e.installDocumentBaseline(plan.snapshot)
 	} else if len(plan.deltas) != 0 {
 		e.buffer.NoteEdit()

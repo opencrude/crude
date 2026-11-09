@@ -59,7 +59,7 @@ func (m *ideQualityVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF6:
 			m.openGitReview("", "")
-			m.activeGitReview().screen.ShowChanges(gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "sample.go", BaseLabel: "HEAD", TargetLabel: "Index", Before: m.before, After: "package sample\n\n// Reviewed source version\nfunc Greet() string {\n\treturn \"git_target\"\n}\n", Fingerprint: "visual-read-only", Historical: true, BeforePresent: true, AfterPresent: true}}), "main")
+			m.activeGitReview().screen.ShowChanges(gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "sample.go", BaseLabel: "HEAD", TargetLabel: "Index", Before: []byte(m.before), After: []byte("package sample\n\n// Reviewed source version\nfunc Greet() string {\n\treturn \"git_target\"\n}\n"), Fingerprint: "visual-read-only", Historical: true, BeforePresent: true, AfterPresent: true}}), "main")
 			m.activeGitReview().screen.SetPresentation(gitdiff.Split)
 			return m, nil
 		case tea.KeyF7:

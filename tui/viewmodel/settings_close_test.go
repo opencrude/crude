@@ -144,6 +144,47 @@ func settingsTextCell(t *testing.T, parent *wm.FloatingWindow, label string) (in
 	return 0, 0
 }
 
+func TestSuggestionSettingsRemainReadableInNarrowWindow(t *testing.T) {
+	app, _, _ := newSettingsPromptApp(t)
+	app.width, app.height = 80, 24
+	app.openApplicationSettings()
+	parent := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
+	body := app.settingsSurface(parent)
+	selectSettingsCategory(t, body, "Code Intelligence")
+	body.FocusForm()
+	var form *ui.Form
+	for _, child := range body.Children() {
+		if candidate, ok := child.(*ui.Form); ok && candidate.ID() == settingsui.WorkspaceSettingsFormID {
+			form = candidate
+		}
+	}
+	if form == nil {
+		t.Fatal("Code Intelligence settings form is not mounted")
+	}
+	paintField := func(id string) string {
+		t.Helper()
+		if !form.FocusField(id) {
+			t.Fatalf("cannot focus %s", id)
+		}
+		frame := parent.Content.(*ui.WindowFrameWidget)
+		frame.Host().MarkLayout()
+		frame.Host().Layout()
+		w, h := parent.Size()
+		buf := surface.NewCellBuffer(w, h)
+		frame.Host().Paint(buf)
+		return bufferPlain(buf)
+	}
+	auto := paintField("auto-complete")
+	if !strings.Contains(auto, "Suggest while typing") && !strings.Contains(auto, "Show as you type") {
+		t.Fatalf("automatic suggestions label is truncated:\n%s", auto)
+	}
+	accept := paintField("completion-accept")
+	if !strings.Contains(accept, "Accept suggestion with") && !strings.Contains(accept, "Accept with") ||
+		!strings.Contains(accept, "Tab or Enter") && !strings.Contains(accept, "Tab / Enter") {
+		t.Fatalf("suggestion acceptance choice is truncated:\n%s", accept)
+	}
+}
+
 func TestSettingsBreadcrumbStillReturnsToParent(t *testing.T) {
 	app, parent, body := newSettingsPromptApp(t)
 	body.ShowAccounts()

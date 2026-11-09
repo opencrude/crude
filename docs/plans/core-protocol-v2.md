@@ -27,6 +27,18 @@ secrets, one authority per state. Pre-alpha policy applies: v2 replaces v1
 wholesale; no adapters, dual stacks, legacy readers or compatibility branches
 remain in Crude's own machinery.
 
+## Wire fingerprint parity
+
+The required regeneration exposed a cross-platform blocker: the schema hash
+includes host-native separators in the MessagePack runtime file names. Identical
+codecs and source bytes therefore produce different Windows and Linux schemas.
+Normalize those names in the existing generator, retain all content in the hash,
+and verify both separator spellings and changed-content sensitivity. The wire
+layout is unchanged. The separator regression failed before the correction and
+now passes with content and file-identity checks; the generator cross-builds
+for Windows and macOS. Native Windows generation and attachment still require
+separate verification; do not infer them from a Linux test.
+
 ## Original pre-refactor baseline (2026-10-23, Linux, i7-10750H)
 
 | Observation | Measurement |

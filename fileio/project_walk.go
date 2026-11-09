@@ -1,7 +1,6 @@
 package fileio
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -44,7 +43,7 @@ func WalkProjectFiles(ctx context.Context, root string, limit int64, visit func(
 			return nil
 		}
 		data, err := os.ReadFile(path)
-		if err != nil || len(data) > int(limit) || bytes.IndexByte(data[:min(len(data), 512)], 0) >= 0 {
+		if err != nil || len(data) > int(limit) || IsBinary(data) {
 			return nil
 		}
 		return visit(path, data)

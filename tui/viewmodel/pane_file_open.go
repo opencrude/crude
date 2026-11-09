@@ -21,6 +21,7 @@ import (
 
 type paneFilePrepared struct {
 	path        string
+	requested   string
 	buffer      *editor.Buffer
 	err         error
 	existing    bool
@@ -125,9 +126,9 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 			}
 			if connected {
 				s, err := msg.refs.open(ctx, path)
-				file := paneFilePrepared{path: s.Path, err: err, snapshot: &s}
+				file := paneFilePrepared{path: documentEditorKey(s), requested: path, err: err, snapshot: &s}
 				if err == nil {
-					file.recovery, file.recoveryErr = loadRecovery(s.Path)
+					file.recovery, file.recoveryErr = loadRecovery(recoveryKeyForDocument(s))
 				}
 				msg.files = append(msg.files, file)
 				continue
@@ -156,6 +157,36 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 		}
 		return result
 	}
+}
+
+// createPaneUntitled captures the target pane and attachment before asking the
+// core to create a document. A late result cannot retarget a replacement pane.
+func (m *App) createPaneUntitled(group window.GroupID) tea.Cmd {
+	m.paneFileOpenSeq++
+	live, ok := m.ws.(shellport.LiveDocuments)
+	if !ok || m.Win == nil || m.BufferMgr == nil || !m.Win.HasGroup(group) {
+		return nil
+	}
+	if _, ok := m.ws.(shellport.UntitledDocuments); !ok {
+		m.Feedback.NotifyError("Cannot create a new buffer in this workspace.")
+		return nil
+	}
+	msg := paneFilesOpenedMsg{seq: m.paneFileOpenSeq, generation: m.workspaceSwitchGen.Load(),
+		manager: m.BufferMgr, win: m.Win, group: group, initiated: m.Win.ActiveGroup()}
+	if tab := m.Win.ActiveTab(); tab != nil {
+		msg.selected = tab.ID
+	}
+	if m.liveOpenRefs == nil || m.liveOpenRefs.owner != m.ws {
+		m.liveOpenRefs = &liveDocumentRefs{owner: m.ws, live: live, counts: make(map[string]int)}
+	}
+	msg.refs = m.liveOpenRefs
+	return m.clientIOCommand(context.Background(), func(owner context.Context) tea.Msg {
+		ctx, cancel := context.WithTimeout(owner, 30*time.Second)
+		defer cancel()
+		snapshot, err := msg.refs.createUntitled(ctx)
+		msg.files = []paneFilePrepared{{path: documentEditorKey(snapshot), snapshot: &snapshot, err: err}}
+		return msg
+	})
 }
 
 func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
@@ -275,9 +306,16 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if msg.activePath != "" {
 		// A restored pane reopens its last selected document, not simply the
 		// last file in the remembered order.
-		tab := m.Win.GroupTabByTitle(msg.group, m.editorTabTitle(msg.activePath))
+		activePath := msg.activePath
+		for _, file := range msg.files {
+			if file.requested == activePath && file.err == nil && file.path != "" {
+				activePath = file.path
+				break
+			}
+		}
+		tab := m.Win.GroupTabByTitle(msg.group, m.editorTabTitle(activePath))
 		if tab == nil {
-			tab = m.Win.GroupTabByTitle(msg.group, imageTabTitle(msg.activePath))
+			tab = m.Win.GroupTabByTitle(msg.group, imageTabTitle(activePath))
 		}
 		if tab != nil {
 			if foreground {

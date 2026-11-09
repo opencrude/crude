@@ -91,7 +91,7 @@ func TestInspectFileClassifiesAndBounds(t *testing.T) {
 	if !smallPrev.Truncated {
 		t.Fatalf("small-cap inspect must report truncation: %+v", smallPrev)
 	}
-	if rendered := smallPrev.ReadableText(); !strings.Contains(rendered, "[truncated") {
+	if rendered := smallPrev.ReadableText(); !strings.Contains(rendered, "[Text preview truncated. File size: 26 bytes.]") {
 		t.Fatalf("truncation note missing: %q", rendered)
 	}
 }

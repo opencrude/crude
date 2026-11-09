@@ -18,6 +18,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/provider"
+	"crude/textencoding"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -379,6 +380,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.SegmentedFieldState("syntax-theme", "Syntax colors", []ui.FormOption{{ID: "catppuccin", Label: "Catppuccin"}, {ID: "dracula", Label: "Dracula"}, {ID: "github", Label: "GitHub"}, {ID: "monokai", Label: "Monokai"}, {ID: "solarized", Label: "Solarized"}}, editor.SyntaxTheme, "The color grammar used for source code."),
 			ui.SegmentedFieldState("render-whitespace", "Show whitespace", []ui.FormOption{{ID: "none", Label: "Never"}, {ID: "boundary", Label: "At edges"}, {ID: "all", Label: "Always"}}, editor.RenderWhitespace, "Draw spaces and tabs. At edges shows only leading and trailing whitespace."),
 			ui.SeparatorFieldState("saving", "Saving"),
+			newFileEncodingField(editor.NewFileEncoding),
 			autoSaveModeField(editor.AutoSave),
 			autoSaveDelayField(editor.AutoSaveDelay),
 			ui.BoolFieldState("format-on-save", "Format on manual save", editor.FormatOnSave, "Format explicit saves only. Automatic saves always preserve the exact text you typed."),
@@ -590,6 +592,15 @@ func autoSaveModeField(mode types.AutoSaveMode) *ui.FieldState {
 		{ID: string(types.AutoSaveEditorFocusChange), Label: "Editor switch"},
 		{ID: string(types.AutoSaveTerminalFocusLoss), Label: "Window blur"},
 	}, string(mode), "Save text exactly as typed, never formatted. Editor switch saves when focus leaves the editor; Window blur needs focus reports from your terminal.")
+}
+
+func newFileEncodingField(encoding textencoding.Encoding) *ui.FieldState {
+	var options []ui.FormOption
+	for _, value := range textencoding.Choices() {
+		options = append(options, ui.FormOption{ID: value.Key(), Label: value.Label()})
+	}
+	return ui.SegmentedFieldState("new-file-encoding", "New file encoding", options, encoding.Key(),
+		"Default for new unnamed files. Save File can change it. Existing files keep their encoding.")
 }
 
 func autoSaveDelayField(delay int) *ui.FieldState {
@@ -2887,6 +2898,7 @@ func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {
 	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSave: types.AutoSaveMode(m.value(catEditor, "auto-save")), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 1000), FormatOnSave: m.value(catEditor, "format-on-save") == "on"}
+	cfg.NewFileEncoding = textencoding.FromKey(m.value(catEditor, "new-file-encoding"))
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {

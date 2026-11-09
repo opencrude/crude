@@ -1,6 +1,8 @@
 package editor
 
 import (
+	"crude/textencoding"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"sync"
@@ -159,7 +161,7 @@ func TestSyntaxPendingLineInsertionDeletionAndReplacement(t *testing.T) {
 	if got := buf.Get(ed.gutterWidth(), 1); got.Char != '/' || !got.FG.Equal(ed.cellColor(ed.th.Colors.Code.Comment)) {
 		t.Fatalf("join lost shifted comment: %+v", got)
 	}
-	ed.ApplyDisk([]byte("# replacement has no matching old source\n"))
+	ed.ApplyDisk([]byte("# replacement has no matching old source\n"), textencoding.UTF8, sha256.Sum256([]byte("# replacement has no matching old source\n")))
 	if ed.lineColorMap(1) != nil {
 		t.Fatal("replacement kept unrelated line decorations")
 	}

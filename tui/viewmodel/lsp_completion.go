@@ -279,7 +279,7 @@ func (m *App) syncCompletion() tea.Cmd {
 			continue
 		}
 		entries = append(entries, completion.Entry{ID: row.ID, Label: row.Insertion.Label, Kind: row.Insertion.Kind, Detail: row.Documentation.Detail,
-			Documentation: completionDocumentationText(row.Documentation)})
+			Documentation: row.Documentation.Value})
 	}
 	if len(entries) == 0 {
 		if !s.automatic {
@@ -297,12 +297,14 @@ func (m *App) syncCompletion() tea.Cmd {
 	s.screen = completion.New(m.Theme, set.ID, entries, caption)
 	s.screen.SetAcceptance(m.ws.LSPMgr().Settings().CompletionAcceptance())
 	title := fmt.Sprintf("Completions · %d", len(entries))
-	bounds, visible := m.editorHelpBounds(s.editor, min(112, max(1, m.width-4)), min(22, max(1, m.height-4)))
+	frame, fw := m.newEditorPopover(ui.OverlayCompletion, title, s.screen, s.screen.DefaultFocus(), ui.Rect{W: 1, H: 1})
+	bounds, visible := m.completionBounds(s, frame)
 	if !visible || bounds.H < 6 {
 		m.closeCompletionPopup()
 		return nil
 	}
-	_, fw := m.newEditorPopover(ui.OverlayCompletion, title, s.screen, s.screen.DefaultFocus(), bounds)
+	fw.SetPosition(bounds.X, bounds.Y)
+	fw.SetSize(bounds.W, bounds.H)
 	m.overlayHost.Open(ui.OverlayCompletion, fw, ui.PopoverPolicy(true), func() {
 		if m.completion == s {
 			m.completion = nil
@@ -313,27 +315,38 @@ func (m *App) syncCompletion() tea.Cmd {
 	return m.readCompletion(s, s.screen.SelectedID(), false)
 }
 
+func (m *App) completionBounds(s *completionState, frame *ui.WindowFrameWidget) (ui.Rect, bool) {
+	size := frame.Frame().Measure(ui.LayoutContext{}, ui.Constraints{
+		MaxW: min(112, max(1, m.width-4)), MaxH: min(14, max(1, m.height-4)),
+	})
+	return m.editorHelpBounds(s.editor, size.W, size.H)
+}
+
 func (m *App) positionCompletion() {
 	s := m.completion
 	if s == nil || s.screen == nil || m.overlayHost == nil {
 		return
 	}
-	b, ok := m.editorHelpBounds(s.editor, min(112, max(1, m.width-4)), min(22, max(1, m.height-4)))
+	fw := m.overlayHost.Window(ui.OverlayCompletion)
+	if fw == nil {
+		return
+	}
+	frame, ok := fw.Content.(*ui.WindowFrameWidget)
+	if !ok {
+		m.closeCompletionPopup()
+		return
+	}
+	b, ok := m.completionBounds(s, frame)
 	if !ok || b.H < 6 {
 		m.closeCompletionPopup()
 		return
 	}
-	if fw := m.overlayHost.Window(ui.OverlayCompletion); fw != nil {
+	if x, y := fw.Position(); x != b.X || y != b.Y {
 		fw.SetPosition(b.X, b.Y)
+	}
+	if w, h := fw.Size(); w != b.W || h != b.H {
 		fw.SetSize(b.W, b.H)
 	}
-}
-
-func completionDocumentationText(doc types.LSPCompletionDocumentation) string {
-	if doc.Value == "" {
-		return "No documentation available."
-	}
-	return doc.Value
 }
 
 func (m *App) markCompletionDirty(s *completionState) {
@@ -377,7 +390,7 @@ func (m *App) readCompletion(s *completionState, itemID string, accept bool) tea
 	if accept {
 		status = "Inserting suggestion..."
 	}
-	s.screen.SetDocumentation(s.set.ID, itemID, row.Documentation.Detail, completionDocumentationText(row.Documentation), status)
+	s.screen.SetDocumentation(s.set.ID, itemID, row.Documentation.Detail, row.Documentation.Value, status)
 	m.markCompletionDirty(s)
 	return func() tea.Msg {
 		defer cancel()
@@ -414,7 +427,7 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 		if read.accept {
 			status = "Could not insert this suggestion. Try another suggestion."
 		}
-		s.screen.SetDocumentation(s.set.ID, read.itemID, row.Documentation.Detail, completionDocumentationText(row.Documentation), status)
+		s.screen.SetDocumentation(s.set.ID, read.itemID, row.Documentation.Detail, row.Documentation.Value, status)
 		m.markCompletionDirty(s)
 		return false
 	}
@@ -437,7 +450,7 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 		return true
 	}
 	s.observed[read.itemID] = true
-	s.screen.SetDocumentation(s.set.ID, read.itemID, result.Documentation.Detail, completionDocumentationText(result.Documentation), "")
+	s.screen.SetDocumentation(s.set.ID, read.itemID, result.Documentation.Detail, result.Documentation.Value, "")
 	m.markCompletionDirty(s)
 	return true
 }

@@ -3,6 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"crude/textencoding"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -74,6 +75,10 @@ type reviewedEdit struct {
 	edits   []FileEdit
 	splices [][]document.Edit
 	check   func() error // exact provider/context fence, never I/O or a source read
+	// draftSaveID saves the exact canonical draft, including its selected disk
+	// encoding. The first save also gives an unnamed document its path.
+	draftSaveID       string
+	draftSaveEncoding textencoding.Encoding
 }
 
 type reviewedEditJournal struct {
@@ -199,6 +204,7 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		seen[path] = true
 		var file workspaceEditFile
 		var before string
+		encoding := textencoding.UTF8
 		mode := os.FileMode(0o644)
 		if target.Create {
 			file, err = absentWorkspaceEditFile(path)
@@ -218,7 +224,11 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 			if err != nil {
 				return ReviewedEditPreview{}, err
 			}
-			before = string(file.data)
+			decoded, detected, err := textencoding.DecodeText(file.data)
+			if err != nil {
+				return ReviewedEditPreview{}, err
+			}
+			before, encoding = string(decoded), detected
 			mode = file.info.Mode()
 		}
 		for _, previous := range plan.files {
@@ -230,15 +240,19 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		if err != nil {
 			return ReviewedEditPreview{}, err
 		}
-		if len(after) > reviewedEditFileBytes {
+		encoded, err := textencoding.EncodeText([]byte(after), encoding)
+		if err != nil {
+			return ReviewedEditPreview{}, err
+		}
+		if len(encoded) > reviewedEditFileBytes {
 			return ReviewedEditPreview{}, errors.New("reviewed result exceeds its recoverable 2 MiB file bound")
 		}
-		total += len(before) + len(after)
+		total += len(file.data) + len(encoded)
 		if total > reviewedEditMaxBytes {
 			return ReviewedEditPreview{}, errors.New("review exceeds its 16 MiB aggregate source bound")
 		}
 		s.mu.Lock()
-		meta, sourceErr := s.reviewedFileSourceLocked(path, file.data, target)
+		meta, sourceErr := s.reviewedFileSourceLocked(path, []byte(before), target)
 		s.mu.Unlock()
 		if sourceErr != nil {
 			return ReviewedEditPreview{}, sourceErr
@@ -246,8 +260,8 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 		if before == after && !target.Create {
 			continue
 		}
-		meta.Path, meta.BeforeSHA256, meta.AfterSHA256 = path, reviewedHash(before), reviewedHash(after)
-		meta.Mode, meta.BeforeBytes, meta.AfterBytes = uint32(mode), len(before), len(after)
+		meta.Path, meta.BeforeSHA256, meta.AfterSHA256 = path, reviewedHash(string(file.data)), reviewedHash(string(encoded))
+		meta.Mode, meta.BeforeBytes, meta.AfterBytes = uint32(mode), len(file.data), len(encoded)
 		meta.Created = target.Create
 		displayPath, err := filepath.Rel(s.root, path)
 		if err != nil {
@@ -263,7 +277,7 @@ func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner documen
 			return ReviewedEditPreview{}, err
 		}
 		plan.files = append(plan.files, file)
-		plan.edits = append(plan.edits, FileEdit{Path: path, OldContent: before, NewContent: after, Create: target.Create})
+		plan.edits = append(plan.edits, FileEdit{Path: path, OldContent: string(file.data), NewContent: string(encoded), Create: target.Create})
 		splices := make([]document.Edit, 0, len(target.Edits))
 		if !target.Create {
 			for _, edit := range target.Edits {
@@ -338,8 +352,27 @@ func (s *DocumentService) validateReviewedPlanLocked(ctx context.Context, p *rev
 	if time.Now().After(p.expires) {
 		return errors.New("edit preview expired; request a fresh review")
 	}
-	if err := s.validateReviewedSourceLocked(p.owner, p.preview.Boundary.Source); err != nil {
-		return err
+	if p.draftSaveID != "" {
+		if s.closed || s.idleFenced {
+			return context.Canceled
+		}
+		if s.stateErr != nil {
+			return s.stateErr
+		}
+		d, err := s.owned(p.owner, p.draftSaveID)
+		if err != nil {
+			return err
+		}
+		encoded, encodeErr := textencoding.EncodeText(d.snapshot.Text, p.draftSaveEncoding)
+		if len(p.edits) != 1 || encodeErr != nil || (d.snapshot.Path != "" && d.snapshot.Path != p.edits[0].Path) || d.snapshot.Conflict || d.diskIntent != nil || d.relocation != nil ||
+			s.analysisIdentityLocked(d) != p.preview.Boundary.Source ||
+			!bytes.Equal(encoded, []byte(p.edits[0].NewContent)) {
+			return document.ErrRevision
+		}
+	} else {
+		if err := s.validateReviewedSourceLocked(p.owner, p.preview.Boundary.Source); err != nil {
+			return err
+		}
 	}
 	for i, expected := range p.preview.Files {
 		if expected.Created {
@@ -353,14 +386,15 @@ func (s *DocumentService) validateReviewedPlanLocked(ctx context.Context, p *rev
 		}
 		d := s.documentAtPath(expected.Path)
 		if expected.Source.DocumentID == "" {
-			if d != nil {
+			if d != nil && d.snapshot.ID != p.draftSaveID {
 				return document.ErrRevision
 			}
 			continue
 		}
-		if d == nil || s.analysisIdentityLocked(d) != expected.Source ||
+		before, _, err := textencoding.DecodeText(p.files[i].data)
+		if err != nil || d == nil || s.analysisIdentityLocked(d) != expected.Source ||
 			d.snapshot.Dirty || d.snapshot.Conflict || d.diskIntent != nil || d.relocation != nil ||
-			!bytes.Equal(d.snapshot.Text, p.files[i].data) {
+			!bytes.Equal(d.snapshot.Text, before) {
 			return document.ErrRevision
 		}
 		// Prove the canonical journal can accept the disk reconciliation before
@@ -548,6 +582,23 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 	if effectErr == nil && s.lsp != nil {
 		watch, effectErr = s.lsp.reviewWatch.begin(p.edits)
 	}
+	draftSaveIntent := false
+	if effectErr == nil && p.draftSaveID != "" {
+		d := s.docs[p.draftSaveID]
+		effectErr = s.watch.add(filepath.Dir(p.edits[0].Path))
+		if effectErr == nil {
+			intent := stageDocument(d)
+			intent.diskIntent = &documentDiskIntent{
+				Revision: d.snapshot.Revision, Hash: sha256.Sum256([]byte(p.edits[0].NewContent)),
+				Exists: true, Target: p.edits[0].Path,
+			}
+			effectErr = s.persistDocument(intent)
+			if effectErr == nil {
+				*d = *intent
+				draftSaveIntent = true
+			}
+		}
+	}
 	if effectErr != nil {
 		out.State, out.Error = "refused", effectErr.Error()
 	} else {
@@ -567,6 +618,14 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 			out.State, out.Error = "refused", result.Err.Error()
 			out.Detail = "The writer admitted no edit commit."
 		} else {
+			if p.draftSaveID != "" {
+				changed = append(changed, p.draftSaveID)
+				if result.Err == nil {
+					effectErr = errors.Join(effectErr, s.commitReviewedDraftSaveLocked(p))
+				} else {
+					s.docs[p.draftSaveID].snapshot.Conflict = true
+				}
+			}
 			for i, meta := range p.preview.Files {
 				if meta.Source.DocumentID != "" {
 					changed = append(changed, meta.Source.DocumentID)
@@ -582,6 +641,20 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 				out.Error = "reviewed disk mutation or reconciliation needs inspection; do not replay: " + effectErr.Error()
 			}
 		}
+	}
+	if draftSaveIntent && out.State == "refused" {
+		// Only a positive no-effect refusal can remove this disk-intent fence.
+		d := s.docs[p.draftSaveID]
+		trial := stageDocument(d)
+		trial.diskIntent = nil
+		if err := s.persistDocument(trial); err != nil {
+			out.State = "unconfirmed"
+			out.Error = "the save outcome needs inspection; do not repeat it"
+			d.snapshot.Conflict = true
+		} else {
+			*d = *trial
+		}
+		changed = append(changed, p.draftSaveID)
 	}
 	journal.Result = out
 	if err := s.saveReviewedJournal(journal); err != nil {
@@ -608,8 +681,8 @@ func (s *DocumentService) ApplyReviewedEdit(ctx context.Context, owner document.
 func (s *DocumentService) commitReviewedDocumentLocked(p *reviewedEdit, index int) error {
 	meta, edit := p.preview.Files[index], p.edits[index]
 	d := s.docs[meta.Source.DocumentID]
-	data, exists, err := readLiveDocument(edit.Path)
-	if err != nil || !exists || !bytes.Equal(data, []byte(edit.NewContent)) {
+	disk, err := readLiveDocument(edit.Path)
+	if err != nil || !disk.Exists || disk.Hash != sha256.Sum256([]byte(edit.NewContent)) {
 		return errors.Join(errors.New("reviewed disk postimage changed before canonical publication"), err, s.reconcileLocked(meta.Source.DocumentID))
 	}
 	trial := stageDocument(d)
@@ -619,7 +692,9 @@ func (s *DocumentService) commitReviewedDocumentLocked(p *reviewedEdit, index in
 	}
 	trial.snapshot.Saved = bytes.Clone(trial.snapshot.Text)
 	trial.snapshot.DiskExists = true
-	trial.snapshot.DiskHash = sha256.Sum256(data)
+	trial.snapshot.DiskHash = disk.Hash
+	trial.snapshot.Encoding = disk.Encoding
+	trial.snapshot.SavedEncoding = disk.Encoding
 	trial.snapshot.Dirty, trial.snapshot.Conflict = false, false
 	if err := s.persistDocument(trial); err != nil {
 		d.snapshot.Conflict = true

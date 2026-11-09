@@ -125,7 +125,7 @@ func FuzzCoreGitReviewedMutations(f *testing.F) {
 				before, after = "HEAD\n", indexText
 			}
 			c := out.Comparison
-			if c.Before != before || c.After != after || c.Path != "tracked.txt" || c.AbsolutePath != path || c.Area != area || !c.BeforePresent || !c.AfterPresent || c.Fingerprint == "" {
+			if string(c.Before) != before || string(c.After) != after || c.Path != "tracked.txt" || c.AbsolutePath != path || c.Area != area || !c.BeforePresent || !c.AfterPresent || c.Fingerprint == "" {
 				t.Fatalf("comparison disagrees with byte model: %+v", c)
 			}
 			return c
@@ -180,7 +180,7 @@ func FuzzCoreGitReviewedMutations(f *testing.F) {
 				case 4:
 					method = coreprotocol.GitUnstageReviewed // wrong review area
 				case 7:
-					c.After += "forged\n" // fingerprint alone is not authority
+					c.After = append(c.After, "forged\n"...) // fingerprint alone is not authority
 				}
 				var input any = coreprotocol.GitStageReviewedRequest{Comparison: c}
 				if method == coreprotocol.GitUnstageReviewed {

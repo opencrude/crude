@@ -2,6 +2,8 @@ package editor
 
 import (
 	"context"
+	"crude/textencoding"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"testing"
@@ -100,7 +102,7 @@ func TestSyntaxOffscreenDelimiterEditAndStaleCompletion(t *testing.T) {
 		t.Fatal("missing syntax command")
 	}
 	msg := command().(SyntaxReadyMsg)
-	ed.ApplyDisk([]byte("# new document\n"))
+	ed.ApplyDisk([]byte("# new document\n"), textencoding.UTF8, sha256.Sum256([]byte("# new document\n")))
 	msg.Apply()
 	if ed.syntaxDocument != nil {
 		t.Fatal("old completion installed after replacement")

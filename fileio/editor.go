@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/textencoding"
 )
 
 // Editor performs exact, receipt-prepared file mutations for one session.
@@ -147,44 +148,34 @@ func (e *Editor) WithMessage(msgID string) *Editor {
 }
 
 func (e *Editor) Read(path string) (string, error) {
-	abs, err := filepath.Abs(path)
+	text, _, err := e.ReadText(path)
 	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
+		return "", err
 	}
-	start := time.Now()
-	data, _, err := readFileSecure(abs, e.policy)
-	dur := time.Since(start).Milliseconds()
-	if err != nil {
-		e.logger.Error("FILEIO", "read", "path", path, "latency_ms", dur, "error", err.Error())
-		return "", fmt.Errorf("read %s: %w", path, err)
-	}
-	if IsBinary(data) {
-		e.logger.Info("FILEIO", "read_binary", "path", path, "latency_ms", dur, "size", int64(len(data)))
-		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
-	}
-	encoded := EncodeHashlines(string(data))
-	e.logger.Info("FILEIO", "read", "path", path, "latency_ms", dur, "size", len(data), "encoded_size", len(encoded))
-	return encoded, nil
+	return EncodeHashlines(text), nil
 }
 
 func (e *Editor) ReadRaw(path string) (string, error) {
+	text, _, err := e.ReadText(path)
+	return text, err
+}
+
+// ReadText returns canonical UTF-8 text and its exact disk encoding. Byte
+// consumers use their explicit byte APIs instead of treating this as raw I/O.
+func (e *Editor) ReadText(path string) (string, textencoding.Encoding, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("read raw %s: %w", path, err)
+		return "", textencoding.UTF8, err
 	}
-	start := time.Now()
 	data, _, err := readFileSecure(abs, e.policy)
-	dur := time.Since(start).Milliseconds()
 	if err != nil {
-		e.logger.Error("FILEIO", "read_raw", "path", path, "latency_ms", dur, "error", err.Error())
-		return "", fmt.Errorf("read raw %s: %w", path, err)
+		return "", textencoding.UTF8, fmt.Errorf("read %s: %w", path, err)
 	}
 	if IsBinary(data) {
-		e.logger.Warn("FILEIO", "read_raw_binary", "path", path, "size", int64(len(data)))
-		return "", &BinaryFileError{Path: abs, Size: int64(len(data))}
+		return "", textencoding.UTF8, &BinaryFileError{Path: abs, Size: int64(len(data))}
 	}
-	e.logger.Debug("FILEIO", "read_raw_ok", "path", abs, "latency_ms", dur, "size", len(data))
-	return string(data), nil
+	text, encoding, err := textencoding.DecodeText(data)
+	return string(text), encoding, err
 }
 
 func (e *Editor) Write(path string, content string) error {
@@ -205,7 +196,30 @@ func (e *Editor) WriteTracked(path string, content string, prepare MutationPrepa
 	if err == nil && IsBinary(existing) {
 		return &BinaryFileError{Path: path, Size: info.Size()}
 	}
-	return e.writeBytesTracked(path, []byte(content), prepare)
+	encoding := textencoding.UTF8
+	expected := absentState()
+	if err == nil {
+		expected = regularState(existing, info.Mode())
+		_, encoding, err = textencoding.DecodeText(existing)
+	} else if errors.Is(err, os.ErrNotExist) {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	encoded, err := textencoding.EncodeText([]byte(content), encoding)
+	if err != nil {
+		return err
+	}
+	return e.writeBytesTracked(path, encoded, func(receipt MutationReceipt) (MutationComplete, error) {
+		for _, image := range receipt.Paths {
+			if image.Path == abs && (image.Before.Kind != expected.Kind || image.Before.Mode != expected.Mode ||
+				!bytes.Equal(image.Before.Bytes, expected.Bytes)) {
+				return nil, fmt.Errorf("write %s: file changed while determining its encoding", path)
+			}
+		}
+		return prepareMutation(prepare, receipt)
+	})
 }
 
 // writeBytesTracked requires the shared mutation lease. Text-only callers
@@ -319,13 +333,20 @@ func (e *Editor) PatchTracked(path string, ops []SearchReplace, prepare Mutation
 		return err
 	}
 
-	newContent, err := ApplySearchReplace(string(oldBytes), ops, e.logger)
+	text, encoding, err := textencoding.DecodeText(oldBytes)
+	if err != nil {
+		return fmt.Errorf("patch %s: %w", path, err)
+	}
+	newContent, err := ApplySearchReplace(string(text), ops, e.logger)
 	if err != nil {
 		e.logger.Error("FILEIO", "patch_apply_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: %w", path, err)
 	}
 
-	newBytes := []byte(newContent)
+	newBytes, err := textencoding.EncodeText([]byte(newContent), encoding)
+	if err != nil {
+		return fmt.Errorf("patch %s: %w", path, err)
+	}
 	opID := newOpID()
 
 	complete, err := prepareMutation(prepare, MutationReceipt{OperationID: opID, OperationName: "edit_file", Paths: []MutationPathState{{Path: abs, Before: regularState(oldBytes, fi.Mode()), After: regularState(newBytes, fi.Mode())}}})

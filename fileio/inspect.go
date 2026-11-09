@@ -4,11 +4,15 @@
 package fileio
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"unicode/utf8"
+
+	"crude/textencoding"
 )
 
 // DefaultHexHeadBytes is how many leading bytes of a binary file get rendered
@@ -27,6 +31,7 @@ type FilePreview struct {
 	Binary    bool
 	Truncated bool   // true when the file exceeded the read cap
 	Text      string // decoded text (non-binary only, possibly truncated)
+	Encoding  textencoding.Encoding
 	HexDump   string // formatted hex dump head (binary only)
 	HexHead   int    // how many bytes HexDump covers
 }
@@ -37,7 +42,7 @@ type FilePreview struct {
 func (p *FilePreview) ReadableText() string {
 	if !p.Binary {
 		if p.Truncated {
-			return p.Text + fmt.Sprintf("\n\n[truncated — showing first %d of %d bytes]", len(p.Text), p.Size)
+			return p.Text + fmt.Sprintf("\n\n[Text preview truncated. File size: %d bytes.]", p.Size)
 		}
 		return p.Text
 	}
@@ -52,9 +57,8 @@ func (p *FilePreview) ReadableText() string {
 	return b.String()
 }
 
-// InspectFile reads up to maxTextBytes+1 bytes of path and classifies it.
-// A cap larger than the read budget keeps the truncated flag honest without
-// reading the whole file. Hex dumps are rendered for binary payloads.
+// InspectFile bounds decoded text, not UTF-16 code units or raw-byte offsets.
+// A bounded stream handles partial characters without corrupting the preview.
 func InspectFile(path string, maxTextBytes int64, hexHeadBytes int) (*FilePreview, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -67,38 +71,54 @@ func InspectFile(path string, maxTextBytes int64, hexHeadBytes int) (*FilePrevie
 		return nil, err
 	}
 
-	// One extra byte beyond the cap distinguishes "exactly cap sized" from
-	// "truncated" without a second stat round-trip.
 	budget := maxTextBytes
 	if budget < 1 {
 		budget = DefaultPreviewBytes
 	}
-	data, err := io.ReadAll(io.LimitReader(f, budget+1))
-	if err != nil {
+	reader := bufio.NewReader(f)
+	head, err := reader.Peek(512)
+	if err != nil && err != io.EOF {
 		return nil, err
 	}
-	truncated := int64(len(data)) > budget
-	if truncated {
-		data = data[:budget]
-	}
-
-	head := data
-	if int64(len(head)) > 512 {
-		head = head[:512]
-	}
 	mime := http.DetectContentType(head)
-
 	p := &FilePreview{
-		Path:      path,
-		Size:      fi.Size(),
-		MIME:      mime,
-		Truncated: truncated,
-		Binary:    IsBinary(data),
-		HexHead:   hexHeadBytes,
+		Path:    path,
+		Size:    fi.Size(),
+		MIME:    mime,
+		Binary:  IsBinary(head),
+		HexHead: hexHeadBytes,
 	}
 	if p.Binary {
+		data, err := io.ReadAll(io.LimitReader(reader, budget+1))
+		if err != nil {
+			return nil, err
+		}
+		p.Truncated = int64(len(data)) > budget
+		data = data[:min(int64(len(data)), budget)]
 		p.HexDump = HexDump(data, hexHeadBytes)
 	} else {
+		p.Encoding, _ = textencoding.DetectBOM(head)
+		decoded, err := textencoding.NewReader(reader, p.Encoding)
+		if err != nil {
+			return nil, err
+		}
+		data, err := io.ReadAll(io.LimitReader(decoded, budget+1))
+		if err != nil {
+			return nil, err
+		}
+		p.Truncated = int64(len(data)) > budget
+		if p.Truncated {
+			data = data[:budget]
+			// Only the budget edge may split a UTF-8 character. The strict
+			// decoder already verified every source byte it consumed.
+			for len(data) > 0 {
+				r, size := utf8.DecodeLastRune(data)
+				if r != utf8.RuneError || size != 1 {
+					break
+				}
+				data = data[:len(data)-1]
+			}
+		}
 		p.Text = string(data)
 	}
 	return p, nil

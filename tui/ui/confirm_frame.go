@@ -32,6 +32,9 @@ func (s ConfirmPromptSeverity) icon() string {
 	}
 }
 
+// Icon returns the shared title-bar glyph for this dialog severity.
+func (s ConfirmPromptSeverity) Icon() string { return s.icon() }
+
 // actionVariant resolves a button's variant from its action semantics so the
 // row reads like every ActionBar in the app: destructive actions are danger,
 // the affirmative action is primary, neutral alternatives are secondary.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"crude/textdiff"
+	"crude/textencoding"
 )
 
 // GitBlameLine is porcelain blame for one 1-based file line.
@@ -67,6 +68,10 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 	// form too. Matching still ignores CRLF/LF so an LF buffer Git considers
 	// clean under core.autocrlf is not marked changed either.
 	head, headErr := gitCheckoutText(ctx, root, rel, "HEAD:"+rel)
+	if headErr == nil {
+		decoded, _, err := textencoding.DecodeText([]byte(head))
+		head, headErr = string(decoded), err
+	}
 	if err := ctx.Err(); err != nil {
 		return GitFileAnnotation{}, err
 	}

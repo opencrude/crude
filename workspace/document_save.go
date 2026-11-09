@@ -16,6 +16,10 @@ import (
 
 var ErrDocumentConflict = errors.New("document changed on disk")
 
+// ErrDocumentSaveUncertain requires inspecting the original operation, not
+// submitting another write.
+var ErrDocumentSaveUncertain = errors.New("save outcome requires reconciliation")
+
 // DocumentSaveRequest is an immutable buffer snapshot submitted to the one
 // workspace disk authority.
 type DocumentSaveRequest struct {
@@ -252,7 +256,11 @@ func (s *DocumentSaveService) Save(ctx context.Context, request DocumentSaveRequ
 		result.Unchanged = true
 		return result
 	}
-	if err := fileio.WriteAtomicChecked(path, request.Data, mode, func() error {
+	write := fileio.WriteAtomicChecked
+	if !request.ExpectedExist {
+		write = fileio.WriteAtomicNewChecked
+	}
+	if err := write(path, request.Data, mode, func() error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -276,10 +284,14 @@ func (s *DocumentSaveService) Save(ctx context.Context, request DocumentSaveRequ
 			result.DiskHash = sha256.Sum256(request.Data)
 			result.Committed = true
 		}
+		if errors.Is(err, os.ErrExist) {
+			err = ErrDocumentConflict
+		}
 		result.Err = err
 		return result
 	}
 	newHash := sha256.Sum256(request.Data)
+	result.DiskHash, result.Committed = newHash, true
 	committed, committedMode, exists, err := readDocument(path)
 	if err != nil || !exists || sha256.Sum256(committed) != newHash || committedMode != mode {
 		if err != nil {
@@ -289,8 +301,6 @@ func (s *DocumentSaveService) Save(ctx context.Context, request DocumentSaveRequ
 		}
 		return result
 	}
-	result.DiskHash = newHash
-	result.Committed = true
 	return result
 }
 

@@ -11,8 +11,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
+	"crude/document"
 	"crude/tui/editor"
 )
+
+func recoveryKeyForDocument(snapshot document.Snapshot) string {
+	if document.IsUntitledID(snapshot.ID) {
+		return snapshot.ID
+	}
+	return snapshot.Path
+}
+
+func editorRecoveryKey(ed *editor.Editor) string {
+	return recoveryKeyForDocument(ed.DocumentSnapshot())
+}
 
 // prepareEditorRecovery captures the immutable private binding on Update; the
 // returned loader runs in the file-open command, never on the UI goroutine.
@@ -39,7 +51,7 @@ func (m *App) installEditorRecovery(ed *editor.Editor, record clientstate.Editor
 		return nil
 	}
 	c := m.composerDraftClient
-	if c == nil || record.Epoch != c.attachment.Epoch || record.Key.ClientID != c.attachment.ClientID || record.Key.WorkspaceID != c.workspaceID || record.Key.Path != ed.FilePath() {
+	if c == nil || record.Epoch != c.attachment.Epoch || record.Key.ClientID != c.attachment.ClientID || record.Key.WorkspaceID != c.workspaceID || record.Key.Path != editorRecoveryKey(ed) {
 		return clientstate.ErrStaleEpoch
 	}
 	var recovery editor.DocumentRecovery
@@ -59,7 +71,7 @@ func (m *App) installEditorRecovery(ed *editor.Editor, record clientstate.Editor
 			live.uncertain = &liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: live, kind: "edit", requestID: recovery.InFlight.RequestID}
 		}
 	}
-	if recovery.CommandRequestID != "" && (recovery.CommandKind == "save" || recovery.CommandKind == "format") {
+	if recovery.CommandRequestID != "" && (recovery.CommandKind == "save" || recovery.CommandKind == "save-untitled" || recovery.CommandKind == "format") {
 		if live := m.liveEditors[ed.Primary()]; live != nil {
 			live.uncertain = &liveEditorResult{owner: m.ws, generation: m.workspaceSwitchGen.Load(), ed: ed, state: live, kind: recovery.CommandKind, requestID: recovery.CommandRequestID}
 		}
@@ -100,12 +112,13 @@ func (m *App) clearResolvedEditorRecovery(ed *editor.Editor) tea.Cmd {
 	}
 	state := asyncIOStateFor(m)
 	state.mu.Lock()
-	known := state.editorRecoveryRevisions[c.workspaceID+"\x00"+ed.FilePath()]
+	keyPath := editorRecoveryKey(ed)
+	known := state.editorRecoveryRevisions[c.workspaceID+"\x00"+keyPath]
 	state.mu.Unlock()
 	if known == 0 {
 		return nil
 	}
-	key := clientstate.EditorRecoveryKey{ClientID: c.attachment.ClientID, WorkspaceID: c.workspaceID, Path: ed.FilePath()}
+	key := clientstate.EditorRecoveryKey{ClientID: c.attachment.ClientID, WorkspaceID: c.workspaceID, Path: keyPath}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -164,7 +177,8 @@ func (m *App) retainEditorRecovery(flushErr error) map[*editor.Editor]bool {
 			if err != nil {
 				return err
 			}
-			key := clientstate.EditorRecoveryKey{ClientID: c.attachment.ClientID, WorkspaceID: c.workspaceID, Path: recovery.Path}
+			keyPath := recoveryKeyForDocument(recovery.Canonical)
+			key := clientstate.EditorRecoveryKey{ClientID: c.attachment.ClientID, WorkspaceID: c.workspaceID, Path: keyPath}
 			old, err := c.store.LoadEditorRecovery(ctx, c.attachment, key)
 			if err != nil && !errors.Is(err, clientstate.ErrNotFound) {
 				return err
@@ -172,7 +186,7 @@ func (m *App) retainEditorRecovery(flushErr error) map[*editor.Editor]bool {
 			known := uint64(0)
 			if state := m.asyncIO.Load(); state != nil {
 				state.mu.Lock()
-				known = state.editorRecoveryRevisions[c.workspaceID+"\x00"+recovery.Path]
+				known = state.editorRecoveryRevisions[c.workspaceID+"\x00"+keyPath]
 				state.mu.Unlock()
 			}
 			if len(old.Payload) > 0 && old.Revision != known {
