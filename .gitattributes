@@ -57,7 +57,6 @@
 *.scm text eol=lf
 
 # Scripts and text artifacts that Windows tooling may rewrite.
-*.bat text eol=lf
 *.cmd text eol=lf
 *.sha256 text eol=lf
 *.terminfo text eol=lf
