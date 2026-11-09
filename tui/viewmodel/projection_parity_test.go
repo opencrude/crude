@@ -45,7 +45,7 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 		{
 			name: "edit no-change failure", tool: "edit_file",
 			rawArgs:   `path: tools/dispatcher.go old_string: beta new_string: beta`,
-			content:   "Error: no changes to make: old_string and new_string are exactly the same\nHint: match the file's current bytes exactly.",
+			content:   "Error: no changes to make: old_string and new_string are exactly the same",
 			isError:   true,
 			pathLabel: "tools/dispatcher.go",
 		},
@@ -200,16 +200,17 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 				if strings.Contains(c.rawArgs, "{") && strings.Contains(text, `{"`) {
 					t.Fatalf("structured arguments leaked into projection: %s", text)
 				}
-				for _, want := range c.want {
-					if !strings.Contains(text, want) {
-						t.Fatalf("projection missing %q: %s", want, text)
-					}
-				}
 			}
 
 			// Expanding must stay consistent too: the expanded body reads
 			// operands (command/pattern/scope) each path derives its own way.
-			assertSameRows(t, "expanded", renderLive(t, toolID, c, true)[0], renderHydrated(t, toolID, c, true)[0])
+			expanded := renderLive(t, toolID, c, true)[0]
+			assertSameRows(t, "expanded", expanded, renderHydrated(t, toolID, c, true)[0])
+			for _, want := range c.want {
+				if !strings.Contains(strings.Join(expanded.Lines, "\n"), want) {
+					t.Fatalf("expanded projection missing %q: %s", want, strings.Join(expanded.Lines, "\n"))
+				}
+			}
 			if c.name == "agent list with identities" {
 				if !live[0].Toggle || !hydrated[0].Toggle {
 					t.Fatalf("agent list evidence cannot be disclosed: live=%v resumed=%v", live[0].Toggle, hydrated[0].Toggle)

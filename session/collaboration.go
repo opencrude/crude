@@ -20,6 +20,7 @@ import (
 	"crude/tools"
 	captypes "crude/types/capability"
 	"crude/types/command"
+	"crude/types/toolresult"
 	"crude/worktree"
 )
 
@@ -1373,7 +1374,21 @@ func collaborationResult(value any, err error) tools.ToolResult {
 	if encodeErr != nil {
 		return tools.ToolResult{Content: fmt.Sprintf(`{"error":%q}`, encodeErr.Error())}
 	}
-	return tools.ToolResult{Content: string(encoded)}
+	result := tools.ToolResult{Content: string(encoded)}
+	if observation, ok := value.(collaborationWaitObservation); ok {
+		result.AgentHint = observation.Guidance
+		if observation.Status == "caller_interrupted" {
+			result.Outcome = toolresult.Outcome{State: toolresult.Cancelled, Summary: "The wait was stopped."}
+		} else if observation.Run != nil {
+			switch observation.Run.State {
+			case collaboration.RunFailed, collaboration.RunInterrupted:
+				result.Outcome = toolresult.Outcome{State: toolresult.Succeeded, Code: "observed_run_failed", Summary: observation.Run.Outcome}
+			case collaboration.RunSucceeded:
+				result.Outcome = toolresult.Outcome{State: toolresult.Succeeded, Summary: "Run succeeded"}
+			}
+		}
+	}
+	return result
 }
 
 func collaborationEffect(name string) captypes.Effect {

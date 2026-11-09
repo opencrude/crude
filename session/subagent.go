@@ -33,6 +33,7 @@ import (
 	"crude/tools"
 	ttypes "crude/types"
 	recoverytypes "crude/types/recovery"
+	"crude/types/toolresult"
 	"crude/worktree"
 )
 
@@ -2000,8 +2001,14 @@ func childTerminalPublication(
 	for _, message := range archive {
 		for _, call := range message.ToolCalls {
 			toolNames[call.ID] = call.Function.Name
+			if call.InternalID != "" {
+				toolNames[call.InternalID] = call.Function.Name
+			}
 			if params, err := provider.ToolCallParams(call); err == nil {
 				toolArgs[call.ID] = agent.FormatToolArgs(params)
+				if call.InternalID != "" {
+					toolArgs[call.InternalID] = toolArgs[call.ID]
+				}
 			}
 		}
 	}
@@ -2033,7 +2040,7 @@ func childTerminalPublication(
 		}
 		meta := sessiondb.DisplayMeta{DisplayRole: displayRole}
 		if message.Role == "tool" {
-			meta.ToolName, meta.ToolArgs = toolNames[message.ToolCallID], toolArgs[message.ToolCallID]
+			meta.ToolName, meta.ToolArgs = toolNames[toolResultKey(message)], toolArgs[toolResultKey(message)]
 			if message.ToolError {
 				meta.ToolStatus = "error"
 			} else {
@@ -2045,7 +2052,7 @@ func childTerminalPublication(
 			meta.ProviderID, meta.AccountID, meta.ModelID = turnIdentity.ProviderID, turnIdentity.AccountID, turnIdentity.ModelID
 		}
 		stamp := createdAt.Add(time.Duration(index) * time.Nanosecond)
-		meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[message.ToolCallID], index, stamp)
+		meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[toolResultKey(message)], index, stamp)
 		deltas = append(deltas, contextDelta(message, meta, 1, stamp, agentID))
 	}
 	return canonicalContextMessages(archive), canonicalContextMessages(active), deltas, nil
@@ -2276,12 +2283,13 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 	nativeFn := r.session.buildToolFnAtRoot(false, turnProvider, spec.ModelModalities, root)
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if !agent.PolicyAllows(spec.Policy, tool) {
-			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q", tool, spec.PolicyName)
+			return tools.ToolResult{AgentHint: rootprompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}},
+				fmt.Errorf("policy %q does not allow tool %q", spec.PolicyName, tool)
 		}
 		resolveRelativeParamsAtRoot(root, tool, params)
 		if tool == "apply_patch" {
 			if err := agent.CheckPatchPolicy(spec.Policy, getStrParam(params, "input")); err != nil {
-				return tools.ToolResult{}, err
+				return tools.ToolResult{AgentHint: rootprompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, err
 			}
 		}
 
@@ -2292,12 +2300,14 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 				command = getStrParam(params, "cmd")
 			}
 			if tool == "write_stdin" && getStrParam(params, "chars") != "" {
-				return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] interactive input requires execute permission")
+				return tools.ToolResult{AgentHint: rootprompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}},
+					fmt.Errorf("interactive input requires execute permission")
 			}
 			if command != "" {
 				safetyRes := safety.CheckCommandSafetyWithPolicy(command, r.session.logger, handle.Agent.CommandPolicyFor(tool, params))
 				if safetyRes.Risk != safety.RiskSafe {
-					return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed", command, safetyRes.Risk, safetyRes.Reason)
+					return tools.ToolResult{AgentHint: rootprompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}},
+						fmt.Errorf("read-only execution does not allow this command (risk: %s): %s", safetyRes.Risk, safetyRes.Reason)
 				}
 			}
 		}
@@ -2313,7 +2323,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 					"task":       spec.Description,
 				}, string(spec.ID))
 			}
-			return tools.ToolResult{Content: "Question forwarded to main agent. Continue with your task using available information."}, nil
+			return tools.ToolResult{Content: "Question forwarded to main agent.", AgentHint: rootprompt.HintForwardedQuestion}, nil
 		}
 
 		if isPlanningTool(tool) {
@@ -2330,7 +2340,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			if root != r.session.WorkDir() {
 				if err := validateExecutionWriteTargets(root, privateDir, requested); err != nil {
 					r.notifyParentOfRejectedWrite(ctx, spec, handle, strings.Join(requested, ", "), err.Error())
-					return tools.ToolResult{}, err
+					return tools.ToolResult{AgentHint: rootprompt.HintWriteScope(privateDir), Outcome: toolresult.Outcome{State: toolresult.Denied}}, err
 				}
 			}
 			targets := sharedWriteTargets(requested, privateDir)
@@ -2342,7 +2352,8 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 						if !r.FileOwnership().WriteScopeAllows(spec.ID, target) {
 							scope := r.FileOwnership().WriteClaimsByAgent(spec.ID)
 							r.notifyParentOfRejectedWrite(ctx, spec, handle, target, fmt.Sprintf("outside its file scope (%s)", strings.Join(scope, ", ")))
-							return tools.ToolResult{}, fmt.Errorf("write to %q was rejected: it is outside your file scope (%s). Nothing was changed and your run continues. Work within your scope, use your temporary directory (%s) for scratch files, or ask your parent with agent_send to extend your scope via agent_update_claims", target, strings.Join(scope, ", "), privateDir)
+							return tools.ToolResult{AgentHint: rootprompt.HintWriteScope(privateDir), Outcome: toolresult.Outcome{State: toolresult.Denied}},
+								fmt.Errorf("write to %q was rejected: it is outside your file scope (%s). Nothing was changed and your run continues", target, strings.Join(scope, ", "))
 						}
 					}
 				}
@@ -2375,7 +2386,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 					// Claims are published only after every target has passed the
 					// complete preflight, so a rejected effect leaves no claim behind.
 					r.notifyParentOfRejectedWrite(ctx, spec, handle, strings.Join(targets, ", "), err.Error())
-					return tools.ToolResult{}, fmt.Errorf("write was rejected: %w. Nothing was changed and your run continues. Coordinate with the owning agent or ask your parent with agent_send", err)
+					return tools.ToolResult{AgentHint: rootprompt.HintWriteScope(privateDir), Outcome: toolresult.Outcome{State: toolresult.Denied}}, fmt.Errorf("write was rejected: %w. Nothing was changed and your run continues", err)
 				}
 				releaseWrite, err := r.FileOwnership().BeginWrite(spec.ID, targets)
 				if err != nil {
@@ -2782,7 +2793,7 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 		}
 		info, ok := mgr.Check(handleName)
 		if !ok {
-			return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handleName)}, nil
+			return tools.ToolResult{}, fmt.Errorf("async command %q was not found", handleName)
 		}
 		return tools.ToolResult{Content: FormatCommandStatus(*info)}, nil
 
@@ -2830,15 +2841,16 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 	if !r.session.YoloEnabled() {
 		sr := safety.CheckCommandSafetyWithPolicy(cmd, r.session.logger, a.CommandPolicyFor("execute_command", params))
 		if sr.Risk.IsAlwaysBlocked() {
-			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
+			errMsg := fmt.Sprintf("Command blocked: %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 			r.session.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
-			return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
+			return tools.ToolResult{Content: errMsg, AgentHint: rootprompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, fmt.Errorf("%s", errMsg)
 		}
 		if sr.NeedsConfirmation() {
 			r.session.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
 		}
 		if isReadOnlyExec && sr.Risk != safety.RiskSafe {
-			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Command %q is not safe for read-only execution (risk: %s, reason: %s). Only read-only commands like git status, git diff, git log, ls, cat, etc. are allowed", cmd, sr.Risk, sr.Reason)
+			return tools.ToolResult{AgentHint: rootprompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}},
+				fmt.Errorf("read-only execution does not allow this command (risk: %s): %s", sr.Risk, sr.Reason)
 		}
 	}
 

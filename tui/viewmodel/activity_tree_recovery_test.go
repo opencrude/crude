@@ -259,8 +259,8 @@ func TestActivityTreeCommandClickAndEmptyEnvelopeRecovery(t *testing.T) {
 		return l
 	}
 	rows := check("collapsed")
-	if len(rows[1].LeafToggles) < 8 || strings.Contains(strings.Join(rows[1].Lines, "\n"), "more command lines") || !strings.Contains(strings.Join(rows[1].Lines, "\n"), "omega") {
-		t.Fatalf("command preview missing: %v", rows[1])
+	if len(rows[1].LeafToggles) < 2 || strings.Contains(strings.Join(rows[1].Lines, "\n"), "omega") || !strings.Contains(strings.Join(rows[1].Lines, "\n"), "echo alpha") {
+		t.Fatalf("closed command lost its operand/disclosure or exposed the whole command: %v", rows[1])
 	}
 	th := theme.DefaultDark()
 	screen := shellchat.New(th)

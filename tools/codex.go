@@ -8,6 +8,7 @@ import (
 	"crude/codexio"
 	"crude/diff"
 	"crude/fileio"
+	"crude/prompt"
 )
 
 func ApplyPatchTool() ToolDef {
@@ -114,6 +115,9 @@ func executeApplyPatch(ctx context.Context, params map[string]any, ed *fileio.Ed
 		}
 	}
 	result := ToolResult{}
+	if err != nil {
+		result.AgentHint = prompt.HintVerifyEditContent
+	}
 	for _, change := range changes {
 		kind := "M"
 		if change.Before.Kind == fileio.MutationAbsent {

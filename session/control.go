@@ -12,11 +12,13 @@ import (
 	"slices"
 
 	"crude/agent"
+	"crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
 	captypes "crude/types/capability"
 	"crude/types/control"
+	"crude/types/toolresult"
 )
 
 type controlTargetKey struct{}
@@ -177,14 +179,36 @@ func (s *Session) bindAgentControl(ctx context.Context, live *agent.Agent, targe
 			return tools.ToolResult{}, err
 		}
 		if !controlDescriptorAllowed(live.Policy, descriptor) {
-			return tools.ToolResult{}, errors.New("resolved Crude operation exceeds this agent's effect ceiling or requires human authority")
+			return tools.ToolResult{Outcome: toolresult.Outcome{State: toolresult.Denied}, AgentHint: prompt.HintDenied},
+				errors.New("resolved Crude operation exceeds this agent's effect ceiling or requires human authority")
 		}
 		result, err := runtime.Execute(callCtx, request)
 		if result.RequestID == "" && err != nil {
 			return tools.ToolResult{}, err
 		}
 		encoded, encodeErr := json.Marshal(result)
-		return tools.ToolResult{Content: string(encoded)}, errors.Join(err, encodeErr)
+		out := tools.ToolResult{Content: string(encoded)}
+		if result.Fault != nil {
+			state := toolresult.Failed
+			if result.Fault.Code == control.Denied {
+				state = toolresult.Denied
+			}
+			if result.State == control.Uncertain {
+				state = toolresult.Uncertain
+			}
+			summary := result.Fault.Message
+			if result.State == control.Partial {
+				summary = "Some changes were applied. Check the details."
+			}
+			out.Outcome = toolresult.Outcome{State: state, Summary: summary}
+		}
+		if result.State == control.Uncertain {
+			out.Outcome.State = toolresult.Uncertain
+			out.AgentHint = prompt.HintUncertain
+		} else if out.Outcome.State == toolresult.Denied {
+			out.AgentHint = prompt.HintDenied
+		}
+		return out, errors.Join(err, encodeErr)
 	}
 	_ = ctx // Lifetime is carried by call contexts and exact runtime run checks.
 }

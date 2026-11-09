@@ -9,7 +9,7 @@ import (
 	"crude/types"
 )
 
-func TestStructuredPreviewIsUsefulAndFullDisclosureRetainsLongUnicodeText(t *testing.T) {
+func TestStructuredResultsStayClosedAndFullDisclosureRetainsLongUnicodeText(t *testing.T) {
 	body := strings.Repeat("Retained evidence 👩‍💻 中文 é with complete findings. ", 40) + "final-evidence-token"
 	msg := types.ChatMessage{Role: types.RoleTool, ToolName: "recall_memory", ToolStatus: "success", ToolPreviewPhase: "done",
 		Content: `{"results":[{"id":"m1","revision":7,"title":"Evidence","content":"` + body + `"}]}`}
@@ -17,8 +17,8 @@ func TestStructuredPreviewIsUsefulAndFullDisclosureRetainsLongUnicodeText(t *tes
 		compact := renderToolMessageLines(msg, theme.DefaultDark(), width, width, width, 0, 24, "done", DisclosureCollapsed)
 		full := renderToolMessageLines(msg, theme.DefaultDark(), width, width, width, 0, 24, "done", DisclosureExpanded)
 		text := strings.Join(compact.lines, "\n")
-		if !strings.Contains(text, "Retained") || strings.Contains(text, "…") || !strings.Contains(strings.ReplaceAll(text, "\n│   ", " "), "Expand for full text") {
-			t.Fatalf("compact evidence is useless at %d: %s", width, text)
+		if strings.Contains(text, "Retained evidence") || strings.Contains(text, "final-evidence-token") || !strings.Contains(text, "▸") {
+			t.Fatalf("closed result exposed its body or lost disclosure at %d: %s", width, text)
 		}
 		if !strings.Contains(strings.Join(full.lines, ""), "final-evidence-token") && width >= 32 {
 			t.Fatalf("expanded evidence was clipped at %d", width)

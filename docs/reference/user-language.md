@@ -83,3 +83,13 @@ show two different stories.
 - Is the text no longer than needed? Remove words that do not change the
   meaning.
 - Is the same state shown with the same words on every surface?
+
+## Settled result words
+
+Use **denied** for a refused operation, **Stopped** for cancellation, **Not run**
+when execution did not start, and **outcome unknown** when effects cannot be
+verified. A timeout is not a human cancellation. A successful status query can
+report a failed process or run; show the observed failure without claiming the
+query itself failed. Keep the short factual reason in the closed row and full
+evidence behind its single disclosure control. Model repair advice is not UI
+text, even when it has no “Hint:” prefix.

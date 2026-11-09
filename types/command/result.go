@@ -35,6 +35,7 @@ type Page struct {
 // keep process facts separate from captured bytes and model-facing retrieval
 // guidance. The original result is retained in the conversation audit log.
 type Result struct {
+	ExecutionID        string           `json:"execution_id,omitempty"`
 	Command            string           `json:"command,omitempty"`
 	CWD                string           `json:"cwd,omitempty"`
 	PID                int              `json:"pid,omitempty"`
@@ -46,6 +47,8 @@ type Result struct {
 	Page               *Page            `json:"page,omitempty"`
 	Error              string           `json:"error,omitempty"`
 	Cancelled          bool             `json:"cancelled,omitempty"`
+	TimedOut           bool             `json:"timed_out,omitempty"`
+	Uncertain          bool             `json:"uncertain,omitempty"`
 	Retrieval          string           `json:"retrieval,omitempty"`
 	OutputEncoding     string           `json:"output_encoding,omitempty"`
 	Output             string           `json:"output"`

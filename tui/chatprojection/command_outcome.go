@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	toolargs "crude/tools"
 	"crude/tui/rendering"
 	"crude/tui/tools"
 	"crude/tui/ui"
@@ -21,10 +22,14 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 	info := msg.Collaboration.Command
 	if info != nil {
 		title.Action, title.Operand = "Completed command", info.Handle
-		if info.Status == "failed" || info.ExitKnown && info.ExitCode != 0 {
+		if info.Uncertain {
+			title.Action, title.Warning, status = "Command outcome unknown", true, types.ToolStatusError
+		} else if info.TimedOut {
+			title.Action, title.Failed, status = "Command timed out", true, types.ToolStatusError
+		} else if info.Status == "failed" || info.ExitKnown && info.ExitCode != 0 {
 			title.Action, title.Failed, status = "Command failed", true, types.ToolStatusError
 		} else if info.Status == "killed" {
-			title.Action, title.Failed, status = "Command timed out", true, types.ToolStatusError
+			title.Action, status = "Command stopped", types.ToolStatusCancelled
 		}
 		if info.ExitKnown && info.ExitCode != 0 {
 			title.Metadata = fmt.Sprintf("(exit %d)", info.ExitCode)
@@ -38,9 +43,14 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 	if ctx.disclosure == DisclosureExpanded {
 		glyph = " ▾"
 	}
-	header.Spans = append(header.Spans, RowSpan{Text: glyph, Role: ui.ColorMuted})
+	suffix := []RowSpan{{Text: glyph, Role: ui.ColorMuted}}
 	var out messageLines
-	for _, line := range wrapToolTitle(header, ctx.innerW) {
+	lines := wrapCompactToolTitle(header, ctx.innerW, suffix)
+	if ctx.disclosure == DisclosureExpanded {
+		header.Spans = append(header.Spans, suffix...)
+		lines = wrapToolTitle(header, ctx.innerW)
+	}
+	for _, line := range lines {
 		out.lines = append(out.lines, line.PlainText())
 		out.native = append(out.native, line)
 	}
@@ -52,6 +62,14 @@ func renderCommandOutcome(msg types.ChatMessage, ctx renderContext) messageLines
 		// into guessed status/command facts or painted as an oversized peer card.
 		out.appendPlainToolBody("execute_command", msg.Content, ctx.innerW, ctx.height, false, true)
 		return out
+	}
+	if msg.ToolName != "" {
+		if initial, ok := toolargs.ParseCommandResult(msg.ToolName, msg.Content); ok {
+			out.appendPlainToolBody("execute_command", "Initial result:\n"+tools.CommandMetadata(initial), ctx.innerW, ctx.height, false, true)
+			if output := tools.CommandOutput(initial); output != "" {
+				out.appendPlainToolBody("execute_command", output, ctx.innerW, ctx.height, false, true)
+			}
+		}
 	}
 	text := fmt.Sprintf("Command: %s\nHandle: %s\nStatus: %s\nPID: %d\nCaptured output: %s",
 		info.Command, info.Handle, info.Status, info.PID, rendering.FormatBytes(int64(info.OutputBytes)))

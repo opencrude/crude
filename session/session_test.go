@@ -15,6 +15,7 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/types"
+	"crude/types/toolresult"
 )
 
 func TestSanitizeMessages_CleanTail(t *testing.T) {
@@ -87,6 +88,7 @@ func TestPersistedToolStatusDoesNotMislabelValidationErrorAsCancelled(t *testing
 	}
 	cancelled := provider.ChatMessage{
 		Role: "tool", Content: provider.TextContent("[cancelled] operation cancelled"), ToolError: true,
+		ToolOutcome: &toolresult.Outcome{State: toolresult.Cancelled},
 	}
 	if got := persistedToolStatus(cancelled, ""); got != "cancelled" {
 		t.Fatalf("cancellation status = %q, want cancelled", got)
@@ -95,9 +97,9 @@ func TestPersistedToolStatusDoesNotMislabelValidationErrorAsCancelled(t *testing
 
 func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 	tracker := &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}
-	tracker.updateToolCall("call-1", "agent_start", "description: inspect wait: true")
+	tracker.updateToolCall("call-1", "", "agent_start", "description: inspect wait: true")
 	result := `{"session_id":"child-session","agent_id":"child-1","status":"completed"}`
-	tracker.updateToolResult("call-1", "agent_start", result, "success", 1500, 42, 3, 1)
+	tracker.updateToolResult("call-1", "", "agent_start", result, "success", 1500, 42, 3, 1)
 	message := provider.NewTextMessage("tool", result)
 	message.ToolCallID = "call-1"
 	tracked := tracker.get("call-1")
@@ -130,7 +132,7 @@ func TestReplyToolResultBecomesDurableProgressBoundary(t *testing.T) {
 		t.Fatalf("reply tool result lost its durable identity: %+v", clean)
 	}
 	tracker := &displayMetaTracker{metas: map[string]*sessiondb.DisplayMeta{}}
-	tracker.updateToolCall(call.ID, "reply", `content: "Checking tests."`)
+	tracker.updateToolCall(call.ID, "", "reply", `content: "Checking tests."`)
 	meta := canonicalizeDisplayMeta(clean[2], tracker.get(call.ID), call.Function.Arguments, 2, time.Unix(10, 0))
 	if len(meta.Snapshots) != 1 || meta.Snapshots[0].Role != "assistant" || meta.Snapshots[0].Content != "Checking tests." || meta.Snapshots[0].InternalID != "reply:progress-1" {
 		t.Fatalf("reply recovery snapshot = %+v", meta.Snapshots)

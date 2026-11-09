@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"crude/collaboration"
 	"crude/fileio"
@@ -28,7 +27,7 @@ func (s *Session) observeCommandOutcomes(manager *fileio.AsyncCommandManager, ag
 // whoever stopped the command already knows, and a human Terminate must not
 // restart autonomous work. Completion, failure and timeout are reported.
 func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo) {
-	if info.Status == fileio.AsyncRunning || info.Status == fileio.AsyncKilled && info.Error == "killed" {
+	if info.Status == fileio.AsyncRunning || info.Status == fileio.AsyncKilled && !info.TimedOut && !info.Uncertain {
 		return
 	}
 	if atomic.LoadInt32(&s.closing) != 0 {
@@ -38,12 +37,7 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 	if store == nil {
 		return
 	}
-	commandText := []rune(info.Command)
-	if len(commandText) > 300 {
-		commandText = append(commandText[:300], '…')
-	}
-	body := fmt.Sprintf("Background command %q settled after %s: %s\nCommand: %s",
-		info.Handle, info.Duration.Round(time.Second), FormatCommandStatus(info), string(commandText))
+	body := fmt.Sprintf("Background command %q settled.\n%s", info.Handle, FormatCommandStatus(info))
 	_, err := store.Publish(context.Background(), collaboration.PublishRequest{
 		SenderID: agentID, SenderName: "Background command " + info.Handle,
 		IdempotencyKey: fmt.Sprintf("command-outcome:%s:%s:%d:%d", agentID, info.Handle, info.PID, info.StartedAt.UnixNano()),
@@ -55,6 +49,7 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 			StartedAt: info.StartedAt, EndedAt: info.EndedAt, Duration: info.Duration,
 			ExitCode: info.ExitCode, ExitKnown: info.Status == fileio.AsyncCompleted || info.Status == fileio.AsyncFailed,
 			OutputBytes: info.OutputBytes, Error: info.Error,
+			TimedOut: info.TimedOut, Uncertain: info.Uncertain,
 			Output: info.SettledOutput,
 		},
 	})

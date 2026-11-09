@@ -45,7 +45,7 @@ func CheckPatchPolicy(policy safety.Policy, input string) error {
 			capability = safety.OpDelete
 		}
 		if !policy.IsAllowed(capability) {
-			return fmt.Errorf("[POLICY BLOCK] patch operation %s is not allowed", op.Kind)
+			return fmt.Errorf("policy does not allow patch operation %s", op.Kind)
 		}
 	}
 	return nil

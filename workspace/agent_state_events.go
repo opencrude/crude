@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"crude/tools"
+	"crude/types/toolresult"
 )
 
 func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversation, effects *AgentEffects) {
@@ -248,13 +249,18 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, effe
 		result, _ := data["result"].(string)
 		errFlag, _ := data["error"].(string)
 		isError := errFlag == "true"
+		outcome, _ := data["outcome"].(toolresult.Outcome)
 		if name == "reply" {
 			if result != "" {
 				role := MessageRoleAssistant
 				if isError {
 					role = MessageRoleError
 				}
-				target.AppendMessage(Message{InternalID: "reply:" + toolID, Role: role,
+				replyID := internalID
+				if replyID == "" {
+					replyID = toolID
+				}
+				target.AppendMessage(Message{InternalID: "reply:" + replyID, Role: role,
 					Content: SanitizeForTerminal(result), Time: time.Now(),
 					TurnGeneration: target.turnIdentity.Generation, AccountID: target.turnIdentity.AccountID,
 					ProviderID: target.turnIdentity.ProviderID, ModelID: target.turnIdentity.ModelID})
@@ -262,7 +268,7 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, effe
 			return
 		}
 		if !target.HasToolMessage(toolID, internalID) && result != "" {
-			target.AppendMessage(Message{InternalID: "tool-result:" + internalID, Role: MessageRoleTool,
+			target.AppendMessage(Message{InternalID: internalID, Role: MessageRoleTool,
 				ToolID: toolID, ToolName: name, Content: SanitizeForTerminal(result), Time: time.Now(),
 				TurnGeneration: target.turnIdentity.Generation, AccountID: target.turnIdentity.AccountID,
 				ProviderID: target.turnIdentity.ProviderID, ModelID: target.turnIdentity.ModelID})
@@ -275,7 +281,15 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, effe
 		} else {
 			effects.setStatus(toolOperationStatus(name, "done"))
 		}
+		if message := target.findTool(internalID, toolID); message != nil {
+			message.ToolOutcome = outcome
+		}
 		target.UpdateToolResult(toolID, internalID, name, result, isError, int(estTokens), int(linesAdded), int(linesRemoved))
+		if duration, present := data["tool_dur_ms"]; present {
+			if message := target.findTool(internalID, toolID); message != nil {
+				message.ToolDuration = time.Duration(toInt(duration)) * time.Millisecond
+			}
+		}
 		if interrupted, _ := data["interrupted"].(bool); interrupted {
 			target.MarkToolNotExecuted(toolID, internalID)
 			effects.setStatus("Reconnecting before running tool")

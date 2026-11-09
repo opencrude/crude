@@ -70,7 +70,7 @@ func TestToolPanicContinuesSupervisedRunWithoutIncident(t *testing.T) {
 				t.Fatalf("tool panic opened a recovery incident: %+v", status)
 			default:
 			}
-			if text := <-sawError; !strings.Contains(text, "panicked") || !strings.Contains(text, "effects are uncertain") {
+			if text := <-sawError; !strings.Contains(text, "panicked") || !strings.Contains(text, "Do not replay an operation that may have committed") {
 				t.Fatalf("model did not receive the uncertain-effect tool error: %q", text)
 			}
 		})

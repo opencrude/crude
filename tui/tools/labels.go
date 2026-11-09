@@ -8,6 +8,7 @@ import (
 	"crude/tui/rendering"
 	"crude/types"
 	"crude/types/command"
+	"crude/types/toolresult"
 )
 
 // ToolTitle keeps presentation roles separate from their text. Consumers must
@@ -15,6 +16,7 @@ import (
 type ToolTitle struct {
 	Action, Operand, Metadata string
 	Failed                    bool
+	Warning                   bool
 }
 
 func (t ToolTitle) Text() string {
@@ -152,10 +154,24 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		if ccrude.IsCommandTool(msg.ToolName) {
 			action = "Command stopped"
 		}
-		return ToolTitle{Action: action, Operand: target, Metadata: duration}
+		return ToolTitle{Action: action, Operand: target, Metadata: resultMetadata(duration, msg.ToolOutcome.Summary)}
 	}
 	if msg.ToolStatus == "interrupted" {
-		return ToolTitle{Action: "Not run · " + strings.ToLower(rendering.PascalCaseTool(msg.ToolName)), Operand: target}
+		return ToolTitle{Action: "Not run · " + strings.ToLower(rendering.PascalCaseTool(msg.ToolName)), Operand: target, Metadata: msg.ToolOutcome.Summary}
+	}
+	if msg.ToolOutcome.State == toolresult.Denied || msg.ToolOutcome.State == toolresult.Uncertain {
+		name := rendering.PascalCaseTool(msg.ToolName)
+		if ccrude.IsCommandTool(msg.ToolName) {
+			name = "Command"
+		}
+		action := name + " denied"
+		if msg.ToolOutcome.State == toolresult.Uncertain {
+			action = name + " outcome unknown"
+		}
+		return ToolTitle{Action: action, Operand: target, Metadata: resultMetadata(duration, msg.ToolOutcome.Summary), Warning: true}
+	}
+	if msg.ToolOutcome.Code == "observed_run_failed" {
+		return ToolTitle{Action: "Agent run failed", Operand: target, Metadata: resultMetadata(duration, msg.ToolOutcome.Summary), Failed: true}
 	}
 	// A renderer's ambient phase is not evidence that this tool failed.
 	failed := msg.ToolStatus == types.ToolStatusError || msg.ToolPreviewPhase == types.ToolPreviewError && msg.ToolStatus != types.ToolStatusSuccess
@@ -165,7 +181,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			return ToolTitle{Action: "Agent run failed", Operand: target, Metadata: outcome.summary, Failed: true}
 		}
 	}
-	if result, ok := ccrude.ParseCommandResult(msg.ToolName, types.StripToolHint(msg.Content)); ok && (msg.ToolStatus == types.ToolStatusSuccess || failed) {
+	if result, ok := ccrude.ParseCommandResult(msg.ToolName, msg.Content); ok && (msg.ToolStatus == types.ToolStatusSuccess || failed) {
 		if result.Command != "" {
 			target = strings.ReplaceAll(result.Command, "\n", " ")
 		}
@@ -182,9 +198,12 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		}
 		if result.Failed() {
 			title.Action = "Command failed"
+			if result.TimedOut {
+				title.Action = "Command timed out"
+			}
 			title.Failed = true
 		} else if failed {
-			return errorTitle(msg.ToolName, target, duration, ToolErrorReason(msg.ToolName, msg.Content))
+			return errorTitle(msg.ToolName, target, duration, resultReason(msg))
 		} else if result.OutputDescriptor.Status == command.Running && (msg.ToolName == "exec_command" || msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") {
 			title.Action = "Started"
 		}
@@ -192,7 +211,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		return title
 	}
 	if failed {
-		return errorTitle(msg.ToolName, target, duration, ToolErrorReason(msg.ToolName, msg.Content))
+		return errorTitle(msg.ToolName, target, duration, resultReason(msg))
 	}
 	stage := 1
 	if phase == types.ToolPreviewPreparing {
@@ -215,11 +234,17 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	title := ToolTitle{Action: verbs[stage], Operand: target}
 	if stage == 2 {
 		title.Metadata = duration
+		if msg.ToolOutcome.Summary != "" {
+			title.Metadata = resultMetadata(duration, msg.ToolOutcome.Summary)
+		}
 		if IsStructuredTool(msg.ToolName) {
 			summary := BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput).Summary
 			if summary != "" {
 				title.Metadata = strings.TrimSpace("— " + summary + " " + duration)
 			}
+		}
+		if msg.ToolOutcome.Summary != "" {
+			title.Metadata = resultMetadata(duration, msg.ToolOutcome.Summary)
 		}
 	}
 	if stage == 0 && target != "" {
@@ -251,6 +276,23 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		}
 	}
 	return title
+}
+
+func resultMetadata(duration, reason string) string {
+	if reason == "" {
+		return duration
+	}
+	return strings.TrimSpace(duration + " · " + CollapseLine(reason))
+}
+
+func resultReason(message types.ChatMessage) string {
+	if message.ToolOutcome.Summary != "" {
+		return CollapseLine(message.ToolOutcome.Summary)
+	}
+	if reason := ToolErrorReason(message.ToolName, message.Content); reason != "" {
+		return reason
+	}
+	return ccrude.ResultReason(message.Content)
 }
 
 func isCollaborationOperation(name string) bool {

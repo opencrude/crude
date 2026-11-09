@@ -44,6 +44,8 @@ type AsyncCmdInfo struct {
 	Duration  time.Duration
 	ExitCode  int
 	Error     string
+	TimedOut  bool
+	Uncertain bool
 	// OutputBytes is the complete number of raw stdout+stderr bytes retained
 	// under Handle at the instant this snapshot was taken.
 	OutputBytes int
@@ -174,10 +176,12 @@ func (st *asyncCmdState) finishOutcome(ctxErr, waitErr error) {
 			return
 		case context.DeadlineExceeded:
 			st.info.Status, st.info.Error = AsyncKilled, "timed out"
+			st.info.TimedOut = true
 			return
 		}
 	}
 	st.info.Status, st.info.Error = AsyncFailed, waitErr.Error()
+	st.info.Uncertain = unverified != nil
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
 		st.info.ExitCode = exitErr.ExitCode()
@@ -294,7 +298,8 @@ func (state *asyncCmdState) outputExcerpt(info AsyncCmdInfo) command.Result {
 	} else {
 		output = string(raw)
 	}
-	result := command.Result{Command: info.Command, CWD: info.CWD, PID: info.PID, WallTimeSeconds: info.Duration.Seconds(), Error: info.Error, OutputDescriptor: d, Output: output}
+	result := command.Result{ExecutionID: command.ExecutionID(info.PID, info.StartedAt), Command: info.Command, CWD: info.CWD, PID: info.PID, WallTimeSeconds: info.Duration.Seconds(), Error: info.Error, OutputDescriptor: d, Output: output, TimedOut: info.TimedOut, Uncertain: info.Uncertain}
+	result.Cancelled = info.Status == AsyncKilled && !info.TimedOut
 	if info.Status == AsyncCompleted || info.Status == AsyncFailed {
 		code := info.ExitCode
 		result.ExitCode = &code

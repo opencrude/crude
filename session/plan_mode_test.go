@@ -139,7 +139,7 @@ func TestPlanModeRefusesMutationsAtExecution(t *testing.T) {
 		if (err != nil) != test.refused {
 			t.Errorf("%s %v: refusal = %v, want refused %v", test.tool, test.params, err, test.refused)
 		}
-		if err != nil && !strings.Contains(err.Error(), "[PLAN MODE]") {
+		if err != nil && !strings.Contains(err.Error(), "plan mode") {
 			t.Errorf("%s refusal does not name Plan mode: %v", test.tool, err)
 		}
 	}

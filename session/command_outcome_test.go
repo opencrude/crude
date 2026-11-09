@@ -34,7 +34,7 @@ func TestSettledBackgroundCommandIsDeliveredToItsOwner(t *testing.T) {
 	event := pending[0].Event
 	if event.Origin != collaboration.OriginRuntime || event.Kind != collaboration.EventCommandOutcome ||
 		!strings.Contains(event.Body, `"mcp_prepare"`) || !strings.Contains(event.Body, `"exit_code":254`) ||
-		!strings.Contains(event.Body, "read_async_output") || !strings.Contains(event.Body, "47s") {
+		!strings.Contains(event.Body, "read_async_output") || !strings.Contains(event.Body, `"wall_time_seconds":47`) {
 		t.Fatalf("command outcome event = %+v", event)
 	}
 	if event.Command == nil || event.Command.Handle != "mcp_prepare" || event.Command.ExitCode != 254 || !event.Command.ExitKnown || event.Command.OutputBytes != 120 {
@@ -82,5 +82,25 @@ func TestControlHeavyCommandOutputFitsDurableOutcome(t *testing.T) {
 	}
 	if got := page.Events[0].Command.Output; got.Output != raw || got.OutputEncoding != "" {
 		t.Fatal("journal changed or unnecessarily encoded UTF-8 stdout evidence")
+	}
+}
+
+func TestBackgroundDeliveryUsesStopFactsNotDiagnosticWords(t *testing.T) {
+	s, store, _, child := collaborationContractFixture(t)
+	started := time.Now()
+	for _, info := range []fileio.AsyncCmdInfo{
+		{Handle: "stopped", PID: 44, Status: fileio.AsyncKilled, Error: "timed out", StartedAt: started},
+		{Handle: "deadline", PID: 45, Status: fileio.AsyncKilled, TimedOut: true, Error: "killed", StartedAt: started},
+		{Handle: "unverified", PID: 46, Status: fileio.AsyncFailed, Uncertain: true, Error: "cancelled", StartedAt: started},
+	} {
+		s.publishCommandOutcome(child.ID, info)
+	}
+	page, err := store.Page(t.Context(), collaboration.PageQuery{RecipientID: child.ID})
+	if err != nil || len(page.Events) != 2 {
+		t.Fatalf("stop wording changed journal delivery: %+v %v", page, err)
+	}
+	if page.Events[0].Command == nil || !page.Events[0].Command.TimedOut ||
+		page.Events[1].Command == nil || !page.Events[1].Command.Uncertain {
+		t.Fatal("journal lost timeout or uncertainty facts")
 	}
 }

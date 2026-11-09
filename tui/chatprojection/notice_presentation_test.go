@@ -26,6 +26,26 @@ func TestErrorAndYoloNoticesShareReadableBoundedRows(t *testing.T) {
 			} {
 				test.message.Time = time.Now()
 				rows := renderMessageContent(test.message, ctx, false)
+				if test.message.Role == types.RoleError {
+					expandedCtx := ctx
+					expandedCtx.disclosure = DisclosureExpanded
+					rows = renderMessageContent(test.message, expandedCtx, false)
+					for _, row := range rows.native {
+						if row.VisibleWidth() > width {
+							t.Fatal("expanded error overflowed terminal")
+						}
+						for _, span := range row.Spans {
+							if span.Role != ui.ColorError && span.Role != ui.ColorMuted {
+								t.Fatalf("error left shared ink: %+v", span)
+							}
+						}
+					}
+					compact := func(text string) string { return strings.Join(strings.Fields(strings.ReplaceAll(text, "│", "")), "") }
+					if !strings.Contains(compact(strings.Join(rows.lines, "")), compact(test.message.Content)) {
+						t.Fatalf("expanded error lost evidence: %+v", rows.lines)
+					}
+					continue
+				}
 				if len(rows.native) < 2 || rows.frameSensitive || rows.native[0].Spans[0].Role != test.role || rows.native[0].Spans[0].Attr != cell.AttrBold {
 					t.Fatalf("notice lost its static severity heading: %+v", rows)
 				}

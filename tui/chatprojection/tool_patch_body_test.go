@@ -40,8 +40,7 @@ func TestNoChangeEditFailureRendersOneRedRow(t *testing.T) {
 	msg := types.ChatMessage{
 		Role: types.RoleTool, ToolName: "edit_file", ToolStatus: types.ToolStatusError,
 		ToolPreviewPhase: types.ToolPreviewError, ToolArgs: "tools/dispatcher.go",
-		Content: "Error: no changes to make: old_string and new_string are exactly the same\n" +
-			"Hint: match the file's current bytes exactly — read_file the section first.",
+		Content: "Error: no changes to make: old_string and new_string are exactly the same",
 	}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 96, 98, 100, 0, 20, "error", DisclosureCollapsed)
 	if len(ml.lines) > 2 {
@@ -63,20 +62,20 @@ func TestNoChangeEditFailureRendersOneRedRow(t *testing.T) {
 	}
 }
 
-// A failed read names the missing path; the hint that lists nearby entries
-// for the model's retry never reaches the row, collapsed or expanded.
-func TestFailedReadNeverShowsTheModelHint(t *testing.T) {
+// A literal "Hint:" inside source or remote evidence is not an agent hint.
+// Native repair hints are separated at the producer (covered by the real
+// session failure journey); presentation must not guess from this wording.
+func TestLiteralHintTextInEvidenceRemainsReadable(t *testing.T) {
 	msg := types.ChatMessage{
 		Role: types.RoleTool, ToolName: "read_file", ToolStatus: types.ToolStatusError,
 		ToolPreviewPhase: types.ToolPreviewError, ToolArgs: "tui/ui/window_frame_widget.go",
-		Content: "Error: read raw tui/ui/window_frame_widget.go: file does not exist" + types.ToolHintSeparator +
-			"file not found. Entries in tui/ui (closest first): window_frame.go, window_frame_widget_test.go",
+		Content: "Error: read raw tui/ui/window_frame_widget.go: file does not exist\n\nHint: literal evidence from the source",
 	}
 	for _, disclosure := range []DisclosureState{DisclosureCollapsed, DisclosureExpanded} {
 		ml := renderToolMessageLines(msg, theme.DefaultDark(), 140, 140, 140, 0, 20, "error", disclosure)
 		joined := strings.Join(ml.lines, "\n")
-		if strings.Contains(joined, "Hint") || strings.Contains(joined, "closest first") {
-			t.Fatalf("model hint reached the row:\n%s", joined)
+		if strings.Contains(joined, "Hint: literal evidence") != (disclosure == DisclosureExpanded) {
+			t.Fatalf("literal evidence was lost or exposed before expansion:\n%s", joined)
 		}
 		if !strings.Contains(joined, "file does not exist") {
 			t.Fatalf("failure reason missing:\n%s", joined)

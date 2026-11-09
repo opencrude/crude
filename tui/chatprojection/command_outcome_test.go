@@ -26,6 +26,7 @@ func TestCommandOutcomesStayCompactStaticAndHydrateIdentically(t *testing.T) {
 					info.ExitCode, info.Error = 7, "compiler failed"
 				case "killed":
 					info.Error = "timed out"
+					info.TimedOut = true
 				}
 				message := types.ChatMessage{InternalID: "outcome", Role: types.RoleUser, Origin: provider.OriginPeer,
 					Content: "runtime instructions for read_async_output; do not rerun the command", Collaboration: &provider.CollaborationAttribution{

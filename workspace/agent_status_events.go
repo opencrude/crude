@@ -248,7 +248,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 			center.Notify(ttypes.NotificationRecord{
 				DedupKey: "agent-recovery:" + status.ID, Owner: snapshot.Ref,
 				Severity: ttypes.SeverityWarning, Source: "recovery",
-				Summary: snapshot.Label + " needs attention", Detail: status.Detail + "\n" + status.Action,
+				Summary: snapshot.Label + " needs attention", Detail: "Open the agent transcript for the reason and run controls.",
 				Actions: actions,
 			})
 		}
@@ -311,7 +311,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		})
 		center.Notify(ttypes.NotificationRecord{
 			DedupKey: "agent-failure:" + evt.AgentID, Owner: snapshot.Ref,
-			Severity: ttypes.SeverityError, Source: "agent", Summary: snapshot.Label + " failed", Detail: detail,
+			Severity: ttypes.SeverityError, Source: "agent", Summary: snapshot.Label + " failed", Detail: "Open the agent transcript for details.",
 			Actions: []ttypes.StatusAction{{ID: "status.switch", Label: "Inspect agent", Enabled: true}},
 		})
 	}

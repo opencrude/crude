@@ -30,6 +30,7 @@ import (
 	"crude/types/attachment"
 	captypes "crude/types/capability"
 	recoverytypes "crude/types/recovery"
+	"crude/types/toolresult"
 	"crude/worktree"
 )
 
@@ -944,7 +945,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.ToolFn = func(toolCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if planMode {
 			if err := planModeRefusal(tool, params, ag.ToolMetadata, s.logger, s.agentShell().Syntax); err != nil {
-				return tools.ToolResult{}, err
+				return tools.ToolResult{AgentHint: rootprompt.HintPlanMode, Outcome: toolresult.Outcome{State: toolresult.Denied}}, err
 			}
 		}
 		return baseToolFn(withDelegationOwner(toolCtx, o.ID, turnGeneration), tool, params)
@@ -1445,19 +1446,20 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 	case "tool_call_streaming", "tool_call":
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
+			internalID, _ := data["internal_id"].(string)
 			name, _ := data["name"].(string)
 			if name != "" && toolID != "" {
 				args, _ := data["args"].(string)
-				tracker.updateToolCall(toolID, name, args)
+				tracker.updateToolCall(toolID, internalID, name, args)
 				if round, _ := data["request_id"].(string); round != "" {
-					ensureToolSnapshot(tracker.metas[toolID]).ToolRoundID = round
+					ensureToolSnapshot(tracker.metas[toolCallKey(toolID, internalID)]).ToolRoundID = round
 				}
 				label, _ := data["target"].(string)
 				if label == "" {
 					label, _ = data["path"].(string)
 				}
 				if label != "" {
-					tracker.updateToolProgress(toolID, name, "streaming", "", label,
+					tracker.updateToolProgress(toolID, internalID, name, "streaming", "", label,
 						eventInt(data["content_lines_int"]), 0, eventInt(data["est_tokens_int"]))
 				}
 			}
@@ -1465,6 +1467,7 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 	case "tool_result":
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
+			internalID, _ := data["internal_id"].(string)
 			if toolID != "" {
 				name, _ := data["name"].(string)
 				result, _ := data["result"].(string)
@@ -1473,13 +1476,19 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 				if errFlag == "true" {
 					status = "error"
 				}
-				tracker.updateToolResult(toolID, name, result, status, int64(eventInt(data["tool_dur_ms"])),
+				tracker.updateToolResult(toolID, internalID, name, result, status, int64(eventInt(data["tool_dur_ms"])),
 					eventInt(data["tool_est_tokens"]), eventInt(data["lines_added"]), eventInt(data["lines_removed"]))
+				snapshot := ensureToolSnapshot(tracker.metas[toolCallKey(toolID, internalID)])
+				snapshot.ToolOutcome = toolOutcomeFromEvent(data)
+				snapshot.ToolStatus = snapshot.ToolOutcome.Status(errFlag == "true")
+				snapshot.ToolPreviewPhase = snapshot.ToolOutcome.PreviewPhase(errFlag == "true")
+				tracker.metas[toolCallKey(toolID, internalID)].ToolStatus = snapshot.ToolStatus
 			}
 		}
 	case "tool_progress":
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
+			internalID, _ := data["internal_id"].(string)
 			if toolID == "" {
 				return
 			}
@@ -1487,7 +1496,7 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 			phase, _ := data["phase"].(string)
 			detail, _ := data["detail"].(string)
 			label, _ := data["path"].(string)
-			tracker.updateToolProgress(toolID, name, phase, detail, label,
+			tracker.updateToolProgress(toolID, internalID, name, phase, detail, label,
 				eventInt(data["lines_added"]), eventInt(data["lines_removed"]), eventInt(data["tool_est_tokens"]))
 		}
 	case "blocking_auto":
@@ -1509,9 +1518,10 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 	case "permission_resolved":
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
+			internalID, _ := data["internal_id"].(string)
 			tool, _ := data["tool"].(string)
 			decision, _ := data["decision"].(string)
-			tracker.setPermTag(toolID, tool, decision)
+			tracker.setPermTag(toolID, internalID, tool, decision)
 		}
 	}
 }
@@ -1613,6 +1623,9 @@ func (s *Session) finalizeTurnLocked(
 	for _, earlier := range returned {
 		for _, call := range earlier.ToolCalls {
 			toolNames[call.ID] = call.Function.Name
+			if call.InternalID != "" {
+				toolNames[call.InternalID] = call.Function.Name
+			}
 		}
 	}
 
@@ -1639,8 +1652,8 @@ func (s *Session) finalizeTurnLocked(
 		}
 		switch m.Role {
 		case "tool":
-			dm = tracker.get(m.ToolCallID)
-			if name := toolNames[m.ToolCallID]; name != "" {
+			dm = tracker.get(toolResultKey(m))
+			if name := toolNames[toolResultKey(m)]; name != "" {
 				dm.ToolName = name
 			}
 			dm.ToolStatus = persistedToolStatus(m, dm.ToolStatus)
@@ -1669,7 +1682,7 @@ func (s *Session) finalizeTurnLocked(
 			dm.ModelID = turnIdentity.ModelID
 		}
 		if m.Role != "system" {
-			dm = canonicalizeDisplayMeta(m, dm, rawToolArgs[m.ToolCallID], len(s.msgs)+i, createdAt)
+			dm = canonicalizeDisplayMeta(m, dm, rawToolArgs[toolResultKey(m)], len(s.msgs)+i, createdAt)
 		}
 		additionMetas = append(additionMetas, dm)
 		additionCreated = append(additionCreated, createdAt)
@@ -1784,16 +1797,16 @@ func contextCheckpointContent(messages []provider.ChatMessage) string {
 }
 
 func persistedToolStatus(message provider.ChatMessage, current string) string {
+	if message.ToolOutcome != nil && message.ToolOutcome.State != "" {
+		return message.ToolOutcome.Status(message.ToolError)
+	}
 	if !message.ToolError {
+		if current == "calling" || current == "streaming" {
+			return "success"
+		}
 		return current
 	}
-	if strings.Contains(strings.ToLower(message.ContentString()), "cancelled") {
-		return "cancelled"
-	}
-	if current == "" {
-		return "error"
-	}
-	return current
+	return "error"
 }
 
 // messagesForTurnLocked snapshots this turn's messages. Caller holds msgsMu.

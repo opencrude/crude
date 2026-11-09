@@ -57,6 +57,11 @@ partial-round checkpoint and retain it at final publication. An unfinished nativ
 parallel wrapper is different: its changing leaf evidence is stored in the recovery
 envelope's `InFlightTools`, not committed as an immutable provider tool message.
 Finishing the wrapper publishes its final result once and clears that evidence.
+Typed tool outcomes are optional immutable message evidence. Ordinary history
+does not allocate inline result strings on checkpoint copies. Tool-call metadata
+is keyed by Crude's internal call ID, so a reused provider ID cannot rewrite a
+prior result's duration, operands or disclosure evidence. Display snapshots keep
+factual content separately from model-only repair advice in the existing metadata.
 Passive interruption materializes captured completed leaves with an explicitly
 unknown wrapper outcome; it does not replay the batch or erase attachments.
 

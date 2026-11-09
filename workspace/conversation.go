@@ -807,6 +807,7 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 	}
 	c.insertMessage(message)
 	c.index(message)
+	c.bindInternalID(message, internalID)
 	c.startToolTimeline(message)
 	if hasStreamingDetail {
 		c.scheduleToolTransition(message, "streaming", "streaming")
@@ -862,6 +863,7 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 	c.attributeTurn(message)
 	c.insertMessage(message)
 	c.index(message)
+	c.bindInternalID(message, internalID)
 	c.startToolTimeline(message)
 	c.scheduleToolTransition(message, "streaming", "calling")
 	c.commitChange(message)
@@ -991,12 +993,9 @@ func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string,
 	// Stop settles unfinished calls as cancelled for immediate presentation, but
 	// a real backend result that was already in flight remains authoritative
 	// evidence. Admit it without recreating the dwell timeline or active state.
+	status, phase := message.ToolOutcome.Status(isError), message.ToolOutcome.PreviewPhase(isError)
 	if message.ToolStatus == "cancelled" {
-		if isError {
-			message.ToolStatus, message.ToolPreviewPhase = "error", "error"
-		} else {
-			message.ToolStatus, message.ToolPreviewPhase = "success", "done"
-		}
+		message.ToolStatus, message.ToolPreviewPhase = status, phase
 		message.ToolProgressPhase, message.ToolProgressMessage = "", ""
 		message.ToolDuration = elapsed(message.ToolStartTime)
 		if result != "" {
@@ -1006,11 +1005,7 @@ func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string,
 		c.commitChange(message)
 		return
 	}
-	if isError {
-		c.scheduleToolTransition(message, "error", "error")
-	} else {
-		c.scheduleToolTransition(message, "done", "success")
-	}
+	c.scheduleToolTransition(message, phase, status)
 	message.ToolDuration = elapsed(message.ToolStartTime)
 	if estTokens > 0 {
 		message.ToolEstTokens = estTokens
@@ -1259,15 +1254,21 @@ func (c *Conversation) findTool(internalID, toolID string) *Message {
 	if c == nil {
 		return nil
 	}
-	if toolID != "" {
-		if message := c.byID[toolID]; message != nil {
-			return message
-		}
-	}
 	if internalID != "" {
 		if message := c.byID[internalID]; message != nil && (toolID == "" || message.ToolID == "" || message.ToolID == toolID) {
 			return message
 		}
+		// Provider IDs can repeat on a later call. Adopt an early unbound
+		// streaming placeholder only; never route a new operation to an older
+		// bound or settled result because its provider ID happens to match.
+		if message := c.byID[toolID]; message != nil && message.ToolOutcome.CallID == "" &&
+			message.ToolStatus != "success" && message.ToolStatus != "error" && message.ToolStatus != "cancelled" && message.ToolStatus != "interrupted" {
+			return message
+		}
+		return nil
+	}
+	if toolID != "" {
+		return c.byID[toolID]
 	}
 	return nil
 }
@@ -1292,6 +1293,7 @@ func (c *Conversation) bindInternalID(message *Message, internalID string) {
 	}
 	if existing := c.byID[internalID]; existing == nil || existing == message {
 		c.byID[internalID] = message
+		message.ToolOutcome.CallID = internalID
 	}
 }
 

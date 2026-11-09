@@ -7,6 +7,7 @@ import (
 
 	toolargs "crude/tools"
 	"crude/types"
+	"crude/types/toolresult"
 )
 
 // A batch is a provider envelope, not a second visual tool family. Derive
@@ -21,12 +22,13 @@ func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
 	}
 	var output struct {
 		Results []*struct {
-			Name    string `json:"recipient_name"`
-			Result  string `json:"result"`
-			Error   bool   `json:"error"`
-			Phase   string `json:"phase"`
-			Added   int    `json:"added"`
-			Removed int    `json:"removed"`
+			Name    string             `json:"recipient_name"`
+			Result  string             `json:"result"`
+			Error   bool               `json:"error"`
+			Phase   string             `json:"phase"`
+			Added   int                `json:"added"`
+			Removed int                `json:"removed"`
+			Outcome toolresult.Outcome `json:"outcome"`
 		} `json:"results"`
 	}
 	_ = json.Unmarshal([]byte(msg.ToolInput), &input)
@@ -78,6 +80,11 @@ func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
 			}
 			if result.Error {
 				child.ToolStatus, child.ToolPreviewPhase = "error", types.ToolPreviewError
+			}
+			child.ToolOutcome = result.Outcome
+			if result.Outcome.State != "" {
+				child.ToolStatus = result.Outcome.Status(result.Error)
+				child.ToolPreviewPhase = result.Outcome.PreviewPhase(result.Error)
 			}
 		} else if stopped {
 			child.ToolStatus, child.ToolPreviewPhase, child.Content = types.ToolStatusCancelled, types.ToolPreviewDone, "No result returned"

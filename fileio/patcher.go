@@ -174,8 +174,7 @@ func applySingleOp(content string, op SearchReplace, lg *logger.Logger) (string,
 			// it would silently drop the rest of that line.
 			lg.Warn("DIFF", "phase5_partial_middle_line", "match_line", start+1)
 			return "", fmt.Errorf(
-				"search text matches only part of a line in the middle of the block at line %d; nothing was changed:\n  %s\n\n"+
-					"ⓘ  HINT: Copy the exact text from read_file output, or include each middle line in full",
+				"search text matches only part of a line in the middle of the block at line %d; nothing was changed:\n  %s",
 				start+1, preview(op.Search))
 		}
 		lg.Debug("DIFF", "phase5_fragment_splice", "match_line", start+1)
@@ -189,9 +188,7 @@ func applySingleOp(content string, op SearchReplace, lg *logger.Logger) (string,
 
 	lg.Error("DIFF", "all_phases_failed", "search_preview", preview(op.Search))
 	return "", fmt.Errorf(
-		"search text not found (tried exact match, whitespace-normalised match, and substring match):\n  %s\n\n"+
-			"ⓘ  HINT: Copy FULL lines from read_file output — from the START of each line including all indentation.\n"+
-			"ⓘ  Do NOT start your search in the middle of a line",
+		"search text not found (tried exact match, whitespace-normalised match, and substring match):\n  %s",
 		preview(op.Search),
 	)
 }
@@ -705,7 +702,7 @@ func multiMatchErr(hits []int, mode, search string) error {
 		locs[i] = fmt.Sprintf("line %d", h+1)
 	}
 	return fmt.Errorf(
-		"search matches %d locations %s (%s) — add more surrounding FULL lines (from start of line) to make it unique:\n  %s",
+		"search matches %d locations %s (%s):\n  %s",
 		len(hits), mode, strings.Join(locs, ", "), preview(search),
 	)
 }

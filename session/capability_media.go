@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	"crude/prompt"
 	"crude/provider"
 	"crude/tools"
 	captypes "crude/types/capability"
+	"crude/types/toolresult"
 )
 
 // capabilityMediaResult projects attributed remote evidence; URIs remain labels,
@@ -77,7 +79,9 @@ func capabilityMediaResult(result captypes.Result, original error, policy *tools
 		blockText.WriteByte('\n')
 	}
 	if result.Unknown {
-		blockText.WriteString("\nResult unknown: the remote operation may have taken effect. Do not retry blindly.")
+		blockText.WriteString("\nRemote operation effects are unknown.")
+		out.Outcome = toolresult.Outcome{State: toolresult.Uncertain, Summary: "Effects are unknown. Check the remote state."}
+		out.AgentHint = prompt.HintUncertain
 	}
 	if result.IsError {
 		blockText.WriteString("\nMCP server reported a tool failure.")

@@ -17,15 +17,6 @@ func toolRowFrameSensitive(msg types.ChatMessage) bool {
 	return (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") && msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
 }
 
-// hasTitleReason reports whether a structured failure reason is already
-// surfaced on the title row, which means a body payload would only repeat it.
-func hasTitleReason(msg types.ChatMessage) bool {
-	if msg.ToolStatus != types.ToolStatusError {
-		return false
-	}
-	return tools.ToolErrorReason(msg.ToolName, msg.Content) != ""
-}
-
 func buildProjectToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int, paths *tools.ProjectPaths) PaintLine {
 	title := tools.BuildToolTitle(msg, titlePhase)
 	title.Operand = paths.ToolOperand(&msg, title.Operand)
@@ -55,6 +46,9 @@ func paintToolTitle(title tools.ToolTitle, status string, active, settled bool, 
 	}
 	if title.Failed {
 		titleRole, iconRole = ui.ColorError, ui.ColorError
+	} else if title.Warning {
+		titleRole, iconRole = ui.ColorWarning, ui.ColorWarning
+		dot = "○ "
 	}
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorMuted},
@@ -74,21 +68,99 @@ func paintToolTitle(title tools.ToolTitle, status string, active, settled bool, 
 }
 
 func buildProjectToolTitleLines(msg types.ChatMessage, phase string, frame, width int, disclosure DisclosureState, paths *tools.ProjectPaths) []PaintLine {
-	header := buildProjectToolTitleLine(msg, phase, frame, paths)
+	titleMessage := msg
+	if disclosure == DisclosureExpanded && proseFailure(msg) {
+		titleMessage.Content = ""
+		titleMessage.ToolOutcome.Summary = ""
+	}
+	header := buildProjectToolTitleLine(titleMessage, phase, frame, paths)
+	var suffix []RowSpan
 	if toolSupportsDisclosure(msg.ToolName) && (msg.Content != "" || msg.ToolCommand != "" || msg.ToolInput != "") {
 		glyph := " ▸"
 		if disclosure == DisclosureExpanded {
 			glyph = " ▾"
 		}
-		header.Spans = append(header.Spans, RowSpan{Text: glyph, Role: ui.ColorMuted})
+		suffix = []RowSpan{{Text: glyph, Role: ui.ColorMuted}}
 	}
+	if disclosure != DisclosureExpanded && !toolRowFrameSensitive(msg) {
+		return wrapCompactToolTitle(header, width, suffix)
+	}
+	header.Spans = append(header.Spans, suffix...)
 	return wrapToolTitle(header, width)
 }
 
+// Closed results use at most two title rows on the actual terminal grid.
+// This bounds presentation, not evidence: expansion restores the complete title
+// and body. Keep the disclosure control visible even on constrained grids.
+func wrapCompactToolTitle(header PaintLine, width int, suffix []RowSpan) []PaintLine {
+	if width <= 0 {
+		return nil
+	}
+	trailer := PaintLine{Spans: suffix}
+	trailerWidth := trailer.VisibleWidth()
+	clip := func(line PaintLine, columns int) PaintLine {
+		if line.VisibleWidth() <= columns {
+			return line
+		}
+		if columns <= 0 {
+			return PaintLine{}
+		}
+		line = TruncatePaintLine(line, columns-1)
+		line.Spans = append(line.Spans, RowSpan{Text: "…", Role: ui.ColorMuted})
+		return line
+	}
+	if header.VisibleWidth()+trailerWidth <= width {
+		header.Spans = append(header.Spans, suffix...)
+		return []PaintLine{header}
+	}
+	// A long indivisible path must not push the factual reason offscreen.
+	// Keep operation/operand on the first row and reason/metadata on the second.
+	// The expanded header uses the full shared wrapping path instead.
+	metaStart := len(header.Spans)
+	for i := 3; i < len(header.Spans); i++ {
+		if header.Spans[i].Role == ui.ColorMuted {
+			metaStart = i
+			break
+		}
+	}
+	if metaStart < len(header.Spans) {
+		first := clip(PaintLine{Spans: header.Spans[:metaStart]}, width)
+		prefix := header.Spans[0].Text + strings.Repeat(" ", rendering.VisibleWidth(header.Spans[1].Text))
+		second := PaintLine{Spans: []RowSpan{{Text: prefix, Role: ui.ColorMuted}}}
+		if width <= rendering.VisibleWidth(prefix)+trailerWidth {
+			second.Spans = nil
+		}
+		second.Spans = append(second.Spans, clip(PaintLine{Spans: header.Spans[metaStart:]}, max(0, width-second.VisibleWidth()-trailerWidth)).Spans...)
+		second.Spans = append(second.Spans, suffix...)
+		return []PaintLine{first, TruncatePaintLine(second, width)}
+	}
+	rows := wrapToolTitle(header, width)
+	if len(rows) == 0 {
+		return rows
+	}
+	more := len(rows) > 2
+	if more {
+		rows = rows[:2]
+	}
+	last := len(rows) - 1
+	rows[last] = clip(rows[last], max(0, width-trailerWidth))
+	if more && rows[last].VisibleWidth() < width-trailerWidth {
+		rows[last].Spans = append(rows[last].Spans, RowSpan{Text: "…", Role: ui.ColorMuted})
+	}
+	rows[last].Spans = append(rows[last].Spans, suffix...)
+	return rows
+}
+
 func wrapToolTitle(header PaintLine, width int) []PaintLine {
+	if width <= 0 {
+		return nil
+	}
 	label := PaintLine{Spans: header.Spans[2:]}
 	var lines []PaintLine
 	prefixWidth := rendering.VisibleWidth(header.Spans[0].Text + header.Spans[1].Text)
+	if width <= prefixWidth {
+		return wrapPaintLine(label, width)
+	}
 	continuation := header.Spans[0].Text + strings.Repeat(" ", rendering.VisibleWidth(header.Spans[1].Text))
 	for i, line := range wrapPaintLine(label, max(1, width-prefixWidth)) {
 		prefix := []RowSpan{{Text: continuation, Role: ui.ColorMuted}}
@@ -136,8 +208,6 @@ func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 }
 
 func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState, paths *tools.ProjectPaths) messageLines {
-	// A failure's trailing hint addresses the model's next call, not the reader.
-	msg.Content = types.StripToolHint(msg.Content)
 	commandResult, commandOK := toolargs.ParseCommandResult(msg.ToolName, msg.Content)
 	if commandOK {
 		if commandResult.Cancelled {
@@ -168,13 +238,16 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 		out.lines = append(out.lines, line.PlainText())
 		out.native = append(out.native, line)
 	}
+	if !expanded && msg.ToolStatus != types.ToolStatusCalling && msg.ToolStatus != types.ToolStatusStreaming {
+		return out
+	}
 	if isCommandEvidenceTool(msg.ToolName) && !expanded {
 		return out
 	}
 	if tools.IsStructuredTool(msg.ToolName) {
 		if msg.ToolStatus == types.ToolStatusSuccess {
 			out.appendStructuredToolBody(tools.BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput), msg.ToolInput, innerW, height, expanded)
-		} else if msg.ToolStatus == types.ToolStatusError || expanded && (msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted") {
+		} else if expanded {
 			out.appendStructuredToolBody(tools.BuildReadableResult(msg.Content), msg.ToolInput, innerW, height, expanded)
 		}
 		return out
@@ -211,8 +284,7 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 		return out
 	}
 
-	// Completed tools render a budgeted preview by default; full output only
-	// when the user expanded the block.
+	// Settled results are title-only until the user asks for full evidence.
 	if msg.ToolStatus == "success" && msg.Content != "" {
 		resultContent := msg.Content
 		fullLabel := rendering.PascalCaseTool(msg.ToolName) + " " + msg.ToolArgs
@@ -220,7 +292,8 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 		resultContent = strings.TrimSpace(resultContent)
 		if resultContent != "" {
 			switch {
-			case (msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch") && !expanded:
+			case tools.IsPlanTool(msg.ToolName) && msg.ToolOutcome.Code == "no_active_plan":
+				// The owner supplied an empty, successful lookup, not a plan card.
 			case isToolRichBody(msg, resultContent):
 				out.appendRichToolBody(msg, resultContent, th, contentWidth, innerW, height, expanded)
 			case tools.IsSummaryOnlyTool(msg.ToolName) && !expanded:
@@ -237,20 +310,20 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 				out.appendPlainToolBody(msg.ToolName, body, innerW, height, false, expanded)
 			}
 		}
-	} else if msg.ToolStatus == "error" {
-		// A structured planning failure already explains itself in the title
-		// ("Update plan failed" plus the reason …"); its canonical JSON
-		// payload addresses the model, not the reader.
+	} else if msg.ToolStatus != types.ToolStatusCalling && msg.ToolStatus != types.ToolStatusStreaming {
 		if msg.ToolName == "apply_patch" && tools.IsDiffContent(msg.Content) {
 			prefix, _, _ := strings.Cut(msg.Content, "```diff")
-			out.appendPlainToolBody(msg.ToolName, prefix, innerW, height, false, true)
+			prose := msg
+			prose.Content = prefix
+			out.appendPlainToolBody(msg.ToolName, prose.Content, innerW, height, false, true)
 			out.appendRichToolBody(msg, msg.Content, th, contentWidth, innerW, height, true)
-		} else if msg.Content != "" && (!hasTitleReason(msg) || expanded && (msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch")) {
-			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, min(height, 9), false, expanded)
-		}
-	} else if (msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted") && expanded {
-		if msg.Content != "" {
-			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, false, true)
+		} else if msg.Content != "" {
+			if tools.IsPlanTool(msg.ToolName) && strings.HasPrefix(strings.TrimSpace(msg.Content), "{") {
+				out.appendStructuredToolBody(tools.BuildReadableResult(msg.Content), "", innerW, height, true)
+			} else {
+				content := msg.Content
+				out.appendPlainToolBody(msg.ToolName, content, innerW, height, false, true)
+			}
 		}
 	}
 
@@ -258,16 +331,13 @@ func renderProjectToolMessageLines(msg types.ChatMessage, th *theme.Theme, conte
 }
 
 func toolSupportsDisclosure(toolName string) bool {
-	if tools.IsStructuredTool(toolName) {
-		return true
-	}
-	switch toolName {
-	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
-		"exec_command", "write_stdin", "apply_patch", "edit_file", "write_file", "update_plan", "get_plan", "read_file", "grep_files", "glob_files",
-		"list_directory", "web_search", "web_fetch", "arxiv_search":
-		return true
-	}
-	return false
+	return toolName != "" && toolName != "reply"
+}
+
+func proseFailure(message types.ChatMessage) bool {
+	return message.Content != "" && message.ToolStatus != types.ToolStatusSuccess &&
+		message.ToolStatus != types.ToolStatusCalling && message.ToolStatus != types.ToolStatusStreaming &&
+		!toolargs.IsCommandTool(message.ToolName) && !tools.IsStructuredTool(message.ToolName) && !tools.IsPlanTool(message.ToolName)
 }
 
 func isCompactEvidenceTool(name string) bool {
@@ -342,7 +412,11 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 	// Wrap at the real painted content width (not the full terminal width)
 	// so every wrapped segment stays inside the LayoutRow band. The 4-col
 	// margin mirrors the "│   " gutter in buildToolPlainResultLine.
-	toolLineWidth := max(1, width-toolBodyGutterWidth)
+	gutter := "│   "
+	if width <= toolBodyGutterWidth {
+		gutter = ""
+	}
+	toolLineWidth := max(1, width-rendering.VisibleWidth(gutter))
 	maxRes := toolPreviewHeight(toolName, height)
 	// Grep/find-style output repeats the same absolute path prefix on every
 	// line ("/home/u/proj/tui/file.go:12: ..."). Stripping that shared prefix
@@ -395,7 +469,7 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 		visible = max(1, maxRes-1)
 	}
 	for _, seg := range wrapped[:visible] {
-		pl := buildToolPlainResultLine("│   ", seg, errorStyle)
+		pl := buildToolPlainResultLine(gutter, seg, errorStyle)
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}

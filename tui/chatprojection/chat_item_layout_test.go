@@ -179,9 +179,10 @@ func TestCancelledToolCallHasStoppedLabelWithoutStrike(t *testing.T) {
 // fall back to dumping the raw JSON blob into chat.
 func TestSearchHistoryRealBackendShape(t *testing.T) {
 	content := `{"turns":[{"session_id":"s1","turn":3,"when":"3m","user":"fix the stale deny","assistant":"drained the channel","tools":"edit_file execute_command","files":"agent/tool_exec.go"}],"sessions":[{"key_files":"a.go b.go","outcome":"completed","session_id":"s2","summary":"did stuff","title":"Work done","when":"1m ago"}]}`
-	rows := exportForLayout(t, []types.ChatMessage{
-		{InternalID: "t1", Role: types.RoleTool, ToolName: "search_history", ToolStatus: "success", Content: content},
-	})
+	r := newActivityRenderer()
+	r.AppendMessage(types.ChatMessage{InternalID: "t1", Role: types.RoleTool, ToolName: "search_history", ToolStatus: "success", Content: content})
+	r.ToggleDisclosure("t1")
+	rows, _, _ := r.ExportMessageRows(120)
 	joined := strings.Join(rows[0].Lines, "\n")
 	if strings.Contains(joined, `"turns"`) || strings.Contains(joined, `{"`) {
 		t.Fatalf("search_history fell back to raw JSON:\n%s", joined)
@@ -231,18 +232,19 @@ func TestCommandResultPathPrefixOnlyWhenShared(t *testing.T) {
 // TestErrorProjectionAligned asserts error message continuations hang under the
 // message body (not flushed to the margin) and stay within the render width.
 func TestErrorProjectionAligned(t *testing.T) {
-	rows := exportForLayout(t, []types.ChatMessage{
-		{InternalID: "e1", Role: types.RoleError, Content: "Error: patch failed: op[0]: search text not found (tried exact match, whitespace-normalised match, and substring match) at tui/screens/question/question_test.go\nHint: pass an exact snippet from the latest file."},
-	})
+	r := newActivityRenderer()
+	r.AppendMessage(types.ChatMessage{InternalID: "e1", Role: types.RoleError, Content: "Error: patch failed: op[0]: search text not found (tried exact match, whitespace-normalised match, and substring match) at tui/screens/question/question_test.go\nRetained error evidence from the operation."})
+	r.ToggleDisclosure("e1")
+	rows, _, _ := r.ExportMessageRows(120)
 	lines := rows[0].Lines
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "Hint: pass an exact snippet") {
+	if !strings.Contains(joined, "Retained error evidence") {
 		t.Fatalf("error continuation missing:\n%s", joined)
 	}
-	// Continuation rows must carry the 6-space hanging indent, not flush-left.
+	// Title and diagnostic continuations use the common tool-row gutter.
 	foundCont := false
 	for _, l := range lines {
-		if strings.HasPrefix(l, "      whitespace-normalised") || strings.HasPrefix(l, "      tui/screens") || strings.Contains(l, "Hint:") {
+		if strings.HasPrefix(l, "│   ") {
 			foundCont = true
 		}
 	}

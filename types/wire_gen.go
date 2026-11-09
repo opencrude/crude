@@ -3378,8 +3378,8 @@ func (z *CompletionSnippet) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ConversationMessage) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 60
-	o = append(o, 0xdc, 0x0, 0x3c)
+	// array header, size 61
+	o = append(o, 0xdc, 0x0, 0x3d)
 	o = msgp.AppendString(o, z.InternalID)
 	o = msgp.AppendString(o, z.Role)
 	o, err = z.Origin.MarshalMsg(o)
@@ -3430,6 +3430,11 @@ func (z *ConversationMessage) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.ToolID)
 	o = msgp.AppendString(o, z.ToolRoundID)
 	o = msgp.AppendString(o, z.ToolStatus)
+	o, err = z.ToolOutcome.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "ToolOutcome")
+		return
+	}
 	o = msgp.AppendInt(o, z.ToolIndex)
 	o = msgp.AppendString(o, z.ToolProgressPhase)
 	o = msgp.AppendString(o, z.ToolProgressMessage)
@@ -3497,8 +3502,8 @@ func (z *ConversationMessage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 60 {
-		err = msgp.ArrayError{Wanted: 60, Got: zb0001}
+	if zb0001 != 61 {
+		err = msgp.ArrayError{Wanted: 61, Got: zb0001}
 		return
 	}
 	z.InternalID, bts, err = msgp.ReadStringBytes(bts)
@@ -3654,6 +3659,11 @@ func (z *ConversationMessage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	z.ToolStatus, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "ToolStatus")
+		return
+	}
+	bts, err = z.ToolOutcome.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ToolOutcome")
 		return
 	}
 	z.ToolIndex, bts, err = msgp.ReadIntBytes(bts)
@@ -3887,7 +3897,7 @@ func (z *ConversationMessage) Msgsize() (s int) {
 	} else {
 		s += z.Collaboration.Msgsize()
 	}
-	s += msgp.StringPrefixSize + len(z.ToolName) + msgp.StringPrefixSize + len(z.ToolArgs) + msgp.StringPrefixSize + len(z.ToolCommand) + msgp.StringPrefixSize + len(z.ToolInput) + msgp.StringPrefixSize + len(z.ToolScope) + msgp.StringPrefixSize + len(z.ToolID) + msgp.StringPrefixSize + len(z.ToolRoundID) + msgp.StringPrefixSize + len(z.ToolStatus) + msgp.IntSize + msgp.StringPrefixSize + len(z.ToolProgressPhase) + msgp.StringPrefixSize + len(z.ToolProgressMessage) + msgp.StringPrefixSize + len(z.ToolProgressLabel) + msgp.StringPrefixSize + len(z.ToolPreviewPhase) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.TimeSize + msgp.DurationSize + msgp.BoolSize + msgp.BoolSize + msgp.DurationSize + z.ThinkingDisplay.Msgsize() + msgp.StringPrefixSize + len(z.LifecyclePhase) + msgp.IntSize + msgp.StringPrefixSize + len(z.LifecycleProvider) + msgp.Int64Size + msgp.Int64Size + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.LifecycleOperationID) + msgp.StringPrefixSize + len(z.LifecycleTrigger) + msgp.StringPrefixSize + len(z.LifecycleStageName) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.TimeSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.HistoryTargetSnapshot) + msgp.StringPrefixSize + len(z.HistorySafetySnapshot) + msgp.BoolSize + msgp.StringPrefixSize + len(z.IncompleteReason) + msgp.StringPrefixSize + len(z.SubPaneID) + msgp.StringPrefixSize + len(z.PermTag) + msgp.BoolSize
+	s += msgp.StringPrefixSize + len(z.ToolName) + msgp.StringPrefixSize + len(z.ToolArgs) + msgp.StringPrefixSize + len(z.ToolCommand) + msgp.StringPrefixSize + len(z.ToolInput) + msgp.StringPrefixSize + len(z.ToolScope) + msgp.StringPrefixSize + len(z.ToolID) + msgp.StringPrefixSize + len(z.ToolRoundID) + msgp.StringPrefixSize + len(z.ToolStatus) + z.ToolOutcome.Msgsize() + msgp.IntSize + msgp.StringPrefixSize + len(z.ToolProgressPhase) + msgp.StringPrefixSize + len(z.ToolProgressMessage) + msgp.StringPrefixSize + len(z.ToolProgressLabel) + msgp.StringPrefixSize + len(z.ToolPreviewPhase) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.TimeSize + msgp.DurationSize + msgp.BoolSize + msgp.BoolSize + msgp.DurationSize + z.ThinkingDisplay.Msgsize() + msgp.StringPrefixSize + len(z.LifecyclePhase) + msgp.IntSize + msgp.StringPrefixSize + len(z.LifecycleProvider) + msgp.Int64Size + msgp.Int64Size + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.LifecycleOperationID) + msgp.StringPrefixSize + len(z.LifecycleTrigger) + msgp.StringPrefixSize + len(z.LifecycleStageName) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.TimeSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.StringPrefixSize + len(z.HistoryTargetSnapshot) + msgp.StringPrefixSize + len(z.HistorySafetySnapshot) + msgp.BoolSize + msgp.StringPrefixSize + len(z.IncompleteReason) + msgp.StringPrefixSize + len(z.SubPaneID) + msgp.StringPrefixSize + len(z.PermTag) + msgp.BoolSize
 	if z.Recovery == nil {
 		s += msgp.NilSize
 	} else {

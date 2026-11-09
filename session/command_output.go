@@ -12,9 +12,10 @@ import (
 )
 
 func commandResult(info fileio.AsyncCmdInfo) command.Result {
-	result := command.Result{Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error,
+	result := command.Result{ExecutionID: command.ExecutionID(info.PID, info.StartedAt), Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, TimedOut: info.TimedOut, Uncertain: info.Uncertain,
 		WallTimeSeconds:  info.Duration.Seconds(),
 		OutputDescriptor: command.OutputDescriptor{Handle: info.Handle, Status: info.Status, TotalBytes: info.OutputBytes}}
+	result.Cancelled = info.Status == fileio.AsyncKilled && !info.TimedOut
 	if info.Status == fileio.AsyncCompleted || info.Status == fileio.AsyncFailed {
 		code := info.ExitCode
 		result.ExitCode = &code

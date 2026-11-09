@@ -65,7 +65,7 @@ func TestMCPBinaryAndUnknownEvidenceReachToolResults(t *testing.T) {
 	if err == nil || !strings.Contains(result.Content, "Media refused:") {
 		t.Fatalf("invalid PDF bytes must be refused with evidence: result=%+v err=%v", result, err)
 	}
-	for _, want := range []string{"Binary resource", "application/pdf", "5 bytes", "docs://document", "\nResult unknown:"} {
+	for _, want := range []string{"Binary resource", "application/pdf", "5 bytes", "docs://document", "\nRemote operation effects are unknown."} {
 		if !strings.Contains(result.Content, want) {
 			t.Fatalf("lost MCP evidence %q: %s", want, result.Content)
 		}

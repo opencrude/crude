@@ -966,6 +966,15 @@ names. Owner-source size and dense UI presentation have separate existing gates.
 
 ## Purpose
 
+The compact-result follow-up (2026-11-09, Linux/i7-10750H, `GOMAXPROCS=2`)
+adds `BenchmarkDenseCommandSettlementPresentedFrame`: 2,000 command starts and
+their exact late settlements, plus one active command. Three isolated runs
+measured 36.0–39.9 µs, 22.2 KB and 59 allocations per presented frame. The
+allocation gate is 27,000 B / 72 allocations; wall time remains observational.
+Process-lifetime indexing happens only on source changes, not on clock frames.
+Optional provider outcomes also keep ordinary checkpoint copies within the
+unchanged append/recovery allocation ceilings.
+
 A CPU-hammering regression in a tick-driven TUI is almost never one
 function getting fatter — it is a **call-frequency regression**: cached state
 re-dirtied every tick until steady state becomes a full-session re-render.

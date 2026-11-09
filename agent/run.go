@@ -22,6 +22,7 @@ import (
 	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
+	"crude/types/toolresult"
 )
 
 type RuntimeMessage struct {
@@ -981,7 +982,8 @@ steps:
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 							"tool_id": call.ID, "internal_id": call.InternalID,
 							"name": call.Function.Name, "error": "true", "interrupted": true,
-							"result": "Provider stream interrupted before execution; this partial call was discarded and will be re-evaluated.",
+							"outcome": toolresult.Outcome{State: toolresult.NotRun, CallID: call.InternalID, Summary: "The provider stream stopped before execution."},
+							"result":  "Provider stream interrupted before execution; this partial call was discarded and will be re-evaluated.",
 						}})
 					}
 				}
@@ -1118,7 +1120,8 @@ steps:
 				emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 					"tool_id": call.ID, "internal_id": call.InternalID,
 					"name": call.Function.Name, "error": "true", "interrupted": true,
-					"result": "Provider output ended before execution; this incomplete call was discarded.",
+					"outcome": toolresult.Outcome{State: toolresult.NotRun, CallID: call.InternalID, Summary: "The provider response ended before execution."},
+					"result":  "Provider output ended before execution; this incomplete call was discarded.",
 				}})
 			}
 			a.setRunFailure(truncatedErr, rootprompt.RecoveryPartialTool, RecoveryFailureTruncated)
@@ -1290,14 +1293,19 @@ steps:
 			if guidanceErr != nil {
 				errorText = guidanceErr.Error()
 			}
-			message := rootprompt.GuidanceDeferredResult(errorText)
+			hint := rootprompt.GuidanceDeferredResult(errorText)
+			message := "This call did not run. Project guidance changed."
+			if errorText != "" {
+				message = "This call did not run. Could not read project guidance: " + errorText
+			}
 			for i, call := range toolCalls {
 				if guidanceErr == nil && guidanceSafeRead(call) {
 					runIndex = append(runIndex, i)
 					continue
 				}
-				acceptResult(execResult{index: i, id: call.ID, name: call.Function.Name, result: tools.ToolResult{Content: message}, toolError: true})
-				requestEmit(AgentEvent{Type: "tool_result", Data: map[string]any{"tool_id": call.ID, "name": call.Function.Name, "result": message, "error": "true"}})
+				deferred := execResult{index: i, result: tools.ToolResult{Content: message, AgentHint: hint,
+					Outcome: toolresult.Outcome{State: toolresult.NotRun, Summary: "Project guidance must be read first."}}, toolError: true}
+				acceptResult(a.publishToolResult(call, deferred, requestEmit))
 			}
 		} else {
 			for i := range toolCalls {
@@ -1387,6 +1395,7 @@ steps:
 				name:  toolCalls[i].Function.Name,
 				result: tools.ToolResult{
 					Content: "Turn cancelled by user.",
+					Outcome: toolresult.Outcome{State: toolresult.Cancelled, CallID: toolCalls[i].InternalID},
 				},
 				toolError: true,
 			})
@@ -1397,13 +1406,14 @@ steps:
 		// round together instead of temporarily regressing to its first result.
 		appendWire(resultMessages...)
 		for _, r := range results {
-			toolError := r.toolError || IsToolError(r.result.Content)
+			toolError := r.toolError
 			if a.ToolResultAccepted != nil && !toolError {
 				a.ToolResultAccepted(r.name, r.id, append([]provider.ChatMessage(nil), msgs[1:]...))
 			}
 			lastToolResultIdx = len(msgs) - 1
 			if r.name == "reply" && r.result.Content != "" {
-				data := map[string]any{"tool_id": r.id, "name": r.name, "result": r.result.Content}
+				data := map[string]any{"tool_id": r.id, "internal_id": r.result.Outcome.CallID,
+					"name": r.name, "result": r.result.Content, "outcome": r.result.Outcome}
 				if toolError {
 					data["error"] = "true"
 				}
@@ -1492,7 +1502,8 @@ func toolResultMessage(result execResult, count int) provider.ChatMessage {
 		content = provider.TextContent(parts[0].Text)
 	}
 	message := provider.ChatMessage{Role: "tool", ToolCallID: result.id, Content: content,
-		ToolError: result.toolError || IsToolError(result.result.Content)}
+		ToolError: result.toolError, ToolOutcome: &result.result.Outcome}
+	message.DisplayContent = result.result.Content
 	if result.index == count-1 {
 		message.CacheControl = &provider.CacheControl{Type: "ephemeral"}
 	}

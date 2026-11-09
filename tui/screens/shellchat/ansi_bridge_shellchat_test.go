@@ -90,7 +90,8 @@ func TestShellchatPaintsDiffToolBodyNative(t *testing.T) {
 		ToolStatus: "success",
 		Time:       time.Now(),
 	})
-	// File mutations paint their tinted diff body by default.
+	// File mutations keep their tinted diff behind explicit disclosure.
+	r.ToggleDisclosure("edit-1")
 	rows, paneMap, _ := r.ExportMessageRows(80)
 
 	compose := shellchat.ComposeParams{
