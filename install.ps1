@@ -519,13 +519,20 @@ function Undo-CrudePath($Transaction) {
     }
 }
 
-function Get-CrudeInstalledProcesses([string] $Executable) {
-    # Only processes that run this installation block the update.
-    $full = [IO.Path]::GetFullPath($Executable)
+function Get-CrudeInstalledProcesses([string[]] $Executables) {
+    # Only processes that run this installation block the update. A window shows
+    # the same program, so it is covered by the same check.
+    $paths = @{}
+    foreach ($executable in $Executables) {
+        if ($executable) { $paths[[IO.Path]::GetFullPath($executable)] = $true }
+    }
     $list = New-Object 'System.Collections.Generic.List[object]'
+    $names = @($paths.Keys | ForEach-Object { [IO.Path]::GetFileName($_) } | Sort-Object -Unique)
+    if (-not $names.Count) { return $list.ToArray() }
+    $filter = ($names | ForEach-Object { "Name = '$_'" }) -join ' OR '
     try {
-        foreach ($process in (Get-CimInstance -ClassName Win32_Process -Filter "Name = 'crude.exe'" -ErrorAction Stop)) {
-            if ($process.ExecutablePath -and [string]::Equals([IO.Path]::GetFullPath($process.ExecutablePath), $full, [StringComparison]::OrdinalIgnoreCase)) {
+        foreach ($process in (Get-CimInstance -ClassName Win32_Process -Filter $filter -ErrorAction Stop)) {
+            if ($process.ExecutablePath -and $paths.ContainsKey([IO.Path]::GetFullPath($process.ExecutablePath))) {
                 $list.Add($process)
             }
         }
@@ -536,14 +543,14 @@ function Get-CrudeInstalledProcesses([string] $Executable) {
     return $list.ToArray()
 }
 
-function Confirm-CrudeStop([string] $Executable, [switch] $Stop, [switch] $NoStop) {
+function Confirm-CrudeStop([string[]] $Executables, [switch] $Stop, [switch] $NoStop) {
     # The answer comes before the download; the program is signalled only after
     # the new one is verified.
-    $running = @(Get-CrudeInstalledProcesses $Executable)
+    $running = @(Get-CrudeInstalledProcesses $Executables)
     if (-not $running.Count) { return 'none' }
     if ($NoStop) { return 'keep' }
     if (-not $Stop) {
-        $question = "Crude is running ($($running.Count) processes). Stop it now? Open sessions end. Unsaved editor text stays in History"
+        $question = "Crude is running ($($running.Count) processes). Stop it now? Open sessions and windows end. Unsaved editor text stays in History"
         if (-not (Confirm-CrudeQuestion $question $false)) {
             throw 'Crude is still running. Close it and run this installer again, or add -Stop.'
         }
@@ -551,8 +558,8 @@ function Confirm-CrudeStop([string] $Executable, [switch] $Stop, [switch] $NoSto
     return 'go'
 }
 
-function Stop-CrudeProcess([string] $Executable, [switch] $Force) {
-    $running = @(Get-CrudeInstalledProcesses $Executable)
+function Stop-CrudeProcess([string[]] $Executables, [switch] $Force) {
+    $running = @(Get-CrudeInstalledProcesses $Executables)
     if (-not $running.Count) { return }
     $ids = @($running | ForEach-Object { [int] $_.ProcessId })
     foreach ($id in $ids) { Stop-Process -Id $id -ErrorAction SilentlyContinue }
@@ -718,18 +725,37 @@ function Get-CrudeWindowPaths {
     return [pscustomobject] @{
         Home = $windowHome
         Root = Join-Path $windowHome 'window'
-        Version = '20240203-110809-5046fc22'
-        Asset = 'WezTerm-windows-20240203-110809-5046fc22.zip'
-        Sha256 = '57e5d03b585303d81e8b8e96d1230362852eb39aca92b3b29c7a42cfb82f9ac4'
+        # Windows Terminal reads one JSON fragment per application.
+        Fragment = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows Terminal\Fragments\Crude\crude.json'
+        # A fixed identity keeps the menu entry and the profile pointing at the
+        # same thing across updates.
+        Guid = '{9f2b6c53-6a1e-4c31-9f0a-2b7d5c8e4a11}'
         FontVersion = 'v3.5.1'
         FontSha256 = '04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
+        FontApi = 'https://api.github.com/repos/ryanoasis/nerd-fonts/releases/assets/523475208'
+        # The families the window asks for, in this order.
+        FontFamilies = @('JetBrainsMono Nerd Font', 'JetBrainsMono NF')
+        FontFaces = 'JetBrainsMonoNerdFont-*.ttf'
         Icon = Join-Path $windowHome 'crude.ico'
         Link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Crude.lnk'
     }
 }
 
+function Get-CrudeWindowsTerminal {
+    # The terminal Crude opens in. The execution alias keeps working across
+    # terminal updates, so it is also what the menu entry points at.
+    if ($env:LOCALAPPDATA) {
+        $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\wt.exe'
+        if ([IO.File]::Exists($alias)) { return $alias }
+    }
+    $command = Get-Command 'wt.exe' -ErrorAction SilentlyContinue
+    if ($command -and $command.Source -and [IO.File]::Exists($command.Source)) { return $command.Source }
+    return $null
+}
+
 function Confirm-CrudeWindow([switch] $Gui, [switch] $NoGui) {
-    # The answer comes before the download, so the question never waits behind it.
+    # The answer comes before the program download, so the question never waits
+    # behind it.
     if ($NoGui) { return 'skip' }
     if ($Gui) { return 'install' }
     $paths = Get-CrudeWindowPaths
@@ -739,88 +765,110 @@ function Confirm-CrudeWindow([switch] $Gui, [switch] $NoGui) {
     return 'skip'
 }
 
-function Expand-CrudeWindowArchive([string] $Archive, [string] $Destination) {
-    Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop
-    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
-    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+function Get-CrudeFontFamily([string[]] $Families) {
+    # Which of these families Windows can draw, and whether Windows answered at
+    # all. A font this machine already has is used as it is; the window never
+    # replaces or re-registers one.
     try {
-        $root = [IO.Path]::GetFullPath($Destination) + [IO.Path]::DirectorySeparatorChar
-        foreach ($entry in $zip.Entries) {
-            $name = $entry.FullName.Replace('\', '/')
-            if (-not $name -or $name.StartsWith('/') -or $name -match '(^|/)\.\.?(/|$)') { throw "Unsafe window archive path '$($entry.FullName)'." }
-            $target = [IO.Path]::GetFullPath((Join-Path $Destination $name.Replace('/', [IO.Path]::DirectorySeparatorChar)))
-            if (-not $target.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw 'Window archive path escapes its folder.' }
-            if ($name.EndsWith('/')) { [void] [IO.Directory]::CreateDirectory($target); continue }
-            [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
-            [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $false)
-        }
-    } finally { $zip.Dispose() }
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $collection = New-Object System.Drawing.Text.InstalledFontCollection
+        try { $available = @($collection.Families | ForEach-Object { $_.Name }) } finally { $collection.Dispose() }
+    } catch {
+        return [pscustomobject] @{ Known = $false; Name = $null }
+    }
+    foreach ($family in $Families) {
+        if ($available -contains $family) { return [pscustomobject] @{ Known = $true; Name = $family } }
+    }
+    return [pscustomobject] @{ Known = $true; Name = $null }
 }
 
-function Register-CrudeFonts([string] $Folder) {
-    # A per-user font is a file copy plus one value under HKCU. No elevation.
-    $target = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
-    [void] [IO.Directory]::CreateDirectory($target)
+function Test-CrudeFontAvailable($Paths) {
+    $lookup = Get-CrudeFontFamily $Paths.FontFamilies
+    if ($lookup.Name) { return $true }
+    # Without a font list, the two standard font folders still answer the same
+    # question, and a face that is there is never copied over.
+    $folders = @()
+    if ($env:WINDIR) { $folders += Join-Path $env:WINDIR 'Fonts' }
+    if ($env:LOCALAPPDATA) { $folders += Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts' }
+    foreach ($folder in $folders) {
+        if (@(Get-ChildItem -LiteralPath $folder -Filter $Paths.FontFaces -File -ErrorAction SilentlyContinue).Count) { return $true }
+    }
+    # No answer is no evidence that the font is missing, so nothing is written.
+    if (-not $lookup.Known) { return $true }
+    return $false
+}
+
+function Get-CrudeWindowFont($Paths) {
+    # The face to name in the profile, and nothing when Windows cannot list it,
+    # so the terminal keeps its own font instead of guessing.
+    $lookup = Get-CrudeFontFamily $Paths.FontFamilies
+    if ($lookup.Name) { return $lookup.Name }
+    return $null
+}
+
+function Add-CrudeFontRegistration([string] $Folder) {
+    # One per-user value per face, pointing at the file in the folder that
+    # belongs to Crude. No file is copied into the user's font folder, no
+    # existing value is overwritten, and the whole footprint is inside Crude's
+    # own folder, so removing it removes only what this window installed.
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Fonts')
+    if (-not $key) { throw 'the per-user font list could not be opened' }
+    $registered = 0
     try {
         foreach ($font in @(Get-ChildItem -LiteralPath $Folder -Filter '*.ttf' -File)) {
-            $copy = Join-Path $target $font.Name
-            Copy-Item -LiteralPath $font.FullName -Destination $copy -Force
-            $key.SetValue($font.BaseName + ' (TrueType)', $copy, [Microsoft.Win32.RegistryValueKind]::String)
+            $name = $font.BaseName + ' (TrueType)'
+            $current = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            if ($null -ne $current -and -not [string]::Equals([string] $current, $font.FullName, [StringComparison]::OrdinalIgnoreCase)) {
+                # Another copy of this face is registered. It is not ours to change.
+                continue
+            }
+            if ($null -eq $current) { $registered++ }
+            $key.SetValue($name, $font.FullName, [Microsoft.Win32.RegistryValueKind]::String)
         }
     } finally { $key.Dispose() }
+    return $registered
 }
 
-function Install-CrudeWindowTerminal($Paths, [string] $WorkDir) {
-    $prefix = Join-Path $Paths.Root "wezterm-$($Paths.Version)"
-    $exe = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse -ErrorAction SilentlyContinue |
-        Select-Object -First 1
-    if ($exe) { return $exe }
-    [void] [IO.Directory]::CreateDirectory($Paths.Root)
-    $archive = Join-Path $WorkDir 'wezterm.zip'
-    Get-CrudeDownload "https://github.com/wezterm/wezterm/releases/download/$($Paths.Version)/$($Paths.Asset)" $archive
-    if ((Get-CrudeHash $archive) -cne $Paths.Sha256) {
-        throw 'the downloaded window does not match its pinned checksum'
-    }
-    $unpack = Join-Path $Paths.Root ('.unpack-' + [Guid]::NewGuid().ToString('N'))
-    $previous = Join-Path $Paths.Root ('.previous-' + [Guid]::NewGuid().ToString('N'))
-    try {
-        Expand-CrudeWindowArchive $archive $unpack
-        # Move the old copy aside first, so a failed move can put it back.
-        if ([IO.Directory]::Exists($prefix)) { [IO.Directory]::Move($prefix, $previous) }
+function Get-CrudeWindowDownload([string[]] $Sources, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds) {
+    # One file, two GitHub paths, the same bytes behind both. The published
+    # download path can fail while the API asset path answers, so each path is
+    # tried in turn; the pinned checksum still decides what is accepted.
+    $failure = $null
+    foreach ($source in $Sources) {
         try {
-            [IO.Directory]::Move($unpack, $prefix)
+            Get-CrudeDownload $source $Destination $MaximumBytes $TimeoutSeconds
+            return
         } catch {
-            if ([IO.Directory]::Exists($previous) -and -not [IO.Directory]::Exists($prefix)) { [IO.Directory]::Move($previous, $prefix) }
-            throw
-        }
-        if ([IO.Directory]::Exists($previous)) { try { [IO.Directory]::Delete($previous, $true) } catch { } }
-    } finally {
-        foreach ($leftover in @($unpack, $previous)) {
-            if ([IO.Directory]::Exists($leftover)) { try { [IO.Directory]::Delete($leftover, $true) } catch { } }
+            $failure = $_.Exception.Message
+            if ([IO.File]::Exists($Destination)) { [IO.File]::Delete($Destination) }
         }
     }
-    $exe = Get-ChildItem -LiteralPath $prefix -Filter 'wezterm-gui.exe' -File -Recurse | Select-Object -First 1
-    if (-not $exe) { throw 'the downloaded window does not hold the program it needs' }
-    return $exe
+    throw $failure
 }
 
 function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
+    # The font is only added when the machine cannot draw the family already.
+    # That is the case this window must never change: a font the user installed
+    # stays exactly as it is, byte for byte, with its own registration.
+    if (Test-CrudeFontAvailable $Paths) { return }
     $fonts = Join-Path $Paths.Root 'fonts'
     $stamp = Join-Path $fonts '.crude-font'
     $present = @(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File -ErrorAction SilentlyContinue)
     if ($present.Count -and [IO.File]::Exists($stamp) -and ([IO.File]::ReadAllText($stamp)).Trim() -ceq $Paths.FontVersion) {
+        try { [void] (Add-CrudeFontRegistration $fonts) } catch {
+            Write-CrudeStep (Mark 'warn') 'Font' "the font for the window could not be registered: $($_.Exception.Message)"
+        }
         return
     }
     if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
-        if (-not $present.Count) { Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong' }
+        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
         return
     }
     $archive = Join-Path $WorkDir 'fonts.tar.xz'
     try {
-        Get-CrudeDownload "https://github.com/ryanoasis/nerd-fonts/releases/download/$($Paths.FontVersion)/JetBrainsMono.tar.xz" $archive
+        Get-CrudeWindowDownload @($Paths.FontApi, "https://github.com/ryanoasis/nerd-fonts/releases/download/$($Paths.FontVersion)/JetBrainsMono.tar.xz") $archive 33554432 300
     } catch {
-        if (-not $present.Count) { Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong' }
+        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
         return
     }
     if ((Get-CrudeHash $archive) -cne $Paths.FontSha256) {
@@ -829,7 +877,9 @@ function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
     }
     [void] [IO.Directory]::CreateDirectory($fonts)
     & tar.exe -xJf $archive -C $fonts
-    Register-CrudeFonts $fonts
+    try { [void] (Add-CrudeFontRegistration $fonts) } catch {
+        Write-CrudeStep (Mark 'warn') 'Font' "the font for the window could not be registered: $($_.Exception.Message)"
+    }
     if (@(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File).Count) {
         [IO.File]::WriteAllText($stamp, $Paths.FontVersion)
     } else {
@@ -837,86 +887,131 @@ function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
     }
 }
 
-function Write-CrudeWindowFiles($Paths, [string] $InstallDir, [string] $Payload, [string] $Gui) {
-    $lua = Join-Path $Paths.Root 'wezterm.lua'
-    $text = @"
--- Written by the Crude installer. This window opens Crude only.
-local wezterm = require 'wezterm'
-
--- Open as an application window: use the desktop area, not a small terminal.
-wezterm.on('gui-startup', function(cmd)
-    local _, _, window = wezterm.mux.spawn_window(cmd or {})
-    local gui = window:gui_window()
-    if gui then gui:maximize() end
-end)
-
-return {
-    default_prog = { '@@PROGRAM@@' },
-    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
-    font_size = 13.0,
-    window_decorations = 'TITLE | RESIZE',
-    -- A sane size when the window manager cannot maximise; the handler below
-    -- asks for the full desktop area.
-    initial_cols = 120,
-    initial_rows = 36,
-    hide_tab_bar_if_only_one_tab = true,
-    enable_kitty_keyboard = true,
-    window_close_confirmation = 'NeverPrompt',
-    -- If Crude exits because of an error, keep the message on screen.
-    exit_behavior = 'CloseOnCleanExit',
-    check_for_updates = false,
-    audible_bell = 'Disabled',
-    -- Crude owns these keys, so the terminal must not act on them here. That
-    -- includes copy: the terminal's own copy would copy a selection Crude never
-    -- leaves in the terminal, so the key must reach Crude instead.
-    keys = {
-        { key = 'c', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-        { key = 'n', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-        { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-        { key = 'w', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-    },
+function Remove-CrudeFontRegistration([string] $Folder) {
+    # Delete the per-user font values that point into this folder. Every other
+    # value is left alone.
+    if (-not $Folder) { return }
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Fonts', $true)
+    if (-not $key) { return }
+    $root = [IO.Path]::GetFullPath($Folder)
+    try {
+        foreach ($name in @($key.GetValueNames())) {
+            $value = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+            if ($value -isnot [string] -or -not $value) { continue }
+            try { $full = [IO.Path]::GetFullPath($value) } catch { continue }
+            if ($full.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+                try { $key.DeleteValue($name, $false) } catch { }
+            }
+        }
+    } finally { $key.Dispose() }
 }
-"@
-    # Write beside the file and replace it in one step, so a half-written
-    # configuration is never read.
-    $pending = $lua + '.new'
-    [IO.File]::WriteAllText($pending, $text.Replace('@@PROGRAM@@', (Join-Path $InstallDir 'crude.exe').Replace('\', '\\')))
-    # Windows PowerShell 5.1 has no File.Move(source, target, overwrite), and
-    # File.Replace is a single step on Windows but unavailable elsewhere, so use
-    # it first and fall back to delete-then-move.
-    if (-not [IO.File]::Exists($lua)) {
-        [IO.File]::Move($pending, $lua)
-    } else {
+
+function Get-CrudeWindowLegacyPrograms($Paths) {
+    # Terminal programs that a window in this folder runs. A window holding one
+    # of these cannot be replaced, so an update closes it with the program. A
+    # terminal the user installed elsewhere is never in this list.
+    $found = New-Object 'System.Collections.Generic.List[string]'
+    if (-not [IO.Directory]::Exists($Paths.Root)) { return $found.ToArray() }
+    foreach ($program in @(Get-ChildItem -LiteralPath $Paths.Root -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @('wezterm-gui.exe', 'wezterm.exe', 'crude-window.exe') })) {
+        $found.Add($program.FullName)
+    }
+    return $found.ToArray()
+}
+
+function Remove-CrudeWindowLegacy($Paths) {
+    # Remove a terminal, a configuration and font values that a window in this
+    # folder does not use: its own terminal folder, wezterm.lua, the tools
+    # folder, and a menu entry that opens them. Nothing outside Crude's own
+    # folder is touched, and no font the user installed is removed.
+    if (-not [IO.Directory]::Exists($Paths.Root)) { return }
+    $legacy = @(Get-ChildItem -LiteralPath $Paths.Root -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'wezterm-*' -or $_.Name -like '.unpack-*' -or $_.Name -like '.previous-*' -or $_.Name -eq 'tools' })
+    $lua = Join-Path $Paths.Root 'wezterm.lua'
+    if (-not $legacy.Count -and -not [IO.File]::Exists($lua) -and -not [IO.File]::Exists("$lua.new")) { return }
+    # A menu entry that opens a removed program would stay behind.
+    if ([IO.File]::Exists($Paths.Link)) {
+        $target = ''
         try {
-            # [NullString]::Value passes a real null, which File.Replace
-            # requires for "no backup copy".
-            [IO.File]::Replace($pending, $lua, [NullString]::Value)
-        } catch [PlatformNotSupportedException] {
-            [IO.File]::Delete($lua)
-            [IO.File]::Move($pending, $lua)
+            $shell = New-Object -ComObject WScript.Shell
+            try { $target = $shell.CreateShortcut($Paths.Link).TargetPath } finally { [void] [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+        } catch { $target = '' }
+        if ($target) {
+            try {
+                if ([IO.Path]::GetFullPath($target).StartsWith([IO.Path]::GetFullPath($Paths.Root), [StringComparison]::OrdinalIgnoreCase)) {
+                    [IO.File]::Delete($Paths.Link)
+                }
+            } catch { }
         }
     }
-
-    $iconSource = Join-Path $Payload 'crude-icon.ico'
-    if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $Paths.Icon -Force }
-
-    [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Paths.Link))
-    $shell = New-Object -ComObject WScript.Shell
-    $link = $shell.CreateShortcut($Paths.Link)
-    $link.TargetPath = $Gui
-    $link.Arguments = "--config-file ""$lua"" start --always-new-process --class crude"
-    $link.WorkingDirectory = $HOME
-    $link.Description = 'Editor, terminals and AI agents in one window'
-    if ([IO.File]::Exists($Paths.Icon)) { $link.IconLocation = $Paths.Icon }
-    $link.Save()
+    Remove-CrudeFontRegistration (Join-Path $Paths.Root 'fonts')
+    foreach ($entry in $legacy) {
+        try { [IO.Directory]::Delete($entry.FullName, $true) } catch { }
+    }
+    foreach ($stale in @($lua, "$lua.new")) {
+        if ([IO.File]::Exists($stale)) { try { [IO.File]::Delete($stale) } catch { } }
+    }
+    $fonts = Join-Path $Paths.Root 'fonts'
+    if ([IO.Directory]::Exists($fonts) -and -not @(Get-ChildItem -LiteralPath $fonts -File -ErrorAction SilentlyContinue).Count) {
+        try { [IO.Directory]::Delete($fonts, $true) } catch { }
+    }
 }
 
-function Remove-CrudeWindowOldVersions($Paths) {
-    $current = "wezterm-$($Paths.Version)"
-    foreach ($old in @(Get-ChildItem -LiteralPath $Paths.Root -Directory -ErrorAction SilentlyContinue)) {
-        if ($old.Name -like 'wezterm-*' -and $old.Name -cne $current) {
-            try { [IO.Directory]::Delete($old.FullName, $true) } catch { }
+function Write-CrudeWindowProfile($Paths, [string] $InstallDir) {
+    # One JSON fragment in the user's Fragments folder: Windows Terminal reads
+    # it at start, so the profile appears without editing the user's settings.
+    $profile = [ordered] @{
+        guid = $Paths.Guid
+        name = 'Crude'
+        commandline = (Join-Path $InstallDir 'crude.exe')
+        startingDirectory = '%USERPROFILE%'
+        # Keep the pane when Crude fails, so the message stays readable.
+        closeOnExit = 'graceful'
+    }
+    if ([IO.File]::Exists($Paths.Icon)) { $profile.icon = $Paths.Icon }
+    $face = Get-CrudeWindowFont $Paths
+    if ($face) { $profile.font = [ordered] @{ face = $face; size = 12 } }
+    $fragment = [ordered] @{ profiles = @($profile) }
+
+    [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Paths.Fragment))
+    $pending = $Paths.Fragment + '.new'
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(($fragment | ConvertTo-Json -Depth 6))
+    $stream = [IO.File]::Open($pending, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    } finally { $stream.Dispose() }
+    # Replace in one step, so Windows Terminal never reads half a fragment.
+    if (-not [IO.File]::Exists($Paths.Fragment)) {
+        [IO.File]::Move($pending, $Paths.Fragment)
+    } else {
+        try {
+            [IO.File]::Replace($pending, $Paths.Fragment, [NullString]::Value)
+        } catch [PlatformNotSupportedException] {
+            [IO.File]::Delete($Paths.Fragment)
+            [IO.File]::Move($pending, $Paths.Fragment)
         }
+    }
+}
+
+function Write-CrudeWindowLink($Paths, [string] $Terminal, [string] $InstallDir) {
+    # The menu entry opens one maximized Crude window and carries the Crude icon,
+    # because the entry belongs to Crude and not to the terminal. The program is
+    # named on the command line as well as in the profile: a terminal that has
+    # not read the profile yet then still opens Crude.
+    [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($Paths.Link))
+    $program = Join-Path $InstallDir 'crude.exe'
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut($Paths.Link)
+        $link.TargetPath = $Terminal
+        $link.Arguments = '-w -1 new-tab -p "Crude" --maximized -- "' + $program + '"'
+        $link.WorkingDirectory = $HOME
+        $link.Description = 'Editor, terminals and AI agents in one window'
+        if ([IO.File]::Exists($Paths.Icon)) { $link.IconLocation = "$($Paths.Icon),0" }
+        $link.Save()
+    } finally {
+        [void] [Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
     }
 }
 
@@ -932,12 +1027,27 @@ function Install-CrudeWindow([string] $InstallDir, [string] $Payload, [string] $
     }
     # A window problem never undoes the program install; report the cause and stop.
     try {
-        $gui = Install-CrudeWindowTerminal $paths $WorkDir
-        # The new copy is in place, so the older pins can go.
-        Remove-CrudeWindowOldVersions $paths
+        $terminal = Get-CrudeWindowsTerminal
+        if (-not $terminal) {
+            # The window needs the terminal Windows already provides. Crude does
+            # not install one of its own.
+            Write-CrudeStep (Mark 'warn') 'Window' 'needs Windows Terminal, which is not installed'
+            Write-Host '              Install it, then run this installer again:'
+            Write-Host '              winget install --id Microsoft.WindowsTerminal'
+            return
+        }
+        Remove-CrudeWindowLegacy $paths
+        [void] [IO.Directory]::CreateDirectory($paths.Root)
+        $iconSource = Join-Path $Payload 'crude-icon.ico'
+        if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $paths.Icon -Force }
         Install-CrudeWindowFonts $paths $WorkDir
-        Write-CrudeWindowFiles $paths $InstallDir $Payload $gui.FullName
-        Write-CrudeStep (Mark 'check') 'Window' 'Crude is in the Start menu'
+        Write-CrudeWindowProfile $paths $InstallDir
+        Write-CrudeWindowLink $paths $terminal $InstallDir
+        Write-CrudeStep (Mark 'check') 'Window' 'Crude is in the Start menu and in Windows Terminal'
+        if (Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue) {
+            # A running terminal keeps the profiles it read when it started.
+            Write-CrudeStep (Mark 'dot') 'Profile' 'Windows Terminal reads new profiles when it starts. Run Reload settings, then open Crude'
+        }
     } catch {
         Write-CrudeStep (Mark 'warn') 'Window' "the window was not installed: $($_.Exception.Message)"
     }
@@ -979,7 +1089,10 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         # never waits behind a large download.
         $release = Get-CrudeRelease $Repository $Version $work
         Write-Host "Version $($release.Tag) · windows/amd64"
-        $stopPlan = Confirm-CrudeStop (Join-Path $InstallDir 'crude.exe') -Stop:$Stop -NoStop:$NoStop
+        # Stop this program, and any terminal program a window in Crude's folder
+        # runs, before the update replaces them.
+        $programs = @((Join-Path $InstallDir 'crude.exe')) + @(Get-CrudeWindowLegacyPrograms (Get-CrudeWindowPaths))
+        $stopPlan = Confirm-CrudeStop $programs -Stop:$Stop -NoStop:$NoStop
         $windowPlan = Confirm-CrudeWindow -Gui:$Gui -NoGui:$NoGui
         $archive = Join-Path $work $release.AssetName
         $checksums = Join-Path $work 'SHA256SUMS'
@@ -993,7 +1106,7 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         if ($stopPlan -eq 'keep') {
             Write-CrudeStep (Mark 'dot') 'Running' 'Crude stays open on the old version. It changes at the next start'
         } elseif ($stopPlan -eq 'go') {
-            Stop-CrudeProcess (Join-Path $InstallDir 'crude.exe') -Force:$Stop
+            Stop-CrudeProcess $programs -Force:$Stop
         }
         $files = New-CrudeFileTransaction $payload $InstallDir $relativeFiles $work
         if (-not $NoPath) { $path = New-CrudePathTransaction $InstallDir }
