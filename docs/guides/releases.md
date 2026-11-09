@@ -112,7 +112,8 @@ warning covers bugs, agent mistakes, work lost and the need for backups.
 
 Crude keeps working in a detached core after a window closes, and that core
 runs the installed program. The installer finds only the processes that run
-this exact installation.
+this exact installation: the program itself, which an open window also runs, and
+a terminal program that a window folder holds.
 
 - The question comes before the download, so a refusal costs nothing. Without
   an answer it stops and changes nothing: close Crude and run the installer
@@ -128,8 +129,8 @@ No force path runs automatically, and no other program is signalled.
 ### The window
 
 `--gui` adds a window that opens Crude. Once the window is installed, every
-later run of the installer updates it together with the program: the pinned
-terminal, the font, the configuration, the menu entry and the icon.
+later run of the installer updates it together with the program: the profile,
+the font, the menu entry and the icon.
 
 Without `--gui` or `--no-gui`, a terminal in a graphical session asks one
 question, `Do you want the GUI version as well?`, and the default is yes. A
@@ -137,32 +138,45 @@ session without a display does not ask and does not download. An unattended
 `--yes` run never starts a window download, and still updates a window that is
 already installed.
 
-- It installs one pinned WezTerm build for this user, after a checksum check.
-  Linux gets `wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz` under
-  `~/.local/share/crude/window`; Windows gets the matching zip under
-  `%LOCALAPPDATA%\Crude\window`. No system package and no elevation.
-- It writes one configuration that opens the installed `crude` program and
-  fills the desktop area, the way an application window opens. It uses
-  JetBrainsMono Nerd Font first, hides the tab bar, reports keys precisely, and
-  disables the automatic updater and the bell. The terminal does not act on
+- Windows opens Crude in Windows Terminal, which Windows 11 provides and Windows
+  10 gets from the Microsoft Store. When it is missing, the window step says so
+  and names the exact install command, and the program itself is still
+  installed. Crude installs no second terminal beside it.
+- On Windows the window is one JSON fragment in
+  `%LOCALAPPDATA%\Microsoft\Windows Terminal\Fragments\Crude`, which Windows
+  Terminal reads at start, so a `Crude` profile appears and the user's own
+  `settings.json` is never edited. The fragment names the installed program, the
+  user folder, the Crude icon and the Nerd Font when the machine can draw it. It
+  keeps the pane open when Crude fails, so the message stays readable. A
+  terminal that is already running keeps the profiles it read when it started,
+  so the installer says to run Reload settings before the profile is listed.
+- The Start menu entry `Crude.lnk` opens one maximized window with the Crude
+  profile and the installed program, so it also works before the terminal has
+  read the profile, and it carries the Crude icon from the release archive.
+- Windows Terminal binds keys for the whole application, not for one profile, so
+  the window keeps the user's own key bindings. Crude's keys pass through
+  unchanged: Ctrl+C and Ctrl+V behave as in any terminal, and the terminal
+  reports modified keys precisely, so Shift+Enter and Ctrl+Enter reach Crude.
+  Ctrl+Shift+C stays the terminal's own copy.
+- Linux installs one pinned WezTerm build for this user, after a checksum check:
+  `wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz` under
+  `~/.local/share/crude/window`. No system package and no elevation. It writes
+  one configuration that opens the installed `crude` program and fills the
+  desktop area. It also adds `crude-window` next to the program, with an
+  application-menu entry and `StartupWMClass=crude`. The terminal does not act on
   Ctrl+Shift+C, Ctrl+Shift+N, Ctrl+Shift+T or Ctrl+Shift+W, because Crude owns
-  those keys; Ctrl+Shift+C copies Crude's own selection, which the terminal
-  never sees.
-  The launcher passes no arguments, so the window has one job. When Crude exits
-  because of an error, the window stays open with the message, so a failure is
-  never a window that vanishes. The configuration is rewritten on every run, so
-  an update keeps it current.
-- It adds `crude-window` next to the program, an application-menu entry with
-  `StartupWMClass=crude` on Linux and `Crude.lnk` in the Start menu on Windows,
-  and the Crude icon from the release archive.
-- It installs JetBrainsMono Nerd Font for this user only:
-  `~/.local/share/fonts/JetBrainsMonoNerdFont` on Linux, a per-user font copy
-  plus one `HKCU` value on Windows. A version stamp skips a font that is
-  already current.
-- The new terminal is unpacked beside the old one, the old one is removed only
-  after the new one is in place, and an older pin is deleted. A download,
-  checksum or start failure reports the cause and keeps the program install, and
-  never leaves a half-written window folder.
+  those keys.
+- It adds JetBrainsMono Nerd Font only when the machine cannot draw that family
+  already: `~/.local/share/fonts/JetBrainsMonoNerdFont` on Linux, per-user values
+  under `HKCU` that point at `%LOCALAPPDATA%\Crude\window\fonts` on Windows. A
+  font that is already installed is used as it is and is never copied over,
+  re-registered or removed, so the window cannot change how the rest of the
+  machine draws text.
+- A window folder that holds a terminal, a configuration or font values the
+  installer does not use loses them, together with a menu entry that opens them.
+  Nothing outside Crude's own folder is removed.
+- A download, checksum or write failure reports the cause and keeps the program
+  install.
 
 ### Files the installers change
 

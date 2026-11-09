@@ -157,7 +157,7 @@ jobs:
           gh release create "$RELEASE_TAG" \
             "dist/crude_${RELEASE_TAG}_linux_amd64.tar.gz" \
             "dist/crude_${RELEASE_TAG}_windows_amd64.zip" dist/SHA256SUMS \
-            install.sh install.ps1 install.bat \
+            install.sh install.ps1 \
             --verify-tag --draft --title "$title" --generate-notes "${flags[@]}"
           if [[ "$RELEASE_MODE" == "instant" ]]; then
             notes="$RUNNER_TEMP/instant-notes.md"

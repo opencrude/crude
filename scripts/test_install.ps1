@@ -136,8 +136,13 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
         GitShell = 'C:\Fixture\Git\bin\bash.exe'; GitPackage = $null; GitShaMismatch = $false
         GitDownloadsFail = $false; GitTransientFailures = 0; GitExpandFails = $false; GitUnpackCalls = 0
         PrimaryDownloadsFail = $false; ApiDownloadsFail = $false
+        FontPresent = $true; FontRegistrations = 0; FontDownloads = 0
+        Terminal = $null
     }
     $install = Join-Path $Fixture.Directory 'install with spaces'
+    $fixtureState.Terminal = Join-Path $Fixture.Directory 'WindowsApps\wt.exe'
+    [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($fixtureState.Terminal))
+    [IO.File]::WriteAllText($fixtureState.Terminal, 'terminal')
     $savedPath = $env:Path
     $savedLocalAppData = $env:LOCALAPPDATA
     $savedAppData = $env:APPDATA
@@ -202,6 +207,10 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
         [void] [IO.Directory]::CreateDirectory((Join-Path $Destination 'bin'))
         [IO.File]::WriteAllText((Join-Path $Destination 'bin\bash.exe'), 'fixture bash')
     }
+    # The window opens in the terminal Windows already provides. The fixture
+    # stands in for its installed path and for the face Windows can draw.
+    function Get-CrudeWindowsTerminal { return $fixtureState.Terminal }
+    function Get-CrudeWindowFont($Paths) { return 'JetBrainsMono NF' }
     function Assert-CrudeGitShell([string] $Bash) {
         Assert-True ([IO.File]::Exists($Bash)) 'A verified Git Shell must hold bin\bash.exe'
     }
@@ -209,6 +218,12 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
         $fixtureState.ProbeCalls++
         Assert-Equal ([IO.File]::ReadAllText($Executable)) "fixture executable $($fixtureState.Fixture.Tag)" 'The verified candidate must be the extracted archive executable'
         return $fixtureState.Fixture.VersionOutput
+    }
+    # A font this machine already has needs no file, no value and no download.
+    function Test-CrudeFontAvailable($Paths) { return $fixtureState.FontPresent }
+    function Add-CrudeFontRegistration([string] $Folder) {
+        $fixtureState.FontRegistrations++
+        return 1
     }
     function Get-CrudeUserPath { return $fixtureState.UserPath }
     function Get-CrudeUserPathKind { return [Microsoft.Win32.RegistryValueKind]::ExpandString }
@@ -285,15 +300,13 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
 }
 
 try {
-    Test-Case 'public installer parameters and thin batch wrapper' {
+    Test-Case 'public installer parameters' {
         $parseErrors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($installer, [ref] $null, [ref] $parseErrors)
         Assert-Equal @($parseErrors).Count 0 'PowerShell source must parse'
         $names = @($ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath })
         Assert-Equal ($names -join ',') 'Version,Repository,InstallDir,NoPath,Yes,Gui,NoGui,Stop,NoStop' 'No HTTP or checksum bypass parameters are exposed'
-        $batch = [IO.File]::ReadAllText((Join-Path (Split-Path $installer -Parent) 'install.bat'))
-        Assert-True ($batch -match 'powershell\.exe.+-File "%~dp0install\.ps1" %\*') 'Batch must forward arguments to the adjacent installer'
-        Assert-True ($batch -notmatch 'go build|setx|crude-beta') 'Batch must not build source or rewrite PATH'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path (Split-Path $installer -Parent) 'install.bat'))) 'The installer is one script; no batch wrapper is shipped'
     }
 
     Test-Case 'noninteractive installation and update require explicit beta-risk consent' {
@@ -470,57 +483,104 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
         }
     }
 
-    Test-Case 'a window update rewrites the configuration and drops older copies' {
-        With-Fixture (New-Fixture) {
-            $paths = Get-CrudeWindowPaths
-            $prefix = Join-Path $paths.Root "wezterm-$($paths.Version)"
-            $inner = Join-Path $prefix 'WezTerm-windows-20240203-110809-5046fc22'
-            [void] [IO.Directory]::CreateDirectory($inner)
-            [IO.File]::WriteAllText((Join-Path $inner 'wezterm-gui.exe'), 'window')
-            $old = Join-Path $paths.Root 'wezterm-20200101-000000-old'
-            [void] [IO.Directory]::CreateDirectory($old)
-            $fonts = Join-Path $paths.Root 'fonts'
-            [void] [IO.Directory]::CreateDirectory($fonts)
-            [IO.File]::WriteAllText((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'), 'font')
-            [IO.File]::WriteAllText((Join-Path $fonts '.crude-font'), $paths.FontVersion)
-            [IO.File]::WriteAllText((Join-Path $paths.Root 'wezterm.lua'), 'stale configuration')
-            $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
-            [void] [IO.Directory]::CreateDirectory($payload)
-            Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
-            Assert-True ([IO.File]::ReadAllText((Join-Path $paths.Root 'wezterm.lua')).Contains('default_prog')) 'An update must rewrite the configuration'
-            Assert-True (-not [IO.Directory]::Exists($old)) 'An update must remove an older pinned copy'
-            Assert-True ([IO.Directory]::Exists($prefix)) 'An update must keep the current pinned copy'
-            Assert-Equal $fixtureState.Attempts 0 'An update must not download a copy that is already present'
-        }
-    }
-
-    Test-Case 'the window writes one configuration for the installed program' {
+    Test-Case 'the window adds one Windows Terminal profile and one menu entry' {
         With-Fixture (New-Fixture) {
             $savedLocalAppData = $env:LOCALAPPDATA
+            $savedAppData = $env:APPDATA
             $env:LOCALAPPDATA = Join-Path $fixtureState.Fixture.Directory 'window profile'
+            $env:APPDATA = Join-Path $fixtureState.Fixture.Directory 'window appdata'
             try {
-                $root = Join-Path $env:LOCALAPPDATA 'Crude/window'
-                $prefix = Join-Path $root 'wezterm-20240203-110809-5046fc22'
-                $inner = Join-Path $prefix 'WezTerm-windows-20240203-110809-5046fc22'
-                [void] [IO.Directory]::CreateDirectory($inner)
-                [IO.File]::WriteAllText((Join-Path $inner 'wezterm-gui.exe'), 'window executable')
-                $fonts = Join-Path $root 'fonts'
-                [void] [IO.Directory]::CreateDirectory($fonts)
-                [IO.File]::WriteAllText((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'), 'font')
                 $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
                 [void] [IO.Directory]::CreateDirectory($payload)
                 [IO.File]::WriteAllText((Join-Path $payload 'crude-icon.ico'), 'icon')
-                # No download happens: the pinned window is already present.
+                $paths = Get-CrudeWindowPaths
                 Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
-                $lua = [IO.File]::ReadAllText((Join-Path $root 'wezterm.lua'))
-                $program = "default_prog = { " + [char] 39 + (Join-Path $install 'crude.exe').Replace('\', '\\') + [char] 39 + " }"
-                Assert-True ($lua.Contains($program)) "The window must start the installed program, got: $lua"
-                Assert-True ($lua.Contains('JetBrainsMono Nerd Font')) 'The window must prefer the installed Nerd Font'
-                Assert-True ($lua.Contains('check_for_updates = false')) 'The window must not update itself'
-                Assert-True ($lua.Contains('gui-startup')) 'The window must open as an application window'
-                Assert-True ($lua.Contains('enable_kitty_keyboard = true')) 'The window must report keys precisely'
-                Assert-True ([IO.File]::Exists((Join-Path $env:LOCALAPPDATA 'Crude/crude.ico'))) 'The window must carry the Crude icon'
-            } finally { $env:LOCALAPPDATA = $savedLocalAppData }
+
+                Assert-True ([IO.File]::Exists($paths.Fragment)) 'The window must add a Windows Terminal profile'
+                $profile = @(([IO.File]::ReadAllText($paths.Fragment) | ConvertFrom-Json).profiles)[0]
+                Assert-Equal $profile.name 'Crude' 'The profile must be named Crude'
+                Assert-Equal $profile.commandline (Join-Path $install 'crude.exe') 'The profile must start the installed program'
+                Assert-Equal $profile.guid $paths.Guid 'The profile must keep one identity across updates'
+                Assert-Equal $profile.font.face 'JetBrainsMono NF' 'The profile must use the Nerd Font Windows can draw'
+                Assert-Equal $profile.icon (Join-Path $env:LOCALAPPDATA 'Crude/crude.ico') 'The profile must carry the Crude icon'
+                Assert-Equal $profile.startingDirectory '%USERPROFILE%' 'The profile must start in the user folder'
+
+                $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($paths.Link)
+                Assert-Equal $shortcut.TargetPath $fixtureState.Terminal 'The Start menu must open Windows Terminal'
+                Assert-Equal $shortcut.Arguments ('-w -1 new-tab -p "Crude" --maximized -- "' + (Join-Path $install 'crude.exe') + '"') 'The Start menu must open one maximized Crude window, even before the profile is read'
+                Assert-Equal $shortcut.IconLocation ((Join-Path $env:LOCALAPPDATA 'Crude/crude.ico') + ',0') 'The Start menu entry must use the Crude icon'
+                Assert-Equal $fixtureState.FontRegistrations 0 'A font this machine already has must not be registered again'
+                Assert-Equal $fixtureState.Attempts 0 'A window that runs in Windows Terminal downloads no terminal'
+            } finally {
+                $env:LOCALAPPDATA = $savedLocalAppData
+                $env:APPDATA = $savedAppData
+            }
+        }
+    }
+
+    Test-Case 'a missing Windows Terminal states the next step and adds nothing' {
+        With-Fixture (New-Fixture) {
+            $savedLocalAppData = $env:LOCALAPPDATA
+            $savedAppData = $env:APPDATA
+            $env:LOCALAPPDATA = Join-Path $fixtureState.Fixture.Directory 'no terminal'
+            $env:APPDATA = Join-Path $fixtureState.Fixture.Directory 'no terminal appdata'
+            try {
+                $fixtureState.Terminal = $null
+                $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
+                [void] [IO.Directory]::CreateDirectory($payload)
+                $paths = Get-CrudeWindowPaths
+                $output = ((Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install' *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+                Assert-True ($output -match 'needs Windows Terminal') 'A missing terminal must be stated'
+                Assert-True ($output -match 'winget install --id Microsoft\.WindowsTerminal') 'A missing terminal must name the exact next step'
+                Assert-True ($output -notmatch '(?i)wezterm|download') 'A missing terminal must not fall back to another terminal'
+                Assert-True (-not [IO.File]::Exists($paths.Link)) 'No menu entry may appear without a terminal'
+                Assert-True (-not [IO.File]::Exists($paths.Fragment)) 'No profile may appear without a terminal'
+            } finally {
+                $env:LOCALAPPDATA = $savedLocalAppData
+                $env:APPDATA = $savedAppData
+            }
+        }
+    }
+
+    Test-Case 'an update removes a window terminal this folder no longer uses' {
+        With-Fixture (New-Fixture) {
+            $savedLocalAppData = $env:LOCALAPPDATA
+            $savedAppData = $env:APPDATA
+            $env:LOCALAPPDATA = Join-Path $fixtureState.Fixture.Directory 'legacy profile'
+            $env:APPDATA = Join-Path $fixtureState.Fixture.Directory 'legacy appdata'
+            try {
+                $paths = Get-CrudeWindowPaths
+                $old = Join-Path $paths.Root "wezterm-$($paths.Version)"
+                $oldProgram = Join-Path $old 'WezTerm-windows-x/wezterm-gui.exe'
+                [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($oldProgram))
+                [IO.File]::WriteAllText($oldProgram, 'old window')
+                [IO.File]::WriteAllText((Join-Path $paths.Root 'wezterm.lua'), 'stale configuration')
+                $fonts = Join-Path $paths.Root 'fonts'
+                [void] [IO.Directory]::CreateDirectory($fonts)
+                [IO.File]::WriteAllText((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'), 'font')
+                [void] [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($paths.Link))
+                $shell = New-Object -ComObject WScript.Shell
+                $link = $shell.CreateShortcut($paths.Link)
+                $link.TargetPath = $oldProgram
+                $link.Save()
+
+                Assert-Equal (Confirm-CrudeWindow) 'install' 'An installed window must keep itself current'
+                Assert-True (@(Get-CrudeWindowLegacyPrograms $paths).Count -ge 1) 'A terminal in the window folder must be part of what an update stops'
+
+                $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
+                [void] [IO.Directory]::CreateDirectory($payload)
+                [IO.File]::WriteAllText((Join-Path $payload 'crude-icon.ico'), 'icon')
+                Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
+
+                Assert-True (-not [IO.Directory]::Exists($old)) 'An update must remove a terminal in the window folder'
+                Assert-True (-not [IO.File]::Exists((Join-Path $paths.Root 'wezterm.lua'))) 'An update must remove an unused configuration'
+                $shortcut = $shell.CreateShortcut($paths.Link)
+                Assert-Equal $shortcut.TargetPath $fixtureState.Terminal 'The menu entry must open Windows Terminal'
+                Assert-True ([IO.File]::Exists((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'))) 'A font inside Crude must not be removed with the terminal'
+            } finally {
+                $env:LOCALAPPDATA = $savedLocalAppData
+                $env:APPDATA = $savedAppData
+            }
         }
     }
 
