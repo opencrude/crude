@@ -2,14 +2,10 @@ package viewmodel
 
 import (
 	"strings"
-	"time"
-	"unicode"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/tui/wm"
 )
 
 type lspHoverResultMsg struct {
@@ -50,45 +46,24 @@ func (m *App) handleLSPHoverResult(msg lspHoverResultMsg) {
 		m.Feedback.NotifyInfo("No symbol documentation")
 		return
 	}
-	area := ui.NewTextArea("lsp-hover/text", ui.NewTokenSet(m.Theme), true)
-	area.SetReadOnly(true)
+	reader := ui.NewTextReader("lsp-hover/reader", ui.NewTokenSet(m.Theme))
+	area := reader.TextArea()
 	area.SetValue(msg.text)
 	area.SetCursorFlat(0)
-	w, h := min(90, max(1, m.width-4)), min(18, max(1, m.height-4))
-	bounds, visible := m.editorHelpBounds(msg.owner, w, h)
+	width := min(90, max(ui.TooltipFrameWidth("Symbol documentation", 90), ui.TooltipFrameWidth(msg.text, 90)+ui.ScrollbarWidth))
+	anchor := m.editorPopoverAnchor(msg.owner, width, 18)
+	if anchor == nil {
+		return
+	}
+	bounds, visible := m.editorReaderBounds(msg.owner, editor.Position{Line: msg.owner.CursorLine(), Col: msg.owner.CursorCol()}, reader, width)
 	if !visible {
 		return
 	}
-	w, h = bounds.W, bounds.H
-	frame := ui.NewWindowFrameWidget(m.Theme, "lsp-hover/frame", ui.FramePopover, "Symbol documentation", area, nil, false, w, h)
-	fw := wm.NewFloatingWindow("lsp-hover", "", frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithClosable(true), wm.WithFocusable(true), wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	fw.SetPosition(bounds.X, bounds.Y)
-	m.overlayHost.Open(ui.OverlayID("lsp-hover"), fw, ui.PopoverPolicy(true), nil)
-}
-
-func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
-	if m.LSPPopup == nil || m.LSPPopup.CompletionDue.IsZero() || now.Before(m.LSPPopup.CompletionDue) {
-		return nil
-	}
-	m.LSPPopup.CompletionDue = time.Time{}
-	ed := m.EditorState.Editor
-	if editorRetainsCompletionKeys(ed) {
-		return nil
-	}
-	if m.ws.LSPMgr() == nil || !m.ws.LSPMgr().Settings().AutoComplete || m.EditorState.ActiveView == "" || ed == nil || !ed.IsOpen() || m.focusTarget() != FocusEditor || m.completion != nil {
-		return nil
-	}
-	if m.focusedPopup() != nil {
-		return nil
-	}
-	raw := ed.LineText(ed.CursorLine())
-	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), editor.DefaultTabWidth)
-	if off <= 0 {
-		return nil
-	}
-	r, _ := utf8.DecodeLastRuneInString(raw[:off])
-	if r != '.' && r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
-		return nil
-	}
-	return m.requestCompletion(true)
+	_, fw := m.newEditorPopover(ui.OverlaySymbolHover, "Symbol documentation", reader, area.ID(), bounds)
+	m.overlayHost.Open(ui.OverlaySymbolHover, fw, ui.PopoverPolicy(true), func() {
+		if m.LSPPopup.Hover == anchor {
+			m.LSPPopup.Hover = nil
+		}
+	})
+	m.LSPPopup.Hover = anchor
 }

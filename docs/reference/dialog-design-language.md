@@ -10,6 +10,11 @@ implementation is `tui/ui/confirm_frame.go` (confirms) and
 
 ## Chrome — WindowFrame only
 
+- Transient editor aids are popovers, not confirmation dialogs. They use
+  `FramePopover`, source-relative placement, no title-bar close button, and
+  Escape/outside-click dismissal. The click continues to its intended target.
+  Rename input shares the native prompt field and validation body; approving
+  the resulting edit still uses the modal review described below.
 - Every dialog is a `ui.WindowFrame` on the `FrameDialog` role, hosted in a
   `wm.FloatingWindow` via `ui.ComponentWidget`. No hand-drawn borders, no
   bespoke chrome, no popup-chrome escape hatch.

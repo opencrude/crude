@@ -15,7 +15,6 @@ import (
 	"crude/tui/screens/navigation"
 	"crude/tui/ui"
 	"crude/tui/window"
-	"crude/tui/wm"
 	"crude/types"
 	"crude/workspace"
 )
@@ -164,12 +163,11 @@ func (m *App) openNavigationPopup(s *navigationState) {
 	s.popup = true
 	ed := s.editor
 	w, h := min(104, max(1, m.width-4)), min(28, max(1, m.height-4))
-	frame := ui.NewWindowFrameWidget(m.Theme, "navigation/frame", ui.FramePopover, navigationTitle(s.kind), s.screen, nil, true, w, h)
-	frame.Focus(s.screen.DefaultFocus())
-	fw := wm.NewFloatingWindow(string(navigationOverlay), "", frame, w, h, wm.WithDecoration(false),
-		wm.WithMovable(false), wm.WithResizable(false), wm.WithClosable(true), wm.WithFocusable(true),
-		wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	m.placeEditorPicker(fw, frame, ed)
+	frame, fw := m.newEditorPopover(navigationOverlay, navigationTitle(s.kind), s.screen, s.screen.DefaultFocus(), ui.Rect{W: w, H: h})
+	if !m.placeEditorPicker(fw, frame, ed) {
+		m.closeNavigation()
+		return
+	}
 	m.overlayHost.Open(navigationOverlay, fw, ui.PopoverPolicy(true), func() {
 		if m.navigation == s && !s.landing {
 			m.navigation = nil

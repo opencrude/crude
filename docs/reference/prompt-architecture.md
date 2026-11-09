@@ -15,6 +15,14 @@ It is a shared library, not another application layer or execution engine.
 Callers import it directly; do not recreate forwarding APIs in `agent/`,
 `session/`, or `memory/`.
 
+The shared engineering contract favors outcome-based regressions, one state
+authority and established primitives. Abstractions and restrictions need a
+concrete reason; text-level checks remain appropriate when text is the contract.
+UI copy uses ASD-STE100-style sentences. Root communication leads with the
+result and uses short paragraphs or a few bullets, with more detail when needed
+for a decision, risk or requested explanation. These rules refine the existing
+contracts rather than adding repeated checklists or provider-specific overlays.
+
 | Owner | Responsibility |
 |---|---|
 | `prompt/build.go`, `contracts.go` | Root/child policy, role contracts, runtime-capability awareness, bounded command-output/temp policy, escaped profile and identity overlays |

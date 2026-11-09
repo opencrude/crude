@@ -12,7 +12,6 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/codeactions"
 	"crude/tui/ui"
-	"crude/tui/wm"
 	"crude/types"
 	"crude/workspace"
 )
@@ -162,13 +161,12 @@ func (m *App) requestCodeActionsCmd() tea.Cmd {
 	}
 	m.codeActions = s
 	w, h := min(104, max(1, m.width-4)), min(28, max(1, m.height-4))
-	frame := ui.NewWindowFrameWidget(m.Theme, "code-actions/frame", ui.FramePopover, "Code actions", s.screen, nil, true, w, h)
-	frame.Focus(s.screen.DefaultFocus())
-	fw := wm.NewFloatingWindow(string(codeActionsOverlay), "", frame, w, h,
-		wm.WithDecoration(false), wm.WithMovable(false), wm.WithResizable(false), wm.WithModal(true),
-		wm.WithFocusable(true), wm.WithClosable(true), wm.WithClickOutside(wm.ClickOutsideIgnore))
-	m.placeEditorPicker(fw, frame, ed)
-	m.overlayHost.Open(codeActionsOverlay, fw, ui.ModalDialogPolicy(), func() {
+	frame, fw := m.newEditorPopover(codeActionsOverlay, "Code actions", s.screen, s.screen.DefaultFocus(), ui.Rect{W: w, H: h})
+	if !m.placeEditorPicker(fw, frame, ed) {
+		m.closeCodeActions()
+		return nil
+	}
+	m.overlayHost.Open(codeActionsOverlay, fw, ui.PopoverPolicy(true), func() {
 		if m.codeActions == s {
 			m.codeActions = nil
 			s.cancel()

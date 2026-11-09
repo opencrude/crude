@@ -67,7 +67,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.closeDiagnosticDetail()
 		m.clearDiagHoverPopup()
 	}
-	if _, pasted := msg.(tea.PasteMsg); pasted && m.completion != nil {
+	if _, pasted := msg.(tea.PasteMsg); pasted {
 		m.closeCompletionPopup()
 	}
 	switch msg.(type) {
@@ -103,6 +103,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncLocalDiffFreshness()
 	m.syncSignatureHelp()
 	m.syncDiagnosticPopups()
+	m.syncSourcePopovers()
 	command = tea.Batch(command, m.syncPointerTooltip(msg))
 	command = tea.Batch(command, m.drainAutomaticSignatureHelp())
 	m.syncCodeActions()
@@ -110,6 +111,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.releaseAbsorbedViews()
 	m.syncNavigationHistory()
 	command = tea.Batch(command, m.syncCompletion())
+	command = tea.Batch(command, m.autoCompletionCmd(time.Now()))
 	command = tea.Batch(command, m.syncInlayHints())
 	m.syncEditorGhost()
 	m.syncEditorSnippet()
@@ -653,7 +655,6 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	m.Input.SetSpinFrame(spinFrame)
 	m.refreshSessionBackgroundJobs(now)
 	m.drainLSPDiagnostics()
-	completionCmd := m.autoCompletionCmd(now)
 	m.syncStatusOverview()
 	m.syncWorkspacePanels()
 	m.tickTerminalCursors(now)
@@ -745,10 +746,10 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, aeronCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, perfCmd, aeronCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right

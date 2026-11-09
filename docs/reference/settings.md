@@ -1067,6 +1067,21 @@ start or request gated features. The tool inventory reads the selected core's
 shared store; it is not another launch configuration or inherited preference
 store.
 
+The **Suggestions** group on Code Intelligence contains:
+
+- **Code suggestions** (`lsp.completions`): the completion feature gate.
+- **Suggest while typing** (`lsp.auto_complete`): automatic function, variable and
+  member suggestions. Off leaves explicit Ctrl+Space requests available.
+- **Suggestion delay** (`lsp.completion_delay_ms`): milliseconds after typing,
+  default 200. An explicit zero means immediate, not an inherited default.
+- **Accept suggestion with** (`lsp.completion_accept`): Tab, Enter or Tab or Enter
+  (default). The choice applies only while a suggestion list is open; normal
+  indentation, newlines and snippet navigation keep their existing owners.
+
+These are ordinary application/workspace preferences. Saves patch only edited
+leaves; Reset inherits the current parent. Changing completion behavior does not
+restart language servers or grant analysis trust.
+
 **Inlay hints** is the ordinary Boolean leaf `lsp.inlay_hints` and defaults
 **Off**. Explicit false overrides remain distinct from an absent inherited value;
 Reset inherits the latest parent value. This is a read-only inline-label display

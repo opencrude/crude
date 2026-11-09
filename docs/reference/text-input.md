@@ -28,6 +28,13 @@ shared control, never to one popup.
   viewport minus one row. The first page gesture advances reading immediately,
   in editable and read-only areas; unchanged paint/layout never restores the
   former page. Composite documentation shortcuts reuse this native behavior.
+- TextArea owns one `ScrollModel` for its reading position. `ui.TextReader`
+  composes a read-only TextArea with the shared ScrollbarControl bound to that
+  same model. It reserves a scrollbar column only when the wrapped content
+  exceeds the assigned height; keys, wheel and thumb dragging cannot diverge.
+- TextArea may color individual graphemes by their starting flat rune offset.
+  Semantic roles follow theme changes and native selection contrast. Content
+  edits retire the colors; they never change wrapping, copy text or input routing.
 - Read-only Form text areas open replacement content at its first line, so a
   source or warning cannot start below the visible viewport. Unchanged Form
   refreshes retain the user's reading position and selection. Editable areas

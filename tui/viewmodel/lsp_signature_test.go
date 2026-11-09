@@ -121,12 +121,13 @@ func TestSignatureEditorEntryPaintAndEscapePreserveText(t *testing.T) {
 		if service.calls.Load() != 1 {
 			t.Fatal("parameter information launched duplicate requests")
 		}
-		body := app.overlayHost.Window(signatureHelpID).Content.(*ui.WindowFrameWidget).Body().(*ui.TextArea)
+		body := app.overlayHost.Window(signatureHelpID).Content.(*ui.WindowFrameWidget).Body().(*ui.TextReader).TextArea()
 		cursor := body.CursorFlat()
 		app.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 		if body.Value() == "" || body.CursorFlat() <= cursor || app.EditorState.Editor.Value() != before {
 			t.Fatal("reader navigation changed source or lost its text")
 		}
+		app.Update(tea.KeyPressMsg{Code: tea.KeyHome, Mod: tea.ModCtrl})
 		app.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModShift})
 		if !body.HasActiveSelection() {
 			t.Fatal("read-only parameter text did not support keyboard selection")
@@ -179,7 +180,7 @@ func TestSignatureRepliesCannotFollowAnInvalidatedInvocation(t *testing.T) {
 			if app.signatureHelp != nil || app.overlayHost.IsOpen(signatureHelpID) {
 				t.Fatal("late semantic reply reopened a retired parameter reader")
 			}
-			if change == "timeout" && !signatureHasNotice(app, "Parameter information timed out or its context could not be observed") {
+			if change == "timeout" && !signatureHasNotice(app, "Could not load parameter information. Try again.") {
 				t.Fatal("unobserved reply deadline was silently retired")
 			}
 		})
@@ -383,7 +384,7 @@ func TestSignatureLoadingNoticeIsExactAndClearsOnRetirement(t *testing.T) {
 	}
 	service.notReady = true
 	if cmd := app.requestSignatureHelpCmd(); cmd != nil ||
-		!signatureHasNotice(app, "Parameter information needs a connected language server") {
+		!signatureHasNotice(app, "No language server is running. Open Problems to start it.") {
 		t.Fatal("no-server state did not give its distinct refusal")
 	}
 }

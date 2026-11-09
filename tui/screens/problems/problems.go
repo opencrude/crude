@@ -533,11 +533,11 @@ func severityNoun(s Severity) string {
 }
 
 func severityGlyph(s Severity) string {
-	return [...]string{"✕", "⚠", "i", "·"}[min(int(s), 3)]
+	return ui.DiagnosticGlyph(int(s) + 1) // Problems is zero-based; LSP starts at one.
 }
 
 func severityRole(s Severity) ui.SemanticColor {
-	return [...]ui.SemanticColor{ui.ColorError, ui.ColorWarning, ui.ColorAccent2, ui.ColorMuted}[min(int(s), 3)]
+	return ui.DiagnosticColor(int(s) + 1)
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {

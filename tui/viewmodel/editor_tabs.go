@@ -84,7 +84,7 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed, fp, text) })
-	ed.SetOnSignatureHelp(func() { m.queueAutomaticSignatureHelp(ed) })
+	ed.SetOnTyping(func(key tea.KeyPressMsg) { m.onEditorTyping(ed, key) })
 
 	// Apply cached diagnostics immediately so the editor is never empty
 	// while waiting for the server to respond.
@@ -229,7 +229,7 @@ func (m *App) jumpToNextError() bool {
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-	m.Feedback.NotifyInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
+	m.Feedback.NotifyInfo(fmt.Sprintf("Error on line %d", d.Line+1))
 	return true
 }
 
@@ -261,7 +261,7 @@ func (m *App) jumpToPrevError() bool {
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-	m.Feedback.NotifyInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
+	m.Feedback.NotifyInfo(fmt.Sprintf("Error on line %d", d.Line+1))
 	return true
 }
 

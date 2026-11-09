@@ -232,7 +232,7 @@ func (m *App) startDeleteInTree(path string) {
 }
 
 // openTextPrompt opens the focused text-input popup shared by
-// new-file / new-folder / rename / rename-symbol / go-to-line.
+// new-file / new-folder / rename / go-to-line.
 // Centralizes the popup creation so the callers stay small. The
 // submit callback returns a non-nil error to surface validation
 // issues; the popup stays open in that case so the user can fix
@@ -325,7 +325,7 @@ func (m *App) textPromptField() (*wm.FloatingWindow, *ui.TextField) {
 	if fw == nil {
 		return nil, nil
 	}
-	cw, ok := fw.Content.(*ui.ComponentWidget)
+	cw, ok := fw.Content.(interface{ Root() ui.Component })
 	if !ok || cw == nil {
 		return nil, nil
 	}
@@ -346,6 +346,16 @@ func (m *App) refreshTextPrompt() {
 	}
 	fw := m.windowManager.Window(string(ui.OverlayTextPrompt))
 	if fw == nil {
+		return
+	}
+	if anchor := m.LSPPopup.RenameInput; anchor != nil {
+		state := m.TextPrompt
+		body := ui.TextPromptBody(m.Theme, state)
+		frame, _ := m.newEditorPopover(ui.OverlayTextPrompt, state.Title, body, ui.TextPromptFieldID,
+			ui.Rect{W: ui.TextPromptPopupWidth(state), H: ui.TextPromptPopupHeight(state)})
+		fw.SetContent(frame)
+		anchor.width = ui.TextPromptPopupWidth(state)
+		m.positionSourcePopover(ui.OverlayTextPrompt, anchor)
 		return
 	}
 	frame := ui.BuildTextPromptFrame(m.Theme, m.TextPrompt)

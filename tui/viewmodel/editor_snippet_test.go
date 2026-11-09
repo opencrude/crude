@@ -155,8 +155,8 @@ func TestEditorSnippetTrueFocusBoundariesAndAutomaticCompletion(t *testing.T) {
 		})
 	}
 	app, ed := snippetJourney(t, 100)
-	app.LSPPopup.CompletionDue = time.Now().Add(-time.Second)
-	if cmd := app.autoCompletionCmd(time.Now()); cmd != nil || !ed.SnippetActive() {
+	app.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if cmd := app.autoCompletionCmd(time.Now()); cmd != nil || app.completionIntent != nil || !ed.SnippetActive() {
 		t.Fatal("automatic completions can steal active snippet Tab")
 	}
 }

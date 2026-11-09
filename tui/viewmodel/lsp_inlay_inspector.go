@@ -9,7 +9,6 @@ import (
 
 	"crude/tui/screens/inlay"
 	"crude/tui/ui"
-	"crude/tui/wm"
 	"crude/types"
 )
 
@@ -75,12 +74,11 @@ func (m *App) openInlayInspectorCmd() tea.Cmd {
 	s.screen.SetLoading()
 	m.inlayInspector = s
 	w, h := min(104, max(1, m.width-4)), min(28, max(1, m.height-4))
-	frame := ui.NewWindowFrameWidget(m.Theme, "inlay/frame", ui.FramePopover, "Inlay hints · read-only", s.screen, nil, true, w, h)
-	frame.Focus(s.screen.DefaultFocus())
-	fw := wm.NewFloatingWindow(string(ui.OverlayInlayHints), "", frame, w, h, wm.WithDecoration(true),
-		wm.WithMovable(true), wm.WithResizable(true), wm.WithClosable(true), wm.WithFocusable(true),
-		wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	wm.CenterOnScreen(fw, m.width, m.height)
+	frame, fw := m.newEditorPopover(ui.OverlayInlayHints, "Inlay hints", s.screen, s.screen.DefaultFocus(), ui.Rect{W: w, H: h})
+	if !m.placeEditorPicker(fw, frame, view.editor) {
+		m.closeInlayInspector()
+		return work
+	}
 	m.overlayHost.Open(ui.OverlayInlayHints, fw, ui.PopoverPolicy(true), func() {
 		if m.inlayInspector == s {
 			m.inlayInspector = nil

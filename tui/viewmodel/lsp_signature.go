@@ -10,7 +10,6 @@ import (
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/tui/wm"
 	"crude/types"
 )
 
@@ -31,6 +30,7 @@ type signatureHelpState struct {
 	automatic            bool
 	status               shellport.StatusService
 	notice               string
+	preferredWidth       int
 }
 
 type signatureHelpResultMsg struct {
@@ -69,14 +69,14 @@ func (m *App) requestSignatureHelp(automatic bool) tea.Cmd {
 	service := m.ws.LSPMgr()
 	if ed == nil || !ed.IsOpen() || service == nil || !service.ServerReady() {
 		if !automatic {
-			m.Feedback.NotifyInfo("Parameter information needs a connected language server")
+			m.Feedback.NotifyInfo("No language server is running. Open Problems to start it.")
 		}
 		return nil
 	}
 	source, current := ed.CurrentInsightSource()
 	if !current {
 		if !automatic {
-			m.Feedback.NotifyInfo("Parameter information waits for acknowledged source text and resolved editor changes")
+			m.Feedback.NotifyInfo("The file is still updating. Try again.")
 		}
 		return nil
 	}
@@ -107,7 +107,7 @@ func signatureHelpText(help types.LSPSignatureHelp) string {
 	}
 	active := help.Signatures[help.ActiveSignature]
 	var text strings.Builder
-	fmt.Fprintf(&text, "Signature %d of %d\n%s\n", help.ActiveSignature+1, len(help.Signatures), active.Label)
+	fmt.Fprintln(&text, active.Label)
 	if active.ActiveParameter >= 0 && active.ActiveParameter < len(active.Parameters) {
 		p := active.Parameters[active.ActiveParameter]
 		fmt.Fprintf(&text, "\nActive parameter %d of %d: %s\n", active.ActiveParameter+1, len(active.Parameters), p.Label)
@@ -128,12 +128,7 @@ func signatureHelpText(help types.LSPSignatureHelp) string {
 			}
 		}
 	}
-	fmt.Fprintf(&text, "\nProvider: %s\nSource revision: %d; context: %d\n",
-		help.Boundary.Producer.Provider, help.Boundary.Source.Revision, help.Boundary.Context.Generation)
-	for _, unknown := range help.Boundary.Context.UnknownInputs {
-		fmt.Fprintf(&text, "Unverified: %s\n", unknown)
-	}
-	return text.String()
+	return strings.TrimSpace(text.String())
 }
 
 func (m *App) handleSignatureHelpResult(msg signatureHelpResultMsg) {
@@ -165,8 +160,8 @@ func (m *App) syncSignatureHelp() {
 	line, col := state.editor.LSPCursorPosition()
 	ownWindow := m.overlayHost != nil && m.overlayHost.IsOpen(signatureHelpID)
 	ownsInput := m.focusTarget() == FocusEditor && !m.termDockOwnsKeys() && !m.sessionDeckCapturesInput()
-	if ownWindow && !state.automatic {
-		ownsInput = m.focusedPopup() == m.overlayHost.Window(signatureHelpID)
+	if ownWindow && m.focusedPopup() == m.overlayHost.Window(signatureHelpID) {
+		ownsInput = !m.termDockOwnsKeys() && !m.sessionDeckCapturesInput()
 	} else {
 		ownsInput = ownsInput && m.focusedPopup() == nil
 	}
@@ -180,7 +175,7 @@ func (m *App) syncSignatureHelp() {
 	if !state.shown && time.Now().After(state.deadline) {
 		m.closeSignatureHelp()
 		if !state.automatic {
-			m.Feedback.NotifyInfo("Parameter information timed out or its context could not be observed")
+			m.Feedback.NotifyInfo("Could not load parameter information. Try again.")
 		}
 		return
 	}
@@ -208,21 +203,11 @@ func (m *App) syncSignatureHelp() {
 		}
 		return
 	}
-	area := ui.NewTextArea("lsp-signature/text", ui.NewTokenSet(m.Theme), true)
-	area.SetReadOnly(true)
-	w, h := min(90, max(1, m.width-4)), min(18, max(1, m.height-4))
-	if state.automatic {
-		h = min(h, 10)
-	}
-	bounds, visible := m.editorHelpBounds(state.editor, w, h)
-	if !visible {
-		m.closeSignatureHelp()
-		return
-	}
-	w, h = bounds.W, bounds.H
+	reader := ui.NewTextReader("lsp-signature/reader", ui.NewTokenSet(m.Theme))
+	area := reader.TextArea()
 	text := state.result.text
 	if state.automatic {
-		text = signatureHintText(state.result.help, w)
+		text = signatureHintText(state.result.help)
 	}
 	area.SetValue(text)
 	area.SetCursorFlat(0)
@@ -230,16 +215,19 @@ func (m *App) syncSignatureHelp() {
 	if state.automatic {
 		title += " · Alt+I details"
 	}
-	widget := ui.NewWindowFrameWidget(m.Theme, "lsp-signature/frame", ui.FramePopover, title, area, nil, true, w, h)
-	if !state.automatic {
-		widget.Focus(area.ID())
+	state.preferredWidth = min(90, max(ui.TooltipFrameWidth(title, 90), ui.TooltipFrameWidth(text, 90)+ui.ScrollbarWidth))
+	bounds, visible := m.editorReaderBounds(state.editor, editor.Position{Line: state.editor.CursorLine(), Col: state.editor.CursorCol()}, reader, state.preferredWidth)
+	if !visible {
+		m.closeSignatureHelp()
+		return
 	}
-	fw := wm.NewFloatingWindow(string(signatureHelpID), "", widget, w, h, wm.WithDecoration(true),
-		wm.WithMovable(!state.automatic), wm.WithResizable(!state.automatic), wm.WithClosable(true), wm.WithFocusable(!state.automatic),
-		wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	fw.SetPosition(bounds.X, bounds.Y)
+	var focus ui.ComponentID
+	if !state.automatic {
+		focus = area.ID()
+	}
+	_, fw := m.newEditorPopover(signatureHelpID, title, reader, focus, bounds)
 	policy := ui.PopoverPolicy(true)
-	policy.Passive, policy.Focusable = state.automatic, !state.automatic
+	policy.Passive = state.automatic
 	m.overlayHost.Open(signatureHelpID, fw, policy, func() {
 		if m.signatureHelp == state {
 			m.signatureHelp = nil

@@ -16,7 +16,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/editor"
-	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
@@ -25,26 +24,6 @@ import (
 )
 
 const automaticSignatureSource = "package journey\n\nvar _ = join\n"
-
-func TestAutomaticSignatureProviderFitsNarrowCard(t *testing.T) {
-	help := types.LSPSignatureHelp{
-		Boundary:   types.InsightBoundary{Producer: types.InsightProducer{Provider: `C:\very-long-path\工具\language-server\bin\server.exe`}},
-		Signatures: []types.LSPSignature{{Label: "join(first string)", ActiveParameter: -1}},
-	}
-	for _, width := range []int{40, 90} {
-		text := signatureHintText(help, width)
-		for _, line := range strings.Split(text, "\n") {
-			if strings.HasPrefix(line, "Provider: ") {
-				if rendering.VisibleWidth(line) > width-4 || width == 40 && !strings.Contains(line, "…") {
-					t.Fatalf("provider does not fit card width %d: %q", width, line)
-				}
-				goto found
-			}
-		}
-		t.Fatal("provider line missing")
-	found:
-	}
-}
 
 type automaticSignatureCall struct {
 	path      string
@@ -231,7 +210,7 @@ func TestConnectedAutomaticSignatureNativeTriggersStayPassiveAndShellPrivate(t *
 	f.assertSource(t, 0, "package journey\n\nvar _ = join()\n", 13)
 	app.advanceReveals(time.Now().Add(2 * revealDuration))
 	paint := ansi.Strip(app.View().RenderContent())
-	for _, marker := range []string{"join(first string, count int)", "Text to repeat.", "Source revision:", "context:"} {
+	for _, marker := range []string{"join(first string, count int)", "Text to repeat."} {
 		if !strings.Contains(paint, marker) {
 			t.Fatalf("automatic card does not paint qualified provider help %q:\n%s", marker, paint)
 		}
@@ -279,7 +258,7 @@ func TestConnectedAutomaticSignatureNativeTriggersStayPassiveAndShellPrivate(t *
 	if app.focusedPopup() != fw {
 		t.Fatal("Alt+I did not focus the explicit full reader")
 	}
-	area := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextArea)
+	area := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextReader).TextArea()
 	f.key(t, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModShift})
 	if !area.HasActiveSelection() {
 		t.Fatal("explicit reader lost native text selection")

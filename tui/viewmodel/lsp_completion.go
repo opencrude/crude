@@ -1,16 +1,18 @@
 package viewmodel
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
+	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
+	"crude/textsearch"
 	"crude/tui/editor"
 	"crude/tui/screens/completion"
 	"crude/tui/ui"
@@ -85,6 +87,7 @@ func (m *App) retireCompletion(s *completionState) {
 }
 
 func (m *App) closeCompletionPopup() {
+	m.cancelCompletionIntent()
 	s := m.completion
 	m.completion = nil
 	m.retireCompletion(s)
@@ -241,54 +244,65 @@ func (m *App) syncCompletion() tea.Cmd {
 		m.closeCompletionPopup()
 		return nil
 	}
-	if owner == "" || generation < set.Boundary.Context.Generation || s.screen != nil {
+	if s.screen != nil {
+		if s.screen.SetAcceptance(m.ws.LSPMgr().Settings().CompletionAcceptance()) {
+			m.markCompletionDirty(s)
+		}
+		return nil
+	}
+	if owner == "" || generation < set.Boundary.Context.Generation {
 		return nil
 	}
 	if len(set.Entries) == 0 {
 		if !s.automatic {
 			switch {
 			case set.Answer == types.LSPCompletionUnsupported:
-				m.Feedback.NotifyInfo("This provider does not advertise completions")
+				m.Feedback.NotifyInfo("This language server does not support completion.")
 			case set.UnsupportedItems > 0:
-				m.Feedback.NotifyInfo(fmt.Sprintf("No supported completions (%d unsupported items)", set.UnsupportedItems))
-			case set.Answer == types.LSPCompletionNull:
-				m.Feedback.NotifyInfo("Completion provider returned null")
+				m.Feedback.NotifyInfo("These suggestions cannot be inserted. Continue typing to narrow the list.")
 			default:
-				m.Feedback.NotifyInfo("Completion provider returned an empty list")
+				m.Feedback.NotifyInfo("No suggestions at this position.")
 			}
 		}
 		m.closeCompletionPopup()
 		return nil
 	}
-	entries := make([]completion.Entry, len(set.Entries))
-	for i, row := range set.Entries {
-		entries[i] = completion.Entry{ID: row.ID, Label: row.Insertion.Label, Kind: row.Insertion.Kind, Detail: row.Documentation.Detail,
-			Documentation: completionDocumentationText(set, row.Documentation), DocumentationState: completionDocumentationState(row.Documentation, "initial")}
+	// Keep exact original row IDs. Matching and ranking are only a projection
+	// of this acknowledged invocation, never a rebased insertion.
+	rows := slices.Clone(set.Entries)
+	slices.SortStableFunc(rows, func(a, b types.LSPCompletionEntry) int {
+		return cmp.Compare(a.SortText, b.SortText)
+	})
+	var entries []completion.Entry
+	for _, row := range rows {
+		if _, _, matches := textsearch.Fuzzy(row.FilterText, row.Prefix, false); !matches {
+			continue
+		}
+		entries = append(entries, completion.Entry{ID: row.ID, Label: row.Insertion.Label, Kind: row.Insertion.Kind, Detail: row.Documentation.Detail,
+			Documentation: completionDocumentationText(row.Documentation)})
 	}
-	qualifier := "unversioned"
-	if len(set.Boundary.Context.UnknownInputs) > 0 {
-		qualifier += "; context partial"
+	if len(entries) == 0 {
+		if !s.automatic {
+			m.Feedback.NotifyInfo("No suggestions match the text at the cursor.")
+		}
+		m.closeCompletionPopup()
+		return nil
 	}
-	caption := fmt.Sprintf("r%d · %s · context %d · %s", s.source.Revision, set.Boundary.Producer.Provider, set.Boundary.Context.Generation, qualifier)
-	s.screen = completion.New(m.Theme, set.ID, entries, caption)
-	title := fmt.Sprintf("Completions · %d", len(entries))
+	caption := ""
 	if set.Incomplete {
-		title += " · incomplete"
+		caption = "Continue typing to narrow the suggestions."
+	} else if set.UnsupportedItems > 0 {
+		caption = "Some suggestions cannot be inserted."
 	}
-	if set.UnsupportedItems > 0 {
-		title += fmt.Sprintf(" · %d unsupported", set.UnsupportedItems)
-	}
+	s.screen = completion.New(m.Theme, set.ID, entries, caption)
+	s.screen.SetAcceptance(m.ws.LSPMgr().Settings().CompletionAcceptance())
+	title := fmt.Sprintf("Completions · %d", len(entries))
 	bounds, visible := m.editorHelpBounds(s.editor, min(112, max(1, m.width-4)), min(22, max(1, m.height-4)))
 	if !visible || bounds.H < 6 {
 		m.closeCompletionPopup()
 		return nil
 	}
-	frame := ui.NewWindowFrameWidget(m.Theme, "completion/frame", ui.FramePopover, title, s.screen, nil, false, bounds.W, bounds.H)
-	frame.Focus(s.screen.DefaultFocus())
-	fw := wm.NewFloatingWindow(completionPopupID, "", frame, bounds.W, bounds.H, wm.WithDecoration(false),
-		wm.WithMovable(false), wm.WithResizable(false), wm.WithClosable(false), wm.WithFocusable(true),
-		wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	fw.SetPosition(bounds.X, bounds.Y)
+	_, fw := m.newEditorPopover(ui.OverlayCompletion, title, s.screen, s.screen.DefaultFocus(), bounds)
 	m.overlayHost.Open(ui.OverlayCompletion, fw, ui.PopoverPolicy(true), func() {
 		if m.completion == s {
 			m.completion = nil
@@ -315,28 +329,11 @@ func (m *App) positionCompletion() {
 	}
 }
 
-func completionDocumentationState(doc types.LSPCompletionDocumentation, status string) string {
-	if !doc.Present {
-		return status + "; not supplied"
-	}
-	kind := doc.Form + " " + doc.Kind
+func completionDocumentationText(doc types.LSPCompletionDocumentation) string {
 	if doc.Value == "" {
-		return status + "; observed empty " + kind
+		return "No documentation available."
 	}
-	return status + "; " + kind
-}
-
-func completionDocumentationText(set *types.LSPCompletionSet, doc types.LSPCompletionDocumentation) string {
-	value := doc.Value
-	if !doc.Present {
-		value = "No documentation supplied."
-	} else if value == "" {
-		value = "The provider supplied empty documentation."
-	}
-	b := set.Boundary
-	return fmt.Sprintf("%s\n\nSource revision: %d (synchronized wire %d; unversioned response)\nProvider: %s\nInstance: %s\nContext: %s (generation %d)\nUnknown inputs: %s",
-		value, b.Source.Revision, set.WireVersion, b.Producer.Provider, b.Producer.InstanceID, b.Context.ID, b.Context.Generation,
-		strings.Join(b.Context.UnknownInputs, "; "))
+	return doc.Value
 }
 
 func (m *App) markCompletionDirty(s *completionState) {
@@ -376,12 +373,11 @@ func (m *App) readCompletion(s *completionState, itemID string, accept bool) tea
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	read := &completionRead{owner: s, itemID: itemID, accept: accept, cancel: cancel}
 	s.pending = read
-	status := "loading"
+	status := "Loading documentation..."
 	if accept {
-		status = "checking original insertion"
+		status = "Inserting suggestion..."
 	}
-	s.screen.SetDocumentation(s.set.ID, itemID, row.Documentation.Detail, completionDocumentationText(s.set, row.Documentation),
-		completionDocumentationState(row.Documentation, status))
+	s.screen.SetDocumentation(s.set.ID, itemID, row.Documentation.Detail, completionDocumentationText(row.Documentation), status)
 	m.markCompletionDirty(s)
 	return func() tea.Msg {
 		defer cancel()
@@ -414,8 +410,11 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 		return false
 	}
 	if msg.err != nil {
-		s.screen.SetDocumentation(s.set.ID, read.itemID, row.Documentation.Detail, completionDocumentationText(s.set, row.Documentation),
-			completionDocumentationState(row.Documentation, "unavailable: "+msg.err.Error()))
+		status := "Could not load documentation. Select the suggestion again to retry."
+		if read.accept {
+			status = "Could not insert this suggestion. Try another suggestion."
+		}
+		s.screen.SetDocumentation(s.set.ID, read.itemID, row.Documentation.Detail, completionDocumentationText(row.Documentation), status)
 		m.markCompletionDirty(s)
 		return false
 	}
@@ -438,8 +437,7 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 		return true
 	}
 	s.observed[read.itemID] = true
-	s.screen.SetDocumentation(s.set.ID, read.itemID, result.Documentation.Detail, completionDocumentationText(s.set, result.Documentation),
-		completionDocumentationState(result.Documentation, result.ResolveState))
+	s.screen.SetDocumentation(s.set.ID, read.itemID, result.Documentation.Detail, completionDocumentationText(result.Documentation), "")
 	m.markCompletionDirty(s)
 	return true
 }
@@ -463,11 +461,15 @@ func (m *App) handleCompletionAction(action *ui.Action) (tea.Cmd, bool) {
 }
 
 func (m *App) handleCompletionKey(fw *wm.FloatingWindow, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	accept := m.ws.LSPMgr().Settings().CompletionAcceptance()
 	native := false
 	if msg.Mod == 0 {
 		switch msg.Code {
 		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd, tea.KeyEnter, tea.KeyTab, tea.KeyEsc:
 			native = true
+		}
+		if msg.Code == tea.KeyTab && accept == "enter" || msg.Code == tea.KeyEnter && accept == "tab" {
+			native = false
 		}
 	}
 	if msg.Mod == tea.ModCtrl && (msg.Code == tea.KeyPgUp || msg.Code == tea.KeyPgDown || msg.Code == 'a') || ui.IsCopyChord(msg) {

@@ -22,11 +22,11 @@ import (
 )
 
 // CodeIntelligence is the workspace language service a session borrows. Probes
-// answer for one file each and release their server view afterwards.
+// retain their borrowed source views until the complete request has finished.
 type CodeIntelligence interface {
 	EditorEnabled() bool
 	ServesWarm(path string) bool
-	ProbeDiagnostics(ctx context.Context, path string) (ttypes.InsightDiagnostics, bool, ttypes.LSPProbeView, error)
+	ProbeDiagnosticsBatch(ctx context.Context, paths []string) []ttypes.LSPDiagnosticsResult
 	ProbeNavigation(ctx context.Context, path, kind string, position ttypes.LSPSourcePosition, includeDeclaration bool) (ttypes.LSPNavigation, ttypes.LSPProbeView, error)
 	ProbeHover(ctx context.Context, path string, position ttypes.LSPSourcePosition) (string, ttypes.LSPProbeView, error)
 	ProbeSymbols(ctx context.Context, path string) ([]ttypes.LSPSymbol, ttypes.LSPProbeView, error)
@@ -193,29 +193,23 @@ func (s *Session) postEditDiagnostics(ctx context.Context, root string, paths []
 	}
 	ctx, cancel := context.WithTimeout(ctx, postEditDiagnosticsWait)
 	defer cancel()
-	var mu sync.Mutex
-	var wg sync.WaitGroup
+	var warm []string
 	for _, path := range paths {
-		if !service.ServesWarm(path) {
+		if service.ServesWarm(path) {
+			warm = append(warm, path)
+		}
+	}
+	for i, result := range service.ProbeDiagnosticsBatch(ctx, warm) {
+		batch, view := result.Diagnostics, result.View
+		if result.Error != "" || !result.Settled || !batch.HasExactSource() || batch.Boundary.Source != view.Source {
 			continue
 		}
-		wg.Add(1)
-		go func(path string) {
-			defer wg.Done()
-			batch, settled, view, err := service.ProbeDiagnostics(ctx, path)
-			if err != nil || !settled || !batch.HasExactSource() || batch.Boundary.Source != view.Source {
-				return
-			}
-			report := ""
-			if errs := filterDiagnostics(batch.Diagnostics, 1); len(errs) > 0 {
-				report = formatFileDiagnostics(root, path, batch, 1, view, true)
-			}
-			mu.Lock()
-			out[path] = report
-			mu.Unlock()
-		}(path)
+		report := ""
+		if errs := filterDiagnostics(batch.Diagnostics, 1); len(errs) > 0 {
+			report = formatFileDiagnostics(root, warm[i], batch, 1, view, true)
+		}
+		out[warm[i]] = report
 	}
-	wg.Wait()
 	return out
 }
 
@@ -249,25 +243,18 @@ func (s *Session) executeLSPTool(ctx context.Context, root string, params map[st
 			}
 		}
 		reports := make([]string, len(resolved))
-		var wg sync.WaitGroup
-		for i, path := range resolved {
-			wg.Add(1)
-			go func(i int, path string) {
-				defer wg.Done()
-				batch, settled, view, err := service.ProbeDiagnostics(ctx, path)
-				switch {
-				case err != nil:
-					reports[i] = fmt.Sprintf("%s: %v\n", displayLSPPath(root, path), err)
-				default:
-					report := formatFileDiagnostics(root, path, batch, floor, view, false)
-					if !settled {
-						report += "  (analysis was still running when the request ended; results may be incomplete, call again to re-check)\n"
-					}
-					reports[i] = report
+		for i, result := range service.ProbeDiagnosticsBatch(ctx, resolved) {
+			switch {
+			case result.Error != "":
+				reports[i] = fmt.Sprintf("%s: %s\n", displayLSPPath(root, resolved[i]), result.Error)
+			default:
+				report := formatFileDiagnostics(root, resolved[i], result.Diagnostics, floor, result.View, false)
+				if !result.Settled {
+					report += "  The check did not finish. Run diagnostics again for this file.\n"
 				}
-			}(i, path)
+				reports[i] = report
+			}
 		}
-		wg.Wait()
 		return tools.ToolResult{Content: strings.TrimRight(strings.Join(reports, ""), "\n")}, nil
 	}
 
@@ -447,7 +434,7 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 		return b.String()
 	}
 	// One line per file. Fact identities, context hashes and the fixed list
-	// of unknown inputs stay in the diagnostic details reader: they cost every
+	// of unknown inputs stay in the structured facts: they cost every
 	// agent tokens and change nothing it does. Only qualifications that change
 	// how to read the result are written.
 	var notes []string
@@ -522,7 +509,7 @@ func formatFileDiagnostics(root, path string, batch ttypes.InsightDiagnostics, f
 // path:line:column per location, with the source line when the queried source
 // contains it. Destination files are never read; a location in another file
 // keeps the server's UTF-16 column. Provenance identities stay in the
-// diagnostic details reader.
+// structured facts.
 func formatNavigation(root string, result ttypes.LSPNavigation, view ttypes.LSPProbeView) string {
 	var b strings.Builder
 	b.WriteString(bufferNote(view))

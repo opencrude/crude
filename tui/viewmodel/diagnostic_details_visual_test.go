@@ -485,10 +485,11 @@ func diagnosticVisualReader(v *controlVisualModel, id ui.OverlayID, frame tea.Vi
 	if !ok {
 		return nil, ui.Rect{}, "", fmt.Errorf("%s is not the shared WindowFrameWidget", id)
 	}
-	area, ok := widget.Body().(*ui.TextArea)
-	if !ok || area.TextEditable() {
+	reader, ok := widget.Body().(*ui.TextReader)
+	if !ok || reader.TextArea().TextEditable() {
 		return nil, ui.Rect{}, "", fmt.Errorf("%s has no native read-only TextArea body", id)
 	}
+	area := reader.TextArea()
 	local, mounted := widget.Host().ScreenRect(area.ID())
 	if !mounted || local.Empty() || frame.Surface == nil {
 		return nil, ui.Rect{}, "", fmt.Errorf("%s reader has no mounted body/completed publication", id)
@@ -576,16 +577,16 @@ func (m *diagnosticDetailsVisualModel) observeDiagnosticDetails(phase int) (bool
 			target := -1
 			for i := range menu.FlatItems {
 				si, ii, ok := menu.FlatItemAt(i)
-				if ok && menu.Sections[si].Items[ii].Label == "Show 1 diagnostic(s)" {
+				if ok && menu.Sections[si].Items[ii].Label == "Show diagnostics" {
 					target = i
 				}
 			}
 			if target < 0 {
-				return fmt.Errorf("editor menu lost literal Show 1 diagnostic(s) entry")
+				return fmt.Errorf("editor menu lost Show diagnostics entry")
 			}
 			if phase == 2 {
 				m.menuDown = (target - menu.Cursor + len(menu.FlatItems)) % len(menu.FlatItems)
-			} else if menu.Cursor != target || !strings.Contains(paint, "Show 1 diagnostic(s)") {
+			} else if menu.Cursor != target || !strings.Contains(paint, "Show diagnostics") {
 				return fmt.Errorf("ordinary Down did not select/paint the diagnostic menu row: cursor=%d target=%d", menu.Cursor, target)
 			}
 			if v.overlayHost.IsOpen(ui.OverlayDiagContext) {
@@ -612,22 +613,8 @@ func (m *diagnosticDetailsVisualModel) observeDiagnosticDetails(phase int) (bool
 			return err
 		}
 		body, scroll, selected = area.Value(), area.ScrollOffset(), area.HasActiveSelection()
-		for _, literal := range []string{m.facts.Diagnostics[0].Message, m.facts.Diagnostics[0].Source, m.facts.ID, m.executable,
-			m.facts.Boundary.Context.ID, "func trigger() { consume(1) }"} {
-			if !strings.Contains(body, literal) {
-				return fmt.Errorf("%s lost full original message/source/provenance %q", id, literal)
-			}
-		}
-		for _, input := range m.facts.Boundary.Context.UnknownInputs {
-			if !strings.Contains(body, input) {
-				return fmt.Errorf("%s lost context input provenance %q", id, input)
-			}
-		}
-		lower := strings.ToLower(body)
-		if !strings.Contains(body, "Results are available for this file. Other files may not be checked.") ||
-			strings.Contains(lower, "project clean") || strings.Contains(lower, "project is clean") ||
-			strings.Contains(lower, "context: complete") || strings.Contains(lower, "coverage: complete") {
-			return fmt.Errorf("partial provider context misrepresented: %q", body)
+		if !strings.HasPrefix(body, "✕ "+strings.TrimSpace(m.facts.Diagnostics[0].Message)) {
+			return fmt.Errorf("%s did not preserve the original provider message: %q", id, body)
 		}
 		fw := v.overlayHost.Window(id)
 		x, y := fw.Position()

@@ -89,6 +89,8 @@ func assertTypingCellsStable(t *testing.T, app *App, before *surface.CellBuffer,
 		for x := r.X + ed.GutterWidth(); x < r.X+r.W-2; x++ {
 			a, b := before.Get(x, y), after.Get(x, y)
 			if !a.Equal(b) {
+				source, current := ed.CurrentInsightSource()
+				t.Logf("source=%+v current=%t facts=%+v", source, current, ed.DiagnosticFacts())
 				t.Fatalf("typing changed unrelated source cell %d,%d: %+v -> %+v", x, y, a, b)
 			}
 		}

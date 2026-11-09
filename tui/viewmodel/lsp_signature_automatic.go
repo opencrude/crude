@@ -7,7 +7,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
-	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/types"
 )
@@ -80,7 +79,7 @@ func (m *App) drainAutomaticSignatureHelp() tea.Cmd {
 	return m.requestSignatureHelp(true)
 }
 
-func signatureHintText(help types.LSPSignatureHelp, width int) string {
+func signatureHintText(help types.LSPSignatureHelp) string {
 	if len(help.Signatures) == 0 || help.ActiveSignature < 0 || help.ActiveSignature >= len(help.Signatures) {
 		return ""
 	}
@@ -94,10 +93,7 @@ func signatureHintText(help types.LSPSignatureHelp, width int) string {
 			fmt.Fprintln(&text, parameter.Documentation)
 		}
 	}
-	provider := rendering.TruncateMiddleVisual(help.Boundary.Producer.Provider, max(0, width-14), "…")
-	fmt.Fprintf(&text, "\nSource revision: %d; context: %d\nProvider: %s\nAlt+I details · Esc dismiss",
-		help.Boundary.Source.Revision, help.Boundary.Context.Generation, provider)
-	return text.String()
+	return strings.TrimSpace(text.String())
 }
 
 // Both explicit documentation readers and passive hints anchor to the mounted
@@ -108,6 +104,14 @@ func (m *App) editorHelpBounds(ed *editor.Editor, preferW, preferH int) (ui.Rect
 		return ui.Rect{}, false
 	}
 	return m.editorPositionHelpBounds(ed, editor.Position{Line: ed.CursorLine(), Col: ed.CursorCol()}, preferW, preferH)
+}
+
+// Readers grow to fit their content before scrolling, within the existing
+// editor-help limits. WindowFrame and TextArea own chrome and wrapping.
+func (m *App) editorReaderBounds(ed *editor.Editor, position editor.Position, reader *ui.TextReader, preferredWidth int) (ui.Rect, bool) {
+	w, h := min(preferredWidth, max(1, m.width-4)), min(18, max(1, m.height-4))
+	size := reader.Measure(ui.LayoutContext{}, ui.Constraints{MaxW: max(1, w-ui.TooltipChrome), MaxH: max(1, h-2)})
+	return m.editorPositionHelpBounds(ed, position, w, size.H+2)
 }
 
 func (m *App) editorPositionHelpBounds(ed *editor.Editor, position editor.Position, preferW, preferH int) (ui.Rect, bool) {
@@ -145,19 +149,14 @@ func (m *App) positionAutomaticSignatureHelp(state *signatureHelpState) {
 		m.closeSignatureHelp()
 		return
 	}
-	w, h := min(90, max(1, m.width-4)), min(10, max(1, m.height-4))
-	bounds, visible := m.editorHelpBounds(state.editor, w, h)
+	reader := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextReader)
+	bounds, visible := m.editorReaderBounds(state.editor, editor.Position{Line: state.editor.CursorLine(), Col: state.editor.CursorCol()}, reader, state.preferredWidth)
 	if !visible {
 		m.closeSignatureHelp()
 		return
 	}
 	if oldW, oldH := fw.Size(); oldW != bounds.W || oldH != bounds.H {
 		fw.SetSize(bounds.W, bounds.H)
-		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
-			if area, ok := frame.Body().(*ui.TextArea); ok {
-				area.SetValue(signatureHintText(state.result.help, bounds.W))
-			}
-		}
 	}
 	if oldX, oldY := fw.Position(); oldX != bounds.X || oldY != bounds.Y {
 		fw.SetPosition(bounds.X, bounds.Y)

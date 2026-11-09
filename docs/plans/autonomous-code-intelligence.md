@@ -68,6 +68,12 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-06 | Formatting must exist as explicit editor commands: Format Document for the current buffer and Format Project for saved files. They reuse the one catalog formatter owner, one transactional writer and one Local History safety snapshot; they do not add a second formatter or file writer. | User |
 | 2026-11-04 | An untargeted wait can correctly wait for the agent's own background command. Its chat title must describe waiting for an update, not imply that another agent exists. | User |
 | 2026-11-08 | Problems gets a manual **Refresh** (restart the workspace's language servers), and a restart must not leave the old server's results as permanent out-of-date rows. The agent `lsp` tool reports one line per file and one-based locations; provenance identities stay in the diagnostic details reader. | User |
+| 2026-11-09 | Errors, warnings, information and inline help must be concise and professional. The supplied diagnostic screenshots reject internal identities, coverage boilerplate and metadata that bury the actual problem. This replaces the previous decision to print provenance in the diagnostic reader. | User |
+| 2026-11-09 | Diagnostic cards grow to fit the message up to a reasonable screen limit; remaining overflow has a visible scrollbar. Regression checks exercise reading and interaction, not merely the removal of rejected text. | User |
+| 2026-11-09 | Match established IDE diagnostic quality: keep complete explanations and useful rule information, with minimal confusion and no unnecessary internal detail. Use the shared state and controls, not local interaction logic or extra restrictions. Application strings follow ASD-STE100. | User |
+| 2026-11-09 | Fix the multi-file diagnostic failure through the real agent's `lsp` path. Consolidate the useful communication and engineering standards in the existing system prompt, with room for judgment and without repeated checklists. | User |
+| 2026-11-09 | Diagnostic messages use the Problems panel's severity icons. A line with several problems shows its highest severity in the gutter. Transient LSP boxes share compact chrome, source-relative placement and outside-click dismissal; they do not need close buttons. Change-review dialogs remain distinct. | User |
+| 2026-11-09 | Offer function, variable and member suggestions during ordinary typing, not only on explicit request or after a dot. Tab accepts a selected suggestion. Expose working completion behavior controls in Settings so users can choose automatic suggestions, timing and acceptance keys. | User |
 | 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
 
 ### Open decisions
@@ -99,6 +105,87 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Immediate correction: automatic completion (2026-11-09).**
+
+Goal: typing a name or member expression in the connected editor produces useful
+suggestions, and accepting one changes only the intended source. Scope: native
+typing intent, acknowledged-source request lifetime, narrowing/requery, Tab/Enter
+acceptance, and the existing Code Intelligence preference page. Keep one completion
+request/selection/edit owner and live application/workspace inheritance.
+Exit: connected typing and acceptance tests, an installed-server journey, and
+Settings input/save/reset tests pass. Cover delayed acknowledgement, continued
+typing, cancellation, peer changes, snippet keys and disabled preferences.
+Out of scope: AI prediction, tool acquisition, a new settings page, or language-
+specific completion logic. This repair takes priority; the earlier native capture
+and repository gate failures below remain open.
+
+Implementation evidence: connected shell tests cover names, members, continued
+typing/backspace, canonical acknowledgement, keyboard acceptance and workspace
+Settings save/publication without a server restart. The installed Pyright journey
+shows function/variable/member candidates and accepts them with Tab. The native
+Settings form covers explicit zero delay, sparse save/reload and reset to the
+latest parent at 160×40 and 80×24. Focused ordinary/race, build/lint, LSP transport,
+wire, docs/design checks and Linux/macOS component builds pass.
+Broad validation exposed a late repeated diagnostic batch erasing unchanged ink
+during typing. The editor now preserves only the already-mapped identical batch
+from the same producer and document lifetime; current semantic interaction still
+requires exact source. The original connected presentation test and full editor
+suite pass without weakening their assertions.
+The full workspace suite passes in exhaustive shards after the aggregate
+180-second run timed out. The viewmodel suite still reports the previously
+observed external-image test failure. The latest full benchmark gate passes
+without changed ceilings (4 MiB recovery image: 32,220 B / 141 allocations).
+Native visual acceptance is still open: the Windows capture driver refused to
+activate its dedicated window before sending input. No capture window remains.
+
+**Immediate correction: concise editor messages (2026-11-09).**
+
+Goal: read the actual problem or documentation without Crude's internal bookkeeping.
+Scope: diagnostic hover and **Show diagnostics**, completion documentation and
+parameter help, and consistent transient LSP popovers (rename input, navigation,
+code-action selection, symbol documentation, outline, inlay and snippet choices).
+Use the Problems severity icons and highest-severity gutter/underline selection.
+Remove generated provenance, redundant source previews and normal-state
+commentary. Size diagnostic cards to their content, then show a native scrollbar
+when the available space cannot fit the message. Retain complete provider messages,
+severity, selection/copy/scroll and all existing source and lifetime checks.
+The real agent's multi-file `lsp` diagnostics must also keep all borrowed source
+views alive until the batch finishes. A batch must not invalidate its own
+results as individual files open or close. The same owner serves explicit
+requests and automatic post-edit checks; real edits and server replacement
+still invalidate results.
+Exit: rendered regressions cover all diagnostic severities, overlapping problems,
+long messages, narrow layouts, paging and scrollbar dragging; native desktop and constrained
+captures and affected tests pass. Out of scope: changing language-server results,
+weakening validation or claiming that every project file has been checked.
+This presentation correction takes priority over the open work below.
+
+Implementation and evidence (2026-11-09): the readers use one native text/scroll
+owner, and explicit and post-edit agent diagnostics use one manager-owned batch.
+`TestDiagnosticPresentation*` exercises the connected shell at 160×40, 80×24
+and 40×20, including scrollbar dragging to the final sentence. Focused reader,
+completion, signature, source-fence, agent-tool and prompt tests pass. The installed
+Pyright check covers eleven clean files and then a deliberate type error.
+The LSP transport/ownership gate and Linux/macOS control cross-builds pass.
+Native 160×40 captures verify compact and expanded cards and the overflow bar.
+
+Follow-up: popup messages now use the Problems glyph/color mapping, and gutter
+and overlap paint choose the highest severity independent of provider order.
+Connected rename, references and code-action tests cover anchored resize, outside
+dismissal, validation/paste and unchanged source. Focused ordinary/race suites
+pass; editor paint remains at 84 allocations (80×24) and 146 (120×40).
+The transient popover family shares nonmodal chrome without title-bar close
+buttons; edit approval remains a separate Cancel-default review.
+
+This correction is **not banked**. Native acceptance of the follow-up remains open:
+Windows refused to activate the dedicated capture window, including the desktop
+popover attempt. Earlier captures do not verify the new icons or popover policy. The repository suite
+also reported `TestImageFileConnectedExternalAndDeniedProjectLink` and package-wide
+180-second timeouts; the initial benchmark gate exceeded the allocation ceiling for
+`BenchmarkPublishContextRecoveryImage/bytes_4194304` (43,046 B versus 40,000 B).
+The later completion validation above records the latest pass. No assertion,
+deadline or performance ceiling was relaxed.
 
 **Immediate correction: LSP interaction and workspace Aeron (2026-11-04).**
 This user-requested correction takes priority over the remaining thin-assembly

@@ -438,7 +438,8 @@ A single supported in-project definition-family target can jump directly.
 Multiple targets, all references and external destinations use the native
 caret-anchored popover, sized to its rows. Each row shows its file name and
 one-based line/column, with its folder in muted native List detail. The title
-shows the result count. There is no Close-only footer; Escape and × dismiss it.
+shows the result count. There is no Close-only footer or title-bar close button;
+Escape and an outside click dismiss it.
 Enter or a click opens the selected location directly, without a metadata page or a
 second Open confirmation. Outside-project and unavailable locations say so in
 the row. Listing never eagerly reads a private or dependency file. Empty
@@ -616,10 +617,12 @@ Escape dismisses the pending intent/card before closing the editor.
 **Alt+I** explicitly requests the complete focusable reader. That reader and
 symbol documentation also open at the caret instead of the screen center.
 
-The native read-only WindowFrame/TextArea reader shows the selected signature,
-active parameter and its documentation, the other overload labels, provider,
-canonical source revision, context generation and unknown inputs. It supports
-normal reading/selection/copy, resize, Close, Escape and outside-click dismissal.
+The native read-only WindowFrame/TextReader shows the selected signature,
+active parameter and its documentation, and the other overload labels. Source,
+provider and context identities stay in the retained result, not in the card.
+The reader grows to fit, within the editor-help limits, and shows a scrollbar
+when the text still overflows. It supports normal reading/selection/copy,
+resize, Escape and outside-click dismissal.
 It never inserts text, chooses an overload on the server or edits an argument.
 Only the two native delimiter inputs trigger automatic assistance; dynamic
 capability registration, language-specific call parsing and full semantic-feature
@@ -809,25 +812,45 @@ not once per tick or painted frame.
 
 ### Completion documentation and original insertion
 
-Ctrl+Space and the automatic-completion debounce share one canonical completion
+Ctrl+Space and automatic suggestions share one canonical completion
 invocation. The native caret-anchored WindowFrame contains a List with standard
 kind glyphs and detail, plus passive selected-row documentation. Wide frames put
 the reader beside the list; constrained frames stack it below. Up/Down, paging,
 Home/End and pointer selection use that one List. Ctrl+PgUp/PgDn pages the native
 read-only TextArea without moving the selected completion; pointer selection and
-Ctrl+C copy inert text. Ordinary typing dismisses the chooser and reaches the
-editor exactly once. Escape/outside dismiss only the invocation. Ctrl+Space on an
+Ctrl+C copy inert text. Ordinary typing reaches the editor exactly once, retires
+the old invocation and schedules fresh suggestions over the newly acknowledged
+source. Backspace also refreshes the list. Escape/outside dismiss only the invocation. Ctrl+Space on an
 active numeric choice field still opens **Snippet choices** first.
+
+Native typing intent is emitted after the final caret and edit group. The same
+observer handles linked views and deferred history input; paste, accepted
+completions, API edits and peer publications do not create typing intent.
+One cancellable debounce waits for both the configured delay and canonical
+acknowledgement. A timer firing first never discards the request. Source lifetime,
+revision, caret, focus, feature generation, workspace changes and Escape retire
+pending intent. Active snippets and ghost-text candidates retain their keys.
+The Code Intelligence **Suggestions** settings control automatic requests, delay
+(200 ms by default; zero is immediate), and acceptance by Tab, Enter or both.
+With automatic requests off, Ctrl+Space remains available. Other keys retain
+normal indentation/newline behavior, and suggestions never write the file to disk.
 
 The core retains the original array or CompletionList item, original index and
 opaque row ID, not a label-keyed reconstruction. Equal labels remain independent
 rows. Null, empty, unsupported static capability, unsupported insertions and
-provider failures remain distinct. `isIncomplete` and omitted unsupported-row
-counts are visible; an incomplete result is never advertised as complete.
+provider failures remain distinct internally. Incomplete results ask the user
+to keep typing; unsupported suggestions are described in plain words.
 CompletionList defaults and dynamic registration are not advertised or accepted.
+The core derives each row's typed prefix from its validated primary range.
+The display uses the shared fzf matcher with the provider's `filterText` (or label)
+and orders matches by `sortText` (or label). Filtering preserves original row IDs,
+insertion ranges and resolve objects. Continued typing queries the current source,
+including for incomplete results, instead of rebasing an old insertion.
 
-Initial documentation preserves string versus MarkupContent, plaintext versus
-markdown, absence versus an explicitly empty value, and optional detail. Markdown,
+Initial documentation retains string versus MarkupContent, plaintext versus
+markdown, absence versus an explicitly empty value, and optional detail. The
+reader shows the actual documentation or "No documentation available.", not
+protocol format names or normal loading-completion states. Markdown,
 links, terminal control bytes and commands are displayed literally, never
 interpreted or executed. If the original provider advertises resolve, selecting a
 row requests `completionItem/resolve` passively with its exact retained original
@@ -840,8 +863,9 @@ selected reader.
 
 Every request, including negative evidence, carries the acknowledged canonical
 source, exact synchronized wire version, actual producer instance and original
-context. Standard completion results do not report a source version and remain
-labelled **unversioned**; unknown context inputs remain partial. The shell waits
+context. Standard completion results do not report a source version; unknown
+context inputs remain partial. These qualifications stay in the retained result,
+not in the completion caption or documentation. The shell waits
 for the original pushed context cursor before presenting semantic evidence.
 Source/caret/selection, tab, focus, workspace, provider, settings and expiry
 boundaries retire old callbacks. A dedicated feature generation prevents an
@@ -1004,9 +1028,13 @@ Editor, shared Buffer, Problems/tree/footer and agent diagnostics use the same
 opaque batch ID. Editor projection requires actual canonical source identity,
 including runtime lifetime, and acknowledged local text without pending edits,
 history or conflict. Future batches wait for their source. Unversioned/stale
-batches remain discoverable with provenance in Problems but cannot authorize
+batches remain discoverable in Problems but cannot authorize
 current paint, hover or navigation. Previously accepted same-batch ink can map
 provisionally through unchanged rows without becoming current semantic evidence.
+An identical later batch from the same producer and document lifetime preserves
+that already-mapped ink when source has advanced past the batch. It does not
+project the later batch's ranges. Changed or empty answers retire the old ink;
+an exact source match replaces it through the normal projection.
 
 #### Project producers and unopened files
 
@@ -1107,7 +1135,7 @@ visible as out of date until a server replaces them.
 Workspace health shows counts or the manager's status
 message and routes its next action to the existing trust, settings or server
 controls. No result is a clean-project claim. Diagnostic provenance remains in
-the diagnostic details reader under **Details**, not in Problems rows.
+the structured result, not in diagnostic readers or Problems rows.
 
 Agent source positions resolve against the immutable source leased for the
 actual request, not an independent disk read. Diagnostic and same-source
@@ -1121,8 +1149,14 @@ one-based `line:column`, severity, message and source line; navigation writes
 one-based `path:line:column` locations. A qualification that changes how to read
 the answer (out of date, unconfirmed file version, unsaved editor text, a column
 counted in UTF-16 units) is written on that line. Fact identities, context
-hashes and unknown-input lists stay in the diagnostic details reader: printing
-them cost four lines per file that no agent acted on.
+hashes and unknown-input lists stay in the structured result: printing them
+cost four lines per file that no agent acted on.
+Multi-file diagnostic requests and automatic post-edit checks use one manager-owned
+batch. It acquires all source views before collecting results and releases them
+after all reads join, so its own opens and closes cannot invalidate sibling
+answers. Duplicate paths share a read while keeping input order; missing files
+have per-file failures. Canonical edits, disk replacement, cancellation, settings
+and producer changes still pass through the same source and context checks.
 Root-bound workspace Trust and shared LSP process admission are implemented.
 General destination qualification, completion/hover fact contracts,
 project modeling, broader analysis work classes, pressure management and native
@@ -1148,8 +1182,20 @@ selection and provider wiring remain separate work.
 
 ### Diagnostic readers
 
+Transient editor aids share one compact WindowFrame popover style: no title-bar
+close control, dragging or manual resize. Rename input, navigation, code-action
+selection, completion, documentation, parameter help, outline, inlay and snippet
+choices anchor to the invoking source, reflow with the editor, and close on an
+outside click. The click continues to its intended destination. An offscreen source
+does not cause a centered fallback. Content appears immediately, without an empty
+opening animation. Passive help does not take typing focus; explicit input and
+choosers do. Escape follows the native selection/Back/Close ladder.
+Rename reuses the bound TextField and validation body, not the modal text-prompt
+chrome. The later immutable edit review remains a separate modal with explicit
+Apply/Cancel actions; changing popover presentation does not weaken approval.
+
 The editor context menu's **Show diagnostics** replaces the centered label stack
-with a native WindowFrame/read-only TextArea. It inspects the clicked source point
+with a native WindowFrame/TextReader. It inspects the clicked source point
 without consuming an existing selection; a keyboard-invoked menu uses the mounted
 caret. Pointer hover and explicit details share the same reader builder and exact
 fact-publication owner, not separate wrapping or source-coordinate models.
@@ -1160,18 +1206,33 @@ that point, shrink to the available side, and re-anchor on the first resized
 frame. An off-viewport source is unavailable, not clamped into a fictitious visible
 anchor. Resizing retains the original TextArea, text and selection.
 
-Complete original messages, severity, reported source/code, source-line preview,
-partial-coverage qualification and fact/provider/context provenance are readable.
+The card leads with the complete diagnostic message. A single problem uses the
+severity in the frame title; overlapping problems have a severity label beside
+each message, with errors first. Each message begins with the same colored severity
+glyph as Problems. Gutter and overlapping underline severity use the same
+highest-priority reduction, independent of server order: error, warning,
+information, then hint. Reported source and rule code remain as compact
+attribution after the message, following
+[VS Code's marker hover](https://github.com/microsoft/vscode/blob/main/src/vs/editor/contrib/hover/browser/markerHoverParticipant.ts).
+Source previews, position labels, generic coverage commentary and Crude's internal
+identities do not occupy the reading surface. Source validation is unchanged.
+Error-navigation feedback names the destination line without copying the full
+problem into a notice. With no target, it describes this file only; a warning is
+still readable but is not an error-navigation target.
+
+The card fits short messages and expands for longer messages, up to 90 columns
+and 18 rows and the available space beside its source. Both hover and explicit
+inspection use the same sizing. If text still overflows, the native scrollbar
+shows the reading position and supports dragging. TextArea and the scrollbar
+share one ScrollModel; there is no second offset, wrapping or interaction owner.
 Provider control characters are escaped literally, never interpreted as terminal
-commands. A separate 64 KiB reader budget refuses an oversized display with an
-explicit notice rather than presenting a clipped apparently-complete answer. The
-retained fact remains unchanged. Source-line previews above 4 KiB are omitted
-explicitly; this does not truncate the diagnostic message.
+commands. The retained fact store owns diagnostic resource limits. The reader
+does not add a second message-size limit or truncate accepted messages.
 
 Explicit details focus the native reader. Hover opens passively, accepts wheel
 browsing without taking typing focus, and an explicit body click enables keyboard
 reading. Page keys, selection and copy use the shared TextArea. Escape and the
-explicit reader's Close/outside actions retire inspection without closing the
+outside-click actions retire inspection without closing the
 editor or consuming its private draft. Pointer departure retires passive hover.
 While the pointer moves within the same set of overlapping diagnostics, the
 reader remains anchored at that span's first column rather than following the

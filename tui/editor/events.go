@@ -37,11 +37,12 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 		e.stopPointerSelection()
 		e.landing = nil
-		if !e.readOnly && (msg.Text == "(" || msg.Text == ",") && msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 {
+		if !e.readOnly && (msg.Text != "" || msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete) &&
+			msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 {
 			before := e.Revision()
 			defer func() {
-				if e.Revision() != before && e.onSignatureHelp != nil {
-					e.onSignatureHelp()
+				if e.Revision() != before && e.onTyping != nil {
+					e.onTyping(msg)
 				}
 			}()
 		}

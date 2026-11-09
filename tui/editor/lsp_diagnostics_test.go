@@ -1,13 +1,61 @@
 package editor
 
 import (
+	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"crude/document"
 	"crude/tui/cell"
+	"crude/tui/ui"
+	"crude/types"
 )
+
+func TestDiagnosticGutterAndOverlapShowHighestSeverity(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		severity, lesser int
+		glyph            rune
+		role             ui.SemanticColor
+		underline        cell.Attrs
+	}{
+		{"error", DiagError, DiagWarning, '✕', ui.ColorError, cell.AttrUndercurl},
+		{"warning", DiagWarning, DiagInfo, '⚠', ui.ColorWarning, cell.AttrUnderlineDotted},
+		{"information", DiagInfo, DiagHint, 'i', ui.ColorAccent2, cell.AttrUnderline},
+	} {
+		for _, reversed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/reversed=%t", tc.name, reversed), func(t *testing.T) {
+				ed := loadEditorText(t, "severity.txt", "abcdefghij\n")
+				ed.SetCursorPosition(1, 0)
+				diags := []LSPDiagnostic{
+					{Line: 0, Col: 0, EndCol: 6, Severity: tc.severity},
+					{Line: 0, Col: 2, EndCol: 10, Severity: tc.lesser},
+				}
+				if reversed {
+					slices.Reverse(diags)
+				}
+				setTestDiagnostics(ed, diags)
+				paint := paintEditor(ed, 40, 6)
+				gutter := paint.Get(ed.gutterGeometry().diagX, 0)
+				overlap := paint.Get(ed.gutterWidth()+3, 0)
+				ink := ed.tokens.Color(tc.role)
+				if gutter.Char != tc.glyph || !gutter.FG.Equal(ink) ||
+					!overlap.FG.Equal(ink) || overlap.Attr&tc.underline == 0 {
+					t.Fatalf("gutter and overlapping source must show %s: gutter=%+v overlap=%+v", tc.name, gutter, overlap)
+				}
+				if got := diagSeverityAtCol(ed.lineDiagnostics(0), 8); got != tc.lesser {
+					t.Fatalf("non-overlapping source lost its own severity: %d", got)
+				}
+				setTestDiagnostics(ed, nil)
+				if got := paintEditor(ed, 40, 6).Get(ed.gutterGeometry().diagX, 0).Char; got != ' ' {
+					t.Fatalf("cleared diagnostics left a gutter marker: %q", got)
+				}
+			})
+		}
+	}
+}
 
 func TestTypingPreservesDiagnosticPaintOnUnchangedSourceOnly(t *testing.T) {
 	ed := loadEditorText(t, "diagnostic.go", "package main\nvar value = 1\nvar bad = missing\n")
@@ -27,6 +75,44 @@ func TestTypingPreservesDiagnosticPaintOnUnchangedSourceOnly(t *testing.T) {
 	ed.InsertRune('x')
 	if len(ed.lineDiagnostics(2)) != 0 {
 		t.Fatal("edited line retained stale diagnostic range")
+	}
+}
+
+func TestLaterDiagnosticBatchCannotBlankUnchangedInkWhileSourceAdvances(t *testing.T) {
+	ed := loadEditorText(t, "diagnostic.go", "var value = 1\nvar bad = missing\n")
+	diags := []LSPDiagnostic{{Line: 1, Col: 10, EndLine: 1, EndCol: 17, Severity: DiagError, Message: "undefined: missing"}}
+	setTestDiagnostics(ed, diags)
+	ed.SetCursorPosition(0, 9)
+	before := paintEditor(ed, 80, 8).Get(ed.gutterWidth()+10, 1)
+	acknowledge := func(id string) {
+		t.Helper()
+		change, err := ed.CaptureDocumentEdits(projectionOwner, id, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ed.AcceptDocumentReceipt(document.Receipt{DocumentID: change.DocumentID, RequestID: change.RequestID,
+			Before: change.BaseRevision, Revision: change.BaseRevision + 1, Accepted: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ed.InsertRune('x')
+	acknowledge("first")
+	later := testDiagnosticFacts(ed, diags) // a different batch for revision 42
+	ed.InsertRune('y')
+	acknowledge("second")
+	later.State = types.InsightStale // publication 42 arrives after source 43
+	ed.SetDiagnostics(later)
+	after := paintEditor(ed, 80, 8).Get(ed.gutterWidth()+10, 1)
+	if !before.Equal(after) {
+		t.Fatalf("a later, unprojectable batch erased mapped ink: %+v -> %+v", before, after)
+	}
+	if len(ed.DiagnosticsAt(1, 10)) != 0 || ed.FirstError() != nil {
+		t.Fatal("mapped ink authorized interaction with an old diagnostic")
+	}
+	// A current empty answer is authoritative and must clear the old decoration.
+	ed.SetDiagnostics(testDiagnosticFacts(ed, nil))
+	if paintEditor(ed, 80, 8).Get(ed.gutterWidth()+10, 1).Attr&cell.AttrUnderline != 0 {
+		t.Fatal("current empty diagnostics did not clear provisional ink")
 	}
 }
 
