@@ -32,7 +32,7 @@ type overlayOutsideFixture struct {
 //
 // Policy groups:
 //   - CloseRoute (PopoverPolicy closeOnOutside=true): context-menu, LSP list popups, diag-context
-//   - KeepRoute (DefaultOverlayPolicy / PopoverPolicy false): find/replace, palette, composer, FIF, replace-in-files, textoverlay, diag-hover
+//   - KeepRoute (DefaultOverlayPolicy / PopoverPolicy false): find/replace, palette, composer, FIF, replace-in-files, textoverlay
 //   - Ignore (ModalDialogPolicy): dirty-close, text prompts, file/workspace pickers, session-picker, help
 var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayContextMenu, policy: ui.PopoverPolicy(true), wantClose: true},
@@ -52,7 +52,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayTextOverlay, policy: ui.DefaultOverlayPolicy()},
 	{id: ui.OverlayFindInFiles, policy: ui.DefaultOverlayPolicy()},
 	{id: ui.OverlayReplaceInFiles, policy: ui.DefaultOverlayPolicy()},
-	{id: ui.OverlayDiagHover, policy: ui.PopoverPolicy(false)},
+	{id: ui.OverlayDiagHover, policy: ui.PopoverPolicy(true), wantClose: true},
 
 	{id: ui.OverlayDirtyClose, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayWorkspaceSwitch, policy: ui.ModalDialogPolicy(), wantSuppress: true},
@@ -245,7 +245,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayTextOverlay:       ui.OutsideKeepAndRoute,
 		ui.OverlayFindInFiles:       ui.OutsideKeepAndRoute,
 		ui.OverlayReplaceInFiles:    ui.OutsideKeepAndRoute,
-		ui.OverlayDiagHover:         ui.OutsideKeepAndRoute,
+		ui.OverlayDiagHover:         ui.OutsideCloseAndRoute,
 		ui.OverlayDirtyClose:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayWorkspaceSwitch:   ui.OutsideIgnoreAndConsume,
 		projectReplaceOverlay:       ui.OutsideIgnoreAndConsume,

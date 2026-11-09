@@ -282,11 +282,6 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 	if m.editorChanges != nil && m.editorChanges.source == ed {
 		m.overlayHost.Close(editorChangesOverlay)
 	}
-	if m.ws.LSPMgr() != nil {
-		if m.ws.LSPMgr().Settings().AutoComplete && m.LSPPopup != nil {
-			m.LSPPopup.CompletionDue = time.Now().Add(350 * time.Millisecond)
-		}
-	}
 	m.markEditorGitDirty(time.Now())
 	if m.ws == nil || m.ws.Documents() == nil || ed == nil {
 		return

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"maps"
 	"strings"
 	"time"
 	"unicode"
@@ -69,7 +70,7 @@ type TextArea struct {
 	// Layout based on the allocated width.
 	textWidth int
 	// scroll tracks the first visible visual row when content overflows.
-	scroll int
+	scroll ScrollModel
 	// viewH is the allocated body height, used for scroll clamping.
 	viewH  int
 	cursor CursorBlinkState
@@ -87,6 +88,8 @@ type TextArea struct {
 	// clipboard. Hosts may inject their own write path; tests inject a
 	// recorder so copy payloads are asserted without touching the clipboard.
 	clipboardCopy func(string) tea.Cmd
+	runeColors    map[int]SemanticColor
+	colorRevision uint64
 }
 
 // NewTextArea creates a multi-line text area. multiLine controls Enter
@@ -190,6 +193,14 @@ func (t *TextArea) NeedsFrame() bool  { return true }
 // Value returns the full text content.
 func (t *TextArea) Value() string { return t.edit.Value() }
 
+// SetRuneColors colors graphemes by their starting flat rune offset. Wrapping,
+// selection and copy still use the original text. Any content edit retires the
+// colors; a theme change resolves the semantic roles again at paint time.
+func (t *TextArea) SetRuneColors(colors map[int]SemanticColor) {
+	t.runeColors = maps.Clone(colors)
+	t.colorRevision = t.edit.contentRevision
+}
+
 // TextAreaState fences asynchronous editor acknowledgements without copying
 // the text. ContentRevision also distinguishes edit/undo and replacement ABA.
 type TextAreaState struct {
@@ -204,7 +215,7 @@ type TextAreaState struct {
 func (t *TextArea) EditState() TextAreaState {
 	from, to := t.SelectionRange()
 	return TextAreaState{ContentRevision: t.edit.contentRevision, Cursor: t.CursorFlat(),
-		SelectionFrom: from, SelectionTo: to, Scroll: t.scroll, Selecting: t.IsSelecting()}
+		SelectionFrom: from, SelectionTo: to, Scroll: t.ScrollOffset(), Selecting: t.IsSelecting()}
 }
 
 // SetValue replaces the content and places the cursor at the end.
@@ -219,7 +230,7 @@ func (t *TextArea) SetValue(s string) {
 func (t *TextArea) Clear() {
 	t.StopSelecting()
 	t.edit.Clear()
-	t.scroll = 0
+	t.SetScrollOffset(0)
 	t.cursor.MarkActivity()
 }
 
@@ -247,10 +258,12 @@ func (t *TextArea) CursorVisualLine() int { return t.edit.CursorVisualLine() }
 // TotalVisualLines returns the total number of visual rows (wrap-aware).
 func (t *TextArea) TotalVisualLines() int { return t.edit.TotalVisualLines() }
 
-func (t *TextArea) ScrollOffset() int { return t.scroll }
+// Scroll is the shared reading-position owner, also used by composed scrollbars.
+func (t *TextArea) Scroll() *ScrollModel { return &t.scroll }
+func (t *TextArea) ScrollOffset() int    { return t.scroll.Offset() }
 func (t *TextArea) SetScrollOffset(offset int) {
-	t.scroll = offset
 	t.clampScroll()
+	t.scroll.ScrollTo(offset)
 }
 
 // VisualLineCount returns the visual row count for a given wrap width.
@@ -440,7 +453,7 @@ func (t *TextArea) MouseToFlatPos(localX, localY int) int {
 	if textX < 0 {
 		textX = 0
 	}
-	return t.edit.visualToFlat(t.textWidth, textX, localY+t.scroll)
+	return t.edit.visualToFlat(t.textWidth, textX, localY+t.ScrollOffset())
 }
 
 // Measure: fill available width, with height based on the available text
@@ -486,27 +499,14 @@ func (t *TextArea) Layout(_ LayoutContext, r Rect) {
 }
 
 func (t *TextArea) clampScroll() {
-	if t.scroll < 0 {
-		t.scroll = 0
-	}
-	maxScroll := t.maxScroll()
-	if t.scroll > maxScroll {
-		t.scroll = maxScroll
-	}
+	t.scroll.SetContent(t.TotalVisualLines())
+	t.scroll.SetViewport(t.viewH)
 }
-
-func (t *TextArea) maxScroll() int { return max(0, t.TotalVisualLines()-t.viewH) }
 
 // EnsureCursorVisible scrolls the viewport so the cursor's visual row is visible.
 func (t *TextArea) EnsureCursorVisible() {
-	curVis := t.edit.CursorVisualLine()
-	if curVis < t.scroll {
-		t.scroll = curVis
-	}
-	if t.viewH > 0 && curVis >= t.scroll+t.viewH {
-		t.scroll = curVis - t.viewH + 1
-	}
 	t.clampScroll()
+	t.scroll.EnsureVisible(t.edit.CursorVisualLine())
 }
 
 // Paint renders the text area into the cell buffer.
@@ -594,7 +594,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	for li, logLine := range lines {
 		segs := rendering.WordWrap(string(logLine), textW)
 		var starts []int
-		if visRow+len(segs) > t.scroll {
+		if visRow+len(segs) > t.ScrollOffset() {
 			// Row offsets are only needed once part of this line is on screen.
 			starts = rendering.FindSegmentStarts(logLine, textW)
 		}
@@ -606,11 +606,11 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 		}
 		for si, seg := range segs {
 			isFirst := li == 0 && si == 0
-			if visRow < t.scroll {
+			if visRow < t.ScrollOffset() {
 				visRow++
 				continue
 			}
-			screenY := oy + visRow - t.scroll
+			screenY := oy + visRow - t.ScrollOffset()
 			if screenY >= oy+r.H {
 				return
 			}
@@ -702,6 +702,11 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 		inSel := selStart >= 0 && selStart != selEnd &&
 			flatPos < selEnd && flatPos+clusterLen > selStart
 		cellFG, cellBG := fg, bg
+		if t.tokens != nil && t.colorRevision == t.edit.contentRevision {
+			if role, ok := t.runeColors[flatPos]; ok {
+				cellFG = t.tokens.Color(role)
+			}
+		}
 		if inSel {
 			cellBG = selBG
 			if t.tokens != nil {
@@ -859,11 +864,11 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateFocus}
 	case EventMouseMotion:
 		if t.IsSelecting() {
-			if ctx.LocalY < 0 && t.scroll > 0 {
-				t.scroll--
+			if ctx.LocalY < 0 && t.ScrollOffset() > 0 {
+				t.scroll.ScrollBy(-1)
 				ctx.LocalY = 0
-			} else if ctx.LocalY >= t.viewH && t.scroll < t.maxScroll() {
-				t.scroll++
+			} else if ctx.LocalY >= t.viewH && t.ScrollOffset() < t.scroll.MaxOffset() {
+				t.scroll.ScrollBy(1)
 				ctx.LocalY = max(0, t.viewH-1)
 			}
 		}
@@ -889,16 +894,16 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 			Invalidate: InvalidatePaint,
 		}
 	case EventMouseWheel:
-		before := t.scroll
+		before := t.ScrollOffset()
 		switch evt.MouseWheel.Button {
 		case tea.MouseWheelUp:
-			t.scroll = max(0, t.scroll-3)
+			t.scroll.ScrollBy(-3)
 		case tea.MouseWheelDown:
-			t.scroll = min(t.maxScroll(), t.scroll+3)
+			t.scroll.ScrollBy(3)
 		default:
 			return EventResult{}
 		}
-		return EventResult{Handled: before != t.scroll, Invalidate: InvalidatePaint}
+		return EventResult{Handled: before != t.ScrollOffset(), Invalidate: InvalidatePaint}
 	}
 	return EventResult{}
 }
@@ -961,7 +966,7 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 		// Page navigation moves the viewport with the cursor, preserving its
 		// relative row. Revealing only the cursor leaves the first PageDown at
 		// the bottom of the same page, which is not a page of reading progress.
-		t.SetScrollOffset(t.scroll + delta)
+		t.SetScrollOffset(t.ScrollOffset() + delta)
 		t.EnsureCursorVisible()
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	}

@@ -36,6 +36,10 @@ func (p *editorSnippetChoice) Children() []ui.Component {
 	return []ui.Component{p.list, p.scrollbar}
 }
 
+func (p *editorSnippetChoice) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return p.list.ContentSize(cs, len(p.list.Items()))
+}
+
 func (p *editorSnippetChoice) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	p.SetBounds(r)
 	p.list.Layout(ctx, ui.Rect{W: max(0, r.W-1), H: r.H})
@@ -128,13 +132,11 @@ func (m *App) openSnippetChoices() bool {
 	p.list.SetItems(items)
 	p.list.SelectIndex(0)
 	w, h := min(64, max(1, m.width-4)), min(len(items)+2, max(1, m.height-4))
-	frame := ui.NewWindowFrameWidget(m.Theme, "snippet-choice/frame", ui.FramePopover,
-		fmt.Sprintf("Snippet choices · stop %d", token.Stop), p, nil, true, w, h)
-	frame.Host().Focus(p.list.ID())
-	fw := wm.NewFloatingWindow(string(ui.OverlaySnippetChoices), "", frame, w, h,
-		wm.WithDecoration(true), wm.WithFocusable(true), wm.WithClosable(true),
-		wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	wm.CenterOnScreen(fw, m.width, m.height)
+	bounds, visible := m.editorHelpBounds(s.editor, w, h)
+	if !visible {
+		return false
+	}
+	_, fw := m.newEditorPopover(ui.OverlaySnippetChoices, "Snippet choices", p, p.list.ID(), bounds)
 	p.window, s.choice = fw, p
 	m.overlayHost.Open(ui.OverlaySnippetChoices, fw, ui.PopoverPolicy(true), func() {
 		if s.choice == p {

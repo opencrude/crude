@@ -12,6 +12,7 @@ import (
 
 	"crude/document"
 	"crude/lspcompletion"
+	"crude/lspedit"
 	"crude/types"
 )
 
@@ -214,6 +215,10 @@ func normalizeCompletionSet(text string, line, col int, response types.LSPComple
 		out.Answer = types.LSPCompletionEmpty
 	}
 	originals := make(map[string][]byte, len(parsed.Items))
+	cursor, err := lspedit.Offset(text, line, col)
+	if err != nil {
+		return nil, types.LSPCompletionSet{}, 0, err
+	}
 	normalizedBytes, rawBytes := 0, 0
 	for index, original := range parsed.Items {
 		item, err := lspcompletion.Insertion(original)
@@ -231,8 +236,13 @@ func normalizeCompletionSet(text string, line, col int, response types.LSPComple
 		// The canonical request, not a later private caret, chooses any implicit
 		// prefix. Explicit and implicit completions now share one exact edit.
 		item.TextEdit = &primary
+		start, err := lspedit.Offset(text, primary.Line, primary.Col)
+		if err != nil {
+			return nil, types.LSPCompletionSet{}, 0, err
+		}
 		id := fmt.Sprintf("item-%d", index)
 		row := types.LSPCompletionEntry{ID: id, Index: index, Insertion: item,
+			Prefix: text[start:cursor], FilterText: original.FilterText, SortText: original.SortText,
 			Documentation: completionDocumentation(original.Documentation)}
 		encoded, err := json.Marshal(row)
 		if err != nil {

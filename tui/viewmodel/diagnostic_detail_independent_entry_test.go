@@ -40,7 +40,7 @@ func diagnosticIndependentMenu(t *testing.T, cols, rows int, message string) (*A
 	chosen := -1
 	for i := range menu.FlatItems {
 		s, j, ok := menu.FlatItemAt(i)
-		if ok && strings.HasPrefix(menu.Sections[s].Items[j].Label, "Show 1 diagnostic") {
+		if ok && menu.Sections[s].Items[j].Label == "Show diagnostics" {
 			chosen = i
 			break
 		}

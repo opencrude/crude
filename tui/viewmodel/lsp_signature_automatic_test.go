@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/document"
+	"crude/tui/ui"
 )
 
 // This regression enters through the real editor key router. Its canonical
@@ -217,6 +218,46 @@ func TestAutomaticSignatureCaretCardReanchorsOnFirstResizedFrame(t *testing.T) {
 	}
 	if service.calls.Load() != 1 {
 		t.Fatal("presentation resize repeated a semantic request")
+	}
+}
+
+func TestAutomaticSignatureCanBeReadAfterAnExplicitClick(t *testing.T) {
+	app, service, change := automaticSignaturePending(t)
+	automaticSignatureAcknowledge(t, app, change)
+	ed := app.EditorState.Editor
+	service.answer.Boundary.Source, _ = ed.CurrentInsightSource()
+	_, cmd := app.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
+	runAppCommand(t, app, cmd)
+	app.View()
+	window := app.overlayHost.Window(signatureHelpID)
+	if window == nil || app.focusedPopup() != nil {
+		t.Fatal("automatic hint did not open passively")
+	}
+	frame := window.Content.(*ui.WindowFrameWidget)
+	area := frame.Body().(*ui.TextReader).TextArea()
+	body, ok := frame.Host().ScreenRect(area.ID())
+	if !ok {
+		t.Fatal("parameter reader is not mounted")
+	}
+	x, y := window.Position()
+	for _, msg := range []tea.Msg{
+		tea.MouseClickMsg{X: x + body.X + 1, Y: y + body.Y, Button: tea.MouseLeft},
+		tea.MouseReleaseMsg{X: x + body.X + 1, Y: y + body.Y, Button: tea.MouseLeft},
+		tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl},
+	} {
+		_, cmd = app.Update(msg)
+		runAppCommand(t, app, cmd)
+	}
+	if app.overlayHost.Window(signatureHelpID) != window || app.focusedPopup() != window ||
+		area.SelectedText() != area.Value() || ed.HasSelection() {
+		t.Fatal("explicit reading closed the hint or selected editor source instead")
+	}
+	rect, _ := app.screenRectOf(app.editorScreen.ID())
+	cx, cy := ed.CursorScreenPosition(rect.X, rect.Y)
+	_, cmd = app.Update(tea.MouseClickMsg{X: cx, Y: cy, Button: tea.MouseLeft})
+	runAppCommand(t, app, cmd)
+	if app.overlayHost.IsOpen(signatureHelpID) || ed.Value() != "join()" {
+		t.Fatal("outside click did not dismiss the reader without changing source")
 	}
 }
 

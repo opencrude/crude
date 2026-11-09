@@ -8,6 +8,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
@@ -60,23 +61,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		e.revealJump()
 	}
 
-	errColor := e.cellColor(e.th.Colors.Error)
-	warnColor := e.cellColor(e.th.Colors.Warning)
 	infoColor := e.cellColor(e.th.Colors.Muted)
-
-	// Diagnostic gutter icon characters.
-	diagIcons := map[int]rune{
-		DiagError:   '✕',
-		DiagWarning: '⚠',
-		DiagInfo:    'ℹ',
-		DiagHint:    'ℹ',
-	}
-	diagIconColors := map[int]cell.Color{
-		DiagError:   errColor,
-		DiagWarning: warnColor,
-		DiagInfo:    infoColor,
-		DiagHint:    infoColor,
-	}
 	diagAttrs := map[int]cell.Attrs{
 		DiagError:   cell.AttrUnderline | cell.AttrUndercurl,
 		DiagWarning: cell.AttrUnderline | cell.AttrUnderlineDotted,
@@ -120,8 +105,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		// Determine highest severity diagnostic on this line for the gutter icon.
 		lineSev := 0
 		for _, d := range diags {
-			if d.severity > lineSev {
-				lineSev = d.severity
+			lineSev = types.HighestDiagnosticSeverity(lineSev, d.severity)
+			if lineSev == DiagError {
+				break
 			}
 		}
 		gitKind := e.gitKindAt(lineIdx)
@@ -130,12 +116,8 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			if x == gutter.diagX {
 				// Diagnostic icon column.
 				if lineSev > 0 {
-					icon, ok := diagIcons[lineSev]
-					if !ok {
-						icon = 'ℹ'
-					}
-					iconColor := diagIconColors[lineSev]
-					cluster := string(icon)
+					cluster := ui.DiagnosticGlyph(lineSev)
+					iconColor := e.tokens.Color(ui.DiagnosticColor(lineSev))
 					buf.Set(x, bufY, cell.NewClusterCell(cluster, max(1, rendering.VisibleWidth(cluster)), iconColor, gutterBg, 0))
 				} else {
 					buf.Set(x, bufY, gutterBlank)
@@ -205,14 +187,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				var diagFg cell.Color
 				if sev > 0 {
 					diagAttr = diagAttrs[sev]
-					switch sev {
-					case DiagError:
-						diagFg = errColor
-					case DiagWarning:
-						diagFg = warnColor
-					default:
-						diagFg = infoColor
-					}
+					diagFg = e.tokens.Color(ui.DiagnosticColor(sev))
 				}
 				if e.link != nil && e.codeLinkAt(lineIdx, sourceCol) {
 					// A Ctrl+hover code link reads as a link: accent ink, plain
@@ -332,15 +307,16 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 }
 
 func diagSeverityAtCol(diags []diagSpan, col int) int {
-	if len(diags) == 0 {
-		return 0
-	}
+	severity := 0
 	for _, d := range diags {
 		if col >= d.startCol && col < d.endCol {
-			return d.severity
+			severity = types.HighestDiagnosticSeverity(severity, d.severity)
+			if severity == DiagError {
+				break
+			}
 		}
 	}
-	return 0
+	return severity
 }
 
 func (e *Editor) gutterWidth() int {

@@ -49,15 +49,17 @@ type Screen struct {
 	list       *chooserList
 	scrollbar  *ui.ScrollbarControl
 	text       *documentation
+	docScroll  *ui.ScrollbarControl
 	caption    *ui.Label
 	hint       *ui.Label
 	renderedID string // documentation projection key, never selection authority
+	acceptance string
 }
 
 // New retains a detached display snapshot. It never dispatches initial requests.
 // The containing Host should focus DefaultFocus after mounting, and invalidate
 // paint/layout after delivering SetDocumentation.
-func New(th *theme.Theme, invocation string, entries []Entry, provenance string) *Screen {
+func New(th *theme.Theme, invocation string, entries []Entry, status string) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
@@ -85,16 +87,38 @@ func New(th *theme.Theme, invocation string, entries []Entry, provenance string)
 	s.scrollbar = ui.NewScrollbarControl("completion/scrollbar", s.list.Scroll(), ts)
 	s.text = &documentation{TextArea: ui.NewTextArea(TextID, ts, true), screen: s}
 	s.text.SetReadOnly(true)
-	s.caption = ui.NewLabel("completion/provenance", singleLine(provenance), th)
+	s.docScroll = ui.NewScrollbarControl("completion/documentation-scrollbar", s.text.Scroll(), ts)
+	s.docScroll.SetPointerTargetSize(1)
+	s.docScroll.SetSurfaceBackground(ui.ColorPopupBg)
+	s.caption = ui.NewLabel("completion/status", singleLine(status), th)
 	s.caption.SetColorRole(ui.ColorMuted)
 	s.hint = ui.NewLabel("completion/hint", "Ctrl+PgUp/PgDn: docs · Enter/Tab: accept · Esc: close", th)
 	s.hint.SetColorRole(ui.ColorMuted)
+	s.SetAcceptance("tab-enter")
 	s.SetTokens(ts)
 	s.prepareDocumentation()
 	return s
 }
 
 func (s *Screen) DefaultFocus() ui.ComponentID { return ListID }
+
+// SetAcceptance updates the native chooser and its displayed key hint together.
+// The containing editor routes a non-accepting key to normal source editing.
+func (s *Screen) SetAcceptance(policy string) bool {
+	if s.acceptance == policy {
+		return false
+	}
+	s.acceptance = policy
+	keys := "Enter/Tab"
+	switch policy {
+	case "tab":
+		keys = "Tab"
+	case "enter":
+		keys = "Enter"
+	}
+	s.hint.SetText("Ctrl+PgUp/PgDn: docs · " + keys + ": accept · Esc: close")
+	return true
+}
 
 func (s *Screen) SelectedID() string {
 	if row, ok := s.list.Selected(); ok && row.Selectable() {
@@ -137,12 +161,12 @@ func (s *Screen) prepareDocumentation() {
 			b.WriteString("\n" + literal(e.Detail))
 		}
 		if e.DocumentationState != "" {
-			b.WriteString("\nDocumentation: " + singleLine(e.DocumentationState))
+			b.WriteString("\n" + singleLine(e.DocumentationState))
 		}
 		if e.Documentation != "" {
 			b.WriteString("\n\n" + literal(e.Documentation))
 		} else {
-			b.WriteString("\n\nNo documentation supplied.")
+			b.WriteString("\n\nNo documentation available.")
 		}
 		value = b.String()
 	}
@@ -162,6 +186,7 @@ func (s *Screen) SetTokens(ts *ui.TokenSet) {
 	s.scrollbar.SetTokens(ts)
 	s.text.SetTokens(ts)
 	s.text.SetBackgroundColor(ts.Color(ui.ColorPopupBg))
+	s.docScroll.SetTokens(ts)
 	s.caption.SetTokens(ts)
 	s.hint.SetTokens(ts)
 }
@@ -173,7 +198,7 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 }
 
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.list, s.scrollbar, s.text, s.caption, s.hint}
+	return []ui.Component{s.list, s.scrollbar, s.text, s.docScroll, s.caption, s.hint}
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
@@ -183,7 +208,10 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	w, h := max(0, r.W), max(0, r.H)
-	captionH := min(1, h)
+	captionH := 0
+	if s.caption.Text() != "" {
+		captionH = min(1, h)
+	}
 	hintH := min(1, h-captionH)
 	bodyH := h - captionH - hintH
 	listRect := ui.Rect{Y: captionH, W: w, H: bodyH}
@@ -203,7 +231,13 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	listRect.W -= barW
 	s.list.Layout(ctx, listRect)
 	s.scrollbar.Layout(ctx, ui.Rect{X: listRect.X + listRect.W, Y: listRect.Y, W: barW, H: listRect.H})
+	docBarW := 0
+	if docRect.W > 1 && docRect.H > 0 && s.text.VisualLineCount(docRect.W) > docRect.H {
+		docBarW = ui.ScrollbarWidth
+	}
+	docRect.W -= docBarW
 	s.text.Layout(ctx, docRect)
+	s.docScroll.Layout(ctx, ui.Rect{X: docRect.X + docRect.W, Y: docRect.Y, W: docBarW, H: docRect.H})
 	s.caption.Layout(ctx, ui.Rect{W: w, H: captionH})
 	s.hint.Layout(ctx, ui.Rect{Y: h - hintH, W: w, H: hintH})
 }
@@ -242,6 +276,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, a ui.Action) ui.EventResult {
 	}
 	if a.ID == rowSelection {
 		s.prepareDocumentation()
+		return s.emit(ActionSelection, row.ID).Merge(ui.EventResult{Invalidate: ui.InvalidateLayout})
 	} else if s.renderedID != row.ID {
 		// Native pointer/semantic activation may select a different row as part
 		// of its single activation; it still emits only one parent intent.
@@ -280,6 +315,10 @@ func (l *chooserList) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 			return l.screen.text.TextArea.Handle(ctx, e)
 		}
 		if e.Key.Mod != 0 {
+			return ui.EventResult{}
+		}
+		if e.Key.Code == tea.KeyTab && l.screen.acceptance == "enter" ||
+			e.Key.Code == tea.KeyEnter && l.screen.acceptance == "tab" {
 			return ui.EventResult{}
 		}
 		if e.Key.Code == tea.KeyTab {

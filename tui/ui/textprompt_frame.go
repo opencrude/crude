@@ -12,18 +12,31 @@ import (
 const TextPromptFieldID = "text-prompt/field"
 
 // BuildTextPromptFrame builds the shared WindowFrame-backed text dialog used by
-// file create/rename, symbol rename, attachment rename and go to line. It is
+// file create/rename, attachment rename and go to line. It is
 // the reference surface on the unified WindowFrame chrome path.
 func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget {
 	if st == nil {
 		st = NewTextPromptState(TextPromptGeneric, "Prompt", "", "")
 	}
-	st.SyncFromEdit()
 	tokens := NewTokenSet(th)
-
 	w := TextPromptPopupWidth(st)
 	h := TextPromptPopupHeight(st)
+	body := TextPromptBody(th, st)
+	frame := NewWindowFrame(NewID(RootID, "text-prompt"), FrameDialog, tokens)
+	frame.SetTitle(st.Title)
+	frame.SetIcon(kindIcon(st.Kind))
+	frame.SetClosable(false)
+	frame.SetContent(body)
+	cw := NewComponentWidget(th, frame, w, h)
+	cw.Focus(ComponentID(TextPromptFieldID))
+	return cw
+}
 
+// TextPromptBody shares the bound field and validation copy without imposing
+// modal chrome. Editor rename uses it inside an anchored transient popover.
+func TextPromptBody(th *theme.Theme, st *TextPromptState) Component {
+	st.SyncFromEdit()
+	tokens := NewTokenSet(th)
 	// Body: prompt label, input field, spacer, hint; colors via semantic
 	// tokens (same pipeline as every other dialog). A rejected value states
 	// why in the guidance row, where the accepted input normally stands, so
@@ -75,19 +88,9 @@ func BuildTextPromptFrame(th *theme.Theme, st *TextPromptState) *ComponentWidget
 	fieldPad := NewInset(NewID(RootID, "text-prompt/field-pad"),
 		Insets{Top: 0, Right: 0, Bottom: 1, Left: 0}, field)
 
-	body := NewStack(NewID(RootID, "text-prompt/body"), Vertical, 0,
+	return NewStack(NewID(RootID, "text-prompt/body"), Vertical, 0,
 		promptLabel, fieldPad, hint,
 	)
-
-	frame := NewWindowFrame(NewID(RootID, "text-prompt"), FrameDialog, tokens)
-	frame.SetTitle(st.Title)
-	frame.SetIcon(kindIcon(st.Kind))
-	frame.SetClosable(false)
-	frame.SetContent(body)
-
-	cw := NewComponentWidget(th, frame, w, h)
-	cw.Focus(ComponentID(TextPromptFieldID))
-	return cw
 }
 
 // sentenceStart renders a rejection message as dialog copy: the guidance row
@@ -102,7 +105,7 @@ func sentenceStart(message string) string {
 }
 
 // TextPromptField returns the bound name field of a framed text prompt.
-func TextPromptField(cw *ComponentWidget) *TextField {
+func TextPromptField(cw interface{ Root() Component }) *TextField {
 	if cw == nil {
 		return nil
 	}

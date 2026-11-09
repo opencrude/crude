@@ -30,16 +30,20 @@ import (
 // those belong to workspace and connected gopls regressions.
 type completionTestService struct {
 	shellport.LSPService
-	context uint64
-	owner   string
-	feature uint64
-	enabled bool
+	context  uint64
+	owner    string
+	feature  uint64
+	enabled  bool
+	settings *types.LSPSettings
 }
 
 func (*completionTestService) ServerReady() bool                  { return true }
 func (s *completionTestService) ContextCursor() (string, uint64)  { return s.owner, s.context }
 func (s *completionTestService) CompletionsState() (bool, uint64) { return s.enabled, s.feature }
-func (*completionTestService) Settings() types.LSPSettings {
+func (s *completionTestService) Settings() types.LSPSettings {
+	if s.settings != nil {
+		return types.CloneLSPSettings(*s.settings)
+	}
 	settings := types.DefaultLSPSettings()
 	settings.AutoComplete = true
 	return settings
@@ -215,7 +219,7 @@ func TestCompletionNativeSelectionPaintsOnlyOriginalSelectedDocumentation(t *tes
 			if app.completion.screen.SelectedID() != "original:1" {
 				t.Fatal("duplicate labels hid the actual native identity change")
 			}
-			completionRequireText(t, app, []string{"**SECOND_SELECTED_DOC**", "markdown"}, []string{"FIRST_SELECTED_DOC"})
+			completionRequireText(t, app, []string{"**SECOND_SELECTED_DOC**"}, []string{"FIRST_SELECTED_DOC"})
 			completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyUp})
 			completionRequireText(t, app, []string{"FIRST_SELECTED_DOC"}, []string{"SECOND_SELECTED_DOC"})
 			if len(port.reads()) != 0 {
@@ -249,16 +253,16 @@ func TestCompletionNativeSelectionPaintsOnlyOriginalSelectedDocumentation(t *tes
 	}
 }
 
-func TestCompletionDocumentationPreservesAbsentEmptyAndMarkdownEvidence(t *testing.T) {
+func TestCompletionDocumentationShowsAvailableTextOrEmptyState(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		for _, tc := range []struct {
 			name            string
 			doc             types.LSPCompletionDocumentation
 			present, absent []string
 		}{
-			{"absent", types.LSPCompletionDocumentation{}, []string{"not supplied", "No documentation supplied."}, []string{"observed empty", "MARKDOWN_LITERAL"}},
-			{"empty", types.LSPCompletionDocumentation{Present: true, Form: "string"}, []string{"observed empty", "provider supplied empty"}, []string{"No documentation supplied.", "MARKDOWN_LITERAL"}},
-			{"markdown", types.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown", Value: "**MARKDOWN_LITERAL**"}, []string{"markdown", "**MARKDOWN_LITERAL**"}, []string{"not supplied", "observed empty"}},
+			{"absent", types.LSPCompletionDocumentation{}, []string{"No documentation available."}, []string{"MARKDOWN_LITERAL"}},
+			{"empty", types.LSPCompletionDocumentation{Present: true, Form: "string"}, []string{"No documentation available."}, []string{"MARKDOWN_LITERAL"}},
+			{"markdown", types.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown", Value: "**MARKDOWN_LITERAL**"}, []string{"**MARKDOWN_LITERAL**"}, []string{"No documentation available."}},
 		} {
 			t.Run(fmt.Sprintf("%dx%d/%s", size[0], size[1], tc.name), func(t *testing.T) {
 				app, port := completionTestApp(t, size[0], size[1], "pr")
@@ -532,7 +536,7 @@ func TestCompletionAllAnswersUseOriginalContextBarrierAndQuietAutomaticResults(t
 				if app.completion == nil || app.completion.screen != nil || app.overlayHost.IsOpen(ui.OverlayCompletion) {
 					t.Fatal("answer escaped its original context publication barrier")
 				}
-				for _, summary := range []string{"Completion: independent request failure", "Completion provider returned an empty list", "Completion provider returned null", "This provider does not advertise completions"} {
+				for _, summary := range []string{"Completion: independent request failure", "No suggestions at this position.", "This language server does not support completion."} {
 					if signatureHasNotice(app, summary) {
 						t.Fatal("unpublished answer already reported", summary)
 					}
@@ -549,8 +553,8 @@ func TestCompletionAllAnswersUseOriginalContextBarrierAndQuietAutomaticResults(t
 					if app.completion != nil || app.overlayHost.IsOpen(ui.OverlayCompletion) {
 						t.Fatal("negative answer did not settle after exact publication")
 					}
-					notice := map[string]string{"empty": "Completion provider returned an empty list", "null": "Completion provider returned null",
-						"unsupported": "This provider does not advertise completions", "error": "Completion: independent request failure"}[answer]
+					notice := map[string]string{"empty": "No suggestions at this position.", "null": "No suggestions at this position.",
+						"unsupported": "This language server does not support completion.", "error": "Completion: independent request failure"}[answer]
 					if signatureHasNotice(app, notice) == automatic {
 						t.Fatalf("explicit/automatic feedback distinction lost: %q automatic=%t", notice, automatic)
 					}
@@ -699,7 +703,11 @@ func TestCompletionInspectionErrorRemainsInertAndPendingEscapeDoesNotCloseEditor
 			if !resolve {
 				completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
 			}
-			completionRequireText(t, app, []string{"unavailable", "FIRST_SELECTED_DOC"}, []string{"FIRST_RESOLVED_DOC", "SECOND_SELECTED_DOC"})
+			status := "Could not insert this suggestion."
+			if resolve {
+				status = "Could not load documentation."
+			}
+			completionRequireText(t, app, []string{status, "FIRST_SELECTED_DOC"}, []string{"FIRST_RESOLVED_DOC", "SECOND_SELECTED_DOC"})
 			if app.EditorState.Editor.Value() != "pr" || app.EditorState.Editor.Modified() ||
 				app.Input.Value() != "keep completion private draft" {
 				t.Fatal("failed inspection inserted or consumed source/draft")

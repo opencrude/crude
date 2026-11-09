@@ -17,8 +17,8 @@ import (
 	"crude/workspace"
 )
 
-const completionConnectedFirst = `{"label":"same","kind":3,"insertText":"first","documentation":"FIRST_INITIAL","data":{"n":9007199254740993}}`
-const completionConnectedSecond = `{"label":"same","kind":3,"insertText":"second","documentation":"SECOND_INITIAL","data":{"n":9007199254740995}}`
+const completionConnectedFirst = `{"label":"same","filterText":"pr","kind":3,"insertText":"first","documentation":"FIRST_INITIAL","data":{"n":9007199254740993}}`
+const completionConnectedSecond = `{"label":"same","filterText":"pr","kind":3,"insertText":"second","documentation":"SECOND_INITIAL","data":{"n":9007199254740995}}`
 
 type completionConnectedRuntime struct {
 	base      renameConnectedRuntime

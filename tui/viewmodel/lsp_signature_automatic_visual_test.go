@@ -492,13 +492,17 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 			if !ok {
 				return fmt.Errorf("parameter reader is not a shared WindowFrame")
 			}
-			area, ok := frame.Body().(*ui.TextArea)
-			if !ok || !strings.Contains(area.Value(), automaticSignatureVisualLabel) ||
+			reader, ok := frame.Body().(*ui.TextReader)
+			if !ok {
+				return fmt.Errorf("parameter reader has no native text body")
+			}
+			area := reader.TextArea()
+			if !strings.Contains(area.Value(), automaticSignatureVisualLabel) ||
 				!strings.Contains(area.Value(), fmt.Sprintf("Active parameter %d of 2: %s", active+1, []string{"first string", "count int"}[active])) {
 				return fmt.Errorf("actual mounted native TextArea lost literal provider parameter")
 			}
 			for _, marker := range []string{automaticSignatureVisualLabel, "Parameter information",
-				fmt.Sprintf("Active parameter %d of 2:", active+1), "Source revision:", "context:"} {
+				fmt.Sprintf("Active parameter %d of 2:", active+1)} {
 				if !strings.Contains(paint, marker) {
 					return fmt.Errorf("native frame lacks %q:\n%s", marker, paint)
 				}
@@ -517,14 +521,11 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 					caretX, caretY, cardX, cardY, cardW, cardH, v.width, v.height)
 			}
 			if automatic {
-				if v.focusedPopup() != nil || v.focusTarget() != FocusEditor || area.HasActiveSelection() ||
-					!strings.Contains(area.Value(), "Alt+I details") {
+				if v.focusedPopup() != nil || v.focusTarget() != FocusEditor || area.HasActiveSelection() {
 					return fmt.Errorf("automatic card captured input instead of remaining passive")
 				}
 			} else {
-				if v.focusedPopup() != fw || !strings.Contains(area.Value(), "Signature 1 of 1") ||
-					!strings.Contains(area.Value(), "AUTOMATIC_SIGNATURE_NATIVE_SENTINEL") ||
-					!strings.Contains(area.Value(), "Unverified:") {
+				if v.focusedPopup() != fw || !strings.Contains(area.Value(), "AUTOMATIC_SIGNATURE_NATIVE_SENTINEL") {
 					return fmt.Errorf("Alt+I did not focus full qualified provider reader")
 				}
 				if phase == 6 {

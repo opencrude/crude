@@ -115,7 +115,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	}
 	if len(diags) > 0 {
 		lspSection.Items = append(lspSection.Items, ui.ContextMenuItem{
-			Label: fmt.Sprintf("Show %d diagnostic(s)", len(diags)), Action: func() {
+			Label: "Show diagnostics", Action: func() {
 				m.showDiagnosticAt(ed, factID, pos.Line, pos.Col)
 			},
 		})

@@ -73,10 +73,11 @@ func TestDiagnosticDetailReadOnlySelectionAndFirstResize(t *testing.T) {
 	if !ok {
 		t.Fatal("diagnostic details are not a native WindowFrame reader")
 	}
-	area, ok := frame.Body().(*ui.TextArea)
+	reader, ok := frame.Body().(*ui.TextReader)
 	if !ok {
 		t.Fatal("diagnostic details are not selectable native text")
 	}
+	area := reader.TextArea()
 	source, draft, text := app.EditorState.Editor.Value(), app.Input.Value(), area.Value()
 	app.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 	if !area.HasActiveSelection() {
@@ -101,7 +102,7 @@ func TestDiagnosticDetailReadOnlySelectionAndFirstResize(t *testing.T) {
 		if !mounted || x > cx || x+w <= cx || (y != cy+1 && y+h != cy) || x < 0 || y < 0 || x+w > grid[0] || y+h > grid[1] {
 			t.Fatalf("first diagnostic resize lost its mounted source: %v caret=%d:%d popup=%d:%d %dx%d", grid, cx, cy, x, y, w, h)
 		}
-		if frame.Body() != area || !strings.Contains(area.Value(), "LAST_ORIGINAL_DIAGNOSTIC") {
+		if frame.Body() != reader || !strings.Contains(area.Value(), "LAST_ORIGINAL_DIAGNOSTIC") {
 			t.Fatal("resize rebuilt or clipped the original reader")
 		}
 	}
@@ -131,7 +132,8 @@ func TestDiagnosticHoverIsPassiveLiteralAndReusesTheSamePublication(t *testing.T
 	if !ok {
 		t.Fatal("hover kept a separate legacy label-stack path")
 	}
-	area := frame.Body().(*ui.TextArea)
+	reader := frame.Body().(*ui.TextReader)
+	area := reader.TextArea()
 	text := area.Value()
 	if strings.ContainsRune(text, '\x1b') || strings.ContainsRune(text, '\a') || !strings.Contains(text, "ERROR_ORIGINAL\\x1b]52;") || !strings.Contains(text, "HINT_ORIGINAL") {
 		t.Fatalf("diagnostic message controls were interpreted or original text lost: %q", text)
@@ -140,7 +142,7 @@ func TestDiagnosticHoverIsPassiveLiteralAndReusesTheSamePublication(t *testing.T
 		_, cmd = app.Update(tea.MouseMotionMsg{X: cx - i%8, Y: cy})
 		runAppCommand(t, app, cmd)
 	}
-	if app.overlayHost.Window(ui.OverlayDiagHover) != fw || frame.Body() != area || area.Value() != text {
+	if app.overlayHost.Window(ui.OverlayDiagHover) != fw || frame.Body() != reader || area.Value() != text {
 		t.Fatal("same-publication hover rebuilt its retained text")
 	}
 	if ed.Value() != before || app.Input.Value() != draft {
@@ -172,7 +174,7 @@ func TestDiagnosticHoverNativeWheelAndExplicitReadingDoNotFallThrough(t *testing
 	app.advanceReveals(time.Now().Add(2 * revealDuration))
 	app.View()
 	frame := fw.Content.(*ui.WindowFrameWidget)
-	area := frame.Body().(*ui.TextArea)
+	area := frame.Body().(*ui.TextReader).TextArea()
 	x, y := fw.Position()
 	source, draft := ed.Value(), app.Input.Value()
 	// A real wheel gesture first transfers the pointer from the source into
@@ -201,7 +203,7 @@ func TestDiagnosticHoverNativeWheelAndExplicitReadingDoNotFallThrough(t *testing
 	}
 	_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
 	runAppCommand(t, app, cmd)
-	if area.ScrollOffset() < 20 {
+	if !strings.Contains(diagnosticPresentationPaint(app, fw), "HOVER_ORIGINAL_TAIL") {
 		t.Fatalf("explicit diagnostic hover reading did not reach the original tail: scroll=%d focused=%s body=%+v reveal=%g",
 			area.ScrollOffset(), frame.Host().Focused(), area.Bounds(), frame.Frame().Reveal())
 	}
@@ -239,7 +241,7 @@ func TestDiagnosticDetailNativeMenuUsesClickedSourceWithoutConsumingSelection(t 
 	target := -1
 	for i := range menu.FlatItems {
 		s, j, ok := menu.FlatItemAt(i)
-		if ok && strings.HasPrefix(menu.Sections[s].Items[j].Label, "Show 1 diagnostic") {
+		if ok && menu.Sections[s].Items[j].Label == "Show diagnostics" {
 			target = i
 			break
 		}
@@ -262,11 +264,9 @@ func TestDiagnosticDetailNativeMenuUsesClickedSourceWithoutConsumingSelection(t 
 	if x > cx || x+w <= cx || (y != cy+1 && y+h != cy) {
 		t.Fatalf("clicked diagnostic anchored at retained caret instead: clicked=%d:%d popup=%d:%d %dx%d", cx, cy, x, y, w, h)
 	}
-	text := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextArea).Value()
-	for _, v := range []string{"CLICKED_SOURCE_DIAGNOSTIC", "Source: independent-source", "Code: independent-code", "Error 1 of 1", "Fact "} {
-		if !strings.Contains(text, v) {
-			t.Fatal("complete original diagnostic metadata missing", v, text)
-		}
+	text := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextReader).TextArea().Value()
+	if text != "✕ CLICKED_SOURCE_DIAGNOSTIC  independent-source (independent-code)" {
+		t.Fatalf("reader did not show the clicked problem: %q", text)
 	}
 	if !ed.HasSelection() || ed.SelectedText() != before || app.Input.Value() != "keep the private draft" {
 		t.Fatal("diagnostic right click consumed retained selection/draft")
@@ -286,7 +286,7 @@ func TestDiagnosticDetailRejectsAReplacedPublicationWhileNativeMenuRemainsOpen(t
 	target := -1
 	for i := range menu.FlatItems {
 		s, j, ok := menu.FlatItemAt(i)
-		if ok && strings.HasPrefix(menu.Sections[s].Items[j].Label, "Show 1 diagnostic") {
+		if ok && menu.Sections[s].Items[j].Label == "Show diagnostics" {
 			target = i
 			break
 		}
@@ -309,20 +309,22 @@ func TestDiagnosticDetailRejectsAReplacedPublicationWhileNativeMenuRemainsOpen(t
 	}
 }
 
-func TestDiagnosticDetailsRefuseDisplayBudgetWithoutTruncatingAValidAnswer(t *testing.T) {
-	app, fw := diagnosticIndependentMenu(t, 80, 24, strings.Repeat("Original diagnostic.", 4000)+"NO_CLIPPED_TAIL")
-	area := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextArea)
-	if !strings.Contains(area.Value(), "64 KiB reader budget") || strings.Contains(area.Value(), "Original diagnostic.") {
-		t.Fatal("oversized diagnostic presented a clipped apparently-complete answer")
+func TestDiagnosticDetailsLargeMessageCanBeReadToItsEnd(t *testing.T) {
+	message := strings.Repeat("Original diagnostic.\n", 4000) + "The final explanation."
+	app, fw := diagnosticIndependentMenu(t, 80, 24, message)
+	area := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextReader).TextArea()
+	if area.Value() != "✕ "+message {
+		t.Fatal("reader did not preserve the full message")
 	}
-	if !strings.HasSuffix(app.EditorState.Editor.DiagnosticFacts().Diagnostics[0].Message, "NO_CLIPPED_TAIL") {
-		t.Fatal("display refusal destroyed original retained diagnostic evidence")
+	app.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	if paint := diagnosticPresentationPaint(app, fw); !strings.Contains(diagnosticVisualLetters(paint), "Thefinalexplanation") {
+		t.Fatalf("the final explanation is not reachable:\n%s", paint)
 	}
 }
 
 func TestDiagnosticDetailEscapeDismissesTextSelectionBeforeTheReader(t *testing.T) {
 	app, fw := diagnosticIndependentMenu(t, 80, 24, "ORIGINAL_DIAGNOSTIC_SELECTED_TEXT")
-	area := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextArea)
+	area := fw.Content.(*ui.WindowFrameWidget).Body().(*ui.TextReader).TextArea()
 	_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
 	runAppCommand(t, app, cmd)
 	if !area.HasActiveSelection() {

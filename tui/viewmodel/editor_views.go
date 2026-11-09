@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -102,7 +103,7 @@ func (m *App) showDocument(path string, group window.GroupID, activate bool) *Ed
 		}
 		ed = source.NewLinkedView()
 		ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed.Primary(), fp, text) })
-		ed.SetOnSignatureHelp(func() { m.queueAutomaticSignatureHelp(ed) })
+		ed.SetOnTyping(func(key tea.KeyPressMsg) { m.onEditorTyping(ed, key) })
 	}
 	tab := m.Win.AddTab(group, window.Resource{Kind: window.ResourceDocument, ID: path}, m.editorTabTitle(path), activate)
 	if tab == nil {

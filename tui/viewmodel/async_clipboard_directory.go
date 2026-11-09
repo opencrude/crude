@@ -870,7 +870,7 @@ func (m *App) stopAsyncIO() {
 			}
 			seen[ed] = true
 			ed.SetOnContentChanged(nil)
-			ed.SetOnSignatureHelp(nil)
+			ed.SetOnTyping(nil)
 			ed.Close()
 		}
 		for _, view := range m.EditorState.Views {

@@ -394,7 +394,7 @@ func (m *App) closeWorkspaceEditors() {
 		}
 		seen[ed] = struct{}{}
 		ed.SetOnContentChanged(nil)
-		ed.SetOnSignatureHelp(nil)
+		ed.SetOnTyping(nil)
 		ed.Close()
 	}
 	for _, view := range m.EditorState.Views {

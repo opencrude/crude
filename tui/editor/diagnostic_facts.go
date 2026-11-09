@@ -1,11 +1,6 @@
 package editor
 
-import (
-	"fmt"
-	"strings"
-
-	"crude/types"
-)
+import "crude/types"
 
 // SetDiagnosticsVisible is a projection filter, not a mutation of observed facts.
 // It applies to every view of the document.
@@ -31,7 +26,8 @@ func (e *Editor) DiagnosticFacts() types.InsightDiagnostics {
 	return types.CloneInsightDiagnostics(e.diagnosticFacts)
 }
 
-// DiagnosticStatus describes observed scope, never whole-project cleanliness.
+// DiagnosticStatus explains why error navigation has no target. It describes
+// the current file, never whole-project cleanliness.
 func (e *Editor) DiagnosticStatus() string {
 	e.diagMu.RLock()
 	defer e.diagMu.RUnlock()
@@ -50,40 +46,10 @@ func (e *Editor) DiagnosticStatus() string {
 	case !e.MatchesDiagnosticSource(f) || e.diagnosticsRevision != e.Revision():
 		status = "Results are for an older version of this file."
 	default:
-		status = "Results are available for this file."
-	}
-	if f.ID != "" && (f.Boundary.Context.ID == "" || f.Boundary.Context.Generation == 0 || len(f.Boundary.Context.UnknownInputs) > 0) {
-		status += " Other files may not be checked."
+		status = "No errors to jump to in this file."
 	}
 	if e.diagnosticsHidden {
 		status += " Problem markers are turned off."
 	}
 	return status
-}
-
-// DiagnosticProvenance is shared by the diagnostic tooltip and editor details.
-func (e *Editor) DiagnosticProvenance() string {
-	e.diagMu.RLock()
-	defer e.diagMu.RUnlock()
-	f := e.diagnosticFacts
-	if f.ID == "" {
-		return "No diagnostic publication observed"
-	}
-	c := f.Boundary.Context
-	context := c.ID
-	if context == "" {
-		context = "unknown"
-	}
-	parts := []string{
-		fmt.Sprintf("Fact %s", f.ID),
-		fmt.Sprintf("%s · revision %d", f.Boundary.Producer.Provider, f.Boundary.Source.Revision),
-		fmt.Sprintf("Context %s/%d", context, c.Generation),
-	}
-	if len(c.UnknownInputs) > 0 {
-		parts = append(parts, "Unknown: "+strings.Join(c.UnknownInputs, ", "))
-	}
-	if f.Detail != "" {
-		parts = append(parts, f.Detail)
-	}
-	return strings.Join(parts, " · ")
 }

@@ -133,6 +133,10 @@ func mergeStringMap(base, top map[string]string) map[string]string {
 }
 
 func CloneLSPSettings(s LSPSettings) LSPSettings {
+	if s.CompletionDelayMS != nil {
+		delay := *s.CompletionDelayMS
+		s.CompletionDelayMS = &delay
+	}
 	s.Languages = cloneLanguages(s.Languages)
 	return s
 }
@@ -152,6 +156,18 @@ const (
 	DiagInfo    = 3
 	DiagHint    = 4
 )
+
+// HighestDiagnosticSeverity selects the more important LSP severity. Zero
+// means no diagnostic; smaller valid protocol values have higher priority.
+func HighestDiagnosticSeverity(a, b int) int {
+	if a < DiagError || a > DiagHint {
+		a = 0
+	}
+	if b >= DiagError && b <= DiagHint && (a == 0 || b < a) {
+		return b
+	}
+	return a
+}
 
 type LSPDiagnostic struct {
 	Line     int
@@ -176,6 +192,15 @@ type LSPProbeView struct {
 	Server     string
 	Source     InsightSource
 	SourceText string
+}
+
+// LSPDiagnosticsResult is one file's answer in an ordered diagnostic batch.
+// Error is a request failure, never a diagnostic reported for the source.
+type LSPDiagnosticsResult struct {
+	Diagnostics InsightDiagnostics
+	View        LSPProbeView
+	Settled     bool
+	Error       string
 }
 
 type LSPSymbol struct {

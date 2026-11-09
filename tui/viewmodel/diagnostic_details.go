@@ -1,7 +1,8 @@
 package viewmodel
 
 import (
-	"fmt"
+	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -9,7 +10,7 @@ import (
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/tui/wm"
+	"crude/types"
 )
 
 // A diagnostic reader borrows one exact projected fact publication. It cannot
@@ -22,9 +23,9 @@ type diagnosticPopover struct {
 	line, col            int
 	selection            codeActionSelection
 	frame                *ui.WindowFrameWidget
+	reader               *ui.TextReader
+	preferredWidth       int
 }
-
-const diagnosticReaderMaxBytes = 64 << 10
 
 func (m *App) closeDiagnosticDetail() {
 	if m.overlayHost != nil {
@@ -39,7 +40,7 @@ func (m *App) showDiagnosticAt(ed *editor.Editor, factID string, line, col int) 
 	}
 	id, current := ed.DiagnosticCursor()
 	if !current || id != factID {
-		m.Feedback.NotifyInfo("Diagnostic details changed; inspect the current source again")
+		m.Feedback.NotifyInfo("This problem changed. Open it again.")
 		return
 	}
 	m.clearDiagHoverPopup()
@@ -79,41 +80,43 @@ func (m *App) openDiagnosticPopover(id ui.OverlayID, ed *editor.Editor, factID s
 	if len(diags) == 0 {
 		return nil
 	}
-	w, h := min(90, max(1, m.width-4)), min(18, max(1, m.height-4))
 	explicit := id == ui.OverlayDiagContext
-	if !explicit {
-		w, h = min(w, 70), min(h, 10)
-	}
-	bounds, visible := m.editorPositionHelpBounds(ed, editor.Position{Line: line, Col: col}, w, h)
-	if !visible || bounds.W < 12 || bounds.H < 4 {
-		return nil
-	}
-	text, severity := diagnosticReaderText(ed, line, col, diags)
+	// DiagnosticsAt returns a detached projection; order overlapping messages by
+	// severity without changing the provider's retained result.
+	slices.SortStableFunc(diags, func(a, b editor.LSPDiagnostic) int { return cmp.Compare(a.Severity, b.Severity) })
+	text, severity, colors := diagnosticReaderText(diags)
 	tokens := ui.NewTokenSet(m.Theme)
-	area := ui.NewTextArea(ui.ComponentID(string(id)+"/text"), tokens, true)
-	area.SetReadOnly(true)
+	reader := ui.NewTextReader(ui.ComponentID(string(id)+"/reader"), tokens)
+	area := reader.TextArea()
 	area.SetValue(text)
+	area.SetRuneColors(colors)
 	area.SetCursorFlat(0)
-	label, accent := "Diagnostics", ui.ColorMuted
+	label, accent := diagnosticSeverityLabel(severity), ui.ColorMuted
 	switch severity {
 	case editor.DiagError:
-		label, accent = "Error", ui.ColorError
+		accent = ui.ColorError
 	case editor.DiagWarning:
-		label, accent = "Warning", ui.ColorWarning
-	case editor.DiagInfo:
-		label = "Information"
-	case editor.DiagHint:
-		label = "Hint"
+		accent = ui.ColorWarning
 	}
-	frame := ui.NewWindowFrameWidget(m.Theme, ui.ComponentID(string(id)+"/frame"), ui.FramePopover, label, area, nil, explicit, bounds.W, bounds.H)
-	frame.Frame().SetBorderAccent(tokens.Color(accent))
+	if len(diags) > 1 {
+		label = "Diagnostics"
+	}
+	titleWidth := ui.TooltipFrameWidth(label, 90)
+	// Leave room for the scrollbar so tall messages do not rewrap merely
+	// because the bar appears.
+	preferredWidth := min(90, max(titleWidth, ui.TooltipFrameWidth(text, 90)+ui.ScrollbarWidth))
+	bounds, visible := m.editorReaderBounds(ed, editor.Position{Line: line, Col: col}, reader, preferredWidth)
+	if !visible || bounds.W <= ui.TooltipChrome || bounds.H < 3 {
+		return nil
+	}
+	var focus ui.ComponentID
 	if explicit {
-		frame.Focus(area.ID())
+		focus = area.ID()
 	}
-	s := &diagnosticPopover{workspace: m.ws, editor: ed, generation: m.workspaceSwitchGen.Load(), revision: ed.Revision(), factID: factID, line: line, col: col, selection: currentCodeActionSelection(ed), frame: frame}
-	fw := wm.NewFloatingWindow(string(id), "", frame, bounds.W, bounds.H, wm.WithDecoration(true), wm.WithFocusable(true), wm.WithMovable(false), wm.WithResizable(false), wm.WithClosable(explicit), wm.WithModal(false), wm.WithClickOutside(wm.ClickOutsideCloseRoute))
-	fw.SetPosition(bounds.X, bounds.Y)
-	policy := ui.PopoverPolicy(explicit)
+	frame, fw := m.newEditorPopover(id, label, reader, focus, bounds)
+	frame.Frame().SetBorderAccent(tokens.Color(accent))
+	s := &diagnosticPopover{workspace: m.ws, editor: ed, generation: m.workspaceSwitchGen.Load(), revision: ed.Revision(), factID: factID, line: line, col: col, selection: currentCodeActionSelection(ed), frame: frame, reader: reader, preferredWidth: preferredWidth}
+	policy := ui.PopoverPolicy(true)
 	policy.Passive = !explicit
 	m.overlayHost.Open(id, fw, policy, func() {
 		if id == ui.OverlayDiagContext && m.diagnosticDetail == s {
@@ -126,76 +129,70 @@ func (m *App) openDiagnosticPopover(id ui.OverlayID, ed *editor.Editor, factID s
 	return s
 }
 
-// The display budget is separate from the fact authority's retained evidence.
-// Overbudget content is refused visibly, never clipped into an apparent complete
-// message. Provider controls are shown as literal escapes, not terminal effects.
-func diagnosticReaderText(ed *editor.Editor, line, col int, diags []editor.LSPDiagnostic) (string, int) {
-	severity := editor.DiagInfo
+// The fact store already bounds retained diagnostics. Show the complete message;
+// provider controls are literal escapes, not terminal effects.
+func diagnosticReaderText(diags []editor.LSPDiagnostic) (string, int, map[int]ui.SemanticColor) {
+	severity := 0
+	for _, d := range diags {
+		severity = types.HighestDiagnosticSeverity(severity, d.Severity)
+	}
 	var b strings.Builder
-	appendText := func(s string) bool {
-		if len(s) > diagnosticReaderMaxBytes-b.Len() {
-			return false
-		}
-		b.WriteString(s)
-		return true
-	}
-	refused := func() (string, int) {
-		return "Diagnostic details exceed the 64 KiB reader budget. No partial diagnostic text is displayed.", severity
-	}
-	if !appendText(fmt.Sprintf("%s:%d:%d (visual columns)\n%s\n\n", ed.BaseTitle(), line+1, col+1, ed.DiagnosticStatus())) {
-		return refused()
-	}
-	source := strings.TrimRight(ed.LineText(line), "\r\n")
-	if len(source) > 4096 {
-		source = "Source line preview omitted (over 4 KiB)."
-	}
-	if !appendText(source + "\n\n") {
-		return refused()
-	}
+	colors := make(map[int]ui.SemanticColor, len(diags))
+	offset := 0
 	for i, d := range diags {
-		if d.Severity > 0 && (i == 0 || d.Severity < severity) {
-			severity = d.Severity
+		if i > 0 {
+			b.WriteString("\n\n")
+			offset += 2
 		}
-		label := "Diagnostic"
-		switch d.Severity {
-		case editor.DiagError:
-			label = "Error"
-		case editor.DiagWarning:
-			label = "Warning"
-		case editor.DiagInfo:
-			label = "Information"
-		case editor.DiagHint:
-			label = "Hint"
+		colors[offset] = ui.DiagnosticColor(d.Severity)
+		icon := ui.DiagnosticGlyph(d.Severity) + " "
+		b.WriteString(icon)
+		offset += len([]rune(icon))
+		if len(diags) > 1 {
+			label := diagnosticSeverityLabel(d.Severity) + ": "
+			b.WriteString(label)
+			offset += len([]rune(label))
 		}
-		if !appendText(fmt.Sprintf("%s %d of %d\n", label, i+1, len(diags))) {
-			return refused()
+		message := strings.Trim(d.Message, "\r\n")
+		if strings.TrimSpace(message) == "" {
+			message = "No description provided."
 		}
-		if d.Source != "" && (!appendText("Source: ") || !appendText(d.Source) || !appendText("\n")) {
-			return refused()
+		// Keep useful rule attribution compact, as in IDE marker hovers. This
+		// is reported source/code, not Crude's fact or provider identity.
+		source, code := strings.TrimSpace(d.Source), strings.TrimSpace(d.Code)
+		if source != "" || code != "" {
+			message += "  " + source
+			if code != "" {
+				message += " (" + code + ")"
+			}
 		}
-		if d.Code != "" && (!appendText("Code: ") || !appendText(d.Code) || !appendText("\n")) {
-			return refused()
-		}
-		if !appendText(d.Message) || !appendText("\n\n") {
-			return refused()
-		}
-	}
-	if !appendText("Details\n" + ed.DiagnosticProvenance()) {
-		return refused()
-	}
-	raw := b.String()
-	b.Reset()
-	for _, r := range raw {
-		v := string(r)
-		if unicode.IsControl(r) && r != '\n' && r != '\t' {
-			q := strconv.QuoteRune(r)
-			v = q[1 : len(q)-1]
-		}
-		if !appendText(v) {
-			return refused()
+		for _, r := range message {
+			if unicode.IsControl(r) && r != '\n' && r != '\t' {
+				q := strconv.QuoteRune(r)
+				b.WriteString(q[1 : len(q)-1])
+				offset += len(q) - 2 // quoted control escapes are ASCII
+			} else {
+				b.WriteRune(r)
+				offset++
+			}
 		}
 	}
-	return b.String(), severity
+	return b.String(), severity, colors
+}
+
+func diagnosticSeverityLabel(severity int) string {
+	switch severity {
+	case editor.DiagError:
+		return "Error"
+	case editor.DiagWarning:
+		return "Warning"
+	case editor.DiagInfo:
+		return "Information"
+	case editor.DiagHint:
+		return "Hint"
+	default:
+		return "Diagnostic"
+	}
 }
 
 // Update alone retires stale evidence. It reads only the small publication
@@ -246,12 +243,8 @@ func (m *App) positionDiagnosticPopups() {
 		if fw == nil {
 			continue
 		}
-		w, h := min(90, max(1, m.width-4)), min(18, max(1, m.height-4))
-		if id == ui.OverlayDiagHover {
-			w, h = min(w, 70), min(h, 10)
-		}
-		bounds, visible := m.editorPositionHelpBounds(s.editor, editor.Position{Line: s.line, Col: s.col}, w, h)
-		if !visible || bounds.W < 12 || bounds.H < 4 {
+		bounds, visible := m.editorReaderBounds(s.editor, editor.Position{Line: s.line, Col: s.col}, s.reader, s.preferredWidth)
+		if !visible || bounds.W <= ui.TooltipChrome || bounds.H < 3 {
 			if id == ui.OverlayDiagContext {
 				m.closeDiagnosticDetail()
 			} else {

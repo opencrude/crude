@@ -22,7 +22,7 @@ func (m *App) routeOverlayText(fw *wm.FloatingWindow, field *ui.TextField, msg t
 	if fw == nil || field == nil {
 		return false, nil
 	}
-	cw, ok := fw.Content.(*ui.ComponentWidget)
+	cw, ok := fw.Content.(interface{ Host() *ui.Host })
 	if !ok || cw == nil || cw.Host() == nil {
 		return false, nil
 	}
@@ -51,7 +51,7 @@ func overlayFieldPointer(fw *wm.FloatingWindow, localX, localY int, msg tea.Msg)
 	if fw == nil {
 		return false
 	}
-	cw, ok := fw.Content.(*ui.ComponentWidget)
+	cw, ok := fw.Content.(interface{ Host() *ui.Host })
 	if !ok || cw == nil || cw.Host() == nil {
 		return false
 	}

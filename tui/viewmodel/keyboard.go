@@ -412,7 +412,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.Feedback.NotifyInfo("Rename cancelled")
 			return m, nil
 		}
-		if m.completion != nil {
+		if m.completion != nil || m.completionIntent != nil {
 			m.closeCompletionPopup()
 			return m, nil
 		}
@@ -1054,7 +1054,7 @@ func (m *App) startRenameCmd() tea.Cmd {
 			return nil
 		}
 	}
-	m.openTextPrompt(ui.TextPromptRename, "Rename symbol", "Enter the new symbol name. Changes will be previewed before applying.", "", func(value string) error {
+	m.openEditorTextPrompt("Rename symbol", "Enter a new name to preview the changes.", "", func(value string) error {
 		if value == "" {
 			return fmt.Errorf("name cannot be empty")
 		}
@@ -1211,17 +1211,20 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 		Selected: m.LSPPopup.OutlineCursor,
 		Width:    boxW,
 		Height:   boxH,
-		Closable: true,
+		Closable: false,
 	})
 
-	popupX := m.width - boxW - 2
-	popupY := 4
-	if popupX < 0 {
-		popupX = 0
+	anchor := m.editorPopoverAnchor(m.EditorState.Editor, boxW, boxH)
+	if anchor == nil {
+		return
 	}
-	if popupY < 0 {
-		popupY = 0
+	bounds, visible := m.editorHelpBounds(anchor.editor, boxW, boxH)
+	if !visible {
+		m.closeOutlinePopup()
+		return
 	}
+	popupX, popupY := bounds.X, bounds.Y
+	boxW, boxH = bounds.W, bounds.H
 
 	if existing := m.windowManager.Window(outlinePopupID); existing != nil {
 		if cw, ok := existing.Content.(*ui.ComponentWidget); ok && cw != nil {
@@ -1262,11 +1265,13 @@ func (m *App) showOutlinePopup(syms []editor.LSPSymbol) {
 			m.LSPPopup.OutlineOpen = false
 			m.LSPPopup.OutlineRows = nil
 			m.LSPPopup.OutlineCursor = 0
+			m.LSPPopup.Outline = nil
 		})
 	}
 
 	m.LSPPopup.OutlineRows = flat
 	m.LSPPopup.OutlineOpen = true
+	m.LSPPopup.Outline = anchor
 }
 
 func (m *App) closeOutlinePopup() {

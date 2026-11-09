@@ -201,7 +201,7 @@ func TestDetachedDocumentationDeliveryAndHonestStates(t *testing.T) {
 		}
 		host.MarkPaint() // external deliveries are parent-owned invalidations
 		_, output = painted(host, 110, 20)
-		if !strings.Contains(output, "Documentation: "+state) || !strings.Contains(output, "No documentation supplied.") ||
+		if !strings.Contains(output, state) || !strings.Contains(output, "No documentation available.") ||
 			strings.Contains(output, "cached original-A") {
 			t.Fatalf("state fabricated evidence or retained obsolete docs:\n%s", output)
 		}

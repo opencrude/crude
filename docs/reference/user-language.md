@@ -45,6 +45,11 @@ Text follows ASD-STE100 (Simplified Technical English):
 6. **One line first, detail on demand.** A status line, pill or header segment
    has one short phrase. Longer explanations go in a tooltip, details row or
    dialog the user opens.
+7. **Reading surfaces are not debug dumps.** Diagnostic cards show the problem;
+   completion and parameter help show the relevant documentation. Keep internal
+   identities, version clocks and routine coverage commentary in structured
+   evidence, not in the text. Grow a message card before requiring scrolling.
+   When the available space cannot fit the message, show a scrollbar.
 
 ## When to ask
 

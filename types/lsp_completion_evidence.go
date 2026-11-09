@@ -40,6 +40,9 @@ type LSPCompletionEntry struct {
 	Index         int
 	Insertion     CompletionItem
 	Documentation LSPCompletionDocumentation
+	// Prefix comes from the canonical primary range up to the request cursor.
+	// Filtering/ranking is display-only and cannot alter retained insertion.
+	Prefix, FilterText, SortText string
 }
 
 // LSPCompletionSet is one bounded, ephemeral, owner/view-sequenced invocation

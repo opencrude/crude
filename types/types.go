@@ -742,6 +742,9 @@ type LSPSettings struct {
 	DiagInTree   bool `json:"diag_in_tree"`
 	DiagInStatus bool `json:"diag_in_status"`
 	AutoComplete bool `json:"auto_complete"`
+	// A nil delay inherits the default; an explicit zero means no typing delay.
+	CompletionDelayMS *int   `json:"completion_delay_ms,omitempty"`
+	CompletionAccept  string `json:"completion_accept,omitempty"`
 	// MinSeverity is error, warning, info, or hint.
 	MinSeverity        string                         `json:"min_severity,omitempty"`
 	UpdateDebounceMS   int                            `json:"update_debounce_ms,omitempty"`
@@ -751,6 +754,24 @@ type LSPSettings struct {
 	IdleTimeoutSeconds int                            `json:"idle_timeout_seconds,omitempty"`
 	MaxDocumentBytes   int                            `json:"max_document_bytes,omitempty"`
 	Languages          map[string]LSPLanguageSettings `json:"languages,omitempty"`
+}
+
+func (s LSPSettings) CompletionDelay() int {
+	if s.CompletionDelayMS == nil {
+		return 200
+	}
+	return min(60000, max(0, *s.CompletionDelayMS))
+}
+
+// CompletionAcceptance is the key policy for a visible suggestion list only.
+// Without that list, indentation, newlines and snippet navigation are unchanged.
+func (s LSPSettings) CompletionAcceptance() string {
+	switch s.CompletionAccept {
+	case "tab", "enter":
+		return s.CompletionAccept
+	default:
+		return "tab-enter"
+	}
 }
 
 const (

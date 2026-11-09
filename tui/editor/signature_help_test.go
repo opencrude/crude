@@ -8,12 +8,14 @@ import (
 	"crude/tui/theme"
 )
 
-func TestSignatureHelpNativeIntentFollowsFinalSourceAndCaret(t *testing.T) {
+func TestTypingNativeIntentFollowsFinalSourceAndCaret(t *testing.T) {
 	for _, tc := range []struct {
 		before, key, after string
 		col                int
 	}{
 		{"join", "(", "join()", 5},
+		{"pr", "i", "pri", 3},
+		{"device", ".", "device.", 7},
 		{"join(x", ",", "join(x,", 7},
 		{"\tjoin", "(", "\tjoin()", 9},
 	} {
@@ -21,7 +23,7 @@ func TestSignatureHelpNativeIntentFollowsFinalSourceAndCaret(t *testing.T) {
 			e, _ := projectionEditor(t, tc.before)
 			e.SetCursorPosition(0, LineVisualWidth(tc.before, DefaultTabWidth))
 			count := 0
-			e.SetOnSignatureHelp(func() {
+			e.SetOnTyping(func(tea.KeyPressMsg) {
 				count++
 				if e.Value() != tc.after || e.CursorLine() != 0 || e.CursorCol() != tc.col || e.undoGroupDepth != 0 {
 					t.Fatalf("intent preceded the final native edit/caret/history group: %q %d:%d depth=%d", e.Value(), e.CursorLine(), e.CursorCol(), e.undoGroupDepth)
@@ -35,13 +37,13 @@ func TestSignatureHelpNativeIntentFollowsFinalSourceAndCaret(t *testing.T) {
 	}
 }
 
-func TestSignatureHelpNativeIntentDoesNotTreatOtherMutationAsTyping(t *testing.T) {
+func TestTypingNativeIntentDoesNotTreatOtherMutationAsTyping(t *testing.T) {
 	for _, kind := range []string{"paste", "API", "readonly", "modified", "publication"} {
 		t.Run(kind, func(t *testing.T) {
 			e, snapshot := projectionEditor(t, "join")
 			e.SetCursorPosition(0, 4)
 			count := 0
-			e.SetOnSignatureHelp(func() { count++ })
+			e.SetOnTyping(func(tea.KeyPressMsg) { count++ })
 			switch kind {
 			case "paste":
 				e.HandleEvent(tea.PasteMsg{Content: "("})
@@ -67,11 +69,11 @@ func TestSignatureHelpNativeIntentDoesNotTreatOtherMutationAsTyping(t *testing.T
 	}
 	e := NewPreview(theme.DefaultDark(), "/virtual/readonly", "join", 1)
 	t.Cleanup(e.Close)
-	e.SetOnSignatureHelp(func() { t.Fatal("preview requested parameter help") })
+	e.SetOnTyping(func(tea.KeyPressMsg) { t.Fatal("preview requested parameter help") })
 	e.HandleEvent(tea.KeyPressMsg{Code: ',', Text: ","})
 }
 
-func TestSignatureHelpDeferredHistoryKeyOnlyTriggersWhenExecuted(t *testing.T) {
+func TestTypingDeferredHistoryKeyOnlyTriggersWhenExecuted(t *testing.T) {
 	e, _ := projectionEditor(t, "join")
 	e.SetCursorPosition(0, 4)
 	if err := e.BindDocumentOwner(projectionOwner); err != nil {
@@ -80,7 +82,7 @@ func TestSignatureHelpDeferredHistoryKeyOnlyTriggersWhenExecuted(t *testing.T) {
 	var undo DocumentUndoIntent
 	e.SetOnDocumentUndo(func(intent DocumentUndoIntent) { undo = intent })
 	count := 0
-	e.SetOnSignatureHelp(func() { count++ })
+	e.SetOnTyping(func(tea.KeyPressMsg) { count++ })
 	e.Undo()
 	e.HandleEvent(tea.KeyPressMsg{Code: '(', Text: "("})
 	if count != 0 || e.Value() != "join" || !e.DocumentState().HistoryQueued {
@@ -97,7 +99,7 @@ func TestSignatureHelpDeferredHistoryKeyOnlyTriggersWhenExecuted(t *testing.T) {
 	}
 }
 
-func TestSignatureHelpRecoveryAndDeferredAPIRetainTextWithoutNewUIIntent(t *testing.T) {
+func TestTypingRecoveryAndDeferredAPIRetainTextWithoutNewUIIntent(t *testing.T) {
 	for _, origin := range []string{"recovery", "API"} {
 		t.Run(origin, func(t *testing.T) {
 			e, _ := projectionEditor(t, "join")
@@ -128,7 +130,7 @@ func TestSignatureHelpRecoveryAndDeferredAPIRetainTextWithoutNewUIIntent(t *test
 				}
 			}
 			count := 0
-			e.SetOnSignatureHelp(func() { count++ })
+			e.SetOnTyping(func(tea.KeyPressMsg) { count++ })
 			if err := e.CompleteDocumentUndo(undo, document.ErrOverlap); err != nil {
 				t.Fatal(err)
 			}

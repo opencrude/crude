@@ -215,8 +215,8 @@ func TestInsertionAdjunctAndConsumedTextBounds(t *testing.T) {
 }
 
 func TestInsertionOriginalAuthorityAndCallerMutationIsolation(t *testing.T) {
-	raw := json.RawMessage(`{"label":"initial","detail":"initial detail","insertTextFormat":2,"insertText":"${1|red,blue|}:$1","data":{"opaque":[1,true]},"sortText":{"inert":true},"filterText":null,"preselect":true,"commitCharacters":[";"]}`)
-	input := lspcompletion.Item{Label: "changed display", Original: raw}
+	raw := json.RawMessage(`{"label":"initial","detail":"initial detail","insertTextFormat":2,"insertText":"${1|red,blue|}:$1","data":{"opaque":[1,true]},"sortText":"1","filterText":"red","preselect":true,"commitCharacters":[";"]}`)
+	input := lspcompletion.Item{Label: "changed display", FilterText: "changed filter", SortText: "changed sort", Original: raw}
 	input.Documentation.Detail = "resolved display"
 	first, err := lspcompletion.Insertion(input)
 	if err != nil || first.Label != "initial" || first.Detail != "initial detail" || first.InsertText != "red:red" {

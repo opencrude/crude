@@ -70,12 +70,13 @@ func (m *App) View() tea.View {
 	}
 	m.syncPlanHover()
 	m.syncConnectionHover()
-	if state := m.signatureHelp; state != nil && state.shown && state.automatic {
+	if state := m.signatureHelp; state != nil && state.shown {
 		m.positionAutomaticSignatureHelp(state)
 	}
 	m.positionCompletion()
 	m.positionEditorPickers()
 	m.positionDiagnosticPopups()
+	m.positionSourcePopovers()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
 	m.windowManager.ClearNeedsRender()

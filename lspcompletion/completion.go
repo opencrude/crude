@@ -32,9 +32,10 @@ type Documentation struct {
 // separately and retain this original object, never an expanded neutral item, as
 // the identity of the corresponding row's documentation resolve.
 type Item struct {
-	Label         string
-	Documentation Documentation
-	Original      json.RawMessage
+	Label                string
+	FilterText, SortText string
+	Documentation        Documentation
+	Original             json.RawMessage
 }
 
 type Result struct {
@@ -113,7 +114,13 @@ func readItem(raw []byte) (Item, error) {
 	if err != nil {
 		return Item{}, err
 	}
-	return Item{Label: label, Documentation: doc, Original: bytes.Clone(raw)}, nil
+	filter, order := label, label
+	for name, value := range map[string]*string{"filterText": &filter, "sortText": &order} {
+		if raw, supplied := fields[name]; supplied && !readString(raw, value) {
+			return Item{}, invalid(name + " requires a string")
+		}
+	}
+	return Item{Label: label, FilterText: filter, SortText: order, Documentation: doc, Original: bytes.Clone(raw)}, nil
 }
 
 func readString(raw []byte, out *string) bool {

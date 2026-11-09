@@ -22,6 +22,7 @@ const mebibyte = 1024 * 1024
 
 func (m *Model) collectLSP(cfg *types.LSPSettings) {
 	documentMB := parseOpt(m.value(catLSP, "max-document"), 2)
+	delay := parseOpt(m.value(catLSP, "completion-delay"), 200)
 	lsp := types.NormalizeLSP(types.LSPSettings{
 		Enabled:            m.value(catLSP, "enabled") == "on",
 		AutoDetect:         m.value(catLSP, "auto-detect") == "on",
@@ -38,6 +39,8 @@ func (m *Model) collectLSP(cfg *types.LSPSettings) {
 		DiagInTree:         m.value(catLSP, "diag-tree") == "on",
 		DiagInStatus:       m.value(catLSP, "diag-status") == "on",
 		AutoComplete:       m.value(catLSP, "auto-complete") == "on",
+		CompletionDelayMS:  &delay,
+		CompletionAccept:   m.value(catLSP, "completion-accept"),
 		MinSeverity:        m.value(catLSP, "min-severity"),
 		UpdateDebounceMS:   parseOpt(m.value(catLSP, "debounce"), 300),
 		Languages:          cloneLSPLanguages(m.lspLanguages),
@@ -65,14 +68,19 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 		{ID: "servers-nav", Label: "Language tools", Type: ui.FieldNav, Target: "settings.lsp.servers", Columns: []string{lspServerSummary(lsp.Languages)}, Description: "Review installed tools and configure language servers."},
 		ui.SeparatorFieldState("features", "Features"),
 		ui.BoolFieldState("diagnostics", "Diagnostics", lsp.Diagnostics, "Publish errors, warnings and hints from the server."),
-		ui.BoolFieldState("completions", "Completions", lsp.Completions, "Offer completion items at the cursor."),
-		ui.BoolFieldState("auto-complete", "Complete while typing", lsp.AutoComplete, "Open completions automatically as you type instead of on request."),
 		ui.BoolFieldState("hover", "Hover documentation", lsp.Hover, "Show symbol documentation under the cursor."),
 		ui.BoolFieldState("goto-definition", "Go to definition", lsp.Definition, "Jump to where a symbol is defined."),
 		ui.BoolFieldState("find-references", "Find references", lsp.References, "List every reference to the symbol."),
 		ui.BoolFieldState("outline", "Document outline", lsp.Outline, "Build the symbol outline for the open file."),
 		ui.BoolFieldState("rename", "Rename symbol", lsp.Rename, "Rename a symbol across the project."),
 		ui.BoolFieldState("inlay-hints", "Inlay hints", lsp.InlayHints, "Default Off—read-only inline param/type; advertised providers; no commands/edits"),
+		ui.SeparatorFieldState("completion-behavior", "Suggestions"),
+		ui.BoolFieldState("completions", "Code suggestions", lsp.Completions, "Suggest functions, variables and members from the language server."),
+		ui.BoolFieldState("auto-complete", "Suggest while typing", lsp.AutoComplete, "Show suggestions as you type. When off, use Ctrl+Space."),
+		lspNumberField("completion-delay", "Suggestion delay", "ms", lsp.CompletionDelay(), 60000, "Wait this long after typing. Zero shows suggestions without a delay."),
+		ui.SegmentedFieldState("completion-accept", "Accept suggestion with", []ui.FormOption{
+			{ID: "tab", Label: "Tab"}, {ID: "enter", Label: "Enter"}, {ID: "tab-enter", Label: "Tab or Enter"},
+		}, lsp.CompletionAcceptance(), "Choose the key that inserts the selected suggestion."),
 		ui.SeparatorFieldState("diagnostic-display", "Diagnostics display"),
 		severity,
 		ui.BoolFieldState("diag-editor", "In the editor", lsp.DiagInEditor, "Underline issues in the open buffer."),

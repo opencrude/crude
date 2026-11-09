@@ -58,6 +58,14 @@ func (f *fakeCodeIntelligence) ProbeDiagnostics(_ context.Context, path string) 
 	return batch, true, view, nil
 }
 
+func (f *fakeCodeIntelligence) ProbeDiagnosticsBatch(ctx context.Context, paths []string) []ttypes.LSPDiagnosticsResult {
+	results := make([]ttypes.LSPDiagnosticsResult, len(paths))
+	for i, path := range paths {
+		results[i].Diagnostics, results[i].Settled, results[i].View, _ = f.ProbeDiagnostics(ctx, path)
+	}
+	return results
+}
+
 func TestPostEditDiagnosticsRespectRoleAndReadAdmission(t *testing.T) {
 	for _, exclusion := range []string{"denied-tool", "allowed-tools", "no-read"} {
 		t.Run(exclusion, func(t *testing.T) {
@@ -401,7 +409,7 @@ func TestLSPDiagnosticsReportSeverityAndCleanFiles(t *testing.T) {
 			t.Fatalf("diagnostics lack %q:\n%s", want, result.Content)
 		}
 	}
-	// Provenance identities belong to the details reader. They made each file
+	// Provenance identities belong to structured facts. They made each file
 	// cost four lines of identifiers that no agent acts on.
 	for _, absent := range []string{"Fact ", "fact-a.go", "source revision", "Partial context", "generation", "producer", "clean-project"} {
 		if strings.Contains(result.Content, absent) {

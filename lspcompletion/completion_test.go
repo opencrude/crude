@@ -89,6 +89,7 @@ func TestCompletionOriginalJSONRefusesLossAndUnsupportedListDefaults(t *testing.
 		`{"isIncomplete":false,"items":[],"itemDefaults":{"editRange":{}}}`,
 		`[{"label":"x","documentation":{"kind":"html","value":"no"}}]`,
 		`[{"label":"x","detail":null}]`, `[] null`,
+		`[{"label":"x","filterText":null}]`, `[{"label":"x","sortText":{}}]`,
 		`[{"label":"` + string([]byte{0xff}) + `"}]`,
 		`[{"label":"x","data":` + strings.Repeat("[", MaxDepth+1) + "0" + strings.Repeat("]", MaxDepth+1) + `}]`,
 		`[{"label":"x","documentation":"` + strings.Repeat("d", MaxStringBytes+1) + `"}]`,
@@ -103,6 +104,18 @@ func TestCompletionOriginalJSONRefusesLossAndUnsupportedListDefaults(t *testing.
 	}
 	if _, err := Parse(bytes.Repeat([]byte(" "), MaxRawBytes+1)); !errors.Is(err, ErrInvalid) {
 		t.Fatal("accepted overbound original response", err)
+	}
+}
+
+func TestCompletionFilterAndSortRetainProviderText(t *testing.T) {
+	raw := []byte(`[{"label":"display(a)","filterText":"differentMatch","sortText":"0002"},{"label":"default"}]`)
+	result, err := Parse(raw)
+	if err != nil || len(result.Items) != 2 {
+		t.Fatal(result, err)
+	}
+	if result.Items[0].FilterText != "differentMatch" || result.Items[0].SortText != "0002" ||
+		result.Items[1].FilterText != "default" || result.Items[1].SortText != "default" {
+		t.Fatal("provider match/ranking data or absent-field defaults changed", result.Items)
 	}
 }
 

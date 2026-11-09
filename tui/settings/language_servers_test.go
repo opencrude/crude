@@ -65,6 +65,7 @@ func TestCodeIntelligencePaintsResourcesWithUnitsAndScopedSave(t *testing.T) {
 	root := NewSurface(theme.DefaultDark(), model)
 	host := ui.NewHost(theme.DefaultDark(), root)
 	host.Resize(160, 70)
+	root.form.FocusField("server-memory")
 	host.Layout()
 	buf := surface.NewCellBuffer(160, 70)
 	host.Paint(buf)

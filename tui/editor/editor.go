@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
 
@@ -177,9 +178,9 @@ type Editor struct {
 
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
-	// onSignatureHelp observes an actual native delimiter edit after its final
+	// onTyping observes an actual native typing edit after its final
 	// caret/history group is installed. It carries intent, not source authority.
-	onSignatureHelp func()
+	onTyping func(tea.KeyPressMsg)
 
 	// Git supplies an immutable HEAD baseline. The editor owns one exact live
 	// projection for paint, navigation and inspection; there are no local claims.
@@ -620,10 +621,12 @@ func (e *Editor) SetDiagnostics(facts types.InsightDiagnostics) {
 
 func (e *Editor) setDiagnostics(facts types.InsightDiagnostics) {
 	e.diagMu.Lock()
-	previous := e.diagnosticFacts.ID
+	previous := e.diagnosticFacts
+	retainPaint := facts.ID == previous.ID || e.retainMappedDiagnosticPaint(previous, facts)
 	e.diagnosticFacts = types.CloneInsightDiagnostics(facts)
-	// Only previously accepted ink from the SAME batch can map provisionally.
-	if facts.ID == "" || facts.ID != previous {
+	// New evidence cannot erase still-mapped ink merely by arriving after the
+	// source has advanced. RefreshDiagnostics replaces it only at exact source.
+	if facts.ID == "" || !retainPaint {
 		e.diagnostics = nil
 		e.diagByLine = nil
 		e.diagnosticProjectedID = ""

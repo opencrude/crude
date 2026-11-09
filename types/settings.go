@@ -82,6 +82,7 @@ func (o WorkspaceOverrides) IsEmpty() bool {
 // Languages has an enabled entry for every catalog language with a language
 // server. An entry without a command follows the catalog's first server.
 func DefaultLSPSettings() LSPSettings {
+	delay := 200
 	languages := map[string]LSPLanguageSettings{}
 	for _, language := range catalog.Current().Languages() {
 		if len(language.Servers) > 0 {
@@ -104,6 +105,8 @@ func DefaultLSPSettings() LSPSettings {
 		DiagInTree:         true,
 		DiagInStatus:       true,
 		AutoComplete:       true,
+		CompletionDelayMS:  &delay,
+		CompletionAccept:   "tab-enter",
 		MinSeverity:        "hint",
 		UpdateDebounceMS:   300,
 		MaxServers:         2,
@@ -242,6 +245,9 @@ func NormalizeEditorSettings(s EditorSettings) EditorSettings {
 func NormalizeLSP(s LSPSettings) LSPSettings {
 	s = CloneLSPSettings(s)
 	def := DefaultLSPSettings()
+	delay := s.CompletionDelay()
+	s.CompletionDelayMS = &delay
+	s.CompletionAccept = s.CompletionAcceptance()
 	if s.ServerThreads == 0 {
 		s.ServerThreads = def.ServerThreads
 	}

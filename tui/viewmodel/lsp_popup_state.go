@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"crude/tui/editor"
-	"time"
 )
 
 // OutlineRow is one row in the outline popup list.
@@ -12,7 +11,7 @@ type OutlineRow struct {
 }
 
 // LSPPopupState holds the transient UI state for LSP-related popups:
-// rename preview, outline, and the automatic-completion debounce.
+// rename preview and outline.
 //
 // This is DISPLAY state: it tracks which LSP popups are open right now,
 // cursor positions within them, and the rendered data.
@@ -22,7 +21,9 @@ type LSPPopupState struct {
 	OutlineOpen   bool
 	OutlineRows   []OutlineRow
 	OutlineCursor int
-	CompletionDue time.Time
+	RenameInput   *editorPopoverAnchor
+	Hover         *editorPopoverAnchor
+	Outline       *editorPopoverAnchor
 }
 
 // NewLSPPopupState creates an LSPPopupState with all fields zeroed.

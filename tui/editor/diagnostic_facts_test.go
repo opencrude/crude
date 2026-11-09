@@ -78,15 +78,15 @@ func TestFutureDiagnosticWaitsForCanonicalSourceAndCannotStampDraft(t *testing.T
 	}
 }
 
-func TestDiagnosticContextUnknownEmptyIsVisibleNotClean(t *testing.T) {
+func TestDiagnosticErrorNavigationReportsOnlyTheCurrentFile(t *testing.T) {
 	ed := loadEditorText(t, "empty.txt", "source")
 	setTestDiagnostics(ed, nil)
 	facts := testDiagnosticFacts(ed, nil)
 	facts.Boundary.Context = types.InsightContext{UnknownInputs: []string{"build flags", "dependencies"}}
 	ed.SetDiagnostics(facts)
 	status := ed.DiagnosticStatus()
-	if !strings.Contains(status, "Other files may not be checked") || strings.Contains(status, "clean") || ed.DiagnosticFacts().ID == "" {
-		t.Fatalf("unknown empty observation looks certified: %q", status)
+	if status != "No errors to jump to in this file." || ed.FirstError() != nil || ed.DiagnosticFacts().ID != facts.ID {
+		t.Fatalf("empty current-file observation has inconsistent navigation: %q", status)
 	}
 	facts.ID, facts.Binding, facts.ReportedVersion = "unversioned-empty", "unversioned", nil
 	ed.SetDiagnostics(facts)
@@ -95,14 +95,18 @@ func TestDiagnosticContextUnknownEmptyIsVisibleNotClean(t *testing.T) {
 	}
 }
 
-func TestDiagnosticUnknownContextCanPaintSourceButRemainsQualified(t *testing.T) {
+func TestDiagnosticWarningWithUnknownContextRemainsReadable(t *testing.T) {
 	ed := loadEditorText(t, "unknown.txt", "\t😀bad")
 	setTestDiagnostics(ed, nil)
 	facts := testDiagnosticFacts(ed, []LSPDiagnostic{{Line: 0, Col: 3, EndCol: 6, Severity: DiagWarning}})
 	facts.Boundary.Context.UnknownInputs = []string{"configuration"}
 	ed.SetDiagnostics(facts)
-	if len(ed.DiagnosticsAt(0, 6)) != 1 || len(ed.lineDiagnostics(0)) != 1 || !strings.Contains(ed.DiagnosticStatus(), "Other files may not be checked") {
-		t.Fatal("exact-source partial-context observation was hidden or over-certified")
+	if len(ed.DiagnosticsAt(0, 6)) != 1 || len(ed.lineDiagnostics(0)) != 1 || ed.FirstError() != nil ||
+		ed.DiagnosticStatus() != "No errors to jump to in this file." {
+		t.Fatal("the warning must be readable without becoming an error-navigation target")
+	}
+	if got := ed.DiagnosticFacts(); len(got.Boundary.Context.UnknownInputs) != 1 || got.Boundary.Context.UnknownInputs[0] != "configuration" {
+		t.Fatal("presenting the warning discarded the analysis evidence")
 	}
 }
 

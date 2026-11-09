@@ -388,6 +388,7 @@ type App struct {
 	projectFormatting     bool
 	navigation            *navigationState
 	completion            *completionState
+	completionIntent      *completionIntent
 	completionSequence    uint64
 	inlayViews            map[*editor.Editor]*inlayViewState
 	inlayViewSequence     uint64
@@ -1137,12 +1138,15 @@ func (m *App) registerOverlayHandlers() {
 	// WindowFrame (driven by the per-frame tick). Popovers, palettes and
 	// menus get the subtle open animation; modals (dirty-close, tree-delete,
 	// file picker, settings) appear instantly for snappy confirmation UX.
-	// Immediate code popups (completion, navigation, outline, snippet choices) are excluded:
-	// they re-open on every keystroke, so an animation would feel laggy.
+	// Editor popovers show readable content immediately. Typing, browsing and
+	// error inspection must not wait for an expanding empty frame.
 	// The reveal is a no-op for windows without a WindowFrame body.
 	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
 		switch id {
-		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayInlayHints, ui.OverlayOutline, ui.OverlaySnippetChoices, ui.OverlayPlanHover, ui.OverlayConnectionHealth, ui.OverlayTooltip:
+		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayInlayHints, ui.OverlayOutline,
+			ui.OverlaySnippetChoices, ui.OverlaySignatureHelp, ui.OverlaySymbolHover,
+			ui.OverlayDiagHover, ui.OverlayDiagContext, ui.OverlayTextPrompt, codeActionsOverlay,
+			ui.OverlayPlanHover, ui.OverlayConnectionHealth, ui.OverlayTooltip:
 			return
 		}
 		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {

@@ -578,7 +578,7 @@ func (m *App) clickTextPrompt(localX, localY int, msg tea.Msg) tea.Cmd {
 	if field == nil {
 		return nil
 	}
-	cw, _ := fw.Content.(*ui.ComponentWidget)
+	cw := fw.Content.(interface{ Host() *ui.Host })
 	w, h := fw.Size()
 	cw.Host().Resize(w, h)
 	cw.Host().Layout()
