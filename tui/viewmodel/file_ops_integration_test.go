@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -101,7 +102,7 @@ func TestViewModel_DeletePath_RoutesThroughWorkspace(t *testing.T) {
 	}
 
 	// Delete through workspace method.
-	msg := app.ws.DeletePath(path)
+	msg := app.ws.DeletePath(context.Background(), path, nil)
 	if !msg.Succeeded() {
 		t.Fatalf("DeletePath failed: %v", msg.Err)
 	}
@@ -167,7 +168,7 @@ func TestViewModel_DeletePath_DoesNotEchoReturnedResult(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := app.ws.DeletePath(path)
+	msg := app.ws.DeletePath(context.Background(), path, nil)
 	if !msg.Succeeded() {
 		t.Fatalf("DeletePath failed: %v", msg.Err)
 	}
@@ -232,7 +233,7 @@ func TestViewModel_DeletePath_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	app := newTestAppWithFileOps(t, dir)
 
-	msg := app.ws.DeletePath(filepath.Join(dir, "nonexistent"))
+	msg := app.ws.DeletePath(context.Background(), filepath.Join(dir, "nonexistent"), nil)
 	if msg.Succeeded() {
 		t.Fatal("expected failure for nonexistent path")
 	}
@@ -281,7 +282,7 @@ func TestViewModel_DeletePath_Directory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := app.ws.DeletePath(dirPath)
+	msg := app.ws.DeletePath(context.Background(), dirPath, nil)
 	if !msg.Succeeded() {
 		t.Fatalf("DeletePath for directory failed: %v", msg.Err)
 	}

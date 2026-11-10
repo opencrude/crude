@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"strings"
-
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -43,8 +41,8 @@ func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintConte
 	if b.Empty() || r.tokens == nil {
 		return
 	}
-	glyph := string(FirstRune(r.tokens.Glyphs().BorderH, '─'))
-	width := rendering.VisibleWidth(glyph)
+	glyph := FirstRune(r.tokens.Glyphs().BorderH, '─')
+	width := rendering.VisibleWidth(string(glyph))
 	if width < 1 {
 		return
 	}
@@ -53,19 +51,28 @@ func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintConte
 	if r.bgSet {
 		bg = r.tokens.Color(r.bg)
 	}
-	buf.WriteString(ox+b.X, oy+b.Y, strings.Repeat(glyph, b.W/width), ink, bg, 0)
-	if !r.active {
-		return
-	}
 	frame := r.frame
 	if frame == 0 {
 		// Hosts that publish the shared clock through PaintContext need no
 		// separate SetFrame plumbing.
 		frame = ctx.Frame
 	}
-	center := r.motion.Advance(frame, b.W, true)
+	center := 0.0
+	if r.active {
+		center = r.motion.Advance(frame, b.W, true)
+	}
+	// Paint the repeated single-rune rule directly. A row-sized temporary string
+	// makes even an idle footer allocate on every frame.
 	for column := 0; column+width <= b.W; column += width {
-		fg, _ := TextTide(ink, 0, r.tokens, center, column)
-		buf.WriteString(ox+b.X+column, oy+b.Y, glyph, fg, bg, 0)
+		fg, attr := ink, cell.Attrs(0)
+		if r.active {
+			fg, attr = TextTide(ink, attr, r.tokens, center, column)
+		}
+		c := cell.NewCell(glyph, fg, bg, attr)
+		c.Width = uint8(width)
+		if !r.bgSet {
+			c.BG = buf.Get(ox+b.X+column, oy+b.Y).BG
+		}
+		buf.Set(ox+b.X+column, oy+b.Y, c)
 	}
 }

@@ -30,7 +30,13 @@ func (l *local) CopyPath(oldPath, newPath string) workspace.FileOperationResultM
 	return l.ws.CopyPath(oldPath, newPath)
 }
 
-func (l *local) DeletePath(path string) workspace.FileOperationResultMsg {
+func (l *local) DeletePath(ctx context.Context, path string, progress func(string)) workspace.FileOperationResultMsg {
+	if err := ctx.Err(); err != nil {
+		return workspace.FileOperationResultMsg{Op: workspace.FileOpDelete, Path: path, Err: err}
+	}
+	if progress != nil {
+		progress("Deleting")
+	}
 	return l.ws.DeletePath(path)
 }
 

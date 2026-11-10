@@ -3,8 +3,10 @@ package core
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"crude/coreclient"
@@ -13,6 +15,55 @@ import (
 	"crude/textencoding"
 	"crude/types/control"
 )
+
+func TestControlDocumentReadNeedsReturnedIdentity(t *testing.T) {
+	r, root := sharedDocumentRuntime(t)
+	path := filepath.Join(root, "saved")
+	if err := os.WriteFile(path, []byte("on disk"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := controlWireClient(t, r, "document-read")
+	var attached coreprotocol.AttachResult
+	if err := c.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Call(t.Context(), attached.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	read := func(id string) control.Result {
+		t.Helper()
+		raw, _ := json.Marshal(coreprotocol.DocumentReadRequest{ID: id})
+		var out control.Result
+		reads++
+		req := control.Request{ID: fmt.Sprintf("read-%d", reads), CommandID: "document.read", Input: raw}
+		if _, err := c.CallWith(t.Context(), attached.WorkspaceID, coreprotocol.ControlExecute, &req, &out, coreclient.CallOptions{ID: req.ID}); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	if out := read(path); out.Fault == nil || out.Fault.Code == control.Denied || !strings.Contains(out.Fault.Message, "document ID") || strings.Contains(out.Fault.Message, "file does not exist") {
+		t.Fatalf("unknown document ID misreported disk absence or permission denial: %+v", out)
+	}
+	var opened document.Snapshot
+	raw, _ := json.Marshal(coreprotocol.DocumentOpenRequest{Path: path})
+	var out control.Result
+	req := control.Request{ID: "open", CommandID: "document.open", Input: raw}
+	if _, err := c.CallWith(t.Context(), attached.WorkspaceID, coreprotocol.ControlExecute, &req, &out, coreclient.CallOptions{ID: req.ID}); err != nil || out.Fault != nil {
+		t.Fatalf("open: %+v %v", out, err)
+	}
+	if err := json.Unmarshal(out.Output, &opened); err != nil {
+		t.Fatal(err)
+	}
+	out = read(opened.ID)
+	if out.Fault != nil {
+		t.Fatalf("returned identity unreadable: %+v", out)
+	}
+	var got document.Snapshot
+	if err := json.Unmarshal(out.Output, &got); err != nil || string(got.Text) != "on disk" {
+		t.Fatalf("read: %+v %v", got, err)
+	}
+}
 
 func TestControlUnnamedEncodingJourney(t *testing.T) {
 	r, root := sharedDocumentRuntime(t)

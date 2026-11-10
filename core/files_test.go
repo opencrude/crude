@@ -12,6 +12,33 @@ import (
 	"testing"
 )
 
+func TestFilesDeleteReportsJoinedProgress(t *testing.T) {
+	r, root := sharedDocumentRuntime(t)
+	path := filepath.Join(root, ".claude")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := controlWireClient(t, r, "delete-progress")
+	var attached coreprotocol.AttachResult
+	if err := c.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+		t.Fatal(err)
+	}
+	var phases []string
+	var result coreprotocol.FileOperationResult
+	err := c.CallCancellableWithProgress(t.Context(), attached.WorkspaceID, coreprotocol.FilesDelete, &coreprotocol.FilePathRequest{Path: path}, &result, func(phase string) {
+		phases = append(phases, phase)
+	})
+	if err != nil || result.Error != "" {
+		t.Fatalf("delete: %+v %v", result, err)
+	}
+	if len(phases) < 2 || phases[len(phases)-1] != "Deleting" {
+		t.Fatalf("delete stages did not reach original request: %v", phases)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("final result preceded actual deletion")
+	}
+}
+
 func fileBridge(t *testing.T, a *actor, method string, in any) coreprotocol.Response {
 	t.Helper()
 	raw, err := testPayload(in)

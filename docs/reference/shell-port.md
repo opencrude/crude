@@ -234,6 +234,12 @@ are not a port: each shell keeps them in its private client profile (see
 
 Files is the filesystem mutation and project-search surface.
 
+`DeletePath(ctx, path, progress)` runs on the shell's joined I/O owner. Its
+optional callback receives phases on that worker, never on Update. The connected
+adapter uses the shared cancellation-and-join exchange, so switching workspaces
+or shutting down retires the original request rather than abandoning its worker.
+The core keeps the Local History safety-copy and shared-document checks.
+
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
 | `Documents` | 18 | reads | accessor (nil check) | document.* (live revision-fenced documents) |

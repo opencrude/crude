@@ -1673,9 +1673,21 @@ func (r *Renderer) planMessageSuperseded(msg *types.ChatMessage) bool {
 	if !ok || view.ID == "" {
 		return false
 	}
-	idx := r.messageIndexOf(msg)
-	for i := idx + 1; i < len(r.sync.Messages); i++ {
-		next := r.sync.Messages[i]
+	messages := r.activityFlat
+	if messages == nil {
+		messages = r.sync.Messages
+	}
+	idx := -1
+	for i, candidate := range messages {
+		if candidate == msg || msg.InternalID != "" && candidate.InternalID == msg.InternalID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false // an external pane has no retained chronology to supersede
+	}
+	for _, next := range messages[idx+1:] {
 		if next == nil || next.Role != types.RoleTool || !tools.IsPlanTool(next.ToolName) || next.ToolStatus == "error" {
 			continue
 		}

@@ -671,6 +671,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	now := time.Now()
 	spinFrame := int(now.UnixMilli())
 	m.SpinFrame = spinFrame
+	m.drainTreeDeleteProgress()
 	m.Input.SetSpinFrame(spinFrame)
 	m.refreshSessionBackgroundJobs(now)
 	m.drainLSPDiagnostics()
@@ -835,6 +836,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.applyInputAdmission(msg))
 	case treeCopyResultMsg:
 		cmds = append(cmds, m.applyTreeCopyResult(msg))
+	case treeDeleteResultMsg:
+		cmds = append(cmds, m.applyTreeDeleteResult(msg))
 	case workspaceDeletePreviewMsg:
 		m.applyWorkspaceDeletePreview(msg)
 	case workspaceDeleteIntent:

@@ -194,6 +194,12 @@ func TestRelativeToolTitlesMatchLiveAndHydratedEvidence(t *testing.T) {
 			right.SetProjectRoot(root)
 			left.SyncMessages(live, 1, 0)
 			right.SyncMessages(hydrated, 1, 0)
+			// Patches open expanded. This path-title test explicitly inspects
+			// both the collapsed title and its subsequent expansion.
+			if tc.tool == "apply_patch" {
+				left.ToggleDisclosure(live[0].InternalID)
+				right.ToggleDisclosure(hydrated[0].InternalID)
+			}
 			lrows, rrows := exportRows(t, left, false), exportRows(t, right, false)
 			assertSameRows(t, "relative collapsed", lrows[0], rrows[0])
 			if text := strings.Join(lrows[0].Lines, "\n"); !strings.Contains(text, tc.want) {

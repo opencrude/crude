@@ -206,9 +206,9 @@ func TestCollapsedMultilineDisclosureClickAndDrag(t *testing.T) {
 	}
 }
 
-// Exercise actual compact plan projection, not only hand-built rows. Both a
-// live and a hydrated plan must expand from the continuation and step lines.
-func TestRenderedCompactPlanEveryLineExpands(t *testing.T) {
+// Exercise the actual plan projection, not only hand-built rows. Both live and
+// hydrated plans open expanded and toggle from their continuation and step lines.
+func TestRenderedPlanEveryLineToggles(t *testing.T) {
 	message := types.ChatMessage{InternalID: "plan", Role: types.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: `{"id":"plan-1","revision":1,"objective":"A deliberately long objective that wraps across several rows of a narrow transcript","status":"active","steps":[{"id":"one","description":"First item","status":"completed"},{"id":"two","description":"Current item with detailed evidence that should be displayed when expanded","status":"in_progress"}]}`}
 	for _, hydrated := range []bool{false, true} {
 		th := theme.DefaultDark()
@@ -222,8 +222,8 @@ func TestRenderedCompactPlanEveryLineExpands(t *testing.T) {
 			r.AppendMessage(message)
 		}
 		rows, _, h := r.ExportMessageRows(width)
-		if len(rows) != 1 || !rows[0].Toggle || len(rows[0].Lines) != 2 {
-			t.Fatalf("compact plan is not one title and a spacer with disclosure: %+v", rows)
+		if len(rows) != 1 || !rows[0].Toggle || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "evidence that") {
+			t.Fatalf("default plan does not show its full body: %q", rows[0].Lines)
 		}
 		screen := New(th)
 		screen.SetMessages(rows, PaintParams{Compose: ComposeParams{InnerW: width - th.Spacing.PadLR*2, PadLR: th.Spacing.PadLR, Theme: th}})
@@ -234,11 +234,16 @@ func TestRenderedCompactPlanEveryLineExpands(t *testing.T) {
 			screen.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: ctx.LocalX, Y: line, Button: tea.MouseLeft}))
 			result := screen.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: ctx.LocalX, Y: line, Button: tea.MouseLeft}))
 			if result.Action == nil || result.Action.ID != chatprojection.ChatToggleActionID {
-				t.Fatalf("hydrated=%v row %d did not expand: %q", hydrated, line, rows[0].Lines[line])
+				t.Fatalf("hydrated=%v row %d did not toggle: %q", hydrated, line, rows[0].Lines[line])
 			}
 			if result.Action.Payload.(chatprojection.ChatTogglePayload).MessageID != "plan" {
 				t.Fatalf("wrong message: %#v", result.Action.Payload)
 			}
+		}
+		r.ToggleDisclosure("plan")
+		closed, _, _ := r.ExportMessageRows(width)
+		if len(closed[0].Lines) != 2 || !strings.Contains(strings.Join(closed[0].Lines, "\n"), "▸") {
+			t.Fatalf("explicitly collapsed plan did not become a compact title: %q", closed[0].Lines)
 		}
 		r.ToggleDisclosure("plan")
 		expanded, _, _ := r.ExportMessageRows(width)

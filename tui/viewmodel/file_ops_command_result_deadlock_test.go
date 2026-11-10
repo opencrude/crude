@@ -221,14 +221,15 @@ func setUndrainedProgram(t *testing.T, bus *workspace.EventBus) {
 func updateTreeMutationWithoutDeadlock(t *testing.T, app *App, operation string) {
 	t.Helper()
 
-	done := make(chan struct{})
+	done := make(chan tea.Cmd, 1)
 	go func() {
-		app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		close(done)
+		_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		done <- cmd
 	}()
 
 	select {
-	case <-done:
+	case cmd := <-done:
+		runAppCommand(t, app, cmd)
 	case <-time.After(5 * time.Second):
 		t.Fatalf("%s Update deadlocked by re-entering EventBus from a local tree mutation", operation)
 	}

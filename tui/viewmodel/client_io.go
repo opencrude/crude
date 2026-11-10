@@ -47,6 +47,9 @@ func (m *App) beginClientIO(state *appAsyncIOState, parent context.Context, gene
 }
 
 func (m *App) cancelClientIOOperations() {
+	// Update retires presentation too: a queued command can be cancelled before
+	// it produces a result. StopAsyncIO joins workers separately after UI exit.
+	m.treeDeletes = nil
 	state := m.asyncIO.Load()
 	if state == nil {
 		return

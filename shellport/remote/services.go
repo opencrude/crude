@@ -434,10 +434,13 @@ func (w *Workspace) CopyPath(oldPath, newPath string) workspace.FileOperationRes
 	defer cancel()
 	return w.rpc().CopyPath(ctx, oldPath, newPath)
 }
-func (w *Workspace) DeletePath(path string) workspace.FileOperationResultMsg {
-	ctx, cancel := w.fileContext()
-	defer cancel()
-	return w.rpc().DeletePath(ctx, path)
+func (w *Workspace) DeletePath(ctx context.Context, path string, progress func(string)) workspace.FileOperationResultMsg {
+	var out coreprotocol.FileOperationResult
+	err := w.callCancellableWithProgress(ctx, coreprotocol.FilesDelete, coreprotocol.FilePathRequest{Path: path}, &out, progress)
+	if err == nil && out.Error != "" {
+		err = errors.New(out.Error)
+	}
+	return workspace.FileOperationResultMsg{Op: workspace.FileOpDelete, Path: path, IsDir: out.IsDir, Err: err, Detail: out.Detail}
 }
 func (w *Workspace) ApplyWorkspaceEdit(edits []workspace.FileEdit) workspace.FileOperationResultMsg {
 	ctx, cancel := w.fileContext()

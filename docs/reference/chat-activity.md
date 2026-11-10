@@ -41,7 +41,8 @@ focus or crossing modal boundaries.
 | Treatment | Tools |
 | --- | --- |
 | Aggregate after success | `exec_command`, `write_stdin`, `execute_command`, `async_execute_command`, `check_async_command`, `read_async_output`, `read_file`, `list_directory`, `glob_files`, `grep_files`, `web_search`, `web_fetch`, `arxiv_search`, `recall_memory`, `search_history`, `wait`, `agent_list`, `agent_inspect`, `agent_wait`, `board_read`, `artifact_read` |
-| Separate rows (settled results closed) | `apply_patch`, `edit_file`, `write_file`, `delete_file`, `move_file`, `copy_file`, `update_plan`, `get_plan`, `agent_start`, `agent_send`, `agent_respond`, `agent_control`, `publish_report`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
+| Separate rows (expanded by default) | `apply_patch`, `edit_file`, `write_file`, `update_plan`, `get_plan` |
+| Separate rows (settled results closed) | `delete_file`, `move_file`, `copy_file`, `agent_start`, `agent_send`, `agent_respond`, `agent_control`, `publish_report`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
 
 Unknown tools stay visible until intentionally classified. A failed or cancelled call, a child failure reported by an otherwise successful poll, and any required user action remain visible as boundaries. A background command's successful *start* is not evidence that the background job finished; label it as started, not completed. Never imply that all calls passed solely because their tool transport succeeded.
 
@@ -125,8 +126,12 @@ limits still apply: history search and compact memory evidence arrive with
 backend-bounded snippets, and binary content is described, not rendered as a
 document or dumped as base64.
 
-File edits, writes, patches and plan operations remain separate, closed rows.
-Expansion reveals their full tinted diff or canonical plan view. An empty active
+File edits, writes, patches and the current plan remain separate, expanded rows.
+Their full tinted diff or canonical plan view is visible without a click.
+Explicit collapse survives later updates. Older snapshots of the same plan
+collapse when a newer snapshot arrives, unless the user opened them.
+These defaults also apply to parallel leaves, compact agent panes and resumed
+sessions. An empty active
 plan lookup says “No active plan”; it is not an invalid plan payload.
 Raw and unclassified active thinking keep their stream and pane promotion. Promotion transfers the
 body without changing its transcript identity or position. When thinking ends,
@@ -539,7 +544,8 @@ not change table widths, wrapping, selection text, or the painted transcript.
   rendering and copying never strip instructions by spelling or separators.
   Literal “Hint:” text from a file remains evidence. Native patcher errors
   contain facts only, including partial commits and exact failed search text.
-- Every settled tool row defaults closed. Its title carries one operation,
+- Settled tool rows default closed, except file edits, writes, patches and the
+  current plan, which open expanded. Each title carries one operation,
   operand and outcome/reason; expansion retains complete diagnostics, diffs,
   requests and receipts. Long closed titles use at most two terminal rows;
   expansion restores the full title and evidence. Unknown effects stay visible
@@ -552,7 +558,7 @@ not change table widths, wrapping, selection text, or the painted transcript.
   Expansion reveals hidden branches in place; it never replaces the tree with
   standalone legacy rows. Execution events carry exact tool arguments, not
   formatted/truncated summaries. Native command JSON envelopes are decoded only
-  at presentation; file edits/writes/patches stay separate and default-closed.
+  at presentation; file edits/writes/patches stay separate and default-expanded.
   **Never print a raw JSON tool-argument envelope in any tool title, status,
   compact pane, or batch leaf.** `tools.SummarizeArgs` is the single semantic
   operand authority for live events, child projections, and resumed snapshots.

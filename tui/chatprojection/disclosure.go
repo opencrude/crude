@@ -3,6 +3,7 @@ package chatprojection
 import (
 	"strings"
 
+	"crude/tui/tools"
 	"crude/types"
 )
 
@@ -42,7 +43,8 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 //   - active/interrupted thinking always shows its stream;
 //   - completed thinking collapses to a single "Thought" row;
 //   - completed subpane placeholders collapse to the pane summary;
-//   - settled tools and diagnostics show only their title until expanded.
+//   - file changes and the current plan show their full body;
+//   - other settled tools and diagnostics show only their title until expanded.
 func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	switch {
 	case isCommandOutcome(msg):
@@ -65,9 +67,41 @@ func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	case msg.SubPaneID != "":
 		return DisclosureCollapsed
 	case msg.Role == types.RoleTool:
+		if tools.IsPatchCardTool(msg.ToolName) || tools.IsPlanTool(msg.ToolName) && !r.planMessageSuperseded(msg) {
+			return DisclosureExpanded
+		}
 		return DisclosureCollapsed
 	}
 	return DisclosureExpanded
+}
+
+// A new plan snapshot changes the default view of earlier snapshots even when
+// their own bytes did not change. Only plan-source changes invalidate these
+// rows; ordinary tool streams and presentation ticks retain their caches.
+func (r *Renderer) invalidateRelatedPlanRows(messages []*types.ChatMessage, from int, changed map[string]bool) int {
+	plans := make(map[string]bool)
+	for _, msg := range messages[from:] {
+		if msg.Role == types.RoleTool && tools.IsPlanTool(msg.ToolName) {
+			if view, ok := parsePlanView(msg.Content); ok && view.ID != "" {
+				plans[view.ID] = true
+			}
+		}
+	}
+	if len(plans) == 0 {
+		return from
+	}
+	first := from
+	for i, msg := range messages {
+		if msg.Role != types.RoleTool || !tools.IsPlanTool(msg.ToolName) {
+			continue
+		}
+		if view, ok := parsePlanView(msg.Content); ok && plans[view.ID] {
+			r.invalidateMessageCache(msg)
+			changed[msg.InternalID] = true
+			first = min(first, i)
+		}
+	}
+	return first
 }
 
 // ToggleDisclosure flips a message's disclosure state and invalidates its

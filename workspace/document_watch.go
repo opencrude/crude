@@ -219,7 +219,12 @@ func (s *DocumentService) reconcileLocked(id string) error {
 		d.snapshot.Conflict = false
 		d.diskIntent = nil
 	} else if hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists && d.diskIntent == nil {
-		return nil
+		if !d.snapshot.Conflict {
+			return nil
+		}
+		// A removed file can be restored with exactly the saved bytes. The
+		// current verified preimage, not a stale watcher flag, owns conflict.
+		d.snapshot.Conflict = false
 	}
 	if d.diskIntent == nil && hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists {
 		// Exact pending disk commit reconciled above.

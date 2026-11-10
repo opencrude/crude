@@ -104,6 +104,11 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 		ops = workspace.NewFileOpsService(root, nil, a.ws.Logger)
 	}
 	documents := a.ws.LiveDocuments
+	progress := func(text string) {
+		if a.progress != nil {
+			a.progress(request.Owner, coreprotocol.Progress{RequestID: request.ID, Text: text})
+		}
+	}
 	bad := func(code, message string) (func(context.Context) coreprotocol.Response, bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, true
 	}
@@ -210,6 +215,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 						return nil, errors.New("shared document authority unavailable")
 					}
 					if history != nil {
+						progress("Keeping safety copy of")
 						rel, err := filepath.Rel(root, path)
 						if err != nil {
 							return nil, err
@@ -218,7 +224,11 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 							return nil, err
 						}
 					}
-					result = documents.MutateFiles(ctx, workspace.FileOpDelete, []string{path}, nil, func() workspace.FileOperationResultMsg { return ops.DeletePath(path) })
+					progress("Checking saved files in")
+					result = documents.MutateFiles(ctx, workspace.FileOpDelete, []string{path}, nil, func() workspace.FileOperationResultMsg {
+						progress("Deleting")
+						return ops.DeletePath(path)
+					})
 				case coreprotocol.FilesCopy:
 					target, err := workspaceFilePath(root, in.NewPath, true)
 					if err != nil {

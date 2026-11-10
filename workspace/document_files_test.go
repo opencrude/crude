@@ -2,12 +2,118 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"crude/document"
 )
+
+func TestDocumentDeleteSavedFolderIgnoresMissingCheckpoints(t *testing.T) {
+	for _, dirty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("old-draft=%v", dirty), func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, ".claude")
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			db, err := openWorkspaceDBAt(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			saves := NewDocumentSaveService()
+			defer saves.Close()
+			s := NewDocumentService(root, saves, nil, db.DB)
+			owner := document.Owner{ClientID: "author", Epoch: 1}
+			oldPath, savedPath := filepath.Join(dir, "old"), filepath.Join(dir, "test")
+			if err := os.WriteFile(oldPath, []byte("old"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			old, err := s.Open(owner, oldPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "old"
+			if dirty {
+				documentEdit(t, s, owner, old.ID, "typing-old", old.Revision, 3, 3, " draft")
+				want = "old draft"
+			}
+			if err := os.Remove(oldPath); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.ReconcileDisk(t.Context(), old.ID); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.CloseView(owner, old.ID); err != nil {
+				t.Fatal(err)
+			}
+			draft, err := s.CreateUntitled(owner, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			documentEdit(t, s, owner, draft.ID, "typing-test", draft.Revision, 0, 0, "test")
+			saved, err := s.SaveUntitled(t.Context(), owner, draft.ID, draft.Revision+1, savedPath, "")
+			if err != nil || saved.Dirty || saved.Conflict {
+				t.Fatalf("explicit save: %+v %v", saved, err)
+			}
+			if err := s.CloseView(owner, saved.ID); err != nil {
+				t.Fatal(err)
+			}
+			ops := NewFileOpsService(root, nil, nil)
+			result := s.MutateFiles(t.Context(), FileOpDelete, []string{dir}, nil, func() FileOperationResultMsg { return ops.DeletePath(dir) })
+			s.Close()
+			if result.Err != nil {
+				t.Fatal(result.Err)
+			}
+			if _, err := os.Stat(dir); !os.IsNotExist(err) {
+				t.Fatalf("folder remains after deletion: %v", err)
+			}
+			s = NewDocumentService(root, nil, nil, db.DB)
+			defer s.Close()
+			recovered, err := s.Open(owner, oldPath)
+			if err != nil || string(recovered.Text) != want || recovered.Dirty != dirty {
+				t.Fatalf("missing checkpoint lost recoverable text: %+v %v", recovered, err)
+			}
+			if dirty {
+				if _, err := s.Undo(owner, old.ID, "undo-old", recovered.Revision); err != nil {
+					t.Fatal(err)
+				}
+				documentText(t, s, old.ID, "old")
+			}
+		})
+	}
+}
+
+func TestDocumentDeleteChecksCurrentSavedBytes(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "saved")
+	if err := os.WriteFile(path, []byte("saved"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewDocumentService(root, nil, nil)
+	defer s.Close()
+	owner := document.Owner{ClientID: "author", Epoch: 1}
+	d, err := s.Open(owner, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReconcileDisk(t.Context(), d.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("saved"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ops := NewFileOpsService(root, nil, nil)
+	got := s.MutateFiles(t.Context(), FileOpDelete, []string{path}, nil, func() FileOperationResultMsg { return ops.DeletePath(path) })
+	if got.Err != nil {
+		t.Fatal(got.Err)
+	}
+}
 
 func TestDocumentFilesRetainedDescendantAndDestinationFailBeforeEffects(t *testing.T) {
 	root := t.TempDir()

@@ -55,8 +55,11 @@ func TestPlanProjectionCoalescesSamePlanAcrossTools(t *testing.T) {
 	first := `{"id":"plan-123","revision":1,"objective":"Fix persistence","status":"active","steps":[{"id":"a","description":"Old step body","status":"pending"}]}`
 	latest := `{"id":"plan-123","revision":2,"objective":"Fix persistence","status":"active","steps":[{"id":"a","description":"Latest step body","status":"in_progress"}]}`
 	r.AppendMessage(types.ChatMessage{InternalID: "p1", Role: types.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: first})
+	initial, _, _ := r.ExportMessageRows(100)
+	if !strings.Contains(strings.Join(initial[0].Lines, "\n"), "Old step body") {
+		t.Fatal("initial plan did not open expanded")
+	}
 	r.AppendMessage(types.ChatMessage{InternalID: "p2", Role: types.RoleTool, ToolName: "get_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: latest})
-	r.ToggleDisclosure("p2")
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %+v", rows)
@@ -428,14 +431,12 @@ func TestPlanRendererLiveAndHydratedMessagesMatch(t *testing.T) {
 	live.SetSize(100, 30)
 	live.SetChatAreaBounds(0, 20)
 	live.AppendMessage(message)
-	live.ToggleDisclosure("plan")
 	liveRows, _, _ := live.ExportMessageRows(100)
 
 	hydrated := chatprojection.NewRenderer(theme.DefaultDark())
 	hydrated.SetSize(100, 30)
 	hydrated.SetChatAreaBounds(0, 20)
 	hydrated.SyncMessages([]types.ChatMessage{message}, 1, 0)
-	hydrated.ToggleDisclosure("plan")
 	hydratedRows, _, _ := hydrated.ExportMessageRows(100)
 
 	if fmt.Sprint(liveRows) != fmt.Sprint(hydratedRows) {
