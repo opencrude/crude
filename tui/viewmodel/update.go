@@ -389,8 +389,6 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleConnectionHealthAction(msg)
 	case shellheader.ActionMsg:
 		switch msg.Action {
-		case workspaceAeronAction:
-			return m, m.openWorkspaceAeron()
 		case shellheader.ConnectionAction:
 			m.openConnectionHover(m.connectionWordmarkRect())
 		case "remotes":

@@ -475,6 +475,7 @@ type Program struct {
 	// unusable state after a panic because Bubble Tea will not perform its usual
 	// cleanup on exit.
 	disableCatchPanics bool
+	panicHandler       func(any, []byte)
 
 	// filter supplies an event filter that will be invoked before Bubble Tea
 	// processes a tea.Msg. The event filter can return any tea.Msg which will
@@ -1403,6 +1404,9 @@ func (p *Program) shutdown(kill bool) {
 // recoverFromPanic recovers from a panic, prints the stack trace, and restores
 // the terminal to a usable state.
 func (p *Program) recoverFromPanic(r interface{}) {
+	if p.panicHandler != nil {
+		p.panicHandler(r, debug.Stack())
+	}
 	select {
 	case p.errs <- ErrProgramPanic:
 	default:
@@ -1428,6 +1432,9 @@ func (p *Program) recoverFromPanic(r interface{}) {
 // recoverFromGoPanic recovers from a goroutine panic, prints a stack trace and
 // signals for the program to be killed and terminal restored to a usable state.
 func (p *Program) recoverFromGoPanic(r interface{}) {
+	if p.panicHandler != nil {
+		p.panicHandler(r, debug.Stack())
+	}
 	select {
 	case p.errs <- ErrProgramPanic:
 	default:

@@ -114,6 +114,26 @@ func TestUpdateSessionCost(t *testing.T) {
 	}
 }
 
+func TestSavedWorkspaceAeronIsNotAnOrdinarySession(t *testing.T) {
+	db := openTestWorkspaceDB(t)
+	for _, id := range []string{"workspace-aeron", "ordinary"} {
+		if err := db.RegisterSession(id, "/project", "Project", "model", "provider"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SetSetting(workspaceAeronSessionKey, "workspace-aeron"); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := db.ListSessions()
+	if err != nil || len(sessions) != 1 || sessions[0].ID != "ordinary" {
+		t.Fatalf("saved workspace Aeron leaked into session browsing: %+v %v", sessions, err)
+	}
+	var count int
+	if err := db.DB.QueryRow("SELECT count(*) FROM workspace_sessions").Scan(&count); err != nil || count != 2 {
+		t.Fatal("filter deleted the workspace agent or its registry record", count, err)
+	}
+}
+
 func TestUpdateSessionCostUnknownSessionNoOp(t *testing.T) {
 	wdb := openTestWorkspaceDB(t)
 	// Updating a session that was never registered should not error;

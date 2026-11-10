@@ -81,6 +81,8 @@ documents to read before changing each area.
   TUI consumes and the matching `coreprotocol` methods.
 - [Async ownership and lifecycle](reference/async-lifecycle.md) — the Update
   goroutine, generation boundaries, shutdown ordering and retained resources.
+- [Process crash reports](reference/crash-reports.md) — synchronous TUI/core
+  disaster reports, private paths, framework panics and hard-stop limitations.
 - [Settings layers](reference/settings.md) — the app → workspace → session model,
   agent settings, LSP settings and semantic settings control.
 - [In-app terminals](reference/in-app-terminals.md) — libghostty-vt PTY engine,

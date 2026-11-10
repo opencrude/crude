@@ -13,6 +13,7 @@ detailed contracts.
 |---|---|
 | `main.go`, `app/` | CLI parsing, application config, core spawning (`core_image.go` staged executable, detach), MCP control entry. No session or orchestrator knowledge. |
 | `buildinfo/` | Build identity and `buildinfo.Home`, the single Crude data root (`CRUDE_HOME`). |
+| `crashlog/` | Process-local synchronous fatal output and recovered TUI panic reports; no event-loop or normal-log dependency. |
 | `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. |
 | `coreprotocol/` | Versioned, presentation-neutral core API types. |
 | `projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
@@ -120,6 +121,9 @@ detailed contracts.
 non-blocking LSP transport hook; `jsonrpc2` retains original request/notification
 params and atomic envelope validation ([fork provenance](../../third_party/jsonrpc2/README.md));
 `pathwalk` is the internal directory walker.
+`bubbletea` also exposes a narrow `WithPanicHandler` observation hook in both
+existing recovery paths. Crude writes the original panic and stack before
+terminal cleanup; the framework keeps its normal restoration and error outcome.
 `modernc-libc` and `modernc-memory` retain the complete pinned upstream modules
 for the existing SQLite driver. Their narrow Windows call-adapter patches remove
 temporary syscall argument slices without changing database formats, WAL,
@@ -219,3 +223,5 @@ All Crude data lives under `buildinfo.Home` (the user's home directory unless
 | `.crude/workspaces/<hash>/sessions/<id>/` | Session-owned files (temporary directory, attachments, child-agent data) |
 | `.crude/corewire/core.sock` | The per-user core socket |
 | `.crude/bin/crude-core-<build-id>` | The staged, immutable core executable |
+| `.crude/crashes/tui-<time>-<pid>-<nonce>.log` | Private synchronous TUI crash reports |
+| `.crude/crashes/core-<time>-<pid>-<nonce>.log` | Private synchronous core crash reports on that core's host |

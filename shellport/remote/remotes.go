@@ -32,7 +32,7 @@ func (w *Workspace) BackendStatus() shellport.RemoteStatus {
 		// while that owner is still retrying a fresh attachment.
 		state = "reconnecting"
 	}
-	status := shellport.RemoteStatus{State: state, Carrier: string(carrier), RTT: rtt}
+	status := shellport.RemoteStatus{State: state, Carrier: string(carrier), RTT: rtt, CoreBuildID: c.CoreBuildID()}
 	// Report known causes without exposing raw dial errors, credentials or
 	// remote command payloads in a passive client-visible surface.
 	switch {

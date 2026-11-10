@@ -8,6 +8,7 @@ import (
 
 // ActionLink is a compact, text-led command. It uses Button's activation and
 // disabled semantics without a bracket, border, or permanent filled surface.
+// Enabled labels stay underlined, including when neither focused nor hovered.
 type ActionLink struct {
 	Button
 }
@@ -31,10 +32,11 @@ func (l *ActionLink) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext
 		return
 	}
 	tokens := l.tokenSet()
-	fg, bg, attr := l.idleForeground(tokens), tokens.Color(ColorBg), cell.Attrs(0)
+	fg, bg, attr := l.idleForeground(tokens), tokens.Color(ColorBg), cell.AttrUnderline
 	switch ResolveControlState(l.disabled, ctx.Focused, false, false, ctx.Hovered) {
 	case StateDisabled:
 		fg = tokens.Color(ColorMuted)
+		attr = 0
 	case StateFocused:
 		bg, attr = tokens.Color(ColorSelection), cell.AttrBold|cell.AttrUnderline
 	case StateHovered:

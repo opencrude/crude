@@ -147,9 +147,6 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 	if m.OverlayState.IsYolo() {
 		segments = append(segments, shellheader.Segment{Text: "! YOLO", Role: ui.ColorError, Action: "tabs", TargetID: target, Priority: 0})
 	}
-	if m.ws != nil {
-		segments = append(segments, shellheader.Segment{Text: "Open workspace Aeron", Role: ui.ColorAccent2, Action: workspaceAeronAction, Priority: 0})
-	}
 	if strings.HasPrefix(target, "agent:") {
 		agentID := strings.TrimPrefix(target, "agent:")
 		if m.ws.PlanModeForAgent(agentID) {
@@ -601,10 +598,19 @@ func (m *App) statusTabItems() []statusoverview.Item {
 	items := make([]statusoverview.Item, 0)
 	activeAgent := m.AgentView.ActiveID()
 	nodes := m.ws.AgentMgr().AllNodes()
-	if len(nodes) > 0 {
-		items = append(items, statusoverview.Item{ID: "group-agents", Label: fmt.Sprintf("Open Agents (%d)", len(nodes)), Header: true})
+	count := 0
+	for _, node := range nodes {
+		if !m.isAeronAgent(node.ID) {
+			count++
+		}
+	}
+	if count > 0 {
+		items = append(items, statusoverview.Item{ID: "group-agents", Label: fmt.Sprintf("Open Agents (%d)", count), Header: true})
 	}
 	for _, node := range nodes {
+		if m.isAeronAgent(node.ID) {
+			continue
+		}
 		label := node.Label
 		if label == "" {
 			label = "Main Agent"
@@ -897,6 +903,8 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.Cmd {
 	action := msg.Action
 	switch {
+	case action == workspaceAeronAction:
+		return m.openWorkspaceAeron()
 	case action == "agent.retry":
 		return m.retryAgentRecovery(msg.Item.Owner.ID)
 	case action == "status.switch":

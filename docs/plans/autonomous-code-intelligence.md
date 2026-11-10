@@ -77,6 +77,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
 | 2026-11-10 | Repair missing live diagnostics at their owner, not through a language-specific workaround. Move workspace Aeron out of the ordinary agent list into a header link. Problems keeps its style, shows up to three message lines, and expands messages in place. | User |
 | 2026-11-10 | Clear actions must be undoable. Empty undo history must not imply another author exists. Shared lists must retain wheel scrolling when the pointer leaves; fix their owners rather than one Settings page. | User |
+| 2026-11-10 | The Aeron link belongs in the **Workspace panel header**, like Problems, not the application header. Aeron, including its generated name (Naveen), must not appear in that panel's normal agent list. This corrects the previous implementation. | User |
+| 2026-11-10 | Panel links must look consistent. Aeron's link must stay underlined like the Problems links, not only when focused. | User |
 
 ### Open decisions
 
@@ -108,6 +110,33 @@ them; they are not a template for language-specific modules.
 
 ## Current checkpoint
 
+**Immediate correction: Aeron panel placement (2026-11-10).**
+
+Remove the rejected application-header link. Put **Open workspace Aeron** beside
+the Workspace panel's search, with the same compact header flow as Problems.
+Filter Aeron by its session role, not its generated name, from Workspace and
+ordinary agent lists. The link opens the same normal retained agent tab.
+Exit: real dock/tab/window placement and constrained-size checks show the link
+inside the panel, no Aeron/Naveen row, no application-header link, and successful
+opening without creating a new agent or losing the user's draft.
+
+Implemented: the panel uses the shared command-link control and the existing
+agent-open path. Role-based filtering removes Aeron and its subtree from the
+Workspace list/count, and the saved workspace-Aeron identity is excluded from
+ordinary saved-session browsing without deleting its data. Dock, main-tab and
+pane-window journeys pass at 160×40 and 80×24, including draft retention.
+Keyboard and semantic activation use the same action as the pointer.
+Final native panel/build captures pass at both sizes and verify every link
+letter stays underlined before focus. Shared link tests
+now require persistent underline and exact Problems ink parity in dark/light
+themes at 34, 80 and 160 columns; both regressions fail before the shared fix.
+The application-header implementation and its earlier captures were rejected,
+not acceptance of this panel requirement.
+The latest whole-core package run passes, as does the original-production
+comparison. The broad suite also exposed intermittent dense-diagnostics and
+delete-progress checks which pass both isolated package rechecks; that broad
+run is not a green-suite claim. The earlier suite failures below remain open.
+
 **Immediate correction: live diagnostics and shared UI regressions (2026-11-10).**
 
 Goal: invalid text typed into a connected editor produces diagnostics again.
@@ -133,8 +162,8 @@ journey verifies unsaved `sxsxsx` after this recovery through canonical editing,
 the agent diagnostic reader and the connected shell snapshot; ordinary and race
 runs pass. This reproduces the defect class, not the unrecorded original event.
 
-The other repairs pass focused component and connected-shell checks. Aeron opens
-from the header at 160×40 and 80×24 and is absent from the ordinary agent list.
+The other repairs pass focused component and connected-shell checks. The earlier
+Aeron application-header placement was rejected and is corrected above.
 Problems shows three-line previews and expands in place without losing full
 copy text or source navigation. User clear actions preserve input history and
 reference identities; an exhausted document history is a quiet no-op.

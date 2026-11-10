@@ -29,10 +29,11 @@ func (RemoteConnectionDraft) String() string     { return "[remote connection dr
 func (v RemoteConnectionDraft) GoString() string { return v.String() }
 
 type RemoteStatus struct {
-	State   string // connected, reconnecting, offline, needs install
-	Carrier string
-	RTT     time.Duration
-	Notice  string
+	State       string // connected, reconnecting, offline, needs install
+	Carrier     string
+	RTT         time.Duration
+	Notice      string
+	CoreBuildID string
 }
 
 // BackendLink projects the attached SDK session without network work on Update.
