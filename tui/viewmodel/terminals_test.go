@@ -49,7 +49,7 @@ func TestTerminalPickerUsesMatchingSuffixNumbersAndNamedPlacement(t *testing.T) 
 	app.promoteTerminal(ids[0])
 	app.openTerminalPicker()
 	items = app.LastContextMenu.Sections[0].Items
-	if items[1].Label != "Terminal 16" || items[1].Detail != "Floating" || items[2].Label != "Terminal 1" {
+	if items[1].Label != "Terminal 1" || items[1].Detail != "Floating" || items[2].Label != "Terminal 2" {
 		t.Fatalf("floating/docked numbering is inconsistent: %+v", items[:3])
 	}
 }
@@ -112,8 +112,8 @@ func TestTerminalPickerActionsKeepRealIDsAfterRenumbering(t *testing.T) {
 	app.closeContextMenu()
 	app.closeTerminal(ids[0])
 	waitAppTerminalClosed(t, app, ids[0])
-	if app.termDock.Number(ids[1]) != 1 {
-		t.Fatal("remaining terminal did not receive the first display number")
+	if app.termDock.Number(ids[1]) != 2 {
+		t.Fatal("removing another terminal changed a stable terminal number")
 	}
 	secondAction()
 	if app.termDock.ActiveID() != ids[1] {

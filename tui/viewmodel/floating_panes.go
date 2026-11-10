@@ -420,6 +420,11 @@ func (m *App) paneWindowContextMenu(group window.GroupID, mouse tea.Mouse) *ui.C
 	case g.chat.Contains(mouse.X, mouse.Y):
 		return m.buildChatContextMenu(mouse)
 	}
+	if tab := m.Win.GroupActiveTab(group); tab != nil && g.body.Contains(mouse.X, mouse.Y) {
+		if id, ok := terminalIDFromPanel(tab.Resource.ID); ok {
+			return m.terminalContextMenu(id)
+		}
+	}
 	return nil
 }
 

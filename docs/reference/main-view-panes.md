@@ -470,6 +470,23 @@ next tick finally synced.
 
 ## Git and local comparisons
 
+### Large files and Git LFS
+
+The palette provides **Set Up Git LFS** (repository-local filters/hooks) and
+**Download Git LFS Files** (current checkout). A file-tree Git menu provides
+**Track file with Git LFS** for the exact literal filename; it changes
+`.gitattributes`, which remains visible for review and commit. Git LFS must
+be installed on the Git host. Setup never changes global Git configuration,
+rewrites history or silently converts existing commits. Native Git continues
+to own clean/smudge filters, commit hooks, checkout, fetch and push.
+
+Comparisons batch Git's `filter` attribute lookup. LFS paths and files over
+the 64 MiB review limit show a metadata note rather than pointer text, an
+error, or expanded model/dataset bytes. The UI can Stage/Unstage the whole
+file through Git; it never offers hunks or exact-byte discard for an unloaded
+preimage. Annotation reads do not smudge LFS pointers. Git subprocess stdout
+is bounded too, including custom smudge-filter expansion.
+
 The Git **Changes** review (every changed file, or one commit, stacked in one
 `gitdiff.Document`) and local comparison tabs move/split through the same main
 groups as documents and agents. Git keeps its exact reviewed-byte stage/unstage

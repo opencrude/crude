@@ -94,7 +94,7 @@ func (s *Store) planRestore(ctx context.Context, targetSnapshotID string, opts S
 	if target.ScopePaths != nil {
 		return s.planSelectedRestore(ctx, target, opts, target.ScopePaths)
 	}
-	current, err := s.scan(ctx, opts, false)
+	current, err := s.scanWithin(ctx, opts, false, target.ScopeRoots)
 	if err != nil {
 		return RestorePlan{}, err
 	}
@@ -343,6 +343,13 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	if target.ScopeRoots != nil {
+		for _, path := range paths {
+			if !manifestObserves(target, path) {
+				return RestoreResult{}, errors.New("localhistory: restore path is outside subtree scope")
+			}
+		}
+	}
 	if target.ScopePaths != nil {
 		for _, path := range paths {
 			if !manifestObserves(target, path) {
@@ -367,6 +374,11 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	safetyOpts.ParentID = ""
 	safetyOpts.IncludePaths = append([]string(nil), paths...)
 	capture := s.snapshotIncludingPaths
+	if target.ScopeRoots != nil {
+		capture = func(ctx context.Context, opts SnapshotOptions, _ []string) (Manifest, error) {
+			return s.snapshotRoots(ctx, opts, target.ScopeRoots)
+		}
+	}
 	if target.ScopePaths != nil {
 		// A selected restore must never expand unknown coverage into a full
 		// workspace safety/after snapshot.

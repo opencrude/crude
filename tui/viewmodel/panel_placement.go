@@ -33,6 +33,9 @@ var panelTitles = map[string]string{
 // movablePanel reports whether a dock surface can be shown as a tab or
 // window. Terminals have their own floating windows.
 func movablePanel(id string) bool {
+	if terminal, ok := terminalIDFromPanel(id); ok && terminal != "" {
+		return true
+	}
 	_, ok := panelTitles[id]
 	return ok
 }
@@ -155,7 +158,11 @@ func (m *App) openPanelAsTab(id string) {
 	}
 	m.releasePlacement(id)
 	m.setPlacement(id, placeTab)
-	tab := m.Win.OpenResource(panelResource(id), panelTitles[id], true)
+	title := panelTitles[id]
+	if terminal, ok := terminalIDFromPanel(id); ok {
+		title = m.termScreens[terminal].Title()
+	}
+	tab := m.Win.OpenResource(panelResource(id), title, true)
 	m.Win.SwitchTo(m.Win.IndexOf(tab.ID))
 	m.handleTabSwitch()
 	m.focusPanelContent(id)
@@ -183,6 +190,10 @@ func (m *App) openPanelAsWindow(id string) {
 
 // dockPanel returns a tab or window surface to the dock and shows it there.
 func (m *App) dockPanel(id string) {
+	if terminal, ok := terminalIDFromPanel(id); ok {
+		m.dockTerminal(terminal)
+		return
+	}
 	if m.placementOf(id) == placeDock {
 		return
 	}

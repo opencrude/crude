@@ -49,11 +49,10 @@ const (
 	ActionOpenAsTab    = "workspace.panel.tab"
 	ActionOpenAsWindow = "workspace.panel.window"
 
-	iconNew   = "+"
 	iconFloat = "⇱"
 	iconTab   = "⧉"
 	iconHide  = "⌄"
-	iconClose = "✕"
+	iconClose = ""
 )
 
 type headerAction struct {
@@ -69,7 +68,8 @@ type panelEntry struct {
 
 type headerControl struct {
 	ui.Base
-	owner *Screen
+	owner   *Screen
+	buttons map[string]*ui.IconButton
 }
 
 type Screen struct {
@@ -91,8 +91,8 @@ type Screen struct {
 	focused    bool
 	renderable bool
 
-	actions     []headerAction
-	hoverAction int
+	actions   []headerAction
+	newButton *ui.IconButton
 }
 
 func New(th *theme.Theme) *Screen {
@@ -103,16 +103,15 @@ func New(th *theme.Theme) *Screen {
 	split := ui.NewSplitModel(ui.Vertical)
 	split.SetMinSizes(8, MinRenderableHeight)
 	s := &Screen{
-		Base:        ui.NewBase(ScreenID),
-		th:          th,
-		tokens:      tokens,
-		split:       split,
-		divider:     ui.NewSplitDivider(DividerID, split),
-		tabs:        ui.NewTabs(TabsID, tokens),
-		panels:      make(map[string]panelEntry),
-		screens:     make(map[string]*shellterm.Screen),
-		attention:   make(map[string]bool),
-		hoverAction: -1,
+		Base:      ui.NewBase(ScreenID),
+		th:        th,
+		tokens:    tokens,
+		split:     split,
+		divider:   ui.NewSplitDivider(DividerID, split),
+		tabs:      ui.NewTabs(TabsID, tokens),
+		panels:    make(map[string]panelEntry),
+		screens:   make(map[string]*shellterm.Screen),
+		attention: make(map[string]bool),
 	}
 	s.divider.SetTokens(tokens)
 	s.divider.SetColorRole(ui.ColorBorder)
@@ -120,7 +119,8 @@ func New(th *theme.Theme) *Screen {
 	s.divider.SetTransparent(true)
 	s.tabs.SetChrome(ui.TabsShell)
 	s.tabs.SetRuleFullBleed(true)
-	s.header = &headerControl{Base: ui.NewBase(HeaderID), owner: s}
+	s.header = &headerControl{Base: ui.NewBase(HeaderID), owner: s, buttons: make(map[string]*ui.IconButton)}
+	s.newButton = ui.NewTabButton(ui.NewID(ScreenID, "new"), "New terminal", ActionNew, tokens)
 	return s
 }
 
@@ -128,6 +128,10 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.divider.SetTokens(tokens)
 	s.tabs.SetTokens(tokens)
+	s.newButton.SetTokens(tokens)
+	for _, button := range s.header.buttons {
+		button.SetTokens(tokens)
+	}
 	for _, panel := range s.panels {
 		if consumer, ok := panel.content.(interface{ SetTokens(*ui.TokenSet) }); ok {
 			consumer.SetTokens(tokens)
@@ -161,6 +165,8 @@ func (s *Screen) SetPanel(id string, content ui.Component) {
 func (s *Screen) Panel(id string) ui.Component {
 	return s.panels[id].content
 }
+
+func (s *Screen) RemovePanel(id string) { delete(s.panels, id) }
 
 func (s *Screen) ShowPanel(id string) bool {
 	if id == PanelTerminal {
@@ -205,7 +211,23 @@ func (s *Screen) Contains(id string) bool {
 
 func (s *Screen) ActiveID() string { return s.active }
 
+// TerminalAt preserves the clicked instance, including an inactive tab.
+func (s *Screen) TerminalAt(x, y int) string {
+	r := s.Bounds()
+	x, y = x-r.X, y-r.Y
+	tabs := s.tabs.Bounds()
+	if y == tabs.Y && x >= tabs.X && x < tabs.X+tabs.W {
+		if index, _ := s.tabs.HitTest(x - tabs.X); index >= 0 && index < len(s.order) {
+			return s.order[index]
+		}
+	}
+	return s.active
+}
+
 func (s *Screen) Number(id string) int {
+	if child := s.screens[id]; child != nil && child.Number() > 0 {
+		return child.Number()
+	}
 	for index, existing := range s.order {
 		if existing == id {
 			return index + 1
@@ -348,9 +370,12 @@ func (s *Screen) syncTabs() {
 		if child == nil {
 			continue
 		}
-		number := strconv.Itoa(index + 1)
-		suffix := " " + number
-		label := rendering.TruncateVisual(child.Title(), max(1, terminalLabelWidth-rendering.VisibleWidth(suffix)), "…") + suffix
+		numberValue := child.Number()
+		if numberValue == 0 {
+			numberValue = index + 1
+		}
+		number := strconv.Itoa(numberValue)
+		label := rendering.TruncateVisual(child.Title(), terminalLabelWidth, "…")
 		items = append(items, ui.TabItem{ID: id, Label: label, CompactLabel: "T " + number, Attention: s.attention[id]})
 	}
 	s.tabs.SetItems(items, s.active)
@@ -375,7 +400,7 @@ func (s *Screen) Children() []ui.Component {
 		out = append(out, child)
 	}
 	if s.TerminalActive() {
-		out = append(out, s.tabs)
+		out = append(out, s.tabs, s.newButton)
 	}
 	if !s.header.Bounds().Empty() {
 		out = append(out, s.header)
@@ -393,7 +418,6 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.renderable = s.open && r.W > 0 && r.H >= MinRenderableHeight
 	if !s.renderable {
 		s.actions = s.actions[:0]
-		s.hoverAction = -1
 		s.header.Layout(ctx, ui.Rect{})
 		return
 	}
@@ -401,10 +425,16 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	bodyY, bodyH := dividerH, max(0, r.H-dividerH)
 
 	if s.TerminalActive() {
-		glyphs := []headerAction{{id: "terminal.picker", glyph: "≡"}, {id: ActionNew, glyph: iconNew}, {id: shellterm.ActionPromote, glyph: iconFloat}, {id: shellterm.ActionClose, glyph: iconClose}, {id: ActionHide, glyph: iconHide}}
+		glyphs := []headerAction{{id: "terminal.picker", glyph: "≡"}, {id: ActionOpenAsTab, glyph: iconTab}, {id: shellterm.ActionPromote, glyph: iconFloat}, {id: shellterm.ActionClose, glyph: iconClose}, {id: ActionHide, glyph: iconHide}}
 		s.layoutHeader(ctx, r.W, bodyY, glyphs)
 		s.tabs.SetRuleBleed(0, r.W)
-		s.tabs.Layout(ctx, ui.Rect{Y: bodyY, W: max(0, r.W-s.header.Bounds().W-1), H: ui.StripHeight})
+		available := max(0, r.W-s.header.Bounds().W-1)
+		buttonW := min(5, available)
+		tabW := available - buttonW
+		s.tabs.Layout(ctx, ui.Rect{Y: bodyY, W: tabW, H: ui.StripHeight})
+		x := min(tabW, s.tabs.LabelRowEnd())
+		s.tabs.Layout(ctx, ui.Rect{Y: bodyY, W: x, H: ui.StripHeight})
+		s.newButton.Layout(ctx, ui.Rect{X: x, Y: bodyY, W: buttonW, H: 1})
 		if child := s.Active(); child != nil {
 			child.Layout(ctx, ui.Rect{Y: bodyY + ui.StripHeight, W: r.W, H: max(0, bodyH-ui.StripHeight)})
 		}
@@ -437,12 +467,22 @@ func (s *Screen) layoutHeader(ctx ui.LayoutContext, width, top int, glyphs []hea
 	for index := range glyphs {
 		glyphs[index].rect.X = left
 		left += glyphs[index].rect.W
+		id := glyphs[index].id
+		button := s.header.buttons[id]
+		if button == nil {
+			names := map[string]string{
+				"terminal.picker": "Choose terminal",
+				ActionOpenAsTab:   "Open as tab", ActionOpenAsWindow: "Open as window",
+				shellterm.ActionPromote: "Open as window", shellterm.ActionClose: "Kill terminal",
+				ActionHide: "Hide panel",
+			}
+			button = ui.NewIconButton(ui.NewID(HeaderID, id), glyphs[index].glyph, names[id], id, s.tokens)
+			s.header.buttons[id] = button
+		}
+		button.Layout(ctx, glyphs[index].rect)
 	}
 	s.actions = append(s.actions[:0], glyphs...)
 	s.header.Layout(ctx, ui.Rect{X: width - actionsW, Y: top, W: actionsW, H: 1})
-	if s.hoverAction >= len(s.actions) {
-		s.hoverAction = -1
-	}
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
@@ -462,31 +502,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		s.ClosePanel()
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "workspace.panel.closed"}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	}
-	ctx = ui.ChildEventContext(ctx, s.header.Bounds())
-	switch evt.Kind {
-	case ui.EventMouseMotion:
-		hover := s.actionAt(ctx.LocalX, ctx.LocalY)
-		if hover != s.hoverAction {
-			s.hoverAction = hover
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		}
-	case ui.EventMouseClick:
-		if evt.MouseClick.Button == tea.MouseLeft {
-			if i := s.actionAt(ctx.LocalX, ctx.LocalY); i >= 0 {
-				return s.runHeaderAction(s.actions[i].id)
-			}
-		}
-	}
 	return ui.EventResult{}
-}
-
-func (s *Screen) actionAt(lx, ly int) int {
-	for i, a := range s.actions {
-		if a.rect.Contains(lx, ly) {
-			return i
-		}
-	}
-	return -1
 }
 
 func (s *Screen) runHeaderAction(id string) ui.EventResult {
@@ -508,6 +524,8 @@ func (s *Screen) runHeaderAction(id string) ui.EventResult {
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
+	case ActionNew:
+		return s.runHeaderAction(ActionNew)
 	case "tabs.activate":
 		if !s.TerminalActive() {
 			return ui.EventResult{Action: &action}
@@ -533,19 +551,19 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	return ui.EventResult{Action: &action}
 }
 
-func (header *headerControl) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
-	owner := header.owner
-	rect := header.Bounds()
-	for index, action := range owner.actions {
-		color := owner.tokens.Color(ui.ColorMuted)
-		if index == owner.hoverAction {
-			color = owner.tokens.Color(ui.ColorFg)
-		}
-		buf.WriteString(ox+rect.X+action.rect.X, oy+rect.Y, " "+action.glyph+" ", color, owner.tokens.Color(ui.ColorBg), 0)
+func (header *headerControl) Paint(*surface.CellBuffer, int, int, ui.PaintContext) {}
+
+func (header *headerControl) Children() []ui.Component {
+	out := make([]ui.Component, 0, len(header.owner.actions))
+	for _, action := range header.owner.actions {
+		out = append(out, header.buttons[action.id])
 	}
+	return out
 }
 
-func (header *headerControl) PointerPolicy() ui.PointerPolicy { return ui.PointerPolicyPassthrough }
+func (header *headerControl) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	return header.owner.runHeaderAction(action.ID)
+}
 
 func (header *headerControl) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Dock actions"}

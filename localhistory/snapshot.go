@@ -31,6 +31,45 @@ func (s *Store) Snapshot(ctx context.Context, opts SnapshotOptions) (Manifest, e
 	return s.snapshot(ctx, opts)
 }
 
+// SnapshotSubtree keeps delete recovery proportional to the deleted tree.
+// It uses the same immutable object/index owner, without discovering ignores
+// or reading any sibling tree. Ignore and size rules cannot omit deleted bytes.
+func (s *Store) SnapshotSubtree(ctx context.Context, opts SnapshotOptions, rel string) (Manifest, error) {
+	if !validSubtreePath(rel) {
+		return Manifest{}, errors.New("localhistory: invalid subtree path")
+	}
+	if err := s.beginOperation(); err != nil {
+		return Manifest{}, err
+	}
+	defer s.endOperation()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	unlock, err := s.lockMutation(ctx)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer unlock()
+	return s.snapshotRoots(ctx, opts, []string{rel})
+}
+
+func (s *Store) snapshotRoots(ctx context.Context, opts SnapshotOptions, roots []string) (Manifest, error) {
+	entries, err := s.scanWithin(ctx, opts, true, roots)
+	if err != nil {
+		return Manifest{}, err
+	}
+	manifest := Manifest{
+		Version: FormatVersion, ParentID: opts.ParentID, CreatedAt: time.Now().UnixNano(),
+		Kind: opts.Kind, Label: opts.Label, Entries: entries, ScopeRoots: append([]string(nil), roots...),
+	}
+	if err := s.saveManifest(&manifest); err != nil {
+		return Manifest{}, err
+	}
+	if err := s.recordSnapshot(manifest); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
 // SnapshotMessageScope captures the safety preimage and registers its existing
 // message-scope reference under the same mutation gate as pruning. Callers must
 // not expose an unreferenced safety snapshot between capture and scope creation.
@@ -84,7 +123,7 @@ func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Ma
 		if err != nil {
 			return Manifest{}, false, err
 		}
-		if latest.ScopePaths == nil && entryMapsEqual(latest.Entries, entries) {
+		if latest.ScopePaths == nil && latest.ScopeRoots == nil && entryMapsEqual(latest.Entries, entries) {
 			return latest, false, nil
 		}
 		if opts.ParentID == "" {
@@ -232,10 +271,28 @@ func (s *Store) captureExternalEntry(ctx context.Context, key string) (Entry, bo
 }
 
 func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects bool) (map[string]Entry, error) {
+	return s.scanWithin(ctx, opts, storeObjects, nil)
+}
+
+func (s *Store) scanWithin(ctx context.Context, opts SnapshotOptions, storeObjects bool, roots []string) (map[string]Entry, error) {
 	if err := s.validateWorkspaceRoot(); err != nil {
 		return nil, err
 	}
-	matcher, err := newIgnoreMatcher(s.workspaceRoot, opts)
+	var matcher *ignoreMatcher
+	var err error
+	if roots == nil {
+		matcher, err = newIgnoreMatcher(s.workspaceRoot, opts)
+	} else {
+		if err := validateSubtreeRoots(roots); err != nil {
+			return nil, err
+		}
+		if err := s.validateSelectedAdministration(roots); err != nil {
+			return nil, err
+		}
+		var admin []string
+		admin, err = gitAdministration(s.workspaceRoot)
+		matcher = &ignoreMatcher{root: s.workspaceRoot, gitAdmin: admin}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("localhistory: resolve ignores: %w", err)
 	}
@@ -245,12 +302,24 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 	}
 	entries := make(map[string]Entry)
 	included := normalizedIncludedPaths(opts.IncludePaths)
+	if roots != nil {
+		included = roots
+	}
 	hardlinks := make(map[string]string)
 	scanStarted := time.Now().UnixNano()
 	seen := make(map[string]bool)
-	defer func() { s.forgetUnseen(seen) }()
-	err = filepath.WalkDir(s.workspaceRoot, func(path string, dirEntry fs.DirEntry, walkErr error) error {
+	if roots == nil {
+		defer func() { s.forgetUnseen(seen) }()
+	}
+	visit := func(path string, dirEntry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			if roots != nil && os.IsNotExist(walkErr) {
+				for _, root := range roots {
+					if path == filepath.Join(s.workspaceRoot, filepath.FromSlash(root)) {
+						return nil
+					}
+				}
+			}
 			return walkErr
 		}
 		if err := ctx.Err(); err != nil {
@@ -323,7 +392,22 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 			entries[rel] = Entry{Type: EntrySpecial, Mode: storedMode(mode), SpecialMode: mode.Type().String()}
 		}
 		return nil
-	})
+	}
+	if roots == nil {
+		err = filepath.WalkDir(s.workspaceRoot, visit)
+	} else {
+		for _, root := range roots {
+			var path string
+			path, err = s.workspacePath(root)
+			if err != nil {
+				break
+			}
+			err = filepath.WalkDir(path, visit)
+			if err != nil {
+				break
+			}
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("localhistory: scan workspace: %w", err)
 	}

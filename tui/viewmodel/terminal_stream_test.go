@@ -87,7 +87,7 @@ func TestTerminalFrameReceiptFollowsUICommitAndRejectsStaleOwners(t *testing.T) 
 	for i := range row {
 		row[i] = terminalvt.Cell{Text: "X", Width: 1}
 	}
-	p := workspace.TerminalProjection{Info: workspace.TerminalInfo{ID: "stream", Title: "committed", Alive: true}, Generation: 1, Grid: terminalvt.Projection{Cols: 8, GridRows: 2, Total: 2, Cells: [][]terminalvt.Cell{row, row}, Wrapped: make([]bool, 2)}}
+	p := workspace.TerminalProjection{Info: workspace.TerminalInfo{ID: "stream", Name: "committed", Title: "application title", Alive: true}, Generation: 1, Grid: terminalvt.Projection{Cols: 8, GridRows: 2, Total: 2, Cells: [][]terminalvt.Cell{row, row}, Wrapped: make([]bool, 2)}}
 	done := make(chan error, 1)
 	service.apply = func(*shellport.TerminalFrameMsg) error {
 		if app.termScreens["stream"] != nil {
@@ -126,7 +126,7 @@ func TestTerminalFrameReceiptFollowsUICommitAndRejectsStaleOwners(t *testing.T) 
 		t.Run(stale, func(t *testing.T) {
 			msg := shellport.TerminalFrameMsg{Service: service, ID: "stream", Projection: p, Applied: done}
 			msg.Projection.Generation++
-			msg.Projection.Info.Title = "stale"
+			msg.Projection.Info.Name = "stale"
 			service.apply = func(*shellport.TerminalFrameMsg) error { return context.Canceled }
 			switch stale {
 			case "closed":

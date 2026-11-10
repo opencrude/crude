@@ -51,8 +51,9 @@ func run(args []string) (result error) {
 		}
 		_, err := io.WriteString(os.Stdout, args[1])
 		return err
-	case "echo", "query":
-		if (args[0] == "echo" && len(args) > 2) || (args[0] == "query" && len(args) != 1) {
+	case "echo", "query", "emit-after-key":
+		if (args[0] == "echo" && len(args) > 2) || (args[0] == "query" && len(args) != 1) ||
+			(args[0] == "emit-after-key" && len(args) != 2) {
 			return fmt.Errorf("invalid fixture arguments")
 		}
 		fd := int(os.Stdin.Fd())
@@ -74,6 +75,20 @@ func run(args []string) (result error) {
 				result = err
 			}
 		}()
+		if args[0] == "emit-after-key" {
+			if _, err := io.WriteString(os.Stdout, "CHILD_READY"); err != nil {
+				return err
+			}
+			var key [1]byte
+			if _, err := io.ReadFull(os.Stdin, key[:]); err != nil {
+				return err
+			}
+			if _, err := io.WriteString(os.Stdout, args[1]); err != nil {
+				return err
+			}
+			_, err := io.Copy(io.Discard, os.Stdin)
+			return err
+		}
 		if args[0] == "echo" {
 			if len(args) == 2 {
 				if _, err := io.WriteString(os.Stdout, args[1]); err != nil {

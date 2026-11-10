@@ -44,20 +44,29 @@ func TestDockHeaderActionsEmitPanelCommands(t *testing.T) {
 	a := shellterm.New(th, "t1", "one")
 	t.Cleanup(a.Close)
 	dock.Mount("t1", a)
-	dock.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: 80, H: 12})
+	host := ui.NewHost(th, dock)
+	host.Resize(80, 12)
+	host.Layout()
 
 	if len(dock.actions) != 5 {
-		t.Fatalf("header actions=%d want 5 (picker, new, float, close, hide)", len(dock.actions))
+		t.Fatalf("header actions=%d want 5 (picker, tab, float, kill, hide)", len(dock.actions))
 	}
 	click := func(i int) ui.EventResult {
 		r := dock.actions[i].rect
 		header := dock.header.Bounds()
-		return dock.Handle(ui.EventContext{LocalX: header.X + r.X + 1, LocalY: header.Y},
-			ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y}))
+		result := host.Handle(tea.MouseClickMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y})
+		host.Handle(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y})
+		return result
 	}
-	res := click(1)
+	button := dock.newButton.Bounds()
+	res := host.Handle(tea.MouseClickMsg{Button: tea.MouseLeft, X: button.X + 1, Y: button.Y})
+	host.Handle(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: button.X + 1, Y: button.Y})
 	if res.Action == nil || res.Action.ID != ActionNew {
 		t.Fatalf("new icon action=%+v want %s", res.Action, ActionNew)
+	}
+	res = click(1)
+	if res.Action == nil || res.Action.ID != ActionOpenAsTab || res.Action.Payload != PanelTerminal {
+		t.Fatal("terminal has no open-as-tab action", res)
 	}
 	res = click(2)
 	if res.Action == nil || res.Action.ID != shellterm.ActionPromote {
@@ -97,12 +106,14 @@ func TestDockSurfaceHeaderEmitsPlacementActions(t *testing.T) {
 	dock := New(theme.DefaultDark())
 	dock.SetPanel(PanelProblems, ui.NewLabel("problems/body", "Problems", theme.DefaultDark()))
 	dock.ShowPanel(PanelProblems)
-	dock.Layout(ui.LayoutContext{}, ui.Rect{W: 80, H: 12})
+	host := ui.NewHost(theme.DefaultDark(), dock)
+	host.Resize(80, 12)
+	host.Layout()
 	header := dock.header.Bounds()
 	for index, want := range []string{ActionOpenAsTab, ActionOpenAsWindow, ActionHide} {
 		r := dock.actions[index].rect
-		res := dock.Handle(ui.EventContext{LocalX: header.X + r.X + 1, LocalY: header.Y},
-			ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y}))
+		res := host.Handle(tea.MouseClickMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y})
+		host.Handle(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y})
 		if res.Action == nil || res.Action.ID != want {
 			t.Fatalf("action %d = %+v, want %s", index, res.Action, want)
 		}

@@ -178,6 +178,26 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// A retained selection in another pane must never turn Ctrl+C into copy or
 	// eat EOF, suspend, flow control, or ordinary application key bindings.
 	if m.terminalOwnsKeys() {
+		if ui.IsPasteChord(msg) {
+			screen := m.mainTerminalOwnsKeys()
+			if m.terminalDockOwnsKeys() {
+				screen = m.termDock.Active()
+			}
+			if popup := m.focusedPopup(); popup != nil {
+				if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(popup.ID)); ok {
+					screen = m.termScreens[id]
+				}
+			}
+			if screen != nil {
+				return m, m.pasteTerminalClipboard(screen)
+			}
+		}
+		if screen := m.mainTerminalOwnsKeys(); screen != nil {
+			host := m.hostFor(screen.ID())
+			host.Focus(screen.ID())
+			result := host.Handle(msg)
+			return m, tea.Batch(result.Cmd, m.handleHostAction(result.Action))
+		}
 		if m.terminalDockOwnsKeys() {
 			return m.dispatchTermDockKey(msg)
 		}
@@ -862,6 +882,12 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 // (or no explicit owner) reaches the chat input.
 func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	if screen := m.mainTerminalOwnsKeys(); screen != nil {
+		host := m.hostFor(screen.ID())
+		host.Focus(screen.ID())
+		result := host.Handle(msg)
+		return m, tea.Batch(result.Cmd, m.handleHostAction(result.Action))
+	}
 	if m.sessionDeckCapturesInput() && m.focusedPopup() == nil {
 		return m, m.handleSessionDeckEvent(msg)
 	}

@@ -34,6 +34,24 @@ func manyWorkspaces(n int) []workspace.WorkspaceInfo {
 	return out
 }
 
+func TestLauncherAnimationPublishesOnlyChangedInk(t *testing.T) {
+	s, _ := launcherContractHost(t, 100, 24, nil)
+	if s.SetAnimation(16, 0) || s.SetAnimation(500, 0) {
+		t.Fatal("settled action ink requested a repaint without a glyph change")
+	}
+	if !s.SetAnimation(10000, 0) || s.SetAnimation(10016, 0) {
+		t.Fatal("settled action did not publish exactly its changed glyph")
+	}
+	s.BeginLoad("/projects/current")
+	if !s.SetAnimation(10032, 0) || s.SetAnimation(10032, 0) {
+		t.Fatal("loading rule lost its clock or invalidated the same frame twice")
+	}
+	s.FinishLoad("/projects/current", nil, nil)
+	if s.SetAnimation(10048, 0) {
+		t.Fatal("settled loading rule retained continuous clock damage")
+	}
+}
+
 // TestLauncherHostKeyboardContractTable documents Screen/Host keyboard behavior
 // for fixed action rows, workspace list navigation, filter mode, and bounds.
 func TestLauncherHostKeyboardContractTable(t *testing.T) {

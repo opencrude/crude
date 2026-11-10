@@ -126,6 +126,12 @@
   History, even when Git ignores it. If Local History is on and the snapshot
   fails, nothing is deleted. With Local History off, delete proceeds and the
   prompt does not promise a copy.
+  Delete safety uses a subtree-scoped manifest (`ScopeRoots`): it walks only
+  the deleted file/folder, not the project or its ignore files. It captures
+  ignored descendants and large files through the ordinary object store.
+  Restore preview, safety capture, rollback and after-restore capture retain
+  that coverage; absent siblings are unknown, never deletion targets. Ordinary
+  full snapshots and bounded reviewed-edit `ScopePaths` keep their own semantics.
 - Restores append one hidden `<workspace_history_event>` to provider context and
   one visible canonical `history_restored` context-boundary table without
   rewriting accepted conversation prefix. The completed boundary is static,

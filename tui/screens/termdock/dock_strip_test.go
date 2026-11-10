@@ -21,8 +21,8 @@ import (
 func TestDockUsesNumberedTerminalTabsAndFullWidthBody(t *testing.T) {
 	th := theme.DefaultDark()
 	dock := New(th)
-	first := shellterm.New(th, "one", "one")
-	second := shellterm.New(th, "two", "two")
+	first := shellterm.New(th, "one", "Terminal 1")
+	second := shellterm.New(th, "two", "Terminal 2")
 	t.Cleanup(first.Close)
 	t.Cleanup(second.Close)
 	dock.Mount("one", first)
@@ -44,7 +44,7 @@ func TestDockUsesNumberedTerminalTabsAndFullWidthBody(t *testing.T) {
 		t.Fatalf("terminal body width=%d want full dock width", second.Bounds().W)
 	}
 	painted := readCellsRange(buf, dividerH, 0, 80)
-	for _, want := range []string{"one 1", "two 2", "≡", "+", "⇱", "✕", "⌄"} {
+	for _, want := range []string{"Terminal 1", "Terminal 2", "≡", "+", "⧉", "⇱", "", "⌄"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("terminal tab/action row missing %q: %q", want, painted)
 		}
@@ -180,7 +180,7 @@ func TestDockDenseTerminalWheelKeepsSelectionAndCompactNumbers(t *testing.T) {
 	dock := New(th)
 	for number := 1; number <= 16; number++ {
 		id := fmt.Sprint(number)
-		terminal := shellterm.New(th, id, "Terminal")
+		terminal := shellterm.New(th, id, fmt.Sprintf("Terminal %d", number))
 		t.Cleanup(terminal.Close)
 		dock.Mount(id, terminal)
 	}
@@ -210,7 +210,7 @@ func TestDockDenseTerminalWheelKeepsSelectionAndCompactNumbers(t *testing.T) {
 	host.Layout()
 	wide := surface.NewCellBuffer(240, 12)
 	host.Paint(wide)
-	if row := readCellsRange(wide, dividerH, 0, 240); !strings.Contains(row, "Terminal 1") || !strings.Contains(row, "changed 16") {
+	if row := readCellsRange(wide, dividerH, 0, 240); !strings.Contains(row, "Terminal 1") || !strings.Contains(row, "changed") || strings.Contains(row, "changed 16") {
 		t.Fatalf("wide tabs did not restore full suffix numbering: %q", row)
 	}
 }

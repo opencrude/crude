@@ -4,7 +4,8 @@
 
 Crude embeds a terminal multiplexer in the TUI. Each session is a PTY whose
 environment is pinned to **Ghostty 1.3.0** (`types.PinnedGhosttyVersion`,
-`TERM=xterm-ghostty`). Emulation is **libghostty-vt** at the commit in
+`TERM=xterm-ghostty`). The renderer identifies itself as `TERM_PROGRAM=crude`,
+not Ghostty. Emulation is **libghostty-vt** at the commit in
 `third_party/libghostty-vt/GHOSTTY_PIN`, linked through a narrow presentation-neutral cgo adapter in `terminalvt/`.
 `CGO_ENABLED=0` builds compile a stub that returns an error from
 `terminalvt.New`; they do not keep a hand-written parser.
@@ -49,7 +50,7 @@ without this database: child rc scripts break (`tput colors` returns empty).
 | Cursor styles | DECSCUSR requests normalize to the shared reverse-video block geometry; embedded applications retain blink/steady timing while focused. An unfocused pane or blurred terminal paints no caret |
 | Synchronized output | DEC 2026 holds one completed active-grid render state (cells, wraps, cursor and visual metadata) until reset, resize or a one-second broken-client timeout; parsing and query replies continue |
 | Bell | BEL flags an unfocused dock tab or adds a `•` icon to an unfocused floating `WindowFrame`; focusing the terminal clears it |
-| OSC titles | Collected after Feed, committed by the service and delivered as neutral effects outside the engine lock |
+| OSC titles | Collected after Feed as application metadata; never replace the terminal's numbered or user-chosen name |
 | OSC 7 pwd | Updates `TerminalInfo.CWD` (file:// URL parsed to a path) |
 | Query replies | Only `TerminalService` enqueues DA/DSR/XTVERSION/size replies on the async `ptyWriter`; clients receive no reply bytes and cannot answer twice |
 
@@ -438,13 +439,18 @@ Crude can tell when it is nested in tmux/zellij/screen **and** whether the
 outer emulator matches the Ghostty pin. In-app PTYs always set:
 
 - `TERM=xterm-ghostty`
-- `TERM_PROGRAM=ghostty`
-- `TERM_PROGRAM_VERSION=1.3.0`
+- `TERM_PROGRAM=crude` (no invented Ghostty program version)
 - `COLORTERM=truecolor`
+
+The parser identity is not a font or graphics promise. PTYs do not inherit
+outer-window IDs for Kitty, Alacritty, WezTerm or Ghostty resources. This keeps
+applications such as Expo on their portable half-block QR output rather than
+selecting sextant glyphs on the false claim that this is a Ghostty window.
+It does not change the user's outer terminal or font.
 
 ## Placement
 
-Dock/floating placement and focus belong to each shell (`App.terminalPlacements`),
+Dock/tab/floating placement and focus belong to each shell (`App.terminalPlacements`),
 not the PTY service. The service has one process/grid; a viewer does not acquire
 resize authority merely by laying out a screen. See the
 [core client protocol](core-client-protocol.md) for the implemented resource API
@@ -454,13 +460,18 @@ and the outstanding native/performance acceptance gates.
   above the footer, independent of AI session `PanelDeck`. Available in launcher,
   editor, and chat. The footer's labeled `Terminals` control toggles this mode.
   PTYs use numbered `ui.Tabs` (`Terminal 1`, `Terminal 2`, …) beside
-  picker/new/float/close/maximize/hide controls on the same row. Titles truncate
-  within 16 columns with the number retained; cramped strips use `T 1`, `T 2`, ….
+  picker/tab/window/kill/hide controls on the same row. The shared native **+**
+  sits immediately after the tabs, pinned at the end during overflow. Names
+  truncate within 16 columns; cramped strips use `T 1`, `T 2`, ….
   Overflow supports horizontal trackpad/wheel, vertical wheel over the strip,
   and visible `‹`/`›` controls without changing the active PTY. Browsing stays
   put across repaint/title updates; choosing a tab reveals it. Unseen bells
   retain the shared attention marker. The picker exposes matching terminal
-  numbers with readable Docked/Floating placement. The baseline and PTY body
+  numbers with readable Docked/Tab/Floating placement. Numbers are assigned by
+  the workspace manager and do not change when another terminal moves or closes.
+  **Rename terminal** opens the native modal; the chosen name belongs to the
+  retained PTY and reaches every shell, independently of child OSC titles.
+  The baseline and PTY body
   span the full dock width. The divider plus
   two-row tab strip still reserve at least two PTY body rows.
   Closing the last docked terminal closes Terminal mode without affecting the
@@ -469,10 +480,44 @@ and the outstanding native/performance acceptance gates.
 - **Floating:** `OverlayHost` + `FloatingWindow` + `WindowFrame`,
   `DefaultOverlayPolicy` (KeepRoute, movable, resizable). Overlay IDs are
   dynamic: `ui.TerminalOverlayID(id)` → `"terminal/"+id`.
-- **Promote / Dock:** action bar on the terminal screen. The same retained
+- **Main tab:** a terminal is a workspace-surface tab in the existing recursive
+  pane tree. It keeps terminal key/paste ownership and the same retained screen.
+  Closing this tab returns the terminal to the hidden dock; it does not kill it.
+- **Promote / Dock:** shared header controls and context-menu actions. The same retained
   `shellterm.Screen` and PTY move; the process is not restarted. Closing a
   floating window kills the PTY unless the viewmodel is mid-promote
   (`suppressTermClose`).
+- **Kill / Hide:** destructive PTY controls use the bin glyph, including the
+  floating frame. Hide and tab close are presentation actions, never process kills.
+- **Context menu:** right-click anchors the shared menu at the pointer, with
+  Copy, Paste, Select all, Clear, New, Rename, placement and Kill. Clear changes
+  the display and scrollback, not the process or its negotiated modes. Copy is unavailable
+  without a selection; Paste and Rename require the exact controlling lease.
+  Only a viewer sees Take input control. Inactive tab menus retain the clicked
+  terminal identity. Workspace changes, close and replacement fence callbacks;
+  asynchronous paste also retains the exact original lease.
+
+QR regression coverage reconstructs every module of a known Expo half-block
+fixture from painted cells in dark/light themes, after byte-fragmented VT
+ingress. `TestTerminalUsabilityVisualAcceptance`, driven only through
+`scripts/tuishot.ps1`, sends that output over an owned native child PTY for
+Windows font/rendering review. This is not an Expo project launch or acceptance
+of image protocols.
+
+The 2026-11-10 connected native captures pass at 80×30 and 160×44: full portable
+QR output arrives without extra pointer input, the header uses the stable
+terminal name and bin action, and right-click opens the native resource menu at
+the pointer. The fixtures keep failures in memory until the TUI has stopped;
+checks read painted cells without calling `View` or consuming a presentation.
+The follow-up connected captures also keep Home's loading rule visible above a
+focused terminal. Its ink changes without pointer input at both sizes; the chat
+activity regression separately keeps dense transcript content retained.
+These captures do not make the whole repository green: the aggregate suite
+reported package timeouts and a launcher golden mismatch, and the full benchmark
+gate exceeded the dense-chat single-row allocation ceiling. That benchmark's
+three isolated reruns passed the unchanged ceiling; the failed full gate is
+still separate evidence.
+
 - **Z-order:** `WindowManager.FocusWindow` / `BringToTop` on click and on
   focus from the Terminals activity list. Esc in a focused terminal is a PTY
   key, not close.

@@ -212,6 +212,13 @@ func (t *terminalReplica) Paste(lease workspace.TerminalLease, data []byte) erro
 	return t.SendInput(workspace.TerminalInput{Lease: lease, Kind: "paste", Data: data})
 }
 
+func (t *terminalReplica) Rename(lease workspace.TerminalLease, name string) error {
+	return t.SendInput(workspace.TerminalInput{Lease: lease, Kind: "rename", Data: []byte(name)})
+}
+func (t *terminalReplica) Clear(lease workspace.TerminalLease) error {
+	return t.SendInput(workspace.TerminalInput{Lease: lease, Kind: "clear"})
+}
+
 func (t *terminalReplica) Resize(lease workspace.TerminalLease, cols, rows int) error {
 	return t.SendInput(workspace.TerminalInput{Lease: lease, Kind: "resize", Cols: cols, Rows: rows})
 }

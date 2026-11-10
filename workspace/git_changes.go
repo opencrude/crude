@@ -42,6 +42,18 @@ func (s *GitService) CompareChanges(ctx context.Context, changes []GitChange) ([
 		return nil, err
 	}
 	defer state.close()
+	paths := make([]string, 0, min(len(changes), GitChangesLimit))
+	for _, change := range changes[:min(len(changes), GitChangesLimit)] {
+		rel, err := gitReviewPath(state.root, change.Path, change.AbsolutePath)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, rel)
+	}
+	state.lfsPaths, err = gitLFSPaths(ctx, state.root, paths)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]GitChangeComparison, 0, len(changes))
 	var total int64
 	for index, change := range changes {

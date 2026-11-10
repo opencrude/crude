@@ -408,9 +408,15 @@ func TestScreenProjectionMetadataAndAttention(t *testing.T) {
 	p := s.projection
 	p.Info.CWD = "file:///tmp/dir"
 	p.Info.Title = "child title"
+	p.Info.Number = 3
 	s.SetProjection(p)
-	if s.PWD() != "/tmp/dir" || s.Title() != "child title" {
+	if s.PWD() != "/tmp/dir" || s.Title() != "Terminal 3" {
 		t.Fatal("metadata lost")
+	}
+	p.Info.Name = "Model training"
+	s.SetProjection(p)
+	if s.Title() != "Model training" {
+		t.Fatal("application title replaced the user name")
 	}
 	if !s.SetAttention(true) || !s.HasAttention() || s.SetAttention(true) {
 		t.Fatal("attention transitions")

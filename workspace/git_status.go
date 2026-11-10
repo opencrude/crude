@@ -137,7 +137,8 @@ func gitStdout(ctx context.Context, root string, stdin []byte, args ...string) (
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
 	cmd.WaitDelay = time.Second
 	cmd.Stdin = bytes.NewReader(stdin)
-	var stdout, stderr bytes.Buffer
+	stdout := gitBoundedOutput{limit: int(gitComparisonLimit)}
+	stderr := gitBoundedOutput{limit: 1 << 20}
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
@@ -152,5 +153,31 @@ func gitStdout(ctx context.Context, root string, stdin []byte, args ...string) (
 		}
 		return nil, fmt.Errorf("git %s: %s", strings.Join(args, " "), detail)
 	}
+	if stdout.overflow {
+		return nil, errors.New("git output exceeds the 64 MiB review limit")
+	}
 	return stdout.Bytes(), nil
+}
+
+// Continue draining after the limit so a subprocess cannot block on a full
+// output pipe. The caller receives an explicit overflow, never truncated success.
+type gitBoundedOutput struct {
+	buffer   bytes.Buffer
+	limit    int
+	overflow bool
+}
+
+func (b *gitBoundedOutput) Len() int       { return b.buffer.Len() }
+func (b *gitBoundedOutput) Bytes() []byte  { return b.buffer.Bytes() }
+func (b *gitBoundedOutput) String() string { return b.buffer.String() }
+
+func (b *gitBoundedOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	available := max(0, b.limit-b.Len())
+	if n > available {
+		b.overflow = true
+		p = p[:available]
+	}
+	_, _ = b.buffer.Write(p)
+	return n, nil
 }

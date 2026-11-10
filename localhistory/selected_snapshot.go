@@ -145,6 +145,20 @@ func validateSelectedScope(paths []string) error {
 }
 
 func validateScopedManifest(manifest Manifest) error {
+	if manifest.ScopeRoots != nil {
+		if manifest.ScopePaths != nil || len(manifest.TrackedPaths) != 0 {
+			return errors.New("localhistory: mixed snapshot scopes")
+		}
+		if err := validateSubtreeRoots(manifest.ScopeRoots); err != nil {
+			return err
+		}
+		for path := range manifest.Entries {
+			if !validSubtreePath(path) || !manifestObserves(manifest, path) {
+				return errors.New("localhistory: entry outside subtree snapshot")
+			}
+		}
+		return nil
+	}
 	if manifest.ScopePaths == nil {
 		return nil
 	}
@@ -169,7 +183,40 @@ func validateScopedManifest(manifest Manifest) error {
 	return nil
 }
 
+func validSubtreePath(path string) bool {
+	clean, ok := cleanRelativeHistoryPath(path)
+	if !ok || clean != path {
+		return false
+	}
+	for _, part := range strings.Split(path, "/") {
+		if strings.EqualFold(part, ".git") {
+			return false
+		}
+	}
+	return true
+}
+
+func validateSubtreeRoots(paths []string) error {
+	if len(paths) == 0 {
+		return errors.New("localhistory: empty subtree scope")
+	}
+	for i, path := range paths {
+		if !validSubtreePath(path) || (i > 0 && paths[i-1] >= path) {
+			return errors.New("localhistory: invalid subtree scope")
+		}
+	}
+	return nil
+}
+
 func manifestObserves(manifest Manifest, path string) bool {
+	if manifest.ScopeRoots != nil {
+		for _, root := range manifest.ScopeRoots {
+			if path == root || strings.HasPrefix(path, root+"/") {
+				return true
+			}
+		}
+		return false
+	}
 	if manifest.ScopePaths == nil {
 		return true
 	}

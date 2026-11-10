@@ -16,6 +16,8 @@ const (
 	CommandResize
 	CommandReadRows
 	CommandTakeControl
+	CommandRename
+	CommandClear
 )
 
 // Command is an intent, never pre-encoded PTY bytes. The host binds the exact

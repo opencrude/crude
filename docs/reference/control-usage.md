@@ -142,9 +142,10 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
   scope is not a tab strip. Terminal mode places compact numbered instance tabs
   beside its action glyphs on one label row, with a full-width baseline and PTY
   body. Terminal labels use suffix numbers (`Terminal 1`, `Terminal 2`); their
-  title portion truncates within 16 columns while retaining the number. Cramped
+  default names and user-chosen names truncate within 16 columns. Numbers stay
+  stable when a terminal moves or another one closes. Cramped
   strips use `T 1`, `T 2`, … before shared overflow scrolling. The picker keeps
-  the same numbers and names Docked/Floating placement instead of raw enum values.
+  the same numbers and names Docked/Tab/Floating placement instead of raw enum values.
 - **Icons are not painted in tab bars.** Window tab icons live in `window.Tab`
   (disambiguation) and are deliberately not plumbed into the strip — glyph tofu
   risk. Labels are the only tab content.
@@ -182,6 +183,14 @@ and agent-minimize semantics. Palette operations use the shared ActionRegistry.
 | Find in Files editor preview | cell-buffer `Editor.Render` adapter in `findinfiles` screen (no `Editor.View()` / `scrollbar_ansi` bridge) |
 
 ## Chrome
+
+Compact header actions use `ui.IconButton`: native Button activation and
+focus, one hover fill (`ColorHover`), and the accessible label as the tooltip.
+Dock surfaces expose ⧉ (tab), ⇱ (window), and ⌄ (hide). Destructive terminal
+controls use a bin, not the dismiss glyph. The shell and terminal tab rails
+share `ui.NewTabButton`: accent bold **+**, five columns, content-adjacent
+until overflow pins it to the trailing edge. Neither rail paints a second
+plus or handles its pointer input separately.
 
 | Current | Target |
 |---------|--------|

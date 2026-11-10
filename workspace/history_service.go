@@ -150,8 +150,7 @@ func (s *LocalHistoryService) KeepBeforeDelete(ctx context.Context, rel string) 
 		return nil
 	}
 	opts := historyOptions(settings, "safety", "Before delete: "+rel, "")
-	opts.IncludePaths = []string{rel}
-	if _, err := s.store.Snapshot(ctx, opts); err != nil {
+	if _, err := s.store.SnapshotSubtree(ctx, opts, rel); err != nil {
 		return fmt.Errorf("local history could not keep a copy of %s, so it was not deleted: %w", rel, err)
 	}
 	return nil

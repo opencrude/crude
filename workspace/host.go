@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"crude/buildinfo"
@@ -105,8 +106,18 @@ func PTYEnviron(extra []string) []string {
 	}
 	env = setEnv(env, "TERM", types.GhosttyTermName)
 	env = setEnv(env, "COLORTERM", "truecolor")
-	env = setEnv(env, "TERM_PROGRAM", "ghostty")
-	env = setEnv(env, "TERM_PROGRAM_VERSION", types.PinnedGhosttyVersion)
+	env = setEnv(env, "TERM_PROGRAM", "crude")
+	// Outer-window identity does not describe this embedded terminal's renderer
+	// or fonts. Do not make children select unconfirmed graphics/glyph paths.
+	env = slices.DeleteFunc(env, func(entry string) bool {
+		key, _, _ := strings.Cut(entry, "=")
+		switch strings.ToUpper(key) {
+		case "TERM_PROGRAM_VERSION", "KITTY_WINDOW_ID", "KITTY_PID", "ALACRITTY_WINDOW_ID",
+			"ALACRITTY_SOCKET", "WEZTERM_PANE", "WEZTERM_UNIX_SOCKET", "GHOSTTY_RESOURCES_DIR":
+			return true
+		}
+		return false
+	})
 	if dir := TerminfoDir(); dir != "" {
 		env = setEnv(env, "TERMINFO", dir)
 	}

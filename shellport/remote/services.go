@@ -36,6 +36,9 @@ func (g gitService) AnnotateFile(ctx context.Context, absPath, content string) (
 	return g.client().AnnotateFile(ctx, absPath, content)
 }
 func (g gitService) Fetch(ctx context.Context) error { return g.client().Fetch(ctx) }
+func (g gitService) LFS(ctx context.Context, operation string, paths ...string) error {
+	return g.w.callCancellable(ctx, coreprotocol.GitLFS, &coreprotocol.GitLFSRequest{Operation: operation, Paths: paths}, &coreprotocol.Empty{})
+}
 func (g gitService) Pull(ctx context.Context) (workspace.GitSyncResult, error) {
 	return g.client().Pull(ctx)
 }

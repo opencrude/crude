@@ -88,7 +88,7 @@ func (m *App) toggleMemoryBrowser() (tea.Model, tea.Cmd) {
 	if m.memoryBrowser != nil && m.memoryBrowser.IsOpen() && m.revealPlacedPanel(termdock.PanelMemory) {
 		return m, nil
 	}
-	if m.memoryBrowserVisible() && m.termDockFocused {
+	if m.memoryBrowserVisible() {
 		m.closeMemoryBrowser()
 		return m, nil
 	}

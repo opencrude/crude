@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,6 +25,87 @@ func historyServiceHarness(t *testing.T) (*LocalHistoryService, *localhistory.St
 	service := NewLocalHistoryService(root, store, nopLogger{})
 	t.Cleanup(func() { service.Stop(); _ = store.Close() })
 	return service, store, root
+}
+
+func TestDeleteSafetyCapturesOnlyDeletedTree(t *testing.T) {
+	service, store, root := historyServiceHarness(t)
+	service.settings = ttypes.LocalHistorySettings{Enabled: "on"}
+	for _, path := range []string{"unrelated", "gone/file", "gone/.ignored/file"} {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(path), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.KeepBeforeDelete(t.Context(), "gone"); err != nil {
+		t.Fatal(err)
+	}
+	records, err := store.Timeline(1)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("safety records: %v %v", records, err)
+	}
+	manifest, err := store.LoadManifest(records[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, included := manifest.Entries["unrelated"]; included {
+		t.Fatal("delete scanned and captured unrelated project content")
+	}
+	if err := os.RemoveAll(filepath.Join(root, "gone")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "unrelated"), []byte("newer unrelated work"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := store.PlanRestore(t.Context(), manifest.ID, localhistory.SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range plan.Changes {
+		if change.Path == "unrelated" {
+			t.Fatal("delete recovery would overwrite unrelated work")
+		}
+	}
+	if _, err := store.ApplyRestore(t.Context(), plan.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"gone/file", "gone/.ignored/file"} {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil || string(data) != path {
+			t.Fatalf("lost deleted content %s: %q %v", path, data, err)
+		}
+	}
+}
+
+func BenchmarkDeleteSafetyInDenseWorkspace(b *testing.B) {
+	root := b.TempDir()
+	store, err := localhistory.Open(b.TempDir(), root)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer store.Close()
+	service := NewLocalHistoryService(root, store, nopLogger{})
+	service.settings = ttypes.LocalHistorySettings{Enabled: "on"}
+	for i := range 1000 {
+		full := filepath.Join(root, "unrelated", fmt.Sprintf("%04d", i))
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("unchanged source"), 0600); err != nil {
+			b.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "delete-me"), []byte("recover me"), 0600); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for range b.N {
+		if err := service.KeepBeforeDelete(b.Context(), "delete-me"); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func TestDisabledHistoryIsDistinctFromCaptureFailure(t *testing.T) {

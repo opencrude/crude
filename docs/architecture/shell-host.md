@@ -202,6 +202,11 @@ Rules:
   context menu, previews saved-data consequences, and moves data to recoverable
   storage with Undo; project files are untouched. See the workspace-home section
   of `docs/reference/interaction-matrix.md`.
+  Clock damage follows visible content, not keyboard focus: Home's progress
+  rule and cycling action ink must still paint when a terminal owns input.
+  `configureLauncherScreen` publishes changed clock ink to the mounted Home
+  region independently of the focused caret. A settled glyph or hidden Home
+  does not damage a retained chat/editor region.
 - `themeConsumers()` walks `rootHost` (SetTheme propagates tokens to all
   mounted screens via `applyTokenSet`).
 
