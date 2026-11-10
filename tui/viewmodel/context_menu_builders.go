@@ -746,10 +746,10 @@ func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			}},
 			{Label: "Cut", Detail: "Ctrl+X", Disabled: m.Input.Value() == "", Action: func() {
 				m.copyToClipboard(m.Input.Value())
-				m.Input.ClearInput()
+				m.Input.ClearDraft()
 			}},
 			{Label: "Clear input", Action: func() {
-				m.Input.ClearInput()
+				m.Input.ClearDraft()
 			}},
 		},
 	})

@@ -75,6 +75,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-09 | Diagnostic messages use the Problems panel's severity icons. A line with several problems shows its highest severity in the gutter. Transient LSP boxes share compact chrome, source-relative placement and outside-click dismissal; they do not need close buttons. Change-review dialogs remain distinct. | User |
 | 2026-11-09 | Offer function, variable and member suggestions during ordinary typing, not only on explicit request or after a dot. Tab accepts a selected suggestion. Expose working completion behavior controls in Settings so users can choose automatic suggestions, timing and acceptance keys. | User |
 | 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
+| 2026-11-10 | Repair missing live diagnostics at their owner, not through a language-specific workaround. Move workspace Aeron out of the ordinary agent list into a header link. Problems keeps its style, shows up to three message lines, and expands messages in place. | User |
+| 2026-11-10 | Clear actions must be undoable. Empty undo history must not imply another author exists. Shared lists must retain wheel scrolling when the pointer leaves; fix their owners rather than one Settings page. | User |
 
 ### Open decisions
 
@@ -105,6 +107,64 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Immediate correction: live diagnostics and shared UI regressions (2026-11-10).**
+
+Goal: invalid text typed into a connected editor produces diagnostics again.
+The live workspace reports connected gopls but incomplete file observation;
+the manager discards diagnostics from project producers while that fence is set.
+An independent watch-admission scan of this same root succeeds. The original
+event that set the fence is not retained, so its exact cause is not yet proven.
+Scope: reproduce transient directory admission and recovery through the native
+watcher, preserve root-loss and stale-callback fences, and verify real installed
+server results through connected editor and agent paths. Do not remove freshness
+checks or treat a connected process as proof of working diagnostics.
+Exit: a regression fails on the original watcher, recovery restores actual
+diagnostics, and focused ordinary/race plus native rendered checks pass.
+The Aeron, Problems, input undo, empty-history feedback and shared-list scroll
+corrections remain part of the same reported repair; prior acceptance does not
+close these regressions.
+
+Implemented: a vanished child directory no longer leaves observation fenced
+forever. The observer rebuilds the native backend and its full directory
+coverage with bounded retries, while root replacement and old callbacks stay
+fenced. The regression fails on the original observer. A real installed-gopls
+journey verifies unsaved `sxsxsx` after this recovery through canonical editing,
+the agent diagnostic reader and the connected shell snapshot; ordinary and race
+runs pass. This reproduces the defect class, not the unrecorded original event.
+
+The other repairs pass focused component and connected-shell checks. Aeron opens
+from the header at 160×40 and 80×24 and is absent from the ordinary agent list.
+Problems shows three-line previews and expands in place without losing full
+copy text or source navigation. User clear actions preserve input history and
+reference identities; an exhausted document history is a quiet no-op.
+The shared Table and VirtualList retain wheel reading across refresh and pointer
+departure; Settings no longer reselects an unchanged row after each refresh.
+Sequential native captures at both sizes verify inline expansion, clear/undo
+and Language Tools scroll retention. They use fixture diagnostics, not a live
+project-health claim.
+Separate real-gopls native captures at both sizes pass the complete connected
+journey: editor underlines and Problems, hover, references, cross-file
+definition, completion, parameter help and snippet insertion/edit/undo.
+Each observes its actual server process and verifies joined cleanup.
+
+The repository suite remains red: the full viewmodel run reaches its aggregate
+180-second limit, and exhaustive shards cover all 1,511 discovered cases with
+five terminal/palette failures. The same five failures, the launcher golden
+mismatch and the Git comparison failure reproduce with the original production
+files. The session worktree launch failure also reproduces on the original
+code: the host's Budgie login script changes its working directory.
+No golden or allocation ceiling was changed to hide these failures.
+The focused UI, document-history and native-watcher race paths, LSP transport,
+build/lint, wire check, docs/design, website and benchmark gates pass.
+
+**Still open:** activate the repaired build in the user's core and confirm the
+original workspace's editor results. The currently attached core runs the old
+code; restarting only gopls does not reset its failed watcher. No forced core
+shutdown or replacement of the user's dirty editor buffer was performed.
+Native Windows/macOS acceptance is not supplied by the Linux captures.
+Full cross-builds without cgo fail on the required native syntax bindings;
+the standalone Windows/macOS watch backends compile.
 
 General file editing and encoding are owned by
 [Editor file workflows](editor-file-workflows.md). Protocol fingerprint

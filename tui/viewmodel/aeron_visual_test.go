@@ -22,7 +22,7 @@ import (
 // (CRUDE_VISUAL_AERON=1). The pointer rests on the file tab and F4 checks its
 // tooltip. F3 releases the fixture provider and F4 checks Aeron's modal
 // question over the unchanged main tab. Its own Cancel action closes it with the
-// normal question behavior and F4 checks that it closed. Opening Aeron's Agents row and F4
+// normal question behavior and F4 checks that it closed. Clicking the header link and F4
 // checks its normal agent tab and composer. F9 checks all four and exits.
 func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_AERON") != "1" {

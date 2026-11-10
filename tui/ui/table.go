@@ -91,15 +91,29 @@ func (t *Table) SetColumnGap(gap int) {
 	t.recomputeWidths()
 }
 
-// SetRows replaces rows and selects the first row if needed.
+// SetRows refreshes rows without moving the reader back to an offscreen
+// selection. Retain the selected identity; only a removed selection is revealed.
 func (t *Table) SetRows(rows []TableRow) {
+	previous, selected := t.Selected()
 	t.rows = append(t.rows[:0], rows...)
 	t.sel.SetCount(len(rows))
 	t.scroll.SetContent(len(rows))
+	retained := false
+	if selected {
+		for i, row := range t.rows {
+			if row.ID == previous.ID {
+				t.sel.SetIndex(i)
+				retained = true
+				break
+			}
+		}
+	}
 	if len(rows) > 0 && t.sel.Index() < 0 {
 		t.sel.SetIndex(0)
 	}
-	t.scroll.EnsureVisible(t.sel.Index())
+	if !retained {
+		t.scroll.EnsureVisible(t.sel.Index())
+	}
 	t.recomputeWidths()
 }
 

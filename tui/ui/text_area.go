@@ -234,6 +234,17 @@ func (t *TextArea) Clear() {
 	t.cursor.MarkActivity()
 }
 
+// ClearWithHistory is one reversible user edit. Clear remains an owner reset
+// for submitted drafts and replacement content.
+func (t *TextArea) ClearWithHistory() {
+	if t.edit.Len() == 0 {
+		return
+	}
+	undo := append(t.edit.undo, t.edit.snapshot())
+	t.Clear()
+	t.edit.undo = undo
+}
+
 // Len returns the total rune count including newlines.
 func (t *TextArea) Len() int { return t.edit.Len() }
 

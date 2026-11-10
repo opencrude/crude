@@ -365,6 +365,20 @@ func (m *Model) ClearInput() {
 	m.draftRevision++
 }
 
+// ClearDraft is the user's clear/cut action. Keep the native undo history and
+// attachment identity allow-list; only the visible text is removed.
+func (m *Model) ClearDraft() {
+	m.invalidatePendingPastes()
+	m.historyGeneration++
+	m.historyLoading = false
+	m.input.ClearWithHistory()
+	m.applyReferenceRanges()
+	m.histIdx = -1
+	m.histDraft, m.histPrefix = "", ""
+	m.slashActive = false
+	m.draftRevision++
+}
+
 func (m *Model) SetPrompt(p string) {
 	m.input.SetPrompt(p)
 }

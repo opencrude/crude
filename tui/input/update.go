@@ -371,6 +371,6 @@ func (m Model) applyClipboardChord(key tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if m.input.Value() == "" {
 		return m, nil, true
 	}
-	m.ClearInput()
+	m.ClearDraft()
 	return m, nil, true
 }

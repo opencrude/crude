@@ -54,6 +54,17 @@ func (e *TextEdit) SetValue(s string) {
 	e.redo = nil
 }
 
+// ClearWithHistory is an explicit user edit, unlike replacing an owner's value.
+func (e *TextEdit) ClearWithHistory() {
+	if len(e.runes) == 0 {
+		return
+	}
+	e.recordEdit()
+	e.runes = nil
+	e.cursor = 0
+	e.ClearSelection()
+}
+
 // Value returns the current text.
 func (e *TextEdit) Value() string {
 	return string(e.runes)

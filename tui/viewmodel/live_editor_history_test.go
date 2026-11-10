@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"crude/shellport"
@@ -11,6 +12,38 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 )
+
+func TestLiveEditorEmptyHistoryIsQuietAndKeepsEditing(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "history.txt")
+	if err := os.WriteFile(path, []byte("base"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, "http://127.0.0.1:1"), root)
+	ed := liveTestOpen(t, shell.app, path)
+	shell.app.setFocusEditor()
+	ed.SetCursorPosition(0, 4)
+	for _, key := range []tea.KeyPressMsg{
+		{Code: 'z', Mod: tea.ModCtrl}, // empty history
+		{Code: 'x', Text: "x"},
+		{Code: 'z', Mod: tea.ModCtrl},
+		{Code: 'z', Mod: tea.ModCtrl}, // empty again, without discarding redo
+		{Code: 'y', Mod: tea.ModCtrl},
+		{Code: 'y', Text: "y"},
+	} {
+		_, cmd := shell.app.Update(key)
+		runAppCommand(t, shell.app, cmd)
+		liveTestSync(t, shell.app)
+	}
+	if ed.Value() != "basexy" {
+		t.Fatalf("empty Undo blocked subsequent edit/redo: %q", ed.Value())
+	}
+	for _, notice := range shell.app.ws.Status().Notifications(false) {
+		if strings.Contains(strings.ToLower(notice.Summary), "undo") || strings.Contains(notice.Summary, "authors") {
+			t.Fatalf("empty Undo generated misleading feedback: %+v", notice)
+		}
+	}
+}
 
 func TestLiveEditorHistoryLogicalGroupsSurvivePacedAndBurstDispatch(t *testing.T) {
 	for _, paced := range []bool{true, false} {

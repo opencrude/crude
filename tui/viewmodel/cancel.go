@@ -19,7 +19,7 @@ func (m *App) handleCancel() tea.Cmd {
 		return nil
 	}
 	if m.Input.Value() != "" {
-		m.Input.ClearInput()
+		m.Input.ClearDraft()
 		return nil
 	}
 	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {

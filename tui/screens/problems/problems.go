@@ -101,9 +101,13 @@ type group struct {
 	worst              Severity
 }
 
-// row is a file row (problem < 0) or a problem row.
+// row is a file row (problem < 0) or one visual line of a problem.
+// The same projection owns painting, selection and pointer coordinates.
 type row struct {
 	group, problem int
+	line           int
+	text           string
+	expandable     bool
 }
 
 // Screen is the Problems pane.
@@ -117,6 +121,9 @@ type Screen struct {
 	groups    []group
 	rows      []row
 	collapsed map[string]bool
+	expanded  map[string]bool
+	columns   columns
+	listWidth int
 	query     string
 	inset     int
 	link      ui.Rect // the status action, screen-local
@@ -132,7 +139,7 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	ts := ui.NewTokenSet(th)
-	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ts, collapsed: map[string]bool{}}
+	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ts, collapsed: map[string]bool{}, expanded: map[string]bool{}}
 	s.filter = ui.NewFilterField(FilterID, ts)
 	s.filter.SetPlaceholder("Filter problems")
 	s.filter.SetPromptPlacement(ui.PromptEnd)
@@ -178,8 +185,10 @@ func (s *Screen) focusID(id ui.ComponentID) ui.EventResult {
 
 // SetDockHeaderInset keeps the header clear of the dock's own buttons.
 func (s *Screen) SetDockHeaderInset(width int) {
-	s.inset = max(0, width)
-	s.updateBand()
+	if width = max(0, width); s.inset != width {
+		s.inset = width
+		s.rebuild()
+	}
 }
 
 // PreferredFocus puts keys on the list: arrows move, Ctrl+C copies.
@@ -189,8 +198,16 @@ func (s *Screen) PreferredFocus() ui.ComponentID { return ListID }
 // is still reported.
 func (s *Screen) SetModel(model Model) {
 	key, ok := s.list.cursorKey()
+	s.rows = s.rows[:0]
 	s.model = model
 	s.groups = buildGroups(model.Problems)
+	retained := make(map[string]bool)
+	for _, p := range model.Problems {
+		if key := problemKey(p); s.expanded[key] {
+			retained[key] = true
+		}
+	}
+	s.expanded = retained
 	s.rebuild()
 	if ok {
 		s.list.selectKey(key)
@@ -247,6 +264,43 @@ func (s *Screen) matches(g group, p Problem) bool {
 }
 
 func (s *Screen) rebuild() {
+	key, selected := s.list.cursorKey()
+	s.updateBand()
+	width := max(0, s.Bounds().W-2*margin)
+	s.buildRows(width)
+	if len(s.rows) > max(0, s.Bounds().H-listTop-s.list.top) && width > 2 {
+		width -= 2
+		s.buildRows(width)
+	}
+	s.listWidth = width
+	s.list.clamp()
+	if selected {
+		s.list.selectKey(key)
+	}
+}
+
+func problemKey(p Problem) string {
+	return fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%s\x00%s", p.Path, p.Line, p.Col, p.Severity, p.Source, p.Message)
+}
+
+func (s *Screen) buildRows(width int) {
+	s.columns = columns{}
+	for _, g := range s.groups {
+		for _, p := range g.problems {
+			if s.matches(g, p) {
+				s.columns.position = max(s.columns.position, rendering.VisibleWidth(position(p)))
+				s.columns.tag = max(s.columns.tag, rendering.VisibleWidth(problemTag(p)))
+			}
+		}
+	}
+	s.columns.tag = min(s.columns.tag, 20)
+	if width < 60 {
+		s.columns.tag = 0
+	}
+	room := max(1, width-s.columns.position-6)
+	if s.columns.tag > 0 {
+		room = max(1, room-s.columns.tag-2)
+	}
 	s.rows = s.rows[:0]
 	for gi, g := range s.groups {
 		start := len(s.rows)
@@ -258,15 +312,31 @@ func (s *Screen) rebuild() {
 			}
 			shown++
 			if !s.collapsed[g.path] {
-				s.rows = append(s.rows, row{group: gi, problem: pi})
+				message := strings.Join(strings.Fields(p.Message), " ")
+				lines := []string{message}
+				if width > 0 {
+					lines = rendering.WordWrap(message, room)
+				}
+				if len(lines) == 0 {
+					lines = []string{""}
+				}
+				expandable := len(lines) > 3
+				count := len(lines)
+				if !s.expanded[problemKey(p)] {
+					count = min(count, 3)
+				}
+				for i, text := range lines[:count] {
+					if i == count-1 && count < len(lines) {
+						text = rendering.TruncateVisual(text, max(0, room-1), "") + "…"
+					}
+					s.rows = append(s.rows, row{group: gi, problem: pi, line: i, text: text, expandable: expandable})
+				}
 			}
 		}
 		if shown == 0 {
 			s.rows = s.rows[:start]
 		}
 	}
-	s.updateBand()
-	s.list.clamp()
 }
 
 // updateBand decides from the current width and model whether the status
@@ -284,7 +354,6 @@ func (s *Screen) updateBand() {
 	if s.band {
 		s.list.top = 1
 	}
-	s.list.scroll.SetViewport(max(0, s.list.Bounds().H-s.list.top))
 }
 
 func (s *Screen) headerSpan(width int) (left, right int) {
@@ -382,16 +451,17 @@ func filterWidth(width int) int {
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
+	changed := s.Bounds().W != r.W || s.Bounds().H != r.H
 	s.SetBounds(r)
-	innerW := max(0, r.W-2*margin)
+	if changed {
+		s.rebuild()
+	}
 	s.filter.Layout(ctx, ui.Rect{X: margin, W: filterWidth(r.W), H: min(1, r.H)})
 	listH := max(0, r.H-listTop)
-	s.list.scroll.SetContent(len(s.rows))
-	s.list.scroll.Clamp()
-	listW := innerW
-	if s.scrollbar.NeededForViewport(listH) && listW > 2 {
-		listW -= 2
-		s.scrollbar.Layout(ctx, ui.Rect{X: margin + listW, Y: listTop, W: 2, H: listH})
+	listW := s.listWidth
+	s.list.scroll.SetViewport(max(0, listH-s.list.top))
+	if s.scrollbar.Needed() && r.W-2*margin > 2 {
+		s.scrollbar.Layout(ctx, ui.Rect{X: margin + listW, Y: listTop + s.list.top, W: 2, H: max(0, listH-s.list.top)})
 	} else {
 		s.scrollbar.Layout(ctx, ui.Rect{})
 	}
@@ -652,8 +722,7 @@ func (l *list) rowKey(index int) string {
 	if r.problem < 0 {
 		return g.path
 	}
-	p := g.problems[r.problem]
-	return fmt.Sprintf("%s\x00%d\x00%d\x00%s", g.path, p.Line, p.Col, p.Message)
+	return problemKey(g.problems[r.problem])
 }
 
 func (l *list) cursorKey() (string, bool) {
@@ -672,7 +741,13 @@ func (l *list) selectKey(key string) {
 
 func (l *list) inSelection(index int) bool {
 	lo, hi := min(l.anchor, l.cursor), max(l.anchor, l.cursor)
-	return index >= lo && index <= hi
+	return index >= lo && index <= hi || l.sameProblem(index, lo) || l.sameProblem(index, hi)
+}
+
+func (l *list) sameProblem(a, b int) bool {
+	rows := l.owner.rows
+	return a >= 0 && b >= 0 && a < len(rows) && b < len(rows) &&
+		rows[a].group == rows[b].group && rows[a].problem == rows[b].problem
 }
 
 func (l *list) cursorProblem() (Problem, bool) {
@@ -735,7 +810,19 @@ func (l *list) toggle(index int, open bool) ui.EventResult {
 	if index < 0 || index >= len(l.owner.rows) {
 		return ui.EventResult{Handled: true}
 	}
-	path := l.owner.groups[l.owner.rows[index].group].path
+	r := l.owner.rows[index]
+	if r.problem >= 0 {
+		key := l.rowKey(index)
+		if !r.expandable || l.owner.expanded[key] == open {
+			return ui.EventResult{Handled: true}
+		}
+		l.owner.expanded[key] = open
+		l.owner.rebuild()
+		l.selectKey(key)
+		l.scroll.EnsureVisible(l.cursor)
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+	}
+	path := l.owner.groups[r.group].path
 	if l.owner.collapsed[path] == !open {
 		return ui.EventResult{Handled: true}
 	}
@@ -824,6 +911,10 @@ func (l *list) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			l.lastClickKey, l.lastClickAt = "", time.Time{}
 			return l.activate(l.cursor)
 		}
+		if ctx.LocalX < 2 && l.owner.rows[l.cursor].expandable {
+			l.lastClickKey, l.lastClickAt = "", time.Time{}
+			return l.toggle(l.cursor, !l.owner.expanded[l.rowKey(l.cursor)])
+		}
 		key, now := l.rowKey(l.cursor), time.Now()
 		if key != "" && key == l.lastClickKey && now.Sub(l.lastClickAt) <= 500*time.Millisecond {
 			l.lastClickKey, l.lastClickAt = "", time.Time{}
@@ -869,9 +960,20 @@ func (l *list) handleKey(evt ui.Event) ui.EventResult {
 	}
 	switch key.Code {
 	case tea.KeyUp:
-		return l.move(l.cursor-1, shift)
+		index := l.cursor - 1
+		for index >= 0 && l.sameProblem(index, l.cursor) {
+			index--
+		}
+		for index > 0 && l.owner.rows[index].line > 0 {
+			index--
+		}
+		return l.move(index, shift)
 	case tea.KeyDown:
-		return l.move(l.cursor+1, shift)
+		index := l.cursor + 1
+		for index < len(l.owner.rows) && l.sameProblem(index, l.cursor) {
+			index++
+		}
+		return l.move(index, shift)
 	case tea.KeyPgUp:
 		return l.move(l.cursor-max(1, l.scroll.Viewport()-1), shift)
 	case tea.KeyPgDown:
@@ -880,13 +982,21 @@ func (l *list) handleKey(evt ui.Event) ui.EventResult {
 		return l.move(0, shift)
 	case tea.KeyEnd:
 		return l.move(len(l.owner.rows)-1, shift)
-	case tea.KeyEnter, tea.KeySpace:
+	case tea.KeyEnter:
+		return l.activate(l.cursor)
+	case tea.KeySpace:
+		if r := l.cursor; r >= 0 && r < len(l.owner.rows) && l.owner.rows[r].problem >= 0 {
+			return l.toggle(r, !l.owner.expanded[l.rowKey(r)])
+		}
 		return l.activate(l.cursor)
 	case tea.KeyRight:
 		return l.toggle(l.cursor, true)
 	case tea.KeyLeft:
 		if l.cursor >= 0 && l.cursor < len(l.owner.rows) {
 			if r := l.owner.rows[l.cursor]; r.problem >= 0 {
+				if l.owner.expanded[l.rowKey(l.cursor)] {
+					return l.toggle(l.cursor, false)
+				}
 				// Left from a problem goes to its file row.
 				l.selectKey(l.owner.groups[r.group].path)
 				l.scroll.EnsureVisible(l.cursor)
@@ -909,25 +1019,6 @@ func (l *list) handleKey(evt ui.Event) ui.EventResult {
 // tags and positions line up.
 type columns struct{ tag, position int }
 
-func (l *list) columns(width int) columns {
-	var c columns
-	end := min(len(l.owner.rows), l.scroll.Offset()+l.scroll.Viewport())
-	for index := l.scroll.Offset(); index < end; index++ {
-		r := l.owner.rows[index]
-		if r.problem < 0 {
-			continue
-		}
-		p := l.owner.groups[r.group].problems[r.problem]
-		c.tag = max(c.tag, rendering.VisibleWidth(problemTag(p)))
-		c.position = max(c.position, rendering.VisibleWidth(position(p)))
-	}
-	c.tag = min(c.tag, 20)
-	if width < 60 {
-		c.tag = 0
-	}
-	return c
-}
-
 func problemTag(p Problem) string {
 	if p.Note != "" {
 		return p.Note
@@ -948,15 +1039,15 @@ func (l *list) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	if len(l.owner.rows) == 0 {
 		return
 	}
-	cols := l.columns(r.W)
+	cols := l.owner.columns
 	end := min(len(l.owner.rows), l.scroll.Offset()+r.H-l.top)
 	for index := l.scroll.Offset(); index < end; index++ {
 		y := y0 + l.top + index - l.scroll.Offset()
 		rowBg := bg
 		switch {
-		case l.inSelection(index) && (ctx.Focused || index == l.cursor):
+		case l.inSelection(index) && (ctx.Focused || l.sameProblem(index, l.cursor)):
 			rowBg = t.Color(ui.ColorSelection)
-		case index == l.hover:
+		case l.sameProblem(index, l.hover):
 			rowBg = t.Color(ui.ColorHover)
 		}
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x0, Y: y, W: r.W, H: 1}, cell.BlankCell(rowBg))
@@ -970,7 +1061,7 @@ func (l *list) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 			l.paintFile(buf, x0, y, r.W, g, rowBg, attr)
 			continue
 		}
-		l.paintProblem(buf, x0, y, r.W, g.problems[row.problem], cols, rowBg, attr)
+		l.paintProblem(buf, x0, y, r.W, g.problems[row.problem], row, cols, rowBg, attr)
 	}
 }
 
@@ -1013,13 +1104,24 @@ func (l *list) paintFile(buf *surface.CellBuffer, x, y, width int, g group, bg c
 
 // Problem rows: severity glyph and message under the file name; the tag and
 // position columns are right-aligned and shared by every visible row.
-func (l *list) paintProblem(buf *surface.CellBuffer, x, y, width int, p Problem, cols columns, bg cell.Color, attr cell.Attrs) {
+func (l *list) paintProblem(buf *surface.CellBuffer, x, y, width int, p Problem, row row, cols columns, bg cell.Color, attr cell.Attrs) {
 	t := l.owner.tokens
 	glyphX := x + 2
-	buf.WriteString(glyphX, y, severityGlyph(p.Severity), t.Color(severityRole(p.Severity)), bg, 0)
+	if row.line == 0 {
+		if row.expandable {
+			chevron := t.Glyphs().TreeCollapsed
+			if l.owner.expanded[problemKey(p)] {
+				chevron = t.Glyphs().TreeExpanded
+			}
+			buf.WriteString(x, y, chevron, t.Color(ui.ColorAccent2), bg, 0)
+		}
+		buf.WriteString(glyphX, y, severityGlyph(p.Severity), t.Color(severityRole(p.Severity)), bg, 0)
+	}
 	posX := x + width - cols.position
 	pos := position(p)
-	buf.WriteString(posX+cols.position-rendering.VisibleWidth(pos), y, pos, t.Color(ui.ColorMuted), bg, 0)
+	if row.line == 0 {
+		buf.WriteString(posX+cols.position-rendering.VisibleWidth(pos), y, pos, t.Color(ui.ColorMuted), bg, 0)
+	}
 	tagX := posX
 	if cols.tag > 0 {
 		tagX = posX - 2 - cols.tag
@@ -1028,7 +1130,9 @@ func (l *list) paintProblem(buf *surface.CellBuffer, x, y, width int, p Problem,
 		if p.Note != "" {
 			role = ui.ColorWarning
 		}
-		buf.WriteString(tagX, y, tag, t.Color(role), bg, 0)
+		if row.line == 0 {
+			buf.WriteString(tagX, y, tag, t.Color(role), bg, 0)
+		}
 	}
 	messageX := glyphX + 2
 	room := max(0, tagX-2-messageX)
@@ -1036,8 +1140,7 @@ func (l *list) paintProblem(buf *surface.CellBuffer, x, y, width int, p Problem,
 	if p.Note != "" {
 		ink = ui.ColorMuted
 	}
-	message := strings.Join(strings.Fields(p.Message), " ")
-	buf.WriteString(messageX, y, rendering.TruncateVisual(message, room, "…"), t.Color(ink), bg, attr)
+	buf.WriteString(messageX, y, rendering.TruncateVisual(row.text, room, "…"), t.Color(ink), bg, attr)
 }
 
 func (l *list) Semantics() ui.Semantics {

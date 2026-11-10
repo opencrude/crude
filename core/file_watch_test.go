@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -250,6 +251,72 @@ func TestCoreFileWatchAdmissionFailureStaysUnreliable(t *testing.T) {
 	for state := range states {
 		if state {
 			t.Fatal("failed admission claimed restored observation")
+		}
+	}
+}
+
+// A build or package manager can remove a directory between its create event
+// and recursive watch admission. That is not permanent loss of the workspace.
+func TestCoreFileWatchVanishedDirectoryRestoresObservation(t *testing.T) {
+	root := t.TempDir()
+	transient := filepath.Join(root, "transient")
+	states := make(chan bool, 32)
+	changes := make(chan watchNotification, 32)
+	removed := make(chan error, 1)
+	var armed atomic.Bool
+	w, err := startCoreFileWatch(root, nil, func(_ context.Context, path string, kind int) {
+		changes <- watchNotification{path, kind}
+	}, func(reliable bool) {
+		if !reliable && armed.CompareAndSwap(true, false) {
+			removed <- os.Remove(transient)
+		}
+		states <- reliable
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	<-w.ready
+	if first, second := <-states, <-states; first || !second {
+		t.Fatalf("startup reliability = %v, %v", first, second)
+	}
+	armed.Store(true)
+	if err := os.Mkdir(transient, 0700); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-removed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("directory was not removed at the admission boundary")
+	}
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case reliable := <-states:
+			if reliable {
+				goto recovered
+			}
+		case <-deadline.C:
+			t.Fatal("a vanished child directory permanently disabled language-server observation")
+		}
+	}
+recovered:
+	path := filepath.Join(root, "later.go")
+	if err := os.WriteFile(path, []byte("package later\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		select {
+		case change := <-changes:
+			if change.path == path && change.kind == 1 {
+				return
+			}
+		case <-deadline.C:
+			t.Fatal("recovered observation did not deliver the next source change")
 		}
 	}
 }

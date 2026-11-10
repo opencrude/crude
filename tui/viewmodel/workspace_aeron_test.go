@@ -15,8 +15,8 @@ import (
 )
 
 // The workspace's Aeron is created once per attachment, never takes the user's
-// tab, and stays in the Agents panel with a state the user can read.
-func TestWorkspaceAeronIsEnsuredOnceAndListedIdle(t *testing.T) {
+// tab, and opens from the header instead of the ordinary Agents collection.
+func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 	app, port := projectToolsTestApp(t, 120, 36)
 	port.onEnsure = func() {
 		//nolint:staticcheck // The wrapper is not a *local; unwrap its embedded workspace.
@@ -48,21 +48,32 @@ func TestWorkspaceAeronIsEnsuredOnceAndListedIdle(t *testing.T) {
 	if !app.AgentView.IsHidden("aeron-agent") {
 		t.Fatal("the workspace Aeron took the user's tab")
 	}
-	row := findSidebarAgent(t, app, "aeron-agent")
-	if row.Label != "Aeron" || row.Detail != "idle" {
-		t.Fatalf("Aeron row does not report its state: %#v", row)
-	}
+	requireAeronAbsentFromAgentList(t, app)
 	app.setActivity(activityAgents, true)
 	app.paintShellFrame()
 	paint := ansi.Strip(app.View().RenderContent())
-	if !strings.Contains(paint, "Aeron") || !strings.Contains(paint, "idle") {
-		t.Fatalf("the Agents panel does not paint the idle Aeron:\n%s", paint)
+	if !strings.Contains(paint, "Open workspace Aeron") {
+		t.Fatalf("the header does not expose workspace Aeron:\n%s", paint)
+	}
+	openAeronHeader(t, app)
+	if app.AgentView.ActiveID() != "aeron-agent" || app.AgentView.IsHidden("aeron-agent") {
+		t.Fatal("the header did not restore the existing workspace Aeron")
 	}
 	if again := app.ensureWorkspaceAeron(); again != nil {
 		t.Fatal("a second ensure would create or resume the agent again")
 	}
 	if len(port.roles) != 1 {
 		t.Fatalf("a second ensure created another agent: %v", port.roles)
+	}
+}
+
+func requireAeronAbsentFromAgentList(t *testing.T, app *App) {
+	t.Helper()
+	for _, row := range app.agentSidebarItems() {
+		if row.Label == "Aeron" || row.ID == "aeron:workspace" ||
+			strings.HasPrefix(row.ID, "agent:") && app.isAeronAgent(strings.TrimPrefix(row.ID, "agent:")) {
+			t.Fatalf("workspace Aeron remains in the ordinary agent list: %+v", row)
+		}
 	}
 }
 

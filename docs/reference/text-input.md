@@ -13,6 +13,12 @@ shared control, never to one popup.
   Ctrl/Super shortcuts, copy/cut, bracketed paste, owner-keyed async Ctrl+V,
   multi-click selection, and captured outside drag with autoscroll. Add behavior
   there, never to one popup.
+- Explicit clear actions use `ClearWithHistory`, one reversible edit in the
+  native history. Composer Escape, unselected Ctrl+C and menu Clear/Cut preserve
+  the earlier undo chain and attachment identity restrictions. Filter Escape
+  uses the same reversible contract and notifies its collection on clear,
+  undo and redo. Submission and replacement content still reset history.
+  Switching draft owners keeps each owner's retained history separate.
 - Overlays whose text outlives their rebuilt frames (editor find/replace, the
   command palette filter, tree create/rename prompts) bind the frame's field to
   their retained `TextEdit` with `TextField.BindEdit`; keys and bracketed pastes

@@ -118,7 +118,7 @@ func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	if len(items) < 1 || items[0].ID != sidebarItemNewAgent || !items[0].Command {
 		t.Fatalf("new agent command=%#v", items)
 	}
-	if len(items) != 5 || items[1].ID != sidebarItemAeron {
+	if len(items) != 4 {
 		t.Fatalf("items=%#v", items)
 	}
 	if row := findSidebarAgent(t, app, "root"); row.Depth != 0 || row.Label != "Main Agent" {
@@ -149,15 +149,15 @@ func TestAgentSidebarFoldsAndUnfoldsSubtree(t *testing.T) {
 	app.handleHostAction(&ui.Action{ID: activitylist.ActionToggleFold, Payload: parent})
 	folded := app.agentSidebarItems()
 	parent = findSidebarAgent(t, app, "root")
-	if len(folded) != 3 || !parent.Folded || !strings.Contains(parent.Detail, "+2") {
+	if len(folded) != 2 || !parent.Folded || !strings.Contains(parent.Detail, "+2") {
 		t.Fatalf("folded parent must hide both children and count them: %#v", folded)
 	}
-	if got := sidebarCountBadge(folded); got != "2" {
+	if got := sidebarCountBadge(folded); got != "1" {
 		t.Fatalf("badge counts visible rows only, got %q", got)
 	}
 
 	app.handleHostAction(&ui.Action{ID: activitylist.ActionToggleFold, Payload: parent})
-	if again := app.agentSidebarItems(); len(again) != 5 || findSidebarAgent(t, app, "root").Folded {
+	if again := app.agentSidebarItems(); len(again) != 4 || findSidebarAgent(t, app, "root").Folded {
 		t.Fatalf("unfold must restore the children: %#v", again)
 	}
 }

@@ -127,6 +127,15 @@ func (t *TextField) SetValue(s string) {
 	t.cursor.MarkActivity()
 }
 
+// ClearWithHistory lets Undo restore the text, cursor and selection.
+func (t *TextField) ClearWithHistory() {
+	t.CancelPointerCapture()
+	t.edit.ClearWithHistory()
+	t.viewStart = 0
+	t.viewReset = false
+	t.cursor.MarkActivity()
+}
+
 // Value returns the field value.
 func (t *TextField) Value() string { return t.edit.Value() }
 

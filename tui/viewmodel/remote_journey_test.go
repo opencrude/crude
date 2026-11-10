@@ -358,7 +358,7 @@ func TestRemoteAppJourneyPeerRootFocusAndWorkspaceSwitch(t *testing.T) {
 	assertAgentIsPaintedView(t, one.app, id)
 }
 
-func TestRemoteWorkspaceAeronIsEnsuredListedAndIdle(t *testing.T) {
+func TestRemoteWorkspaceAeronIsEnsuredAndKeptOutOfAgentList(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
@@ -377,9 +377,9 @@ func TestRemoteWorkspaceAeronIsEnsuredListedAndIdle(t *testing.T) {
 	if !shell.app.AgentView.IsHidden(id) {
 		t.Fatal("the workspace Aeron took the user's tab")
 	}
-	row := findSidebarAgent(t, shell.app, id)
-	if row.Label != "Aeron" || row.Detail != "idle" {
-		t.Fatalf("Aeron row does not report its state: %#v", row)
+	requireAeronAbsentFromAgentList(t, shell.app)
+	if shell.app.agentStatus(id) != "idle" {
+		t.Fatal("ensuring Aeron unexpectedly started work")
 	}
 	if again := shell.app.workspaceAeronTick(time.Now()); again != nil {
 		t.Fatal("a second tick created or resumed the workspace Aeron again")

@@ -12,8 +12,7 @@ import (
 	"crude/workspace"
 )
 
-// sidebarItemAeron is the Agents row shown until the core returns Aeron.
-const sidebarItemAeron = "aeron:workspace"
+const workspaceAeronAction = "workspace-aeron"
 
 const (
 	// The workspace agent is background inventory. The shell opens it after it
@@ -48,7 +47,7 @@ func (m *App) isAeronAgent(id string) bool {
 
 // agentLabel is the shell's one display name for an agent. The workspace's
 // Aeron root is always "Aeron", not its generated session name, so its tab,
-// Agents row, notices, tooltip and prompts name the same agent.
+// header, notices, tooltip and prompts name the same agent.
 func (m *App) agentLabel(node *workspace.AgentNode) string {
 	if node != nil && node.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[node.ID]) {
 		return "Aeron"
@@ -56,21 +55,7 @@ func (m *App) agentLabel(node *workspace.AgentNode) string {
 	return workspace.AgentDisplayLabel(node)
 }
 
-// aeronStatus is the one state text of the permanent Aeron row. Before the
-// core returns Aeron, it says whether it is starting or needs setup.
-func (m *App) aeronStatus() string {
-	if m.aeronEnsureFailed {
-		return "needs setup"
-	}
-	id := m.workspaceAeronAgent()
-	if m.ws == nil || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(id) == nil {
-		return "starting"
-	}
-	return m.agentStatus(id)
-}
-
-// agentStatus is the short user text of an agent's state, shared by the Aeron
-// row and agent tab tooltips.
+// agentStatus is the short user text of an agent's state for tab tooltips.
 func (m *App) agentStatus(id string) string {
 	activity := m.ws.AgentActivity(id)
 	switch activity.Status.Phase {
