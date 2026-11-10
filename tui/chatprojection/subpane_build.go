@@ -169,7 +169,7 @@ func (r *Renderer) BuildSubPaneToolLines(messages []*types.ChatMessage, width, f
 			continue
 		}
 		active = active || toolRowFrameSensitive(*msg)
-		body := renderProjectToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12, msg.ToolPreviewPhase, DisclosureCollapsed, r.projectPaths)
+		body := renderProjectToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12, msg.ToolPreviewPhase, r.disclosureState(msg), r.projectPaths)
 		for _, line := range body.native {
 			lines = append(lines, NativeLine(padPaintLine(line, width)))
 		}

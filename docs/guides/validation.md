@@ -254,6 +254,25 @@ change.
 
 ## Visual capture
 
+### File-tree delete and visible file changes
+
+`CRUDE_VISUAL_FILE_CHANGES=progress` holds a disposable delete at its safety-copy
+boundary. Delete, then Y, starts the real command. F4 observes its footer phase;
+F3 releases the fixture; F4 checks the completed delete; F9 exits. Capture
+160x40 and 80x24 sequentially and inspect the moving separator in both.
+
+`TestFileChangesVisualAcceptance` uses `CRUDE_VISUAL_FILE_CHANGES=delete` or
+`chat` with a compiled viewmodel test binary and `scripts/tuishot.sh`.
+Capture each mode sequentially at 160x40 and 80x24. Delete mode starts with a
+selected folder inside a dot-folder on a real connected core. Use Delete,
+Escape, Delete and `y` to cancel once and then delete. F4 only observes that
+the folder is absent from disk and the loaded tree. Chat mode shows the current
+plan, a write, an edit and a patch without disclosure clicks; F4 checks their
+retained bodies. Scroll the narrow transcript to inspect its first rows.
+Finish with `quit:F9`; the test requires the observation and a clean exit.
+This is local Linux rendered acceptance, not distinct-host or native Windows
+and macOS evidence.
+
 ### Live agent-wait acceptance
 
 `app/live_agent_wait_test.go` is opt-in actual-model acceptance with

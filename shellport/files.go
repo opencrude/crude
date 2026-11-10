@@ -41,7 +41,7 @@ type Files interface {
 	// DeletePath removes a file or directory at the given path. Directories are
 	// removed recursively. The path must be absolute and under the workspace root.
 	// The result is returned directly to the caller.
-	DeletePath(path string) workspace.FileOperationResultMsg
+	DeletePath(ctx context.Context, path string, progress func(string)) workspace.FileOperationResultMsg
 	// ApplyWorkspaceEdit applies a set of text edits to files on disk.
 	// Language edits instead use the immutable ReviewedEdits capability.
 	// The result is returned directly to the caller.

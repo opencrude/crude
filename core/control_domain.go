@@ -3,10 +3,12 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 
 	"crude/coreprotocol"
+	"crude/document"
 	"crude/types/control"
 	"crude/workspace"
 )
@@ -76,6 +78,9 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 	}
 	request, paths, err := a.controlDomainPaths(request, root)
 	if err != nil {
+		if errors.Is(err, document.ErrNotFound) {
+			return controlFailure(in, control.Unavailable, err.Error())
+		}
 		return controlFailure(in, control.Denied, err.Error())
 	}
 	if in.CommandID == "session.list" {

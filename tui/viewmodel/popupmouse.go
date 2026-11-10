@@ -549,7 +549,7 @@ func (m *App) clickTreeDeleteConfirm(localX, localY int) tea.Cmd {
 	}
 	m.TreeDeleteChoice = choice
 	if choice == 0 {
-		m.confirmTreeDelete()
+		return m.confirmTreeDelete()
 	} else {
 		m.cancelTreeDelete()
 	}

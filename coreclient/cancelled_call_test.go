@@ -163,7 +163,7 @@ func TestCallCancellableWaitsForAdmissionNotProgress(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
 	go func() {
-		result <- c.callCancellable(ctx, "exact-workspace", "read", &coreprotocol.Empty{}, nil, 40*time.Millisecond)
+		result <- c.callCancellable(ctx, "exact-workspace", "read", &coreprotocol.Empty{}, nil, 40*time.Millisecond, nil)
 	}()
 	original := <-opened
 	cancel()
@@ -191,7 +191,7 @@ func TestCallCancellableUncooperativeProviderBounded(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
 	go func() {
-		result <- c.callCancellable(ctx, "exact-workspace", "read", &coreprotocol.Empty{}, nil, 80*time.Millisecond)
+		result <- c.callCancellable(ctx, "exact-workspace", "read", &coreprotocol.Empty{}, nil, 80*time.Millisecond, nil)
 	}()
 	original := <-opened
 	start := time.Now()

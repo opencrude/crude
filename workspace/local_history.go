@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -33,7 +34,12 @@ func (s *DocumentService) WithHistoryMutation(ctx context.Context, paths []strin
 			if !documentUnder(path, d.snapshot.Path) {
 				continue
 			}
-			if d.snapshot.Dirty || d.snapshot.Conflict || d.diskIntent != nil || d.relocation != nil {
+			// Removing a saved file preserves its clean document as recovery
+			// evidence. That removal conflict must not prevent Local History
+			// from restoring it. Actual unsaved text and intents stay protected.
+			_, diskErr := os.Lstat(d.snapshot.Path)
+			missing := os.IsNotExist(diskErr)
+			if d.snapshot.Dirty || d.snapshot.Conflict && !missing || d.diskIntent != nil || d.relocation != nil {
 				return fmt.Errorf("retained document %s must be saved/reconciled before history mutation", d.snapshot.Path)
 			}
 			changed = append(changed, d.snapshot.ID)

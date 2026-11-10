@@ -97,6 +97,7 @@ type App struct {
 	ContextMenuOpenedAt       time.Time
 	TextPrompt                *ui.TextPromptState
 	TreeDeletePending         string
+	treeDeletes               []*treeDeleteOperation
 	treeMovePending           *treeMoveRequest
 	treeClip                  *treeClipboard
 	treeLastMove              *treeMove

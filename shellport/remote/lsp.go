@@ -82,6 +82,10 @@ func (l *lspReplica) query(ctx context.Context, method string, input coreprotoco
 // cancellation/join owner. A cleanup error is returned with any known result,
 // never converted into a fresh request or a second exchange implementation.
 func (w *Workspace) callCancellable(ctx context.Context, method string, input coreprotocol.Value, out coreprotocol.Target) error {
+	return w.callCancellableWithProgress(ctx, method, input, out, nil)
+}
+
+func (w *Workspace) callCancellableWithProgress(ctx context.Context, method string, input coreprotocol.Value, out coreprotocol.Target, progress func(string)) error {
 	client, id := w.conn()
 	if client == nil {
 		return errDisconnected
@@ -105,7 +109,7 @@ func (w *Workspace) callCancellable(ctx context.Context, method string, input co
 			<-cancelled
 		}
 	}()
-	err := client.CallCancellable(ctx, id, method, input, out)
+	err := client.CallCancellableWithProgress(ctx, id, method, input, out, progress)
 	var uncertain *coreclient.UncertainError
 	if errors.As(err, &uncertain) {
 		// Some older slice-only port methods cannot return errors. Preserve the

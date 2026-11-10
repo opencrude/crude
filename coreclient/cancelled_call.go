@@ -20,10 +20,16 @@ const cancelledCallCleanupTimeout = 5 * time.Second
 // boundary returns UncertainError with the original identity, never a replay
 // under another identity or attachment.
 func (c *Client) CallCancellable(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target) error {
-	return c.callCancellable(ctx, workspaceID, method, in, out, cancelledCallCleanupTimeout)
+	return c.CallCancellableWithProgress(ctx, workspaceID, method, in, out, nil)
 }
 
-func (c *Client) callCancellable(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target, cleanupTimeout time.Duration) error {
+// CallCancellableWithProgress retains the same exact request and joined cleanup
+// while delivering its intermediate evidence. Progress is not a final outcome.
+func (c *Client) CallCancellableWithProgress(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target, progress func(string)) error {
+	return c.callCancellable(ctx, workspaceID, method, in, out, cancelledCallCleanupTimeout, progress)
+}
+
+func (c *Client) callCancellable(ctx context.Context, workspaceID, method string, in coreprotocol.Value, out coreprotocol.Target, cleanupTimeout time.Duration, progress func(string)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -51,7 +57,7 @@ func (c *Client) callCancellable(ctx context.Context, workspaceID, method string
 			seenAdmission = true
 			close(admitted)
 		}
-	})
+	}, progress)
 	close(finished)
 	cancelErr := <-helperDone // no cancellation helper or timer outlives the call
 	if cancelErr != nil {
@@ -110,7 +116,7 @@ func (c *Client) cancelRead(caller, run context.Context, cancelRun context.Cance
 	}
 	var result coreprotocol.BoolResult
 	err := c.callJoined(cleanup, workspaceID, coreprotocol.CancelRequest, randomID(),
-		&coreprotocol.CancelRequestPayload{RequestID: id}, &result, nil)
+		&coreprotocol.CancelRequestPayload{RequestID: id}, &result, nil, nil)
 	if err == nil && result.Error != "" {
 		err = errors.New(result.Error)
 	}
@@ -144,8 +150,8 @@ func joinedAfterFunc(ctx context.Context, fn func()) func() {
 
 // callJoined reuses ordinary command exchange with a confirmed-release boundary.
 // A known final result is never reattached after possible server release.
-func (c *Client) callJoined(ctx context.Context, workspaceID, method, id string, in coreprotocol.Value, out coreprotocol.Target, admitted func()) error {
-	_, err := c.callWith(ctx, workspaceID, method, in, out, CallOptions{ID: id},
+func (c *Client) callJoined(ctx context.Context, workspaceID, method, id string, in coreprotocol.Value, out coreprotocol.Target, admitted func(), progress func(string)) error {
+	_, err := c.callWith(ctx, workspaceID, method, in, out, CallOptions{ID: id, Progress: progress},
 		commandBoundary{admitted: admitted, acknowledge: func(s corewire.Stream, reader *corewire.Reader) error {
 			return acknowledgeReadResult(ctx, s, reader)
 		}})

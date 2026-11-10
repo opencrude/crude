@@ -48,8 +48,20 @@ func (s *DocumentService) MutateFiles(ctx context.Context, op FileOperation, pat
 			if !documentUnder(path, d.snapshot.Path) {
 				continue
 			}
+			if op == FileOpDelete && d.diskIntent == nil && d.relocation == nil {
+				// A missing file's checkpoint is recovery data, not a child
+				// on disk. Deleting its parent does not discard that text.
+				if _, err := os.Lstat(d.snapshot.Path); os.IsNotExist(err) {
+					continue
+				}
+				// Watcher timing cannot decide whether a saved file is
+				// deletable. Verify its current disk state before testing flags.
+				if err := s.reconcileLocked(d.snapshot.ID); err != nil {
+					return fail(err)
+				}
+			}
 			if op != FileOpDelete || d.snapshot.Dirty || d.snapshot.Conflict || d.diskIntent != nil || d.relocation != nil {
-				return fail(fmt.Errorf("cannot %s %s: retained shared work must be saved/reconciled first", op, path))
+				return fail(fmt.Errorf("cannot %s %s: open %s and save or reload its changes first", op, path, d.snapshot.Path))
 			}
 			changed = append(changed, d.snapshot.ID)
 		}

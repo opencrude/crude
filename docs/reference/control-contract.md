@@ -25,6 +25,9 @@ same retained preimage and reviewed writer as the editor. `document.reload`
 changes canonical text from saved bytes, not disk, and preserves replaced text
 in author undo. Pathless edits have no invented file claim; first save acquires
 the destination claim. The ordinary result/receipt rules still apply.
+`document.read` takes a returned document ID, not a native path. An unknown
+ID reports an unavailable document with an instruction to open the file; it is
+not a permission denial or evidence that the disk file does not exist.
 A descriptor's presence does not prove every product component supports every
 verb. Inspect live availability and exact schemas; unsupported controls fail
 explicitly. [Managed executions](managed-executions.md) describes isolation and

@@ -90,8 +90,7 @@ func TestShellchatPaintsDiffToolBodyNative(t *testing.T) {
 		ToolStatus: "success",
 		Time:       time.Now(),
 	})
-	// File mutations keep their tinted diff behind explicit disclosure.
-	r.ToggleDisclosure("edit-1")
+	// File mutations show their tinted diff without a disclosure click.
 	rows, paneMap, _ := r.ExportMessageRows(80)
 
 	compose := shellchat.ComposeParams{

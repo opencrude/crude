@@ -41,6 +41,8 @@ type Segment struct {
 type Projection struct {
 	Left  []Segment
 	Right []Segment
+	// Progress animates the existing separator without inventing a percentage.
+	Progress bool
 }
 
 type ActionMsg struct {
@@ -62,40 +64,43 @@ type Screen struct {
 	leftFit    segmentFit
 	rightFit   segmentFit
 	ranked     []Segment
+	progress   *ui.ProgressRule
 }
 
 func New(th *theme.Theme, _ *ui.ActionRegistry) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
-	return &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th)}
+	tokens := ui.NewTokenSet(th)
+	return &Screen{Base: ui.NewBase(ScreenID), tokens: tokens, progress: ui.NewProgressRule("shell/footer/progress", tokens)}
 }
 
 func (s *Screen) Children() []ui.Component { return nil }
 func (s *Screen) SetProjection(projection Projection) bool {
-	changed := !slices.Equal(s.projection.Left, projection.Left) || !slices.Equal(s.projection.Right, projection.Right)
+	changed := !slices.Equal(s.projection.Left, projection.Left) || !slices.Equal(s.projection.Right, projection.Right) || s.projection.Progress != projection.Progress
 	s.projection = projection
+	s.progress.SetActive(projection.Progress)
 	return changed
 }
-func (s *Screen) SetTokens(tokens *ui.TokenSet) { s.tokens = tokens }
+func (s *Screen) SetTokens(tokens *ui.TokenSet) { s.tokens = tokens; s.progress.SetTokens(tokens) }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: 2})
 }
 
-func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) { s.SetBounds(r) }
+func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
+	s.SetBounds(r)
+	s.progress.Layout(ctx, ui.Rect{W: r.W, H: min(1, r.H)})
+}
 
-func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
+func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	r := s.Bounds()
 	if r.Empty() || buf == nil {
 		return
 	}
 	bg := s.tokens.Color(ui.ColorBg)
-	divider := s.tokens.Color(ui.ColorBorder)
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	for x := 0; x < r.W; x++ {
-		buf.Set(ox+r.X+x, oy+r.Y, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
-	}
+	s.progress.Paint(buf, ox+r.X, oy+r.Y, ctx)
 	leftRail, rightRail := ui.ShellContentRail(s.tokens, r.W)
 	innerW := rightRail - leftRail
 	s.hits = s.hits[:0]

@@ -18,6 +18,7 @@ var (
 	ErrRequest  = errors.New("document request ID reused with different payload")
 	ErrOverlap  = errors.New("document undo overlaps later work")
 	ErrLimit    = errors.New("document limit exceeded")
+	ErrNotFound = errors.New("document ID is not loaded. Open the file and use the returned document ID")
 )
 
 type Owner struct {

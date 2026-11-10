@@ -319,6 +319,13 @@ These limits are not evidence of VS Code or JetBrains parity.
   parent never recreates it or authorizes a save. Directory removal/rename drops
   its stale watches and reconciles descendants; reopening a recreated directory
   registers a fresh watch. Invalid durable storage still fails closed.
+   File-tree deletion verifies current disk bytes before checking saved/conflict
+   state. A restored saved preimage clears its stale conflict. Missing descendant
+   checkpoints do not veto deletion of their parent; their text, savepoint and
+   undo history remain recoverable after deletion and restart. Existing files
+   with unsaved work still stop deletion and the error names the file to open.
+   Local History can restore a deleted saved file despite its removal conflict;
+   unsaved text and active disk intents remain protected.
   Directory watches include their ancestors up to the workspace root because
   Windows reports a directory's rename to its parent, not to the watched contents.
 

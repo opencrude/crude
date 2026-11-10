@@ -9,7 +9,7 @@ import (
 )
 
 func TestSettledResultsDefaultToTitleOnlyAndRetainExpandedEvidence(t *testing.T) {
-	for _, name := range []string{"read_file", "edit_file", "write_file", "apply_patch", "agent_send", "mcp__test__read", "get_plan"} {
+	for _, name := range []string{"read_file", "agent_send", "mcp__test__read"} {
 		t.Run(name, func(t *testing.T) {
 			r := newActivityRenderer()
 			message := types.ChatMessage{InternalID: "result", Role: types.RoleTool, ToolName: name,

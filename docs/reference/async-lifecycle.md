@@ -28,6 +28,15 @@ subprocess rather than a process-name search.
   `ApplyLocalMutation`; only real background watcher events use
   `ProcessWatcherEvent`. Backend agent events enter the TUI through its FIFO
   message pump so session teardown never waits on the active `Update`.
+  File-tree delete confirmation returns a joined, cancellable command. Safety
+  snapshots and deletion run off Update through the original core attachment.
+  Intermediate phases use the same request's progress stream and a coalesced
+  shell-owned channel. The footer shows the phase and shared animated progress
+  rule, not a fabricated percentage. Completion removes progress on success or
+  failure; workspace generations discard stale progress and final results.
+  Only a current owner/generation result changes tabs or tree rows. Connected
+  success explicitly reloads the affected parent through the core browse port,
+  including dot-folders; it never relies on watcher delivery or client disk.
 - **Clipboard and picker I/O never run in `Update`.** Clipboard requests use
   the App-owned FIFO worker and carry an editor/session/find-replace owner plus
   generation; image reference persistence is a separate command.

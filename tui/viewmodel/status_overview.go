@@ -125,13 +125,18 @@ func (m *App) configureFooterScreen() {
 		return
 	}
 	left, right := m.footerHelpSegments(), m.footerStatusSegments()
+	progress := false
+	if label := m.treeDeleteProgress(); label != "" {
+		left = []shellfooter.Segment{{Text: label, Role: ui.ColorAccent}}
+		progress = true
+	}
 	if status := m.remoteWorkspaceSwitchStatus(); status != "" {
 		left = []shellfooter.Segment{{Text: status, Role: ui.ColorWarning}}
 		// Switching temporarily owns input. Do not spend the whole constrained
 		// footer on inactive dock controls while hiding its cancel instruction.
 		right = nil
 	}
-	if m.footerScreen.SetProjection(shellfooter.Projection{Left: left, Right: right}) {
+	if m.footerScreen.SetProjection(shellfooter.Projection{Left: left, Right: right, Progress: progress}) || progress {
 		m.rootHost.MarkComponentPaint(m.footerScreen.ID())
 	}
 }

@@ -326,7 +326,7 @@ func (s *DocumentService) Snapshot(id string) (document.Snapshot, error) {
 	}
 	d := s.docs[id]
 	if d == nil {
-		return document.Snapshot{}, os.ErrNotExist
+		return document.Snapshot{}, document.ErrNotFound
 	}
 	return cloneDocument(d.snapshot), nil
 }

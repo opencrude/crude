@@ -1,9 +1,11 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"crude/shellport"
 
@@ -12,6 +14,7 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/workspace"
 )
 
 // pathUnderMouse resolves a file tree path from a screen Y.
@@ -396,7 +399,7 @@ func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case tea.KeyEnter:
 		if m.TreeDeleteChoice == 0 {
-			m.confirmTreeDelete()
+			return m.confirmTreeDelete()
 		} else {
 			m.cancelTreeDelete()
 		}
@@ -419,8 +422,7 @@ func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "y", "Y":
 		m.TreeDeleteChoice = 0
-		m.confirmTreeDelete()
-		return nil
+		return m.confirmTreeDelete()
 	case "n", "N":
 		m.cancelTreeDelete()
 		return nil
@@ -428,36 +430,130 @@ func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-func (m *App) confirmTreeDelete() {
+type treeDeleteResultMsg struct {
+	owner      shellport.Workspace
+	generation uint64
+	path       string
+	result     workspace.FileOperationResultMsg
+	operation  *treeDeleteOperation
+}
+
+type treeDeleteOperation struct {
+	owner      shellport.Workspace
+	generation uint64
+	path       string
+	phase      string
+	progress   chan string
+}
+
+// Progress is presentation-only and coalesced. Only Update installs its latest
+// phase; the worker never mutates shell state or waits for a UI acknowledgement.
+func (op *treeDeleteOperation) report(phase string) {
+	select {
+	case op.progress <- phase:
+	default:
+		select {
+		case <-op.progress:
+		default:
+		}
+		select {
+		case op.progress <- phase:
+		default:
+		}
+	}
+}
+
+func (m *App) drainTreeDeleteProgress() {
+	active := m.treeDeletes[:0]
+	for _, op := range m.treeDeletes {
+		if op.owner != m.ws || op.generation != m.workspaceSwitchGen.Load() {
+			continue
+		}
+		select {
+		case op.phase = <-op.progress:
+		default:
+		}
+		active = append(active, op)
+	}
+	m.treeDeletes = active
+}
+
+func (m *App) treeDeleteProgress() string {
+	for _, op := range m.treeDeletes {
+		if op.owner == m.ws && op.generation == m.workspaceSwitchGen.Load() {
+			label := op.phase + " " + filepath.Base(op.path)
+			if len(m.treeDeletes) > 1 {
+				label += fmt.Sprintf(" · %d deletions", len(m.treeDeletes))
+			}
+			return label
+		}
+	}
+	return ""
+}
+
+func (m *App) confirmTreeDelete() tea.Cmd {
 	if m.GitDiscardPending != nil {
 		if m.gitDiscardPreview == nil {
 			m.Feedback.NotifyError("Exact discard preview is still loading; no files changed")
-			return
+			return nil
 		}
 		preview := *m.gitDiscardPreview
 		m.overlayHost.Close(ui.OverlayTreeDelete)
 		m.startSourceControlMutation(m.discardGitChange(preview))
-		return
+		return nil
 	}
 	path := m.TreeDeletePending
 	m.overlayHost.Close(ui.OverlayTreeDelete)
 	if path == "" {
-		return
+		return nil
 	}
-	msg := m.ws.DeletePath(path)
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
+	op := &treeDeleteOperation{owner: owner, generation: generation, path: path, phase: "Preparing to delete", progress: make(chan string, 1)}
+	m.treeDeletes = append(m.treeDeletes, op)
+	return m.clientIOCommand(context.Background(), func(ctx context.Context) tea.Msg {
+		// A large safety copy can legitimately take minutes. The shell's I/O
+		// owner cancels and joins this request at a lifecycle boundary.
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+		return treeDeleteResultMsg{owner: owner, generation: generation, path: path, result: owner.DeletePath(ctx, path, op.report), operation: op}
+	})
+}
+
+func (m *App) applyTreeDeleteResult(done treeDeleteResultMsg) tea.Cmd {
+	for i, op := range m.treeDeletes {
+		if op == done.operation {
+			m.treeDeletes = append(m.treeDeletes[:i], m.treeDeletes[i+1:]...)
+			break
+		}
+	}
+	if m.asyncIOStopped.Load() || done.owner != m.ws || done.generation != m.workspaceSwitchGen.Load() {
+		return nil
+	}
+	path, msg := done.path, done.result
 	if !msg.Succeeded() {
 		m.Feedback.NotifyError("delete " + filepath.Base(path) + ": " + msg.Err.Error())
-		return
+		return nil
 	}
-	m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
-		Type: filetree.FileDeleted, Path: path,
-	})
-	// If the deleted file was open in an editor, close the tab.
-	if tab, ok := m.EditorState.Tabs[path]; ok {
-		m.closeEditorTabForce(tab.Path)
+	var refresh tea.Cmd
+	if m.Tree != nil && m.Tree.Model != nil {
+		if _, connected := m.ws.(shellport.ClientFiles); connected {
+			// A remote tree cannot reload client disk. Refresh the affected
+			// directory explicitly, including dot-folders, without a watcher.
+			refresh = m.Tree.Model.RequestRemoteDirectory(filepath.Dir(path))
+		} else {
+			m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{Type: filetree.FileDeleted, Path: path})
+		}
+	}
+	// Folder deletion also retires the editors of its descendants.
+	for tabPath := range m.EditorState.Tabs {
+		rel, err := filepath.Rel(path, tabPath)
+		if tabPath == path || msg.IsDir && err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			m.closeEditorTabForce(tabPath)
+		}
 	}
 	m.closeImageTabsUnder(path)
 	m.Feedback.NotifyInfo("Deleted " + filepath.Base(path))
+	return refresh
 }
 
 func (m *App) cancelTreeDelete() {

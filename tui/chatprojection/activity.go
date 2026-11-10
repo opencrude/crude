@@ -367,6 +367,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		}
 	}
 	r.activityFlat, r.activityFlatStart = messages, starts
+	flatFrom = r.invalidateRelatedPlanRows(messages, flatFrom, changed)
 	// First flat index of each tool round. Prefix entries stay exact; an entry
 	// at or after flatFrom is re-established on its first sight in this build.
 	// A stale entry for a vanished round is only ever a conservative bound.
