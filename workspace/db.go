@@ -330,8 +330,9 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 		       first_prompt, last_prompt, (SELECT name FROM workspace_agent_names n WHERE n.session_id = workspace_sessions.session_id)
 		FROM workspace_sessions
 		WHERE db_missing = 0
+		  AND session_id != COALESCE((SELECT value FROM workspace_metadata WHERE key = ?), '')
 		ORDER BY created_at DESC
-	`)
+	`, workspaceAeronSessionKey)
 	if err != nil {
 		return nil, err
 	}

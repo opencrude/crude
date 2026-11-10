@@ -57,6 +57,9 @@ type Welcome struct {
 	// LocalHost is immutable admission provenance, not a carrier guess. SSH and
 	// direct sessions never gain local host administration when they resume.
 	LocalHost bool `json:"local_host"`
+	// CoreBuildID is the actual native core image, not the source cohort
+	// agreed above and not an assumption about the attaching shell image.
+	CoreBuildID string `json:"core_build_id"`
 }
 
 // SessionEnd is the core's last message on the control stream: the session

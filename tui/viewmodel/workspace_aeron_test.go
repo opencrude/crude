@@ -9,6 +9,7 @@ import (
 
 	"crude/provider"
 	"crude/shellport"
+	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
@@ -50,11 +51,13 @@ func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 	}
 	requireAeronAbsentFromAgentList(t, app)
 	app.setActivity(activityAgents, true)
+	app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	app.paintShellFrame()
 	paint := ansi.Strip(app.View().RenderContent())
 	if !strings.Contains(paint, "Open workspace Aeron") {
-		t.Fatalf("the header does not expose workspace Aeron:\n%s", paint)
+		t.Fatalf("the panel header does not expose workspace Aeron:\n%s", paint)
 	}
+	app.hideWorkspacePanel()
 	openAeronHeader(t, app)
 	if app.AgentView.ActiveID() != "aeron-agent" || app.AgentView.IsHidden("aeron-agent") {
 		t.Fatal("the header did not restore the existing workspace Aeron")

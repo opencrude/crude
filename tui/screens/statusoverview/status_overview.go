@@ -30,6 +30,7 @@ const (
 	UtilityActionsID ui.ComponentID = "status-overview/actions/utility"
 	PrimaryActionsID ui.ComponentID = "status-overview/actions/primary"
 	ListScrollID     ui.ComponentID = "status-overview/list-scroll"
+	HeaderLinkID     ui.ComponentID = "status-overview/header-link"
 )
 
 const expandedDetailIndent = 4
@@ -73,8 +74,9 @@ type Item struct {
 }
 
 type Projection struct {
-	Views  map[ViewID][]Item
-	Active ViewID
+	Views                     map[ViewID][]Item
+	Active                    ViewID
+	HeaderAction, HeaderLabel string
 }
 
 type NavigateMsg struct {
@@ -102,6 +104,7 @@ type Surface struct {
 	tokens          *ui.TokenSet
 	views           *ui.Tabs
 	search          *searchControl
+	headerLink      *headerLinkControl
 	list            *listControl
 	utilityActions  *ui.ActionBar
 	primaryActions  *ui.ActionBar
@@ -160,6 +163,9 @@ func newSurface(th *theme.Theme, projection Projection, docked, stats bool) *Sur
 		s.search.field.SetPlaceholder("Search agents, files and previous sessions")
 	}
 	s.search.field.SetSubmitAction("")
+	s.headerLink = &headerLinkControl{ActionLink: ui.NewActionLink(HeaderLinkID, "", "status.header"), owner: s}
+	s.headerLink.SetTokens(tokens)
+	s.headerLink.SetVariant(ui.VariantSecondary)
 	// Search inputs use the shared filter fill everywhere, docked or not:
 	// a field painted in the panel colour reads as plain text.
 	s.search.field.SetBackgroundColor(ui.FilterSurface(tokens))
@@ -199,6 +205,9 @@ func (s *Surface) Children() []ui.Component {
 		children = append(children, s.views)
 	}
 	children = append(children, s.search)
+	if s.docked && s.projection.HeaderAction != "" {
+		children = append(children, s.headerLink)
+	}
 	children = append(children, s.list)
 	if s.listScroll.Needed() {
 		children = append(children, s.listScroll)
@@ -218,6 +227,7 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 	// a field painted in the panel colour reads as plain text.
 	s.search.field.SetBackgroundColor(ui.FilterSurface(tokens))
 	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
+	s.headerLink.SetTokens(tokens)
 	s.list.list.SetTokens(tokens)
 	s.listScroll.SetTokens(tokens)
 	s.utilityActions.SetTokens(tokens)
@@ -240,6 +250,7 @@ func (s *Surface) focusID(id ui.ComponentID) {
 
 func (s *Surface) SetProjection(projection Projection) {
 	s.projection = projection
+	s.headerLink.SetLabel(projection.HeaderLabel)
 	if projection.Active != "" {
 		s.activeView = projection.Active
 	}
@@ -519,6 +530,21 @@ func (s *Surface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.docked && s.dockHeaderInset > 0 {
 		searchW = min(innerW, max(0, r.W-s.dockHeaderInset-innerX-1))
 	}
+	s.headerLink.Layout(ctx, ui.Rect{})
+	if s.docked && s.projection.HeaderAction != "" {
+		linkW := s.headerLink.Measure(ctx, ui.Loose(innerW, 1)).W
+		if searchW >= linkW+22 {
+			linkX := innerX + searchW - linkW
+			searchW = min(48, max(20, searchW-linkW-2))
+			s.headerLink.Layout(ctx, ui.Rect{X: linkX, Y: topY, W: linkW, H: min(1, contentH)})
+		} else {
+			// Constrained panels keep the complete action on the next row,
+			// just as Problems moves its status links below the search.
+			listOffset++
+			listH = max(0, contentH-listOffset)
+			s.headerLink.Layout(ctx, ui.Rect{X: innerX, Y: topY + 2, W: min(innerW, linkW), H: min(1, max(0, contentH-2))})
+		}
+	}
 	s.search.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: searchW, H: min(1, contentH)})
 	listW := innerW
 	showScroll := s.listScroll.NeededForViewport(listH)
@@ -705,6 +731,10 @@ func (s *Surface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResu
 			s.FocusSearch()
 		}
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ViewChangedMsg{View: s.activeView} }, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+	case "status.header":
+		if action := s.projection.HeaderAction; action != "" {
+			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return NavigateMsg{Action: action} }}
+		}
 	case "tabs.enter":
 		s.FocusSearch()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
@@ -827,7 +857,11 @@ func (s *searchControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintC
 func (s *searchControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	result := s.field.Handle(ctx, evt)
 	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
-		s.owner.FocusList()
+		if s.owner.docked && s.owner.projection.HeaderAction != "" && !evt.Key.Mod.Contains(tea.ModShift) {
+			s.owner.focusID(HeaderLinkID)
+		} else {
+			s.owner.FocusList()
+		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	s.owner.query = s.field.Value()
@@ -836,6 +870,23 @@ func (s *searchControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult
 	return result
 }
 func (s *searchControl) Semantics() ui.Semantics { return s.field.Semantics() }
+
+type headerLinkControl struct {
+	*ui.ActionLink
+	owner *Surface
+}
+
+func (l *headerLinkControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
+		if evt.Key.Mod.Contains(tea.ModShift) {
+			l.owner.FocusSearch()
+		} else {
+			l.owner.FocusList()
+		}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	}
+	return l.ActionLink.Handle(ctx, evt)
+}
 
 type listControl struct {
 	ui.Base
@@ -912,7 +963,9 @@ func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 	}
 	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
-		if l.owner.docked || l.owner.stats || evt.Key.Mod.Contains(tea.ModShift) {
+		if l.owner.docked && l.owner.projection.HeaderAction != "" && evt.Key.Mod.Contains(tea.ModShift) {
+			l.owner.focusID(HeaderLinkID)
+		} else if l.owner.docked || l.owner.stats || evt.Key.Mod.Contains(tea.ModShift) {
 			l.owner.FocusSearch()
 		} else if l.owner.utilityActions.Bounds().W > 0 {
 			l.owner.FocusUtilityActions()

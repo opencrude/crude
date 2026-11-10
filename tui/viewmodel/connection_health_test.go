@@ -158,6 +158,40 @@ func TestConnectionHealthHoverLiveDetailsAndFocus(t *testing.T) {
 	}
 }
 
+func TestConnectionDetailsShowDistinctNativeBuilds(t *testing.T) {
+	app, w := newConnectionHealthApp(t)
+	app.tuiBuildID = "0123456789abcdef"
+	w.status.CoreBuildID = "fedcba9876543210"
+	app.openConnectionHover(app.connectionWordmarkRect())
+	for _, want := range []string{"TUI build", "0123456789abcdef", "Core build", "fedcba9876543210"} {
+		if text := connectionPopoverText(app); !strings.Contains(text, want) {
+			t.Fatalf("connection details lost %q:\n%s", want, text)
+		}
+	}
+	w.status.State = "reconnecting"
+	app.syncConnectionHover()
+	if text := connectionPopoverText(app); !strings.Contains(text, "last connection") {
+		t.Fatal("stale native core build was presented as a current observation", text)
+	}
+	w.status.CoreBuildID = ""
+	app.syncConnectionHover()
+	if text := connectionPopoverText(app); !strings.Contains(text, "Not observed") || strings.Contains(text, "fedcba9876543210") {
+		t.Fatal("missing core build was fabricated or kept from a different connection", text)
+	}
+}
+
+func TestConnectedConnectionDetailsUsesServerImage(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	runtime.SetBuildID("c0dec0dec0dec0de")
+	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+	shell.app.paintShellFrame()
+	shell.app.openConnectionHover(shell.app.connectionWordmarkRect())
+	text := connectionPopoverText(shell.app)
+	if len(shell.app.tuiBuildID) != 16 || !strings.Contains(text, "c0dec0dec0dec0de") || !strings.Contains(text, shell.app.tuiBuildID) {
+		t.Fatal("live connected popover did not show both independent image identities", text)
+	}
+}
+
 func TestConnectionHealthDismissalAndLifetimeBoundaries(t *testing.T) {
 	for _, scenario := range []string{"leave", "escape", "outside", "modal", "workspace", "replacement", "capture", "tiny"} {
 		t.Run(scenario, func(t *testing.T) {

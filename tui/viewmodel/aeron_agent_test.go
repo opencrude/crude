@@ -13,6 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/session"
+	"crude/tui/screens/statusoverview"
+	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 )
 
@@ -30,13 +32,15 @@ func aeronToolReply(w http.ResponseWriter, name string, arguments any, round int
 // Click the actually painted header link, not a direct restore helper.
 func openAeronHeader(t *testing.T, app *App) {
 	t.Helper()
-	app.paintShellFrame()
-	bounds := app.headerScreen.ActionBounds("workspace-aeron")
-	if bounds.Empty() {
-		t.Fatal("Open workspace Aeron is not visible in the header")
+	if !app.panelShown(termdock.PanelWorkspace) {
+		app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	}
-	header := app.headerScreen.Bounds()
-	_, cmd := app.Update(tea.MouseClickMsg{X: header.X + bounds.X, Y: header.Y + bounds.Y, Button: tea.MouseLeft})
+	app.paintShellFrame()
+	bounds, ok := app.screenRectOf(statusoverview.HeaderLinkID)
+	if !ok || bounds.Empty() {
+		t.Fatal("Open workspace Aeron is not visible in the Workspace panel header")
+	}
+	_, cmd := app.Update(tea.MouseClickMsg{X: bounds.X + 1, Y: bounds.Y, Button: tea.MouseLeft})
 	runAppCommand(t, app, cmd)
 }
 

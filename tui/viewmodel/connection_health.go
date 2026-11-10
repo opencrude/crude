@@ -18,13 +18,14 @@ import (
 const slowCoreRoundTrip = 250 * time.Millisecond
 
 type connectionHealth struct {
-	name   string
-	status shellport.RemoteStatus
-	brand  shellheader.ConnectionState
+	name       string
+	status     shellport.RemoteStatus
+	brand      shellheader.ConnectionState
+	tuiBuildID string
 }
 
 func (m *App) connectionHealth() connectionHealth {
-	h := connectionHealth{name: m.remoteBackendName(), status: shellport.RemoteStatus{State: "connected", Carrier: "local"}}
+	h := connectionHealth{name: m.remoteBackendName(), status: shellport.RemoteStatus{State: "connected", Carrier: "local"}, tuiBuildID: m.tuiBuildID}
 	if link, ok := m.ws.(shellport.BackendLink); ok {
 		h.status = link.BackendStatus()
 	}
@@ -89,7 +90,11 @@ func (h connectionHealth) projection() connectionpopover.Projection {
 			rtt += " · last observation"
 		}
 	}
-	p.Detail = fmt.Sprintf("Connection   %s\nState        %s\nTransport    %s\nRound trip   %s\n\n%s", h.name, state, carrier, rtt, guidance)
+	coreBuild := firstNonempty(h.status.CoreBuildID, "Not observed")
+	if h.status.State != "connected" && h.status.CoreBuildID != "" {
+		coreBuild += " · last connection"
+	}
+	p.Detail = fmt.Sprintf("Connection   %s\nState        %s\nTransport    %s\nRound trip   %s\nTUI build    %s\nCore build   %s\n\n%s", h.name, state, carrier, rtt, firstNonempty(h.tuiBuildID, "Not available"), coreBuild, guidance)
 	if h.status.Notice != "" {
 		p.Detail += "\n\n" + h.status.Notice
 	}

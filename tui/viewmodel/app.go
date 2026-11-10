@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/buildinfo"
 	"crude/history"
 	"crude/provider"
 	"crude/sessiondb"
@@ -64,6 +65,7 @@ const (
 type Logger = workspace.Logger
 type App struct {
 	ws                   shellport.Workspace
+	tuiBuildID           string
 	shellControlRevision uint64
 	shellControlStamp    [32]byte
 	shellControlPending  int
@@ -483,6 +485,7 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 
 	app := &App{
 		ws:                  ws,
+		tuiBuildID:          buildinfo.ExecutableID(),
 		AgentView:           NewAgentViewState(ws.AgentMgr()),
 		FocusStack:          NewFocusStack(),
 		ModelName:           ws.InitialModelName(),

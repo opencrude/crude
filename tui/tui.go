@@ -8,6 +8,7 @@ import (
 
 	"crude/agent"
 	"crude/clientstate"
+	"crude/crashlog"
 	"crude/shellport"
 
 	tea "charm.land/bubbletea/v2"
@@ -311,6 +312,7 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 		tea.WithWidthMethod(ansi.GraphemeWidth),
 		tea.WithWidthProbe(rendering.TerminalWidthProbeCorpus()...),
 		tea.WithObserver(observer),
+		tea.WithPanicHandler(crashlog.Recovered),
 	)
 	t.app = a
 	t.Program = program

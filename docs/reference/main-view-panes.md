@@ -369,10 +369,14 @@ ownership are all retained. A stray click must never destroy work in flight.
 - The workspace Aeron is permanent. Each attachment ensures exactly one after
   startup settles and a quiet period without user work; it arrives minimized
   and never takes the user's tab by itself. It is not an ordinary Agents row
-  and does not count toward that sidebar badge. **Open workspace Aeron** in the
-  header opens its existing normal agent tab with the normal chat, composer
+  and does not count toward that sidebar badge or the Workspace panel's agent
+  list. **Open workspace Aeron** in the **Workspace panel header**, beside its
+  search, opens its existing normal agent tab with the normal chat, composer
   and status bar. Its tab retains the usual window and minimize actions.
-  Before the core has returned it, opening the header link waits and opens the tab when it
+  The application header has no Aeron link. Narrow panels move the link to a
+  compact row below search, like Problems. Tab reaches it from search; Enter
+  and pointer activation use the same navigation and return focus to the composer.
+  Before the core has returned it, opening the panel link waits and opens the tab when it
   arrives; a failed start opens Aeron's settings. Aeron is permanent, so it has
   no Terminate action. Reopening the workspace resumes the saved identity even
   before its first task. The core supplies automatic approval only when it

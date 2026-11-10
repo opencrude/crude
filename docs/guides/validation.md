@@ -320,9 +320,29 @@ and run it through `scripts/tuishot.sh` with `CRUDE_BIN`/`CRUDE_ARGS`, at
 press F4 (the painted tooltip shows the absolute path). F3 releases Aeron's
 question; F4 checks that it is a modal over the unchanged tab and draft.
 Click the modal's **Cancel**, then F4 checks that it closed. F5 shows the
-Agents panel; click **Open workspace Aeron** in the header; F4 checks its normal
+Workspace panel; click **Open workspace Aeron** in its panel header; F4 checks its normal
 agent tab. F9 exits. `CRUDE_AERON_VISUAL_RESULT` receives
 `AERON_VISUAL_SUCCESS` or the failed phase and its state.
+
+`TestAeronPanelAndBuildsVisualAcceptance` (`CRUDE_VISUAL_AERON_PANEL=1`) checks
+the corrected panel placement and connection version reader. Run it sequentially
+at 160x40 and 80x24. F2 opens Workspace, F3 observes the underlined panel link and absence
+of Aeron/Naveen rows and application-header links. Tab/Enter or the pointer opens
+the existing Aeron; F4 verifies its normal composer. F5 restores the main draft.
+Move the pointer away, then hover the Crude wordmark; F6 verifies both distinct
+native build hashes. F9 checks all observations and writes `CRUDE_VISUAL_PROOF`.
+The TUI hash is the actual test image; the core hash is controlled fixture data.
+`TestWorkspacePanelLinkMatchesProblems` compares actual link cells across
+dark/light themes and constrained widths. The shared `ActionLink` regression
+also checks that idle, hovered and focused labels stay underlined.
+`TestConnectedConnectionDetailsUsesServerImage` separately checks propagation
+from a real core handshake through the remote port into the painted reader.
+
+`go test ./crashlog -count=1` runs genuine subprocess fatal/recovered crashes
+and checks report contents, private permissions and normal-exit cleanup.
+`TestCoreFatalCrashReportAtCLIEntry` also sends a fatal signal to one exact
+disposable core launched through the production CLI. It never uses the user's
+core. See [process crash reports](../reference/crash-reports.md) for limits.
 
 ### Shared regression repair acceptance
 

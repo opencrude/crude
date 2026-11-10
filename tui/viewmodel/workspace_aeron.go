@@ -80,6 +80,9 @@ func (m *App) agentStatus(id string) string {
 // core has returned it, the request waits and the tab opens when it arrives.
 // A failed start opens Aeron's settings, where the cause can be fixed.
 func (m *App) openWorkspaceAeron() tea.Cmd {
+	// This is an explicit user navigation. The panel must not retain the
+	// keyboard after it opens the agent's normal composer.
+	m.setFocusInput()
 	if id := m.workspaceAeronAgent(); id != "" {
 		m.restoreAgent(id)
 		return nil

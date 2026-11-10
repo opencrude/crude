@@ -17,6 +17,13 @@ import (
 //	p := NewProgram(model, WithInput(someInput), WithOutput(someOutput))
 type ProgramOption func(*Program)
 
+// WithPanicHandler observes recovered panics before terminal cleanup. The
+// handler must be concurrency-safe and must not panic. Normal panic reporting
+// and terminal restoration still run. The stack belongs to the panic site.
+func WithPanicHandler(handler func(any, []byte)) ProgramOption {
+	return func(p *Program) { p.panicHandler = handler }
+}
+
 // WithContext lets you specify a context in which to run the Program. This is
 // useful if you want to cancel the execution from outside. When a Program gets
 // cancelled it will exit with an error ErrProgramKilled.

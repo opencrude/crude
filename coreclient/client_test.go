@@ -25,6 +25,7 @@ type fakeCore struct {
 	gone    bool
 	hellos  []coreprotocol.Hello
 	carrier []*corewire.Mux
+	buildID string
 }
 
 func (f *fakeCore) serve(conn net.Conn) {
@@ -49,8 +50,9 @@ func (f *fakeCore) serve(conn net.Conn) {
 		f.mu.Lock()
 		f.hellos = append(f.hellos, hello)
 		gone := f.gone
+		buildID := f.buildID
 		f.mu.Unlock()
-		welcome := coreprotocol.Welcome{Owner: coreprotocol.Owner{ClientID: hello.ClientID, Epoch: 7}, SessionID: "session", Secret: "secret", Schema: coreprotocol.Schema, Build: hello.Build, Grace: 5 * time.Second, Resumed: hello.Resume != nil}
+		welcome := coreprotocol.Welcome{Owner: coreprotocol.Owner{ClientID: hello.ClientID, Epoch: 7}, SessionID: "session", Secret: "secret", Schema: coreprotocol.Schema, Build: hello.Build, Grace: 5 * time.Second, Resumed: hello.Resume != nil, CoreBuildID: buildID}
 		if gone && hello.Resume != nil {
 			welcome = coreprotocol.Welcome{Fault: &coreprotocol.Fault{Code: "session_gone", Message: "expired"}}
 		}

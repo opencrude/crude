@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crude/buildinfo"
+	"crude/crashlog"
 	"crude/insight/catalog"
 	"encoding/json"
 	"flag"
@@ -272,6 +273,19 @@ func Main() int {
 		fmt.Println(buildinfo.VersionString())
 		return 0
 	}
+	if role := crashReportRole(flags); role != "" {
+		home, err := buildinfo.Home()
+		if err == nil {
+			var report *crashlog.Report
+			report, err = crashlog.Start(home, role)
+			if err == nil {
+				defer report.Finish()
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Could not enable crash reports. Check the Crude data folder: %v\n", err)
+		}
+	}
 	// Every Crude process (core and shells) reads the same catalog: the
 	// embedded data plus the packs in the data folder. A pack that does not
 	// validate is skipped; the core logs it.
@@ -351,6 +365,17 @@ func Main() int {
 		return 1
 	}
 	return 0
+}
+
+func crashReportRole(flags CLIFlags) string {
+	if flags.Core {
+		return "core"
+	}
+	if flags.CoreStatus || flags.CoreStop || flags.CoreStdio || flags.CoreHandoverIdentity ||
+		flags.MCP || flags.ListSessions || flags.DeleteSession != "" {
+		return ""
+	}
+	return "tui"
 }
 
 // handleCoreCommands runs the core process routes. It reports whether the
