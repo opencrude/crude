@@ -115,7 +115,7 @@ func (f *FilterField) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 func (f *FilterField) Handle(ctx EventContext, evt Event) EventResult {
 	if evt.IsKey() && evt.Key.Code == tea.KeyEsc {
 		if f.field.Edit().Len() > 0 {
-			f.field.SetValue("")
+			f.field.ClearWithHistory()
 			if f.onChange != nil {
 				f.onChange("")
 			}

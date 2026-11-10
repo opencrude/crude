@@ -64,6 +64,28 @@ func TestDocumentServiceInterleavedUndoRedo(t *testing.T) {
 	}
 	documentText(t, s, snap.ID, "ALPHA beta GAMMA!")
 }
+
+func TestDocumentEmptyHistoryIsAnAcceptedNoOp(t *testing.T) {
+	s, initial, owner, peer := documentFixture(t, "original")
+	for _, redo := range []bool{false, true} {
+		var receipt document.Receipt
+		var err error
+		if redo {
+			receipt, err = s.Redo(owner, initial.ID, "empty-redo", initial.Revision)
+		} else {
+			receipt, err = s.Undo(owner, initial.ID, "empty-undo", initial.Revision)
+		}
+		if err != nil || !receipt.Accepted || receipt.Before != initial.Revision || receipt.Revision != initial.Revision {
+			t.Fatalf("empty history was reported as an error or changed revision: %+v %v", receipt, err)
+		}
+	}
+	edit := documentEdit(t, s, peer, initial.ID, "peer", initial.Revision, 0, 8, "peer text")
+	receipt, err := s.Undo(owner, initial.ID, "empty-after-peer", edit.Revision)
+	if err != nil || !receipt.Accepted || receipt.Revision != edit.Revision {
+		t.Fatalf("empty author history affected peer work: %+v %v", receipt, err)
+	}
+	documentText(t, s, initial.ID, "peer text")
+}
 func TestDocumentServiceUndoRebasesShiftAndRejectsOverlap(t *testing.T) {
 	s, snap, a, b := documentFixture(t, "one two three")
 	r := documentEdit(t, s, a, snap.ID, "a1", 1, 8, 13, "THREE")

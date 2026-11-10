@@ -24,6 +24,40 @@ func TestCodeToolsDescribesPreparedTreeDigest(t *testing.T) {
 	}
 }
 
+func TestLanguageToolsWheelReadingSurvivesPointerLeaveAndRefresh(t *testing.T) {
+	for _, size := range []ui.Size{{W: 160, H: 40}, {W: 80, H: 24}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			m, s, _ := codeToolsFixture(t)
+			s.lsp.project.SetChecked(false)
+			s.lsp.installed.SetChecked(false)
+			s.lsp.all.SetChecked(true)
+			s.lsp.filterTouched = true
+			s.lsp.refreshRows()
+			host := ui.NewHost(theme.DefaultDark(), s)
+			host.Resize(size.W, size.H)
+			host.Layout()
+			rect, ok := host.ScreenRect(s.lsp.table.ID())
+			if !ok || s.lsp.table.Scroll().MaxOffset() == 0 {
+				t.Fatal("language tools collection is not mounted and scrollable")
+			}
+			for range 4 {
+				host.Handle(tea.MouseWheelMsg{X: rect.X + 2, Y: rect.Y + 2, Button: tea.MouseWheelDown})
+			}
+			before := s.lsp.table.Scroll().Offset()
+			if before == 0 {
+				t.Fatal("the real Settings list did not scroll")
+			}
+			host.Handle(tea.MouseMotionMsg{X: 1, Y: 1})
+			s.SetModel(m)
+			host.MarkLayout()
+			host.Layout()
+			if got := s.lsp.table.Scroll().Offset(); got != before {
+				t.Fatalf("leaving/refreshing Language Tools reset scroll: %d -> %d", before, got)
+			}
+		})
+	}
+}
+
 func TestLanguageToolsManagedDetailsScrollInMountedSettings(t *testing.T) {
 	m, s, _ := codeToolsFixture(t)
 	for index, row := range s.lsp.table.Rows() {

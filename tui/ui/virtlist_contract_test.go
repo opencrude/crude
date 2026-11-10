@@ -142,8 +142,7 @@ func TestScrollModelShouldAutoScrollContract(t *testing.T) {
 	}
 }
 
-// TestVirtualListSelectionAnchorsScrollContract documents default selection-anchored
-// scroll vs paint-only lists that preserve user offset when auto-scroll is disarmed.
+// Explicit selection reveals its row; passive refresh never undoes wheel reading.
 func TestVirtualListSelectionAnchorsScrollContract(t *testing.T) {
 	items := []VirtItem{
 		{ID: "a", Height: 1, Label: "a"},
@@ -158,7 +157,7 @@ func TestVirtualListSelectionAnchorsScrollContract(t *testing.T) {
 		{ID: "j", Height: 1, Label: "j"},
 	}
 
-	t.Run("default_anchoring_setitems_reveals_selection", func(t *testing.T) {
+	t.Run("default_anchoring_refresh_keeps_reading_position", func(t *testing.T) {
 		list := NewVirtualList("contract", nil)
 		if !list.SelectionAnchorsScroll() {
 			t.Fatal("default should anchor selection to scroll")
@@ -172,11 +171,12 @@ func TestVirtualListSelectionAnchorsScrollContract(t *testing.T) {
 			t.Fatal("setup: need non-zero offset")
 		}
 		list.SetItems(items)
-		if list.Scroll().Offset() == want {
-			t.Fatalf("default anchoring should reveal index 0, offset=%d want != %d", list.Scroll().Offset(), want)
+		if list.Scroll().Offset() != want {
+			t.Fatalf("refresh moved the reading position: offset=%d want %d", list.Scroll().Offset(), want)
 		}
+		list.EnsureSelectedVisible()
 		if list.Scroll().Offset() != 0 {
-			t.Fatalf("default anchoring should scroll to selected item start, offset=%d", list.Scroll().Offset())
+			t.Fatalf("explicit reveal did not show the selected item: offset=%d", list.Scroll().Offset())
 		}
 	})
 

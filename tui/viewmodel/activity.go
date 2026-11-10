@@ -132,7 +132,12 @@ func (m *App) refreshActivityList() {
 		if m.ws.AgentMgr() != nil {
 			// Counts every agent the panel lists, minimized included:
 			// that badge is how a backgrounded agent stays discoverable.
-			m.activityBar.SetBadge(activityAgents, m.ws.AgentMgr().Count())
+			count := m.ws.AgentMgr().Count()
+			if aeron := m.ws.AgentMgr().Get(m.workspaceAeronAgent()); aeron != nil {
+				descendants, _ := agentSubtreeSummary(aeron)
+				count -= 1 + descendants
+			}
+			m.activityBar.SetBadge(activityAgents, count)
 		}
 	}
 	nerd := panelchrome.NerdFont(m.Theme)
@@ -175,11 +180,6 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		Icon:    "+",
 		Command: true,
 	}}
-	aeronID := m.workspaceAeronAgent()
-	if aeronID == "" {
-		items = append(items, ui.ListItem{ID: sidebarItemAeron, Label: "Aeron", Icon: "◆",
-			Detail: m.aeronStatus()})
-	}
 	if m.ws.AgentMgr() == nil {
 		return items
 	}
@@ -190,7 +190,6 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			return
 		}
 		label := m.agentLabel(n)
-		aeron := n.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[n.ID])
 		if label == "" {
 			if n.IsOrchestrator() {
 				label = "Main Agent"
@@ -212,9 +211,7 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		}
 		// Minimized agents stay listed here: this panel is how they come
 		// back, so the row has to say the tab is gone, not that the agent is.
-		if aeron {
-			detail = m.aeronStatus()
-		} else if m.AgentView.IsHidden(n.ID) {
+		if m.AgentView.IsHidden(n.ID) {
 			switch {
 			case n.IsCompleted():
 				icon = "✓"
@@ -262,11 +259,8 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 			appendTree(child, depth+1, i == len(n.Children)-1)
 		}
 	}
-	if aeronID != "" {
-		appendTree(m.ws.AgentMgr().Get(aeronID), 0, len(roots) == 1)
-	}
 	for i, root := range roots {
-		if root.ID != aeronID {
+		if !workspace.SessionIsAeron(m.ws.SessionsByAgent()[root.ID]) {
 			appendTree(root, 0, i == len(roots)-1)
 		}
 	}
@@ -325,8 +319,6 @@ func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
 		return m.handleRemoteSidebar(item)
 	}
 	switch {
-	case item.ID == sidebarItemAeron:
-		return m.openWorkspaceAeron()
 	case item.ID == sidebarItemNewWorkspace:
 		if m.activityView == activityWorkspaces && m.sidebarHostVisible() {
 			m.openFolderPicker()

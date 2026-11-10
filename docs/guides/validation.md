@@ -320,9 +320,27 @@ and run it through `scripts/tuishot.sh` with `CRUDE_BIN`/`CRUDE_ARGS`, at
 press F4 (the painted tooltip shows the absolute path). F3 releases Aeron's
 question; F4 checks that it is a modal over the unchanged tab and draft.
 Click the modal's **Cancel**, then F4 checks that it closed. F5 shows the
-Agents panel; Home, Down and Enter open Aeron's row; F4 checks its normal
+Agents panel; click **Open workspace Aeron** in the header; F4 checks its normal
 agent tab. F9 exits. `CRUDE_AERON_VISUAL_RESULT` receives
 `AERON_VISUAL_SUCCESS` or the failed phase and its state.
+
+### Shared regression repair acceptance
+
+`TestRegressionRepairVisualAcceptance` uses `CRUDE_VISUAL_REGRESSION_REPAIR=1`
+with the compiled viewmodel test binary and sequential `scripts/tuishot.sh`
+captures at 160x40 and 80x24. F2 opens Problems; Down, Right and End expand
+and read its long message, and F4 observes the final sentence. F3 seeds a
+composer draft; Escape and Ctrl+Z must clear and restore it. F5 opens Language
+Tools; wheel down, F6, move outside the table, then F6 checks retained scroll.
+F9 exits and checks all observations; `CRUDE_REGRESSION_REPAIR_RESULT` records
+them. These are UI fixtures, not installed-server evidence.
+
+`CRUDE_LSP_LIVE=1 go test ./core -run
+'^TestLiveLSPDiagnosticsRecoverAfterDirectoryAdmissionFailure$'` separately uses
+a real installed gopls, native watcher failure/recovery, canonical unsaved
+invalid Go text and the connected diagnostic snapshot. Run it with and without
+the race detector. The native watcher regression must fail on the original
+permanently latched failure; root replacement and stale callbacks stay fenced.
 
 ### Shared language diagnostic acceptance
 

@@ -266,10 +266,6 @@ func (c *lspCatalog) refreshRows() {
 	if m == nil {
 		return
 	}
-	selected := ""
-	if row, ok := c.table.Selected(); ok {
-		selected = row.ID
-	}
 	query := strings.ToLower(strings.TrimSpace(c.filter.Value()))
 	var rows []ui.TableRow
 	c.rows = make(map[string]languageToolRow)
@@ -300,11 +296,6 @@ func (c *lspCatalog) refreshRows() {
 		rows = append(rows, ui.TableRow{ID: tool.id, Cells: cells})
 	}
 	c.table.SetRows(rows)
-	for index, row := range rows {
-		if row.ID == selected {
-			c.table.SelectIndex(index)
-		}
-	}
 	c.rebuildBar()
 }
 

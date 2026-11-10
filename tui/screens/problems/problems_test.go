@@ -1,6 +1,7 @@
 package problems
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,59 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
+
+func TestProblemPreviewExpandsInPlaceAndKeepsFullCopy(t *testing.T) {
+	for _, width := range []int{40, 80, 160} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			p := Problem{Path: "/w/main.go", Line: 7, Col: 2, Severity: Error, Source: "compiler",
+				Message: strings.Repeat("This explanation includes the cause and the way to fix the problem. ", 32) + "FINAL_SENTENCE."}
+			s, host := mount(t, width, 12, Model{Checked: true, Problems: []Problem{p}})
+			before := strings.Join(paint(host, width, 12), "\n")
+			if len(s.rows) != 4 || strings.Contains(before, "FINAL_SENTENCE") || !strings.Contains(before, "…") {
+				t.Fatalf("long problem must show three preview lines and overflow: rows=%d\n%s", len(s.rows), before)
+			}
+			for _, y := range []int{listTop + 1, listTop + 2, listTop + 3} {
+				if strings.TrimSpace(paint(host, width, 12)[y]) == "" {
+					t.Fatalf("preview line %d is empty", y)
+				}
+			}
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
+			expanded := strings.Join(paint(host, width, 12), "\n")
+			if !strings.Contains(expanded, "FINAL_SENTENCE.") || !s.scrollbar.Needed() {
+				t.Fatalf("expanded message tail is not readable with the native scroll owner:\n%s", expanded)
+			}
+			if got := s.SelectionText(); got != Line(p) {
+				t.Fatalf("a continuation row lost or duplicated copy text: %q", got)
+			}
+			if got := s.OpenSelected(); got == nil || got().(OpenMsg).Problem.Message != p.Message {
+				t.Fatal("opening from a continuation row lost its problem")
+			}
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
+			paint(host, width, 12)
+			if len(s.rows) != 4 {
+				t.Fatal("Left did not restore the three-line preview")
+			}
+			// The visible disclosure uses the same expansion path.
+			host.Handle(tea.MouseClickMsg{X: margin, Y: listTop + 1, Button: tea.MouseLeft})
+			result := host.Handle(tea.MouseReleaseMsg{X: margin, Y: listTop + 1, Button: tea.MouseLeft})
+			if result.Cmd != nil || len(s.rows) <= 4 {
+				t.Fatal("disclosure opened the file or failed to expand in place")
+			}
+			s.SetModel(Model{Checked: true, Problems: []Problem{p}})
+			paint(host, width, 12)
+			if len(s.rows) <= 4 {
+				t.Fatal("an unchanged publication collapsed the message")
+			}
+			s.SetModel(Model{Checked: true})
+			paint(host, width, 12)
+			if len(s.rows) != 0 {
+				t.Fatal("removed diagnostics kept stale disclosure state")
+			}
+		})
+	}
+}
 
 func fixture() Model {
 	return Model{

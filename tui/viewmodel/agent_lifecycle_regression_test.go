@@ -187,8 +187,8 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	}
 
 	items := app.agentSidebarItems()
-	if len(items) != 2 || items[0].ID != sidebarItemNewAgent || items[1].ID != sidebarItemAeron {
-		t.Fatalf("Agents panel did not retain its workspace-agent entry: %#v", items)
+	if len(items) != 1 || items[0].ID != sidebarItemNewAgent {
+		t.Fatalf("Agents panel did not remove the closed agents: %#v", items)
 	}
 }
 

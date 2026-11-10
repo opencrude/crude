@@ -39,6 +39,7 @@ type VirtualList struct {
 	bottomGravity          bool
 	pointerPolicy          PointerPolicy
 	selectionAnchorsScroll bool // when true, selection changes reveal rows (launcher/FIF)
+	revealSelection        bool // selection made before viewport geometry was available
 	opaqueRowFill          bool // ListRowColors pre-fill; chat turns this off
 	// prefix[i] = starting row of item i; prefix[len] = total rows
 	prefix            []int
@@ -70,6 +71,7 @@ func (v *VirtualList) SetItems(items []VirtItem) {
 	v.sel.SetCount(len(items))
 	if i := v.sel.Index(); i < 0 || i >= len(items) || items[i].Disabled {
 		v.selectFrom(0, 1)
+		v.revealSelection = v.selectionAnchorsScroll
 	}
 	v.applyScrollAfterContentChange()
 }
@@ -82,6 +84,7 @@ func (v *VirtualList) UpdateItem(index int, item VirtItem) bool {
 	v.items[index] = item
 	if item.Disabled && v.sel.Index() == index {
 		v.selectFrom(index, 1)
+		v.revealSelection = v.selectionAnchorsScroll
 	}
 	if max(1, item.Height) != oldHeight {
 		v.rebuildPrefix()
@@ -106,10 +109,10 @@ func (v *VirtualList) SetRowPainter(fn RowPainter) { v.rowPainter = fn }
 // parent owns text selection, wheel policy, or other pointer semantics.
 func (v *VirtualList) SetPointerPolicy(p PointerPolicy) { v.pointerPolicy = p }
 
-// SetSelectionAnchorsScroll controls whether selection changes and content/layout
-// updates scroll to keep the selected item visible. Default is true (launcher,
-// find-in-files). Paint-only consumers such as shellchat set false because the
-// parent owns scroll/selection semantics.
+// SetSelectionAnchorsScroll controls whether explicit selection changes reveal
+// the selected item. Passive content/layout refreshes preserve wheel reading.
+// Paint-only consumers such as shellchat set false because the parent owns
+// scroll/selection semantics.
 func (v *VirtualList) SetSelectionAnchorsScroll(anchor bool) {
 	v.selectionAnchorsScroll = anchor
 	if anchor {
@@ -290,6 +293,11 @@ func (v *VirtualList) itemAtRow(row int) int {
 }
 
 func (v *VirtualList) ensureSelectedVisible() {
+	if v.scroll.Viewport() == 0 {
+		v.revealSelection = true
+		return
+	}
+	v.revealSelection = false
 	i := v.sel.Index()
 	if i < 0 || i >= len(v.items) {
 		return
@@ -310,7 +318,7 @@ func (v *VirtualList) applyScrollAfterContentChange() {
 		v.scroll.StickToBottom()
 		return
 	}
-	if v.selectionAnchorsScroll {
+	if v.selectionAnchorsScroll && v.revealSelection {
 		v.ensureSelectedVisible()
 		return
 	}
@@ -324,7 +332,7 @@ func (v *VirtualList) Measure(_ LayoutContext, cs Constraints) Size {
 func (v *VirtualList) Layout(_ LayoutContext, r Rect) {
 	v.SetBounds(r)
 	v.scroll.SetViewport(r.H)
-	if v.selectionAnchorsScroll {
+	if v.selectionAnchorsScroll && v.revealSelection {
 		v.ensureSelectedVisible()
 	} else if v.scroll.AutoScroll() {
 		v.scroll.StickToBottom()

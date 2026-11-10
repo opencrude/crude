@@ -39,6 +39,12 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 
 ## Collections
 
+Wheel reading survives pointer departure, focus changes and unchanged layout or
+content refreshes. `Table.SetRows` retains selection by row identity without
+revealing it; catalog consumers do not reselect it afterward. `VirtualList`
+reveals on explicit selection, not every layout or refresh. Keyboard navigation
+and explicit reveal still bring the selected row into view.
+
 | Current | Target |
 |---------|--------|
 | Command palette list | sectioned VirtualList |

@@ -617,7 +617,11 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 			err = complete
 		}
 		if err != nil {
-			m.Feedback.NotifyError("Shared undo refused; other authors' work retained: " + err.Error())
+			action := "undo"
+			if msg.undo.Redo {
+				action = "redo"
+			}
+			m.Feedback.NotifyError("Could not " + action + ": " + err.Error())
 		}
 		state.sync = true
 		if state.pushedRevision >= msg.receipt.Revision {

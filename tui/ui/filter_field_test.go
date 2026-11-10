@@ -123,6 +123,26 @@ func TestFilterFieldNotifyOnEditAndEscClear(t *testing.T) {
 	}
 }
 
+func TestFilterEscapeClearCanUndoAndRedo(t *testing.T) {
+	f := NewFilterField("filter", nil)
+	f.Layout(LayoutContext{}, Rect{W: 30, H: 1})
+	f.SetValue("é😀 query")
+	f.Edit().SetCursor(2, false)
+	var changed []string
+	f.OnChanged(func(value string) { changed = append(changed, value) })
+	for _, key := range []tea.KeyPressMsg{
+		{Code: tea.KeyEsc}, {Code: 'z', Mod: tea.ModCtrl}, {Code: 'y', Mod: tea.ModCtrl},
+	} {
+		f.Handle(EventContext{Focused: true}, KeyEvent(key))
+		if key.Code == 'z' && (f.Value() != "é😀 query" || f.Edit().Cursor() != 2) {
+			t.Fatal("Undo lost the filter text or insertion position")
+		}
+	}
+	if len(changed) != 3 || changed[0] != "" || changed[1] != "é😀 query" || changed[2] != "" {
+		t.Fatalf("clear/undo/redo did not notify the collection once per edit: %q", changed)
+	}
+}
+
 // TestFilterFieldEditNotifiesExactlyOncePerKey guards against double-sync when
 // a surface also re-applies the value after Handle (the old ad-hoc filter
 // pattern).

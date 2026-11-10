@@ -505,7 +505,9 @@ func (s *DocumentService) history(redo bool, owner document.Owner, id, requestID
 		}
 		stack := from[author(owner)]
 		if len(stack) == 0 {
-			return d.snapshot.Revision, errors.New("document history is empty")
+			// Reaching the end of this author's history is a normal no-op,
+			// not evidence of conflicting work by somebody else.
+			return d.snapshot.Revision, nil
 		}
 		unit := stack[len(stack)-1]
 		// Prepare the whole group on a detached document, so a later conflict or

@@ -5,8 +5,46 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/sessiondb"
 	"crude/tui/theme"
 )
+
+func TestComposerClearUndoRestoresDraftAndExactReferences(t *testing.T) {
+	m, copied := newClipboardModel(t, "draft é😀\n")
+	ref := sessiondb.Reference{ID: "kept", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]"}
+	m.SetReferenceStore(&pasteReferenceStore{references: []sessiondb.Reference{
+		ref, {ID: "not-selected", Kind: sessiondb.KindPastedText, Label: "[Pasted Text2]"},
+	}})
+	m.UseReferenceIDs([]string{ref.ID})
+	m.InsertReference(ref)
+	m, _, _ = m.Update(tea.PasteMsg{Content: " literal [Pasted Text2]"}, false, false)
+	before, cursor, revision := m.Value(), m.CursorFlat(), m.DraftRevision()
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, false, false)
+	if m.Value() != "" || len(m.ReferencedIDs()) != 0 || len(*copied) != 0 {
+		t.Fatal("clear did not remove the draft without copying")
+	}
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}, false, false)
+	if m.Value() != before || m.CursorFlat() != cursor || m.DraftRevision() <= revision {
+		t.Fatal("Undo did not restore the complete draft and cursor")
+	}
+	if ids := m.ReferencedIDs(); len(ids) != 1 || ids[0] != ref.ID {
+		t.Fatalf("Undo changed attachment identities or captured literal prose: %v", ids)
+	}
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}, false, false)
+	if m.Value() != "" {
+		t.Fatal("Redo did not clear the draft again")
+	}
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}, false, false)
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}, false, false)
+	if m.Value() != "draft é😀\n"+ref.DisplayName() {
+		t.Fatalf("clear erased the earlier editing history: %q", m.Value())
+	}
+	m.ClearInput() // submitted/replaced content cannot return through Undo
+	m, _, _ = m.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}, false, false)
+	if m.Value() != "" {
+		t.Fatal("an owner reset resurrected a consumed prompt")
+	}
+}
 
 // newClipboardModel builds a composer with a recording clipboard writer so
 // chords are asserted without touching the system clipboard.

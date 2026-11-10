@@ -54,6 +54,7 @@ There is no other installer, approval store or registration table.
 | 2026-11-03 | Merge only **Language Servers** and **Code intelligence tools**; keep **Code Intelligence** preferences separate. The user delegated the setup review design. Offer to install missing runtimes and use JetBrains products as a reference instead of asking the user to settle such details. The existing **Acquisition** install policy also governs code-intelligence tools. |
 | 2026-11-04 | Aeron's primary surface is a compact view inside the Agents sidebar, with Back and a small task input. Do not expose its structured work order or the normal composer. Opus supplies UI design only; the main agent implements and verifies the repairs. **Replaced by the next row.** |
 | 2026-11-04 | The sidebar page is removed. Aeron opens like any agent (tab or window, normal composer). Its questions and confirmations always use the modal agent prompt, and its system prompt tells it that the question tool is its channel to the user. Do not expose its structured work order. |
+| 2026-11-10 | Remove workspace Aeron from the normal Agents list. A header link, **Open workspace Aeron**, opens the same retained agent. |
 
 ## Direction: a workspace Aeron does the setup (2026-11-04)
 
@@ -66,10 +67,10 @@ cooperation with the language server, not to a trust framework around setup.
   a new kind of agent. The workspace has one instance. The shell opens it
   shortly after the workspace opens, once startup has settled and the user is
   not working, so a restore or first input never competes with it. It starts
-  minimized, and shows in the Agents sidebar like any agent with its idle or
-  running state. A restart reopens the same saved session. The user can open it
-  to see what it does and task it whenever they choose. Opening its row opens it
-  like any agent, as a tab or a window. It reaches the user through modal
+  minimized, outside the normal Agents list and its badge. A restart reopens
+  the same saved session. The user selects **Open workspace Aeron** in the
+  header to see its normal agent tab and task it whenever they choose.
+  The tab keeps the normal window actions. It reaches the user through modal
   question and confirmation prompts. Crude parts and the main agent task it
   through the same session input owner. The user can also task the main agent to
   do the same job if Aeron falls short.

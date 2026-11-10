@@ -60,7 +60,7 @@ func (j *documentHistoryJourney) history(owner document.Owner, redo bool, want s
 	j.check(r, err, want)
 }
 
-func (j *documentHistoryJourney) rejected(owner document.Owner, redo bool, expected error, want string) {
+func (j *documentHistoryJourney) nonmutating(owner document.Owner, redo bool, expected error, want string) {
 	j.t.Helper()
 	before := stageDocument(j.s.docs[j.id])
 	var r document.Receipt
@@ -70,12 +70,12 @@ func (j *documentHistoryJourney) rejected(owner document.Owner, redo bool, expec
 	} else {
 		r, err = j.s.Undo(owner, j.id, j.next(), j.revision)
 	}
-	if err == nil || (expected != nil && !errors.Is(err, expected)) || r.Accepted || r.Revision != j.revision {
-		j.t.Fatalf("rejection receipt=%+v err=%v want=%v", r, err, expected)
+	if !errors.Is(err, expected) || r.Accepted != (expected == nil) || r.Revision != j.revision {
+		j.t.Fatalf("nonmutating history receipt=%+v err=%v want=%v", r, err, expected)
 	}
 	after := j.s.docs[j.id]
 	if !reflect.DeepEqual(before.snapshot, after.snapshot) || !reflect.DeepEqual(before.journal, after.journal) || !reflect.DeepEqual(before.undo, cloneHistory(after.undo)) || !reflect.DeepEqual(before.redo, cloneHistory(after.redo)) || before.historyBytes != after.historyBytes {
-		j.t.Fatal("rejected command changed canonical text or history")
+		j.t.Fatal("no-op or rejected history command changed canonical text or history")
 	}
 	documentText(j.t, j.s, j.id, want)
 }
@@ -90,11 +90,11 @@ func TestDocumentHistoryUndoAllRedoAllMixedCommands(t *testing.T) {
 		j.history(a, false, "alpha! gamma")
 		j.history(a, false, "alpha! beta gamma")
 		j.history(a, false, "alpha beta gamma")
-		j.rejected(a, false, nil, "alpha beta gamma")
+		j.nonmutating(a, false, nil, "alpha beta gamma")
 		j.history(a, true, "alpha! beta gamma")
 		j.history(a, true, "alpha! gamma")
 		j.history(a, true, "alpha! OMEGA")
-		j.rejected(a, true, nil, "alpha! OMEGA")
+		j.nonmutating(a, true, nil, "alpha! OMEGA")
 	}
 }
 
@@ -119,7 +119,7 @@ func TestDocumentHistoryBranchAfterUndo(t *testing.T) {
 	j.edit(a, "", 0, 3, "two", "two")
 	j.history(a, false, "one")
 	j.edit(a, "", 0, 3, "branch", "branch")
-	j.rejected(a, true, nil, "branch")
+	j.nonmutating(a, true, nil, "branch")
 	j.history(a, false, "one")
 	j.history(a, false, "zero")
 	j.history(a, true, "one")
@@ -132,7 +132,7 @@ func TestDocumentHistoryGroupedOverlapIsAtomic(t *testing.T) {
 	j.edit(a, "command", 9, 12, "CCCC", "AAAA bbb CCCC")
 	// The last group member can be reversed, but its first member conflicts.
 	j.edit(b, "", 1, 2, "x", "AxAA bbb CCCC")
-	j.rejected(a, false, document.ErrOverlap, "AxAA bbb CCCC")
+	j.nonmutating(a, false, document.ErrOverlap, "AxAA bbb CCCC")
 	j.history(b, false, "AAAA bbb CCCC")
 	j.history(a, false, "aaa bbb ccc")
 }
@@ -218,7 +218,7 @@ func TestDocumentHistoryEqualPeerBytesDoNotAuthorizeCancellation(t *testing.T) {
 	j.edit(a, "", 0, 6, "after", "after")
 	// A peer returning equal bytes is still peer work, not a recorded inverse.
 	j.edit(b, "", 0, 5, "before", "before")
-	j.rejected(a, false, document.ErrOverlap, "before")
+	j.nonmutating(a, false, document.ErrOverlap, "before")
 	j.history(b, false, "after")
 	j.history(a, false, "before")
 }
@@ -241,7 +241,7 @@ func TestDocumentHistoryOpaquePriorInverseFailsClosed(t *testing.T) {
 	if _, err := j.s.Open(a, snap.Path); err != nil {
 		t.Fatal(err)
 	}
-	j.rejected(a, false, document.ErrOverlap, "first")
+	j.nonmutating(a, false, document.ErrOverlap, "first")
 	j.history(a, true, "second")
 	j.history(a, false, "first")
 }
@@ -260,11 +260,11 @@ func TestDocumentHistoryDenseGroupedUndoAllRedoAll(t *testing.T) {
 		for i := 79; i >= 0; i-- {
 			j.history(a, false, fmt.Sprintf("state-%d", i))
 		}
-		j.rejected(a, false, nil, "state-0")
+		j.nonmutating(a, false, nil, "state-0")
 		for i := 1; i <= 80; i++ {
 			j.history(a, true, fmt.Sprintf("state-%d", i))
 		}
-		j.rejected(a, true, nil, "state-80")
+		j.nonmutating(a, true, nil, "state-80")
 	}
 }
 

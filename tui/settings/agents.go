@@ -128,10 +128,6 @@ func (c *agentCatalog) refreshRows() {
 	if c.model == nil {
 		return
 	}
-	selected := ""
-	if row, ok := c.table.Selected(); ok {
-		selected = row.ID
-	}
 	var rows []ui.TableRow
 	query := strings.ToLower(c.filter.Value())
 	add := func(id, name, role, model, description string, enabled bool) {
@@ -168,11 +164,6 @@ func (c *agentCatalog) refreshRows() {
 		add("profile/"+key, key, p.Category, p.Model, p.Description, p.Enabled == nil || *p.Enabled)
 	}
 	c.table.SetRows(rows)
-	for i, row := range rows {
-		if row.ID == selected {
-			c.table.SelectIndex(i)
-		}
-	}
 	c.rebuildBar()
 }
 

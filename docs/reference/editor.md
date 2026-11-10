@@ -121,6 +121,9 @@ an external disk conflict. See [private shared-editor recovery](core-client-prot
   typing within 500 ms is one logical group; Enter, indentation, pair operations,
   line moves/duplicate/delete, cut/paste, completion, formatting and replacement
   are atomic commands. Replace All is one transaction, not one step per match.
+- Reaching the end of the requesting author's undo or redo history is an
+  accepted no-op. It changes neither text, revision nor history and shows no
+  error. An actual refusal states its cause without inventing another author.
 - Logical groups originate at the editing command, never the network drain.
   Core history is author-specific and follows the same group across paced or
   burst RPCs. A new edit after Undo invalidates Redo. Whole groups are retained
@@ -1178,6 +1181,12 @@ heap-owned and pinned through completion/cancellation and joined Close. Overflow
 read/admission failures and root loss fence project coverage. Root replacement
 does not restore reliability automatically: the watcher must restart. Unrelated
 sibling subtree activity is outside the native observation scope.
+For a still-identical root, transient admission or backend failures rebuild the
+native watcher with bounded retry delays. The old backend and event generation
+retire before the full directory scan; only successful observation restores
+coverage and replaces project producers. A directory that disappears during
+admission cannot permanently silence diagnostics. Shutdown cancels retries and
+joins the observer. Lost or replaced roots remain fenced.
 
 Coverage is shown where the user looks for problems. Server rows show their
 current state and declared scope as a capability, not proof of a complete

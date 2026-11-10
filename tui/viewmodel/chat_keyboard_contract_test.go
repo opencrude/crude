@@ -66,6 +66,21 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 	return app, screen
 }
 
+func TestComposerEscapeClearCanUndoThroughShell(t *testing.T) {
+	app, _ := setupChatRoutingApp(t, 5, nil)
+	app.setFocusInput()
+	app.Input.SetInput("keep this exact draft\né😀")
+	app.Input.SetCursorFlat(4)
+	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if app.Input.Value() != "" {
+		t.Fatal("Escape did not clear the draft")
+	}
+	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+	if app.Input.Value() != "keep this exact draft\né😀" || app.Input.CursorFlat() != 4 {
+		t.Fatal("shell Undo did not restore the cleared draft and cursor")
+	}
+}
+
 // TestChatViewmodelKeyboardContractTable verifies PgUp/PgDown/Home/End routing,
 // Ctrl+C copy semantics, Esc/capture teardown, and input-empty ownership rules.
 func TestChatViewmodelKeyboardContractTable(t *testing.T) {

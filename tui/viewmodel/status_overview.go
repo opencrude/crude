@@ -147,6 +147,9 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 	if m.OverlayState.IsYolo() {
 		segments = append(segments, shellheader.Segment{Text: "! YOLO", Role: ui.ColorError, Action: "tabs", TargetID: target, Priority: 0})
 	}
+	if m.ws != nil {
+		segments = append(segments, shellheader.Segment{Text: "Open workspace Aeron", Role: ui.ColorAccent2, Action: workspaceAeronAction, Priority: 0})
+	}
 	if strings.HasPrefix(target, "agent:") {
 		agentID := strings.TrimPrefix(target, "agent:")
 		if m.ws.PlanModeForAgent(agentID) {

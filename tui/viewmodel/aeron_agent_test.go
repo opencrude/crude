@@ -27,20 +27,20 @@ func aeronToolReply(w http.ResponseWriter, name string, arguments any, round int
 	fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
 }
 
-// openAeronRow activates Aeron's row in the Agents panel with the keyboard,
-// the same path as a click.
-func openAeronRow(t *testing.T, app *App) {
+// Click the actually painted header link, not a direct restore helper.
+func openAeronHeader(t *testing.T, app *App) {
 	t.Helper()
-	app.setActivity(activityAgents, true)
-	app.setFocusTree()
 	app.paintShellFrame()
-	for _, key := range []rune{tea.KeyHome, tea.KeyDown, tea.KeyEnter} {
-		_, cmd := app.Update(tea.KeyPressMsg{Code: key})
-		runAppCommand(t, app, cmd)
+	bounds := app.headerScreen.ActionBounds("workspace-aeron")
+	if bounds.Empty() {
+		t.Fatal("Open workspace Aeron is not visible in the header")
 	}
+	header := app.headerScreen.Bounds()
+	_, cmd := app.Update(tea.MouseClickMsg{X: header.X + bounds.X, Y: header.Y + bounds.Y, Button: tea.MouseLeft})
+	runAppCommand(t, app, cmd)
 }
 
-// Aeron opens from its row as a normal agent tab, with the normal composer, and
+// Aeron opens from its header link as a normal agent tab, with the normal composer, and
 // runs real commands and settings changes through the connected core. The
 // session's system prompt carries the workspace-agent contract.
 func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
@@ -108,18 +108,18 @@ func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
 				t.Fatal("the background Aeron took a tab before the user opened it")
 			}
 
-			openAeronRow(t, app)
+			openAeronHeader(t, app)
 			if app.AgentView.ActiveID() != aeron || app.Win.ActiveTab() == nil || app.Win.ActiveTab().Title != app.agentTabTitle(aeron) {
 				t.Fatal("opening Aeron did not select its agent tab")
 			}
 			if app.ActiveSession != app.ws.SessionsByAgent()[aeron] {
 				t.Fatal("the normal composer does not send to Aeron")
 			}
-			// The tab, Agents row and tooltip name the same agent, not its
+			// The tab and tooltip name the same agent, not its
 			// generated session name.
-			if row := findSidebarAgent(t, app, aeron); row.Label != "Aeron" ||
-				app.Win.ActiveTab().DisplayTitle != "Aeron" || !strings.HasPrefix(app.tabTooltip(app.Win.ActiveTab().ID), "Aeron\n") {
-				t.Fatalf("Aeron is not named Aeron everywhere: row %q tab %q", row.Label, app.Win.ActiveTab().DisplayTitle)
+			requireAeronAbsentFromAgentList(t, app)
+			if app.Win.ActiveTab().DisplayTitle != "Aeron" || !strings.HasPrefix(app.tabTooltip(app.Win.ActiveTab().ID), "Aeron\n") {
+				t.Fatalf("Aeron is not named Aeron in its tab: %q", app.Win.ActiveTab().DisplayTitle)
 			}
 			app.paintShellFrame()
 			for _, gone := range []string{"Give Aeron a task", "Esc back"} {
@@ -132,7 +132,7 @@ func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
 			_, send := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			runAppCommand(t, app, send)
 			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
-				return app.aeronStatus() == "finished"
+				return app.agentStatus(aeron) == "finished"
 			})
 			if got := app.ws.LoadAppSettings().LSP.Languages["aeron-fixture"].Command; got != commandPath {
 				t.Fatalf("the configured command did not reach workspace settings: %q", got)

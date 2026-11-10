@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"crude/coreprotocol"
+	"crude/retry"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -67,11 +68,33 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 	}()
 	go func() {
 		defer close(w.done)
-		defer func() { _ = watcher.Close() }()
+		defer func() {
+			if watcher != nil {
+				_ = watcher.Close()
+			}
+		}()
 		generation, cancelGeneration := context.WithCancel(ctx)
 		defer func() { cancelGeneration() }()
 		admissionFailed := false
 		var rootIdentity os.FileInfo
+		rootLost := false
+		events, watchErrors := watcher.Events, watcher.Errors
+		var recoveryTimer *time.Timer
+		var recoverAt <-chan time.Time
+		recoveryAttempt := 0
+		defer func() {
+			if recoveryTimer != nil {
+				recoveryTimer.Stop()
+			}
+		}()
+		scheduleRecovery := func() {
+			if rootLost || ctx.Err() != nil || recoverAt != nil {
+				return
+			}
+			recoveryAttempt++
+			recoveryTimer = time.NewTimer(retry.Exponential(recoveryAttempt, 250*time.Millisecond, 30*time.Second))
+			recoverAt = recoveryTimer.C
+		}
 		gap := func() {
 			// Cancellation is visible under the manager lock before a new
 			// producer can be admitted, including callbacks already dequeued.
@@ -95,8 +118,19 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 			current, err := os.Lstat(root)
 			if err != nil || rootIdentity == nil || !current.IsDir() || !os.SameFile(rootIdentity, current) {
 				admissionFailed = true
+				// Never bind a replacement workspace to the old observation.
+				// A temporary access failure can be retried against the saved
+				// identity; disappearance or replacement needs a new owner.
+				if os.IsNotExist(err) || rootIdentity == nil || err == nil {
+					rootLost = true
+				}
 			}
-			if !admissionFailed && ctx.Err() == nil && reliable != nil {
+			if admissionFailed {
+				scheduleRecovery()
+				return
+			}
+			recoveryAttempt = 0
+			if ctx.Err() == nil && reliable != nil {
 				reliable(true)
 			}
 		}
@@ -149,12 +183,46 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 			select {
 			case <-ctx.Done():
 				return
-			case event, ok := <-watcher.Events:
+			case <-recoverAt:
+				recoverAt = nil
+				// A failed subtree admission is not permanent workspace loss.
+				// Rebuild the entire observation before clearing the fence.
+				// Joining the old backend also drops stale native watch handles.
+				current, statErr := os.Lstat(root)
+				if statErr != nil || rootIdentity == nil || !current.IsDir() || !os.SameFile(rootIdentity, current) {
+					recoverObservation()
+					continue
+				}
+				if rootLost {
+					continue
+				}
+				gap()
+				events, watchErrors = nil, nil
+				if watcher != nil {
+					if closeErr := watcher.Close(); closeErr != nil {
+						scheduleRecovery()
+						continue
+					}
+					watcher = nil
+				}
+				watcher, err = newCoreWatcher(root)
+				if err != nil {
+					scheduleRecovery()
+					continue
+				}
+				events, watchErrors = watcher.Events, watcher.Errors
+				dirs = make(map[string]bool)
+				admissionFailed = !addCoreWatchParent(watcher, root) || !add(root)
+				recoverObservation()
+			case event, ok := <-events:
 				if !ok {
 					if ctx.Err() == nil {
 						gap()
+						admissionFailed = true
+						events, watchErrors = nil, nil
+						recoverObservation()
 					}
-					return
+					continue
 				}
 				path := filepath.Clean(event.Name)
 				rel, err := filepath.Rel(root, path)
@@ -178,12 +246,13 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 							admissionFailed = true
 							gap()
 						}
-						if !git {
+						if !git || admissionFailed {
 							recoverObservation()
 						}
 					} else if err != nil && !os.IsNotExist(err) {
 						admissionFailed = true
 						gap()
+						recoverObservation()
 					}
 				}
 				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 && dirs[key] {
@@ -193,6 +262,7 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 					// A replacement is not admitted reliably. Stay fenced until restart.
 					if key == coreWatchPathKey(root) {
 						admissionFailed = true
+						rootLost = true
 					}
 					for dir := range dirs {
 						if dir == key || strings.HasPrefix(dir, key+string(filepath.Separator)) {
@@ -220,7 +290,7 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 				if ctx.Err() == nil && publish != nil {
 					publish(coreprotocol.FileChange{Path: path, Removed: event.Op&(fsnotify.Remove|fsnotify.Rename) != 0, Git: git})
 				}
-			case watchErr, ok := <-watcher.Errors:
+			case watchErr, ok := <-watchErrors:
 				if ctx.Err() == nil {
 					gap()
 					if ok && watchErr == fsnotify.ErrEventOverflow {
@@ -230,10 +300,9 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 						recoverObservation()
 					} else {
 						admissionFailed = true
+						events, watchErrors = nil, nil
+						recoverObservation()
 					}
-				}
-				if !ok {
-					return
 				}
 			}
 		}
