@@ -8,7 +8,7 @@ import "strings"
 // retain the conservative containing-region invalidation contract.
 func (m *App) invalidateClockContent() {
 	focused := m.rootHost.Focused()
-	if m.wantsFastTick() {
+	if m.anyAgentAnimating() || m.mainPanes.tabsAnimating() || m.subPaneProjections.AnyMaterializing() || m.chatFindPending() {
 		// Active tab icons, loading and reveal progress can live outside chat.
 		m.rootHost.MarkComponentPaint(m.shell.mainPanes.ID())
 	}

@@ -160,8 +160,16 @@ func (s *Screen) SyncFocus() {
 func (s *Screen) OwnsFocus(id ui.ComponentID) bool {
 	return id == ScreenID || strings.HasPrefix(string(id), ScreenID+"/")
 }
-func (s *Screen) SetAnimation(frame int, _ float64) { s.frame = frame; s.rule.SetFrame(frame) }
-func (s *Screen) Loading() bool                     { return s.loading }
+
+// SetAnimation reports a changed clock-driven presentation, independent of
+// keyboard focus. Settled action ink changes only when its glyph changes.
+func (s *Screen) SetAnimation(frame int, _ float64) bool {
+	changed := frame != s.frame && (s.loading || sparkleFrame(frame) != sparkleFrame(s.frame))
+	s.frame = frame
+	s.rule.SetFrame(frame)
+	return changed
+}
+func (s *Screen) Loading() bool { return s.loading }
 func (s *Screen) BeginLoad(cwd string) {
 	if !sameWorkspacePath(cwd, s.cwd) {
 		s.filterOn = false

@@ -7202,6 +7202,84 @@ func (z *GitInspectCommitResult) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *GitLFSRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.Operation)
+	if z.Paths == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Paths)))
+		for za0001 := range z.Paths {
+			o = msgp.AppendString(o, z.Paths[za0001])
+		}
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *GitLFSRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Operation, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Operation")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Paths = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Paths")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Paths != nil && cap(z.Paths) >= int(zb0002) {
+			z.Paths = (z.Paths)[:zb0002]
+		} else {
+			z.Paths = make([]string, zb0002)
+		}
+		for za0001 := range z.Paths {
+			z.Paths[za0001], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Paths", za0001)
+				return
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *GitLFSRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Operation) + msgp.ArrayHeaderSize
+	for za0001 := range z.Paths {
+		s += msgp.StringPrefixSize + len(z.Paths[za0001])
+	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z GitMergeRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 1

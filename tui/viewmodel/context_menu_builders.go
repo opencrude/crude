@@ -689,11 +689,16 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	}
 	if tab.Resource.Kind == window.ResourcePanel {
 		id := tab.Resource.ID
+		if terminal, ok := terminalIDFromPanel(id); ok {
+			if menu := m.terminalContextMenu(terminal); menu != nil {
+				st.Sections = append(st.Sections, menu.Sections...)
+			}
+		}
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Panel",
 			Items: []ui.ContextMenuItem{
 				{Label: "Open in window", Action: func() { m.openPanelAsWindow(id) }},
-				{Label: "Move to main area", Action: func() { m.dockPanel(id) }},
+				{Label: "Move to panel", Action: func() { m.dockPanel(id) }},
 				{Label: "Close tab", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
 			},
 		})

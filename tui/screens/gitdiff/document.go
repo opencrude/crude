@@ -475,7 +475,9 @@ func (document *Document) actionsFor(file *File) []headerAction {
 			add(OpStage, "Stage")
 		default:
 			add(OpStage, "Stage")
-			add(OpDiscard, "Discard")
+			if !file.Comparison.MetadataOnly {
+				add(OpDiscard, "Discard")
+			}
 		}
 	}
 	if !file.Comparison.Deleted {

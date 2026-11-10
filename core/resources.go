@@ -251,6 +251,10 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 				err = terminals.Mouse(input.Lease, input.Mouse)
 			case "paste":
 				err = terminals.Paste(input.Lease, input.Data)
+			case "rename":
+				err = terminals.Rename(input.Lease, string(input.Data))
+			case "clear":
+				err = terminals.Clear(input.Lease)
 			case "focus":
 				err = terminals.Focus(input.Lease, input.Focused)
 			default:

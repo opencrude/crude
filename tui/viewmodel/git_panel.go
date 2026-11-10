@@ -350,20 +350,13 @@ type gitEvidenceMsg struct {
 
 const defaultGitPanelHeight = 18
 
-// toggleGitPanel opens the Git dock destination, focuses it when it is open
-// but unfocused, and hides it when it already owns focus.
+// toggleGitPanel uses the same show/hide policy as every footer destination.
 func (m *App) toggleGitPanel() tea.Cmd {
 	if m.termDock == nil || m.gitPanel == nil {
 		return nil
 	}
 	if m.revealPlacedPanel(termdock.PanelGit) {
 		return m.refreshSourceControl()
-	}
-	if m.termDock.IsOpen() && m.termDock.ActivePanel() == termdock.PanelGit && !m.termDockFocused {
-		m.setSessionDeckFocused(false)
-		m.setTermDockFocused(true)
-		m.FocusStack.Clear()
-		return nil
 	}
 	m.toggleWorkspacePanel(termdock.PanelGit)
 	if !m.gitPanelOpen() {

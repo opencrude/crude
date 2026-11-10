@@ -369,8 +369,8 @@ func (z EntryType) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Manifest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 10
+	o = append(o, 0x9a)
 	o = msgp.AppendInt(o, z.Version)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.ParentID)
@@ -406,6 +406,14 @@ func (z *Manifest) MarshalMsg(b []byte) (o []byte, err error) {
 			o = msgp.AppendString(o, z.ScopePaths[za0004])
 		}
 	}
+	if z.ScopeRoots == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.ScopeRoots)))
+		for za0005 := range z.ScopeRoots {
+			o = msgp.AppendString(o, z.ScopeRoots[za0005])
+		}
+	}
 	return
 }
 
@@ -421,8 +429,8 @@ func (z *Manifest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 10 {
+		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
 		return
 	}
 	z.Version, bts, err = msgp.ReadIntBytes(bts)
@@ -547,6 +555,33 @@ func (z *Manifest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.ScopeRoots = nil
+	} else {
+		var zb0005 uint32
+		zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "ScopeRoots")
+			return
+		}
+		if uint64(zb0005)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.ScopeRoots != nil && cap(z.ScopeRoots) >= int(zb0005) {
+			z.ScopeRoots = (z.ScopeRoots)[:zb0005]
+		} else {
+			z.ScopeRoots = make([]string, zb0005)
+		}
+		for za0005 := range z.ScopeRoots {
+			z.ScopeRoots[za0005], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "ScopeRoots", za0005)
+				return
+			}
+		}
+	}
 	o = bts
 	return
 }
@@ -567,6 +602,10 @@ func (z *Manifest) Msgsize() (s int) {
 	s += msgp.ArrayHeaderSize
 	for za0004 := range z.ScopePaths {
 		s += msgp.StringPrefixSize + len(z.ScopePaths[za0004])
+	}
+	s += msgp.ArrayHeaderSize
+	for za0005 := range z.ScopeRoots {
+		s += msgp.StringPrefixSize + len(z.ScopeRoots[za0005])
 	}
 	return
 }

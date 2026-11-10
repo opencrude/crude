@@ -73,7 +73,7 @@ func TestTerminalTitleOutputDoesNotDeadlockOrDuplicate(t *testing.T) {
 	if got, _ := app.ws.TermMgr().Get(info.ID); got.Title != "crude-title" {
 		t.Fatalf("manager title=%q", got.Title)
 	}
-	if got := app.termScreens[info.ID].Title(); got != "crude-title" {
+	if got := app.termScreens[info.ID].Title(); got != info.DisplayName() {
 		t.Fatalf("screen title=%q", got)
 	}
 }
@@ -104,7 +104,11 @@ func TestTerminalClipboardOutputRequiresExplicitCopy(t *testing.T) {
 		}
 		app.openTerminalControlMenu("osc52")
 		items := app.LastContextMenu.Sections[0].Items
-		if len(items) != 2 || items[1].Label != "Copy offered text" {
+		found := false
+		for _, item := range items {
+			found = found || item.Label == "Copy offered text"
+		}
+		if !found {
 			t.Fatal("clipboard offer has no explicit copy action")
 		}
 	case <-time.After(5 * time.Second):

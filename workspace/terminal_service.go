@@ -200,9 +200,14 @@ func (s *TerminalService) notify(r *terminalResource) {
 // ApplyInput acknowledges every processed sequence, including rejected intents.
 // Retransmission after a carrier failure never writes an accepted intent twice.
 // The exact lease fences a replacement controller and bounds retained log state.
-func (s *TerminalService) ApplyInput(stream string, sequence, acknowledged uint64, input TerminalInput) error {
+func (s *TerminalService) ApplyInput(stream string, sequence, acknowledged uint64, input TerminalInput) (result error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer func() {
+		s.mu.Unlock()
+		if result == nil && input.Kind == "rename" {
+			s.publishName(input.Lease.TerminalID)
+		}
+	}()
 	r, err := s.controlled(input.Lease)
 	if err != nil {
 		return err
@@ -336,6 +341,22 @@ func (s *TerminalService) Mouse(lease TerminalLease, mouse terminalvt.Mouse) err
 func (s *TerminalService) Paste(lease TerminalLease, data []byte) error {
 	return s.input(TerminalInput{Lease: lease, Kind: "paste", Data: data})
 }
+func (s *TerminalService) Clear(lease TerminalLease) error {
+	return s.input(TerminalInput{Lease: lease, Kind: "clear"})
+}
+func (s *TerminalService) Rename(lease TerminalLease, name string) error {
+	err := s.input(TerminalInput{Lease: lease, Kind: "rename", Data: []byte(name)})
+	if err == nil {
+		s.publishName(lease.TerminalID)
+	}
+	return err
+}
+
+func (s *TerminalService) publishName(id string) {
+	if info, ok := s.manager.Get(id); ok {
+		s.manager.emit(TerminalTitleMsg{ID: id, Title: info.DisplayName()})
+	}
+}
 func (s *TerminalService) Focus(lease TerminalLease, focused bool) error {
 	return s.input(TerminalInput{Lease: lease, Kind: "focus", Focused: focused})
 }
@@ -366,6 +387,20 @@ func (s *TerminalService) inputLocked(r *terminalResource, input TerminalInput) 
 		return s.manager.Write(id, r.engine.EncodeFocus(input.Focused))
 	case "resize":
 		return s.resizeLocked(r, id, input.Cols, input.Rows)
+	case "rename":
+		if err := s.manager.rename(id, string(input.Data)); err != nil {
+			return err
+		}
+		r.generation++
+		s.notify(r)
+		return nil
+	case "clear":
+		// Clear display and scrollback, not the child process or its input.
+		// Preserve negotiated terminal modes (unlike a full RIS reset).
+		r.engine.Feed([]byte("\x1b[3J\x1b[H\x1b[2J"))
+		r.generation++
+		s.notify(r)
+		return nil
 	default:
 		return errors.New("invalid terminal input kind")
 	}

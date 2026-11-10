@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"fmt"
 	"time"
 
 	"crude/tui/screens/problems"
@@ -89,7 +88,11 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 	m.workspacePanelLastVersion, m.workspacePanelLastSecond = 0, 0
 	m.syncWorkspacePanels()
 	if panelID == termdock.PanelTerminal && m.termDock.Empty() {
-		m.runDetachedAsyncCmd(m.openNewTerminal())
+		if terminals := m.terminalInfos(); len(terminals) > 0 {
+			m.focusTerminal(terminals[len(terminals)-1].ID)
+		} else {
+			m.runDetachedAsyncCmd(m.openNewTerminal())
+		}
 		return
 	}
 	if height := m.workspacePanelHeights[panelID]; height > 0 {
@@ -139,29 +142,15 @@ func (app *App) openTerminalPicker() {
 		return
 	}
 	items := []ui.ContextMenuItem{{Label: "New terminal", Action: func() { app.startSourceControlMutation(app.openNewTerminal()) }}}
-	nextNumber := 1
-	if app.termDock != nil {
-		nextNumber += len(app.termDock.IDs())
-	}
 	for _, terminal := range app.terminalInfos() {
 		id := terminal.ID
-		title := terminal.Title
-		if title == "" {
-			title = "Terminal"
-		}
-		number := 0
-		if app.termDock != nil {
-			number = app.termDock.Number(id)
-		}
-		if number == 0 {
-			number = nextNumber
-			nextNumber++
-		}
 		placement := "Docked"
 		if app.terminalPlacement(terminal.ID) == workspace.TerminalFloating {
 			placement = "Floating"
+		} else if app.terminalPlacement(terminal.ID) == workspace.TerminalTab {
+			placement = "Tab"
 		}
-		items = append(items, ui.ContextMenuItem{Label: fmt.Sprintf("%s %d", title, number), Detail: placement, Action: func() { app.focusTerminal(id) }})
+		items = append(items, ui.ContextMenuItem{Label: terminal.DisplayName(), Detail: placement, Action: func() { app.focusTerminal(id) }})
 	}
 	app.openContextMenuState(tea.Mouse{X: max(0, app.width-30), Y: max(app.shellTopRow(), app.height-app.chromeBottomRows()-len(items)-3)}, &ui.ContextMenuState{Title: "Terminals", Sections: []ui.ContextMenuSection{{Items: items}}})
 }

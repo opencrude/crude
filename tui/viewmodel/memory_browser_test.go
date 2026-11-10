@@ -83,8 +83,8 @@ func TestMemoryBrowserRetainedWorkspaceDockAndUnavailableRecovery(t *testing.T) 
 		t.Fatal("memory still has a second overlay owner")
 	}
 	app.setTermDockFocused(false)
-	if _, command := app.toggleMemoryBrowser(); command != nil || !app.memoryBrowserVisible() || !app.termDockFocused {
-		t.Fatal("activating visible unfocused memory should focus, not close/reload")
+	if _, command := app.toggleMemoryBrowser(); command != nil || app.memoryBrowserVisible() || app.termDockFocused {
+		t.Fatal("activating visible unfocused memory should hide it")
 	}
 	app.closeMemoryBrowser()
 	_, command := app.toggleMemoryBrowser()

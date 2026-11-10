@@ -472,6 +472,11 @@ func (m *App) syncTerminalFocusReports() {
 	if !m.terminalBlurred && focusedFloating == "" && !wmFocused && m.terminalDockOwnsKeys() && m.termDock != nil {
 		dockActive = m.termDock.ActiveID()
 	}
+	if !m.terminalBlurred && !wmFocused {
+		if screen := m.mainTerminalOwnsKeys(); screen != nil {
+			dockActive = screen.TermID()
+		}
+	}
 	if focusedFloating != "" {
 		m.lastTerminalID = focusedFloating
 	} else if dockActive != "" {
@@ -718,7 +723,11 @@ func (m *App) configureLauncherScreen() {
 		return
 	}
 	m.launcherScreen.SetRegistry(m.actionRegistry)
-	m.launcherScreen.SetAnimation(m.SpinFrame, time.Since(m.LastInteractionTime).Seconds())
+	if m.launcherScreen.SetAnimation(m.SpinFrame, time.Since(m.LastInteractionTime).Seconds()) {
+		// Visible clock-driven ink is a source mutation even when a terminal
+		// owns input. Do not rely on the focused-caret clock damage path.
+		m.rootHost.MarkComponentPaint(m.launcherScreen.ID())
+	}
 }
 
 func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {

@@ -197,6 +197,44 @@ func (a *actor) controlDomainPaths(request coreprotocol.Request, root string) (c
 		if err := encode(payload(request, in)); err != nil {
 			return request, nil, err
 		}
+	case coreprotocol.GitLFS:
+		var in coreprotocol.GitLFSRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return request, nil, err
+		}
+		switch in.Operation {
+		case "track":
+			path, err := check(".gitattributes", true)
+			if err != nil {
+				return request, nil, err
+			}
+			paths = []string{path}
+			for i, raw := range in.Paths {
+				path, err := check(raw, true)
+				if err != nil {
+					return request, nil, err
+				}
+				rel, err := filepath.Rel(root, path)
+				if err != nil {
+					return request, nil, err
+				}
+				in.Paths[i] = filepath.ToSlash(rel)
+			}
+		case "pull":
+			paths = []string{root}
+		case "install":
+			// Local Git configuration is shared by linked worktrees. A scoped
+			// execution must not change another checkout's hooks or config.
+			if root != a.ws.RootPath {
+				return request, nil, errors.New("set up Git LFS from the workspace, not an isolated checkout")
+			}
+			paths = []string{root}
+		default:
+			return request, nil, errors.New("unknown Git LFS action")
+		}
+		if err := encode(payload(request, in)); err != nil {
+			return request, nil, err
+		}
 	case coreprotocol.GitCompare, coreprotocol.PreviewGitDiscard:
 		var in coreprotocol.GitCompareRequest
 		if err := decodeRequest(request, &in); err != nil {

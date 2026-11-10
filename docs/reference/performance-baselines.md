@@ -7,6 +7,45 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Animations with terminal focus (2026-11-10)
+
+The Home loading rule previously advanced in 30/30 presented clock frames with
+the terminal closed, but 0/30 with an idle or streaming terminal focused.
+`BenchmarkLauncherClockWithTerminal` measured 0.16–0.24 ms per warm frame on
+Windows amd64 (i7-9850H, `GOMAXPROCS=2`, two 500 ms runs). The low open-terminal
+cost was missing work, not an optimization success.
+
+Home now publishes changed animation ink to its Host region independently of
+keyboard focus. Settled action glyphs publish only when they change; hidden Home
+does not invalidate chat. The shared clock, terminal stream admission and dense
+transcript caches are unchanged. The regression checks painted rule cells at
+160×44 and 80×30 with the terminal closed, idle and streaming; the companion chat
+activity check guards paint-only motion without transcript rederivation.
+
+After the correction, three quiet one-second runs measured 0.25–0.26 ms with the
+terminal closed, 0.31–0.32 ms with it idle and 0.32–0.33 ms while streaming.
+The dense 500-message single-row benchmark used 20,730–20,754 B and 624–631
+allocations, below the unchanged 65,000 B / 2,740 ceiling. Runs concurrent with
+build/race work exceeded that dense-chat ceiling; those runs are not passes.
+Connected native captures at both sizes observed 176 and 183 changed Home-rule
+frames while the terminal retained focus. These are shell/capture measurements,
+not a physical display FPS guarantee.
+
+## File-delete progress and safety capture (2026-11-10)
+
+An active delete now participates in `wantsFastTick` at the shared 16 ms
+cadence. Previously it inherited the 250–500 ms idle clock (2–4 animation
+steps per second). This is clock admission, not a second timer or delayed
+mutation. Clock paint damage still separates footer progress from chat/tab
+animation, so a delete does not invalidate dense transcript panes each frame.
+
+The delete safety stage previously walked and snapshotted the entire project.
+`BenchmarkDeleteSafetyInDenseWorkspace` (Windows amd64, 1,000 unrelated files,
+three operations per run, two runs) measured 300–317 ms before and 8–10 ms
+with subtree-only capture. This is safety-stage time, not the complete delete
+or outer-terminal frame latency. `TestDeleteSafetyCapturesOnlyDeletedTree`
+verifies recoverable ignored descendants and unchanged unrelated files.
+
 ## Diagnostic hover within a span (2026-11-08)
 
 `BenchmarkDiagnosticHoverWithinSpan` moves across one source span with 1,000

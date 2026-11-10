@@ -21,12 +21,14 @@ type TerminalHost interface {
 type TerminalService interface {
 	Acquire(id string, owner workspace.TerminalController) (workspace.TerminalLease, error)
 	Close(id string)
+	Clear(lease workspace.TerminalLease) error
 	Create(opts workspace.TerminalCreateOpts) (workspace.TerminalInfo, error)
 	Detach(owner workspace.TerminalController)
 	Focus(lease workspace.TerminalLease, focused bool) error
 	Key(lease workspace.TerminalLease, key terminalvt.Key) error
 	Mouse(lease workspace.TerminalLease, mouse terminalvt.Mouse) error
 	Paste(lease workspace.TerminalLease, data []byte) error
+	Rename(lease workspace.TerminalLease, name string) error
 	Resize(lease workspace.TerminalLease, cols, rows int) error
 	// Rows returns a detached bounded page; start=-1 requests the active grid.
 	Rows(id string, request terminalvt.RowRequest) (workspace.TerminalProjection, error)

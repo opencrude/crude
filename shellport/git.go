@@ -34,6 +34,9 @@ type CommitMessageWriter interface {
 
 // GitService owns source-control reads and mutations.
 type GitService interface {
+	// LFS delegates setup, literal filename tracking and current-file downloads
+	// to Git LFS installed beside Git. Setup is repository-local.
+	LFS(ctx context.Context, operation string, paths ...string) error
 	// AnnotateFile reads blame and HEAD-vs-content line edits for absPath.
 	// content is the editor buffer (unsaved text included). Results are
 	// presentation-neutral; the TUI owns gutter paint and hover.

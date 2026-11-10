@@ -71,10 +71,42 @@ func (m *App) terminalDockOwnsKeys() bool {
 func (m *App) terminalOwnsKeys() bool {
 	if m.windowManager != nil {
 		if fw := m.windowManager.Focused(); fw != nil {
-			return ui.IsTerminalOverlay(ui.OverlayID(fw.ID))
+			if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
+				return true
+			}
+			if _, pane := paneGroupFromOverlay(ui.OverlayID(fw.ID)); !pane {
+				return false
+			}
 		}
 	}
-	return m.terminalDockOwnsKeys()
+	return m.terminalDockOwnsKeys() || m.mainTerminalOwnsKeys() != nil
+}
+
+func (m *App) mainTerminalOwnsKeys() *shellterm.Screen {
+	if m.focusedPopup() != nil || m.termDockOwnsKeys() || m.focusTarget() == FocusTree || m.focusTarget() == FocusTabBar {
+		return nil
+	}
+	screen, _ := m.activePanelTabContent().(*shellterm.Screen)
+	return screen
+}
+
+func (m *App) openTerminalAsTab(id string) {
+	info, ok := m.terminalInfo(id)
+	if !ok || m.termDock == nil {
+		return
+	}
+	key := "terminal/" + id
+	screen := m.ensureTermScreen(id, info.DisplayName())
+	if m.overlayHost != nil {
+		m.suppressTermClose = id
+		m.overlayHost.Close(ui.TerminalOverlayID(id))
+		m.suppressTermClose = ""
+	}
+	m.termDock.Unmount(id)
+	screen.SetFloating(false)
+	m.termDock.SetPanel(key, screen)
+	m.setTerminalPlacement(id, workspace.TerminalTab)
+	m.openPanelAsTab(key)
 }
 
 func (m *App) termDockHeightClamped() int {
@@ -143,7 +175,13 @@ func (m *App) ensureTermScreen(id, title string) *shellterm.Screen {
 	if s := m.termScreens[id]; s != nil {
 		return s
 	}
+	if info, ok := m.terminalInfo(id); ok {
+		title = info.DisplayName()
+	}
 	s := shellterm.New(m.Theme, id, title)
+	if info, ok := m.terminalInfo(id); ok {
+		s.SetNumber(info.Number)
+	}
 	s.SetCommand(m.terminalCommand)
 	s.SetCopy(rendering.CopyToClipboardCmd)
 	m.termScreens[id] = s
@@ -217,7 +255,9 @@ func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
 		return
 	}
 	id := info.ID
-	screen := m.ensureTermScreen(id, info.Title)
+	m.releasePlacement("terminal/" + id)
+	screen := m.ensureTermScreen(id, info.DisplayName())
+	screen.SetNumber(info.Number)
 	m.lastTerminalID = id
 	screen.SetFloating(false)
 	screen.SetAttention(false)
@@ -245,8 +285,10 @@ func (m *App) promoteTerminal(id string) {
 // floatTerminalInfo opens a terminal window from an exact inventory identity.
 func (m *App) floatTerminalInfo(info workspace.TerminalInfo) {
 	id := info.ID
+	m.releasePlacement("terminal/" + id)
 	m.lastTerminalID = id
-	screen := m.ensureTermScreen(id, info.Title)
+	screen := m.ensureTermScreen(id, info.DisplayName())
+	screen.SetNumber(info.Number)
 	if m.termDock != nil {
 		m.termDock.Unmount(id)
 	}
@@ -288,6 +330,7 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 		h,
 	)
 	if frame.Frame() != nil {
+		frame.Frame().SetCloseGlyph("")
 		// JetBrains-style title-bar control: dock the tool window back into
 		// the panel (replaces the old in-body action bar).
 		frame.Frame().SetTitleAction("⇲", "Dock")
@@ -325,6 +368,9 @@ func (m *App) focusTerminal(id string) {
 	if !ok {
 		return
 	}
+	if m.terminalPlacement(id) == workspace.TerminalTab && m.revealPlacedPanel("terminal/"+id) {
+		return
+	}
 	if m.terminalPlacement(info.ID) == workspace.TerminalFloating {
 		oid := ui.TerminalOverlayID(id)
 		if !m.overlayHost.IsOpen(oid) {
@@ -351,6 +397,10 @@ func (m *App) closeTerminal(id string) {
 		m.terminalClosed = make(map[string]bool)
 	}
 	m.terminalClosed[id] = true
+	m.releasePlacement("terminal/" + id)
+	if m.termDock != nil {
+		m.termDock.RemovePanel("terminal/" + id)
+	}
 	if m.overlayHost != nil {
 		m.suppressTermClose = id
 		m.overlayHost.Close(ui.TerminalOverlayID(id))
@@ -380,8 +430,12 @@ func (m *App) tickTerminalCursors(now time.Time) {
 		if fw != nil && fw.Focused() && s.HasAttention() {
 			m.setFloatingTerminalAttention(id, false)
 		}
-		if s.TickCursor(now) && fw != nil {
-			fw.MarkContentDirty()
+		if s.TickCursor(now) {
+			if fw != nil {
+				fw.MarkContentDirty()
+			} else {
+				m.hostFor(s.ID()).MarkComponentPaint(s.ID())
+			}
 		}
 	}
 }
@@ -394,6 +448,9 @@ func (m *App) markTerminalBell(id string) {
 	}
 	wmFocused := m.windowManager != nil && m.windowManager.Focused() != nil
 	focused := !wmFocused && m.terminalDockOwnsKeys() && m.termDock.ActiveID() == id
+	if screen := m.mainTerminalOwnsKeys(); screen != nil && screen.TermID() == id {
+		focused = true
+	}
 	if focused {
 		return
 	}
@@ -513,6 +570,9 @@ func (m *App) applyTerminalTitle(id, title string) {
 	if m.termDock != nil {
 		m.termDock.SetTitle(id, title)
 	}
+	if tab := m.panelTab("terminal/" + id); tab != nil {
+		m.Win.SetTabTitleByIndex(m.Win.IndexOf(tab.ID), title)
+	}
 	if m.overlayHost != nil {
 		if fw := m.overlayHost.Window(ui.TerminalOverlayID(id)); fw != nil {
 			fw.Title = title
@@ -545,6 +605,9 @@ func (m *App) discardTerminalUI() {
 		}
 	}
 	for id, s := range m.termScreens {
+		if m.termDock != nil {
+			m.termDock.RemovePanel("terminal/" + id)
+		}
 		if s != nil {
 			s.Close()
 		}

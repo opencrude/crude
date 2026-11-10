@@ -83,6 +83,9 @@ type Manifest struct {
 	// ScopePaths declares complete coverage of only these relative file keys.
 	// Nil means a full snapshot; absence outside a selected scope is unknown.
 	ScopePaths []string `json:"scope_paths,omitempty"`
+	// ScopeRoots observes only these path subtrees, including directories and
+	// links. Used for delete safety; unknown siblings are never restore targets.
+	ScopeRoots []string `json:"scope_roots,omitempty"`
 }
 
 func (m Manifest) Time() time.Time { return time.Unix(0, m.CreatedAt) }

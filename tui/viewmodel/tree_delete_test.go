@@ -55,6 +55,9 @@ func TestTreeDeletePaintsProgressUntilCompletion(t *testing.T) {
 			app.ws = &blockedTreeDelete{Workspace: app.ws, release: release, started: started}
 			app.startDeleteInTree(path)
 			cmd := app.confirmTreeDelete()
+			if !app.wantsFastTick() {
+				t.Fatal("file deletion uses the idle animation clock")
+			}
 			done := make(chan tea.Msg, 1)
 			go func() { done <- cmd() }()
 			<-started
@@ -79,6 +82,9 @@ func TestTreeDeletePaintsProgressUntilCompletion(t *testing.T) {
 			app.paintShellFrame()
 			if strings.Contains(rowText(app, app.height-1), "Keeping safety copy") || app.treeDeleteProgress() != "" {
 				t.Fatal("completed delete retained running progress")
+			}
+			if app.wantsFastTick() {
+				t.Fatal("completed delete retained the fast animation clock")
 			}
 			requireMissing(t, path)
 		})

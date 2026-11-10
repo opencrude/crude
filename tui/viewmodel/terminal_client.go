@@ -92,6 +92,10 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 				input.Kind = "focus"
 			case shellterm.CommandResize:
 				input.Kind = "resize"
+			case shellterm.CommandRename:
+				input.Kind = "rename"
+			case shellterm.CommandClear:
+				input.Kind = "clear"
 			}
 			for i := 0; i < max(1, command.Repeat); i++ {
 				if err := stream.SendInput(input); err != nil {
@@ -119,6 +123,10 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 				result.err = service.Focus(lease, command.Focused)
 			case shellterm.CommandResize:
 				result.err = service.Resize(lease, command.Cols, command.Rows)
+			case shellterm.CommandRename:
+				result.err = service.Rename(lease, string(command.Paste))
+			case shellterm.CommandClear:
+				result.err = service.Clear(lease)
 			case shellterm.CommandReadRows:
 				result.projection, result.err = service.Rows(command.ID, terminalvt.RowRequest{Start: command.Start, Count: command.Count, ViewportStart: command.ViewportStart, HistoryEpoch: command.HistoryEpoch, HistoryBase: command.HistoryBase})
 			case shellterm.CommandTakeControl:
@@ -274,7 +282,7 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 	} else {
 		screen.SetProjection(msg.projection)
 	}
-	m.applyTerminalTitle(id, msg.projection.Info.Title)
+	m.applyTerminalTitle(id, msg.projection.Info.DisplayName())
 	if fw := m.overlayHost.Window(ui.TerminalOverlayID(id)); fw != nil {
 		fw.MarkContentDirty()
 	}
@@ -326,11 +334,11 @@ func (m *App) applyTerminalFrame(msg shellport.TerminalFrameMsg) tea.Cmd {
 		result = msg.Err
 		return nil
 	}
-	screen := m.ensureTermScreen(msg.ID, msg.Projection.Info.Title)
+	screen := m.ensureTermScreen(msg.ID, msg.Projection.Info.DisplayName())
 	// SDK stream publications (including authoritative prediction rollbacks)
 	// retain immutable rows for their lifetime; do not clone the full grid again.
 	screen.SetImmutableProjection(msg.Projection)
-	m.applyTerminalTitle(msg.ID, msg.Projection.Info.Title)
+	m.applyTerminalTitle(msg.ID, msg.Projection.Info.DisplayName())
 	if fw := m.overlayHost.Window(ui.TerminalOverlayID(msg.ID)); fw != nil {
 		fw.MarkContentDirty()
 	}
@@ -354,9 +362,6 @@ func (m *App) drainTerminalCommands() tea.Cmd {
 }
 
 func (m *App) handleTerminalEffects(msg workspace.TerminalEffectsMsg) {
-	if msg.Effects.TitleChanged {
-		m.applyTerminalTitle(msg.ID, msg.Effects.Title)
-	}
 	if msg.Effects.Bell {
 		m.markTerminalBell(msg.ID)
 	}
@@ -375,11 +380,88 @@ func (m *App) handleTerminalEffects(msg workspace.TerminalEffectsMsg) {
 }
 
 func (m *App) openTerminalControlMenu(id string) {
-	items := []ui.ContextMenuItem{{Label: "Take input control", Action: func() {
-		m.runDetachedAsyncCmd(m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandTakeControl}))
-	}}}
-	if text := m.terminalClipboard[id]; text != "" {
-		items = append(items, ui.ContextMenuItem{Label: "Copy offered text", Action: func() { m.runDetachedAsyncCmd(rendering.CopyToClipboardCmd(text)) }})
+	// Keyboard access anchors to the terminal, never the middle of the shell.
+	mouse := tea.Mouse{}
+	if s := m.termScreens[id]; s != nil && m.rootHost != nil {
+		if r, ok := m.rootHost.ScreenRect(s.ID()); ok {
+			mouse.X, mouse.Y = r.X, r.Y
+		}
 	}
-	m.openContextMenuState(tea.Mouse{X: max(0, m.width/2), Y: max(0, m.height/2)}, &ui.ContextMenuState{Title: "Terminal control", Sections: []ui.ContextMenuSection{{Items: items}}})
+	m.openTerminalContextMenu(id, mouse)
+}
+
+func (m *App) openTerminalContextMenu(id string, mouse tea.Mouse) {
+	m.openContextMenuState(mouse, m.terminalContextMenu(id))
+}
+
+func (m *App) terminalContextMenu(id string) *ui.ContextMenuState {
+	screen := m.termScreens[id]
+	if screen == nil || m.terminalClosed[id] {
+		return nil
+	}
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
+	current := func() bool {
+		return m.ws == owner && generation == m.workspaceSwitchGen.Load() && m.termScreens[id] == screen && !m.terminalClosed[id]
+	}
+	guard := func(fn func()) func() {
+		return func() {
+			if current() {
+				fn()
+			}
+		}
+	}
+	items := []ui.ContextMenuItem{
+		{Label: "Copy", Detail: "Ctrl+Shift+C", Disabled: !screen.HasSelection(), Action: guard(func() {
+			m.runDetachedAsyncCmd(tea.Batch(screen.CopySelection(), m.drainTerminalCommands()))
+		})},
+		{Label: "Paste", Detail: "Ctrl+Shift+V", Disabled: !screen.PasteActive(), Action: guard(func() {
+			m.runDetachedAsyncCmd(m.pasteTerminalClipboard(screen))
+		})},
+		{Label: "Select all", Detail: "Ctrl+Shift+A", Action: guard(func() { screen.SelectAll(); m.forceFrame(); m.runDetachedAsyncCmd(m.drainTerminalCommands()) })},
+		{Label: "Clear terminal", Disabled: !screen.PasteActive(), Action: guard(func() {
+			m.runDetachedAsyncCmd(m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandClear}))
+		})},
+	}
+	if !screen.Controlled() {
+		items = append(items, ui.ContextMenuItem{Label: "Take input control", Action: guard(func() {
+			m.runDetachedAsyncCmd(m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandTakeControl}))
+		})})
+	}
+	if text := m.terminalClipboard[id]; text != "" {
+		items = append(items, ui.ContextMenuItem{Label: "Copy offered text", Action: guard(func() { m.runDetachedAsyncCmd(rendering.CopyToClipboardCmd(text)) })})
+	}
+	manage := []ui.ContextMenuItem{
+		{Label: "New terminal", Action: guard(func() { m.runDetachedAsyncCmd(m.openNewTerminal()) })},
+		{Label: "Rename terminal", Disabled: !screen.PasteActive(), Action: guard(func() {
+			lease := m.terminalLeases[id]
+			m.openTextPrompt(ui.TextPromptRename, "Rename terminal", "Terminal name", screen.Title(), func(name string) error {
+				if !current() || m.terminalLeases[id] != lease {
+					return errors.New("terminal changed; open Rename terminal again")
+				}
+				if err := workspace.ValidateTerminalName(name); err != nil {
+					return err
+				}
+				m.runDetachedAsyncCmd(m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandRename, Paste: []byte(name)}))
+				return nil
+			})
+		})},
+		{Label: "Open as tab", Action: guard(func() { m.openTerminalAsTab(id) })},
+		{Label: "Open as window", Action: guard(func() { m.promoteTerminal(id) })},
+		{Label: "Move to panel", Action: guard(func() { m.dockTerminal(id) })},
+		{Label: "Kill terminal", Action: guard(func() { m.closeTerminal(id) })},
+	}
+	return &ui.ContextMenuState{Title: screen.Title(), Sections: []ui.ContextMenuSection{{Items: items}, {Items: manage}}}
+}
+
+func (m *App) pasteTerminalClipboard(screen *shellterm.Screen) tea.Cmd {
+	id := screen.TermID()
+	owner, generation, lease := m.ws, m.workspaceSwitchGen.Load(), m.terminalLeases[id]
+	return m.beginNativeClipboardPaste(screen, "", func(text string) tea.Cmd {
+		if m.ws != owner || generation != m.workspaceSwitchGen.Load() || m.termScreens[id] != screen ||
+			m.terminalLeases[id] != lease || !screen.PasteActive() {
+			return nil
+		}
+		screen.PasteText(text)
+		return m.drainTerminalCommands()
+	})
 }

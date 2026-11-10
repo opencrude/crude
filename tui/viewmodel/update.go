@@ -640,12 +640,18 @@ func (m *App) invalidateMessageRegions(msg tea.Msg) {
 		// A grid publication may also change the tab title. Floating terminal
 		// content is independently invalidated by its existing window owner.
 		mark(m.shell.termDock)
+		if s := m.termScreens[msg.ID]; s != nil {
+			m.hostFor(s.ID()).MarkComponentPaint(s.ID())
+		}
 	case terminalProjectionMsg:
 		if msg.err != nil {
 			m.rootHost.MarkPaint()
 			return
 		}
 		mark(m.shell.termDock)
+		if s := m.termScreens[msg.command.ID]; s != nil {
+			m.hostFor(s.ID()).MarkComponentPaint(s.ID())
+		}
 	case workspace.TerminalChangedMsg:
 		// Only schedules the projection read; the result owns paint damage.
 	case types.TickMsg:
@@ -778,6 +784,11 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 // animation, and a permanent 16 ms tick there repaints full 160x40 frames
 // (roughly a quarter CPU on an idle floating terminal).
 func (m *App) wantsFastTick() bool {
+	// File operations own the footer's progress rule independently of agents.
+	// Waiting for disk or the core must not put a visible animation on idle ticks.
+	if m.treeDeleteProgress() != "" {
+		return true
+	}
 	if m.headerScreen != nil {
 		state := m.connectionHealth().brand
 		if state == shellheader.ConnectionConnecting || state == shellheader.ConnectionReconnecting {
@@ -956,7 +967,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case workspace.TerminalExitedMsg:
 		m.handleTerminalExited(msg)
 	case workspace.TerminalTitleMsg:
-		m.applyTerminalTitle(msg.ID, msg.Title)
+		if info, ok := m.terminalInfo(msg.ID); ok {
+			m.applyTerminalTitle(msg.ID, info.DisplayName())
+		}
 	case findinfiles.OpenMsg:
 		if m.findInFiles == nil || !m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
 			break
@@ -1796,6 +1809,12 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		return nil
 	}
 	if tab.Resource.Kind == window.ResourcePanel {
+		if id, ok := terminalIDFromPanel(tab.Resource.ID); ok {
+			m.dockTerminal(id)
+			m.hideWorkspacePanel()
+			m.forceFrame()
+			return nil
+		}
 		// Closing a surface's tab returns it to the dock, hidden.
 		m.setPlacement(tab.Resource.ID, placeDock)
 		m.Win.CloseTabByID(tab.ID)

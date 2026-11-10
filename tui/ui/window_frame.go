@@ -33,6 +33,7 @@ type WindowFrame struct {
 	tokens       *TokenSet
 	content      Component
 	closable     bool
+	closeGlyph   string
 	borderAccent cell.Color // optional accent override for border
 	titleAccent  cell.Color // optional accent override for title
 	// Optional title-bar buttons left of close, rightmost first (JetBrains
@@ -90,6 +91,9 @@ func (f *WindowFrame) Content() Component { return f.content }
 
 // SetClosable toggles the close button.
 func (f *WindowFrame) SetClosable(v bool) { f.closable = v }
+
+// SetCloseGlyph identifies a destructive resource action instead of dismissal.
+func (f *WindowFrame) SetCloseGlyph(glyph string) { f.closeGlyph = glyph }
 
 // SetBorderAccent overrides the border color with an explicit accent.
 // Used by diagnostic popups to tint the border by severity.
@@ -408,7 +412,10 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 	// Close button
 	if f.closable && !f.closeR.Empty() {
 		cx := ox + f.closeR.X
-		closeGlyph := g.Close
+		closeGlyph := f.closeGlyph
+		if closeGlyph == "" {
+			closeGlyph = g.Close
+		}
 		if closeGlyph == "" {
 			closeGlyph = "✕"
 		}

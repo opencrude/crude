@@ -2,6 +2,7 @@
 # Each line covers one literal in one file. These files use a name that the
 # catalog also knows, for a purpose that is not code intelligence.
 app/core_restart.go	.json	Crude's own restart record file.
+core/control_execution_resources.go	.gitattributes	Git LFS tracking writes this Git-defined repository file; enforce execution claims, not language detection.
 docconv/docconv.go	.ipynb	Document conversion for read_file and web_fetch, not language support.
 search/web.go	.ipynb	Maps a web MIME type to the document converter.
 jsonrepair/utils.go	.c	Heuristic that recognizes file paths inside model output.
@@ -58,6 +59,7 @@ session/auto_permission.go	.env	Safety rule: secret files that need approval.
 workspace/editor_prediction_service.go	.env	Privacy rule: files never sent for AI predictions.
 workspace/editor_prediction_service.go	.kube	Privacy rule: folders never sent for AI predictions.
 workspace/editor_prediction_service.go	.pem	Privacy rule: files never sent for AI predictions.
+workspace/git_lfs.go	.gitattributes	Git LFS tracking writes this Git-defined repository file; reject links and nonregular destinations, not language detection.
 syntax/registry.go	.scm	File suffix of the embedded highlight query files.
 toolstore/store.go	Package	Generic package field in sorting, not a language name.
 toolstore/install.go	Package	Generic package identity field, not a language name.

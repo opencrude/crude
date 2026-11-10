@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -47,7 +46,7 @@ type Screen struct {
 	tokens     *ui.TokenSet
 	tabs       *ui.Tabs
 	width      int
-	newButton  *newSessionButton
+	newButton  *ui.IconButton
 	newEnabled bool
 	barFocused bool
 	emptyClick time.Time
@@ -67,7 +66,7 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	tokens := ui.NewTokenSet(th)
 	t := ui.NewTabs(ui.NewID(id, "tabs"), tokens)
 	t.SetChrome(ui.TabsShell)
-	b := &newSessionButton{Button: ui.NewButton(ui.NewID(id, "new"), "+", "tabs.new"), tokens: tokens}
+	b := ui.NewTabButton(ui.NewID(id, "new"), "New session", "tabs.new", tokens)
 	return &Screen{
 		Base:      ui.NewBase(id),
 		th:        th,
@@ -278,42 +277,6 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return ui.EventResult{Handled: true, Action: &action}
 	}
 	return ui.EventResult{Action: &action}
-}
-
-// newSessionButton uses native Button activation and Host focus/hover, with
-// compact glyph-only chrome so even a one-column strip retains the action.
-type newSessionButton struct {
-	*ui.Button
-	tokens *ui.TokenSet
-}
-
-func (b *newSessionButton) SetTokens(tokens *ui.TokenSet) {
-	b.tokens = tokens
-	b.Button.SetTokens(tokens)
-}
-
-func (b *newSessionButton) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
-	r := b.Bounds()
-	if r.Empty() || b.tokens == nil {
-		return
-	}
-	// Pointer hover gets no treatment of its own: the strip is two rows of
-	// cells, so any fill either stops short of the bar's bottom rule or hangs
-	// past it. The glyph alone carries the action; keyboard focus still needs
-	// its accent chip to be locatable without a pointer.
-	fg, bg := b.tokens.Color(ui.ColorAccent), b.tokens.Color(ui.ColorBg)
-	if ctx.Focused {
-		bg = b.tokens.Color(ui.ColorAccent)
-		fg = cell.ContrastInk(bg)
-	}
-	// Fill only this action's label-row bounds. ui.Tabs is the sole owner of
-	// every baseline cell, including the rule beneath the action.
-	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	buf.WriteString(ox+r.X+(r.W-1)/2, oy+r.Y, "+", fg, bg, cell.AttrBold)
-}
-
-func (b *newSessionButton) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleButton, Label: "New session"}
 }
 
 // HitTest resolves screen-local X against the tabs control, translating

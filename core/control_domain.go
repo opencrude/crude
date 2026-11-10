@@ -48,6 +48,7 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 		"files.search": coreprotocol.FilesSearch, "files.create": coreprotocol.FilesCreate,
 		"files.rename": coreprotocol.FilesRename, "files.delete": coreprotocol.FilesDelete,
 		"git.snapshot": coreprotocol.GitSnapshot, "git.review": coreprotocol.GitCompare,
+		"git.lfs":            coreprotocol.GitLFS,
 		"git.stage_reviewed": coreprotocol.GitStageReviewed, "git.discard_preview": coreprotocol.PreviewGitDiscard,
 		"git.discard_reviewed": coreprotocol.DiscardGitReviewed,
 	}

@@ -22,6 +22,7 @@ const (
 	DiscardGitReviewed   = "git.discard_reviewed"
 	DiscardGitHunk       = "git.discard_hunk"
 	GitFetch             = "git.fetch"
+	GitLFS               = "git.lfs"
 	GitPull              = "git.pull"
 	GitPush              = "git.push"
 	GitMerge             = "git.merge"
@@ -115,6 +116,10 @@ type GitInspectCommitResult struct {
 }
 
 type GitRemoteRequest struct{}
+type GitLFSRequest struct {
+	Operation string   `json:"operation"`
+	Paths     []string `json:"paths"`
+}
 type GitRemoteResult struct {
 	Sync workspace.GitSyncResult `json:"sync"`
 }

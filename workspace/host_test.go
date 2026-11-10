@@ -51,7 +51,9 @@ func TestDetectHostMultiplexer(t *testing.T) {
 }
 
 func TestPTYEnvironPinsGhostty(t *testing.T) {
-	env := PTYEnviron([]string{"PATH=/bin", "TERM=xterm", "HOME=/tmp"})
+	env := PTYEnviron([]string{"PATH=/bin", "TERM=xterm", "HOME=/tmp",
+		"TERM_PROGRAM=ghostty", "TERM_PROGRAM_VERSION=1.3.0", "KITTY_WINDOW_ID=1",
+		"ALACRITTY_WINDOW_ID=2", "WEZTERM_PANE=3", "GHOSTTY_RESOURCES_DIR=/outer"})
 	got := map[string]string{}
 	for _, e := range env {
 		k, v, ok := splitEnv(e)
@@ -62,11 +64,13 @@ func TestPTYEnvironPinsGhostty(t *testing.T) {
 	if got["TERM"] != types.GhosttyTermName {
 		t.Fatalf("TERM=%q want %q", got["TERM"], types.GhosttyTermName)
 	}
-	if got["TERM_PROGRAM"] != "ghostty" {
+	if got["TERM_PROGRAM"] != "crude" {
 		t.Fatalf("TERM_PROGRAM=%q", got["TERM_PROGRAM"])
 	}
-	if got["TERM_PROGRAM_VERSION"] != types.PinnedGhosttyVersion {
-		t.Fatalf("TERM_PROGRAM_VERSION=%q", got["TERM_PROGRAM_VERSION"])
+	for _, key := range []string{"TERM_PROGRAM_VERSION", "KITTY_WINDOW_ID", "ALACRITTY_WINDOW_ID", "WEZTERM_PANE", "GHOSTTY_RESOURCES_DIR"} {
+		if _, inherited := got[key]; inherited {
+			t.Fatalf("embedded PTY inherited outer renderer identity %s", key)
+		}
 	}
 	if got["COLORTERM"] != "truecolor" {
 		t.Fatalf("COLORTERM=%q", got["COLORTERM"])

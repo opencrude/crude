@@ -199,6 +199,17 @@ func PrepareComparisonsContext(ctx context.Context, comparisons []workspace.GitC
 
 func prepareBody(ctx context.Context, file *File) error {
 	comparison := file.Comparison
+	if comparison.MetadataOnly {
+		kind := "Large file"
+		if comparison.LFS {
+			kind = "Git LFS file"
+		}
+		file.Note = fmt.Sprintf("%s · %d → %d bytes. Content is not loaded.", kind, comparison.BeforeSize, comparison.AfterSize)
+		if !comparison.Historical {
+			file.Note += " Use Stage or Unstage for the whole file."
+		}
+		return nil
+	}
 	if comparison.Binary {
 		file.Note = fmt.Sprintf("Binary file · %s → %s", byteSize(len(comparison.Before)), byteSize(len(comparison.After)))
 		return nil

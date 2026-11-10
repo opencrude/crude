@@ -64,6 +64,15 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 	}
 
 	annotation := GitFileAnnotation{Path: absPath}
+	attrs, err := gitLFSPaths(ctx, root, []string{rel})
+	if err != nil {
+		return GitFileAnnotation{}, err
+	}
+	if attrs[rel] {
+		// A pointer is not a text baseline. Reading an annotation must never
+		// download or expand a model/dataset through a smudge filter.
+		return annotation, nil
+	}
 	// HEAD in the working-tree form Git checks out here; the buffer is in that
 	// form too. Matching still ignores CRLF/LF so an LF buffer Git considers
 	// clean under core.autocrlf is not marked changed either.

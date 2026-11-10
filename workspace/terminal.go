@@ -9,9 +9,12 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"crude/fileio"
 	ttypes "crude/types"
@@ -64,12 +67,15 @@ type TerminalPlacement uint8
 const (
 	TerminalDocked TerminalPlacement = iota
 	TerminalFloating
+	TerminalTab
 )
 
 // TerminalInfo is a presentation-neutral snapshot of one PTY session.
 type TerminalInfo struct {
 	ID        string
 	Title     string
+	Name      string
+	Number    int
 	CWD       string
 	PID       int
 	Cols      int
@@ -78,6 +84,29 @@ type TerminalInfo struct {
 	Alive     bool
 	ExitCode  int
 	ExitErr   string
+}
+
+// DisplayName is independent of application-supplied OSC window titles.
+func (info TerminalInfo) DisplayName() string {
+	if info.Name != "" {
+		return info.Name
+	}
+	if info.Number > 0 {
+		return fmt.Sprintf("Terminal %d", info.Number)
+	}
+	return "Terminal"
+}
+
+func ValidateTerminalName(name string) error {
+	if strings.TrimSpace(name) == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > 64 {
+		return errors.New("use a name with 1 to 64 characters")
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return errors.New("use a name without control characters")
+		}
+	}
+	return nil
 }
 
 // TerminalCreateOpts configures a new in-app terminal.
@@ -119,11 +148,14 @@ type TerminalManager struct {
 	root       string
 	host       HostInfo
 	settings   ttypes.TerminalSettings
+	nextNumber int
 }
 
 type terminalSession struct {
 	id         string
 	title      string
+	name       string
+	number     int
 	cwd        string
 	cols       int
 	rows       int
@@ -419,6 +451,8 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 		readDone:  make(chan struct{}),
 	}
 	m.mu.Lock()
+	m.nextNumber++
+	sess.number = m.nextNumber
 	sess.outputSink = m.outputSink
 	if sess.outputSink == nil && m.bus != nil {
 		sess.outputSink = m.bus
@@ -512,7 +546,7 @@ func (m *TerminalManager) Resize(id string, cols, rows int) error {
 	return nil
 }
 
-// SetTitle stores a title from OSC (TUI VT) or the user.
+// SetTitle stores an application OSC title, not the user-visible terminal name.
 func (m *TerminalManager) SetTitle(id, title string) {
 	if m == nil || title == "" {
 		return
@@ -527,6 +561,20 @@ func (m *TerminalManager) SetTitle(id, title string) {
 	if changed {
 		m.emit(TerminalTitleMsg{ID: id, Title: title})
 	}
+}
+
+func (m *TerminalManager) rename(id, name string) error {
+	if err := ValidateTerminalName(name); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.items[id]
+	if s == nil {
+		return fmt.Errorf("terminal %s not found", id)
+	}
+	s.name = strings.TrimSpace(name)
+	return nil
 }
 
 // SetCWD records the child's reported working directory (OSC 7). No event
@@ -659,6 +707,8 @@ func (s *terminalSession) info() TerminalInfo {
 	return TerminalInfo{
 		ID:        s.id,
 		Title:     s.title,
+		Name:      s.name,
+		Number:    s.number,
 		CWD:       s.cwd,
 		PID:       pid,
 		Cols:      s.cols,

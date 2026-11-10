@@ -2758,8 +2758,8 @@ func (z *GitCommitSummary) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *GitComparison) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 18
-	o = append(o, 0xdc, 0x0, 0x12)
+	// array header, size 24
+	o = append(o, 0xdc, 0x0, 0x18)
 	o = msgp.AppendString(o, z.Path)
 	o = msgp.AppendString(o, z.AbsolutePath)
 	o = msgp.AppendString(o, z.RepositoryRoot)
@@ -2786,6 +2786,12 @@ func (z *GitComparison) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendUint32(o, z.BeforeMode)
 	o = msgp.AppendUint32(o, z.AfterMode)
 	o = msgp.AppendBool(o, z.Historical)
+	o = msgp.AppendBool(o, z.MetadataOnly)
+	o = msgp.AppendBool(o, z.LFS)
+	o = msgp.AppendInt64(o, z.BeforeSize)
+	o = msgp.AppendInt64(o, z.AfterSize)
+	o = msgp.AppendString(o, z.BeforeObject)
+	o = msgp.AppendString(o, z.AfterObject)
 	return
 }
 
@@ -2801,8 +2807,8 @@ func (z *GitComparison) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 18 {
-		err = msgp.ArrayError{Wanted: 18, Got: zb0001}
+	if zb0001 != 24 {
+		err = msgp.ArrayError{Wanted: 24, Got: zb0001}
 		return
 	}
 	z.Path, bts, err = msgp.ReadStringBytes(bts)
@@ -2915,13 +2921,43 @@ func (z *GitComparison) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Historical")
 		return
 	}
+	z.MetadataOnly, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "MetadataOnly")
+		return
+	}
+	z.LFS, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "LFS")
+		return
+	}
+	z.BeforeSize, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "BeforeSize")
+		return
+	}
+	z.AfterSize, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AfterSize")
+		return
+	}
+	z.BeforeObject, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "BeforeObject")
+		return
+	}
+	z.AfterObject, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AfterObject")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *GitComparison) Msgsize() (s int) {
-	s = 3 + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.AbsolutePath) + msgp.StringPrefixSize + len(z.RepositoryRoot) + msgp.StringPrefixSize + len(z.OriginalPath) + msgp.StringPrefixSize + len(z.BaseLabel) + msgp.StringPrefixSize + len(z.TargetLabel) + msgp.BytesPrefixSize + len(z.Before) + msgp.BytesPrefixSize + len(z.After) + msgp.StringPrefixSize + len(z.Fingerprint) + msgp.Uint8Size + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.Uint32Size + msgp.Uint32Size + msgp.BoolSize
+	s = 3 + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.AbsolutePath) + msgp.StringPrefixSize + len(z.RepositoryRoot) + msgp.StringPrefixSize + len(z.OriginalPath) + msgp.StringPrefixSize + len(z.BaseLabel) + msgp.StringPrefixSize + len(z.TargetLabel) + msgp.BytesPrefixSize + len(z.Before) + msgp.BytesPrefixSize + len(z.After) + msgp.StringPrefixSize + len(z.Fingerprint) + msgp.Uint8Size + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.Uint32Size + msgp.Uint32Size + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.Int64Size + msgp.Int64Size + msgp.StringPrefixSize + len(z.BeforeObject) + msgp.StringPrefixSize + len(z.AfterObject)
 	return
 }
 
@@ -5223,10 +5259,12 @@ func (z *TerminalEffectsMsg) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *TerminalInfo) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 10
-	o = append(o, 0x9a)
+	// array header, size 12
+	o = append(o, 0x9c)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.Title)
+	o = msgp.AppendString(o, z.Name)
+	o = msgp.AppendInt(o, z.Number)
 	o = msgp.AppendString(o, z.CWD)
 	o = msgp.AppendInt(o, z.PID)
 	o = msgp.AppendInt(o, z.Cols)
@@ -5250,8 +5288,8 @@ func (z *TerminalInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 10 {
-		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
+	if zb0001 != 12 {
+		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -5262,6 +5300,16 @@ func (z *TerminalInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	z.Title, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Title")
+		return
+	}
+	z.Name, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Name")
+		return
+	}
+	z.Number, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Number")
 		return
 	}
 	z.CWD, bts, err = msgp.ReadStringBytes(bts)
@@ -5314,7 +5362,7 @@ func (z *TerminalInfo) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *TerminalInfo) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Title) + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.Uint8Size + msgp.BoolSize + msgp.IntSize + msgp.StringPrefixSize + len(z.ExitErr)
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Title) + msgp.StringPrefixSize + len(z.Name) + msgp.IntSize + msgp.StringPrefixSize + len(z.CWD) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.Uint8Size + msgp.BoolSize + msgp.IntSize + msgp.StringPrefixSize + len(z.ExitErr)
 	return
 }
 

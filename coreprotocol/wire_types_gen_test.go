@@ -149,6 +149,7 @@ var wireTypes = []any{
 	new(p1.GitConflictFileResult),
 	new(p1.GitInspectCommitRequest),
 	new(p1.GitInspectCommitResult),
+	new(p1.GitLFSRequest),
 	new(p1.GitMergeRequest),
 	new(p1.GitPathsRequest),
 	new(p1.GitRemoteRequest),

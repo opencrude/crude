@@ -510,6 +510,10 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return m.openGitReview("", "")
 	case "git.history":
 		return m.openGitPanel(gitpanel.ModeHistory)
+	case "git.lfs.install":
+		return m.gitLargeFiles("install")
+	case "git.lfs.pull":
+		return m.gitLargeFiles("pull")
 	case "terminal.new":
 		return m.openNewTerminal()
 	case "terminal.toggle":

@@ -326,7 +326,7 @@ func (m *App) terminalHeaderContext(id string) (context, metrics, target string)
 	if !ok {
 		return "Terminal", "Unavailable", target
 	}
-	context = firstNonempty(terminal.Title, "Terminal")
+	context = terminal.DisplayName()
 	if terminal.Alive {
 		metrics = "PTY running"
 	} else if terminal.ExitErr != "" {
@@ -755,7 +755,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 				placement = "Floating"
 			}
 			items = append(items, statusoverview.Item{
-				ID: "terminal:" + terminal.ID, Label: terminal.Title, Summary: state + "  " + placement, Icon: ">_",
+				ID: "terminal:" + terminal.ID, Label: terminal.DisplayName(), Summary: state + "  " + placement, Icon: ">_",
 				Subtitle: firstNonempty(terminal.CWD, placement),
 				Active:   terminal.Alive && m.termDock != nil && m.termDock.ActiveID() == terminal.ID,
 				Owner:    ttypes.ResourceRef{Kind: ttypes.ResourceTerminal, ID: terminal.ID},

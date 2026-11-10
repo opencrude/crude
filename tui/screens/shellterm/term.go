@@ -34,6 +34,7 @@ type Screen struct {
 	tokens               *ui.TokenSet
 	termID               string
 	title                string
+	number               int
 	view                 termview.View
 	projection           workspace.TerminalProjection
 	controlled           bool
@@ -98,7 +99,9 @@ func (s *Screen) ID() ui.ComponentID {
 	return ui.ComponentID("shellterm/" + s.termID)
 }
 
-func (s *Screen) TermID() string { return s.termID }
+func (s *Screen) TermID() string       { return s.termID }
+func (s *Screen) Number() int          { return s.number }
+func (s *Screen) SetNumber(number int) { s.number = number }
 func (s *Screen) Title() string {
 	if s.title != "" {
 		return s.title
@@ -156,7 +159,8 @@ func (s *Screen) setProjection(p workspace.TerminalProjection, install func(term
 	p.Grid = s.view.Grid
 	s.projection = p
 	s.cols, s.rows = p.Grid.Cols, p.Grid.GridRows
-	s.title = p.Info.Title
+	s.title = p.Info.DisplayName()
+	s.number = p.Info.Number
 	s.exited = !p.Info.Alive
 	if p.Grid.Synchronized && !wasSynchronized {
 		s.syncRetryAt = time.Now().Add(terminalvt.SynchronizedOutputTimeout)
@@ -291,6 +295,20 @@ func (s *Screen) TakePendingCopy() tea.Cmd {
 // system clipboard. Clipboard subprocess I/O must never run in Handle, which
 // executes on Bubble Tea's update goroutine.
 func (s *Screen) SetCopy(fn func(string) tea.Cmd) { s.copy = fn }
+
+// Clipboard and context-menu actions use the same selection and paste owners as keys.
+func (s *Screen) HasSelection() bool     { return s.view.HasSelection() }
+func (s *Screen) CopySelection() tea.Cmd { return s.copySelection() }
+func (s *Screen) SelectAll()             { s.view.SelectAll(); s.requestSelectionRows() }
+func (s *Screen) PasteActive() bool      { return !s.closed && !s.exited && s.controlled }
+func (s *Screen) PasteText(text string) {
+	if !s.PasteActive() {
+		return
+	}
+	s.view.ClearSelection()
+	s.view.ScrollBottom()
+	s.queue(Command{Kind: CommandPaste, Paste: []byte(text)})
+}
 
 // SetNow overrides the multi-click clock (tests).
 func (s *Screen) SetNow(fn func() uint64) {

@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/filetree"
+	"crude/tui/screens/shellterm"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )
@@ -616,7 +617,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
 			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(hitWin.ID)); ok {
-				m.openTerminalControlMenu(id)
+				m.openTerminalContextMenu(id, mouse)
 				return m, nil
 			}
 			if group, ok := paneGroupFromOverlay(ui.OverlayID(hitWin.ID)); ok && m.Win.IsFloating(group) {
@@ -639,6 +640,12 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	if hit, ok := m.deckTextClipboardHit(mouse); ok {
 		return m, m.openContextMenuState(mouse, m.textClipboardMenu("", hit))
 	}
+	if screen, ok := m.activePanelTabContent().(*shellterm.Screen); ok {
+		if r, mounted := m.hostFor(screen.ID()).ScreenRect(screen.ID()); mounted && r.Contains(mouse.X, mouse.Y) {
+			m.openTerminalContextMenu(screen.TermID(), mouse)
+			return m, nil
+		}
+	}
 
 	if st := m.problemsMenuAt(mouse); st != nil {
 		return m, m.openContextMenuState(mouse, st)
@@ -651,7 +658,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	switch region {
 	case regionTermDock:
 		if m.termDock != nil && m.termDock.TerminalActive() {
-			m.openTerminalControlMenu(m.termDock.ActiveID())
+			m.openTerminalContextMenu(m.termDock.TerminalAt(mouse.X, mouse.Y), mouse)
 			return m, nil
 		}
 	case regionEditor:

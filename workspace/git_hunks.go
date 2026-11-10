@@ -68,7 +68,7 @@ func (hunk GitHunkRange) validate(beforeN, afterN int) error {
 }
 
 func gitHunkCapable(comparison GitComparison) error {
-	if comparison.Binary {
+	if comparison.Binary || comparison.MetadataOnly {
 		return errors.New("binary files are staged as a whole")
 	}
 	return nil

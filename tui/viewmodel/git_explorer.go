@@ -93,6 +93,9 @@ func (m *App) explorerGitSection(path string, isDir bool) (ui.ContextMenuSection
 				m.startDiscardGitChange(discardable[0])
 			}
 		}})
+		section.Items = append(section.Items, ui.ContextMenuItem{Label: "Track file with Git LFS", Action: func() {
+			m.startSourceControlMutation(m.gitLargeFiles("track", scope))
+		}})
 	}
 	return section, true
 }

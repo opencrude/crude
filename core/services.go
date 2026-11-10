@@ -182,6 +182,13 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 			value, err := ws.DiscardGitHunk(ctx, in.Comparison, in.Hunk)
 			return coreprotocol.DiscardGitHunkResult{SafetyID: value}, err
 		})
+	case coreprotocol.GitLFS:
+		return serviceCall(request, func(ctx context.Context, in coreprotocol.GitLFSRequest) (coreprotocol.Empty, error) {
+			if git == nil {
+				return coreprotocol.Empty{}, errors.New("git is unavailable")
+			}
+			return coreprotocol.Empty{}, git.LFS(ctx, in.Operation, in.Paths...)
+		})
 	case coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation:
 		return serviceCall(request, func(ctx context.Context, _ coreprotocol.GitRemoteRequest) (coreprotocol.GitRemoteResult, error) {
 			if git == nil {
@@ -356,7 +363,7 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 func serviceMutation(method string) bool {
 	switch method {
 	case coreprotocol.RemoveCodeTools, coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk,
-		coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitMerge, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation, coreprotocol.ResolveGitConflict,
+		coreprotocol.GitLFS, coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitMerge, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation, coreprotocol.ResolveGitConflict,
 		coreprotocol.PinMemory, coreprotocol.ForgetMemoryRecord, coreprotocol.CorrectMemory, coreprotocol.MarkBoardRead:
 		return true
 	}

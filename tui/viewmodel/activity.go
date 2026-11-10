@@ -424,7 +424,11 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return nil
 	case termdock.ActionOpenAsTab:
 		if id, ok := action.Payload.(string); ok {
-			m.openPanelAsTab(id)
+			if id == termdock.PanelTerminal {
+				m.openTerminalAsTab(m.termDock.ActiveID())
+			} else {
+				m.openPanelAsTab(id)
+			}
 		}
 		return nil
 	case termdock.ActionOpenAsWindow:

@@ -46,6 +46,15 @@ pwsh scripts/tuishot.ps1 .\tmp\crude-shots
 The script saves `01-boot.png`, prints the exact HWND and client geometry, and
 closes the dedicated window before returning.
 
+Capture tests must not call `t.Log`, `t.Error`, `t.Fatal`, `fmt.Print` or another
+raw terminal writer while the TUI runs. Keep findings in the visual model.
+Report them only after `Program.Run` returns and the UI's asynchronous work
+joins. Write the pass sentinel after those checks, never from `Update`.
+A successful screenshot command does not imply that the fixture passed.
+Checks must also be passive: read the last painted cell buffer, not `View()`.
+The latter commits incremental output; a discarded assertion call can consume
+the very frame that the capture is meant to verify.
+
 Use a prebuilt binary to avoid rebuilding between visual checks:
 
 ```powershell

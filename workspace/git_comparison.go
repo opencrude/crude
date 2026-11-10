@@ -50,6 +50,14 @@ type GitComparison struct {
 	BeforeMode    uint32
 	AfterMode     uint32
 	Historical    bool
+	// Metadata-only comparisons never load/smudge a large object and never
+	// authorize an exact-byte mutation. Whole-file Stage uses Git's filters.
+	MetadataOnly bool
+	LFS          bool
+	BeforeSize   int64
+	AfterSize    int64
+	BeforeObject string
+	AfterObject  string
 }
 
 type GitCommitReview struct {
@@ -74,12 +82,17 @@ type gitReviewState struct {
 	headTree    *object.Tree
 	fingerprint string
 	status      git.Status // lazily read once per state for rename sources
+	lfsPaths    map[string]bool
 }
 
 type gitReviewFile struct {
-	text    string
-	mode    filemode.FileMode
-	present bool
+	text         string
+	mode         filemode.FileMode
+	present      bool
+	size         int64
+	metadataOnly bool
+	object       string
+	lfs          bool
 }
 
 func (s *GitService) Compare(ctx context.Context, change GitChange) (GitComparison, error) {
@@ -169,6 +182,16 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 	if change.Area == GitAreaConflict {
 		return GitComparison{}, errors.New("unresolved conflict: inspect the working file; staging requires resolving the index conflict first")
 	}
+	if _, known := state.lfsPaths[rel]; !known {
+		attrs, err := gitLFSPaths(ctx, state.root, []string{rel})
+		if err != nil {
+			return GitComparison{}, err
+		}
+		if state.lfsPaths == nil {
+			state.lfsPaths = make(map[string]bool)
+		}
+		state.lfsPaths[rel] = attrs[rel]
+	}
 	beforePath := rel
 	if change.Code == "R" || change.Code == "C" {
 		status, err := state.worktreeStatus(ctx)
@@ -199,9 +222,13 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 	case GitAreaWorking, GitAreaUntracked:
 		// Both sides in working-tree form: disk bytes against the index as Git
 		// would check it out here, never raw repository-form bytes.
-		before, err = state.indexCheckoutFile(ctx, beforePath)
+		if state.lfsPaths[rel] {
+			before, err = state.indexFile(ctx, beforePath)
+		} else {
+			before, err = state.indexCheckoutFile(ctx, beforePath)
+		}
 		if err == nil {
-			after, err = gitReviewDiskFile(ctx, state.root, rel)
+			after, err = gitReviewDiskFileMode(ctx, state.root, rel, state.lfsPaths[rel])
 		}
 	default:
 		return GitComparison{}, errors.New("unknown Git comparison area")
@@ -213,10 +240,17 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 		return GitComparison{}, fmt.Errorf("comparison unavailable: %s exists in neither compared version", rel)
 	}
 	comparison := gitReviewComparison(state.root, rel, change.Area, before, after, baseLabel, targetLabel)
+	comparison.LFS = comparison.LFS || state.lfsPaths[rel]
+	if comparison.LFS {
+		comparison.MetadataOnly, comparison.Binary = true, true
+		comparison.Before, comparison.After = nil, nil
+	}
 	if beforePath != rel {
 		comparison.OriginalPath = beforePath
 	}
-	comparison.Fingerprint = gitReviewDigest(state.fingerprint, gitComparisonIdentity(comparison))
+	if !comparison.MetadataOnly {
+		comparison.Fingerprint = gitReviewDigest(state.fingerprint, gitComparisonIdentity(comparison))
+	}
 	return comparison, ctx.Err()
 }
 
@@ -235,19 +269,28 @@ func (state *gitReviewState) worktreeStatus(ctx context.Context) (git.Status, er
 func gitComparisonIdentity(comparison GitComparison) string {
 	return gitReviewDigest(comparison.RepositoryRoot, comparison.Path, comparison.OriginalPath,
 		string(comparison.Before), string(comparison.After),
-		fmt.Sprintf("%d:%t:%t:%d:%d", comparison.Area, comparison.BeforePresent, comparison.AfterPresent, comparison.BeforeMode, comparison.AfterMode))
+		fmt.Sprintf("%d:%t:%t:%d:%d:%t:%d:%d", comparison.Area, comparison.BeforePresent, comparison.AfterPresent, comparison.BeforeMode, comparison.AfterMode, comparison.MetadataOnly, comparison.BeforeSize, comparison.AfterSize),
+		comparison.BeforeObject, comparison.AfterObject)
 }
 
 func gitReviewComparison(root, rel string, area GitChangeArea, before, after gitReviewFile, base, target string) GitComparison {
 	_, _, beforeErr := textencoding.DecodeText([]byte(before.text))
 	_, _, afterErr := textencoding.DecodeText([]byte(after.text))
-	return GitComparison{
+	comparison := GitComparison{
 		RepositoryRoot: root, Path: rel, AbsolutePath: filepath.Join(root, filepath.FromSlash(rel)),
 		Area: area, BaseLabel: base, TargetLabel: target, Before: []byte(before.text), After: []byte(after.text),
 		BeforePresent: before.present, AfterPresent: after.present, BeforeMode: uint32(before.mode), AfterMode: uint32(after.mode),
 		Binary:    fileio.IsBinary([]byte(before.text)) || fileio.IsBinary([]byte(after.text)) || beforeErr != nil || afterErr != nil,
 		Untracked: area == GitAreaUntracked, Deleted: before.present && !after.present,
+		MetadataOnly: before.metadataOnly || after.metadataOnly,
+		BeforeSize:   max(before.size, int64(len(before.text))), AfterSize: max(after.size, int64(len(after.text))),
+		BeforeObject: before.object, AfterObject: after.object,
+		LFS: before.lfs || after.lfs,
 	}
+	if comparison.MetadataOnly {
+		comparison.Before, comparison.After, comparison.Binary = nil, nil, true
+	}
+	return comparison
 }
 
 func (c GitComparison) TextVersions() (before, after string, beforeEncoding, afterEncoding textencoding.Encoding, err error) {
@@ -293,6 +336,9 @@ func (state *gitReviewState) blob(ctx context.Context, hash plumbing.Hash, mode 
 	if err != nil {
 		return gitReviewFile{}, fmt.Errorf("read Git blob: %w", err)
 	}
+	if blob.Size > gitComparisonLimit {
+		return gitReviewFile{mode: mode, present: true, size: blob.Size, metadataOnly: true, object: hash.String()}, nil
+	}
 	reader, err := blob.Reader()
 	if err != nil {
 		return gitReviewFile{}, err
@@ -308,7 +354,12 @@ func (state *gitReviewState) blob(ctx context.Context, hash plumbing.Hash, mode 
 	if int64(len(content)) > gitComparisonLimit {
 		return gitReviewFile{}, errors.New("git comparison exceeds the 64 MiB review limit")
 	}
-	return gitReviewFile{text: string(content), mode: mode, present: true}, ctx.Err()
+	if len(content) <= 1024 && mode != filemode.Symlink {
+		if size, pointer := gitLFSPointerSize(string(content)); pointer {
+			return gitReviewFile{mode: mode, present: true, size: size, metadataOnly: true, object: hash.String(), lfs: true}, ctx.Err()
+		}
+	}
+	return gitReviewFile{text: string(content), mode: mode, present: true, size: blob.Size, object: hash.String()}, ctx.Err()
 }
 
 func (state *gitReviewState) treeFile(ctx context.Context, tree *object.Tree, rel string) (gitReviewFile, error) {
@@ -343,11 +394,24 @@ func (state *gitReviewState) indexCheckoutFile(ctx context.Context, rel string) 
 	if found.Mode == filemode.Symlink || found.Mode == filemode.Submodule {
 		return state.blob(ctx, found.Hash, found.Mode)
 	}
+	blob, err := state.repo.BlobObject(found.Hash)
+	if err != nil {
+		return gitReviewFile{}, err
+	}
+	if blob.Size > gitComparisonLimit {
+		return gitReviewFile{mode: found.Mode, present: true, size: blob.Size, metadataOnly: true, object: found.Hash.String()}, nil
+	}
+	if blob.Size <= 1024 {
+		raw, err := state.blob(ctx, found.Hash, found.Mode)
+		if err != nil || raw.lfs {
+			return raw, err
+		}
+	}
 	text, err := gitCheckoutText(ctx, state.root, rel, found.Hash.String())
 	if err != nil {
 		return gitReviewFile{}, err
 	}
-	return gitReviewFile{text: text, mode: found.Mode, present: true}, ctx.Err()
+	return gitReviewFile{text: text, mode: found.Mode, present: true, object: found.Hash.String()}, ctx.Err()
 }
 
 func (state *gitReviewState) indexEntry(rel string) (*index.Entry, error) {
@@ -367,7 +431,7 @@ func (state *gitReviewState) indexEntry(rel string) (*index.Entry, error) {
 	return found, nil
 }
 
-func gitReviewDiskFile(ctx context.Context, root, rel string) (gitReviewFile, error) {
+func gitReviewDiskFileMode(ctx context.Context, root, rel string, metadataOnly bool) (gitReviewFile, error) {
 	segments := strings.Split(rel, "/")
 	parent := root
 	for _, segment := range segments[:len(segments)-1] {
@@ -402,10 +466,15 @@ func gitReviewDiskFile(ctx context.Context, root, rel string) (gitReviewFile, er
 	if !info.Mode().IsRegular() {
 		return gitReviewFile{}, errors.New("git review supports regular files and symbolic links, not directories or devices")
 	}
-	if info.Size() > gitComparisonLimit {
-		return gitReviewFile{}, errors.New("git comparison exceeds the 64 MiB review limit")
+	if metadataOnly || info.Size() > gitComparisonLimit {
+		return gitReviewFile{mode: mode, present: true, size: info.Size(), metadataOnly: true}, ctx.Err()
 	}
-	content, err := os.ReadFile(abs)
+	f, err := os.Open(abs)
+	if err != nil {
+		return gitReviewFile{}, err
+	}
+	defer f.Close()
+	content, err := io.ReadAll(io.LimitReader(f, gitComparisonLimit+1))
 	if err != nil {
 		return gitReviewFile{}, err
 	}

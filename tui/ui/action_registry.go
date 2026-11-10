@@ -613,6 +613,8 @@ var defaultActions = []*ActionDef{
 	},
 	{ID: "git.review", Label: "Review All Changes", Description: "every changed file as one scrollable diff in the main area", Icon: "±", Category: "Git"},
 	{ID: "git.history", Label: "Git History", Description: "browse recent commits and their changes in the Git panel", Category: "Git"},
+	{ID: "git.lfs.install", Label: "Set Up Git LFS", Description: "configure large file filters and hooks for this repository", Category: "Git"},
+	{ID: "git.lfs.pull", Label: "Download Git LFS Files", Description: "download large file content for the current checkout", Category: "Git"},
 	{ID: "view.activity.skills", Label: "Skills", Description: "show workspace skills in the sidebar", Category: "View", Contextual: true},
 	{ID: "view.activity.mcp", Label: "MCP", Description: "show workspace MCP connections in the sidebar", Category: "View", Contextual: true},
 	{ID: "workspace.panel.hide", Label: "Hide Workspace Panel", Description: "hide the panel without stopping processes or deleting drafts", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+j"}, {Mod: tea.ModCtrl | tea.ModAlt, Code: 'j'}}, HintKey: "Ctrl+Alt+J", Contextual: true},
