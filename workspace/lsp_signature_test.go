@@ -18,7 +18,7 @@ type signatureGateClient struct {
 	calls   atomic.Int64
 }
 
-func (c *signatureGateClient) RequestSignatureHelp(context.Context, string, int, int) (types.LSPSignatureHelp, error) {
+func (c *signatureGateClient) RequestSignatureHelp(context.Context, string, int, int, types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
 	c.calls.Add(1)
 	if c.entered != nil {
 		close(c.entered)
@@ -57,7 +57,7 @@ func TestSignatureManagerRequiresQualifiedBoundaryAndLiveRequest(t *testing.T) {
 				manager.documents[source.Path].boundary = types.InsightBoundary{}
 				manager.mu.Unlock()
 			}
-			help, err := manager.RequestSignatureHelp(ctx, source.Path, 0, 0)
+			help, err := manager.RequestSignatureHelp(ctx, source.Path, 0, 0, types.LSPSignatureContext{})
 			if err == nil || len(help.Signatures) != 0 || client.calls.Load() != 0 {
 				t.Fatal("unqualified or cancelled request probed/accepted provider evidence", help, err, client.calls.Load())
 			}
@@ -93,7 +93,7 @@ func TestSignatureManagerRetainsSourceAndRejectsContextChange(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			go func() {
-				help, err := manager.RequestSignatureHelp(ctx, source.Path, 1, 13)
+				help, err := manager.RequestSignatureHelp(ctx, source.Path, 1, 13, types.LSPSignatureContext{})
 				done <- result{help, err}
 			}()
 			select {
@@ -121,5 +121,21 @@ func TestSignatureManagerRetainsSourceAndRejectsContextChange(t *testing.T) {
 				t.Fatal("parameter answer lost exact source/provider/context qualification", got)
 			}
 		})
+	}
+}
+
+func TestSignatureOldServerIntentCannotReachReplacement(t *testing.T) {
+	root := t.TempDir()
+	client := &signatureGateClient{lifecycleClient: lifecycleClient{runtime: &lifecycleRuntime{}}}
+	manager := NewLSPManager(nil, signatureGateRuntime{client})
+	t.Cleanup(manager.Close)
+	trustAnalysis(t, manager, root)
+	source := editorSource(t, manager, filepath.Join(root, "main.go"), "package main\nvar _ = call(1)\n")
+	awaitLSP(t, func() bool { return manager.AssistanceCapabilities(source.Path).Producer.InstanceID != "" })
+	old := manager.AssistanceCapabilities(source.Path).Producer
+	old.InstanceID = "retired-instance"
+	result, err := manager.RequestSignatureHelp(t.Context(), source.Path, 1, 13, types.LSPSignatureContext{Producer: old, TriggerKind: 3, IsRetrigger: true})
+	if err == nil || len(result.Signatures) != 0 || client.calls.Load() != 0 {
+		t.Fatal("retired-server context reached the replacement", result, err)
 	}
 }

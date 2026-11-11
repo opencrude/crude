@@ -630,7 +630,9 @@ func TestSafetyProtectionProcessGateCancellationAndShutdown(t *testing.T) {
 	select {
 	case err := <-closed:
 		close(ctx.resume)
-		<-changed
+		if cleanupErr := <-changed; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
 		t.Fatalf("shutdown did not join admitted audited change: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}

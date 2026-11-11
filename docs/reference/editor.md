@@ -690,28 +690,42 @@ signature-help request through the same retained server. The initialized provide
 must advertise support; unsupported, failed and supported-but-empty answers stay
 distinct. There is no language-name branch, new server or inferred call parser.
 
-Ordinary native `(` and `,` edits also request parameter information. One
-shell-local intent waits for the exact typed source and caret to be acknowledged,
-then uses the same provider/request/context boundary as explicit inspection.
+Native edits that match the current file server's advertised signature trigger
+characters request parameter information (often `(` and `,`). While that
+assistance is active, native argument typing, deletion, line breaks and
+indentation replace it with one request for the newest source and caret. Arrow
+keys and snippet-field Tab refresh the argument position without changing source.
+One shell-local intent waits for the exact typed source and caret to be acknowledged,
+then uses the same server/request/context boundary as explicit inspection.
+The request carries the standard trigger kind, actual trigger character and
+retrigger flag. An active retrigger preserves the exact bounded server result,
+including original parameter offsets and markup, instead of reconstructing it
+from display text. Retrigger-only characters apply only while help is active.
 Input queued behind Undo triggers only when the original key actually executes.
 An accepted suggestion that leaves the caret, or its selected first field,
-directly after `(` requests it too, like JetBrains IDEs and VS Code after a
+directly after an advertised signature trigger requests it too, as after a
 function suggestion. The selected default of a snippet field is not a user
 selection and does not block the request.
 Paste, API edits, peer publications and reopening a tab are not trigger input.
-An intervening edit, selection, caret/focus/lifetime/workspace change or a
-five-second acknowledgement deadline retires the intent without querying older
-source. A ready-provider/source publication can lead the initial semantic-context
+Unrelated edits, user selection, API caret changes, focus/lifetime/workspace
+departure or a five-second acknowledgement deadline retire the intent without
+querying older source. New native argument input replaces the old intent rather
+than queueing every key. A ready-provider/source publication can lead the initial semantic-context
 cursor; the same intent waits for that cursor rather than being dropped or
 querying unobserved context. Automatic missing/unsupported/empty/failed answers
 and timeouts stay quiet; they do not create loading toasts while typing.
 
-The automatic WindowFrame/TextArea card is passive and anchored immediately
-below or above the actual painted caret, with native Unicode, tabs, inlays,
-scroll and nested-pane coordinates. It never captures the next typed key.
+The automatic WindowFrame/TextArea card is passive and source-anchored, with
+native Unicode, tabs, inlays, scroll and nested-pane coordinates. It never
+captures the next typed key. Completion suggestions and parameter information
+coexist. The shared placement owner keeps their frames disjoint, preferring
+space adjacent to the caret and using the next free interval when needed.
+Old parameter text closes as soon as its source changes; only a current
+acknowledged answer can replace it.
 On short grids, the reader shrinks to the larger space above/below the caret and
 retains native scrolling, rather than centering or covering the source caret.
-Escape dismisses the pending intent/card before closing the editor.
+Escape dismisses the suggestion list, then the parameter intent/card, before
+closing the editor.
 **Alt+I** explicitly requests the complete focusable reader. That reader and
 symbol documentation also open at the caret instead of the screen center.
 
@@ -722,11 +736,12 @@ The reader grows to fit, within the editor-help limits, and shows a scrollbar
 when the text still overflows. It supports normal reading/selection/copy,
 resize, Escape and outside-click dismissal.
 It never inserts text, chooses an overload on the server or edits an argument.
-Only the two native delimiter inputs and an accepted suggestion that opens an
-argument list trigger automatic assistance. The card closes when the caret
-moves. Keeping it open while the user types the arguments, dynamic capability
-registration, language-specific call parsing and full semantic-feature
-acceptance remain outside this slice; see the
+Advertised signature characters and an accepted suggestion that opens an
+argument list start automatic assistance. An accepted argument suggestion also
+refreshes existing assistance. Supported empty answers end it, including after
+the final snippet field leaves the call. Dynamic capability registration,
+language-specific call parsing and full semantic-feature acceptance remain
+outside this slice; see the
 [editor parity plan](../plans/editor-parity.md).
 
 Requests require acknowledged canonical text: optimistic edits, pending history,
@@ -960,9 +975,25 @@ active numeric choice field still opens **Snippet choices** first.
 Native typing intent is emitted after the final caret and edit group. The same
 observer handles linked views and deferred history input; paste, accepted
 completions, API edits and peer publications do not create typing intent.
+The initialized server's capabilities are published for each open path through
+the existing LSP snapshot. Completion and signature hints read that file's
+capabilities, never a different shell's globally focused server status. Restart,
+Stop, close and workspace replacement remove old capability observations.
+Explicit Ctrl+Space and parameter-information actions do not depend on arrival
+of that advisory snapshot. The existing asynchronous core request waits for the
+exact source/server and reports its result; a late capability topic cannot
+discard a user action. Automatic typing waits for advertised capabilities.
+Typing during initialization keeps one bounded input intent. When capabilities
+arrive, identifier input or an actually advertised character can request the
+current source; unsupported punctuation is discarded without querying. Once an
+intent observes a server instance, it cannot transfer to a replacement.
+Automatic non-identifier triggers come from the server advertisement, not a
+hardcoded dot. Requests carry Invoked, TriggerCharacter or incomplete-list
+refresh context. Continued typing after an incomplete list sends the standard
+refresh reason; a subsequent complete list ends that refresh mode.
 One cancellable debounce waits for both the configured delay and canonical
 acknowledgement. A timer firing first never discards the request. Source lifetime,
-revision, caret, focus, feature generation, workspace changes and Escape retire
+revision, caret, focus, feature generation, server instance, workspace changes and Escape retire
 pending intent. Ghost-text candidates of other producers retain their keys;
 completion's own inline text does not. An active snippet does not block
 suggestions: typing in a field requests them like any other typing. In a field,

@@ -6,6 +6,7 @@ type LSPSignatureHelp struct {
 	Boundary        InsightBoundary // filled only by the authoritative workspace coordinator
 	Signatures      []LSPSignature
 	ActiveSignature int
+	Original        []byte // exact bounded server result for signature retrigger context
 }
 
 type LSPSignature struct {

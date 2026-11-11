@@ -66,7 +66,7 @@ func (c *completionAcceptanceClient) answer(call completionAcceptanceCall) (type
 	return out, err
 }
 
-func (c *completionAcceptanceClient) RequestCompletions(ctx context.Context, path string, line, col int) (types.LSPCompletionResponse, error) {
+func (c *completionAcceptanceClient) RequestCompletions(ctx context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
 	return c.answer(completionAcceptanceCall{ctx: ctx, path: path, line: line, col: col})
 }
 
@@ -130,7 +130,7 @@ func (f *completionAcceptanceFixture) request(t *testing.T, raw, view string, se
 	f.client.completionMu.Lock()
 	f.client.raw = raw
 	f.client.completionMu.Unlock()
-	set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, view, sequence, line, col)
+	set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, view, sequence, line, col, types.LSPCompletionContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -331,7 +331,7 @@ func TestCompletionUnsupportedUnknownNullEmptyAndFailuresStayDistinct(t *testing
 			f := newCompletionAcceptanceFixture(t, "abc\n")
 			before, history := f.snapshot(t), f.history()
 			f.client.raw, f.client.unsupported, f.client.err = tc.raw, tc.unsupported, tc.failure
-			set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1)
+			set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1, types.LSPCompletionContext{})
 			if tc.answer == "" {
 				if err == nil || !reflect.DeepEqual(set, types.LSPCompletionSet{}) {
 					t.Fatal("missing support/result or provider failure became successful absence", set, err)
@@ -375,7 +375,7 @@ func TestCompletionMalformedResponsesAreAtomicAndRetainNoRawObjects(t *testing.T
 			f := newCompletionAcceptanceFixture(t, "a😀z\n")
 			before, history := f.snapshot(t), f.history()
 			f.client.raw = raw
-			out, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 3)
+			out, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 3, types.LSPCompletionContext{})
 			if err == nil || !reflect.DeepEqual(out, types.LSPCompletionSet{}) {
 				t.Fatal("invalid list published partial canonical evidence", out, err)
 			}
@@ -435,7 +435,7 @@ func TestCompletionAdmissionAndExactInspectionIdentity(t *testing.T) {
 			case "unsupported-payload":
 				f.client.unsupported = true
 			}
-			out, err := f.w.RequestLSPCompletions(ctx, owner, source, view, sequence, line, col)
+			out, err := f.w.RequestLSPCompletions(ctx, owner, source, view, sequence, line, col, types.LSPCompletionContext{})
 			if err == nil || !reflect.DeepEqual(out, types.LSPCompletionSet{}) {
 				t.Fatal("invalid source/wire/admission acquired evidence", invalid, out, err)
 			}
@@ -706,7 +706,7 @@ func TestCompletionLatestViewSequenceWinsAndOldReleaseCannotRetireNewer(t *testi
 	entered, unblock := holdCompletionAcceptanceRPC(t, f.client)
 	done := make(chan completionAcceptanceOutcome, 1)
 	go func() {
-		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1)
+		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 1, 0, 1, types.LSPCompletionContext{})
 		done <- completionAcceptanceOutcome{set, err}
 	}()
 	first := awaitCompletionAcceptanceCall(t, entered)
@@ -730,7 +730,7 @@ func TestCompletionLatestViewSequenceWinsAndOldReleaseCannotRetireNewer(t *testi
 		t.Fatal("late old request replaced newer set", got)
 	}
 	for _, sequence := range []uint64{1, 2} {
-		if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", sequence, 0, 1); err == nil ||
+		if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", sequence, 0, 1, types.LSPCompletionContext{}); err == nil ||
 			!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
 			t.Fatal("nonmonotonic request replayed provider evidence", sequence, set, err)
 		}
@@ -741,7 +741,7 @@ func TestCompletionLatestViewSequenceWinsAndOldReleaseCannotRetireNewer(t *testi
 	if _, err := f.w.InspectLSPCompletion(t.Context(), f.owner, second.ID, second.Digest, second.Entries[0].ID, false); err == nil {
 		t.Fatal("released set remained acceptable")
 	}
-	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 2, 0, 1); err == nil {
+	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 2, 0, 1, types.LSPCompletionContext{}); err == nil {
 		t.Fatal("exact release lost sequence tombstone")
 	}
 	if third := f.request(t, "[]", "view", 3, 0, 1); third.Answer != "empty" || third.Sequence != 3 {
@@ -764,7 +764,7 @@ func TestCompletionLatePositiveAndAbsenceAnswersCannotCrossLifetimeFences(t *tes
 				defer cancel()
 				done := make(chan completionAcceptanceOutcome, 1)
 				go func() {
-					set, err := f.w.RequestLSPCompletions(ctx, f.owner, f.source, "view", 1, 0, 1)
+					set, err := f.w.RequestLSPCompletions(ctx, f.owner, f.source, "view", 1, 0, 1, types.LSPCompletionContext{})
 					done <- completionAcceptanceOutcome{set, err}
 				}()
 				awaitCompletionAcceptanceCall(t, entered)
@@ -850,7 +850,7 @@ func TestCompletionActiveViewsAndReplayTrackingHaveConstantSeparateCaps(t *testi
 	for i := 0; i < 16; i++ {
 		f.request(t, "[]", fmt.Sprintf("view-%d", i), 1, 0, 1)
 	}
-	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "active-17", 1, 0, 1); err == nil ||
+	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "active-17", 1, 0, 1, types.LSPCompletionContext{}); err == nil ||
 		!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
 		t.Fatal("seventeenth active view exceeded cap16", set, err)
 	}
@@ -863,7 +863,7 @@ func TestCompletionActiveViewsAndReplayTrackingHaveConstantSeparateCaps(t *testi
 			t.Fatal(err)
 		}
 	}
-	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "tracking-129", 1, 0, 1); err == nil ||
+	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "tracking-129", 1, 0, 1, types.LSPCompletionContext{}); err == nil ||
 		!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
 		t.Fatal("129th replay-tracked view exceeded cap128", set, err)
 	}
@@ -909,7 +909,7 @@ func TestCompletionRawAndRetainedByteBoundsReleaseAndCloseReclaimEvidence(t *tes
 	}
 	accepted, rejected := 0, false
 	for i := 0; i < 16; i++ {
-		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, fmt.Sprintf("bytes-%d", i), 1, 0, 1)
+		set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, fmt.Sprintf("bytes-%d", i), 1, 0, 1, types.LSPCompletionContext{})
 		if err != nil {
 			if !reflect.DeepEqual(set, types.LSPCompletionSet{}) || !strings.Contains(err.Error(), "16 MiB") {
 				t.Fatal("workload failed before aggregate retained-byte cap", set, err)
@@ -931,7 +931,7 @@ func TestCompletionRawAndRetainedByteBoundsReleaseAndCloseReclaimEvidence(t *tes
 		t.Fatal("release retained original/display byte accounting", before, after)
 	}
 	f.client.raw = `[{"label":"too-large","data":"x"}]` + strings.Repeat(" ", 1<<20)
-	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "oversize", 1, 0, 1); err == nil ||
+	if set, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "oversize", 1, 0, 1, types.LSPCompletionContext{}); err == nil ||
 		!reflect.DeepEqual(set, types.LSPCompletionSet{}) {
 		t.Fatal("over-1MiB provider JSON acquired retained evidence", set, err)
 	}
@@ -943,5 +943,31 @@ func TestCompletionRawAndRetainedByteBoundsReleaseAndCloseReclaimEvidence(t *tes
 	}
 	if total, count := retained(); total != 0 || count != 0 {
 		t.Fatal("close did not reclaim original/display evidence and tombstones", total, count)
+	}
+}
+
+func TestCompletionCapabilitiesAndOldServerIntentFence(t *testing.T) {
+	fixture := newCompletionAcceptanceFixture(t, "unit")
+	manager := fixture.w.LSPMgr
+	caps := manager.AssistanceCapabilities(fixture.path)
+	if !caps.Completion || caps.Producer.InstanceID == "" {
+		t.Fatal("initialized file has no capabilities", caps)
+	}
+	caps.CompletionTriggers[0] = "corrupt"
+	if manager.AssistanceCapabilities(fixture.path).CompletionTriggers[0] != "." {
+		t.Fatal("capabilities aliased the manager")
+	}
+	old := caps.Producer
+	old.InstanceID = "retired-instance"
+	result, err := fixture.w.RequestLSPCompletions(t.Context(), fixture.owner, fixture.source, "old-server", 1, 0, 4, types.LSPCompletionContext{Producer: old, TriggerKind: 2, TriggerCharacter: "."})
+	fixture.client.completionMu.Lock()
+	calls := len(fixture.client.calls)
+	fixture.client.completionMu.Unlock()
+	if err == nil || result.ID != "" || calls != 0 {
+		t.Fatal("retired-server trigger queried or published a replacement answer", result, err, calls)
+	}
+	manager.Stop()
+	if manager.AssistanceCapabilities(fixture.path).Completion || len(manager.AssistanceSnapshots()) != 0 {
+		t.Fatal("Stop retained capabilities")
 	}
 }

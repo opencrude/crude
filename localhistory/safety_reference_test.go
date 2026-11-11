@@ -385,7 +385,9 @@ func TestRetainedSnapshotCloseJoinsAdmittedCapture(t *testing.T) {
 	select {
 	case err := <-closed:
 		close(ctx.resume)
-		<-captured
+		if cleanupErr := <-captured; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
 		t.Fatalf("close did not join the admitted capture: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}

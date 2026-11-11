@@ -97,7 +97,7 @@ func (c *immediateTreeDiagClient) RequestDocumentSymbols(context.Context, string
 func (c *immediateTreeDiagClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (c *immediateTreeDiagClient) RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error) {
+func (c *immediateTreeDiagClient) RequestSignatureHelp(context.Context, string, int, int, model.LSPSignatureContext) (model.LSPSignatureHelp, error) {
 	return model.LSPSignatureHelp{}, nil
 }
 func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
@@ -115,7 +115,7 @@ func (c *immediateTreeDiagClient) RequestInlayHints(context.Context, string, mod
 func (c *immediateTreeDiagClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
 	return model.LSPInlayResponse{}, context.Canceled
 }
-func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int) (model.LSPCompletionResponse, error) {
+func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int, model.LSPCompletionContext) (model.LSPCompletionResponse, error) {
 	return model.LSPCompletionResponse{}, context.Canceled
 }
 func (c *immediateTreeDiagClient) ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error) {
@@ -243,4 +243,8 @@ func assertLSPStartedForRoot(t *testing.T, runtime *immediateTreeDiagRuntime, di
 
 func (*immediateTreeDiagClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
 	return model.InsightDiagnosticPublication{}, true
+}
+
+func (*immediateTreeDiagClient) AssistanceCapabilities() model.LSPAssistanceCapabilities {
+	return model.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

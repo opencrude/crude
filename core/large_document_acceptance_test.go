@@ -199,7 +199,10 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}

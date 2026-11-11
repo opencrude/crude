@@ -120,14 +120,13 @@ func TestPreparedCapabilityOverlayPreservesNeighborsAndAcceptsRepeatedSet(t *tes
 	if err := w.ensureWorkspacePersistence(); err != nil {
 		t.Fatal(err)
 	}
-	before := w.LoadAppSettings()
 	// Parent-equal and schema-stale neighbors are stored intent/data, not a
 	// reason for a capability edit to rewrite other categories.
 	neighbors := types.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":4,"removed_editor_field":"kept"}`), Agents: json.RawMessage(`{"Enabled":false}`)}
 	if err := w.SaveWorkspaceSettings(neighbors); err != nil {
 		t.Fatal(err)
 	}
-	before = w.LoadAppSettings()
+	before := w.LoadAppSettings()
 	commit := w.PrepareCapabilityOverlayCommit(captypes.Action{})
 	after := before
 	after.Capabilities = captypes.Clone(before.Capabilities)

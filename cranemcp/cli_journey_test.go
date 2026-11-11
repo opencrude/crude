@@ -67,7 +67,9 @@ func (p *cliProcess) join(t *testing.T, wantSuccess bool) {
 		}
 	case <-time.After(5 * time.Second):
 		_ = p.cmd.Process.Kill()
-		<-p.done
+		if cleanupErr := <-p.done; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
 		p.joined = true
 		t.Error("MCP subprocess failed to exit within five seconds")
 	}
@@ -108,7 +110,9 @@ func cliSDK(t *testing.T, binary string, env []string, root string, flags ...str
 	p.session, err = mcp.NewClient(&mcp.Implementation{Name: "CLI acceptance", Version: "1"}, nil).Connect(ctx, &mcp.IOTransport{Reader: p.out, Writer: in}, nil)
 	if err != nil {
 		_ = p.cmd.Process.Kill()
-		<-p.done
+		if cleanupErr := <-p.done; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
 		t.Fatalf("SDK initialize: %v: %s", err, p.stderr.String())
 	}
 	t.Cleanup(func() { _ = p.session.Close(); p.join(t, false) })
@@ -180,7 +184,9 @@ func TestCLIProtocolJourney(t *testing.T) {
 	t.Cleanup(func() {
 		if !coreJoined {
 			_ = coreCmd.Process.Kill()
-			<-coreDone
+			if cleanupErr := <-coreDone; cleanupErr != nil {
+				t.Logf("Cleanup join: %v", cleanupErr)
+			}
 		}
 	})
 	var shell *coreclient.Client

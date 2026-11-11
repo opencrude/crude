@@ -68,7 +68,7 @@ func (p *cancelledPortProvider) NotifyWatchedFilesChanged(context.Context, strin
 func (p *cancelledPortProvider) RequestDocumentSymbols(context.Context, string) []workspace.LSPSymbol {
 	return nil
 }
-func (p *cancelledPortProvider) RequestSignatureHelp(ctx context.Context, _ string, _, _ int) (types.LSPSignatureHelp, error) {
+func (p *cancelledPortProvider) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
 	retired := make(chan struct{})
 	p.entered <- retired
 	<-ctx.Done()
@@ -145,7 +145,7 @@ func TestSignatureRemoteServiceCancellationRetiresProviderAndKeepsAttachment(t *
 		request, retire := context.WithCancel(ctx)
 		done := make(chan error, 1)
 		go func() {
-			_, err := port.LSPMgr().RequestSignatureHelp(request, path, 0, 0)
+			_, err := port.LSPMgr().RequestSignatureHelp(request, path, 0, 0, types.LSPSignatureContext{})
 			done <- err
 		}()
 		var retired chan struct{}
@@ -179,4 +179,8 @@ func TestSignatureRemoteServiceCancellationRetiresProviderAndKeepsAttachment(t *
 	if err := port.call(ctx, coreprotocol.StatusSnapshotMethod, &coreprotocol.Empty{}, &coreprotocol.StatusSnapshot{}); err != nil {
 		t.Fatal("repeated aborted remote-service queries exhausted the live attachment", err)
 	}
+}
+
+func (*cancelledPortProvider) AssistanceCapabilities() types.LSPAssistanceCapabilities {
+	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

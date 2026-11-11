@@ -36,6 +36,8 @@ import (
 // key:ctrl+End key:Up key:End key:F4
 // 'type:(' key:F4
 // type:x key:F4
+// key:ctrl+space key:F4
+// key:Escape key:F4
 // key:comma key:F4
 // key:Escape key:F4
 // key:alt+i key:F4
@@ -64,7 +66,7 @@ const automaticSignatureVisualSource = "package journey\n\nvar _ = join\n"
 const automaticSignatureVisualOpen = "package journey\n\nvar _ = join()\n"
 const automaticSignatureVisualArg = "package journey\n\nvar _ = join(x)\n"
 const automaticSignatureVisualComma = "package journey\n\nvar _ = join(x,)\n"
-const automaticSignatureVisualLib = "package journey\n\n// join returns the AUTOMATIC_SIGNATURE_NATIVE_SENTINEL first value.\nfunc join(first string, count int) string { return first }\n\nvar x = \"literal native argument\"\n"
+const automaticSignatureVisualLib = "package journey\n\n// join returns the AUTOMATIC_SIGNATURE_NATIVE_SENTINEL first value.\nfunc join(first string, count int) string { return first }\n\nvar x = \"literal native argument\"\nvar xray = \"another literal argument\"\n"
 const automaticSignatureVisualMod = "module journey\n\ngo 1.22\n"
 const automaticSignatureVisualDraft = "Private automatic parameter draft stays unsent."
 const automaticSignatureVisualLabel = "join(first string, count int) string"
@@ -201,7 +203,7 @@ func runAutomaticSignatureVisual(t *testing.T, headless bool, width, height int)
 				}
 				t.Logf("private installed-gopls RPC tail:\n%s", data)
 			}
-		} else if err := m.recordAutomaticSignature("AUTOMATIC_SIGNATURE_VISUAL_SUCCESS native delimiters; first/second parameters; passive caret card; editor x; Escape; selectable Alt+I reader; exact unsaved edits; unchanged disk/draft; joined local framed core"); err != nil {
+		} else if err := m.recordAutomaticSignature("AUTOMATIC_SIGNATURE_VISUAL_SUCCESS native delimiters; argument continuity; coexisting completion; first/second parameters; passive caret card; Escape; selectable Alt+I reader; exact unsaved edits; unchanged disk/draft; joined local framed core"); err != nil {
 			t.Error(err)
 		}
 		t.Log(m.transcript.String())
@@ -252,8 +254,8 @@ func runAutomaticSignatureVisual(t *testing.T, headless bool, width, height int)
 		}
 		t.Fatal(m.failure)
 	}
-	if m.phase != 9 {
-		t.Fatalf("automatic parameter observations incomplete: %d/9", m.phase)
+	if m.phase != 11 {
+		t.Fatalf("automatic parameter observations incomplete: %d/11", m.phase)
 	}
 	if m.rootHost.HasPointerCapture() {
 		t.Error("automatic parameter journey left pointer capture armed")
@@ -282,7 +284,7 @@ func (m *automaticSignatureVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd)
 			return m, tea.Quit
 		}
 		if v.Code == tea.KeyF3 || v.Code == tea.KeyF4 {
-			if m.busy || v.Code == tea.KeyF3 && m.phase != 0 || v.Code == tea.KeyF4 && (m.phase == 0 || m.phase >= 9) {
+			if m.busy || v.Code == tea.KeyF3 && m.phase != 0 || v.Code == tea.KeyF4 && (m.phase == 0 || m.phase >= 11) {
 				return m, nil
 			}
 			m.busy = true
@@ -316,11 +318,23 @@ func (m *automaticSignatureVisualModel) driveAutomaticSignatureVisual(ctx contex
 	if !observe(tea.KeyF4) {
 		return
 	}
-	for _, r := range "(x," {
+	for _, r := range "(x" {
 		m.program.Send(tea.KeyPressMsg{Code: r, Text: string(r)})
 		if !observe(tea.KeyF4) {
 			return
 		}
+	}
+	send(' ', tea.ModCtrl)
+	if !observe(tea.KeyF4) {
+		return
+	}
+	send(tea.KeyEscape, 0)
+	if !observe(tea.KeyF4) {
+		return
+	}
+	m.program.Send(tea.KeyPressMsg{Code: ',', Text: ","})
+	if !observe(tea.KeyF4) {
+		return
 	}
 	send(tea.KeyEscape, 0)
 	if !observe(tea.KeyF4) {
@@ -408,16 +422,16 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 	if phase == 0 {
 		return m.setupAutomaticSignature()
 	}
-	wantText, wantCol, requests := automaticSignatureVisualComma, 15, 2
+	wantText, wantCol, requests := automaticSignatureVisualComma, 15, 3
 	switch phase {
 	case 1:
 		wantText, wantCol, requests = automaticSignatureVisualSource, 12, 0
 	case 2:
 		wantText, wantCol, requests = automaticSignatureVisualOpen, 13, 1
-	case 3:
-		wantText, wantCol, requests = automaticSignatureVisualArg, 14, 1
-	case 6, 7, 8:
-		requests = 3
+	case 3, 4, 5:
+		wantText, wantCol, requests = automaticSignatureVisualArg, 14, 2
+	case 8, 9, 10:
+		requests = 4
 	}
 	var observed types.InsightSource
 	var editorRevision uint64
@@ -438,7 +452,7 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 				ready, source, ed.Revision(), ed.Value(), ed.Modified(), ed.DocumentState().PendingEdits,
 				line, col, v.Input.Value(), len(v.EditorState.Tabs))
 		}
-		mutated := phase == 2 || phase == 3 || phase == 4
+		mutated := phase == 2 || phase == 3 || phase == 6
 		if mutated && source.Revision <= m.last.Revision || !mutated && source != m.last {
 			return fmt.Errorf("native source revision failed to advance only for literal edits: previous=%+v now=%+v", m.last, source)
 		}
@@ -447,7 +461,8 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 			return fmt.Errorf("native feature journey changed trust/master/provider settings")
 		}
 		paint = ansi.Strip(v.View().RenderContent())
-		shown := phase == 2 || phase == 4 || phase == 6 || phase == 7
+		automatic := phase >= 2 && phase <= 6
+		shown := automatic || phase == 8 || phase == 9
 		state := v.signatureHelp
 		if !shown {
 			if state != nil || v.signatureHelpIntent != nil || v.overlayHost.IsOpen(signatureHelpID) ||
@@ -459,7 +474,6 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 				return fmt.Errorf("native edited source not painted:\n%s", paint)
 			}
 		} else {
-			automatic := phase == 2 || phase == 4
 			if state == nil || !state.shown || state.result == nil || state.result.err != nil ||
 				state.automatic != automatic || state.source != source || state.editor != ed ||
 				state.path != m.path || state.revision != ed.Revision() || state.line != 2 || state.col != wantCol ||
@@ -476,7 +490,7 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 				return fmt.Errorf("answer lost source/provider/context qualification: %+v cursor=%s/%d", b, owner, generation)
 			}
 			active := 1
-			if phase == 2 {
+			if phase >= 2 && phase <= 5 {
 				active = 0
 			}
 			if len(help.Signatures) != 1 || help.ActiveSignature != 0 {
@@ -515,7 +529,7 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 			cardX, cardY = fw.Position()
 			cardW, cardH = fw.Size()
 			if cardX > caretX || cardX+cardW <= caretX ||
-				(cardY != caretY+1 && cardY+cardH != caretY && cardY+cardH+1 != caretY) ||
+				(phase != 4 && cardY != caretY+1 && cardY+cardH != caretY && cardY+cardH+1 != caretY) ||
 				cardX < 0 || cardY < 0 || cardX+cardW > v.width || cardY+cardH > v.height {
 				return fmt.Errorf("reader detached from painted source caret: caret=%d,%d card=%d,%d %dx%d shell=%dx%d",
 					caretX, caretY, cardX, cardY, cardW, cardH, v.width, v.height)
@@ -528,12 +542,26 @@ func (m *automaticSignatureVisualModel) observeAutomaticSignature(phase int) err
 				if v.focusedPopup() != fw || !strings.Contains(area.Value(), "AUTOMATIC_SIGNATURE_NATIVE_SENTINEL") {
 					return fmt.Errorf("Alt+I did not focus full qualified provider reader")
 				}
-				if phase == 6 {
+				if phase == 8 {
 					m.reader = area
 				} else if area != m.reader || !area.HasActiveSelection() {
 					return fmt.Errorf("native shifted arrow did not select the explicit reader")
 				}
 			}
+		}
+		if phase == 4 {
+			suggestions := v.overlayHost.Window(ui.OverlayCompletion)
+			if v.completion == nil || !v.completion.shown || suggestions == nil || !strings.Contains(paint, "xray") {
+				return fmt.Errorf("native Ctrl+Space did not show real argument suggestions beside parameter help:\n%s", paint)
+			}
+			x, y := suggestions.Position()
+			w, h := suggestions.Size()
+			if x < cardX+cardW && cardX < x+w && y < cardY+cardH && cardY < y+h {
+				return fmt.Errorf("native suggestions cover parameter information: completion=%d,%d %dx%d signature=%d,%d %dx%d",
+					x, y, w, h, cardX, cardY, cardW, cardH)
+			}
+		} else if v.completion != nil || v.overlayHost.IsOpen(ui.OverlayCompletion) {
+			return fmt.Errorf("completion survived its own native Escape")
 		}
 		observed, editorRevision = source, ed.Revision()
 		return nil
@@ -619,8 +647,11 @@ func (m *automaticSignatureVisualModel) verifyAutomaticSignatureTrace(count int)
 	previousVersion := 0
 	for i, request := range requests {
 		wantCol, wantActive, wantText := 15, 1, automaticSignatureVisualComma
-		if i == 0 {
+		switch i {
+		case 0:
 			wantCol, wantActive, wantText = 13, 0, automaticSignatureVisualOpen
+		case 1:
+			wantCol, wantActive, wantText = 14, 0, automaticSignatureVisualArg
 		}
 		var params struct {
 			TextDocument struct{ URI string } `json:"textDocument"`
@@ -661,8 +692,8 @@ func (m *automaticSignatureVisualModel) verifyAutomaticSignatureTrace(count int)
 			}
 			wireVersion, wireText = change.TextDocument.Version, change.ContentChanges[0].Text
 		}
-		if wireVersion <= 0 || wireText != wantText || i == 1 && wireVersion <= previousVersion ||
-			i == 2 && wireVersion != previousVersion {
+		if wireVersion <= 0 || wireText != wantText || (i == 1 || i == 2) && wireVersion <= previousVersion ||
+			i == 3 && wireVersion != previousVersion {
 			return fmt.Errorf("original provider source before request %d: version=%d previous=%d text=%q want=%q",
 				i, wireVersion, previousVersion, wireText, wantText)
 		}

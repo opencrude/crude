@@ -26,7 +26,7 @@ type cancelledSemanticClient struct {
 	stops   atomic.Int32
 }
 
-func (c *cancelledSemanticClient) RequestSignatureHelp(ctx context.Context, _ string, _, _ int) (types.LSPSignatureHelp, error) {
+func (c *cancelledSemanticClient) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
 	c.calls.Add(1)
 	retired := make(chan struct{})
 	c.entered <- retired

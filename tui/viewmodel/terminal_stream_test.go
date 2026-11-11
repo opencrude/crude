@@ -94,7 +94,10 @@ func TestTerminalFrameReceiptFollowsUICommitAndRejectsStaleOwners(t *testing.T) 
 			t.Fatal("screen installed before owner validation")
 		}
 		select {
-		case <-done:
+		case cleanupErr := <-done:
+			if cleanupErr != nil {
+				t.Logf("Connection cleanup: %v", cleanupErr)
+			}
 			t.Fatal("ACK released before owner commit")
 		default:
 		}

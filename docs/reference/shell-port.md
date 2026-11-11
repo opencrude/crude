@@ -283,6 +283,7 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
 | `ProjectInsights` | 3 | reads | yes | LSP state topic replica |
 | `CompletionsState` | current | reads | yes: constant-size feature gate/generation | LSP state topic replica |
+| `AssistanceCapabilities` | current | reads | yes: detached static capabilities for the exact open path and server instance | LSP state topic replica |
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |
 | `RequestHover` | 1 | reads | yes | lsp.hover |
 | `RequestSignatureHelp` | current | reads | yes: detached qualified parameter information | lsp.signature_help |
@@ -334,7 +335,7 @@ No shell-local provider, raw object or label-keyed resolve path remains.
 
 | Member | TUI | coreprotocol |
 |---|---|---|
-| `RequestLSPCompletions` | Acknowledged source, private view/sequence and UTF-16 cursor | `lsp.completions` |
+| `RequestLSPCompletions` | Acknowledged source, private view/sequence, UTF-16 cursor and LSP trigger context | `lsp.completions` |
 | `InspectLSPCompletion` | Exact original set ID/digest/item ID; documentation-only resolve or initial-edit validation | `lsp.completion_inspect` |
 | `ReleaseLSPCompletions` | Retire only the owner's exact private sequence | `lsp.completion_release` |
 

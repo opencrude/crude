@@ -41,7 +41,10 @@ func controlWireClient(t *testing.T, r *Runtime, id string) *coreclient.Client {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		select {
-		case <-done:
+		case cleanupErr := <-done:
+			if cleanupErr != nil {
+				t.Logf("Connection cleanup: %v", cleanupErr)
+			}
 		case <-cleanupCtx.Done():
 			t.Error("control server did not close")
 		}

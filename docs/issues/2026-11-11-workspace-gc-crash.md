@@ -72,6 +72,11 @@ name list when reducing a later reproduction.
 - Five fresh-process repetitions of the original uninstrumented group passed.
   They are diagnostic observations, not a fix or automatic retry-to-green
   behavior in `scripts/test_go.py`.
+- On Linux amd64, Go 1.27.4 passed the full grouped suite and then the current
+  fourth workspace group (197 cases, 25.370 seconds) with `GOGC=30` and
+  `GODEBUG=gccheckmark=1`. No assertion, group deadline or test runner changed.
+  This is Linux diagnostic evidence after a local toolchain update, not a
+  reproduction or resolution of the original Windows failure.
 
 ## Next investigation and acceptance
 

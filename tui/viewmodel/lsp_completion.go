@@ -49,6 +49,7 @@ type completionState struct {
 	pending       *completionRead
 	observed      map[string]bool
 	requestErr    error
+	trigger       types.LSPCompletionContext
 }
 
 type completionRead struct {
@@ -108,10 +109,10 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 	if m.openSnippetChoices() {
 		return nil
 	}
-	return m.requestCompletion(false)
+	return m.requestCompletion(false, types.LSPCompletionContext{})
 }
 
-func (m *App) requestCompletion(automatic bool) tea.Cmd {
+func (m *App) requestCompletion(automatic bool, trigger types.LSPCompletionContext) tea.Cmd {
 	// A list kept on screen while typing stays until this request's result
 	// replaces it, so the list does not blink on every key.
 	old := m.completion
@@ -125,7 +126,7 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 		m.closeEditorGhost()
 	}
 	port, connected := m.ws.(shellport.Completions)
-	if ed == nil || !ed.IsOpen() || !connected || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
+	if ed == nil || !ed.IsOpen() || !connected || m.ws.LSPMgr() == nil || automatic && !m.ws.LSPMgr().AssistanceCapabilities(ed.FilePath()).Completion {
 		if !automatic {
 			m.Feedback.NotifyInfo("Completion needs a connected shared document and language server")
 		}
@@ -145,14 +146,16 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 		m.completion = nil
 		m.retireCompletion(old)
 	}
-	m.closeSignatureHelp()
+	if state := m.signatureHelp; state != nil && !state.automatic {
+		m.closeSignatureHelp()
+	}
 	base, generation := m.lspRequestContext()
 	ctx, cancel := context.WithCancel(base)
 	line, col := ed.LSPCursorPosition()
 	m.completionSequence++
 	s := &completionState{workspace: m.ws, editor: ed, source: source, selection: currentCodeActionSelection(ed),
 		revision: ed.Revision(), generation: generation, feature: feature, sequence: m.completionSequence,
-		line: line, col: col, automatic: automatic, port: port, ctx: ctx, cancel: cancel,
+		line: line, col: col, automatic: automatic, trigger: trigger, port: port, ctx: ctx, cancel: cancel,
 		deadline: time.Now().Add(10 * time.Second), observed: make(map[string]bool)}
 	if m.FocusStack != nil {
 		s.focus = m.FocusStack.Top()
@@ -171,7 +174,7 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 	return func() tea.Msg {
 		request, stop := context.WithTimeout(ctx, 10*time.Second)
 		defer stop()
-		set, err := port.RequestLSPCompletions(request, source, completionViewID, s.sequence, line, col)
+		set, err := port.RequestLSPCompletions(request, source, completionViewID, s.sequence, line, col, trigger)
 		if cancelled := request.Err(); cancelled != nil {
 			set, err = types.LSPCompletionSet{}, errors.Join(err, cancelled)
 		}
@@ -189,7 +192,7 @@ func (m *App) completionCurrent(s *completionState) bool {
 	if s == nil || m.completion != s || s.released || s.ctx.Err() != nil || m.ws != s.workspace ||
 		m.asyncIOStopped.Load() || !m.acceptsLSPDocument(s.generation, s.source.Path, s.editor, s.revision) ||
 		!s.editor.MatchesInsightSource(s.source) || currentCodeActionSelection(s.editor) != s.selection ||
-		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() ||
+		m.ws.LSPMgr() == nil || s.automatic && !m.ws.LSPMgr().AssistanceCapabilities(s.source.Path).Completion ||
 		m.sessionDeckCapturesInput() || m.termDockFocused || m.FocusStack != nil && m.FocusStack.Top() != s.focus {
 		return false
 	}

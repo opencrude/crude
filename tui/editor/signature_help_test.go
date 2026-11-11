@@ -37,6 +37,35 @@ func TestTypingNativeIntentFollowsFinalSourceAndCaret(t *testing.T) {
 	}
 }
 
+func TestNativeLineAndIndentKeysPublishFinalInputIntent(t *testing.T) {
+	for _, step := range []struct {
+		name      string
+		key       tea.KeyPressMsg
+		want      string
+		line, col int
+	}{
+		{"new line", tea.KeyPressMsg{Code: tea.KeyEnter}, "join\n", 1, 0},
+		{"indent", tea.KeyPressMsg{Code: tea.KeyTab}, "join    ", 0, 8},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			ed, _ := projectionEditor(t, "join")
+			ed.SetCursorPosition(0, 4)
+			calls := 0
+			ed.SetOnTyping(func(key tea.KeyPressMsg) {
+				calls++
+				if key.Code != step.key.Code || ed.Value() != step.want ||
+					ed.CursorLine() != step.line || ed.CursorCol() != step.col || ed.undoGroupDepth != 0 {
+					t.Fatal("native text-key intent preceded its final source, caret or edit group")
+				}
+			})
+			ed.HandleEvent(step.key)
+			if calls != 1 {
+				t.Fatal("native text-key edit did not publish exactly one input intent", calls)
+			}
+		})
+	}
+}
+
 func TestTypingNativeIntentDoesNotTreatOtherMutationAsTyping(t *testing.T) {
 	for _, kind := range []string{"paste", "API", "readonly", "modified", "publication"} {
 		t.Run(kind, func(t *testing.T) {

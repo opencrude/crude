@@ -105,6 +105,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainComparisonSearch())
 	command = tea.Batch(command, m.drainCoreRestartStartup())
 	m.syncLocalDiffFreshness()
+	m.refreshAutomaticSignaturePosition(msg)
 	m.syncSignatureHelp()
 	m.syncDiagnosticPopups()
 	m.syncSourcePopovers()

@@ -48,7 +48,10 @@ func newResourceWire(t *testing.T, r *Runtime, id string) *resourceWire {
 			_ = c.Close()
 			cancel()
 			select {
-			case <-done:
+			case cleanupErr := <-done:
+				if cleanupErr != nil {
+					t.Logf("Connection cleanup: %v", cleanupErr)
+				}
 			case <-time.After(time.Second):
 				t.Error("resource wire server did not join")
 			}

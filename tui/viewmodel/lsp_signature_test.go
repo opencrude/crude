@@ -23,19 +23,23 @@ import (
 
 type signatureTestService struct {
 	shellport.LSPService
-	context   uint64
-	answer    types.LSPSignatureHelp
-	err       error
-	calls     atomic.Int64
-	cancelled atomic.Bool
-	notReady  bool
+	context           uint64
+	answer            types.LSPSignatureHelp
+	err               error
+	lastTrigger       atomic.Pointer[types.LSPSignatureContext]
+	calls             atomic.Int64
+	cancelled         atomic.Bool
+	notReady          bool
+	aggregateNotReady bool
+	assistance        *types.LSPAssistanceCapabilities
 }
 
-func (s *signatureTestService) ServerReady() bool { return !s.notReady }
+func (s *signatureTestService) ServerReady() bool { return !s.notReady && !s.aggregateNotReady }
 func (s *signatureTestService) ContextCursor() (string, uint64) {
 	return "signature-owner", s.context
 }
-func (s *signatureTestService) RequestSignatureHelp(ctx context.Context, _ string, _, _ int) (types.LSPSignatureHelp, error) {
+func (s *signatureTestService) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+	s.lastTrigger.Store(&trigger)
 	s.calls.Add(1)
 	s.cancelled.Store(ctx.Err() != nil)
 	return s.answer, s.err // deliberately ignores cancellation to test the UI fence
@@ -46,7 +50,12 @@ type signatureTestWorkspace struct {
 	service *signatureTestService
 }
 
-func (w *signatureTestWorkspace) LSPMgr() shellport.LSPService { return w.service }
+func (w *signatureTestWorkspace) LSPMgr() shellport.LSPService {
+	if w.service == nil {
+		return nil
+	}
+	return w.service
+}
 
 func signatureTestApp(t *testing.T, width int) (*App, *signatureTestService) {
 	t.Helper()
@@ -382,9 +391,19 @@ func TestSignatureLoadingNoticeIsExactAndClearsOnRetirement(t *testing.T) {
 		signatureHasNotice(app, "Requesting parameter information") {
 		t.Fatal("retirement kept loading feedback or dismissed an unrelated notice")
 	}
-	service.notReady = true
+	app.ws.(*signatureTestWorkspace).service = nil
 	if cmd := app.requestSignatureHelpCmd(); cmd != nil ||
 		!signatureHasNotice(app, "No language server is running. Open Problems to start it.") {
 		t.Fatal("no-server state did not give its distinct refusal")
 	}
+}
+
+func (s *signatureTestService) AssistanceCapabilities(string) types.LSPAssistanceCapabilities {
+	if s.notReady {
+		return types.LSPAssistanceCapabilities{}
+	}
+	if s.assistance != nil {
+		return types.CloneLSPAssistance(*s.assistance)
+	}
+	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

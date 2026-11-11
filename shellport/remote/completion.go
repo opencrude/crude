@@ -10,10 +10,10 @@ import (
 
 var _ shellport.Completions = (*Workspace)(nil)
 
-func (w *Workspace) RequestLSPCompletions(ctx context.Context, source types.InsightSource, view string, sequence uint64, line, col int) (types.LSPCompletionSet, error) {
+func (w *Workspace) RequestLSPCompletions(ctx context.Context, source types.InsightSource, view string, sequence uint64, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionSet, error) {
 	var out coreprotocol.CompletionReply
 	err := w.callCancellable(ctx, coreprotocol.LSPCompletionsMethod, &coreprotocol.CompletionsRequest{
-		Source: source, ViewID: view, Sequence: sequence, Line: line, Col: col,
+		Source: source, ViewID: view, Sequence: sequence, Line: line, Col: col, Trigger: trigger,
 	}, &out)
 	return out.Set, err
 }

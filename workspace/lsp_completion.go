@@ -67,7 +67,7 @@ func (s *DocumentService) closeCompletionViewsLocked(owner document.Owner, docum
 	}
 }
 
-func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Owner, source types.InsightSource, viewID string, sequence uint64, line, col int) (types.LSPCompletionSet, error) {
+func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Owner, source types.InsightSource, viewID string, sequence uint64, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionSet, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
 		return types.LSPCompletionSet{}, errors.New("completion requires canonical source and a language service")
 	}
@@ -128,7 +128,7 @@ func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Ow
 		}
 		s.mu.Unlock()
 	}()
-	response, err := w.LSPMgr.RequestCompletions(requestCtx, source.Path, line, col)
+	response, err := w.LSPMgr.RequestCompletions(requestCtx, source.Path, line, col, trigger)
 	if err != nil {
 		return types.LSPCompletionSet{}, err
 	}

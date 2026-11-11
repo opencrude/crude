@@ -52,6 +52,11 @@ func cloneLSPDiagnostics(in map[string]types.InsightDiagnostics) map[string]type
 	return out
 }
 func cloneLSPSnapshot(in coreprotocol.LSPSnapshot) coreprotocol.LSPSnapshot {
+	assistance := make(map[string]types.LSPAssistanceCapabilities, len(in.Assistance))
+	for path, caps := range in.Assistance {
+		assistance[path] = types.CloneLSPAssistance(caps)
+	}
+	in.Assistance = assistance
 	in.Diagnostics = cloneLSPDiagnostics(in.Diagnostics)
 	syms := make(map[string][]workspace.LSPSymbol, len(in.Symbols))
 	for path, ss := range in.Symbols {
@@ -206,7 +211,11 @@ func (l *lspReplica) RequestHover(ctx context.Context, path string, line, col in
 	out, err := l.query(ctx, coreprotocol.LSPRequestHover, coreprotocol.LSPRequest{Path: path, Line: line, Col: col})
 	return out.Hover, err
 }
-func (l *lspReplica) RequestSignatureHelp(ctx context.Context, path string, line, col int) (types.LSPSignatureHelp, error) {
-	out, err := l.query(ctx, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPRequest{Path: path, Line: line, Col: col})
+func (l *lspReplica) RequestSignatureHelp(ctx context.Context, path string, line, col int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+	out, err := l.query(ctx, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPRequest{Path: path, Line: line, Col: col, Trigger: trigger})
 	return out.SignatureHelp, err
+}
+
+func (l *lspReplica) AssistanceCapabilities(path string) types.LSPAssistanceCapabilities {
+	return types.CloneLSPAssistance(l.snapshot.Assistance[filepath.Clean(path)])
 }

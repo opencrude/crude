@@ -12,12 +12,13 @@ import (
 	"crude/types"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // RequestCompletions retains the original response over one synchronized source.
 // Initial insertion normalization and retained row identity belong to the
 // canonical owner, not the transport or a shell-authored label.
-func (l *LSPIntegration) RequestCompletions(ctx context.Context, path string, line, col int) (types.LSPCompletionResponse, error) {
+func (l *LSPIntegration) RequestCompletions(ctx context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
 	defer l.observeRequest("completion", time.Now())
 	fp := filepath.Clean(path)
 	l.mu.Lock()
@@ -44,7 +45,10 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, path string, li
 	if !l.currentDocument(fp, client, state, version) {
 		return types.LSPCompletionResponse{}, context.Canceled
 	}
-	raw, callErr := client.RequestCompletionsRaw(ctx, uri, line, col)
+	if trigger.TriggerKind < 0 || trigger.TriggerKind > types.LSPCompletionTriggerIncomplete {
+		return types.LSPCompletionResponse{}, lsp.ErrCompletionInvalid
+	}
+	raw, callErr := client.RequestCompletionsRaw(ctx, uri, line, col, protocol.CompletionContext{TriggerKind: protocol.CompletionTriggerKind(trigger.TriggerKind), TriggerCharacter: trigger.TriggerCharacter})
 	if !l.currentDocument(fp, client, state, version) {
 		return types.LSPCompletionResponse{}, context.Canceled
 	}

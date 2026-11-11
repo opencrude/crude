@@ -75,7 +75,7 @@ func TestLSPCompletionFramedExpandedPlan(t *testing.T) {
 	}
 	path := filepath.Join(root, "test.unknown")
 	openTestFile(t, l, ctx, path, "arbitrary-language-id", "a😀b")
-	response, err := l.RequestCompletions(ctx, path, 0, 3)
+	response, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 	if err != nil || response.WireVersion == 0 || response.Unsupported || !response.ResolveSupported {
 		t.Fatalf("completion evidence: %+v, %v", response, err)
 	}
@@ -150,7 +150,7 @@ func TestLSPCompletionFramedExpandedPlan(t *testing.T) {
 		t.Fatal("choice occurrence aliases its mirror")
 	}
 	items[0].AdditionalTextEdits[0].NewText = "mutated"
-	next, err := l.RequestCompletions(ctx, path, 0, 3)
+	next, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 	if err != nil || !bytes.Equal(next.JSON, response.JSON) {
 		t.Fatalf("consumer expansion mutated raw transport evidence: %s, %v", next.JSON, err)
 	}
@@ -262,7 +262,7 @@ func TestLSPCompletionFramedOriginalVariants(t *testing.T) {
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			l, ctx, path := completionTestIntegration(t, tc.mode, "a😀b")
-			response, err := l.RequestCompletions(ctx, path, 0, 3)
+			response, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 			if err != nil || string(response.JSON) != tc.want || response.WireVersion <= 0 ||
 				response.Unsupported || !response.ResolveSupported {
 				t.Fatalf("original response: %s wire=%d unsupported=%v resolve=%v err=%v",
@@ -275,7 +275,7 @@ func TestLSPCompletionFramedOriginalVariants(t *testing.T) {
 			for i := range response.JSON {
 				response.JSON[i] = 'x'
 			}
-			again, err := l.RequestCompletions(ctx, path, 0, 3)
+			again, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 			if err != nil || string(again.JSON) != tc.want {
 				t.Fatalf("response storage shared: %s, %v", again.JSON, err)
 			}
@@ -300,7 +300,7 @@ func TestLSPCompletionFramedOriginalVariants(t *testing.T) {
 
 func TestLSPCompletionFramedResolveOriginalIdentity(t *testing.T) {
 	l, ctx, path := completionTestIntegration(t, "completion-array", "a😀b")
-	response, err := l.RequestCompletions(ctx, path, 0, 3)
+	response, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestLSPCompletionFramedUnsupportedNeverCalls(t *testing.T) {
 	for _, mode := range []string{"completion-unsupported", "completion-no-resolve"} {
 		t.Run(mode, func(t *testing.T) {
 			l, ctx, path := completionTestIntegration(t, mode, "hello")
-			response, err := l.RequestCompletions(ctx, path, 0, 1)
+			response, err := l.RequestCompletions(ctx, path, 0, 1, types.LSPCompletionContext{})
 			unsupported := mode == "completion-unsupported"
 			if err != nil || response.WireVersion <= 0 || response.Unsupported != unsupported || response.ResolveSupported {
 				t.Fatalf("static capability result: %+v, %v", response, err)
@@ -386,7 +386,7 @@ func TestLSPCompletionFramedConsumerOwnsSchemaAndCount(t *testing.T) {
 	for _, mode := range []string{"completion-schema", "completion-many"} {
 		t.Run(mode, func(t *testing.T) {
 			l, ctx, path := completionTestIntegration(t, mode, "hello")
-			response, err := l.RequestCompletions(ctx, path, 0, 1)
+			response, err := l.RequestCompletions(ctx, path, 0, 1, types.LSPCompletionContext{})
 			if err != nil || response.Unsupported || response.JSON == nil {
 				t.Fatalf("adapter normalized consumer-owned evidence: %+v, %v", response, err)
 			}
@@ -412,7 +412,7 @@ func TestLSPCompletionFramedTransportErrors(t *testing.T) {
 	} {
 		t.Run(mode, func(t *testing.T) {
 			l, ctx, path := completionTestIntegration(t, mode, "hello")
-			got, err := l.RequestCompletions(ctx, path, 0, 1)
+			got, err := l.RequestCompletions(ctx, path, 0, 1, types.LSPCompletionContext{})
 			method := "textDocument/completion"
 			if strings.HasPrefix(mode, "completion-resolve-") {
 				if err != nil {
@@ -452,7 +452,7 @@ func TestLSPCompletionFramedSourceBoundaries(t *testing.T) {
 				defer cancel()
 				var wire int
 				if resolve {
-					initial, err := l.RequestCompletions(ctx, path, 0, 3)
+					initial, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -469,7 +469,7 @@ func TestLSPCompletionFramedSourceBoundaries(t *testing.T) {
 					if resolve {
 						got, err = l.ResolveCompletion(requestCtx, path, wire, []byte(`{"label":"same","data":9007199254740993}`))
 					} else {
-						got, err = l.RequestCompletions(requestCtx, path, 0, 3)
+						got, err = l.RequestCompletions(requestCtx, path, 0, 3, types.LSPCompletionContext{})
 					}
 					result <- outcome{got, err}
 				}()
@@ -513,14 +513,14 @@ func TestLSPCompletionFramedSourceBoundaries(t *testing.T) {
 func TestLSPCompletionInvalidSourceAndOriginalNeverDispatch(t *testing.T) {
 	l, ctx, path := completionTestIntegration(t, "completion-array", "a😀b\r\nx")
 	for _, position := range [][2]int{{-1, 0}, {0, -1}, {0, 2}, {0, 5}, {1, 2}, {2, 0}, {1 << 30, 0}} {
-		if got, err := l.RequestCompletions(ctx, path, position[0], position[1]); err == nil || got.JSON != nil {
+		if got, err := l.RequestCompletions(ctx, path, position[0], position[1], types.LSPCompletionContext{}); err == nil || got.JSON != nil {
 			t.Fatalf("invalid UTF16 source position %v admitted: %+v, %v", position, got, err)
 		}
 	}
-	if got, err := l.RequestCompletions(ctx, filepath.Join(filepath.Dir(path), "not-open"), 0, 0); err == nil || got.JSON != nil {
+	if got, err := l.RequestCompletions(ctx, filepath.Join(filepath.Dir(path), "not-open"), 0, 0, types.LSPCompletionContext{}); err == nil || got.JSON != nil {
 		t.Fatalf("unopened source admitted: %+v, %v", got, err)
 	}
-	initial, err := l.RequestCompletions(ctx, path, 0, 3)
+	initial, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +537,7 @@ func TestLSPCompletionInvalidSourceAndOriginalNeverDispatch(t *testing.T) {
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if got, err := l.RequestCompletions(canceled, path, 0, 3); !errors.Is(err, context.Canceled) || got.JSON != nil {
+	if got, err := l.RequestCompletions(canceled, path, 0, 3, types.LSPCompletionContext{}); !errors.Is(err, context.Canceled) || got.JSON != nil {
 		t.Fatalf("pre-canceled request admitted: %+v, %v", got, err)
 	}
 	if got, err := l.ResolveCompletion(canceled, path, initial.WireVersion, []byte(`{"label":"same"}`)); !errors.Is(err, context.Canceled) || got.JSON != nil {
@@ -551,14 +551,14 @@ func TestLSPCompletionInvalidSourceAndOriginalNeverDispatch(t *testing.T) {
 
 func TestLSPCompletionSourceByteBound(t *testing.T) {
 	l, ctx, path := completionTestIntegration(t, "completion-empty", strings.Repeat("x", 2<<20))
-	atBound, err := l.RequestCompletions(ctx, path, 0, 2<<20)
+	atBound, err := l.RequestCompletions(ctx, path, 0, 2<<20, types.LSPCompletionContext{})
 	if err != nil || string(atBound.JSON) != "[]" {
 		t.Fatalf("exact 2MiB source refused: %+v, %v", atBound, err)
 	}
 	if _, err := l.UpdateFile(ctx, path, strings.Repeat("x", (2<<20)+1), testBoundary(path)); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := l.RequestCompletions(ctx, path, 0, 0); err == nil || got.JSON != nil {
+	if got, err := l.RequestCompletions(ctx, path, 0, 0, types.LSPCompletionContext{}); err == nil || got.JSON != nil {
 		t.Fatalf("oversized source admitted: %+v, %v", got, err)
 	}
 	if completionCallCount(completionTrace(t, l, ctx, path), "textDocument/completion") != 1 {

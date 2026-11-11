@@ -2,6 +2,7 @@ package lspclient
 
 import (
 	"context"
+	"crude/types"
 	"encoding/json"
 	"errors"
 	"os"
@@ -23,7 +24,7 @@ func TestSignatureProtocolNegotiationAndExactParameters(t *testing.T) {
 	}
 	path := filepath.Join(root, "held-out.fixture")
 	openTestFile(t, integration, ctx, path, "held-out", "join(\"a\", )")
-	help, err := integration.RequestSignatureHelp(ctx, path, 0, 10)
+	help, err := integration.RequestSignatureHelp(ctx, path, 0, 10, types.LSPSignatureContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestSignatureProtocolNegotiationAndExactParameters(t *testing.T) {
 			info := caps["signatureInformation"].(map[string]any)
 			if info["activeParameterSupport"] != true ||
 				info["parameterInformation"].(map[string]any)["labelOffsetSupport"] != true ||
-				caps["dynamicRegistration"] == true || caps["contextSupport"] == true {
+				caps["dynamicRegistration"] == true || caps["contextSupport"] != true {
 				t.Fatal("client advertised unsupported signature help behavior", caps)
 			}
 		}
@@ -76,7 +77,7 @@ func TestSignatureUnsupportedIsNotEmptyAndDoesNotProbe(t *testing.T) {
 	}
 	path := filepath.Join(root, "main.go")
 	openTestFile(t, integration, ctx, path, "go", "call()")
-	if _, err := integration.RequestSignatureHelp(ctx, path, 0, 5); !errors.Is(err, lsp.ErrSignatureHelpUnsupported) {
+	if _, err := integration.RequestSignatureHelp(ctx, path, 0, 5, types.LSPSignatureContext{}); !errors.Is(err, lsp.ErrSignatureHelpUnsupported) {
 		t.Fatal("unsupported provider became an empty successful answer", err)
 	}
 	trace, err := integration.RequestHover(ctx, path, 0, 0)
@@ -95,7 +96,7 @@ func TestSignatureSupportedNullMeansNoInformation(t *testing.T) {
 	}
 	path := filepath.Join(root, "main.go")
 	openTestFile(t, integration, ctx, path, "go", "call()")
-	help, err := integration.RequestSignatureHelp(ctx, path, 0, 5)
+	help, err := integration.RequestSignatureHelp(ctx, path, 0, 5, types.LSPSignatureContext{})
 	if err != nil || len(help.Signatures) != 0 {
 		t.Fatal("valid null reply did not settle as absent information", help, err)
 	}
@@ -112,7 +113,10 @@ func TestSignatureReplyCannotSurviveCloseReopen(t *testing.T) {
 	path := filepath.Join(root, "main.go")
 	openTestFile(t, integration, ctx, path, "go", "call()")
 	result := make(chan error, 1)
-	go func() { _, err := integration.RequestSignatureHelp(ctx, path, 0, 5); result <- err }()
+	go func() {
+		_, err := integration.RequestSignatureHelp(ctx, path, 0, 5, types.LSPSignatureContext{})
+		result <- err
+	}()
 	waitProtocolFile(t, filepath.Join(root, "requested"))
 	integration.CloseFile(ctx, path)
 	openTestFile(t, integration, ctx, path, "go", "call()")

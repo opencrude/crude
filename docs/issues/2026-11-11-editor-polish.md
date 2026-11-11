@@ -1,9 +1,9 @@
 # Editor completion, paste and language-server capacity
 
-> Status: IN PROGRESS. Source fixes and focused/native checks are in place.
-> Repository validation remains open after a workspace memory-safety crash.
-> Evidence is recorded below. Broader editor parity remains
-> in [Complete editor experience](../plans/editor-parity.md).
+> Status: IN PROGRESS. The editor fixes and LSP continuation have Linux
+> verification. The original Windows memory-safety crash and tester-workload
+> acceptance remain open. Broader editor parity remains in
+> [Complete editor experience](../plans/editor-parity.md).
 
 ## Report and causes
 
@@ -34,8 +34,11 @@ here repairs an already-saved historical file or updates the running 4.1 binary.
 Suggestions can run inside snippet fields. Tab accepts visible inline text or a
 chosen row before advancing to the next field. Plain completion inside a field
 keeps its mirrors. Function acceptance requests signature help when it leaves the
-caret or first selected field just after an opening parenthesis. Sustained
-signature help across all argument editing remains open.
+caret or first selected field just after an advertised signature trigger. The
+continuation repair maintains help during native argument typing, deletion,
+line breaks, indentation, caret keys and snippet-field navigation. Suggestions
+and hints coexist, and only current acknowledged answers are displayed. Server
+trigger/retrigger context travels through the connected LSP path.
 
 `ui.PastedLineBreaks` is the shared decoder at shell and direct control paste
 entry points. The editor then applies its existing first-line terminator.
@@ -111,9 +114,77 @@ Current contracts: [Editor](../reference/editor.md),
   change; this does not resolve the original failure. See the
   [workspace GC investigation](2026-11-11-workspace-gc-crash.md).
 
+### LSP continuation (2026-11-11)
+
+The follow-up keeps the existing LSP completion engine, not an AI service or a
+custom template library. The earlier HTML/C/Lisp constructs were examples.
+Static capabilities are copied from the initialized server for each open file;
+completion carries the advertised trigger or incomplete-list refresh reason.
+Signature refresh preserves the exact prior server answer, including while a
+new request is unanswered. The core rejects intent from a replaced server.
+
+Two startup regressions were reproduced and fixed. An explicit Ctrl+Space or
+Alt+I action must not be discarded because its advisory capability snapshot has
+not arrived. Native typing during initialization retains one bounded intent,
+then queries only an identifier or an actually advertised character after both
+source acknowledgement and capabilities arrive. Unsupported punctuation makes
+no request. No language-specific branch or hidden inference request was added.
+
+- `TestLSPAdvertised*`, `TestConnectedCompletionTriggerAndIncompleteContexts`,
+  `TestPendingCompletionDoesNotInheritReplacementServer`,
+  `TestExplicitAssistanceSurvivesCapabilityPublicationLag`,
+  `TestAutomaticCompletionWaitsForInitializingFileCapabilities` and
+  `TestSignaturePendingRetriggerPreservesOriginalContext` cover native input,
+  connected two-shell edits/Undo, delayed receipts and replacement boundaries.
+  The final focused group and startup/delayed-response race checks pass.
+- `TestAssistanceCapabilitiesAndRequestContextsOnWire` verifies actual framed
+  initialize/request JSON, including non-dot characters, incomplete refresh and
+  original signature markup/offsets. Transport, replica and manager-fence checks
+  pass, including pure-Go and Windows/macOS component builds. Cross-building is
+  not native platform acceptance.
+- Linux `scripts/tuishot.sh` captures of `TestAutomaticSignatureVisualAcceptance`
+  use installed gopls v0.21.1 at 160×40 and 80×24. The final frozen-source capture
+  verifies all ten boundaries at each size: argument typing, both parameter
+  positions, readable coexisting suggestions/hints, Escape order, the explicit
+  reader and unchanged disk/private draft. Screenshots were inspected; both
+  servers and private cores joined, profiles were removed and windows closed.
+  A prior desktop capture injected `U` instead of comma through the host's
+  multi-layout key mapping. That attempt is rejected. Final capture sends literal
+  comma and requires every phase plus the success and joined-cleanup markers.
+- The first repository sweep exposed the manual-request startup defect. Another
+  overlapped generated-file writes and is not a gate pass. The latest focused
+  fixture correction supplies the normalized filter text that real core rows
+  contain; it does not change product ranking or weaken the painted-outcome check.
+- Final Go 1.27.4 Linux validation: `python3 scripts/test_go.py` passes all
+  ordinary packages and all 17 large-package groups. Build, wire freshness,
+  design/names/docs, pure-Go and nested LSP/syntax checks, compatible
+  golangci-lint v2.15.0 (zero issues), and website lint/build/acceptance pass.
+  The newer lint check exposed ignored error-channel joins: tests now retain
+  their cleanup evidence, and command cancellation/timeout retains its secondary
+  I/O error. No rule or existing assertion was disabled.
+- Race coverage is exhaustive across the same discovered groups, with an explicit
+  execution caveat. The umbrella `scripts/test_go.py --race` command hit the
+  agent's 45-minute command limit during workspace group 3, after every other
+  package/group and workspace groups 1–2 had passed. Groups 3–4 were then completed
+  separately (73.141 s / 51.444 s), with exact discovered membership and unchanged
+  300-second group deadlines. Final affected-package race rechecks also pass.
+  There are no race reports. This is complete grouped coverage, not a claim that
+  the interrupted umbrella command passed.
+- `make bench-gate` passes all 62 allocation checks without changing a ceiling.
+  Dense 20,000-line snippet painting uses 292 allocations with eight mirrors and
+  475 with 64, below 1,110/1,320. Dense 500-message width reflow uses 310,785 B and
+  1,569 allocations, below 455,000 B / 2,180. These are benchmark allocations,
+  not a physical display-latency guarantee.
+
+The existing Windows GC finding is still open. None of these Linux passes
+identifies its cause or establishes a Windows fix. Commit-character acceptance,
+indentation-adjusting insertion modes, dynamic capability registration,
+Emmet/postfix integration and the broader parity plan are not delivered by this
+continuation. No local model is installed or used.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers
 on the tester's workload after building the changed source. The complete
-folding/templates/preferences/semantic-workflow acceptance contract is in the
+folding/expansion/preferences/semantic-workflow acceptance contract is in the
 [editor parity handoff](../plans/editor-parity.md), without a phased rollout claim.

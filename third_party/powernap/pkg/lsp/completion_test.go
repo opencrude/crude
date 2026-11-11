@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/charmbracelet/x/powernap/pkg/transport"
 	"github.com/sourcegraph/jsonrpc2"
 )
@@ -141,7 +142,7 @@ func TestCompletionInitializedStaticAdvertisement(t *testing.T) {
 			if c.CompletionResolveSupported() != tc.resolve {
 				t.Fatal("resolve grant differs from initialized advertisement")
 			}
-			raw, err := c.RequestCompletionsRaw(context.Background(), "custom:source", 0, 0)
+			raw, err := c.RequestCompletionsRaw(context.Background(), "custom:source", 0, 0, protocol.CompletionContext{})
 			if tc.request {
 				if err != nil || string(raw) != "null" {
 					t.Fatalf("supported empty: %s %v", raw, err)
@@ -186,14 +187,14 @@ func TestCompletionFramedOriginalResponseVariants(t *testing.T) {
 				}
 				return `,"result":` + original
 			})
-			raw, err := c.RequestCompletionsRaw(context.Background(), "custom:space%20and%20%E9%9B%AA", 2, 3)
+			raw, err := c.RequestCompletionsRaw(context.Background(), "custom:space%20and%20%E9%9B%AA", 2, 3, protocol.CompletionContext{})
 			if err != nil || string(raw) != original {
 				t.Fatalf("original response lost: %s %v", raw, err)
 			}
 			for i := range raw {
 				raw[i] = 'x'
 			}
-			again, err := c.RequestCompletionsRaw(context.Background(), "custom:space%20and%20%E9%9B%AA", 2, 3)
+			again, err := c.RequestCompletionsRaw(context.Background(), "custom:space%20and%20%E9%9B%AA", 2, 3, protocol.CompletionContext{})
 			if err != nil || string(again) != original || calls.Load() != 2 {
 				t.Fatalf("response storage reused: %s %v calls=%d", again, err, calls.Load())
 			}
@@ -257,12 +258,12 @@ func TestCompletionRawMessageEncodingContract(t *testing.T) {
 func TestCompletionInvalidInputsNeverDispatch(t *testing.T) {
 	c, calls := completionWireClient(t, `{"resolveProvider":true}`, func(codeActionWireRequest) string { return `,"result":null` })
 	for _, uri := range []string{"", strings.Repeat("a", 4097), "file:///te\x00st", "custom:\xff"} {
-		if raw, err := c.RequestCompletionsRaw(context.Background(), uri, 0, 0); raw != nil || !errors.Is(err, ErrCompletionInvalid) {
+		if raw, err := c.RequestCompletionsRaw(context.Background(), uri, 0, 0, protocol.CompletionContext{}); raw != nil || !errors.Is(err, ErrCompletionInvalid) {
 			t.Fatalf("invalid URI admitted: %v", err)
 		}
 	}
 	for _, position := range [][2]int{{-1, 0}, {0, -1}, {math.MinInt, 0}, {0, math.MinInt}} {
-		if raw, err := c.RequestCompletionsRaw(context.Background(), "file:///test", position[0], position[1]); raw != nil || !errors.Is(err, ErrCompletionInvalid) {
+		if raw, err := c.RequestCompletionsRaw(context.Background(), "file:///test", position[0], position[1], protocol.CompletionContext{}); raw != nil || !errors.Is(err, ErrCompletionInvalid) {
 			t.Fatalf("invalid position admitted: %v %v", position, err)
 		}
 	}
@@ -270,7 +271,7 @@ func TestCompletionInvalidInputsNeverDispatch(t *testing.T) {
 	if strconv.IntSize > 32 {
 		overflow := int64(2147483648)
 		for _, position := range [][2]int{{int(overflow), 0}, {0, int(overflow)}} {
-			if raw, err := c.RequestCompletionsRaw(context.Background(), "file:///test", position[0], position[1]); raw != nil || !errors.Is(err, ErrCompletionInvalid) {
+			if raw, err := c.RequestCompletionsRaw(context.Background(), "file:///test", position[0], position[1], protocol.CompletionContext{}); raw != nil || !errors.Is(err, ErrCompletionInvalid) {
 				t.Fatalf("overflow position admitted: %v %v", position, err)
 			}
 		}
@@ -305,7 +306,7 @@ func TestCompletionInclusiveBounds(t *testing.T) {
 		}
 		return `,"result":` + original
 	})
-	raw, err := c.RequestCompletionsRaw(context.Background(), uri, 2147483647, 2147483647)
+	raw, err := c.RequestCompletionsRaw(context.Background(), uri, 2147483647, 2147483647, protocol.CompletionContext{})
 	if err != nil || string(raw) != original {
 		t.Fatalf("inclusive request bound refused: length=%d %v", len(raw), err)
 	}
@@ -367,7 +368,7 @@ func callCompletionRaw(c *Client, ctx context.Context, resolve bool) (json.RawMe
 	if resolve {
 		return c.ResolveCompletionRaw(ctx, json.RawMessage(`{"label":"original"}`))
 	}
-	return c.RequestCompletionsRaw(ctx, "file:///test", 0, 0)
+	return c.RequestCompletionsRaw(ctx, "file:///test", 0, 0, protocol.CompletionContext{})
 }
 
 func TestCompletionRPCAndConnectionErrorIdentity(t *testing.T) {
@@ -429,7 +430,7 @@ func TestCompletionCanceledAndUninitializedNeverDispatch(t *testing.T) {
 					if resolve {
 						raw, err = c.ResolveCompletionRaw(ctx, original)
 					} else {
-						raw, err = c.RequestCompletionsRaw(ctx, uri, 0, 0)
+						raw, err = c.RequestCompletionsRaw(ctx, uri, 0, 0, protocol.CompletionContext{})
 					}
 					if raw != nil || !errors.Is(err, context.Canceled) || calls.Load() != 0 {
 						t.Fatalf("cancellation lost on early outcome: %s %v calls=%d", raw, err, calls.Load())

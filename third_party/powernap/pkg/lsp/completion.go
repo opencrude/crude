@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -24,9 +25,9 @@ var (
 
 // CompletionClientCapabilities constructs only the textDocument.completion leaf.
 // The caller owns initialize wiring. Resolve supports documentation and detail,
-// never deferred edits or commands. Context support permits an explicit Invoked
-// context; no trigger characters, dynamic registrations or list defaults are
-// advertised here.
+// never deferred edits or commands. Request context supports invocation,
+// advertised characters and incomplete-list refresh, not dynamic registration
+// or list defaults.
 func CompletionClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		"dynamicRegistration": false,
@@ -42,14 +43,14 @@ func CompletionClientCapabilities(enableSnippets bool) map[string]any {
 	}
 }
 
-// RequestCompletionsRaw sends one standard explicit invocation to the initialized
+// RequestCompletionsRaw sends one context-qualified invocation to the initialized
 // static provider. Null, arrays and CompletionList objects remain detached
 // original JSON; no CompletionItem decoding or numeric conversion occurs.
 //
 // Validation covers encoded bounds, UTF-8 bytes, JSON syntax and the outer
 // response container only. The consumer owns strict schema, duplicate keys,
 // Unicode escapes, source-relative UTF-16 boundaries, edits and provenance.
-func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, col int) (result json.RawMessage, err error) {
+func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, col int, trigger protocol.CompletionContext) (result json.RawMessage, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -64,6 +65,21 @@ func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, co
 	if c.capabilities.CompletionProvider == nil {
 		return nil, ErrCompletionUnsupported
 	}
+	if trigger.TriggerKind == 0 {
+		trigger.TriggerKind = protocol.Invoked
+	}
+	switch trigger.TriggerKind {
+	case protocol.Invoked, protocol.TriggerForIncompleteCompletions:
+		if trigger.TriggerCharacter != "" {
+			return nil, ErrCompletionInvalid
+		}
+	case protocol.TriggerCharacter:
+		if !utf8.ValidString(trigger.TriggerCharacter) || utf8.RuneCountInString(trigger.TriggerCharacter) != 1 || !slices.Contains(c.capabilities.CompletionProvider.TriggerCharacters, trigger.TriggerCharacter) {
+			return nil, ErrCompletionInvalid
+		}
+	default:
+		return nil, ErrCompletionInvalid
+	}
 	params := struct {
 		TextDocument protocol.TextDocumentIdentifier `json:"textDocument"`
 		Position     protocol.Position               `json:"position"`
@@ -73,7 +89,7 @@ func (c *Client) RequestCompletionsRaw(ctx context.Context, uri string, line, co
 		Position: protocol.Position{
 			Line: uint32(line), Character: uint32(col), //nolint:gosec // Checked int32 bounds above.
 		},
-		Context: protocol.CompletionContext{TriggerKind: protocol.Invoked},
+		Context: trigger,
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

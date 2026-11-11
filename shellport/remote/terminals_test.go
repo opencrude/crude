@@ -47,7 +47,10 @@ func TestTerminalInventoryBarrierRequiresAppliedReplacement(t *testing.T) {
 	w.notifyTopicUpdated()
 	w.topicMu.Unlock()
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 		t.Fatal("a new subscription alone completed the inventory barrier")
 	case <-time.After(20 * time.Millisecond):
 	}

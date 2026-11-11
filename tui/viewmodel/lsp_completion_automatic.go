@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"slices"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -19,6 +20,9 @@ type completionIntent struct {
 	source               types.InsightSource
 	revision, generation uint64
 	feature              uint64
+	trigger              types.LSPCompletionContext
+	character            string
+	requiresTrigger      bool
 	line, col            int
 	due, deadline        time.Time
 	cancel               context.CancelFunc
@@ -34,30 +38,42 @@ func (m *App) cancelCompletionIntent() {
 }
 
 func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
-	if !m.keepCompletionWhileTyping(ed) {
+	keep := m.keepCompletionWhileTyping(ed)
+	if !keep {
 		m.closeCompletionPopup()
 	}
-	if key.Text == "(" || key.Text == "," {
-		m.queueAutomaticSignatureHelp(ed)
-		return
-	}
-	if !m.signatureEditorOwnsInput(ed) || editorRetainsCompletionKeys(ed) || m.ws.LSPMgr() == nil {
+	if !m.signatureEditorOwnsInput(ed) || m.ws.LSPMgr() == nil {
 		return
 	}
 	service := m.ws.LSPMgr()
-	settings := service.Settings()
-	enabled, feature := service.CompletionsState()
-	if !settings.AutoComplete || !enabled {
+	caps := service.AssistanceCapabilities(ed.FilePath())
+	if caps.SignatureHelp && (slices.Contains(caps.SignatureTriggers, key.Text) || m.automaticSignatureActive(ed)) {
+		m.queueAutomaticSignatureHelp(ed, key.Text)
+	}
+	if !editorTypingKey(key) || editorRetainsCompletionKeys(ed) {
 		return
 	}
+	settings := service.Settings()
+	enabled, feature := service.CompletionsState()
+	if !settings.AutoComplete || !enabled || !caps.Completion && caps.Producer.InstanceID != "" {
+		return
+	}
+	trigger := types.LSPCompletionContext{Producer: caps.Producer, TriggerKind: types.LSPCompletionInvoked}
+	character := key.Text != "" && slices.Contains(caps.CompletionTriggers, key.Text)
 	raw := ed.LineText(ed.CursorLine())
 	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), editor.DefaultTabWidth)
 	if off <= 0 {
 		return
 	}
 	r, _ := utf8.DecodeLastRuneInString(raw[:off])
-	if r != '.' && r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) {
+	word := r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
+	if !character && !word && (caps.Completion || caps.Producer.InstanceID != "" || key.Text == "") {
 		return
+	}
+	if character {
+		trigger.TriggerKind, trigger.TriggerCharacter = types.LSPCompletionTriggerCharacter, key.Text
+	} else if keep && m.completion != nil && (m.completion.set != nil && m.completion.set.Incomplete || m.completion.set == nil && m.completion.trigger.TriggerKind == types.LSPCompletionTriggerIncomplete) {
+		trigger.TriggerKind = types.LSPCompletionTriggerIncomplete
 	}
 	source, _ := ed.CurrentInsightSource()
 	if source.DocumentID == "" || source.Lifetime == "" || source.WorkspaceGeneration == "" {
@@ -68,7 +84,7 @@ func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 	line, col := ed.LSPCursorPosition()
 	due := time.Now().Add(time.Duration(settings.CompletionDelay()) * time.Millisecond)
 	m.completionIntent = &completionIntent{editor: ed, source: source, revision: ed.Revision(),
-		generation: generation, feature: feature, line: line, col: col, due: due,
+		generation: generation, feature: feature, trigger: trigger, character: key.Text, requiresTrigger: !word, line: line, col: col, due: due,
 		deadline: due.Add(10 * time.Second), cancel: cancel}
 	m.editorCommands = append(m.editorCommands, func() tea.Msg {
 		timer := time.NewTimer(time.Until(due))
@@ -103,17 +119,30 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	}
 	service := m.ws.LSPMgr()
 	enabled, feature := service.CompletionsState()
-	if !enabled || feature != intent.feature || !service.Settings().AutoComplete {
+	caps := service.AssistanceCapabilities(ed.FilePath())
+	if !enabled || feature != intent.feature || !service.Settings().AutoComplete ||
+		!caps.Completion && caps.Producer.InstanceID != "" ||
+		intent.trigger.Producer.InstanceID != "" && caps.Producer != intent.trigger.Producer {
 		m.cancelCompletionIntent()
 		return nil
 	}
-	if now.Before(intent.due) || !current || !service.ServerReady() {
+	if !caps.Completion || now.Before(intent.due) || !current {
 		return nil
 	}
 	owner, generation := service.ContextCursor()
 	if owner != source.WorkspaceGeneration || generation == 0 {
 		return nil
 	}
+	trigger := intent.trigger
+	// While initialization is pending, retain input intent, not a guessed
+	// capability. Bind the first observed server only at actual admission.
+	trigger.Producer = caps.Producer
+	if intent.character != "" && slices.Contains(caps.CompletionTriggers, intent.character) {
+		trigger.TriggerKind, trigger.TriggerCharacter = types.LSPCompletionTriggerCharacter, intent.character
+	} else if intent.requiresTrigger {
+		m.cancelCompletionIntent()
+		return nil
+	}
 	m.cancelCompletionIntent()
-	return m.requestCompletion(true)
+	return m.requestCompletion(true, trigger)
 }

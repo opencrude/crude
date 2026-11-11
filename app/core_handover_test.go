@@ -394,7 +394,13 @@ func TestConnectCoreSameCohortDifferentImageKeepsOwner(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- core.Serve(ctx, r, listener) }()
-	defer func() { cancel(); _ = listener.Close(); <-done }()
+	defer func() {
+		cancel()
+		_ = listener.Close()
+		if cleanupErr := <-done; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
+	}()
 	client, err := ConnectCore(ctx, home, core.NewClientID())
 	if err != nil {
 		t.Fatal(err)

@@ -85,7 +85,7 @@ func (noopLSPClient) RequestDocumentSymbols(context.Context, string) []workspace
 func (noopLSPClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (noopLSPClient) RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error) {
+func (noopLSPClient) RequestSignatureHelp(context.Context, string, int, int, model.LSPSignatureContext) (model.LSPSignatureHelp, error) {
 	return model.LSPSignatureHelp{}, nil
 }
 func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
@@ -103,7 +103,7 @@ func (noopLSPClient) RequestInlayHints(context.Context, string, model.LSPInlayRa
 func (noopLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
 	return model.LSPInlayResponse{}, context.Canceled
 }
-func (noopLSPClient) RequestCompletions(context.Context, string, int, int) (model.LSPCompletionResponse, error) {
+func (noopLSPClient) RequestCompletions(context.Context, string, int, int, model.LSPCompletionContext) (model.LSPCompletionResponse, error) {
 	return model.LSPCompletionResponse{}, context.Canceled
 }
 func (noopLSPClient) ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error) {
@@ -271,4 +271,8 @@ func TestEditorLastTabCloseSwitchesToLauncher(t *testing.T) {
 
 func (noopLSPClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
 	return model.InsightDiagnosticPublication{}, true
+}
+
+func (noopLSPClient) AssistanceCapabilities() model.LSPAssistanceCapabilities {
+	return model.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

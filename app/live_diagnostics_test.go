@@ -195,7 +195,9 @@ func (s *liveDiagnosticCore) stop(t *testing.T) {
 		}
 	case <-time.After(15 * time.Second):
 		_ = s.cmd.Process.Kill()
-		<-s.done
+		if cleanupErr := <-s.done; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
 		t.Error("private core required exact-process kill after stop timeout")
 	}
 	s.cmd = nil

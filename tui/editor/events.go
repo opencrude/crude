@@ -37,7 +37,8 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 		e.stopPointerSelection()
 		e.landing = nil
-		if !e.readOnly && (msg.Text != "" || msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete) &&
+		if !e.readOnly && (msg.Text != "" || msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete ||
+			msg.Code == tea.KeyEnter || msg.Code == tea.KeyTab) &&
 			msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 {
 			before := e.Revision()
 			defer func() {

@@ -277,7 +277,9 @@ func TestCodeToolsDetachCancelsConsumedRemovalBeforeStoreEffect(t *testing.T) {
 		select {
 		case <-deadline.C:
 			close(release)
-			<-accounting
+			if cleanupErr := <-accounting; cleanupErr != nil {
+				t.Logf("Cleanup join: %v", cleanupErr)
+			}
 			<-done
 			t.Fatal("removal did not consume the native review")
 		case <-time.After(time.Millisecond):
@@ -285,7 +287,9 @@ func TestCodeToolsDetachCancelsConsumedRemovalBeforeStoreEffect(t *testing.T) {
 	}
 	r.codeTools.detach(key.owner, key.workspace)
 	close(release)
-	<-accounting
+	if cleanupErr := <-accounting; cleanupErr != nil {
+		t.Logf("Cleanup join: %v", cleanupErr)
+	}
 	select {
 	case result := <-done:
 		if result.Error == nil {

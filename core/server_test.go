@@ -155,7 +155,10 @@ func TestServeConnectionReadyAndDisconnect(t *testing.T) {
 	}
 	_ = c.Close()
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 	case <-ctx.Done():
 		t.Fatal("server did not join")
 	}

@@ -51,7 +51,7 @@ func (r *automaticSignatureRuntime) NewClient(spec types.LSPServerSpec, root str
 	return &automaticSignatureClient{r.base.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
 
-func (c *automaticSignatureClient) RequestSignatureHelp(ctx context.Context, path string, line, col int) (types.LSPSignatureHelp, error) {
+func (c *automaticSignatureClient) RequestSignatureHelp(ctx context.Context, path string, line, col int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	d := c.docs[path]
@@ -68,8 +68,11 @@ func (c *automaticSignatureClient) RequestSignatureHelp(ctx context.Context, pat
 	if r.mode == "empty" {
 		return types.LSPSignatureHelp{}, nil
 	}
+	if col < 13 {
+		return types.LSPSignatureHelp{}, nil // before the fixture's argument list
+	}
 	active := 0
-	if col == 15 {
+	if col >= 15 {
 		active = 1
 	}
 	return types.LSPSignatureHelp{Signatures: []types.LSPSignature{{
@@ -237,9 +240,14 @@ func TestConnectedAutomaticSignatureNativeTriggersStayPassiveAndShellPrivate(t *
 	if got := f.eds[0].Value(); got != "package journey\n\nvar _ = join(x)\n" {
 		t.Fatalf("ordinary next typed character missed the editor: %q", got)
 	}
+	remoteJourneyUntil(t, f.shells, func() bool { return app.overlayHost.IsOpen(signatureHelpID) })
+	f.assertSource(t, 1, "package journey\n\nvar _ = join(x)\n", 14)
+	if text := signaturePaintedText(app); !strings.Contains(text, "Text to repeat.") {
+		t.Fatalf("typing the first argument lost its current parameter information:\n%s", text)
+	}
 	f.key(t, automaticSignatureRune(','))
 	remoteJourneyUntil(t, f.shells, func() bool { return app.overlayHost.IsOpen(signatureHelpID) })
-	f.assertSource(t, 1, "package journey\n\nvar _ = join(x,)\n", 15)
+	f.assertSource(t, 2, "package journey\n\nvar _ = join(x,)\n", 15)
 	app.advanceReveals(time.Now().Add(2 * revealDuration))
 	if paint = ansi.Strip(app.View().RenderContent()); !strings.Contains(paint, "Number of copies.") {
 		t.Fatalf("comma did not paint the independently returned second parameter:\n%s", paint)
@@ -374,6 +382,7 @@ func TestConnectedAutomaticSignaturePendingReplyCannotReacquireInput(t *testing.
 			d.send(automaticSignatureRune('('))
 			d.until(t, func() bool { return len(f.engine.observed()) == 1 })
 			call := f.engine.observed()[0]
+			original := app.signatureHelp
 			f.assertSource(t, 0, "package journey\n\nvar _ = join()\n", 13)
 			switch change {
 			case "terminal":
@@ -412,7 +421,7 @@ func TestConnectedAutomaticSignaturePendingReplyCannotReacquireInput(t *testing.
 					t.Fatal("Stop did not flush and close its editor projection")
 				}
 			}
-			d.until(t, func() bool { return app.signatureHelp == nil && call.ctx.Err() != nil })
+			d.until(t, func() bool { return app.signatureHelp != original && call.ctx.Err() != nil })
 			f.engine.unblock()
 			d.until(t, func() bool { return d.pending == 0 })
 			if change == "stop" {
@@ -423,7 +432,14 @@ func TestConnectedAutomaticSignaturePendingReplyCannotReacquireInput(t *testing.
 			} else {
 				liveTestPump(t, []*App{app, f.shells[1].app}, nil)
 			}
-			if app.signatureHelp != nil || app.overlayHost.IsOpen(signatureHelpID) {
+			if change == "edit" {
+				source, current := f.eds[0].CurrentInsightSource()
+				if !current || app.signatureHelp == nil || app.signatureHelp == original || app.signatureHelp.result == nil ||
+					app.signatureHelp.result.help.Boundary.Source != source || !app.overlayHost.IsOpen(signatureHelpID) {
+					t.Fatal("new native argument did not replace the retired request with exact current help")
+				}
+				f.assertSource(t, 1, "package journey\n\nvar _ = join(x)\n", 14)
+			} else if app.signatureHelp != nil || app.overlayHost.IsOpen(signatureHelpID) {
 				t.Fatal("late positive provider reply revived retired help")
 			}
 			if change == "terminal" {

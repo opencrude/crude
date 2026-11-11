@@ -101,7 +101,7 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 	case coreprotocol.LSPRequestHover:
 		out.Hover, err = service.RequestHover(ctx, in.Path, in.Line, in.Col)
 	case coreprotocol.LSPRequestSignatureHelp:
-		out.SignatureHelp, err = service.RequestSignatureHelp(ctx, in.Path, in.Line, in.Col)
+		out.SignatureHelp, err = service.RequestSignatureHelp(ctx, in.Path, in.Line, in.Col, in.Trigger)
 	}
 	return out, err
 }
@@ -121,6 +121,7 @@ func lspSnapshot(manager *workspace.LSPManager) coreprotocol.LSPSnapshot {
 		out.Symbols[path] = cloneLSPSymbols(symbols)
 	}
 	out.Insights, out.Health = manager.ProjectInsights(), manager.ServerHealthSnapshots()
+	out.Assistance = manager.AssistanceSnapshots()
 	out.Assembly = manager.Assembly()
 	out.Settings = types.CloneLSPSettings(manager.Settings())
 	out.Connected, out.Status, out.Error = manager.Status()

@@ -32,6 +32,7 @@ type lspClientState struct {
 	status      LSPStatus
 	err         string
 	client      LSPClient
+	assistance  ttypes.LSPAssistanceCapabilities
 	teardownErr error
 	cancel      context.CancelFunc
 	closing     bool
@@ -640,6 +641,10 @@ func (c *leasedLSPClient) OnUnopenedDiagnostics(fn func(string, ttypes.InsightDi
 }
 
 func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPClient, err error) {
+	var assistance ttypes.LSPAssistanceCapabilities
+	if err == nil && client != nil {
+		assistance = client.AssistanceCapabilities()
+	}
 	m.mu.Lock()
 	stale := m.states[key] != state || state.closing || m.closed || m.paused ||
 		m.analysisErrorLocked() != nil || state.epoch != m.settingsGeneration || !m.keyWantedLocked(key)
@@ -662,6 +667,7 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 			m.retireLocked(state)
 		}
 	} else {
+		state.assistance = ttypes.CloneLSPAssistance(assistance)
 		state.status, state.err, state.lastUsed = LSPConnected, "", time.Now()
 	}
 	state.cancel = nil

@@ -21,7 +21,7 @@ func (a *actor) prepareCompletions(request coreprotocol.Request) (func(context.C
 			return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 		}
 		return func(ctx context.Context) coreprotocol.Response {
-			set, err := w.RequestLSPCompletions(ctx, owner, in.Source, in.ViewID, in.Sequence, in.Line, in.Col)
+			set, err := w.RequestLSPCompletions(ctx, owner, in.Source, in.ViewID, in.Sequence, in.Line, in.Col, in.Trigger)
 			if err != nil {
 				return fault(request, "completion_failed", err.Error())
 			}
