@@ -343,6 +343,28 @@ func (c *Connection) serveCommand(ctx context.Context, s corewire.Stream, reader
 		c.refuseCommand(ctx, s, reader, &coreprotocol.Fault{Code: "invalid_request", Message: "invalid command identity"})
 		return
 	}
+	if open.Method == coreprotocol.ReleaseCommands {
+		// Never admitted or retained: a full table must still drain.
+		var in coreprotocol.ReleaseCommandsRequest
+		if err := coreprotocol.Decode(payload, &in); err != nil || open.WorkspaceID != "" || len(in.Commands) > coreprotocol.ReleaseCommandsMax {
+			c.refuseCommand(ctx, s, reader, &coreprotocol.Fault{Code: "invalid_request", Message: "invalid command release"})
+			return
+		}
+		c.releaseIdentities(in.Commands)
+		c.refuseCommand(ctx, s, reader, nil)
+		return
+	}
+	if open.Method == coreprotocol.CancelRequest {
+		// The actor still validates the exact requester and job, but this
+		// idempotent signal never competes with the results it must retire.
+		pending := c.Dispatch(ctx, request)
+		select {
+		case response := <-pending:
+			c.finishUnretainedCommand(ctx, s, reader, response)
+		case <-ctx.Done():
+		}
+		return
+	}
 	admitted := time.Now()
 	var admissionErr error
 	cmd, err := c.admit(ctx, request, func() {
@@ -382,15 +404,7 @@ func (c *Connection) serveCommand(ctx context.Context, s corewire.Stream, reader
 			}
 		case <-cmd.done:
 			coreRequests.Since(request.Method, admitted)
-			response := cmd.response
-			reply := coreprotocol.Reply{Final: true, Revision: response.Revision, Fault: response.Error}
-			m := corewire.NewMessage()
-			if m.B, err = reply.MarshalMsg(m.B); err == nil {
-				m.B = append(m.B, response.Payload...)
-				err = m.Send(s)
-			}
-			m.Release()
-			if err != nil {
+			if err := sendCommandResult(s, cmd.response); err != nil {
 				return
 			}
 			select {
@@ -411,16 +425,35 @@ func (c *Connection) serveCommand(ctx context.Context, s corewire.Stream, reader
 	}
 }
 
+// sendCommandResult is the one final-result encoder for retained commands and
+// idempotent cleanup. Neither progress nor a successful write releases a result.
+func sendCommandResult(s corewire.Stream, response coreprotocol.Response) error {
+	m := corewire.NewMessage()
+	defer m.Release()
+	reply := coreprotocol.Reply{Final: true, Revision: response.Revision, Fault: response.Error}
+	var err error
+	if m.B, err = reply.MarshalMsg(m.B); err != nil {
+		return err
+	}
+	m.B = append(m.B, response.Payload...)
+	return m.Send(s)
+}
+
 // Even a refused command has a final-result boundary. Closing both directions
 // immediately after queueing FIN can reset unread reply bytes (also on QUIC).
 // Await the same applied ACK as admitted commands, but do not retain a journal
 // entry for malformed input or let an uncooperative peer retain a worker forever.
+// A nil refusal is an unretained success (a command release).
 func (c *Connection) refuseCommand(ctx context.Context, s corewire.Stream, reader *corewire.Reader, refusal *coreprotocol.Fault) {
+	c.finishUnretainedCommand(ctx, s, reader, coreprotocol.Response{Error: refusal})
+}
+
+func (c *Connection) finishUnretainedCommand(ctx context.Context, s corewire.Stream, reader *corewire.Reader, response coreprotocol.Response) {
 	ctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
 	defer stop()
-	if send(s, &coreprotocol.Reply{Final: true, Fault: refusal}) != nil {
+	if sendCommandResult(s, response) != nil {
 		return
 	}
 	reader.SetLimit(256)

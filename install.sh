@@ -328,7 +328,9 @@ return {
     initial_cols = 120,
     initial_rows = 36,
     hide_tab_bar_if_only_one_tab = true,
-    enable_kitty_keyboard = true,
+    -- This pinned build encodes plain Delete as Ctrl+H in Kitty mode.
+    -- Crude requests xterm modifyOtherKeys, which keeps modified keys distinct.
+    enable_kitty_keyboard = false,
     window_close_confirmation = 'NeverPrompt',
     -- If Crude exits because of an error, keep the message on screen.
     exit_behavior = 'CloseOnCleanExit',

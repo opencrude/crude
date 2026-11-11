@@ -397,6 +397,12 @@ func (m *navigationVisualModel) navigationLanding(name string, line, col int) er
 		if _, current := ed.CurrentInsightSource(); !current {
 			return fmt.Errorf("landing not canonically synchronized")
 		}
+		// Opening the target and publishing its active-file LSP state use
+		// different asynchronous owners. A painted, synchronized document alone
+		// is not readiness for the driver's next language-server command.
+		if v.ws.LSPMgr() == nil || !v.ws.LSPMgr().ServerReady() {
+			return fmt.Errorf("landed file's language server state is not ready")
+		}
 		return featureVisualPaint(v, strings.TrimSpace(strings.Split(navigationVisualSources[name], "\n")[line]))
 	})
 }
@@ -610,8 +616,8 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 		if err := m.await(func(v *controlVisualModel) error {
 			s := v.navigation
 			if s == nil || !s.shown || s.result == nil || !s.screen.InList() || !v.overlayHost.IsOpen(navigationOverlay) {
-				return fmt.Errorf("native %s chooser not visible: state=%+v result=%+v error=%v invocation=%+v\n%s",
-					kind, s, m.lastResult, m.lastResultErr, m.invocation, ansi.Strip(v.View().RenderContent()))
+				return fmt.Errorf("native %s chooser not visible: state=%+v result=%+v error=%v invocation=%+v status=%q\n%s",
+					kind, s, m.lastResult, m.lastResultErr, m.invocation, testStatusText(v.App), ansi.Strip(v.View().RenderContent()))
 			}
 			if v.EditorState.Editor.FilePath() != filepath.Join(m.root, sourceName) {
 				return fmt.Errorf("listing silently chose/opened a target")

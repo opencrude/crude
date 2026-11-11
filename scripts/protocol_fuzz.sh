@@ -7,9 +7,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export GOMAXPROCS="${GOMAXPROCS:-2}"
 export LC_ALL=C
 : "${CRUDE_TEMP_DIR:?Set CRUDE_TEMP_DIR to an evidence directory}"
-seconds="${FUZZ_SECONDS:-2}"
-[[ "$seconds" =~ ^[1-9][0-9]*$ ]] || { echo 'FAIL: FUZZ_SECONDS must be positive integer seconds' >&2; exit 1; }
-(( seconds <= 3600 )) || { echo 'FAIL: FUZZ_SECONDS exceeds the 3600-second bound' >&2; exit 1; }
+cases_override="${FUZZ_CASES:-}"
+if [[ -n "$cases_override" ]]; then
+  if ! [[ "$cases_override" =~ ^[1-9][0-9]*$ ]] || ((${#cases_override} > 7)) ||
+    (( cases_override > 1000000 )); then
+    echo 'FAIL: FUZZ_CASES must be 1–1000000 generated executions' >&2
+    exit 1
+  fi
+fi
 [[ "$(go env CGO_ENABLED)" == 1 ]] || { echo 'FAIL: native cgo terminal dependency required' >&2; exit 1; }
 out="$(mktemp -d "$CRUDE_TEMP_DIR/protocol-fuzz-XXXXXX")"
 out="$(cd "$out" && pwd)"
@@ -25,12 +30,12 @@ inventory=(
   './coreprotocol:FuzzEveryWireDecoder FuzzWireTimestampMessage'
   './corewire:FuzzMessageReader FuzzMessageFragmentation FuzzReaderLimitTransitions FuzzCompressedStream FuzzMuxFrames FuzzMuxStateMachine FuzzQUICStreamClass'
   './coreclient:FuzzBulkReceiver FuzzTerminalInputAdmissionOrdering FuzzWorkspaceTopicReplicaState'
-  './shellport/remote:FuzzRemoteStateTopicFences'
-  './workspace:FuzzConversationStreamReaders FuzzConversationMalformedTextOffset FuzzTerminalLeaseStateMachine'
+  './shellport/remote:FuzzRemoteStateTopicFences=64'
+  './workspace:FuzzConversationStreamReaders FuzzConversationMalformedTextOffset FuzzTerminalLeaseStateMachine=64'
   './tui/editor:FuzzDocumentUpdateAtomicBoundary'
   './terminalvt:FuzzPackedRow FuzzPackedDictionaryRow'
-  './core:FuzzTerminalGridAuthorityStream FuzzCoreFeatureDocuments FuzzCoreFeatureFilesHistory FuzzCoreFeatureSettings FuzzCoreFeatureDraftCAS FuzzCoreSessionOwnership FuzzCoreSessionTerminalLifecycle FuzzCoreInputAdmissionReceipts FuzzCoreSessionSettingsReset FuzzCoreGitReviewedMutations FuzzCoreLSPRequests FuzzCoreCapabilities FuzzCoreStartupWorkspaces FuzzCoreRemoteAuthentication FuzzCoreBulkLifecycle FuzzCoreMetricsRequests'
-  './tui/viewmodel:FuzzAppFrameState'
+  './core:FuzzTerminalGridAuthorityStream=4096 FuzzCoreFeatureDocuments=64 FuzzCoreFeatureFilesHistory=64 FuzzCoreFeatureSettings=64 FuzzCoreFeatureDraftCAS=64 FuzzCoreSessionOwnership=64 FuzzCoreSessionTerminalLifecycle=64 FuzzCoreInputAdmissionReceipts=64 FuzzCoreSessionSettingsReset=64 FuzzCoreGitReviewedMutations=64 FuzzCoreLSPRequests=64 FuzzCoreCapabilities=64 FuzzCoreStartupWorkspaces=64 FuzzCoreRemoteAuthentication=64 FuzzCoreBulkLifecycle=64 FuzzCoreMetricsRequests=64'
+  './tui/viewmodel:FuzzAppFrameState=64'
   './tui/compositor:FuzzDirectSurfaceResize'
   './third_party/bubbletea:FuzzDirectRendererResizeAndConflation FuzzDirectSurfaceTerminalOutput'
   './third_party/ultraviolet:FuzzParseSequence'
@@ -38,13 +43,14 @@ inventory=(
 )
 selected=" ${FUZZ_TARGETS:-} "
 found=' '
-for entry in "${inventory[@]}"; do
-  package="${entry%%:*}"
-  names="${entry#*:}"
+for package_entry in "${inventory[@]}"; do
+  package="${package_entry%%:*}"
+  names="${package_entry#*:}"
   targets=()
-  for name in $names; do
+  for entry in $names; do
+    name="${entry%%=*}"
     if [[ -z "${FUZZ_TARGETS:-}" || "$selected" == *" $name "* ]]; then
-      targets+=("$name")
+      targets+=("$entry")
       found+="$name "
     fi
   done
@@ -53,7 +59,9 @@ for entry in "${inventory[@]}"; do
   label="${label//\//-}"
   work="$out/$label"
   mkdir -p "$work"
-  regex="$(IFS='|'; echo "${targets[*]}")"
+  target_names=()
+  for entry in "${targets[@]}"; do target_names+=("${entry%%=*}"); done
+  regex="$(IFS='|'; echo "${target_names[*]}")"
   binary="$work/fuzz.test"
   echo "Compile $package: $regex"
   (cd "$package" && go test -c -fuzz "^($regex)$" -o "$binary" .) >"$work/compile.log" 2>&1 || {
@@ -67,20 +75,41 @@ for entry in "${inventory[@]}"; do
     mkdir -p "$work/testdata"
     cp -R "$package/testdata/fuzz" "$work/testdata/fuzz"
   fi
-  for name in "${targets[@]}"; do
+  for entry in "${targets[@]}"; do
+    name="${entry%%=*}"
+    cases=65536
+    [[ "$entry" == *=* ]] && cases="${entry#*=}"
+    cases="${cases_override:-$cases}"
     grep -Fxq "$name" "$work/targets.txt" || { echo "FAIL: missing target $package/$name" >&2; exit 1; }
-    echo "Fuzz $package/$name (${seconds}s)"
+    # Discover and validate the complete baseline with the real target. Go's
+    # execution limit includes warmup, so a fixed total alone can stop before
+    # a large seed inventory is even complete.
+    (cd "$work" && "$binary" -test.run "^$name$" -test.v -test.timeout 120s) \
+      >"$work/$name.seeds.log" 2>&1 || {
+        cat "$work/$name.seeds.log" >&2
+        echo "FAIL: seed validation $package/$name" >&2
+        exit 1
+      }
+    seeds="$(grep -Ec "^=== RUN[[:space:]]+$name/[^/]+$" "$work/$name.seeds.log")" || {
+      echo "FAIL: no seed executions observed for $package/$name" >&2
+      exit 1
+    }
+    echo "Fuzz $package/$name ($seeds seeds + $cases generated executions)"
     # No output truncation and no swallowed failures. Native fuzz owns its exact
     # workers; normal signal/exit unwinding leaves all evidence here for review.
     (cd "$work" && "$binary" -test.run '^$' -test.fuzz "^$name$" \
-      -test.fuzztime "${seconds}s" -test.parallel "$GOMAXPROCS" \
-      -test.fuzzcachedir "$work/cache" -test.timeout "$((seconds + 120))s") \
+        -test.fuzztime "$((seeds + cases))x" -test.parallel "$GOMAXPROCS" \
+        -test.fuzzcachedir "$work/cache" -test.timeout 120s) \
       >"$work/$name.log" 2>&1 || {
         cat "$work/$name.log" >&2
         echo "FAIL: $package/$name (corpus and complete log: $work)" >&2
         exit 1
       }
     cat "$work/$name.log"
+    grep -q 'now fuzzing with' "$work/$name.log" || {
+      echo "FAIL: $package/$name stopped before generated-input fuzzing" >&2
+      exit 1
+    }
   done
 done
 for name in ${FUZZ_TARGETS:-}; do

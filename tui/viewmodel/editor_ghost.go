@@ -10,12 +10,22 @@ type editorGhostView struct {
 	generation uint64
 }
 
+// completionGhostOwner marks inline text that completion itself offered. It
+// previews a suggestion, so it does not hold keys against a newer completion.
+const completionGhostOwner = "completion"
+
 func editorRetainsCompletionKeys(ed *editor.Editor) bool {
 	if ed == nil {
 		return false
 	}
 	_, _, candidate := ed.GhostText()
-	return ed.SnippetActive() || candidate
+	return ed.SnippetActive() || candidate && ed.GhostOwner() != completionGhostOwner
+}
+
+func dismissCompletionGhost(ed *editor.Editor) {
+	if ed != nil && ed.GhostOwner() == completionGhostOwner {
+		ed.DismissGhostText()
+	}
 }
 
 func (m *App) closeEditorGhost() {

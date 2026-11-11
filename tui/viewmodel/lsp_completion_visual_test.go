@@ -474,8 +474,9 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 				return fmt.Errorf("native chooser frame absent")
 			}
 			frame, ok := fw.Content.(*ui.WindowFrameWidget)
-			if !ok || frame.Body() != s.screen || v.focusedPopup() != fw {
-				return fmt.Errorf("chooser not mounted/focused through shared frame")
+			// The chooser is passive: the editor keeps focus and its caret.
+			if !ok || frame.Body() != s.screen || v.focusedPopup() != nil || v.focusTarget() != FocusEditor {
+				return fmt.Errorf("chooser not mounted passively through shared frame")
 			}
 			for _, child := range s.screen.Children() {
 				if area, ok := child.(interface{ Value() string }); ok {
@@ -485,7 +486,7 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 			if !strings.Contains(docs, marker) || strings.Contains(docs, absent) ||
 				strings.Contains(docs, "Documentation: initial") || strings.Contains(docs, "Documentation: resolved") ||
 				!strings.Contains(paint, marker) ||
-				strings.Contains(paint, absent) || !strings.Contains(paint, "Completions") {
+				strings.Contains(paint, absent) || strings.Contains(paint, "Completions ·") {
 				return fmt.Errorf("selected native documentation leaked/missing: docs=%q\n%s", docs, paint)
 			}
 			if phase == 4 && row.ID != m.alpha.ID {

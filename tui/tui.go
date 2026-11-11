@@ -321,6 +321,7 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 	// Bind the event transport before the first interactive frame. A user must
 	// never race shell startup into a falsely unavailable session transport.
 	ws.SetEventSender(t)
+	t.stopOnHangup()
 
 	go func() {
 		_, runErr := program.Run()

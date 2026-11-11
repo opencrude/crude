@@ -23,7 +23,9 @@
 #   shot[:label]              extra screenshot
 #
 # Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS CRUDE_CWD KEEP_OPEN
-# TERMINAL=alacritty|kitty|tilix selects the actual emulator (default alacritty).
+# TERMINAL=alacritty|kitty|tilix|wezterm selects the emulator (default alacritty).
+# WEZTERM_BIN may select a portable wezterm-gui binary.
+# WEZTERM_CONFIG may select the installed Crude GUI configuration for acceptance.
 # CRUDE_BIN may select a prebuilt, deterministic visual acceptance test binary.
 # An isolated CRUDE_HOME must be a real short directory, not a symlink to a
 # long path: the core canonicalizes it before creating its Unix socket.
@@ -40,9 +42,9 @@ FONT_SIZE="${FONT_SIZE:-9}"
 CRUDE_ARGS="${CRUDE_ARGS:-}"
 KEEP_OPEN="${KEEP_OPEN:-0}"
 TERMINAL="${TERMINAL:-alacritty}"
-case "$TERMINAL" in alacritty|kitty|tilix) ;; *) echo "ERROR: unsupported capture terminal: $TERMINAL" >&2; exit 1 ;; esac
+case "$TERMINAL" in alacritty|kitty|tilix|wezterm) ;; *) echo "ERROR: unsupported capture terminal: $TERMINAL" >&2; exit 1 ;; esac
 if [ -z "${TERM_NAME:-}" ]; then
-  case "$TERMINAL" in alacritty) TERM_NAME=alacritty ;; kitty) TERM_NAME=xterm-kitty ;; tilix) TERM_NAME=xterm-256color ;; esac
+  case "$TERMINAL" in alacritty) TERM_NAME=alacritty ;; kitty) TERM_NAME=xterm-kitty ;; tilix|wezterm) TERM_NAME=xterm-256color ;; esac
 fi
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -151,6 +153,24 @@ tilix)
 tilix --new-process --name=CrudeShot --class=CrudeShot --title=CrudeShot \
   --window-style=borderless --geometry="${COLS}x${ROWS}" \
   -e "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
+;;
+wezterm)
+# Do not load user key bindings or connect to an existing GUI/mux process.
+# X11 is required by this driver's exact-window XTEST and screenshot path.
+WEZTERM_CONFIG_ARGS=(--skip-config)
+if [ -n "${WEZTERM_CONFIG:-}" ]; then
+  WEZTERM_CONFIG_ARGS=(--config-file "$WEZTERM_CONFIG")
+fi
+"${WEZTERM_BIN:-wezterm-gui}" "${WEZTERM_CONFIG_ARGS[@]}" \
+  --config "enable_wayland=false" \
+  --config "enable_tab_bar=false" \
+  --config "window_decorations='NONE'" \
+  --config "window_padding={left=0,right=0,top=0,bottom=0}" \
+  --config "initial_cols=$COLS" --config "initial_rows=$ROWS" \
+  --config "font_size=$FONT_SIZE" \
+  --config "check_for_updates=false" \
+  start --always-new-process --no-auto-connect --class CrudeShot --position 0,0 \
+  -- "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
 ;;
 esac
 CAPTURE_PID=$!

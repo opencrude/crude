@@ -478,26 +478,26 @@ func TestTermDockHeaderIconsFloatAndCloseViaMouse(t *testing.T) {
 		t.Fatal("floating overlay window missing after header float")
 	}
 
-	// Dock it back through the floating title action, then close via ✕.
+	// Dock it back, then kill it through the header trash button.
 	app.dockTerminal(info.ID)
 	app.paintShellFrame()
 	lay = app.computeContentLayout()
 	iconRow = lay.TermDockRect.Y + 1
 	closeX := -1
 	for column := lay.TermDockRect.X; column < lay.TermDockRect.X+lay.TermDockRect.W; column++ {
-		if app.mainSurf.Buffer().Get(column, iconRow).Char == '✕' {
+		if app.mainSurf.Buffer().Get(column, iconRow).Char == '' {
 			closeX = column
 			break
 		}
 	}
 	if closeX < 0 {
-		t.Fatal("terminal close control was not painted")
+		t.Fatal("terminal kill control was not painted")
 	}
 	model, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: closeX, Y: iconRow, Button: tea.MouseLeft})
 	app = model.(*App)
 	waitAppTerminalClosed(t, app, info.ID)
 	if _, ok := mgr.Get(info.ID); ok {
-		t.Fatal("terminal still alive after clicking the ✕ header icon")
+		t.Fatal("terminal still alive after clicking the trash header icon")
 	}
 	_ = app
 }

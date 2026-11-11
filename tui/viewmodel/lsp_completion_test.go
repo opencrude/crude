@@ -210,7 +210,7 @@ func TestCompletionNativeSelectionPaintsOnlyOriginalSelectedDocumentation(t *tes
 			if app.completion == nil || app.completion.screen == nil || app.completion.screen.SelectedID() != "original:0" {
 				t.Fatal("registry Ctrl+Space did not mount the native first row")
 			}
-			completionRequireText(t, app, []string{"Completions", "FIRST_SELECTED_DOC"}, []string{"SECOND_SELECTED_DOC"})
+			completionRequireText(t, app, []string{"FIRST_SELECTED_DOC"}, []string{"SECOND_SELECTED_DOC", "Completions ·"})
 			frame := app.overlayHost.Window(ui.OverlayCompletion).Content.(*ui.WindowFrameWidget)
 			if rect, ok := frame.Host().ScreenRect(completion.ListID); !ok || rect.Empty() {
 				t.Fatal("the native chooser List is not mounted")
@@ -260,8 +260,9 @@ func TestCompletionDocumentationShowsAvailableTextOrEmptyState(t *testing.T) {
 			doc             types.LSPCompletionDocumentation
 			present, absent []string
 		}{
-			{"absent", types.LSPCompletionDocumentation{}, []string{"No documentation available."}, []string{"MARKDOWN_LITERAL"}},
-			{"empty", types.LSPCompletionDocumentation{Present: true, Form: "string"}, []string{"No documentation available."}, []string{"MARKDOWN_LITERAL"}},
+			// A row with nothing to read gets no empty documentation pane.
+			{"absent", types.LSPCompletionDocumentation{}, []string{"duplicate"}, []string{"MARKDOWN_LITERAL", "No documentation available."}},
+			{"empty", types.LSPCompletionDocumentation{Present: true, Form: "string"}, []string{"duplicate"}, []string{"MARKDOWN_LITERAL", "No documentation available."}},
 			{"markdown", types.LSPCompletionDocumentation{Present: true, Form: "markup", Kind: "markdown", Value: "**MARKDOWN_LITERAL**"}, []string{"**MARKDOWN_LITERAL**"}, []string{"No documentation available."}},
 		} {
 			t.Run(fmt.Sprintf("%dx%d/%s", size[0], size[1], tc.name), func(t *testing.T) {
@@ -383,8 +384,19 @@ func TestCompletionPassiveDocsScrollSelectAndForwardTypingExactlyOnce(t *testing
 			if !ok || rect.Empty() {
 				t.Fatal("read-only native documentation control is not mounted")
 			}
-			if !frame.Host().Focus(completion.TextID) {
-				t.Fatal("mounted documentation did not accept native focus")
+			// The list does not take focus while typing; a click into the
+			// documentation focuses it for selection and copy.
+			fw := app.overlayHost.Window(ui.OverlayCompletion)
+			wx, wy := fw.Position()
+			for _, msg := range []tea.Msg{
+				tea.MouseClickMsg{X: wx + rect.X + 1, Y: wy + rect.Y, Button: tea.MouseLeft},
+				tea.MouseReleaseMsg{X: wx + rect.X + 1, Y: wy + rect.Y, Button: tea.MouseLeft},
+			} {
+				_, cmd := app.Update(msg)
+				runAppCommand(t, app, cmd)
+			}
+			if app.focusedPopup() != fw || !frame.Host().Focus(completion.TextID) {
+				t.Fatal("a click did not focus the mounted documentation")
 			}
 			completionTestKey(t, app, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 			selected := false
@@ -524,6 +536,9 @@ func TestCompletionAllAnswersUseOriginalContextBarrierAndQuietAutomaticResults(t
 						port.set.Entries = nil
 					}
 				}
+				for i := range port.set.Entries {
+					port.set.Entries[i].FilterText = "print" // continues the typed "pr"
+				}
 				cmd := app.requestCompletion(automatic)
 				if cmd == nil {
 					t.Fatal("request not admitted")
@@ -547,7 +562,10 @@ func TestCompletionAllAnswersUseOriginalContextBarrierAndQuietAutomaticResults(t
 					port.service.context = 8
 				}
 				runAppCommand(t, app, app.syncCompletion())
-				if answer == "items" {
+				if answer == "items" && automatic {
+					// Automatic suggestions choose no row, so no documentation shows.
+					completionRequireText(t, app, []string{"duplicate"}, []string{"FIRST_SELECTED_DOC", "SECOND_SELECTED_DOC"})
+				} else if answer == "items" {
 					completionRequireText(t, app, []string{"FIRST_SELECTED_DOC"}, []string{"SECOND_SELECTED_DOC"})
 				} else {
 					if app.completion != nil || app.overlayHost.IsOpen(ui.OverlayCompletion) {

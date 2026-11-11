@@ -165,7 +165,11 @@ already installed.
   desktop area. It also adds `crude-window` next to the program, with an
   application-menu entry and `StartupWMClass=crude`. The terminal does not act on
   Ctrl+Shift+C, Ctrl+Shift+N, Ctrl+Shift+T or Ctrl+Shift+W, because Crude owns
-  those keys.
+  those keys. The pinned build's Kitty keyboard mode is disabled: it encodes
+  plain Delete as Ctrl+H. Crude requests xterm `modifyOtherKeys` instead, so
+  Delete, Backspace, Shift+Enter, Ctrl+Enter and modified editing keys remain
+  distinct. Every GUI update rewrites this Crude-owned configuration; the
+  user's own terminal configuration is not changed.
 - It adds JetBrainsMono Nerd Font only when the machine cannot draw that family
   already: `~/.local/share/fonts/JetBrainsMonoNerdFont` on Linux, per-user values
   under `HKCU` that point at `%LOCALAPPDATA%\Crude\window\fonts` on Windows. A
@@ -246,10 +250,10 @@ Build the native platform on the local machine from a clean, committed checkout:
 ```bash
 . scripts/libghostty_env.sh
 go run ./internal/wiregen -check
-go test ./... -count=1 -timeout=180s
+python scripts/test_go.py
 golangci-lint run ./...
 make design-audit docs-check bench-gate
-python scripts/test_race.py
+python scripts/test_go.py --race
 python scripts/release.py build --version v0.1.1 --output /absolute/release-dir
 ```
 

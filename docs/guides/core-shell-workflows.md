@@ -41,8 +41,19 @@ invokes only the verified original helper's graceful `--core-stop` with exact
 `ExpectedOwner`; it never force-stops or kills the core. Retained idle workspaces
 can hand over only after transactional admission, session, autonomous work,
 memory, resource and storage leases prove them idle. Attached/resumable shells,
-opening factories, pending/queued turns, compaction, commands, live terminals or
-document/controller leases refuse with named actionable guidance. Refusal releases
+opening factories, pending/queued turns, compaction, commands, terminals that run
+a program or document/controller leases refuse with named actionable guidance.
+An explicit stop closes a shell that waits at its prompt, as an IDE does on exit;
+a terminal started with its own command, or a shell with a foreground or
+background job, is named as running work (`Terminal 2 is running vim`). Only the automatic idle
+exit keeps the core alive for any open terminal, so shells survive closing
+Crude. An explicit stop waits up to three seconds for operations that are already
+finishing, such as a shell's detach cleanup or a session's collaboration check,
+before it refuses. These owners report the shared typed settling refusal; no
+message parsing or sampled activity counter authorizes shutdown. A shell whose
+terminal window is closed (SIGHUP) or terminated (SIGTERM) quits like Quit and
+detaches, so it does not stay behind as a lost connection that blocks the stop
+for the reconnect window. Refusal releases
 all reservations without stopping work or replacing owners. Finish or close the
 named work and retry, or select an isolated development profile. Only explicit
 `--core-stop --force` overrides those protections. Do not delete owner

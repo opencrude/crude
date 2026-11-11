@@ -79,6 +79,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-10 | Clear actions must be undoable. Empty undo history must not imply another author exists. Shared lists must retain wheel scrolling when the pointer leaves; fix their owners rather than one Settings page. | User |
 | 2026-11-10 | The Aeron link belongs in the **Workspace panel header**, like Problems, not the application header. Aeron, including its generated name (Naveen), must not appear in that panel's normal agent list. This corrects the previous implementation. | User |
 | 2026-11-10 | Panel links must look consistent. Aeron's link must stay underlined like the Problems links, not only when focused. | User |
+| 2026-11-10 | Automatic completion stays passive: keep the caret visible, choose no row, drop exact repeats, and show obvious continuations as faded inline text. Tab accepts visible inline text or an explicitly chosen row; otherwise it edits normally. | User |
+| 2026-11-10 | Keep the whole validation gate clean, regardless of failure origin. Fix recurring scheduler-dependent tests at their readiness and ownership boundaries; do not hide them with retries, sleeps or relaxed assertions. | User |
 
 ### Open decisions
 
@@ -109,6 +111,52 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Immediate correction: unobtrusive completion and clean gates (2026-11-10).**
+
+Goal: automatic completion does not take focus or select a row while typing.
+Scope: the existing completion projection, ranking, inline preview, key routing,
+and compact shared list; preserve source-qualified insertion, snippets and settings.
+Exit: real connected typing keeps the caret visible, drops already-complete text,
+shows obvious inline continuations and accepts only visible or chosen suggestions.
+Desktop and 80×24 native captures, ordinary and race regressions, and the entire
+repository gate must pass without timing-sensitive workarounds. Repair gate
+failures regardless of origin. AI prediction and new setup UI stay out of scope.
+
+Implementation: passive lists, source-qualified inline previews and explicit
+selection are connected. Real installed-gopls captures show the faded continuation,
+Tab insertion with snippet fields, unchosen lists and constrained documentation.
+Equal-looking rows with different import edits or snippet fields remain separate
+choices; inline preview does not guess between them.
+
+The repair's Linux validation is complete. Prior failure lists below are
+historical findings, not accepted exemptions. The normal suite now uses the race
+runner's exhaustive grouping, through one shared `scripts/test_go.py`, because the viewmodel's growing
+case inventory exceeded its aggregate 180-second timer. Every discovered case
+still runs once and no individual deadline, assertion or benchmark ceiling is
+raised. Read-only diagnostics tests await watcher and assembly readiness instead
+of attributing unrelated startup publications to the read. Chat-find tests wait
+for complete rendered search results; the installed-server navigation journey
+waits for its landed file's active-server publication before the next command.
+The empty-history fuzz oracle now requires an acknowledged no-op with unchanged
+revision and peer bytes. Protocol fuzz completion uses counted executions after
+the full seed inventory, not a two-second timer; see
+[validation](../guides/validation.md#protocol-generation-and-v2-acceptance).
+
+Ordinary and race coverage passes for every package, with the final affected
+packages rechecked after these test-only corrections. Repeated pressure,
+cancellation, stop, completion, chat-find and navigation regressions pass. Build,
+lint, design, documentation, syntax/LSP, website, installer, workflow and counted
+native fuzz gates pass. The dense-snippet allocation regression is fixed without
+raising its ceiling. Native installed-gopls completion captures at 160×40 and
+80×24 verify choosing, snippets, source Undo and joined provider cleanup.
+Windows and macOS component cross-builds pass; native platform acceptance is
+not supplied by those builds.
+
+The user's attached core still runs the earlier build. Activation requires a
+normal rebuild/restart, not forced shutdown or replacement of dirty buffers.
+The related pinned-WezTerm GUI Delete fix is in the installer-owned configuration;
+an installed GUI must refresh that configuration as well as its executable.
 
 **Immediate correction: Aeron panel placement (2026-11-10).**
 

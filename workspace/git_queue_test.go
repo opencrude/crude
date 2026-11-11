@@ -6,28 +6,26 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
-func TestGitReadDeadlineIncludesRepositoryQueue(t *testing.T) {
+func TestGitReadCancellationIncludesRepositoryQueue(t *testing.T) {
 	service := NewGitService(t.TempDir())
 	if err := service.lock(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer service.unlock()
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := service.CompareChanges(ctx, nil); done <- err }()
+	cancel()
 	select {
 	case err := <-done:
-		service.unlock()
-		if !errors.Is(err, context.DeadlineExceeded) {
+		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("queued read error=%v", err)
 		}
-	case <-time.After(250 * time.Millisecond):
-		service.unlock()
-		<-done
-		t.Fatal("cancelled repository read waited on unrelated Git work instead of its deadline")
+	case <-t.Context().Done():
+		t.Fatal("cancelled repository read waited on unrelated Git work")
 	}
 }
 

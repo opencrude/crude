@@ -29,6 +29,9 @@ func TestAutomaticCompletionWaitsPastDelayForAcknowledgement(t *testing.T) {
 		t.Fatal("fixture did not acknowledge the edit")
 	}
 	port.set.Boundary.Source, port.set.Col = source, 3
+	for i := range port.set.Entries {
+		port.set.Entries[i].FilterText = "private" // continues the typed "pri"
+	}
 	_, cmd = app.Update(struct{}{})
 	runAppCommand(t, app, cmd)
 	if app.completion == nil || app.completion.screen == nil || len(port.requests) != 1 ||
@@ -88,7 +91,7 @@ func TestCompletionAcceptancePreferenceLeavesOtherKeyAsEditing(t *testing.T) {
 			settings.CompletionAccept, settings.AutoComplete = tc.mode, false
 			port.service.settings = &settings
 			completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
-			completionRequireText(t, app, []string{map[string]string{"tab": "Tab: accept", "enter": "Enter: accept"}[tc.mode]}, nil)
+			completionRequireText(t, app, []string{"duplicate"}, []string{"Tab: accept", "Enter: accept"})
 			completionTestKey(t, app, tea.KeyPressMsg{Code: tc.key})
 			got := app.EditorState.Editor.Value()
 			if got != tc.want {

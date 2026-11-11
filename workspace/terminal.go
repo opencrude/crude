@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -152,21 +153,25 @@ type TerminalManager struct {
 }
 
 type terminalSession struct {
-	id         string
-	title      string
-	name       string
-	number     int
-	cwd        string
-	cols       int
-	rows       int
-	placement  TerminalPlacement
-	alive      bool
-	exitCode   int
-	exitErr    string
-	io         terminalIO
-	writer     *ptyWriter
-	outputSink MessageSink
-	readDone   chan struct{}
+	id        string
+	title     string
+	name      string
+	number    int
+	cwd       string
+	cols      int
+	rows      int
+	placement TerminalPlacement
+	alive     bool
+	// interactive marks the configured login shell; any other command is
+	// itself the program the terminal runs.
+	interactive bool
+	program     string
+	exitCode    int
+	exitErr     string
+	io          terminalIO
+	writer      *ptyWriter
+	outputSink  MessageSink
+	readDone    chan struct{}
 }
 
 // ptyWriter serializes PTY stdin on a dedicated goroutine so the UI
@@ -424,6 +429,7 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 	}
 	settings := m.Settings()
 	command, args := opts.Command, opts.Args
+	interactive := command == ""
 	if command == "" {
 		var err error
 		if command, args, err = ttypes.ResolveTerminalLaunch(settings, hostshell.Detect()); err != nil {
@@ -439,16 +445,18 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 		return TerminalInfo{}, fmt.Errorf("start %s: %w", command, err)
 	}
 	sess := &terminalSession{
-		id:        id,
-		title:     title,
-		cwd:       cwd,
-		cols:      cols,
-		rows:      rows,
-		placement: TerminalDocked,
-		alive:     true,
-		io:        io,
-		writer:    newPtyWriter(io),
-		readDone:  make(chan struct{}),
+		id:          id,
+		title:       title,
+		cwd:         cwd,
+		cols:        cols,
+		rows:        rows,
+		placement:   TerminalDocked,
+		alive:       true,
+		interactive: interactive,
+		program:     filepath.Base(command),
+		io:          io,
+		writer:      newPtyWriter(io),
+		readDone:    make(chan struct{}),
 	}
 	m.mu.Lock()
 	m.nextNumber++

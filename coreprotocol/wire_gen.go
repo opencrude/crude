@@ -2967,6 +2967,52 @@ func (z *CodeActionsRequest) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z CommandIdentity) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.Method)
+	o = msgp.AppendString(o, z.ID)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CommandIdentity) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Method, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Method")
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z CommandIdentity) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Method) + msgp.StringPrefixSize + len(z.ID)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z CommitMessageRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 1
@@ -12909,6 +12955,100 @@ func (z *ReferenceView) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ReferenceView) Msgsize() (s int) {
 	s = 1 + z.Reference.Msgsize() + msgp.StringPrefixSize + len(z.Revision)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *ReleaseCommandsRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	if z.Commands == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Commands)))
+		for za0001 := range z.Commands {
+			// array header, size 2
+			o = append(o, 0x92)
+			o = msgp.AppendString(o, z.Commands[za0001].Method)
+			o = msgp.AppendString(o, z.Commands[za0001].ID)
+		}
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *ReleaseCommandsRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Commands = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Commands")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Commands != nil && cap(z.Commands) >= int(zb0002) {
+			z.Commands = (z.Commands)[:zb0002]
+		} else {
+			z.Commands = make([]CommandIdentity, zb0002)
+		}
+		for za0001 := range z.Commands {
+			var zb0003 uint32
+			zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Commands", za0001)
+				return
+			}
+			if uint64(zb0003)*1 > uint64(len(bts)) {
+				err = msgp.ErrShortBytes
+				return
+			}
+			if zb0003 != 2 {
+				err = msgp.ArrayError{Wanted: 2, Got: zb0003}
+				return
+			}
+			z.Commands[za0001].Method, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Commands", za0001, "Method")
+				return
+			}
+			z.Commands[za0001].ID, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Commands", za0001, "ID")
+				return
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *ReleaseCommandsRequest) Msgsize() (s int) {
+	s = 1 + msgp.ArrayHeaderSize
+	for za0001 := range z.Commands {
+		s += 1 + msgp.StringPrefixSize + len(z.Commands[za0001].Method) + msgp.StringPrefixSize + len(z.Commands[za0001].ID)
+	}
 	return
 }
 

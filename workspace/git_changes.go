@@ -46,7 +46,9 @@ func (s *GitService) CompareChanges(ctx context.Context, changes []GitChange) ([
 	for _, change := range changes[:min(len(changes), GitChangesLimit)] {
 		rel, err := gitReviewPath(state.root, change.Path, change.AbsolutePath)
 		if err != nil {
-			return nil, err
+			// Invalid operands are reported on their own rows below. Never
+			// send them to Git or hide the other files in this review.
+			continue
 		}
 		paths = append(paths, rel)
 	}

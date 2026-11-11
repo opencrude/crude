@@ -305,7 +305,7 @@ IPC is uncompressed. There is no timer-delayed compression batch.
 | Byte-stream mux data frame | 16 KiB maximum |
 | Mux stream receive credit | 256 KiB per stream; 256 admission slots per direction |
 | Actor mailbox | 128 commands, 1024 agent events, 256 service events |
-| Retained command results | 16 unacknowledged commands; 128 MiB aggregate request preimages; capacity refuses new commands without evicting unknown results |
+| Retained command results | 16 awaited commands; 128 MiB aggregate request preimages; the SDK keeps its unreleased commands within this window, so a burst waits instead of failing as busy; capacity never evicts an awaited result |
 | Ordered topic journal | 256 entries / 8 MiB, with explicit snapshot reset on an evicted gap |
 | Bulk chunk | 256 KiB, ordered offsets and whole-transfer digest verification; two-minute transfer lifetime |
 | Private clipboard inbox | 16 outstanding offers / 1 MiB accounted bytes; explicit local refusal on overflow |
@@ -316,7 +316,16 @@ The first control stream exchanges Hello/Welcome. The independent session secret
 resumes the same owner over a replacement carrier; lease and topic cursors survive
 within grace. Clean session close ends it; carrier failure does not. Resume
 reattaches to exact command preimages and applied topic cursors, never replays an
-effect under a new identity. Heartbeats detect failed carriers, not slow replica
+effect under a new identity. A retained result exists only for a call the client
+still awaits. The final ACK and the unretained `session.release_commands` request
+release it. A stream failure alone never proves abandonment; no elapsed-time
+heuristic drops a result that a reconnecting caller still awaits. The SDK queues
+a release when it holds a result whose ACK was lost or abandons a call, and sends
+it over the current or replacement carrier. A later call with the same identity
+waits for any in-flight release before it starts; a stale release receipt cannot
+remove a newer release record. An abandoned in-flight command keeps running
+and is forgotten when it completes. Mutations stay deduplicated by durable receipts,
+so a later call under the same identity never applies twice; a read may run again. Heartbeats detect failed carriers, not slow replica
 application. Credit and bounded journals prevent unbounded backlog; a slow viewer
 is paced or reset, not disconnected merely for reading slowly.
 
@@ -450,9 +459,11 @@ authorize replay or be described as an unknown result. The joined path sends its
 final ACK and client FIN before receiving the server's release-confirmation FIN;
 the server waits for both instead of resetting an unread client direction.
 Before a result is known, failed cancellation/cleanup preserves the original
-request identity as unresolved. At the unchanged 16-command bound even the
-cancellation request can be refused. That refusal is explicit; unknown original
-work/results remain retained, never evicted to make the next request succeed.
+request identity as unresolved. Cancellation is an idempotent control signal,
+not a retained result: it bypasses both the SDK window and the core result table,
+so it can retire a job while all 16 slots are occupied. It still goes through the
+workspace actor and can cancel only the requesting client's exact job. Unrelated
+awaited results remain retained, never evicted to make the next request succeed.
 
 `lsp.navigation` accepts the invoking acknowledged canonical source, closed kind,
 UTF-16 position and references-declaration choice. The core retains exact source,
@@ -799,8 +810,13 @@ shells, opening factories and storage operations. Idle retained actors are allow
 only under a transactional reservation: runtime admission closes first, then each
 actor reserves commands/control, resource lanes, every session's existing history
 admission and turn gate, autonomous child/collaboration/control work and memory
-jobs, document views, terminal creation/controllers and live PTYs. Saved-storage
-leases exclude catalog SQL readers and directory moves. Pending/queued input,
+jobs, document views and terminal creation/controllers. Automatic idle exit
+keeps every live PTY. Explicit stop permits idle interactive shells, but protects
+foreground and background shell jobs and terminals running their own command.
+Unobservable process state refuses the stop. Finishing resource/session admissions
+use the shared typed settling refusal and get a bounded wait; active work still
+refuses without cancellation. Saved-storage leases exclude catalog SQL readers
+and directory moves. Pending/queued input,
 turn finalizers, commands, compaction and active children all refuse. No active-work
 sample alone authorizes shutdown. A refusal unwinds every reservation in reverse
 order; it closes/removes no actor and changes no owner record or accepted work.

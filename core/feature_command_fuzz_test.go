@@ -68,6 +68,7 @@ func featureCall(t *testing.T, w *resourceWire, ws, id, method string, input any
 func FuzzCoreFeatureDocuments(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 0, 2, 4})
 	f.Add([]byte{1, 0, 3, 2, 5, 4, 6, 7})
+	f.Add([]byte{2, 3, 4, 5}) // Empty Undo/Redo for both authors are quiet no-ops.
 	f.Fuzz(func(t *testing.T, sequence []byte) {
 		r, root := featureRuntime(t, nil)
 		path := filepath.Join(root, "shared.txt")
@@ -116,8 +117,10 @@ func FuzzCoreFeatureDocuments(f *testing.F) {
 				var receipt document.Receipt
 				out := featureCall(t, w, ws, id, method, coreprotocol.DocumentRevisionRequest{ID: initial.ID, Revision: revision}, nil)
 				if len(*from) == 0 {
-					if out.Error == nil {
-						t.Fatal("empty author history accepted")
+					if out.Error != nil || testDecode(out.Payload, &receipt) != nil ||
+						!receipt.Accepted || receipt.Before != revision || receipt.Revision != revision ||
+						receipt.DocumentID != initial.ID || receipt.RequestID != id || receipt.Error != "" {
+						t.Fatalf("empty author history was not an unchanged acknowledged no-op: %+v %v", receipt, out.Error)
 					}
 					break
 				}

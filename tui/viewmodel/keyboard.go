@@ -359,6 +359,9 @@ func (m *App) treeFilterBlocksEscPop() bool {
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.clearDiagHoverPopup()
+	if cmd, handled := m.routeCompletionKey(msg); handled {
+		return m, cmd
+	}
 	if ui.IsCopyChord(msg) {
 		if m.EditorState.Editor.HasSelection() {
 			selected := m.EditorState.Editor.SelectedText()
@@ -464,7 +467,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.LSPPopup.OutlineOpen && m.windowManager != nil && m.windowManager.Window(outlinePopupID) != nil {
 		return m, m.handleOutlinePopupKey(msg)
 	}
-	if m.completion != nil {
+	// Typing continues with the suggestions on screen; the editor's typing
+	// hook decides whether they still apply. Other keys close them.
+	if m.completion != nil && !editorTypingKey(msg) {
 		m.closeCompletionPopup()
 	}
 	// LSP keybinds (only when a file is open and the LSP is up).

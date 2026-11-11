@@ -24,6 +24,7 @@ type editorGhost struct {
 	caret      Position
 	anchor     int
 	text       string
+	owner      string // which producer offered it; type-through keeps it
 	base, line *editorInlineLine
 }
 
@@ -38,6 +39,12 @@ type ghostEdit struct {
 // Failed preparation is atomic. Invalid/control-bearing/multiline output is
 // refused rather than trimmed or transformed into different source code.
 func (e *Editor) SetGhostText(revision uint64, anchor int, text string) error {
+	return e.SetGhostTextFor("", revision, anchor, text)
+}
+
+// SetGhostTextFor is SetGhostText with a producer name that GhostOwner reports,
+// so a producer can tell its own candidate from another producer's.
+func (e *Editor) SetGhostTextFor(owner string, revision uint64, anchor int, text string) error {
 	if !e.open || e.readOnly || e.buf == nil || e.Revision() != revision ||
 		e.HasSelection() || e.SnippetActive() || e.IsMouseDragging() || !types.ValidEditorPredictionInsertion(text) {
 		return errors.New("prediction does not identify a usable insertion caret")
@@ -51,7 +58,7 @@ func (e *Editor) SetGhostText(revision uint64, anchor int, text string) error {
 		return errors.New("prediction anchor is not this exact source boundary")
 	}
 	g := &editorGhost{buffer: e.buf, document: e.documentProjection,
-		revision: revision, caret: e.cursor, anchor: anchor, text: text}
+		revision: revision, caret: e.cursor, anchor: anchor, text: text, owner: owner}
 	var base *editorInlineLine
 	if hints := e.currentInlays(); hints != nil {
 		base = hints.lines[g.caret.Line]
@@ -79,6 +86,14 @@ func (e *Editor) GhostText() (int, string, bool) {
 		return g.anchor, g.text, true
 	}
 	return 0, "", false
+}
+
+// GhostOwner names the producer of the current candidate ("" when none).
+func (e *Editor) GhostOwner() string {
+	if g := e.currentGhost(); g != nil {
+		return g.owner
+	}
+	return ""
 }
 
 // DismissGhostText retires even a temporarily suspended transaction. The shell
@@ -208,7 +223,7 @@ func (e *Editor) finishGhostEdit() {
 	}
 	// A typed-through candidate can follow an exact local prefix before its
 	// canonical ACK. This does not authorize a new provider request or edit.
-	_ = e.SetGhostText(e.Revision(), tx.next, old.text[tx.consumed:])
+	_ = e.SetGhostTextFor(old.owner, e.Revision(), tx.next, old.text[tx.consumed:])
 }
 
 func (e *Editor) handleGhostKey(key tea.KeyPressMsg) bool {

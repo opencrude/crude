@@ -79,6 +79,12 @@ func shellCommand(ctx context.Context, shell command.Shell, line, cwd, tempDir s
 		c = setProcessGroupCmd(ctx, shell.Path, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", path)
 		cleanup = func() { _ = os.Remove(path) }
 	default:
+		pinCWD := login && cwd != ""
+		if pinCWD {
+			// Profiles may cd away from the requested execution checkout. Pass
+			// its literal path as an argument, never interpolate shell source.
+			line = "CDPATH= cd -- \"$1\" || exit\nshift\n" + line
+		}
 		args := []string{"-c", line}
 		if runtime.GOOS == "windows" {
 			// A Windows command line does not carry arguments exactly: the
@@ -90,6 +96,11 @@ func shellCommand(ctx context.Context, shell command.Shell, line, cwd, tempDir s
 				return nil, nil, err
 			}
 			args, cleanup = []string{filepath.ToSlash(path)}, func() { _ = os.Remove(path) }
+		} else if pinCWD {
+			args = append(args, shell.Path) // keep the shell's original $0
+		}
+		if pinCWD {
+			args = append(args, filepath.ToSlash(cwd))
 		}
 		if login {
 			args = append([]string{"-l"}, args...)

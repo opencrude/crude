@@ -316,17 +316,17 @@ func TestCommandLostFinalAckReturnsKnownResultWithoutReplay(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var first, again coreprotocol.CoreStatus
+	var first coreprotocol.CoreStatus
 	options := coreclient.CallOptions{ID: "known-result"}
 	if _, err := client.CallWith(ctx, "", coreprotocol.CoreStatusMethod, &coreprotocol.Empty{}, &first, options); err != nil {
 		t.Fatal("known outcome incorrectly uncertain", err)
 	}
-	if _, err := client.CallWith(ctx, "", coreprotocol.CoreStatusMethod, &coreprotocol.Empty{}, &again, options); err != nil {
-		t.Fatal(err)
+	if first.Clients != 0 {
+		t.Fatal("lost ACK replayed command", first.Clients)
 	}
-	if first.Clients != 0 || again.Clients != 0 {
-		t.Fatal("lost ACK replayed command", first.Clients, again.Clients)
-	}
+	// The client holds the result, so the retained copy is released over the
+	// replacement carrier instead of pinning a slot for the session.
+	awaitRetained(t, r, client, 0)
 }
 
 func TestTopicReplacementClosesBlockedWriterBeforeJoin(t *testing.T) {

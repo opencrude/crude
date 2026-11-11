@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +81,8 @@ func TestIdleLeaseRefusesPendingQueuedMemoryAndAutonomousWorkWithoutMutation(t *
 			if u, err := s.BeginIdleLease(t.Context()); err == nil {
 				u()
 				t.Fatal("busy owner accepted")
+			} else if (mode == "control" || mode == "compaction") && !errors.Is(err, types.ErrIdleSettling) {
+				t.Fatalf("finishing admission cannot settle during an explicit stop: %v", err)
 			}
 			if s.idle.fenced || s.memoryJobs.fenced {
 				t.Fatal("refusal leaked reservations")

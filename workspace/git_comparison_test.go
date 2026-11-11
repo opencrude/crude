@@ -335,3 +335,32 @@ func TestGitCompareChangesReadsOneSnapshotAndIsolatesFailures(t *testing.T) {
 		t.Fatalf("staged paths=%v", got)
 	}
 }
+
+// Validation of one operand must neither reach Git nor discard valid peers.
+func TestGitCompareChangesKeepsPerPathValidationFailures(t *testing.T) {
+	_, _, service, root := reviewRepository(t, true)
+	reviewWrite(t, root, "file.txt", "edited\n")
+	invalid := []GitChange{
+		{Path: "../escape", Area: GitAreaWorking},
+		{Path: ".git/config", Area: GitAreaWorking},
+		{Path: "nested/../file.txt", Area: GitAreaWorking},
+	}
+	for position := 0; position <= len(invalid); position++ {
+		changes := append([]GitChange(nil), invalid[:position]...)
+		changes = append(changes, GitChange{Path: "file.txt", Area: GitAreaWorking})
+		changes = append(changes, invalid[position:]...)
+		results, err := service.CompareChanges(t.Context(), changes)
+		if err != nil || len(results) != len(changes) {
+			t.Fatalf("valid position %d: results=%d err=%v", position, len(results), err)
+		}
+		for i, item := range results {
+			if i == position {
+				if item.Err != nil || string(item.Comparison.After) != "edited\n" {
+					t.Fatalf("valid comparison lost: %+v", item)
+				}
+			} else if item.Err == nil {
+				t.Fatalf("unsafe operand was compared: %+v", item)
+			}
+		}
+	}
+}

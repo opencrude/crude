@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -51,7 +52,6 @@ type Screen struct {
 	text       *documentation
 	docScroll  *ui.ScrollbarControl
 	caption    *ui.Label
-	hint       *ui.Label
 	renderedID string // documentation projection key, never selection authority
 	acceptance string
 	measureAt  ui.Constraints
@@ -60,7 +60,18 @@ type Screen struct {
 	measure    ui.Size
 	measured   bool
 	hasDetails bool
+	listW      int // measured list column width; documentation takes the rest
 }
+
+// Compact chooser bounds: rows show at most this many suggestions, and labels
+// and details are clipped so the list stays close to the typed text.
+const (
+	maxRows        = 8
+	maxLabelWidth  = 40
+	maxDetailWidth = 28
+	docWidth       = 44
+	stackedDocRows = 5
+)
 
 // New retains a detached display snapshot. It never dispatches initial requests.
 // The containing Host should focus DefaultFocus after mounting, and invalidate
@@ -84,12 +95,7 @@ func New(th *theme.Theme, invocation string, entries []Entry, status string) *Sc
 	s.list = &chooserList{List: ui.NewList(ListID, ts), screen: s}
 	s.list.SetActivateAction(rowActivate)
 	s.list.SetDefaultRowBackground(ui.ColorPopupBg)
-	rows := make([]ui.ListItem, len(s.entries))
-	for i, e := range s.entries {
-		rows[i] = ui.ListItem{ID: e.ID, Label: kindGlyph(e.Kind) + " " + singleLine(e.Label), Detail: singleLine(e.Detail),
-			Disabled: s.byID[e.ID] < 0, Payload: Action{s.invocation, e.ID}}
-	}
-	s.list.SetItems(rows)
+	s.list.SetItems(s.rows())
 	s.scrollbar = ui.NewScrollbarControl("completion/scrollbar", s.list.Scroll(), ts)
 	s.text = &documentation{TextArea: ui.NewTextArea(TextID, ts, true), screen: s}
 	s.text.SetReadOnly(true)
@@ -98,8 +104,6 @@ func New(th *theme.Theme, invocation string, entries []Entry, status string) *Sc
 	s.docScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.caption = ui.NewLabel("completion/status", singleLine(status), th)
 	s.caption.SetColorRole(ui.ColorMuted)
-	s.hint = ui.NewLabel("completion/hint", "Ctrl+PgUp/PgDn: docs · Enter/Tab: accept · Esc: close", th)
-	s.hint.SetColorRole(ui.ColorMuted)
 	s.SetAcceptance("tab-enter")
 	s.SetTokens(ts)
 	s.prepareDocumentation()
@@ -108,22 +112,108 @@ func New(th *theme.Theme, invocation string, entries []Entry, status string) *Sc
 
 func (s *Screen) DefaultFocus() ui.ComponentID { return ListID }
 
-// SetAcceptance updates the native chooser and its displayed key hint together.
-// The containing editor routes a non-accepting key to normal source editing.
+// SetAcceptance updates which keys the native chooser accepts with. The
+// containing editor routes a non-accepting key to normal source editing.
 func (s *Screen) SetAcceptance(policy string) bool {
 	if s.acceptance == policy {
 		return false
 	}
 	s.acceptance = policy
-	keys := "Enter/Tab"
-	switch policy {
-	case "tab":
-		keys = "Tab"
-	case "enter":
-		keys = "Enter"
-	}
-	s.hint.SetText("Ctrl+PgUp/PgDn: docs · " + keys + ": accept · Esc: close")
 	return true
+}
+
+func (s *Screen) rows() []ui.ListItem {
+	rows := make([]ui.ListItem, len(s.entries))
+	for i, e := range s.entries {
+		rows[i] = ui.ListItem{ID: e.ID, Label: kindGlyph(e.Kind) + " " + clip(singleLine(e.Label), maxLabelWidth),
+			Detail: clip(singleLine(e.Detail), maxDetailWidth), Disabled: s.byID[e.ID] < 0, Payload: Action{s.invocation, e.ID}}
+	}
+	return rows
+}
+
+// Invocation names the original result set these rows display.
+func (s *Screen) Invocation() string { return s.invocation }
+
+// ClearSelection shows the rows without choosing one. The parent offers the
+// top row inline; Up or Down chooses a row and shows its documentation.
+func (s *Screen) ClearSelection() {
+	s.list.Selection().ClearSelection()
+	s.list.Scroll().ScrollTo(0)
+	s.prepareDocumentation()
+}
+
+// TopID is the first selectable row, the one offered without a choice.
+func (s *Screen) TopID() string {
+	for _, e := range s.entries {
+		if s.byID[e.ID] >= 0 {
+			return e.ID
+		}
+	}
+	return ""
+}
+
+// Select chooses one row, as Down or a click would.
+func (s *Screen) Select(id string) bool {
+	i, ok := s.byID[id]
+	if !ok || i < 0 || !s.list.SelectIndex(i) {
+		return false
+	}
+	s.list.Scroll().EnsureVisible(i)
+	s.prepareDocumentation()
+	return true
+}
+
+// SetStatus replaces the one-line status shown above the rows.
+func (s *Screen) SetStatus(status string) {
+	s.caption.SetText(singleLine(status))
+	s.contentRev++
+}
+
+// Entry returns the display data of one row.
+func (s *Screen) Entry(id string) (Entry, bool) {
+	i, ok := s.byID[id]
+	if !ok || i < 0 {
+		return Entry{}, false
+	}
+	return s.entries[i], true
+}
+
+// SetEntries replaces the rows with those of a newer result set while the
+// chooser stays open. A chosen row stays chosen when the new set has a row with
+// the same label and kind; otherwise the chooser returns to no choice.
+func (s *Screen) SetEntries(invocation string, entries []Entry) {
+	var keep *Entry
+	if e, ok := s.Entry(s.SelectedID()); ok {
+		keep = &e
+	}
+	s.invocation = strings.Clone(invocation)
+	s.entries = make([]Entry, len(entries))
+	s.byID = make(map[string]int, len(entries))
+	for i, e := range entries {
+		s.entries[i] = Entry{ID: strings.Clone(e.ID), Label: strings.Clone(e.Label), Detail: strings.Clone(e.Detail),
+			Documentation: strings.Clone(e.Documentation), DocumentationState: strings.Clone(e.DocumentationState), Kind: e.Kind}
+		if _, exists := s.byID[e.ID]; exists || e.ID == "" {
+			s.byID[e.ID] = -1
+		} else {
+			s.byID[e.ID] = i
+		}
+	}
+	s.list.SetItems(s.rows())
+	s.list.Selection().ClearSelection()
+	s.list.Scroll().ScrollTo(0)
+	if keep != nil {
+		for i, e := range s.entries {
+			if e.Label == keep.Label && e.Kind == keep.Kind && s.byID[e.ID] == i {
+				s.list.SelectIndex(i)
+				break
+			}
+		}
+	}
+	s.prepareDocumentation()
+}
+
+func clip(value string, width int) string {
+	return rendering.TruncateVisual(value, width, "…")
 }
 
 func (s *Screen) SelectedID() string {
@@ -197,7 +287,6 @@ func (s *Screen) SetTokens(ts *ui.TokenSet) {
 	s.text.SetBackgroundColor(ts.Color(ui.ColorPopupBg))
 	s.docScroll.SetTokens(ts)
 	s.caption.SetTokens(ts)
-	s.hint.SetTokens(ts)
 }
 
 func (s *Screen) SetTheme(th *theme.Theme) {
@@ -207,33 +296,63 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 }
 
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.list, s.scrollbar, s.text, s.docScroll, s.caption, s.hint}
+	return []ui.Component{s.list, s.scrollbar, s.text, s.docScroll, s.caption}
+}
+
+// showsDocumentation: documentation appears only for a chosen row that has
+// something to read, so unchosen suggestions cost no screen space.
+func (s *Screen) showsDocumentation() bool {
+	if s.SelectedID() == "" {
+		return false
+	}
+	e, _ := s.Entry(s.SelectedID())
+	return s.hasDetails || e.DocumentationState != ""
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	if s.measured && s.measureAt == cs && s.measureRev == s.contentRev {
 		return s.measure
 	}
-	preferredW := 70
-	if s.hasDetails {
-		preferredW = 106
+	indent := 1
+	if s.tokens != nil {
+		indent = max(0, s.tokens.FormIndent())
 	}
-	w := cs.ClampSize(ui.Size{W: preferredW}).W
-	listRows := max(1, len(s.entries))
-	docW := w
-	if w >= 80 {
-		docW = w - w*2/5 - 1
+	labelW, detailW := 0, 0
+	for _, row := range s.list.Items() {
+		labelW = max(labelW, rendering.VisibleWidth(row.Label))
+		detailW = max(detailW, rendering.VisibleWidth(row.Detail))
 	}
-	docRows := s.text.VisualLineCount(max(1, docW))
-	bodyH := max(min(listRows, 8), min(docRows, 8))
-	if w < 80 {
-		bodyH = min(listRows, 5) + 1 + min(docRows, 6)
+	listW := indent + labelW + 1
+	if detailW > 0 {
+		listW += 2 + detailW
 	}
-	h := bodyH + 1 // keyboard hint
+	listRows := min(max(1, len(s.entries)), maxRows)
+	if len(s.entries) > listRows {
+		listW++ // scrollbar
+	}
+	listW = max(16, listW)
+	captionH := 0
 	if s.caption.Text() != "" {
-		h++
+		captionH = 1
+		listW = max(listW, rendering.VisibleWidth(s.caption.Text()))
 	}
-	s.measure = cs.ClampSize(ui.Size{W: w, H: h})
+	size := ui.Size{W: listW, H: listRows + captionH}
+	if s.showsDocumentation() {
+		if cs.MaxW <= 0 || listW+1+docWidth <= cs.MaxW {
+			docW := docWidth
+			docRows := s.text.VisualLineCount(max(1, docW-ui.ScrollbarWidth))
+			size = ui.Size{W: listW + 1 + docW, H: max(listRows, min(docRows, 10)) + captionH}
+		} else {
+			w := listW
+			if cs.MaxW > 0 {
+				w = max(listW, min(cs.MaxW, 60))
+			}
+			docRows := s.text.VisualLineCount(max(1, w-ui.ScrollbarWidth))
+			size = ui.Size{W: w, H: listRows + 1 + min(docRows, stackedDocRows) + captionH}
+		}
+	}
+	s.listW = listW
+	s.measure = cs.ClampSize(size)
 	s.measureAt, s.measureRev, s.measured = cs, s.contentRev, true
 	return s.measure
 }
@@ -245,17 +364,18 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.caption.Text() != "" {
 		captionH = min(1, h)
 	}
-	hintH := min(1, h-captionH)
-	bodyH := h - captionH - hintH
+	bodyH := h - captionH
+	listW := min(w, max(1, s.listW))
 	listRect := ui.Rect{Y: captionH, W: w, H: bodyH}
-	docRect := ui.Rect{Y: captionH + bodyH, W: w}
-	if w >= 80 {
-		listRect.W = w * 2 / 5
-		docRect = ui.Rect{X: listRect.W + 1, Y: captionH, W: w - listRect.W - 1, H: bodyH}
-	} else if bodyH > 1 {
-		gap := min(1, bodyH-2)
-		listRect.H = min(max(1, len(s.entries)), (bodyH-gap)/2)
-		docRect = ui.Rect{Y: captionH + listRect.H + gap, W: w, H: bodyH - listRect.H - gap}
+	docRect := ui.Rect{Y: captionH + bodyH}
+	if s.showsDocumentation() {
+		if w >= listW+1+docWidth {
+			listRect.W = listW
+			docRect = ui.Rect{X: listW + 1, Y: captionH, W: w - listW - 1, H: bodyH}
+		} else if bodyH > 2 {
+			listRect.H = min(min(max(1, len(s.entries)), maxRows), bodyH-2)
+			docRect = ui.Rect{Y: captionH + listRect.H + 1, W: w, H: bodyH - listRect.H - 1}
+		}
 	}
 	barW := 0
 	if listRect.W > 1 && s.scrollbar.NeededForViewport(listRect.H) {
@@ -272,7 +392,6 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.text.Layout(ctx, docRect)
 	s.docScroll.Layout(ctx, ui.Rect{X: docRect.X + docRect.W, Y: docRect.Y, W: docBarW, H: docRect.H})
 	s.caption.Layout(ctx, ui.Rect{W: w, H: captionH})
-	s.hint.Layout(ctx, ui.Rect{Y: h - hintH, W: w, H: hintH})
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {

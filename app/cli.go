@@ -435,7 +435,7 @@ func handleCoreCommands(flags CLIFlags) (int, bool) {
 			return 1, true
 		}
 		if !result.Accepted {
-			fmt.Fprintf(os.Stderr, "crude: core stop refused: %s\n", result.Reason)
+			fmt.Fprintf(os.Stderr, "crude: %s\n", result.Reason)
 			for _, w := range result.Busy {
 				fmt.Fprintf(os.Stderr, "  %s  turns=%d children=%d commands=%d compaction=%d memory=%d goals=%d loops=%d operations=%d\n",
 					w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Active.Goals, w.Active.Loops, w.Operations)

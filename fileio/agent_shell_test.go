@@ -180,3 +180,40 @@ func TestEveryCommandPathResolvesTheAgentShell(t *testing.T) {
 		t.Fatal("a command with its own shell consulted the agent shell")
 	}
 }
+
+// Profiles may cd away from the execution checkout. This real shell wrapper
+// makes that startup effect deterministic instead of depending on host dotfiles.
+func TestLoginCommandRestoresRequestedWorkingDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX process fixture")
+	}
+	root := t.TempDir()
+	shellPath := filepath.Join(root, "login-shell")
+	startup := "#!/bin/sh\nif [ \"$1\" = -l ]; then shift; cd / || exit; fi\nexec /bin/sh \"$@\"\n"
+	if err := os.WriteFile(shellPath, []byte(startup), 0700); err != nil {
+		t.Fatal(err)
+	}
+	shell := command.Shell{Path: shellPath, Syntax: command.SyntaxPOSIX}
+	for _, name := range []string{"checkout", "quoted ' $() space", "line\nbreak"} {
+		t.Run(name, func(t *testing.T) {
+			cwd := filepath.Join(root, name)
+			if err := os.Mkdir(cwd, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(cwd, "owned.txt"), []byte("execution-owned"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, login := range []bool{false, true} {
+				cmd, cleanup, err := shellCommand(t.Context(), shell, "cat owned.txt", cwd, t.TempDir(), login)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer cleanup()
+				out, err := cmd.CombinedOutput()
+				if err != nil || string(out) != "execution-owned" {
+					t.Fatalf("login=%v cwd=%q output=%q err=%v", login, cwd, out, err)
+				}
+			}
+		})
+	}
+}

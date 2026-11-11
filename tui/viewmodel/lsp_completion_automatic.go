@@ -34,7 +34,9 @@ func (m *App) cancelCompletionIntent() {
 }
 
 func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
-	m.closeCompletionPopup()
+	if !m.keepCompletionWhileTyping(ed) {
+		m.closeCompletionPopup()
+	}
 	if key.Text == "(" || key.Text == "," {
 		m.queueAutomaticSignatureHelp(ed)
 		return
