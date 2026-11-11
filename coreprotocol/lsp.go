@@ -22,6 +22,7 @@ const (
 )
 
 type LSPRequest struct {
+	Trigger    types.LSPSignatureContext    `json:"trigger"`
 	Path       string                       `json:"path,omitempty"`
 	Line       int                          `json:"line,omitempty"`
 	Col        int                          `json:"col,omitempty"`
@@ -39,24 +40,25 @@ type LSPResult struct {
 }
 
 type LSPSnapshot struct {
-	Generation           string                              `json:"generation"`
-	ContextGeneration    uint64                              `json:"context_generation"`
-	Version              uint64                              `json:"version"`
-	Available            bool                                `json:"available"`
-	Diagnostics          map[string]types.InsightDiagnostics `json:"diagnostics"`
-	Symbols              map[string][]workspace.LSPSymbol    `json:"symbols"`
-	Insights             workspace.ProjectInsights           `json:"insights"`
-	Health               []types.LSPServerHealth             `json:"health"`
-	Assembly             types.AssemblyPlan                  `json:"assembly"`
-	Settings             types.LSPSettings                   `json:"settings"`
-	Connected            bool                                `json:"connected"`
-	Ready                bool                                `json:"ready"`
-	Status               workspace.LSPStatus                 `json:"status"`
-	Error                string                              `json:"error,omitempty"`
-	ShowInEditor         bool                                `json:"show_in_editor"`
-	ShowInTree           bool                                `json:"show_in_tree"`
-	ShowInlays           bool                                `json:"show_inlays"`
-	InlayGeneration      uint64                              `json:"inlay_generation"`
-	ShowCompletions      bool                                `json:"show_completions"`
-	CompletionGeneration uint64                              `json:"completion_generation"`
+	Generation           string                                     `json:"generation"`
+	ContextGeneration    uint64                                     `json:"context_generation"`
+	Version              uint64                                     `json:"version"`
+	Available            bool                                       `json:"available"`
+	Diagnostics          map[string]types.InsightDiagnostics        `json:"diagnostics"`
+	Symbols              map[string][]workspace.LSPSymbol           `json:"symbols"`
+	Insights             workspace.ProjectInsights                  `json:"insights"`
+	Health               []types.LSPServerHealth                    `json:"health"`
+	Assembly             types.AssemblyPlan                         `json:"assembly"`
+	Settings             types.LSPSettings                          `json:"settings"`
+	Assistance           map[string]types.LSPAssistanceCapabilities `json:"assistance"`
+	Connected            bool                                       `json:"connected"`
+	Ready                bool                                       `json:"ready"`
+	Status               workspace.LSPStatus                        `json:"status"`
+	Error                string                                     `json:"error,omitempty"`
+	ShowInEditor         bool                                       `json:"show_in_editor"`
+	ShowInTree           bool                                       `json:"show_in_tree"`
+	ShowInlays           bool                                       `json:"show_inlays"`
+	InlayGeneration      uint64                                     `json:"inlay_generation"`
+	ShowCompletions      bool                                       `json:"show_completions"`
+	CompletionGeneration uint64                                     `json:"completion_generation"`
 }

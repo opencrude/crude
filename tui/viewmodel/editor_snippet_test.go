@@ -171,7 +171,7 @@ func TestEditorSnippetLateAutomaticResultCannotStealIdenticalSourceInteraction(t
 	app, port := completionTestApp(t, 100, 32, "word")
 	ed := app.EditorState.Editor
 	ed.SetCursorPosition(0, 4)
-	automatic := app.requestCompletion(true)
+	automatic := app.requestCompletion(true, types.LSPCompletionContext{})
 	if automatic == nil || app.completion == nil || !app.completion.automatic {
 		t.Fatal("old automatic invocation was not really admitted")
 	}

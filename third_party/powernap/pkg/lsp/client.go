@@ -569,7 +569,7 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 			"hover":           map[string]any{"contentFormat": []string{"plaintext", markupKindMarkdown}},
 			"codeAction":      codeActionClientCapabilities(),
 			"inlayHint":       InlayHintClientCapabilities(),
-			"signatureHelp": map[string]any{"signatureInformation": map[string]any{
+			"signatureHelp": map[string]any{"contextSupport": true, "signatureInformation": map[string]any{
 				"documentationFormat":    []string{"plaintext", markupKindMarkdown},
 				"parameterInformation":   map[string]any{"labelOffsetSupport": true},
 				"activeParameterSupport": true,

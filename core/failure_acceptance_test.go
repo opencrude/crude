@@ -114,7 +114,10 @@ func (w *rawWire) result(t *testing.T, s corewire.Stream) (coreprotocol.Reply, [
 func failureJoin(t *testing.T, done <-chan error) {
 	t.Helper()
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("failed connection did not release its owner")
 	}

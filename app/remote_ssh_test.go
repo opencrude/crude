@@ -67,7 +67,13 @@ func TestRemoteSSHDialerUpgradeAndResumeFallback(t *testing.T) {
 	}
 	served := make(chan error, 1)
 	go func() { served <- core.Serve(ctx, r, l) }()
-	t.Cleanup(func() { cancel(); _ = l.Close(); <-served })
+	t.Cleanup(func() {
+		cancel()
+		_ = l.Close()
+		if cleanupErr := <-served; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
+	})
 	dialCtx, dialCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer dialCancel()
 	client, err := remoteSSHDialer(home, o)(dialCtx, "ssh-upgrade-journey")

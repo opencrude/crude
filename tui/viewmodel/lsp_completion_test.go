@@ -30,14 +30,16 @@ import (
 // those belong to workspace and connected gopls regressions.
 type completionTestService struct {
 	shellport.LSPService
-	context  uint64
-	owner    string
-	feature  uint64
-	enabled  bool
-	settings *types.LSPSettings
+	context           uint64
+	owner             string
+	feature           uint64
+	enabled           bool
+	settings          *types.LSPSettings
+	aggregateNotReady bool
+	assistance        *types.LSPAssistanceCapabilities
 }
 
-func (*completionTestService) ServerReady() bool                  { return true }
+func (s *completionTestService) ServerReady() bool                { return !s.aggregateNotReady }
 func (s *completionTestService) ContextCursor() (string, uint64)  { return s.owner, s.context }
 func (s *completionTestService) CompletionsState() (bool, uint64) { return s.enabled, s.feature }
 func (s *completionTestService) Settings() types.LSPSettings {
@@ -50,6 +52,7 @@ func (s *completionTestService) Settings() types.LSPSettings {
 }
 
 type completionTestRequest struct {
+	trigger   types.LSPCompletionContext
 	source    types.InsightSource
 	view      string
 	sequence  uint64
@@ -76,10 +79,10 @@ type completionTestPort struct {
 }
 
 func (p *completionTestPort) LSPMgr() shellport.LSPService { return p.service }
-func (p *completionTestPort) RequestLSPCompletions(_ context.Context, source types.InsightSource, view string, sequence uint64, line, col int) (types.LSPCompletionSet, error) {
+func (p *completionTestPort) RequestLSPCompletions(_ context.Context, source types.InsightSource, view string, sequence uint64, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionSet, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.requests = append(p.requests, completionTestRequest{source, view, sequence, line, col})
+	p.requests = append(p.requests, completionTestRequest{trigger, source, view, sequence, line, col})
 	if p.requestErr != nil {
 		return types.LSPCompletionSet{}, p.requestErr
 	}
@@ -539,7 +542,7 @@ func TestCompletionAllAnswersUseOriginalContextBarrierAndQuietAutomaticResults(t
 				for i := range port.set.Entries {
 					port.set.Entries[i].FilterText = "print" // continues the typed "pr"
 				}
-				cmd := app.requestCompletion(automatic)
+				cmd := app.requestCompletion(automatic, types.LSPCompletionContext{})
 				if cmd == nil {
 					t.Fatal("request not admitted")
 				}
@@ -696,7 +699,7 @@ func TestCompletionInspectionErrorRemainsInertAndPendingEscapeDoesNotCloseEditor
 	for _, automatic := range []bool{false, true} {
 		t.Run(fmt.Sprintf("pending-escape/automatic=%t", automatic), func(t *testing.T) {
 			app, _ := completionTestApp(t, 80, 24, "pr")
-			cmd := app.requestCompletion(automatic)
+			cmd := app.requestCompletion(automatic, types.LSPCompletionContext{})
 			s := app.completion
 			if cmd == nil || s == nil {
 				t.Fatal("pending request not admitted")
@@ -732,4 +735,11 @@ func TestCompletionInspectionErrorRemainsInertAndPendingEscapeDoesNotCloseEditor
 			}
 		})
 	}
+}
+
+func (s *completionTestService) AssistanceCapabilities(string) types.LSPAssistanceCapabilities {
+	if s.assistance != nil {
+		return types.CloneLSPAssistance(*s.assistance)
+	}
+	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

@@ -147,7 +147,7 @@ func (c *lifecycleClient) NotifySave(_ context.Context, _ string, text string, _
 	}
 	c.record(phase + text)
 }
-func (c *lifecycleClient) RequestCompletions(_ context.Context, path string, _, _ int) (model.LSPCompletionResponse, error) {
+func (c *lifecycleClient) RequestCompletions(_ context.Context, path string, _, _ int, trigger model.LSPCompletionContext) (model.LSPCompletionResponse, error) {
 	c.record("complete")
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -395,7 +395,7 @@ func TestLSPRequestsFlushDebounceAndWatchersDoNotOpenFiles(t *testing.T) {
 	editorSource(t, m, path, "initial")
 	awaitLSP(t, func() bool { cs := r.snapshot(); return len(cs) == 1 && len(cs[0].snapshot()) == 1 })
 	editorSource(t, m, path, "changed")
-	if _, err := m.RequestCompletions(t.Context(), path, 0, 1); err != nil {
+	if _, err := m.RequestCompletions(t.Context(), path, 0, 1, model.LSPCompletionContext{}); err != nil {
 		t.Fatal(err)
 	}
 	m.NotifyWatchedFilesChanged(t.Context(), filepath.Join(root, "go.mod"), 2)

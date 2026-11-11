@@ -31,6 +31,7 @@ type signatureHelpState struct {
 	status               shellport.StatusService
 	notice               string
 	preferredWidth       int
+	trigger              types.LSPSignatureContext
 }
 
 type signatureHelpResultMsg struct {
@@ -60,14 +61,14 @@ func (s *signatureHelpState) finishPendingNotice() {
 }
 
 func (m *App) requestSignatureHelpCmd() tea.Cmd {
-	return m.requestSignatureHelp(false)
+	return m.requestSignatureHelp(false, types.LSPSignatureContext{})
 }
 
-func (m *App) requestSignatureHelp(automatic bool) tea.Cmd {
+func (m *App) requestSignatureHelp(automatic bool, trigger types.LSPSignatureContext) tea.Cmd {
 	m.closeSignatureHelp()
 	ed := m.EditorState.Editor
 	service := m.ws.LSPMgr()
-	if ed == nil || !ed.IsOpen() || service == nil || !service.ServerReady() {
+	if ed == nil || !ed.IsOpen() || service == nil || automatic && !service.AssistanceCapabilities(ed.FilePath()).SignatureHelp {
 		if !automatic {
 			m.Feedback.NotifyInfo("No language server is running. Open Problems to start it.")
 		}
@@ -84,7 +85,7 @@ func (m *App) requestSignatureHelp(automatic bool) tea.Cmd {
 	ctx, cancel := context.WithTimeout(base, 5*time.Second)
 	line, col := ed.LSPCursorPosition()
 	state := &signatureHelpState{editor: ed, path: ed.FilePath(), revision: ed.Revision(), generation: generation, source: source,
-		line: line, col: col, deadline: time.Now().Add(5 * time.Second), cancel: cancel, automatic: automatic}
+		line: line, col: col, deadline: time.Now().Add(5 * time.Second), cancel: cancel, automatic: automatic, trigger: trigger}
 	m.signatureHelp = state
 	state.status = m.ws.Status()
 	if state.status != nil && !automatic {
@@ -96,7 +97,7 @@ func (m *App) requestSignatureHelp(automatic bool) tea.Cmd {
 	}
 	return func() tea.Msg {
 		defer cancel()
-		help, err := service.RequestSignatureHelp(ctx, state.path, line, col)
+		help, err := service.RequestSignatureHelp(ctx, state.path, line, col, trigger)
 		return signatureHelpResultMsg{owner: state, help: help, text: signatureHelpText(help), err: err}
 	}
 }
@@ -168,7 +169,7 @@ func (m *App) syncSignatureHelp() {
 	if state.automatic {
 		ownsInput = ownsInput && !editorHasUserSelection(state.editor)
 	}
-	if !valid || line != state.line || col != state.col || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() || !ownsInput {
+	if !valid || line != state.line || col != state.col || m.ws.LSPMgr() == nil || state.automatic && !m.ws.LSPMgr().AssistanceCapabilities(state.path).SignatureHelp || !ownsInput {
 		m.closeSignatureHelp()
 		return
 	}
@@ -216,7 +217,8 @@ func (m *App) syncSignatureHelp() {
 		title += " · Alt+I details"
 	}
 	state.preferredWidth = min(90, max(ui.TooltipFrameWidth(title, 90), ui.TooltipFrameWidth(text, 90)+ui.ScrollbarWidth))
-	bounds, visible := m.editorReaderBounds(state.editor, editor.Position{Line: state.editor.CursorLine(), Col: state.editor.CursorCol()}, reader, state.preferredWidth)
+	bounds, visible := m.editorReaderBoundsAvoiding(state.editor, editor.Position{Line: state.editor.CursorLine(), Col: state.editor.CursorCol()},
+		reader, state.preferredWidth, m.signatureHelpAvoidance(state.editor))
 	if !visible {
 		m.closeSignatureHelp()
 		return

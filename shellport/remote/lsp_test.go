@@ -73,3 +73,29 @@ func TestLSPMutationsQueueWithoutRPC(t *testing.T) {
 		t.Fatal("extra commands (implicit startup/stop)")
 	}
 }
+
+func TestLSPAssistanceReplicaIsPerFileDetachedAndCleared(t *testing.T) {
+	replica := newLSPReplica(nil)
+	first := types.LSPAssistanceCapabilities{Producer: types.InsightProducer{InstanceID: "first"}, Completion: true, CompletionTriggers: []string{":"}}
+	second := types.LSPAssistanceCapabilities{Producer: types.InsightProducer{InstanceID: "second"}, SignatureHelp: true, SignatureTriggers: []string{"?"}, SignatureRetriggers: []string{";"}}
+	snapshot := coreprotocol.LSPSnapshot{Generation: "one", Assistance: map[string]types.LSPAssistanceCapabilities{"a.fixture": first, "b.fixture": second}}
+	replica.install(snapshot)
+	first.CompletionTriggers[0] = "corrupt"
+	got := replica.AssistanceCapabilities("a.fixture")
+	if got.Producer.InstanceID != "first" || got.CompletionTriggers[0] != ":" || got.SignatureHelp {
+		t.Fatal("path borrowed another server's capabilities", got)
+	}
+	got.CompletionTriggers[0] = "caller"
+	if replica.AssistanceCapabilities("a.fixture").CompletionTriggers[0] != ":" {
+		t.Fatal("caller changed replica")
+	}
+	b := replica.AssistanceCapabilities("b.fixture")
+	b.SignatureRetriggers[0] = "caller"
+	if replica.AssistanceCapabilities("b.fixture").SignatureRetriggers[0] != ";" {
+		t.Fatal("signature trigger read was not detached")
+	}
+	replica.install(coreprotocol.LSPSnapshot{Generation: "two"})
+	if replica.AssistanceCapabilities("a.fixture").Completion || replica.AssistanceCapabilities("b.fixture").SignatureHelp {
+		t.Fatal("workspace replacement retained old capabilities")
+	}
+}

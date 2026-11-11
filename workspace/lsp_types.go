@@ -30,6 +30,7 @@ type ProjectInsights = model.ProjectInsights
 type LSPClient interface {
 	OnDiagnostics(func(model.InsightDiagnosticPublication))
 	Start(context.Context) error
+	AssistanceCapabilities() model.LSPAssistanceCapabilities
 	// Stop joins the owned process lifetime. A non-nil result means retirement
 	// could not be verified; its admission slot must not be reused.
 	Stop() error
@@ -45,13 +46,13 @@ type LSPClient interface {
 	RequestNavigation(context.Context, string, string, int, int, bool) (model.LSPNavigationResponse, error)
 	RequestDocumentSymbols(context.Context, string) []LSPSymbol
 	RequestHover(context.Context, string, int, int) (string, error)
-	RequestSignatureHelp(context.Context, string, int, int) (model.LSPSignatureHelp, error)
+	RequestSignatureHelp(context.Context, string, int, int, model.LSPSignatureContext) (model.LSPSignatureHelp, error)
 	RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error)
 	RequestCodeActions(context.Context, string, int, int, int, int) (model.LSPCodeActionResponse, error)
 	ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error)
 	RequestInlayHints(context.Context, string, model.LSPInlayRange) (model.LSPInlayResponse, error)
 	ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error)
-	RequestCompletions(context.Context, string, int, int) (model.LSPCompletionResponse, error)
+	RequestCompletions(context.Context, string, int, int, model.LSPCompletionContext) (model.LSPCompletionResponse, error)
 	ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error)
 	// AwaitDiagnostics returns the open document's diagnostics once the
 	// server has settled, or the latest seen and false when ctx ends first.

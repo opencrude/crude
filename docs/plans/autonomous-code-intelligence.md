@@ -83,8 +83,9 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-10 | Keep the whole validation gate clean, regardless of failure origin. Fix recurring scheduler-dependent tests at their readiness and ownership boundaries; do not hide them with retries, sleeps or relaxed assertions. | User |
 | 2026-11-11 | Hunt editor gaps beyond the reported completion, paste and capacity failures. Fix as many as can be closed with production-quality verification; give remaining work one complete end-state specification, not a phased release promise. | User |
 | 2026-11-11 | Continue implementation directly, using efficient batched edits. Documentation is permitted again but must not displace fixes. | User |
-
 | 2026-11-11 | Memory-safety and other discovered crashes must be fixed, not only documented. Crash resolution takes priority over further editor expansion; passing reruns alone do not establish a fix. | User |
+| 2026-11-11 | Continue IDE improvements autonomously after the Go toolchain update. Preserve the faster editing experience and keep working through the editor handoff without stopping for small check-ins. | User |
+| 2026-11-11 | The HTML, C and Lisp constructs were examples, not a requirement for a custom three-template library. Complete the existing LSP integration and reuse established expansion tools where justified. No local model now; a possible custom-trained model belongs to later work. Use inline commands, especially Python, for coherent batched edits. | User |
 
 ### Open decisions
 
@@ -108,7 +109,7 @@ Update a row only with evidence.
 | Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
 | Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostic facts, including unopened files. Focused freshness/gap tests and native installed-server captures verify clearing and explicit incomplete coverage. Declared scope is not a complete-project or per-feature proof; richer fact kinds remain open. |
 | Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
-| Editor features | Shared, revision-checked editor and agent answers | Banked slices: navigation, completion documentation, parameter information, inlay hints, code actions, reviewed rename, diagnostic reader, prediction prerequisites. |
+| Editor features | Shared, revision-checked editor and agent answers | Banked slices: navigation, completion documentation, parameter information, inlay hints, code actions, reviewed rename, diagnostic reader, prediction prerequisites and [LSP assistance continuation](#lsp-assistance-continuation-2026-11-11). Broader editor parity and native Windows crash resolution remain open. |
 
 Known exception: the compilation-database and CMake importers in
 `insight/project/` read build-file formats. The generic recipe layer must call
@@ -116,15 +117,18 @@ them; they are not a template for language-specific modules.
 
 ## Current checkpoint
 
-**Editor defect closure (2026-11-11).** This supersedes the narrow completion-only
-checkpoint below for this repair. Fix completion inside snippet arguments, pasted
-line breaks, actionable server-capacity status and independently reproduced
-editing failures. Preserve shared document/history ownership, passive completion
-and assembly-first language data. Prove focused behavior and run repository
-gates. Record broader missing features in the editor parity handoff as one end
-state, with exact owners, UX and acceptance, not claims of implemented support.
-AI inference and tool setup remain separate; deterministic editing must work
-without a model. The previous checkpoint evidence follows.
+**LSP continuation verified (2026-11-11).** The scoped completion/signature
+checkpoint is [banked below](#lsp-assistance-continuation-2026-11-11). It does not
+complete the [editor parity plan](editor-parity.md) or establish a fix for the
+[Windows GC crash](../issues/2026-11-11-workspace-gc-crash.md). The running user
+core was not restarted or replaced for acceptance.
+
+Remaining editor work stays in that existing plan. Emmet/postfix is an evaluation,
+not shipped support; commit-character acceptance, indentation-adjusting insertion
+modes, dynamic registration and broader structural/semantic workflows remain
+open. No local model or separate completion engine is authorized by this slice.
+Write the next bounded implementation checkpoint here before expanding the code.
+The earlier checkpoint records below retain their original scope and evidence.
 
 **Immediate correction: unobtrusive completion and clean gates (2026-11-10).**
 
@@ -1494,6 +1498,36 @@ four items have passed and the current references describe the result.
 
 History of finished slices, kept as evidence. [Stage status](#stage-status) is
 the authoritative summary; this text does not describe remaining work.
+
+### LSP assistance continuation (2026-11-11)
+
+Goal and scope: complete missing static completion/signature trigger context and
+argument-help continuity in the existing LSP path, with one completion, snippet,
+document and Undo owner. The HTML/C/Lisp examples were not a template-library
+specification. No new engine, local model or inference service was added.
+
+Implemented: per-file initialized capabilities, actual advertised trigger and
+retrigger characters, incomplete-list refresh context, exact original signature
+context across delayed requests, passive argument/caret updates and disjoint
+completion/signature placement. Manual requests survive advisory-snapshot delay;
+automatic input waits for both current acknowledged source and capabilities.
+Server-replacement, source, focus and workspace boundaries retire old intent.
+
+Evidence: independent framed-wire checks, connected two-shell edits and Undo,
+ordinary/race startup and delayed-response regressions, and installed-gopls
+native captures at 160×40 and 80×24 with all ten phases and joined cleanup.
+The full ordinary suite, build, lint, design/docs, nested LSP/syntax, website and
+all 62 allocation checks pass. All discovered race groups pass; the umbrella
+command hit its outer time limit and the final two workspace groups completed
+separately with unchanged 300-second deadlines and exact membership. Windows
+and macOS component cross-builds are not native acceptance. Full details and
+rejected attempts are in the [continuation evidence](../issues/2026-11-11-editor-polish.md#lsp-continuation-2026-11-11).
+
+The Windows GC finding and broader parity plan remain open. Unsupported insertion
+modes, commit characters, dynamic registration and specialist expansion tools
+remain explicit future work, not silent fallback behavior.
+
+### Earlier banked foundations
 
 Implementation boundary: [native syntax](../reference/native-syntax.md)
 documents the selected parser/query foundation, shared scheduling and initial

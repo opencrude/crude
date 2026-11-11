@@ -423,7 +423,7 @@ func (m *completionVisualModel) observeCompletion(phase int) error {
 				}
 			}
 			if s == nil || s.screen == nil || s.set == nil || s.pending != nil || !v.completionCurrent(s) || s.automatic {
-				return fmt.Errorf("ordinary Ctrl+Space native chooser/resolve not settled")
+				return fmt.Errorf("ordinary Ctrl+Space native chooser/resolve not settled: state=%+v capabilities=%+v", s, v.ws.LSPMgr().AssistanceCapabilities(m.path))
 			}
 			set = s.set
 			b := set.Boundary

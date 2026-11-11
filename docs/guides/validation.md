@@ -115,6 +115,9 @@ a race-only one.
 - **Lint** (`.golangci.yml`, golangci-lint v2) enables `govet`, `ineffassign`,
   `misspell`, `staticcheck`, `unused` and `errcheck` plus `gofmt`, with zero
   issues allowed. Do not reintroduce dead code or unchecked errors.
+  The linter must understand the active Go toolchain's export format. Go 1.27
+  needs a current linter; v2.4.0 cannot decode its export data. The continuation
+  validation uses v2.15.0 built with Go 1.27.4, with the same enabled rules.
 - **Design audit** (`scripts/tui_design_audit.sh`) enforces that `workspace/`
   never imports `crude/tui`, raw ANSI SGR lives only in
   `tui/cell|compositor|rendering`, and hard-coded hex lives only in `tui/theme/`.

@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/types"
 	"strconv"
 	"strings"
 	"testing"
@@ -110,7 +111,7 @@ func TestEditorGhostAutomaticCompletionCannotStealCandidateKeys(t *testing.T) {
 			ed.SetCursorPosition(0, 4)
 			var late tea.Msg
 			if arrival == "late" {
-				command := app.requestCompletion(true)
+				command := app.requestCompletion(true, types.LSPCompletionContext{})
 				if command == nil {
 					t.Fatal("fixture did not admit the original automatic request")
 				}
@@ -121,7 +122,7 @@ func TestEditorGhostAutomaticCompletionCannotStealCandidateKeys(t *testing.T) {
 			}
 			app.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
 			if arrival == "new" {
-				if app.requestCompletion(true) != nil {
+				if app.requestCompletion(true, types.LSPCompletionContext{}) != nil {
 					t.Fatal("automatic completion queried over a retained literal candidate")
 				}
 			} else {

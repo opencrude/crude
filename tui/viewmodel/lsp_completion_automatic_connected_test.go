@@ -20,11 +20,13 @@ import (
 type typingCompletionCall struct {
 	text      string
 	line, col int
+	trigger   types.LSPCompletionContext
 }
 
 type typingCompletionRuntime struct {
-	base  renameConnectedRuntime
-	calls []typingCompletionCall // guarded by base.mu
+	base       renameConnectedRuntime
+	calls      []typingCompletionCall // guarded by base.mu
+	incomplete bool
 }
 
 type typingCompletionClient struct {
@@ -36,12 +38,12 @@ func (r *typingCompletionRuntime) NewClient(spec types.LSPServerSpec, root strin
 	return &typingCompletionClient{r.base.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
 
-func (c *typingCompletionClient) RequestCompletions(_ context.Context, path string, line, col int) (types.LSPCompletionResponse, error) {
+func (c *typingCompletionClient) RequestCompletions(_ context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	defer r.base.mu.Unlock()
 	d := c.docs[path]
-	r.calls = append(r.calls, typingCompletionCall{d.text, line, col})
+	r.calls = append(r.calls, typingCompletionCall{d.text, line, col, trigger})
 	// Like many real servers, return candidates and their filter/ranking data;
 	// the client must narrow the list, not guess edits from labels.
 	raw := `[
@@ -52,6 +54,9 @@ func (c *typingCompletionClient) RequestCompletions(_ context.Context, path stri
 	]`
 	if strings.HasPrefix(d.text, "device.") {
 		raw = `[{"label":"run","kind":2,"sortText":"1"},{"label":"reset","kind":2,"sortText":"2"}]`
+	}
+	if r.incomplete {
+		raw = `{"isIncomplete":true,"items":` + raw + `}`
 	}
 	return types.LSPCompletionResponse{WireVersion: d.version, JSON: []byte(raw)}, nil
 }
@@ -311,4 +316,52 @@ func TestConnectedAutomaticCompletionKeepsShortSuggestionsCompact(t *testing.T) 
 	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyDown})
 	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyTab})
 	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "privateValue" && eds[1].Value() == "privateValue" })
+}
+
+func (c *typingCompletionClient) AssistanceCapabilities() types.LSPAssistanceCapabilities {
+	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{".", ":", "@"}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
+}
+
+func TestConnectedCompletionTriggerAndIncompleteContexts(t *testing.T) {
+	shells, eds, _, engine, _ := newTypingCompletionFixture(t, "unit")
+	app := shells[0].app
+	engine.base.mu.Lock()
+	engine.incomplete = true
+	engine.base.mu.Unlock()
+	for i, key := range []string{":", "p", "r", "i"} {
+		if i == 2 {
+			engine.base.mu.Lock()
+			engine.incomplete = false
+			engine.base.mu.Unlock()
+		}
+		renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: []rune(key)[0], Text: key})
+		remoteJourneyUntil(t, shells, func() bool {
+			return app.completion != nil && app.completion.shown && !app.completion.stale && eds[1].Value() == eds[0].Value()
+		})
+		engine.base.mu.Lock()
+		calls := append([]typingCompletionCall(nil), engine.calls...)
+		engine.base.mu.Unlock()
+		if len(calls) != i+1 {
+			t.Fatalf("one request per edit: %+v", calls)
+		}
+		wantKind, wantChar := types.LSPCompletionTriggerIncomplete, ""
+		if i == 0 {
+			wantKind, wantChar = types.LSPCompletionTriggerCharacter, ":"
+		}
+		if i == 3 {
+			wantKind = types.LSPCompletionInvoked
+		}
+		call := calls[i]
+		if call.trigger.TriggerKind != wantKind || call.trigger.TriggerCharacter != wantChar || call.text != eds[0].Value() || call.trigger.Producer.InstanceID == "" {
+			t.Fatalf("wrong current-source trigger after %q: %+v", key, call)
+		}
+		if shells[1].app.completion != nil || app.focusTarget() != FocusEditor || app.focusedPopup() != nil {
+			t.Fatal("suggestions took focus or leaked to the other shell")
+		}
+	}
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyDown})
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyTab})
+	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "unit:privateValue" && eds[1].Value() == eds[0].Value() })
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "unit:pri" && eds[1].Value() == eds[0].Value() })
 }

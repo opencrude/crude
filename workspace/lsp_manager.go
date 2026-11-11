@@ -501,7 +501,7 @@ func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, co
 
 // RequestSignatureHelp uses the same exact synchronized source and provider
 // lifetime as other explicit editor requests. It never starts an extra server.
-func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line, col int) (ttypes.LSPSignatureHelp, error) {
+func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line, col int, trigger ttypes.LSPSignatureContext) (ttypes.LSPSignatureHelp, error) {
 	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Enabled }) {
 		return ttypes.LSPSignatureHelp{}, fmt.Errorf("parameter information unavailable: language intelligence is off or blocked")
 	}
@@ -527,8 +527,11 @@ func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line
 		if err := requestCtx.Err(); err != nil {
 			return err
 		}
+		if trigger.Producer.InstanceID != "" && trigger.Producer != boundary.Producer {
+			return fmt.Errorf("language server changed; request parameter information again")
+		}
 		var requestErr error
-		out, requestErr = client.RequestSignatureHelp(requestCtx, path, line, col)
+		out, requestErr = client.RequestSignatureHelp(requestCtx, path, line, col, trigger)
 		if err := requestCtx.Err(); err != nil {
 			out = ttypes.LSPSignatureHelp{}
 			return err

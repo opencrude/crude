@@ -73,7 +73,10 @@ func TestSessionRawCarrierLossRetainsOwner(t *testing.T) {
 	r.mu.Unlock()
 	_ = carrier.Close()
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("carrier server did not join")
 	}
@@ -116,7 +119,10 @@ func TestSessionCoreCloseIsConsumedAndConcurrentCloseJoins(t *testing.T) {
 		t.Fatal("concurrent Close returned before cleanup completed")
 	}
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("control reader did not join")
 	}
@@ -151,7 +157,10 @@ func TestSessionCoreCloseBoundsUnresponsivePeer(t *testing.T) {
 		t.Fatal("unresponsive peer blocked runtime close")
 	}
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("unresponsive control reader was not joined")
 	}

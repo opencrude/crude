@@ -135,67 +135,40 @@ wide graphemes; two panes with different folds/widths; search into folded text;
 selection across folds; delete/undo; concurrent peer edits; restored view memory;
 80×24 and desktop pointer captures; dense-file presented-frame benchmarks.
 
-## Useful patterns without a heavy model
+## Context-aware completion without a model
 
-**Owners:** `snippet/`, `insight/catalog/`, existing completion types and
-`tui/viewmodel/lsp_completion.go`, `tui/editor/lsp_edits.go`.
+**Owners:** existing LSP transport, workspace completion, `snippet/`,
+`tui/viewmodel/lsp_completion.go`, and `tui/editor/lsp_edits.go`.
 
-The requested HTML scaffold, C loop and Lisp function are deterministic templates.
-Neither VS Code snippets nor JetBrains live templates require a language model.
-Provide these fast, offline and without source transmission. AI is for ambiguous
-prediction, not a prerequisite for known constructs.
+**User clarification (2026-11-11):** HTML scaffolding, C loops and Lisp functions
+were examples of useful assistance, not a requirement to build a custom template
+library. No local model is wanted now. A possible custom-trained model is later
+work, not permission to install an inference service in this repair.
 
-**Expected UX:** `!` or `html` offers a complete HTML document; `for` offers a C
-loop; `defun` offers a Lisp function. One visible candidate is accepted with Tab.
-Fields have numeric navigation and mirrors, and final Tab leaves the template.
-Multiple possible expansions use the existing passive suggestion list. Nothing
-is silently inserted when no candidate is shown. Add Insert Snippet in the palette
-for discovery and an editable application/workspace snippet collection.
+Complete the existing LSP path first. Servers supply language-specific symbols,
+types, edits, imports and snippets where supported. Crude must honor the actual
+advertised triggers, request context, incomplete-list refresh and insertion
+contract rather than special-casing familiar languages or constructs.
 
-**Implementation contract:**
+- Retain one passive list, inline preview, selection/acceptance path, numeric
+  snippet owner and canonical Undo transaction. A snippet returned by a server
+  is an LSP result, not a new local-template feature.
+- Preserve original server row identity and source/context validity for resolve
+  and additional edits. Do not manufacture semantics or silently widen ranges.
+- For markup expansion, evaluate an established implementation such as Emmet
+  instead of maintaining an imitation. Integrate through the existing assistance
+  path only after checking context, dependency cost and real editing behavior.
+  This is a remaining evaluation, not shipped support.
+- Context-sensitive transformations need real syntax/type information from
+  tooling; a parser alone cannot infer types or the user's intended program.
+- Ordinary editing remains usable with no server. Missing language knowledge is
+  not filled with fabricated results or a hidden AI request.
 
-- Define validated data records: stable ID, languages/context, prefixes, label,
-  description, body, provenance and license. Use the existing numeric snippet
-  parser. Unsupported transforms are reported, not silently inserted as syntax.
-  Do not create Go language-specific template generators or execute snippet code.
-- Introduce local completion candidates as a real producer in the shared
-  completion coordinator. They must work without a running server, in restricted
-  mode and in unnamed buffers with an explicitly selected language.
-- Preserve each producer's identity and validity boundary. Never manufacture LSP
-  provenance for local templates. Merge server results without moving an explicit
-  selection; deduplicate only identical edits and snippet plans. A local result
-  must not wait for server startup or a canonical semantic acknowledgement.
-- Apply base indentation, document line endings and indentation units **before**
-  parsing or consistently remap all resulting byte offsets. Acceptance replaces
-  only the typed prefix in one transaction. Mirrors and undo must remain exact.
-- Template context is data-driven (document, statement, expression, markup);
-  suppress inappropriate automatic suggestions in comments/strings, and make an
-  explicit Insert Snippet action available when the user intends a literal insert.
-- Read user files asynchronously, publish one generation, reject malformed
-  records with an actionable path/error and keep unrelated valid snippets.
-  Bundled defaults are data; settings can disable them without disabling LSP.
-
-**Minimum bundled data and independent expected expansions:**
-
-- HTML `!` / `html`: `<!doctype html>`, an `html` element with a language
-  field, `head` with UTF-8 charset and responsive viewport, a title field and
-  a body field. Field order is language → title → body → final landing. It is
-  a document template, not an automatic replacement of a nonempty file.
-- C `for`: `for (int ${1:i} = ${2:0}; $1 < ${3:count}; ++$1) {` followed by
-  an indented body field and closing brace. Renaming the index updates both
-  condition and increment. Tab order is index → initial value → bound → body.
-- Common Lisp `defun`: `(defun ${1:name} (${2:arguments})` followed by an
-  indented body field and closing parenthesis. Use a final landing outside
-  the form; do not auto-insert an extra closing parenthesis on acceptance.
-
-Test expanded source, not just parser plans or suggestion labels. Run syntax
-checks on completed fixtures whose placeholder values form valid programs. More
-languages use the same records and parser, not another template subsystem.
-
-**Acceptance:** exact expected generated bytes for all three requested examples;
-no-server and offline paths; selected-row/inline/field Tab precedence; LF/CRLF,
-two-space/tab indentation, Unicode defaults, escaping, mirrors, one-step undo,
-late server replies, cancellation, linked views and edited snippet files.
+**Acceptance:** real server suggestions, snippet fields, imports, documentation,
+continued argument editing and one-step Undo; advertised non-dot triggers;
+incomplete replies; cancellation, restart, two shells, exact UTF-16 edits and
+native narrow-screen behavior. The three example expansions are not standalone
+pass/fail criteria for a bundled library.
 
 ## Completion and signature continuity
 
@@ -207,13 +180,27 @@ late server replies, cancellation, linked views and edited snippet files.
   and current argument position; do not require a new opening parenthesis.
   Completion and parameter help coexist without covering each other or taking
   editor focus. Escape dismisses the top transient aid before closing the file.
-- The current repair triggers help on acceptance but does not maintain it across
-  all argument edits. Do not retain stale parameter information under a new source.
-- Respect provider trigger characters instead of only identifiers and a dot.
-  Handle incomplete lists, commit characters and insertion modes only where the
-  negotiated contract supports them. Do not guess or widen provider edit ranges.
-- Offer useful local words/templates while a server is unavailable. Preserve
-  exact server-row identity for additional edits, resolve and imported symbols.
+- The continuation repair now refreshes help during native argument typing,
+  deletion, Enter, indentation, caret keys, snippet-field navigation and accepted
+  argument suggestions. Completion no longer closes passive parameter help; one
+  placement owner keeps both frames disjoint. Old parameter text is removed on
+  source change, and a fresh answer waits for the exact acknowledgement.
+  Final focused ordinary/race and installed-gopls native captures pass at 160×40
+  and 80×24. Both captures verify all ten interaction boundaries and joined
+  cleanup. Advertised triggers, signature context, incomplete-list refresh and
+  initialization/publication ordering are connected through the existing LSP
+  path. Wire-level, per-file isolation, connected regressions, the full ordinary
+  suite and all discovered race groups pass. The race umbrella command reached
+  its outer time limit; the last two groups passed separately with unchanged
+  coverage/deadlines. Build, lint, documentation and all allocation gates pass.
+  The original Windows GC finding remains open. See the
+  [continuation evidence](../issues/2026-11-11-editor-polish.md#lsp-continuation-2026-11-11).
+- Static trigger characters and incomplete-list request context are implemented.
+  Commit-character acceptance and indentation-adjusting insertion modes remain
+  unadvertised. Add them only with complete native input, transaction and Undo
+  coverage. Do not guess or widen server edit ranges.
+- Keep ordinary editing usable while a server is unavailable. Preserve exact
+  server-row identity for additional edits, resolve and imported symbols.
 - Support nested snippets deliberately if added: inner completion must have a
   defined return-to-outer-field behavior, not two uncoordinated Tab owners.
 
@@ -294,11 +281,11 @@ corpus before claiming it beats another IDE.
 ## Integrated acceptance and handoff requirements
 
 Run one developer journey with a small multi-language web/native/script project:
-open files, paste JSON from a browser, expand the three requested templates, accept
+open files, paste JSON from a browser, use supported language-server constructs, accept
 function/member suggestions inside their fields, fold nested blocks, search and
 navigate through folds, edit two splits, use multiple carets, format, rename with
 review, undo, save, restart and resume. Repeat while a server starts/fails and while
-another shell edits the same document. Offline deterministic features still work.
+another shell edits the same document. Editing remains usable without a server or model.
 
 Every implementation report must list changed owners, behavioral regressions,
 real provider/platform evidence, screenshots inspected at 160×40 and 80×24,

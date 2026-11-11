@@ -34,7 +34,7 @@ func (c *reapableClient) RequestDocumentSymbols(context.Context, string) []LSPSy
 func (c *reapableClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (c *reapableClient) RequestSignatureHelp(context.Context, string, int, int) (types.LSPSignatureHelp, error) {
+func (c *reapableClient) RequestSignatureHelp(context.Context, string, int, int, types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
 	return types.LSPSignatureHelp{}, nil
 }
 func (c *reapableClient) RequestRename(context.Context, string, int, int, string) (types.LSPRenameEdit, error) {
@@ -52,7 +52,7 @@ func (c *reapableClient) RequestInlayHints(context.Context, string, types.LSPInl
 func (c *reapableClient) ResolveInlayHint(context.Context, string, int, []byte) (types.LSPInlayResponse, error) {
 	return types.LSPInlayResponse{}, context.Canceled
 }
-func (c *reapableClient) RequestCompletions(context.Context, string, int, int) (types.LSPCompletionResponse, error) {
+func (c *reapableClient) RequestCompletions(context.Context, string, int, int, types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
 	return types.LSPCompletionResponse{}, context.Canceled
 }
 func (c *reapableClient) ResolveCompletion(context.Context, string, int, []byte) (types.LSPCompletionResponse, error) {
@@ -61,4 +61,8 @@ func (c *reapableClient) ResolveCompletion(context.Context, string, int, []byte)
 
 func (*reapableClient) AwaitDiagnostics(context.Context, string) (types.InsightDiagnosticPublication, bool) {
 	return types.InsightDiagnosticPublication{}, true
+}
+
+func (*reapableClient) AssistanceCapabilities() types.LSPAssistanceCapabilities {
+	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

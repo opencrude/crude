@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"crude/types"
+	"github.com/charmbracelet/x/powernap/pkg/lsp"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
@@ -28,7 +29,7 @@ var errSignatureResult = errors.New("invalid or oversized language-server parame
 // RequestSignatureHelp keeps provider/wire-version identity through the request.
 // Validation and conversion run off Update; label offsets are UTF-16, never
 // visual columns. The transport's frame bound is separate from this result bound.
-func (l *LSPIntegration) RequestSignatureHelp(ctx context.Context, filePath string, line, col int) (types.LSPSignatureHelp, error) {
+func (l *LSPIntegration) RequestSignatureHelp(ctx context.Context, filePath string, line, col int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
 	defer l.observeRequest("signature", time.Now())
 	l.mu.Lock()
 	fp := filepath.Clean(filePath)
@@ -44,9 +45,14 @@ func (l *LSPIntegration) RequestSignatureHelp(ctx context.Context, filePath stri
 	if !signaturePosition(text, line, col) {
 		return types.LSPSignatureHelp{}, errors.New("parameter information needs a valid UTF-16 source position")
 	}
+	if len(trigger.ActiveSignatureHelp) > 0 {
+		if _, err := parseSignatureHelp(trigger.ActiveSignatureHelp); err != nil {
+			return types.LSPSignatureHelp{}, err
+		}
+	}
 	raw, err := client.RequestSignatureHelp(ctx, uri, protocol.Position{
 		Line: uint32(line), Character: uint32(col), // bounded by signaturePosition
-	})
+	}, lsp.SignatureHelpContext{TriggerKind: trigger.TriggerKind, TriggerCharacter: trigger.TriggerCharacter, IsRetrigger: trigger.IsRetrigger, ActiveSignatureHelp: bytes.Clone(trigger.ActiveSignatureHelp)})
 	if !l.currentDocument(fp, client, state, version) {
 		return types.LSPSignatureHelp{}, context.Canceled
 	}
@@ -163,6 +169,7 @@ func parseSignatureHelp(raw json.RawMessage) (types.LSPSignatureHelp, error) {
 		}
 		out.Signatures = append(out.Signatures, item)
 	}
+	out.Original = bytes.Clone(raw)
 	return out, nil
 }
 

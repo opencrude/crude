@@ -331,7 +331,10 @@ func TestRemoteTransportRejectsNetworkAuthorityClaims(t *testing.T) {
 	remoteFault(t, empty.Fault, "unauthorized")
 	_ = c.Close()
 	select {
-	case <-done:
+	case cleanupErr := <-done:
+		if cleanupErr != nil {
+			t.Logf("Connection cleanup: %v", cleanupErr)
+		}
 	case <-time.After(time.Second):
 		t.Fatal("refused custom-auth carrier did not join")
 	}

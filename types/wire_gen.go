@@ -5011,6 +5011,282 @@ func (z *IssueSnapshot) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *LSPAssistanceCapabilities) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 6
+	o = append(o, 0x96)
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.Producer.InstanceID)
+	o = msgp.AppendString(o, z.Producer.Provider)
+	o = msgp.AppendString(o, z.Producer.ToolIdentity)
+	o = msgp.AppendBool(o, z.Completion)
+	if z.CompletionTriggers == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.CompletionTriggers)))
+		for za0001 := range z.CompletionTriggers {
+			o = msgp.AppendString(o, z.CompletionTriggers[za0001])
+		}
+	}
+	o = msgp.AppendBool(o, z.SignatureHelp)
+	if z.SignatureTriggers == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.SignatureTriggers)))
+		for za0002 := range z.SignatureTriggers {
+			o = msgp.AppendString(o, z.SignatureTriggers[za0002])
+		}
+	}
+	if z.SignatureRetriggers == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.SignatureRetriggers)))
+		for za0003 := range z.SignatureRetriggers {
+			o = msgp.AppendString(o, z.SignatureRetriggers[za0003])
+		}
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPAssistanceCapabilities) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+		return
+	}
+	var zb0002 uint32
+	zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer")
+		return
+	}
+	if uint64(zb0002)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0002 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0002}
+		return
+	}
+	z.Producer.InstanceID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "InstanceID")
+		return
+	}
+	z.Producer.Provider, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "Provider")
+		return
+	}
+	z.Producer.ToolIdentity, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "ToolIdentity")
+		return
+	}
+	z.Completion, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Completion")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.CompletionTriggers = nil
+	} else {
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "CompletionTriggers")
+			return
+		}
+		if uint64(zb0003)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.CompletionTriggers != nil && cap(z.CompletionTriggers) >= int(zb0003) {
+			z.CompletionTriggers = (z.CompletionTriggers)[:zb0003]
+		} else {
+			z.CompletionTriggers = make([]string, zb0003)
+		}
+		for za0001 := range z.CompletionTriggers {
+			z.CompletionTriggers[za0001], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "CompletionTriggers", za0001)
+				return
+			}
+		}
+	}
+	z.SignatureHelp, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SignatureHelp")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.SignatureTriggers = nil
+	} else {
+		var zb0004 uint32
+		zb0004, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "SignatureTriggers")
+			return
+		}
+		if uint64(zb0004)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.SignatureTriggers != nil && cap(z.SignatureTriggers) >= int(zb0004) {
+			z.SignatureTriggers = (z.SignatureTriggers)[:zb0004]
+		} else {
+			z.SignatureTriggers = make([]string, zb0004)
+		}
+		for za0002 := range z.SignatureTriggers {
+			z.SignatureTriggers[za0002], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SignatureTriggers", za0002)
+				return
+			}
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.SignatureRetriggers = nil
+	} else {
+		var zb0005 uint32
+		zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "SignatureRetriggers")
+			return
+		}
+		if uint64(zb0005)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.SignatureRetriggers != nil && cap(z.SignatureRetriggers) >= int(zb0005) {
+			z.SignatureRetriggers = (z.SignatureRetriggers)[:zb0005]
+		} else {
+			z.SignatureRetriggers = make([]string, zb0005)
+		}
+		for za0003 := range z.SignatureRetriggers {
+			z.SignatureRetriggers[za0003], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "SignatureRetriggers", za0003)
+				return
+			}
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPAssistanceCapabilities) Msgsize() (s int) {
+	s = 1 + 1 + msgp.StringPrefixSize + len(z.Producer.InstanceID) + msgp.StringPrefixSize + len(z.Producer.Provider) + msgp.StringPrefixSize + len(z.Producer.ToolIdentity) + msgp.BoolSize + msgp.ArrayHeaderSize
+	for za0001 := range z.CompletionTriggers {
+		s += msgp.StringPrefixSize + len(z.CompletionTriggers[za0001])
+	}
+	s += msgp.BoolSize + msgp.ArrayHeaderSize
+	for za0002 := range z.SignatureTriggers {
+		s += msgp.StringPrefixSize + len(z.SignatureTriggers[za0002])
+	}
+	s += msgp.ArrayHeaderSize
+	for za0003 := range z.SignatureRetriggers {
+		s += msgp.StringPrefixSize + len(z.SignatureRetriggers[za0003])
+	}
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *LSPCompletionContext) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.Producer.InstanceID)
+	o = msgp.AppendString(o, z.Producer.Provider)
+	o = msgp.AppendString(o, z.Producer.ToolIdentity)
+	o = msgp.AppendInt(o, z.TriggerKind)
+	o = msgp.AppendString(o, z.TriggerCharacter)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPCompletionContext) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	var zb0002 uint32
+	zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer")
+		return
+	}
+	if uint64(zb0002)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0002 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0002}
+		return
+	}
+	z.Producer.InstanceID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "InstanceID")
+		return
+	}
+	z.Producer.Provider, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "Provider")
+		return
+	}
+	z.Producer.ToolIdentity, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "ToolIdentity")
+		return
+	}
+	z.TriggerKind, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TriggerKind")
+		return
+	}
+	z.TriggerCharacter, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TriggerCharacter")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPCompletionContext) Msgsize() (s int) {
+	s = 1 + 1 + msgp.StringPrefixSize + len(z.Producer.InstanceID) + msgp.StringPrefixSize + len(z.Producer.Provider) + msgp.StringPrefixSize + len(z.Producer.ToolIdentity) + msgp.IntSize + msgp.StringPrefixSize + len(z.TriggerCharacter)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *LSPCompletionDocumentation) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 6
@@ -7578,10 +7854,114 @@ func (z *LSPSignature) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
-func (z *LSPSignatureHelp) MarshalMsg(b []byte) (o []byte, err error) {
+func (z *LSPSignatureContext) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
+	// array header, size 5
+	o = append(o, 0x95)
 	// array header, size 3
 	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.Producer.InstanceID)
+	o = msgp.AppendString(o, z.Producer.Provider)
+	o = msgp.AppendString(o, z.Producer.ToolIdentity)
+	o = msgp.AppendInt(o, z.TriggerKind)
+	o = msgp.AppendString(o, z.TriggerCharacter)
+	o = msgp.AppendBool(o, z.IsRetrigger)
+	if z.ActiveSignatureHelp == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBytes(o, z.ActiveSignatureHelp)
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *LSPSignatureContext) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+		return
+	}
+	var zb0002 uint32
+	zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer")
+		return
+	}
+	if uint64(zb0002)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0002 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0002}
+		return
+	}
+	z.Producer.InstanceID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "InstanceID")
+		return
+	}
+	z.Producer.Provider, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "Provider")
+		return
+	}
+	z.Producer.ToolIdentity, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Producer", "ToolIdentity")
+		return
+	}
+	z.TriggerKind, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TriggerKind")
+		return
+	}
+	z.TriggerCharacter, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TriggerCharacter")
+		return
+	}
+	z.IsRetrigger, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "IsRetrigger")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.ActiveSignatureHelp = nil
+	} else {
+		z.ActiveSignatureHelp, bts, err = msgp.ReadBytesBytes(bts, z.ActiveSignatureHelp)
+		if err != nil {
+			err = msgp.WrapError(err, "ActiveSignatureHelp")
+			return
+		}
+		if z.ActiveSignatureHelp == nil {
+			z.ActiveSignatureHelp = make([]byte, 0)
+		}
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *LSPSignatureContext) Msgsize() (s int) {
+	s = 1 + 1 + msgp.StringPrefixSize + len(z.Producer.InstanceID) + msgp.StringPrefixSize + len(z.Producer.Provider) + msgp.StringPrefixSize + len(z.Producer.ToolIdentity) + msgp.IntSize + msgp.StringPrefixSize + len(z.TriggerCharacter) + msgp.BoolSize + msgp.BytesPrefixSize + len(z.ActiveSignatureHelp)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *LSPSignatureHelp) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
 	o, err = z.Boundary.MarshalMsg(o)
 	if err != nil {
 		err = msgp.WrapError(err, "Boundary")
@@ -7600,6 +7980,11 @@ func (z *LSPSignatureHelp) MarshalMsg(b []byte) (o []byte, err error) {
 		}
 	}
 	o = msgp.AppendInt(o, z.ActiveSignature)
+	if z.Original == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBytes(o, z.Original)
+	}
 	return
 }
 
@@ -7615,8 +8000,8 @@ func (z *LSPSignatureHelp) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 3 {
-		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
 		return
 	}
 	bts, err = z.Boundary.UnmarshalMsg(bts)
@@ -7656,6 +8041,19 @@ func (z *LSPSignatureHelp) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "ActiveSignature")
 		return
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Original = nil
+	} else {
+		z.Original, bts, err = msgp.ReadBytesBytes(bts, z.Original)
+		if err != nil {
+			err = msgp.WrapError(err, "Original")
+			return
+		}
+		if z.Original == nil {
+			z.Original = make([]byte, 0)
+		}
+	}
 	o = bts
 	return
 }
@@ -7666,7 +8064,7 @@ func (z *LSPSignatureHelp) Msgsize() (s int) {
 	for za0001 := range z.Signatures {
 		s += z.Signatures[za0001].Msgsize()
 	}
-	s += msgp.IntSize
+	s += msgp.IntSize + msgp.BytesPrefixSize + len(z.Original)
 	return
 }
 

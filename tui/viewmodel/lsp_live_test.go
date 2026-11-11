@@ -179,7 +179,7 @@ func liveLSPSemantics(t *testing.T, ctx context.Context, m *workspace.LSPManager
 		filepath.Clean(defs.Targets[0].Path) != path || defs.Targets[0].Selection.Start.Line != 1 {
 		t.Fatalf("definition should resolve answer declaration in opened file: %+v, %v", defs, err)
 	}
-	response, err := m.RequestCompletions(ctx, path, line, completionCol)
+	response, err := m.RequestCompletions(ctx, path, line, completionCol, model.LSPCompletionContext{})
 	if err != nil {
 		t.Fatal(err)
 	}

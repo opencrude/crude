@@ -90,6 +90,10 @@ func TestProtocolServerHelper(t *testing.T) {
 			if strings.HasPrefix(mode, "signature") {
 				capabilities["signatureHelpProvider"] = map[string]any{"triggerCharacters": []string{"(", ","}}
 			}
+			if mode == "assistance-context" {
+				capabilities["completionProvider"] = map[string]any{"triggerCharacters": []string{":", "@"}}
+				capabilities["signatureHelpProvider"] = map[string]any{"triggerCharacters": []string{"?"}, "retriggerCharacters": []string{";"}}
+			}
 			if strings.HasPrefix(mode, "rename-") {
 				capabilities["renameProvider"] = true
 			}
@@ -301,7 +305,7 @@ func TestLSPProtocolConfigurationAndDuplicateOpen(t *testing.T) {
 		!bytes.Contains(definitions.JSON, []byte(`"character":3`)) {
 		t.Fatalf("original LocationLink result: %+v, %v", definitions, err)
 	}
-	completions, err := l.RequestCompletions(ctx, path, 0, 3)
+	completions, err := l.RequestCompletions(ctx, path, 0, 3, types.LSPCompletionContext{})
 	if err != nil || completions.WireVersion == 0 || completions.Unsupported ||
 		!bytes.Contains(completions.JSON, []byte("${1|red,blue|};$0")) ||
 		!bytes.Contains(completions.JSON, []byte("$TM_FILENAME")) {

@@ -127,7 +127,12 @@ func TestDiagnosticExternalGatewaySurvivesBlockedCurrentActor(t *testing.T) {
 		joined <- a.inspect(context.Background(), func() { close(entered); <-release })
 	}()
 	<-entered
-	defer func() { close(release); <-joined }()
+	defer func() {
+		close(release)
+		if cleanupErr := <-joined; cleanupErr != nil {
+			t.Logf("Cleanup join: %v", cleanupErr)
+		}
+	}()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	var out control.Result

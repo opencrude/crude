@@ -41,7 +41,10 @@ func wire(t *testing.T, r *core.Runtime, id, root string) (*coreclient.Client, s
 	t.Cleanup(func() {
 		_ = c.Close()
 		select {
-		case <-done:
+		case cleanupErr := <-done:
+			if cleanupErr != nil {
+				t.Logf("Connection cleanup: %v", cleanupErr)
+			}
 		case <-time.After(3 * time.Second):
 			t.Error("core wire did not close")
 		}

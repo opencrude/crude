@@ -78,8 +78,8 @@ func finishOwnedOutput(reader *os.File, done <-chan error) error {
 		return nil
 	case <-timer.C:
 		_ = reader.Close()
-		<-done
-		return &CommandTreeUnverifiedError{Err: exec.ErrWaitDelay}
+		readErr := <-done
+		return &CommandTreeUnverifiedError{Err: errors.Join(exec.ErrWaitDelay, readErr)}
 	}
 }
 

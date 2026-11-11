@@ -3,6 +3,7 @@ package fileio
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -135,9 +136,9 @@ func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *async
 		case <-ctx.Done():
 			state.killGroup()
 			_ = state.input.Close()
-			<-written
+			writeErr := <-written
 			<-state.done
-			return interactiveResultSnapshot(id, state, start, maxTokens), ctx.Err()
+			return interactiveResultSnapshot(id, state, start, maxTokens), errors.Join(ctx.Err(), writeErr)
 		}
 	}
 	timer := time.NewTimer(yield)

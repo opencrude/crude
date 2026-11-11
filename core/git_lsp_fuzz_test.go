@@ -331,7 +331,7 @@ func (c *semanticLSPClient) RequestHover(_ context.Context, path string, line, c
 	c.record(path, line, col, "", false)
 	return "hover **symbol**\nsecond line", nil
 }
-func (c *semanticLSPClient) RequestSignatureHelp(_ context.Context, path string, line, col int) (types.LSPSignatureHelp, error) {
+func (c *semanticLSPClient) RequestSignatureHelp(_ context.Context, path string, line, col int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
 	c.record(path, line, col, "", false)
 	return types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0,
 		Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}, nil
@@ -354,7 +354,7 @@ func (c *semanticLSPClient) RequestInlayHints(context.Context, string, types.LSP
 func (c *semanticLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (types.LSPInlayResponse, error) {
 	return types.LSPInlayResponse{}, context.Canceled
 }
-func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int) (types.LSPCompletionResponse, error) {
+func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
 	c.record(path, line, col, "", false)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -541,4 +541,8 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			t.Fatal("query wrote source file", err)
 		}
 	})
+}
+
+func (*semanticLSPClient) AssistanceCapabilities() types.LSPAssistanceCapabilities {
+	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

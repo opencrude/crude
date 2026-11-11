@@ -38,7 +38,10 @@ func TestInspectionCancellationOwnsCapturedResultLifetime(t *testing.T) {
 			cancel()
 			if running {
 				select {
-				case <-finished:
+				case cleanupErr := <-finished:
+					if cleanupErr != nil {
+						t.Logf("Connection cleanup: %v", cleanupErr)
+					}
 					close(release)
 					t.Fatal("cancel returned while a running callback still owned the captured result")
 				case <-time.After(20 * time.Millisecond):

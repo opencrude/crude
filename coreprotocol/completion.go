@@ -13,6 +13,7 @@ type CompletionsRequest struct {
 	ViewID    string
 	Sequence  uint64
 	Line, Col int
+	Trigger   types.LSPCompletionContext
 }
 
 // Only exact retained identifiers cross back to the canonical owner. Shells

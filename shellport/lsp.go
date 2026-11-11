@@ -25,6 +25,7 @@ type LSPService interface {
 	ContextCursor() (generation string, context uint64)
 	InlayHintsState() (enabled bool, generation uint64)
 	CompletionsState() (enabled bool, generation uint64)
+	AssistanceCapabilities(path string) types.LSPAssistanceCapabilities
 	FileDiagnostics(filePath string) (types.InsightDiagnostics, bool)
 	// Watchers report disk events, never read contents or take ownership of editor
 	// overlays. Include manifests/configuration, not just known source extensions.
@@ -37,7 +38,7 @@ type LSPService interface {
 	RequestDocumentSymbols(ctx context.Context, filePath string) []workspace.LSPSymbol
 	// RequestHover routes a hover request to the right client.
 	RequestHover(ctx context.Context, filePath string, line, col int) (string, error)
-	RequestSignatureHelp(ctx context.Context, filePath string, line, col int) (types.LSPSignatureHelp, error)
+	RequestSignatureHelp(ctx context.Context, filePath string, line, col int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error)
 	RestartServer(id string) bool
 	// ServerHealthSnapshots exposes every configured/attempted server separately.
 	// Diagnostic counts remain project-scoped until the cache records server

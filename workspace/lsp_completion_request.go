@@ -76,9 +76,12 @@ func (m *LSPManager) completionRequest(ctx context.Context, path string, call fu
 	return out, nil
 }
 
-func (m *LSPManager) RequestCompletions(ctx context.Context, path string, line, col int) (types.LSPCompletionResponse, error) {
-	return m.completionRequest(ctx, path, func(ctx context.Context, client LSPClient, _ types.InsightBoundary, _ int) (types.LSPCompletionResponse, error) {
-		return client.RequestCompletions(ctx, path, line, col)
+func (m *LSPManager) RequestCompletions(ctx context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
+	return m.completionRequest(ctx, path, func(ctx context.Context, client LSPClient, boundary types.InsightBoundary, _ int) (types.LSPCompletionResponse, error) {
+		if trigger.Producer.InstanceID != "" && trigger.Producer != boundary.Producer {
+			return types.LSPCompletionResponse{}, errors.New("language server changed; request suggestions again")
+		}
+		return client.RequestCompletions(ctx, path, line, col, trigger)
 	})
 }
 

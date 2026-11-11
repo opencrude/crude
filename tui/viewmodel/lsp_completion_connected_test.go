@@ -35,7 +35,7 @@ func (r *completionConnectedRuntime) NewClient(spec types.LSPServerSpec, root st
 	return &completionConnectedClient{r.base.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
 
-func (c *completionConnectedClient) RequestCompletions(_ context.Context, path string, line, col int) (types.LSPCompletionResponse, error) {
+func (c *completionConnectedClient) RequestCompletions(_ context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	defer r.base.mu.Unlock()
