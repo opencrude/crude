@@ -18,6 +18,10 @@ change plus a map to the detailed contracts. Area-specific contracts live in
 
 Remove this section when the plan below is no longer active.
 
+Editor interaction gaps and the complete target experience are tracked in
+[Complete editor experience](docs/plans/editor-parity.md). Use its ownership,
+UX and acceptance contracts; it describes remaining work, not shipped features.
+
 General editor file work is tracked in
 [Editor file workflows](docs/plans/editor-file-workflows.md).
 Read its current checkpoint and integration criteria before changing unnamed

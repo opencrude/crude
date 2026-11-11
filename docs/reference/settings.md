@@ -1314,18 +1314,27 @@ detach releases only its document views, not shared LSP servers. Universal
 connected editors use the core live-text authority and per-client open/close
 views; final native and distinct-host runtime acceptance remains separate.
 
-Resource fields default to two servers, a 300-second idle timeout and a 2 MiB
+Resource fields default to six servers, a 300-second idle timeout and a 2 MiB
 document limit, edited on Code Intelligence (the document limit in MB). A single
-core-owned governor admits all retained workspaces' LSP processes. Its initial
-global ceiling is one quarter of the core's `GOMAXPROCS`, clamped to 1 through 8,
-with at most 256 queued lifetimes. Each workspace's Maximum servers is an
-additional quota across its retained generations, not a separate global pool.
+core-owned governor admits all retained workspaces' LSP processes. Its global
+ceiling is 32 (`types.MaxLanguageServers`), matching the maximum workspace
+quota permitted by Settings, with at most
+256 queued lifetimes. The ceiling is a backstop against a runaway process count,
+not CPU containment: a language server is idle between requests, and a small
+machine must still run one server for each language of an ordinary project.
+(The earlier ceiling of one quarter of the CPUs allowed one server in total
+below eight CPUs.) Each workspace's Running servers is an additional quota
+across its retained generations, not a separate global pool.
 Quota reductions do not evict running work. An unstarted reservation can be
 cancelled; a begun lease is released only after positively verified teardown.
 Failed cleanup retains its occupied slot and visible failure even across
 workspace reopen or core shutdown. A waiting slot is not a clean analysis result.
-An active file queued for capacity says **Waiting to start**, with the next
-step to close another language's files or change the server limit. It is not
+An active file queued for capacity says **Waiting to start** and names the
+limit that is in the way. At the workspace quota, the next step is to stop
+unused servers or raise **Running servers**. At the maximum workspace quota or
+behind the shared ceiling, the next step is to stop unused language servers in
+a workspace, and no settings action is offered because raising that setting
+cannot help. Project-scoped producers need not stop merely because files close. It is not
 reported as a failed server or an oversized file. Actual file-size refusal is
 derived from the active source bytes and configured limit, not from any nonempty
 status explanation.

@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -87,10 +86,10 @@ func New(factory Factory, receiptPath string) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Conservative machine-sized process admission is not CPU/RSS containment.
-	// Provider memory/thread hints and native enforcement remain separate facts.
 	analysis, err := governor.New(governor.Limits{
-		MaxProcesses: max(1, min(8, runtime.GOMAXPROCS(0)/4)), MaxWaiting: 256,
+		// Workspace quotas stay authoritative on small machines too. This
+		// shared backstop limits process count, not CPU or RSS usage.
+		MaxProcesses: types.MaxLanguageServers, MaxWaiting: 256,
 	})
 	if err != nil {
 		_ = journal.close()

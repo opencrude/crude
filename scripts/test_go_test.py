@@ -29,7 +29,7 @@ class GoGroupsTests(unittest.TestCase):
             with self.subTest(race=race):
                 commands = []
                 listing = "\n".join([*names, "BenchmarkNotATest", "ok ignored timing output"])
-                outputs = ["crude/a\ncrude/session\ncrude/tui/viewmodel\ncrude/z\n", listing, listing]
+                outputs = ["crude/a\ncrude/app\ncrude/session\ncrude/tui/viewmodel\ncrude/workspace\ncrude/z\n", listing, listing, listing, listing]
                 with mock.patch.object(test_go.subprocess, "check_output", side_effect=outputs), \
                      mock.patch.object(test_go, "run", side_effect=commands.append):
                     test_go.main(["--race"] if race else [])
@@ -39,7 +39,7 @@ class GoGroupsTests(unittest.TestCase):
                     self.assertIn("-count=1", command)
                     self.assertIn("-timeout=300s" if race else "-timeout=180s", command)
                     self.assertNotIn("-skip", command)
-                for package in ("./session", "./tui/viewmodel"):
+                for package in ("./app", "./session", "./tui/viewmodel", "./workspace"):
                     patterns = [command[-1] for command in commands if package in command]
                     for name in names:
                         self.assertEqual(sum(bool(re.fullmatch(pattern, name)) for pattern in patterns), 1)

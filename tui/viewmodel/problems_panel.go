@@ -49,7 +49,11 @@ func (m *App) problemsModel() problems.Model {
 		}
 	}
 	insights := m.ws.LSPMgr().ProjectInsights()
-	return problems.Model{Problems: list, Checked: insights.DiagnosticsObserved > 0 || len(list) > 0, Status: m.problemsStatus(insights),
+	checked := insights.DiagnosticsObserved > 0 || len(list) > 0
+	if insights.Language.State != "" && insights.Language.State != ttypes.LanguageReady {
+		checked = false // a previous/other check cannot certify the waiting file
+	}
+	return problems.Model{Problems: list, Checked: checked, Status: m.problemsStatus(insights),
 		Refresh: insights.Language.Action == ttypes.LanguageActionNone}
 }
 
@@ -76,7 +80,11 @@ func (m *App) problemsStatus(insights ttypes.ProjectInsights) problems.Status {
 	case ttypes.LanguageActionStartServers:
 		status.Action = "lsp:start-all"
 	}
-	if insights.Language.Action != ttypes.LanguageActionNone {
+	if insights.Language.Action != ttypes.LanguageActionNone ||
+		insights.Language.State != ttypes.LanguageReady && insights.Language.Message != "" {
+		if insights.Language.Action == ttypes.LanguageActionNone {
+			status.Action, status.ActionLabel = "", ""
+		}
 		if insights.Language.ActionLabel != "" {
 			status.ActionLabel = insights.Language.ActionLabel
 		}

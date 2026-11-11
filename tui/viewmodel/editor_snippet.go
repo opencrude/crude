@@ -99,6 +99,10 @@ func (m *App) syncEditorSnippet() {
 	if s.choice != nil && popup == s.choice.window {
 		owns = true
 	}
+	if popup != nil && m.completion != nil && m.completion.editor == s.editor && m.overlayHost != nil &&
+		popup == m.overlayHost.Window(ui.OverlayCompletion) {
+		owns = true // the suggestion list of this field
+	}
 	if m.EditorState.Editor != s.editor || !s.editor.IsOpen() || !s.editor.SnippetActive() ||
 		s.path != s.editor.FilePath() || s.generation != m.workspaceSwitchGen.Load() ||
 		!owns || m.termDockOwnsKeys() || m.sessionDeckCapturesInput() {

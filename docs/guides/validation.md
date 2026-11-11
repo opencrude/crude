@@ -41,7 +41,7 @@ make site-check                       # shadcn lint, Vite build and site accepta
 ```
 
 CI and the Make targets share `python scripts/test_go.py` (normal) and
-`python scripts/test_go.py --race`. They run every package, with session and
+`python scripts/test_go.py --race`. They run every package, with app, session, workspace and
 viewmodel exhaustively grouped by discovered top-level test/example/fuzz name,
 each exactly once. The multi-megabyte upload recovery stress case has its own
 group. Each normal group keeps the 180-second safety deadline; race groups keep
@@ -55,6 +55,13 @@ suite growth from creating that recurring failure without raising the deadline
 or excluding tests. Runner regressions independently verify package coverage,
 exactly-once name matching, both modes and immediate propagation of a failure.
 Report an ungrouped timeout as a failure, never as a pass of that command.
+
+The app and workspace suites also use these exact-coverage groups. On native Windows,
+the ungrouped suite reached its aggregate three-minute deadline in a newly
+started settings test; that test passes alone. The app suite also exhausted
+its aggregate deadline during a three-second-old bounded SSH transport test;
+the earlier app run completed in 114 seconds. Grouping retains every discovered
+case and the same per-group deadline. It does not exempt a slow or failing case.
 
 ### Windows race checks with Zig
 

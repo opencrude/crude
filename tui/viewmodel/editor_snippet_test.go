@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"crude/snippet"
@@ -154,10 +153,17 @@ func TestEditorSnippetTrueFocusBoundariesAndAutomaticCompletion(t *testing.T) {
 			}
 		})
 	}
+	// Typing in a field keeps the snippet. With no suggestion shown, Tab still
+	// moves to the next field. Suggestions inside a field have their own
+	// journey in lsp_completion_snippet_field_test.go.
 	app, ed := snippetJourney(t, 100)
 	app.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
-	if cmd := app.autoCompletionCmd(time.Now()); cmd != nil || app.completionIntent != nil || !ed.SnippetActive() {
-		t.Fatal("automatic completions can steal active snippet Tab")
+	if !ed.SnippetActive() || ed.Value() != "print(n, red, n)" {
+		t.Fatalf("typing in a field ended the snippet: %q", ed.Value())
+	}
+	app.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if !ed.SnippetActive() || ed.SelectedText() != "red" || ed.Value() != "print(n, red, n)" {
+		t.Fatalf("Tab did not move to the next field: %q selected=%q", ed.Value(), ed.SelectedText())
 	}
 }
 

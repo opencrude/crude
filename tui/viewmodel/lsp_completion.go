@@ -518,6 +518,7 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 		}
 		m.adoptEditorSnippet(s.editor)
 		m.closeCompletionPopup()
+		m.queueSignatureHelpAfterInsertion(s.editor)
 		layout := m.computeLayout()
 		s.editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 		return true
@@ -577,6 +578,7 @@ func (m *App) routeCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		_, _, remaining := s.editor.GhostText()
 		if !remaining {
 			m.closeCompletionPopup()
+			m.queueSignatureHelpAfterInsertion(s.editor)
 		}
 		return cmd, true
 	}

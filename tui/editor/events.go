@@ -105,7 +105,8 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 		e.typingGroup = 0
 		e.cursorBlink.MarkActivity()
-		e.replacingSelection(func() { e.insertText(msg.Content) })
+		text := e.pastedText(msg.Content)
+		e.replacingSelection(func() { e.insertText(text) })
 	case tea.MouseWheelMsg:
 		e.cursorBlink.MarkActivity()
 		e.handleMouseWheel(msg)

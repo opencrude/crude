@@ -135,7 +135,7 @@ func TestEditorGhostNativeWordAcceptAndTypedThroughUseCompletedByteEdits(t *test
 	}
 	requireGhostRest(t, api, 0, "")
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyTab})
-	if e.Value() != "x=  alpha_beta + 中e\u0301👩‍💻    " {
+	if e.Value() != "x=  alpha_beta + 中e\u0301👩‍💻  " {
 		t.Fatal("Tab without a candidate stopped indenting", e.Value())
 	}
 
