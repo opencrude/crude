@@ -1,11 +1,16 @@
 package editor
 
-import "strings"
+import (
+	"crude/document"
+	"crude/indentation"
+	"strings"
+)
 
 // indentStyle is one indentation level of a document: one tab, or size spaces.
 type indentStyle struct {
-	tab  bool
-	size int
+	tab     bool
+	size    int
+	tabSize int
 }
 
 // indentScanLines bounds indentation detection. The first lines of a file
@@ -14,7 +19,7 @@ const indentScanLines = 2000
 
 func (s indentStyle) unit() string {
 	if s.tab {
-		return "\t"
+		return s.padding(0, s.size)
 	}
 	return strings.Repeat(" ", s.size)
 }
@@ -27,7 +32,7 @@ func (s indentStyle) width() int { return s.size }
 // style, not impose four spaces on a tab-indented or two-space file. Lines
 // that start with a tab vote for tabs. Space-indented lines vote for the most
 // frequent change of indentation between neighbouring lines.
-func (e *Editor) indentStyle() indentStyle {
+func (e *Editor) detectedIndentStyle() indentStyle {
 	style := indentStyle{size: e.TabWidth()}
 	if e.buf == nil {
 		return style
@@ -90,13 +95,173 @@ func (e *Editor) indentStyle() indentStyle {
 // levelUnit returns one more level for a line whose leading whitespace is
 // indent. A line that already uses tabs gets a tab even in a spaces document.
 func (e *Editor) levelUnit(indent string) string {
+	style := e.indentStyle()
+	if e.indentationExplicit() {
+		col := LineVisualWidth(indent, e.TabWidth())
+		return style.padding(col, col+style.size)
+	}
 	if strings.Contains(indent, "\t") {
 		return "\t"
 	}
-	style := e.indentStyle()
 	if style.tab && indent != "" {
 		// Space-indented lines inside a tab document keep their own spaces.
 		return strings.Repeat(" ", e.TabWidth())
 	}
 	return style.unit()
+}
+
+func (e *Editor) indentStyle() indentStyle {
+	value := e.Indentation()
+	return indentStyle{tab: value.Style == indentation.Tabs, size: value.Size, tabSize: value.TabWidth}
+}
+func (s indentStyle) padding(start, end int) string {
+	var out strings.Builder
+	for col := start; col < end; {
+		width := TabStopAdvance(col, max(1, s.tabSize))
+		if s.tab && col+width <= end {
+			out.WriteByte('\t')
+			col += width
+		} else {
+			out.WriteByte(' ')
+			col++
+		}
+	}
+	return out.String()
+}
+func (e *Editor) indentationExplicit() bool {
+	c := indentation.Overlay(indentation.Overlay(e.buf.indentSettings, e.buf.indentProject), e.buf.indentFile)
+	return c.Style != "" || c.Size != 0 || c.SizeIsTab
+}
+func (e *Editor) Indentation() indentation.Choices {
+	detected := e.detectedIndentStyle()
+	style := indentation.Spaces
+	if detected.tab {
+		style = indentation.Tabs
+	}
+	return indentation.Resolve(indentation.Choices{Style: style, Size: detected.size, TabWidth: e.TabWidth()}, e.buf.indentSettings, e.buf.indentProject, e.buf.indentFile)
+}
+func (e *Editor) IndentationChoices() indentation.Choices { return e.buf.indentFile }
+func (e *Editor) IndentationGeneration() uint64           { return e.buf.indentGeneration }
+func (e *Editor) SetIndentationChoices(c indentation.Choices) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	e.buf.indentChoiceGeneration++ // even explicit Reset wins over a late restore
+	if e.buf.indentFile == c {
+		return nil
+	}
+	e.buf.indentFile = c
+	e.applyIndentationWidth()
+	return nil
+}
+func (e *Editor) SetProjectIndentation(c indentation.Choices) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if e.buf.indentProject == c {
+		return nil
+	}
+	e.buf.indentProject = c
+	e.applyIndentationWidth()
+	return nil
+}
+func (e *Editor) applyIndentationWidth() {
+	c := indentation.Overlay(indentation.Overlay(e.buf.indentSettings, e.buf.indentProject), e.buf.indentFile)
+	width := c.TabWidth
+	if width == 0 {
+		width = DefaultTabWidth
+	}
+	e.setTabWidth(width)
+	e.buf.indentGeneration++
+}
+func (e *Editor) IndentationSource() string {
+	switch {
+	case e.buf.indentFile != (indentation.Choices{}):
+		return "This file"
+	case e.buf.indentProject != (indentation.Choices{}):
+		return "EditorConfig"
+	case e.buf.indentSettings.Style != "" || e.buf.indentSettings.Size != 0:
+		return "Settings"
+	default:
+		return "Detected from text"
+	}
+}
+
+// convertIndentation rewrites only leading whitespace, preserving its rendered
+// columns and every content/terminator byte. One vector uses canonical Undo.
+func (e *Editor) convertIndentation(tabs bool) {
+	style := e.indentStyle()
+	style.tab = tabs
+	policy := e.IndentationChoices()
+	policy.Style = indentation.Spaces
+	if tabs {
+		policy.Style = indentation.Tabs
+	}
+	_ = e.SetIndentationChoices(policy)
+	e.rewriteIndentation(0, e.LineCount()-1, 0, style)
+}
+
+// Indent, outdent and conversion replace each leading run as one exact vector.
+// Inserting spaces before an existing tab does not necessarily move source ink;
+// deriving the complete new run prevents cursor and indentation from disagreeing.
+func (e *Editor) rewriteIndentation(first, last, delta int, style indentStyle) {
+	var edits []document.Edit
+	shifts := make(map[int][2]int)
+	for line := first; line <= last; line++ {
+		raw := e.LineText(line)
+		if raw == "" {
+			continue
+		}
+		prefix := leadingWhitespace(raw)
+		old := LineVisualWidth(prefix, e.TabWidth())
+		width := max(0, old+delta)
+		replacement := style.padding(0, width)
+		if replacement != prefix {
+			start := e.buf.positionToOffset(Position{Line: line})
+			edits = append(edits, document.Edit{Start: start, End: start + len(prefix), Text: replacement})
+			shifts[line] = [2]int{old, width - old}
+		}
+	}
+	if len(edits) == 0 {
+		return
+	}
+	positions := [3]Position{e.cursor, e.selAnchor, e.selEnd}
+	offsets := [3]int{}
+	for i, p := range positions {
+		offsets[i] = e.buf.positionToOffset(p)
+	}
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
+	if err := e.spliceRecordedBatch(edits, e.cursor); err != nil {
+		return
+	}
+	for i, p := range positions {
+		if shift, changed := shifts[p.Line]; changed && p.Col > 0 {
+			if p.Col >= shift[0] {
+				p = e.buf.positionAtOffset(remapLinkedOffset(offsets[i], edits))
+			} else {
+				p.Col = max(0, p.Col+shift[1])
+			}
+		}
+		positions[i] = e.buf.snapPosition(p)
+	}
+	e.cursor, e.selAnchor, e.selEnd = positions[0], positions[1], positions[2]
+	e.finishEdit()
+}
+func (e *Editor) useDetectedIndentation() {
+	e.buf.indentationRevision = 0
+	style := e.detectedIndentStyle()
+	choice := indentation.Choices{Style: indentation.Spaces, Size: style.size}
+	if style.tab {
+		choice.Style = indentation.Tabs
+	}
+	_ = e.SetIndentationChoices(choice)
+}
+
+// RestoreIndentationChoices never overwrites a newer choice in an already-open
+// linked document while a background pane restoration is still arriving.
+func (e *Editor) RestoreIndentationChoices(c indentation.Choices) {
+	if e.buf.indentChoiceGeneration == 0 {
+		_ = e.SetIndentationChoices(c)
+	}
 }

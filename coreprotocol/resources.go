@@ -2,6 +2,7 @@ package coreprotocol
 
 import (
 	"crude/document"
+	"crude/indentation"
 	"crude/terminalvt"
 	"crude/textencoding"
 	"crude/workspace"
@@ -23,6 +24,7 @@ const (
 	DocumentSave            = "document.save"
 	DocumentReload          = "document.reload"
 	DocumentFormat          = "document.format"
+	DocumentEditorConfig    = "document.editor_config"
 	ProjectFormat           = "project.format"
 	TerminalList            = "terminal.list"
 	TerminalCreate          = "terminal.create"
@@ -89,4 +91,9 @@ type TerminalInputRequest struct {
 	Mouse   terminalvt.Mouse        `json:"mouse,omitempty"`
 	Data    []byte                  `json:"data,omitempty"`
 	Focused bool                    `json:"focused,omitempty"`
+}
+
+type EditorConfigReply struct {
+	Path    string
+	Choices indentation.Choices
 }

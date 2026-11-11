@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
+	"crude/indentation"
 	"crude/tui/editor"
 	"crude/tui/screens/activitybar"
 )
@@ -40,9 +41,10 @@ type viewMemory struct {
 
 // viewMemoryPane is one docked pane's open documents and selected document.
 type viewMemoryPane struct {
-	Folds  map[string]*editor.FoldMemory `json:"folds,omitempty"`
-	Files  []string                      `json:"files,omitempty"`
-	Active string                        `json:"active,omitempty"`
+	Indentation map[string]indentation.Choices `json:"indentation,omitempty"`
+	Folds       map[string]*editor.FoldMemory  `json:"folds,omitempty"`
+	Files       []string                       `json:"files,omitempty"`
+	Active      string                         `json:"active,omitempty"`
 }
 
 // viewMemoryPaneNode is one node of a saved pane tree. A leaf names its pane

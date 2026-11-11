@@ -308,88 +308,14 @@ func (e *Editor) selectedLineRange() (int, int) {
 func (e *Editor) indentLines() {
 	first, last := e.selectedLineRange()
 	style := e.indentStyle()
-	indent, width := style.unit(), style.width()
-	cursorBefore := e.cursor
-	indented := make(map[int]bool, last-first+1)
-
-	e.beginUndoGroup()
-	defer e.endUndoGroup()
-	for line := first; line <= last; line++ {
-		if e.LineText(line) == "" {
-			continue
-		}
-		e.insertRecorded(Position{Line: line}, indent, cursorBefore)
-		indented[line] = true
-	}
-	if len(indented) == 0 {
-		return
-	}
-
-	adjust := func(p Position) Position {
-		if indented[p.Line] && p.Col > 0 {
-			p.Col += width
-		}
-		return p
-	}
-	e.cursor = adjust(e.cursor)
-	if e.HasSelection() {
-		e.selAnchor = adjust(e.selAnchor)
-		e.selEnd = adjust(e.selEnd)
-	}
-	e.finishEdit()
+	e.rewriteIndentation(first, last, style.size, style)
 }
 
-// outdentLines removes up to one indent level (a leading tab, or up to one
-// level of the document's spaces) from every selected line, preserving the
-// selection. One undo step.
+// outdentLines removes one indentation level, including a partial display tab.
 func (e *Editor) outdentLines() {
 	first, last := e.selectedLineRange()
-	level := e.indentStyle().width()
-	cursorBefore := e.cursor
-	removed := make(map[int]int, last-first+1)
-
-	e.beginUndoGroup()
-	defer e.endUndoGroup()
-	for line := first; line <= last; line++ {
-		raw := e.LineText(line)
-		if raw == "" {
-			continue
-		}
-		var nBytes, cols int
-		if raw[0] == '\t' {
-			nBytes = 1
-			cols = TabStopAdvance(0, e.TabWidth())
-		} else {
-			for nBytes < len(raw) && nBytes < level && raw[nBytes] == ' ' {
-				nBytes++
-			}
-			cols = nBytes
-		}
-		if nBytes == 0 {
-			continue
-		}
-		e.deleteRecorded(Position{Line: line}, Position{Line: line, Col: cols}, cursorBefore)
-		removed[line] = cols
-	}
-	if len(removed) == 0 {
-		return
-	}
-
-	adjust := func(p Position) Position {
-		if d := removed[p.Line]; d > 0 {
-			p.Col -= d
-			if p.Col < 0 {
-				p.Col = 0
-			}
-		}
-		return p
-	}
-	e.cursor = adjust(e.cursor)
-	if e.HasSelection() {
-		e.selAnchor = adjust(e.selAnchor)
-		e.selEnd = adjust(e.selEnd)
-	}
-	e.finishEdit()
+	style := e.indentStyle()
+	e.rewriteIndentation(first, last, -style.size, style)
 }
 
 // ── move lines ───────────────────────────────────────────────────────

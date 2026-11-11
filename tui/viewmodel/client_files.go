@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/coreprotocol"
+	"crude/indentation"
 	"crude/shellport"
 	"crude/tui/filetree"
 	"crude/workspace"
@@ -111,6 +112,12 @@ func (m *App) beginClientFileTreeLoad() tea.Cmd {
 // applyCoreFileChanges refreshes metadata using the core read port. The feed
 // never authorizes disk reads, tree watchers or local Git subprocesses.
 func (m *App) applyCoreFileChanges(changes []coreprotocol.FileChange) tea.Cmd {
+	for _, change := range changes {
+		if change.Resync || indentation.ProjectFile(change.Path) {
+			m.invalidateEditorConfiguration()
+			break
+		}
+	}
 	if _, ok := m.ws.(shellport.ClientFiles); !ok || m.Tree == nil || m.Tree.Model == nil {
 		return nil
 	}

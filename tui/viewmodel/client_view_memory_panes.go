@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/indentation"
 	"crude/syntax"
 	"crude/tui/editor"
 	"fmt"
@@ -107,6 +108,14 @@ func validViewPanes(memory viewMemory) bool {
 		if len(pane.Files) > maxRememberedPaneFiles {
 			return false
 		}
+		if len(pane.Indentation) > len(pane.Files) {
+			return false
+		}
+		for path, c := range pane.Indentation {
+			if !slices.Contains(pane.Files, path) || c.Validate() != nil {
+				return false
+			}
+		}
 		if len(pane.Folds) > len(pane.Files) {
 			return false
 		}
@@ -172,6 +181,12 @@ func (m *App) restoreViewPanes(memory viewMemory) {
 		for _, path := range pane.Files {
 			if clean, ok := m.rememberedEditorPath(path); ok {
 				panes[i].Files = append(panes[i].Files, clean)
+				if c, ok := pane.Indentation[path]; ok {
+					if panes[i].Indentation == nil {
+						panes[i].Indentation = make(map[string]indentation.Choices)
+					}
+					panes[i].Indentation[clean] = c
+				}
 				if fold := pane.Folds[path]; fold != nil {
 					if panes[i].Folds == nil {
 						panes[i].Folds = make(map[string]*editor.FoldMemory)
@@ -210,6 +225,7 @@ func (m *App) restoreViewPanes(memory viewMemory) {
 			msg.activePath = activePath
 			msg.restoring = true
 			msg.folds = pane.Folds
+			msg.indentation = pane.Indentation
 			msg.restoreForeground = restoreForeground
 			return msg
 		})
@@ -289,7 +305,7 @@ func (m *App) paneMemoryMark() uint64 {
 			fmt.Fprintf(h, "%s|", path)
 			if i < len(groups) {
 				if view := m.groupEditorView(groups[i], path); view != nil {
-					fmt.Fprintf(h, "F%d", view.Editor.FoldGeneration())
+					fmt.Fprintf(h, "F%dI%d", view.Editor.FoldGeneration(), view.Editor.IndentationGeneration())
 				}
 			}
 
@@ -325,6 +341,12 @@ func (m *App) captureEditorFolds(panes []viewMemoryPane) {
 		}
 		for _, path := range panes[i].Files {
 			if view := m.groupEditorView(groups[i], path); view != nil {
+				if c := view.Editor.IndentationChoices(); c != (indentation.Choices{}) {
+					if panes[i].Indentation == nil {
+						panes[i].Indentation = make(map[string]indentation.Choices)
+					}
+					panes[i].Indentation[path] = c
+				}
 				if fold := view.Editor.ExportFolds(); fold != nil {
 					if panes[i].Folds == nil {
 						panes[i].Folds = make(map[string]*editor.FoldMemory)

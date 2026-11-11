@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"crude/document"
+	"crude/indentation"
 )
 
 type source int
@@ -24,13 +25,16 @@ type piece struct {
 }
 
 type PieceTable struct {
-	tabSize             int
-	indentation         indentStyle
-	indentationRevision uint64
-	lineChanges         [32]bufferLineChange
-	original            []byte
-	add                 []byte
-	pieces              []piece
+	indentSettings, indentProject, indentFile indentation.Choices
+	indentGeneration                          uint64
+	indentChoiceGeneration                    uint64
+	tabSize                                   int
+	indentation                               indentStyle
+	indentationRevision                       uint64
+	lineChanges                               [32]bufferLineChange
+	original                                  []byte
+	add                                       []byte
+	pieces                                    []piece
 
 	filePath string
 

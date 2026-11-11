@@ -107,14 +107,42 @@ Unicode/CRLF, two shells, imported snippets, history and deferred recovery.
 
 ### Indentation and block-only comments
 
-Tab, Enter, Backspace and selected-line indentation share a detected source
-style: tabs, or the most frequent neighboring space-indent step of 2–8 columns.
-Detection inspects at most 2,000 lines and 256 leading spaces per line and caches
-by shared PieceTable revision. Empty/ambiguous content uses the configured Tab size.
-Tab inserts to the next stop; Enter between a padded matching pair consumes the
-old padding and aligns the closing line in the same undo transaction.
-Tab display width is independent of detected indentation. EditorConfig and
-explicit per-file indentation choices remain in the active editor plan.
+Tab, Enter, Backspace and selected-line indentation use one policy on the shared
+source table. Explicit file choices override applicable EditorConfig, workspace
+and application choices, detected indentation, then defaults. Indent size, tab
+width and tabs/spaces remain separate. Changes reproject existing source anchors
+without editing bytes or history. Linked panes share the policy; another shell
+has its own explicit file choices.
+
+The header's **Spaces: N** / **Tabs: N** opens the existing native menu. It offers
+style, indent size, tab width, Detect from text, Use project settings and Reload
+EditorConfig. The two conversion actions rewrite only leading whitespace, preserve
+its display width and line terminators, and undo once. Indent/outdent replace the
+complete leading run: a two-column step inside an eight-column tab does not delete
+the whole tab or misplace a selection. Explicit Reset wins over late pane restore.
+The action picker, editor context menu and semantic controls share these operations.
+
+Detection inspects at most 2,000 lines and 256 leading spaces per line. It caches
+by shared PieceTable revision and uses the most frequent neighboring space-indent
+step of 2–8 columns, or tabs. Ambiguous content uses the effective tab width. Enter
+between a padded matching pair consumes the old padding and aligns the closing
+line in the same Undo transaction.
+
+The pinned official EditorConfig parser owns parent traversal, `root`, section
+order, glob matching and `unset`. Crude consumes `indent_style`, `indent_size`
+(including `tab`) and `tab_width`; it never executes project code or rewrites a file
+on open. Reads run on the selected core, fenced by live document owner/path and
+shell generation. Initial file-open preparation supplies policy before mounting.
+Saved project-file changes refresh retained views; Reload also checks ancestor
+files outside the workspace watcher. Four background refresh reads may run per
+shell; cancellation retains a slot until the exact read retires. Shutdown joins
+all reads through the existing client-I/O owner. Invalid or oversized configuration
+keeps the last valid policy and offers Reload; it is not a successful partial read.
+Configuration files must be regular and at most 1 MiB. Widths use the editor's
+existing 1–32-column bound. Private pane memory restores sparse file overrides;
+EditorConfig and inherited preferences are read again, never stored as overrides.
+Other EditorConfig save policies are separate work; reading indentation does not
+silently enable whitespace cleanup, encoding conversion or line-ending changes.
 
 Ctrl+/ uses catalog block delimiters when the language has no line prefix.
 Each nonblank line is wrapped. Mixed selections keep already-wrapped lines;
@@ -155,7 +183,8 @@ selection, history, the savepoint or dirty state.
   A soft boundary has two visual caret locations but never adds a source byte.
   Horizontal scrolling is absent while wrapped geometry is ready.
 
-EditorConfig and explicit per-file indentation policy remain in the active plan.
+**Indent with** and **Indent size** supply inherited policy. Detect and zero
+select source detection; project/file choices still take priority.
 
 ### Wrapped and folded rows
 

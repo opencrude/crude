@@ -1,6 +1,7 @@
 package editor
 
 import (
+	"crude/indentation"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/types"
@@ -12,7 +13,12 @@ import (
 // canonical bytes, source analysis, selection, snippets, dirty state or history.
 // Linked views share the setting but retain independent paint caches.
 func (e *Editor) SetPresentation(settings types.EditorSettings) {
-	e.setTabWidth(types.NormalizeEditorSettings(settings).TabSize)
+	settings = types.NormalizeEditorSettings(settings)
+	policy := indentation.Choices{Style: settings.IndentStyle, Size: settings.IndentSize, TabWidth: settings.TabSize}
+	if e.buf.indentSettings != policy {
+		e.buf.indentSettings = policy
+		e.applyIndentationWidth()
+	}
 	e.eachView(func(view *Editor) {
 		view.SetLineNumbers(settings.LineNumbers)
 		view.setWrapping(settings.WordWrap)

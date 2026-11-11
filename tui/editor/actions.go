@@ -8,8 +8,12 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/indentation"
 	"crude/tui/ui"
 )
+
+// IndentationMenuMsg opens the native menu for this exact editor.
+type IndentationMenuMsg struct{ Editor *Editor }
 
 // ActionMsg is an exact native operation, not synthetic keyboard input. It is
 // retained with queued history so menus/control and keys share recovery.
@@ -41,6 +45,17 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 		return nil
 	}
 	switch msg.ID {
+	case "view.indentation":
+		return func() tea.Msg { return IndentationMenuMsg{e} }
+	case "view.indentationDetect":
+		e.useDetectedIndentation()
+	case "view.indentationInherit":
+		_ = e.SetIndentationChoices(indentation.Choices{})
+	case "edit.indentToSpaces":
+		e.convertIndentation(false)
+	case "edit.indentToTabs":
+		e.convertIndentation(true)
+
 	case "edit.duplicateLine":
 		e.duplicateLineOrSelection()
 	case "edit.moveLineUp":
@@ -429,6 +444,6 @@ func (e *Editor) ActionToken() string {
 	start, end, valid := e.SourceByteRange()
 	state := e.DocumentState()
 	value := fmt.Sprintf("%p:%p:%d:%s:%d:%d:%d:%t:%d:%d:%t:%t:%t:%d:%d:%t:%t:%t", e, e.buf, e.Revision(), state.DocumentID, e.cursor.Line, e.cursor.Col, start, valid, end, queued, e.selecting, e.readOnly, e.open, state.Revision, state.PendingEdits, state.InFlight, state.UndoPending, state.HistoryQueued)
-	value += fmt.Sprintf(":%d", e.FoldGeneration())
+	value += fmt.Sprintf(":%d:%d", e.FoldGeneration(), e.IndentationGeneration())
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
 }

@@ -379,6 +379,9 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.BoolFieldState("line-numbers", "Line numbers", editor.LineNumbers, "Show the line-number gutter."),
 			ui.SegmentedFieldState("syntax-theme", "Syntax colors", []ui.FormOption{{ID: "catppuccin", Label: "Catppuccin"}, {ID: "dracula", Label: "Dracula"}, {ID: "github", Label: "GitHub"}, {ID: "monokai", Label: "Monokai"}, {ID: "solarized", Label: "Solarized"}}, editor.SyntaxTheme, "The color grammar used for source code."),
 			ui.SegmentedFieldState("render-whitespace", "Show whitespace", []ui.FormOption{{ID: "none", Label: "Never"}, {ID: "boundary", Label: "At edges"}, {ID: "all", Label: "Always"}}, editor.RenderWhitespace, "Draw spaces and tabs. At edges shows only leading and trailing whitespace."),
+			ui.SeparatorFieldState("indentation", "Indentation"),
+			ui.SegmentedFieldState("indent-style", "Indent with", []ui.FormOption{{ID: "auto", Label: "Detect"}, {ID: "space", Label: "Spaces"}, {ID: "tab", Label: "Tabs"}}, defaultString(editor.IndentStyle, "auto"), "EditorConfig and this file's choices take priority."),
+			ui.NumberFieldState("indent-size", "Indent size", editor.IndentSize, "columns", "Use 0 to detect from text, or 1 to 32 columns."),
 			ui.SeparatorFieldState("saving", "Saving"),
 			newFileEncodingField(editor.NewFileEncoding),
 			autoSaveModeField(editor.AutoSave),
@@ -2898,6 +2901,11 @@ func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {
 	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSave: types.AutoSaveMode(m.value(catEditor, "auto-save")), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 1000), FormatOnSave: m.value(catEditor, "format-on-save") == "on"}
+	cfg.IndentStyle = m.value(catEditor, "indent-style")
+	if cfg.IndentStyle == "auto" {
+		cfg.IndentStyle = ""
+	}
+	cfg.IndentSize = parseOpt(m.value(catEditor, "indent-size"), 0)
 	cfg.NewFileEncoding = textencoding.FromKey(m.value(catEditor, "new-file-encoding"))
 }
 

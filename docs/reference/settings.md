@@ -119,14 +119,20 @@ The Editor page's Tab size, Word wrap, Line numbers, Syntax colors and Show
 whitespace preferences reach existing, linked and newly opened documents. A saved choice is
 published to peer shells; Reset restores live inheritance. Source bytes, selected
 characters, dirty state and Undo remain unchanged by presentation changes.
-Tab size is a 1–32 column display width and the fallback indent for undetected
-content. Existing source indentation remains a separate detected policy.
+Tab size is a 1–32-column inherited display width and fallback indent for
+undetected content. Indent with (Detect, Spaces, Tabs) and Indent size (0 for
+Detect, otherwise 1–32) are independent preferences. Workspace choices remain
+sparse, including explicit Detect/zero; Reset restores the live parent.
+Applicable EditorConfig and explicit per-file menu choices take priority.
+The header exposes the effective policy and its menu identifies the source.
+These choices do not rewrite existing indentation; Convert is a separate native
+transaction. See [file policy](editor.md#indentation-and-block-only-comments).
 
 Syntax palettes affect source ink only. Hiding numbers keeps diagnostic/change
 lanes. Whitespace markers never enter copied or saved text. See
 [editor presentation](editor.md#display-preferences) for projection contracts.
 Minimap still has no completed consumer; its stored field is not evidence of
-implemented behavior. The remaining file policy and semantic work is tracked in [Complete editor experience](../plans/editor-parity.md).
+implemented behavior. The remaining semantic work is tracked in [Complete editor experience](../plans/editor-parity.md).
 
 ### First-use profile choices and AI setup
 

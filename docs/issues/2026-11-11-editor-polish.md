@@ -364,6 +364,46 @@ measured 3,028–3,104 B, and the complete quiet gate then passed without changi
 chat code, its benchmark or any ceiling. The failure is not relabelled a pass.
 The existing Windows GC finding remains open. This is not full editor parity.
 
+## File indentation policy (2026-11-11)
+
+The source table now owns sparse explicit, project and inherited policy layers.
+The pinned official EditorConfig parser handles parent traversal, section/glob
+precedence, root and unset. Core reads are owner/path fenced and initial open
+preparation installs policy before the editor accepts its first key. Retained
+refreshes are bounded, cancellation retires the exact request before retry and
+workspace/shutdown use the existing joined client-I/O lifecycle. No project code
+runs and no source is rewritten on open.
+
+The header menu, searchable actions, existing Settings form and exact-view semantic
+control reach the same owner. Private client profile return preserves overrides;
+peer shells follow their own choices. Saved project changes and explicit Reload
+refresh inheritance, while invalid config retains the last valid geometry and
+exposes a recovery action. Explicit Reset cannot be overwritten by a late restore.
+
+Independent source regressions exposed insertion before an existing tab, partial-tab
+Backspace/outdent and selection drift after a body tab. Indent/outdent/conversion
+now derive complete leading runs and retain source anchors. CRLF and untouched body
+bytes survive one-step Undo. The new file policy never joins canonical history.
+
+Native 160×40 and 80×24 journeys verify status clicks, policy menu, width input,
+conversion through typed action search, one Undo and Reset. The first functional
+32-row chooser was rejected during visual inspection as too tall. It was removed
+and replaced with the existing compact text prompt, with selected current value,
+range errors, stale-owner rejection and Escape cancellation. Both replacement
+captures verify seven phases and joined cleanup with unchanged disk bytes. This
+is deterministic EditorConfig/native input evidence, not language-server evidence.
+
+Affected ordinary and race checks, build, zero-issue lint, design/docs and
+Windows/macOS component cross-builds pass. A names-gate failure exposed a duplicated
+configuration filename; the watcher now uses the official parser's filename
+contract through the indentation owner, without an exception or weaker gate.
+The original whole-suite leaf inventory passed except the names finding; its
+fixed package and the complete app/session/viewmodel/workspace grouped inventory
+then passed. The final compact-prompt race/lint/docs checks and full unchanged
+allocation gate pass. Cached dense indentation resolves in 48.9–49.7 ns with
+zero allocations (three Go 1.27.4, GOMAXPROCS=2 runs).
+The Windows GC finding and the remaining editor acceptance rows stay open.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers

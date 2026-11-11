@@ -105,11 +105,7 @@ func (e *Editor) lineEnding() string {
 // spaces that reach the next indentation stop.
 func (e *Editor) insertTab() {
 	style := e.indentStyle()
-	if style.tab {
-		e.insertText("\t")
-		return
-	}
-	e.insertText(strings.Repeat(" ", style.size-e.cursor.Col%style.size))
+	e.insertText(style.padding(e.cursor.Col, e.cursor.Col+style.size-e.cursor.Col%style.size))
 }
 
 func (e *Editor) deleteBackward() {
@@ -124,6 +120,20 @@ func (e *Editor) deleteBackward() {
 		off := VisualColToByteOffset(raw, end.Col, e.TabWidth())
 		if strings.Trim(raw[:off], " \t") == "" {
 			stop := e.indentStyle().width()
+			target := ((end.Col - 1) / stop) * stop
+			prefix := leadingWhitespace(raw)
+			if strings.Contains(prefix, "\t") {
+				// Rebuild the whole leading run while keeping a real source
+				// boundary at the new caret, including before later tabs.
+				style := e.indentStyle()
+				width := LineVisualWidth(prefix, e.TabWidth()) - (end.Col - target)
+				replacement := style.padding(0, target) + style.padding(target, width)
+				begin := e.buf.positionToOffset(Position{Line: end.Line})
+				e.spliceRecorded(begin, begin+len(prefix), replacement, e.cursor)
+				e.cursor = Position{Line: end.Line, Col: target}
+				e.finishSimpleEdit()
+				return
+			}
 			start = e.buf.snapPosition(Position{Line: end.Line, Col: ((end.Col - 1) / stop) * stop})
 		}
 	}

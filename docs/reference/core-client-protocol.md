@@ -635,6 +635,15 @@ not silent text replacement. Close/reopen, conflict resolution, workspace switch
 and shutdown fence queued publications with exact topic-generation tokens.
 Cursors, selection and scrolling stay private.
 
+`document.editor_config` reads indentation rules on the selected core for an
+already-owned document ID. It rechecks owner and mutable path after I/O and never
+changes canonical text or history. File-open preparation installs the result
+before mounting; background refresh uses the same read port and shell generation
+fences. Explicit file indentation choices live in private client pane memory,
+not in shared document snapshots. Linked panes share one table policy. Another
+shell can use different file overrides while editing the same canonical bytes.
+
+
 The independent `insight` document topic pushes bounded
 `types.DocumentInsight` snapshots derived from those canonical revisions.
 Its service generation and version order analysis, not text or author history.
