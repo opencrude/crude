@@ -199,8 +199,43 @@ func TestDiagnosticWorkspaceDenseGatewayPreservesCanonicalStatusAndRevision(t *t
 		t.Fatal(err)
 	}
 	a := r.actors()[0]
+	// Startup publishes a real filesystem resync and an LSP coverage change.
+	// Join that producer, then drain its already-queued owner messages before
+	// measuring read-only behavior. A command FIFO barrier alone cannot order
+	// the actor's independent service-event channel.
+	<-a.fileWatch.ready
+	// Watch recovery schedules a debounced second assembly. Replace it with
+	// one explicit setup generation and observe its completion, not elapsed time.
+	a.ws.LSPMgr.RefreshAssembly()
+	for {
+		_, changed := a.ws.LSPMgr.Changed()
+		plan := a.ws.LSPMgr.Assembly()
+		if plan.State == types.AssemblyReady {
+			break
+		}
+		if plan.State == types.AssemblyFailed {
+			t.Fatal("fixture assembly failed:", plan.Message)
+		}
+		select {
+		case <-changed:
+		case <-t.Context().Done():
+			t.Fatal("fixture assembly did not settle:", t.Context().Err())
+		}
+	}
 	var revision uint64
-	if err := a.inspect(t.Context(), func() { revision = a.revision }); err != nil {
+	if err := a.inspect(t.Context(), func() {
+		for {
+			select {
+			case event := <-a.serviceEvents:
+				a.serviceEvent(event)
+			default:
+				a.publishStatusIfChanged()
+				a.publishLSPIfChanged()
+				revision = a.revision
+				return
+			}
+		}
+	}); err != nil {
 		t.Fatal(err)
 	}
 	statusVersion := a.ws.Status.Version()
@@ -272,8 +307,27 @@ func TestDiagnosticWorkspaceDenseGatewayPreservesCanonicalStatusAndRevision(t *t
 	afterIssues := a.ws.Status.Issues()
 	sort.Slice(issues, func(i, j int) bool { return issues[i].ID < issues[j].ID })
 	sort.Slice(afterIssues, func(i, j int) bool { return afterIssues[i].ID < afterIssues[j].ID })
-	if after != revision || a.ws.Status.Version() != statusVersion || !reflect.DeepEqual(issues, afterIssues) || !reflect.DeepEqual(notices, a.ws.Status.Notifications(true)) || !reflect.DeepEqual(agents, a.ws.Status.Agents()) || !reflect.DeepEqual(operations, a.ws.Status.Operations()) || a.ws.Status.UnreadCount() != 1 {
-		t.Fatal("read changed revision, issue detail or canonical notice markers")
+	if after != revision {
+		t.Errorf("read changed workspace revision: before=%d after=%d", revision, after)
+	}
+	if got := a.ws.Status.Version(); got != statusVersion {
+		t.Errorf("read changed status version: before=%d after=%d", statusVersion, got)
+	}
+	for _, check := range []struct {
+		name          string
+		before, after any
+	}{
+		{"issues", issues, afterIssues},
+		{"notices", notices, a.ws.Status.Notifications(true)},
+		{"agents", agents, a.ws.Status.Agents()},
+		{"operations", operations, a.ws.Status.Operations()},
+	} {
+		if !reflect.DeepEqual(check.before, check.after) {
+			t.Errorf("read changed canonical %s", check.name)
+		}
+	}
+	if got := a.ws.Status.UnreadCount(); got != 1 {
+		t.Errorf("read changed unread markers: got=%d want=1", got)
 	}
 }
 
@@ -303,7 +357,7 @@ func TestDiagnosticTypedStalledActorPartialDoesNotAuthorizeDrain(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	if release, err := r.reserveIdle(ctx); err == nil {
+	if release, err := r.reserveIdle(ctx, workspace.IdleAutomatic); err == nil {
 		release()
 		t.Fatal("diagnostic partial weakened the lifetime reservation fence")
 	}

@@ -420,7 +420,7 @@ func (m *lspVisualModel) journeyLSP(key, phase int) error {
 			for _, entry := range v.completion.set.Entries {
 				item := entry.Insertion
 				if strings.HasPrefix(item.Label, "Answer") && strings.Contains(item.Detail, "int") {
-					return paint(v, "Completions", "Answer", "func() int")
+					return paint(v, "Answer", "func() int")
 				}
 			}
 			return fmt.Errorf("actual completion missing Answer() int: %+v", v.completion.set.Entries)
@@ -533,7 +533,7 @@ func (m *lspVisualModel) journeyLSPNumericSnippet(phase int, do func(string, any
 					if item.InsertText != "Repeat(prefix string, count int)" {
 						return fmt.Errorf("unexpected real gopls primary insertion %q", item.InsertText)
 					}
-					return paint(v, "Completions", "Repeat")
+					return paint(v, "Repeat")
 				}
 			}
 			return fmt.Errorf("gopls numeric plan did not traverse connected completion codec")

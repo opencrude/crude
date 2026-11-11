@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/terminalvt"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
@@ -95,8 +96,12 @@ func TestTerminalOutputMaterializesScreenBeforeExplicitRegistration(t *testing.T
 	if screen == nil {
 		t.Fatal("first output was dropped instead of materializing the screen")
 	}
-	if screen.Title() != "ready" {
-		t.Fatalf("first output was not fed to the emulator: title=%q want ready", screen.Title())
+	projection, err := termSvc(app).Rows(info.ID, terminalvt.RowRequest{Start: -1})
+	if err != nil || projection.Info.Title != "ready" || !strings.Contains(terminalProjectionText(projection), "startup banner") {
+		t.Fatalf("first output was not parsed: title=%q text=%q err=%v", projection.Info.Title, terminalProjectionText(projection), err)
+	}
+	if screen.Title() != info.DisplayName() {
+		t.Fatalf("application output changed the terminal name: got %q want %q", screen.Title(), info.DisplayName())
 	}
 }
 

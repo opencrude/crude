@@ -294,7 +294,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
                          "gui-startup",
                          "maximize()",
                          "initial_cols = 120",
-                         "enable_kitty_keyboard = true",
+                         "enable_kitty_keyboard = false",
                          "check_for_updates = false"):
             self.assertIn(required, config, f"the window configuration needs '{required}'")
         for owned in ("'c', mods = 'CTRL|SHIFT'", "'n', mods = 'CTRL|SHIFT'", "'t', mods = 'CTRL|SHIFT'", "'w', mods = 'CTRL|SHIFT'"):
@@ -347,6 +347,8 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertEqual(code, 0, output)
         self.assertNotIn("Do you want the GUI version", output, "an installed window must not ask again")
         self.assertIn("default_prog", lua.read_text(), "an update must rewrite the configuration")
+        self.assertIn("enable_kitty_keyboard = false", lua.read_text(),
+                      "an update must replace the pinned terminal's broken Delete encoding")
         self.assertFalse(old.exists(), "an update must remove an older pinned copy")
         self.assertTrue(self.window.exists(), "an update must keep the current pinned copy")
         leftovers = [item.name for item in (self.home / ".local/share/crude/window").iterdir()

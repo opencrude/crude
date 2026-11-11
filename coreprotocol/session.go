@@ -68,6 +68,41 @@ type SessionEnd struct {
 	Reason string `json:"reason"`
 }
 
+// ReleaseCommands tells the core that this session no longer awaits the named
+// commands' results. The core forgets a completed result at once and an
+// in-flight one when it completes; the work itself is not cancelled. The core
+// answers on the command stream but never retains this request, so it is
+// admitted even when every retained-result slot is occupied.
+const ReleaseCommands = "session.release_commands"
+
+// CommandRetainsResult separates commands from idempotent session cleanup.
+// Cancellation and release must remain available when the result window is full.
+func CommandRetainsResult(method string) bool {
+	return method != CancelRequest && method != ReleaseCommands
+}
+
+// ReleaseCommandsMax bounds one release request.
+const ReleaseCommandsMax = 256
+
+// SessionRetainedCommands and SessionRetainedCommandBytes are the core's
+// per-session capacity for commands whose results it retains. A client keeps
+// its own unreleased commands within this window, so a burst over a slow link
+// waits for a slot instead of being refused as busy.
+const (
+	SessionRetainedCommands     = 16
+	SessionRetainedCommandBytes = 128 << 20
+)
+
+type ReleaseCommandsRequest struct {
+	Commands []CommandIdentity `json:"commands"`
+}
+
+// CommandIdentity names one command by its method and request identity.
+type CommandIdentity struct {
+	Method string `json:"method"`
+	ID     string `json:"id"`
+}
+
 // StreamKind is the role of a stream, named by its first message.
 type StreamKind uint8
 

@@ -120,6 +120,12 @@ func TestConnectedTypingOffersNamesAndMembersAndTabAccepts(t *testing.T) {
 			if tc.name == "name" {
 				completionRequireText(t, app, []string{"privateValue", "printValue"}, []string{" reset", " run"})
 			}
+			// Two real choices: nothing is chosen or accepted until the user
+			// picks a row. Down chooses the first row; Tab accepts it.
+			if app.completion.screen.SelectedID() != "" {
+				t.Fatal("typing chose a suggestion by itself")
+			}
+			renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyDown})
 			renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyTab})
 			remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == tc.want && eds[1].Value() == tc.want })
 			if app.completion != nil || shells[1].app.completion != nil || app.Input.Value() != "private draft" {
@@ -187,7 +193,7 @@ func TestConnectedCompletionSettingsApplyWithoutRestartAndPreserveManualRequest(
 	}
 	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 	remoteJourneyUntil(t, shells, func() bool { return app.completion != nil && app.completion.screen != nil })
-	completionRequireText(t, app, []string{"Tab: accept", "privateValue"}, nil)
+	completionRequireText(t, app, []string{"privateValue"}, []string{"Tab: accept"})
 	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyTab})
 	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "privateValue" && eds[1].Value() == "privateValue" })
 }
@@ -236,13 +242,24 @@ func TestConnectedCompletionNarrowsAfterMoreTypingAndBackspace(t *testing.T) {
 		{Code: 'i', Text: "i"}, {Code: 'n', Text: "n"}, {Code: tea.KeyBackspace},
 	} {
 		renameConnectedKey(t, shells[0], key)
-		remoteJourneyUntil(t, shells, func() bool { return app.completion != nil && app.completion.screen != nil })
-		if eds[0].Value() == "prin" {
-			completionRequireText(t, app, []string{"printValue"}, []string{"privateValue"})
-		} else {
-			completionRequireText(t, app, []string{"printValue", "privateValue"}, nil)
+		if key.Code == 'n' {
+			// One obvious suggestion is shown inline at the caret, without a list.
+			remoteJourneyUntil(t, shells, func() bool {
+				_, ghost, ok := eds[0].GhostText()
+				return app.completion != nil && app.completion.shown && !app.completion.stale && ok && ghost == "tValue"
+			})
+			if app.overlayHost.IsOpen(ui.OverlayCompletion) {
+				t.Fatal("a single obvious suggestion opened a list")
+			}
+			continue
 		}
+		remoteJourneyUntil(t, shells, func() bool {
+			return app.completion != nil && app.completion.shown && !app.completion.stale && app.completion.screen != nil
+		})
+		completionRequireText(t, app, []string{"printValue", "privateValue"}, nil)
 	}
+	// Down chooses the first row; the second Down reaches printValue.
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyDown})
 	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyDown})
 	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyTab})
 	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "printValue" && eds[1].Value() == "printValue" })
@@ -283,11 +300,15 @@ func TestConnectedAutomaticCompletionKeepsShortSuggestionsCompact(t *testing.T) 
 			t.Fatalf("%dx%d: two short suggestions obscure the editor with a %dx%d chooser",
 				size[0], size[1], w, h)
 		}
-		completionRequireText(t, app, []string{"privateValue", "printValue", "No documentation available.", "Tab"}, nil)
+		// No row is chosen while typing, so no empty documentation pane or
+		// key hints take space next to the suggestions.
+		completionRequireText(t, app, []string{"privateValue", "printValue"}, []string{"No documentation available.", "Tab"})
 		if eds[0].Value() != "pri" || app.Input.Value() != "private draft" {
 			t.Fatal("showing or resizing suggestions changed the source or private draft")
 		}
 	}
+	// Two real choices show no inline text; Tab accepts only a chosen row.
+	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyDown})
 	renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyTab})
 	remoteJourneyUntil(t, shells, func() bool { return eds[0].Value() == "privateValue" && eds[1].Value() == "privateValue" })
 }

@@ -258,7 +258,7 @@ Treat a plan as remaining work, not as a description of current behavior.
 
 ```bash
 go build ./...
-go test ./<affected>/... && go test ./... -count=1 -timeout=180s
+go test ./<affected>/... && make test
 golangci-lint run ./...
 make design-audit docs-check bench-gate
 make site-check

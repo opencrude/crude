@@ -618,15 +618,19 @@ request; mismatches, auto-pair side effects, peers, history, selection and true
 caret/owner departure retire it. Terminal blur, a modal reader, another pane/tab,
 workspace switch, attachment-epoch replacement, buffer replacement and shutdown
 revoke private acceptance even when source bytes remain unchanged.
-Fresh and late automatic LSP completions cannot steal a retained candidate's
-keys; a fresh explicit completion invocation intentionally retires the candidate.
+Fresh and late automatic LSP completions cannot steal another producer's
+candidate keys; a fresh explicit completion invocation intentionally retires the
+candidate. Each candidate records its producer (`SetGhostTextFor`), and
+type-through keeps it. Completion is the first producer: it offers its obvious
+top suggestion and replaces or dismisses only its own candidate.
 
 Preparation rejects empty, invalid UTF-8, multiline, control/bidi-bearing or
 over-4-KiB candidates instead of trimming, escaping or repairing source code.
 Source lines and combined projection runs retain the existing inlay bounds.
 Warm painting reuses retained source and projection geometry.
 
-This is an internal editor prerequisite, **not an enabled prediction service**.
+Apart from completion's own inline suggestion, this is an internal editor
+prerequisite, **not an enabled prediction service**.
 No automatic provider request, privacy opt-in, budget meter, multiline candidate
 or next-edit behavior is supplied by this projection. Those require the retained
 coordinator and human-owned consent/accounting gates in the active plan.
@@ -882,17 +886,47 @@ not once per tick or painted frame.
 ### Completion documentation and original insertion
 
 Ctrl+Space and automatic suggestions share one canonical completion
-invocation. The native caret-anchored WindowFrame contains a List with standard
-kind glyphs and detail, plus passive selected-row documentation. Wide frames put
-the reader beside the list; constrained frames stack it below. The frame grows
-for the visible suggestions and selected documentation within screen limits;
-overflow stays scrollable. Measurement is reused until content or constraints
-change. Up/Down, paging,
-Home/End and pointer selection use that one List. Ctrl+PgUp/PgDn pages the native
-read-only TextArea without moving the selected completion; pointer selection and
-Ctrl+C copy inert text. Ordinary typing reaches the editor exactly once, retires
-the old invocation and schedules fresh suggestions over the newly acknowledged
-source. Backspace also refreshes the list. Escape/outside dismiss only the invocation. Ctrl+Space on an
+invocation. Suggestions are low-profile, as in JetBrains IDEs and VS Code:
+
+- The list is a **passive** caret-anchored WindowFrame without a title or key
+  hints. The editor keeps keyboard focus and its caret. Automatic suggestions
+  choose no row and read no documentation until the user asks; Ctrl+Space
+  chooses the first row and shows its documentation.
+- The list shows at most eight rows with clipped label and detail columns.
+  Documentation takes space only for a chosen row that has detail,
+  documentation or a status. Wide frames put it beside the list; narrow frames
+  stack it below. Measurement is reused until content or constraints change.
+- Ranking is a display projection of exact original rows. A row whose
+  insertion only repeats the typed text is dropped; repeated rows with the same
+  complete insertion appear once. Different imports or snippet fields remain
+  distinct choices;
+  rows that start with the typed text (exact case first) rank before other
+  fuzzy matches; the server's sortText decides among equals. For typed
+  suggestions, a row whose edit does not cover the identifier before the caret
+  must still match that identifier (after `strings.To`, a keyword row is not
+  offered).
+- Inline text appears only for an obvious row: the best row that continues the
+  typed text exactly, when the name of every other such row starts with its
+  name (`print` before `println`, `ToUpper` before `ToUpperSpecial`). A real
+  choice (`ToUpper`, `ToLower`), or the same name with different edits, shows
+  only the list. Inline text must not guess an import source or overload.
+- The obvious row of an automatic result is shown as faded inline text at the
+  caret when its edit ends at the caret on the same line and its text continues
+  the typed prefix. For a plain row, Tab inserts that text and Ctrl+Right one
+  word. A row with snippet fields or other edits (an import) is only previewed:
+  Tab accepts the row itself, so its fields and edits apply. Escape dismisses
+  the inline text. A single plain suggestion opens no list.
+- With no chosen row, Down chooses the first row, Tab accepts only the inline
+  text, and every other key edits the source (Tab indents, Enter is a new line,
+  Up moves the caret). Nothing is accepted that the user did not see chosen. After a choice, Up/Down, paging, Home/End, Enter/Tab
+  acceptance and Ctrl+PgUp/PgDn documentation paging act on the list. A click
+  focuses the list for pointer selection and copy.
+- Typing that continues the same word keeps the list on screen as a read-only
+  view of the previous result until the next result replaces it in place, so
+  the list does not blink. It cannot be accepted from in that state. Other
+  keys, a non-word character or Escape close it.
+
+The passive list stays reachable through semantic control. Ctrl+Space on an
 active numeric choice field still opens **Snippet choices** first.
 
 Native typing intent is emitted after the final caret and edit group. The same
@@ -901,7 +935,8 @@ completions, API edits and peer publications do not create typing intent.
 One cancellable debounce waits for both the configured delay and canonical
 acknowledgement. A timer firing first never discards the request. Source lifetime,
 revision, caret, focus, feature generation, workspace changes and Escape retire
-pending intent. Active snippets and ghost-text candidates retain their keys.
+pending intent. Active snippets and ghost-text candidates of other producers
+retain their keys; completion's own inline text does not.
 The Code Intelligence **Suggestions** settings control automatic requests, delay
 (200 ms by default; zero is immediate), and acceptance by Tab, Enter or both.
 With automatic requests off, Ctrl+Space remains available. Other keys retain

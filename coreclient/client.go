@@ -19,6 +19,7 @@ import (
 	"crude/coreprotocol"
 	"crude/corewire"
 	"crude/metrics"
+	"crude/retry"
 	captypes "crude/types/capability"
 )
 
@@ -103,6 +104,142 @@ type Client struct {
 	controlReceived map[string]*receivedControl
 	controlBytes    int
 	hosts           *hostInbox
+
+	// releases names admitted commands whose results this client no longer
+	// awaits but whose release the core has not confirmed (a lost final ACK,
+	// or a call abandoned while its carrier was being replaced). One worker
+	// delivers them over the current carrier; they never block a caller.
+	// Each queued release keeps its window slot until the core confirms it.
+	releaseMu      sync.Mutex
+	releases       map[coreprotocol.CommandIdentity]*commandRelease
+	releaseWake    chan struct{}
+	releaseChanged chan struct{}
+	window         commandWindow
+}
+
+type commandRelease struct{ size int }
+
+// queueRelease hands a written command's window slot to the release ledger.
+// A record is immutable: a late delivery cannot delete a newer release of the
+// same identity. The charged command window bounds the ledger itself.
+func (c *Client) queueRelease(identity coreprotocol.CommandIdentity, size int) {
+	c.releaseMu.Lock()
+	if previous, queued := c.releases[identity]; queued {
+		c.window.release(previous.size)
+	}
+	if c.releases == nil {
+		c.releases = make(map[coreprotocol.CommandIdentity]*commandRelease)
+	}
+	c.releases[identity] = &commandRelease{size: size}
+	c.releaseMu.Unlock()
+	select {
+	case c.releaseWake <- struct{}{}:
+	default:
+	}
+}
+
+// awaitRelease orders a later call after any already-sent release of its old
+// waiter. Withdrawing a release cannot undo bytes sent on a different stream.
+func (c *Client) awaitRelease(ctx context.Context, identity coreprotocol.CommandIdentity) error {
+	for {
+		c.releaseMu.Lock()
+		_, queued := c.releases[identity]
+		if !queued {
+			c.releaseMu.Unlock()
+			return nil
+		}
+		if c.releaseChanged == nil {
+			c.releaseChanged = make(chan struct{})
+		}
+		changed := c.releaseChanged
+		c.releaseMu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.done:
+			return c.Err()
+		}
+	}
+}
+
+// deliverReleases sends queued releases whenever a carrier is usable. A
+// failed delivery keeps them for the next carrier; the core treats a repeated
+// or unknown identity as already released.
+func (c *Client) deliverReleases() {
+	defer c.wg.Done()
+	for {
+		select {
+		case <-c.done:
+			return
+		case <-c.releaseWake:
+		}
+		for {
+			c.releaseMu.Lock()
+			chunk := make([]coreprotocol.CommandIdentity, 0, min(len(c.releases), coreprotocol.ReleaseCommandsMax))
+			pending := make(map[coreprotocol.CommandIdentity]*commandRelease, cap(chunk))
+			for identity := range c.releases {
+				if len(chunk) == coreprotocol.ReleaseCommandsMax {
+					break
+				}
+				chunk = append(chunk, identity)
+				pending[identity] = c.releases[identity]
+			}
+			c.releaseMu.Unlock()
+			if len(chunk) == 0 {
+				break
+			}
+			if err := c.sendReleases(chunk); err != nil {
+				if retry.Wait(c.lifetime, time.Second) != nil {
+					return
+				}
+				continue
+			}
+			c.releaseMu.Lock()
+			for _, identity := range chunk {
+				if entry := c.releases[identity]; entry == pending[identity] {
+					delete(c.releases, identity)
+					c.window.release(entry.size)
+				}
+			}
+			if c.releaseChanged != nil {
+				close(c.releaseChanged)
+				c.releaseChanged = nil
+			}
+			c.releaseMu.Unlock()
+		}
+	}
+}
+
+func (c *Client) sendReleases(chunk []coreprotocol.CommandIdentity) error {
+	ctx, cancel := context.WithTimeout(c.lifetime, 10*time.Second)
+	defer cancel()
+	m := corewire.NewMessage()
+	defer m.Release()
+	var err error
+	open := coreprotocol.Open{Kind: coreprotocol.StreamCommand, ID: randomID(), Method: coreprotocol.ReleaseCommands}
+	if m.B, err = open.MarshalMsg(m.B); err == nil {
+		m.B, err = (&coreprotocol.ReleaseCommandsRequest{Commands: chunk}).MarshalMsg(m.B)
+	}
+	if err != nil {
+		return err
+	}
+	framed, err := m.Framed()
+	if err != nil {
+		return err
+	}
+	for {
+		conn, err := c.current(ctx)
+		if err != nil {
+			return err
+		}
+		// The release itself is never retained, so it needs no release.
+		_, _, retry, _, err := c.attempt(ctx, conn, corewire.ClassInteractive, framed, nil, nil, commandBoundary{})
+		if retry {
+			continue
+		}
+		return err
+	}
 }
 
 // Dial starts a session over a carrier from dial. ctx bounds only the
@@ -133,13 +270,15 @@ func DialWithOptions(ctx context.Context, dial Dialer, clientID string, options 
 	c := &Client{dial: dial, lifetime: lifetime, cancel: lifetimeCancel, clientID: clientID, carrierChange: make(chan struct{}, 1), owner: welcome.Owner, resume: coreprotocol.SessionResume{SessionID: welcome.SessionID, Secret: welcome.Secret}, grace: welcome.Grace, localHost: welcome.LocalHost, coreBuildID: welcome.CoreBuildID,
 		carrier: conn, control: control, ready: make(chan struct{}), done: make(chan struct{}), stopped: make(chan struct{}), controlEnded: make(chan struct{}, 1),
 		privateEffects: make(chan PrivateEffect), privateWake: make(chan struct{}, 1), controls: make(chan coreprotocol.ControlEnvelope, coreprotocol.ControlMaxOutstanding),
-		controlReceived: make(map[string]*receivedControl), hosts: newHostInbox()}
+		controlReceived: make(map[string]*receivedControl), hosts: newHostInbox(),
+		releases: make(map[coreprotocol.CommandIdentity]*commandRelease), releaseWake: make(chan struct{}, 1)}
 	close(c.ready)
-	c.wg.Add(4)
+	c.wg.Add(5)
 	go c.watchControl(control)
 	go c.supervise(conn)
 	go c.sessionTopic()
 	go c.deliverPrivateEffects()
+	go c.deliverReleases()
 	return c, nil
 }
 
@@ -555,19 +694,47 @@ func (c *Client) callWith(ctx context.Context, workspaceID, method string, in co
 		clientRequests.Observe(method, elapsed)
 		metrics.Blocking("core request", method, elapsed)
 	}()
+	identity := coreprotocol.CommandIdentity{Method: method, ID: id}
+	slot := coreprotocol.CommandRetainsResult(method)
+	if slot {
+		if err := c.awaitRelease(ctx, identity); err != nil {
+			return 0, err
+		}
+		if err := c.window.acquire(ctx, c.done, len(framed)); err != nil {
+			if errors.Is(err, errWindowClosed) {
+				err = c.Err()
+			}
+			return 0, err
+		}
+	}
+	defer func() {
+		if slot {
+			c.window.release(len(framed))
+		}
+	}()
 	sent := false
 	for {
 		conn, err := c.current(ctx)
 		if err != nil {
 			if sent {
+				if slot {
+					slot = false
+					c.queueRelease(identity, len(framed))
+				}
 				return 0, &UncertainError{RequestID: id, Cause: err, State: "uncertain"}
 			}
 			return 0, err
 		}
-		revision, written, retry, err := c.attempt(ctx, conn, class, framed, out, opts.Progress, boundary)
+		revision, written, retry, released, err := c.attempt(ctx, conn, class, framed, out, opts.Progress, boundary)
 		sent = sent || written
 		if retry {
 			continue
+		}
+		if slot && sent && !released {
+			// This call no longer awaits the result; the core must not keep
+			// it in one of the session's few retained-result slots.
+			slot = false
+			c.queueRelease(identity, len(framed))
 		}
 		var cleanup *finalCleanupError
 		if errors.As(err, &cleanup) {
@@ -586,35 +753,41 @@ func (c *Client) callWith(ctx context.Context, workspaceID, method string, in co
 
 // attempt runs a command over one carrier. written reports that the request
 // may have reached the core; retry that the carrier was lost and the command
-// must be re-attached by its identity on the replacement.
-func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire.Class, framed []byte, out coreprotocol.Target, progress func(string), boundary commandBoundary) (revision uint64, written, retry bool, err error) {
+// must be re-attached by its identity on the replacement. released reports
+// that the core holds no result for it: it confirmed the final ACK, or it
+// refused the command without admitting it.
+func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire.Class, framed []byte, out coreprotocol.Target, progress func(string), boundary commandBoundary) (revision uint64, written, retry, released bool, err error) {
 	s, err := conn.OpenStream(ctx, class)
 	if err != nil {
-		return 0, false, ctx.Err() == nil && carrierLost(conn), err
+		return 0, false, ctx.Err() == nil && carrierLost(conn), false, err
 	}
 	defer s.Close()
 	stop := joinedAfterFunc(ctx, func() { _ = s.Close() })
 	defer stop()
 	_, err = s.Write(framed)
 	if err != nil {
-		return 0, true, ctx.Err() == nil && carrierLost(conn), err
+		return 0, true, ctx.Err() == nil && carrierLost(conn), false, err
 	}
 	reader := corewire.NewReader(s, corewire.MaxMessage)
+	admitted := false
 	for {
 		body, err := reader.Next()
 		if err != nil {
 			if ctx.Err() != nil {
-				return 0, true, false, ctx.Err()
+				return 0, true, false, false, ctx.Err()
 			}
-			return 0, true, carrierLost(conn), err
+			return 0, true, carrierLost(conn), false, err
 		}
 		var reply coreprotocol.Reply
 		rest, err := coreprotocol.DecodePrefix(body, &reply)
 		if err != nil {
-			return 0, true, false, err
+			return 0, true, false, false, err
 		}
-		if reply.Admitted && boundary.admitted != nil {
-			boundary.admitted()
+		if reply.Admitted {
+			admitted = true
+			if boundary.admitted != nil {
+				boundary.admitted()
+			}
 		}
 		if !reply.Final {
 			if progress != nil && reply.Progress != "" {
@@ -622,9 +795,12 @@ func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire
 			}
 			continue
 		}
+		// A final reply without admission on this stream is a refusal: the
+		// core retained nothing for this attempt.
+		released = !admitted
 		if out != nil && (reply.Fault == nil || len(rest) > 0) {
 			if err := coreprotocol.Decode(rest, out); err != nil {
-				return reply.Revision, true, false, fmt.Errorf("decode result: %w", err)
+				return reply.Revision, true, false, released, fmt.Errorf("decode result: %w", err)
 			}
 		}
 		// Once decoded, the original outcome is known even if this ACK or its
@@ -635,16 +811,21 @@ func (c *Client) attempt(ctx context.Context, conn corewire.Conn, class corewire
 				if reply.Fault != nil {
 					cause = errors.Join(err, reply.Fault)
 				}
-				return reply.Revision, true, false, &finalCleanupError{cause: cause}
+				return reply.Revision, true, false, released, &finalCleanupError{cause: cause}
 			}
+			released = true
 		} else if sendValues(s, &coreprotocol.TopicAck{Seq: 1}) == nil {
 			_ = s.CloseWrite()
-			_, _ = reader.Next() // server EOF confirms release; cancellation closes s
+			// Server EOF confirms release; cancellation or carrier loss
+			// leaves it to the release ledger.
+			if _, err := reader.Next(); errors.Is(err, io.EOF) {
+				released = true
+			}
 		}
 		if reply.Fault != nil {
-			return reply.Revision, true, false, reply.Fault
+			return reply.Revision, true, false, released, reply.Fault
 		}
-		return reply.Revision, true, false, nil
+		return reply.Revision, true, false, released, nil
 	}
 }
 

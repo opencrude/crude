@@ -38,7 +38,8 @@ jobs:
           shellcheck -x install.sh scripts/bootstrap_libghostty.sh
           python scripts/test_install.py -v
           python -m unittest discover -s scripts -p test_release.py -v
-          python -m unittest discover -s scripts -p test_race_test.py -v
+          python -m unittest discover -s scripts -p test_go_test.py -v
+          python -m unittest discover -s scripts -p protocol_fuzz_test.py -v
       - name: Lint (full repo)
         run: . scripts/libghostty_env.sh && golangci-lint run ./...
       - name: Design, documentation and performance gates
@@ -46,17 +47,16 @@ jobs:
       - name: Build
         run: make build
       - name: Full test suite
-        run: . scripts/libghostty_env.sh && go test ./... -count=1 -timeout=180s
+        run: . scripts/libghostty_env.sh && python scripts/test_go.py
       - name: Native syntax and binding ownership
         run: make test-syntax
       - name: Neutral contracts and LSP process ownership
         run: make test-lsp
       - name: Full race suite
-        run: . scripts/libghostty_env.sh && python scripts/test_race.py
+        run: . scripts/libghostty_env.sh && python scripts/test_go.py --race
       - name: Bounded native protocol fuzz campaigns
         env:
           CRUDE_TEMP_DIR: ${{ runner.temp }}
-          FUZZ_SECONDS: '2'
           GOMAXPROCS: '2'
         run: bash scripts/protocol_fuzz.sh
   windows:
@@ -84,8 +84,8 @@ jobs:
         shell: pwsh
         run: |
           . ./scripts/libghostty_env.ps1
-          go test -p 2 ./... -count=1 -timeout=300s
-          if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
+          python scripts/test_go.py
+          if ($LASTEXITCODE -ne 0) { throw 'full Go test suite failed' }
       - name: Native parser binding regression suite
         shell: pwsh
         run: |

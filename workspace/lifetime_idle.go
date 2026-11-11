@@ -5,11 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"crude/types"
 )
 
 // BeginIdleLease runs on the workspace actor, which fences new sessions and
 // resource commands separately. All partial reservations roll back on refusal.
-func (w *Workspace) BeginIdleLease(ctx context.Context) (func(), error) {
+// IdlePurpose says why the core reserves an idle workspace. An automatic
+// idle exit keeps the core alive for any live terminal, so a shell survives
+// closing Crude. An explicit stop closes idle shells and refuses only for
+// terminals that run a program.
+type IdlePurpose uint8
+
+const (
+	IdleAutomatic IdlePurpose = iota
+	IdleExplicitStop
+)
+
+func (w *Workspace) BeginIdleLease(ctx context.Context, purpose IdlePurpose) (func(), error) {
 	var releases []func()
 	release := func() {
 		for i := len(releases) - 1; i >= 0; i-- {
@@ -42,7 +55,7 @@ func (w *Workspace) BeginIdleLease(ctx context.Context) (func(), error) {
 		releases = append(releases, unlock)
 	}
 	if w.Terminals != nil {
-		unlock, err := w.Terminals.beginIdleLease()
+		unlock, err := w.Terminals.beginIdleLease(purpose)
 		if err != nil {
 			return fail(err)
 		}
@@ -57,7 +70,7 @@ func (w *Workspace) BeginIdleLease(ctx context.Context) (func(), error) {
 
 func (s *DocumentService) beginIdleLease() (func(), error) {
 	if !s.mu.TryLock() {
-		return nil, errors.New("document operation is still running")
+		return nil, types.IdleSettling("document operation is still running")
 	}
 	defer s.mu.Unlock()
 	if s.closed || s.idleFenced {
@@ -73,22 +86,28 @@ func (s *DocumentService) beginIdleLease() (func(), error) {
 	return func() { s.mu.Lock(); s.idleFenced = false; s.mu.Unlock() }, nil
 }
 
-func (s *TerminalService) beginIdleLease() (func(), error) {
+func (s *TerminalService) beginIdleLease(purpose IdlePurpose) (func(), error) {
 	if !s.mu.TryLock() {
-		return nil, errors.New("terminal operation is still running")
+		return nil, types.IdleSettling("terminal operation is still running")
 	}
 	defer s.mu.Unlock()
 	if s.closed || s.idleFenced || s.creating != 0 {
-		return nil, errors.New("terminal creation or shutdown is in progress")
+		return nil, types.IdleSettling("terminal creation or shutdown is in progress")
 	}
 	for id, r := range s.items {
 		if r.lease.Owner.ClientID != "" {
 			return nil, fmt.Errorf("terminal %s has a controller lease; release it", id)
 		}
 	}
-	for _, info := range s.manager.List() {
-		if info.Alive {
-			return nil, fmt.Errorf("terminal %s (%s) is running; close it", info.ID, info.Title)
+	if purpose == IdleExplicitStop {
+		if running := s.manager.RunningPrograms(); len(running) != 0 {
+			return nil, running[0]
+		}
+	} else {
+		for _, info := range s.manager.List() {
+			if info.Alive {
+				return nil, fmt.Errorf("%s is open", info.DisplayName())
+			}
 		}
 	}
 	s.idleFenced = true

@@ -14,13 +14,25 @@ func TestInteractiveExecPipesAndPTY(t *testing.T) {
 		t.Run(map[bool]string{false: "pipes", true: "pty"}[tty], func(t *testing.T) {
 			mgr := NewAsyncCommandManager()
 			defer mgr.CloseAndWait()
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			result, err := mgr.StartInteractive(ctx, InteractiveOptions{Command: "printf ready; read x; printf 'reply:%s' \"$x\"", Shell: shTestShell, TTY: tty}, 50*time.Millisecond, 1000)
-			if err != nil || result.SessionID == 0 || !strings.Contains(result.Output, "ready") {
+			if err != nil || result.SessionID == 0 {
 				t.Fatalf("start %+v %v", result, err)
 			}
-			result, err = mgr.WriteInteractive(ctx, result.SessionID, "hello\n", time.Second, 1000)
+			output := result.Output
+			for !strings.Contains(output, "ready") {
+				if result.SessionID == 0 {
+					t.Fatalf("child exited before readiness: %+v", result)
+				}
+				result, err = mgr.WriteInteractive(ctx, result.SessionID, "", time.Millisecond, 1000)
+				if err != nil {
+					t.Fatal(err)
+				}
+				output += result.Output
+			}
+			// Completion, not a one-second scheduling budget, owns the result.
+			result, err = mgr.WriteInteractive(ctx, result.SessionID, "hello\n", time.Hour, 1000)
 			if err != nil || result.ExitCode == nil || *result.ExitCode != 0 || !strings.Contains(result.Output, "reply:hello") {
 				t.Fatalf("continue %+v %v", result, err)
 			}
@@ -51,12 +63,12 @@ func TestInteractiveExecCancellationAndShutdown(t *testing.T) {
 func TestInteractiveExecRetainsTruncatedOutputWithExactRetrieval(t *testing.T) {
 	mgr := NewAsyncCommandManager()
 	defer mgr.CloseAndWait()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	result, err := mgr.StartInteractive(ctx, InteractiveOptions{
 		Command: "printf '%05000d' 0",
 		Shell:   shTestShell,
-	}, time.Second, 100)
+	}, time.Hour, 100) // wakes on exact process completion, not elapsed time
 	if err != nil {
 		t.Fatal(err)
 	}

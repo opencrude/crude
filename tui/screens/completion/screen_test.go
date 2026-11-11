@@ -88,7 +88,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 			host := mount(s, size[0], size[1])
 			_, output := painted(host, size[0], size[1])
 			for _, want := range []string{"source.go", "provider-X", "context-Y", "first signature",
-				"ƒ same", "v same", "**literal A**", "[link](command:never)", "Ctrl+PgUp/PgDn: docs"} {
+				"ƒ same", "v same", "**literal A**", "[link](command:never)"} {
 				if !strings.Contains(output, want) {
 					t.Fatalf("missing literal display %q:\n%s", want, output)
 				}
@@ -209,8 +209,9 @@ func TestDetachedDocumentationDeliveryAndHonestStates(t *testing.T) {
 	empty := New(nil, "invocation-original", nil, "empty source")
 	emptyHost := mount(empty, 100, 14)
 	_, output = painted(emptyHost, 100, 14)
-	if !strings.Contains(output, "No completion selected.") || !strings.Contains(output, "empty source") {
-		t.Fatal("empty state hidden")
+	// Without a chosen row the chooser spends no space on documentation.
+	if strings.Contains(output, "No completion selected.") || !strings.Contains(output, "empty source") {
+		t.Fatal("empty state hidden or documentation shown without a choice")
 	}
 	expectNoIntent(t, key(emptyHost, tea.KeyEnter))
 	expectNoIntent(t, key(emptyHost, tea.KeyTab))
@@ -319,9 +320,15 @@ func TestMeasuredChooserGrowsForDocumentationAndKeepsItReadable(t *testing.T) {
 	}
 	host := mount(s, short.W, short.H)
 	_, output := painted(host, short.W, short.H)
-	for _, want := range []string{"first", "second", "No documentation available.", "Tab"} {
+	for _, want := range []string{"first", "second"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("compact chooser hides %q:\n%s", want, output)
+		}
+	}
+	// Rows with nothing to read get no empty documentation pane or key hints.
+	for _, absent := range []string{"No documentation available.", "Tab", "Esc"} {
+		if strings.Contains(output, absent) {
+			t.Fatalf("compact chooser wastes space on %q:\n%s", absent, output)
 		}
 	}
 
@@ -377,7 +384,7 @@ func TestNativeListViewportAndInvalidIdentity(t *testing.T) {
 		s.list.Scroll().Offset() == 0 {
 		t.Fatal("native End did not reveal final row and its own documentation")
 	}
-	expectAction(t, key(host, tea.KeyPgUp), ActionSelection, "row-69")
+	expectAction(t, key(host, tea.KeyPgUp), ActionSelection, fmt.Sprintf("row-%02d", 79-s.list.Scroll().Viewport()))
 	expectAction(t, key(host, tea.KeyHome), ActionSelection, "row-00")
 	old := s.list.Scroll().Offset()
 	b := s.list.Bounds()

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -177,7 +178,7 @@ func TestCallCancellableWaitsForAdmissionNotProgress(t *testing.T) {
 func TestCallCancellableUncooperativeProviderBounded(t *testing.T) {
 	opened := make(chan coreprotocol.Open, 1)
 	cancelAck := make(chan struct{})
-	c := dial(t, &fakeCore{t: t, handle: func(open coreprotocol.Open, _ []byte, s corewire.Stream) {
+	f := &fakeCore{t: t, handle: func(open coreprotocol.Open, _ []byte, s corewire.Stream) {
 		_ = sendValues(s, &coreprotocol.Reply{Admitted: true})
 		if open.Method == "read" {
 			opened <- open // deliberately ignores request.cancel; no final reply
@@ -187,7 +188,8 @@ func TestCallCancellableUncooperativeProviderBounded(t *testing.T) {
 			close(cancelAck)
 			_ = s.CloseWrite()
 		}
-	}})
+	}}
+	c := dial(t, f)
 	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
 	go func() {
@@ -205,6 +207,21 @@ func TestCallCancellableUncooperativeProviderBounded(t *testing.T) {
 	case <-cancelAck:
 	default:
 		t.Fatal("cancel command result was not ACKed")
+	}
+	// The caller gave up on the original, so the core must not keep its
+	// result slot: the client releases that exact identity.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		f.mu.Lock()
+		released := slices.Contains(f.released, coreprotocol.CommandIdentity{Method: "read", ID: original.ID})
+		f.mu.Unlock()
+		if released {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("abandoned original was not released")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -443,4 +460,47 @@ func TestJoinedAfterFuncJoinsRunningCallback(t *testing.T) {
 	close(release)
 	wg.Wait()
 	<-returned
+}
+
+// The cancellation control signal cannot queue behind the requests it retires.
+func TestCallCancellableBypassesFullClientWindow(t *testing.T) {
+	opened, cancelled := make(chan struct{}), make(chan struct{})
+	var cancelOnce sync.Once
+	t.Cleanup(func() { cancelOnce.Do(func() { close(cancelled) }) })
+	c := dial(t, &fakeCore{t: t, handle: func(open coreprotocol.Open, _ []byte, s corewire.Stream) {
+		if open.Method == "read" {
+			_ = sendValues(s, &coreprotocol.Reply{Admitted: true})
+			close(opened)
+			<-cancelled
+			if joinedReply(t, s, nil, &coreprotocol.Fault{Code: "cancelled"}) {
+				_ = s.CloseWrite()
+			}
+			return
+		}
+		if open.Method != coreprotocol.CancelRequest {
+			t.Errorf("unexpected control method %q", open.Method)
+			return
+		}
+		cancelOnce.Do(func() { close(cancelled) })
+		if joinedReply(t, s, &coreprotocol.BoolResult{OK: true}, nil) {
+			_ = s.CloseWrite()
+		}
+	}})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- c.CallCancellable(ctx, "workspace", "read", &coreprotocol.Empty{}, nil) }()
+	<-opened
+	for range coreprotocol.SessionRetainedCommands - 1 {
+		if err := c.window.acquire(t.Context(), c.done, 1); err != nil {
+			t.Fatal(err)
+		}
+		defer c.window.release(1)
+	}
+	cancel()
+	err := cancellableResult(t, result)
+	var uncertain *UncertainError
+	if !errors.Is(err, context.Canceled) || errors.As(err, &uncertain) {
+		t.Fatalf("full client window blocked cancellation: %v", err)
+	}
 }

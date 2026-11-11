@@ -39,6 +39,9 @@
     with `-c` goes through the Windows command line, which the MSYS runtime
     re-parses: `a\b\\c` became `a\b\c` and a `sed 's/\\/\//g'` expression broke.
     The file keeps the command byte for byte. Other POSIX shells use `-c`.
+    Login profiles may configure the environment but cannot redirect the
+    requested execution directory. The shared launcher returns there after
+    startup and fails before the command if it cannot enter it.
   - PowerShell runs a temporary UTF-8 `.ps1` file with `-NoLogo -NoProfile
     -NonInteractive -ExecutionPolicy Bypass -File`. `-Command` and
     `-EncodedCommand` write errors as CLIXML when output is redirected; the

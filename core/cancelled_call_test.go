@@ -174,9 +174,8 @@ func TestConnectedSemanticCancellationJoinsAndReleasesRetainedResults(t *testing
 	}
 	assertReleased()
 
-	// Sixteen simultaneous unacknowledged originals leave no slot for the
-	// existing typed cancellation command. Refusal must be explicit uncertainty,
-	// not a false join, a larger limit or cancellation of another owner.
+	// A full retained-result table must not block the control signal that
+	// retires one of those exact provider jobs. Other results stay retained.
 	var held []*command
 	for i := range sessionCommandLimit - 1 {
 		cmd, err := connection.admit(ctx, coreprotocol.Request{ID: fmt.Sprintf("capacity-%d", i),
@@ -197,37 +196,18 @@ func TestConnectedSemanticCancellationJoinsAndReleasesRetainedResults(t *testing
 	stop()
 	err = <-result
 	var uncertain *coreclient.UncertainError
-	var refusal *coreprotocol.Fault
-	if !errors.As(err, &uncertain) || !errors.As(err, &refusal) || refusal.Code != "busy" {
-		t.Fatal("full retained-command table falsely joined cancellation", err)
+	if !errors.Is(err, context.Canceled) || errors.As(err, &uncertain) {
+		t.Fatal("full retained-command table blocked exact cancellation", err)
 	}
 	select {
 	case <-retired:
-		t.Fatal("busy cancellation claimed unperformed provider cancellation")
 	default:
+		t.Fatal("cancellation returned before provider retirement")
 	}
-	// Exact test cleanup settles the still-live provider explicitly. Production
-	// returned its original identity; it did not silently retire this work.
-	var original *command
-	connection.commandMu.Lock()
-	original = connection.commands[commandKey(coreprotocol.Request{ID: uncertain.RequestID, Method: coreprotocol.LSPRequestSignatureHelp})]
-	connection.commandMu.Unlock()
-	if original == nil {
-		t.Fatal("busy cleanup lost the exact retained original")
+	if got := retainedCommands(r, client); got != len(held) {
+		t.Fatalf("cancellation changed unrelated retained outcomes: got=%d want=%d", got, len(held))
 	}
-	if err := a.inspect(ctx, func() {
-		cancel := a.jobCancels[jobKey(original.request)]
-		if cancel == nil {
-			t.Error("unknown original no longer has its provider owner")
-			return
-		}
-		cancel()
-	}); err != nil {
-		t.Fatal(err)
-	}
-	<-retired
-	<-original.done
-	for _, cmd := range append(held, original) {
+	for _, cmd := range held {
 		connection.forget(cmd)
 	}
 	assertReleased()

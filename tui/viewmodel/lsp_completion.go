@@ -1,18 +1,14 @@
 package viewmodel
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
-	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
-	"crude/textsearch"
 	"crude/tui/editor"
 	"crude/tui/screens/completion"
 	"crude/tui/ui"
@@ -35,15 +31,24 @@ type completionState struct {
 	contextGeneration                       uint64
 	line, col                               int
 	automatic, released                     bool
-	port                                    shellport.Completions
-	ctx                                     context.Context
-	cancel                                  context.CancelFunc
-	deadline                                time.Time
-	set                                     *types.LSPCompletionSet
-	screen                                  *completion.Screen
-	pending                                 *completionRead
-	observed                                map[string]bool
-	requestErr                              error
+	// shown: this result set is presented (rows and/or inline text). stale:
+	// typing continued; the rows remain on screen only until the next result
+	// replaces them and cannot be accepted.
+	shown, stale bool
+	typed        string // identifier before the caret of an automatic request
+	// inlineID is the row shown as inline text; inlineLiteral reports that
+	// accepting it only inserts that text.
+	inlineID      string
+	inlineLiteral bool
+	port          shellport.Completions
+	ctx           context.Context
+	cancel        context.CancelFunc
+	deadline      time.Time
+	set           *types.LSPCompletionSet
+	screen        *completion.Screen
+	pending       *completionRead
+	observed      map[string]bool
+	requestErr    error
 }
 
 type completionRead struct {
@@ -91,6 +96,9 @@ func (m *App) closeCompletionPopup() {
 	s := m.completion
 	m.completion = nil
 	m.retireCompletion(s)
+	if s != nil {
+		dismissCompletionGhost(s.editor)
+	}
 	if m.overlayHost != nil {
 		m.overlayHost.Close(ui.OverlayCompletion)
 	}
@@ -104,16 +112,24 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 }
 
 func (m *App) requestCompletion(automatic bool) tea.Cmd {
-	m.closeCompletionPopup()
+	// A list kept on screen while typing stays until this request's result
+	// replaces it, so the list does not blink on every key.
+	old := m.completion
+	ed := m.EditorState.Editor
+	carry := automatic && old != nil && old.stale && old.editor == ed &&
+		(old.screen == nil || m.overlayHost != nil && m.overlayHost.IsOpen(ui.OverlayCompletion))
+	if !carry {
+		m.closeCompletionPopup()
+	}
 	if !automatic {
 		m.closeEditorGhost()
 	}
-	ed := m.EditorState.Editor
 	port, connected := m.ws.(shellport.Completions)
 	if ed == nil || !ed.IsOpen() || !connected || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
 		if !automatic {
 			m.Feedback.NotifyInfo("Completion needs a connected shared document and language server")
 		}
+		m.closeCompletionPopup()
 		return nil
 	}
 	enabled, feature := m.ws.LSPMgr().CompletionsState()
@@ -122,7 +138,12 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 		if !automatic {
 			m.Feedback.NotifyInfo("Completion waits for acknowledged source text and enabled language intelligence")
 		}
+		m.closeCompletionPopup()
 		return nil
+	}
+	if carry {
+		m.completion = nil
+		m.retireCompletion(old)
 	}
 	m.closeSignatureHelp()
 	base, generation := m.lspRequestContext()
@@ -140,6 +161,12 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 	if contextOwner == source.WorkspaceGeneration {
 		s.contextGeneration = contextGeneration
 	}
+	if carry {
+		s.screen = old.screen
+	}
+	if automatic {
+		s.typed = editorTypedWord(ed)
+	}
 	m.completion = s
 	return func() tea.Msg {
 		request, stop := context.WithTimeout(ctx, 10*time.Second)
@@ -153,6 +180,12 @@ func (m *App) requestCompletion(automatic bool) tea.Cmd {
 }
 
 func (m *App) completionCurrent(s *completionState) bool {
+	if s != nil && s.stale {
+		// Kept on screen only while the typing intent that will replace it lives.
+		intent := m.completionIntent
+		return m.completion == s && m.ws == s.workspace && intent != nil && intent.editor == s.editor &&
+			m.EditorState != nil && m.EditorState.Editor == s.editor && m.focusTarget() == FocusEditor && m.focusedPopup() == nil
+	}
 	if s == nil || m.completion != s || s.released || s.ctx.Err() != nil || m.ws != s.workspace ||
 		m.asyncIOStopped.Load() || !m.acceptsLSPDocument(s.generation, s.source.Path, s.editor, s.revision) ||
 		!s.editor.MatchesInsightSource(s.source) || currentCodeActionSelection(s.editor) != s.selection ||
@@ -168,16 +201,22 @@ func (m *App) completionCurrent(s *completionState) bool {
 	if line != s.line || col != s.col {
 		return false
 	}
-	if s.screen == nil {
-		return m.focusTarget() == FocusEditor && m.focusedPopup() == nil
+	editorOwnsKeys := m.focusTarget() == FocusEditor && m.focusedPopup() == nil
+	if !s.shown {
+		return editorOwnsKeys
 	}
 	owner, generation := m.ws.LSPMgr().ContextCursor()
 	if s.set == nil || owner != s.source.WorkspaceGeneration || generation != s.set.Boundary.Context.Generation ||
 		time.Now().After(s.set.ExpiresAt) {
 		return false
 	}
+	if s.screen == nil { // inline text only
+		return editorOwnsKeys
+	}
+	// The list is passive: the editor keeps keys and caret. A click on the
+	// list may focus it instead.
 	fw := m.overlayHost.Window(ui.OverlayCompletion)
-	if fw == nil || m.focusedPopup() != fw {
+	if fw == nil || !editorOwnsKeys && m.focusedPopup() != fw {
 		return false
 	}
 	frame, ok := fw.Content.(*ui.WindowFrameWidget)
@@ -213,6 +252,11 @@ func (m *App) syncCompletion() tea.Cmd {
 		m.closeCompletionPopup()
 		return nil
 	}
+	if s.stale {
+		// The typed edit advances the context; the old rows stay only as a
+		// read-only view until the pending request replaces them.
+		return nil
+	}
 	if !s.deadline.IsZero() && time.Now().After(s.deadline) {
 		if !s.automatic {
 			m.Feedback.NotifyInfo("Completion timed out or its original context was not observed")
@@ -244,8 +288,8 @@ func (m *App) syncCompletion() tea.Cmd {
 		m.closeCompletionPopup()
 		return nil
 	}
-	if s.screen != nil {
-		if s.screen.SetAcceptance(m.ws.LSPMgr().Settings().CompletionAcceptance()) {
+	if s.shown {
+		if s.screen != nil && s.screen.SetAcceptance(m.ws.LSPMgr().Settings().CompletionAcceptance()) {
 			m.markCompletionDirty(s)
 		}
 		return nil
@@ -269,15 +313,9 @@ func (m *App) syncCompletion() tea.Cmd {
 	}
 	// Keep exact original row IDs. Matching and ranking are only a projection
 	// of this acknowledged invocation, never a rebased insertion.
-	rows := slices.Clone(set.Entries)
-	slices.SortStableFunc(rows, func(a, b types.LSPCompletionEntry) int {
-		return cmp.Compare(a.SortText, b.SortText)
-	})
-	var entries []completion.Entry
+	rows := rankCompletions(set.Entries, s.typed)
+	entries := make([]completion.Entry, 0, len(rows))
 	for _, row := range rows {
-		if _, _, matches := textsearch.Fuzzy(row.FilterText, row.Prefix, false); !matches {
-			continue
-		}
 		entries = append(entries, completion.Entry{ID: row.ID, Label: row.Insertion.Label, Kind: row.Insertion.Kind, Detail: row.Documentation.Detail,
 			Documentation: row.Documentation.Value})
 	}
@@ -288,36 +326,71 @@ func (m *App) syncCompletion() tea.Cmd {
 		m.closeCompletionPopup()
 		return nil
 	}
+	// Automatic suggestions refresh as the user types, so the hint to keep
+	// typing would only take a row; an explicit request still shows it.
 	caption := ""
-	if set.Incomplete {
+	if set.Incomplete && !s.automatic {
 		caption = "Continue typing to narrow the suggestions."
-	} else if set.UnsupportedItems > 0 {
+	} else if set.UnsupportedItems > 0 && !s.automatic {
 		caption = "Some suggestions cannot be inserted."
+	}
+	s.shown = true
+	s.deadline = time.Time{}
+	// Typing shows the obvious suggestion as faded text at the caret (Tab
+	// accepts it). The list appears only when there is a choice to make.
+	inline := m.offerCompletionGhost(s, rows)
+	if !inline {
+		dismissCompletionGhost(s.editor)
+	}
+	// A single literal suggestion needs no list. A snippet or import row keeps
+	// its list, which accepts it through the normal path.
+	if inline && s.inlineLiteral && len(entries) == 1 && !set.Incomplete {
+		if s.screen != nil {
+			s.screen = nil
+			m.overlayHost.Close(ui.OverlayCompletion)
+		}
+		return nil
+	}
+	if s.screen != nil {
+		s.screen.SetEntries(set.ID, entries)
+		s.screen.SetStatus(caption)
+		s.screen.SetAcceptance(m.ws.LSPMgr().Settings().CompletionAcceptance())
+		m.positionCompletion()
+		m.markCompletionDirty(s)
+		return nil
 	}
 	s.screen = completion.New(m.Theme, set.ID, entries, caption)
 	s.screen.SetAcceptance(m.ws.LSPMgr().Settings().CompletionAcceptance())
-	title := fmt.Sprintf("Completions · %d", len(entries))
-	frame, fw := m.newEditorPopover(ui.OverlayCompletion, title, s.screen, s.screen.DefaultFocus(), ui.Rect{W: 1, H: 1})
+	if s.automatic {
+		s.screen.ClearSelection() // nothing is chosen until the user asks
+	}
+	frame, fw := m.newEditorPopover(ui.OverlayCompletion, "", s.screen, s.screen.DefaultFocus(), ui.Rect{W: 1, H: 1})
 	bounds, visible := m.completionBounds(s, frame)
-	if !visible || bounds.H < 6 {
+	if !visible || bounds.H < 3 {
 		m.closeCompletionPopup()
 		return nil
 	}
 	fw.SetPosition(bounds.X, bounds.Y)
 	fw.SetSize(bounds.W, bounds.H)
-	m.overlayHost.Open(ui.OverlayCompletion, fw, ui.PopoverPolicy(true), func() {
-		if m.completion == s {
+	screen := s.screen
+	policy := ui.PopoverPolicy(true)
+	policy.Passive = true // the editor keeps the caret and the keys
+	m.overlayHost.Open(ui.OverlayCompletion, fw, policy, func() {
+		if c := m.completion; c != nil && c.screen == screen {
 			m.completion = nil
-			m.retireCompletion(s)
+			m.retireCompletion(c)
+			dismissCompletionGhost(c.editor)
 		}
 	})
-	s.deadline = time.Time{}
+	if s.automatic {
+		return nil
+	}
 	return m.readCompletion(s, s.screen.SelectedID(), false)
 }
 
 func (m *App) completionBounds(s *completionState, frame *ui.WindowFrameWidget) (ui.Rect, bool) {
 	size := frame.Frame().Measure(ui.LayoutContext{}, ui.Constraints{
-		MaxW: min(112, max(1, m.width-4)), MaxH: min(14, max(1, m.height-4)),
+		MaxW: min(100, max(1, m.width-4)), MaxH: max(1, m.height-4),
 	})
 	return m.editorHelpBounds(s.editor, size.W, size.H)
 }
@@ -337,7 +410,7 @@ func (m *App) positionCompletion() {
 		return
 	}
 	b, ok := m.completionBounds(s, frame)
-	if !ok || b.H < 6 {
+	if !ok || b.H < 3 {
 		m.closeCompletionPopup()
 		return
 	}
@@ -463,14 +536,102 @@ func (m *App) handleCompletionAction(action *ui.Action) (tea.Cmd, bool) {
 	}
 	payload, ok := action.Payload.(completion.Action)
 	s := m.completion
-	if !ok || !m.completionCurrent(s) || s.set == nil || payload.Invocation != s.set.ID || payload.ItemID != s.screen.SelectedID() {
+	if action.ID == completion.ActionClose && s != nil && s.screen != nil {
+		m.closeCompletionPopup()
+		return nil, true
+	}
+	if !ok || !m.completionCurrent(s) || s.stale || s.set == nil || s.screen == nil || payload.Invocation != s.set.ID ||
+		payload.ItemID != s.screen.SelectedID() {
 		return nil, true
 	}
 	if action.ID == completion.ActionClose {
 		m.closeCompletionPopup()
 		return nil, true
 	}
+	// A chosen row replaces the inline preview of the top row.
+	dismissCompletionGhost(s.editor)
 	return m.readCompletion(s, payload.ItemID, action.ID == completion.ActionAccept), true
+}
+
+// routeCompletionKey gives the passive suggestion list the few keys that
+// operate it while the editor keeps focus and caret. With no chosen row, Down
+// chooses the first row, Tab accepts only the inline text, and every other key
+// edits the source as usual: nothing is accepted that the user cannot see.
+// Up, Enter, Tab and paging act on the list only after the user chose a row.
+func (m *App) routeCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	s := m.completion
+	if s == nil || m.EditorState == nil || m.EditorState.Editor != s.editor {
+		return nil, false
+	}
+	accept := m.ws.LSPMgr().Settings().CompletionAcceptance()
+	chosen := s.screen != nil && s.screen.SelectedID() != ""
+	inline := s.editor.GhostOwner() == completionGhostOwner
+	if inline && !chosen && !s.inlineLiteral && !s.stale && msg.Mod == 0 && msg.Code == tea.KeyTab && accept != "enter" &&
+		s.screen != nil && m.completionCurrent(s) && s.screen.Select(s.inlineID) {
+		// The inline text previews a snippet or import row: accept the row.
+		dismissCompletionGhost(s.editor)
+		return m.readCompletion(s, s.inlineID, true), true
+	}
+	if inline && !chosen && (msg.Mod == 0 && msg.Code == tea.KeyTab || msg.Mod == tea.ModCtrl && msg.Code == tea.KeyRight) {
+		cmd := s.editor.HandleEvent(msg) // the editor inserts exactly the shown text
+		_, _, remaining := s.editor.GhostText()
+		if !remaining {
+			m.closeCompletionPopup()
+		}
+		return cmd, true
+	}
+	if !s.shown || s.stale || s.screen == nil || !m.completionCurrent(s) {
+		return nil, false
+	}
+	fw := m.overlayHost.Window(ui.OverlayCompletion)
+	if fw == nil {
+		return nil, false
+	}
+	forward := func() (tea.Cmd, bool) { return m.forwardEventToWindowContent(fw, msg), true }
+	if msg.Mod == tea.ModCtrl && (msg.Code == tea.KeyPgUp || msg.Code == tea.KeyPgDown) && chosen {
+		return forward()
+	}
+	if msg.Mod != 0 {
+		return nil, false
+	}
+	switch msg.Code {
+	case tea.KeyEsc:
+		m.closeCompletionPopup()
+		return nil, true
+	case tea.KeyDown:
+		if !chosen {
+			top := s.screen.TopID()
+			if top == "" || !s.screen.Select(top) {
+				return nil, false
+			}
+			dismissCompletionGhost(s.editor)
+			m.markCompletionDirty(s)
+			return m.readCompletion(s, top, false), true
+		}
+		return forward()
+	case tea.KeyUp, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		if chosen {
+			return forward()
+		}
+	case tea.KeyTab:
+		if accept == "enter" {
+			return nil, false
+		}
+		if chosen {
+			return forward()
+		}
+	case tea.KeyEnter:
+		if chosen && accept != "tab" {
+			return forward()
+		}
+	}
+	return nil, false
+}
+
+// editorTypingKey edits the source text without a command chord.
+func editorTypingKey(msg tea.KeyPressMsg) bool {
+	return msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 &&
+		(msg.Text != "" || msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete)
 }
 
 func (m *App) handleCompletionKey(fw *wm.FloatingWindow, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

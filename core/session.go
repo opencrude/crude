@@ -36,6 +36,10 @@ type sessionState struct {
 	commandMu    sync.Mutex
 	commands     map[string]*command
 	commandBytes int
+	// abandonedCommands counts retained in-flight commands that no caller
+	// awaits. They hold no result and are dropped on completion, so they do not
+	// occupy result capacity; their request preimages still count in bytes.
+	abandonedCommands int
 
 	topicMu                 sync.Mutex
 	topicCancel             map[string]context.CancelFunc
@@ -176,14 +180,20 @@ type command struct {
 	done      chan struct{}
 	response  coreprotocol.Response
 	progress  chan string
+	// abandoned (guarded by commandMu) means the client no longer awaits the
+	// result: it is forgotten as soon as it exists. Re-attachment clears it.
+	abandoned bool
 }
 
 // Unacknowledged results are never evicted to admit another command. At most
 // sixteen results (each bounded by MaxMessage) and 128 MiB of request preimages
-// survive a carrier; session expiry releases them. Durable receipts separately
-// protect journaled mutations across process crashes.
-const sessionCommandLimit = 16
-const sessionCommandBytes = 128 << 20
+// survive a carrier. Retention exists only so a client can re-attach a call it
+// still awaits: the final ACK, the client's explicit release request, or
+// session expiry releases it. A stream failure alone never proves abandonment. Durable
+// receipts separately protect journaled mutations across process crashes and
+// later calls under the same identity.
+const sessionCommandLimit = coreprotocol.SessionRetainedCommands
+const sessionCommandBytes = coreprotocol.SessionRetainedCommandBytes
 
 var errCommandCapacity = errors.New("unacknowledged command capacity exceeded")
 
@@ -200,10 +210,15 @@ func (c *Connection) admit(ctx context.Context, request coreprotocol.Request, on
 	}
 	c.commandMu.Lock()
 	if existing := c.commands[commandKey(request)]; existing != nil {
-		c.commandMu.Unlock()
 		if existing.request.Method != request.Method || existing.request.WorkspaceID != request.WorkspaceID || !bytes.Equal(existing.request.Payload, request.Payload) {
+			c.commandMu.Unlock()
 			return nil, errors.New("request identity reused with different content")
 		}
+		if existing.abandoned { // a caller awaits this result again
+			existing.abandoned = false
+			c.abandonedCommands--
+		}
+		c.commandMu.Unlock()
 		// An exact reattachment can find the retained entry before its initial
 		// Dispatch returns. Never publish admission ahead of that enqueue.
 		select {
@@ -214,7 +229,7 @@ func (c *Connection) admit(ctx context.Context, request coreprotocol.Request, on
 		notify()
 		return existing, nil
 	}
-	if len(c.commands) >= sessionCommandLimit || c.commandBytes+len(request.Payload) > sessionCommandBytes {
+	if len(c.commands)-c.abandonedCommands >= sessionCommandLimit || c.commandBytes+len(request.Payload) > sessionCommandBytes {
 		c.commandMu.Unlock()
 		return nil, errCommandCapacity
 	}
@@ -236,19 +251,64 @@ func (c *Connection) admit(ctx context.Context, request coreprotocol.Request, on
 			cmd.response = fault(request, "outcome_uncertain", "session ended; inspect the receipt before retrying")
 		}
 		cmd.completed = time.Now()
+		c.commandMu.Lock()
 		close(cmd.done)
+		if cmd.abandoned {
+			c.forgetLocked(cmd)
+		}
+		c.commandMu.Unlock()
 	}()
 	return cmd, nil
 }
 
-// forget drops a command only after the client acknowledged its final result.
+// release forgets a command whose result the client no longer awaits: at once
+// when it completed, otherwise when it completes. It never cancels the work.
+func (c *Connection) release(cmd *command) {
+	c.commandMu.Lock()
+	if c.commands[commandKey(cmd.request)] != cmd {
+		c.commandMu.Unlock()
+		return
+	}
+	if !cmd.abandoned {
+		cmd.abandoned = true
+		c.abandonedCommands++
+	}
+	select {
+	case <-cmd.done:
+		c.forgetLocked(cmd)
+	default:
+	}
+	c.commandMu.Unlock()
+}
+
+// releaseIdentities applies a client release request. Unknown identities
+// are already released or never admitted.
+func (c *Connection) releaseIdentities(identities []coreprotocol.CommandIdentity) {
+	for _, identity := range identities {
+		c.commandMu.Lock()
+		cmd := c.commands[commandKey(coreprotocol.Request{Method: identity.Method, ID: identity.ID})]
+		c.commandMu.Unlock()
+		if cmd != nil {
+			c.release(cmd)
+		}
+	}
+}
+
+// forget drops a command after the client acknowledged or released its result.
 func (c *Connection) forget(cmd *command) {
 	c.commandMu.Lock()
+	defer c.commandMu.Unlock()
+	c.forgetLocked(cmd)
+}
+
+func (c *Connection) forgetLocked(cmd *command) {
 	if key := commandKey(cmd.request); c.commands[key] == cmd {
 		delete(c.commands, key)
 		c.commandBytes -= len(cmd.request.Payload)
+		if cmd.abandoned {
+			c.abandonedCommands--
+		}
 	}
-	c.commandMu.Unlock()
 }
 
 // reportProgress offers the latest cumulative progress text to the stream

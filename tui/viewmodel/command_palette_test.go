@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -397,17 +398,60 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 	for _, e := range entries {
 		byID[e.ID] = e
 	}
-	for _, id := range []string{
-		"agent.newSession", "app.sessions", "file.attach", "composer.toggle", "board.browse", "memory.browse",
-		"file.new", "file.close", "search.project.open", "search.project.replace", "lsp.outline", "history.open",
-		"view.toggle.sidebar", "lsp.problems", "status.overview", "performance.open", "terminal.new", "terminal.toggle",
-		"view.activity.git", "git.review", "git.history",
-		"settings.open", "settings.workspace", "lsp.restart", "app.quit",
-		"lsp.inlayShow", "lsp.inlayHide", "lsp.inlayRefresh",
-	} {
-		if e, ok := byID[id]; !ok || e.Label == "" {
-			t.Errorf("palette missing global command %q", id)
+	want := []string{
+		"agent.newSession",
+		"app.copyLastAssistant",
+		"app.quit",
+		"app.sessions",
+		"app.toggleTheme",
+		"board.browse",
+		"composer.toggle",
+		"editor.privateRecovery",
+		"file.attach",
+		"file.close",
+		"file.encoding",
+		"file.new",
+		"file.newBuffer",
+		"file.revealInTree",
+		"git.history",
+		"git.lfs.install",
+		"git.lfs.pull",
+		"git.review",
+		"history.open",
+		"history.snapshot",
+		"lsp.inlayHide",
+		"lsp.inlayRefresh",
+		"lsp.inlayShow",
+		"lsp.outline",
+		"lsp.problems",
+		"lsp.restart",
+		"memory.browse",
+		"performance.open",
+		"remote.connect",
+		"remote.health",
+		"remote.switch",
+		"search.project.open",
+		"search.project.replace",
+		"settings.open",
+		"settings.workspace",
+		"status.overview",
+		"terminal.new",
+		"terminal.picker",
+		"terminal.toggle",
+		"view.activity.git",
+		"view.activity.workspaces",
+		"view.toggle.sidebar",
+	}
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Label == "" {
+			t.Errorf("palette command %q has no label", entry.ID)
 		}
+		got = append(got, entry.ID)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("global command inventory changed:\n got %q\nwant %q", got, want)
 	}
 	for _, id := range []string{
 		"file.save", "edit.undo", "edit.moveLineUp", "lsp.hover", "tabs.next", "view.focus.sidebar",
@@ -416,9 +460,6 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 		if _, ok := byID[id]; ok {
 			t.Errorf("palette lists surface-bound or removed command %q", id)
 		}
-	}
-	if len(entries) > 40 {
-		t.Fatalf("palette has %d commands; keep it to commands that work from anywhere", len(entries))
 	}
 }
 

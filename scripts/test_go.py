@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Run the full Go race suite with bounded, exhaustive large-package shards."""
+"""Run the full Go suite with bounded, exhaustive large-package groups."""
 
+import argparse
 import re
 import subprocess
 
@@ -29,10 +30,15 @@ def run(args):
     subprocess.run(args, check=True)
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--race", action="store_true", help="enable the Go race detector")
+    args = parser.parse_args(argv)
     packages = subprocess.check_output(["go", "list", "./..."], text=True).splitlines()
     rest = [package for package in packages if package not in LARGE_PACKAGES]
-    flags = ["go", "test", "-race", "-p", "2", "-count=1", "-timeout=300s"]
+    flags = ["go", "test", "-p", "2", "-count=1", "-timeout=300s" if args.race else "-timeout=180s"]
+    if args.race:
+        flags.append("-race")
     run(flags + rest)
     for package in LARGE_PACKAGES.values():
         listing = subprocess.check_output(["go", "test", package, "-list", "."], text=True)
@@ -41,9 +47,9 @@ def main():
             raise RuntimeError("no test cases discovered for " + package)
         groups = partition(names)
         for index, group in enumerate(groups, 1):
-            print(f"Race {package}: shard {index}/{len(groups)}, {len(group)} cases", flush=True)
+            print(f"{'Race' if args.race else 'Go'} {package}: group {index}/{len(groups)}, {len(group)} cases", flush=True)
             run(flags + [package, "-run", pattern(group)])
-    print("FULL_RACE_SUITE_PASSED", flush=True)
+    print("FULL_RACE_SUITE_PASSED" if args.race else "FULL_GO_SUITE_PASSED", flush=True)
 
 
 if __name__ == "__main__":

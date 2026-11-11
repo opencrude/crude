@@ -131,7 +131,7 @@ func TestTerminalMenuClipboardUsesTheOwnedNativePTY(t *testing.T) {
 			select {
 			case <-dirty:
 			case <-timer.C:
-				t.Fatal("native child did not echo", want)
+				t.Fatalf("native child did not echo %q: grid=%q status=%q queued=%d busy=%v", want, terminalProjectionText(page), testStatusText(app), len(app.terminalQueue), app.terminalBusy)
 			}
 		}
 	}
@@ -175,7 +175,9 @@ func TestTerminalMenuClipboardUsesTheOwnedNativePTY(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("menu Paste did not finish")
 	}
-	waitText("READYPASTED")
+	// Docking can reflow the startup banner into history. Wait for the
+	// actual paste, not accidental adjacency to a pre-resize cursor.
+	waitText("PASTED")
 	runTerminalCommand(t, app, app.terminalRefresh(info.ID))
 	screen := app.termScreens[info.ID]
 	copied := make(chan string, 1)
@@ -194,7 +196,7 @@ func TestTerminalMenuClipboardUsesTheOwnedNativePTY(t *testing.T) {
 		case msg := <-results:
 			runTerminalCommand(t, app, func() tea.Msg { return msg })
 		case text := <-copied:
-			if !strings.Contains(text, "READYPASTED") {
+			if !strings.Contains(text, "READY") || strings.Count(text, "PASTED") != 1 {
 				t.Fatal("Copy returned another surface's text", text)
 			}
 			return

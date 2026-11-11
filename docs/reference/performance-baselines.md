@@ -7,6 +7,25 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Typing preserves unchanged line geometry (2026-11-10)
+
+The dense snippet gate exposed 1,767 allocations per 64-mirror typing-and-grid
+operation (ceiling: 1,320), even though quieter repetitions measured 1,090–1,092.
+An allocation profile put 70% of allocated objects in line geometry. Every edit
+cleared the entire viewport cache despite each entry already checking its exact
+line bytes. This repeated work was unnecessary and amplified benchmark variation.
+
+The editor now retains those content-checked entries across edits and navigation.
+Only changed text is rebuilt; width-profile changes still clear all geometry.
+The regression verifies changed source, unchanged painted cells/cache identity,
+and correct geometry after inserting a line with Unicode and tabs.
+
+Three Linux amd64, i7-10750H, `GOMAXPROCS=2` repetitions of the unchanged
+`BenchmarkSnippetTypingDense` workload measured 297–299 allocations with eight
+mirrors and 480–487 with 64 mirrors (3.07–3.15 MB / 3.28–3.34 MB, 1.31–1.45 ms).
+All existing allocation ceilings are unchanged. This measures real mutation plus
+120×40 editor-grid painting, not provider, transport or physical-display latency.
+
 ## Animations with terminal focus (2026-11-10)
 
 The Home loading rule previously advanced in 30/30 presented clock frames with

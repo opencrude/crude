@@ -205,7 +205,7 @@ func TestProjectContextIdleFencePreservesInvalidationAndReleasesAtomically(t *te
 	}
 	before := awaitProjectContext(t, p, "ready")
 	w := &Workspace{ProjectContext: p}
-	release, err := w.BeginIdleLease(t.Context())
+	release, err := w.BeginIdleLease(t.Context(), IdleAutomatic)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestProjectContextIdleFencePreservesInvalidationAndReleasesAtomically(t *te
 	if snapshot.State != "pending" || snapshot.Generation != before.Generation+1 || snapshot.ObservedGeneration != before.Generation {
 		t.Fatal("idle fence discarded passive invalidation or relabelled former evidence current", snapshot)
 	}
-	if u, err := w.BeginIdleLease(t.Context()); err == nil {
+	if u, err := w.BeginIdleLease(t.Context(), IdleAutomatic); err == nil {
 		u()
 		t.Fatal("second idle lease bypassed the existing context reservation")
 	}

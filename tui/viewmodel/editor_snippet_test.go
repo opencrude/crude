@@ -192,9 +192,9 @@ func TestEditorSnippetLateAutomaticResultCannotStealIdenticalSourceInteraction(t
 		t.Fatal("manual request was suppressed by a snippet without choices")
 	}
 	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyEsc})
-	// This fresh manual chooser is a true input-owner departure, unlike the
-	// retired automatic reply above. Dismissing it must not revive old fields.
-	if ed.SnippetActive() || ed.Value() != "word" {
-		t.Fatal("manual chooser departure revived snippet fields or changed accepted bytes")
+	// The chooser never takes focus from the editor, so closing it returns to
+	// the same snippet field without changing accepted bytes.
+	if !ed.SnippetActive() || ed.SelectedText() != "word" || ed.Value() != "word" {
+		t.Fatal("closing the chooser lost the snippet field or changed accepted bytes")
 	}
 }

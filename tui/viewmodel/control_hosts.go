@@ -57,6 +57,18 @@ func (m *App) controlHosts(target control.Target) []shellControlHost {
 		}
 		hosts = append(hosts, shellControlHost{host: projection.deckHost, prefix: fmt.Sprintf("deck/%s/%d::", deckTarget.SessionID, projection.deckHost.ControlLifetime()), target: deckTarget, body: body})
 	}
+	// Suggestions are shown without taking focus from the editor; they stay
+	// operable through semantic control like the focused shell beneath them.
+	if m.overlayHost != nil {
+		if passive := m.overlayHost.Window(ui.OverlayCompletion); passive != nil && passive.Visible() {
+			if body, ok := passive.Content.(interface{ Host() *ui.Host }); ok && body.Host() != nil {
+				w, h := passive.Size()
+				body.Host().Resize(w, h)
+				body.Host().MarkLayout()
+				hosts = append(hosts, shellControlHost{host: body.Host(), prefix: fmt.Sprintf("floating/%s/%d::", passive.ID, body.Host().ControlLifetime()), target: target, window: passive})
+			}
+		}
+	}
 	return hosts
 }
 

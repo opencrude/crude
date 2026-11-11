@@ -31,21 +31,30 @@ go build ./...
 go test ./<affected packages>/...     # focused first
 make test-syntax                     # includes the nested native binding suite
 make test-lsp                        # pure data/transport and nested LSP ownership
-go test ./... -count=1 -timeout=180s  # repository suite
+make test                            # exhaustive repository suite
 golangci-lint run ./...               # zero issues, whole repo
 make design-audit                     # layer boundary, raw SGR, hard-coded hex
 make docs-check                       # documentation acceptance gate
 make bench-gate                       # allocation ceilings and work budgets
-make test-race-tui                    # race-clean full repo (go test -race ./...)
+make test-race-tui                    # exhaustive repository race suite
 make site-check                       # shadcn lint, Vite build and site acceptance
 ```
 
-CI uses `python scripts/test_race.py` for the full race suite. It runs every
-package; the large session/viewmodel packages are exhaustively partitioned by
-discovered top-level test/example/fuzz name, each exactly once. The multi-megabyte
-upload recovery stress case runs separately with the same five-minute limit.
-No workload size, individual assertion or timeout is relaxed to fit the sum of
-hundreds of cases into one package-wide budget.
+CI and the Make targets share `python scripts/test_go.py` (normal) and
+`python scripts/test_go.py --race`. They run every package, with session and
+viewmodel exhaustively grouped by discovered top-level test/example/fuzz name,
+each exactly once. The multi-megabyte upload recovery stress case has its own
+group. Each normal group keeps the 180-second safety deadline; race groups keep
+300 seconds. No failed group is retried and no individual assertion, workload,
+opt-in skip or performance ceiling changes between the two modes.
+
+The ungrouped `go test ./... -timeout=180s` repeatedly exhausted the viewmodel
+package's shared timer after more than 1,400 passing cases, including in a quiet
+run. That is an aggregate limit, not evidence of a hung case. Grouping prevents
+suite growth from creating that recurring failure without raising the deadline
+or excluding tests. Runner regressions independently verify package coverage,
+exactly-once name matching, both modes and immediate propagation of a failure.
+Report an ungrouped timeout as a failure, never as a pass of that command.
 
 ### Windows race checks with Zig
 
@@ -67,10 +76,9 @@ compatible shadow address range, and Zig does not accept Go's GNU spelling for
 that switch. The PE high-entropy bit may remain set, but dynamic-base is off.
 The setup rejects an existing `GOFLAGS` linker override. Close the session before
 normal builds; do not use these race-specific linker flags for production binaries.
-For the whole repository in the same session, limit concurrent package binaries
-so timing-sensitive tests are not starved by the run itself:
-`go test -race -count=1 -p 2 -timeout 1800s ./...` (about 30 minutes on a
-developer laptop).
+For the whole repository in the same session, use
+`python scripts/test_go.py --race`. The shared runner limits concurrent package
+binaries and keeps the same exhaustive groups on both native platforms.
 
 ### When a test fails only under `-race`
 
@@ -158,9 +166,9 @@ every performance, per-feature visual and fuzz row has evidence.
 Run the bounded native protocol campaigns after the ordinary and race suites:
 
 ```sh
-FUZZ_SECONDS=2 GOMAXPROCS=2 bash scripts/protocol_fuzz.sh
+GOMAXPROCS=2 bash scripts/protocol_fuzz.sh
 # For a longer focused campaign:
-FUZZ_SECONDS=30 FUZZ_TARGETS='FuzzCoreSessionOwnership FuzzRemoteStateTopicFences' \
+FUZZ_CASES=512 FUZZ_TARGETS='FuzzCoreSessionOwnership FuzzRemoteStateTopicFences' \
   bash scripts/protocol_fuzz.sh
 ```
 
@@ -170,10 +178,21 @@ runs from private working directories. Binaries, logs, caches and crash corpora
 stay beneath its printed evidence path; it never writes unreviewed fuzz failures
 into the checkout. Its generated short private `CRUDE_HOME` is removed on exit.
 Native terminal dependencies are required, and missing targets or invalid bounds
-fail closed. Linux Verify includes a two-second-per-target smoke campaign; wiring
-is not proof of a hosted run. Runtime-backed feature fuzzers retain real durable
-owners and are substantially slower than pure decoder targets, so report their
-actual execution counts rather than treating the same wall time as equal coverage.
+fail closed. Linux Verify uses execution counts, not elapsed time, as the smoke
+completion criterion. The runner first validates and counts every seed, then
+includes that complete baseline in Go's execution budget before generated work:
+65,536 additional executions for pure targets, 4,096 for the terminal-grid owner,
+and 64 for each durable-runtime target. `FUZZ_CASES` overrides the generated budget
+for a focused run (1–1,000,000); a 120-second watchdog remains a failure, never
+successful completion. A seed-only run is refused as fuzz acceptance.
+
+The previous two-second limit could finish before the 1,199 wire seeds completed
+and could report a worker shutdown deadline instead of a target failure. No
+failure is retried or suppressed. Campaign-driver tests exercise complete seed
+accounting, exact worker arguments, failure propagation and incomplete coverage.
+Runtime-backed fuzzers retain real durable owners and cost more per execution
+than pure decoders. Report each target's actual counts; wiring and a local smoke
+campaign do not establish a hosted run or complete semantic certification.
 
 Run the network-impaired QUIC gate on Linux with sudo:
 
@@ -597,8 +616,14 @@ and `Return` activates the highlighted Application Settings entry. The broader
 `settings` query also matches command descriptions, so an extra `Down` can
 select a different action.
 
-`TERMINAL=alacritty` (default), `TERMINAL=kitty` and `TERMINAL=tilix` select the
+`TERMINAL=alacritty` (default), `TERMINAL=kitty`, `TERMINAL=tilix` and
+`TERMINAL=wezterm` select the
 actual native emulator through this same workflow, not a changed `TERM` label.
+`WEZTERM_BIN` can name a portable `wezterm-gui` binary; `WEZTERM_CONFIG` can
+name the installer-generated Crude window configuration. The default capture
+loads no user configuration. For GUI keyboard acceptance, use the generated
+configuration: the pinned terminal's optional Kitty mode changes Delete's
+encoding, so testing only its default settings does not test the installed GUI.
 Each launch is an independent borderless capture process; Tilix uses
 `--new-process`, never an existing user terminal. The window is selected by the
 exact capture process and visible geometry, not the latest global class match.

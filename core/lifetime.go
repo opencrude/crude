@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"crude/coreprotocol"
+	"crude/retry"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -213,7 +215,7 @@ func (r *Runtime) BeginDrain() bool {
 	r.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	release, err := r.reserveIdle(ctx)
+	release, err := r.reserveIdle(ctx, workspace.IdleAutomatic)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stopping = false
@@ -271,11 +273,17 @@ func (r *Runtime) shutdown(ctx context.Context, caller *Connection, input corepr
 		return coreprotocol.ShutdownResult{Reason: "core is already closing; wait for its owner to settle"}
 	}
 	if !input.Force && (otherClients != 0 || len(r.creating) != 0 || len(r.storageGates) != 0) {
-		reason := fmt.Sprintf("%d shell(s) are attached; close them or retry --core-stop --force", otherClients)
-		if otherClients == 0 {
-			reason = "workspace factory or saved-storage operation is in progress; wait for it to finish and retry"
+		others := make([]*Connection, 0, len(r.clients))
+		for _, c := range r.clients {
+			if c != caller {
+				others = append(others, c)
+			}
 		}
 		r.mu.Unlock()
+		reason := "Cannot stop the core: a workspace is opening or saved data is being written. Wait for it to finish and try again."
+		if otherClients != 0 {
+			reason = shellsRefusal(others, r.sessionGrace())
+		}
 		return coreprotocol.ShutdownResult{Reason: reason, Shells: otherClients}
 	}
 	r.stopping = true
@@ -283,12 +291,12 @@ func (r *Runtime) shutdown(ctx context.Context, caller *Connection, input corepr
 	var release func()
 	if !input.Force {
 		var err error
-		release, err = r.reserveIdle(ctx)
+		release, err = r.reserveStop(ctx)
 		if err != nil {
 			r.mu.Lock()
 			r.stopping = false
 			r.mu.Unlock()
-			return coreprotocol.ShutdownResult{Reason: err.Error() + "; finish or close the named work and retry, or explicitly use --core-stop --force"}
+			return coreprotocol.ShutdownResult{Reason: stopRefusal(err)}
 		}
 	}
 	r.mu.Lock()
@@ -307,6 +315,80 @@ func (r *Runtime) shutdown(ctx context.Context, caller *Connection, input corepr
 	// Delay lets this response reach the requester before connections close.
 	time.AfterFunc(150*time.Millisecond, hook)
 	return coreprotocol.ShutdownResult{Accepted: true}
+}
+
+// stopSettleWindow is how long an explicit stop waits for operations that are
+// already finishing, such as a shell's detach cleanup, before it refuses.
+const stopSettleWindow = 3 * time.Second
+
+// reserveStop fences the core for an explicit stop. Idle shells do not block
+// it; running programs, agent work and open views do. Operations that are
+// finishing get a short time to settle instead of an immediate refusal.
+func (r *Runtime) reserveStop(ctx context.Context) (func(), error) {
+	return reserveStopLease(ctx, func() (func(), error) { return r.reserveIdle(ctx, workspace.IdleExplicitStop) })
+}
+
+func reserveStopLease(ctx context.Context, reserve func() (func(), error)) (func(), error) {
+	deadline := time.Now().Add(stopSettleWindow)
+	for {
+		release, err := reserve()
+		if err == nil || !errors.Is(err, types.ErrIdleSettling) || !time.Now().Before(deadline) {
+			return release, err
+		}
+		if err := retry.Wait(ctx, 50*time.Millisecond); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// shellsRefusal separates connected windows from sessions that lost their
+// connection and can still resume, which the user cannot see.
+func shellsRefusal(clients []*Connection, grace time.Duration) string {
+	connected, waiting := 0, 0
+	for _, c := range clients {
+		if carrier, _ := c.Carrier(); carrier != "" {
+			connected++
+		} else {
+			waiting++
+		}
+	}
+	count := func(n int, one, many string) string {
+		if n == 1 {
+			return one
+		}
+		return fmt.Sprintf(many, n)
+	}
+	var b strings.Builder
+	b.WriteString("Cannot stop the core: ")
+	if connected > 0 {
+		b.WriteString(count(connected, "1 Crude window is connected. Close it", "%d Crude windows are connected. Close them"))
+		b.WriteString(" and try again")
+	}
+	if waiting > 0 {
+		if connected > 0 {
+			b.WriteString(". Also, ")
+		}
+		b.WriteString(count(waiting, "1 Crude window lost its connection", "%d Crude windows lost their connection"))
+		fmt.Fprintf(&b, " and can reconnect for up to %s. Wait for it to end", graceWords(grace))
+	}
+	b.WriteString(", or use --core-stop --force to stop now.")
+	return b.String()
+}
+
+// graceWords states a reconnect window in words: "15 minutes".
+func graceWords(grace time.Duration) string {
+	switch minutes := int(grace.Round(time.Minute) / time.Minute); {
+	case minutes < 1:
+		return "less than a minute"
+	case minutes == 1:
+		return "1 minute"
+	default:
+		return fmt.Sprintf("%d minutes", minutes)
+	}
+}
+
+func stopRefusal(err error) string {
+	return "Cannot stop the core: " + err.Error() + ". Finish or close it and try again, or use --core-stop --force to stop now."
 }
 
 // publishProgress sends request-scoped output to exactly the owning connection

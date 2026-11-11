@@ -26,6 +26,9 @@ type fakeCore struct {
 	hellos  []coreprotocol.Hello
 	carrier []*corewire.Mux
 	buildID string
+	// released lists identities the client released as no longer awaited.
+	released []coreprotocol.CommandIdentity
+	release  func([]coreprotocol.CommandIdentity, corewire.Stream)
 }
 
 func (f *fakeCore) serve(conn net.Conn) {
@@ -90,6 +93,24 @@ func (f *fakeCore) serve(conn net.Conn) {
 						f.session(s)
 					}
 					<-m.Done() // hold the topic open
+					return
+				}
+				if open.Method == coreprotocol.ReleaseCommands {
+					// The real core forgets these retained results; this fake
+					// retains none, so it only confirms the release.
+					var in coreprotocol.ReleaseCommandsRequest
+					if err := coreprotocol.Decode(rest, &in); err != nil {
+						f.t.Error(err)
+						return
+					}
+					f.mu.Lock()
+					f.released = append(f.released, in.Commands...)
+					f.mu.Unlock()
+					if f.release != nil {
+						f.release(in.Commands, s)
+						return
+					}
+					reply(s, &coreprotocol.Empty{})
 					return
 				}
 				f.handle(open, rest, s)

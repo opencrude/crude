@@ -50,7 +50,7 @@ func TestLifecycleChannelFrozenBytesAndNoSession(t *testing.T) {
 			if !bytes.HasPrefix(body, prefix) || body[len(prefix)] != map[bool]byte{false: 1, true: 0}[attached] {
 				t.Fatalf("result %q", body)
 			}
-			if attached && !bytes.Contains(body, []byte("1 shell(s)")) {
+			if attached && !bytes.Contains(body, []byte("1 Crude window")) {
 				t.Fatalf("not actionable: %q", body)
 			}
 			if r.ClientCount() != map[bool]int{false: 0, true: 1}[attached] {

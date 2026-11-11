@@ -70,8 +70,11 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	if app.termScreens[oldInfo.ID] != nil {
 		t.Fatal("stale output materialized a screen from the replacement manager")
 	}
-	if got := newScreen.Title(); got != "new" {
-		t.Fatalf("stale old message mutated replacement title to %q", got)
+	if got := newScreen.Title(); got != newInfo.DisplayName() {
+		t.Fatalf("stale old message mutated replacement name to %q, want %q", got, newInfo.DisplayName())
+	}
+	if current, ok := newMgr.Get(newInfo.ID); !ok || current.Title != "new" {
+		t.Fatalf("stale old message changed replacement application metadata: %+v", current)
 	}
 	result := newScreen.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'x', Text: "x"}))
 	runTerminalCommand(t, app, result.Cmd)

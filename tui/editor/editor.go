@@ -455,7 +455,9 @@ func (e *Editor) invalidateEditorCaches() {
 	e.lineRunesCacheLine = -1
 	e.lineRunesCache = nil
 	e.lineRunesCacheWidth = 0
-	e.lineGeomCache = nil
+	// Geometry entries validate their exact line text on every lookup. Retain
+	// unchanged lines across edits and navigation instead of rebuilding the
+	// whole viewport. Width-profile changes have their own explicit fence.
 	// Geometry-only invalidation (navigation and resize) preserves source syntax.
 	currentSyntax := e.syntaxBuffer == e.buf && e.syntaxRevision == e.buf.Revision()
 	if job := e.syntaxJob; job != nil && job.buffer == e.buf && job.revision == e.buf.Revision() && job.generation == e.syntaxGeneration {

@@ -3,7 +3,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := libghostty
 
-.PHONY: libghostty ensure-libghostty protocol-generate protocol-check build test-tui test-race-tui test-syntax test-lsp design-audit bench-gate docs-check site-check site-serve
+.PHONY: libghostty ensure-libghostty protocol-generate protocol-check build test test-tui test-race-tui test-syntax test-lsp design-audit bench-gate docs-check site-check site-serve
 
 # Regenerate explicitly after production-source edits. Checks never mutate files.
 protocol-generate: ensure-libghostty
@@ -21,13 +21,17 @@ ensure-libghostty:
 build: ensure-libghostty protocol-check
 	. scripts/libghostty_env.sh && go build ./... && go build -o crude .
 
+# Full repository coverage, with exhaustive groups for the largest packages.
+test: ensure-libghostty protocol-check
+	. scripts/libghostty_env.sh && python3 scripts/test_go.py
+
 # Full TUI test suite (all tui packages).
 test-tui: ensure-libghostty protocol-check
 	. scripts/libghostty_env.sh && go test ./tui/...
 
 # Race-sensitive suite: the full repo is race-clean (2026-08-01).
 test-race-tui: ensure-libghostty protocol-check
-	. scripts/libghostty_env.sh && go test -race -count=1 ./...
+	. scripts/libghostty_env.sh && python3 scripts/test_go.py --race
 
 # The native binding is a replacement module, excluded from go test ./....
 test-syntax:

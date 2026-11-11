@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -31,6 +32,9 @@ func findChatApp(t *testing.T) (*App, *shellchat.Screen) {
 	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "one more needle at the end", Time: time.Unix(100, 0)})
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
+	// Keep history incomplete at first paint. Counter tests must observe the
+	// search finishing instead of relying on a fast renderer or scheduler.
+	app.activeMessageList().MaterializeBudget = time.Nanosecond
 	app.paintShellFrame()
 	return app, screen
 }
@@ -72,6 +76,29 @@ func shellText(app *App) string {
 	return strings.Join(lines, "\n")
 }
 
+// settleChatFind drives the real frame work until the owner has counted every
+// row. The timeout is only a deadlock guard, never evidence of readiness.
+func settleChatFind(t *testing.T, app *App) {
+	t.Helper()
+	if app.findChat == nil {
+		t.Fatal("no chat search is open")
+	}
+	renderer := app.activeMessageList()
+	renderer.MaterializeBudget = 0
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	for {
+		app.paintShellFrame()
+		if !renderer.Materializing() && app.findChat != nil &&
+			!app.findChat.FindPending() && app.findChat.FindStatusText() == "" {
+			return
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("chat search did not settle: %q", app.findChat.FindStatusText())
+		}
+	}
+}
+
 func TestChatFindUsesTheEditorFindWindow(t *testing.T) {
 	app, screen := findChatApp(t)
 	pressKey(app, 'f', "", tea.ModCtrl)
@@ -110,6 +137,7 @@ func TestChatFindCountsAndStepsThroughMatches(t *testing.T) {
 	app, screen := findChatApp(t)
 	pressKey(app, 'f', "", tea.ModCtrl)
 	typeText(app, "needle")
+	settleChatFind(t, app)
 	if got := app.Input.Value(); got != "" {
 		t.Fatalf("typing in find leaked into the composer: %q", got)
 	}
@@ -146,15 +174,18 @@ func TestChatFindFilterPillsChangeTheSearch(t *testing.T) {
 	app, _ := findChatApp(t)
 	pressKey(app, 'f', "", tea.ModCtrl)
 	typeText(app, "needle")
+	settleChatFind(t, app)
 	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "2 of 2" {
 		t.Fatalf("setup counter %q", got)
 	}
 	pressKey(app, 'c', "", tea.ModAlt) // Aa: case sensitive
+	settleChatFind(t, app)
 	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "1 of 1" {
 		t.Fatalf("case-sensitive counter %q, want only the lowercase match", got)
 	}
 	pressKey(app, 'c', "", tea.ModAlt) // back to folded
 	pressKey(app, 'w', "", tea.ModAlt) // ab: whole word
+	settleChatFind(t, app)
 	if got := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app)); got != "2 of 2" {
 		t.Fatalf("whole-word counter %q", got)
 	}
@@ -185,7 +216,7 @@ func TestChatFindPasteGoesToTheFindField(t *testing.T) {
 	app, _ := findChatApp(t)
 	pressKey(app, 'f', "", tea.ModCtrl)
 	app.dispatchPasteMsg(tea.PasteMsg{Content: "haystack"})
-	app.paintShellFrame()
+	settleChatFind(t, app)
 	if app.Input.Value() != "" {
 		t.Fatalf("paste leaked into the composer: %q", app.Input.Value())
 	}
@@ -210,8 +241,15 @@ func TestChatFindKeepsTheShellAwakeOnlyWhileCounting(t *testing.T) {
 	app, screen := findChatApp(t)
 	pressKey(app, 'f', "", tea.ModCtrl)
 	typeText(app, "needle")
-	if app.chatFindPending() || screen.FindPending() {
-		t.Fatal("a short chat is counted within its first frame")
+	if !screen.FindPending() && !screen.FindWaiting() {
+		t.Fatal("fixture did not retain the incomplete search")
+	}
+	if !app.wantsFastTick() {
+		t.Fatal("the shell stopped presenting while search was incomplete")
+	}
+	settleChatFind(t, app)
+	if app.chatFindPending() || screen.FindPending() || screen.FindWaiting() {
+		t.Fatal("completed search kept pending frame work")
 	}
 }
 
@@ -220,7 +258,7 @@ func TestChatFindKeepsTheShellAwakeOnlyWhileCounting(t *testing.T) {
 // finish the history, in the background, and then report the true count.
 func TestChatFindFinishesHistoryThatAResizeLeftUndrawn(t *testing.T) {
 	rows := []chatprojection.MessageRow{{ID: "seed", Lines: []string{"seed"}}}
-	app, screen := setupChatRoutingApp(t, 10, rows)
+	app, _ := setupChatRoutingApp(t, 10, rows)
 	app.Input.ClearInput()
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
@@ -241,10 +279,7 @@ func TestChatFindFinishesHistoryThatAResizeLeftUndrawn(t *testing.T) {
 		t.Fatalf("setup: every row was drawn, so find has nothing to wait for; status=%q", status)
 	}
 
-	renderer.MaterializeBudget = 0 // normal budget from here on
-	for i := 0; i < 600 && (screen.FindPending() || screen.FindWaiting() || renderer.Materializing()); i++ {
-		app.paintShellFrame()
-	}
+	settleChatFind(t, app)
 	status = ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app))
 	if strings.Contains(status, "loading") || !strings.HasSuffix(status, "of 60") {
 		t.Fatalf("find must finish the whole history and count all 60 replies, status=%q", status)
