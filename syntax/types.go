@@ -14,6 +14,7 @@ const (
 	MaxDocumentBytes = document.MaxBytes
 	MaxCaptures      = 1 << 20
 	MaxProblems      = 1024
+	MaxStructure     = 65536
 	PreparationLimit = 5 * time.Second
 )
 
@@ -31,6 +32,8 @@ type LanguageID = syntaxdata.LanguageID
 type Kind = syntaxdata.Kind
 type Span = syntaxdata.Span
 type Problem = syntaxdata.Problem
+type Range = syntaxdata.Range
+type Bracket = syntaxdata.Bracket
 type Identity = syntaxdata.Identity
 type Result = syntaxdata.Result
 

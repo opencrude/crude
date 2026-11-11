@@ -102,9 +102,14 @@ func TestInsightCanonicalRevisionSharedAndDetachedSnapshots(t *testing.T) {
 		}
 	}
 	// Returned arrays are detached from the canonical result and other shells.
+	if len(first.Syntax.Selections) == 0 || len(first.Syntax.Brackets) == 0 {
+		t.Fatal("canonical structure absent")
+	}
+	first.Syntax.Selections[0].End = 0
+	first.Syntax.Brackets[0].Mate = 0
 	first.Syntax.Spans[0].End = 0
 	again, err := s.Insight.Snapshot(author, snapshot.ID)
-	if err != nil || again.Syntax.Spans[0].End == 0 {
+	if err != nil || again.Syntax.Spans[0].End == 0 || again.Syntax.Selections[0].End == 0 || again.Syntax.Brackets[0].Mate == 0 {
 		t.Fatalf("snapshot aliases canonical spans: %+v %v", again, err)
 	}
 	receipt := documentEdit(t, s, author, snapshot.ID, "break-syntax", 1, 0, len(snapshot.Text), "package main\nfunc main( {\n")

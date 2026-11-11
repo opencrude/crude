@@ -225,6 +225,10 @@ func DefaultRegistry() *ActionRegistry {
 	for _, a := range defaultActions {
 		r.Register(a)
 	}
+	for _, a := range EditorActions() {
+		def := a.ActionDef
+		r.Register(&def)
+	}
 	return r
 }
 
@@ -400,6 +404,7 @@ var defaultActions = []*ActionDef{
 	{ID: "editor.privateRecovery", Label: "Recover Editor Drafts", Description: "preview and recover retained private drafts and discard backups", Icon: "↺", Category: "File"},
 
 	// ─── Edit ────────────────────────────────────────────────────────
+	{ID: "edit.actions", Label: "Editor actions", Category: "Edit", FocusContext: "editor", Bindings: []KeyBinding{{Key: "alt+/"}}, HintKey: "Alt+/"},
 	{
 		ID:           "edit.undo",
 		Label:        "Undo Typing",
@@ -473,56 +478,6 @@ var defaultActions = []*ActionDef{
 		Icon:         "⇶",
 		Category:     "Edit",
 		FocusContext: "editor",
-	},
-	{
-		ID:           "edit.moveLineUp",
-		Label:        "Move Line Up",
-		Description:  "move the current line or selection up",
-		Icon:         "⇡",
-		Category:     "Edit",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "alt+up"}, {Mod: tea.ModAlt, Code: int32(tea.KeyUp)}},
-		HintKey:      "Alt+Up",
-	},
-	{
-		ID:           "edit.moveLineDown",
-		Label:        "Move Line Down",
-		Description:  "move the current line or selection down",
-		Icon:         "⇣",
-		Category:     "Edit",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "alt+down"}, {Mod: tea.ModAlt, Code: int32(tea.KeyDown)}},
-		HintKey:      "Alt+Down",
-	},
-	{
-		ID:           "edit.duplicateLine",
-		Label:        "Duplicate Line",
-		Description:  "duplicate the current line or selection",
-		Icon:         "⊕",
-		Category:     "Edit",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+shift+d"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'd'}},
-		HintKey:      "Ctrl+Shift+D",
-	},
-	{
-		ID:           "edit.deleteLine",
-		Label:        "Delete Line",
-		Description:  "delete the current line or selected lines",
-		Icon:         "✂",
-		Category:     "Edit",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+shift+k"}, {Mod: tea.ModCtrl | tea.ModShift, Code: 'k'}},
-		HintKey:      "Ctrl+Shift+K",
-	},
-	{
-		ID:           "edit.toggleComment",
-		Label:        "Toggle Line Comment",
-		Description:  "comment or uncomment the current line or selection",
-		Icon:         "#",
-		Category:     "Edit",
-		FocusContext: "editor",
-		Bindings:     []KeyBinding{{Key: "ctrl+/"}, {Key: "ctrl+_"}},
-		HintKey:      "Ctrl+/",
 	},
 	{
 		ID:           "tree.refresh",

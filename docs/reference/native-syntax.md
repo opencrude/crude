@@ -79,6 +79,24 @@ source-qualified [Insight diagnostic store](editor.md#shared-diagnostic-facts).
 Other semantic request families, complete project context and the general fact
 graph remain open.
 
+## Source structure for editor motion
+
+The existing parse worker also projects named-node selection intervals and
+matched delimiter endpoints. Ranges use exclusive source bytes; bracket endpoints
+are sorted source offsets with reciprocal mates. Highlight/lexical classification
+excludes strings and comments; crossing or unmatched delimiters do not become
+matches. Chroma-backed surfaces use that same bounded endpoint builder with their
+own full-document lexical spans. No parser runs during input or paint.
+
+Each result is limited to 65,536 named ranges and 65,536 delimiter endpoints.
+`StructureTruncated` reports the limit without erasing valid lexical coverage.
+The workspace's unchanged 16 MiB result budget includes both arrays. Snapshots
+clone them; codecs carry them as neutral values, without native handles.
+Only an exact current source can drive selection or bracket motion. A private
+parse may supply current draft structure; mapped old ink cannot. Paint looks up
+the adjacent delimiter by binary search and projects two cells through normal
+source geometry, not a document scan per frame.
+
 ## Selected grammar data
 
 Only explicit grammar/scanner modules are linked:
@@ -121,6 +139,9 @@ options occupy C-owned memory for the cursor lifetime; re-exec/Close releases
 their Go handle and storage. Logger replacement/close releases its old handle,
 and custom input buffers are freed. The regression observes actual callback
 payload collection and invokes query callbacks after GC, not a proxy count.
+Structural traversal uses `TreeCursor.NodeValue`, borrowing the same tree lifetime
+without a Go heap object for each visited node; its allocation/identity regression
+and the unchanged native-preparation gate cover that path.
 See `third_party/go-tree-sitter/CRUDE.md`.
 
 Do not remove the module replacement or substitute a runtime/grammar ABI

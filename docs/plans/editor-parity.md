@@ -1,6 +1,6 @@
 # Complete Editor Experience
 
-> Status: ACTIVE HANDOFF. One target experience, not a phased release plan.
+> Status: ACTIVE IMPLEMENTATION. One target experience, not a phased release plan.
 > The defect fixes listed below are implemented; the remaining contracts are
 > work to do. A checked-in plan is not evidence that a feature exists.
 
@@ -9,7 +9,8 @@
 The user wants a dependable editor comparable to VS Code and JetBrains for
 real editing tasks, not a list of advertised features or a collection of
 language-specific hacks. They explicitly asked us to hunt beyond their examples,
-fix what can be closed well, and specify the rest for other agents.
+finish the workflows, including general JetBrains-style commands and motions.
+The latest request is to continue implementation, not stop at another handoff.
 
 Treat the open requirements below as one acceptance contract. Work can be split
 by owner, but do not call the editor complete until the integrated journeys pass.
@@ -53,11 +54,35 @@ hints, code actions, reviewed rename, manual formatting and format-on-manual-sav
 Extend these owners rather than building replacements.
 
 The audit found no integrated folding, multi-cursor editing, wrap projection,
-indent guides, bracket matching, EditorConfig resolver, user template library,
-semantic token projection, selection expansion, linked editing or CodeLens.
+indent guides, EditorConfig resolver, user template library,
+semantic token projection, linked editing or CodeLens.
 Some LSP method constants exist in the vendored transport; a constant is not a
 working workspace/shell workflow. AI literal ghost projection and budget libraries
 exist, but a shipped automatic inference service does not follow from them.
+
+## Everyday commands and motion
+
+The latest user request prioritizes implementation over another handoff. Ctrl+D
+means Duplicate line/selection. Tab accepts one visible supported suggestion
+without choosing it first; neither example limits this work.
+
+Implemented and verified: one typed native action executor for
+line/text operations, Ctrl+D, join, line-above/below, case/sort/reverse/transpose,
+line selection, paragraph/name-part motions and selection expansion/shrink.
+The editor menu, searchable **Editor actions** and exact-view semantic commands
+share it. Deferred actions retain recoverable identity behind shared Undo.
+
+A sole visible supported completion row accepts Tab through its original-object
+path, including fuzzy matches, snippets and imports. Enter and the acceptance
+preference keep their distinct behavior. Current native node ranges and
+lexically qualified bracket endpoints support structural selection, bracket
+navigation and matched-delimiter paint. Canonical results cross the generated
+wire; private results stay in the existing syntax worker.
+
+Connected/history/recovery/source-fencing checks, native captures at both sizes,
+ordinary and focused race coverage, build/lint/docs/site and the unchanged allocation
+gates pass. See [checkpoint evidence](../issues/2026-11-11-editor-polish.md#everyday-commands-and-sole-suggestions-2026-11-11).
+These changes do not complete the remaining sections below.
 
 ## Source geometry and truthful preferences
 
@@ -214,13 +239,14 @@ screen. Assert the actual displayed signature, not only that intent was queued.
 **Owners:** `tui/editor/editops.go`, `tui/editor/movement.go`, source geometry,
 `syntax/`, catalog data, existing document transaction and author undo owners.
 
-- Match bracket pairs and show the matching delimiter without changing source.
-  Smart Enter and closing-delimiter dedent must exclude strings/comments and use
+- Matching-delimiter paint and navigation are implemented through exact syntax
+  results. Finish Smart Enter and closing-delimiter dedent: exclude strings/comments and use
   current syntax/context rules. A stale parser must not rewrite indentation based
   on guessed brackets. Continue comment leaders and language indentation through
   data-driven rules; do not hard-code colon/newline behavior per language.
-- Add expand/shrink selection with a deterministic source-range stack; prefer
-  negotiated semantic selection ranges, then current structural syntax.
+- Extend the implemented deterministic expand/shrink selection stack with
+  negotiated semantic selection ranges. Current native structure and lexical
+  bracket ranges already participate; no stale result may supply a source range.
 - Add Select next occurrence, Select all occurrences, add caret above/below and
   rectangular selection. Use source-byte ranges and one simultaneous edit vector
   in the canonical transaction. Merge overlapping ranges deterministically.

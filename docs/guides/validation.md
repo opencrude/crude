@@ -283,6 +283,32 @@ change.
 
 ## Visual capture
 
+### Editor action and structural-motion acceptance
+
+`TestEditorActionsVisualAcceptance` uses `CRUDE_VISUAL_EDITOR_ACTIONS=1` and
+`CRUDE_EDITOR_ACTIONS_RESULT` with a compiled viewmodel test binary. Run it through
+`scripts/tuishot.sh`, sequentially at 160×40 and 80×24. F3 opens a disposable
+connected document; F4 only observes source, history, focus and painted cells.
+Use ordinary keys to duplicate/Undo, search **Join lines** in Alt+/, apply/Undo,
+jump to the matching bracket, expand twice and shrink once. F9 exits and joins.
+Set `CRUDE_CAPTURE_EVIDENCE` to the result file and follow each F3/F4 with
+`await:EDITOR_ACTIONS_READY phase=N` (N = 1–10). The ready marker is emitted after
+the observer's Update completion, so the next key cannot overtake its boundary.
+The capture script waits for the exact line with a bounded deadline and checks
+that its original product/window is still alive. It does not replay input.
+Both key chords and literal typing clear inherited desktop modifiers for the
+exact capture window. A previous shortcut must not turn typed text into commands.
+The headless counterpart exercises the same sequence. Neither fixture touches
+the user's core or sends an agent prompt.
+
+`TestSoleCompletionVisualAcceptance` uses `CRUDE_VISUAL_SOLE_COMPLETION=1` and
+`CRUDE_SOLE_RESULT`. Drive F4, type `i`, F4, Tab, F4, Ctrl+Z, F4, Ctrl+Y, F4,
+then F9. Follow each F4 with `await:SOLE_READY phase=N` (N = 1–5). The exact
+protocol fixture returns one non-inline snippet plus an import. The observer
+requires no choice keys, original bytes, one-step Undo/Redo, canonical text,
+unchanged disk/draft and joined fixture cleanup. It is deterministic native
+input evidence, not a claim about an installed language server.
+
 ### File-tree delete and visible file changes
 
 `CRUDE_VISUAL_FILE_CHANGES=progress` holds a disposable delete at its safety-copy

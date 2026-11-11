@@ -233,6 +233,10 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 		return m.executePaletteCommand(cmdID)
 	}, m.actionRegistry)
 
+	return m.openCommandPicker(model, "Command Palette")
+}
+
+func (m *App) openCommandPicker(model *commandPaletteModel, title string) (tea.Model, tea.Cmd) {
 	// Labels and shortcuts are short; half the screen, clamped to [52, 72].
 	palW := m.width / 2
 	if palW < 52 {
@@ -264,6 +268,7 @@ func (m *App) toggleCommandPalette() (tea.Model, tea.Cmd) {
 	model.height = palH
 
 	frame := ui.BuildCommandPaletteFrame(m.Theme, ui.CommandPaletteSpec{
+		Title:    title,
 		Items:    model.listItems(),
 		Selected: 0,
 		Width:    palW,

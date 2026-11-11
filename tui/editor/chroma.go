@@ -26,9 +26,11 @@ type syntaxSpan struct {
 }
 
 type syntaxDocument struct {
-	text  string
-	lines []int
-	spans []syntaxSpan
+	selections []syntax.Range
+	brackets   []syntax.Bracket
+	text       string
+	lines      []int
+	spans      []syntaxSpan
 }
 
 type syntaxLine struct {
@@ -345,7 +347,14 @@ func lexSyntax(ctx context.Context, lexer chroma.Lexer, source textSnapshot) (do
 			document.spans = append(document.spans, syntaxSpan{end: offset, kind: token.Type})
 		}
 	}
-	return document, ctx.Err()
+	index := 0
+	document.brackets, _, err = syntax.BracketIndex(ctx, []byte(document.text), func(offset int) bool {
+		for index < len(document.spans) && document.spans[index].end <= offset {
+			index++
+		}
+		return index == len(document.spans) || structuralExcluded(document.spans[index].kind)
+	})
+	return document, err
 }
 
 func syntaxSource(ctx context.Context, source textSnapshot) (*syntaxDocument, error) {
@@ -382,6 +391,7 @@ func nativeSyntax(ctx context.Context, language syntax.LanguageID, source textSn
 	if err != nil {
 		return nil, err
 	}
+	document.selections, document.brackets = result.Selections, result.Brackets
 	document.spans = make([]syntaxSpan, len(result.Spans))
 	for i, span := range result.Spans {
 		document.spans[i] = syntaxSpan{end: int(span.End), kind: rendering.SyntaxToken(span.Kind)}

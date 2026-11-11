@@ -28,6 +28,13 @@ func (tc *TreeCursor) Node() *Node {
 	return newNode(C.ts_tree_cursor_current_node(&tc._inner))
 }
 
+// NodeValue reads the current node without a heap allocation per visit. The
+// value borrows the tree just like Node; it must not outlive that tree. A live
+// cursor always has a current node, including when traversal cannot advance.
+func (tc *TreeCursor) NodeValue() Node {
+	return Node{_inner: C.ts_tree_cursor_current_node(&tc._inner)}
+}
+
 // Get the numerical field id of this tree cursor's current node.
 //
 // See also [TreeCursor.FieldName].

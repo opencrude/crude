@@ -7,6 +7,28 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Structural editor analysis (2026-11-11)
+
+The new named-node selection and bracket index runs in the existing source
+analysis worker, never Update/Paint. Its first preparation gate failed at 65
+allocations for 200 lines (unchanged ceiling: 64). An allocation profile attributed
+33% of sampled objects to the binding's heap-allocated current node. The value
+accessor removes per-visit Go objects while retaining the original tree lifetime.
+The independent binding regression checks identity and zero per-visit allocations.
+
+Linux amd64, Go 1.27.4, i7-10750H, three quiet 300 ms repetitions:
+
+| Stage | Before structure | With structure and value traversal |
+|---|---|---|
+| Fresh preparation, 200-line docstring | 64.6–66.7 µs, 8,116–8,117 B, 41 allocs | 85.4–87.1 µs, 8,413–8,414 B, 48 allocs |
+| Fresh preparation, 20,000-line docstring | 2.82–2.87 ms, 569,562–569,579 B, 60 allocs | 3.58–3.63 ms, 569,868–569,921 B, 67 allocs |
+| Incremental full projection, 20,000 lines | 3.18–3.21 ms, 569,658–569,664 B, 62 allocs | 3.91–3.94 ms, 569,947–569,960 B, 69 allocs |
+
+The added source scan has a measured cost; this is not a parse-latency improvement
+or a physical-display guarantee. The complete existing allocation/work-budget gate
+passes with no ceiling changes. Bracket paint uses binary search over the retained
+index; selection scans only bounded current intervals when the command runs.
+
 ## Typing preserves unchanged line geometry (2026-11-10)
 
 The dense snippet gate exposed 1,767 allocations per 64-mirror typing-and-grid

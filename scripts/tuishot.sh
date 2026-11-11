@@ -8,6 +8,7 @@
 #   key:<xdotool-key-spec>    key:ctrl+alt+p  key:Down  key:Escape  key:shift+Down
 #   quit:<key-spec>          expected clean product exit; must be the final step
 #   await-exit              wait for an autonomous journey's clean exit (last step)
+#   await:<literal line>    wait for this exact line in CRUDE_CAPTURE_EVIDENCE
 #   record:<seconds>        lossless native video of this exact window (FFMPEG_BIN)
 #   type:<literal text>       type:main.go
 #   click:<col>,<row>[,<btn>] cell coords, btn 1=left 2=mid 3=right 4=whlup 5=whldn
@@ -41,6 +42,11 @@ STEP_WAIT="${STEP_WAIT:-0.7}"
 FONT_SIZE="${FONT_SIZE:-9}"
 CRUDE_ARGS="${CRUDE_ARGS:-}"
 KEEP_OPEN="${KEEP_OPEN:-0}"
+# A retained marker from an older run cannot satisfy this capture's waits.
+if [ -n "${CRUDE_CAPTURE_EVIDENCE:-}" ] && [ -s "$CRUDE_CAPTURE_EVIDENCE" ]; then
+  echo 'ERROR: use an empty or new CRUDE_CAPTURE_EVIDENCE file for this capture' >&2
+  exit 1
+fi
 TERMINAL="${TERMINAL:-alacritty}"
 case "$TERMINAL" in alacritty|kitty|tilix|wezterm) ;; *) echo "ERROR: unsupported capture terminal: $TERMINAL" >&2; exit 1 ;; esac
 if [ -z "${TERM_NAME:-}" ]; then
@@ -257,6 +263,23 @@ await_exit() {
   echo 'verified expected clean product exit'
 }
 
+# Native acceptance can publish an observation before the next input is safe.
+# Wait for its explicit ready marker instead of guessing at async receipt timing.
+await_evidence() {
+  local marker="$1" evidence="${CRUDE_CAPTURE_EVIDENCE:-}"
+  [ -n "$evidence" ] && [ -n "$marker" ] || { echo 'ERROR: await requires CRUDE_CAPTURE_EVIDENCE and a marker' >&2; exit 1; }
+  for _ in $(seq 1 600); do
+    assert_running
+    if [ -f "$evidence" ] && grep -Fqx -- "$marker" "$evidence"; then
+      echo "verified evidence: $marker"
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "ERROR: capture did not publish: $marker" >&2
+  exit 1
+}
+
 shot boot
 
 for step in "$@"; do
@@ -271,6 +294,11 @@ for step in "$@"; do
     await-exit)
       [ "$step" = "${!#}" ] || { echo 'ERROR: await-exit must be the final capture step' >&2; exit 1; }
       await_exit
+      ;;
+    await:*)
+      marker="${step#await:}"
+      await_evidence "$marker"
+      sleep "$STEP_WAIT"; shot "await-$(slug "$marker")"
       ;;
     record:*)
       duration="${step#record:}"
@@ -293,7 +321,7 @@ for step in "$@"; do
     type:*)
       txt="${step#type:}"
       focus_keys
-      xdotool type --delay 45 -- "$txt"
+      xdotool type --clearmodifiers --delay 45 -- "$txt"
       sleep "$STEP_WAIT"; shot "type-$(slug "$txt")" ;;
     click:*)
       IFS=',' read -r c r b <<<"${step#click:}"

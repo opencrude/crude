@@ -104,6 +104,16 @@ Capability registration toggles retain human-owned settings authority through
 generic controls; opening, searching and selecting never grants activation,
 server launch or tool access.
 
+`editor.actions` reads the focused document's native action list and view token,
+without exporting source text. `editor.action` requires that token plus the normal
+shell revision/open-epoch and exact document ID. The token binds view identity,
+source revision, cursor/selection, read-only state and outstanding history.
+It cannot retarget another pane or replay after a source change. The typed native
+operation is the same as keyboard/menu input; mutating actions report **admitted**,
+not a canonical commit or Save. The document receipt/topic still has to settle.
+Read-only views reject mutations but allow navigation and selection. Deferred
+commands retain their exact action identity in private recovery.
+
 Numeric snippet alternatives resolve Write only against the exact open picker,
 native list and interaction owner. Semantic activation shares the ordinary
 editor choice handler and its source/selection/invocation fences. A connected

@@ -152,6 +152,15 @@ func (s *Screen) TopID() string {
 	return ""
 }
 
+// SoleID identifies one visible, selectable row. Duplicate identities cannot
+// become an implicit choice, even when their labels look equal.
+func (s *Screen) SoleID() string {
+	if len(s.entries) != 1 || s.byID[s.entries[0].ID] < 0 {
+		return ""
+	}
+	return s.entries[0].ID
+}
+
 // Select chooses one row, as Down or a click would.
 func (s *Screen) Select(id string) bool {
 	i, ok := s.byID[id]

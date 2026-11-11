@@ -386,9 +386,16 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.actionRegistry != nil {
 		if match := m.actionRegistry.MatchContext("editor", msg); match != nil {
 			m.closeEditorGhost()
+			if _, native := ui.FindEditorAction(match.ID); native {
+				m.closeCompletionPopup()
+				m.closeSignatureHelp()
+				return m, m.EditorState.Editor.HandleEvent(editor.ActionMsg{ID: match.ID})
+			}
 			switch match.ID {
 			case "file.save":
 				return m, m.requestActiveEditorSave(workspace.DocumentSaveManual)
+			case "edit.actions":
+				return m, m.openEditorActions()
 			case "edit.undo":
 				m.EditorState.Editor.Undo()
 				return m, nil

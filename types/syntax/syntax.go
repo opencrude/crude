@@ -40,6 +40,13 @@ type Span struct {
 	Kind       Kind
 }
 
+// Range is a named syntax node's exclusive UTF-8 source interval.
+type Range struct{ Start, End uint32 }
+
+// Bracket is one matched ASCII delimiter and its mate, sorted by Offset.
+// Strings/comments never contribute endpoints; unmatched delimiters are absent.
+type Bracket struct{ Offset, Mate uint32 }
+
 type Problem struct {
 	Start, End uint32
 	Missing    bool
@@ -56,10 +63,13 @@ type Identity struct {
 // Result contains no native handles. Its slices belong to the recipient.
 // Syntax problems are not compiler diagnostics or project coverage.
 type Result struct {
-	Revision          uint64
-	Identity          Identity
-	Spans             []Span
-	Problems          []Problem
-	ProblemsTruncated bool
-	HasError          bool
+	Revision           uint64
+	Identity           Identity
+	Spans              []Span
+	Selections         []Range
+	Brackets           []Bracket
+	StructureTruncated bool
+	Problems           []Problem
+	ProblemsTruncated  bool
+	HasError           bool
 }

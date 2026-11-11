@@ -182,6 +182,59 @@ indentation-adjusting insertion modes, dynamic capability registration,
 Emmet/postfix integration and the broader parity plan are not delivered by this
 continuation. No local model is installed or used.
 
+## Everyday commands and sole suggestions (2026-11-11)
+
+The native editor now owns one typed command path shared by keys, the context
+menu, the searchable **Editor actions** picker (Alt+/), and exact-view semantic
+controls. Ctrl+D duplicates; line join/insert/move/delete, case conversion,
+sort/reverse/transpose, paragraph/name-part motion, Select Line and reversible
+selection growth use the same transaction and history. Deferred commands retain
+an action ID behind shared Undo and survive private recovery. Current native
+node ranges and lexically qualified bracket endpoints provide structural selection,
+matching-bracket movement and paint; stale syntax cannot supply source locations.
+
+Tab accepts the sole visible supported completion without Down, including a
+non-inline fuzzy match, snippet fields and additional import edits. The original
+server item supplies the edit; labels do not. Enter, multiple choices, stale rows,
+and the acceptance preference retain their distinct behavior.
+
+- Direct and connected regressions cover text/selection bytes, CRLF/graphemes,
+  read-only/no-op cases, two shells, author Undo/Redo and Save, stale picker/menu
+  tokens, exact-document controls and queued-action recovery. The original
+  missing Ctrl+D, sole-row acceptance and structural-selection failures were
+  reproduced before implementation.
+- Linux native captures at 160×40 and 80×24 verify all ten action boundaries and
+  all five sole-completion boundaries. Inspected frames show duplicate/Undo,
+  a filtered Join lines picker, bracket paint, expansion/shrink, the unchosen
+  single row and the accepted snippet/import. The sole fixture uses a deterministic
+  protocol reply to isolate this path; it is not installed-server evidence.
+  Each fixture records successful joined cleanup. Windows were closed; the user's
+  current core was not stopped or replaced.
+- The first captures exposed two driver defects: inherited desktop modifiers
+  changed literal typing into shortcuts, and input could overtake an observer's
+  completion. The shared script now clears modifiers for literal text and waits
+  for fresh exact ready markers from the original live capture. Rejected captures
+  are not passes. Alt+Q is the deliverable shrink shortcut; shifted arrows extend
+  name-part movement without relying on ambiguous shifted Alt-letter sequences.
+- The full ordinary suite passed. Final affected editor/UI/syntax packages and
+  connected journeys pass after the last changes. Focused race checks and the
+  separate native binding suite pass, with no race reports. Build, fresh generated
+  codecs/cohort, lint (zero issues), design/names/docs and site checks pass.
+  Windows amd64 and macOS arm64 native-parser component builds pass; they do not
+  establish native Windows/macOS UI or GC acceptance.
+- The first allocation gate failed: structural traversal allocated a Go node per
+  visit (65 allocations versus the unchanged 64 ceiling in the small preparation
+  fixture). Profiling identified the binding allocation. `TreeCursor.NodeValue`
+  now borrows the same native tree by value, with an identity/zero-allocation
+  regression. Final preparation measures 48 allocations for 200 lines and 67
+  for 20,000, below the unchanged 64/96 ceilings. The complete benchmark gate
+  passes. Timing and incremental costs are recorded in
+  [performance baselines](../reference/performance-baselines.md#structural-editor-analysis-2026-11-11).
+
+This closes the everyday-command checkpoint, not all editor parity. Configurable
+geometry, folding/wrapping, multiple carets, remaining negotiated LSP workflows
+and the original Windows GC finding remain open. No local model was added.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers

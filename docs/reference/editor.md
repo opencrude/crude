@@ -68,6 +68,43 @@ an external disk conflict. See [private shared-editor recovery](core-client-prot
   parking the cursor on blank lines — and SA4004 flagged it as a dead loop.
   When a "dead loop" warning appears, check for a swallowed `continue` first.
 
+### Native editing actions
+
+The editor owns one typed action path. Keyboard shortcuts, the editor menu,
+**Editor actions** (Alt+/), and exact-view semantic controls use the same
+operations. The searchable action picker reuses the command-palette frame and
+filter; the global palette still omits context-bound commands. A retired picker
+or menu cannot edit a different view or a newer source/selection.
+
+- Ctrl+D duplicates the line or selection; Ctrl+Shift+D remains an alternate.
+  Alt+Up/Down moves lines; Ctrl+Shift+K deletes them. Ctrl+Shift+J joins lines
+  with one space. Joining is lexical, not a language-aware rewrite.
+- Shift+Enter starts a line below; Ctrl+Alt+Enter starts one above. On terminals
+  without modified Enter, the shared chord labels show Ctrl+Alt+O and
+  Ctrl+Alt+Shift+O. Each uses the document's indentation and line terminator.
+- Ctrl+L selects the line, then extends by a line on repetition. Alt+W expands
+  the selection; Alt+Q restores its exact prior range and caret. Current
+  native syntax nodes and lexical bracket interiors precede line/paragraph/file
+  ranges by containment. Independent selection, movement, source or buffer changes
+  retire the growth chain. No stale parse is used as a source range.
+- Ctrl+Up/Down moves between paragraph boundaries; Shift extends the selection.
+  Alt+B/F moves across identifier parts, including camel case, acronym boundaries,
+  underscores and digits without splitting a grapheme. Alt+Shift+Left/Right
+  extends the selection (Shift+Alt+F remains Format Document).
+- Ctrl+Alt+B goes to the matching bracket; Shift extends the selection. Exact
+  syntax/lexical results exclude strings and comments. Both delimiter cells use
+  restrained accent ink. Missing or stale results never manufacture a match.
+- The action picker also offers case conversion, line sorting/reversal,
+  character transposition, indentation and comment toggling. Text mutations
+  are one native transaction with one Undo step; read-only views expose only
+  selection and movement. Ctrl+W still closes; Ctrl+Y still redoes.
+
+An action queued behind connected Undo retains its action ID in private recovery
+alongside keys and paste. Recovery validates the ID and reconciles the original
+history receipt before replay; it does not turn an old menu into authorization.
+The tests cover native keys, picker filtering, menus, exact-view controls,
+Unicode/CRLF, two shells, imported snippets, history and deferred recovery.
+
 ### Indentation and block-only comments
 
 Tab, Enter, Backspace and selected-line indentation share a detected source
@@ -997,14 +1034,20 @@ revision, caret, focus, feature generation, server instance, workspace changes a
 pending intent. Ghost-text candidates of other producers retain their keys;
 completion's own inline text does not. An active snippet does not block
 suggestions: typing in a field requests them like any other typing. In a field,
-Tab accepts visible inline text or a chosen row; with neither, Tab moves to the
-next field. Accepting a plain suggestion inside the active field is an ordinary
+Tab accepts visible inline text, a chosen row or the sole visible supported
+suggestion. With none of these, Tab moves to the next field. Accepting a plain suggestion inside the active field is an ordinary
 edit of that field and keeps the snippet. A suggestion with its own fields
 replaces the snippet.
 The Code Intelligence **Suggestions** settings control automatic requests, delay
 (200 ms by default; zero is immediate), and acceptance by Tab, Enter or both.
 With automatic requests off, Ctrl+Space remains available. Other keys retain
 normal indentation/newline behavior, and suggestions never write the file to disk.
+
+A sole visible suggestion accepts Tab without Down first, including a fuzzy
+match, a snippet and an import-bearing row. This selects the exact original ID
+and uses the normal validated insertion, never the display label. Multiple
+non-inline choices remain passive; Enter remains a newline until a row is chosen.
+The Enter-only preference still leaves Tab to the editor. Stale rows cannot accept.
 
 The core retains the original array or CompletionList item, original index and
 opaque row ID, not a label-keyed reconstruction. Equal labels remain independent

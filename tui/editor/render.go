@@ -76,6 +76,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	buf.Fill(blankCell)
 	sbX := sw + textW
 	e.remapDiagnosticPaint()
+	bracketFrom, bracketTo, hasBracket := e.matchingBracket()
 	e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
 	for y := 0; y < bodyH; y++ {
 		bufY := y
@@ -182,6 +183,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						sourceCol = inline.SourceWidth + max(0, vCol-inline.DisplayWidth)
 					}
 				}
+				bracketCell := hasBracket && (lineIdx == bracketFrom.Line && sourceCol == bracketFrom.Col || lineIdx == bracketTo.Line && sourceCol == bracketTo.Col)
 				sev := diagSeverityAtCol(diags, sourceCol)
 				diagAttr := cell.Attrs(0)
 				var diagFg cell.Color
@@ -229,6 +231,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							}
 							if sev > 0 {
 								fg = diagFg
+							}
+							if bracketCell {
+								fg = e.tokens.Color(ui.ColorAccent)
+								diagAttr |= cell.AttrBold | cell.AttrUnderline
 							}
 							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bgColor, diagAttr, blankCell)
 						}

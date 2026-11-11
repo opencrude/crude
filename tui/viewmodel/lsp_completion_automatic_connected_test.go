@@ -27,6 +27,7 @@ type typingCompletionRuntime struct {
 	base       renameConnectedRuntime
 	calls      []typingCompletionCall // guarded by base.mu
 	incomplete bool
+	response   string
 }
 
 type typingCompletionClient struct {
@@ -54,6 +55,9 @@ func (c *typingCompletionClient) RequestCompletions(_ context.Context, path stri
 	]`
 	if strings.HasPrefix(d.text, "device.") {
 		raw = `[{"label":"run","kind":2,"sortText":"1"},{"label":"reset","kind":2,"sortText":"2"}]`
+	}
+	if r.response != "" {
+		raw = r.response
 	}
 	if r.incomplete {
 		raw = `{"isIncomplete":true,"items":` + raw + `}`

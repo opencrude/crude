@@ -87,6 +87,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-11 | Continue IDE improvements autonomously after the Go toolchain update. Preserve the faster editing experience and keep working through the editor handoff without stopping for small check-ins. | User |
 | 2026-11-11 | The HTML, C and Lisp constructs were examples, not a requirement for a custom three-template library. Complete the existing LSP integration and reuse established expansion tools where justified. No local model now; a possible custom-trained model belongs to later work. Use inline commands, especially Python, for coherent batched edits. | User |
 
+| 2026-11-11 | After restarting the core, continue implementation through the editor gaps instead of stopping at an LSP slice. Add JetBrains-style general editing actions and motions. Ctrl+D duplicates, and Tab accepts a sole visible suggestion without Down first; these are examples, not the scope boundary. Retain no-local-model and shared-owner constraints. | User |
+
 ### Open decisions
 
 None. The 2026-11-03 setup questions are answered in
@@ -117,18 +119,32 @@ them; they are not a template for language-specific modules.
 
 ## Current checkpoint
 
-**LSP continuation verified (2026-11-11).** The scoped completion/signature
-checkpoint is [banked below](#lsp-assistance-continuation-2026-11-11). It does not
-complete the [editor parity plan](editor-parity.md) or establish a fix for the
-[Windows GC crash](../issues/2026-11-11-workspace-gc-crash.md). The running user
-core was not restarted or replaced for acceptance.
+**Complete editor interactions (2026-11-11).** The user restarted the core and
+requests implementation through the remaining experience, not another handoff.
+Use [Complete editor experience](editor-parity.md) as the target contract.
 
-Remaining editor work stays in that existing plan. Emmet/postfix is an evaluation,
-not shipped support; commit-character acceptance, indentation-adjusting insertion
-modes, dynamic registration and broader structural/semantic workflows remain
-open. No local model or separate completion engine is authorized by this slice.
-Write the next bounded implementation checkpoint here before expanding the code.
-The earlier checkpoint records below retain their original scope and evidence.
+The shared native actions, Ctrl+D, sole-suggestion Tab, structural selection and
+matching-bracket checkpoint is implemented and verified. Native captures pass at
+160×40 and 80×24; connected/recovery/Undo, ordinary/focused race, build/lint/docs,
+site and the unchanged benchmark gates pass. See
+[everyday editor evidence](../issues/2026-11-11-editor-polish.md#everyday-commands-and-sole-suggestions-2026-11-11).
+
+Next, consume the existing editor preferences through the shared editor owners:
+line numbers, syntax colors and whitespace paint, then geometry-neutral tab
+policy and the single wrap/fold row projection. Keep source bytes, selections,
+Undo, recovery, diagnostic actions and linked-view identity intact. A stored
+preference with no consumer is not accepted. Do not add another Settings page.
+
+Continue structural editing and the remaining geometry/preferences, folding and
+semantic workflows with their existing owners. No local model, language-named
+branch, second document/history engine or UI-thread native parsing. The open
+Windows GC finding stays explicit; Linux passes are not a Windows fix.
+
+Acceptance: native keys plus menu/control routes, shared/standalone and read-only
+views, Unicode/CRLF, linked panes, delayed Undo receipts, source replacement,
+server startup/failure, snippets/imports, one-step Undo/Redo, desktop and 80×24
+captures, and unchanged repository/performance gates. Do not claim the complete
+parity plan is finished while an acceptance row is unimplemented or failing.
 
 **Immediate correction: unobtrusive completion and clean gates (2026-11-10).**
 
