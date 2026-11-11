@@ -802,6 +802,11 @@ remain strict; pre-contract cores require their retained original helper, not a
 compatibility decoder. A lost response is an unknown outcome, never permission to
 kill or replay against a replacement owner.
 
+The receiving core owns the busy decision. Building or running a newer CLI does
+not replace that core before it processes the stop. An older core can therefore
+still return its older idle-resource refusal. The caller must not parse refusal
+text to bypass checks or silently change a graceful stop into a forced one.
+
 For a mismatched cohort/schema, startup verifies and invokes only the retained
 owner image with `--core-stop`, passing the exact generation as `ExpectedOwner`.
 It does not decode foreign application traffic, force shutdown or kill the core.
