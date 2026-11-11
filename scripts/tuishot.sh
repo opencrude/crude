@@ -326,11 +326,11 @@ for step in "$@"; do
     click:*)
       IFS=',' read -r c r b <<<"${step#click:}"
       b="${b:-1}"
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click "$b"
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click --clearmodifiers "$b"
       sleep "$STEP_WAIT"; shot "click-${c}_${r}_${b}" ;;
     doubleclick:*)
       IFS=',' read -r c r <<<"${step#doubleclick:}"
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click --repeat 2 --delay 120 1
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click --clearmodifiers --repeat 2 --delay 120 1
       sleep "$STEP_WAIT"; shot "doubleclick-${c}_${r}" ;;
     move:*)
       IFS=',' read -r c r <<<"${step#move:}"
@@ -352,13 +352,13 @@ for step in "$@"; do
       IFS=',' read -r c r n <<<"${step#wheel:}"
       btn=5; [ "${n:-1}" -lt 0 ] && { btn=4; n=$(( -n )); }
       xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
-      for _ in $(seq 1 "${n:-1}"); do xdotool click "$btn"; sleep 0.05; done
+      for _ in $(seq 1 "${n:-1}"); do xdotool click --clearmodifiers "$btn"; sleep 0.05; done
       sleep "$STEP_WAIT"; shot "wheel-${c}_${r}_${btn}" ;;
     hwheel:*)
       IFS=',' read -r c r n <<<"${step#hwheel:}"
       btn=7; [ "${n:-1}" -lt 0 ] && { btn=6; n=$(( -n )); }
       xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
-      for _ in $(seq 1 "${n:-1}"); do xdotool click "$btn"; sleep 0.03; done
+      for _ in $(seq 1 "${n:-1}"); do xdotool click --clearmodifiers "$btn"; sleep 0.03; done
       sleep "$STEP_WAIT"; shot "hwheel-${c}_${r}_${btn}" ;;
     drag:*)
       IFS=',' read -r c1 r1 c2 r2 <<<"${step#drag:}"

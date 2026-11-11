@@ -6,6 +6,10 @@ import (
 )
 
 func (e *Editor) moveUp() {
+	if e.usesRows() {
+		e.moveVisualRows(-1)
+		return
+	}
 	if e.cursor.Line <= 0 {
 		return
 	}
@@ -19,6 +23,10 @@ func (e *Editor) moveUp() {
 }
 
 func (e *Editor) moveDown() {
+	if e.usesRows() {
+		e.moveVisualRows(1)
+		return
+	}
 	maxLine := e.buf.LineCount() - 1
 	if maxLine < 0 {
 		maxLine = 0
@@ -46,17 +54,32 @@ func (e *Editor) clearGoal() {
 
 func (e *Editor) moveLeft() {
 	e.clearGoal()
+	if e.wrapsRows() && !e.wrapBefore {
+		row, col := e.visualPosition(e.cursor, false)
+		if col == 0 && e.rowAt(row).index > 0 {
+			e.wrapBefore = true
+			e.ensureCursorVisible()
+			return
+		}
+	}
+	e.wrapBefore = false
 	e.cursor = e.buf.previousPosition(e.cursor)
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) moveRight() {
 	e.clearGoal()
+	if e.wrapsRows() && e.wrapBefore {
+		e.wrapBefore = false
+		e.ensureCursorVisible()
+		return
+	}
 	e.cursor = e.buf.nextPosition(e.cursor)
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) moveWordLeft() {
+	e.wrapBefore = false
 	e.clearGoal()
 	e.cursor = e.buf.snapPosition(e.cursor)
 	if e.cursor.Col <= 0 && e.cursor.Line == 0 {
@@ -107,6 +130,7 @@ func (e *Editor) moveWordLeft() {
 }
 
 func (e *Editor) moveWordRight() {
+	e.wrapBefore = false
 	e.clearGoal()
 	e.cursor = e.buf.snapPosition(e.cursor)
 	runes, columns, ri := e.wordGeometry(e.cursor.Line, e.cursor.Col)
@@ -190,6 +214,19 @@ func colToRuneIdx(tabW int, runes []rune, col int) int {
 // moveToLineStart implements Smart Home: the cursor toggles between the
 // first non-whitespace column and column 0, from either direction.
 func (e *Editor) moveToLineStart() {
+	if e.wrapsRows() {
+		row, _ := e.visualPosition(e.cursor, e.wrapBefore)
+		r := e.rowAt(row)
+		start := e.sourceColumn(r.line, r.start)
+		if r.index > 0 && (e.cursor.Col != start || e.wrapBefore) {
+			e.cursor.Col = start
+			e.wrapBefore = false
+			e.clearGoal()
+			e.ensureCursorVisible()
+			return
+		}
+	}
+	e.wrapBefore = false
 	e.clearGoal()
 	b, err := e.buf.Line(e.cursor.Line)
 	if err != nil {
@@ -216,12 +253,28 @@ func (e *Editor) moveToLineStart() {
 }
 
 func (e *Editor) moveToLineEnd() {
+	if e.wrapsRows() && !e.wrapBefore {
+		row, _ := e.visualPosition(e.cursor, false)
+		r := e.rowAt(row)
+		if r.continues {
+			e.cursor.Col = e.sourceColumn(r.line, r.end)
+			e.wrapBefore = true
+			e.clearGoal()
+			e.ensureCursorVisible()
+			return
+		}
+	}
+	e.wrapBefore = false
 	e.clearGoal()
 	e.cursor.Col = e.lineVisualWidth(e.cursor.Line)
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) pageUp() {
+	if e.usesRows() {
+		e.moveVisualRows(-max(1, e.bodyHeight()-1))
+		return
+	}
 	if !e.goalSet {
 		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
 		e.goalSet = true
@@ -239,6 +292,10 @@ func (e *Editor) pageUp() {
 }
 
 func (e *Editor) pageDown() {
+	if e.usesRows() {
+		e.moveVisualRows(max(1, e.bodyHeight()-1))
+		return
+	}
 	if !e.goalSet {
 		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
 		e.goalSet = true
@@ -260,12 +317,14 @@ func (e *Editor) pageDown() {
 }
 
 func (e *Editor) goToDocStart() {
+	e.wrapBefore = false
 	e.clearGoal()
 	e.cursor = Position{Line: 0, Col: 0}
 	e.ensureCursorVisible()
 }
 
 func (e *Editor) goToDocEnd() {
+	e.wrapBefore = false
 	e.clearGoal()
 	lastLine := e.buf.LineCount() - 1
 	if lastLine < 0 {

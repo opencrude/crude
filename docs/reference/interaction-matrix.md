@@ -199,6 +199,8 @@ window derive from current bytes, not replayed change guesses.
 | Undo / redo | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z | Atomic editing commands, adjacent typing groups; exact bytes and private caret/selection where valid. Pending shared history preserves every gesture and subsequent input order |
 | Drag to scroll | Hold text/word/line selection at a viewport edge | Repeats with a stationary pointer in both axes; whole-line gutter drag works too. Release stops immediately and retains editable selection. Cancel, tab unmount, resize, terminal blur and modal takeover stop stale repeats |
 | Move line/selection | Alt+Up / Alt+Down | One undo step each |
+| Fold / unfold block | Alt+- / Alt+= | View-local folds; gutter chevron also toggles. Fold all, Unfold all and Fold level are in Editor actions and semantic controls. Source, dirty state and Undo do not change |
+| Wrapped line motion | Up/Down, PgUp/PgDn, Home/End | One visible-row map with folding. Home/End first reaches the continuation edge, then the logical source edge; pointer and selection use the same source positions |
 | Duplicate line/selection | Ctrl+D; Ctrl+Shift+D alternate | Selected text copies after the selection; otherwise the current line copies below. One Undo step |
 | Delete line(s) | Ctrl+Shift+K | Kitty/CSI-u terminals |
 | Editor actions | Alt+/; editor menu **More editor actions** | Searchable native picker over the exact editor source and selection; globals remain in Command Palette |

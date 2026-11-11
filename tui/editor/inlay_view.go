@@ -8,7 +8,7 @@ func (e *Editor) VisibleSourceLines() (first, last int, ok bool) {
 		return 0, 0, false
 	}
 	first = min(max(0, e.scrollY), e.LineCount()-1)
-	last = min(e.LineCount()-1, first+max(1, e.bodyHeight())-1)
+	last = min(e.LineCount()-1, e.rowAt(e.scrollRow()+max(1, e.bodyHeight())-1).line)
 	return first, last, true
 }
 

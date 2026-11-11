@@ -149,8 +149,49 @@ selection, history, the savepoint or dirty state.
   enter copy, search, save, snippet text, inlays or ghost suggestions. Per-line
   whitespace geometry is cached with the exact source line, not rebuilt per frame.
 
-Soft wrap, EditorConfig and explicit per-file indentation policy remain in the
-active editor plan. Configurable tab geometry does not imply those are implemented.
+- **Word wrap** fits long source lines to the text viewport. Continuations keep
+  their source line number and show a muted continuation mark. Up/Down and page
+  keys move by visible rows; Home/End first use that row, then the source line.
+  A soft boundary has two visual caret locations but never adds a source byte.
+  Horizontal scrolling is absent while wrapped geometry is ready.
+
+EditorConfig and explicit per-file indentation policy remain in the active plan.
+
+### Wrapped and folded rows
+
+`sourceRows` is the one source-line/visible-row index for wrapping and folding.
+Paint, scrollbars, pointer/drag, vertical motion, search/navigation, diagnostics,
+inlay hit testing and popover anchors use it. The unprojected case is its identity
+mapping. Each view owns width and collapsed choices; source/history stay shared.
+A tab may span rows as display padding, but remains one source unit. Other
+multi-cell graphemes remain atomic. Copy and edits contain neither hints nor
+continuation/fold markers.
+
+Fold/Unfold, Fold all/Unfold all and Fold level use the shared native action
+registry, menu, searchable Editor actions and `editor.action` control. The gutter
+chevron stays available with line numbers hidden. The collapsed source header
+shows an ellipsis and hidden-line count. Expanding a parent retains nested choices.
+Current native node ranges and lexically qualified bracket/comment/string spans
+supply ranges; crossing/out-of-bounds ranges are rejected. No stale parse supplies
+new positions, no language-name branch guesses a fold, and there is no advertised
+LSP folding or indentation-only fallback.
+
+Disjoint source changes shift retained folds; changes touching their lines open
+them. Replacements and missing journal entries discard them. Navigation into hidden
+source reveals it; typing at a collapsed boundary opens the affected block. Source
+selection still spans hidden lines. Docked panes persist separate collapsed choices
+through the existing private client view memory, qualified by exact source hash;
+changed file bytes cannot inherit stale folds. Closing a view does not change peers.
+
+Cold row metrics run in a cancellable source worker on the existing editor worker
+pool. Exact buffer/revision/tab-width/generation checks reject late work. Main and
+floating editor job drains deliver completions and shutdown joins both row and
+syntax jobs. Source and ordinary unwrapped editing remain usable while cold work
+is pending. Incremental changes up to 64 KiB of affected source lines remeasure only
+those lines; larger changes take the owned worker. Width-only reflow reuses metrics.
+Painting folded content prepares colors only for actually visible source lines,
+not the whole hidden interval. Uniform wrapped rows use arithmetic runs rather
+than one object per displayed row.
 
 ## Go to line
 

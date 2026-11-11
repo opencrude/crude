@@ -36,6 +36,10 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 		e.beginUndoGroup()
 		defer e.endUndoGroup()
 	}
+	if strings.HasPrefix(string(msg.ID), "view.fold") || strings.HasPrefix(string(msg.ID), "view.unfold") {
+		e.foldAction(msg.ID)
+		return nil
+	}
 	switch msg.ID {
 	case "edit.duplicateLine":
 		e.duplicateLineOrSelection()
@@ -425,5 +429,6 @@ func (e *Editor) ActionToken() string {
 	start, end, valid := e.SourceByteRange()
 	state := e.DocumentState()
 	value := fmt.Sprintf("%p:%p:%d:%s:%d:%d:%d:%t:%d:%d:%t:%t:%t:%d:%d:%t:%t:%t", e, e.buf, e.Revision(), state.DocumentID, e.cursor.Line, e.cursor.Col, start, valid, end, queued, e.selecting, e.readOnly, e.open, state.Revision, state.PendingEdits, state.InFlight, state.UndoPending, state.HistoryQueued)
+	value += fmt.Sprintf(":%d", e.FoldGeneration())
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
 }

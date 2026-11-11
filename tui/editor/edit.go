@@ -237,7 +237,7 @@ func (e *Editor) endUndoGroup() {
 }
 
 func (e *Editor) captureViewState() editorViewState {
-	return editorViewState{Cursor: e.buf.positionToOffset(e.cursor), Anchor: e.buf.positionToOffset(e.selAnchor), End: e.buf.positionToOffset(e.selEnd), Selecting: e.selecting, ScrollX: e.scrollX, ScrollY: e.scrollY}
+	return editorViewState{Cursor: e.buf.positionToOffset(e.cursor), Anchor: e.buf.positionToOffset(e.selAnchor), End: e.buf.positionToOffset(e.selEnd), Selecting: e.selecting, ScrollX: e.scrollX, ScrollY: e.scrollY, WrapOffset: e.wrapOffset, WrapBefore: e.wrapBefore}
 }
 
 func (e *Editor) restoreViewState(s editorViewState) {
@@ -246,6 +246,7 @@ func (e *Editor) restoreViewState(s editorViewState) {
 	e.stopPointerSelection()
 	e.selecting = s.Selecting
 	e.scrollX, e.scrollY = s.ScrollX, s.ScrollY
+	e.wrapOffset, e.wrapBefore = s.WrapOffset, s.WrapBefore
 	e.clearGoal()
 }
 

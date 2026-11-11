@@ -44,11 +44,16 @@ func (m *App) drainEditorSyntaxCommands() tea.Cmd {
 		if command := ed.SyntaxCommand(); command != nil {
 			commands = append(commands, command)
 		}
-		if done := ed.SyntaxDone(); done != nil {
-			if m.editorSyntaxJobs == nil {
-				m.editorSyntaxJobs = make(map[<-chan struct{}]*editor.Editor)
+		if command := ed.RowsCommand(); command != nil {
+			commands = append(commands, command)
+		}
+		for _, done := range []<-chan struct{}{ed.SyntaxDone(), ed.RowsDone()} {
+			if done != nil {
+				if m.editorSyntaxJobs == nil {
+					m.editorSyntaxJobs = make(map[<-chan struct{}]*editor.Editor)
+				}
+				m.editorSyntaxJobs[done] = ed
 			}
-			m.editorSyntaxJobs[done] = ed
 		}
 	}
 	m.visitSyntaxEditors(add)
@@ -60,12 +65,16 @@ func (m *App) applyEditorSyntax(msg editor.SyntaxReadyMsg) {
 	if failure := msg.Failure(); failure != "" && m.Feedback != nil {
 		m.Feedback.NotifyError(failure)
 	}
+	m.invalidatePreparedEditor(msg.Editor())
+}
+
+func (m *App) invalidatePreparedEditor(ed *editor.Editor) {
 	if m.windowManager == nil {
 		return
 	}
 	for _, fw := range m.windowManager.Windows() {
 		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
-			if surface, ok := frame.Body().(editorSyntaxSurface); ok && surface.SyntaxEditor() == msg.Editor() {
+			if surface, ok := frame.Body().(editorSyntaxSurface); ok && surface.SyntaxEditor() == ed {
 				fw.MarkContentDirty()
 			}
 		}
@@ -79,15 +88,19 @@ func (m *App) stopEditorSyntax() {
 		if ed == nil {
 			return
 		}
-		if done := ed.SyntaxDone(); done != nil {
-			if m.editorSyntaxJobs == nil {
-				m.editorSyntaxJobs = make(map[<-chan struct{}]*editor.Editor)
+		for _, done := range []<-chan struct{}{ed.SyntaxDone(), ed.RowsDone()} {
+			if done != nil {
+				if m.editorSyntaxJobs == nil {
+					m.editorSyntaxJobs = make(map[<-chan struct{}]*editor.Editor)
+				}
+				m.editorSyntaxJobs[done] = ed
 			}
-			m.editorSyntaxJobs[done] = ed
 		}
+		ed.StopRows()
 		ed.StopSyntax()
 	})
 	for _, ed := range m.editorSyntaxJobs {
+		ed.StopRows()
 		ed.StopSyntax()
 	}
 	for done := range m.editorSyntaxJobs {

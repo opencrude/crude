@@ -89,10 +89,9 @@ func (e *Editor) ClearInlayHints() {
 }
 
 func (e *Editor) inlayCaretVisible() bool {
-	col := e.displayColumn(e.cursor.Line, e.cursor.Col)
+	row, col := e.viewPosition(e.cursor)
 	width := max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
-	return e.cursor.Line >= e.scrollY && e.cursor.Line < e.scrollY+e.bodyHeight() &&
-		col >= e.scrollX && col < e.scrollX+width
+	return row >= 0 && row < e.bodyHeight() && col >= 0 && col < width
 }
 
 func (e *Editor) currentInlays() *editorInlayProjection {
@@ -135,8 +134,9 @@ func (e *Editor) InlayHintAt(x, y int) (int, bool) {
 	if x < e.gutterWidth() || x >= e.viewW-e.scrollbarColWidth() || y < 0 || y >= e.bodyHeight() {
 		return 0, false
 	}
-	if p := e.inlineLine(e.scrollY + y); p != nil {
-		hit := p.displayHit(e.scrollX + x - e.gutterWidth())
+	r := e.rowAt(e.scrollRow() + y)
+	if p := e.inlineLine(r.line); p != nil {
+		hit := p.displayHit(min(r.end, r.start+x-e.gutterWidth()))
 		return hit.HintIndex, hit.HintIndex >= 0
 	}
 	return 0, false
@@ -146,8 +146,9 @@ func (e *Editor) inlineInsertionAt(x, y int) bool {
 	if x < e.gutterWidth() || x >= e.viewW-e.scrollbarColWidth() || y < 0 || y >= e.bodyHeight() {
 		return false
 	}
-	if p := e.inlineLine(e.scrollY + y); p != nil {
-		return p.insertionAt(e.scrollX + x - e.gutterWidth())
+	r := e.rowAt(e.scrollRow() + y)
+	if p := e.inlineLine(r.line); p != nil {
+		return p.insertionAt(min(r.end, r.start+x-e.gutterWidth()))
 	}
 	return false
 }

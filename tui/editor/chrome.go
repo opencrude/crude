@@ -16,11 +16,11 @@ func (e *Editor) syncScrollChrome(bodyH int) {
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	lc := e.buf.LineCount()
+	lc := e.visualRowCount()
 	if e.scrollModel == nil {
 		e.scrollModel = ui.NewScrollModel()
 	}
-	ui.SyncScrollModel(e.scrollModel, lc, bodyH, e.scrollY)
+	ui.SyncScrollModel(e.scrollModel, lc, bodyH, e.scrollRow())
 	if e.sbCtrl == nil {
 		e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	} else {
@@ -31,6 +31,14 @@ func (e *Editor) syncScrollChrome(bodyH int) {
 }
 
 func (e *Editor) syncHorizontalScrollChrome(textW, bodyH int) bool {
+	if e.wrapsRows() {
+		e.hScrollbarVisible = false
+		e.scrollX = 0
+		if e.hScrollModel != nil {
+			ui.SyncScrollModel(e.hScrollModel, 0, max(1, textW), 0)
+		}
+		return false
+	}
 	if textW < 1 || bodyH < 1 {
 		e.hScrollbarVisible = false
 		return false

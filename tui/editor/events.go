@@ -46,6 +46,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		if !e.readOnly && (msg.Text != "" || msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete ||
 			msg.Code == tea.KeyEnter || msg.Code == tea.KeyTab) &&
 			msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 {
+			e.wrapBefore = false
 			before := e.Revision()
 			defer func() {
 				if e.Revision() != before && e.onTyping != nil {
@@ -137,7 +138,11 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.link = nil
 		if msg.Button == tea.MouseLeft && msg.Y >= 0 && msg.Y < e.bodyHeight() {
 			gutter := e.gutterGeometry()
-			line := e.scrollY + msg.Y
+			line := e.rowAt(e.scrollRow() + msg.Y).line
+			if msg.X == gutter.foldX {
+				e.toggleFold(line)
+				return nil
+			}
 			if msg.X == gutter.railX || msg.X == gutter.gapX {
 				if _, _, ok := e.GitHunkAtLine(line); ok {
 					revision := e.Revision()
@@ -217,6 +222,9 @@ func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
 	bodyH := e.bodyHeight()
 	horizontal := msg.Button == tea.MouseWheelLeft || msg.Button == tea.MouseWheelRight || msg.Mod.Contains(tea.ModShift)
 	if horizontal {
+		if e.wrapsRows() {
+			return
+		}
 		e.syncHorizontalScrollChrome(max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth()), bodyH)
 		switch msg.Button {
 		case tea.MouseWheelLeft, tea.MouseWheelUp:
@@ -233,22 +241,14 @@ func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
 		e.hScrollModel.ScrollTo(e.scrollX)
 		return
 	}
+	row := e.scrollRow()
 	switch msg.Button {
 	case tea.MouseWheelUp:
-		e.scrollY -= scrollLines
-		if e.scrollY < 0 {
-			e.scrollY = 0
-		}
+		row -= scrollLines
 	case tea.MouseWheelDown:
-		e.scrollY += scrollLines
-		maxScroll := e.buf.LineCount() - bodyH
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
-		if e.scrollY > maxScroll {
-			e.scrollY = maxScroll
-		}
+		row += scrollLines
 	}
+	e.setScrollRow(min(max(0, row), max(0, e.visualRowCount()-bodyH)))
 	e.syncScrollChrome(bodyH)
 }
 
@@ -266,22 +266,8 @@ func (e *Editor) mouseToPosition(mouseX, mouseY int) (Position, bool) {
 	if e.verticalScrollbarHit(mouseX, mouseY, sbX) {
 		return Position{}, false
 	}
-	lineIdx := e.scrollY + mouseY
-	if lineIdx >= e.buf.LineCount() {
-		lineIdx = e.buf.LineCount() - 1
-	}
-	if lineIdx < 0 {
-		lineIdx = 0
-	}
-	col := e.sourceColumn(lineIdx, e.scrollX+mouseX-sw)
-	if col < 0 {
-		col = 0
-	}
-	lineVisW := e.lineVisualWidth(lineIdx)
-	if col > lineVisW {
-		col = lineVisW
-	}
-	return e.buf.snapPosition(Position{Line: lineIdx, Col: col}), true
+	pos, _ := e.positionOnRow(e.scrollRow()+mouseY, max(0, mouseX-sw))
+	return pos, true
 }
 
 func (e *Editor) PositionAt(mouseX, mouseY int) (Position, bool) {

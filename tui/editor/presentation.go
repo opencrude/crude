@@ -15,6 +15,7 @@ func (e *Editor) SetPresentation(settings types.EditorSettings) {
 	e.setTabWidth(types.NormalizeEditorSettings(settings).TabSize)
 	e.eachView(func(view *Editor) {
 		view.SetLineNumbers(settings.LineNumbers)
+		view.setWrapping(settings.WordWrap)
 		if view.syntaxColors != settings.SyntaxTheme {
 			view.syntaxColors = settings.SyntaxTheme
 			view.refreshSyntaxPalette()

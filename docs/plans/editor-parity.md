@@ -42,8 +42,8 @@ or network requests in Update or Paint.
 
 These fixes do **not** establish all-language parity, installed-server acceptance
 for the tester's 4.1 binary, repaired historical JSON files, general auto-dedent,
-folding, or a built-in template library. Configurable tab display width has since
-landed through the geometry owner described below.
+or a built-in template library. Configurable tab width and wrapping/folding have
+since landed through the geometry owner described below.
 
 ## Inventory: existing is not missing
 
@@ -54,8 +54,9 @@ definition/type/implementation/references navigation, document outline, inlay
 hints, code actions, reviewed rename, manual formatting and format-on-manual-save.
 Extend these owners rather than building replacements.
 
-The audit found no integrated folding, multi-cursor editing, wrap projection,
-indent guides, EditorConfig resolver, user template library,
+The initial audit found no integrated folding or wrap projection; these now
+have one shared row owner. Multi-cursor editing, indent guides, EditorConfig,
+a user template library,
 semantic token projection, linked editing or CodeLens.
 Some LSP method constants exist in the vendored transport; a constant is not a
 working workspace/shell workflow. AI literal ghost projection and budget libraries
@@ -91,8 +92,8 @@ These changes do not complete the remaining sections below.
 `tui/editor/inline_projection.go`, `tui/editor/buffer.go`,
 `tui/viewmodel/editor_save.go`, `types/types.go`, existing preferences plumbing.
 
-**Remaining gap:** Word wrap is stored/exposed by Settings but not yet consumed.
-Minimap also has a stored field with no implemented view.
+**Remaining gap:** Minimap has a stored field with no implemented view. Word wrap
+now uses the shared row projection below.
 Line numbers, Syntax colors and Show whitespace now reach current, linked and
 new editor views and live peer settings. Colors reproject without reparsing;
 whitespace stays out of source and copy. Autosave and format-on-save also have
@@ -133,37 +134,27 @@ visible setting actually changes its stated behavior and reset restores inherita
 `tui/editor/pointer.go`, `tui/editor/movement.go`, `syntax/`, `types/syntax`,
 `workspace/insight.go`, and the established LSP request/transport owners.
 
-**Expected UX:** a small chevron in the gutter collapses/expands a block; keyboard
-commands Fold, Unfold, Fold all, Unfold all and Fold level have shared registry
-entries and semantic controls. A collapsed row keeps the source header with a
-muted ellipsis and hidden-line count. Nested folds retain their independent state.
-Long lines wrap at grapheme boundaries when enabled; continuation rows do not
-pretend to be new source lines. No horizontal scrollbar in wrapped mode.
+Implemented: the source-line/visible-row index combines wrapping and folding.
+Paint, scrollbars, pointer/drag, vertical and page motion, search/navigation,
+diagnostic and inlay anchors use it. Source bytes, Undo and LSP coordinates stay
+unchanged. Native source ranges and lexically qualified delimiters/comments/strings
+supply folds without per-language Go branches. There is no advertised LSP folding
+or indentation-only fallback. Alt+-/Alt+=, gutter toggles, Fold/Unfold all and Fold
+levels 1–9 share the native registry, menu, picker and semantic executor.
 
-**Implementation contract:**
+Nested choices and source-qualified private pane memory survive reopening;
+disjoint edits shift folds and touched ranges reopen. A peer's fold choices stay
+private. Cold/large source geometry runs in an owned cancellable worker; width-only
+reflow reuses metrics and folded syntax prepares visible lines only. Current
+references and measured costs are in [Editor](../reference/editor.md#wrapped-and-folded-rows)
+and [performance baselines](../reference/performance-baselines.md#wrapped-and-folded-source-rows-2026-11-11).
 
-- Add source-qualified folding ranges from negotiated LSP or native query data.
-  Prefer one available provider deterministically, not an unqualified union of
-  incompatible ranges. Use indentation folding only as a labelled structural
-  fallback. Validate bounds/nesting, reject crossing ranges and stale results.
-- Introduce one source-line/visible-row index that combines folds and wraps.
-  Rendering, scrolling, drag/autoscroll, cursor motion, page keys, diagnostics,
-  search, inlays and popover anchoring must all consume it. Do not implement
-  folding by omitting painted rows while the scrollbar still counts them.
-- Folding never edits canonical bytes, LSP coordinates, dirty state or undo.
-  Typing at a collapsed boundary, search navigation and diagnostic jumps reveal
-  the affected source before editing. Copy uses the selected source, including
-  hidden lines where the source selection spans them.
-- Fold state is view-local, source-qualified and persists with client view memory.
-  Remap disjoint edits, reopen touched ranges, and discard ranges invalidated by
-  peer changes or replacement. Width changes invalidate wrap geometry, not folds.
-- Cache the row index by source, folds and width. Use bounded visible reflow;
-  avoid exporting/reflowing the whole document during every pointer event.
-
-**Acceptance:** nested blocks, long JSON, comments, multiline strings, tabs and
-wide graphemes; two panes with different folds/widths; search into folded text;
-selection across folds; delete/undo; concurrent peer edits; restored view memory;
-80×24 and desktop pointer captures; dense-file presented-frame benchmarks.
+The native 160×40/80×24 journey verifies fold/unfold, gutter click, Go to line,
+Ctrl+D and one Undo with seven ready boundaries and joined cleanup. Connected
+profile return, peer edits/Undo, source/geometry regressions, ordinary inventory
+and affected race checks pass. Windows/macOS component builds are not native UI
+acceptance. Final allocation-gate evidence belongs in the checkpoint issue, not
+an all-editor-parity claim.
 
 ## Context-aware completion without a model
 

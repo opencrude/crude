@@ -4,27 +4,28 @@ package theme
 // Themes may override them; the factory supplies defaults so product code
 // never hard-codes box/prompt/close glyphs when tokens are available.
 type Glyphs struct {
-	Prompt         string // unused; must stay empty. Never paint ❯.
-	Search         string
-	Replace        string
-	Close          string
-	CornerTL       string
-	CornerTR       string
-	CornerBL       string
-	CornerBR       string
-	BorderH        string
-	BorderV        string
-	ScrollbarTrack string
-	ScrollbarThumb string
-	TreeExpanded   string
-	TreeCollapsed  string
-	BreadcrumbSep  string
-	SwitchOn       string // filled marker of an enabled switch control
-	SwitchOff      string // hollow marker of a disabled switch control
-	CycleLeft      string // previous-value affordance of a cycle control
-	CycleRight     string // next-value affordance of a cycle control
-	Modified       string // unsaved-change marker (rail, footer, field labels)
-	FocusEdge      string // left edge marking the focused form row or selected card
+	Prompt           string // unused; must stay empty. Never paint ❯.
+	Search           string
+	Replace          string
+	Close            string
+	CornerTL         string
+	CornerTR         string
+	CornerBL         string
+	CornerBR         string
+	BorderH          string
+	BorderV          string
+	ScrollbarTrack   string
+	ScrollbarThumb   string
+	TreeExpanded     string
+	TreeCollapsed    string
+	WrapContinuation string
+	BreadcrumbSep    string
+	SwitchOn         string // filled marker of an enabled switch control
+	SwitchOff        string // hollow marker of a disabled switch control
+	CycleLeft        string // previous-value affordance of a cycle control
+	CycleRight       string // next-value affordance of a cycle control
+	Modified         string // unsaved-change marker (rail, footer, field labels)
+	FocusEdge        string // left edge marking the focused form row or selected card
 }
 
 // Typography captures semantic text emphasis that themes may vary without
@@ -53,27 +54,28 @@ type Metrics struct {
 // DefaultGlyphs returns the shared reference glyph table.
 func DefaultGlyphs() Glyphs {
 	return Glyphs{
-		Prompt:         "",
-		Search:         "⌕",
-		Replace:        "⇄",
-		Close:          "✕",
-		CornerTL:       "╭",
-		CornerTR:       "╮",
-		CornerBL:       "╰",
-		CornerBR:       "╯",
-		BorderH:        "─",
-		BorderV:        "│",
-		ScrollbarTrack: "│",
-		ScrollbarThumb: "┃",
-		TreeExpanded:   "▾",
-		TreeCollapsed:  "▸",
-		BreadcrumbSep:  "▸",
-		SwitchOn:       "●",
-		SwitchOff:      "○",
-		CycleLeft:      "‹",
-		CycleRight:     "›",
-		Modified:       "●",
-		FocusEdge:      "▎",
+		Prompt:           "",
+		Search:           "⌕",
+		Replace:          "⇄",
+		Close:            "✕",
+		CornerTL:         "╭",
+		CornerTR:         "╮",
+		CornerBL:         "╰",
+		CornerBR:         "╯",
+		BorderH:          "─",
+		BorderV:          "│",
+		ScrollbarTrack:   "│",
+		ScrollbarThumb:   "┃",
+		TreeExpanded:     "▾",
+		TreeCollapsed:    "▸",
+		WrapContinuation: "↩",
+		BreadcrumbSep:    "▸",
+		SwitchOn:         "●",
+		SwitchOff:        "○",
+		CycleLeft:        "‹",
+		CycleRight:       "›",
+		Modified:         "●",
+		FocusEdge:        "▎",
 	}
 }
 

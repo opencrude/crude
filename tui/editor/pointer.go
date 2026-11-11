@@ -55,8 +55,9 @@ func (e *Editor) pointerPosition() Position {
 	// Clamp to the text edge, not an invisible source row/column far offscreen.
 	x := min(max(left, right), max(left, e.drag.x))
 	y := min(e.bodyHeight()-1, max(0, e.drag.y))
-	line := e.scrollY + y
-	return e.buf.snapPosition(Position{Line: line, Col: e.sourceColumn(line, e.scrollX+x-left)})
+	pos, before := e.positionOnRow(e.scrollRow()+y, x-left)
+	e.wrapBefore = before
+	return pos
 }
 
 func positionBefore(a, b Position) bool {
@@ -116,10 +117,10 @@ func (e *Editor) pointerScrollStep() (dx, dy int) {
 		return 0, 0
 	}
 	dy = pointerEdgeStep(e.drag.y, 0, e.bodyHeight())
-	if dy < 0 && e.scrollY <= 0 || dy > 0 && e.scrollY >= max(0, e.LineCount()-e.bodyHeight()) {
+	if dy < 0 && e.scrollRow() <= 0 || dy > 0 && e.scrollRow() >= max(0, e.visualRowCount()-e.bodyHeight()) {
 		dy = 0
 	}
-	if e.drag.kind != pointerLine {
+	if e.drag.kind != pointerLine && !e.wrapsRows() {
 		textW := max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
 		e.syncHorizontalScrollChrome(textW, e.bodyHeight())
 		dx = pointerEdgeStep(e.drag.x, e.gutterWidth(), e.gutterWidth()+textW)
@@ -154,7 +155,7 @@ func (e *Editor) handlePointerScroll(msg PointerScrollMsg) tea.Cmd {
 	}
 	e.drag.tickPending = false
 	dx, dy := e.pointerScrollStep()
-	e.scrollY = min(max(0, e.LineCount()-e.bodyHeight()), max(0, e.scrollY+dy))
+	e.setScrollRow(min(max(0, e.visualRowCount()-e.bodyHeight()), max(0, e.scrollRow()+dy)))
 	if dx != 0 {
 		e.hScrollModel.ScrollBy(dx)
 		e.scrollX = e.hScrollModel.Offset()

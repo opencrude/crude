@@ -43,6 +43,8 @@ type editorViewState struct {
 	Cursor, Anchor, End int // UTF-8 offsets in the corresponding source snapshot
 	Selecting           bool
 	ScrollX, ScrollY    int
+	WrapOffset          int
+	WrapBefore          bool
 }
 
 type Editor struct {
@@ -59,10 +61,18 @@ type Editor struct {
 	buffer             *Buffer
 	documentProjection *DocumentProjection
 
-	sourceCaret sourceCaretCache
-	cursor      Position
-	scrollX     int
-	scrollY     int
+	sourceCaret   sourceCaretCache
+	cursor        Position
+	scrollX       int
+	scrollY       int
+	folds         foldState
+	wordWrap      bool
+	wrapOffset    int
+	wrapBefore    bool
+	rows          editorRows
+	rowJob        *rowJob
+	rowGeneration uint64
+	rowsStopped   bool
 
 	goalCol int
 	goalSet bool
@@ -311,6 +321,9 @@ func (e *Editor) Open(path string) error {
 // loading. The Editor delegates all text access to the buffer. Call this
 // instead of Open() when using the BufferManager.
 func (e *Editor) OpenBuffer(buf *Buffer) {
+	e.cancelRows()
+	e.folds = foldState{}
+	e.rowsStopped = false
 	e.detachDocument()
 	e.buffer = buf
 	e.filePath = buf.Path
@@ -321,6 +334,7 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.cursor = Position{Line: 0, Col: 0}
 	e.scrollX = 0
 	e.scrollY = 0
+	e.wrapOffset, e.wrapBefore = 0, false
 	if len(e.buf.views) == 0 {
 		// A buffer no view shows starts a fresh history; one that is shown
 		// keeps the document's history.
@@ -385,6 +399,7 @@ func (e *Editor) ApplyFormatted(text string) {
 }
 
 func (e *Editor) Close() {
+	e.StopRows()
 	e.DismissGhostText()
 	e.ClearInlayHints()
 	e.StopSyntax()
@@ -481,6 +496,8 @@ func (e *Editor) invalidateEditorCaches() {
 // InvalidateWidthProfile clears all geometry derived from terminal cell widths.
 // Buffer contents, cursor position, undo state, and syntax data are preserved.
 func (e *Editor) InvalidateWidthProfile() {
+	e.cancelRows()
+	e.rows = editorRows{}
 	e.DismissGhostText()
 	e.ClearInlayHints()
 	e.lineRunesCacheValid = false
@@ -1079,22 +1096,8 @@ func (e *Editor) RefreshCursorHover(sidebarW, chatAreaTop int) {
 
 // CursorScreenPosition returns the approximate absolute screen cell of the cursor.
 func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
-	bodyH := e.viewH
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	lineOff := e.cursor.Line - e.scrollY
-	if lineOff < 0 {
-		lineOff = 0
-	}
-	if lineOff >= bodyH {
-		lineOff = bodyH - 1
-	}
-	colOff := e.displayColumn(e.cursor.Line, e.cursor.Col) - e.scrollX
-	if colOff < 0 {
-		colOff = 0
-	}
-	return sidebarW + e.PadL + e.gutterWidth() + colOff, chatAreaTop + lineOff
+	row, col := e.viewPosition(e.cursor)
+	return sidebarW + e.PadL + e.gutterWidth() + max(0, col), chatAreaTop + min(max(0, row), max(0, e.bodyHeight()-1))
 }
 
 // SetCursorPosition jumps the cursor to (line, col) clamping to the buffer's
@@ -1102,6 +1105,7 @@ func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
 // reference", "find symbol") so the cursor lands precisely where the server
 // pointed.
 func (e *Editor) SetCursorPosition(line, col int) {
+	e.wrapBefore = false
 	e.expansion = nil
 	e.DismissGhostText()
 	e.BreakUndoGroup()
@@ -1128,6 +1132,7 @@ func (e *Editor) SetCursorPosition(line, col int) {
 		col = maxCol
 	}
 	e.cursor = e.buf.snapPosition(Position{Line: line, Col: col})
+	e.unfoldSource(e.cursor.Line, false)
 	e.ClearSelection()
 	e.landing = &SearchMatch{Start: e.cursor, End: Position{Line: line, Col: col + 1}}
 	e.landingRevision = e.Revision()
@@ -1152,16 +1157,20 @@ func (e *Editor) SetLandingRange(line, startCol, endCol int) {
 }
 
 func (e *Editor) revealJump() {
+	e.unfoldSource(e.cursor.Line, false)
 	e.pendingReveal = false
 	h := e.bodyHeight()
-	if e.cursor.Line < e.scrollY || e.cursor.Line >= e.scrollY+h {
-		e.scrollY = max(0, e.cursor.Line-h/3)
+	row, col := e.visualPosition(e.cursor, e.wrapBefore)
+	top := e.scrollRow()
+	if row < top || row >= top+h {
+		top = max(0, row-h/3)
 	}
-	e.scrollY = min(e.scrollY, max(0, e.LineCount()-h))
-	w := max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
-	col := e.displayColumn(e.cursor.Line, e.cursor.Col)
-	if col < e.scrollX || col >= e.scrollX+w {
-		e.scrollX = max(0, col-w/3)
+	e.setScrollRow(min(top, max(0, e.visualRowCount()-h)))
+	if !e.wrapsRows() {
+		w := max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
+		if col < e.scrollX || col >= e.scrollX+w {
+			e.scrollX = max(0, col-w/3)
+		}
 	}
 	e.syncScrollChrome(h)
 }
