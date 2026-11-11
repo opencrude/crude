@@ -6,7 +6,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"crude/fileio"
 	"crude/provider"
 	"crude/types"
 )
@@ -186,4 +188,81 @@ func TestIdleLeaseRefusesAutonomousGoalAndChildWithoutStoppingThem(t *testing.T)
 		t.Fatal(err)
 	}
 	u()
+}
+
+func TestIdleLeaseIgnoresRetainedCommandResults(t *testing.T) {
+	s := idleSession()
+	manager := fileio.NewAsyncCommandManager()
+	defer manager.CloseAndWait()
+	s.asyncMgr = manager
+	settled := make(chan fileio.AsyncCmdInfo, 3)
+	manager.SetSettleObserver(func(info fileio.AsyncCmdInfo) { settled <- info })
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	for _, test := range []struct {
+		handle, command string
+		want            fileio.AsyncStatus
+	}{
+		{"completed", "exit 0", fileio.AsyncCompleted},
+		{"failed", "exit 7", fileio.AsyncFailed},
+		{"cancelled", promotionHelperCommand("sleep"), fileio.AsyncKilled},
+	} {
+		started, err := manager.Start(test.handle, test.command, t.TempDir(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if test.want == fileio.AsyncKilled {
+			if s.Activity().AsyncCommands != 1 {
+				t.Fatal("running command was not counted as active work")
+			}
+			if release, err := s.BeginIdleLease(ctx); err == nil {
+				release()
+				t.Fatal("running command did not protect its session")
+			}
+			if err := manager.KillRef(started.Ref()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		select {
+		case result := <-settled:
+			if result.Handle != test.handle || result.Status != test.want {
+				t.Fatalf("unexpected command outcome: %+v", result)
+			}
+		case <-ctx.Done():
+			t.Fatal("command did not settle:", ctx.Err())
+		}
+		if s.Activity().Any() {
+			t.Fatalf("retained %s result still counts as active work: %+v", test.handle, s.Activity())
+		}
+		release, err := s.BeginIdleLease(ctx)
+		if err != nil {
+			t.Fatalf("retained %s result blocks shutdown: %v", test.handle, err)
+		}
+		release()
+	}
+	if len(manager.List()) != 3 {
+		t.Fatal("idle reservation discarded retained command results")
+	}
+}
+
+func TestIdleLeaseIgnoresInactiveGoalsAndPausedLoops(t *testing.T) {
+	for _, status := range []types.GoalStatus{types.GoalPaused, types.GoalBlocked, types.GoalBudgetLimited, types.GoalComplete} {
+		t.Run(string(status), func(t *testing.T) {
+			s := idleSession()
+			s.goal.present = true
+			s.goal.record.Goal = types.Goal{Status: status, Objective: "keep saved work"}
+			s.loops = []types.Loop{{ID: "paused", Paused: true}}
+			if goals, loops := s.AutonomousWork(); goals != 0 || loops != 0 {
+				t.Fatalf("inactive state counts as autonomous work: goals=%d loops=%d", goals, loops)
+			}
+			release, err := s.BeginIdleLease(t.Context())
+			if err != nil {
+				t.Fatal("inactive saved work blocked shutdown:", err)
+			}
+			release()
+			if s.goal.record.Goal.Status != status || len(s.loops) != 1 || !s.loops[0].Paused {
+				t.Fatal("shutdown reservation changed retained goal or schedule")
+			}
+		})
+	}
 }

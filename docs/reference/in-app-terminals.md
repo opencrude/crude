@@ -399,6 +399,13 @@ to a new PTY or lazily materialize its screen.
 
 ## Shutdown
 
+An open terminal is not by itself active work for explicit core stop or version
+handover. A configured shell at its prompt may close without `--force`, including
+after its command returns normally. Running terminal programs and controller
+leases still protect their work. Automatic idle exit instead retains every live
+terminal, so closing a Crude window does not kill its shell. See the
+[core lifetime reservation](core-client-protocol.md#trust-secrets-and-platform-limits).
+
 `unixPTY.Close` sends SIGHUP to the child's process group (the shell is a
 session leader via Setsid), waits briefly for the leader to be reaped, then
 SIGKILLs the group. Descendants that stayed in the group (sh -c pipelines,

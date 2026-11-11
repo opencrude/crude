@@ -260,7 +260,10 @@ not keep writing caller-owned result memory after the caller has returned.
   stop/result exchange independent of Hello/schema/cohort. Retained idle actors
   require reversible runtime/actor/session/autonomous-work/memory/resource/storage
   reservations, not a sampled activity count. Attached/resumable shells, opening
-  factories, pending/queued input, live PTYs and document/controller leases refuse.
+  factories, pending/queued input, running terminal programs and document/controller
+  leases refuse. Explicit stop and handover permit idle terminal shells; automatic
+  idle exit retains every live PTY. Finished command results and inactive saved
+  goals or paused loops are retained state, not running work.
   Refusal rolls back all reservations without closing an actor or changing its
   owner; accepted reservations survive through shutdown joins. See the
   [core ownership contract](core-client-protocol.md#trust-secrets-and-platform-limits).

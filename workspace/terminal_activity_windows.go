@@ -22,7 +22,7 @@ func terminalProgram(t terminalIO) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	defer windows.CloseHandle(snapshot)
+	defer func() { _ = windows.CloseHandle(snapshot) }()
 	entry := windows.ProcessEntry32{Size: uint32(unsafe.Sizeof(windows.ProcessEntry32{}))}
 	for err = windows.Process32First(snapshot, &entry); err == nil; err = windows.Process32Next(snapshot, &entry) {
 		if int(entry.ParentProcessID) != shell {
