@@ -106,6 +106,9 @@ func (s *Session) Parse(ctx context.Context, revision uint64, source []byte) (re
 	if err != nil {
 		return Result{}, err
 	}
+	if err = s.structure(ctx, root, text, &result); err != nil {
+		return Result{}, err
+	}
 	if result.HasError {
 		result.Problems, result.ProblemsTruncated, err = syntaxProblems(ctx, root)
 		if err != nil {

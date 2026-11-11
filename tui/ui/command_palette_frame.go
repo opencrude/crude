@@ -15,6 +15,7 @@ const (
 
 // CommandPaletteSpec configures a WindowFrame-backed command palette.
 type CommandPaletteSpec struct {
+	Title    string
 	Items    []ListItem
 	Selected int
 	Width    int
@@ -64,7 +65,11 @@ func BuildCommandPaletteFrame(th *theme.Theme, spec CommandPaletteSpec) *Compone
 	stack := NewStack(NewID(RootID, "command-palette/content"), Vertical, 1, search, list)
 
 	frame := NewWindowFrame(NewID(RootID, "command-palette"), FramePopover, tokens)
-	frame.SetTitle("Command Palette")
+	title := spec.Title
+	if title == "" {
+		title = "Command Palette"
+	}
+	frame.SetTitle(title)
 	frame.SetClosable(true)
 	frame.SetContent(stack)
 

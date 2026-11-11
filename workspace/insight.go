@@ -91,7 +91,7 @@ func insightWeight(view types.DocumentInsight) int {
 	if view.Syntax == nil {
 		return 0
 	}
-	return len(view.Syntax.Spans)*12 + len(view.Syntax.Problems)*12
+	return len(view.Syntax.Spans)*12 + len(view.Syntax.Problems)*12 + len(view.Syntax.Selections)*8 + len(view.Syntax.Brackets)*8
 }
 
 // observeLocked runs under the document authority lock. Source bytes are not
@@ -174,6 +174,8 @@ func cloneInsight(view types.DocumentInsight) types.DocumentInsight {
 		result := *view.Syntax
 		result.Spans = slices.Clone(result.Spans)
 		result.Problems = slices.Clone(result.Problems)
+		result.Selections = slices.Clone(result.Selections)
+		result.Brackets = slices.Clone(result.Brackets)
 		view.Syntax = &result
 	}
 	return view
@@ -296,7 +298,7 @@ func (s *InsightService) run() {
 						entry.view.State = types.InsightLimited
 					}
 				case len(result.Spans) > insightSpanLimit ||
-					s.bytes+len(result.Spans)*12+len(result.Problems)*12 > insightResultBudget:
+					s.bytes+insightWeight(types.DocumentInsight{Syntax: &result}) > insightResultBudget:
 					entry.view.State = types.InsightLimited
 					entry.view.Detail = "Native syntax projection exceeds the workspace result budget."
 				default:

@@ -24,6 +24,10 @@ Crude changes:
 - Make the upstream concurrent-clone test self-contained: its Rust CLI source
   fixture is absent from the published Go module. A 4096-function Rust source
   retains the workload and exact child-count checks, with all clones released.
+- Expose `TreeCursor.NodeValue` for allocation-free traversal. It copies the
+  current native node by value and borrows the same tree lifetime as `Node`.
+  The regression compares both APIs over a real tree and requires zero
+  per-visit Go allocations. No parser or C runtime behavior changes.
 - Trim three upstream trailing-whitespace lines in `src/lexer.c` and
   `src/unicode/utf16.h`; no C token or license text changes.
 

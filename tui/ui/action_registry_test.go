@@ -108,9 +108,17 @@ func TestCodeActionRegistryUsesDeliverableEditorChord(t *testing.T) {
 				t.Fatalf("editor action stole a global/composer key: %+v", got)
 			}
 		}
-		for _, mod := range []tea.KeyMod{0, tea.ModShift, tea.ModCtrl | tea.ModAlt} {
-			if got := r.MatchContext("editor", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: mod}); got != nil {
-				t.Fatalf("plain/newline/replace-all Enter became code actions: %+v", got)
+		for _, test := range []struct {
+			mod  tea.KeyMod
+			want ActionID
+		}{{0, ""}, {tea.ModShift, "edit.lineBelow"}, {tea.ModCtrl | tea.ModAlt, "edit.lineAbove"}} {
+			got := r.MatchContext("editor", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: test.mod})
+			id := ActionID("")
+			if got != nil {
+				id = got.ID
+			}
+			if id != test.want {
+				t.Fatalf("Enter action %q, want %q; newline actions must not open code actions", id, test.want)
 			}
 		}
 	}

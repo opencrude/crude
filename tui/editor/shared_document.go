@@ -10,6 +10,7 @@ import (
 
 	"crude/document"
 	"crude/textencoding"
+	"crude/tui/ui"
 	"crude/types"
 )
 
@@ -63,6 +64,7 @@ type documentHistoryAction struct {
 // DocumentHistoryIntent is private recovery evidence for ordered UI input, not
 // permission to publish it against a different canonical document.
 type DocumentHistoryIntent struct {
+	Action        ui.ActionID
 	Key           *tea.KeyPressMsg
 	Paste         *tea.PasteMsg
 	Redo          bool
@@ -138,6 +140,8 @@ func (e *Editor) DeferDocumentEvent(msg tea.Msg) bool {
 		intent.Key = &v
 	case tea.PasteMsg:
 		intent.Paste = &v
+	case ActionMsg:
+		intent.Action = v.ID
 	default:
 		intent.Unrecoverable = true
 	}

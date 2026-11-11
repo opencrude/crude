@@ -27,6 +27,8 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	defer e.reconcileSnippetSelection()
 
 	switch msg := msg.(type) {
+	case ActionMsg:
+		return e.handleAction(msg)
 	case tea.BlurMsg:
 		e.DismissGhostText()
 	case PointerScrollMsg:
@@ -35,6 +37,10 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		if e.handleGhostKey(msg) {
 			return nil
 		}
+		if action, ok := ui.MatchEditorAction(msg); ok {
+			return e.HandleEvent(ActionMsg{ID: action.ID})
+		}
+		e.expansion = nil
 		e.stopPointerSelection()
 		e.landing = nil
 		if !e.readOnly && (msg.Text != "" || msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete ||
@@ -375,22 +381,7 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+y", "ctrl+shift+z", "ctrl+shift+Z", "super+shift+z", "super+shift+Z":
 		e.Redo()
 		return nil
-	case "alt+up":
-		e.moveLinesUp()
-		return nil
-	case "alt+down":
-		e.moveLinesDown()
-		return nil
-	case "ctrl+shift+d", "ctrl+shift+D":
-		e.duplicateLineOrSelection()
-		return nil
-	case "ctrl+shift+k", "ctrl+shift+K":
-		e.deleteLines()
-		return nil
-	case "ctrl+/", "ctrl+_":
-		// Ctrl+/ arrives as ctrl+_ (0x1F) on legacy terminal encodings.
-		e.toggleLineComment()
-		return nil
+
 	}
 
 	switch key.Code {

@@ -622,6 +622,13 @@ func (m *App) routeCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		if accept == "enter" {
 			return nil, false
 		}
+		if !chosen {
+			if sole := s.screen.SoleID(); sole != "" && s.screen.Select(sole) {
+				dismissCompletionGhost(s.editor)
+				m.markCompletionDirty(s)
+				return m.readCompletion(s, sole, true), true
+			}
+		}
 		if chosen {
 			return forward()
 		}

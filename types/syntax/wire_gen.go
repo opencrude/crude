@@ -7,6 +7,52 @@ import (
 )
 
 // MarshalMsg implements msgp.Marshaler
+func (z Bracket) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendUint32(o, z.Offset)
+	o = msgp.AppendUint32(o, z.Mate)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *Bracket) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Offset, bts, err = msgp.ReadUint32Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Offset")
+		return
+	}
+	z.Mate, bts, err = msgp.ReadUint32Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Mate")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z Bracket) Msgsize() (s int) {
+	s = 1 + msgp.Uint32Size + msgp.Uint32Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *Identity) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 4
@@ -177,10 +223,56 @@ func (z Problem) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z Range) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendUint32(o, z.Start)
+	o = msgp.AppendUint32(o, z.End)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *Range) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Start, bts, err = msgp.ReadUint32Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Start")
+		return
+	}
+	z.End, bts, err = msgp.ReadUint32Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "End")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z Range) Msgsize() (s int) {
+	s = 1 + msgp.Uint32Size + msgp.Uint32Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *Result) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 6
-	o = append(o, 0x96)
+	// array header, size 9
+	o = append(o, 0x99)
 	o = msgp.AppendUint64(o, z.Revision)
 	o, err = z.Identity.MarshalMsg(o)
 	if err != nil {
@@ -199,16 +291,39 @@ func (z *Result) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
+	if z.Selections == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Selections)))
+		for za0002 := range z.Selections {
+			// array header, size 2
+			o = append(o, 0x92)
+			o = msgp.AppendUint32(o, z.Selections[za0002].Start)
+			o = msgp.AppendUint32(o, z.Selections[za0002].End)
+		}
+	}
+	if z.Brackets == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Brackets)))
+		for za0003 := range z.Brackets {
+			// array header, size 2
+			o = append(o, 0x92)
+			o = msgp.AppendUint32(o, z.Brackets[za0003].Offset)
+			o = msgp.AppendUint32(o, z.Brackets[za0003].Mate)
+		}
+	}
+	o = msgp.AppendBool(o, z.StructureTruncated)
 	if z.Problems == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.Problems)))
-		for za0002 := range z.Problems {
+		for za0004 := range z.Problems {
 			// array header, size 3
 			o = append(o, 0x93)
-			o = msgp.AppendUint32(o, z.Problems[za0002].Start)
-			o = msgp.AppendUint32(o, z.Problems[za0002].End)
-			o = msgp.AppendBool(o, z.Problems[za0002].Missing)
+			o = msgp.AppendUint32(o, z.Problems[za0004].Start)
+			o = msgp.AppendUint32(o, z.Problems[za0004].End)
+			o = msgp.AppendBool(o, z.Problems[za0004].Missing)
 		}
 	}
 	o = msgp.AppendBool(o, z.ProblemsTruncated)
@@ -228,8 +343,8 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 6 {
-		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+	if zb0001 != 9 {
+		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
 		return
 	}
 	z.Revision, bts, err = msgp.ReadUint64Bytes(bts)
@@ -271,51 +386,148 @@ func (z *Result) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	}
 	if msgp.IsNil(bts) {
 		bts = bts[1:]
-		z.Problems = nil
+		z.Selections = nil
 	} else {
 		var zb0003 uint32
 		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
-			err = msgp.WrapError(err, "Problems")
+			err = msgp.WrapError(err, "Selections")
 			return
 		}
 		if uint64(zb0003)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.Problems != nil && cap(z.Problems) >= int(zb0003) {
-			z.Problems = (z.Problems)[:zb0003]
+		if z.Selections != nil && cap(z.Selections) >= int(zb0003) {
+			z.Selections = (z.Selections)[:zb0003]
 		} else {
-			z.Problems = make([]Problem, zb0003)
+			z.Selections = make([]Range, zb0003)
 		}
-		for za0002 := range z.Problems {
+		for za0002 := range z.Selections {
 			var zb0004 uint32
 			zb0004, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Problems", za0002)
+				err = msgp.WrapError(err, "Selections", za0002)
 				return
 			}
 			if uint64(zb0004)*1 > uint64(len(bts)) {
 				err = msgp.ErrShortBytes
 				return
 			}
-			if zb0004 != 3 {
-				err = msgp.ArrayError{Wanted: 3, Got: zb0004}
+			if zb0004 != 2 {
+				err = msgp.ArrayError{Wanted: 2, Got: zb0004}
 				return
 			}
-			z.Problems[za0002].Start, bts, err = msgp.ReadUint32Bytes(bts)
+			z.Selections[za0002].Start, bts, err = msgp.ReadUint32Bytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Problems", za0002, "Start")
+				err = msgp.WrapError(err, "Selections", za0002, "Start")
 				return
 			}
-			z.Problems[za0002].End, bts, err = msgp.ReadUint32Bytes(bts)
+			z.Selections[za0002].End, bts, err = msgp.ReadUint32Bytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Problems", za0002, "End")
+				err = msgp.WrapError(err, "Selections", za0002, "End")
 				return
 			}
-			z.Problems[za0002].Missing, bts, err = msgp.ReadBoolBytes(bts)
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Brackets = nil
+	} else {
+		var zb0005 uint32
+		zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Brackets")
+			return
+		}
+		if uint64(zb0005)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Brackets != nil && cap(z.Brackets) >= int(zb0005) {
+			z.Brackets = (z.Brackets)[:zb0005]
+		} else {
+			z.Brackets = make([]Bracket, zb0005)
+		}
+		for za0003 := range z.Brackets {
+			var zb0006 uint32
+			zb0006, bts, err = msgp.ReadArrayHeaderBytes(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Problems", za0002, "Missing")
+				err = msgp.WrapError(err, "Brackets", za0003)
+				return
+			}
+			if uint64(zb0006)*1 > uint64(len(bts)) {
+				err = msgp.ErrShortBytes
+				return
+			}
+			if zb0006 != 2 {
+				err = msgp.ArrayError{Wanted: 2, Got: zb0006}
+				return
+			}
+			z.Brackets[za0003].Offset, bts, err = msgp.ReadUint32Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Brackets", za0003, "Offset")
+				return
+			}
+			z.Brackets[za0003].Mate, bts, err = msgp.ReadUint32Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Brackets", za0003, "Mate")
+				return
+			}
+		}
+	}
+	z.StructureTruncated, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "StructureTruncated")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Problems = nil
+	} else {
+		var zb0007 uint32
+		zb0007, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Problems")
+			return
+		}
+		if uint64(zb0007)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Problems != nil && cap(z.Problems) >= int(zb0007) {
+			z.Problems = (z.Problems)[:zb0007]
+		} else {
+			z.Problems = make([]Problem, zb0007)
+		}
+		for za0004 := range z.Problems {
+			var zb0008 uint32
+			zb0008, bts, err = msgp.ReadArrayHeaderBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Problems", za0004)
+				return
+			}
+			if uint64(zb0008)*1 > uint64(len(bts)) {
+				err = msgp.ErrShortBytes
+				return
+			}
+			if zb0008 != 3 {
+				err = msgp.ArrayError{Wanted: 3, Got: zb0008}
+				return
+			}
+			z.Problems[za0004].Start, bts, err = msgp.ReadUint32Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Problems", za0004, "Start")
+				return
+			}
+			z.Problems[za0004].End, bts, err = msgp.ReadUint32Bytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Problems", za0004, "End")
+				return
+			}
+			z.Problems[za0004].Missing, bts, err = msgp.ReadBoolBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Problems", za0004, "Missing")
 				return
 			}
 		}
@@ -340,7 +552,7 @@ func (z *Result) Msgsize() (s int) {
 	for za0001 := range z.Spans {
 		s += z.Spans[za0001].Msgsize()
 	}
-	s += msgp.ArrayHeaderSize + (len(z.Problems) * (19 + msgp.Uint32Size + msgp.Uint32Size + msgp.BoolSize)) + msgp.BoolSize + msgp.BoolSize
+	s += msgp.ArrayHeaderSize + (len(z.Selections) * (11 + msgp.Uint32Size + msgp.Uint32Size)) + msgp.ArrayHeaderSize + (len(z.Brackets) * (13 + msgp.Uint32Size + msgp.Uint32Size)) + msgp.BoolSize + msgp.ArrayHeaderSize + (len(z.Problems) * (19 + msgp.Uint32Size + msgp.Uint32Size + msgp.BoolSize)) + msgp.BoolSize + msgp.BoolSize
 	return
 }
 

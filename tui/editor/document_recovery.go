@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"crude/document"
+	"crude/tui/ui"
 )
 
 // DocumentRecovery is detached evidence, never permission to replay a command.
@@ -81,8 +82,13 @@ func (r DocumentRecovery) Validate() error {
 		return document.ErrRevision
 	}
 	for _, intent := range r.HistoryQueue {
-		if intent.Key != nil && intent.Paste != nil {
+		if intent.Key != nil && intent.Paste != nil || intent.Action != "" && (intent.Key != nil || intent.Paste != nil || intent.Redo || intent.Unrecoverable) {
 			return document.ErrRequest
+		}
+		if intent.Action != "" {
+			if _, ok := ui.FindEditorAction(intent.Action); !ok {
+				return document.ErrRequest
+			}
 		}
 		if intent.Key != nil && (len(intent.Key.Text) > document.MaxBytes || !utf8.ValidString(intent.Key.Text)) {
 			return document.ErrLimit
@@ -159,6 +165,9 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 	for _, intent := range r.HistoryQueue {
 		action := documentHistoryAction{redo: intent.Redo, evidence: intent}
 		switch {
+		case intent.Action != "":
+			id := intent.Action
+			action.edit = func() { e.handleNonInteractiveInput(ActionMsg{ID: id}) }
 		case intent.Key != nil:
 			key := *intent.Key
 			action.evidence.Key = &key

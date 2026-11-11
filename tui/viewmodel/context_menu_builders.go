@@ -71,6 +71,24 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		},
 	})
 
+	token := ed.ActionToken()
+	editing := ui.ContextMenuSection{SectionLabel: "Lines and selection"}
+	for _, id := range []ui.ActionID{"edit.duplicateLine", "edit.joinLines", "edit.deleteLine", "edit.toggleComment", "select.expand", "select.shrink"} {
+		action, _ := ui.FindEditorAction(id)
+		item := ui.ContextMenuItem{Label: action.Label, Disabled: ed.ReadOnly() && action.MutatesText}
+		if m.actionRegistry != nil {
+			item.Detail = ui.FormatShortcut(m.actionRegistry.HintFor(id))
+		}
+		item.Action = func() { m.runDetachedAsyncCmd(m.runEditorAction(ed, token, id)) }
+		editing.Items = append(editing.Items, item)
+	}
+	editing.Items = append(editing.Items, ui.ContextMenuItem{Label: "More editor actions", Detail: "Alt+/", Action: func() {
+		if m.EditorState.Editor == ed && ed.IsOpen() {
+			m.runDetachedAsyncCmd(m.openEditorActions())
+		}
+	}})
+	st.Sections = append(st.Sections, editing)
+
 	// Inspect the clicked source point even when a private selection retains
 	// the caret elsewhere. A stale menu cannot inspect a newer publication.
 	pos := diagnosticPosition

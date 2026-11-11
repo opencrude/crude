@@ -36,7 +36,9 @@ const (
 	PreviousMatchChord = "chord:previous-match"
 	// ReplaceAllChord replaces every match from a find/replace popup.
 	// Accepts Ctrl+Alt+Enter and Alt+Enter (tmux drops Ctrl from the former).
-	ReplaceAllChord = "chord:replace-all"
+	ReplaceAllChord      = "chord:replace-all"
+	EditorLineBelowChord = "chord:editor-line-below"
+	EditorLineAboveChord = "chord:editor-line-above"
 )
 
 // KeyboardProfile records which modified Enter chords reach the application.
@@ -160,6 +162,16 @@ func IsReplaceAllChord(m tea.KeyPressMsg) bool {
 func ChordLabel(token string) (label string, ok bool) {
 	profile := CurrentKeyboardProfile()
 	switch token {
+	case EditorLineBelowChord:
+		if profile.ModifiedEnter {
+			return "Shift+Enter", true
+		}
+		return "Ctrl+Alt+O", true
+	case EditorLineAboveChord:
+		if profile.ModifiedEnter {
+			return "Ctrl+Alt+Enter", true
+		}
+		return "Ctrl+Alt+Shift+O", true
 	case CommitChord, CodeActionsChord:
 		if profile.ModifiedEnter || profile.AltEnterReserved {
 			return "Ctrl+Enter", true
@@ -213,6 +225,10 @@ func MatchesShortcut(m tea.KeyPressMsg, shortcut string) bool {
 	switch shortcut {
 	case "":
 		return false
+	case EditorLineBelowChord:
+		return m.Code == tea.KeyEnter && m.Mod == tea.ModShift || (m.Code == 'o' || m.Code == 'O') && m.Mod == tea.ModCtrl|tea.ModAlt
+	case EditorLineAboveChord:
+		return m.Code == tea.KeyEnter && m.Mod == tea.ModCtrl|tea.ModAlt || (m.Code == 'o' || m.Code == 'O') && m.Mod == tea.ModCtrl|tea.ModAlt|tea.ModShift
 	case CommitChord, CodeActionsChord:
 		return IsCommitChord(m)
 	case NewlineChord:
