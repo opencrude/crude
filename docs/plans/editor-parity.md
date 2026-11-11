@@ -55,9 +55,9 @@ hints, code actions, reviewed rename, manual formatting and format-on-manual-sav
 Extend these owners rather than building replacements.
 
 The initial audit found no integrated folding or wrap projection; these now
-have one shared row owner. Multi-cursor editing, indent guides, EditorConfig,
-a user template library,
-semantic token projection, linked editing or CodeLens.
+have one shared row owner. EditorConfig indentation and explicit file choices
+now use the source-table policy. Remaining gaps include multi-cursor editing,
+indent guides, semantic token projection, linked editing and CodeLens.
 Some LSP method constants exist in the vendored transport; a constant is not a
 working workspace/shell workflow. AI literal ghost projection and budget libraries
 exist, but a shipped automatic inference service does not follow from them.
@@ -99,8 +99,13 @@ new editor views and live peer settings. Colors reproject without reparsing;
 whitespace stays out of source and copy. Autosave and format-on-save also have
 consumers. Tab size now supplies shared display geometry and the fallback indent
 width. Source-byte history/recovery and navigation anchors keep the same source
-through width changes. Explicit per-file policy and EditorConfig precedence remain
-open; detected indentation is still separate from display width.
+through width changes. Explicit file choices, EditorConfig and inherited
+indentation now share one source-table policy. The header menu identifies the
+current source; compact validated width prompts, conversion, Reset and Reload use
+native controls. First file-open input uses prepared project policy. Private pane
+memory restores sparse choices without overwriting newer selections. Connected
+peer/profile/control and native 160×40/80×24 journeys pass; indentation is still
+separate from display width. Detailed evidence belongs in the checkpoint issue.
 
 **Implementation contract:**
 
@@ -271,7 +276,7 @@ overlapping cursors, one-step Undo, peer edits, cancellation and render/hit agre
 | Call/type hierarchy | Expand incoming/outgoing calls or supertypes/subtypes in the shared bounded tree/list. Lazy requests, cancellation and exact location navigation; no unrelated popup framework. |
 | CodeLens | Only actual provider-supported actions appear. Resolve on demand; edits go through review and command effects through existing authorization. Never print protocol identifiers as user labels. |
 | Formatting selection and save actions | One formatter selection authority; support range formatting where offered. Organize imports/fix-on-save are explicit opt-ins, serialized with format/save against one source revision. No duplicate file writer or surprise multi-file save. |
-| EditorConfig and whitespace cleanup | Resolve project config without running code. Trim trailing whitespace/final newline are explicit save policies, visible in review and reversible. Never silently rewrite historical mixed line endings on open. |
+| Whitespace cleanup | EditorConfig indentation is connected. Trim trailing whitespace/final newline remain explicit save policies to implement, visible in review and reversible. Never silently rewrite historical mixed line endings on open. |
 | Pull diagnostics and dynamic features | Add only supported negotiated workflows; retain previous result IDs/cancellation semantics where specified. A missing provider, queue or failed analysis must not be labelled a clean project. |
 
 **Acceptance for every row:** supported/unsupported/empty/error/cancelled cases,

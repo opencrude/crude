@@ -50,6 +50,7 @@ require github.com/klauspost/compress v1.20.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/editorconfig/editorconfig-core-go/v2 v2.6.4
 	github.com/go-enry/go-enry/v2 v2.9.6
 	github.com/tinylib/msgp v1.6.5
 	github.com/ulikunitz/xz v0.5.17
@@ -65,6 +66,7 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
+	gopkg.in/ini.v1 v1.67.3 // indirect
 )
 
 require (

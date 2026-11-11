@@ -12,6 +12,7 @@ import (
 	"crude/clientstate"
 	"crude/document"
 	"crude/fileio"
+	"crude/indentation"
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/imagepreview"
@@ -20,6 +21,10 @@ import (
 )
 
 type paneFilePrepared struct {
+	config      indentation.Choices
+	configPath  string
+	configErr   error
+	configRead  bool
 	path        string
 	requested   string
 	buffer      *editor.Buffer
@@ -35,6 +40,7 @@ type paneFilePrepared struct {
 
 type paneFilesOpenedMsg struct {
 	seq, generation  uint64
+	configGeneration uint64
 	manager          *editor.BufferManager
 	win              *window.Window
 	group, initiated window.GroupID
@@ -49,8 +55,9 @@ type paneFilesOpenedMsg struct {
 	// window = landed tab in its own window (Open in window).
 	window bool
 	// activePath selects the remembered document after a restored pane opens.
-	activePath string
-	folds      map[string]*editor.FoldMemory
+	activePath  string
+	folds       map[string]*editor.FoldMemory
+	indentation map[string]indentation.Choices
 	// restoring accepts several pane opens queued by one layout restoration.
 	restoring bool
 	// restoreForeground keeps the remembered active pane focused while other
@@ -69,7 +76,7 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 	if len(paths) == 0 || m.Win == nil || m.BufferMgr == nil || !m.Win.HasGroup(group) {
 		return nil
 	}
-	msg := paneFilesOpenedMsg{seq: m.paneFileOpenSeq, generation: m.workspaceSwitchGen.Load(), manager: m.BufferMgr,
+	msg := paneFilesOpenedMsg{seq: m.paneFileOpenSeq, generation: m.workspaceSwitchGen.Load(), configGeneration: m.editorConfigGeneration, manager: m.BufferMgr,
 		win: m.Win, group: group, initiated: m.Win.ActiveGroup()}
 	if tab := m.Win.ActiveTab(); tab != nil {
 		msg.selected = tab.ID
@@ -97,6 +104,7 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 		msg.refs = m.liveOpenRefs
 	}
 	loadRecovery := m.prepareEditorRecovery()
+	configPort, _ := m.ws.(shellport.EditorConfiguration)
 	command := m.clientIOCommand(ctx, func(owner context.Context) tea.Msg {
 		ctx, cancel := context.WithTimeout(owner, 2*time.Minute)
 		defer cancel()
@@ -128,6 +136,10 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 			if connected {
 				s, err := msg.refs.open(ctx, path)
 				file := paneFilePrepared{path: documentEditorKey(s), requested: path, err: err, snapshot: &s}
+				if err == nil && configPort != nil {
+					file.configRead = true
+					file.configPath, file.config, file.configErr = configPort.ReadEditorConfig(ctx, s.ID)
+				}
 				if err == nil {
 					file.recovery, file.recoveryErr = loadRecovery(recoveryKeyForDocument(s))
 				}
@@ -172,7 +184,7 @@ func (m *App) createPaneUntitled(group window.GroupID) tea.Cmd {
 		m.Feedback.NotifyError("Cannot create a new buffer in this workspace.")
 		return nil
 	}
-	msg := paneFilesOpenedMsg{seq: m.paneFileOpenSeq, generation: m.workspaceSwitchGen.Load(),
+	msg := paneFilesOpenedMsg{seq: m.paneFileOpenSeq, generation: m.workspaceSwitchGen.Load(), configGeneration: m.editorConfigGeneration,
 		manager: m.BufferMgr, win: m.Win, group: group, initiated: m.Win.ActiveGroup()}
 	if tab := m.Win.ActiveTab(); tab != nil {
 		msg.selected = tab.ID
@@ -259,6 +271,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 				m.editorCommands = append(m.editorCommands, msg.refs.releaseCmd(file.snapshot.ID))
 				continue
 			}
+			m.installPreparedEditorConfiguration(m.EditorState.Tabs[file.path].Editor, file, msg.configGeneration)
 			state := m.liveEditors[m.EditorState.Tabs[file.path].Editor.Primary()]
 			if state.refs != nil {
 				// Reopening an already live view must not reinstall an older private
@@ -278,6 +291,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			if view := m.showDocument(file.path, msg.group, foreground); view != nil {
 				if msg.restoring {
 					view.Editor.RestoreFolds(msg.folds[file.path])
+					view.Editor.RestoreIndentationChoices(msg.indentation[file.path])
 				}
 				opened = true
 			}
@@ -306,6 +320,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 		if view := m.showDocument(buf.Path, msg.group, foreground); view != nil {
 			if msg.restoring {
 				view.Editor.RestoreFolds(msg.folds[buf.Path])
+				view.Editor.RestoreIndentationChoices(msg.indentation[buf.Path])
 			}
 			opened = true
 		}

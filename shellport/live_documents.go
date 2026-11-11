@@ -6,6 +6,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/document"
+	"crude/indentation"
 	"crude/workspace"
 )
 
@@ -70,4 +71,9 @@ type LiveDocumentsChangedMsg struct {
 type LiveDocumentEpoch interface {
 	FenceDocumentTopics()
 	ResumeDocumentTopics()
+}
+
+// EditorConfiguration reads saved project data on the selected core, never the shell host.
+type EditorConfiguration interface {
+	ReadEditorConfig(context.Context, string) (string, indentation.Choices, error)
 }

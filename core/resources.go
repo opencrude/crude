@@ -100,6 +100,15 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			value, err := docs.Open(owner, input.Path)
 			return ok(wire(value), err)
 		}, true
+	case coreprotocol.DocumentEditorConfig:
+		var input coreprotocol.DocumentReadRequest
+		if err := decodeRequest(request, &input); err != nil {
+			return bad(err)
+		}
+		return func(ctx context.Context) coreprotocol.Response {
+			path, choices, err := docs.EditorConfig(ctx, owner, input.ID)
+			return ok(wire(coreprotocol.EditorConfigReply{Path: path, Choices: choices}), err)
+		}, true
 	case coreprotocol.DocumentRead:
 		var input coreprotocol.DocumentReadRequest
 		if err := decodeRequest(request, &input); err != nil {
@@ -315,7 +324,7 @@ func (a *actor) applyResource(request coreprotocol.Request, result coreprotocol.
 
 func resourceMutation(method string) bool {
 	switch method {
-	case coreprotocol.DocumentRead, coreprotocol.DocumentSync, coreprotocol.TerminalList, coreprotocol.TerminalRows:
+	case coreprotocol.DocumentEditorConfig, coreprotocol.DocumentRead, coreprotocol.DocumentSync, coreprotocol.TerminalList, coreprotocol.TerminalRows:
 		return false
 	case coreprotocol.DocumentOpen, coreprotocol.DocumentCreateUntitled, coreprotocol.DocumentOpenUntitled, coreprotocol.DocumentSaveUntitled, coreprotocol.DocumentReviewUntitled,
 		coreprotocol.DocumentClose, coreprotocol.DocumentFormat, coreprotocol.DocumentEdit, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave, coreprotocol.DocumentReload, coreprotocol.ProjectFormat,

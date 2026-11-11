@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"crude/indentation"
 	"crude/shellport"
 	"crude/tui/ui"
 	"crude/types/control"
@@ -21,6 +22,28 @@ func (m *App) handleEditorActionControl(msg shellport.ControlRequestMsg) (tea.Cm
 		return fail(control.Stale, "The focused editor changed. Inspect it again.")
 	}
 	result := control.Result{State: control.Applied}
+	if r.CommandID == "editor.indentation" {
+		var input struct {
+			Token   string               `json:"view_token"`
+			Choices *indentation.Choices `json:"choices"`
+		}
+		if err := decodeShellInput(r.Input, &input); err != nil {
+			return fail(control.Invalid, err.Error())
+		}
+		if input.Choices == nil {
+			return fail(control.Invalid, "Supply indentation choices. Use an empty object to inherit.")
+		}
+		if ed.ActionToken() != input.Token {
+			return fail(control.Stale, "The editor changed. Inspect it again.")
+		}
+		if err := ed.SetIndentationChoices(*input.Choices); err != nil {
+			return fail(control.Invalid, err.Error())
+		}
+		result.Output, _ = json.Marshal(ed.Indentation())
+		m.forceFrame()
+		return m.replyShellControl(msg, result), true
+	}
+
 	if r.CommandID == "editor.actions" {
 		if err := decodeShellInput(r.Input, &struct{}{}); err != nil {
 			return fail(control.Invalid, err.Error())
@@ -33,9 +56,12 @@ func (m *App) handleEditorActionControl(msg shellport.ControlRequestMsg) (tea.Cm
 			Enabled  bool        `json:"enabled"`
 		}
 		out := struct {
-			Token   string   `json:"view_token"`
-			Actions []action `json:"actions"`
-		}{Token: ed.ActionToken()}
+			Token              string              `json:"view_token"`
+			Actions            []action            `json:"actions"`
+			Indentation        indentation.Choices `json:"indentation"`
+			IndentationChoices indentation.Choices `json:"indentation_choices"`
+			IndentationSource  string              `json:"indentation_source"`
+		}{Token: ed.ActionToken(), Indentation: ed.Indentation(), IndentationChoices: ed.IndentationChoices(), IndentationSource: ed.IndentationSource()}
 		for _, a := range ui.EditorActions() {
 			out.Actions = append(out.Actions, action{ID: a.ID, Label: a.Label, Shortcut: ui.FormatShortcut(m.actionRegistry.HintFor(a.ID)), Mutates: a.MutatesText, Enabled: !ed.ReadOnly() || !a.MutatesText})
 		}

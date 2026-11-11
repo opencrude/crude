@@ -113,6 +113,12 @@ operation is the same as keyboard/menu input; mutating actions report **admitted
 not a canonical commit or Save. The document receipt/topic still has to settle.
 Read-only views reject mutations but allow navigation and selection. Deferred
 commands retain their exact action identity in private recovery.
+The inspection also returns effective indentation, sparse file choices and their
+source. `editor.indentation` requires the same exact view token and replaces its
+sparse file choices; an empty object restores project inheritance. It is a private
+policy change, not a document edit or save. The token fences policy/fold changes
+as well as source/selection. Leading-whitespace conversion uses `editor.action`
+and its normal canonical history settlement.
 
 Numeric snippet alternatives resolve Write only against the exact open picker,
 native list and interaction owner. Semantic activation shares the ordinary

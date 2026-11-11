@@ -228,6 +228,10 @@ func lspUnset(s LSPSettings) bool {
 }
 
 func NormalizeEditorSettings(s EditorSettings) EditorSettings {
+	if s.IndentStyle != "space" && s.IndentStyle != "tab" {
+		s.IndentStyle = ""
+	}
+	s.IndentSize = min(32, max(0, s.IndentSize))
 	if s.TabSize <= 0 {
 		s.TabSize = 4
 	}

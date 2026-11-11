@@ -223,11 +223,13 @@ type App struct {
 	// and cancels the rest.
 	paneRestoreCeiling uint64
 	// problemsScreen is the Problems pane; syncWorkspacePanels feeds it.
-	problemsScreen   *problems.Screen
-	liveEditors      map[*editor.Editor]*liveEditorState
-	liveOpenRefs     *liveDocumentRefs
-	editorCommands   []tea.Cmd
-	editorSyntaxJobs map[<-chan struct{}]*editor.Editor
+	problemsScreen         *problems.Screen
+	liveEditors            map[*editor.Editor]*liveEditorState
+	liveOpenRefs           *liveDocumentRefs
+	editorCommands         []tea.Cmd
+	editorSyntaxJobs       map[<-chan struct{}]*editor.Editor
+	editorConfigRequests   map[*editor.Editor]*editorConfigRequest
+	editorConfigGeneration uint64
 	// Rectangles computed by computeContentLayout each frame; they drive
 	// shell slot geometry AND viewmodel policy (mouse region classification
 	// for editor/divider/status and focus-stack updates).

@@ -216,7 +216,7 @@ func (m *App) handleProductControl(msg shellport.ControlRequestMsg) (tea.Cmd, bo
 			return fail(control.Stale, err.Error())
 		}
 		return m.awaitShellControl(msg, func() tea.Msg { return productJobStopped{err: run()} }, nil), true
-	case "editor.actions", "editor.action":
+	case "editor.actions", "editor.action", "editor.indentation":
 		return m.handleEditorActionControl(msg)
 	case "editor.find", "project.search_open":
 		var in struct {

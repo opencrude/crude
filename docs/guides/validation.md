@@ -754,3 +754,22 @@ results and cold/large-line work with the worker pool deliberately occupied.
 `BenchmarkWrappedEditorWorkload` measures warm grid paint; `BenchmarkWrappedRowPreparation`
 separates cold source preparation, width reflow and typing-plus-grid paint. Neither
 benchmark is a measurement of terminal transport or physical display latency.
+
+## File indentation and project rules
+
+`TestEditorIndentationVisualAcceptance` uses `CRUDE_VISUAL_INDENTATION=1`,
+`CRUDE_INDENTATION_RESULT` and `CRUDE_CAPTURE_EVIDENCE` pointing to one new file.
+F3 opens an isolated project with an eight-column tab and two-column indent.
+The published `INDENT_CLICK` cell is the actual header status. Click it, choose
+Indent size with Home, Down, Down, Enter, then enter `4` in the selected
+number field and press Enter. Use Alt+/ to search and run **Convert indentation to spaces**, Undo,
+then **Use project indentation**. F4 only observes each boundary; wait for
+`INDENT_READY phase=N` before the next input. Seven verified phases and joined
+F9 cleanup with unchanged disk source are required at 160×40 and 80×24.
+
+Connected tests cover native menu/control entry, sparse peer choices, client
+profile return, saved EditorConfig updates, first mounted input, invalid-policy
+recovery and deletion, cancellation before/after admission and stale results.
+Source tests cover distinct indent/tab widths, partial-tab Backspace/outdent,
+CRLF, selection preservation, linked panes and one-step Undo. The official parser's
+nested globs, section order, root and unset behavior are exercised independently.

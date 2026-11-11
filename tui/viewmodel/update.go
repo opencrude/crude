@@ -214,6 +214,14 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorSnippetChoiceMsg:
 		m.handleSnippetChoice(msg)
 		return m, nil
+	case editor.IndentationMenuMsg:
+		if msg.Editor == m.EditorState.Editor {
+			return m, m.openIndentationMenu(msg.Editor)
+		}
+		return m, nil
+	case editorConfigResult:
+		m.applyEditorConfiguration(msg)
+		return m, nil
 	case editor.RowsReadyMsg:
 		msg.Apply()
 		m.invalidatePreparedEditor(msg.Editor())
@@ -414,6 +422,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleWorkspacePanel(termdock.PanelNotices)
 		case "tabs":
 			m.openTabStats(msg.TargetID)
+		case "editor-indentation":
+			if m.EditorState.Editor != nil && msg.TargetID == "editor:"+m.EditorState.ActiveView {
+				return m, m.openIndentationMenu(m.EditorState.Editor)
+			}
 		case "editor-encoding":
 			if m.EditorState.Editor != nil && msg.TargetID == "editor:"+m.EditorState.ActiveView {
 				return m, m.openEncodingMenu(m.EditorState.Editor)

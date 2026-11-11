@@ -142,8 +142,14 @@ connected profile/peer editing, ordinary inventory and affected race checks pass
 The checkpoint issue records gate details and failures rather than declaring all
 editor parity complete.
 
-Next, complete per-file indentation/EditorConfig through the existing source,
-settings and save owners, then the remaining semantic workflows. Preserve source,
+File indentation and EditorConfig now share the source-table policy, first-open
+preparation and private pane memory. Native status/menu/width/conversion/Undo/Reset
+journeys pass at 160×40 and 80×24. The tall width chooser was removed after visual
+review and replaced by the shared compact prompt. Ordinary inventory, affected
+race, build/lint/docs/cross-build and the unchanged allocation gate pass.
+
+Next, complete multiple selections through the existing source, input, pointer,
+paint and history owners, then the remaining semantic workflows. Preserve source,
 history, diagnostics and linked-view identity. A stored preference with no consumer
 is not accepted. Do not add another Settings page.
 

@@ -36,10 +36,22 @@ func (m *App) drainEditorSyntaxCommands() tea.Cmd {
 		default:
 		}
 	}
+	for ed, r := range m.editorConfigRequests {
+		if !ed.IsOpen() || r.owner != m.ws {
+			r.invalid = true
+			r.cancel()
+			if !r.loading {
+				delete(m.editorConfigRequests, ed)
+			}
+		}
+	}
 	var commands []tea.Cmd
 	add := func(ed *editor.Editor) {
 		if ed == nil || !ed.IsOpen() {
 			return
+		}
+		if cmd := m.editorConfigurationCommand(ed); cmd != nil {
+			commands = append(commands, cmd)
 		}
 		if command := ed.SyntaxCommand(); command != nil {
 			commands = append(commands, command)

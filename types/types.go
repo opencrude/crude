@@ -700,6 +700,8 @@ const (
 )
 
 type EditorSettings struct {
+	IndentStyle      string                `json:"indent_style,omitempty"`
+	IndentSize       int                   `json:"indent_size,omitempty"`
 	TabSize          int                   `json:"tab_size,omitempty"`
 	WordWrap         bool                  `json:"word_wrap,omitempty"`
 	LineNumbers      bool                  `json:"line_numbers,omitempty"`

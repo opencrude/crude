@@ -5,6 +5,7 @@ import (
 	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/document"
+	"crude/indentation"
 	"crude/shellport"
 	"crude/textencoding"
 	"crude/workspace"
@@ -360,4 +361,10 @@ func (w *Workspace) ResumeDocumentTopics() {
 			w.startDocumentTopicLocked(client, id, topic.path, false)
 		}
 	}
+}
+
+func (w *Workspace) ReadEditorConfig(ctx context.Context, id string) (string, indentation.Choices, error) {
+	var out coreprotocol.EditorConfigReply
+	err := w.callCancellable(ctx, coreprotocol.DocumentEditorConfig, &coreprotocol.DocumentReadRequest{ID: id}, &out)
+	return out.Path, out.Choices, err
 }
