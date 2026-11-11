@@ -511,7 +511,7 @@ func (m *App) handleAutosaveDue(msg workspace.DocumentAutosaveDueMsg) tea.Cmd {
 func (m *App) applyEditorSettings(settings types.EditorSettings) {
 	settings = types.NormalizeEditorSettings(settings)
 	m.editorSettings = settings
-	if m.EditorState == nil || m.ws.Documents() == nil {
+	if m.EditorState == nil {
 		return
 	}
 	for _, tab := range m.EditorState.Tabs {
@@ -519,6 +519,10 @@ func (m *App) applyEditorSettings(settings types.EditorSettings) {
 			continue
 		}
 		ed := tab.Editor
+		ed.SetPresentation(settings)
+		if m.ws.Documents() == nil {
+			continue
+		}
 		m.ws.Documents().Cancel(ed.BufferID())
 		if state := m.editorSaves[ed.BufferID()]; state != nil && state.inFlight && state.reason != workspace.DocumentSaveManual {
 			state.pending = false

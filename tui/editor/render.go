@@ -88,6 +88,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, e.scrollX)
 		inline := e.inlineLine(lineIdx)
 		diags := e.lineDiagnostics(lineIdx)
+		spaces := e.whitespaceInfo(lineIdx)
 
 		ri := 0
 		visCol := 0
@@ -203,18 +204,32 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, sourceCol)
 				if ri < len(clusters) && vCol < visCol+widths[ri] && vCol < lineVisW {
 					if vCol == visCol {
+						cluster := clusters[ri]
+						marker := ""
+						if cluster == " " {
+							marker = spaces.marker(sourceCol, e.renderWhitespace == "boundary")
+						}
+						if marker != "" {
+							cluster = marker
+						}
 						switch {
 						case e.isSelected(lineIdx, sourceCol):
 							fg := e.cellColor(e.th.Colors.Fg)
-							if sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
+							if marker != "" {
+								fg = e.tokens.Color(ui.ColorMuted)
+							}
+							if marker == "" && sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
 								fg = rendering.LipglossColorToCell(colorMap[sourceCol])
 							}
 							fg, bg := e.tokens.TextSelectionColors(fg)
-							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bg, diagAttr, blankCell)
+							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, bg, diagAttr, blankCell)
 						case searchMatchIdx >= 0:
 							hlBg := e.searchHighlightBg(searchIsCurrent)
 							fg := e.cellColor(e.th.Colors.Fg)
-							if sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
+							if marker != "" {
+								fg = e.tokens.Color(ui.ColorMuted)
+							}
+							if marker == "" && sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
 								fg = rendering.LipglossColorToCell(colorMap[sourceCol])
 							}
 							if sev > 0 {
@@ -223,10 +238,13 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							if cell.ContrastRatio(fg, hlBg) < 4.5 {
 								fg = cell.ContrastInk(hlBg)
 							}
-							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, hlBg, diagAttr, blankCell)
+							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, hlBg, diagAttr, blankCell)
 						default:
 							fg := e.cellColor(e.th.Colors.Fg)
-							if sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
+							if marker != "" {
+								fg = e.tokens.Color(ui.ColorMuted)
+							}
+							if marker == "" && sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
 								fg = rendering.LipglossColorToCell(colorMap[sourceCol])
 							}
 							if sev > 0 {
@@ -236,7 +254,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 								fg = e.tokens.Color(ui.ColorAccent)
 								diagAttr |= cell.AttrBold | cell.AttrUnderline
 							}
-							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bgColor, diagAttr, blankCell)
+							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, bgColor, diagAttr, blankCell)
 						}
 					} else if visCol < e.scrollX {
 						switch {

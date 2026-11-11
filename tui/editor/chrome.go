@@ -241,15 +241,14 @@ func (e *Editor) SetTokens(ts *ui.TokenSet) {
 	}
 }
 
-// SetTheme replaces the editor palette, rebuilds chroma styles, and clears
-// line/chroma caches so the next paint cannot keep pre-theme colours.
+// SetTheme replaces the palette and clears projected colors. Source analysis,
+// geometry, cursor and history are independent of theme and remain current.
 func (e *Editor) SetTheme(th *theme.Theme) {
 	if e == nil || th == nil {
 		return
 	}
 	e.th = th
-	e.initChroma()
-	e.invalidateEditorCaches()
+	e.refreshSyntaxPalette()
 	if e.tokens != nil {
 		e.tokens.Rebuild(th)
 	} else {

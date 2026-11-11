@@ -309,6 +309,19 @@ requires no choice keys, original bytes, one-step Undo/Redo, canonical text,
 unchanged disk/draft and joined fixture cleanup. It is deterministic native
 input evidence, not a claim about an installed language server.
 
+### Editor display preferences
+
+`TestEditorPresentationVisualAcceptance` uses `CRUDE_VISUAL_EDITOR_PRESENTATION=1`
+and `CRUDE_PRESENTATION_RESULT`. F3 opens a disposable document and focuses Line
+numbers on the existing Editor page. Space, Tab, Right, Tab, Right, Right changes
+line numbers, syntax colors and whitespace. F4 observes the unsaved draft; F5
+focuses the footer, Enter saves, F4 observes committed preferences. F5, Right,
+Enter closes Settings; F4 checks actual source ink/markers, unchanged bytes and
+restored editor focus. Follow F3/F4 with `await:PRESENTATION_READY phase=N`
+(N = 1–4), then `quit:F9`. Run desktop and constrained sizes sequentially.
+Connected regressions separately cover peer publications, linked/new views,
+reset/inheritance and typing/Undo after the preferences change.
+
 ### File-tree delete and visible file changes
 
 `CRUDE_VISUAL_FILE_CHANGES=progress` holds a disposable delete at its safety-copy

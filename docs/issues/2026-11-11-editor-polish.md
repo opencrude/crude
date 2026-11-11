@@ -235,6 +235,38 @@ This closes the everyday-command checkpoint, not all editor parity. Configurable
 geometry, folding/wrapping, multiple carets, remaining negotiated LSP workflows
 and the original Windows GC finding remain open. No local model was added.
 
+## Editor display preferences (2026-11-11)
+
+The existing Line numbers, Syntax colors and Show whitespace preferences now
+have consumers in the shared editor. New/open/linked views and peer settings
+publications use the same path. Reset restores inherited values without changing
+selected source bytes or Undo. Syntax palette changes reproject only color;
+spaces/tabs are paint-only and cannot enter copy, search, save or inline hints.
+The diagnostic/change gutter lanes remain present when numbers are hidden.
+
+The connected regression initially failed because saved settings had no visible
+effect. It now passes at 160×40 and 80×24 through actual form keys and Save/Close,
+two shells, linked and newly opened views, reset and subsequent typing/Undo.
+Direct checks cover exact whitespace cells, unchanged source/history, inlays,
+diagnostics, cached geometry, parser identity and readable distinct palettes.
+Native captures at both sizes verify all four boundaries and successful joined
+cleanup; inspected frames show the existing preferences page and changed source
+ink/markers without line numbers. No user core was replaced or stopped.
+
+Affected editor/theme packages, connected editor/history/insight/split/theme/save
+checks, focused race checks, native build, zero-issue lint and design/docs pass.
+The unchanged complete benchmark gate passes. Three quiet 500 ms repetitions on
+Linux amd64 measured 0.183–0.188 ms for disabled whitespace, 0.196–0.198 ms for
+boundary markers and 0.197–0.199 ms for all markers on a 120×40 grid over 10,000
+source lines. These include a newly allocated test surface (about 200 KB and
+181–185 allocations per operation), not terminal display latency. No gate was
+loosened. The previous full suite and site results are not relabelled as a new
+full run for this checkpoint.
+
+Tab-size geometry, wrap/fold projection and the other remaining editor workflows
+are still open. This checkpoint is not a claim of full IDE parity or a Windows
+GC fix.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers

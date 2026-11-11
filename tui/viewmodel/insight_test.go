@@ -10,6 +10,7 @@ import (
 	"crude/shellport"
 	"crude/tui/cell"
 	"crude/tui/editor"
+	"crude/tui/theme"
 	"crude/types"
 	"crude/workspace"
 )
@@ -51,7 +52,7 @@ func TestInsightThreeRenderedShellsEditAuthorUndoAndSave(t *testing.T) {
 		}
 		// Inspect the actual mounted editor region, not only its cached result.
 		x, y := shell.app.editorRect.X+editors[i].GutterWidth()+2, shell.app.editorRect.Y
-		r, g, b, _ := shell.app.Theme.Colors.Code.Comment.RGBA()
+		r, g, b, _ := theme.SyntaxPalette(shell.app.Theme, shell.app.editorSettings.SyntaxTheme).Colors.Code.Comment.RGBA()
 		wantInk := cell.NewTrueColor(uint8(r>>8), uint8(g>>8), uint8(b>>8))
 		if got := shell.app.mainSurf.Buffer().Get(x, y); got.Char != 's' || !got.FG.Equal(wantInk) {
 			t.Fatalf("shell %d failed to paint shared native comment: %+v", i, got)
