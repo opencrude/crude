@@ -312,11 +312,13 @@ input evidence, not a claim about an installed language server.
 ### Editor display preferences
 
 `TestEditorPresentationVisualAcceptance` uses `CRUDE_VISUAL_EDITOR_PRESENTATION=1`
-and `CRUDE_PRESENTATION_RESULT`. F3 opens a disposable document and focuses Line
-numbers on the existing Editor page. Space, Tab, Right, Tab, Right, Right changes
-line numbers, syntax colors and whitespace. F4 observes the unsaved draft; F5
+and `CRUDE_PRESENTATION_RESULT`. F3 opens a disposable document with a selected
+source word and focuses Tab size on the existing Editor page. Ctrl+A, `8`, Tab,
+Tab, Space, Tab, Right, Tab, Right, Right changes tab width, line numbers, syntax
+colors and whitespace. F4 observes the unsaved draft; F5
 focuses the footer, Enter saves, F4 observes committed preferences. F5, Right,
-Enter closes Settings; F4 checks actual source ink/markers, unchanged bytes and
+Enter closes Settings; F4 checks actual source ink/markers, retained selected
+source bytes at the new column, the complete unit caption, unchanged bytes and
 restored editor focus. Follow F3/F4 with `await:PRESENTATION_READY phase=N`
 (N = 1–4), then `quit:F9`. Run desktop and constrained sizes sequentially.
 Connected regressions separately cover peer publications, linked/new views,

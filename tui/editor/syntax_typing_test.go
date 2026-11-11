@@ -130,7 +130,7 @@ func TestSyntaxProvisionalMappingRespectsSourceGeometry(t *testing.T) {
 		{"replace-with-zwj", 4, 7, "👩‍💻", "\t界👩‍💻Z", []string{"tab", "tab", "tab", "tab", "wide", "wide", "accent", "accent", "tail"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := mapSyntaxLine(before, bufferLineChange{byteStart: tc.start, byteEnd: tc.end, text: tc.text})
+			got := mapSyntaxLine(DefaultTabWidth, before, bufferLineChange{byteStart: tc.start, byteEnd: tc.end, text: tc.text})
 			if got.text != tc.wantText || strings.Join(got.colours, ",") != strings.Join(tc.want, ",") {
 				t.Fatalf("mapped %q %v, want %q %v", got.text, got.colours, tc.wantText, tc.want)
 			}
@@ -217,6 +217,6 @@ func BenchmarkSyntaxMapInlineDecorations(b *testing.B) {
 	edit := bufferLineChange{byteStart: 10, byteEnd: 10, text: "x"}
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = mapSyntaxLine(line, edit)
+		_ = mapSyntaxLine(DefaultTabWidth, line, edit)
 	}
 }

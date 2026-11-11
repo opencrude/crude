@@ -126,7 +126,7 @@ func (e *Editor) invalidateEditedSyntax() {
 			}
 			if change.delta == 0 {
 				if line, ok := e.chromaLineCache[change.start]; ok && change.start == change.end && change.inline {
-					e.chromaLineCache[change.start] = mapSyntaxLine(line, change)
+					e.chromaLineCache[change.start] = mapSyntaxLine(e.TabWidth(), line, change)
 					continue
 				}
 				for line := range e.chromaLineCache {
@@ -156,16 +156,16 @@ func (e *Editor) invalidateEditedSyntax() {
 	e.syntaxBuffer, e.syntaxRevision = e.buf, revision
 }
 
-func mapSyntaxLine(line syntaxLine, edit bufferLineChange) syntaxLine {
+func mapSyntaxLine(tabW int, line syntaxLine, edit bufferLineChange) syntaxLine {
 	start, end := edit.byteStart, edit.byteEnd
 	if start < 0 || end < start || end > len(line.text) {
 		return syntaxLine{}
 	}
 	raw := line.text[:start] + edit.text + line.text[end:]
-	colours := make([]string, LineVisualWidth(raw, tabWidth))
+	colours := make([]string, LineVisualWidth(raw, tabW))
 	oldOffset, oldCol, offset, col := 0, 0, 0, 0
 	for rest := raw; rest != ""; {
-		size, width := firstSourceUnit(rest, col)
+		size, width := firstSourceUnit(tabW, rest, col)
 		if size == 0 {
 			break
 		}
@@ -176,7 +176,7 @@ func mapSyntaxLine(line syntaxLine, edit bufferLineChange) syntaxLine {
 			original = start
 		}
 		for oldOffset < len(line.text) {
-			n, w := firstSourceUnit(line.text[oldOffset:], oldCol)
+			n, w := firstSourceUnit(tabW, line.text[oldOffset:], oldCol)
 			if n == 0 || oldOffset+n > original {
 				break
 			}
@@ -453,11 +453,11 @@ func (e *Editor) ensureChromaColors(fromLine, toLine int) {
 // Both canonical byte spans and provisional/lexical spans use one grapheme,
 // tab and theme projection. No second native-cell geometry path may drift.
 func (e *Editor) projectSyntaxLine(raw string, start int, tokenAt func(int) chroma.TokenType) syntaxLine {
-	colours := make([]string, LineVisualWidth(raw, tabWidth))
+	colours := make([]string, LineVisualWidth(raw, e.TabWidth()))
 	col, offset := 0, start
 	for rest := raw; rest != ""; {
 		colour := e.chromaTokenColor(tokenAt(offset))
-		size, width := firstSourceUnit(rest, col)
+		size, width := firstSourceUnit(e.TabWidth(), rest, col)
 		if size == 0 {
 			break
 		}

@@ -443,7 +443,7 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 		}
 	}
 	raw := string(b)
-	clusters, runes, widths, totalW := lineDisplayGeometryWithClusters(raw, tabWidth)
+	clusters, runes, widths, totalW := lineDisplayGeometryWithClusters(raw, e.TabWidth())
 	if e.lineGeomCache == nil {
 		e.lineGeomCache = make(map[int]*lineGeomCache, 128)
 	}

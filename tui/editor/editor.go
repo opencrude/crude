@@ -27,9 +27,8 @@ const (
 )
 
 type Change struct {
-	Type         ActionType
-	Text         []byte
-	CursorBefore Position
+	Type ActionType
+	Text []byte
 	// Group links changes that undo/redo as one step. Zero means the
 	// change stands alone; equal non-zero values form one atomic group.
 	Group int
@@ -41,7 +40,7 @@ type Change struct {
 }
 
 type editorViewState struct {
-	Cursor, Anchor, End Position
+	Cursor, Anchor, End int // UTF-8 offsets in the corresponding source snapshot
 	Selecting           bool
 	ScrollX, ScrollY    int
 }
@@ -60,9 +59,10 @@ type Editor struct {
 	buffer             *Buffer
 	documentProjection *DocumentProjection
 
-	cursor  Position
-	scrollX int
-	scrollY int
+	sourceCaret sourceCaretCache
+	cursor      Position
+	scrollX     int
+	scrollY     int
 
 	goalCol int
 	goalSet bool
@@ -240,7 +240,6 @@ type HoverState struct {
 
 const (
 	scrollMargin = 3
-	tabWidth     = DefaultTabWidth
 )
 
 func New(th *theme.Theme) *Editor {
@@ -682,7 +681,7 @@ func (e *Editor) RefreshDiagnostics() {
 		valid := d.EndLine > d.Line || d.EndLine == d.Line && d.EndCol >= d.Col
 		rawLine, err := e.buf.Line(d.Line)
 		if err == nil {
-			converted[i].Col = UTF16ColToVisualCol(string(rawLine), d.Col, tabWidth)
+			converted[i].Col = UTF16ColToVisualCol(string(rawLine), d.Col, e.TabWidth())
 			if _, err := lspEditOffset(string(rawLine), 0, d.Col); err != nil {
 				valid = false
 			}
@@ -691,7 +690,7 @@ func (e *Editor) RefreshDiagnostics() {
 		}
 		rawLine, err = e.buf.Line(d.EndLine)
 		if err == nil {
-			converted[i].EndCol = UTF16ColToVisualCol(string(rawLine), d.EndCol, tabWidth)
+			converted[i].EndCol = UTF16ColToVisualCol(string(rawLine), d.EndCol, e.TabWidth())
 			if _, err := lspEditOffset(string(rawLine), 0, d.EndCol); err != nil {
 				valid = false
 			}
@@ -1121,7 +1120,7 @@ func (e *Editor) SetCursorPosition(line, col int) {
 	}
 	e.cursor.Line = line
 	lineBytes, _ := e.buf.Line(line)
-	maxCol := LineVisualWidth(string(lineBytes), tabWidth)
+	maxCol := LineVisualWidth(string(lineBytes), e.TabWidth())
 	if col < 0 {
 		col = 0
 	}

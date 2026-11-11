@@ -387,12 +387,12 @@ func (s *Screen) rebuildPreview() {
 	if localLine < 0 {
 		localLine = 0
 	}
-	startCol := editor.RuneIndexToVisualColumn(result.LineText, result.Column)
+	startCol := editor.RuneIndexToVisualColumn(preview.TabWidth(), result.LineText, result.Column)
 	endRune := result.EndColumn
 	if result.EndLine > result.Line {
 		endRune = len([]rune(result.LineText))
 	}
-	endCol := editor.RuneIndexToVisualColumn(result.LineText, max(endRune, result.Column+1))
+	endCol := editor.RuneIndexToVisualColumn(preview.TabWidth(), result.LineText, max(endRune, result.Column+1))
 	preview.SetCursorPosition(localLine, startCol)
 	if !result.FuzzyOnly {
 		preview.SetLandingRange(localLine, startCol, endCol)
@@ -421,7 +421,7 @@ func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.Pro
 		}
 		if r.FuzzyOnly {
 			for _, pos := range r.TextMatches {
-				sc, ec := editor.RuneIndexToVisualColumn(r.LineText, pos), editor.RuneIndexToVisualColumn(r.LineText, pos+1)
+				sc, ec := editor.RuneIndexToVisualColumn(preview.TabWidth(), r.LineText, pos), editor.RuneIndexToVisualColumn(preview.TabWidth(), r.LineText, pos+1)
 				if i == s.selected && st.CurrentIdx < 0 {
 					st.CurrentIdx = len(st.Matches)
 				}
@@ -429,7 +429,7 @@ func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.Pro
 			}
 			continue
 		}
-		sc := editor.RuneIndexToVisualColumn(r.LineText, r.Column)
+		sc := editor.RuneIndexToVisualColumn(preview.TabWidth(), r.LineText, r.Column)
 		endLocal := local
 		endText := r.LineText
 		if r.EndLine > r.Line {
@@ -439,7 +439,7 @@ func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.Pro
 			}
 			endText = strings.Split(selected.Context, "\n")[endLocal]
 		}
-		ec := editor.RuneIndexToVisualColumn(endText, r.EndColumn)
+		ec := editor.RuneIndexToVisualColumn(preview.TabWidth(), endText, r.EndColumn)
 		if endLocal == local && ec <= sc {
 			ec = sc + 1
 		}

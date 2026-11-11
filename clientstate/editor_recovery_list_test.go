@@ -14,7 +14,7 @@ func TestEditorRecoveryListingBoundedPrivateAndStageCAS(t *testing.T) {
 	a := attach(t, s, "profile")
 	b := attach(t, s, "other")
 	ctx := context.Background()
-	raw := json.RawMessage(`{"Version":1,"draft":"private"}`)
+	raw := json.RawMessage(`{"Version":2,"draft":"private"}`)
 	save := func(owner Attachment, workspace, path string) EditorRecoveryRecord {
 		t.Helper()
 		r, err := s.SaveEditorRecovery(ctx, owner, EditorRecoveryKey{owner.ClientID, workspace, path}, 0, raw)

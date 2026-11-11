@@ -32,7 +32,7 @@ func TestEditorSyntaxCompletionFollowsOwnerAcrossTabChange(t *testing.T) {
 	ed.ScrollToCursor()
 	buf := surface.NewSurface("syntax-acceptance", 80, 12, cell.TransparentBlank())
 	ed.Render(buf, ui.PaintContext{Theme: app.Theme})
-	want := rendering.ThemeColorToCell(app.Theme.Colors.Code.String)
+	want := rendering.ThemeColorToCell(theme.SyntaxPalette(app.Theme, app.editorSettings.SyntaxTheme).Colors.Code.String)
 	found := false
 	for y := 0; y < 12; y++ {
 		for x := 0; x < 80; x++ {

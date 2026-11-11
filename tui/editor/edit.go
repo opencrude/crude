@@ -51,7 +51,7 @@ func (e *Editor) insertNewline() {
 	e.beginUndoGroup()
 	defer e.endUndoGroup()
 	line := e.LineText(e.cursor.Line)
-	byteOff := VisualColToByteOffset(line, e.cursor.Col, tabWidth)
+	byteOff := VisualColToByteOffset(line, e.cursor.Col, e.TabWidth())
 	before := line[:byteOff]
 	indent := leadingWhitespace(before)
 	baseIndent := indent
@@ -63,11 +63,11 @@ func (e *Editor) insertNewline() {
 			// this split. Do not carry it onto the closing line after baseIndent.
 			padding := len(leadingWhitespace(line[byteOff:]))
 			if padding > 0 {
-				e.deleteRecorded(e.cursor, Position{Line: e.cursor.Line, Col: ByteOffsetToVisualCol(line, byteOff+padding, tabWidth)}, e.cursor)
+				e.deleteRecorded(e.cursor, Position{Line: e.cursor.Line, Col: ByteOffsetToVisualCol(line, byteOff+padding, e.TabWidth())}, e.cursor)
 			}
 			e.insertText(e.lineEnding() + indent + e.lineEnding() + baseIndent)
 			e.cursor.Line--
-			e.cursor.Col = LineVisualWidth(indent, tabWidth)
+			e.cursor.Col = LineVisualWidth(indent, e.TabWidth())
 			e.ensureCursorVisible()
 			return
 		}
@@ -121,7 +121,7 @@ func (e *Editor) deleteBackward() {
 	// never extends into words, even when the indent contains tabs.
 	if end.Col > 0 {
 		raw := e.LineText(end.Line)
-		off := VisualColToByteOffset(raw, end.Col, tabWidth)
+		off := VisualColToByteOffset(raw, end.Col, e.TabWidth())
 		if strings.Trim(raw[:off], " \t") == "" {
 			stop := e.indentStyle().width()
 			start = e.buf.snapPosition(Position{Line: end.Line, Col: ((end.Col - 1) / stop) * stop})
@@ -156,9 +156,6 @@ func (e *Editor) recordChange(c Change) {
 	}
 	c.Group = e.undoGroupID
 	c.viewID = e.historyID
-	c.Before = e.captureViewState()
-	c.Before.Cursor = c.CursorBefore
-	c.After = e.captureViewState()
 	if e.buf.changeIndex < len(e.buf.changes) {
 		e.buf.changes = e.buf.changes[:e.buf.changeIndex]
 	}
@@ -240,12 +237,12 @@ func (e *Editor) endUndoGroup() {
 }
 
 func (e *Editor) captureViewState() editorViewState {
-	return editorViewState{Cursor: e.cursor, Anchor: e.selAnchor, End: e.selEnd, Selecting: e.selecting, ScrollX: e.scrollX, ScrollY: e.scrollY}
+	return editorViewState{Cursor: e.buf.positionToOffset(e.cursor), Anchor: e.buf.positionToOffset(e.selAnchor), End: e.buf.positionToOffset(e.selEnd), Selecting: e.selecting, ScrollX: e.scrollX, ScrollY: e.scrollY}
 }
 
 func (e *Editor) restoreViewState(s editorViewState) {
-	e.cursor = e.buf.snapPosition(s.Cursor)
-	e.selAnchor, e.selEnd = e.buf.snapPosition(s.Anchor), e.buf.snapPosition(s.End)
+	e.cursor = e.buf.positionAtOffset(s.Cursor)
+	e.selAnchor, e.selEnd = e.buf.positionAtOffset(s.Anchor), e.buf.positionAtOffset(s.End)
 	e.stopPointerSelection()
 	e.selecting = s.Selecting
 	e.scrollX, e.scrollY = s.ScrollX, s.ScrollY

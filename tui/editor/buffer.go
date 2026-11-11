@@ -24,6 +24,7 @@ type piece struct {
 }
 
 type PieceTable struct {
+	tabSize             int
 	indentation         indentStyle
 	indentationRevision uint64
 	lineChanges         [32]bufferLineChange
@@ -83,6 +84,7 @@ func (pt *PieceTable) recordLineChange(start, end, delta int, edit document.Edit
 
 func NewPieceTable() *PieceTable {
 	return &PieceTable{
+		tabSize:  DefaultTabWidth,
 		original: []byte{},
 		add:      []byte{},
 		pieces:   []piece{{buffer: originalBuffer, start: 0, length: 0}},
@@ -237,7 +239,7 @@ func (pt *PieceTable) positionToOffset(pos Position) int {
 	}
 	line := max(0, pos.Line)
 	content, _ := pt.lineView(line)
-	return pt.lineOffsets[line] + VisualColToByteOffset(string(content), pos.Col, tabWidth)
+	return pt.lineOffsets[line] + VisualColToByteOffset(string(content), pos.Col, pt.tabSize)
 }
 
 func (pt *PieceTable) GetText(start, end Position) string {

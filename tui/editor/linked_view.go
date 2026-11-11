@@ -69,19 +69,38 @@ func (e *Editor) AdoptView(from *Editor) {
 	e.ClearHover()
 }
 
-// Caret returns the caret and the first visible line, for navigation history.
-func (e *Editor) Caret() (Position, int) { return e.cursor, e.scrollY }
+// SourcePosition retains a line and UTF-8 byte column independently of display geometry.
+type SourcePosition struct{ Line, Byte int }
+type sourceCaretCache struct {
+	buffer   *PieceTable
+	revision uint64
+	position Position
+	width    int
+	source   SourcePosition
+}
+
+// Caret returns the source caret and first visible line for navigation history.
+// Unchanged updates reuse the source conversion, including on multi-megabyte lines.
+func (e *Editor) Caret() (SourcePosition, int) {
+	c := &e.sourceCaret
+	if c.buffer != e.buf || c.revision != e.Revision() || c.position != e.cursor || c.width != e.TabWidth() {
+		raw, _ := e.buf.lineView(e.cursor.Line)
+		*c = sourceCaretCache{buffer: e.buf, revision: e.Revision(), position: e.cursor, width: e.TabWidth(), source: SourcePosition{Line: e.cursor.Line, Byte: VisualColToByteOffset(string(raw), e.cursor.Col, e.TabWidth())}}
+	}
+	return c.source, e.scrollY
+}
 
 // RestoreCaret returns to a recorded place: the caret moves to pos (clamped
 // to the current text) and the first visible line to scrollY, then the caret
 // is kept visible.
-func (e *Editor) RestoreCaret(pos Position, scrollY int) {
+func (e *Editor) RestoreCaret(pos SourcePosition, scrollY int) {
 	e.DismissGhostText()
 	e.BreakUndoGroup()
 	e.CancelPointerCapture()
 	e.clearGoal()
 	e.ClearSelection()
-	e.cursor = e.buf.snapPosition(Position{Line: min(max(0, pos.Line), max(0, e.buf.LineCount()-1)), Col: max(0, pos.Col)})
+	line := min(max(0, pos.Line), max(0, e.buf.LineCount()-1))
+	e.cursor = Position{Line: line, Col: ByteOffsetToVisualCol(e.LineText(line), pos.Byte, e.TabWidth())}
 	e.scrollY = min(max(0, scrollY), max(0, e.buf.LineCount()-1))
 	e.ensureCursorVisible()
 	e.cursorBlink.MarkActivity()

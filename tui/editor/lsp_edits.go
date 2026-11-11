@@ -18,7 +18,7 @@ import (
 func (e *Editor) LSPCursorPosition() (line, col int) {
 	line = e.cursor.Line
 	raw := e.LineText(line)
-	off := VisualColToByteOffset(raw, e.cursor.Col, tabWidth)
+	off := VisualColToByteOffset(raw, e.cursor.Col, e.TabWidth())
 	for _, r := range raw[:off] {
 		col += utf16.RuneLen(r)
 	}
@@ -49,7 +49,7 @@ func (e *Editor) lspVisualPosition(line, col int) (Position, error) {
 	if _, err := lspEditOffset(string(raw), 0, col); err != nil {
 		return Position{}, err
 	}
-	return Position{Line: line, Col: UTF16ColToVisualCol(string(raw), col, tabWidth)}, nil
+	return Position{Line: line, Col: UTF16ColToVisualCol(string(raw), col, e.TabWidth())}, nil
 }
 
 // SetLSPDiagnosticPosition accepts a raw UTF-16 range, validates both endpoints

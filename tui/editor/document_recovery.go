@@ -23,7 +23,7 @@ type DocumentRecovery struct {
 	HistorySync                           bool
 	InFlight                              *document.Change
 	Owner                                 document.Owner
-	Cursor, SelectionAnchor, SelectionEnd Position
+	Cursor, SelectionAnchor, SelectionEnd int // UTF-8 offsets in OptimisticText
 	ScrollX, ScrollY                      int
 	Selecting, UndoPending                bool
 	Conflict                              string
@@ -48,7 +48,7 @@ func (e *Editor) ExportDocumentRecovery() (DocumentRecovery, bool) {
 	if p == nil {
 		return DocumentRecovery{}, false
 	}
-	r := DocumentRecovery{Version: 1, Path: e.filePath, Canonical: e.DocumentSnapshot(), OptimisticText: []byte(e.Value()), Pending: append([]document.Edit(nil), p.pending...), Owner: p.owner, Cursor: e.cursor, SelectionAnchor: e.selAnchor, SelectionEnd: e.selEnd, ScrollX: e.scrollX, ScrollY: e.scrollY, Selecting: e.selecting, UndoPending: p.undoPending}
+	r := DocumentRecovery{Version: 2, Path: e.filePath, Canonical: e.DocumentSnapshot(), OptimisticText: []byte(e.Value()), Pending: append([]document.Edit(nil), p.pending...), Owner: p.owner, Cursor: e.buf.positionToOffset(e.cursor), SelectionAnchor: e.buf.positionToOffset(e.selAnchor), SelectionEnd: e.buf.positionToOffset(e.selEnd), ScrollX: e.scrollX, ScrollY: e.scrollY, Selecting: e.selecting, UndoPending: p.undoPending}
 	r.PendingGroups = append([]string(nil), p.pendingGroups...)
 	r.HistorySync = p.historySync
 	for _, action := range p.historyQueue {
@@ -97,7 +97,7 @@ func (r DocumentRecovery) Validate() error {
 			return document.ErrLimit
 		}
 	}
-	if r.Version != 1 || r.Path == "" && !document.IsUntitledID(r.Canonical.ID) || r.Path != r.Canonical.Path || r.Canonical.ID == "" || r.Canonical.Revision == 0 || r.ScrollX < 0 || r.ScrollY < 0 {
+	if r.Version != 2 || r.Path == "" && !document.IsUntitledID(r.Canonical.ID) || r.Path != r.Canonical.Path || r.Canonical.ID == "" || r.Canonical.Revision == 0 || r.ScrollX < 0 || r.ScrollY < 0 {
 		return document.ErrRevision
 	}
 	for _, text := range [][]byte{r.Canonical.Text, r.Canonical.Saved, r.OptimisticText} {
@@ -126,8 +126,8 @@ func (r DocumentRecovery) Validate() error {
 	if !bytes.Equal(text, r.OptimisticText) {
 		return document.ErrRevision
 	}
-	for _, pos := range []Position{r.Cursor, r.SelectionAnchor, r.SelectionEnd} {
-		if pos.Line < 0 || pos.Col < 0 {
+	for _, pos := range []int{r.Cursor, r.SelectionAnchor, r.SelectionEnd} {
+		if pos < 0 || pos > len(r.OptimisticText) || pos < len(r.OptimisticText) && !utf8.RuneStart(r.OptimisticText[pos]) {
 			return document.ErrRevision
 		}
 	}
@@ -189,7 +189,7 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 	if !matching {
 		p.conflict = errors.New(ErrRecoveredDocument.Error() + "; canonical revision/text changed")
 	}
-	e.cursor, e.selAnchor, e.selEnd, e.selecting = r.Cursor, r.SelectionAnchor, r.SelectionEnd, r.Selecting
+	e.cursor, e.selAnchor, e.selEnd, e.selecting = e.buf.positionAtOffset(r.Cursor), e.buf.positionAtOffset(r.SelectionAnchor), e.buf.positionAtOffset(r.SelectionEnd), r.Selecting
 	e.scrollX, e.scrollY = r.ScrollX, r.ScrollY
 	e.installDocumentBaseline(r.Canonical)
 	e.invalidateEditorCaches()

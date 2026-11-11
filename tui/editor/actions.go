@@ -105,7 +105,7 @@ func (e *Editor) startLine(above bool) {
 		return
 	}
 	e.insertRecorded(Position{Line: line}, indent+e.lineEnding(), e.cursor)
-	e.cursor = Position{Line: line, Col: LineVisualWidth(indent, tabWidth)}
+	e.cursor = Position{Line: line, Col: LineVisualWidth(indent, e.TabWidth())}
 	e.finishEdit()
 }
 
@@ -121,7 +121,7 @@ func (e *Editor) joinLines() {
 		return
 	}
 	firstText := strings.TrimRight(e.LineText(first), " \t")
-	seam := LineVisualWidth(firstText, tabWidth)
+	seam := LineVisualWidth(firstText, e.TabWidth())
 	var joined strings.Builder
 	joined.WriteString(firstText)
 	for line := first + 1; line <= last; line++ {
@@ -138,7 +138,7 @@ func (e *Editor) joinLines() {
 	e.cursor = Position{Line: first, Col: seam}
 	if selected {
 		e.selAnchor = start
-		e.selEnd = Position{Line: first, Col: LineVisualWidth(text, tabWidth)}
+		e.selEnd = Position{Line: first, Col: LineVisualWidth(text, e.TabWidth())}
 		e.selecting = true
 		e.cursor = e.selEnd
 	}
@@ -338,7 +338,7 @@ type selectionExpansion struct {
 
 func (e *Editor) selectionExpansionCurrent() bool {
 	s := e.expansion
-	return s != nil && s.buffer == e.buf && s.revision == e.Revision() && s.expected.Cursor == e.cursor && s.expected.Anchor == e.selAnchor && s.expected.End == e.selEnd && s.expected.Selecting == e.selecting
+	return s != nil && s.buffer == e.buf && s.revision == e.Revision() && s.expected.Cursor == e.buf.positionToOffset(e.cursor) && s.expected.Anchor == e.buf.positionToOffset(e.selAnchor) && s.expected.End == e.buf.positionToOffset(e.selEnd) && s.expected.Selecting == e.selecting
 }
 func (e *Editor) expandSelection() {
 	if !e.selectionExpansionCurrent() {
@@ -409,7 +409,7 @@ func (e *Editor) shrinkSelection() {
 	}
 	previous := s.previous[len(s.previous)-1]
 	s.previous = s.previous[:len(s.previous)-1]
-	e.cursor, e.selAnchor, e.selEnd, e.selecting = previous.Cursor, previous.Anchor, previous.End, previous.Selecting
+	e.restoreViewState(previous)
 	e.clearGoal()
 	e.ensureCursorVisible()
 	s.expected = e.captureViewState()

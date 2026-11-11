@@ -17,7 +17,7 @@ func TestEditorRecoveryReopenEpochCASAndClear(t *testing.T) {
 	}
 	a := attach(t, s, "profile")
 	k := EditorRecoveryKey{a.ClientID, "workspace", "/project/long/file"}
-	r, err := s.SaveEditorRecovery(ctx, a, k, 0, json.RawMessage(`{"Version":1,"draft":"unresolved"}`))
+	r, err := s.SaveEditorRecovery(ctx, a, k, 0, json.RawMessage(`{"Version":2,"draft":"unresolved"}`))
 	if err != nil || r.Revision != 1 {
 		t.Fatalf("save: %+v %v", r, err)
 	}
