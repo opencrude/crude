@@ -83,7 +83,7 @@ func TestCompletionAcceptancePreferenceLeavesOtherKeyAsEditing(t *testing.T) {
 		want string
 	}{
 		{"tab", tea.KeyTab, "first"}, {"enter", tea.KeyEnter, "first"},
-		{"tab", tea.KeyEnter, "pr\n"}, {"enter", tea.KeyTab, "pr    "},
+		{"tab", tea.KeyEnter, "pr\n"}, {"enter", tea.KeyTab, "pr  "},
 	} {
 		t.Run(tc.mode+"/"+tea.KeyPressMsg{Code: tc.key}.String(), func(t *testing.T) {
 			app, port := completionTestApp(t, 100, 32, "pr")

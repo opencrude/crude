@@ -12,6 +12,10 @@ import (
 	"crude/insight/catalog"
 )
 
+// MaxLanguageServers is the largest workspace process quota. The core-wide
+// admission ceiling must not make an allowed workspace quota unreachable.
+const MaxLanguageServers = 32
+
 // languageForPath returns the language of a file: a catalog language first,
 // then a custom language by extension. Validation rejects a custom language
 // that claims a catalog extension, so the order is unambiguous.
@@ -133,7 +137,7 @@ func (s LSPSettings) Validate() error {
 		name           string
 		value, maximum int
 	}{
-		{"max_servers", s.MaxServers, 32}, {"idle_timeout_seconds", s.IdleTimeoutSeconds, 86400},
+		{"max_servers", s.MaxServers, MaxLanguageServers}, {"idle_timeout_seconds", s.IdleTimeoutSeconds, 86400},
 		{"max_document_bytes", s.MaxDocumentBytes, 64 * 1024 * 1024}, {"server_threads", s.ServerThreads, 64},
 		{"server_memory_mb", s.ServerMemoryMB, 65536}, {"update_debounce_ms", s.UpdateDebounceMS, 60000},
 	} {

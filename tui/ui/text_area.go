@@ -820,7 +820,7 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 			if t.readOnly {
 				return EventResult{Handled: true}
 			}
-			t.edit.InsertString(paste.Content)
+			t.edit.InsertString(PastedLineBreaks(paste.Content))
 			t.cursor.MarkActivity()
 			t.EnsureCursorVisible()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
@@ -1090,7 +1090,7 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 		if t.readOnly {
 			return nil
 		}
-		t.edit.InsertString(paste.Content)
+		t.edit.InsertString(PastedLineBreaks(paste.Content))
 		t.cursor.MarkActivity()
 		t.EnsureCursorVisible()
 		return nil

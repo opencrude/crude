@@ -25,9 +25,34 @@ type signatureHelpIntent struct {
 
 func (m *App) signatureEditorOwnsInput(ed *editor.Editor) bool {
 	return m.EditorState != nil && m.EditorState.Editor == ed && ed != nil && ed.IsOpen() &&
-		!ed.ReadOnly() && !ed.HasSelection() && m.isEditorActive() &&
+		!ed.ReadOnly() && !editorHasUserSelection(ed) && m.isEditorActive() &&
 		m.focusTarget() == FocusEditor && !m.termDockOwnsKeys() && !m.sessionDeckCapturesInput() &&
 		m.focusedPopup() == nil && !m.asyncIOStopped.Load()
+}
+
+// editorHasUserSelection ignores the selected default of an active snippet
+// field. The editor retires a snippet when a selection leaves its field.
+func editorHasUserSelection(ed *editor.Editor) bool {
+	return ed.HasSelection() && !ed.SnippetActive()
+}
+
+// queueSignatureHelpAfterInsertion asks for parameter information when an
+// accepted suggestion leaves the caret, or its selected first field, directly
+// inside a new argument list. Typing "(" does the same.
+func (m *App) queueSignatureHelpAfterInsertion(ed *editor.Editor) {
+	if ed == nil || !ed.IsOpen() {
+		return
+	}
+	line, col := ed.CursorLine(), ed.CursorCol()
+	if ed.HasSelection() {
+		line, col, _, _ = ed.SelectionRange()
+	}
+	raw := ed.LineText(line)
+	off := editor.VisualColToByteOffset(raw, col, editor.DefaultTabWidth)
+	if off <= 0 || off > len(raw) || raw[off-1] != '(' {
+		return
+	}
+	m.queueAutomaticSignatureHelp(ed)
 }
 
 func (m *App) queueAutomaticSignatureHelp(ed *editor.Editor) {

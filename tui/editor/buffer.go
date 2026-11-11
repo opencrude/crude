@@ -24,10 +24,12 @@ type piece struct {
 }
 
 type PieceTable struct {
-	lineChanges [32]bufferLineChange
-	original    []byte
-	add         []byte
-	pieces      []piece
+	indentation         indentStyle
+	indentationRevision uint64
+	lineChanges         [32]bufferLineChange
+	original            []byte
+	add                 []byte
+	pieces              []piece
 
 	filePath string
 

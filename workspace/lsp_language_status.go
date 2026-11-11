@@ -15,7 +15,16 @@ func (m *LSPManager) recomputeLanguageStatusLocked() {
 	active := m.documents[m.activeFilePath]
 	switch {
 	case m.activeFileWaitingLocked():
-		s = types.LanguageServiceStatus{State: types.LanguageStarting, Label: "Waiting to start", Message: "The language server is waiting for capacity. Close another language's files or raise the server limit in Code Intelligence settings.", Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}
+		// Name the limit that is in the way, so the next step can work.
+		servers := "language servers"
+		if m.settings.MaxServers == 1 {
+			servers = "language server"
+		}
+		s = types.LanguageServiceStatus{State: types.LanguageStarting, Label: "Waiting to start", Message: fmt.Sprintf("The language server is waiting to start. This workspace reached its limit of %d %s. Stop an unused server or raise Running servers in Code Intelligence settings.", m.settings.MaxServers, servers), Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}
+		if !m.workspaceAtServerLimitLocked() || m.settings.MaxServers >= types.MaxLanguageServers {
+			s.Message = "The language server is waiting to start. Crude reached its language-server limit across workspaces. Stop unused language servers in a workspace to free capacity."
+			s.Action, s.ActionLabel = "", ""
+		}
 	case m.activeStatus == LSPIdle && active != nil && len(active.text) > m.settings.MaxDocumentBytes:
 		s = types.LanguageServiceStatus{State: types.LanguageFailed, Label: "Language server failed", Message: "Language server could not check this file. The file is too large. Change the file size limit in Language servers settings.", Action: types.LanguageActionOpenSettings, ActionLabel: "Open settings"}
 	case m.isFailedLocked():
@@ -76,6 +85,21 @@ func (m *LSPManager) activeFileWaitingLocked() bool {
 	}
 	state := m.states[doc.key]
 	return state != nil && state.waiting && !state.closing && !state.stopped
+}
+
+// workspaceAtServerLimitLocked reports whether this workspace's own quota,
+// not the ceiling shared by all workspaces, keeps a server waiting. The
+// governor owns both counts.
+func (m *LSPManager) workspaceAtServerLimitLocked() bool {
+	if m.analysisGovernor == nil {
+		return true
+	}
+	for _, ws := range m.analysisGovernor.Snapshot().Workspaces {
+		if ws.Workspace == m.analysisWorkspace {
+			return ws.Counts.Reserved() >= ws.Limit
+		}
+	}
+	return false
 }
 
 func (m *LSPManager) languageServerMatchesActiveLocked() bool {

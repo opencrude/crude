@@ -81,6 +81,10 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-10 | Panel links must look consistent. Aeron's link must stay underlined like the Problems links, not only when focused. | User |
 | 2026-11-10 | Automatic completion stays passive: keep the caret visible, choose no row, drop exact repeats, and show obvious continuations as faded inline text. Tab accepts visible inline text or an explicitly chosen row; otherwise it edits normally. | User |
 | 2026-11-10 | Keep the whole validation gate clean, regardless of failure origin. Fix recurring scheduler-dependent tests at their readiness and ownership boundaries; do not hide them with retries, sleeps or relaxed assertions. | User |
+| 2026-11-11 | Hunt editor gaps beyond the reported completion, paste and capacity failures. Fix as many as can be closed with production-quality verification; give remaining work one complete end-state specification, not a phased release promise. | User |
+| 2026-11-11 | Continue implementation directly, using efficient batched edits. Documentation is permitted again but must not displace fixes. | User |
+
+| 2026-11-11 | Memory-safety and other discovered crashes must be fixed, not only documented. Crash resolution takes priority over further editor expansion; passing reruns alone do not establish a fix. | User |
 
 ### Open decisions
 
@@ -111,6 +115,16 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Editor defect closure (2026-11-11).** This supersedes the narrow completion-only
+checkpoint below for this repair. Fix completion inside snippet arguments, pasted
+line breaks, actionable server-capacity status and independently reproduced
+editing failures. Preserve shared document/history ownership, passive completion
+and assembly-first language data. Prove focused behavior and run repository
+gates. Record broader missing features in the editor parity handoff as one end
+state, with exact owners, UX and acceptance, not claims of implemented support.
+AI inference and tool setup remain separate; deterministic editing must work
+without a model. The previous checkpoint evidence follows.
 
 **Immediate correction: unobtrusive completion and clean gates (2026-11-10).**
 

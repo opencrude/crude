@@ -6,7 +6,12 @@ import re
 import subprocess
 
 
-LARGE_PACKAGES = {"crude/session": "./session", "crude/tui/viewmodel": "./tui/viewmodel"}
+LARGE_PACKAGES = {
+    "crude/app": "./app",
+    "crude/session": "./session",
+    "crude/tui/viewmodel": "./tui/viewmodel",
+    "crude/workspace": "./workspace",
+}
 STRESS_TESTS = {"TestUploadBlackholeRecoveryDurableOwners"}
 
 

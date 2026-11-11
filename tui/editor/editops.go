@@ -166,15 +166,6 @@ func leadingWhitespace(s string) string {
 	return s
 }
 
-// indentUnit returns one extra indent level matching the style of the
-// existing indent: tabs beget a tab, otherwise spaces.
-func indentUnit(indent string) string {
-	if strings.Contains(indent, "\t") {
-		return "\t"
-	}
-	return strings.Repeat(" ", tabWidth)
-}
-
 func lastRune(s string) (rune, bool) {
 	if s == "" {
 		return 0, false
@@ -299,7 +290,8 @@ func (e *Editor) selectedLineRange() (int, int) {
 // selected line, preserving the selection. One undo step.
 func (e *Editor) indentLines() {
 	first, last := e.selectedLineRange()
-	indent := strings.Repeat(" ", tabWidth)
+	style := e.indentStyle()
+	indent, width := style.unit(), style.width()
 	cursorBefore := e.cursor
 	indented := make(map[int]bool, last-first+1)
 
@@ -318,7 +310,7 @@ func (e *Editor) indentLines() {
 
 	adjust := func(p Position) Position {
 		if indented[p.Line] && p.Col > 0 {
-			p.Col += tabWidth
+			p.Col += width
 		}
 		return p
 	}
@@ -330,11 +322,12 @@ func (e *Editor) indentLines() {
 	e.finishEdit()
 }
 
-// outdentLines removes up to one indent level (a leading tab or up to
-// tabWidth spaces) from every selected line, preserving the selection.
-// One undo step.
+// outdentLines removes up to one indent level (a leading tab, or up to one
+// level of the document's spaces) from every selected line, preserving the
+// selection. One undo step.
 func (e *Editor) outdentLines() {
 	first, last := e.selectedLineRange()
+	level := e.indentStyle().width()
 	cursorBefore := e.cursor
 	removed := make(map[int]int, last-first+1)
 
@@ -350,7 +343,7 @@ func (e *Editor) outdentLines() {
 			nBytes = 1
 			cols = TabStopAdvance(0, tabWidth)
 		} else {
-			for nBytes < len(raw) && nBytes < tabWidth && raw[nBytes] == ' ' {
+			for nBytes < len(raw) && nBytes < level && raw[nBytes] == ' ' {
 				nBytes++
 			}
 			cols = nBytes
@@ -508,28 +501,39 @@ func (e *Editor) deleteLines() {
 
 // ── toggle line comment ──────────────────────────────────────────────
 
-// commentPrefix returns the line-comment prefix for the current file, or
-// "" when the language has no known line comment.
-func (e *Editor) commentPrefix() string {
+// commentTokens returns the current file's line-comment prefix and block
+// comment delimiters from the language catalog. Either may be empty.
+func (e *Editor) commentTokens() (line, blockStart, blockEnd string) {
 	path := e.filePath
 	if path == "" {
 		path = e.title
 	}
 	c := catalog.Current()
 	language, ok := c.LanguageForPath(path, nil)
-	if !ok || len(language.CommentTokens) == 0 {
-		return ""
+	if !ok {
+		return "", "", ""
 	}
-	return language.CommentTokens[0]
+	if len(language.CommentTokens) > 0 {
+		line = language.CommentTokens[0]
+	}
+	if language.BlockComment != nil {
+		blockStart, blockEnd = language.BlockComment.Start, language.BlockComment.End
+	}
+	return line, blockStart, blockEnd
 }
 
 // toggleLineComment comments or uncomments every selected line using the
-// file's line-comment prefix. When all non-blank selected lines are
+// file's line-comment prefix, or its block delimiters when it has no prefix. When all non-blank selected lines are
 // already commented they are uncommented; otherwise every non-blank line
 // gains the prefix after its leading whitespace. One undo step.
 func (e *Editor) toggleLineComment() {
-	prefix := e.commentPrefix()
+	prefix, blockStart, blockEnd := e.commentTokens()
 	if prefix == "" {
+		// A language with block comments only (markup, style sheets) comments
+		// each selected line with its own pair of delimiters.
+		if blockStart != "" && blockEnd != "" {
+			e.toggleBlockCommentLines(blockStart, blockEnd)
+		}
 		return
 	}
 	first, last := e.selectedLineRange()
@@ -597,6 +601,90 @@ func (e *Editor) toggleLineComment() {
 			p.Col = s.at
 		}
 		return p
+	}
+	e.cursor = adjust(e.cursor)
+	if e.HasSelection() {
+		e.selAnchor = adjust(e.selAnchor)
+		e.selEnd = adjust(e.selEnd)
+	}
+	e.finishEdit()
+}
+
+// toggleBlockCommentLines wraps every non-blank selected line in the block
+// delimiters, after its indentation and before its trailing whitespace. When
+// every non-blank line is already wrapped, it removes the delimiters and the
+// one space inside each. One undo step.
+func (e *Editor) toggleBlockCommentLines(start, end string) {
+	first, last := e.selectedLineRange()
+	type span struct {
+		indent, content int
+		wrapped         bool
+	}
+	spans := make(map[int]span, last-first+1)
+	allCommented := true
+	for line := first; line <= last; line++ {
+		raw := e.LineText(line)
+		indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		content := len(strings.TrimRight(raw, " \t"))
+		if content <= indent {
+			continue
+		}
+		body := raw[indent:content]
+		wrapped := len(body) >= len(start)+len(end) && strings.HasPrefix(body, start) && strings.HasSuffix(body, end)
+		if !wrapped && (strings.Contains(body, start) || strings.Contains(body, end)) {
+			return // partial block delimiters cannot be safely nested
+		}
+		spans[line] = span{indent, content, wrapped}
+		allCommented = allCommented && wrapped
+	}
+	if len(spans) == 0 {
+		return
+	}
+	cursorBefore := e.cursor
+	type shift struct{ at, head, tailAt, tail int } // visual columns and deltas
+	shifts := make(map[int]shift, len(spans))
+
+	e.beginUndoGroup()
+	defer e.endUndoGroup()
+	for line := first; line <= last; line++ {
+		sp, ok := spans[line]
+		if !ok || !allCommented && sp.wrapped {
+			continue
+		}
+		raw := e.LineText(line)
+		headCol := ByteOffsetToVisualCol(raw, sp.indent, tabWidth)
+		tailCol := ByteOffsetToVisualCol(raw, sp.content, tabWidth)
+		if allCommented {
+			body := raw[sp.indent:sp.content]
+			head, tail := start, end
+			inner := body[len(start) : len(body)-len(end)]
+			if strings.HasPrefix(inner, " ") {
+				head += " "
+			}
+			if strings.HasSuffix(inner, " ") && len(inner) > 1 {
+				tail = " " + tail
+			}
+			tailStart := ByteOffsetToVisualCol(raw, sp.content-len(tail), tabWidth)
+			e.deleteRecorded(Position{Line: line, Col: tailStart}, Position{Line: line, Col: tailCol}, cursorBefore)
+			e.deleteRecorded(Position{Line: line, Col: headCol}, Position{Line: line, Col: ByteOffsetToVisualCol(raw, sp.indent+len(head), tabWidth)}, cursorBefore)
+			shifts[line] = shift{at: headCol, head: -len(head), tailAt: tailStart, tail: -len(tail)}
+			continue
+		}
+		e.insertRecorded(Position{Line: line, Col: tailCol}, " "+end, cursorBefore)
+		e.insertRecorded(Position{Line: line, Col: headCol}, start+" ", cursorBefore)
+		shifts[line] = shift{at: headCol, head: len(start) + 1, tailAt: tailCol, tail: len(end) + 1}
+	}
+
+	adjust := func(p Position) Position {
+		s, ok := shifts[p.Line]
+		if !ok || p.Col < s.at {
+			return p
+		}
+		col := p.Col
+		if col > s.tailAt || col == s.tailAt && s.tail < 0 {
+			col = max(s.tailAt, col+s.tail) // after the closing delimiter
+		}
+		return Position{Line: p.Line, Col: max(s.at, col+s.head)}
 	}
 	e.cursor = adjust(e.cursor)
 	if e.HasSelection() {

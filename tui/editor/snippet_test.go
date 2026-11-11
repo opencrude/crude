@@ -194,7 +194,7 @@ func TestSnippetNumericOrderBacktabFinalAndOrdinaryTab(t *testing.T) {
 	require.Equal(t, Position{Col: 17}, e.cursor)
 	require.Equal(t, before, e.Value())
 	snippetKey(e, tea.KeyTab, "", 0)
-	require.Equal(t, "last first middle    ", e.Value())
+	require.Equal(t, "last first middle   ", e.Value())
 }
 
 func TestSnippetNestedTypingOuterReplacementAndPairDefaults(t *testing.T) {
@@ -270,7 +270,7 @@ func TestSnippetAdditionalEditsPreserveSparseCanonicalOffsetsAndUndo(t *testing.
 	require.Equal(t, "package main\nimport \"fmt\"\n\nprint(α😀, α😀)\nsuffix", e.Value())
 	require.Equal(t, "α😀", e.SelectedText())
 	e.HandleEvent(tea.PasteMsg{Content: "界\r\nZ"})
-	require.Equal(t, "package main\nimport \"fmt\"\n\nprint(界\r\nZ, 界\r\nZ)\nsuffix", e.Value())
+	require.Equal(t, "package main\nimport \"fmt\"\n\nprint(界\nZ, 界\nZ)\nsuffix", e.Value())
 	e.Undo()
 	e.Undo()
 	require.Equal(t, "package main\n\npr\nsuffix", e.Value())

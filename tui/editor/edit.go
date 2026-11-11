@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/ui"
 )
 
 func (e *Editor) insertRune(r rune) {
@@ -55,8 +57,14 @@ func (e *Editor) insertNewline() {
 	baseIndent := indent
 	trimmed := strings.TrimRight(before, " \t")
 	if r, ok := lastRune(trimmed); ok && (r == '(' || r == '[' || r == '{') {
-		indent += indentUnit(indent)
+		indent += e.levelUnit(indent)
 		if closer := autoClosePairs[r]; strings.TrimSpace(line[byteOff:]) == string(closer) {
+			// Whitespace between the caret and the existing closer belongs to
+			// this split. Do not carry it onto the closing line after baseIndent.
+			padding := len(leadingWhitespace(line[byteOff:]))
+			if padding > 0 {
+				e.deleteRecorded(e.cursor, Position{Line: e.cursor.Line, Col: ByteOffsetToVisualCol(line, byteOff+padding, tabWidth)}, e.cursor)
+			}
 			e.insertText(e.lineEnding() + indent + e.lineEnding() + baseIndent)
 			e.cursor.Line--
 			e.cursor.Col = LineVisualWidth(indent, tabWidth)
@@ -67,8 +75,19 @@ func (e *Editor) insertNewline() {
 	e.insertText(e.lineEnding() + indent)
 }
 
-// Newly inserted line breaks follow the source document's first terminator;
-// paste remains byte-exact. No save or background normalization is involved.
+// pastedText gives every line break of pasted text the document's terminator.
+// Inserted as they arrive, a terminal's CR or the Windows clipboard's CRLF
+// puts a bare CR inside one line or mixes terminators in the file.
+func (e *Editor) pastedText(text string) string {
+	text = ui.PastedLineBreaks(text)
+	if terminator := e.lineEnding(); terminator != "\n" {
+		text = strings.ReplaceAll(text, "\n", terminator)
+	}
+	return text
+}
+
+// Newly inserted line breaks, typed or pasted, follow the source document's
+// first terminator. No save or background normalization is involved.
 func (e *Editor) lineEnding() string {
 	e.buf.ensureCache()
 	for i, b := range e.buf.cachedBytes {
@@ -82,8 +101,15 @@ func (e *Editor) lineEnding() string {
 	return "\n"
 }
 
+// insertTab inserts one level of the document's indentation: a tab, or the
+// spaces that reach the next indentation stop.
 func (e *Editor) insertTab() {
-	e.insertText(strings.Repeat(" ", tabWidth))
+	style := e.indentStyle()
+	if style.tab {
+		e.insertText("\t")
+		return
+	}
+	e.insertText(strings.Repeat(" ", style.size-e.cursor.Col%style.size))
 }
 
 func (e *Editor) deleteBackward() {
@@ -97,7 +123,8 @@ func (e *Editor) deleteBackward() {
 		raw := e.LineText(end.Line)
 		off := VisualColToByteOffset(raw, end.Col, tabWidth)
 		if strings.Trim(raw[:off], " \t") == "" {
-			start = e.buf.snapPosition(Position{Line: end.Line, Col: ((end.Col - 1) / tabWidth) * tabWidth})
+			stop := e.indentStyle().width()
+			start = e.buf.snapPosition(Position{Line: end.Line, Col: ((end.Col - 1) / stop) * stop})
 		}
 	}
 	if e.deleteRecorded(start, end, e.cursor) != "" {

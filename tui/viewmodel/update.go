@@ -52,6 +52,10 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if paste, pasted := msg.(tea.PasteMsg); pasted {
+		// One decode for every text owner: composer, fields, editor, terminals.
+		msg = tea.PasteMsg{Content: ui.PastedLineBreaks(paste.Content)}
+	}
 	m.cancelTreeRevealOnInput(msg)
 	switch msg.(type) {
 	case tea.BlurMsg:

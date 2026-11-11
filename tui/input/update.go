@@ -155,7 +155,7 @@ func (m Model) draftStateKey() string {
 }
 
 func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
-	content = rendering.SanitizeForTerminal(content)
+	content = rendering.SanitizeForTerminal(ui.PastedLineBreaks(content))
 	if content == "" {
 		return m, nil, nil
 	}

@@ -131,6 +131,14 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   a `tea.PasteMsg` through the exact component that asked (dropped when it is
   unmounted or replaced), so composites observe Ctrl+V exactly like a bracketed
   paste. Never insert into the leaf directly: wrappers would miss the change.
+- **Pasted line breaks are decoded once.** A terminal sends the line breaks of
+  a bracketed paste as CR (xterm, Windows Terminal), and the Windows clipboard
+  holds CRLF. `App.Update` passes every `tea.PasteMsg` through
+  `ui.PastedLineBreaks`, so the composer, fields and terminals receive LF and a
+  multi-line paste keeps its lines. Direct TextArea and composer paste entry
+  points use the same idempotent decoder because clipboard delivery can target
+  a retained control without re-entering App.Update. The editor then applies
+  the document's own terminator. Never strip a pasted CR before decoding it.
 - Copies write the system clipboard; when it is unreachable or the session is
   SSH they also emit an OSC 52 terminal clipboard write
   (`rendering.CopyToClipboardCmd`, the async write lane). A failed read names

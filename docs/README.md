@@ -148,6 +148,9 @@ documents to read before changing each area.
 
 ### Plans (active work only)
 
+- [Complete editor experience](plans/editor-parity.md) — audited gaps, one complete
+  target UX, implementation owners and behavioral acceptance for later agents.
+
 - [First-use acceptance handoff](plans/broad-workspace-ux.md): remaining native
   Windows, distinct-host SSH, and reported memory-workload acceptance.
 - [Agent experience roadmap](plans/agent-experience-roadmap.md) — vision and
@@ -186,6 +189,12 @@ documents to read before changing each area.
   — approved design replacing picker lists with bounded tree/path search.
 
 ### Issues (dated user reports)
+
+- [Workspace GC crash on Windows (2026-11-11)](issues/2026-11-11-workspace-gc-crash.md)
+  — unresolved memory-safety failure, exact reproduction and diagnostic evidence.
+
+- [Editor completion, paste and capacity (2026-11-11)](issues/2026-11-11-editor-polish.md)
+  — argument suggestions, CR/CRLF paste, server quotas, indentation and block comments.
 
 - [IDE navigation and splits (2026-11-07)](issues/2026-11-07-ide-navigation-and-splits.md)
   — Ctrl+click navigation, split showing the same file, pane-local opens,

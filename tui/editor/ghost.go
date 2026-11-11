@@ -43,10 +43,12 @@ func (e *Editor) SetGhostText(revision uint64, anchor int, text string) error {
 }
 
 // SetGhostTextFor is SetGhostText with a producer name that GhostOwner reports,
-// so a producer can tell its own candidate from another producer's.
+// so a producer can tell its own candidate from another producer's. A candidate
+// may sit at the caret of an active snippet field: accepting it is an ordinary
+// edit of that field, and the next Tab moves to the next field.
 func (e *Editor) SetGhostTextFor(owner string, revision uint64, anchor int, text string) error {
 	if !e.open || e.readOnly || e.buf == nil || e.Revision() != revision ||
-		e.HasSelection() || e.SnippetActive() || e.IsMouseDragging() || !types.ValidEditorPredictionInsertion(text) {
+		e.HasSelection() || e.IsMouseDragging() || !types.ValidEditorPredictionInsertion(text) {
 		return errors.New("prediction does not identify a usable insertion caret")
 	}
 	if p := e.documentProjection; p != nil && (p.conflict != nil || p.snapshot.Conflict ||
@@ -119,7 +121,7 @@ func (e *Editor) currentGhost() *editorGhost {
 		return nil
 	}
 	if !e.open || e.readOnly || e.buf != g.buffer || e.documentProjection != g.document ||
-		e.Revision() != g.revision || e.cursor != g.caret || e.HasSelection() || e.SnippetActive() {
+		e.Revision() != g.revision || e.cursor != g.caret || e.HasSelection() {
 		e.DismissGhostText()
 		return nil
 	}

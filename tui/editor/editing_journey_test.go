@@ -109,7 +109,7 @@ func TestEditingJourneyEveryCommandRestoresBytesAndView(t *testing.T) {
 		edit                func(*Editor)
 	}{
 		{"split", "\talpha beta\n", "\talpha \n\tbeta\n", func(e *Editor) { e.SetCursorPosition(0, 10) }, func(e *Editor) { press(e, tea.KeyPressMsg{Code: tea.KeyEnter}) }},
-		{"indent", "first\n\tsecond\nthird", "    first\n    \tsecond\nthird", func(e *Editor) { selectRange(e, 0, 1, 2, 0) }, func(e *Editor) { press(e, tea.KeyPressMsg{Code: tea.KeyTab}) }},
+		{"indent", "first\n\tsecond\nthird", "\tfirst\n\t\tsecond\nthird", func(e *Editor) { selectRange(e, 0, 1, 2, 0) }, func(e *Editor) { press(e, tea.KeyPressMsg{Code: tea.KeyTab}) }},
 		{"single selected indent", "abcdef", "    abcdef", func(e *Editor) { selectRange(e, 0, 2, 0, 4) }, func(e *Editor) { press(e, tea.KeyPressMsg{Code: tea.KeyTab}) }},
 		{"outdent", "    alpha\n\tbeta", "alpha\nbeta", func(e *Editor) { selectRange(e, 0, 1, 1, 5) }, func(e *Editor) { press(e, tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}) }},
 		{"line move", "one\n\ttwo\nthree", "\ttwo\none\nthree", func(e *Editor) { e.SetCursorPosition(1, 5) }, func(e *Editor) { press(e, tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModAlt}) }},

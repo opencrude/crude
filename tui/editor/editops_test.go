@@ -272,7 +272,7 @@ func TestTab_NoSelectionInsertsSpaces(t *testing.T) {
 	e := opsEditor(t, "test.go", "ab")
 	e.cursor = Position{Line: 0, Col: 1}
 	press(e, tea.KeyPressMsg{Code: tea.KeyTab})
-	assert.Equal(t, "a    b", e.Value())
+	assert.Equal(t, "a   b", e.Value())
 }
 
 func TestOutdentLines_MultiLineSelection(t *testing.T) {

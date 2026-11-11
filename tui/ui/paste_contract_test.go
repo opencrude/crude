@@ -85,7 +85,7 @@ func TestBracketedPasteContractTable(t *testing.T) {
 			paste:     "\n\t\r",
 			wantEdit:  "seed",
 			wantField: "seed",
-			wantArea:  "seed\n\t",
+			wantArea:  "seed\n\t\n",
 		},
 		{
 			name:      "mixed_printable_and_whitespace",

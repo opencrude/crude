@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -192,4 +194,15 @@ type TextControlAtProvider interface {
 	// TextControlAt returns the component owning the control at a local point,
 	// or nil when the point is not over one.
 	TextControlAt(x, y int) Component
+}
+
+// PastedLineBreaks returns pasted text with LF line breaks. A terminal sends
+// the line breaks of a bracketed paste as CR (xterm, Windows Terminal), and
+// the Windows clipboard holds CRLF. Text owners receive one form, so a paste
+// never loses its line breaks or leaves a bare CR inside a line.
+func PastedLineBreaks(text string) string {
+	if !strings.ContainsRune(text, '\r') {
+		return text
+	}
+	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
 }

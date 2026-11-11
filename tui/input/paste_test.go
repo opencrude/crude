@@ -108,3 +108,11 @@ func TestLargeInlinePasteCreatesContentReference(t *testing.T) {
 		t.Fatal("inline-size attachment was not retained as an off-UI request")
 	}
 }
+
+func TestComposerDirectPasteKeepsBareCRBeforeSanitizing(t *testing.T) {
+	model := NewModel(theme.DefaultDark())
+	updated, _, _ := model.Update(tea.PasteMsg{Content: "one\rtwo\r\nthree"}, false, false)
+	if got := updated.Value(); got != "one\ntwo\nthree" {
+		t.Fatalf("line breaks were removed: %q", got)
+	}
+}

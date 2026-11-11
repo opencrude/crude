@@ -109,7 +109,7 @@ func DefaultLSPSettings() LSPSettings {
 		CompletionAccept:   "tab-enter",
 		MinSeverity:        "hint",
 		UpdateDebounceMS:   300,
-		MaxServers:         2,
+		MaxServers:         6,
 		ServerThreads:      2,
 		ServerMemoryMB:     1024,
 		IdleTimeoutSeconds: 300,

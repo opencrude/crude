@@ -193,9 +193,16 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 			return fmt.Errorf("completion: snippet positions are not editable source boundaries")
 		}
 	}
-	e.CancelSnippet()
+	// A suggestion with its own fields replaces the current snippet. A plain
+	// one is an ordinary edit: inside the active field it keeps the snippet,
+	// and the mutation observer retires the snippet for any other edit.
+	if session != nil {
+		e.CancelSnippet()
+	}
 	if after == before {
-		e.installSnippet(session)
+		if session != nil {
+			e.installSnippet(session)
+		}
 		return nil
 	}
 	// Sparse exact-byte recording also supports rune boundaries inside joined
@@ -213,7 +220,11 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 	}
 	e.cursor = e.buf.positionAtOffset(cursorOffset)
 	e.ClearSelection()
-	e.installSnippet(session)
+	if session != nil {
+		e.installSnippet(session)
+	} else {
+		e.DismissGhostText()
+	}
 	e.finishEdit()
 	return nil
 }

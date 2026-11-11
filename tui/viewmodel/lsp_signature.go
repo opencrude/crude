@@ -166,7 +166,7 @@ func (m *App) syncSignatureHelp() {
 		ownsInput = ownsInput && m.focusedPopup() == nil
 	}
 	if state.automatic {
-		ownsInput = ownsInput && !state.editor.HasSelection()
+		ownsInput = ownsInput && !editorHasUserSelection(state.editor)
 	}
 	if !valid || line != state.line || col != state.col || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() || !ownsInput {
 		m.closeSignatureHelp()

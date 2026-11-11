@@ -1,0 +1,323 @@
+# Complete Editor Experience
+
+> Status: ACTIVE HANDOFF. One target experience, not a phased release plan.
+> The defect fixes listed below are implemented; the remaining contracts are
+> work to do. A checked-in plan is not evidence that a feature exists.
+
+## Outcome and working instructions
+
+The user wants a dependable editor comparable to VS Code and JetBrains for
+real editing tasks, not a list of advertised features or a collection of
+language-specific hacks. They explicitly asked us to hunt beyond their examples,
+fix what can be closed well, and specify the rest for other agents.
+
+Treat the open requirements below as one acceptance contract. Work can be split
+by owner, but do not call the editor complete until the integrated journeys pass.
+Do not replace the shared document, completion, snippet, history, source geometry,
+settings, control registry or language-service owners with parallel systems.
+
+Before each change, reproduce the missing behavior through an actual input
+entry point. Add an independent behavioral regression. Reuse existing tests for
+linked views, canonical receipts, source identity, sparse edits, Unicode and
+history. Update current references when a contract lands, and remove completed
+items here. Record evidence and limits, not self-reported completion percentages.
+
+Language syntax, template bodies, context rules and server knowledge belong in
+catalog/query data. Go implements generic consumers. Never branch on a language
+name to make one fixture pass. Never run native parsing, disk I/O, subprocesses
+or network requests in Update or Paint.
+
+## What this repair actually changes
+
+| Defect | Owner and corrected outcome | Evidence |
+|---|---|---|
+| Accepting a function with Tab blocked suggestions inside its argument fields | `tui/viewmodel/editor_ghost.go` no longer treats all active snippets as a competing suggestion producer. Plain suggestions accepted inside a field preserve its mirrors and next Tab stop. Acceptance requests parameter information when it opens an argument list. | `TestSuggestionsWorkInsideAnAcceptedArgumentList`, `TestTabPrefersAChosenRowThenTheNextField`; old guard reproduced the failure. |
+| Pasted CR line breaks appeared inside JSON lines | Shared `ui.PastedLineBreaks` decodes CRLF and CR to LF at shell paste ingress; the editor applies its document terminator. Escaped backslash-n inside strings is not a line break. Existing disk contents are not rewritten. | `TestPasteGivesEveryLineBreakTheDocumentTerminator`, `TestPasteOfCopiedJSONKeepsItsLines`, `TestTerminalPasteKeepsItsLinesInComposerAndEditor`. |
+| CPU-derived admission stranded ordinary mixed-language projects | Core ceiling is the same 32-server bound permitted by settings; default workspace quota is six. An explicit lower quota remains effective. Waiting status distinguishes workspace quota from shared capacity. No claim of CPU/RSS containment. | `TestAnalysisProcessCeilingHonorsEveryWorkspaceQuota`, `TestDefaultLimitsRunOneServerForEachOpenLanguage`, `TestWaitingBehindOtherWorkspacesDoesNotBlameThisWorkspaceLimit`. |
+| Problems hid a waiting explanation when no Settings action could help | `tui/viewmodel/problems_panel.go` preserves a non-ready status independently of its button. Previous results cannot turn a waiting/failed empty view into “No problems.” | `TestProblemsPreservesWaitingWithoutSettingsAction` checks the model and actual 80-column paint. |
+| Comment toggle did nothing for block-only comment syntax | Catalog block delimiters support linewise toggle. A mixed selection keeps already wrapped lines, never nests them. A selection containing partial delimiters is left intact rather than generating broken comments. | `TestToggleCommentUsesBlockDelimitersWithoutALinePrefix`, `TestBlockCommentMixedSelectionNeverNestsAndUndoKeepsSource`. |
+| Tab and indent commands imposed four spaces | `tui/editor/indentation.go` detects tabs or space steps from bounded source evidence, cached by shared buffer revision. Tab reaches the next detected stop; Enter, Backspace and selected-line operations use the same style. Ambiguous/new content defaults to four spaces. | `TestIndentCommandsContinueDocumentStyle`, `TestTabUsesNextStopAndCachedStyleFollowsLinkedEdits`. |
+| Splitting a padded bracket pair left the closing bracket over-indented | Enter consumes intervening whitespace in the same undo transaction and aligns the closing line with its opening line. | `TestEnterBetweenPaddedPairKeepsClosingIndentAndOneUndo`. |
+
+These fixes do **not** establish all-language parity, installed-server acceptance
+for the tester's 4.1 binary, repaired historical JSON files, configurable display
+tab widths, general auto-dedent, folding, or a built-in template library.
+
+## Inventory: existing is not missing
+
+The source already has canonical shared documents, dirty-byte identity, undo,
+linked splits, search/replace, auto-pairs, line operations, snippet tab stops and
+choices, completion documentation/resolve, signature information, hover,
+definition/type/implementation/references navigation, document outline, inlay
+hints, code actions, reviewed rename, manual formatting and format-on-manual-save.
+Extend these owners rather than building replacements.
+
+The audit found no integrated folding, multi-cursor editing, wrap projection,
+indent guides, bracket matching, EditorConfig resolver, user template library,
+semantic token projection, selection expansion, linked editing or CodeLens.
+Some LSP method constants exist in the vendored transport; a constant is not a
+working workspace/shell workflow. AI literal ghost projection and budget libraries
+exist, but a shipped automatic inference service does not follow from them.
+
+## Source geometry and truthful preferences
+
+**Owners:** `tui/editor/coords.go`, `tui/editor/source_geometry.go`,
+`tui/editor/inline_projection.go`, `tui/editor/buffer.go`,
+`tui/viewmodel/editor_save.go`, `types/types.go`, existing preferences plumbing.
+
+**Observed gap:** Tab size, Word wrap, Line numbers, Syntax colors and Show
+whitespace are stored/exposed by Settings, but the primary editor does not consume
+those preferences. Minimap also has a stored field with no implemented view.
+Autosave and format-on-save do have consumers. Do not advertise the new indentation
+detection as a fix for configurable display width.
+
+**Implementation contract:**
+
+- Resolve explicit file choices, applicable EditorConfig, workspace choices,
+  application choices, detected indentation and defaults in that order. Keep
+  indentation width, tab display width and insert-tabs policy distinct. Show
+  `Spaces: 2` or `Tabs: 4` in the existing editor status, with a compact menu to
+  change the current file's policy and an explicit conversion action.
+- Replace the fixed display-width assumptions together, not only insertTab.
+  Source-to-cell mapping must cover cursor, selection, pointer, syntax, search,
+  diagnostics, inlays, ghost text, saved view state and history. Linked views
+  of one table must not interpret a Position using different widths.
+- Preserve source byte anchors when policy changes. Undo/Redo and retained
+  navigation history need geometry-neutral anchors; do not reinterpret old
+  visual columns using a new width. Never mutate source merely to paint a tab.
+- Settings changes apply to open views, new views, restored tabs and previews
+  that are meant to inherit them. Explicit preview overrides remain explicit.
+  Line numbers can hide without hiding diagnostic or folding actions.
+- Syntax colors reuse theme tokens/styles and invalidate color projection only.
+  Whitespace markers are display-only, never copied or saved. Boundary mode
+  shows leading/trailing whitespace, not every internal space.
+
+**Acceptance:** change 4 to 2 to 8 with tabs, emoji and combining marks in two
+linked views; caret and selected source bytes stay fixed. Type, click, search,
+accept a completion, undo/redo, save, reopen and switch workspaces. Verify every
+visible setting actually changes its stated behavior and reset restores inheritance.
+
+## Folding and wrapped lines: one row projection
+
+**Owners:** `tui/editor/render.go`, `tui/editor/chrome.go`,
+`tui/editor/pointer.go`, `tui/editor/movement.go`, `syntax/`, `types/syntax`,
+`workspace/insight.go`, and the established LSP request/transport owners.
+
+**Expected UX:** a small chevron in the gutter collapses/expands a block; keyboard
+commands Fold, Unfold, Fold all, Unfold all and Fold level have shared registry
+entries and semantic controls. A collapsed row keeps the source header with a
+muted ellipsis and hidden-line count. Nested folds retain their independent state.
+Long lines wrap at grapheme boundaries when enabled; continuation rows do not
+pretend to be new source lines. No horizontal scrollbar in wrapped mode.
+
+**Implementation contract:**
+
+- Add source-qualified folding ranges from negotiated LSP or native query data.
+  Prefer one available provider deterministically, not an unqualified union of
+  incompatible ranges. Use indentation folding only as a labelled structural
+  fallback. Validate bounds/nesting, reject crossing ranges and stale results.
+- Introduce one source-line/visible-row index that combines folds and wraps.
+  Rendering, scrolling, drag/autoscroll, cursor motion, page keys, diagnostics,
+  search, inlays and popover anchoring must all consume it. Do not implement
+  folding by omitting painted rows while the scrollbar still counts them.
+- Folding never edits canonical bytes, LSP coordinates, dirty state or undo.
+  Typing at a collapsed boundary, search navigation and diagnostic jumps reveal
+  the affected source before editing. Copy uses the selected source, including
+  hidden lines where the source selection spans them.
+- Fold state is view-local, source-qualified and persists with client view memory.
+  Remap disjoint edits, reopen touched ranges, and discard ranges invalidated by
+  peer changes or replacement. Width changes invalidate wrap geometry, not folds.
+- Cache the row index by source, folds and width. Use bounded visible reflow;
+  avoid exporting/reflowing the whole document during every pointer event.
+
+**Acceptance:** nested blocks, long JSON, comments, multiline strings, tabs and
+wide graphemes; two panes with different folds/widths; search into folded text;
+selection across folds; delete/undo; concurrent peer edits; restored view memory;
+80×24 and desktop pointer captures; dense-file presented-frame benchmarks.
+
+## Useful patterns without a heavy model
+
+**Owners:** `snippet/`, `insight/catalog/`, existing completion types and
+`tui/viewmodel/lsp_completion.go`, `tui/editor/lsp_edits.go`.
+
+The requested HTML scaffold, C loop and Lisp function are deterministic templates.
+Neither VS Code snippets nor JetBrains live templates require a language model.
+Provide these fast, offline and without source transmission. AI is for ambiguous
+prediction, not a prerequisite for known constructs.
+
+**Expected UX:** `!` or `html` offers a complete HTML document; `for` offers a C
+loop; `defun` offers a Lisp function. One visible candidate is accepted with Tab.
+Fields have numeric navigation and mirrors, and final Tab leaves the template.
+Multiple possible expansions use the existing passive suggestion list. Nothing
+is silently inserted when no candidate is shown. Add Insert Snippet in the palette
+for discovery and an editable application/workspace snippet collection.
+
+**Implementation contract:**
+
+- Define validated data records: stable ID, languages/context, prefixes, label,
+  description, body, provenance and license. Use the existing numeric snippet
+  parser. Unsupported transforms are reported, not silently inserted as syntax.
+  Do not create Go language-specific template generators or execute snippet code.
+- Introduce local completion candidates as a real producer in the shared
+  completion coordinator. They must work without a running server, in restricted
+  mode and in unnamed buffers with an explicitly selected language.
+- Preserve each producer's identity and validity boundary. Never manufacture LSP
+  provenance for local templates. Merge server results without moving an explicit
+  selection; deduplicate only identical edits and snippet plans. A local result
+  must not wait for server startup or a canonical semantic acknowledgement.
+- Apply base indentation, document line endings and indentation units **before**
+  parsing or consistently remap all resulting byte offsets. Acceptance replaces
+  only the typed prefix in one transaction. Mirrors and undo must remain exact.
+- Template context is data-driven (document, statement, expression, markup);
+  suppress inappropriate automatic suggestions in comments/strings, and make an
+  explicit Insert Snippet action available when the user intends a literal insert.
+- Read user files asynchronously, publish one generation, reject malformed
+  records with an actionable path/error and keep unrelated valid snippets.
+  Bundled defaults are data; settings can disable them without disabling LSP.
+
+**Minimum bundled data and independent expected expansions:**
+
+- HTML `!` / `html`: `<!doctype html>`, an `html` element with a language
+  field, `head` with UTF-8 charset and responsive viewport, a title field and
+  a body field. Field order is language → title → body → final landing. It is
+  a document template, not an automatic replacement of a nonempty file.
+- C `for`: `for (int ${1:i} = ${2:0}; $1 < ${3:count}; ++$1) {` followed by
+  an indented body field and closing brace. Renaming the index updates both
+  condition and increment. Tab order is index → initial value → bound → body.
+- Common Lisp `defun`: `(defun ${1:name} (${2:arguments})` followed by an
+  indented body field and closing parenthesis. Use a final landing outside
+  the form; do not auto-insert an extra closing parenthesis on acceptance.
+
+Test expanded source, not just parser plans or suggestion labels. Run syntax
+checks on completed fixtures whose placeholder values form valid programs. More
+languages use the same records and parser, not another template subsystem.
+
+**Acceptance:** exact expected generated bytes for all three requested examples;
+no-server and offline paths; selected-row/inline/field Tab precedence; LF/CRLF,
+two-space/tab indentation, Unicode defaults, escaping, mirrors, one-step undo,
+late server replies, cancellation, linked views and edited snippet files.
+
+## Completion and signature continuity
+
+**Owners:** existing completion and signature coordinator files in
+`tui/viewmodel/`, `workspace/lsp_completion.go`, `lspclient/`.
+
+- Keep parameter help anchored while typing arguments, changing overloads and
+  moving between fields. Refresh on provider-advertised trigger/retrigger input
+  and current argument position; do not require a new opening parenthesis.
+  Completion and parameter help coexist without covering each other or taking
+  editor focus. Escape dismisses the top transient aid before closing the file.
+- The current repair triggers help on acceptance but does not maintain it across
+  all argument edits. Do not retain stale parameter information under a new source.
+- Respect provider trigger characters instead of only identifiers and a dot.
+  Handle incomplete lists, commit characters and insertion modes only where the
+  negotiated contract supports them. Do not guess or widen provider edit ranges.
+- Offer useful local words/templates while a server is unavailable. Preserve
+  exact server-row identity for additional edits, resolve and imported symbols.
+- Support nested snippets deliberately if added: inner completion must have a
+  defined return-to-outer-field behavior, not two uncoordinated Tab owners.
+
+**Acceptance:** accept function, type first argument, choose a member, type comma,
+select second argument and overload, then leave the call. Test nested calls,
+selection replacement, Undo, delayed receipts, stale server replies and a narrow
+screen. Assert the actual displayed signature, not only that intent was queued.
+
+## Structural editing and multiple selections
+
+**Owners:** `tui/editor/editops.go`, `tui/editor/movement.go`, source geometry,
+`syntax/`, catalog data, existing document transaction and author undo owners.
+
+- Match bracket pairs and show the matching delimiter without changing source.
+  Smart Enter and closing-delimiter dedent must exclude strings/comments and use
+  current syntax/context rules. A stale parser must not rewrite indentation based
+  on guessed brackets. Continue comment leaders and language indentation through
+  data-driven rules; do not hard-code colon/newline behavior per language.
+- Add expand/shrink selection with a deterministic source-range stack; prefer
+  negotiated semantic selection ranges, then current structural syntax.
+- Add Select next occurrence, Select all occurrences, add caret above/below and
+  rectangular selection. Use source-byte ranges and one simultaneous edit vector
+  in the canonical transaction. Merge overlapping ranges deterministically.
+- Multi-cursor paste distributes equal-count lines only when the policy is explicit;
+  otherwise every caret receives the literal block. Completion, snippets and
+  conflicts must have a defined multi-caret policy. Do not partly apply a command.
+- General block-comment toggle must eventually handle existing multi-line comments
+  and delimiter-containing content using syntax context. The repair is linewise,
+  and deliberately refuses unsafe partial delimiters.
+
+**Acceptance:** escaped strings, comment brackets, malformed code, adjacent and
+nested delimiters, CRLF, wide graphemes, tabs, empty rectangular ranges,
+overlapping cursors, one-step Undo, peer edits, cancellation and render/hit agreement.
+
+## Navigation, semantic presentation and project editing
+
+**Owners:** existing workspace LSP families, `third_party/powernap/pkg/lsp/`,
+`lspclient/`, `types/`, `shellport/`, native editor-help windows and review owner.
+
+| Missing/partial workflow | Complete expected result and implementation constraint |
+|---|---|
+| Workspace symbols and breadcrumbs | Search project symbols from the existing palette/native list; selecting one goes to exact source and participates in Back/Forward. Document outline already exists. Reuse it for breadcrumb hierarchy, not another symbol cache. |
+| Document highlights | Current symbol reads/writes are distinguished with restrained theme tokens; async answers are fenced by exact source and caret invocation. They never become editable selections. |
+| Semantic tokens | Negotiate full/range/delta support, validate legends and bounds, recover a rejected delta via the protocol's full refresh, combine with lexical fallback by explicit precedence. Theme changes reproject colors without requerying source. |
+| Linked editing | Paired tag-name edits use negotiated ranges, one local transaction and source-qualified invalidation. Never keep mirrored editing after a peer touches its range. |
+| Call/type hierarchy | Expand incoming/outgoing calls or supertypes/subtypes in the shared bounded tree/list. Lazy requests, cancellation and exact location navigation; no unrelated popup framework. |
+| CodeLens | Only actual provider-supported actions appear. Resolve on demand; edits go through review and command effects through existing authorization. Never print protocol identifiers as user labels. |
+| Formatting selection and save actions | One formatter selection authority; support range formatting where offered. Organize imports/fix-on-save are explicit opt-ins, serialized with format/save against one source revision. No duplicate file writer or surprise multi-file save. |
+| EditorConfig and whitespace cleanup | Resolve project config without running code. Trim trailing whitespace/final newline are explicit save policies, visible in review and reversible. Never silently rewrite historical mixed line endings on open. |
+| Pull diagnostics and dynamic features | Add only supported negotiated workflows; retain previous result IDs/cancellation semantics where specified. A missing provider, queue or failed analysis must not be labelled a clean project. |
+
+**Acceptance for every row:** supported/unsupported/empty/error/cancelled cases,
+source and workspace switch during request, two shells, dirty documents, narrow
+native UI, actual command effect and Undo/recovery. Add protocol codecs and semantic
+controls in the same change, not as an unconnected backend endpoint.
+
+## Resource recovery and optional AI
+
+The larger process ceiling fixes a default starvation bug, not scheduling fairness
+or memory containment. Active editor work must not be indefinitely blocked behind
+background project producers. Extend the **existing governor** with explicit
+interactive priority and fair background scheduling; do not add a second pool.
+Release only positively stopped processes, retain uncertain teardown evidence,
+and show a recovery action that changes the binding constraint. Closing files
+may not release a project-scoped producer: name that distinction rather than
+promising it always frees a slot. Test mixed projects, many workspaces, retained
+old generations, low quotas, crashes, restart and thread/memory hints.
+
+AI suggestions remain separate from deterministic completion. Reuse existing
+prediction budget, source snapshot, cancellation and ghost projection owners.
+Require the established workspace consent and positive budget before transmission;
+local models still need an explicit resource/configuration path. Label next-edit
+previews, require explicit acceptance, and use review for broader modifications.
+No model may claim semantic correctness from a plausible generated pattern.
+Measure acceptance, latency, unwanted edits and resource costs against a fixed
+corpus before claiming it beats another IDE.
+
+## Integrated acceptance and handoff requirements
+
+Run one developer journey with a small multi-language web/native/script project:
+open files, paste JSON from a browser, expand the three requested templates, accept
+function/member suggestions inside their fields, fold nested blocks, search and
+navigate through folds, edit two splits, use multiple carets, format, rename with
+review, undo, save, restart and resume. Repeat while a server starts/fails and while
+another shell edits the same document. Offline deterministic features still work.
+
+Every implementation report must list changed owners, behavioral regressions,
+real provider/platform evidence, screenshots inspected at 160×40 and 80×24,
+latency/allocation measurements and remaining unsupported behavior. Run the
+[validation gates](../guides/validation.md). Never turn a timeout, skipped native
+fixture, protocol constant or screenshot command exit into a success claim.
+
+## Design references
+
+These are behavior references, not permission to acquire Marketplace content:
+
+- [VS Code snippets](https://code.visualstudio.com/docs/editing/userdefinedsnippets):
+  prefix/body/description, scope, placeholder navigation and indentation-aware insertion.
+- [JetBrains live templates](https://www.jetbrains.com/help/idea/using-live-templates.html):
+  abbreviation + Tab, fields, contextual and surround templates.
+- [LSP specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/):
+  negotiate each feature; preserve source and provider boundaries.
+- Current Crude contracts: [Editor](../reference/editor.md),
+  [native syntax](../reference/native-syntax.md),
+  [interaction matrix](../reference/interaction-matrix.md),
+  [file workflows](editor-file-workflows.md),
+  [autonomous code intelligence](autonomous-code-intelligence.md).

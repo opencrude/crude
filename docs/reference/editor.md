@@ -53,7 +53,10 @@ an external disk conflict. See [private shared-editor recovery](core-client-prot
   at a line end (including an empty line) removes the complete terminator. CRLF
   is one terminator, excluded from line content. Enter follows the document's
   first terminator, inherits indentation and opens a matching bracket pair onto
-  separate lines. Paste retains exact bytes.
+  separate lines. Paste gives every pasted line break (LF, CRLF or a lone CR)
+  that same terminator, so a paste never mixes terminators or leaves a bare CR
+  inside a line. A terminal sends the line breaks of a bracketed paste as CR;
+  see [text input](text-input.md#clipboard).
 - Left/Right without Shift collapse an existing selection to its directional
   edge. Tab indents every selected line, including a single-line selection;
   Shift+Tab outdents. Vertical motion retains its desired column while snapping
@@ -64,6 +67,23 @@ an external disk conflict. See [private shared-editor recovery](core-client-prot
   b323a3b rewrite once replaced the climb loop's `continue` with `return`,
   parking the cursor on blank lines — and SA4004 flagged it as a dead loop.
   When a "dead loop" warning appears, check for a swallowed `continue` first.
+
+### Indentation and block-only comments
+
+Tab, Enter, Backspace and selected-line indentation share a detected source
+style: tabs, or the most frequent neighboring space-indent step of 2–8 columns.
+Detection inspects at most 2,000 lines and 256 leading spaces per line and caches
+by shared PieceTable revision. Empty/ambiguous content defaults to four spaces.
+Tab inserts to the next stop; Enter between a padded matching pair consumes the
+old padding and aligns the closing line in the same undo transaction.
+This does not implement configurable **display** tab width or EditorConfig.
+
+Ctrl+/ uses catalog block delimiters when the language has no line prefix.
+Each nonblank line is wrapped. Mixed selections keep already-wrapped lines;
+all-wrapped selections unwrap. Partial block delimiters are left intact rather
+than nested unsafely. Cursor/selection and Undo remain on the normal edit path.
+General multi-line block-comment editing remains in the
+[complete editor plan](../plans/editor-parity.md).
 
 ## Go to line
 
@@ -622,7 +642,8 @@ Fresh and late automatic LSP completions cannot steal another producer's
 candidate keys; a fresh explicit completion invocation intentionally retires the
 candidate. Each candidate records its producer (`SetGhostTextFor`), and
 type-through keeps it. Completion is the first producer: it offers its obvious
-top suggestion and replaces or dismisses only its own candidate.
+top suggestion and replaces or dismisses only its own candidate. A candidate may
+sit at the caret of an active snippet field; accepting it edits that field.
 
 Preparation rejects empty, invalid UTF-8, multiline, control/bidi-bearing or
 over-4-KiB candidates instead of trimming, escaping or repairing source code.
@@ -673,6 +694,10 @@ Ordinary native `(` and `,` edits also request parameter information. One
 shell-local intent waits for the exact typed source and caret to be acknowledged,
 then uses the same provider/request/context boundary as explicit inspection.
 Input queued behind Undo triggers only when the original key actually executes.
+An accepted suggestion that leaves the caret, or its selected first field,
+directly after `(` requests it too, like JetBrains IDEs and VS Code after a
+function suggestion. The selected default of a snippet field is not a user
+selection and does not block the request.
 Paste, API edits, peer publications and reopening a tab are not trigger input.
 An intervening edit, selection, caret/focus/lifetime/workspace change or a
 five-second acknowledgement deadline retires the intent without querying older
@@ -697,9 +722,12 @@ The reader grows to fit, within the editor-help limits, and shows a scrollbar
 when the text still overflows. It supports normal reading/selection/copy,
 resize, Escape and outside-click dismissal.
 It never inserts text, chooses an overload on the server or edits an argument.
-Only the two native delimiter inputs trigger automatic assistance; dynamic
-capability registration, language-specific call parsing and full semantic-feature
-acceptance remain outside this slice.
+Only the two native delimiter inputs and an accepted suggestion that opens an
+argument list trigger automatic assistance. The card closes when the caret
+moves. Keeping it open while the user types the arguments, dynamic capability
+registration, language-specific call parsing and full semantic-feature
+acceptance remain outside this slice; see the
+[editor parity plan](../plans/editor-parity.md).
 
 Requests require acknowledged canonical text: optimistic edits, pending history,
 conflicts and standalone raw buffers cannot query an older canonical source.
@@ -935,8 +963,13 @@ completions, API edits and peer publications do not create typing intent.
 One cancellable debounce waits for both the configured delay and canonical
 acknowledgement. A timer firing first never discards the request. Source lifetime,
 revision, caret, focus, feature generation, workspace changes and Escape retire
-pending intent. Active snippets and ghost-text candidates of other producers
-retain their keys; completion's own inline text does not.
+pending intent. Ghost-text candidates of other producers retain their keys;
+completion's own inline text does not. An active snippet does not block
+suggestions: typing in a field requests them like any other typing. In a field,
+Tab accepts visible inline text or a chosen row; with neither, Tab moves to the
+next field. Accepting a plain suggestion inside the active field is an ordinary
+edit of that field and keeps the snippet. A suggestion with its own fields
+replaces the snippet.
 The Code Intelligence **Suggestions** settings control automatic requests, delay
 (200 ms by default; zero is immediate), and acceptance by Tab, Enter or both.
 With automatic requests off, Ctrl+Space remains available. Other keys retain
@@ -1066,7 +1099,9 @@ WindowFrame/List with ordinary keys, pointer and scrolling. Enter/Tab or a row
 activation applies the exact current alternative as one editor command. Empty
 choices have an explicit label. Escape/outside dismisses only the picker; another
 editor, source revision, selection, interaction or invocation cannot reuse an old
-choice callback. Automatic completion does not steal an active snippet's Tab.
+choice callback. Suggestions work inside a field (see
+[completion](#completion-documentation-and-original-insertion)); they take Tab
+only while inline text or a chosen row is visible.
 
 The core remains the only connected text and author-history owner. Private
 snippet navigation is neither replicated nor persisted. Exact own receipts and

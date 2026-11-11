@@ -14,12 +14,15 @@ type editorGhostView struct {
 // previews a suggestion, so it does not hold keys against a newer completion.
 const completionGhostOwner = "completion"
 
+// editorRetainsCompletionKeys reports whether another producer's candidate
+// holds Tab. An active snippet does not: suggestions work inside its fields,
+// and Tab moves to the next field unless inline text or a chosen row is shown.
 func editorRetainsCompletionKeys(ed *editor.Editor) bool {
 	if ed == nil {
 		return false
 	}
 	_, _, candidate := ed.GhostText()
-	return ed.SnippetActive() || candidate && ed.GhostOwner() != completionGhostOwner
+	return candidate && ed.GhostOwner() != completionGhostOwner
 }
 
 func dismissCompletionGhost(ed *editor.Editor) {
