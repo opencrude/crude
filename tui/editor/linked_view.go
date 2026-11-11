@@ -31,6 +31,7 @@ func (e *Editor) NewLinkedView() *Editor {
 	v.filePath, v.title = e.filePath, e.title
 	v.readOnly, v.hideLineNumbers, v.lineNumberOffset = e.readOnly, e.hideLineNumbers, e.lineNumberOffset
 	v.statusChrome, v.maxHistory = e.statusChrome, e.maxHistory
+	v.syntaxColors, v.renderWhitespace = e.syntaxColors, e.renderWhitespace
 	v.open = e.open
 	v.cursor, v.scrollX, v.scrollY = e.cursor, e.scrollX, e.scrollY
 	v.goalCol, v.goalSet = e.goalCol, e.goalSet

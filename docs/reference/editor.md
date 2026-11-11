@@ -122,6 +122,29 @@ than nested unsafely. Cursor/selection and Undo remain on the normal edit path.
 General multi-line block-comment editing remains in the
 [complete editor plan](../plans/editor-parity.md).
 
+## Display preferences
+
+The existing Editor preferences apply to new and open document views, including
+linked splits and settings changes received from another shell. Reset removes
+the scope's choices and restores live inheritance. They do not change source,
+selection, history, the savepoint or dirty state.
+
+- **Line numbers** hides only the number lane. Diagnostic and change lanes remain
+  visible and actionable. A changed gutter retires pointer capture and reveals
+  the same source caret in the new geometry.
+- **Syntax colors** selects the pinned Chroma palette's source-token colors.
+  Application chrome and selection keep the application theme. Light variants are
+  used where available; source ink meets 4.5:1 contrast on the editor background.
+  Theme/palette changes clear projected colors, not the current parser result.
+- **Show whitespace** paints spaces as `·` and the first cell of each tab as `→`.
+  **At edges** shows only leading/trailing whitespace; **Always** includes internal
+  spaces and tabs. Expanded tab cells keep their source geometry. Markers never
+  enter copy, search, save, snippet text, inlays or ghost suggestions. Per-line
+  whitespace geometry is cached with the exact source line, not rebuilt per frame.
+
+Configurable tab width, soft wrap and EditorConfig remain in the active editor
+plan. The display preferences above do not imply those features are implemented.
+
 ## Go to line
 
 - Ctrl+G and the editor View menu open the shared text prompt with the lines

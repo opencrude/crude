@@ -71,7 +71,7 @@ func (msg SyntaxReadyMsg) Failure() string {
 }
 
 func (e *Editor) initChroma() {
-	e.chromaStyle = rendering.SourceStyle(e.th)
+	e.refreshSyntaxPalette()
 	path := e.filePath
 	if path == "" {
 		path = e.title

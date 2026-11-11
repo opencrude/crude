@@ -140,6 +140,7 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 	if err := ed.InstallDocument(s); err != nil {
 		return err
 	}
+	ed.SetPresentation(m.editorSettings)
 	if err := ed.BindDocumentOwner(live.DocumentOwner()); err != nil {
 		ed.Close()
 		return err

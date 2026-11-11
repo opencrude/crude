@@ -90,11 +90,12 @@ These changes do not complete the remaining sections below.
 `tui/editor/inline_projection.go`, `tui/editor/buffer.go`,
 `tui/viewmodel/editor_save.go`, `types/types.go`, existing preferences plumbing.
 
-**Observed gap:** Tab size, Word wrap, Line numbers, Syntax colors and Show
-whitespace are stored/exposed by Settings, but the primary editor does not consume
-those preferences. Minimap also has a stored field with no implemented view.
-Autosave and format-on-save do have consumers. Do not advertise the new indentation
-detection as a fix for configurable display width.
+**Remaining gap:** Tab size and Word wrap are stored/exposed by Settings but are
+not yet consumed. Minimap also has a stored field with no implemented view.
+Line numbers, Syntax colors and Show whitespace now reach current, linked and
+new editor views and live peer settings. Colors reproject without reparsing;
+whitespace stays out of source and copy. Autosave and format-on-save also have
+consumers. Do not advertise indentation detection as configurable display width.
 
 **Implementation contract:**
 

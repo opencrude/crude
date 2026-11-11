@@ -13,11 +13,12 @@ type Position struct {
 // lineGeomCache holds tab-expanded, grapheme-collapsed geometry for one line.
 // Deliberately excludes chroma colour data so cursor motion never tokenises.
 type lineGeomCache struct {
-	raw      string
-	clusters []string
-	runes    []rune
-	widths   []int
-	totalW   int
+	raw        string
+	clusters   []string
+	runes      []rune
+	widths     []int
+	totalW     int
+	whitespace *whitespaceGeometry
 }
 
 type EditInfo struct {

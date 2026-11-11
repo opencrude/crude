@@ -81,6 +81,7 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 	// gives back the same Editor instance with all state intact.
 	ed := editor.New(m.Theme)
 	ed.OpenBuffer(buf)
+	ed.SetPresentation(m.editorSettings)
 
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed, fp, text) })

@@ -186,18 +186,20 @@ type Editor struct {
 
 	// Git supplies an immutable HEAD baseline. The editor owns one exact live
 	// projection for paint, navigation and inspection; there are no local claims.
-	gitHunks        []GitHunk
-	gitHead         string
-	gitHeadLines    []string
-	gitSnapshot     textSnapshot
-	gitLineOffsets  []int
-	gitBlameHunks   []GitHunk
-	gitBlame        []GitBlameLine
-	gitLoaded       bool
-	gitConflicted   bool
-	gitRevision     uint64
-	readOnly        bool
-	hideLineNumbers bool
+	gitHunks         []GitHunk
+	gitHead          string
+	gitHeadLines     []string
+	gitSnapshot      textSnapshot
+	gitLineOffsets   []int
+	gitBlameHunks    []GitHunk
+	gitBlame         []GitBlameLine
+	gitLoaded        bool
+	gitConflicted    bool
+	gitRevision      uint64
+	readOnly         bool
+	hideLineNumbers  bool
+	syntaxColors     string
+	renderWhitespace string
 
 	// hover state for diagnostic tooltip popup.
 	hoverMessages []string
@@ -283,7 +285,15 @@ func NewPreview(th *theme.Theme, path, text string, firstLine int) *Editor {
 
 func (e *Editor) ReadOnly() bool { return e.readOnly }
 
-func (e *Editor) SetLineNumbers(visible bool) { e.hideLineNumbers = !visible }
+func (e *Editor) SetLineNumbers(visible bool) {
+	if e.hideLineNumbers == !visible {
+		return
+	}
+	e.stopPointerSelection()
+	e.CancelPointerCapture()
+	e.hideLineNumbers = !visible
+	e.pendingReveal = true
+}
 
 func (e *Editor) Open(path string) error {
 	abs, err := filepath.Abs(path)
