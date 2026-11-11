@@ -185,7 +185,7 @@ func (m *App) keepCompletionWhileTyping(ed *editor.Editor) bool {
 		return false
 	}
 	raw := ed.LineText(ed.CursorLine())
-	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), editor.DefaultTabWidth)
+	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), ed.TabWidth())
 	if !completionWordBefore(raw[:max(0, min(off, len(raw)))]) {
 		return false
 	}
@@ -228,6 +228,6 @@ func typedWordBefore(text string) string {
 // editorTypedWord is the identifier before the caret of ed.
 func editorTypedWord(ed *editor.Editor) string {
 	raw := ed.LineText(ed.CursorLine())
-	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), editor.DefaultTabWidth)
+	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), ed.TabWidth())
 	return typedWordBefore(raw[:max(0, min(off, len(raw)))])
 }

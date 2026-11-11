@@ -115,7 +115,7 @@ func (e *Editor) measureDocumentLineWidth(line int) int {
 	if err != nil {
 		return 0
 	}
-	return rendering.VisibleWidth(ExpandTabs(string(raw), tabWidth))
+	return rendering.VisibleWidth(ExpandTabs(string(raw), e.TabWidth()))
 }
 
 func (e *Editor) markDocumentWidthChanged() {

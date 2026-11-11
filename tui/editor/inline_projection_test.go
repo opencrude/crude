@@ -13,7 +13,7 @@ import (
 
 func mustInlineProjection(t testing.TB, raw string, ins []InlineInsertion) *inlineProjection {
 	t.Helper()
-	p, err := buildInlineProjection(raw, ins)
+	p, err := buildInlineProjection(DefaultTabWidth, raw, ins)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,14 +192,14 @@ func TestInlineProjectionStrictPlacement(t *testing.T) {
 		{"zero width space", "a\u200bb", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := buildInlineProjection(tc.raw, []InlineInsertion{{ByteOffset: tc.offset, Index: 1, Label: "X"}})
+			p, err := buildInlineProjection(DefaultTabWidth, tc.raw, []InlineInsertion{{ByteOffset: tc.offset, Index: 1, Label: "X"}})
 			if p != nil || !errors.Is(err, ErrInlinePlacement) {
 				t.Fatalf("got p=%+v err=%v, want placement refusal", p, err)
 			}
 		})
 	}
 	for _, label := range []string{"\u0301", "\u200b"} {
-		p, err := buildInlineProjection("a", []InlineInsertion{{ByteOffset: 1, Index: 1, Label: label}})
+		p, err := buildInlineProjection(DefaultTabWidth, "a", []InlineInsertion{{ByteOffset: 1, Index: 1, Label: label}})
 		if p != nil || !errors.Is(err, ErrInlinePlacement) {
 			t.Errorf("zero-cell label %q: p=%+v err=%v", label, p, err)
 		}
@@ -207,7 +207,7 @@ func TestInlineProjectionStrictPlacement(t *testing.T) {
 	// The shared terminal profile gives a standalone ZWJ a positive fallback
 	// width. It is not a zero-cell unit and must not receive a private correction.
 	cluster, width := rendering.FirstGrapheme("\u200d")
-	p, err := buildInlineProjection("a", []InlineInsertion{{ByteOffset: 1, Index: 1, Label: "\u200d"}})
+	p, err := buildInlineProjection(DefaultTabWidth, "a", []InlineInsertion{{ByteOffset: 1, Index: 1, Label: "\u200d"}})
 	if width > 0 {
 		if err != nil || cluster != "\u200d" || p.DisplayWidth != 1+width ||
 			p.sourceToDisplay(1) != 1+width || p.displayHit(width).HintIndex != 1 {
@@ -216,11 +216,11 @@ func TestInlineProjectionStrictPlacement(t *testing.T) {
 	} else if p != nil || !errors.Is(err, ErrInlinePlacement) {
 		t.Fatalf("shared zero-cell ZWJ: p=%+v err=%v", p, err)
 	}
-	if p, err := buildInlineProjection("\u0301", nil); p != nil || !errors.Is(err, ErrInlinePlacement) {
+	if p, err := buildInlineProjection(DefaultTabWidth, "\u0301", nil); p != nil || !errors.Is(err, ErrInlinePlacement) {
 		t.Fatalf("ambiguous source without insertions: p=%+v err=%v", p, err)
 	}
 	// A UTF-16 surrogate-half byte "offset" is not a valid UTF-8 byte boundary.
-	if p, err := buildInlineProjection("😀", []InlineInsertion{{ByteOffset: 2, Index: 1, Label: "X"}}); p != nil || err == nil {
+	if p, err := buildInlineProjection(DefaultTabWidth, "😀", []InlineInsertion{{ByteOffset: 2, Index: 1, Label: "X"}}); p != nil || err == nil {
 		t.Fatalf("inside emoji byte accepted: p=%+v err=%v", p, err)
 	}
 }
@@ -297,7 +297,7 @@ func TestInlineProjectionLabelClustersAndClipMetadata(t *testing.T) {
 		t.Fatal("source wide continuation inherited label identity")
 	}
 	// An inserted leading accent must not attach to source or to a prior label.
-	_, err := buildInlineProjection("a", []InlineInsertion{{1, 1, "e", false, false}, {1, 2, "\u0301", false, false}})
+	_, err := buildInlineProjection(DefaultTabWidth, "a", []InlineInsertion{{1, 1, "e", false, false}, {1, 2, "\u0301", false, false}})
 	if !errors.Is(err, ErrInlinePlacement) {
 		t.Fatalf("independent labels were merged: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestInlineProjectionInputBounds(t *testing.T) {
 		{"inside UTF8", "界", []InlineInsertion{{ByteOffset: 1, Index: 0}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if p, err := buildInlineProjection(tc.raw, tc.in); p != nil || err == nil {
+			if p, err := buildInlineProjection(DefaultTabWidth, tc.raw, tc.in); p != nil || err == nil {
 				t.Fatalf("invalid input accepted: p=%+v err=%v", p, err)
 			}
 		})
@@ -359,7 +359,7 @@ func TestInlineProjectionRunBound(t *testing.T) {
 		t.Fatalf("exact independent run bound: runs=%d width=%d boundaries=%d", len(p.Runs), p.DisplayWidth, len(p.boundaries))
 	}
 	for _, raw := range []string{strings.Repeat("a", 131073), strings.Repeat("\t", 32769)} {
-		projected, err := buildInlineProjection(raw, nil)
+		projected, err := buildInlineProjection(DefaultTabWidth, raw, nil)
 		if projected != nil || !errors.Is(err, ErrInlinePlacement) || !strings.Contains(err.Error(), "run bound") {
 			t.Fatalf("accepted overbudget projection: source=%d p-nil=%t err=%v", len(raw), projected == nil, err)
 		}
@@ -401,7 +401,7 @@ func BenchmarkInlineProjectionBuild(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				var err error
-				inlineBenchmarkProjection, err = buildInlineProjection(tc.raw, tc.in)
+				inlineBenchmarkProjection, err = buildInlineProjection(DefaultTabWidth, tc.raw, tc.in)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -436,7 +436,7 @@ func FuzzInlineProjection(f *testing.F) {
 		}
 		offset := int(position) % (len(raw) + 1)
 		ins := []InlineInsertion{{offset, 0, label, true, true}, {offset, 1, "x", false, false}}
-		p, err := buildInlineProjection(raw, ins)
+		p, err := buildInlineProjection(DefaultTabWidth, raw, ins)
 		if err != nil {
 			if p != nil {
 				t.Fatal("failed build exposed a partial projection")

@@ -61,7 +61,7 @@ func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 	trigger := types.LSPCompletionContext{Producer: caps.Producer, TriggerKind: types.LSPCompletionInvoked}
 	character := key.Text != "" && slices.Contains(caps.CompletionTriggers, key.Text)
 	raw := ed.LineText(ed.CursorLine())
-	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), editor.DefaultTabWidth)
+	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), ed.TabWidth())
 	if off <= 0 {
 		return
 	}

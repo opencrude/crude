@@ -158,33 +158,33 @@ func isWordChar(r rune) bool {
 	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 }
 
-func runeVisualWidth(r rune) int {
+func runeVisualWidth(tabW int, r rune) int {
 	if r == '\t' {
 		// Lone-tab width at column 0; mid-line tabs go through ExpandTabs /
 		// TabStopAdvance in the coords module.
-		return TabStopAdvance(0, tabWidth)
+		return TabStopAdvance(0, tabW)
 	}
 	return rendering.VisibleWidth(string(r))
 }
 
-func lineVisualWidthFromRunes(runes []rune) int {
-	return LineVisualWidth(string(runes), tabWidth)
+func lineVisualWidthFromRunes(tabW int, runes []rune) int {
+	return LineVisualWidth(string(runes), tabW)
 }
 
-func runesToVisualCol(runes []rune, ri int) int {
+func runesToVisualCol(tabW int, runes []rune, ri int) int {
 	ri = min(len(runes), max(0, ri))
-	return ByteOffsetToVisualCol(string(runes), len(string(runes[:ri])), tabWidth)
+	return ByteOffsetToVisualCol(string(runes), len(string(runes[:ri])), tabW)
 }
 
 // RuneIndexToVisualColumn maps source rune offsets to editor columns, including
 // tab stops and complete graphemes. Search/LSP adapters must use source geometry.
-func RuneIndexToVisualColumn(text string, index int) int {
-	return runesToVisualCol([]rune(text), index)
+func RuneIndexToVisualColumn(tabW int, text string, index int) int {
+	return runesToVisualCol(tabW, []rune(text), index)
 }
 
-func colToRuneIdx(runes []rune, col int) int {
+func colToRuneIdx(tabW int, runes []rune, col int) int {
 	text := string(runes)
-	return len([]rune(text[:VisualColToByteOffset(text, col, tabWidth)]))
+	return len([]rune(text[:VisualColToByteOffset(text, col, tabW)]))
 }
 
 // moveToLineStart implements Smart Home: the cursor toggles between the
@@ -203,7 +203,7 @@ func (e *Editor) moveToLineStart() {
 		if text[0] != ' ' && text[0] != '\t' {
 			break
 		}
-		size, width := firstSourceUnit(text, firstNonWS)
+		size, width := firstSourceUnit(e.TabWidth(), text, firstNonWS)
 		firstNonWS += width
 		text = text[size:]
 	}

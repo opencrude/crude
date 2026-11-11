@@ -37,12 +37,13 @@ or network requests in Update or Paint.
 | CPU-derived admission stranded ordinary mixed-language projects | Core ceiling is the same 32-server bound permitted by settings; default workspace quota is six. An explicit lower quota remains effective. Waiting status distinguishes workspace quota from shared capacity. No claim of CPU/RSS containment. | `TestAnalysisProcessCeilingHonorsEveryWorkspaceQuota`, `TestDefaultLimitsRunOneServerForEachOpenLanguage`, `TestWaitingBehindOtherWorkspacesDoesNotBlameThisWorkspaceLimit`. |
 | Problems hid a waiting explanation when no Settings action could help | `tui/viewmodel/problems_panel.go` preserves a non-ready status independently of its button. Previous results cannot turn a waiting/failed empty view into “No problems.” | `TestProblemsPreservesWaitingWithoutSettingsAction` checks the model and actual 80-column paint. |
 | Comment toggle did nothing for block-only comment syntax | Catalog block delimiters support linewise toggle. A mixed selection keeps already wrapped lines, never nests them. A selection containing partial delimiters is left intact rather than generating broken comments. | `TestToggleCommentUsesBlockDelimitersWithoutALinePrefix`, `TestBlockCommentMixedSelectionNeverNestsAndUndoKeepsSource`. |
-| Tab and indent commands imposed four spaces | `tui/editor/indentation.go` detects tabs or space steps from bounded source evidence, cached by shared buffer revision. Tab reaches the next detected stop; Enter, Backspace and selected-line operations use the same style. Ambiguous/new content defaults to four spaces. | `TestIndentCommandsContinueDocumentStyle`, `TestTabUsesNextStopAndCachedStyleFollowsLinkedEdits`. |
+| Tab and indent commands imposed four spaces | `tui/editor/indentation.go` detects tabs or space steps from bounded source evidence, cached by shared buffer revision. Tab reaches the next detected stop; Enter, Backspace and selected-line operations use the same style. Ambiguous/new content uses the configured Tab size. | `TestIndentCommandsContinueDocumentStyle`, `TestTabUsesNextStopAndCachedStyleFollowsLinkedEdits`. |
 | Splitting a padded bracket pair left the closing bracket over-indented | Enter consumes intervening whitespace in the same undo transaction and aligns the closing line with its opening line. | `TestEnterBetweenPaddedPairKeepsClosingIndentAndOneUndo`. |
 
 These fixes do **not** establish all-language parity, installed-server acceptance
-for the tester's 4.1 binary, repaired historical JSON files, configurable display
-tab widths, general auto-dedent, folding, or a built-in template library.
+for the tester's 4.1 binary, repaired historical JSON files, general auto-dedent,
+folding, or a built-in template library. Configurable tab display width has since
+landed through the geometry owner described below.
 
 ## Inventory: existing is not missing
 
@@ -90,12 +91,15 @@ These changes do not complete the remaining sections below.
 `tui/editor/inline_projection.go`, `tui/editor/buffer.go`,
 `tui/viewmodel/editor_save.go`, `types/types.go`, existing preferences plumbing.
 
-**Remaining gap:** Tab size and Word wrap are stored/exposed by Settings but are
-not yet consumed. Minimap also has a stored field with no implemented view.
+**Remaining gap:** Word wrap is stored/exposed by Settings but not yet consumed.
+Minimap also has a stored field with no implemented view.
 Line numbers, Syntax colors and Show whitespace now reach current, linked and
 new editor views and live peer settings. Colors reproject without reparsing;
 whitespace stays out of source and copy. Autosave and format-on-save also have
-consumers. Do not advertise indentation detection as configurable display width.
+consumers. Tab size now supplies shared display geometry and the fallback indent
+width. Source-byte history/recovery and navigation anchors keep the same source
+through width changes. Explicit per-file policy and EditorConfig precedence remain
+open; detected indentation is still separate from display width.
 
 **Implementation contract:**
 

@@ -70,7 +70,7 @@ func TestSearchHighlight_MultibytePainted(t *testing.T) {
 		t.Fatalf("matches=%d", n)
 	}
 	m := ed.Search().Matches[0]
-	wantStart := LineVisualWidth("日本語", tabWidth)
+	wantStart := LineVisualWidth("日本語", DefaultTabWidth)
 	if m.Start.Col != wantStart {
 		t.Fatalf("start col=%d want %d", m.Start.Col, wantStart)
 	}
@@ -94,7 +94,7 @@ func TestSearchHighlight_EmojiZWJPainted(t *testing.T) {
 		t.Fatalf("matches=%d", n)
 	}
 	m := ed.Search().Matches[0]
-	wantStart := LineVisualWidth(emoji, tabWidth)
+	wantStart := LineVisualWidth(emoji, DefaultTabWidth)
 	if m.Start.Col != wantStart {
 		t.Fatalf("start col=%d want %d", m.Start.Col, wantStart)
 	}

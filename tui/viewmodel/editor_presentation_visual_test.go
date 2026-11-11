@@ -119,6 +119,10 @@ func runEditorPresentationVisual(t *testing.T, headless bool, width, height int)
 			if !observe(tea.KeyF3) {
 				return
 			}
+			program.Send(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+			send('8', "8")
+			send(tea.KeyTab, "")
+			send(tea.KeyTab, "")
 			send(' ', " ")
 			send(tea.KeyTab, "")
 			send(tea.KeyRight, "")
@@ -223,6 +227,8 @@ func (m *presentationVisualModel) observePresentation(phase int) error {
 			return fmt.Errorf("source syntax not ready")
 		}
 		if phase == 0 {
+			ed.SetCursorPosition(3, 8)
+			ed.SetSelection(3, 4, 3, 8)
 			v.View()
 			r := v.editorRect
 			m.originalWidth = ed.GutterWidth()
@@ -239,23 +245,26 @@ func (m *presentationVisualModel) observePresentation(phase int) error {
 			body.FocusForm()
 			for _, child := range body.Children() {
 				if form, ok := child.(*ui.Form); ok && form.ID() == settingsui.WorkspaceSettingsFormID {
-					if !form.FocusField("line-numbers") {
-						return fmt.Errorf("line-number control missing")
+					if !form.FocusField("tab-size") {
+						return fmt.Errorf("tab-size control missing")
 					}
 				}
 			}
 		}
 		frame = ansi.Strip(v.View().RenderContent())
 		if phase == 1 {
+			if !strings.Contains(frame, "columns") {
+				return fmt.Errorf("tab unit is clipped")
+			}
 			body := v.settingsSurface(v.overlayHost.Window(ui.OverlayWorkspaceSettings))
 			if body == nil {
 				return fmt.Errorf("preferences closed before Save")
 			}
 			settings := body.Model().AppSettings().Editor
-			if settings.LineNumbers || settings.SyntaxTheme != "dracula" || settings.RenderWhitespace != "all" || len(body.Model().Edits()) != 3 {
+			if settings.TabSize != 8 || settings.LineNumbers || settings.SyntaxTheme != "dracula" || settings.RenderWhitespace != "all" || len(body.Model().Edits()) != 4 {
 				return fmt.Errorf("native preference input missed its fields: %+v", settings)
 			}
-			if !v.editorSettings.LineNumbers || ed.GutterWidth() != m.originalWidth {
+			if ed.TabWidth() != 4 || !v.editorSettings.LineNumbers || ed.GutterWidth() != m.originalWidth {
 				return fmt.Errorf("unsaved preference changed editor")
 			}
 		}
@@ -266,6 +275,9 @@ func (m *presentationVisualModel) observePresentation(phase int) error {
 			}
 		}
 		if phase == 3 {
+			if ed.TabWidth() != 8 || ed.SelectedText() != "call" || ed.CursorCol() != 12 {
+				return fmt.Errorf("tab width moved source selection: %d %q %d", ed.TabWidth(), ed.SelectedText(), ed.CursorCol())
+			}
 			if v.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) || v.focusTarget() != FocusEditor || ed.Revision() != m.originalRevision || ed.GutterWidth() >= m.originalWidth {
 				return fmt.Errorf("saved settings/focus not applied")
 			}

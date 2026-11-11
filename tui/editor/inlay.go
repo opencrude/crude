@@ -2,7 +2,6 @@ package editor
 
 import (
 	"errors"
-	"fmt"
 
 	"crude/lspedit"
 	"crude/types"
@@ -66,29 +65,10 @@ func (e *Editor) SetInlayHints(set types.LSPInlaySet) error {
 			PaddingLeft: hint.PaddingLeft, PaddingRight: hint.PaddingRight,
 		})
 	}
-	next := &editorInlayProjection{source: set.Boundary.Source, buffer: e.buf,
-		revision: e.Revision(), lines: make(map[int]*editorInlineLine)}
-	runs := 0
-	for line, insertions := range byLine {
-		raw, _ := e.buf.lineView(line)
-		projection, err := buildInlineProjection(string(raw), insertions)
-		if err != nil {
-			return err
-		}
-		runs += len(projection.Runs)
-		if runs > inlineMaxRuns {
-			return fmt.Errorf("%w: combined inlay projection run bound exceeded", ErrInlinePlacement)
-		}
-		prepared := &editorInlineLine{inlineProjection: projection,
-			clusters: make([]string, len(projection.Runs)), widths: make([]int, len(projection.Runs)),
-			insertions: append([]InlineInsertion(nil), insertions...)}
-		for i, run := range projection.Runs {
-			prepared.clusters[i], prepared.widths[i] = run.Cluster, run.Width
-		}
-		next.lines[line] = prepared
-		next.maxWidth = max(next.maxWidth, projection.DisplayWidth)
+	next, err := e.prepareInlayProjection(set.Boundary.Source, byLine)
+	if err != nil {
+		return err
 	}
-	next.runs = runs
 	visible := e.inlayCaretVisible()
 	e.CancelPointerCapture()
 	e.clearGoal()
@@ -170,4 +150,28 @@ func (e *Editor) inlineInsertionAt(x, y int) bool {
 		return p.insertionAt(e.scrollX + x - e.gutterWidth())
 	}
 	return false
+}
+
+// prepareInlayProjection is shared by initial installation and geometry changes.
+// The exact source and original label identities are retained, never re-requested.
+func (e *Editor) prepareInlayProjection(source types.InsightSource, byLine map[int][]InlineInsertion) (*editorInlayProjection, error) {
+	next := &editorInlayProjection{source: source, buffer: e.buf, revision: e.Revision(), lines: make(map[int]*editorInlineLine)}
+	for line, insertions := range byLine {
+		raw, _ := e.buf.lineView(line)
+		projection, err := buildInlineProjection(e.TabWidth(), string(raw), insertions)
+		if err != nil {
+			return nil, err
+		}
+		next.runs += len(projection.Runs)
+		if next.runs > inlineMaxRuns {
+			return nil, ErrInlinePlacement
+		}
+		prepared := &editorInlineLine{inlineProjection: projection, clusters: make([]string, len(projection.Runs)), widths: make([]int, len(projection.Runs)), insertions: append([]InlineInsertion(nil), insertions...)}
+		for i, run := range projection.Runs {
+			prepared.clusters[i], prepared.widths[i] = run.Cluster, run.Width
+		}
+		next.lines[line] = prepared
+		next.maxWidth = max(next.maxWidth, projection.DisplayWidth)
+	}
+	return next, nil
 }

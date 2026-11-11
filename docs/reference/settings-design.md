@@ -79,7 +79,8 @@ Every control is a box that starts on the form's value column; text inside a box
 starts one cell in. Rows are never filled: focus is an accent `▎` edge plus an
 accent bold label, and hover/focus light only the control's own box. Inputs,
 dropdowns, steppers, drill-ins, tables and text areas share one width (capped at
-60 columns), so their right edges line up; numbers are short boxes; switches and
+60 columns), so their right edges line up; numbers are short boxes that reserve
+space for their complete unit caption before shrinking the input; switches and
 segments are content-sized. Multi-line editors start on their label's row.
 
 | Value | Control | Example |

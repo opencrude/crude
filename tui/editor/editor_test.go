@@ -388,14 +388,14 @@ func TestRuneVisualWidth(t *testing.T) {
 	}{
 		{'a', 1},
 		{' ', 1},
-		{'\t', tabWidth},
+		{'\t', DefaultTabWidth},
 		{'文', 2},
 		{'😀', 2},
 		{'\n', 0},
 	}
 	for _, tt := range tests {
-		got := runeVisualWidth(tt.r)
-		assert.Equal(t, tt.exp, got, "runeVisualWidth(%c) should be %d", tt.r, tt.exp)
+		got := runeVisualWidth(DefaultTabWidth, tt.r)
+		assert.Equal(t, tt.exp, got, "runeVisualWidth(DefaultTabWidth, %c) should be %d", tt.r, tt.exp)
 	}
 }
 
@@ -411,7 +411,7 @@ func TestLineVisualWidthFromRunes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.exp, lineVisualWidthFromRunes(tt.runes))
+			assert.Equal(t, tt.exp, lineVisualWidthFromRunes(DefaultTabWidth, tt.runes))
 		})
 	}
 }
@@ -419,32 +419,32 @@ func TestLineVisualWidthFromRunes(t *testing.T) {
 func TestColToRuneIdx(t *testing.T) {
 	runes := []rune("ab文c")
 	// a=col0, b=col1, 文=col2(col2-3), c=col4
-	assert.Equal(t, 0, colToRuneIdx(runes, 0))
-	assert.Equal(t, 1, colToRuneIdx(runes, 1))
-	assert.Equal(t, 2, colToRuneIdx(runes, 2))
-	assert.Equal(t, 2, colToRuneIdx(runes, 3))
-	assert.Equal(t, 3, colToRuneIdx(runes, 4))
-	assert.Equal(t, 4, colToRuneIdx(runes, 10))
+	assert.Equal(t, 0, colToRuneIdx(DefaultTabWidth, runes, 0))
+	assert.Equal(t, 1, colToRuneIdx(DefaultTabWidth, runes, 1))
+	assert.Equal(t, 2, colToRuneIdx(DefaultTabWidth, runes, 2))
+	assert.Equal(t, 2, colToRuneIdx(DefaultTabWidth, runes, 3))
+	assert.Equal(t, 3, colToRuneIdx(DefaultTabWidth, runes, 4))
+	assert.Equal(t, 4, colToRuneIdx(DefaultTabWidth, runes, 10))
 }
 
 func TestColToRuneIdx_Empty(t *testing.T) {
-	assert.Equal(t, 0, colToRuneIdx(nil, 0))
-	assert.Equal(t, 0, colToRuneIdx([]rune{}, 5))
+	assert.Equal(t, 0, colToRuneIdx(DefaultTabWidth, nil, 0))
+	assert.Equal(t, 0, colToRuneIdx(DefaultTabWidth, []rune{}, 5))
 }
 
 func TestRunesToVisualCol(t *testing.T) {
 	runes := []rune("ab文c")
-	assert.Equal(t, 0, runesToVisualCol(runes, 0))
-	assert.Equal(t, 1, runesToVisualCol(runes, 1))
-	assert.Equal(t, 2, runesToVisualCol(runes, 2))
-	assert.Equal(t, 4, runesToVisualCol(runes, 3))
+	assert.Equal(t, 0, runesToVisualCol(DefaultTabWidth, runes, 0))
+	assert.Equal(t, 1, runesToVisualCol(DefaultTabWidth, runes, 1))
+	assert.Equal(t, 2, runesToVisualCol(DefaultTabWidth, runes, 2))
+	assert.Equal(t, 4, runesToVisualCol(DefaultTabWidth, runes, 3))
 	// Past end returns total width
-	assert.Equal(t, 5, runesToVisualCol(runes, 10))
+	assert.Equal(t, 5, runesToVisualCol(DefaultTabWidth, runes, 10))
 }
 
 func TestRunesToVisualCol_Empty(t *testing.T) {
-	assert.Equal(t, 0, runesToVisualCol(nil, 0))
-	assert.Equal(t, 0, runesToVisualCol([]rune{}, 5))
+	assert.Equal(t, 0, runesToVisualCol(DefaultTabWidth, nil, 0))
+	assert.Equal(t, 0, runesToVisualCol(DefaultTabWidth, []rune{}, 5))
 }
 
 func TestIsWordChar(t *testing.T) {
@@ -610,13 +610,13 @@ func TestRuneVisualWidth_CJK(t *testing.T) {
 		{"fullwidth_digit", '１', 2},
 		{"ascii", 'a', 1},
 		{"space", ' ', 1},
-		{"tab", '\t', tabWidth},
+		{"tab", '\t', DefaultTabWidth},
 		{"newline", '\n', 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runeVisualWidth(tt.r)
-			assert.Equal(t, tt.exp, got, "runeVisualWidth(%c U+%04x)", tt.r, tt.r)
+			got := runeVisualWidth(DefaultTabWidth, tt.r)
+			assert.Equal(t, tt.exp, got, "runeVisualWidth(DefaultTabWidth, %c U+%04x)", tt.r, tt.r)
 		})
 	}
 }
@@ -637,8 +637,8 @@ func TestColToRuneIdx_CJK(t *testing.T) {
 		{7, 5},
 	}
 	for _, l := range layout {
-		got := colToRuneIdx(runes, l.col)
-		assert.Equal(t, l.ri, got, "colToRuneIdx(col=%d)", l.col)
+		got := colToRuneIdx(DefaultTabWidth, runes, l.col)
+		assert.Equal(t, l.ri, got, "colToRuneIdx(DefaultTabWidth, col=%d)", l.col)
 	}
 }
 
@@ -656,8 +656,8 @@ func TestRunesToVisualCol_CJK(t *testing.T) {
 		{5, 7},
 	}
 	for _, l := range layout {
-		got := runesToVisualCol(runes, l.ri)
-		assert.Equal(t, l.col, got, "runesToVisualCol(ri=%d)", l.ri)
+		got := runesToVisualCol(DefaultTabWidth, runes, l.ri)
+		assert.Equal(t, l.col, got, "runesToVisualCol(DefaultTabWidth, ri=%d)", l.ri)
 	}
 }
 
@@ -671,13 +671,13 @@ func TestLineVisualWidthFromRunes_CJK(t *testing.T) {
 		{"ascii", "hello", 5},
 		{"cjk", "中文测试", 8},
 		{"mixed", "a文😀", 1 + 2 + 2},
-		{"tab", "\t\t", tabWidth * 2},
+		{"tab", "\t\t", DefaultTabWidth * 2},
 		// ab=2 + 文=2 + 😀=2 = 6; tab at col 6 advances 2 to stop 8.
 		{"all", "ab文😀\t", 8},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := lineVisualWidthFromRunes([]rune(tt.s))
+			got := lineVisualWidthFromRunes(DefaultTabWidth, []rune(tt.s))
 			assert.Equal(t, tt.exp, got)
 		})
 	}

@@ -12,6 +12,7 @@ import (
 // canonical bytes, source analysis, selection, snippets, dirty state or history.
 // Linked views share the setting but retain independent paint caches.
 func (e *Editor) SetPresentation(settings types.EditorSettings) {
+	e.setTabWidth(types.NormalizeEditorSettings(settings).TabSize)
 	e.eachView(func(view *Editor) {
 		view.SetLineNumbers(settings.LineNumbers)
 		if view.syntaxColors != settings.SyntaxTheme {
@@ -54,9 +55,9 @@ func (e *Editor) whitespaceInfo(line int) *whitespaceGeometry {
 	raw := cached.raw
 	leading := len(raw) - len(strings.TrimLeft(raw, " \t"))
 	trailing := len(strings.TrimRight(raw, " \t"))
-	info := &whitespaceGeometry{leading: ByteOffsetToVisualCol(raw, leading, tabWidth), trailing: ByteOffsetToVisualCol(raw, trailing, tabWidth)}
+	info := &whitespaceGeometry{leading: ByteOffsetToVisualCol(raw, leading, e.TabWidth()), trailing: ByteOffsetToVisualCol(raw, trailing, e.TabWidth())}
 	for offset, col := 0, 0; offset < len(raw); {
-		n, w := firstSourceUnit(raw[offset:], col)
+		n, w := firstSourceUnit(e.TabWidth(), raw[offset:], col)
 		if n == 0 {
 			break
 		}

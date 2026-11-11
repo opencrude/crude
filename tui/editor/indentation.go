@@ -20,12 +20,7 @@ func (s indentStyle) unit() string {
 }
 
 // width is the visual width of one level at a line start.
-func (s indentStyle) width() int {
-	if s.tab {
-		return TabStopAdvance(0, tabWidth)
-	}
-	return s.size
-}
+func (s indentStyle) width() int { return s.size }
 
 // indentStyle reads the document's own indentation, as editors that detect
 // indentation do: Tab, Shift+Tab, Enter and Backspace must continue the file's
@@ -33,7 +28,7 @@ func (s indentStyle) width() int {
 // that start with a tab vote for tabs. Space-indented lines vote for the most
 // frequent change of indentation between neighbouring lines.
 func (e *Editor) indentStyle() indentStyle {
-	style := indentStyle{size: DefaultTabWidth}
+	style := indentStyle{size: e.TabWidth()}
 	if e.buf == nil {
 		return style
 	}
@@ -77,7 +72,7 @@ func (e *Editor) indentStyle() indentStyle {
 		previous, havePrevious = spaces, true
 	}
 	if tabLines > spaceLines {
-		style = indentStyle{tab: true, size: tabWidth}
+		style = indentStyle{tab: true, size: e.TabWidth()}
 		return style
 	}
 	best := 0
@@ -101,7 +96,7 @@ func (e *Editor) levelUnit(indent string) string {
 	style := e.indentStyle()
 	if style.tab && indent != "" {
 		// Space-indented lines inside a tab document keep their own spaces.
-		return strings.Repeat(" ", DefaultTabWidth)
+		return strings.Repeat(" ", e.TabWidth())
 	}
 	return style.unit()
 }

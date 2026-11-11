@@ -731,6 +731,11 @@ rejects a replaced/newer one rather than repainting an old context as current.
 not the ordinary connected editor text authority.
 
 Private unresolved editor recovery lives beside composer drafts in `clientstate`.
+Its current payload is version 2. Cursor and selection endpoints are UTF-8 byte
+offsets in the retained optimistic source, independent of the restored tab width.
+Source, command identity, author, pending transaction groups and unknown receipts
+remain unchanged. There is no automatic reader/converter for version 1; back up
+and align affected private records outside product code before using the new format.
 The native Resolve Shared Editor Changes dialog defaults to **Keep draft**;
 **Compare with shared** opens read-only immutable snapshots. **Use shared text**
 requires confirmation, a durable private backup and exact recovery tombstone.

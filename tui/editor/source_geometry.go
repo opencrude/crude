@@ -9,12 +9,12 @@ import (
 
 // firstSourceUnit measures one source editing unit. A tab is one byte and one
 // movement unit even when its display projection contains several space cells.
-func firstSourceUnit(text string, col int) (size, width int) {
+func firstSourceUnit(tabW int, text string, col int) (size, width int) {
 	if text == "" {
 		return 0, 0
 	}
 	if text[0] == '\t' {
-		return 1, TabStopAdvance(col, tabWidth)
+		return 1, TabStopAdvance(col, tabW)
 	}
 	cluster, width := rendering.FirstGrapheme(text)
 	return len(cluster), width
@@ -30,7 +30,7 @@ func (pt *PieceTable) positionAtOffset(offset int) Position {
 		return pt.lineOffsets[i] > offset
 	}) - 1
 	content, _ := pt.lineView(line)
-	return Position{Line: line, Col: ByteOffsetToVisualCol(string(content), offset-pt.lineOffsets[line], tabWidth)}
+	return Position{Line: line, Col: ByteOffsetToVisualCol(string(content), offset-pt.lineOffsets[line], pt.tabSize)}
 }
 
 // snapPosition clamps to document content and floors columns inside a tab or
@@ -50,13 +50,13 @@ func (pt *PieceTable) previousPosition(pos Position) Position {
 			return snapped
 		}
 		content, _ := pt.lineView(snapped.Line - 1)
-		return Position{Line: snapped.Line - 1, Col: LineVisualWidth(string(content), tabWidth)}
+		return Position{Line: snapped.Line - 1, Col: LineVisualWidth(string(content), pt.tabSize)}
 	}
 	content, _ := pt.lineView(snapped.Line)
 	text := string(content)
 	col, previous := 0, 0
 	for len(text) > 0 && col < snapped.Col {
-		size, width := firstSourceUnit(text, col)
+		size, width := firstSourceUnit(pt.tabSize, text, col)
 		if size == 0 {
 			break
 		}
@@ -71,9 +71,9 @@ func (pt *PieceTable) nextPosition(pos Position) Position {
 	pos = pt.snapPosition(pos)
 	content, _ := pt.lineView(pos.Line)
 	text := string(content)
-	offset := VisualColToByteOffset(text, pos.Col, tabWidth)
+	offset := VisualColToByteOffset(text, pos.Col, pt.tabSize)
 	if offset < len(text) {
-		_, width := firstSourceUnit(text[offset:], pos.Col)
+		_, width := firstSourceUnit(pt.tabSize, text[offset:], pos.Col)
 		return Position{Line: pos.Line, Col: pos.Col + width}
 	}
 	if pos.Line < pt.LineCount()-1 {
@@ -85,10 +85,10 @@ func (pt *PieceTable) nextPosition(pos Position) Position {
 // sourceWordGeometry classifies whole graphemes by their first rune but retains
 // their complete measured widths. Unlike lineRunes, tabs are not expanded and
 // flag/ZWJ/modifier clusters do not lose their geometry.
-func sourceWordGeometry(text string) (runes []rune, columns []int) {
+func sourceWordGeometry(tabW int, text string) (runes []rune, columns []int) {
 	col := 0
 	for len(text) > 0 {
-		size, width := firstSourceUnit(text, col)
+		size, width := firstSourceUnit(tabW, text, col)
 		if size == 0 {
 			break
 		}
@@ -103,7 +103,7 @@ func sourceWordGeometry(text string) (runes []rune, columns []int) {
 
 func (e *Editor) wordGeometry(line int, col int) (runes []rune, columns []int, index int) {
 	content, _ := e.buf.lineView(line)
-	runes, columns = sourceWordGeometry(string(content))
+	runes, columns = sourceWordGeometry(e.TabWidth(), string(content))
 	index = sort.Search(len(columns), func(i int) bool { return columns[i] > col }) - 1
 	return runes, columns, max(0, index)
 }

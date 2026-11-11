@@ -110,10 +110,11 @@ Unicode/CRLF, two shells, imported snippets, history and deferred recovery.
 Tab, Enter, Backspace and selected-line indentation share a detected source
 style: tabs, or the most frequent neighboring space-indent step of 2–8 columns.
 Detection inspects at most 2,000 lines and 256 leading spaces per line and caches
-by shared PieceTable revision. Empty/ambiguous content defaults to four spaces.
+by shared PieceTable revision. Empty/ambiguous content uses the configured Tab size.
 Tab inserts to the next stop; Enter between a padded matching pair consumes the
 old padding and aligns the closing line in the same undo transaction.
-This does not implement configurable **display** tab width or EditorConfig.
+Tab display width is independent of detected indentation. EditorConfig and
+explicit per-file indentation choices remain in the active editor plan.
 
 Ctrl+/ uses catalog block delimiters when the language has no line prefix.
 Each nonblank line is wrapped. Mixed selections keep already-wrapped lines;
@@ -129,6 +130,12 @@ linked splits and settings changes received from another shell. Reset removes
 the scope's choices and restores live inheritance. They do not change source,
 selection, history, the savepoint or dirty state.
 
+- **Tab size** controls tab-stop width (1–32 columns), and the default indentation
+  for files without a detected style. Every linked view of one table shares it.
+  Cursor, selection and retained history use source-byte anchors across changes;
+  syntax, diagnostics, search, inlays, ghost text and pointer hits reproject through
+  the same width. Native parsing and canonical source revisions do not change.
+  Back/Forward retains line and source-byte column, not an old display column.
 - **Line numbers** hides only the number lane. Diagnostic and change lanes remain
   visible and actionable. A changed gutter retires pointer capture and reveals
   the same source caret in the new geometry.
@@ -142,8 +149,8 @@ selection, history, the savepoint or dirty state.
   enter copy, search, save, snippet text, inlays or ghost suggestions. Per-line
   whitespace geometry is cached with the exact source line, not rebuilt per frame.
 
-Configurable tab width, soft wrap and EditorConfig remain in the active editor
-plan. The display preferences above do not imply those features are implemented.
+Soft wrap, EditorConfig and explicit per-file indentation policy remain in the
+active editor plan. Configurable tab geometry does not imply those are implemented.
 
 ## Go to line
 

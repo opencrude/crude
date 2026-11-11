@@ -267,6 +267,64 @@ Tab-size geometry, wrap/fold projection and the other remaining editor workflows
 are still open. This checkpoint is not a claim of full IDE parity or a Windows
 GC fix.
 
+## Source-anchored tab geometry (2026-11-11)
+
+Tab size now supplies the one shared display width for each source table.
+All source/cell consumers use it: rendering, whitespace, pointer hits, diagnostics,
+search results, inlays, ghost text, completion/signature context and navigation.
+Linked views retain their own viewports but cannot interpret the same source with
+different tab widths. Undetected indentation uses the configured width; detected
+space/tab indentation remains distinct. No source is rewritten on a preference change.
+
+History snapshots, restored selections and Back/Forward locations retain source
+anchors instead of old display columns. Private editor recovery is now payload
+version 2 with UTF-8 byte offsets. The current local client-state database was
+inspected read-only before this change: it had no editor-recovery tables/records,
+so no existing recovery needed conversion and no user database was written.
+No compatibility reader was added. Other profiles with old payloads must be
+backed up and aligned outside product code before using the changed format.
+
+Independent regressions first failed on the fixed four-column geometry. They now
+cover 4→2→8, combining marks, wide glyphs, CRLF, selected source, linked panes,
+search/diagnostic/hint positions, pointer editing, unknown-receipt recovery,
+completion with an import and snippet, author Undo/Redo, Save and unchanged drafts.
+Tab/Backspace on new content follows 1/2/8/32-column defaults without overriding
+detected indentation. The 160×40 and 80×24 native journeys retain a selected source
+word across Settings Save/Close and show it at the new column.
+
+Native review also exposed clipped number-unit captions. The shared form primitive
+now reserves the unit's width in both paint and input geometry, including compact
+rows. Tests cover narrow widths and native edits. Corrected captures show the
+complete **columns** caption and joined cleanup at both sizes.
+
+The exhaustive normal suite exposed two older presentation assumptions: the
+syntax test expected application ink rather than the selected source palette,
+and the gutter test clicked an explicitly hidden number lane. The tests now use
+the selected palette and enable the lane they exercise; the gutter check requires
+complete selected source lines. The original failed groups and all remaining
+viewmodel/workspace groups then passed without changing deadlines or skipping cases.
+
+The allocation gate caught redundant byte-anchor capture for every snippet mirror.
+Profiling attributed 63% of allocated objects to position conversion, mostly from
+per-edit after snapshots overwritten by the transaction boundary. The existing
+batch/history owner now captures the view once per transaction (once per batch
+when ungrouped), retaining every sparse source edit. Three repetitions measured
+106 allocations for eight mirrors and 283 for 64, below the unchanged 120/330
+ceilings; mutation took 0.764–0.786 ms and 0.818–0.842 ms respectively over 20,000
+lines. These are mutation measurements, not terminal presentation latency.
+
+Final affected race checks, build, zero-issue lint, generated cohort/codecs,
+design/docs and Windows/macOS component builds pass. The complete unchanged
+benchmark gate passes after the batch fix. The source-caret cache measures
+3.08–3.29 ns with zero allocations on a two-megabyte line; unchanged shell updates
+do not repeat a source conversion. The full ordinary suite is accounted for by
+the initial passing package/app/session groups plus the corrected exhaustive
+viewmodel and workspace groups, not by relabelling the failed umbrella command.
+
+File-specific indentation choices, EditorConfig, wrapping/folding and the other
+remaining parity rows stay open. Linux verification does not settle the separate
+Windows GC finding.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers

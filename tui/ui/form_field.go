@@ -330,7 +330,7 @@ func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 			// Compact editor rows sit flush at the shared value column:
 			// TextField paints its value at its own bounds with no inset,
 			// so the first glyph lands on the table's second column.
-			ff.control.Layout(ctx, Rect{X: editorX, Y: 0, W: max(1, r.W-editorX), H: 1})
+			ff.control.Layout(ctx, Rect{X: editorX, Y: 0, W: ff.compactInputWidth(max(1, r.W-editorX)), H: 1})
 		} else {
 			controlW = ff.inputWidth(controlW)
 			ff.control.Layout(ctx, Rect{X: controlX + 1, Y: 0, W: max(1, controlW-2), H: 1})
@@ -373,7 +373,7 @@ func (ff *FormField) boxWidth(width int) int {
 	available := max(1, width-ff.valueX(width))
 	switch {
 	case (ff.field.Unit != "" || ff.field.Numeric) && (ff.field.Type == FieldText || ff.field.Type == FieldPassword):
-		return min(available, max(shortControlW, rendering.VisibleWidth(ff.field.Value.String())+4))
+		return ff.unitInputWidth(available, max(shortControlW, rendering.VisibleWidth(ff.field.Value.String())+4), 3)
 	case ff.field.Type == FieldCycle && ff.field.Style == StyleSwitch:
 		// A switch is a compact ‹ On › box sized to its widest state.
 		return min(available, ff.maxOptionWidth()+6)
@@ -591,7 +591,7 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	controlX := x + ff.editorControlX(r.W)
 	controlW := ff.controlWidth(r.W)
 	if editorX >= 0 {
-		controlW = max(1, r.W-editorX)
+		controlW = ff.compactInputWidth(max(1, r.W-editorX))
 	}
 	contentX := controlX + 1
 	if editorX >= 0 {
@@ -612,8 +612,9 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 			fieldCtx.Focused = ctx.Focused
 			ff.control.SetBackgroundColor(controlBG)
 			ff.control.Paint(buf, originX+r.X, originY+r.Y, fieldCtx)
-			if ff.field.Unit != "" && editorX < 0 {
-				buf.WriteString(controlX+controlW+1, y, ff.field.Unit, mutedFG, rowBG, 0)
+			if ff.field.Unit != "" {
+				unitX := controlX + controlW + 1
+				buf.WriteString(unitX, y, rendering.TruncateVisual(ff.field.Unit, max(0, x+r.W-unitX), "…"), mutedFG, rowBG, 0)
 			}
 		} else {
 			text := ff.field.Value.String()
@@ -689,7 +690,7 @@ func (ff *FormField) paintSpacious(buf *surface.CellBuffer, originX, originY int
 			ff.control.Paint(buf, x, y, ctx)
 		}
 		if ff.field.Unit != "" {
-			buf.WriteString(vx+boxW+1, y, ff.field.Unit, muted, bg, 0)
+			buf.WriteString(vx+boxW+1, y, rendering.TruncateVisual(ff.field.Unit, max(0, x+r.W-vx-boxW-1), "…"), muted, bg, 0)
 		}
 	case FieldTextArea:
 		rows = ff.areaRows()
@@ -1455,9 +1456,24 @@ func (ff *FormField) cycleDisplay() string {
 func (ff *FormField) inputWidth(available int) int {
 	value := strings.TrimSpace(ff.field.Value.String())
 	if ff.field.Unit != "" || (value != "" && isNumeric(value)) {
-		return min(available, max(12, rendering.VisibleWidth(value)+4))
+		return ff.unitInputWidth(available, max(12, rendering.VisibleWidth(value)+4), 3)
 	}
 	return min(available, 56)
+}
+
+// Reserve the suffix in the same geometry used for paint and text input.
+// Below the minimum usable editor width the painter elides the unit explicitly.
+func (ff *FormField) unitInputWidth(available, preferred, minimum int) int {
+	if ff.field.Unit != "" {
+		available = min(available, max(minimum, available-1-rendering.VisibleWidth(ff.field.Unit)))
+	}
+	return min(available, preferred)
+}
+func (ff *FormField) compactInputWidth(available int) int {
+	if ff.field.Unit != "" || ff.field.Numeric {
+		return ff.unitInputWidth(available, max(10, rendering.VisibleWidth(ff.field.Value.String())+2), 1)
+	}
+	return available
 }
 
 func isNumeric(value string) bool {

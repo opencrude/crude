@@ -69,14 +69,14 @@ type inlineProjection struct {
 	boundaries                []inlineBoundary
 }
 
-func buildInlineProjection(raw string, insertions []InlineInsertion) (*inlineProjection, error) {
-	return buildInlineProjectionWithGhost(raw, insertions, nil)
+func buildInlineProjection(tabW int, raw string, insertions []InlineInsertion) (*inlineProjection, error) {
+	return buildInlineProjectionWithGhost(tabW, raw, insertions, nil)
 }
 
 // Both display-only kinds share source segmentation, paint runs and hit geometry.
 // Hints have after affinity; a candidate is last at its anchor, before the caret's
 // source glyph, and gives the caret before affinity for its entire literal text.
-func buildInlineProjectionWithGhost(raw string, insertions []InlineInsertion, ghost *InlineInsertion) (*inlineProjection, error) {
+func buildInlineProjectionWithGhost(tabW int, raw string, insertions []InlineInsertion, ghost *InlineInsertion) (*inlineProjection, error) {
 	if len(raw) > inlineMaxSource || !utf8.ValidString(raw) || strings.ContainsAny(raw, "\r\n") {
 		return nil, errors.New("inline source must be a UTF-8 line of at most 2 MiB")
 	}
@@ -132,12 +132,12 @@ func buildInlineProjectionWithGhost(raw string, insertions []InlineInsertion, gh
 		return ordered[i].ByteOffset < ordered[j].ByteOffset
 	})
 	p := &inlineProjection{sourceBytes: len(raw)}
-	// Each source byte can produce at most DefaultTabWidth space runs. An
+	// Each source byte can produce at most tabW space runs. An
 	// escaped label byte produces at most six ASCII runs (\uXXXX), plus padding.
 	// The independent run ceiling also bounds source boundaries (one per source
 	// unit plus EOF). A 2 MiB byte limit alone would allow millions of runs.
 	// Neither bound is an eagerly allocated maximum-size buffer.
-	runLimit := min(inlineMaxRuns, DefaultTabWidth*len(raw)+6*labelBytes+2*len(ordered))
+	runLimit := min(inlineMaxRuns, tabW*len(raw)+6*labelBytes+2*len(ordered))
 	appendRun := func(run inlineRun) error {
 		if len(p.Runs) >= runLimit {
 			return fmt.Errorf("%w: inline projection run bound exceeded", ErrInlinePlacement)
@@ -197,7 +197,7 @@ func buildInlineProjectionWithGhost(raw string, insertions []InlineInsertion, gh
 		size := len(cluster)
 		isTab := raw[off] == '\t'
 		if isTab {
-			size, width = 1, TabStopAdvance(col, DefaultTabWidth)
+			size, width = 1, TabStopAdvance(col, tabW)
 		}
 		if size == 0 || width <= 0 {
 			return nil, fmt.Errorf("%w: zero-cell source unit at byte %d", ErrInlinePlacement, off)

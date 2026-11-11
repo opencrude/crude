@@ -180,7 +180,7 @@ func (e *Editor) pointerUnitRange(kind pointerUnit, pos Position) (start, end Po
 	text := e.LineText(pos.Line)
 	col, runStart, runClass := 0, 0, -1
 	for len(text) > 0 {
-		size, width := firstSourceUnit(text, col)
+		size, width := firstSourceUnit(e.TabWidth(), text, col)
 		if size == 0 {
 			break
 		}

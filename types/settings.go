@@ -228,6 +228,10 @@ func lspUnset(s LSPSettings) bool {
 }
 
 func NormalizeEditorSettings(s EditorSettings) EditorSettings {
+	if s.TabSize <= 0 {
+		s.TabSize = 4
+	}
+	s.TabSize = min(s.TabSize, 32)
 	if !s.NewFileEncoding.Valid() {
 		s.NewFileEncoding = ""
 	}

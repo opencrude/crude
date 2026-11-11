@@ -154,3 +154,31 @@ func TestHelpFieldFollowsHoverThenFocus(t *testing.T) {
 		t.Fatalf("help = %+v, want hovered beta", got)
 	}
 }
+
+func TestUnitFieldKeepsItsUnitInsideNarrowBounds(t *testing.T) {
+	for _, width := range []int{36, 40, 42, 50, 90} {
+		for _, compact := range []bool{false, true} {
+			form, model, _ := paintedForm(t, NumberFieldState("tab-size", "Tab size", 8, "columns", ""))
+			form.SetCompact(compact)
+			form.Layout(LayoutContext{}, Rect{W: width, H: 5})
+			buf := surface.NewCellBuffer(width, 5)
+			form.Paint(buf, 0, 0, PaintContext{})
+			if !strings.Contains(formBufferPlain(buf), "columns") {
+				t.Fatalf("width=%d compact=%t clipped number unit: %s", width, compact, formBufferPlain(buf))
+			}
+			field := form.Field("tab-size")
+			if field.unitInputWidth(1, 12, 3) != 1 {
+				t.Fatal("unit reservation exceeded available width")
+			}
+			control := field.Control()
+			if formColOf(buf, 0, "columns") < control.Bounds().X+control.Bounds().W {
+				t.Fatal("unit not reserved in input geometry")
+			}
+			field.Handle(EventContext{}, Event{Kind: EventKey, Key: tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}})
+			field.Handle(EventContext{}, Event{Kind: EventKey, Key: tea.KeyPressMsg{Code: '2', Text: "2"}})
+			if model.Field("tab-size").Value.String() != "2" {
+				t.Fatal("narrow number input lost native editing")
+			}
+		}
+	}
+}

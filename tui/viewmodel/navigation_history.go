@@ -34,7 +34,7 @@ type navLocation struct {
 	tab     window.TabID
 	group   window.GroupID
 	path    string // file path; empty for agent and panel tabs
-	caret   editor.Position
+	caret   editor.SourcePosition
 	scrollY int
 }
 

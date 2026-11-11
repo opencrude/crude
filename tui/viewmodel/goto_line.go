@@ -55,7 +55,7 @@ func (m *App) jumpToLine(value string) error {
 	// SetCursorPosition clamps the column to the line, so a column past the
 	// end of a short line lands at its end.
 	ed.SetCursorPosition(index, column-1)
-	ed.SetLandingRange(index, 0, editor.LineVisualWidth(ed.LineText(index), editor.DefaultTabWidth))
+	ed.SetLandingRange(index, 0, editor.LineVisualWidth(ed.LineText(index), ed.TabWidth()))
 	ed.ScrollToCursor()
 	return nil
 }

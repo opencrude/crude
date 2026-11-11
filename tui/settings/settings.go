@@ -374,7 +374,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			ui.SeparatorFieldState("editing", "Editing"),
-			ui.NumberFieldState("tab-size", "Tab size", editor.TabSize, "spaces", "How wide a tab is, and how many spaces Tab inserts."),
+			ui.NumberFieldState("tab-size", "Tab size", editor.TabSize, "columns", "Tab width and default indentation. Use 1 to 32 columns."),
 			ui.BoolFieldState("word-wrap", "Word wrap", editor.WordWrap, "Wrap long lines inside the editor instead of scrolling sideways."),
 			ui.BoolFieldState("line-numbers", "Line numbers", editor.LineNumbers, "Show the line-number gutter."),
 			ui.SegmentedFieldState("syntax-theme", "Syntax colors", []ui.FormOption{{ID: "catppuccin", Label: "Catppuccin"}, {ID: "dracula", Label: "Dracula"}, {ID: "github", Label: "GitHub"}, {ID: "monokai", Label: "Monokai"}, {ID: "solarized", Label: "Solarized"}}, editor.SyntaxTheme, "The color grammar used for source code."),

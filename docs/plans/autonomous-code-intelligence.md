@@ -129,11 +129,17 @@ matching-bracket checkpoint is implemented and verified. Native captures pass at
 site and the unchanged benchmark gates pass. See
 [everyday editor evidence](../issues/2026-11-11-editor-polish.md#everyday-commands-and-sole-suggestions-2026-11-11).
 
-Next, consume the existing editor preferences through the shared editor owners:
-line numbers, syntax colors and whitespace paint, then geometry-neutral tab
-policy and the single wrap/fold row projection. Keep source bytes, selections,
-Undo, recovery, diagnostic actions and linked-view identity intact. A stored
-preference with no consumer is not accepted. Do not add another Settings page.
+Line numbers, syntax colors, whitespace paint and configurable tab geometry are
+implemented through the shared editor. Source-byte anchors preserve selection,
+Undo, private recovery and navigation while the width changes. Native preference
+journeys pass at both sizes; the full ordinary inventory, affected race paths and
+unchanged allocation gate pass. See
+[tab-geometry evidence](../issues/2026-11-11-editor-polish.md#source-anchored-tab-geometry-2026-11-11).
+
+Next, connect wrapping and folding through one row projection, then complete
+per-file indentation/EditorConfig and the remaining semantic workflows. Preserve
+source, history, diagnostics and linked-view identity. A stored preference with
+no consumer is not accepted. Do not add another Settings page.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named

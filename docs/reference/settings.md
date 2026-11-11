@@ -113,6 +113,22 @@ bottom-anchored actions; narrow screens stack actions below results. The retaine
 Settings frame never resizes or moves because an editor opened. Back/Esc handles
 navigation and exact discard decisions; × and Close close the whole window.
 
+### Editor presentation
+
+The Editor page's Tab size, Line numbers, Syntax colors and Show whitespace
+preferences reach existing, linked and newly opened documents. A saved choice is
+published to peer shells; Reset restores live inheritance. Source bytes, selected
+characters, dirty state and Undo remain unchanged by presentation changes.
+Tab size is a 1–32 column display width and the fallback indent for undetected
+content. Existing source indentation remains a separate detected policy.
+
+Syntax palettes affect source ink only. Hiding numbers keeps diagnostic/change
+lanes. Whitespace markers never enter copied or saved text. See
+[editor presentation](editor.md#display-preferences) for projection contracts.
+Word wrap and Minimap still have no completed consumer; their stored fields are
+not evidence of implemented behavior. The remaining file policy and row projection
+work is tracked in [Complete editor experience](../plans/editor-parity.md).
+
 ### First-use profile choices and AI setup
 
 The selected core owns two application-only choices under `onboarding`:

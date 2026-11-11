@@ -199,9 +199,11 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 	if len(s.Text) > document.MaxBytes || len(s.Saved) > document.MaxBytes || !utf8.Valid(s.Text) || !utf8.Valid(s.Saved) {
 		return document.ErrLimit
 	}
+	width := e.TabWidth()
 	e.detachDocument()
 	e.stopWatching()
 	pt := NewPieceTable()
+	pt.tabSize = width
 	pt.ReplaceAll(string(s.Text))
 	pt.filePath = s.Path
 	e.buf = pt

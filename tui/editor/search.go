@@ -101,7 +101,7 @@ func (s *SearchState) Reset() {
 // Literal queries are escaped before the same source-offset regexp scan.
 // Unicode case folding must never change the byte offsets in the source.
 // Whole-word boundaries classify original runes, including combining marks.
-func (s *SearchState) computeMatches(bufText string) {
+func (s *SearchState) computeMatches(tabW int, bufText string) {
 	s.Reset()
 	s.Error = ""
 	if s.Query == "" {
@@ -115,16 +115,16 @@ func (s *SearchState) computeMatches(bufText string) {
 		return
 	}
 	for _, hit := range matcher.FindAll(bufText, 0) {
-		start, end := offsetToLineCol(bufText, hit.Start, hit.End)
+		start, end := offsetToLineCol(tabW, bufText, hit.Start, hit.End)
 		s.Matches = append(s.Matches, SearchMatch{Start: start, End: end, Matched: bufText[hit.Start:hit.End], startOffset: hit.Start, endOffset: hit.End, sourceMatch: hit})
 	}
 }
 
 // offsetToLineCol converts a byte offset pair (start, end) into
 // (startPos, endPos) with visual columns (tab stops + grapheme widths).
-func offsetToLineCol(text string, startOff, endOff int) (Position, Position) {
-	startLine, startCol := ByteOffsetToLineCol(text, startOff, tabWidth)
-	endLine, endCol := ByteOffsetToLineCol(text, endOff, tabWidth)
+func offsetToLineCol(tabW int, text string, startOff, endOff int) (Position, Position) {
+	startLine, startCol := ByteOffsetToLineCol(text, startOff, tabW)
+	endLine, endCol := ByteOffsetToLineCol(text, endOff, tabW)
 	return Position{Line: startLine, Col: startCol}, Position{Line: endLine, Col: endCol}
 }
 
@@ -319,7 +319,7 @@ func (e *Editor) recomputeMatches() {
 	}
 	prevIdx := e.search.CurrentIdx
 	text := string(e.buf.Bytes())
-	e.search.computeMatches(text)
+	e.search.computeMatches(e.TabWidth(), text)
 	e.searchRevision = e.Revision()
 	e.search.LastCompute = time.Now()
 	// Try to preserve the cursor position. If the new list is

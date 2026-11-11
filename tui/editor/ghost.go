@@ -142,7 +142,7 @@ func (e *Editor) prepareGhostLine(g *editorGhost, base *editorInlineLine) (*edit
 	if base != nil {
 		hints = base.insertions
 	}
-	p, err := buildInlineProjectionWithGhost(string(raw), hints, &InlineInsertion{
+	p, err := buildInlineProjectionWithGhost(e.TabWidth(), string(raw), hints, &InlineInsertion{
 		ByteOffset: g.anchor - e.buf.lineOffsets[g.caret.Line], Index: -1, Label: g.text,
 	})
 	if err != nil {

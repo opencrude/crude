@@ -60,7 +60,7 @@ func (pt *PieceTable) exactSourceOffset(pos Position) (int, bool) {
 		if offset == len(text) || col > pos.Col {
 			break
 		}
-		size, width := firstSourceUnit(text[offset:], col)
+		size, width := firstSourceUnit(pt.tabSize, text[offset:], col)
 		if size <= 0 || width < 0 {
 			return 0, false
 		}

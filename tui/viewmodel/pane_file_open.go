@@ -371,7 +371,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 	if match := msg.landing; match != nil && m.EditorState.ActiveView == match.Path {
 		ed := m.EditorState.Editor
 		line := max(0, match.Line-1)
-		start, end, valid := searchLandingColumns(*match, ed.LineText(line))
+		start, end, valid := searchLandingColumns(*match, ed.LineText(line), ed.TabWidth())
 		if !match.NameOnly && !valid {
 			m.Feedback.NotifyInfo("Search result changed; the current editor text is preserved. Search again for the exact location.")
 		} else if !match.NameOnly {
@@ -414,7 +414,7 @@ func (m *App) queueLiveNavigation(path string, position editor.LSPDiagnostic) bo
 	return true
 }
 
-func searchLandingColumns(match fileio.ProjectSearchMatch, current string) (start, end int, valid bool) {
+func searchLandingColumns(match fileio.ProjectSearchMatch, current string, tabW int) (start, end int, valid bool) {
 	from, to := match.Column, match.EndColumn
 	if match.EndLine > match.Line {
 		to = len([]rune(match.LineText))
@@ -436,5 +436,5 @@ func searchLandingColumns(match fileio.ProjectSearchMatch, current string) (star
 			to = from + len([]rune(needle))
 		}
 	}
-	return editor.RuneIndexToVisualColumn(current, from), editor.RuneIndexToVisualColumn(current, to), true
+	return editor.RuneIndexToVisualColumn(tabW, current, from), editor.RuneIndexToVisualColumn(tabW, current, to), true
 }

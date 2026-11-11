@@ -57,7 +57,7 @@ func (m *App) queueSignatureHelpAfterInsertion(ed *editor.Editor) {
 		line, col, _, _ = ed.SelectionRange()
 	}
 	raw := ed.LineText(line)
-	off := editor.VisualColToByteOffset(raw, col, editor.DefaultTabWidth)
+	off := editor.VisualColToByteOffset(raw, col, ed.TabWidth())
 	if off <= 0 || off > len(raw) || m.ws.LSPMgr() == nil {
 		return
 	}

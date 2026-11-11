@@ -79,6 +79,14 @@ func (e *Editor) spliceRecordedBatch(edits []document.Edit, cursorBefore Positio
 	if err := e.buf.checkOffsets(edits); err != nil {
 		return err
 	}
+	// A transaction owns one before/after view, not one per sparse edit.
+	// Its boundary snapshots are filled by startUndoGroup/endUndoGroup.
+	standalone := e.documentProjection == nil && e.undoGroupDepth == 0
+	var before, after editorViewState
+	if standalone {
+		before = e.captureViewState()
+		before.Cursor = e.buf.positionToOffset(cursorBefore)
+	}
 	deleted := make([]string, len(edits))
 	for i, edit := range edits {
 		deleted[i] = string(e.buf.cachedBytes[edit.Start:edit.End])
@@ -89,16 +97,19 @@ func (e *Editor) spliceRecordedBatch(edits []document.Edit, cursorBefore Positio
 	if err := e.buf.applyOffsets(edits); err != nil {
 		return err
 	}
+	if standalone {
+		after = e.captureViewState()
+	}
 	for i := len(edits) - 1; i >= 0; i-- {
 		edit := edits[i]
 		if deleted[i] == edit.Text {
 			continue
 		}
 		if deleted[i] != "" {
-			e.recordChange(Change{Type: ActDelete, Text: []byte(deleted[i]), CursorBefore: cursorBefore, Offset: edit.Start})
+			e.recordChange(Change{Type: ActDelete, Text: []byte(deleted[i]), Before: before, After: after, Offset: edit.Start})
 		}
 		if edit.Text != "" {
-			e.recordChange(Change{Type: ActInsert, Text: []byte(edit.Text), CursorBefore: cursorBefore, Offset: edit.Start})
+			e.recordChange(Change{Type: ActInsert, Text: []byte(edit.Text), Before: before, After: after, Offset: edit.Start})
 		}
 	}
 	return nil
@@ -133,7 +144,7 @@ func (e *Editor) clampCursorToLine() {
 
 func (e *Editor) runeAtCursor() rune {
 	line := e.LineText(e.cursor.Line)
-	off := VisualColToByteOffset(line, e.cursor.Col, tabWidth)
+	off := VisualColToByteOffset(line, e.cursor.Col, e.TabWidth())
 	if off >= len(line) {
 		return 0
 	}
@@ -193,7 +204,7 @@ func (e *Editor) typeRune(r rune) {
 	}
 	if isOpener && e.shouldAutoClose(r) {
 		e.insertText(string(r) + string(closer))
-		e.cursor.Col -= runeVisualWidth(closer)
+		e.cursor.Col -= runeVisualWidth(e.TabWidth(), closer)
 		e.ensureCursorVisible()
 		return
 	}
@@ -226,7 +237,7 @@ func (e *Editor) wrapSelection(opener, closer rune) {
 	start := Position{Line: sLine, Col: sCol}
 	end := Position{Line: eLine, Col: eCol}
 	cursorBefore := e.cursor
-	ow := runeVisualWidth(opener)
+	ow := runeVisualWidth(e.TabWidth(), opener)
 
 	e.beginUndoGroup()
 	defer e.endUndoGroup()
@@ -258,8 +269,8 @@ func (e *Editor) deleteBackwardSmart() {
 	prev := e.runeBeforeCursor()
 	if closer, ok := autoClosePairs[prev]; ok && e.runeAtCursor() == closer {
 		cursorBefore := e.cursor
-		start := Position{Line: e.cursor.Line, Col: e.cursor.Col - runeVisualWidth(prev)}
-		end := Position{Line: e.cursor.Line, Col: e.cursor.Col + runeVisualWidth(closer)}
+		start := Position{Line: e.cursor.Line, Col: e.cursor.Col - runeVisualWidth(e.TabWidth(), prev)}
+		end := Position{Line: e.cursor.Line, Col: e.cursor.Col + runeVisualWidth(e.TabWidth(), closer)}
 		e.deleteRecorded(start, end, cursorBefore)
 		e.cursor = start
 		e.finishEdit()
@@ -341,7 +352,7 @@ func (e *Editor) outdentLines() {
 		var nBytes, cols int
 		if raw[0] == '\t' {
 			nBytes = 1
-			cols = TabStopAdvance(0, tabWidth)
+			cols = TabStopAdvance(0, e.TabWidth())
 		} else {
 			for nBytes < len(raw) && nBytes < level && raw[nBytes] == ' ' {
 				nBytes++
@@ -571,7 +582,7 @@ func (e *Editor) toggleLineComment() {
 		if trimmed == "" {
 			continue
 		}
-		insCol := ByteOffsetToVisualCol(raw, wsLen, tabWidth)
+		insCol := ByteOffsetToVisualCol(raw, wsLen, e.TabWidth())
 		if allCommented {
 			remove := prefix
 			if strings.HasPrefix(trimmed, prefix+" ") {
@@ -652,8 +663,8 @@ func (e *Editor) toggleBlockCommentLines(start, end string) {
 			continue
 		}
 		raw := e.LineText(line)
-		headCol := ByteOffsetToVisualCol(raw, sp.indent, tabWidth)
-		tailCol := ByteOffsetToVisualCol(raw, sp.content, tabWidth)
+		headCol := ByteOffsetToVisualCol(raw, sp.indent, e.TabWidth())
+		tailCol := ByteOffsetToVisualCol(raw, sp.content, e.TabWidth())
 		if allCommented {
 			body := raw[sp.indent:sp.content]
 			head, tail := start, end
@@ -664,9 +675,9 @@ func (e *Editor) toggleBlockCommentLines(start, end string) {
 			if strings.HasSuffix(inner, " ") && len(inner) > 1 {
 				tail = " " + tail
 			}
-			tailStart := ByteOffsetToVisualCol(raw, sp.content-len(tail), tabWidth)
+			tailStart := ByteOffsetToVisualCol(raw, sp.content-len(tail), e.TabWidth())
 			e.deleteRecorded(Position{Line: line, Col: tailStart}, Position{Line: line, Col: tailCol}, cursorBefore)
-			e.deleteRecorded(Position{Line: line, Col: headCol}, Position{Line: line, Col: ByteOffsetToVisualCol(raw, sp.indent+len(head), tabWidth)}, cursorBefore)
+			e.deleteRecorded(Position{Line: line, Col: headCol}, Position{Line: line, Col: ByteOffsetToVisualCol(raw, sp.indent+len(head), e.TabWidth())}, cursorBefore)
 			shifts[line] = shift{at: headCol, head: -len(head), tailAt: tailStart, tail: -len(tail)}
 			continue
 		}

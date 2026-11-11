@@ -54,7 +54,7 @@ func validEditorRecoveryPayload(raw []byte) bool {
 		return false
 	}
 	var header struct{ Version int }
-	return json.Unmarshal(raw, &header) == nil && header.Version == 1
+	return json.Unmarshal(raw, &header) == nil && header.Version == 2
 }
 func (s *Store) LoadEditorRecovery(ctx context.Context, a Attachment, k EditorRecoveryKey) (EditorRecoveryRecord, error) {
 	if err := validateEditorRecoveryKey(a, k); err != nil {

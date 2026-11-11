@@ -259,6 +259,9 @@ func TestEditorScrollbarDragUsesRootCaptureOutsideEditor(t *testing.T) {
 
 func TestEditorGutterLineSelectionUsesRootCaptureOutsideEditor(t *testing.T) {
 	app := setupEditorMouseApp(t, 100, 30, false)
+	settings := app.editorSettings
+	settings.LineNumbers = true // This journey targets the visible number lane.
+	app.applyEditorSettings(settings)
 	openMultiLineEditor(t, app, "one\ntwo\nthree\nfour\nfive\n")
 	app.paintShellFrame()
 	r, ok := app.rootHost.ScreenRect(app.editorScreen.ID())
@@ -271,8 +274,8 @@ func TestEditorGutterLineSelectionUsesRootCaptureOutsideEditor(t *testing.T) {
 		t.Fatal("line-number drag did not capture through Host")
 	}
 	_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: x, Y: r.Y + r.H + 3, Button: tea.MouseLeft})
-	if !app.EditorState.Editor.HasSelection() {
-		t.Fatal("captured line drag did not select complete lines")
+	if got := app.EditorState.Editor.SelectedText(); got != "two\nthree\nfour\nfive\n" {
+		t.Fatalf("captured line drag selected %q, want complete source lines", got)
 	}
 	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{X: x, Y: r.Y + r.H + 3, Button: tea.MouseLeft})
 	if app.rootHost.HasPointerCapture() || app.EditorState.Editor.IsMouseDragging() {
