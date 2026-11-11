@@ -214,6 +214,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorSnippetChoiceMsg:
 		m.handleSnippetChoice(msg)
 		return m, nil
+	case editor.RowsReadyMsg:
+		msg.Apply()
+		m.invalidatePreparedEditor(msg.Editor())
+		return m, nil
 	case editor.SyntaxReadyMsg:
 		m.applyEditorSyntax(msg)
 		return m, nil

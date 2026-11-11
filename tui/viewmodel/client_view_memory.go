@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
+	"crude/tui/editor"
 	"crude/tui/screens/activitybar"
 )
 
@@ -39,8 +40,9 @@ type viewMemory struct {
 
 // viewMemoryPane is one docked pane's open documents and selected document.
 type viewMemoryPane struct {
-	Files  []string `json:"files,omitempty"`
-	Active string   `json:"active,omitempty"`
+	Folds  map[string]*editor.FoldMemory `json:"folds,omitempty"`
+	Files  []string                      `json:"files,omitempty"`
+	Active string                        `json:"active,omitempty"`
 }
 
 // viewMemoryPaneNode is one node of a saved pane tree. A leaf names its pane
@@ -300,6 +302,7 @@ func (m *App) captureViewMemory() viewMemory {
 	}
 	memory.SidebarHidden = m.Tree != nil && !m.Tree.Visible
 	memory.Panes, memory.PaneLayout, memory.ActivePane, _ = m.captureViewPanes()
+	m.captureEditorFolds(memory.Panes)
 	return memory
 }
 

@@ -3,6 +3,7 @@ package editor
 import (
 	"crude/document"
 	"crude/types"
+	"slices"
 )
 
 // Linked views show one document in several places at once (a split editor,
@@ -34,8 +35,10 @@ func (e *Editor) NewLinkedView() *Editor {
 	v.syntaxColors, v.renderWhitespace = e.syntaxColors, e.renderWhitespace
 	v.open = e.open
 	v.cursor, v.scrollX, v.scrollY = e.cursor, e.scrollX, e.scrollY
+	v.wordWrap, v.wrapOffset, v.wrapBefore = e.wordWrap, e.wrapOffset, e.wrapBefore
 	v.goalCol, v.goalSet = e.goalCol, e.goalSet
 	v.canonicalInsight = e.canonicalInsight
+	v.folds = e.copyFolds()
 	v.chromaStyle, v.chromaLexer, v.syntaxPlain = e.chromaStyle, e.chromaLexer, e.syntaxPlain
 	if e.syntaxBuffer == e.buf && e.syntaxRevision == e.buf.Revision() {
 		v.syntaxBuffer, v.syntaxRevision = e.syntaxBuffer, e.syntaxRevision
@@ -61,6 +64,9 @@ func (e *Editor) NewLinkedView() *Editor {
 func (e *Editor) AdoptView(from *Editor) {
 	if from == nil || from == e {
 		return
+	}
+	if e.buf == from.buf {
+		e.folds = from.copyFolds()
 	}
 	e.restoreViewState(from.captureViewState())
 	e.goalCol, e.goalSet = from.goalCol, from.goalSet
@@ -94,6 +100,7 @@ func (e *Editor) Caret() (SourcePosition, int) {
 // to the current text) and the first visible line to scrollY, then the caret
 // is kept visible.
 func (e *Editor) RestoreCaret(pos SourcePosition, scrollY int) {
+	e.wrapOffset, e.wrapBefore = 0, false
 	e.DismissGhostText()
 	e.BreakUndoGroup()
 	e.CancelPointerCapture()
@@ -288,4 +295,13 @@ func (e *Editor) afterLinkedEdit() {
 	// History is document state (PieceTable.changes or the canonical
 	// projection), so a sibling's edit needs only this view's paint caches.
 	e.invalidateEditorCaches()
+}
+
+func (e *Editor) copyFolds() foldState {
+	e.remapFolds()
+	f := e.folds
+	f.ranges = slices.Clone(f.ranges)
+	f.collapsed = slices.Clone(f.collapsed)
+	f.hidden = slices.Clone(f.hidden)
+	return f
 }

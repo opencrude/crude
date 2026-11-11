@@ -1,9 +1,12 @@
 package viewmodel
 
 import (
+	"crude/syntax"
+	"crude/tui/editor"
 	"fmt"
 	"hash/fnv"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -104,6 +107,14 @@ func validViewPanes(memory viewMemory) bool {
 		if len(pane.Files) > maxRememberedPaneFiles {
 			return false
 		}
+		if len(pane.Folds) > len(pane.Files) {
+			return false
+		}
+		for path, folds := range pane.Folds {
+			if !slices.Contains(pane.Files, path) || folds == nil || len(folds.Ranges) > syntax.MaxStructure {
+				return false
+			}
+		}
 		totalFiles += len(pane.Files)
 		if totalFiles > maxRememberedPanes*maxRememberedPaneFiles {
 			return false
@@ -161,6 +172,12 @@ func (m *App) restoreViewPanes(memory viewMemory) {
 		for _, path := range pane.Files {
 			if clean, ok := m.rememberedEditorPath(path); ok {
 				panes[i].Files = append(panes[i].Files, clean)
+				if fold := pane.Folds[path]; fold != nil {
+					if panes[i].Folds == nil {
+						panes[i].Folds = make(map[string]*editor.FoldMemory)
+					}
+					panes[i].Folds[clean] = fold
+				}
 			}
 		}
 		if clean, ok := m.rememberedEditorPath(pane.Active); ok {
@@ -192,6 +209,7 @@ func (m *App) restoreViewPanes(memory viewMemory) {
 			msg := cmd().(paneFilesOpenedMsg)
 			msg.activePath = activePath
 			msg.restoring = true
+			msg.folds = pane.Folds
 			msg.restoreForeground = restoreForeground
 			return msg
 		})
@@ -264,10 +282,17 @@ func (m *App) paneMemoryMark() uint64 {
 		return 0
 	}
 	h := fnv.New64a()
+	groups := m.Win.GroupIDs()
 	for i, pane := range panes {
 		fmt.Fprintf(h, "%d:", i)
 		for _, path := range pane.Files {
 			fmt.Fprintf(h, "%s|", path)
+			if i < len(groups) {
+				if view := m.groupEditorView(groups[i], path); view != nil {
+					fmt.Fprintf(h, "F%d", view.Editor.FoldGeneration())
+				}
+			}
+
 		}
 		fmt.Fprintf(h, ">%s;", pane.Active)
 	}
@@ -287,4 +312,26 @@ func (m *App) paneMemoryMark() uint64 {
 	visit(layout)
 	fmt.Fprintf(h, "A%d", active)
 	return h.Sum64()
+}
+
+func (m *App) captureEditorFolds(panes []viewMemoryPane) {
+	if m.Win == nil {
+		return
+	}
+	groups := m.Win.GroupIDs()
+	for i := range panes {
+		if i >= len(groups) {
+			break
+		}
+		for _, path := range panes[i].Files {
+			if view := m.groupEditorView(groups[i], path); view != nil {
+				if fold := view.Editor.ExportFolds(); fold != nil {
+					if panes[i].Folds == nil {
+						panes[i].Folds = make(map[string]*editor.FoldMemory)
+					}
+					panes[i].Folds[path] = fold
+				}
+			}
+		}
+	}
 }

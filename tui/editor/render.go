@@ -22,7 +22,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	if w != e.viewW || h != e.viewH {
 		e.CancelPointerCapture()
 	}
-	if (w != e.viewW || h != e.viewH) && e.cursor.Line >= e.scrollY && e.cursor.Line < e.scrollY+e.bodyHeight() {
+	if (w != e.viewW || h != e.viewH) && e.inlayCaretVisible() {
 		e.pendingReveal = true
 	}
 	e.viewW = w
@@ -31,6 +31,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		return
 	}
 
+	e.refreshFolds()
 	bgColor := e.cellColor(e.th.Colors.Bg)
 	selFgColor, selBgColor := e.tokens.TextSelectionColors(e.cellColor(e.th.Colors.Fg))
 	blankCell := cell.NewCell(' ', bgColor, bgColor, 0)
@@ -77,22 +78,34 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	sbX := sw + textW
 	e.remapDiagnosticPaint()
 	bracketFrom, bracketTo, hasBracket := e.matchingBracket()
-	e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
+	if e.usesRows() {
+		previous := -1
+		for y := 0; y < bodyH; y++ {
+			line := e.rowAt(e.scrollRow() + y).line
+			if line != previous && line < e.LineCount() {
+				e.ensureChromaColors(line, line+1)
+				previous = line
+			}
+		}
+	} else {
+		e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
+	}
 	for y := 0; y < bodyH; y++ {
 		bufY := y
 		if bufY >= h {
 			break
 		}
 
-		lineIdx := e.scrollY + y
-		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, e.scrollX)
+		row := e.rowAt(e.scrollRow() + y)
+		lineIdx, startCol := row.line, row.start
+		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, startCol)
 		inline := e.inlineLine(lineIdx)
 		diags := e.lineDiagnostics(lineIdx)
 		spaces := e.whitespaceInfo(lineIdx)
 
 		ri := 0
 		visCol := 0
-		for ri < len(clusters) && visCol+widths[ri] <= e.scrollX {
+		for ri < len(clusters) && visCol+widths[ri] <= startCol {
 			visCol += widths[ri]
 			ri++
 		}
@@ -100,19 +113,25 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		gutter := e.gutterGeometry()
 		lineExists := lineIdx >= 0 && lineIdx < e.buf.LineCount()
 		numStr := ""
-		if lineExists {
+		if lineExists && row.index == 0 {
 			numStr = e.formatLineNum(lineIdx+1+e.lineNumberOffset, gutter.numberW)
 		}
 
 		// Determine highest severity diagnostic on this line for the gutter icon.
 		lineSev := 0
 		for _, d := range diags {
+			if row.index != 0 {
+				break
+			}
 			lineSev = types.HighestDiagnosticSeverity(lineSev, d.severity)
 			if lineSev == DiagError {
 				break
 			}
 		}
 		gitKind := e.gitKindAt(lineIdx)
+		if row.index != 0 {
+			gitKind = 0
+		}
 
 		for x := 0; x < sbX; x++ {
 			if x == gutter.diagX {
@@ -123,6 +142,21 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					buf.Set(x, bufY, cell.NewClusterCell(cluster, max(1, rendering.VisibleWidth(cluster)), iconColor, gutterBg, 0))
 				} else {
 					buf.Set(x, bufY, gutterBlank)
+				}
+			} else if x == gutter.foldX {
+				glyph := " "
+				if row.index == 0 {
+					if r, ok := e.foldAt(lineIdx); ok {
+						glyph = e.tokens.Glyphs().TreeExpanded
+						if containsFold(e.folds.collapsed, r) {
+							glyph = e.tokens.Glyphs().TreeCollapsed
+						}
+					}
+				}
+				if glyph == " " {
+					buf.Set(x, bufY, gutterBlank)
+				} else {
+					buf.Set(x, bufY, cell.NewClusterCell(glyph, 1, infoColor, gutterBg, 0))
 				}
 			} else if x >= gutter.numberX && x < gutter.numberX+gutter.numberW {
 				index := x - gutter.numberX
@@ -142,6 +176,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				buf.Set(x, bufY, cell.NewCell(ch, fg, gutterBg, 0))
 			} else if x == gutter.gapX {
 				marker := e.gitDeletionMarkerAt(lineIdx, e.buf.LineCount())
+				if row.index != 0 {
+					marker = ' '
+				}
 				fg := gutterBg
 				if marker != ' ' {
 					color := e.th.Tree.Colors.GitDeleted
@@ -155,7 +192,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				buf.Set(x, bufY, gutterBlank)
 			} else {
 				cx := x
-				vCol := e.scrollX + (cx - sw)
+				vCol := startCol + (cx - sw)
+				if row.continues && vCol >= row.end {
+					continue
+				}
 
 				for ri < len(clusters) && vCol >= visCol+widths[ri] {
 					visCol += widths[ri]
@@ -256,7 +296,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							}
 							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, bgColor, diagAttr, blankCell)
 						}
-					} else if visCol < e.scrollX {
+					} else if visCol < startCol {
 						switch {
 						case e.isSelected(lineIdx, sourceCol):
 							buf.Set(cx, bufY, cell.NewCell(' ', selFgColor, selBgColor, 0))
@@ -291,10 +331,18 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				}
 			}
 		}
+		if r, ok := e.foldAt(lineIdx); ok && row.index == 0 && containsFold(e.folds.collapsed, r) {
+			label := " … " + e.itoa(r.End-r.Start) + " lines"
+			start := max(sw, min(sw+lineVisW-startCol, sbX-rendering.VisibleWidth(label)))
+			buf.WriteString(start, bufY, rendering.TruncateVisual(label, max(0, sbX-start), "…"), infoColor, bgColor, 0)
+		}
+		if row.continues {
+			buf.Set(sbX-1, bufY, cell.NewCell(ui.FirstRune(e.tokens.Glyphs().WrapContinuation, '↩'), infoColor, bgColor, 0))
+		}
 	}
 	if ctx.Focused && !e.readOnly && e.cursorBlink.Visible(ctx.Frame) {
-		cursorX := sw + e.displayColumn(e.cursor.Line, e.cursor.Col) - e.scrollX
-		cursorY := e.cursor.Line - e.scrollY
+		cursorY, cursorCol := e.viewPosition(e.cursor)
+		cursorX := sw + cursorCol
 		if cursorX >= sw && cursorX < sbX && cursorY >= 0 && cursorY < bodyH {
 			ui.PaintBlockCursor(buf, cursorX, cursorY, e.tokens.Color(ui.ColorCursor), bgColor)
 		}
@@ -349,6 +397,7 @@ func (e *Editor) gutterWidth() int {
 
 type gutterGeometry struct {
 	diagX   int
+	foldX   int
 	numberX int
 	numberW int
 	railX   int
@@ -373,7 +422,7 @@ func (e *Editor) gutterGeometry() gutterGeometry {
 	diagWidth := max(rendering.VisibleWidth("✕"), rendering.VisibleWidth("⚠"), rendering.VisibleWidth("ℹ"))
 	numberX := diagWidth + 1
 	railX := numberX + digits + 1
-	return gutterGeometry{diagX: 0, numberX: numberX, numberW: digits, railX: railX, gapX: railX + 1, width: railX + 2}
+	return gutterGeometry{diagX: 0, foldX: numberX - 1, numberX: numberX, numberW: digits, railX: railX, gapX: railX + 1, width: railX + 2}
 }
 
 // GutterWidth is the painted left chrome width in columns.
@@ -566,6 +615,7 @@ func (e *Editor) lineVisualWidth(lineIdx int) int {
 }
 
 func (e *Editor) ensureCursorVisible() {
+	e.unfoldSource(e.cursor.Line, false)
 	sw := e.gutterWidth()
 	sbW := e.scrollbarColWidth()
 	availW := e.viewW - sw - sbW
@@ -582,21 +632,19 @@ func (e *Editor) ensureCursorVisible() {
 		margin = 1
 	}
 
-	if e.cursor.Line < e.scrollY+margin {
-		e.scrollY = e.cursor.Line - margin
+	row, _ := e.visualPosition(e.cursor, e.wrapBefore)
+	top := e.scrollRow()
+	if row < top+margin {
+		top = row - margin
 	}
-	if e.cursor.Line >= e.scrollY+availH-margin {
-		e.scrollY = e.cursor.Line - availH + margin + 1
+	if row >= top+availH-margin {
+		top = row - availH + margin + 1
 	}
-	if e.scrollY < 0 {
-		e.scrollY = 0
-	}
-	maxScroll := e.buf.LineCount() - availH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if e.scrollY > maxScroll {
-		e.scrollY = maxScroll
+	e.setScrollRow(min(max(0, top), max(0, e.visualRowCount()-availH)))
+	if e.wrapsRows() {
+		e.scrollX = 0
+		e.syncScrollChrome(availH)
+		return
 	}
 
 	hMargin := 5

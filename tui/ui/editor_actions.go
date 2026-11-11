@@ -52,6 +52,19 @@ var nativeEditorActions = []EditorAction{
 	// Shifted arrow sequences remain distinct in legacy terminals; shifted
 	// Alt-letter text can be ambiguous. Shift+Alt+F still formats the file.
 	editorAction("select.subwordNext", "Select next name part", false, "alt+shift+right"),
+	editorAction("view.fold", "Fold block", false, "alt+-"),
+	editorAction("view.unfold", "Unfold block", false, "alt+="),
+	editorAction("view.foldAll", "Fold all blocks", false),
+	editorAction("view.unfoldAll", "Unfold all blocks", false),
+	editorAction("view.foldLevel1", "Fold level 1", false),
+	editorAction("view.foldLevel2", "Fold level 2", false),
+	editorAction("view.foldLevel3", "Fold level 3", false),
+	editorAction("view.foldLevel4", "Fold level 4", false),
+	editorAction("view.foldLevel5", "Fold level 5", false),
+	editorAction("view.foldLevel6", "Fold level 6", false),
+	editorAction("view.foldLevel7", "Fold level 7", false),
+	editorAction("view.foldLevel8", "Fold level 8", false),
+	editorAction("view.foldLevel9", "Fold level 9", false),
 }
 
 // EditorActions returns detached metadata. Callers cannot rewrite live bindings.

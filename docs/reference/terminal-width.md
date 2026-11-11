@@ -110,6 +110,10 @@ the terminal. Version and isolated CPR checks do not replace visual acceptance.
 ## Width Rules
 
 `x/ansi.FirstGraphemeCluster` segments UAX #29 extended grapheme clusters.
+Printable ASCII followed by ASCII or EOF uses the existing exact boundary fast
+path, shared with the ANSI decoder. A non-ASCII successor still goes through full
+segmentation, so combining marks, variation selectors and keycaps remain attached.
+There is no editor-local width correction or alternative Unicode iterator.
 `correctClusterWidth` applies the measured profile before the default model:
 
 | Input | Width |

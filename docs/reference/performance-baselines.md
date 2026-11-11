@@ -7,6 +7,31 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Wrapped and folded source rows (2026-11-11)
+
+The first synchronous 20,000-line cold projection measured 45–48 ms and
+223,614–228,778 allocations. Profiling attributed 71% of sampled CPU to source
+measurement, mostly repeated grapheme segmentation. The shared ANSI boundary
+fast path and source-sized metric arenas reduce that work; cold and large-edit
+measurement now runs in a cancellable, generation-fenced source worker. Source
+edits are never delayed. Folding stays effective while wrapping is pending.
+
+Linux amd64, Go 1.27.4, i7-10750H, GOMAXPROCS=2, three 500 ms repetitions:
+
+| Stage | Time | Bytes / allocations |
+|---|---|---|
+| Warm wrapped paint, 200 lines, 80×24 | 128.6–129.5 µs | 2,380 / 60 |
+| Warm wrapped paint, 20,000 lines | 124.6–128.0 µs | 2,496 / 84 |
+| Cold source metrics plus initial wrap, 20,000 lines | 27.4–28.8 ms | 10,527,082–10,527,084 / 40,028 |
+| Width-only reflow, 20,000 lines | 0.73–0.77 ms | 0 / 0 |
+| Typing and grid paint, 20,000 lines | 2.81–2.94 ms | 5,664,396–5,786,629 / 171–172 |
+
+These are grid/worker measurements, not terminal latency. The row benchmarks
+are now gated with approximately 20% allocation headroom; resize retains zero
+allocations. No earlier ceiling changes. Behavioral checks fence stale workers,
+keep changed-line measurement bounded, retain cold fold-only geometry, compress
+multi-megabyte uniform lines, and exclude hidden syntax from visible projection.
+
 ## Structural editor analysis (2026-11-11)
 
 The new named-node selection and bracket index runs in the existing source

@@ -559,3 +559,25 @@ func TestParameter(t *testing.T) {
 		})
 	}
 }
+
+func TestFirstGraphemeASCIIBoundaryKeepsUnicodeExtensions(t *testing.T) {
+	for _, tc := range []struct {
+		source, first string
+		width         int
+	}{
+		{"abc", "a", 1}, {" ", " ", 1}, {"a\t", "a", 1}, {"a\x1b", "a", 1},
+		{"áb", "á", 1}, {"#️⃣x", "#️⃣", 2}, {"é界", "é", 1}, {"👩‍💻a", "👩‍💻", 2},
+	} {
+		got, width := FirstGraphemeCluster(tc.source, GraphemeWidth)
+		if got != tc.first || width != tc.width {
+			t.Fatal(tc.source, got, width)
+		}
+		bytes, w := FirstGraphemeCluster([]byte(tc.source), GraphemeWidth)
+		if string(bytes) != tc.first || w != tc.width {
+			t.Fatal("byte input drifted", tc.source, string(bytes), w)
+		}
+	}
+	if allocations := testing.AllocsPerRun(100, func() { FirstGraphemeCluster("plain text", GraphemeWidth) }); allocations != 0 {
+		t.Fatal("ASCII boundary allocated", allocations)
+	}
+}

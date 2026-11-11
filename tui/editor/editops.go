@@ -87,6 +87,12 @@ func (e *Editor) spliceRecordedBatch(edits []document.Edit, cursorBefore Positio
 		before = e.captureViewState()
 		before.Cursor = e.buf.positionToOffset(cursorBefore)
 	}
+	if len(e.folds.collapsed) > 0 {
+		for _, edit := range edits {
+			e.unfoldSource(e.buf.positionAtOffset(edit.Start).Line, true)
+			e.unfoldSource(e.buf.positionAtOffset(edit.End).Line, true)
+		}
+	}
 	deleted := make([]string, len(edits))
 	for i, edit := range edits {
 		deleted[i] = string(e.buf.cachedBytes[edit.Start:edit.End])

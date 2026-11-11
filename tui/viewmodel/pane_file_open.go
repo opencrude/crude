@@ -50,6 +50,7 @@ type paneFilesOpenedMsg struct {
 	window bool
 	// activePath selects the remembered document after a restored pane opens.
 	activePath string
+	folds      map[string]*editor.FoldMemory
 	// restoring accepts several pane opens queued by one layout restoration.
 	restoring bool
 	// restoreForeground keeps the remembered active pane focused while other
@@ -274,7 +275,10 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			}
 			// The file opens where it was requested. A view elsewhere stays
 			// where it is; this pane gets its own view of the same document.
-			if m.showDocument(file.path, msg.group, foreground) != nil {
+			if view := m.showDocument(file.path, msg.group, foreground); view != nil {
+				if msg.restoring {
+					view.Editor.RestoreFolds(msg.folds[file.path])
+				}
 				opened = true
 			}
 			continue
@@ -299,7 +303,10 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			continue
 		}
 		m.installEditorBuffer(buf)
-		if m.showDocument(buf.Path, msg.group, foreground) != nil {
+		if view := m.showDocument(buf.Path, msg.group, foreground); view != nil {
+			if msg.restoring {
+				view.Editor.RestoreFolds(msg.folds[buf.Path])
+			}
 			opened = true
 		}
 	}

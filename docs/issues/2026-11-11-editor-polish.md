@@ -325,6 +325,45 @@ File-specific indentation choices, EditorConfig, wrapping/folding and the other
 remaining parity rows stay open. Linux verification does not settle the separate
 Windows GC finding.
 
+## Wrapped and folded editor rows (2026-11-11)
+
+One view-local source-row index now owns wraps, collapsed ranges, paint, scroll,
+pointer/drag, caret and popover geometry. Nested native source ranges and qualified
+lexical brackets/comments/strings feed folding; stale results cannot supply new
+ranges. Commands and gutter actions share the native executor. No source bytes,
+provider coordinates, shared history or dirty state change when a block folds.
+
+Current/private/linked rows, CRLF, tabs, combining marks, wide glyphs, copied hidden
+source, search reveal, disjoint and touched peer edits, width changes and retained
+profile folds have behavioral regressions. Cold source work was measured at
+45–48 ms before changes. It is now a cancellable worker, not UI work; warm paint
+and width-only reflow are independently measured and guarded. Large-line changes
+use that same worker while current source stays editable. Fold-only geometry stays
+cached and visible while new wrap metrics are pending.
+
+Linux native 160×40 and 80×24 captures verify seven interaction boundaries:
+wrapped source, Fold, Unfold, nested gutter fold, Go to line reveal, Ctrl+D and
+one Undo. Inspected frames show hidden-line counts and continuation ink. Both
+record joined cleanup with unchanged disk bytes; every window is closed. The first
+chord was not delivered correctly by the terminal and was replaced with Alt+-/Alt+=.
+The pointer diagnostic proved no click reached the product while desktop modifiers
+were held; the shared capture driver now clears modifiers for click/wheel input,
+as it already did for keys. Failed captures are retained as failures, not passes.
+
+The ordinary suite was disrupted by running wire generation concurrently with
+compilation; every affected build/golden package and the complete app/session/
+viewmodel/workspace inventory then passed after generation finished. The only
+intentional golden change is the source fold chevron. Find-in-files kept its
+original golden after correcting empty gutter ink. Final affected race checks
+pass, including the shared ANSI module, without race reports. Build, zero-issue
+lint, generated cohort, design/docs and Windows/macOS component builds pass.
+The complete benchmark gate passes with all existing ceilings unchanged and five
+new wrap checks. A simultaneous build/lint run first pushed the existing chat-find
+amortized allocation measurement to 4,606 B (ceiling 4,500); three isolated runs
+measured 3,028–3,104 B, and the complete quiet gate then passed without changing
+chat code, its benchmark or any ceiling. The failure is not relabelled a pass.
+The existing Windows GC finding remains open. This is not full editor parity.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers

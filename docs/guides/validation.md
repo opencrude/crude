@@ -731,3 +731,26 @@ For stationary pointer acceptance, `down:col,row`, `move:col,row`, `sleep:1`,
 held viewport with a later stationary shot and verify it stops after release;
 a burst drag alone does not establish timer-driven edge scrolling. Cleanup
 releases a held button even if capture fails.
+
+## Wrapped and folded editor rows
+
+`TestEditorRowsVisualAcceptance` uses `CRUDE_VISUAL_EDITOR_ROWS=1` and
+`CRUDE_ROWS_RESULT`; point `CRUDE_CAPTURE_EVIDENCE` at the same new result file.
+F3 opens a disposable connected document with Word wrap enabled. Each F4 only
+observes the next native interaction, followed by `await:ROWS_READY phase=N`.
+Alt+- folds and Alt+= unfolds. The journey folds/unfolds the function, clicks the nested gutter chevron, jumps to
+line 4 to reveal hidden source, duplicates it with Ctrl+D and undoes once. F9 quits
+and records joined cleanup. At 160×40 and 80×24, the current fixture publishes the
+nested chevron at cell 11,6; the `ROWS_CLICK` observation must match before using it.
+Seven `ROWS_VERIFIED` records and `ROWS_JOIN phase=7 passed=true headless=false`
+are required, not only a zero screenshot-script exit. Inspect the actual header,
+continuation mark, source ink, selected caret and hidden-line counts at both sizes.
+
+The connected row test saves/restores a private client profile, leaves a second
+shell unfolded, then edits hidden source from that shell and undoes. Unit regressions
+cover linked widths, Unicode/CRLF source geometry, atomic tab/cluster positions,
+source-qualified persistence, disjoint/touched peer edits, stale/cancelled worker
+results and cold/large-line work with the worker pool deliberately occupied.
+`BenchmarkWrappedEditorWorkload` measures warm grid paint; `BenchmarkWrappedRowPreparation`
+separates cold source preparation, width reflow and typing-plus-grid paint. Neither
+benchmark is a measurement of terminal transport or physical display latency.

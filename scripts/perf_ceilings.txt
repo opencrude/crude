@@ -36,6 +36,13 @@ BenchmarkSnippetTypingDense/lines20000/mirrors64/paintfalse 2950000 330
 BenchmarkSnippetTypingDense/lines20000/mirrors64/painttrue 4150000 1320
 BenchmarkSyntaxDocumentPreparation/Python_200 445000 7060
 BenchmarkSyntaxDocumentPreparation/Python_20000 42700000 672400
+# Wrapped source rows: warm paint, worker cold metrics, width-only reflow and
+# actual typing+grid paint. Three Go 1.27.4 runs; no existing gate is relaxed.
+BenchmarkWrappedEditorWorkload/200 2900 72
+BenchmarkWrappedEditorWorkload/20000 3000 101
+BenchmarkWrappedRowPreparation/cold 12640000 48040
+BenchmarkWrappedRowPreparation/resize 0 0
+BenchmarkWrappedRowPreparation/typing_and_paint 6950000 207
 # Native syntax Go allocations only; native heap/RSS require separate evidence.
 BenchmarkNativeSyntaxPreparation/Python_200 10240 64
 BenchmarkNativeSyntaxPreparation/Python_20000 700000 96

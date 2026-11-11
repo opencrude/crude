@@ -136,10 +136,16 @@ journeys pass at both sizes; the full ordinary inventory, affected race paths an
 unchanged allocation gate pass. See
 [tab-geometry evidence](../issues/2026-11-11-editor-polish.md#source-anchored-tab-geometry-2026-11-11).
 
-Next, connect wrapping and folding through one row projection, then complete
-per-file indentation/EditorConfig and the remaining semantic workflows. Preserve
-source, history, diagnostics and linked-view identity. A stored preference with
-no consumer is not accepted. Do not add another Settings page.
+Wrapping and folding now share the source-row projection, source-qualified private
+pane memory and retained editor worker lifecycle. Native 160×40 and 80×24 journeys,
+connected profile/peer editing, ordinary inventory and affected race checks pass.
+The checkpoint issue records gate details and failures rather than declaring all
+editor parity complete.
+
+Next, complete per-file indentation/EditorConfig through the existing source,
+settings and save owners, then the remaining semantic workflows. Preserve source,
+history, diagnostics and linked-view identity. A stored preference with no consumer
+is not accepted. Do not add another Settings page.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named

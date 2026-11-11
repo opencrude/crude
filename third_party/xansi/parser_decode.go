@@ -444,6 +444,13 @@ func HasEscPrefix[T string | []byte](b T) bool {
 // to reconcile Unicode tables with the calibrated effective terminal grid.
 // Layout and ultraviolet both use this function.
 func FirstGraphemeCluster[T string | []byte](b T, m Method) (T, int) {
+	// As in DecodeSequence, a printable ASCII base followed by ASCII (or
+	// EOF) is an exact UAX boundary. Do not construct an iterator per cell.
+	// A non-ASCII successor may be a combining mark, keycap or selector and
+	// must take the same full grapheme/profile path as before.
+	if len(b) > 0 && b[0] > US && b[0] < DEL && (len(b) == 1 || b[1] < utf8.RuneSelf) {
+		return b[:1], 1
+	}
 	switch b := any(b).(type) {
 	case string:
 		cluster := graphemes.FromString(b).First()

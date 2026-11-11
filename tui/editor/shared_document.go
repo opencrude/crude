@@ -199,6 +199,9 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 	if len(s.Text) > document.MaxBytes || len(s.Saved) > document.MaxBytes || !utf8.Valid(s.Text) || !utf8.Valid(s.Saved) {
 		return document.ErrLimit
 	}
+	e.cancelRows()
+	e.folds = foldState{}
+	e.rowsStopped = false
 	width := e.TabWidth()
 	e.detachDocument()
 	e.stopWatching()
