@@ -3,6 +3,7 @@ package editor
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"unicode/utf8"
 
@@ -46,7 +47,34 @@ type DocumentProjection struct {
 	// to; nil means the coordinator's own editor.
 	restoreEditor *Editor
 	suppressed    bool
+	// hold orders input behind one guarded edit; see HoldDocumentInput.
+	hold         *documentHold
+	holdSequence uint64
+	// heldRefused reports, once, that a guarded edit left this view because
+	// canonical text advanced before it could commit.
+	heldRefused bool
 }
+
+// documentHold is one guarded edit and the input waiting behind it. The edit
+// may commit only at the canonical revision observed when the hold began. It
+// is never rebased over another author's change: if canonical text advances
+// first, the edit leaves this view and the held input replays.
+type documentHold struct {
+	sequence, revision uint64
+	applied            bool
+	before             editorViewState
+	editor             *Editor
+}
+
+// DocumentHold identifies one exact hold for the caller that began it.
+type DocumentHold struct {
+	projection *DocumentProjection
+	sequence   uint64
+}
+
+// ErrHeldEditRefused reports that the document owner refused a guarded edit.
+// The edit has already left the view; held input replays normally.
+var ErrHeldEditRefused = errors.New("the file changed before the guarded edit was committed")
 
 // documentGroupView retains the edit's originating view and its private caret.
 // Its snapshot is restored only when that same view invokes undo or redo.
@@ -120,11 +148,83 @@ func (p *DocumentProjection) endEditGroup() {
 // than at coordinates from the text that is about to be undone.
 func (e *Editor) DeferDocumentEdit(edit func()) bool {
 	p := e.documentProjection
-	if p == nil || p.replaying || (!p.undoPending && !p.historySync && len(p.historyQueue) == 0) || (p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending)) {
+	if p == nil || p.replaying || (p.hold == nil && !p.undoPending && !p.historySync && len(p.historyQueue) == 0) || (p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending)) {
 		return false
 	}
 	p.historyQueue = append(p.historyQueue, documentHistoryAction{edit: edit, evidence: DocumentHistoryIntent{Unrecoverable: true}})
 	return true
+}
+
+// HoldDocumentInput begins ordering later input behind one guarded edit. Only
+// a settled projection can hold, so the edit describes exactly its canonical
+// text. Input typed meanwhile waits in the ordinary history queue.
+func (e *Editor) HoldDocumentInput() (DocumentHold, bool) {
+	p := e.documentProjection
+	if p == nil || p.hold != nil || p.replaying || len(p.pending) != 0 || p.inflight != nil || p.undoPending ||
+		p.historySync || len(p.historyQueue) != 0 || p.conflict != nil {
+		return DocumentHold{}, false
+	}
+	p.holdSequence++
+	p.hold = &documentHold{sequence: p.holdSequence, revision: p.snapshot.Revision}
+	return DocumentHold{projection: p, sequence: p.holdSequence}, true
+}
+
+// HoldsDocumentInput reports that input to this document waits behind a
+// guarded edit.
+func (e *Editor) HoldsDocumentInput() bool {
+	p := e.documentProjection
+	return p != nil && p.hold != nil
+}
+
+// ReleaseDocumentHold ends a hold whose guarded edit was not applied. Held
+// input replays at the next drain. An old, foreign or applied hold is ignored:
+// the document owner's receipt settles an applied edit.
+func (e *Editor) ReleaseDocumentHold(h DocumentHold) {
+	if p := e.documentProjection; p != nil && h.projection == p && p.hold != nil && p.hold.sequence == h.sequence && !p.hold.applied {
+		p.hold = nil
+	}
+}
+
+// ConsumeRefusedHeldEdit reports, once, that a guarded edit left this view
+// because another change reached the document first.
+func (e *Editor) ConsumeRefusedHeldEdit() bool {
+	p := e.documentProjection
+	if p == nil || !p.heldRefused {
+		return false
+	}
+	p.heldRefused = false
+	return true
+}
+
+// heldEditPending is an applied guarded edit that is not yet in flight.
+func (p *DocumentProjection) heldEditPending() bool {
+	return p.hold != nil && p.hold.applied && p.inflight == nil && len(p.pending) != 0
+}
+
+// retireHeldEdit removes a guarded edit that never became canonical text.
+// edits are its simultaneous changes against the canonical snapshot; input was
+// held, so no later local edit depends on them.
+func (e *Editor) retireHeldEdit(edits []document.Edit) {
+	p := e.documentProjection
+	hold := p.hold
+	p.hold, p.heldRefused = nil, true
+	_, inverse, err := document.Apply(p.snapshot.Text, edits)
+	if err != nil {
+		p.conflict = err
+		return
+	}
+	target := hold.editor
+	if target == nil || !target.open || target.documentProjection != p {
+		target = e
+	}
+	target.CancelSnippet()
+	target.DismissGhostText()
+	e.commitDocumentDelta(document.Change{}, inverse, nil)
+	p.pendingGroups = nil
+	// The text is again the text the edit replaced, so the private view from
+	// before the edit is exact.
+	target.restoreViewState(hold.before)
+	target.ensureCursorVisible()
 }
 
 // DeferDocumentEvent preserves the event payload as well as its live replay, so
@@ -483,6 +583,14 @@ func (e *Editor) AcceptDocumentReceipt(r document.Receipt) error {
 	if r.DocumentID != c.DocumentID || r.RequestID != c.RequestID {
 		return document.ErrRequest
 	}
+	if !r.Accepted && p.hold != nil && p.hold.applied {
+		p.inflight = nil
+		e.retireHeldEdit(c.Edits)
+		if errors.Is(p.conflict, ErrDocumentPending) {
+			p.conflict = nil
+		}
+		return fmt.Errorf("%w: %s", ErrHeldEditRefused, r.Error)
+	}
 	if !r.Accepted {
 		groups := make([]string, len(c.Edits))
 		for i := range groups {
@@ -512,6 +620,10 @@ func (e *Editor) AcceptDocumentReceipt(r document.Receipt) error {
 	p.snapshot.Text = text
 	p.snapshot.Revision = r.Revision
 	p.inflight = nil
+	if p.hold != nil && p.hold.applied {
+		// The guarded edit committed at exactly the revision it described.
+		p.hold = nil
+	}
 	if errors.Is(p.conflict, ErrDocumentPending) {
 		p.conflict = nil
 	}
@@ -537,7 +649,7 @@ func (e *Editor) requestDocumentUndo(redo bool) {
 // local edits have been acknowledged and the canonical revision is current.
 func (e *Editor) DrainDocumentUndo() {
 	p := e.documentProjection
-	if p == nil || p.inflight != nil || p.undoPending || p.historySync || (p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending)) {
+	if p == nil || p.hold != nil || p.inflight != nil || p.undoPending || p.historySync || (p.conflict != nil && !errors.Is(p.conflict, ErrDocumentPending)) {
 		return
 	}
 	for len(p.historyQueue) > 0 {
@@ -693,6 +805,9 @@ func (e *Editor) ApplyDocumentDelta(c document.Change, s document.Snapshot) erro
 	if !bytes.Equal(canonical, s.Text) {
 		return document.ErrRevision
 	}
+	if p.heldEditPending() {
+		e.retireHeldEdit(composeDocumentEdits(len(p.snapshot.Text), p.pending))
+	}
 	remote := append([]document.Edit(nil), c.Edits...)
 	pending := make([]document.Edit, 0, len(p.pending))
 	for _, local := range p.pending {
@@ -809,6 +924,8 @@ type PreparedDocumentUpdate struct {
 	reset, savepoint        bool
 	snippetSource, snippet  *snippetSession
 	snippetSequence         uint64
+	// retire is a guarded edit that newer canonical text refuses.
+	retire []document.Edit
 }
 
 func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, changes []document.Change, state document.Snapshot, reset *document.Snapshot, savepoint bool) (*PreparedDocumentUpdate, error) {
@@ -863,6 +980,12 @@ func (e *Editor) PrepareDocumentUpdate(owner document.Owner, base uint64, change
 	}
 	next := base
 	text, pending := p.snapshot.Text, p.pending
+	if p.heldEditPending() && state.Revision > p.snapshot.Revision {
+		// Another author committed first. The guarded edit cannot commit at its
+		// revision, so it leaves this view instead of being rebased.
+		plan.retire = composeDocumentEdits(len(p.snapshot.Text), p.pending)
+		pending, plan.snippet = nil, nil
+	}
 	for _, c := range changes {
 		if c.DocumentID != state.ID || c.BaseRevision != next || next == ^uint64(0) {
 			return nil, document.ErrRevision
@@ -929,6 +1052,9 @@ func (e *Editor) CommitDocumentUpdate(plan *PreparedDocumentUpdate) error {
 		return err
 	}
 	p.owner = plan.owner
+	if plan.retire != nil {
+		e.retireHeldEdit(plan.retire)
+	}
 	e.snippetApplying = true
 	if plan.reset {
 		e.CancelPointerCapture()

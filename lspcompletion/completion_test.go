@@ -192,3 +192,30 @@ func BenchmarkCompletionOriginalAndDocumentationOnlyResolve(b *testing.B) {
 		}
 	})
 }
+
+func TestCompletionCommitCharactersKeepItemPresenceAndRefuseMalformedLists(t *testing.T) {
+	got, err := Parse([]byte(`[{"label":"own","commitCharacters":[".",";","."]},{"label":"none","commitCharacters":[]},{"label":"default"}]`))
+	if err != nil || len(got.Items) != 3 {
+		t.Fatal(got, err)
+	}
+	if !got.Items[0].HasCommitCharacters || strings.Join(got.Items[0].CommitCharacters, "") != ".;" {
+		t.Fatal("item commit characters were not retained once each", got.Items[0])
+	}
+	if !got.Items[1].HasCommitCharacters || len(got.Items[1].CommitCharacters) != 0 || got.Items[2].HasCommitCharacters {
+		t.Fatal("an explicit empty list must replace the provider default; absence must not")
+	}
+	for name, raw := range map[string]string{
+		"null":         `[{"label":"x","commitCharacters":null}]`,
+		"not an array": `[{"label":"x","commitCharacters":"."}]`,
+		"two runes":    `[{"label":"x","commitCharacters":["=>"]}]`,
+		"empty":        `[{"label":"x","commitCharacters":[""]}]`,
+		"control":      `[{"label":"x","commitCharacters":["\n"]}]`,
+	} {
+		if _, err := Parse([]byte(raw)); !errors.Is(err, ErrInvalid) {
+			t.Fatal("malformed commit characters were accepted:", name, err)
+		}
+	}
+	if _, err := CommitCharacters(strings.Split(strings.Repeat("a", MaxCommitCharacters+1), "")); !errors.Is(err, ErrInvalid) {
+		t.Fatal("an unbounded provider default was accepted")
+	}
+}

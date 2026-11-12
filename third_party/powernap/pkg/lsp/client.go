@@ -578,6 +578,7 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 			"definition":         map[string]any{"linkSupport": true},
 			"rangeFormatting":    map[string]any{"dynamicRegistration": false},
 			"documentSymbol":     map[string]any{"hierarchicalDocumentSymbolSupport": true},
+			"documentHighlight":  map[string]any{"dynamicRegistration": false},
 			"publishDiagnostics": map[string]any{"versionSupport": true},
 		},
 		"workspace": map[string]any{

@@ -850,6 +850,35 @@ active requests, retained view sequences and delta bases; cancellation does not
 free a running slot until its provider call actually ends. These are consumer
 bounds, not a guarantee on the initial RPC frame or provider process memory.
 
+### Occurrences of the symbol at the caret
+
+When the caret rests (250 ms) in the focused editor, Crude asks the file's
+language server for `textDocument/documentHighlight` at the exact acknowledged
+canonical source and UTF-16 caret. The client advertises the capability without
+dynamic registration; only a static `documentHighlightProvider` is queried.
+Occurrences are part of Find references and follow that preference, so there is
+no separate switch.
+
+The core parses the original JSON with the navigation parser's closed-object
+rules (`lspnav.ParseHighlights`): null, an empty list and occurrences stay
+distinct, an unknown kind or member refuses the answer, and every range must fit
+the exact source. It fences the producer, wire version, preference and context
+like navigation. The shell waits for the answer's context publication before
+painting, and clears its marks when the source, provider, context, focus or
+preference changes. The answer is presentation only. It never selects, moves the
+caret, edits or saves.
+
+The editor converts ranges to visual columns once and paints them with
+`OccurrenceFill`: a quiet blend of the foreground into the background, a little
+stronger for a write. Find matches and selection paint over it. Marks show only
+while the caret is inside or at the end of one of them and the source is
+unchanged; any edit hides them at once. A single mark (the symbol alone) is not
+shown. Moving within a marked symbol sends no new request, and a caret resting
+where there is nothing to mark asks once. Unsupported providers, empty answers
+and failures paint nothing and say nothing. Workspace switch and shutdown cancel
+the pending question. One request per focused editor is in flight; multiple
+carets suspend occurrences.
+
 ### Read-only inlay hints
 
 Code Intelligence's **Inlay hints** feature defaults **Off**. When explicitly
@@ -1306,6 +1335,16 @@ and uses the normal validated insertion, never the display label. Multiple
 non-inline choices remain passive; Enter remains a newline until a row is chosen.
 The Enter-only preference still leaves Tab to the editor. Stale rows cannot accept.
 
+**Commit characters.** The client advertises `commitCharactersSupport`. Each row
+keeps the initial item's `commitCharacters` when present, even an empty list;
+otherwise it uses the provider's static `allCommitCharacters`. Each entry must be
+one printable character; a malformed list refuses the result. Resolve cannot
+change them. Typing a commit character accepts the chosen row, or the sole visible
+supported row when Tab could accept it, and then types the character after the
+insertion. The sole row is not committed when the typed word is itself a
+suggestion. In every other case the key is ordinary typing. If the acceptance
+fails, is refused or is cancelled, the character is still typed, once.
+
 The core retains the original array or CompletionList item, original index and
 opaque row ID, not a label-keyed reconstruction. Equal labels remain independent
 rows. Null, empty, unsupported static capability, unsupported insertions and
@@ -1343,12 +1382,29 @@ boundaries retire old callbacks. A dedicated feature generation prevents an
 off/on settings cycle from reviving old evidence without restarting the server.
 Automatic absence/failure stays quiet; explicit requests give bounded feedback.
 
-Enter/Tab or row activation first inspects the exact retained set ID/digest/item
-without resolve. The core validates all original primary/additional edits against
-the still-current canonical source. The shell then rechecks its original editor
-and applies only the initial insertion through the existing editor transaction.
-Semantic activation reports local admission while that ordinary canonical edit
-is pending; a successful documentation read is not a text/save receipt.
+Enter/Tab, a commit character or row activation first inspects the exact retained
+set ID/digest/item without resolve. The core validates all original
+primary/additional edits against the still-current canonical source. The shell
+then rechecks its original editor and applies only the initial insertion through
+the existing editor transaction. Semantic activation reports local admission while
+that ordinary canonical edit is pending; a successful documentation read is not a
+text/save receipt.
+
+**Acceptance is a guarded edit, not optimistic typing.** The preflight is not
+authority at the later commit: another shell can change the document after the
+core validated the row and before this shell's insertion arrives. From the
+acceptance key, the document projection holds later input (`HoldDocumentInput`)
+in the ordinary deferred-input queue, so keys keep their order. The insertion
+commits only at the canonical revision it described. It is never rebased: a
+refused receipt, or newer canonical text that arrives before capture, removes it
+from every view of the document, cancels its snippet and restores the caret from
+before the acceptance. The user sees "The file changed before the suggestion was
+inserted. Request suggestions again." Held keys then replay once, at that caret.
+A failed, cancelled or Escaped acceptance releases the hold the same way. Ordinary
+typing, paste and inline literal text stay optimistic and rebase as before. Like
+Undo, held input waits for one core round trip. Queued keys keep the active
+snippet field until they replay, so Tab reaches its next stop after the receipt.
+An invalid peer delta cannot retire the held insertion.
 An omitted insertion may use its label; an explicitly empty insertion never does.
 The shared `lspcompletion.PrimaryEdit` chooses the strict UTF-16 range or backward
 Unicode identifier prefix, so validation and application cannot derive different

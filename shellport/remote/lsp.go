@@ -143,6 +143,9 @@ func (l *lspReplica) InlayHintsState() (bool, uint64) {
 func (l *lspReplica) CompletionsState() (bool, uint64) {
 	return l.snapshot.ShowCompletions, l.snapshot.CompletionGeneration
 }
+func (l *lspReplica) ReferencesEnabled() bool {
+	return l.snapshot.Settings.Enabled && l.snapshot.Settings.References
+}
 func (l *lspReplica) FileDiagnostics(path string) (types.InsightDiagnostics, bool) {
 	batch, ok := l.snapshot.Diagnostics[filepath.Clean(path)]
 	return types.CloneInsightDiagnostics(batch), ok

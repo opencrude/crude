@@ -25,6 +25,9 @@ type LSPService interface {
 	ContextCursor() (generation string, context uint64)
 	InlayHintsState() (enabled bool, generation uint64)
 	CompletionsState() (enabled bool, generation uint64)
+	// ReferencesEnabled is a constant-size feature-gate read for passive
+	// occurrences; unlike Settings, it does not clone the language catalog.
+	ReferencesEnabled() bool
 	AssistanceCapabilities(path string) types.LSPAssistanceCapabilities
 	// FileProducer is the current connected producer for this path, or zero.
 	// It is a small snapshot read and does not copy trigger lists.

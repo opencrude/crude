@@ -429,7 +429,19 @@ func completionInvalidate(t *testing.T, app *App, port *completionTestPort, chan
 	ed := app.EditorState.Editor
 	switch change {
 	case "source":
-		ed.InsertRune('x')
+		if !ed.HoldsDocumentInput() {
+			ed.InsertRune('x')
+			break
+		}
+		// Typing waits behind an acceptance; another author's change still
+		// replaces the source that the suggestion described.
+		before := ed.DocumentSnapshot()
+		change := document.Change{DocumentID: before.ID, BaseRevision: before.Revision, Edits: []document.Edit{{Start: len(before.Text), End: len(before.Text), Text: "x"}}}
+		after := before
+		after.Revision, after.Text = before.Revision+1, append(before.Text, 'x')
+		if err := ed.ApplyDocumentDelta(change, after); err != nil {
+			t.Fatal(err)
+		}
 	case "cursor":
 		ed.SetCursorPosition(0, 0)
 	case "focus":

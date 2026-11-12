@@ -62,6 +62,7 @@ func (m *App) resetLSPRequestContext() {
 	m.closeNavigation()
 	m.resetInlayHints()
 	m.resetSemanticTokens()
+	m.resetOccurrences()
 	if m.lspRequestCancel != nil {
 		m.lspRequestCancel()
 	}

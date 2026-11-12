@@ -57,40 +57,37 @@ func LineVisualWidth[T string | []byte](line T, tabW int) int {
 	return col
 }
 
+// visualColumnWalker projects increasing byte offsets along one source line.
+// It uses the same tab and grapheme rules as ordinary editor coordinates.
+type visualColumnWalker[T string | []byte] struct {
+	line                     T
+	tabWidth, offset, column int
+}
+
+func (w *visualColumnWalker[T]) advance(byteOff int) int {
+	byteOff = max(0, min(byteOff, len(w.line)))
+	for w.offset < byteOff {
+		if w.line[w.offset] == '\t' {
+			w.column += TabStopAdvance(w.column, w.tabWidth)
+			w.offset++
+			continue
+		}
+		cluster, width := rendering.FirstGrapheme(w.line[w.offset:])
+		if len(cluster) == 0 || w.offset+len(cluster) > byteOff {
+			// An offset inside a cluster projects to its first cell.
+			break
+		}
+		w.column += width
+		w.offset += len(cluster)
+	}
+	return w.column
+}
+
 // ByteOffsetToVisualCol converts a byte offset within a single line (no
 // newlines) to a visual column, honouring tab stops and grapheme widths.
 func ByteOffsetToVisualCol[T string | []byte](line T, byteOff, tabW int) int {
-	if tabW < 1 {
-		tabW = DefaultTabWidth
-	}
-	if byteOff < 0 {
-		byteOff = 0
-	}
-	if byteOff > len(line) {
-		byteOff = len(line)
-	}
-	col := 0
-	i := 0
-	for i < byteOff {
-		if line[i] == '\t' {
-			col += TabStopAdvance(col, tabW)
-			i++
-			continue
-		}
-		cluster, w := rendering.FirstGrapheme(line[i:])
-		if len(cluster) == 0 {
-			break
-		}
-		next := i + len(cluster)
-		if next > byteOff {
-			// Offset lands inside a multi-byte cluster: report the
-			// column at the cluster start (cursor cannot sit mid-cluster).
-			break
-		}
-		col += w
-		i = next
-	}
-	return col
+	w := visualColumnWalker[T]{line: line, tabWidth: tabW}
+	return w.advance(byteOff)
 }
 
 // VisualColToByteOffset converts a visual column to a byte offset within

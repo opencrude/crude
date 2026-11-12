@@ -82,6 +82,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	sbX := sw + textW
 	e.remapDiagnosticPaint()
 	bracketFrom, bracketTo, hasBracket := e.matchingBracket()
+	showOccurrences := e.occurrenceAtCaret()
 	if e.usesRows() {
 		previous := -1
 		for y := 0; y < bodyH; y++ {
@@ -106,6 +107,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		inline := e.inlineLine(lineIdx)
 		diags := e.lineDiagnostics(lineIdx)
 		spaces := e.whitespaceInfo(lineIdx)
+		occurrences := e.lineOccurrences(lineIdx, showOccurrences)
 
 		ri := 0
 		visCol := 0
@@ -246,6 +248,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				// current match is rendered with a stronger
 				// background; other matches get a softer tint.
 				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, sourceCol)
+				occurrenceWrite, isOccurrence := occurrenceAt(occurrences, sourceCol)
 				if ri < len(clusters) && vCol < visCol+widths[ri] && vCol < lineVisW {
 					if vCol == visCol {
 						cluster := clusters[ri]
@@ -288,6 +291,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							}
 							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, hlBg, diagAttr, blankCell)
 						default:
+							bg := bgColor
+							if isOccurrence {
+								bg = e.tokens.OccurrenceFill(occurrenceWrite)
+							}
 							fg := e.cellColor(e.th.Colors.Fg)
 							if marker != "" {
 								fg = e.tokens.Color(ui.ColorMuted)
@@ -302,7 +309,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 								fg = e.tokens.Color(ui.ColorAccent)
 								diagAttr |= cell.AttrBold | cell.AttrUnderline
 							}
-							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, bgColor, diagAttr, blankCell)
+							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, bg, diagAttr, blankCell)
 						}
 					} else if visCol < startCol {
 						switch {

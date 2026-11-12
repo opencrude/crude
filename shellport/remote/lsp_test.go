@@ -128,3 +128,27 @@ func TestLSPAssistanceReplicaIsPerFileDetachedAndCleared(t *testing.T) {
 		t.Fatal("workspace replacement retained old capabilities")
 	}
 }
+
+// A passive editor observation cannot clone the language catalog on every
+// pointer event or frame. It follows the current replica's actual preferences.
+func TestLSPReferenceGateReadsWithoutCopyingSettings(t *testing.T) {
+	replica := newLSPReplica(nil)
+	snapshot := coreprotocol.LSPSnapshot{Generation: "owner", Settings: types.DefaultLSPSettings()}
+	snapshot.Settings.Enabled, snapshot.Settings.References = true, true
+	replica.install(snapshot)
+	var enabled bool
+	allocations := testing.AllocsPerRun(100, func() { enabled = replica.ReferencesEnabled() })
+	if !enabled || allocations != 0 {
+		t.Fatal("reference gate copied settings or lost its state", enabled, allocations)
+	}
+	snapshot.Settings.References = false
+	replica.install(snapshot)
+	if replica.ReferencesEnabled() {
+		t.Fatal("disabled references stayed enabled")
+	}
+	snapshot.Settings.Enabled, snapshot.Settings.References = false, true
+	replica.install(snapshot)
+	if replica.ReferencesEnabled() {
+		t.Fatal("disabled language intelligence allowed references")
+	}
+}

@@ -7,6 +7,53 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Completion source normalization (2026-11-12)
+
+`BenchmarkCompletionNormalization` measures the workspace's original completion
+response parser and source-coordinate normalization, not editor input or a
+presented frame. The previous implementation revalidated and rescanned the
+entire immutable source for every row and UTF-16 endpoint. A source index now
+validates once, indexes line starts and uses sparse UTF-16 checkpoints on long
+lines. The original strict column resolver still owns each final lookup.
+
+On Linux amd64, Go 1.27.4, i7-10750H, GOMAXPROCS=2, three sequential 300 ms
+runs measured the unchanged benchmark against the original and indexed code:
+
+| Source and rows | Before | After | After Go allocations |
+|---|---:|---:|---:|
+| 20,000 lines, empty answer | 189–191 µs | 188–190 µs | 704 B, 9 |
+| 40 lines, one row | 11.8–12.4 µs | 11.0–11.2 µs | 5,469–5,470 B, 67 |
+| 20,000 lines, 128 rows | 107.3–110.8 ms | 1.83–1.87 ms | 698,955–699,107 B, 6,699 |
+| 262 KiB line, 128 rows | 171.7–186.9 ms | 1.98–2.11 ms | 655,623–655,725 B, 6,710–6,711 |
+
+The extra index allocation is bounded by the source length and is released with
+normalization. Empty answers still validate the cursor but skip indexing. The new
+allocation ceilings use approximately 20% headroom; no existing ceiling was raised. Timing is not machine-gated. A separate source
+regression checks exact original UTF-16 ranges and surrogate refusal on a large
+Unicode document. These results do not establish provider or terminal latency.
+
+## Highlight source and projection (2026-11-12)
+
+`BenchmarkHighlightNormalizationLongLine` and `BenchmarkOccurrenceProjectionLongLine`
+measure a 64 KiB line with 128 UTF-16 ranges near its end. The first measures core
+normalization; the second measures installation in the editor, not provider or
+terminal presentation latency. The original code rescanned the whole line for
+each endpoint. Normalization now prepares the shared strict source index once;
+editor projection orders endpoints by line and walks its shared grapheme/tab
+geometry once per line. No wire schema or source authority changed.
+
+On Linux amd64, Go 1.27.4, i7-10750H, GOMAXPROCS=2, a single before sample and
+two five-iteration after samples taken while other tests were active measured:
+
+| Stage | Before | After | After Go allocations |
+|---|---:|---:|---:|
+| Core normalization | 25.57 ms | 1.45–1.47 ms | 348,006–348,009 B, 6,843 allocs |
+| Editor installation | 153.64 ms | 0.59–0.62 ms | 314,838 B, 28 allocs |
+
+These samples are a diagnostic comparison, not a latency guarantee or a
+presented-frame measurement. The allocation gate adds ceilings with roughly 20%
+headroom for these two workloads. No existing ceiling was raised.
+
 ## Inlay reader layout (2026-11-11)
 
 `BenchmarkInlayReaderStableLayout` measures a warm measure/layout pair for the
@@ -1102,6 +1149,19 @@ message generations warm; release commits final width using existing lazy
 viewport/overscan reflow. Warm agent switching still fits its unchanged
 15,000 B / 315 allocation gate: 14,075–14,128 B, 197–198 allocations,
 153.8–157.0 µs. Main-pane ceilings add bounded headroom; no existing gate is raised.
+
+The 2026-11-12 highlight checkpoint exposed a divider mutation regression:
+three 500 ms Linux/i7-10750H, Go 1.27.4, `GOMAXPROCS=2` runs measured
+43.3–45.4 µs, 34,152–34,153 B and 230 allocations against the unchanged
+11,750 B / 54 allocation ceiling. An allocation profile traced the added work
+to cloning the language catalog during every automatic highlight reconciliation.
+A constant-size preference read and an early check for the highlight port avoid
+that copy. Three repeat runs measured 14.8–15.2 µs, 1,720 B and 43 allocations.
+This benchmark exercises the real dense-pane pointer update with a local test
+workspace, not a connected provider or terminal presentation. A separate
+regression checks zero steady-state allocations with a connected highlight
+fixture, and connected/installed-provider tests check that highlights still work.
+No existing ceiling was raised.
 
 ## Recovery Disclosure Clock (2026-10-05)
 

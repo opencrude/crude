@@ -498,6 +498,12 @@ execution authority. The returned content hash is not a target wire version;
 standard destinations remain unversioned. The shell rechecks its actual opened
 snapshot before landing. Both commands share the joined cancellable exchange;
 the retired raw `.definition`/`.references` slice methods have no fallback.
+
+`lsp.highlights` accepts the same acknowledged canonical source and UTF-16 caret
+and returns the occurrences of the symbol there, qualified with source, provider,
+wire and context. Null, empty and unsupported stay distinct. Every range is
+checked against the exact source in the core. The answer is presentation
+evidence only.
 See [qualified location navigation](editor.md#qualified-location-navigation).
 
 `lsp.inlay_hints` accepts an acknowledged canonical source, private view ID,

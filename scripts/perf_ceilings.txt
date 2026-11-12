@@ -25,6 +25,9 @@ BenchmarkEditorPaint_80x24 5200 760
 BenchmarkEditorPaint_120x40 9600 1380
 BenchmarkEditorPaint_LargeFile_120x40 9600 1380
 BenchmarkEditorScrollRepaint_120x40 9600 1380
+# 64 KiB line, 128 highlight ranges: repeated UTF-16 projection and normalization.
+BenchmarkOccurrenceProjectionLongLine 380000 34
+BenchmarkHighlightNormalizationLongLine 420000 8220
 BenchmarkBufferDirtyCheckLargeFile 0 0
 BenchmarkBufferSavepointManualRoundTripLargeFile 0 0
 BenchmarkSyntaxLongPythonViewport 0 0
@@ -82,6 +85,11 @@ BenchmarkOpenIndexedHistory 460000 11000
 BenchmarkOpenIndexedHistory windows 600000 14000
 BenchmarkProjectInsightsCached10kDiagnostics 0 0
 BenchmarkUsageSummaryCached1000Requests 0 0
+# Original LSP completion normalization; 20% above measured Go allocations.
+BenchmarkCompletionNormalization/empty 850 11
+BenchmarkCompletionNormalization/short 6600 81
+BenchmarkCompletionNormalization/manylines 840000 8040
+BenchmarkCompletionNormalization/longline 790000 8055
 BenchmarkPublishContextReplaceUnrelatedArchiveHistory/unrelated_0 10000 190
 BenchmarkPublishContextReplaceUnrelatedArchiveHistory/unrelated_2000 10000 190
 BenchmarkPublishContextRecoveryImage/bytes_1024 7500 170

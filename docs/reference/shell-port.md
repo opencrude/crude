@@ -285,6 +285,7 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
 | `ProjectInsights` | 3 | reads | yes | LSP state topic replica |
 | `CompletionsState` | current | reads | yes: constant-size feature gate/generation | LSP state topic replica |
+| `ReferencesEnabled` | current | reads | yes: constant-size references gate without copying language settings | LSP state topic replica |
 | `AssistanceCapabilities` | current | reads | yes: detached capabilities and synchronized source/context for the exact file | LSP state topic replica |
 | `FileProducer` | current | reads | yes: exact open path and connected producer without copying trigger lists | LSP state topic replica |
 | `FileSynchronized` | current | reads | yes: exact source/context admission hint without copying trigger lists | LSP state topic replica |
@@ -326,6 +327,7 @@ joined cancellable command exchange and run off Update.
 |---|---|---|
 | `RequestLSPNavigation` | Exact acknowledged source, kind, UTF-16 position and references-declaration flag | `lsp.navigation` |
 | `InspectLSPNavigationTarget` | Explicit original-boundary/wire/kind and selected target; observe one bounded current source | `lsp.navigation_target` |
+| `RequestLSPHighlights` (`shellport.Highlights`) | Exact acknowledged source and UTF-16 caret; occurrences for presentation only | `lsp.highlights` |
 
 Only qualified DTOs cross the port. Null, empty, unsupported and failed outcomes
 are distinct. Target content is not fetched during listing. The shell verifies

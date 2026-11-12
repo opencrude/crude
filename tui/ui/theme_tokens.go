@@ -395,6 +395,17 @@ func (ts *TokenSet) MenuInk(st ControlState, fg cell.Color) (primary, muted cell
 // would obscure it, move the ink toward the theme's contrasting foreground
 // just enough to remain readable, retaining its color rather than flattening
 // every syntax token to the same foreground.
+// OccurrenceFill is the quiet background of the other occurrences of the
+// symbol at the caret. A write is slightly stronger than a read. Both stay
+// below find matches and selection, which remain the explicit marks.
+func (ts *TokenSet) OccurrenceFill(write bool) cell.Color {
+	alpha := float32(0.12)
+	if write {
+		alpha = 0.22
+	}
+	return ts.Color(ColorBg).Blend(ts.Color(ColorFg), alpha)
+}
+
 // FindMatchFill returns the background of one search match. The selected match
 // uses the accent; every other match uses the secondary accent at reduced
 // strength, so the two are different hues on every theme and a transcript full

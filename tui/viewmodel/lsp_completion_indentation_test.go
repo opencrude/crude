@@ -48,8 +48,9 @@ func TestConnectedAdjustedCompletionUsesFileIndentAndOneUndo(t *testing.T) {
 	}
 }
 
-// Do not let a late acceptance apply an adjusted insertion to a changed source,
-// and do not consume the user's later key when the old request is retired.
+// Do not let a late acceptance apply an adjusted insertion to a changed source.
+// A key typed after the acceptance is neither lost nor reordered: it follows
+// the insertion, as if acceptance were immediate.
 func TestAdjustedCompletionCancelledOrChangedSourceCannotApplyLate(t *testing.T) {
 	for _, change := range []string{"escape", "typing", "peer"} {
 		t.Run(change, func(t *testing.T) {
@@ -75,7 +76,11 @@ func TestAdjustedCompletionCancelledOrChangedSourceCannotApplyLate(t *testing.T)
 				renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: tea.KeyEsc})
 			case "typing":
 				renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: 'x', Text: "x"})
-				want = "package p\n\n  prix\n"
+				if ed.Value() != want || !ed.HoldsDocumentInput() {
+					t.Fatal("a key typed after the acceptance did not wait for the insertion", ed.Value())
+				}
+				want = "package p\n\n  if {\n    body\n  }x\n"
+				runAppCommand(t, app, pending)
 			case "peer":
 				eds[1].SetCursorPosition(0, 0)
 				renameConnectedKey(t, shells[1], tea.KeyPressMsg{Code: 'X', Text: "X"})

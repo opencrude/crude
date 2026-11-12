@@ -169,7 +169,7 @@ func TestLSPCompletionFramedExpandedPlan(t *testing.T) {
 		if msg["method"] == "initialize" {
 			caps := msg["params"].(map[string]any)["capabilities"].(map[string]any)
 			completion := caps["textDocument"].(map[string]any)["completion"].(map[string]any)
-			want := `{"completionItem":{"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail"]},"snippetSupport":true},"contextSupport":true,"dynamicRegistration":false,"insertTextMode":1}`
+			want := `{"completionItem":{"commitCharactersSupport":true,"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail"]},"snippetSupport":true},"contextSupport":true,"dynamicRegistration":false,"insertTextMode":1}`
 			actual, err := json.Marshal(completion)
 			if err != nil || string(actual) != want {
 				t.Fatalf("actual negotiated completion grants: %s, %v", actual, err)

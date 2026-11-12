@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strconv"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -35,7 +37,33 @@ type Item struct {
 	Label                string
 	FilterText, SortText string
 	Documentation        Documentation
-	Original             json.RawMessage
+	// CommitCharacters is the item's own list; HasCommitCharacters reports
+	// that it replaces the provider default, even when empty.
+	CommitCharacters    []string
+	HasCommitCharacters bool
+	Original            json.RawMessage
+}
+
+// MaxCommitCharacters bounds one commit-character list.
+const MaxCommitCharacters = 64
+
+// CommitCharacters validates a commit-character list: each entry is exactly one
+// printable character. Malformed evidence is refused, not filtered.
+func CommitCharacters(in []string) ([]string, error) {
+	if len(in) > MaxCommitCharacters {
+		return nil, invalid("too many commit characters")
+	}
+	out := make([]string, 0, len(in))
+	for _, value := range in {
+		r, size := utf8.DecodeRuneInString(value)
+		if r == utf8.RuneError || size != len(value) || !unicode.IsPrint(r) {
+			return nil, invalid("a commit character must be one printable character")
+		}
+		if !slices.Contains(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out, nil
 }
 
 type Result struct {
@@ -120,7 +148,18 @@ func readItem(raw []byte) (Item, error) {
 			return Item{}, invalid(name + " requires a string")
 		}
 	}
-	return Item{Label: label, FilterText: filter, SortText: order, Documentation: doc, Original: bytes.Clone(raw)}, nil
+	item := Item{Label: label, FilterText: filter, SortText: order, Documentation: doc, Original: bytes.Clone(raw)}
+	if raw, supplied := fields["commitCharacters"]; supplied {
+		var values []string
+		if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+			return Item{}, invalid("commitCharacters requires a string array")
+		}
+		if item.CommitCharacters, err = CommitCharacters(values); err != nil {
+			return Item{}, err
+		}
+		item.HasCommitCharacters = true
+	}
+	return item, nil
 }
 
 func readString(raw []byte, out *string) bool {

@@ -200,6 +200,9 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 		return tea.Batch(commands...)
 	}
 	for ed, state := range m.liveEditors {
+		if ed.ConsumeRefusedHeldEdit() && m.Feedback != nil {
+			m.Feedback.NotifyInfo("The file changed before the suggestion was inserted. Request suggestions again.")
+		}
 		if state.busy || !ed.IsOpen() {
 			continue
 		}
@@ -598,7 +601,11 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 	switch msg.kind {
 	case "edit":
 		err := ed.AcceptDocumentReceipt(msg.receipt)
-		if err != nil {
+		if errors.Is(err, editor.ErrHeldEditRefused) {
+			// The guarded insertion already left the view; fetch the change
+			// that reached the document first.
+			state.sync = state.pushedRevision < max(msg.receipt.Revision, ed.DocumentState().Revision)
+		} else if err != nil {
 			if !msg.receipt.Accepted && strings.Contains(msg.receipt.Error, document.ErrRevision.Error()) {
 				ed.ReconcileDocumentRevision()
 				state.sync = state.pushedRevision < max(msg.receipt.Revision, ed.DocumentState().Revision)

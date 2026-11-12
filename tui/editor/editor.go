@@ -82,12 +82,16 @@ type Editor struct {
 	goalCol int
 	goalSet bool
 
-	viewW           int
-	viewH           int
-	pendingReveal   bool
-	landing         *SearchMatch
-	link            *codeLink // Ctrl+hover underline (code_link.go)
-	landingRevision uint64
+	viewW         int
+	viewH         int
+	pendingReveal bool
+	landing       *SearchMatch
+	// occurrences mark the symbol at the caret; see occurrences.go.
+	occurrences        []occurrence
+	occurrenceRevision uint64
+	occurrenceTabWidth int
+	link               *codeLink // Ctrl+hover underline (code_link.go)
+	landingRevision    uint64
 	// scrollModel + sbCtrl are the shared scrollbar chrome (paint + mouse drag).
 	// Kept in sync with scrollY via syncScrollChrome.
 	scrollModel       *ui.ScrollModel
@@ -681,7 +685,7 @@ func (e *Editor) MatchesInsightSource(s types.InsightSource) bool {
 		s.DocumentID != "" && s.DocumentID == p.snapshot.ID && s.Path == e.filePath &&
 		s.Path == p.snapshot.Path && s.Revision == p.snapshot.Revision &&
 		len(p.pending) == 0 && p.inflight == nil && p.conflict == nil && !p.snapshot.Conflict &&
-		!p.undoPending && !p.historySync && len(p.historyQueue) == 0
+		!p.undoPending && !p.historySync && (len(p.historyQueue) == 0 || p.hold != nil && !p.hold.applied)
 }
 
 func (e *Editor) diagnosticsCurrent() bool {

@@ -237,8 +237,24 @@ func normalizeCompletionSet(text string, line, col int, response types.LSPComple
 	} else if len(parsed.Items) == 0 {
 		out.Answer = types.LSPCompletionEmpty
 	}
+	defaults, err := lspcompletion.CommitCharacters(response.CommitCharacters)
+	if err != nil {
+		return nil, types.LSPCompletionSet{}, 0, err
+	}
 	originals := make(map[string][]byte, len(parsed.Items))
-	cursor, err := lspedit.Offset(text, line, col)
+	if len(parsed.Items) == 0 {
+		// Negative answers still validate the original cursor, but have no
+		// row endpoints to justify allocating an index of the whole source.
+		if _, err := lspedit.Offset(text, line, col); err != nil {
+			return nil, types.LSPCompletionSet{}, 0, err
+		}
+		return originals, out, 0, nil
+	}
+	source, err := lspedit.NewSource(text)
+	if err != nil {
+		return nil, types.LSPCompletionSet{}, 0, err
+	}
+	cursor, err := source.Offset(line, col)
 	if err != nil {
 		return nil, types.LSPCompletionSet{}, 0, err
 	}
@@ -252,21 +268,25 @@ func normalizeCompletionSet(text string, line, col int, response types.LSPComple
 		if err != nil {
 			return nil, types.LSPCompletionSet{}, 0, err
 		}
-		primary, err := lspcompletion.PrimaryEdit(text, line, col, item)
+		primary, err := lspcompletion.PrimaryEditOnSource(source, line, col, item)
 		if err != nil {
 			return nil, types.LSPCompletionSet{}, 0, err
 		}
 		// The canonical request, not a later private caret, chooses any implicit
 		// prefix. Explicit and implicit completions now share one exact edit.
 		item.TextEdit = &primary
-		start, err := lspedit.Offset(text, primary.Line, primary.Col)
+		start, err := source.Offset(primary.Line, primary.Col)
 		if err != nil {
 			return nil, types.LSPCompletionSet{}, 0, err
 		}
 		id := fmt.Sprintf("item-%d", index)
+		commit := defaults
+		if original.HasCommitCharacters {
+			commit = original.CommitCharacters
+		}
 		row := types.LSPCompletionEntry{ID: id, Index: index, Insertion: item,
 			Prefix: text[start:cursor], FilterText: original.FilterText, SortText: original.SortText,
-			Documentation: completionDocumentation(original.Documentation)}
+			Documentation: completionDocumentation(original.Documentation), CommitCharacters: slices.Clone(commit)}
 		encoded, err := json.Marshal(row)
 		if err != nil {
 			return nil, types.LSPCompletionSet{}, 0, err
@@ -292,6 +312,7 @@ func cloneCompletionSet(in types.LSPCompletionSet) types.LSPCompletionSet {
 	in.Entries = slices.Clone(in.Entries)
 	for i := range in.Entries {
 		in.Entries[i].Insertion = types.CloneCompletionItem(in.Entries[i].Insertion)
+		in.Entries[i].CommitCharacters = slices.Clone(in.Entries[i].CommitCharacters)
 	}
 	return in
 }

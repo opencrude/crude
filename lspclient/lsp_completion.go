@@ -63,6 +63,7 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, path string, li
 	}
 	return types.LSPCompletionResponse{
 		WireVersion: version, JSON: bytes.Clone(raw), ResolveSupported: client.CompletionResolveSupported(),
+		CommitCharacters: client.CompletionCommitCharacters(),
 	}, nil
 }
 

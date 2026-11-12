@@ -402,6 +402,7 @@ type App struct {
 	inlayViewSequence     uint64
 	semanticViews         map[*editor.Editor]*semanticViewState
 	semanticViewSequence  uint64
+	occurrence            *occurrenceRequest
 	inlayInspector        *inlayInspectorState
 	editorSnippet         *editorSnippetState
 	editorGhost           *editorGhostView

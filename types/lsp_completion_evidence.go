@@ -22,6 +22,8 @@ type LSPCompletionResponse struct {
 	FeatureGeneration             uint64
 	JSON                          []byte
 	Unsupported, ResolveSupported bool
+	// CommitCharacters is the provider's allCommitCharacters default.
+	CommitCharacters []string
 }
 
 // LSPCompletionDocumentation preserves absence, empty evidence and the standard
@@ -43,6 +45,9 @@ type LSPCompletionEntry struct {
 	// Prefix comes from the canonical primary range up to the request cursor.
 	// Filtering/ranking is display-only and cannot alter retained insertion.
 	Prefix, FilterText, SortText string
+	// CommitCharacters accept this row before they are typed: the item's own
+	// list when present, otherwise the provider's default.
+	CommitCharacters []string
 }
 
 // LSPCompletionSet is one bounded, ephemeral, owner/view-sequenced invocation

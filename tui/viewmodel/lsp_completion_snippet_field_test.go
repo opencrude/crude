@@ -126,8 +126,36 @@ func TestTabPrefersAChosenRowThenTheNextField(t *testing.T) {
 			t.Fatal("accepting a chosen row inside the field ended the snippet")
 		}
 		completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
-		if ed.SnippetActive() || ed.CursorCol() != len("print(number)") {
-			t.Fatalf("Tab did not leave the argument list: active=%t col=%d", ed.SnippetActive(), ed.CursorCol())
+		if !ed.HoldsDocumentInput() || !ed.SnippetActive() || ed.CursorCol() != len("print(number") {
+			t.Fatalf("Tab did not wait with the argument field intact: held=%t active=%t col=%d", ed.HoldsDocumentInput(), ed.SnippetActive(), ed.CursorCol())
+		}
+		completionAcknowledge(t, app)
+		if ed.SnippetActive() || ed.CursorCol() != len("print(number)") || ed.Value() != "print(number)" {
+			t.Fatalf("the queued Tab did not leave the argument list: active=%t col=%d value=%q", ed.SnippetActive(), ed.CursorCol(), ed.Value())
 		}
 	})
+}
+
+// Multiple keys queued behind a chosen completion must replay inside the same
+// snippet field, in order, before Tab moves to the final stop.
+func TestTypingAfterHeldCompletionKeepsTheArgumentField(t *testing.T) {
+	entries := []types.LSPCompletionEntry{argumentEntry("name", "name", "a"), argumentEntry("number", "number", "b")}
+	app, ed := argumentFieldJourney(t, entries...)
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyDown})
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyDown})
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyEnter})
+	for _, r := range "xy" {
+		completionTestKey(t, app, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if ed.Value() != "print(number)" || !ed.HoldsDocumentInput() || !ed.SnippetActive() {
+		t.Fatal("queued typing changed or retired the argument field", ed.Value())
+	}
+	completionAcknowledge(t, app)
+	if ed.Value() != "print(numberxy)" || !ed.SnippetActive() {
+		t.Fatal("queued typing did not replay inside the argument field", ed.Value())
+	}
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
+	if ed.Value() != "print(numberxy)" || ed.SnippetActive() || ed.CursorCol() != len("print(numberxy)") {
+		t.Fatal("Tab did not finish the argument field after replay", ed.Value(), ed.CursorCol())
+	}
 }
