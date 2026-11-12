@@ -427,8 +427,9 @@ output and delivered no mouse event. That gesture was removed. Alt-click adds or
 removes a caret and Alt-drag forms the rectangle through the existing captured
 gesture. Ctrl-click navigation remains unchanged. Replacement Linux captures at
 160×40 and 80×24 verify all eleven phases, source selection paint, header count,
-Ctrl+D, Undo, rectangle editing, Escape, unchanged disk and joined cleanup. Representative frames at both sizes were inspected; no capture window remains. This is native input evidence,
-not installed language-server or Windows acceptance.
+Ctrl+D, Undo, rectangle editing, Escape, unchanged disk and joined cleanup.
+Representative frames at both sizes were inspected; no capture window remains.
+This is native input evidence, not installed language-server or Windows acceptance.
 
 The full ordinary repository inventory passes. Affected editor/UI/shell/client
 and connected history/snippet/completion race paths pass; final geometry regressions
@@ -464,7 +465,8 @@ action-picker filtering and a second Undo. The other two unformatted lines stay
 unchanged, disk stays unchanged, private drafts remain and provider shutdown joins.
 The initial capture failed because Alacritty's default Shift+End binding sent no
 key; recorded input proved that boundary. The replacement selects through native
-Shift+Right. Representative frames at both sizes were inspected and no capture window remains.
+Shift+Right. Representative frames at both sizes were inspected and no capture
+window remains.
 Build, lint, generated-wire checks and Windows/macOS component builds pass.
 The full ordinary inventory is accounted for by the initial passing groups and the
 remaining viewmodel/workspace groups after correcting an obsolete test that required
@@ -514,6 +516,41 @@ passes: wrapped typing and paint measured 6,021,472 B and 157 allocations agains
 the unchanged 6,950,000 B and 207 allocation ceilings. Final affected tests and
 race checks include the source-range correction.
 This is Linux native evidence, not native Windows acceptance or a GC-crash fix.
+
+## Multiline completion indentation (2026-11-11)
+
+A standard completion item requesting `adjustIndentation` was previously counted
+as unsupported, so the editor never offered it. The core now retains the original
+mode and validated numeric snippet syntax with the original expanded plan. After
+source-qualified acceptance, the editor applies its current indentation prefix,
+file tab policy and line ending before one sparse primary/import transaction.
+Literal `asIs` remains unchanged. The exact original snippet is checked before
+reparsing; overflow or mismatched evidence cannot partly mutate the document.
+A later regression found leading tabs inside a placeholder after a line break.
+The existing numeric parser now applies the same policy to its definition and
+choices before expanding all references. When one stop also occurs outside a
+continuation's indentation, its original value is kept at every occurrence so
+mirrors stay equal. Nested placeholders and choices have direct edit/Undo checks.
+
+The connected regression first failed because the only completion row was dropped.
+It now exercises Tab, a CRLF/tab-indented import, a selected wide field, mirror
+typing, two shells and Undo. Escape, subsequent typing and peer edits retire a
+held old acceptance. The native 160×40 and 80×24 captures pass six boundaries;
+representative frames show the sole row, the adjusted block, import and mirror.
+The response is a deterministic protocol fixture, not proof that an installed
+server produced this mode. A separate installed-gopls completion journey passes
+with the new capability negotiation. The initial capture attempt could not start:
+the temporary profile made the canonical Unix socket path too long. The passing
+captures use the prescribed short disposable profile; neither touches the user's
+running core. The first linear-stop prototype scanned a 60,000-byte prefix once
+for each of 255 stops (31.6–33.0 ms). A single source-order pass reduces that
+stage to 0.107–0.122 ms. The new allocation gate catches the old 528-allocation
+implementation; measurements and limits are in the performance reference.
+The final full ordinary suite, affected race paths, build, lint, design/docs,
+Windows/macOS component cross-builds and extended allocation gate pass. Dense
+20,000-line insertion/Undo and grid-paint comparisons against literal snippets
+are recorded separately; they do not measure terminal presentation latency.
+The Windows GC finding remains open and was not tested on native Windows here.
 
 ## Remaining acceptance
 

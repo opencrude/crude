@@ -32,10 +32,12 @@ func CompletionClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		"dynamicRegistration": false,
 		"contextSupport":      true,
+		"insertTextMode":      1, // Unspecified item mode remains literal as-is.
 		"completionItem": map[string]any{
-			"snippetSupport":       enableSnippets,
-			"insertReplaceSupport": true,
-			"documentationFormat":  []string{"plaintext", "markdown"},
+			"insertTextModeSupport": map[string]any{"valueSet": []int{1, 2}},
+			"snippetSupport":        enableSnippets,
+			"insertReplaceSupport":  true,
+			"documentationFormat":   []string{"plaintext", "markdown"},
 			"resolveSupport": map[string]any{
 				"properties": []string{"documentation", "detail"},
 			},

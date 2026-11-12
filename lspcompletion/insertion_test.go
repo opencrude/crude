@@ -127,7 +127,7 @@ func TestInsertionRefusesInvalidAndUnsupportedWithoutPartialOutput(t *testing.T)
 		{"command", `"command":{"title":"run","command":"provider.run"}`, lspcompletion.ErrUnsupported},
 		{"null command", `"command":null`, lspcompletion.ErrUnsupported},
 		{"format", `"insertTextFormat":3`, lspcompletion.ErrUnsupported},
-		{"mode", `"insertTextMode":2`, lspcompletion.ErrUnsupported},
+		{"mode", `"insertTextMode":3`, lspcompletion.ErrUnsupported},
 		{"null format", `"insertTextFormat":null`, lspcompletion.ErrInvalid},
 		{"float format", `"insertTextFormat":2.0`, lspcompletion.ErrInvalid},
 		{"string mode", `"insertTextMode":"1"`, lspcompletion.ErrInvalid},

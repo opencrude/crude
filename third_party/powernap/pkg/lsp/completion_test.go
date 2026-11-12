@@ -98,8 +98,8 @@ func TestCompletionCapabilityLeaf(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		leaf := CompletionClientCapabilities(enabled)
 		raw, err := json.Marshal(leaf)
-		want := `{"completionItem":{"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"resolveSupport":{"properties":["documentation","detail"]},"snippetSupport":` +
-			strconv.FormatBool(enabled) + `},"contextSupport":true,"dynamicRegistration":false}`
+		want := `{"completionItem":{"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail"]},"snippetSupport":` +
+			strconv.FormatBool(enabled) + `},"contextSupport":true,"dynamicRegistration":false,"insertTextMode":1}`
 		if err != nil || string(raw) != want {
 			t.Fatalf("capability grants changed:\n%s\nwant %s\n%v", raw, want, err)
 		}

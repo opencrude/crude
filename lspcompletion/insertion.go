@@ -72,9 +72,10 @@ func Insertion(item Item) (types.CompletionItem, error) {
 		if err != nil {
 			return types.CompletionItem{}, err
 		}
-		if mode != 1 {
+		if mode != 1 && mode != 2 {
 			return types.CompletionItem{}, unsupported("insertTextMode")
 		}
+		out.AdjustIndentation = mode == 2
 	}
 	if raw, exists := fields["insertText"]; exists {
 		if !readString(raw, &out.InsertText) {
@@ -118,6 +119,9 @@ func Insertion(item Item) (types.CompletionItem, error) {
 		}
 	}
 	if format == 2 {
+		if out.AdjustIndentation {
+			out.SnippetSource = out.InsertText
+		}
 		expanded, plan, err := snippet.Parse(out.InsertText)
 		if err != nil {
 			if errors.Is(err, snippet.ErrLimit) {

@@ -48,6 +48,19 @@ type parser struct {
 // its definition gets the same value and subtree. Expansion is acyclic, bounded
 // and detached. No unsupported item produces a partially usable plan.
 func Parse(source string) (string, *types.CompletionSnippet, error) {
+	return parse(source, nil)
+}
+
+// ParseWithLeadingWhitespace transforms a numeric stop's initial literal
+// whitespace (including each choice) before expansion. References always use
+// the same transformed definition, so linked occurrences and nested ranges stay
+// consistent. The callback must not insert non-whitespace; this is not a second
+// snippet grammar or a way to authorize other provider constructs.
+func ParseWithLeadingWhitespace(source string, transform func(int, string) (string, error)) (string, *types.CompletionSnippet, error) {
+	return parse(source, transform)
+}
+
+func parse(source string, transform func(int, string) (string, error)) (string, *types.CompletionSnippet, error) {
 	if len(source) > MaxSourceBytes {
 		return "", nil, ErrLimit
 	}
@@ -58,6 +71,48 @@ func Parse(source string) (string, *types.CompletionSnippet, error) {
 	tree, err := p.sequence(false, 0)
 	if err != nil {
 		return "", nil, err
+	}
+	if transform != nil {
+		for id, def := range p.defs {
+			replace := func(value string) (string, error) {
+				prefix := len(value) - len(strings.TrimLeft(value, " \t"))
+				if prefix == 0 {
+					return value, nil
+				}
+				replacement, err := transform(id, value[:prefix])
+				if err != nil {
+					return "", err
+				}
+				if strings.Trim(replacement, " \t") != "" {
+					return "", ErrInvalid
+				}
+				if replacement == value[:prefix] {
+					return value, nil
+				}
+				if len(replacement) > MaxSourceBytes-(len(value)-prefix) {
+					return "", ErrLimit
+				}
+				return replacement + value[prefix:], nil
+			}
+			if len(def.choices) > 0 {
+				choices := make([]string, len(def.choices))
+				for i, value := range def.choices {
+					choices[i], err = replace(value)
+					if err != nil {
+						return "", nil, err
+					}
+				}
+				def.choices = choices
+			} else if len(def.parts) > 0 && def.parts[0].stop < 0 {
+				parts := append([]node(nil), def.parts...)
+				parts[0].text, err = replace(parts[0].text)
+				if err != nil {
+					return "", nil, err
+				}
+				def.parts = parts
+			}
+			p.defs[id] = def
+		}
 	}
 	e := expansion{defs: p.defs, visiting: make(map[int]bool)}
 	if err := e.emit(tree, -1, 0); err != nil {

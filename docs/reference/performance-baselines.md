@@ -7,6 +7,30 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Multiline completion indentation (2026-11-11)
+
+`BenchmarkCompletionLeadingStopsDense` isolates source-coordinate discovery for
+255 numeric stops after 60,000 indentation bytes. The first implementation
+rescanned that prefix per stop: three 300 ms Linux amd64/Go 1.27.4 runs measured
+31.6–33.0 ms, 29,296 B and 528 allocations per operation. Source-preorder
+traversal now visits each byte once; the same workload measured 0.107–0.122 ms,
+27,354 B and 5 allocations. These are helper timings, not presented-frame latency.
+The new allocation ceiling of 33,000 B/6 objects has approximately 20% headroom;
+the initial per-stop allocation pattern fails it. No existing ceiling changed.
+The editor also tests a 100-line adjustment without per-line allocations, while
+retaining bounded output and active snippet mirrors.
+
+`BenchmarkAdjustedCompletionDense` compares literal and adjusted snippets in the
+real editor on 20,000 lines. Across three 500 ms repetitions, literal insertion plus
+Undo took 1.73–1.87 ms and 3,535,421 B/93 allocations; adjusted insertion plus Undo
+took 1.88–1.96 ms and about 3,543,859 B/166 allocations. Adding a 120×40 grid paint
+gave 5.20–5.55 ms and 20,291–20,305 allocations for literal insertion, versus
+5.36–5.44 ms and 20,367–20,378 allocations for adjusted insertion. Each iteration
+checks that Undo restores source. These are combined iteration measurements;
+Go's allocation counts can include asynchronous work. They are not presented-terminal
+latency or a standalone paint cost. The numeric helper and existing editor, source
+and paint allocation gates remain separate.
+
 ## Editor minimap and indentation guides (2026-11-11)
 
 `BenchmarkEditorOrientation` measures a new 120×40 grid paint after source workers

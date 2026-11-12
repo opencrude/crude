@@ -184,6 +184,9 @@ contract rather than special-casing familiar languages or constructs.
 - Retain one passive list, inline preview, selection/acceptance path, numeric
   snippet owner and canonical Undo transaction. A snippet returned by a server
   is an LSP result, not a new local-template feature.
+  Multiline `adjustIndentation` now preserves file indentation, numeric
+  placeholders, mirrors, imports and one Undo group; `asIs` remains literal.
+  See [completion indentation evidence](../issues/2026-11-11-editor-polish.md#multiline-completion-indentation-2026-11-11).
 - Preserve original server row identity and source/context validity for resolve
   and additional edits. Do not manufacture semantics or silently widen ranges.
 - For markup expansion, evaluate an established implementation such as Emmet
@@ -227,8 +230,8 @@ pass/fail criteria for a bundled library.
   The original Windows GC finding remains open. See the
   [continuation evidence](../issues/2026-11-11-editor-polish.md#lsp-continuation-2026-11-11).
 - Static trigger characters and incomplete-list request context are implemented.
-  Commit-character acceptance and indentation-adjusting insertion modes remain
-  unadvertised. Add them only with complete native input, transaction and Undo
+  Commit-character acceptance remains
+  unadvertised. Add it only with complete native input, transaction and Undo
   coverage. Do not guess or widen server edit ranges.
 - Keep ordinary editing usable while a server is unavailable. Preserve exact
   server-row identity for additional edits, resolve and imported symbols.

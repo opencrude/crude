@@ -111,7 +111,7 @@ Update a row only with evidence.
 | Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
 | Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostic facts, including unopened files. Focused freshness/gap tests and native installed-server captures verify clearing and explicit incomplete coverage. Declared scope is not a complete-project or per-feature proof; richer fact kinds remain open. |
 | Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
-| Editor features | Shared, revision-checked editor and agent answers | Banked slices: navigation, completion documentation, parameter information, inlay hints, code actions, reviewed rename, diagnostic reader, prediction prerequisites and [LSP assistance continuation](#lsp-assistance-continuation-2026-11-11). Broader editor parity and native Windows crash resolution remain open. |
+| Editor features | Shared, revision-checked editor and agent answers | Banked slices: navigation, completion documentation and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostic reader, prediction prerequisites and [LSP assistance continuation](#lsp-assistance-continuation-2026-11-11). Broader editor parity and native Windows crash resolution remain open. |
 
 Known exception: the compilation-database and CMake importers in
 `insight/project/` read build-file formats. The generic recipe layer must call
@@ -168,18 +168,26 @@ component cross-build and the extended allocation gate pass. Whole-line and
 whole-document copies found by the gate were corrected at their source owners;
 no existing ceiling was raised. See the orientation evidence in the editor issue.
 
-**Next checkpoint: multiline completion indentation.** Complete the negotiated
-LSP `insertTextMode` insertion contract through the existing completion, snippet,
-source and Undo owners. Preserve selected source, line endings, per-file policy,
-placeholder positions, imports and one author transaction. Keep original provider
-identity and source/context fencing; unsupported or invalid evidence must not
-partly edit the file. Test plain and numeric-snippet items, tabs/spaces, CRLF,
-Unicode, additional edits, stale/cancelled replies, linked shells and no-server
-editing through the real entry points. Verify native desktop and 80×24 journeys,
-affected race/build/docs and unchanged gates before claiming this checkpoint.
-Commit characters, semantic tokens and the other rows in the editor handoff remain
-open; do not advertise those features as part of this checkpoint. No local model,
-new Settings page or language-specific product branch is in scope.
+The completion client now negotiates `adjustIndentation`; source-qualified
+acceptance follows the file policy and line endings without losing numeric snippet
+fields, mirrors, import edits or one-step Undo. The full ordinary suite, affected
+race/build/docs/cross-build and extended allocation gate pass. Native 160×40 and
+80×24 journeys use deterministic provider replies; a separate installed-gopls
+journey passes but does not prove that gopls returned this mode. See
+[completion indentation evidence](../issues/2026-11-11-editor-polish.md#multiline-completion-indentation-2026-11-11).
+
+**Next checkpoint: semantic token presentation.** Negotiate advertised full,
+range and delta forms through the existing LSP/workspace owners. Validate legends,
+UTF-16 spans, ordering, delta edits and provider/source/context generations; a
+rejected delta requests full evidence without displaying stale tokens. Combine
+current semantic tokens with lexical fallback in the one editor paint projection,
+and reproject on theme changes without a new server request. Verify supported,
+unsupported, empty, malformed, delayed, peer-edited and cancelled cases, one
+installed provider, source/Undo stability, and native 160×40/80×24 views. Gate
+dense mutation and paint separately without relaxing existing limits. No local
+model, new Settings page, language-specific product branch or duplicate source
+owner is in scope. Linked editing, CodeLens, commit characters and the other
+rows of the editor handoff remain open.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named
