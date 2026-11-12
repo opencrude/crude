@@ -12,6 +12,10 @@ func TestNativeEditorActionsStayContextualAndHaveExactKeys(t *testing.T) {
 		id  ActionID
 	}{
 		{tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}, "edit.duplicateLine"},
+		{tea.KeyPressMsg{Code: 'n', Mod: tea.ModAlt}, "select.nextOccurrence"},
+		{tea.KeyPressMsg{Code: tea.KeyF3, Mod: tea.ModAlt}, "select.allOccurrences"},
+		{tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl | tea.ModAlt | tea.ModShift}, "select.caretAbove"},
+		{tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl | tea.ModAlt | tea.ModShift}, "select.caretBelow"},
 		{tea.KeyPressMsg{Code: 'q', Mod: tea.ModAlt}, "select.shrink"},
 		{tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModAlt | tea.ModShift}, "select.subwordPrevious"},
 		{tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModAlt | tea.ModShift}, "select.subwordNext"},

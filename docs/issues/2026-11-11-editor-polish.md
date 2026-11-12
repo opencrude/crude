@@ -404,6 +404,41 @@ allocation gate pass. Cached dense indentation resolves in 48.9–49.7 ns with
 zero allocations (three Go 1.27.4, GOMAXPROCS=2 runs).
 The Windows GC finding and the remaining editor acceptance rows stay open.
 
+## Multiple selections (2026-11-11)
+
+The editor now owns immutable private UTF-8 selection sets, per-caret motion goals
+and one simultaneous edit vector. Native occurrence commands, adjacent carets,
+Alt-click, captured Alt-drag rectangles, typed/pasted replacement, pairs, line
+commands, conversion, expansion/shrink, copy/cut and author Undo use those owners.
+Overlapping peer ranges coalesce; identical line edits run once. Lost or conflicting
+coordinates cannot partly edit a command. Numeric snippets and completion have an
+explicit single-caret policy rather than silently applying to one member.
+
+New regressions initially failed on primary-only edits, lost vertical goals,
+duplicate edits after a peer deletion, source-reset residue, hidden caret paint,
+and old tab-width goals. The fixes keep source, painting and geometry ownership
+separate. Recovery preserves pending source and all ranges and rejects split
+Unicode/CRLF boundaries. Exact-view control tokens include the whole private set.
+Two-shell tests retain peer text and private drafts; no source file is saved by
+these editing journeys.
+
+The first native rectangle journey failed because Shift+Alt selected terminal
+output and delivered no mouse event. That gesture was removed. Alt-click adds or
+removes a caret and Alt-drag forms the rectangle through the existing captured
+gesture. Ctrl-click navigation remains unchanged. Replacement Linux captures at
+160×40 and 80×24 verify all eleven phases, source selection paint, header count,
+Ctrl+D, Undo, rectangle editing, Escape, unchanged disk and joined cleanup. Both
+sizes were inspected; no capture window remains. This is native input evidence,
+not installed language-server or Windows acceptance.
+
+The full ordinary repository inventory passes. Affected editor/UI/shell/client
+and connected history/snippet/completion race paths pass; final geometry regressions
+also pass under race. Build, zero-issue lint, design/docs and Windows/macOS component
+cross-builds pass. Initial lint findings were corrected, not suppressed. The
+existing allocation gate passes unchanged; new dense-edit measurements and budgets
+are recorded in the performance reference. The extended allocation gate also
+passes, including all twelve new multiple-caret workload/stage budgets.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers

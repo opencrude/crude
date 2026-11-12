@@ -271,6 +271,50 @@ than one object per displayed row.
   [CodeMirror mouse selection](https://github.com/codemirror/view/blob/main/src/input.ts),
   rather than separate one-off behavior for each kind of drag.
 
+## Multiple selections and carets
+
+Alt+N selects the current word, then the next literal occurrence. Alt+F3 selects
+all occurrences. Ctrl+Alt+Shift+Up/Down adds a caret on the adjacent source line.
+These actions also appear in Editor actions, the editor context menu and exact-view
+semantic controls. Alt-click adds or removes a caret. Alt-drag replaces the set
+with a rectangle over visible rows. Shift is not part of this gesture: common
+terminals use it to select terminal output instead of reporting mouse input.
+Ctrl-click and Ctrl+Alt-click keep their definition/implementation behavior.
+
+The header shows the caret count only when more than one exists. Escape first
+keeps the primary caret/selection; a later Escape clears that selection before
+closing the file. A normal click or explicit source navigation ends the extra
+carets. Captured rectangle drags reuse the ordinary Host, scroll repeat, final
+release and cancellation path. Empty rectangles retain insertion carets. Wrapped
+rows, tab stops, inlays and complete grapheme boundaries use the same projection.
+
+Each view holds immutable UTF-8 selection ranges with independent motion goals
+and wrap affinity. Overlapping ranges and duplicate carets merge deterministically;
+adjacent nonempty ranges remain separate. Source deltas transform every range.
+Whole-source replacement discards stale carets. Linked views and peer shells do
+not inherit a later selection choice. History retains the exact private set;
+unresolved recovery stores and validates its byte offsets, not display columns.
+
+Typing, pair wrapping, deletion, Enter, Tab, paste and native text/line commands
+produce one original-coordinate edit vector and one Undo group. Line operations
+visit each touched line once even when it holds several carets. Identical plans
+share one edit while retaining their separate caret positions. Conflicting plans
+are refused before any bytes change. Copy joins selected source pieces in source
+order with the document terminator. Paste repeats the complete literal block at
+every caret; line counts never implicitly distribute clipboard text.
+
+Adding multiple carets retires a snippet interaction without undoing its accepted
+source. Automatic suggestions stop while multiple carets exist; explicit completion
+asks for one caret. Late replies and direct acceptance cannot edit only one member
+of the set. The limit is 256 carets; Select All reports overflow without partially
+changing selection. Rectangle endpoints stop at the same bound. Use Replace All
+for larger literal changes. Ordinary editing does not require a language server.
+
+Standalone grouped Undo/Redo and received canonical deltas apply one source vector,
+not one buffer rebuild per caret. Exact vectors update only affected horizontal
+width entries when line counts stay fixed. Paint caches selection geometry by
+source revision, tab width and immutable selection identity.
+
 ## Edit transactions and history
 
 - Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo (Super equivalents when delivered

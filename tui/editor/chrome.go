@@ -3,11 +3,15 @@ package editor
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"bytes"
+	"crude/document"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"sort"
+	"strings"
 )
 
 // syncScrollChrome updates the shared ScrollModel and ScrollbarControl layout
@@ -312,4 +316,34 @@ func (e *Editor) bodyHeight() int {
 		h = 1
 	}
 	return h
+}
+
+func (e *Editor) applySourceOffsets(edits []document.Edit) error {
+	if err := e.buf.checkOffsets(edits); err != nil {
+		return err
+	}
+	owner := e.Primary()
+	revision := e.Revision()
+	complete := owner.hWidthAllDirty || owner.hWidthRevision != revision || len(owner.hLineWidths) != e.LineCount()
+	if !complete {
+		for _, edit := range edits {
+			if bytes.Contains(e.buf.cachedBytes[edit.Start:edit.End], []byte{'\n'}) || strings.Contains(edit.Text, "\n") {
+				complete = true
+				break
+			}
+			first := sort.Search(len(e.buf.lineOffsets), func(i int) bool { return e.buf.lineOffsets[i] > edit.Start }) - 1
+			if owner.hWidthDirty == nil {
+				owner.hWidthDirty = make(map[int]bool)
+			}
+			owner.hWidthDirty[first] = true
+		}
+	}
+	if err := e.buf.applyOffsets(edits); err != nil {
+		return err
+	}
+	if e.Revision() != revision {
+		owner.hWidthRevision = e.Revision()
+		owner.hWidthAllDirty = complete
+	}
+	return nil
 }

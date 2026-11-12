@@ -24,6 +24,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	if !e.open {
 		return nil
 	}
+	e.normalizeCarets()
 	defer e.reconcileSnippetSelection()
 
 	switch msg := msg.(type) {
@@ -55,6 +56,10 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			}()
 		}
 		if e.readOnly {
+			if msg.Code == tea.KeyEsc && e.HasMultipleCarets() {
+				e.clearSecondary()
+				return nil
+			}
 			if ui.IsCopyChord(msg) {
 				return rendering.CopyToClipboardCmd(e.SelectedText())
 			}
@@ -102,6 +107,9 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 				}
 			}()
 		}
+		if cmd, handled := e.multipleKey(msg); handled {
+			return cmd
+		}
 		return e.handleKey(msg)
 	case tea.PasteMsg:
 		e.stopPointerSelection()
@@ -114,6 +122,9 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.typingGroup = 0
 		e.cursorBlink.MarkActivity()
 		text := e.pastedText(msg.Content)
+		if e.HasMultipleCarets() {
+			return selectionNotice(e.multipleReplace(text))
+		}
 		e.replacingSelection(func() { e.insertText(text) })
 	case tea.MouseWheelMsg:
 		e.cursorBlink.MarkActivity()
@@ -205,7 +216,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			// An editable document keeps the dragged selection for typing,
 			// indenting, cutting or Ctrl+C. Only a read-only document is a
 			// reading surface that copies on release like the chat transcript.
-			if !e.HasSelection() {
+			if !e.HasSelection() && !e.HasMultipleCarets() {
 				e.ClearSelection()
 			} else if e.readOnly {
 				text := e.SelectedText()
@@ -301,6 +312,18 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	if !ok {
 		return
 	}
+	if mouse.Mod == tea.ModAlt {
+		e.CancelSnippet()
+		e.DismissGhostText()
+		e.toggleCaretAt(pos)
+		// Shift bypasses mouse reporting in common terminals. One delivered
+		// Alt gesture adds/removes a caret on click and forms a rectangle on drag.
+		e.drag = pointerSelection{kind: pointerRectangle, start: pos, end: pos, x: mouse.X, y: mouse.Y, pressX: mouse.X, pressY: mouse.Y}
+		e.dragEpoch++
+		e.clickCount = 0
+		return
+	}
+	e.clearSecondary()
 	now := time.Now()
 	if now.Sub(e.lastClickAt) <= multiClickWindow && pos.Line == e.lastClickPos.Line &&
 		max(pos.Col-e.lastClickPos.Col, e.lastClickPos.Col-pos.Col) <= 1 {

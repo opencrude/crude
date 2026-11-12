@@ -16,7 +16,7 @@
 #   move:<col>,<row>          move pointer only (hover test)
 #   down:<col>,<row>          hold left button (stationary drag acceptance)
 #   up:<col>,<row>            release left button at the final endpoint
-#   drag:<c1>,<r1>,<c2>,<r2>  press, move, shot mid-drag, release, shot
+#   drag:<c1>,<r1>,<c2>,<r2>[,alt]  press, move, shot mid-drag, release, shot
 #   dragburst:<c1>,<r1>,<c2>,<r2>,<steps> flood motion without sleeps
 #   wheel:<col>,<row>,<n>     n wheel-down clicks (negative = up) at cell
 #   hwheel:<col>,<row>,<n>    n wheel-right clicks (negative = left) at cell
@@ -83,8 +83,10 @@ export DISPLAY="${DISPLAY:-:0}"
 WIN_ID=""
 CAPTURE_PID=""
 POINTER_DOWN=0
+POINTER_MOD=""
 VIDEO_PID=""
 cleanup() {
+  [ -n "$POINTER_MOD" ] && xdotool keyup "$POINTER_MOD" 2>/dev/null
   [ "$POINTER_DOWN" = "1" ] && xdotool mouseup 1 2>/dev/null
   if [ -n "$VIDEO_PID" ]; then
     kill "$VIDEO_PID" 2>/dev/null || true
@@ -361,12 +363,21 @@ for step in "$@"; do
       for _ in $(seq 1 "${n:-1}"); do xdotool click --clearmodifiers "$btn"; sleep 0.03; done
       sleep "$STEP_WAIT"; shot "hwheel-${c}_${r}_${btn}" ;;
     drag:*)
-      IFS=',' read -r c1 r1 c2 r2 <<<"${step#drag:}"
+      IFS=',' read -r c1 r1 c2 r2 mod <<<"${step#drag:}"
+      case "${mod:-}" in ''|alt) ;; *) echo "unsupported drag modifier: $mod" >&2; exit 1;; esac
+      focus_keys
+      xdotool keyup alt+shift+ctrl
+      POINTER_MOD="${mod:-}"
+      [ -z "$POINTER_MOD" ] || xdotool keydown "$POINTER_MOD"
       xdotool mousemove --sync "$(px "$c1")" "$(py "$r1")" mousedown 1
+      POINTER_DOWN=1
       sleep 0.25
       xdotool mousemove --sync "$(px "$c2")" "$(py "$r2")"
       sleep 0.25; shot "dragheld-${c1}_${r1}-${c2}_${r2}"
       xdotool mouseup 1
+      POINTER_DOWN=0
+      [ -z "$POINTER_MOD" ] || xdotool keyup "$POINTER_MOD"
+      POINTER_MOD=""
       sleep "$STEP_WAIT"; shot "drag-${c1}_${r1}-${c2}_${r2}" ;;
     dragburst:*)
       IFS=',' read -r c1 r1 c2 r2 steps <<<"${step#dragburst:}"

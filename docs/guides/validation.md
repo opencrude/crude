@@ -773,3 +773,24 @@ recovery and deletion, cancellation before/after admission and stale results.
 Source tests cover distinct indent/tab widths, partial-tab Backspace/outdent,
 CRLF, selection preservation, linked panes and one-step Undo. The official parser's
 nested globs, section order, root and unset behavior are exercised independently.
+
+## Native multiple selections
+
+`TestEditorMultipleVisualAcceptance` uses `CRUDE_VISUAL_MULTIPLE=1`,
+`CRUDE_MULTIPLE_RESULT` and `CRUDE_CAPTURE_EVIDENCE` pointing to one new file.
+F3 prepares a disposable CRLF document with wide/combining characters. Use
+Ctrl+Home, three Alt+N keys, type `X`, Undo, Ctrl+D, Undo, Escape, Ctrl+Home,
+then Alt-drag the published `MULTIPLE_RECT` cells. Type `Z`, Undo and Escape.
+F4 observes each boundary; wait for `MULTIPLE_READY phase=N` before continuing.
+F9 quits. Require eleven verified phases, joined cleanup, unchanged disk source
+and inspected screenshots at 160×40 and 80×24. The capture script's optional
+`drag:c1,r1,c2,r2,alt` modifier is released even if capture fails. Do not substitute
+Shift+Alt dragging: Alacritty treats it as terminal text selection.
+
+Connected tests cover action search, exact-view tokens, author Undo, peer text
+without private selection leakage and Escape without closing the file. Source
+regressions cover overlapping peer ranges, whole-source replacement, immutable
+recovery, per-caret vertical goals, wrapping, rectangle paint, snippet retirement,
+limit failures and each line command visiting source once. The dense workload
+benchmark measures key-to-grid-paint and grouped Undo; it does not measure physical
+terminal display latency.

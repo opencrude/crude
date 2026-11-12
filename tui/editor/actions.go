@@ -3,7 +3,6 @@ package editor
 import (
 	"crypto/sha256"
 	"fmt"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -29,6 +28,52 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 	}
 	if msg.ID != "select.expand" && msg.ID != "select.shrink" {
 		e.expansion = nil
+	}
+	if handled, err := e.selectionAction(msg.ID); handled {
+		if err != nil {
+			return selectionNotice(err)
+		}
+		e.CancelSnippet()
+		e.DismissGhostText()
+		e.stopPointerSelection()
+		e.ensureCursorVisible()
+		e.cursorBlink.MarkActivity()
+		return selectionNotice(err)
+	}
+	if caretPlannedAction(msg.ID) {
+		e.CancelSnippet()
+		e.DismissGhostText()
+		e.stopPointerSelection()
+		e.typingGroup = 0
+		e.cursorBlink.MarkActivity()
+		return selectionNotice(e.applyNativeCaretAction(msg.ID))
+	}
+	if linePlannedAction(msg.ID) {
+		e.CancelSnippet()
+		e.DismissGhostText()
+		e.stopPointerSelection()
+		e.typingGroup = 0
+		e.cursorBlink.MarkActivity()
+		return selectionNotice(e.applyNativeLineAction(msg.ID))
+	}
+	if e.HasMultipleCarets() && msg.ID == "select.expand" {
+		return e.expandMultiple()
+	}
+	if msg.ID == "select.shrink" && e.expansion != nil && e.expansion.expected.Secondary != nil {
+		e.shrinkSelection()
+		return nil
+	}
+	if e.HasMultipleCarets() {
+		if strings.HasPrefix(string(msg.ID), "move.") || strings.HasPrefix(string(msg.ID), "select.") {
+			return e.multipleMotion(func() { e.handleAction(msg) })
+		}
+		if msg.ID == "edit.indent" || msg.ID == "edit.outdent" {
+			delta := e.indentStyle().size
+			if msg.ID == "edit.outdent" {
+				delta = -delta
+			}
+			return selectionNotice(e.multipleIndent(delta))
+		}
 	}
 	e.stopPointerSelection()
 	e.DismissGhostText()
@@ -114,133 +159,23 @@ func (e *Editor) actionMotion(extend bool, move func()) {
 }
 
 func (e *Editor) startLine(above bool) {
-	line := e.cursor.Line
-	raw := e.LineText(line)
-	indent := raw[:len(raw)-len(strings.TrimLeft(raw, " \t"))]
-	e.ClearSelection()
-	if !above {
-		e.cursor = Position{Line: line, Col: e.lineVisualWidth(line)}
-		e.insertNewline()
-		return
+	id := ui.ActionID("edit.lineBelow")
+	if above {
+		id = "edit.lineAbove"
 	}
-	e.insertRecorded(Position{Line: line}, indent+e.lineEnding(), e.cursor)
-	e.cursor = Position{Line: line, Col: LineVisualWidth(indent, e.TabWidth())}
-	e.finishEdit()
+	_ = e.applyNativeCaretAction(id)
 }
 
-// Joining is deliberately lexical: combine lines with one space, not a guessed
-// language-specific rewrite of strings, comments, operators or punctuation.
-func (e *Editor) joinLines() {
-	first, last := e.selectedLineRange()
-	selected := e.HasSelection()
-	if first == last {
-		last = min(last+1, e.LineCount()-1)
-	}
-	if first == last {
-		return
-	}
-	firstText := strings.TrimRight(e.LineText(first), " \t")
-	seam := LineVisualWidth(firstText, e.TabWidth())
-	var joined strings.Builder
-	joined.WriteString(firstText)
-	for line := first + 1; line <= last; line++ {
-		next := strings.Trim(e.LineText(line), " \t")
-		if joined.Len() > 0 && next != "" {
-			joined.WriteByte(' ')
-		}
-		joined.WriteString(next)
-	}
-	text := joined.String()
-	start, end := Position{Line: first}, Position{Line: last, Col: e.lineVisualWidth(last)}
-	e.spliceRecorded(e.buf.positionToOffset(start), e.buf.positionToOffset(end), text, e.cursor)
-	e.ClearSelection()
-	e.cursor = Position{Line: first, Col: seam}
-	if selected {
-		e.selAnchor = start
-		e.selEnd = Position{Line: first, Col: LineVisualWidth(text, e.TabWidth())}
-		e.selecting = true
-		e.cursor = e.selEnd
-	}
-	e.finishEdit()
-}
-
-func (e *Editor) changeCase(action ui.ActionID) {
-	var start, end Position
-	if e.HasSelection() {
-		sl, sc, el, ec := e.SelectionRange()
-		start, end = Position{Line: sl, Col: sc}, Position{Line: el, Col: ec}
-	} else {
-		start, end = e.pointerUnitRange(pointerWord, e.cursor)
-	}
-	text := e.buf.GetText(start, end)
-	if text == "" {
-		return
-	}
-	changed := strings.ToUpper(text)
-	if action == "edit.lowerCase" || action == "edit.toggleCase" && changed == text {
-		changed = strings.ToLower(text)
-	}
-	if text == changed {
-		return
-	}
-	off := e.buf.positionToOffset(start)
-	e.spliceRecorded(off, e.buf.positionToOffset(end), changed, e.cursor)
-	e.selectOffsets(off, off+len(changed))
-	e.finishEdit()
-}
-
+func (e *Editor) joinLines()                { _ = e.applyNativeLineAction("edit.joinLines") }
+func (e *Editor) changeCase(id ui.ActionID) { _ = e.applyNativeCaretAction(id) }
 func (e *Editor) orderLines(reverse bool) {
-	first, last := e.selectedLineRange()
-	if !e.HasSelection() {
-		first, last = 0, e.LineCount()-1
-		if last > 0 && e.LineText(last) == "" {
-			last--
-		}
-	}
-	if first >= last {
-		return
-	}
-	lines := make([]string, 0, last-first+1)
-	for i := first; i <= last; i++ {
-		lines = append(lines, e.LineText(i))
-	}
+	id := ui.ActionID("edit.sortLines")
 	if reverse {
-		slices.Reverse(lines)
-	} else {
-		slices.Sort(lines)
+		id = "edit.reverseLines"
 	}
-	start, end := Position{Line: first}, Position{Line: last, Col: e.lineVisualWidth(last)}
-	replacement := strings.Join(lines, e.lineEnding())
-	if replacement == e.buf.GetText(start, end) {
-		return
-	}
-	off := e.buf.positionToOffset(start)
-	e.spliceRecorded(off, e.buf.positionToOffset(end), replacement, e.cursor)
-	e.selectOffsets(off, off+len(replacement))
-	e.finishEdit()
+	_ = e.applyNativeLineAction(id)
 }
-
-func (e *Editor) transposeCharacters() {
-	if e.HasSelection() {
-		return
-	}
-	right := e.cursor
-	if right.Col == e.lineVisualWidth(right.Line) {
-		right = e.buf.previousPosition(right)
-	}
-	if right.Line != e.cursor.Line || right.Col == 0 {
-		return
-	}
-	left, end := e.buf.previousPosition(right), e.buf.nextPosition(right)
-	if left.Line != right.Line || end.Line != right.Line {
-		return
-	}
-	text := e.buf.GetText(right, end) + e.buf.GetText(left, right)
-	off := e.buf.positionToOffset(left)
-	e.spliceRecorded(off, e.buf.positionToOffset(end), text, e.cursor)
-	e.cursor = e.buf.positionAtOffset(off + len(text))
-	e.finishEdit()
-}
+func (e *Editor) transposeCharacters() { _ = e.applyNativeCaretAction("edit.transpose") }
 
 func (e *Editor) selectOffsets(start, end int) {
 	e.selAnchor, e.selEnd = e.buf.positionAtOffset(start), e.buf.positionAtOffset(end)
@@ -357,7 +292,7 @@ type selectionExpansion struct {
 
 func (e *Editor) selectionExpansionCurrent() bool {
 	s := e.expansion
-	return s != nil && s.buffer == e.buf && s.revision == e.Revision() && s.expected.Cursor == e.buf.positionToOffset(e.cursor) && s.expected.Anchor == e.buf.positionToOffset(e.selAnchor) && s.expected.End == e.buf.positionToOffset(e.selEnd) && s.expected.Selecting == e.selecting
+	return s != nil && s.buffer == e.buf && s.revision == e.Revision() && s.expected.Cursor == e.buf.positionToOffset(e.cursor) && s.expected.Anchor == e.buf.positionToOffset(e.selAnchor) && s.expected.End == e.buf.positionToOffset(e.selEnd) && s.expected.Selecting == e.selecting && s.expected.Secondary == e.secondary
 }
 func (e *Editor) expandSelection() {
 	if !e.selectionExpansionCurrent() {
@@ -444,6 +379,6 @@ func (e *Editor) ActionToken() string {
 	start, end, valid := e.SourceByteRange()
 	state := e.DocumentState()
 	value := fmt.Sprintf("%p:%p:%d:%s:%d:%d:%d:%t:%d:%d:%t:%t:%t:%d:%d:%t:%t:%t", e, e.buf, e.Revision(), state.DocumentID, e.cursor.Line, e.cursor.Col, start, valid, end, queued, e.selecting, e.readOnly, e.open, state.Revision, state.PendingEdits, state.InFlight, state.UndoPending, state.HistoryQueued)
-	value += fmt.Sprintf(":%d:%d", e.FoldGeneration(), e.IndentationGeneration())
+	value += fmt.Sprintf(":%d:%d:%v", e.FoldGeneration(), e.IndentationGeneration(), e.secondary)
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(value)))
 }

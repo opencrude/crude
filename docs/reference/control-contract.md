@@ -107,14 +107,14 @@ server launch or tool access.
 `editor.actions` reads the focused document's native action list and view token,
 without exporting source text. `editor.action` requires that token plus the normal
 shell revision/open-epoch and exact document ID. The token binds view identity,
-source revision, cursor/selection, read-only state and outstanding history.
+source revision, every private selection, read-only state and outstanding history.
 It cannot retarget another pane or replay after a source change. The typed native
 operation is the same as keyboard/menu input; mutating actions report **admitted**,
 not a canonical commit or Save. The document receipt/topic still has to settle.
 Read-only views reject mutations but allow navigation and selection. Deferred
 commands retain their exact action identity in private recovery.
-The inspection also returns effective indentation, sparse file choices and their
-source. `editor.indentation` requires the same exact view token and replaces its
+The inspection also returns ordered source-byte `selections`, effective indentation,
+sparse file choices and their source. `editor.indentation` requires the same exact view token and replaces its
 sparse file choices; an empty object restores project inheritance. It is a private
 policy change, not a document edit or save. The token fences policy/fold changes
 as well as source/selection. Leading-whitespace conversion uses `editor.action`

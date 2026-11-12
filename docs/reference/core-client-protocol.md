@@ -740,7 +740,11 @@ rejects a replaced/newer one rather than repainting an old context as current.
 not the ordinary connected editor text authority.
 
 Private unresolved editor recovery lives beside composer drafts in `clientstate`.
-Its current payload is version 2. Cursor and selection endpoints are UTF-8 byte
+Its current payload is version 2. Multiple selections retain bounded UTF-8
+anchor/cursor pairs in that private payload. Validation walks complete grapheme
+and CRLF boundaries once; no canonical document snapshot stores another shell's
+selection. Deferred keys/paste/actions still wait for their exact original history
+receipt before replay. Cursor and selection endpoints are UTF-8 byte
 offsets in the retained optimistic source, independent of the restored tab width.
 Source, command identity, author, pending transaction groups and unknown receipts
 remain unchanged. There is no automatic reader/converter for version 1; back up

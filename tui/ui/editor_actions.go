@@ -52,6 +52,11 @@ var nativeEditorActions = []EditorAction{
 	// Shifted arrow sequences remain distinct in legacy terminals; shifted
 	// Alt-letter text can be ambiguous. Shift+Alt+F still formats the file.
 	editorAction("select.subwordNext", "Select next name part", false, "alt+shift+right"),
+	editorAction("select.nextOccurrence", "Select next occurrence", false, "alt+n"),
+	editorAction("select.allOccurrences", "Select all occurrences", false, "alt+f3"),
+	editorAction("select.caretAbove", "Add caret above", false, "ctrl+alt+shift+up"),
+	editorAction("select.caretBelow", "Add caret below", false, "ctrl+alt+shift+down"),
+	editorAction("select.singleCaret", "Keep one caret", false),
 	editorAction("view.indentation", "Indentation…", false),
 	editorAction("view.indentationDetect", "Detect indentation from text", false),
 	editorAction("view.indentationInherit", "Use project indentation", false),

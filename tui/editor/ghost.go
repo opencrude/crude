@@ -48,7 +48,7 @@ func (e *Editor) SetGhostText(revision uint64, anchor int, text string) error {
 // edit of that field, and the next Tab moves to the next field.
 func (e *Editor) SetGhostTextFor(owner string, revision uint64, anchor int, text string) error {
 	if !e.open || e.readOnly || e.buf == nil || e.Revision() != revision ||
-		e.HasSelection() || e.IsMouseDragging() || !types.ValidEditorPredictionInsertion(text) {
+		e.HasMultipleCarets() || e.HasSelection() || e.IsMouseDragging() || !types.ValidEditorPredictionInsertion(text) {
 		return errors.New("prediction does not identify a usable insertion caret")
 	}
 	if p := e.documentProjection; p != nil && (p.conflict != nil || p.snapshot.Conflict ||
@@ -109,7 +109,7 @@ func (e *Editor) DismissGhostText() bool {
 		g = transaction.offer
 	}
 	e.ghost, e.ghostEdit = nil, nil
-	if g != nil && g.buffer != nil && (!e.SnippetActive() || g.buffer != e.buf) {
+	if g != nil && g.buffer != nil && (!e.SnippetActive() || g.buffer != e.buf) && e.secondary == nil {
 		delete(g.buffer.interactionViews, e)
 	}
 	return true

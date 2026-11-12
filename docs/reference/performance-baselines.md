@@ -7,6 +7,34 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Multiple-caret editing (2026-11-11)
+
+The first 20,000-line implementation rebuilt source once per caret during Undo
+and remeasured every line width. One typing/grid-paint/Undo iteration cost 7.73 ms
+for one caret, 25.82 ms for 32 and 134.63 ms for 256. The 256-caret run allocated
+312 MB and 597,344 objects. Profiling then located most remaining CPU in Unicode
+line-width measurement after the edit-vector correction.
+
+Standalone history and received canonical changes now apply one simultaneous
+vector. The shared source-offset owner marks affected width rows instead of forcing
+a full scan. A behavioral budget checks that two changed lines cause no more than
+two width measurements, including Undo. Background source preparation stays enabled.
+
+Linux amd64, Go 1.27.4, i7-10750H, GOMAXPROCS=2, three quiet 300 ms repetitions:
+
+| Carets | Mutation | Grid paint | Undo | Combined iteration |
+|---|---|---|---|---|
+| 1 | 0.666–0.682 ms | 0.243–0.252 ms | 0.673–0.704 ms | 1.61–1.70 ms, 3.39–3.48 MB, 295–323 allocs |
+| 32 | 0.779–0.820 ms | 0.318–0.324 ms | 0.835–0.847 ms | 1.84–1.90 ms, 3.79–3.86 MB, 1,221–1,242 allocs |
+| 256 | 1.20–1.29 ms | 0.449–0.472 ms | 1.59–1.63 ms | 3.80–3.84 ms, 7.29–7.36 MB, 10,050–11,208 allocs |
+
+The stage benchmark excludes the other stages from its timer; the combined
+benchmark includes all three. Grid figures include a fresh 120×40 test surface,
+not terminal transport or physical presentation. Background preparation contributes
+to process allocation counts, so stage maxima are not additive. Twelve new ceilings
+use approximately 20% headroom above the observed maxima. No existing ceiling is
+raised. The initial per-caret rebuild fails these budgets by a wide margin.
+
 ## Wrapped and folded source rows (2026-11-11)
 
 The first synchronous 20,000-line cold projection measured 45–48 ms and

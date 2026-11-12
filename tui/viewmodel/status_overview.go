@@ -276,6 +276,9 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 	if path := m.EditorState.ActiveView; path != "" && m.EditorState.Editor != nil {
 		ed := m.EditorState.Editor
 		state := fmt.Sprintf("%d:%d", ed.CursorLine()+1, ed.CursorCol()+1)
+		if count := ed.CaretCount(); count > 1 {
+			state += fmt.Sprintf(" · %d carets", count)
+		}
 		if ed.Modified() {
 			state = "● " + state
 		}

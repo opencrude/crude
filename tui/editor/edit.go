@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/document"
 	"crude/tui/ui"
 )
 
@@ -48,31 +49,8 @@ func (e *Editor) insertText(s string) {
 // one extra indent level when the text before the cursor ends with an
 // opening brace/bracket/paren. Recorded as a single undo step.
 func (e *Editor) insertNewline() {
-	e.beginUndoGroup()
-	defer e.endUndoGroup()
-	line := e.LineText(e.cursor.Line)
-	byteOff := VisualColToByteOffset(line, e.cursor.Col, e.TabWidth())
-	before := line[:byteOff]
-	indent := leadingWhitespace(before)
-	baseIndent := indent
-	trimmed := strings.TrimRight(before, " \t")
-	if r, ok := lastRune(trimmed); ok && (r == '(' || r == '[' || r == '{') {
-		indent += e.levelUnit(indent)
-		if closer := autoClosePairs[r]; strings.TrimSpace(line[byteOff:]) == string(closer) {
-			// Whitespace between the caret and the existing closer belongs to
-			// this split. Do not carry it onto the closing line after baseIndent.
-			padding := len(leadingWhitespace(line[byteOff:]))
-			if padding > 0 {
-				e.deleteRecorded(e.cursor, Position{Line: e.cursor.Line, Col: ByteOffsetToVisualCol(line, byteOff+padding, e.TabWidth())}, e.cursor)
-			}
-			e.insertText(e.lineEnding() + indent + e.lineEnding() + baseIndent)
-			e.cursor.Line--
-			e.cursor.Col = LineVisualWidth(indent, e.TabWidth())
-			e.ensureCursorVisible()
-			return
-		}
-	}
-	e.insertText(e.lineEnding() + indent)
+	off := e.buf.positionToOffset(e.cursor)
+	e.applySingleCaretEdit(e.newlineCaretEdit(off, off))
 }
 
 // pastedText gives every line break of pasted text the document's terminator.
@@ -109,38 +87,7 @@ func (e *Editor) insertTab() {
 }
 
 func (e *Editor) deleteBackward() {
-	e.beginUndoGroup()
-	defer e.endUndoGroup()
-	end := e.buf.snapPosition(e.cursor)
-	start := e.buf.previousPosition(end)
-	// Within leading whitespace, Backspace removes one indentation stop. It
-	// never extends into words, even when the indent contains tabs.
-	if end.Col > 0 {
-		raw := e.LineText(end.Line)
-		off := VisualColToByteOffset(raw, end.Col, e.TabWidth())
-		if strings.Trim(raw[:off], " \t") == "" {
-			stop := e.indentStyle().width()
-			target := ((end.Col - 1) / stop) * stop
-			prefix := leadingWhitespace(raw)
-			if strings.Contains(prefix, "\t") {
-				// Rebuild the whole leading run while keeping a real source
-				// boundary at the new caret, including before later tabs.
-				style := e.indentStyle()
-				width := LineVisualWidth(prefix, e.TabWidth()) - (end.Col - target)
-				replacement := style.padding(0, target) + style.padding(target, width)
-				begin := e.buf.positionToOffset(Position{Line: end.Line})
-				e.spliceRecorded(begin, begin+len(prefix), replacement, e.cursor)
-				e.cursor = Position{Line: end.Line, Col: target}
-				e.finishSimpleEdit()
-				return
-			}
-			start = e.buf.snapPosition(Position{Line: end.Line, Col: ((end.Col - 1) / stop) * stop})
-		}
-	}
-	if e.deleteRecorded(start, end, e.cursor) != "" {
-		e.cursor = start
-		e.finishSimpleEdit()
-	}
+	e.applySingleCaretEdit(e.backwardCaretEdit(e.buf.snapPosition(e.cursor), false))
 }
 
 func (e *Editor) deleteForward() {
@@ -247,10 +194,12 @@ func (e *Editor) endUndoGroup() {
 }
 
 func (e *Editor) captureViewState() editorViewState {
-	return editorViewState{Cursor: e.buf.positionToOffset(e.cursor), Anchor: e.buf.positionToOffset(e.selAnchor), End: e.buf.positionToOffset(e.selEnd), Selecting: e.selecting, ScrollX: e.scrollX, ScrollY: e.scrollY, WrapOffset: e.wrapOffset, WrapBefore: e.wrapBefore}
+	return editorViewState{Secondary: e.secondary, Cursor: e.buf.positionToOffset(e.cursor), Anchor: e.buf.positionToOffset(e.selAnchor), End: e.buf.positionToOffset(e.selEnd), Selecting: e.selecting, ScrollX: e.scrollX, ScrollY: e.scrollY, WrapOffset: e.wrapOffset, WrapBefore: e.wrapBefore}
 }
 
 func (e *Editor) restoreViewState(s editorViewState) {
+	e.retainSecondary(s.Secondary)
+	e.multiDirty = false
 	e.cursor = e.buf.positionAtOffset(s.Cursor)
 	e.selAnchor, e.selEnd = e.buf.positionAtOffset(s.Anchor), e.buf.positionAtOffset(s.End)
 	e.stopPointerSelection()
@@ -271,30 +220,34 @@ func (e *Editor) undo() {
 	if e.buf.changeIndex <= 0 {
 		return
 	}
-	group := e.buf.changes[e.buf.changeIndex-1].Group
-	for e.buf.changeIndex > 0 {
-		c := e.buf.changes[e.buf.changeIndex-1]
-		if c.Group != group {
-			break
+	last := e.buf.changeIndex
+	first := last - 1
+	group := e.buf.changes[first].Group
+	for group != 0 && first > 0 && e.buf.changes[first-1].Group == group {
+		first--
+	}
+	e.buf.ensureCache()
+	size := len(e.buf.cachedBytes)
+	var sequential []document.Edit
+	for i := last - 1; i >= first; i-- {
+		c := e.buf.changes[i]
+		edit := document.Edit{Start: c.Offset, End: c.Offset}
+		if c.Type == ActInsert {
+			edit.End += len(c.Text)
+		} else {
+			edit.Text = string(c.Text)
 		}
-		e.buf.changeIndex--
-
-		switch c.Type {
-		case ActInsert:
-			_, _ = e.buf.deleteOffsets(c.Offset, c.Offset+len(c.Text))
-		case ActDelete:
-			_, _ = e.buf.insertAtOffset(c.Offset, c.Text)
-		}
-		if c.viewID == 0 || c.viewID == e.historyID {
-			e.restoreViewState(c.Before)
-		}
-		if group == 0 {
-			break
-		}
+		sequential = append(sequential, edit)
+	}
+	if err := e.applySourceOffsets(composeDocumentEdits(size, sequential)); err != nil {
+		return
+	}
+	e.buf.changeIndex = first
+	if c := e.buf.changes[first]; c.viewID == 0 || c.viewID == e.historyID {
+		e.restoreViewState(c.Before)
 	}
 	e.invalidateEditorCaches()
 	e.ensureCursorVisible()
-	e.markDocumentWidthAll()
 	if e.buffer != nil {
 		e.buffer.NoteEdit()
 	}
@@ -318,31 +271,35 @@ func (e *Editor) redo() {
 	if e.buf.changeIndex >= len(e.buf.changes) {
 		return
 	}
-	group := e.buf.changes[e.buf.changeIndex].Group
-	for e.buf.changeIndex < len(e.buf.changes) {
-		c := e.buf.changes[e.buf.changeIndex]
-		if c.Group != group {
-			break
+	first := e.buf.changeIndex
+	last := first + 1
+	group := e.buf.changes[first].Group
+	for group != 0 && last < len(e.buf.changes) && e.buf.changes[last].Group == group {
+		last++
+	}
+	e.buf.ensureCache()
+	size := len(e.buf.cachedBytes)
+	var sequential []document.Edit
+	for i := first; i < last; i++ {
+		c := e.buf.changes[i]
+		edit := document.Edit{Start: c.Offset, End: c.Offset}
+		if c.Type == ActDelete {
+			edit.End += len(c.Text)
+		} else {
+			edit.Text = string(c.Text)
 		}
-		e.buf.changeIndex++
-
-		switch c.Type {
-		case ActInsert:
-			_, _ = e.buf.insertAtOffset(c.Offset, c.Text)
-		case ActDelete:
-			_, _ = e.buf.deleteOffsets(c.Offset, c.Offset+len(c.Text))
-		}
-		if c.viewID == 0 || c.viewID == e.historyID {
-			e.restoreViewState(c.After)
-		}
-		if group == 0 {
-			break
-		}
+		sequential = append(sequential, edit)
+	}
+	if err := e.applySourceOffsets(composeDocumentEdits(size, sequential)); err != nil {
+		return
+	}
+	e.buf.changeIndex = last
+	if c := e.buf.changes[last-1]; c.viewID == 0 || c.viewID == e.historyID {
+		e.restoreViewState(c.After)
 	}
 	e.clampCursorToLine()
 	e.invalidateEditorCaches()
 	e.ensureCursorVisible()
-	e.markDocumentWidthAll()
 	if e.buffer != nil {
 		e.buffer.NoteEdit()
 	}

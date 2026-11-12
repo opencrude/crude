@@ -253,6 +253,10 @@ func (pt *PieceTable) remapLinked(views []*Editor, edits []document.Edit) {
 		for i, off := range v.linkAnchors {
 			anchors[i] = pt.positionAtOffset(remapLinkedOffset(off, edits))
 		}
+		if v.primaryHasSelection() {
+			rangeAfter := remapSourceSelection(SourceSelection{v.linkAnchors[1], v.linkAnchors[2]}, edits)
+			anchors[1], anchors[2] = pt.positionAtOffset(rangeAfter.Anchor), pt.positionAtOffset(rangeAfter.Cursor)
+		}
 		v.cursor, v.selAnchor, v.selEnd = anchors[0], anchors[1], anchors[2]
 		v.scrollY = anchors[3].Line
 		if v.IsMouseDragging() {

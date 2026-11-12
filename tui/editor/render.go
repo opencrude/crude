@@ -341,6 +341,21 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		}
 	}
 	if ctx.Focused && !e.readOnly && e.cursorBlink.Visible(ctx.Frame) {
+		e.prepareMultiplePaint()
+		for _, r := range e.multiPaint.ranges {
+			if _, hidden := e.hiddenFold(r.cursor.Line); hidden {
+				continue
+			}
+			y, col := e.visualPosition(r.cursor, r.before)
+			y -= e.scrollRow()
+			if !e.wrapsRows() {
+				col -= e.scrollX
+			}
+			x := sw + col
+			if x >= sw && x < sbX && y >= 0 && y < bodyH {
+				ui.PaintBlockCursor(buf, x, y, e.tokens.Color(ui.ColorCursor), bgColor)
+			}
+		}
 		cursorY, cursorCol := e.viewPosition(e.cursor)
 		cursorX := sw + cursorCol
 		if cursorX >= sw && cursorX < sbX && cursorY >= 0 && cursorY < bodyH {

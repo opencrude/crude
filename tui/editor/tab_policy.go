@@ -44,6 +44,7 @@ func (e *Editor) setTabWidth(width int) {
 		clear(v.chromaLineScratch)
 		v.markDocumentWidthAll()
 		v.restoreViewState(saved.state)
+		v.resetSecondaryGoals()
 		v.ClearHover()
 		v.link = nil
 		if saved.hasLanding {

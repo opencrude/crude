@@ -40,6 +40,7 @@ type Change struct {
 }
 
 type editorViewState struct {
+	Secondary           *caretSet
 	Cursor, Anchor, End int // UTF-8 offsets in the corresponding source snapshot
 	Selecting           bool
 	ScrollX, ScrollY    int
@@ -61,18 +62,22 @@ type Editor struct {
 	buffer             *Buffer
 	documentProjection *DocumentProjection
 
-	sourceCaret   sourceCaretCache
-	cursor        Position
-	scrollX       int
-	scrollY       int
-	folds         foldState
-	wordWrap      bool
-	wrapOffset    int
-	wrapBefore    bool
-	rows          editorRows
-	rowJob        *rowJob
-	rowGeneration uint64
-	rowsStopped   bool
+	secondary                    *caretSet
+	multiPaint                   multiPaintCache
+	multiDispatch, multiApplying bool
+	multiDirty                   bool
+	sourceCaret                  sourceCaretCache
+	cursor                       Position
+	scrollX                      int
+	scrollY                      int
+	folds                        foldState
+	wordWrap                     bool
+	wrapOffset                   int
+	wrapBefore                   bool
+	rows                         editorRows
+	rowJob                       *rowJob
+	rowGeneration                uint64
+	rowsStopped                  bool
 
 	goalCol int
 	goalSet bool
@@ -388,6 +393,7 @@ func (e *Editor) ApplyFormatted(text string) {
 	last := e.LineCount() - 1
 	e.beginUndoGroup()
 	defer e.endUndoGroup()
+	e.clearSecondary()
 	e.deleteRecorded(Position{}, Position{Line: last, Col: e.lineVisualWidth(last)}, cursor)
 	e.insertRecorded(Position{}, text, cursor)
 	e.cursor = cursor
@@ -829,6 +835,7 @@ func (e *Editor) Diagnostics() []LSPDiagnostic {
 // backwards single-line range is normalized. Setting a selection is
 // purely visual: it does not move the cursor.
 func (e *Editor) SetSelection(startLine, startCol, endLine, endCol int) {
+	e.clearSecondary()
 	e.expansion = nil
 	e.DismissGhostText()
 	e.stopPointerSelection()
@@ -923,6 +930,12 @@ func (e *Editor) FirstError() *LSPDiagnostic {
 func (e *Editor) DeleteSelection() bool {
 	if e.readOnly || !e.HasSelection() {
 		return false
+	}
+	if e.HasMultipleCarets() {
+		if e.DeferDocumentEvent(tea.KeyPressMsg{Code: tea.KeyDelete}) {
+			return false
+		}
+		return e.multipleReplace("") == nil
 	}
 	if e.DeferDocumentEdit(func() { e.DeleteSelection() }) {
 		return false

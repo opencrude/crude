@@ -24,7 +24,7 @@ func (e *Editor) SnippetActive() bool { return e.snippet != nil }
 // CancelSnippet discards only private interaction. Accepted bytes and the
 // canonical edit/history log are never undone or consumed.
 func (e *Editor) CancelSnippet() {
-	if e.snippet != nil && e.buf != nil && e.ghost == nil && e.ghostEdit == nil {
+	if e.snippet != nil && e.buf != nil && e.ghost == nil && e.ghostEdit == nil && e.secondary == nil {
 		delete(e.buf.interactionViews, e)
 	}
 	e.snippet, e.snippetDirty = nil, false

@@ -125,6 +125,13 @@ func (m *App) requestCompletion(automatic bool, trigger types.LSPCompletionConte
 	if !automatic {
 		m.closeEditorGhost()
 	}
+	if ed != nil && ed.HasMultipleCarets() {
+		m.closeCompletionPopup()
+		if !automatic {
+			m.Feedback.NotifyInfo("Press Esc to use one caret for suggestions.")
+		}
+		return nil
+	}
 	port, connected := m.ws.(shellport.Completions)
 	if ed == nil || !ed.IsOpen() || !connected || m.ws.LSPMgr() == nil || automatic && !m.ws.LSPMgr().AssistanceCapabilities(ed.FilePath()).Completion {
 		if !automatic {
@@ -183,6 +190,9 @@ func (m *App) requestCompletion(automatic bool, trigger types.LSPCompletionConte
 }
 
 func (m *App) completionCurrent(s *completionState) bool {
+	if s != nil && s.editor != nil && s.editor.HasMultipleCarets() {
+		return false
+	}
 	if s != nil && s.stale {
 		// Kept on screen only while the typing intent that will replace it lives.
 		intent := m.completionIntent

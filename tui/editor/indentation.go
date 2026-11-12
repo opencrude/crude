@@ -24,9 +24,6 @@ func (s indentStyle) unit() string {
 	return strings.Repeat(" ", s.size)
 }
 
-// width is the visual width of one level at a line start.
-func (s indentStyle) width() int { return s.size }
-
 // indentStyle reads the document's own indentation, as editors that detect
 // indentation do: Tab, Shift+Tab, Enter and Backspace must continue the file's
 // style, not impose four spaces on a tab-indented or two-space file. Lines
@@ -205,48 +202,27 @@ func (e *Editor) convertIndentation(tabs bool) {
 // Inserting spaces before an existing tab does not necessarily move source ink;
 // deriving the complete new run prevents cursor and indentation from disagreeing.
 func (e *Editor) rewriteIndentation(first, last, delta int, style indentStyle) {
-	var edits []document.Edit
-	shifts := make(map[int][2]int)
-	for line := first; line <= last; line++ {
-		raw := e.LineText(line)
-		if raw == "" {
-			continue
-		}
-		prefix := leadingWhitespace(raw)
-		old := LineVisualWidth(prefix, e.TabWidth())
-		width := max(0, old+delta)
-		replacement := style.padding(0, width)
-		if replacement != prefix {
-			start := e.buf.positionToOffset(Position{Line: line})
-			edits = append(edits, document.Edit{Start: start, End: start + len(prefix), Text: replacement})
-			shifts[line] = [2]int{old, width - old}
-		}
+	_ = e.applyIndentation(first, last, delta, style, nil)
+}
+func (e *Editor) applyIndentation(first, last, delta int, style indentStyle, only map[int]bool) error {
+	spans := e.selectionSpans()
+	positions := make(map[int]Position, len(spans)*2)
+	for _, s := range spans {
+		positions[s.Anchor] = e.buf.positionAtOffset(s.Anchor)
+		positions[s.Cursor] = e.buf.positionAtOffset(s.Cursor)
 	}
-	if len(edits) == 0 {
-		return
-	}
-	positions := [3]Position{e.cursor, e.selAnchor, e.selEnd}
-	offsets := [3]int{}
-	for i, p := range positions {
-		offsets[i] = e.buf.positionToOffset(p)
-	}
-	e.beginUndoGroup()
-	defer e.endUndoGroup()
-	if err := e.spliceRecordedBatch(edits, e.cursor); err != nil {
-		return
-	}
-	for i, p := range positions {
-		if shift, changed := shifts[p.Line]; changed && p.Col > 0 {
-			if p.Col >= shift[0] {
-				p = e.buf.positionAtOffset(remapLinkedOffset(offsets[i], edits))
-			} else {
+	edits, shifts := e.indentationEdits(first, last, delta, style, only)
+	return e.applyMappedCaretEdits(edits, spans, func(s selectionSpan) SourceSelection {
+		adjust := func(off int) int {
+			p := positions[off]
+			if shift, ok := shifts[p.Line]; ok && p.Col > 0 && p.Col < shift[0] {
 				p.Col = max(0, p.Col+shift[1])
+				return e.buf.positionToOffset(e.buf.snapPosition(p))
 			}
+			return remapLinkedOffset(off, edits)
 		}
-		positions[i] = e.buf.snapPosition(p)
-	}
-	e.cursor, e.selAnchor, e.selEnd = positions[0], positions[1], positions[2]
-	e.finishEdit()
+		return SourceSelection{adjust(s.Anchor), adjust(s.Cursor)}
+	})
 }
 func (e *Editor) useDetectedIndentation() {
 	e.buf.indentationRevision = 0
@@ -264,4 +240,29 @@ func (e *Editor) RestoreIndentationChoices(c indentation.Choices) {
 	if e.buf.indentChoiceGeneration == 0 {
 		_ = e.SetIndentationChoices(c)
 	}
+}
+
+func (e *Editor) indentationEdits(first, last, delta int, style indentStyle, only map[int]bool) ([]document.Edit, map[int][2]int) {
+	var edits []document.Edit
+	shifts := make(map[int][2]int)
+	for line := first; line <= last; line++ {
+		if only != nil && !only[line] {
+			continue
+		}
+		raw := e.LineText(line)
+		if raw == "" {
+			continue
+		}
+		prefix := leadingWhitespace(raw)
+		old := LineVisualWidth(prefix, e.TabWidth())
+		width := max(0, old+delta)
+		replacement := style.padding(0, width)
+		if replacement != prefix {
+			start := e.buf.positionToOffset(Position{Line: line})
+			edits = append(edits, document.Edit{Start: start, End: start + len(prefix), Text: replacement})
+			shifts[line] = [2]int{old, width - old}
+		}
+	}
+
+	return edits, shifts
 }

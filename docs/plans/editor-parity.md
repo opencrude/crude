@@ -56,8 +56,9 @@ Extend these owners rather than building replacements.
 
 The initial audit found no integrated folding or wrap projection; these now
 have one shared row owner. EditorConfig indentation and explicit file choices
-now use the source-table policy. Remaining gaps include multi-cursor editing,
-indent guides, semantic token projection, linked editing and CodeLens.
+now use the source-table policy. Multiple selections now use native edit vectors
+and private history, with native and repository acceptance. Remaining gaps
+include indent guides, semantic token projection, linked editing and CodeLens.
 Some LSP method constants exist in the vendored transport; a constant is not a
 working workspace/shell workflow. AI literal ghost projection and budget libraries
 exist, but a shipped automatic inference service does not follow from them.
@@ -248,12 +249,15 @@ screen. Assert the actual displayed signature, not only that intent was queued.
 - Extend the implemented deterministic expand/shrink selection stack with
   negotiated semantic selection ranges. Current native structure and lexical
   bracket ranges already participate; no stale result may supply a source range.
-- Add Select next occurrence, Select all occurrences, add caret above/below and
-  rectangular selection. Use source-byte ranges and one simultaneous edit vector
-  in the canonical transaction. Merge overlapping ranges deterministically.
-- Multi-cursor paste distributes equal-count lines only when the policy is explicit;
-  otherwise every caret receives the literal block. Completion, snippets and
-  conflicts must have a defined multi-caret policy. Do not partly apply a command.
+- Multiple selections are implemented through one source vector and private
+  history. Select next/all occurrences, adjacent carets and Alt-click/drag share
+  native actions, capture and row geometry. Copy joins source pieces; paste repeats
+  the complete literal block. Per-caret goals, overlap merging, source-qualified
+  recovery and one-step shared Undo have behavioral coverage. Completion is
+  deliberately single-caret; creating multiple carets retires snippet interaction.
+  Native captures at 160×40/80×24, the full ordinary inventory, affected race paths
+  and the extended allocation gate pass. See the multiple-selection checkpoint
+  evidence; the remaining semantic requirements below are still open.
 - General block-comment toggle must eventually handle existing multi-line comments
   and delimiter-containing content using syntax context. The repair is linewise,
   and deliberately refuses unsafe partial delimiters.
