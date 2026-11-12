@@ -812,6 +812,44 @@ at most 50 rows with an explicit omitted count, and never read destination files
 This manual navigation slice does not implement navigation history, hierarchy,
 dynamic capability registration or complete semantic/project coverage.
 
+### Semantic token colors
+
+Connected editable views request source-qualified semantic tokens from their
+existing language server. Crude negotiates full, range and full/delta requests and
+uses only a form the server advertises. A full result ID belongs to the provider
+and the exact private view; it may be used for the next source revision only if
+the provider and legend still match. A rejected delta gets one full request.
+Range-only answers must overlap the requested source range. Empty, null,
+unsupported, invalid or retired answers never edit source or become a clean-project
+claim; syntax colors remain the fallback.
+
+The core validates raw JSON, the provider legend, UTF-16 coordinates, token order,
+overlap and delta edits against an immutable source off the UI thread. It fences
+the producer, document lifetime, wire version and context before returning UTF-8
+spans. The shell waits for this file's exact synchronized source and context
+publication before requesting; it waits for the answer's context before painting.
+An unrelated starting server can delay that synchronization, but no automatic
+semantic RPC occupies a core job while the source is known to be unsynchronized.
+Source changes hide old semantic ink immediately, and views retire their requests
+on close, switch or server loss. Each view checks its own file's connected producer;
+an unrelated pane or shell's active-file status cannot remove its colors. Producer
+replacement retires old answers before requesting new ones. No token changes
+selection, Undo or disk.
+
+Semantic token types overlay the same lexical source-to-grapheme/tab and theme
+projection. Unknown types fall back to lexical ink. Modifiers are retained as
+provider evidence but do not yet apply distinct styling. Theme and syntax-palette
+changes reproject without a new LSP request. A definite busy refusal retries with
+bounded cooldown while its view and source stay current. An unconfirmed or failed
+request is not replayed: lexical ink stays until source or context changes. Dynamic registrations
+and server-initiated semantic refresh are not advertised or implemented.
+
+The consumer bounds raw replies to 4 MiB and 250,000 integers (50,000 tokens),
+legends to 256 types and 31 modifiers, and result IDs to 4 KiB. The core bounds
+active requests, retained view sequences and delta bases; cancellation does not
+free a running slot until its provider call actually ends. These are consumer
+bounds, not a guarantee on the initial RPC frame or provider process memory.
+
 ### Read-only inlay hints
 
 Code Intelligence's **Inlay hints** feature defaults **Off**. When explicitly

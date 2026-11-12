@@ -79,7 +79,30 @@ func TestLSPAssistanceReplicaIsPerFileDetachedAndCleared(t *testing.T) {
 	first := types.LSPAssistanceCapabilities{Producer: types.InsightProducer{InstanceID: "first"}, Completion: true, CompletionTriggers: []string{":"}}
 	second := types.LSPAssistanceCapabilities{Producer: types.InsightProducer{InstanceID: "second"}, SignatureHelp: true, SignatureTriggers: []string{"?"}, SignatureRetriggers: []string{";"}}
 	snapshot := coreprotocol.LSPSnapshot{Generation: "one", Assistance: map[string]types.LSPAssistanceCapabilities{"a.fixture": first, "b.fixture": second}}
+	source := types.InsightSource{WorkspaceGeneration: "one", DocumentID: "doc-a", Path: "a.fixture", Lifetime: "open-a", Revision: 2, Kind: "canonical"}
+	first.SynchronizedSource, first.SynchronizedContext = source, 7
+	snapshot.Assistance["a.fixture"] = first
 	replica.install(snapshot)
+	if !replica.FileSynchronized(source, 7) || replica.FileSynchronized(source, 8) {
+		t.Fatal("source/context synchronization was not retained exactly")
+	}
+	changed := source
+	changed.Lifetime = "another-open"
+	if replica.FileSynchronized(changed, 7) || replica.FileSynchronized(types.InsightSource{}, 0) {
+		t.Fatal("a different or empty source acquired synchronization")
+	}
+	var synchronized bool
+	if alloc := testing.AllocsPerRun(100, func() { synchronized = replica.FileSynchronized(source, 7) }); alloc != 0 || !synchronized {
+		t.Fatal("synchronization read copied per-frame data", alloc)
+	}
+	if replica.FileProducer("a.fixture") != first.Producer || replica.FileProducer("b.fixture") != second.Producer || replica.FileProducer("missing.fixture").InstanceID != "" {
+		t.Fatal("file producer is not source-specific")
+	}
+	var observed types.InsightProducer
+	allocations := testing.AllocsPerRun(100, func() { observed = replica.FileProducer("a.fixture") })
+	if observed != first.Producer || allocations != 0 {
+		t.Fatal("file producer copied or lost per-update evidence", observed, allocations)
+	}
 	first.CompletionTriggers[0] = "corrupt"
 	got := replica.AssistanceCapabilities("a.fixture")
 	if got.Producer.InstanceID != "first" || got.CompletionTriggers[0] != ":" || got.SignatureHelp {
@@ -95,6 +118,12 @@ func TestLSPAssistanceReplicaIsPerFileDetachedAndCleared(t *testing.T) {
 		t.Fatal("signature trigger read was not detached")
 	}
 	replica.install(coreprotocol.LSPSnapshot{Generation: "two"})
+	if replica.FileSynchronized(source, 7) {
+		t.Fatal("workspace replacement retained synchronized source")
+	}
+	if replica.FileProducer("a.fixture").InstanceID != "" {
+		t.Fatal("workspace replacement retained old file producer")
+	}
 	if replica.AssistanceCapabilities("a.fixture").Completion || replica.AssistanceCapabilities("b.fixture").SignatureHelp {
 		t.Fatal("workspace replacement retained old capabilities")
 	}

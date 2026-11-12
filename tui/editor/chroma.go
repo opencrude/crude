@@ -402,6 +402,12 @@ func nativeSyntax(ctx context.Context, language syntax.LanguageID, source textSn
 // Lexical context is always the full immutable document. The viewport selects
 // only which compact source spans to project into grapheme/tab cell colours.
 func (e *Editor) ensureChromaColors(fromLine, toLine int) {
+	if e.semantic != nil && !e.semanticCurrent() {
+		e.ClearSemanticTokens()
+	}
+	if e.semanticCurrent() {
+		defer e.ensureSemanticFallback(fromLine, toLine)
+	}
 	e.finishSyntax()
 	if e.canonicalSyntaxSource() {
 		e.ensureCanonicalColors(fromLine, toLine)
@@ -453,6 +459,7 @@ func (e *Editor) ensureChromaColors(fromLine, toLine int) {
 // Both canonical byte spans and provisional/lexical spans use one grapheme,
 // tab and theme projection. No second native-cell geometry path may drift.
 func (e *Editor) projectSyntaxLine(raw string, start int, tokenAt func(int) chroma.TokenType) syntaxLine {
+	tokenAt = e.semanticLineToken(start, tokenAt)
 	colours := make([]string, LineVisualWidth(raw, e.TabWidth()))
 	col, offset := 0, start
 	for rest := raw; rest != ""; {

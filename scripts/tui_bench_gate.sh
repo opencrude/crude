@@ -74,6 +74,8 @@ run_bench '^BenchmarkBuffer(DirtyCheckLargeFile|SavepointManualRoundTripLargeFil
 run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation|MapInlineDecorations)$' ./tui/editor
 run_bench '^BenchmarkSnippetTypingDense$/^lines20000$/^mirrors(8|64)$/^paint(false|true)$' ./tui/editor
 run_bench '^BenchmarkCompletionLeadingStopsDense$' ./tui/editor
+run_bench '^BenchmarkSemantic(DecodeDense|ParseDense)$' ./lspsemantic
+run_bench '^BenchmarkSemanticEditingDense$' ./tui/editor
 run_bench '^BenchmarkWrapped(EditorWorkload|RowPreparation)$' ./tui/editor
 run_bench '^BenchmarkMultipleCaret(Workload|Stages)$' ./tui/editor
 run_bench '^Benchmark(EditorOrientation|MinimapRebuild)$' ./tui/editor

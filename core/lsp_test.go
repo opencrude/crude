@@ -88,7 +88,7 @@ func TestLSPSnapshotSettingsDetached(t *testing.T) {
 }
 
 func TestPassiveLSPReadsDoNotUseFileEffectLane(t *testing.T) {
-	for _, method := range []string{coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPNavigationMethod, coreprotocol.LSPCompletionsMethod, coreprotocol.LSPInlayHintsMethod, coreprotocol.LSPCodeActions, coreprotocol.LSPSelectionFormattingMethod} {
+	for _, method := range []string{coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPNavigationMethod, coreprotocol.LSPCompletionsMethod, coreprotocol.LSPInlayHintsMethod, coreprotocol.LSPSemanticMethod, coreprotocol.LSPSemanticReleaseMethod, coreprotocol.LSPCodeActions, coreprotocol.LSPSelectionFormattingMethod} {
 		if !independentLSPRead(method) {
 			t.Fatal("read blocks file effects", method)
 		}

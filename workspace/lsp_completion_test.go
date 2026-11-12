@@ -950,6 +950,9 @@ func TestCompletionCapabilitiesAndOldServerIntentFence(t *testing.T) {
 	fixture := newCompletionAcceptanceFixture(t, "unit")
 	manager := fixture.w.LSPMgr
 	caps := manager.AssistanceCapabilities(fixture.path)
+	if manager.FileProducer(fixture.path) != caps.Producer {
+		t.Fatal("file producer differs from its capability owner")
+	}
 	if !caps.Completion || caps.Producer.InstanceID == "" {
 		t.Fatal("initialized file has no capabilities", caps)
 	}
@@ -967,6 +970,9 @@ func TestCompletionCapabilitiesAndOldServerIntentFence(t *testing.T) {
 		t.Fatal("retired-server trigger queried or published a replacement answer", result, err, calls)
 	}
 	manager.Stop()
+	if manager.FileProducer(fixture.path).InstanceID != "" {
+		t.Fatal("Stop retained the file producer")
+	}
 	if manager.AssistanceCapabilities(fixture.path).Completion || len(manager.AssistanceSnapshots()) != 0 {
 		t.Fatal("Stop retained capabilities")
 	}

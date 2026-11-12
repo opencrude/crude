@@ -181,7 +181,7 @@
   },
   "servers": {
     "gopls": {
-      "note": "Earlier Crude launch and resource hints. Staticcheck stays off because it can use two cores for a long time on a cold large workspace. The gopls diagnostics documentation states that compilation and analysis diagnostics are computed for the whole workspace: https://github.com/golang/tools/blob/master/gopls/doc/features/diagnostics.md",
+      "note": "Staticcheck stays off on cold large workspaces. Semantic tokens are enabled because this server returns an empty result by default; explicit user settings win. Server configuration: https://github.com/golang/tools/blob/master/gopls/doc/settings.md#semantictokens. Diagnostic scope: https://github.com/golang/tools/blob/master/gopls/doc/features/diagnostics.md",
       "launch": {
         "command": "gopls"
       },
@@ -194,9 +194,11 @@
         "settings": {
           "gopls": {
             "staticcheck": false,
-            "diagnosticsDelay": "1s"
+            "diagnosticsDelay": "1s",
+            "semanticTokens": true
           }
-        }
+        },
+        "initialization_from_section": "gopls"
       }
     },
     "clangd": {

@@ -59,7 +59,9 @@ have one shared row owner. EditorConfig indentation and explicit file choices
 now use the source-table policy. Multiple selections now use native edit vectors
 and private history, with native and repository acceptance. Minimap and indent
 guides now share the existing Editor page and scroll/source geometry. Remaining
-gaps include semantic token projection, linked editing and CodeLens.
+gaps include linked editing, CodeLens and completion/inlay lifetime recovery.
+Semantic colors now use the connected provider and shared source projection; their
+scope and verified limits are in the semantic-token checkpoint evidence.
 Some LSP method constants exist in the vendored transport; a constant is not a
 working workspace/shell workflow. AI literal ghost projection and budget libraries
 exist, but a shipped automatic inference service does not follow from them.
@@ -278,11 +280,16 @@ overlapping cursors, one-step Undo, peer edits, cancellation and render/hit agre
 **Owners:** existing workspace LSP families, `third_party/powernap/pkg/lsp/`,
 `lspclient/`, `types/`, `shellport/`, native editor-help windows and review owner.
 
+Semantic colors negotiate full/range/delta support, validate source-qualified
+legends and bounds, recover a rejected delta, and reproject the theme without a
+new request. Installed-gopls and two-shell evidence is recorded in the
+[checkpoint](../issues/2026-11-11-editor-polish.md#semantic-token-presentation-2026-11-11).
+Modifier-specific styling and server-initiated semantic refresh remain open.
+
 | Missing/partial workflow | Complete expected result and implementation constraint |
 |---|---|
 | Workspace symbols and breadcrumbs | Search project symbols from the existing palette/native list; selecting one goes to exact source and participates in Back/Forward. Document outline already exists. Reuse it for breadcrumb hierarchy, not another symbol cache. |
 | Document highlights | Current symbol reads/writes are distinguished with restrained theme tokens; async answers are fenced by exact source and caret invocation. They never become editable selections. |
-| Semantic tokens | Negotiate full/range/delta support, validate legends and bounds, recover a rejected delta via the protocol's full refresh, combine with lexical fallback by explicit precedence. Theme changes reproject colors without requerying source. |
 | Linked editing | Paired tag-name edits use negotiated ranges, one local transaction and source-qualified invalidation. Never keep mirrored editing after a peer touches its range. |
 | Call/type hierarchy | Expand incoming/outgoing calls or supertypes/subtypes in the shared bounded tree/list. Lazy requests, cancellation and exact location navigation; no unrelated popup framework. |
 | CodeLens | Only actual provider-supported actions appear. Resolve on demand; edits go through review and command effects through existing authorization. Never print protocol identifiers as user labels. |

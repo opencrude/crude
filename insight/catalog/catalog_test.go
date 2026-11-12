@@ -95,7 +95,8 @@ func TestWithHintsMatchesLegacyResourceHints(t *testing.T) {
 	}
 	gopls := server("gopls").WithHints(0, 0)
 	jsonEqual(t, "gopls env", gopls.Environment, map[string]string{"GOMAXPROCS": "2", "GOMEMLIMIT": "1024MiB"})
-	jsonEqual(t, "gopls settings", gopls.Settings, map[string]any{"gopls": map[string]any{"staticcheck": false, "diagnosticsDelay": "1s"}})
+	jsonEqual(t, "gopls settings", gopls.Settings, map[string]any{"gopls": map[string]any{"staticcheck": false, "diagnosticsDelay": "1s", "semanticTokens": true}})
+	jsonEqual(t, "gopls startup", gopls.InitializationOptions, map[string]any{"staticcheck": false, "diagnosticsDelay": "1s", "semanticTokens": true})
 
 	explicitEnv := server("gopls")
 	explicitEnv.Environment = map[string]string{"GOMAXPROCS": "7"}

@@ -31,6 +31,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `navigation.go` | `Navigation` | Read-only qualified definition/type/implementation/reference answers and explicit selected-target observation |
 | `formatting.go` | optional `SelectionFormatter` | Exact canonical range-format plans from the selected language server; the original editor owns fenced native application and Undo, never Save. |
 | `completion.go` | `Completions` | Canonical source/view-bound original completions, selected documentation-only resolve, acceptance preflight and exact-sequence release |
+| `semantic.go` | optional `SemanticTokens` | Source-qualified semantic color reads and private view release; delta bases stay in core |
 | `history_safety.go` | `HistorySafety` | Native review-safety administration with bounded traversal, original evidence, exact human consent and original core receipt observation |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
 | `history.go` | `History`, `LocalHistoryStore`, `LocalHistoryService` | Local History |
@@ -284,14 +285,16 @@ Generation/version cursors avoid unchanged-frame full snapshot copies.
 | `NotifyWatchedFilesChanged` | 1 | mutates | yes | lsp.notify_watched_files_changed |
 | `ProjectInsights` | 3 | reads | yes | LSP state topic replica |
 | `CompletionsState` | current | reads | yes: constant-size feature gate/generation | LSP state topic replica |
-| `AssistanceCapabilities` | current | reads | yes: detached static capabilities for the exact open path and server instance | LSP state topic replica |
+| `AssistanceCapabilities` | current | reads | yes: detached capabilities and synchronized source/context for the exact file | LSP state topic replica |
+| `FileProducer` | current | reads | yes: exact open path and connected producer without copying trigger lists | LSP state topic replica |
+| `FileSynchronized` | current | reads | yes: exact source/context admission hint without copying trigger lists | LSP state topic replica |
 | `RequestDocumentSymbols` | 1 | reads | yes | lsp.document_symbols |
 | `RequestHover` | 1 | reads | yes | lsp.hover |
 | `RequestSignatureHelp` | current | reads | yes: detached qualified parameter information | lsp.signature_help |
 | `Refresh` | 1 | mutates | yes | lsp.refresh (explicit Restart language servers / Problems Refresh only) |
 | `RestartServer` | 1 | mutates | yes | lsp.restart_server |
 | `ServerHealthSnapshots` | 3 | reads | yes | LSP state topic replica |
-| `ServerReady` | 2 | reads | yes | LSP state topic replica |
+| `ServerReady` | current | reads | yes: selected status, not readiness of another file | LSP state topic replica |
 | `SetActiveFile` | 1 | mutates | yes | lsp.set_active_file |
 | `Settings` | 2 | reads | yes | LSP state topic replica |
 | `ShowDiagnosticsInEditor` | 2 | reads | yes | LSP state topic replica |
@@ -345,6 +348,22 @@ reads the detached gate/feature generation, not a second settings owner. Only
 initial core-normalized edits can reach the ordinary editor transaction;
 documentation remains inert. See
 [completion documentation](editor.md#completion-documentation-and-original-insertion).
+
+### `SemanticTokens`
+
+This optional read capability uses the joined cancellable exchange off Update.
+The shell supplies only acknowledged source, a private view/sequence and visible
+range. The core chooses the advertised full, delta or range request, retains its
+own bounded delta base, and returns validated source-relative spans.
+
+| Member | TUI | coreprotocol |
+|---|---|---|
+| `RequestLSPSemantic` | Source, private view and sequence, visible range | `lsp.semantic_tokens` |
+| `ReleaseLSPSemantic` | Retire the exact private view through its sequence | `lsp.semantic_tokens_release` |
+
+A definite busy refusal can retry with a bounded cooldown while the source and
+view remain current; an uncertain outcome is not replayed. Release cannot retire
+a newer view. See [semantic token colors](editor.md#semantic-token-colors).
 
 ### `InlayHints`
 

@@ -32,6 +32,9 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 	if run, known := a.prepareInlay(request); known {
 		return run, true
 	}
+	if run, known := a.prepareSemantic(request); known {
+		return run, true
+	}
 	if run, known := a.prepareSelectionFormatting(request); known {
 		return run, true
 	}
@@ -162,6 +165,7 @@ func independentLSPRead(method string) bool {
 		coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationTargetMethod,
 		coreprotocol.LSPCompletionsMethod, coreprotocol.LSPCompletionInspectMethod, coreprotocol.LSPCompletionReleaseMethod,
 		coreprotocol.LSPInlayHintsMethod, coreprotocol.LSPInlayInspectMethod, coreprotocol.LSPInlayReleaseMethod,
+		coreprotocol.LSPSemanticMethod, coreprotocol.LSPSemanticReleaseMethod,
 		coreprotocol.LSPCodeActions, coreprotocol.LSPReleaseCodeActions, coreprotocol.LSPSelectionFormattingMethod:
 		return true
 	}

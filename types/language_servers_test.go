@@ -151,3 +151,31 @@ func TestStaleLanguageEntryDoesNotDisableOtherLanguages(t *testing.T) {
 		t.Fatalf("go after a stale entry = %+v %v", spec, ok)
 	}
 }
+
+// The ordinary resolved server must offer useful semantic colors without a
+// fixture-only initialization object. Explicit settings still win in both
+// the startup and later workspace/configuration views.
+func TestSemanticServerDefaultsRespectExplicitChoices(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		settings, init map[string]any
+		want           bool
+	}{
+		{"default", nil, nil, true},
+		{"settings-off", map[string]any{"gopls": map[string]any{"semanticTokens": false}}, nil, false},
+		{"startup-off", nil, map[string]any{"semanticTokens": false}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultLSPSettings()
+			cfg.Languages["go"] = LSPLanguageSettings{Enabled: true, Settings: tc.settings, InitializationOptions: tc.init}
+			spec, ok := cfg.ResolveServer("source.go")
+			if !ok {
+				t.Fatal("catalog server unavailable")
+			}
+			section, ok := spec.Settings["gopls"].(map[string]any)
+			if !ok || section["semanticTokens"] != tc.want || spec.InitializationOptions["semanticTokens"] != tc.want {
+				t.Fatalf("startup and workspace settings differ: %+v", spec)
+			}
+		})
+	}
+}

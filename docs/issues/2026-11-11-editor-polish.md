@@ -204,7 +204,7 @@ and the acceptance preference retain their distinct behavior.
   missing Ctrl+D, sole-row acceptance and structural-selection failures were
   reproduced before implementation.
 - Linux native captures at 160×40 and 80×24 verify all ten action boundaries and
-  all five sole-completion boundaries. Inspected frames show duplicate/Undo,
+  all five sole-completion boundaries. Recorded frame and cell checks cover duplicate/Undo,
   a filtered Join lines picker, bracket paint, expansion/shrink, the unchosen
   single row and the accepted snippet/import. The sole fixture uses a deterministic
   protocol reply to isolate this path; it is not installed-server evidence.
@@ -250,8 +250,8 @@ two shells, linked and newly opened views, reset and subsequent typing/Undo.
 Direct checks cover exact whitespace cells, unchanged source/history, inlays,
 diagnostics, cached geometry, parser identity and readable distinct palettes.
 Native captures at both sizes verify all four boundaries and successful joined
-cleanup; inspected frames show the existing preferences page and changed source
-ink/markers without line numbers. No user core was replaced or stopped.
+cleanup; recorded frame and cell checks cover the existing preferences page
+and changed source ink/markers without line numbers. No user core was replaced or stopped.
 
 Affected editor/theme packages, connected editor/history/insight/split/theme/save
 checks, focused race checks, native build, zero-issue lint and design/docs pass.
@@ -343,7 +343,7 @@ cached and visible while new wrap metrics are pending.
 
 Linux native 160×40 and 80×24 captures verify seven interaction boundaries:
 wrapped source, Fold, Unfold, nested gutter fold, Go to line reveal, Ctrl+D and
-one Undo. Inspected frames show hidden-line counts and continuation ink. Both
+one Undo. Recorded frame checks cover hidden-line counts and continuation ink. Both
 record joined cleanup with unchanged disk bytes; every window is closed. The first
 chord was not delivered correctly by the terminal and was replaced with Alt+-/Alt+=.
 The pointer diagnostic proved no click reached the product while desktop modifiers
@@ -387,7 +387,7 @@ bytes survive one-step Undo. The new file policy never joins canonical history.
 
 Native 160×40 and 80×24 journeys verify status clicks, policy menu, width input,
 conversion through typed action search, one Undo and Reset. The first functional
-32-row chooser was rejected during visual inspection as too tall. It was removed
+32-row chooser was too tall for a compact prompt. It was removed
 and replaced with the existing compact text prompt, with selected current value,
 range errors, stale-owner rejection and Escape cancellation. Both replacement
 captures verify seven phases and joined cleanup with unchanged disk bytes. This
@@ -428,7 +428,7 @@ removes a caret and Alt-drag forms the rectangle through the existing captured
 gesture. Ctrl-click navigation remains unchanged. Replacement Linux captures at
 160×40 and 80×24 verify all eleven phases, source selection paint, header count,
 Ctrl+D, Undo, rectangle editing, Escape, unchanged disk and joined cleanup.
-Representative frames at both sizes were inspected; no capture window remains.
+The retained records report all phases; no capture window remains.
 This is native input evidence, not installed language-server or Windows acceptance.
 
 The full ordinary repository inventory passes. Affected editor/UI/shell/client
@@ -465,8 +465,7 @@ action-picker filtering and a second Undo. The other two unformatted lines stay
 unchanged, disk stays unchanged, private drafts remain and provider shutdown joins.
 The initial capture failed because Alacritty's default Shift+End binding sent no
 key; recorded input proved that boundary. The replacement selects through native
-Shift+Right. Representative frames at both sizes were inspected and no capture
-window remains.
+Shift+Right. Both retained records report all phases, and no capture window remains.
 Build, lint, generated-wire checks and Windows/macOS component builds pass.
 The full ordinary inventory is accounted for by the initial passing groups and the
 remaining viewmodel/workspace groups after correcting an obsolete test that required
@@ -482,9 +481,8 @@ This is not native Windows acceptance or a resolution of the open GC finding.
 Minimap and indentation guides now consume the existing Editor page's saved
 preferences and share the source geometry and scrollbar owner. Native 160×40 and
 80×24 captures pass eight phases: change preferences, Save/Close, source paint,
-click, captured drag, typing and Undo. Representative final frames were inspected
-at both sizes: labels and controls fit, guides stay in indentation, the viewport
-tint follows the map, and Undo returns to the retained selection. Disk and private drafts
+click, captured drag, typing and Undo. Recorded frame and cell checks cover
+the guides, map and retained selection at both sizes. Disk and private drafts
 stay unchanged, shutdown joins and no capture window remains.
 
 Tests first reproduced an inert minimap preference and a wrapped scrollbar offset
@@ -536,7 +534,7 @@ The connected regression first failed because the only completion row was droppe
 It now exercises Tab, a CRLF/tab-indented import, a selected wide field, mirror
 typing, two shells and Undo. Escape, subsequent typing and peer edits retire a
 held old acceptance. The native 160×40 and 80×24 captures pass six boundaries;
-representative frames show the sole row, the adjusted block, import and mirror.
+recorded frame checks cover the sole row, adjusted block, import and mirror.
 The response is a deterministic protocol fixture, not proof that an installed
 server produced this mode. A separate installed-gopls completion journey passes
 with the new capability negotiation. The initial capture attempt could not start:
@@ -551,6 +549,74 @@ Windows/macOS component cross-builds and extended allocation gate pass. Dense
 20,000-line insertion/Undo and grid-paint comparisons against literal snippets
 are recorded separately; they do not measure terminal presentation latency.
 The Windows GC finding remains open and was not tested on native Windows here.
+
+## Semantic-token presentation (2026-11-11)
+
+The client now negotiates standard semantic-token requests through the existing
+language server. The core validates source-qualified full, range and delta evidence,
+retains bounded per-view delta bases and sends detached spans to the editor's one
+source/theme projector. Lexical colors remain the fallback. Unknown token types
+remain lexical; modifier-specific styling and server-initiated refresh are open.
+
+A connected test found that requiring equal context generations prevented deltas
+after edits; the new answer is now fenced against the current source while the
+prior result is identified by its provider and legend. Other regressions exposed
+out-of-range tokens, cancellation slots freed before work ended, and a release
+that arrived before its request. The core now bounds actual running work, rejects
+out-of-range evidence and retains an ordered sequence tombstone. A distinct
+peer's edit retires a delayed provider response. Fast answers wait for the exact
+context publication; a malformed delta falls back to a single full request.
+A final capacity test found that a definite busy refusal left an unchanged view
+without semantic colors. Only a known non-admission now retries with bounded
+cooldown; an uncertain response, other failure, edit, context change or shutdown
+cannot replay the old request. Saturated provider calls keep their slots until
+those calls return. A second regression fills the retained sequence records by
+closing views; that temporary limit now also reports a retryable refusal, so an
+unchanged editor recovers when the records expire.
+
+A connected two-shell test then reproduced another missing color case: focusing a
+file without a server in one shell changed the selected workspace status and
+removed colors from the other shell's still-connected file. The semantic view now
+uses that file's own producer from the existing assistance snapshot, not the
+selected-file status. Producer replacement and loss retire old requests. The
+source-specific replica read does not copy completion trigger lists on each frame.
+The first full-suite run after that fix failed the existing connected navigation
+journey: its intentionally starting destination server held the LSP worker while
+an automatic semantic read waited for the source's newer context. A focused run
+reproduced both failures. The core now publishes each file's synchronized source
+and context after a completed document send. Automatic semantic reads wait for that
+exact snapshot and recheck it after debounce; they do not occupy a job for a known
+unsynchronized source. The original navigation test, synchronization publication,
+replica isolation, changed-context and delayed-timer regressions now pass. The full
+ordinary suite, affected race paths, LSP gate and extended allocation gate pass on
+the corrected tree. The new semantic decode, parse, mutation and paint cases all
+run within their recorded limits; no existing ceiling was raised.
+
+The first installed-gopls test passed only with a fixture-only setting. Removing
+that override reproduced the ordinary configuration failure: gopls 0.21.1 returned
+an empty token set by default. The catalog now supplies its documented semantic
+token setting at initialization and in `workspace/configuration`, with explicit
+settings taking precedence. Installed-server headless and sequential native
+captures without the fixture override record all three typing/Undo phases at
+160×40 and 80×24, preserve source/draft/disk and join the provider. Fresh inspection
+of the initial and edited screenshots confirms readable token colors at both sizes.
+With the tree open at 80×24, the long source line extends beyond the right edge.
+A separate native End-key capture scrolls to the diagnostic: the red wavy underline
+under the undefined name is visible. Linux build, lint, design/docs, generated
+wire and Windows/macOS component cross-build checks pass. A 45-second parser fuzz
+run completed without a crash; it is not proof of native-platform behavior.
+
+The [Windows GC crash](2026-11-11-workspace-gc-crash.md) is still open. Linux
+checks or cross-builds do not establish its cause or repair it.
+
+## Open completion and inlay ownership findings (2026-11-11)
+
+A two-shell probe reproduced hidden inlay labels when a different shell focused a
+file without a server. Separate ordering probes found that inlay and completion
+releases arriving before their requests can let released views reach a provider.
+Additional probes found that repeated replacements can exceed both work limits when
+a provider ignores cancellation. These findings remain open; temporary probe
+evidence is not a product fix or a passing regression.
 
 ## Remaining acceptance
 

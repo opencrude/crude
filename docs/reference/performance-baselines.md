@@ -7,6 +7,30 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Semantic-token source and paint (2026-11-11)
+
+The protocol consumer processes 20,000 relative token tuples against one
+immutable source. On Linux amd64, Go 1.27.4, i7-10750H, GOMAXPROCS=2, three
+300 ms runs measured decoding at 0.756–0.789 ms, about 803 KB and one allocation;
+JSON parsing measured 4.48–4.64 ms, about 1.13 MB and 27–28 allocations. The
+initial per-integer JSON decoder measured about 10.6 ms, 2.74 MB and 100,041
+allocations. A bounded linear integer scanner replaces those per-value allocations.
+
+`BenchmarkSemanticEditingDense` uses 20,000 source lines and tokens. It times an
+actual source key and the first 120×40 editor-grid paint after a key separately;
+source restoration and renewed evidence are outside the timer. Three repetitions:
+
+| Semantic tokens | Key mutation | First grid paint after key | Stable grid paint |
+|---|---|---|---|
+| Off | 0.433–0.453 ms, 1.49–1.50 MB, 55–106 allocs | 0.253–0.269 ms, 665–691 KB, 172–174 allocs | 0.178–0.184 ms, 206 KB, 289–297 allocs |
+| On | 0.456–0.469 ms, 1.58–1.60 MB, 146–197 allocs | 0.255–0.277 ms, 597–601 KB, 178–181 allocs | 0.181–0.184 ms, 204 KB, 258–261 allocs |
+
+These are grid and Go-allocation measurements, not provider, RPC, native RSS or
+terminal presentation latency. Background syntax workers can contribute to
+allocation counts. The new ceilings use roughly 20% headroom above observed
+maxima; no existing ceiling changed. The complete gate must be run after all
+parallel tests and captures have ended.
+
 ## Multiline completion indentation (2026-11-11)
 
 `BenchmarkCompletionLeadingStopsDense` isolates source-coordinate discovery for

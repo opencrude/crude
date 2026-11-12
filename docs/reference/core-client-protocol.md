@@ -90,8 +90,8 @@ source-generation fences remain immediate and independent of presentation.
 
 Passive LSP reads use the actor's existing bounded, cancellable, joined job
 admission independently of the file-effect lane. Hover, signatures, navigation,
-completion, inlay inspection, code-action discovery and selection formatting
-cannot hold document edits behind a slow provider reply. Source/provider fences
+completion, inlay inspection, semantic tokens, code-action discovery and selection
+formatting cannot hold document edits behind a slow provider reply. Source/provider fences
 reject obsolete evidence. Setup, lifecycle operations and reviewed effects retain
 the ordered effect lane; unknown methods never opt themselves into a read path.
 This does not bypass the shared 16-job admission bound or process governor.
@@ -100,6 +100,13 @@ This does not bypass the shared 16-job admission bound or process governor.
 `coreprotocol/formatting.go`. It never writes text or disk. The requesting shell
 fences its private selection and applies the plan through ordinary document edits;
 there is no second canonical formatting writer or raw caller-supplied LSP route.
+
+`lsp.semantic_tokens` returns a bounded, source- and provider-qualified token set;
+`lsp.semantic_tokens_release` retires the requesting owner's private view. Both
+use the passive read lane and do not write documents. The core owns delta bases,
+source/legend validation and sequence tombstones, including when a release arrives
+before its request. The shell installs only the exact matching source and context;
+it never sends a raw provider result ID or makes its own canonical token set.
 
 Before publishing a retained actor, its factory worker restores saved Notices
 and initializes configured capability metadata. Neither requires a model session
@@ -513,6 +520,12 @@ object; non-resolve validates all original edits before explicit editor acceptan
 `lsp.completion_release` retires only that owner's exact view sequence. All three
 use the existing joined cancellable exchange. No method executes provider commands
 or applies newly resolved edits.
+
+The LSP state topic also publishes each connected file's last synchronized source
+and context. A completed document send advances the topic version; a wake alone
+cannot publish readiness. Shells use this small per-file snapshot to avoid automatic
+reads while that source is not synchronized. It is an admission hint, not a
+replacement for the core's source, producer, wire or context checks.
 
 The LSP state topic exposes a constant-size completion gate/feature generation;
 coalesced disable/re-enable cannot revive an older invocation. Results retain
