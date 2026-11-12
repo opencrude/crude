@@ -456,6 +456,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.editorGhost = nil
 			return m, nil
 		}
+		if m.EditorState.Editor.HasMultipleCarets() {
+			return m, m.EditorState.Editor.HandleEvent(editor.ActionMsg{ID: "select.singleCaret"})
+		}
 		// A selection is transient editor UI: drag selections persist for
 		// editing, so the first Esc only drops them.
 		if m.EditorState.Editor.HasSelection() {

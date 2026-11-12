@@ -92,3 +92,17 @@ BenchmarkRecoveryCheckpoint_2000Msgs 5300000 395
 BenchmarkEstimateMultipartImage/bytes_1024 3800 21
 BenchmarkEstimateMultipartImage/bytes_4194304 10100000 21
 BenchmarkSessionDatabaseStartup 9000 215
+
+# Multiple carets on 20,000 lines: simultaneous mutation, grid paint and author Undo.
+BenchmarkMultipleCaretWorkload/1 4180000 388
+BenchmarkMultipleCaretWorkload/32 4630000 1491
+BenchmarkMultipleCaretWorkload/256 8840000 13450
+BenchmarkMultipleCaretStages/1/mutation 1660000 86
+BenchmarkMultipleCaretStages/1/paint 670000 212
+BenchmarkMultipleCaretStages/1/undo 1960000 255
+BenchmarkMultipleCaretStages/32/mutation 2130000 614
+BenchmarkMultipleCaretStages/32/paint 760000 364
+BenchmarkMultipleCaretStages/32/undo 2180000 548
+BenchmarkMultipleCaretStages/256/mutation 1690000 4168
+BenchmarkMultipleCaretStages/256/paint 880000 1503
+BenchmarkMultipleCaretStages/256/undo 6240000 5034

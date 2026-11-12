@@ -270,6 +270,7 @@ func (e *Editor) setWrapping(on bool) {
 	e.stopPointerSelection()
 	e.CancelPointerCapture()
 	e.wordWrap = on
+	e.resetSecondaryGoals()
 	if !on {
 		e.cancelRows()
 	}

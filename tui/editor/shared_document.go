@@ -169,6 +169,7 @@ type DocumentState struct {
 }
 
 func (e *Editor) detachDocument() {
+	e.clearSecondary()
 	e.DismissGhostText()
 	e.CancelSnippet()
 	if e.unlink() {
@@ -750,24 +751,20 @@ func (e *Editor) commitDocumentDelta(c document.Change, remote, pending []docume
 	// primitive through the table.
 	previousActor := e.buf.linkActor
 	e.buf.linkActor = e
-	for i := len(remote) - 1; i >= 0; i-- {
-		r := remote[i]
-		_, _ = e.buf.deleteOffsets(r.Start, r.End)
-		_, _ = e.buf.insertAtOffset(r.Start, []byte(r.Text))
-	}
+	_ = e.applySourceOffsets(remote)
 	e.buf.linkActor = previousActor
 	p.suppressed = false
+	selection := remapSourceSelection(SourceSelection{offsets[1], offsets[2]}, remote)
 	for i, off := range offsets {
-		delta := 0
+		offsets[i] = remapLinkedOffset(off, remote)
 		for _, r := range remote {
-			if off >= r.End {
-				delta += len(r.Text) - (r.End - r.Start)
-			} else if off >= r.Start {
-				off = r.Start
-				break
+			if off == r.Start && r.Start == r.End {
+				offsets[i] += len(r.Text)
 			}
 		}
-		offsets[i] = off + delta
+	}
+	if e.primaryHasSelection() {
+		offsets[1], offsets[2] = selection.Anchor, selection.Cursor
 	}
 	for i, off := range offsets {
 		anchors[i] = e.buf.positionAtOffset(off)
@@ -777,11 +774,11 @@ func (e *Editor) commitDocumentDelta(c document.Change, remote, pending []docume
 	if e.IsMouseDragging() {
 		e.drag.start, e.drag.end = anchors[4], anchors[5]
 	}
+	e.normalizeCarets()
 	p.pending = pending
 	p.undoPending = false
 	p.conflict = nil
 	e.invalidateEditorCaches()
-	e.markDocumentWidthAll()
 	e.remapGitProjection()
 }
 

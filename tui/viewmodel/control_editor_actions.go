@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"crude/indentation"
 	"crude/shellport"
+	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types/control"
 	"encoding/json"
@@ -56,12 +57,13 @@ func (m *App) handleEditorActionControl(msg shellport.ControlRequestMsg) (tea.Cm
 			Enabled  bool        `json:"enabled"`
 		}
 		out := struct {
-			Token              string              `json:"view_token"`
-			Actions            []action            `json:"actions"`
-			Indentation        indentation.Choices `json:"indentation"`
-			IndentationChoices indentation.Choices `json:"indentation_choices"`
-			IndentationSource  string              `json:"indentation_source"`
-		}{Token: ed.ActionToken(), Indentation: ed.Indentation(), IndentationChoices: ed.IndentationChoices(), IndentationSource: ed.IndentationSource()}
+			Token              string                   `json:"view_token"`
+			Selections         []editor.SourceSelection `json:"selections"`
+			Actions            []action                 `json:"actions"`
+			Indentation        indentation.Choices      `json:"indentation"`
+			IndentationChoices indentation.Choices      `json:"indentation_choices"`
+			IndentationSource  string                   `json:"indentation_source"`
+		}{Selections: ed.SourceSelections(), Token: ed.ActionToken(), Indentation: ed.Indentation(), IndentationChoices: ed.IndentationChoices(), IndentationSource: ed.IndentationSource()}
 		for _, a := range ui.EditorActions() {
 			out.Actions = append(out.Actions, action{ID: a.ID, Label: a.Label, Shortcut: ui.FormatShortcut(m.actionRegistry.HintFor(a.ID)), Mutates: a.MutatesText, Enabled: !ed.ReadOnly() || !a.MutatesText})
 		}

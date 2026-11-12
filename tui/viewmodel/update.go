@@ -214,6 +214,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorSnippetChoiceMsg:
 		m.handleSnippetChoice(msg)
 		return m, nil
+	case editor.SelectionNoticeMsg:
+		m.Feedback.NotifyInfo(msg.Message)
+		return m, nil
 	case editor.IndentationMenuMsg:
 		if msg.Editor == m.EditorState.Editor {
 			return m, m.openIndentationMenu(msg.Editor)

@@ -137,6 +137,9 @@ func (pt *PieceTable) ReplaceAll(text string) {
 	pt.revision++
 	pt.invalidateCache()
 	pt.resetLinked(linked)
+	for view := range pt.interactionViews {
+		view.clearSecondary()
+	}
 	pt.observeMutation(document.Edit{Start: 0, End: size, Text: text})
 }
 
@@ -391,6 +394,7 @@ func (pt *PieceTable) applyOffsets(edits []document.Edit) error {
 	}
 	pt.invalidateCache()
 	pt.remapLinked(linked, changed)
+	pt.remapCarets(changed)
 	for i := len(changed) - 1; i >= 0; i-- {
 		pt.observeMutation(changed[i])
 	}

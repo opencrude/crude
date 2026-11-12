@@ -148,10 +148,18 @@ journeys pass at 160×40 and 80×24. The tall width chooser was removed after vi
 review and replaced by the shared compact prompt. Ordinary inventory, affected
 race, build/lint/docs/cross-build and the unchanged allocation gate pass.
 
-Next, complete multiple selections through the existing source, input, pointer,
-paint and history owners, then the remaining semantic workflows. Preserve source,
-history, diagnostics and linked-view identity. A stored preference with no consumer
-is not accepted. Do not add another Settings page.
+Multiple selections now share native input, one source edit vector and private
+history. Native occurrence/rectangle/Ctrl+D/Undo/Escape journeys pass at both sizes;
+the full ordinary inventory, affected race, build/lint/docs/cross-build and extended
+allocation gates pass. Dense 256-caret mutation, grid paint and Undo take 3.80–3.84 ms
+combined, instead of the initial 134.63 ms. See the multiple-selection evidence.
+
+Next, finish selection-only formatting and the remaining semantic workflows through
+the existing formatter, document and LSP owners. Add real range-format negotiation,
+source/selection fencing, native and semantic entry points and one-step Undo. Do
+not format or save unrelated source as a fallback. Preserve history, diagnostics
+and linked-view identity. A stored preference with no consumer is not accepted.
+Do not add another Settings page.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named

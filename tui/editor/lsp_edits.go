@@ -108,6 +108,9 @@ type completionEdit struct {
 // InsertText and NewText carry expanded text; the optional initial snippet plan
 // must match exactly. Additional edits remain literal, in original coordinates.
 func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
+	if e.HasMultipleCarets() {
+		return fmt.Errorf("press Esc to use one caret before accepting a suggestion")
+	}
 	if e.buf == nil || !e.open || e.readOnly {
 		return fmt.Errorf("completion: document is not editable")
 	}

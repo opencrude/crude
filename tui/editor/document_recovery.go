@@ -3,6 +3,7 @@ package editor
 import (
 	"bytes"
 	"errors"
+	"slices"
 	"unicode/utf8"
 
 	"crude/document"
@@ -13,6 +14,7 @@ import (
 // Pending coordinates are sequential; InFlight retains its original owner and
 // request identity even when a new shell attachment has a different epoch.
 type DocumentRecovery struct {
+	Secondary                             []SourceSelection
 	Version                               int
 	Path                                  string
 	Canonical                             document.Snapshot
@@ -49,6 +51,9 @@ func (e *Editor) ExportDocumentRecovery() (DocumentRecovery, bool) {
 		return DocumentRecovery{}, false
 	}
 	r := DocumentRecovery{Version: 2, Path: e.filePath, Canonical: e.DocumentSnapshot(), OptimisticText: []byte(e.Value()), Pending: append([]document.Edit(nil), p.pending...), Owner: p.owner, Cursor: e.buf.positionToOffset(e.cursor), SelectionAnchor: e.buf.positionToOffset(e.selAnchor), SelectionEnd: e.buf.positionToOffset(e.selEnd), ScrollX: e.scrollX, ScrollY: e.scrollY, Selecting: e.selecting, UndoPending: p.undoPending}
+	if e.secondary != nil {
+		r.Secondary = append([]SourceSelection(nil), e.secondary.ranges...)
+	}
 	r.PendingGroups = append([]string(nil), p.pendingGroups...)
 	r.HistorySync = p.historySync
 	for _, action := range p.historyQueue {
@@ -126,8 +131,36 @@ func (r DocumentRecovery) Validate() error {
 	if !bytes.Equal(text, r.OptimisticText) {
 		return document.ErrRevision
 	}
-	for _, pos := range []int{r.Cursor, r.SelectionAnchor, r.SelectionEnd} {
-		if pos < 0 || pos > len(r.OptimisticText) || pos < len(r.OptimisticText) && !utf8.RuneStart(r.OptimisticText[pos]) {
+	if len(r.Secondary) >= MaxCarets {
+		return document.ErrLimit
+	}
+	positions := []int{r.Cursor, r.SelectionAnchor, r.SelectionEnd}
+	for _, s := range r.Secondary {
+		positions = append(positions, s.Anchor, s.Cursor)
+	}
+	slices.Sort(positions)
+	textView := string(r.OptimisticText)
+	offset, col := 0, 0
+	for _, pos := range positions {
+		for offset < pos && offset < len(textView) {
+			if textView[offset] == '\r' && offset+1 < len(textView) && textView[offset+1] == '\n' {
+				offset += 2
+				col = 0
+				continue
+			}
+			if textView[offset] == '\n' {
+				offset++
+				col = 0
+				continue
+			}
+			n, width := firstSourceUnit(DefaultTabWidth, textView[offset:], col)
+			if n == 0 {
+				break
+			}
+			offset += n
+			col += width
+		}
+		if offset != pos {
 			return document.ErrRevision
 		}
 	}
@@ -189,7 +222,13 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 	if !matching {
 		p.conflict = errors.New(ErrRecoveredDocument.Error() + "; canonical revision/text changed")
 	}
+	e.clearSecondary()
 	e.cursor, e.selAnchor, e.selEnd, e.selecting = e.buf.positionAtOffset(r.Cursor), e.buf.positionAtOffset(r.SelectionAnchor), e.buf.positionAtOffset(r.SelectionEnd), r.Selecting
+	if len(r.Secondary) > 0 {
+		e.retainSecondary(&caretSet{ranges: append([]SourceSelection(nil), r.Secondary...)})
+	}
+	e.multiDirty = true
+	e.normalizeCarets()
 	e.scrollX, e.scrollY = r.ScrollX, r.ScrollY
 	e.installDocumentBaseline(r.Canonical)
 	e.invalidateEditorCaches()

@@ -22,7 +22,7 @@ func editorRetainsCompletionKeys(ed *editor.Editor) bool {
 		return false
 	}
 	_, _, candidate := ed.GhostText()
-	return candidate && ed.GhostOwner() != completionGhostOwner
+	return ed.HasMultipleCarets() || candidate && ed.GhostOwner() != completionGhostOwner
 }
 
 func dismissCompletionGhost(ed *editor.Editor) {

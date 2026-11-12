@@ -1,6 +1,7 @@
 package editor
 
 func (e *Editor) ClearSelection() {
+	e.clearSecondary()
 	e.selecting = false
 	e.stopPointerSelection()
 	e.selAnchor = Position{Line: 0, Col: 0}
@@ -8,6 +9,16 @@ func (e *Editor) ClearSelection() {
 }
 
 func (e *Editor) HasSelection() bool {
+	if e.HasMultipleCarets() {
+		for _, s := range e.secondary.ranges {
+			if s.Anchor != s.Cursor {
+				return true
+			}
+		}
+	}
+	return e.primaryHasSelection()
+}
+func (e *Editor) primaryHasSelection() bool {
 	if !e.selecting && e.selAnchor.Line == e.selEnd.Line && e.selAnchor.Col == e.selEnd.Col {
 		return false
 	}
@@ -44,6 +55,9 @@ func (e *Editor) SelectionRange() (startLine, startCol, endLine, endCol int) {
 }
 
 func (e *Editor) SelectedText() string {
+	if e.HasMultipleCarets() {
+		return e.multipleText()
+	}
 	sLine, sCol, eLine, eCol := e.SelectionRange()
 	if sLine == eLine && sCol == eCol {
 		return ""
@@ -52,7 +66,10 @@ func (e *Editor) SelectedText() string {
 }
 
 func (e *Editor) isSelected(line, col int) bool {
-	if !e.HasSelection() {
+	if e.secondarySelected(line, col) {
+		return true
+	}
+	if !e.primaryHasSelection() {
 		return false
 	}
 	sLine, sCol, eLine, eCol := e.SelectionRange()
