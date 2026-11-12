@@ -137,8 +137,28 @@ func (s *DocumentService) ReleaseLSPCompletions(owner document.Owner, viewID str
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if view := s.completionViews[completionViewKey{owner, viewID}]; view != nil && view.sequence == sequence {
-		view.retire()
+	if s.closed || !s.attachedOwner(owner) {
+		return nil
 	}
+	s.pruneCompletionViewsLocked()
+	key := completionViewKey{owner, viewID}
+	view := s.completionViews[key]
+	if view != nil && view.sequence > sequence {
+		return nil
+	}
+	if view == nil {
+		if len(s.completionViews) >= completionMaxSequences {
+			return ErrCompletionBusy
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		view = &completionView{ctx: ctx, cancel: cancel}
+		if s.completionViews == nil {
+			s.completionViews = make(map[completionViewKey]*completionView)
+		}
+		s.completionViews[key] = view
+	}
+	view.retire()
+	view.sequence, view.expires = sequence, time.Now().Add(completionLifetime)
 	return nil
 }

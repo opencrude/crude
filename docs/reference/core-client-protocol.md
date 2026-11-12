@@ -502,9 +502,10 @@ monotonic sequence and UTF-16 anchor range. The authenticated attachment is its
 owner; the core stamps synchronized source/provider/context evidence and retains
 the original objects. `lsp.inlay_inspect` accepts only original set ID/digest/index
 and an explicit tooltip-resolve choice, never a caller-authored provider object.
-`lsp.inlay_release` retires that owner's exact view sequence; a late old release
-cannot revoke a newer replacement. All three use the existing joined cancellable
-exchange. The snapshot exposes a constant-size inlay gate/epoch so a coalesced
+`lsp.inlay_release` fences that owner's view through the released sequence, even
+when it arrives before the corresponding read. An older release cannot revoke a
+newer replacement. All three use the existing joined cancellable exchange. The
+snapshot exposes a constant-size inlay gate/epoch so a coalesced
 disable/re-enable cannot revive old labels or retained row authority. No route
 executes hint edits, commands or label locations, and the local request wire
 version is not a provider-reported result version. See
@@ -517,9 +518,20 @@ plans and distinct items/null/empty/unsupported evidence; no raw provider object
 cross the shell port. `lsp.completion_inspect` accepts only set ID/digest/item ID
 and a resolve flag. Resolve is documentation/detail-only over the retained original
 object; non-resolve validates all original edits before explicit editor acceptance.
-`lsp.completion_release` retires only that owner's exact view sequence. All three
-use the existing joined cancellable exchange. No method executes provider commands
-or applies newly resolved edits.
+`lsp.completion_release` fences that owner's view through the released sequence;
+a late older release cannot revoke a newer replacement. All three use the existing
+joined cancellable exchange. No method executes provider commands or applies newly
+resolved edits.
+
+Completion and inlay admission count provider calls until those calls return, even
+when cancellation is ignored. Closing a file retires its original evidence while
+keeping the owner's bounded sequence fence, including when another shell retains
+the same source during reopen. Detaching the owner removes its fences. Semantic
+colors follow the same close boundary and discard the prior delta base. Bounded
+sequence tombstones preserve release order and expire independently of source changes. A full work or sequence budget returns
+`busy` only when the request was not admitted. The shell retries only that definite
+refusal with bounded backoff while the original view, source and context stay current;
+unknown or uncertain outcomes are never replayed.
 
 The LSP state topic also publishes each connected file's last synchronized source
 and context. A completed document send advances the topic version; a wake alone

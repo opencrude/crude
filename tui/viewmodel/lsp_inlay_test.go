@@ -15,10 +15,21 @@ import (
 
 type inlayCursorService struct {
 	shellport.LSPService
-	cursor uint64
+	cursor         uint64
+	producer       *types.InsightProducer
+	unsynchronized bool
 }
 
 func (s *inlayCursorService) ServerReady() bool { return true }
+func (s *inlayCursorService) FileProducer(string) types.InsightProducer {
+	if s.producer != nil {
+		return *s.producer
+	}
+	return types.InsightProducer{InstanceID: "independent-provider"}
+}
+func (s *inlayCursorService) FileSynchronized(types.InsightSource, uint64) bool {
+	return !s.unsynchronized
+}
 func (s *inlayCursorService) InlayHintsState() (bool, uint64) {
 	return true, 1
 }
@@ -112,5 +123,43 @@ func TestInlayEveryAnswerWaitsForTheOriginalContextCursor(t *testing.T) {
 				t.Fatal("publication barrier modified source or private draft")
 			}
 		})
+	}
+}
+
+func TestInlayWaitsForSynchronizedFileAndRetiresReplacedProducer(t *testing.T) {
+	app, ed, port := inlayRetryFixture(t, nil)
+	port.service.unsynchronized = true
+	app.syncInlayHints()
+	view := app.inlayViews[ed]
+	if view == nil || view.request != nil || port.calls.Load() != 0 {
+		t.Fatal("unsynchronized file admitted an inlay request")
+	}
+	port.service.unsynchronized = false
+	app.syncInlayHints()
+	first := view.request
+	if first == nil {
+		t.Fatal("synchronization did not admit inlays")
+	}
+	port.service.unsynchronized = true
+	if cmd := app.startInlayRequest(inlayDueMsg{owner: first}); cmd != nil || view.request != nil || first.ctx.Err() == nil {
+		t.Fatal("revoked synchronization admitted an old timer")
+	}
+	port.service.unsynchronized = false
+	app.syncInlayHints()
+	first = view.request
+	replacement := types.InsightProducer{InstanceID: "replacement"}
+	port.service.producer = &replacement
+	if cmd := app.startInlayRequest(inlayDueMsg{owner: first}); cmd != nil {
+		t.Fatal("old provider request started")
+	}
+	app.syncInlayHints()
+	if view.request == nil || view.request == first || first.ctx.Err() == nil || view.request.producer != replacement {
+		t.Fatal("new provider did not own a new request")
+	}
+	lost := types.InsightProducer{}
+	port.service.producer = &lost
+	app.syncInlayHints()
+	if view.request != nil || ed.HasInlayProjection() || ed.Value() != "abc\n" || ed.Modified() {
+		t.Fatal("server loss retained labels or changed source")
 	}
 }

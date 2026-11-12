@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 
 	"crude/coreprotocol"
 	"crude/document"
+	"crude/workspace"
 )
 
 func (a *actor) prepareCompletions(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
@@ -22,6 +24,9 @@ func (a *actor) prepareCompletions(request coreprotocol.Request) (func(context.C
 		}
 		return func(ctx context.Context) coreprotocol.Response {
 			set, err := w.RequestLSPCompletions(ctx, owner, in.Source, in.ViewID, in.Sequence, in.Line, in.Col, in.Trigger)
+			if errors.Is(err, workspace.ErrCompletionBusy) {
+				return fault(request, "busy", err.Error())
+			}
 			if err != nil {
 				return fault(request, "completion_failed", err.Error())
 			}

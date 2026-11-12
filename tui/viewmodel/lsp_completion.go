@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/retry"
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/completion"
@@ -49,6 +50,8 @@ type completionState struct {
 	pending       *completionRead
 	observed      map[string]bool
 	requestErr    error
+	requesting    bool
+	busyAttempts  int
 	trigger       types.LSPCompletionContext
 }
 
@@ -58,6 +61,8 @@ type completionRead struct {
 	accept bool
 	cancel context.CancelFunc
 }
+
+type completionRetryDueMsg struct{ owner *completionState }
 
 type completionResultMsg struct {
 	owner *completionState
@@ -178,15 +183,31 @@ func (m *App) requestCompletion(automatic bool, trigger types.LSPCompletionConte
 		s.typed = editorTypedWord(ed)
 	}
 	m.completion = s
-	return func() tea.Msg {
-		request, stop := context.WithTimeout(ctx, 10*time.Second)
+	return m.startCompletionRequest(s)
+}
+
+func (m *App) startCompletionRequest(s *completionState) tea.Cmd {
+	if !m.completionCurrent(s) || s.stale || s.requesting {
+		return nil
+	}
+	if s.busyAttempts > 0 {
+		owner, generation := m.ws.LSPMgr().ContextCursor()
+		if owner != "" && owner != s.source.WorkspaceGeneration || s.contextGeneration > 0 && generation > s.contextGeneration {
+			m.closeCompletionPopup()
+			return nil
+		}
+	}
+	s.requesting = true
+	s.deadline = time.Now().Add(10 * time.Second)
+	return m.clientIOCommand(s.ctx, func(parent context.Context) tea.Msg {
+		request, stop := context.WithTimeout(parent, 10*time.Second)
 		defer stop()
-		set, err := port.RequestLSPCompletions(request, source, completionViewID, s.sequence, line, col, trigger)
+		set, err := s.port.RequestLSPCompletions(request, s.source, completionViewID, s.sequence, s.line, s.col, s.trigger)
 		if cancelled := request.Err(); cancelled != nil {
 			set, err = types.LSPCompletionSet{}, errors.Join(err, cancelled)
 		}
 		return completionResultMsg{owner: s, set: set, err: err}
-	}
+	})
 }
 
 func (m *App) completionCurrent(s *completionState) bool {
@@ -236,22 +257,31 @@ func (m *App) completionCurrent(s *completionState) bool {
 	return ok && frame.Body() == s.screen
 }
 
-func (m *App) handleCompletionResult(msg completionResultMsg) {
+func (m *App) handleCompletionResult(msg completionResultMsg) tea.Cmd {
 	s := msg.owner
 	if !m.completionCurrent(s) {
-		return
+		return nil
 	}
+	wasRequesting := s.requesting
+	s.requesting = false
 	if msg.err != nil {
+		if wasRequesting && knownLSPBusy(msg.err) {
+			s.deadline = time.Time{}
+			s.busyAttempts++
+			delay := retry.Jitter(s.busyAttempts, 250*time.Millisecond, 5*time.Second)
+			return tea.Tick(delay, func(time.Time) tea.Msg { return completionRetryDueMsg{owner: s} })
+		}
 		s.requestErr = msg.err
-		return
+		return nil
 	}
 	set := msg.set
 	if set.ID == "" || len(set.Digest) != 64 || set.ViewID != completionViewID || set.Sequence != s.sequence ||
 		set.Line != s.line || set.Col != s.col || set.Boundary.Source != s.source || set.FeatureGeneration != s.feature {
 		m.closeCompletionPopup()
-		return
+		return nil
 	}
 	s.set = &set
+	return nil
 }
 
 // Only memory clocks and mounted identities are observed on Update. Publication

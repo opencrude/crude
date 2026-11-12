@@ -53,30 +53,32 @@ type documentRequest struct {
 // All methods serialize, including disk saves. Invoke I/O methods off any UI
 // thread. The supplied save/LSP services are borrowed, not closed by this owner.
 type DocumentService struct {
-	mu              sync.Mutex
-	ownerMu         sync.Mutex
-	saveCancels     map[document.Owner]context.CancelFunc
-	stateDB         *sql.DB
-	stateErr        error
-	stateSizes      map[string]int
-	root            string
-	saves           *DocumentSaveService
-	lsp             *LSPManager
-	Insight         *InsightService
-	docs            map[string]*liveDocument
-	epochs          map[string]uint64
-	detached        map[document.Owner]bool
-	closed          bool
-	idleFenced      bool
-	watch           *documentWatch
-	bus             *EventBus
-	subscribers     map[string]map[chan struct{}]bool
-	reviewed        map[string]*reviewedEdit
-	codeActions     map[string]*codeActionSet
-	inlayViews      map[inlayViewKey]*inlayView
-	semanticViews   map[inlayViewKey]*semanticView
-	semanticRunning int
-	completionViews map[completionViewKey]*completionView
+	mu                sync.Mutex
+	ownerMu           sync.Mutex
+	saveCancels       map[document.Owner]context.CancelFunc
+	stateDB           *sql.DB
+	stateErr          error
+	stateSizes        map[string]int
+	root              string
+	saves             *DocumentSaveService
+	lsp               *LSPManager
+	Insight           *InsightService
+	docs              map[string]*liveDocument
+	epochs            map[string]uint64
+	detached          map[document.Owner]bool
+	closed            bool
+	idleFenced        bool
+	watch             *documentWatch
+	bus               *EventBus
+	subscribers       map[string]map[chan struct{}]bool
+	reviewed          map[string]*reviewedEdit
+	codeActions       map[string]*codeActionSet
+	inlayViews        map[inlayViewKey]*inlayView
+	inlayRunning      int
+	semanticViews     map[inlayViewKey]*semanticView
+	semanticRunning   int
+	completionViews   map[completionViewKey]*completionView
+	completionRunning int
 }
 
 func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager, state ...*sql.DB) *DocumentService {

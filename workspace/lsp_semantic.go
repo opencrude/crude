@@ -44,7 +44,14 @@ func (s *DocumentService) closeSemanticViewsLocked(owner document.Owner, id stri
 	for key, v := range s.semanticViews {
 		if key.owner == owner && (id == "" || v.source.DocumentID == id) {
 			v.cancel()
-			delete(s.semanticViews, key)
+			if id == "" {
+				delete(s.semanticViews, key)
+			} else {
+				// Keep the sequence fence across a peer-retained reopen, but
+				// never reuse the closed view's semantic delta base.
+				v.base = nil
+				v.loading = false
+			}
 		}
 	}
 }
@@ -65,10 +72,7 @@ func (s *DocumentService) ReleaseLSPSemantic(owner document.Owner, view string, 
 	// Requests and releases are independent read jobs. The release can arrive
 	// first, including ahead of a newer request while an older one is retained.
 	// Record its sequence before any late request can publish or retain a base.
-	s.ownerMu.Lock()
-	attached := owner.ClientID != "" && owner.Epoch != 0 && !s.detached[owner] && s.epochs[owner.ClientID] == owner.Epoch
-	s.ownerMu.Unlock()
-	if s.closed || !attached {
+	if s.closed || !s.attachedOwner(owner) {
 		return nil
 	}
 	s.pruneSemanticViewsLocked()

@@ -283,7 +283,13 @@ func (m *inlayVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.settled <- struct{}{}:
 		default:
 		}
-		return m, nil
+		phase := m.phase
+		return m, func() tea.Msg {
+			if err := m.evidence(fmt.Sprintf("INLAY_READY phase=%d", phase)); err != nil {
+				return inlayVisualDone{phase: -1, err: err}
+			}
+			return nil
+		}
 	case tea.KeyPressMsg:
 		if v.Code == tea.KeyF9 && !m.busy {
 			return m, tea.Quit

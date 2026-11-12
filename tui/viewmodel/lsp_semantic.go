@@ -2,13 +2,10 @@ package viewmodel
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/coreclient"
-	"crude/coreprotocol"
 	"crude/retry"
 	"crude/shellport"
 	"crude/tui/editor"
@@ -225,9 +222,7 @@ func (m *App) handleSemanticResult(msg semanticResultMsg) tea.Cmd {
 	if msg.err != nil {
 		// A busy fault means the core explicitly refused admission. An
 		// uncertain cleanup can wrap that fault; never replay that case.
-		var uncertain *coreclient.UncertainError
-		var fault *coreprotocol.Fault
-		if r.started && !errors.As(msg.err, &uncertain) && errors.As(msg.err, &fault) && fault.Code == "busy" {
+		if r.started && knownLSPBusy(msg.err) {
 			r.started = false
 			r.busyAttempts++
 			delay := retry.Jitter(r.busyAttempts, 250*time.Millisecond, 5*time.Second)

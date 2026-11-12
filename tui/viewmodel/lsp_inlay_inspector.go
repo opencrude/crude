@@ -101,7 +101,7 @@ func (m *App) inlayInspectorCurrent(s *inlayInspectorState) bool {
 	if r == nil || r.view == nil || m.inlayViews[r.view.editor] != r.view || r.view.request != r ||
 		r.view.hidden || !r.view.visible || r.view.workspace != m.ws || !m.acceptsLSPGeneration(r.view.generation) ||
 		!r.view.editor.IsOpen() || r.view.editor.Revision() != r.revision || !r.view.editor.MatchesInsightSource(r.source) ||
-		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
+		m.ws.LSPMgr() == nil || m.ws.LSPMgr().FileProducer(r.source.Path) != r.producer {
 		return false
 	}
 	enabled, epoch := m.ws.LSPMgr().InlayHintsState()

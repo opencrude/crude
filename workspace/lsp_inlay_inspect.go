@@ -107,7 +107,7 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 	return out, nil
 }
 
-// ReleaseLSPInlayHints retires only this owner's exact private view sequence.
+// ReleaseLSPInlayHints fences this owner's private view through this sequence.
 // Late release of an older sequence cannot retire its newer replacement.
 func (s *DocumentService) ReleaseLSPInlayHints(owner document.Owner, viewID string, sequence uint64) error {
 	if !validLSPView(viewID, sequence) {
@@ -115,10 +115,28 @@ func (s *DocumentService) ReleaseLSPInlayHints(owner document.Owner, viewID stri
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	view := s.inlayViews[inlayViewKey{owner, viewID}]
-	if view == nil || view.sequence != sequence {
+	if s.closed || !s.attachedOwner(owner) {
 		return nil
 	}
+	s.pruneInlayViewsLocked()
+	key := inlayViewKey{owner, viewID}
+	view := s.inlayViews[key]
+	if view != nil && view.sequence > sequence {
+		return nil
+	}
+	if view == nil {
+		if len(s.inlayViews) >= inlayMaxSequences {
+			return ErrInlayBusy
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		view = &inlayView{ctx: ctx, cancel: cancel}
+		if s.inlayViews == nil {
+			s.inlayViews = make(map[inlayViewKey]*inlayView)
+		}
+		s.inlayViews[key] = view
+	}
 	view.retire()
+	view.sequence, view.expires = sequence, time.Now().Add(inlayLifetime)
 	return nil
 }

@@ -598,25 +598,46 @@ an empty token set by default. The catalog now supplies its documented semantic
 token setting at initialization and in `workspace/configuration`, with explicit
 settings taking precedence. Installed-server headless and sequential native
 captures without the fixture override record all three typing/Undo phases at
-160×40 and 80×24, preserve source/draft/disk and join the provider. Fresh inspection
-of the initial and edited screenshots confirms readable token colors at both sizes.
-With the tree open at 80×24, the long source line extends beyond the right edge.
-A separate native End-key capture scrolls to the diagnostic: the red wavy underline
-under the undefined name is visible. Linux build, lint, design/docs, generated
-wire and Windows/macOS component cross-build checks pass. A 45-second parser fuzz
-run completed without a crash; it is not proof of native-platform behavior.
+160×40 and 80×24, preserve source/draft/disk and join the provider. The edited
+images were inspected: both show semantic colors; the wide image also shows the
+diagnostic underline. At 80×24, the source line extends beyond the right edge.
+A separate End-key capture was made but was not visually verified. Linux build,
+lint, design/docs, generated wire and Windows/macOS component cross-build checks
+pass. A 45-second parser fuzz run completed without a crash; it is not proof of
+native-platform behavior.
 
 The [Windows GC crash](2026-11-11-workspace-gc-crash.md) is still open. Linux
 checks or cross-builds do not establish its cause or repair it.
 
-## Open completion and inlay ownership findings (2026-11-11)
+## Completion and inlay request lifetimes (2026-11-11)
 
 A two-shell probe reproduced hidden inlay labels when a different shell focused a
 file without a server. Separate ordering probes found that inlay and completion
 releases arriving before their requests can let released views reach a provider.
 Additional probes found that repeated replacements can exceed both work limits when
-a provider ignores cancellation. These findings remain open; temporary probe
-evidence is not a product fix or a passing regression.
+a provider ignores cancellation. A connected core test covers definite busy
+recovery, editing, Undo and private drafts. A later close/reopen regression exposed
+that deleting sequence fences could revive old completion, inlay and semantic
+requests while a peer retained the same source. The owner now retains each fence
+across file close, discards old evidence and semantic delta bases, and removes the
+fences on owner detach. All three focused regressions and a two-shell native-key
+close/reopen, edit and Undo journey pass. The full ordinary suite, affected race,
+build/lint, documentation and Windows/macOS component cross-build checks pass on
+the corrected tree. The unchanged allocation gate passes, without raised ceilings.
+Installed-gopls inlay journeys run at 160×40 and 80×24; provider processes join.
+The installed server did not advertise tooltip resolve, so the resolve check uses
+a deterministic fixture. Windows cross-builds do not resolve the open GC crash.
+
+## Inlay details presentation gap (2026-11-11)
+
+Fresh Linux 160×40 and 80×24 captures show inline labels and working inspector
+interaction. They also expose an existing usability defect: the detail reader
+shows byte offsets, zero-based protocol coordinates, opaque fields and raw JSON
+instead of leading with the hint and useful documentation. This violates
+[user language](../reference/user-language.md). Fix the existing reader and its
+entry points without weakening source/row validation or making provider commands,
+edits or locations executable. The installed gopls did not advertise tooltip
+resolve; deterministic protocol tests are not installed-server resolve evidence.
 
 ## Remaining acceptance
 

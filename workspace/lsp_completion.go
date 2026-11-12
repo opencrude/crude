@@ -23,6 +23,9 @@ const (
 	completionLifetime         = 5 * time.Minute
 )
 
+// ErrCompletionBusy is a definite non-admission: no provider or sequence changed.
+var ErrCompletionBusy = errors.New("completion request capacity is occupied")
+
 type completionViewKey struct {
 	owner document.Owner
 	view  string
@@ -49,11 +52,19 @@ func (v *completionView) retire() {
 }
 
 func (s *DocumentService) pruneCompletionViewsLocked() {
+	now := time.Now()
 	for key, view := range s.completionViews {
-		_, err := s.readOnlyLSPSourceLocked(key.owner, view.source)
-		if time.Now().After(view.expires) || err != nil || view.check != nil && view.check() != nil {
+		if now.After(view.expires) {
 			view.cancel()
 			delete(s.completionViews, key)
+			continue
+		}
+		if view.ctx.Err() != nil {
+			continue
+		} // Keep the sequence fence, not evidence.
+		_, err := s.readOnlyLSPSourceLocked(key.owner, view.source)
+		if err != nil || view.check != nil && view.check() != nil {
+			view.retire()
 		}
 	}
 }
@@ -61,8 +72,15 @@ func (s *DocumentService) pruneCompletionViewsLocked() {
 func (s *DocumentService) closeCompletionViewsLocked(owner document.Owner, documentID string) {
 	for key, view := range s.completionViews {
 		if key.owner == owner && (documentID == "" || view.source.DocumentID == documentID) {
-			view.cancel()
-			delete(s.completionViews, key)
+			// Detach ends the owner epoch. Closing one file does not: another
+			// shell can retain its source while this owner reopens the file.
+			// Keep the bounded sequence fence, but discard all old evidence.
+			if documentID == "" {
+				view.cancel()
+				delete(s.completionViews, key)
+			} else {
+				view.retire()
+			}
 		}
 	}
 }
@@ -89,7 +107,7 @@ func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Ow
 		err = errors.New("completion invocation was superseded")
 	}
 	if err == nil && previous == nil && len(s.completionViews) >= completionMaxSequences {
-		err = errors.New("completion sequence tracking is full; close an earlier document view")
+		err = ErrCompletionBusy
 	}
 	active := 0
 	for k, other := range s.completionViews {
@@ -98,7 +116,10 @@ func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Ow
 		}
 	}
 	if err == nil && active >= completionMaxViews {
-		err = errors.New("close an earlier completion view before requesting another")
+		err = ErrCompletionBusy
+	}
+	if err == nil && s.completionRunning >= completionMaxViews {
+		err = ErrCompletionBusy
 	}
 	if err != nil {
 		s.mu.Unlock()
@@ -115,6 +136,7 @@ func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Ow
 		s.completionViews = make(map[completionViewKey]*completionView)
 	}
 	s.completionViews[key] = entry
+	s.completionRunning++
 	s.mu.Unlock()
 
 	requestCtx, cancel := context.WithCancel(ctx)
@@ -123,6 +145,7 @@ func (w *Workspace) RequestLSPCompletions(ctx context.Context, owner document.Ow
 		stop()
 		cancel()
 		s.mu.Lock()
+		s.completionRunning--
 		if s.completionViews[key] == entry && entry.set.ID == "" {
 			entry.retire()
 		}

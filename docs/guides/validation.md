@@ -520,8 +520,10 @@ For sequential native captures select `CRUDE_VISUAL_INLAY=1`,
 `CRUDE_ARGS='-test.run=^TestInlayVisualAcceptance$ -test.count=1 -test.timeout=600s'`
 and `CRUDE_INLAY_VISUAL_RESULT` with the compiled viewmodel test binary.
 F3 prepares only the disposable fixture; F4 passively verifies the original
-boundary after the ordinary keys listed in `lsp_inlay_visual_test.go`. Follow
-the actually observed `RESOLVE_SUPPORTED` value, never treat unsupported tooltip
+boundary after the ordinary keys listed in `lsp_inlay_visual_test.go`. Set
+`CRUDE_CAPTURE_EVIDENCE` to the same result file and await the exact
+`INLAY_READY phase=N` marker after each observation before sending the next key.
+Follow the actually observed `RESOLVE_SUPPORTED` value, never treat unsupported tooltip
 resolution as an executed read. Inspect native inline/list/detail and hidden
 frames at 160x40 and 80x24, use the printed literal `POINTER_COUNT` cell for the
 final click, and finish with `quit:F9`. Check all ten `F4 VERIFIED` markers,

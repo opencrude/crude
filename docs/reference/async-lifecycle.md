@@ -104,12 +104,16 @@ subprocess rather than a process-name search.
   off Update through the joined cancellable exchange; only Update may publish a
   still-current reader or apply the initial editor transaction. Changing row
   cancels the former read, not the original insertion. Closing/switching/shutdown
-  cancels the invocation and schedules its exact-sequence release on the App's
+  cancels the invocation and schedules its ordered sequence release on the App's
   joined async owner. A late old release/result cannot affect a newer chooser or
   another workspace's feedback. The canonical document service retains at most
   16 active views, 128 sequence records and 16 MiB accounted raw/display payload,
-  expiring after five minutes; source close/detach/shutdown revoke their views.
-  These bounds do not prove provider CPU/RSS containment. See
+  expiring after five minutes. File close revokes retained evidence but keeps the
+  bounded sequence fence across reopen; detach and shutdown remove that owner's
+  fences. Actual completion and inlay provider work holds capacity until return,
+  even after cancellation. Only a definite busy refusal can retry while the same
+  source and view remain current. These bounds do not prove provider CPU/RSS
+  containment. See
   [completion documentation](editor.md#completion-documentation-and-original-insertion).
   Completion and inlay publication/selected-row inspection recheck the retained
   invocation's own cancellation under the document lock. Release takes effect

@@ -59,7 +59,8 @@ have one shared row owner. EditorConfig indentation and explicit file choices
 now use the source-table policy. Multiple selections now use native edit vectors
 and private history, with native and repository acceptance. Minimap and indent
 guides now share the existing Editor page and scroll/source geometry. Remaining
-gaps include linked editing, CodeLens and completion/inlay lifetime recovery.
+gaps include linked editing, CodeLens and the inlay details reader. Completion and
+inlay request lifetimes now retain their ordering and work-capacity fences.
 Semantic colors now use the connected provider and shared source projection; their
 scope and verified limits are in the semantic-token checkpoint evidence.
 Some LSP method constants exist in the vendored transport; a constant is not a
@@ -289,6 +290,7 @@ Modifier-specific styling and server-initiated semantic refresh remain open.
 | Missing/partial workflow | Complete expected result and implementation constraint |
 |---|---|
 | Workspace symbols and breadcrumbs | Search project symbols from the existing palette/native list; selecting one goes to exact source and participates in Back/Forward. Document outline already exists. Reuse it for breadcrumb hierarchy, not another symbol cache. |
+| Inlay details | Show the selected hint and useful tooltip in plain language, not raw JSON, protocol coordinates or internal identities. Keep the exact row/source fence, safe native interaction and inert provider actions. |
 | Document highlights | Current symbol reads/writes are distinguished with restrained theme tokens; async answers are fenced by exact source and caret invocation. They never become editable selections. |
 | Linked editing | Paired tag-name edits use negotiated ranges, one local transaction and source-qualified invalidation. Never keep mirrored editing after a peer touches its range. |
 | Call/type hierarchy | Expand incoming/outgoing calls or supertypes/subtypes in the shared bounded tree/list. Lazy requests, cancellation and exact location navigation; no unrelated popup framework. |

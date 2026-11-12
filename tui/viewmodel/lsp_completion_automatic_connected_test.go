@@ -67,6 +67,13 @@ func (c *typingCompletionClient) RequestCompletions(_ context.Context, path stri
 
 func newTypingCompletionFixture(t *testing.T, initial string) ([]remoteJourneyShell, []*editor.Editor, *workspace.Workspace, *typingCompletionRuntime, string) {
 	t.Helper()
+	engine := &typingCompletionRuntime{}
+	shells, eds, owned, path := newTypingCompletionFixtureWithRuntime(t, initial, engine)
+	return shells, eds, owned, engine, path
+}
+
+func newTypingCompletionFixtureWithRuntime(t *testing.T, initial string, engine workspace.LSPRuntime) ([]remoteJourneyShell, []*editor.Editor, *workspace.Workspace, string) {
+	t.Helper()
 	root := t.TempDir()
 	path := filepath.Join(root, "main.go")
 	for name, text := range map[string]string{path: initial, filepath.Join(root, "go.mod"): "module journey\n\ngo 1.22\n"} {
@@ -78,7 +85,6 @@ func newTypingCompletionFixture(t *testing.T, initial string) ([]remoteJourneySh
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := &typingCompletionRuntime{}
 	var owned *workspace.Workspace
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		owned = w
@@ -104,7 +110,7 @@ func newTypingCompletionFixture(t *testing.T, initial string) ([]remoteJourneySh
 	shells[0].app.setFocusEditor()
 	shells[0].app.Input.SetInput("private draft")
 	eds[0].SetCursorPosition(0, editor.LineVisualWidth(initial, editor.DefaultTabWidth))
-	return shells, eds, owned, engine, path
+	return shells, eds, owned, path
 }
 
 func TestConnectedTypingOffersNamesAndMembersAndTabAccepts(t *testing.T) {

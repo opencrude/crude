@@ -422,3 +422,49 @@ func TestSemanticFileSynchronizationPublishesReadiness(t *testing.T) {
 		t.Fatal("source synchronization did not publish a new snapshot version")
 	}
 }
+
+// Closing one shell's file cannot revive its old color request when another
+// shell keeps the canonical source and server alive during the reopen.
+func TestSemanticSequenceSurvivesPeerRetainedReopen(t *testing.T) {
+	f := newSemanticFixture(t, "abc\n")
+	docs := f.w.LiveDocuments
+	if _, err := docs.Open(document.Owner{ClientID: "peer", Epoch: 1}, f.path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.request(t, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := docs.CloseView(f.owner, f.source.DocumentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := docs.Open(f.owner, f.path); err != nil {
+		t.Fatal(err)
+	}
+	docs.mu.Lock()
+	source := docs.analysisIdentityLocked(docs.docs[f.source.DocumentID])
+	docs.mu.Unlock()
+	if source != f.source {
+		t.Fatal("peer did not retain the same canonical source", source, f.source)
+	}
+	f.c.lock.Lock()
+	before := len(f.c.calls)
+	f.c.lock.Unlock()
+	if _, err := f.request(t, 1); err == nil {
+		t.Fatal("old semantic request revived after reopen")
+	}
+	f.c.lock.Lock()
+	after := len(f.c.calls)
+	f.c.lock.Unlock()
+	if after != before {
+		t.Fatal("old semantic request reached provider after reopen")
+	}
+	if next, err := f.request(t, 2); err != nil || next.Sequence != 2 {
+		t.Fatal("newer semantic request did not recover", err)
+	}
+	f.c.lock.Lock()
+	calls := append([]semanticTestCall(nil), f.c.calls[before:]...)
+	f.c.lock.Unlock()
+	if len(calls) != 2 || calls[0].mode != "support" || calls[1].mode != "full" {
+		t.Fatal("reopened view reused the closed view's delta base", calls)
+	}
+}

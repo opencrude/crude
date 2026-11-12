@@ -938,11 +938,26 @@ func TestCompletionRawAndRetainedByteBoundsReleaseAndCloseReclaimEvidence(t *tes
 	if total, _ := retained(); total != after {
 		t.Fatal("failed oversize response retained bytes", total, after)
 	}
+	_, beforeClose := retained()
 	if err := f.w.LiveDocuments.CloseView(f.owner, f.source.DocumentID); err != nil {
 		t.Fatal(err)
 	}
+	if total, count := retained(); total != 0 || count != beforeClose {
+		t.Fatal("close did not discard original/display evidence while retaining sequence fences", total, count, beforeClose)
+	}
+	s := f.w.LiveDocuments
+	s.mu.Lock()
+	for _, view := range s.completionViews {
+		if view.ctx.Err() == nil || view.set.ID != "" || len(view.originals) != 0 || len(view.resolved) != 0 || view.check != nil {
+			s.mu.Unlock()
+			t.Fatal("file close retained active completion evidence")
+		}
+	}
+	s.mu.Unlock()
+	s.Detach(f.owner)
+	s.ReleaseDetached(f.owner)
 	if total, count := retained(); total != 0 || count != 0 {
-		t.Fatal("close did not reclaim original/display evidence and tombstones", total, count)
+		t.Fatal("owner detach did not reclaim completion sequence fences", total, count)
 	}
 }
 

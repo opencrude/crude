@@ -2,9 +2,20 @@ package viewmodel
 
 import (
 	"context"
+	"crude/coreclient"
+	"crude/coreprotocol"
 	"crude/tui/editor"
 	"crude/workspace"
+	"errors"
 )
+
+// knownLSPBusy accepts only the core's definite refusal. An uncertain
+// transport outcome cannot be replayed even when it wraps a busy fault.
+func knownLSPBusy(err error) bool {
+	var uncertain *coreclient.UncertainError
+	var fault *coreprotocol.Fault
+	return !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.As(err, &uncertain) && errors.As(err, &fault) && fault.Code == "busy"
+}
 
 // A manual request can wait through startup. Automatic popup requests continue
 // to require readiness so ordinary typing never starts a long-lived search.

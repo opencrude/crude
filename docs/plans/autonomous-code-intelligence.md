@@ -111,7 +111,7 @@ Update a row only with evidence.
 | Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
 | Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostic facts, including unopened files. Focused freshness/gap tests and native installed-server captures verify clearing and explicit incomplete coverage. Declared scope is not a complete-project or per-feature proof; richer fact kinds remain open. |
 | Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
-| Editor features | Shared, revision-checked editor and agent answers | Banked slices include navigation, completion and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostics and [semantic colors](#semantic-token-presentation-2026-11-11). Completion/inlay request lifetime defects, broader editor parity and native Windows crash resolution remain open. |
+| Editor features | Shared, revision-checked editor and agent answers | Banked slices include navigation, completion and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostics and [semantic colors](#semantic-token-presentation-2026-11-11). Completion/inlay request lifetimes are fenced; the inlay details reader, broader editor parity and native Windows crash resolution remain open. |
 
 Known exception: the compilation-database and CMake importers in
 `insight/project/` read build-file formats. The generic recipe layer must call
@@ -181,20 +181,24 @@ owners. Full/range/delta validation, lexical fallback, cancellation, per-file
 producer and synchronization fences pass the documented Linux tests and native
 installed-server journeys. See the [banked evidence](#semantic-token-presentation-2026-11-11).
 
-**Next checkpoint: completion and inlay request lifetimes.** Fix the reproduced
-release-before-request race, preserve newer view sequences, and bound actual
-provider work even when cancellation is ignored. A known non-admission must recover
-without replaying an uncertain request. Inlay views follow their own file's
-producer rather than another shell's selected server. Use the existing document,
-request and presentation owners; do not add another source or retry authority.
+Completion/inlay release ordering, peer focus, close/reopen and provider-work
+capacity now use the original view and document owners. The full suite,
+affected race paths, installed-server journeys at both sizes, build/lint/docs,
+component cross-builds and allocation gate pass. The evidence is in the
+[request-lifetime checkpoint](../issues/2026-11-11-editor-polish.md#completion-and-inlay-request-lifetimes-2026-11-11).
 
-Exit: real core and two-shell entry points cover release ordering, replacement,
-capacity, retry, peer focus/edit, provider loss and late results, with unchanged
-source, private drafts and author Undo. Verify supported/unsupported and installed
-provider behavior at 160×40 and 80×24, affected race/build/docs/cross-build and the
-unchanged allocation and full-suite gates. No local model, new Settings page or
-language-specific product branch is in scope. Commit characters, linked editing,
-CodeLens and the other editor rows remain open.
+**Next checkpoint: usable inlay details (2026-11-11).** The existing reader shows
+internal protocol bookkeeping instead of useful hint text. Show the selected
+label and available tooltip in concise, safe text, with compact content-sized
+presentation and scrolling where needed. Keep original row/source validation,
+read-only actions, cancellation, native copy and keyboard/pointer paths.
+
+Exit: reproduce and fix the existing native reader failure; test empty, unsupported,
+failed, resolved and malicious text; verify exact-row selection, Back/Close,
+source invalidation, copying and scrolling at desktop and 80×24. Run affected
+checks and native captures. Do not change provider commands/edits into actions,
+create a new settings page or imply installed-server tooltip resolve where absent.
+Commit characters, linked editing, CodeLens and remaining editor rows stay open.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named
@@ -1575,6 +1579,19 @@ four items have passed and the current references describe the result.
 
 History of finished slices, kept as evidence. [Stage status](#stage-status) is
 the authoritative summary; this text does not describe remaining work.
+
+### Completion and inlay request lifetimes (2026-11-11)
+
+Release-before-request and peer-retained close/reopen now retain bounded ordered
+sequence fences without retaining old display evidence. Completion and inlay
+admission counts actual provider work until return, and a definite busy refusal
+can retry only for the same current view and source. Inlays follow their own
+file's producer and synchronization state, not another shell's selected file.
+Connected tests cover two-shell edit/Undo, cancellation, retries and reopen. The
+full ordinary suite, affected race, build/lint/docs, cross-build and allocation
+gates pass. Linux installed-gopls inlay captures pass at both sizes; this does
+not establish installed-server tooltip resolve or native Windows acceptance.
+See [the detailed evidence](../issues/2026-11-11-editor-polish.md#completion-and-inlay-request-lifetimes-2026-11-11).
 
 ### Semantic token presentation (2026-11-11)
 
