@@ -161,13 +161,25 @@ checks pass. Passive LSP reads no longer occupy the file-effect lane. Ordinary
 inventory, affected race, build/lint/docs/cross-build and unchanged allocation gates
 pass. The checkpoint issue records the aborted final build and its passing test run.
 
-Next, finish editor orientation preferences: consume the existing Minimap setting
-and add indentation guides on the existing Editor page. Reuse source/row geometry,
-theme tokens, the one scroll model and captured scrollbar interaction. Check
-source/selection stability, linked views, narrow panes, wrapping/folding, settings
-inheritance and native pointer navigation. Keep work bounded by visible geometry;
-no full-file reflow in Paint. Then continue the remaining semantic workflows.
-Do not add another Settings page.
+Minimap and indentation guides now use the existing Editor page, source/row
+geometry and shared captured scrollbar. Native pointer, typing and Undo journeys
+pass at 160×40 and 80×24; connected peer/reset, affected race, build/lint/docs,
+component cross-build and the extended allocation gate pass. Whole-line and
+whole-document copies found by the gate were corrected at their source owners;
+no existing ceiling was raised. See the orientation evidence in the editor issue.
+
+**Next checkpoint: multiline completion indentation.** Complete the negotiated
+LSP `insertTextMode` insertion contract through the existing completion, snippet,
+source and Undo owners. Preserve selected source, line endings, per-file policy,
+placeholder positions, imports and one author transaction. Keep original provider
+identity and source/context fencing; unsupported or invalid evidence must not
+partly edit the file. Test plain and numeric-snippet items, tabs/spaces, CRLF,
+Unicode, additional edits, stale/cancelled replies, linked shells and no-server
+editing through the real entry points. Verify native desktop and 80×24 journeys,
+affected race/build/docs and unchanged gates before claiming this checkpoint.
+Commit characters, semantic tokens and the other rows in the editor handoff remain
+open; do not advertise those features as part of this checkpoint. No local model,
+new Settings page or language-specific product branch is in scope.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named

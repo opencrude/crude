@@ -7,6 +7,43 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Editor minimap and indentation guides (2026-11-11)
+
+`BenchmarkEditorOrientation` measures a new 120×40 grid paint after source workers
+settle; `BenchmarkMinimapRebuild` measures just the bounded image reconstruction.
+The source worker remains enabled and separately gated. Initial measurements that
+overlapped its preparation included process-wide worker allocations, so they did
+not isolate the map's cost. Three 300 ms Linux amd64 / Go 1.27.4 repetitions,
+GOMAXPROCS=2, i7-10750H (repository tests were running in another process):
+
+| Source lines | Paint, guides/map off | Paint, guides/map on | Minimap rebuild |
+|---|---|---|---|
+| 200 | 0.222–0.229 ms, 199,003 B, 154 allocs | 0.238–0.299 ms, 199,003 B, 154 allocs | 0.105–0.123 ms, 8,960 B, 161 allocs |
+| 20,000 | 0.216–0.226 ms, 199,088 B, 154 allocs | 0.224–0.257 ms, 199,088 B, 154 allocs | 0.106–0.119 ms, 8,960 B, 161 allocs |
+
+These are grid timings, not terminal transport or presented-frame latency. The
+initial unimplemented Minimap field had no visible consumer; a passing fast paint
+was not feature evidence. The new image uses at most four samples per pane row,
+not per source line. A behavioral regression rejects rescanning on scroll/theme
+changes and checks that source edits rebuild only the bounded image. A separate
+regression catches wrapped continuations that looked empty. Unsampled content past
+the 1 KiB source-prefix budget is marked, never interpreted as source whitespace.
+
+Six new allocation ceilings retain approximately 20% headroom (240,000 B / 185
+allocs for paint; 10,800 B / 194 allocs for rebuilding). Existing ceilings stay
+unchanged. Cold source preparation and Unicode geometry keep their existing gates.
+
+The first complete gate also exposed 5,079 allocations in 256-caret Undo against
+the unchanged 5,034 ceiling. A heap profile attributed 62% of all scenario objects
+to source-position/offset conversions copying whole lines. The shared grapheme
+wrapper and coordinate converters now accept borrowed byte slices as well as
+strings; they still delegate to the same calibrated x/ansi iterator. No unsafe
+alias, new geometry cache or alternate Unicode algorithm was added. The offset
+roundtrip regression changes from two allocations to zero. Three unchanged
+256-caret Undo repetitions then measured 1.49–1.63 ms and 1,742–2,247 allocations,
+with background syntax still enabled. The original ceiling is not raised.
+
+
 ## Multiple-caret editing (2026-11-11)
 
 The first 20,000-line implementation rebuilt source once per caret during Undo
@@ -59,6 +96,16 @@ are now gated with approximately 20% allocation headroom; resize retains zero
 allocations. No earlier ceiling changes. Behavioral checks fence stale workers,
 keep changed-line measurement bounded, retain cold fold-only geometry, compress
 multi-megabyte uniform lines, and exclude hidden syntax from visible projection.
+
+A later orientation gate exposed 7,235,873 B per typing/paint operation, above
+the unchanged 6,950,000 B limit. Five isolated repetitions measured 7.16–7.33 MB.
+An allocation profile showed that reading one preceding grapheme for Backspace
+copied the entire 1.8 MB source. `PieceTable.GetText` now makes its owned string
+from the requested byte range only. Its regression verifies Unicode, CRLF, reversed
+selection and a detached result after editing; an ASCII selection uses one instead
+of two allocations. Five further 1-second repetitions measured 5.96–6.14 MB and
+157–162 allocations with source and syntax workers enabled. This is the original
+benchmark's total process allocation, not an isolated mutation or latency claim.
 
 ## Structural editor analysis (2026-11-11)
 

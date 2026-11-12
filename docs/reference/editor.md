@@ -48,6 +48,8 @@ an external disk conflict. See [private shared-editor recovery](core-client-prot
   and deletion use complete source units. A tab is one unit, not its expanded
   spaces; a combining/ZWJ/modifier cluster is never split by a visible edit.
   Exact inverse edits use byte offsets, including inside a newly joined cluster.
+  A selected source range returns an owned string copied from that range, not a
+  copy of the whole document; later edits cannot change the returned text.
 - Backspace within leading whitespace removes to the previous indentation stop,
   never into following words. At line start it joins the previous line; Delete
   at a line end (including an empty line) removes the complete terminator. CRLF
@@ -270,6 +272,39 @@ than one object per displayed row.
 - This follows the established captured-gesture/repeating-edge-scroll model in
   [CodeMirror mouse selection](https://github.com/codemirror/view/blob/main/src/input.ts),
   rather than separate one-off behavior for each kind of drag.
+
+## Indentation guides and minimap
+
+The existing Editor page contains **Indent guides** and **Minimap**, both opt-in
+presentation choices. They follow live application/workspace inheritance and reach
+open, linked and new views. Neither writes source, changes selected bytes nor
+adds an Undo record. Guides mark each effective indentation step in existing
+leading whitespace. Tab stops, explicit file indentation and EditorConfig use the
+same geometry. At a guide position the line replaces a whitespace marker; other
+whitespace markers remain visible. Guides never overwrite source text or inlays.
+
+Minimap widens the existing vertical scrollbar, not the editor document or its
+state. Its sampled Braille image uses four visual-row samples per cell and the
+first 32–64 columns of each sampled row, bounded to a 1 KiB source prefix.
+Later wrapped content beyond that prefix shows `…`, not a misleading empty row. It is
+a compact orientation aid, not a complete source or diagnostic overview. Wrapped
+and folded rows come from the same projection as scrolling; hidden rows are not
+sampled. Image work/storage is bounded by pane geometry. Source, tab width,
+row/fold/inline geometry and terminal width profile invalidate the image; cursor,
+scroll and theme changes do not resample it. Colors reproject through theme tokens.
+
+The shared `ui.ScrollbarControl` paints the image, its viewport tint and one
+track. Clicking jumps to the indicated area; dragging uses its normal pointer
+capture and final release. There is no second viewport or minimap drag state.
+The miniature hides when fewer than forty source columns would remain; it returns
+when the pane grows. Ordinary scrollbars retain page-on-track-click behavior.
+Source hit testing and horizontal/wrapped layout exclude the full reserved width.
+
+Scrollbar offsets are visual rows. They pass through `setScrollRow`, never an
+assignment to a logical source line. Canonical author Undo reveals its restored
+caret after restoring private view state, like standalone Undo; it does not move
+another shell or a sibling view's caret. Typing after scrolling the minimap returns
+to the existing selected source, not to the miniature's clicked location.
 
 ## Multiple selections and carets
 

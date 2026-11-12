@@ -70,6 +70,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		DiagHint:    cell.AttrUnderline,
 	}
 
+	indentSize := 0
+	if e.indentGuides {
+		indentSize = e.indentStyle().size
+	}
 	buf := surf.Buffer()
 	// Every cell is the editor's: rows the body loop does not reach (the
 	// horizontal scrollbar row, its corner) must never show what the editor
@@ -247,7 +251,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						cluster := clusters[ri]
 						marker := ""
 						if cluster == " " {
-							marker = spaces.marker(sourceCol, e.renderWhitespace == "boundary")
+							if indentSize > 0 && spaces != nil && sourceCol < spaces.leading && sourceCol%indentSize == 0 {
+								marker = "│"
+							} else if e.renderWhitespace == "all" || e.renderWhitespace == "boundary" {
+								marker = spaces.marker(sourceCol, e.renderWhitespace == "boundary")
+							}
 						}
 						if marker != "" {
 							cluster = marker

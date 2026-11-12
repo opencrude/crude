@@ -201,20 +201,22 @@ type Editor struct {
 
 	// Git supplies an immutable HEAD baseline. The editor owns one exact live
 	// projection for paint, navigation and inspection; there are no local claims.
-	gitHunks         []GitHunk
-	gitHead          string
-	gitHeadLines     []string
-	gitSnapshot      textSnapshot
-	gitLineOffsets   []int
-	gitBlameHunks    []GitHunk
-	gitBlame         []GitBlameLine
-	gitLoaded        bool
-	gitConflicted    bool
-	gitRevision      uint64
-	readOnly         bool
-	hideLineNumbers  bool
-	syntaxColors     string
-	renderWhitespace string
+	gitHunks              []GitHunk
+	gitHead               string
+	gitHeadLines          []string
+	gitSnapshot           textSnapshot
+	gitLineOffsets        []int
+	gitBlameHunks         []GitHunk
+	gitBlame              []GitBlameLine
+	gitLoaded             bool
+	gitConflicted         bool
+	gitRevision           uint64
+	readOnly              bool
+	hideLineNumbers       bool
+	syntaxColors          string
+	renderWhitespace      string
+	indentGuides, minimap bool
+	mini                  minimapProjection
 
 	// hover state for diagnostic tooltip popup.
 	hoverMessages []string
@@ -326,6 +328,7 @@ func (e *Editor) Open(path string) error {
 // loading. The Editor delegates all text access to the buffer. Call this
 // instead of Open() when using the BufferManager.
 func (e *Editor) OpenBuffer(buf *Buffer) {
+	e.mini = minimapProjection{}
 	e.cancelRows()
 	e.folds = foldState{}
 	e.rowsStopped = false
@@ -405,6 +408,7 @@ func (e *Editor) ApplyFormatted(text string) {
 }
 
 func (e *Editor) Close() {
+	e.mini = minimapProjection{}
 	e.StopRows()
 	e.DismissGhostText()
 	e.ClearInlayHints()
@@ -502,6 +506,7 @@ func (e *Editor) invalidateEditorCaches() {
 // InvalidateWidthProfile clears all geometry derived from terminal cell widths.
 // Buffer contents, cursor position, undo state, and syntax data are preserved.
 func (e *Editor) InvalidateWidthProfile() {
+	e.mini = minimapProjection{}
 	e.cancelRows()
 	e.rows = editorRows{}
 	e.DismissGhostText()

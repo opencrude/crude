@@ -5,7 +5,6 @@ import (
 
 	"bytes"
 	"crude/document"
-	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -31,6 +30,11 @@ func (e *Editor) syncScrollChrome(bodyH int) {
 		e.sbCtrl.SetScroll(e.scrollModel)
 		e.sbCtrl.SetTokens(e.tokens)
 	}
+	target := 3
+	if e.minimapWidth() > 0 {
+		target = 1
+	}
+	e.sbCtrl.SetPointerTargetSize(target)
 	e.sbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: e.scrollbarColWidth(), H: bodyH})
 }
 
@@ -165,7 +169,9 @@ func (e *Editor) paintHorizontalScrollbar(buf *surface.CellBuffer, x, y, width i
 }
 
 // scrollbarColWidth is the reserved right-column width for shared chrome.
-func (e *Editor) scrollbarColWidth() int {
+func (e *Editor) scrollbarColWidth() int { return e.scrollbarStrokeWidth() + e.minimapWidth() }
+
+func (e *Editor) scrollbarStrokeWidth() int {
 	if e.tokens != nil {
 		if w := e.tokens.Metrics().ScrollbarWidth; w > 0 {
 			return w
@@ -181,15 +187,12 @@ func (e *Editor) paintScrollbar(buf *surface.CellBuffer, sbX, bodyH int) {
 		return
 	}
 	e.syncScrollChrome(bodyH)
-	if e.scrollModel == nil || e.scrollModel.MaxOffset() <= 0 {
-		bg := e.cellColor(e.th.Colors.Bg)
-		for y := 0; y < bodyH; y++ {
-			for x := 0; x < e.scrollbarColWidth(); x++ {
-				buf.Set(sbX+x, y, cell.NewCell(' ', bg, bg, 0))
-			}
-		}
+	overview := e.prepareMinimap(bodyH)
+	e.sbCtrl.SetOverview(overview)
+	if overview == nil && e.scrollModel.MaxOffset() == 0 {
 		return
-	}
+	} // Render already filled the complete source surface.
+
 	e.sbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: sbX, Y: 0, W: e.scrollbarColWidth(), H: bodyH})
 	e.sbCtrl.Paint(buf, 0, 0, ui.PaintContext{Hovered: e.vScrollbarHovered})
 }
@@ -208,14 +211,12 @@ func (e *Editor) SetPointerHovered(hovered bool) {
 	}
 }
 
-// applyScrollbarOffset copies ScrollModel offset back into editor scrollY.
+// applyScrollbarOffset projects the shared visual-row offset into source geometry.
 func (e *Editor) applyScrollbarOffset() {
 	if e.scrollModel == nil {
 		return
 	}
-	if off := e.scrollModel.Offset(); off != e.scrollY {
-		e.scrollY = off
-	}
+	e.setScrollRow(e.scrollModel.Offset())
 }
 
 // handleScrollbarEvent routes mouse input to ScrollbarControl using track-local Y.
@@ -224,6 +225,7 @@ func (e *Editor) handleScrollbarEvent(msg tea.Msg, localY int) bool {
 	if e.sbCtrl == nil {
 		return false
 	}
+	e.sbCtrl.SetOverview(e.prepareMinimap(e.bodyHeight()))
 	res := e.sbCtrl.Handle(ui.EventContext{LocalY: localY}, ui.NormalizeEvent(msg))
 	if res.Handled {
 		e.applyScrollbarOffset()

@@ -246,7 +246,7 @@ func (pt *PieceTable) positionToOffset(pos Position) int {
 	}
 	line := max(0, pos.Line)
 	content, _ := pt.lineView(line)
-	return pt.lineOffsets[line] + VisualColToByteOffset(string(content), pos.Col, pt.tabSize)
+	return pt.lineOffsets[line] + VisualColToByteOffset(content, pos.Col, pt.tabSize)
 }
 
 func (pt *PieceTable) GetText(start, end Position) string {
@@ -258,7 +258,9 @@ func (pt *PieceTable) GetText(start, end Position) string {
 	if startOff == endOff {
 		return ""
 	}
-	bytes := pt.Bytes()
+	// positionToOffset has materialized the cache. Copy only the requested
+	// range into the returned string, not the entire source for a small read.
+	bytes := pt.cachedBytes
 	if startOff < 0 {
 		startOff = 0
 	}

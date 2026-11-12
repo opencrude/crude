@@ -379,6 +379,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.BoolFieldState("line-numbers", "Line numbers", editor.LineNumbers, "Show the line-number gutter."),
 			ui.SegmentedFieldState("syntax-theme", "Syntax colors", []ui.FormOption{{ID: "catppuccin", Label: "Catppuccin"}, {ID: "dracula", Label: "Dracula"}, {ID: "github", Label: "GitHub"}, {ID: "monokai", Label: "Monokai"}, {ID: "solarized", Label: "Solarized"}}, editor.SyntaxTheme, "The color grammar used for source code."),
 			ui.SegmentedFieldState("render-whitespace", "Show whitespace", []ui.FormOption{{ID: "none", Label: "Never"}, {ID: "boundary", Label: "At edges"}, {ID: "all", Label: "Always"}}, editor.RenderWhitespace, "Draw spaces and tabs. At edges shows only leading and trailing whitespace."),
+			ui.BoolFieldState("indent-guides", "Indent guides", editor.IndentGuides, "Show lines at each indentation step."),
+			ui.BoolFieldState("minimap", "Minimap", editor.Minimap, "Show a compact source map when the pane has room."),
 			ui.SeparatorFieldState("indentation", "Indentation"),
 			ui.SegmentedFieldState("indent-style", "Indent with", []ui.FormOption{{ID: "auto", Label: "Detect"}, {ID: "space", Label: "Spaces"}, {ID: "tab", Label: "Tabs"}}, defaultString(editor.IndentStyle, "auto"), "EditorConfig and this file's choices take priority."),
 			ui.NumberFieldState("indent-size", "Indent size", editor.IndentSize, "columns", "Use 0 to detect from text, or 1 to 32 columns."),
@@ -2905,6 +2907,8 @@ func (m *Model) collectEditor(cfg *types.EditorSettings) {
 	if cfg.IndentStyle == "auto" {
 		cfg.IndentStyle = ""
 	}
+	cfg.IndentGuides = m.value(catEditor, "indent-guides") == "on"
+	cfg.Minimap = m.value(catEditor, "minimap") == "on"
 	cfg.IndentSize = parseOpt(m.value(catEditor, "indent-size"), 0)
 	cfg.NewFileEncoding = textencoding.FromKey(m.value(catEditor, "new-file-encoding"))
 }

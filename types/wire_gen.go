@@ -4138,8 +4138,8 @@ func (z EditorPredictionProtocol) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *EditorSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 12
-	o = append(o, 0x9c)
+	// array header, size 13
+	o = append(o, 0x9d)
 	o = msgp.AppendString(o, z.IndentStyle)
 	o = msgp.AppendInt(o, z.IndentSize)
 	o = msgp.AppendInt(o, z.TabSize)
@@ -4147,6 +4147,7 @@ func (z *EditorSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendBool(o, z.LineNumbers)
 	o = msgp.AppendString(o, z.SyntaxTheme)
 	o = msgp.AppendBool(o, z.Minimap)
+	o = msgp.AppendBool(o, z.IndentGuides)
 	o = msgp.AppendString(o, string(z.AutoSave))
 	o = msgp.AppendInt(o, z.AutoSaveDelay)
 	o = msgp.AppendString(o, z.RenderWhitespace)
@@ -4171,8 +4172,8 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 12 {
-		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+	if zb0001 != 13 {
+		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
 		return
 	}
 	z.IndentStyle, bts, err = msgp.ReadStringBytes(bts)
@@ -4210,6 +4211,11 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Minimap")
 		return
 	}
+	z.IndentGuides, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "IndentGuides")
+		return
+	}
 	{
 		var zb0002 string
 		zb0002, bts, err = msgp.ReadStringBytes(bts)
@@ -4245,7 +4251,7 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *EditorSettings) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.IndentStyle) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize + z.NewFileEncoding.Msgsize()
+	s = 1 + msgp.StringPrefixSize + len(z.IndentStyle) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize + z.NewFileEncoding.Msgsize()
 	return
 }
 

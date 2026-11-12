@@ -33,6 +33,7 @@ func (e *Editor) NewLinkedView() *Editor {
 	v.readOnly, v.hideLineNumbers, v.lineNumberOffset = e.readOnly, e.hideLineNumbers, e.lineNumberOffset
 	v.statusChrome, v.maxHistory = e.statusChrome, e.maxHistory
 	v.syntaxColors, v.renderWhitespace = e.syntaxColors, e.renderWhitespace
+	v.indentGuides, v.minimap = e.indentGuides, e.minimap
 	v.open = e.open
 	v.cursor, v.scrollX, v.scrollY = e.cursor, e.scrollX, e.scrollY
 	v.wordWrap, v.wrapOffset, v.wrapBefore = e.wordWrap, e.wrapOffset, e.wrapBefore

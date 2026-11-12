@@ -707,6 +707,7 @@ type EditorSettings struct {
 	LineNumbers      bool                  `json:"line_numbers,omitempty"`
 	SyntaxTheme      string                `json:"syntax_theme,omitempty"`
 	Minimap          bool                  `json:"minimap,omitempty"`
+	IndentGuides     bool                  `json:"indent_guides,omitempty"`
 	AutoSave         AutoSaveMode          `json:"auto_save"`
 	AutoSaveDelay    int                   `json:"auto_save_delay,omitempty"`
 	RenderWhitespace string                `json:"render_whitespace,omitempty"`

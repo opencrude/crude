@@ -195,3 +195,35 @@ func TestScrollbarSurfaceBackgroundRole(t *testing.T) {
 		t.Fatalf("track fg=%v want ColorBorder %v", fg, tokens.Color(ColorBorder))
 	}
 }
+
+func TestScrollbarOverviewSharesThumbCaptureAndPaint(t *testing.T) {
+	scroll := NewScrollModel()
+	SyncScrollModel(scroll, 1000, 20, 0)
+	tokens := NewTokenSet(theme.DefaultDark())
+	bar := NewScrollbarControl("map", scroll, tokens)
+	cells := make([]rune, 40)
+	for i := range cells {
+		cells[i] = '⠿'
+	}
+	bar.SetOverview(&ScrollbarOverview{Width: 4, Height: 10, Cells: cells})
+	bar.Layout(LayoutContext{}, Rect{X: 2, Y: 1, W: 5, H: 10})
+	buf := surface.NewCellBuffer(10, 12)
+	bar.Paint(buf, 0, 0, PaintContext{})
+	if buf.Get(2, 1).Char != '⠿' || buf.Get(6, 1).Char != '┃' || buf.Get(2, 1).BG.Equal(buf.Get(2, 5).BG) {
+		t.Fatal("overview does not share thumb geometry")
+	}
+	res := bar.Handle(EventContext{LocalY: 5}, NormalizeEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	if !res.Handled || res.Action == nil || !bar.IsDragging() || scroll.Offset() < 400 {
+		t.Fatal("overview click did not jump/capture", scroll.Offset(), res)
+	}
+	bar.Handle(EventContext{LocalY: 9}, NormalizeEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	if bar.IsDragging() || scroll.Offset() != scroll.MaxOffset() {
+		t.Fatal("overview release did not commit its final position")
+	}
+	bar.SetOverview(nil)
+	scroll.ScrollTo(0)
+	bar.Handle(EventContext{LocalY: 5}, NormalizeEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	if bar.IsDragging() || scroll.Offset() != 19 {
+		t.Fatal("ordinary scrollbar paging changed")
+	}
+}

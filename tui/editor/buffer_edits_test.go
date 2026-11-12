@@ -125,3 +125,31 @@ func FuzzPieceTableByteBatches(f *testing.F) {
 		}
 	})
 }
+
+// Keep the selected string alive so the allocation budget measures the public
+// result rather than a compiler-elided conversion.
+var selectedTextSink string
+
+func TestPieceTableGetTextCopiesOnlySelectedBytes(t *testing.T) {
+	pt := NewPieceTable()
+	pt.ReplaceAll(strings.Repeat("filler abcdefghijklmnopqrstuvwxyz\n", 2000) + "界éfoo\r\nnext\n")
+	start, end := Position{Line: 2000}, Position{Line: 2000, Col: 3}
+	if got := pt.GetText(end, start); got != "界é" {
+		t.Fatalf("reversed grapheme selection = %q", got)
+	}
+	if got := pt.GetText(Position{Line: 2000, Col: 6}, Position{Line: 2001, Col: 4}); got != "\r\nnext" {
+		t.Fatalf("cross-line selection = %q", got)
+	}
+	stable := pt.GetText(start, end)
+	if allocations := testing.AllocsPerRun(50, func() {
+		selectedTextSink = pt.GetText(Position{Line: 1999}, Position{Line: 1999, Col: 3})
+	}); allocations > 1 {
+		t.Fatalf("small selection copied more than its bytes: %.0f allocations", allocations)
+	}
+	if _, err := pt.Insert(start, []byte("X")); err != nil {
+		t.Fatal(err)
+	}
+	if stable != "界é" || pt.GetText(start, Position{Line: 2000, Col: 4}) != "X界é" {
+		t.Fatal("selection did not retain its original bytes after editing")
+	}
+}

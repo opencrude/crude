@@ -35,7 +35,7 @@ func ExpandTabs(line string, tabW int) string {
 }
 
 // LineVisualWidth returns the visual column width of a raw (unexpanded) line.
-func LineVisualWidth(line string, tabW int) int {
+func LineVisualWidth[T string | []byte](line T, tabW int) int {
 	if tabW < 1 {
 		tabW = DefaultTabWidth
 	}
@@ -59,7 +59,7 @@ func LineVisualWidth(line string, tabW int) int {
 
 // ByteOffsetToVisualCol converts a byte offset within a single line (no
 // newlines) to a visual column, honouring tab stops and grapheme widths.
-func ByteOffsetToVisualCol(line string, byteOff, tabW int) int {
+func ByteOffsetToVisualCol[T string | []byte](line T, byteOff, tabW int) int {
 	if tabW < 1 {
 		tabW = DefaultTabWidth
 	}
@@ -96,7 +96,7 @@ func ByteOffsetToVisualCol(line string, byteOff, tabW int) int {
 // VisualColToByteOffset converts a visual column to a byte offset within
 // a single line. If visualCol lands inside a wide cluster or tab span,
 // the offset of the start of that unit is returned.
-func VisualColToByteOffset(line string, visualCol, tabW int) int {
+func VisualColToByteOffset[T string | []byte](line T, visualCol, tabW int) int {
 	if tabW < 1 {
 		tabW = DefaultTabWidth
 	}

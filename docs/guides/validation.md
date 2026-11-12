@@ -814,3 +814,23 @@ the edit must commit before the server reply is released, and the reply must the
 be discarded. Other checks cover exact menu/control tokens, selection changes,
 multiple ranges in one Undo, unsupported/empty/malformed replies, strict Unicode
 positions, returned edits outside the selection and invalid aggregate plans.
+
+## Native editor orientation
+
+`TestEditorOrientationVisualAcceptance` uses `CRUDE_VISUAL_ORIENTATION=1`,
+`CRUDE_ORIENTATION_RESULT` and `CRUDE_CAPTURE_EVIDENCE`. F3 opens a disposable
+400-line CRLF/Unicode source, selects `alpha`, hides the tree and opens the existing
+Editor page focused on Indent guides. Space, Tab, Space changes Guides/Minimap.
+F4 verifies the draft; F5, Enter saves; F4 verifies completion. F5, Right, Enter
+closes Settings; F4 observes guides, the map and publishes `ORIENTATION_POINTER`.
+Click that column/row, F4, drag to its `end` row, F4, type `X`, F4, Undo, F4, F9.
+Wait for `ORIENTATION_READY phase=N` after each F3/F4. Require eight verified
+boundaries and `ORIENTATION_JOIN phase=8 passed=true headless=false` at 160×40
+and 80×24. Inspect both preferences and source frames, including viewport tint.
+
+The same headless/native journey tests that map navigation retains source
+selection, typing reveals that selection and shared Undo restores/reveals it.
+Connected coverage checks peer publication, Reset, source bytes and unchanged disk.
+Leaf regressions combine wrapping/folding, linked views, tab-width changes,
+whitespace, Unicode, pointer capture outside the bar and bounded sampling/cache
+reuse on 20,000 lines. Benchmarks distinguish unchanged paint and cache rebuilds.

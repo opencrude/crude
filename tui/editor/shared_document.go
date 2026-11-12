@@ -576,6 +576,7 @@ func (e *Editor) CompleteDocumentHistorySync() {
 		if target != nil && target.open && target.documentProjection == p &&
 			(p.historyViewID == 0 || target.historyID == p.historyViewID) {
 			target.restoreViewState(*p.restoreView)
+			target.ensureCursorVisible()
 		}
 		p.restoreView, p.restoreEditor = nil, nil
 	}
