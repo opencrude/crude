@@ -66,7 +66,8 @@ name list when reducing a later reproduction.
 - They passed once under GC pressure (`GOGC=30`, 52.875 seconds). That command
   used `GODEBUG=checkmark=1`, which is not the Go 1.25.8 option; it did **not**
   enable mark verification. The correct option, confirmed in runtime source, is
-  `GODEBUG=gccheckmark=1`. Dedicated runs with that option are now in progress.
+  `GODEBUG=gccheckmark=1`. No completed Windows run with that option is recorded
+  here; it remains part of the investigation.
 - Both diagnostic runs exercised the originally active inlay case. No source,
   dependency, compiler or test-filter change was made between failure and runs.
 - Five fresh-process repetitions of the original uninstrumented group passed.

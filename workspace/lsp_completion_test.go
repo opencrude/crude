@@ -971,3 +971,21 @@ func TestCompletionCapabilitiesAndOldServerIntentFence(t *testing.T) {
 		t.Fatal("Stop retained capabilities")
 	}
 }
+
+// An advertised multiline insertion must survive the real canonical request
+// and inspection path instead of being silently discarded as unsupported.
+func TestCompletionAdjustedMultilineSurvivesCanonicalInspection(t *testing.T) {
+	f := newCompletionAcceptanceFixture(t, "\tpri\r\n")
+	before, history := f.snapshot(t), f.history()
+	raw := `[{"label":"print block","insertTextFormat":2,"insertTextMode":2,"textEdit":{"range":{"start":{"line":0,"character":1},"end":{"line":0,"character":4}},"newText":"if (${1:界}) {\n\tuse($1);\n}$0"},"data":{"serverId":"exact"}}]`
+	set := f.request(t, raw, "adjusted", 1, 0, 4)
+	if set.Answer != types.LSPCompletionItems || set.UnsupportedItems != 0 || len(set.Entries) != 1 {
+		t.Fatalf("multiline suggestion was discarded: %+v", set)
+	}
+	insertion := set.Entries[0].Insertion
+	if insertion.Snippet == nil || insertion.TextEdit == nil || insertion.TextEdit.NewText != "if (界) {\n\tuse(界);\n}" {
+		t.Fatalf("original snippet was not retained: %+v", insertion)
+	}
+	f.inspect(t, set, 0, false)
+	f.unchanged(t, before, history)
+}

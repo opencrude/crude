@@ -114,3 +114,6 @@ BenchmarkEditorOrientation/20000/false 240000 185
 BenchmarkEditorOrientation/20000/true 240000 185
 BenchmarkMinimapRebuild/200 10800 194
 BenchmarkMinimapRebuild/20000 10800 194
+
+# 255 source-ordered snippet stops following 60,000 indentation bytes.
+BenchmarkCompletionLeadingStopsDense 33000 6

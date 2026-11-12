@@ -225,11 +225,16 @@ type CompletionItem struct {
 	TextEdit            *LSPTextEdit
 	AdditionalTextEdits []LSPTextEdit
 	Snippet             *CompletionSnippet
-	Label               string
-	Detail              string
-	Documentation       string
-	Kind                int
-	InsertText          string
+	// AdjustIndentation is the initial provider's explicit insertTextMode 2.
+	// SnippetSource retains the validated original syntax for this mode only;
+	// the editor reparses it after applying its private indentation policy.
+	AdjustIndentation bool
+	SnippetSource     string
+	Label             string
+	Detail            string
+	Documentation     string
+	Kind              int
+	InsertText        string
 	// HasInsertText distinguishes an explicitly empty insertion from an absent
 	// field. Only absence permits using the label as a replacement.
 	HasInsertText bool

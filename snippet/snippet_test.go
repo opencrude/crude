@@ -224,3 +224,25 @@ func BenchmarkNumericSnippetSmall(b *testing.B) {
 		}
 	}
 }
+
+func TestNumericSnippetLeadingWhitespaceTransformKeepsSharedStops(t *testing.T) {
+	source := "${1|\tred,\tblue|} / $1 ${2:${3:\tchild}}"
+	text, plan, err := ParseWithLeadingWhitespace(source, func(id int, prefix string) (string, error) {
+		if id == 1 || id == 3 {
+			return strings.ReplaceAll(prefix, "\t", "  "), nil
+		}
+		return prefix, nil
+	})
+	if err != nil || text != "  red /   red   child" {
+		t.Fatalf("adjusted text=%q err=%v", text, err)
+	}
+	if err := Validate(text, plan); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plan.Occurrences[0].Choices, []string{"  red", "  blue"}) || !reflect.DeepEqual(plan.Occurrences[1].Choices, plan.Occurrences[0].Choices) {
+		t.Fatal("choice copies diverged", plan.Occurrences)
+	}
+	if _, _, err := ParseWithLeadingWhitespace(source, func(int, string) (string, error) { return "x", nil }); !errors.Is(err, ErrInvalid) {
+		t.Fatal("accepted non-whitespace transform", err)
+	}
+}

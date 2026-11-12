@@ -145,6 +145,13 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 		edit.primary = true
 		edits = append(edits, edit)
 	}
+	if item.AdjustIndentation {
+		adjusted, plan, err := e.adjustCompletionInsertion(edits[0].text, item)
+		if err != nil {
+			return err
+		}
+		edits[0].text, item.Snippet = adjusted, plan
+	}
 	for _, wire := range item.AdditionalTextEdits {
 		edit, err := validateCompletionEdit(before, wire)
 		if err != nil {

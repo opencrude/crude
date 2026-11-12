@@ -113,6 +113,13 @@ func (e *Editor) indentStyle() indentStyle {
 }
 func (s indentStyle) padding(start, end int) string {
 	var out strings.Builder
+	s.writePadding(&out, start, end)
+	return out.String()
+}
+
+// writePadding uses the same indentation owner without a temporary string per
+// line when a multiline insertion is assembled into an existing builder.
+func (s indentStyle) writePadding(out *strings.Builder, start, end int) {
 	for col := start; col < end; {
 		width := TabStopAdvance(col, max(1, s.tabSize))
 		if s.tab && col+width <= end {
@@ -123,7 +130,6 @@ func (s indentStyle) padding(start, end int) string {
 			col++
 		}
 	}
-	return out.String()
 }
 func (e *Editor) indentationExplicit() bool {
 	c := indentation.Overlay(indentation.Overlay(e.buf.indentSettings, e.buf.indentProject), e.buf.indentFile)

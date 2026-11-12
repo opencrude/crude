@@ -2973,8 +2973,8 @@ func (z *CompactResultMsg) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *CompletionItem) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 11
+	o = append(o, 0x9b)
 	if z.TextEdit == nil {
 		o = msgp.AppendNil(o)
 	} else {
@@ -3015,6 +3015,8 @@ func (z *CompletionItem) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
+	o = msgp.AppendBool(o, z.AdjustIndentation)
+	o = msgp.AppendString(o, z.SnippetSource)
 	o = msgp.AppendString(o, z.Label)
 	o = msgp.AppendString(o, z.Detail)
 	o = msgp.AppendString(o, z.Documentation)
@@ -3036,8 +3038,8 @@ func (z *CompletionItem) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 11 {
+		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -3140,6 +3142,16 @@ func (z *CompletionItem) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	z.AdjustIndentation, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AdjustIndentation")
+		return
+	}
+	z.SnippetSource, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SnippetSource")
+		return
+	}
 	z.Label, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "Label")
@@ -3194,7 +3206,7 @@ func (z *CompletionItem) Msgsize() (s int) {
 			s += z.Snippet.Occurrences[za0002].Msgsize()
 		}
 	}
-	s += msgp.StringPrefixSize + len(z.Label) + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Documentation) + msgp.IntSize + msgp.StringPrefixSize + len(z.InsertText) + msgp.BoolSize
+	s += msgp.BoolSize + msgp.StringPrefixSize + len(z.SnippetSource) + msgp.StringPrefixSize + len(z.Label) + msgp.StringPrefixSize + len(z.Detail) + msgp.StringPrefixSize + len(z.Documentation) + msgp.IntSize + msgp.StringPrefixSize + len(z.InsertText) + msgp.BoolSize
 	return
 }
 

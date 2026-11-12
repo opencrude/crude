@@ -526,7 +526,7 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 	}
 	if read.accept {
 		if err := s.editor.ApplyCompletion(row.Insertion); err != nil {
-			m.Feedback.NotifyError("Completion: " + err.Error())
+			m.Feedback.NotifyErrorDetail("Could not insert this suggestion. Try another suggestion.", err.Error())
 			return false
 		}
 		m.adoptEditorSnippet(s.editor)
@@ -569,9 +569,9 @@ func (m *App) handleCompletionAction(action *ui.Action) (tea.Cmd, bool) {
 
 // routeCompletionKey gives the passive suggestion list the few keys that
 // operate it while the editor keeps focus and caret. With no chosen row, Down
-// chooses the first row, Tab accepts only the inline text, and every other key
-// edits the source as usual: nothing is accepted that the user cannot see.
-// Up, Enter, Tab and paging act on the list only after the user chose a row.
+// chooses the first row and Tab accepts visible inline text or the sole visible
+// supported row. Other keys edit the source as usual. Up, Enter and paging act on
+// the list only after the user chose a row.
 func (m *App) routeCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	s := m.completion
 	if s == nil || m.EditorState == nil || m.EditorState.Editor != s.editor {

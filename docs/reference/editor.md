@@ -1208,9 +1208,9 @@ invocation. Suggestions are low-profile, as in JetBrains IDEs and VS Code:
   word. A row with snippet fields or other edits (an import) is only previewed:
   Tab accepts the row itself, so its fields and edits apply. Escape dismisses
   the inline text. A single plain suggestion opens no list.
-- With no chosen row, Down chooses the first row, Tab accepts only the inline
-  text, and every other key edits the source (Tab indents, Enter is a new line,
-  Up moves the caret). Nothing is accepted that the user did not see chosen. After a choice, Up/Down, paging, Home/End, Enter/Tab
+- With no chosen row, Down chooses the first row. Tab accepts visible inline
+  text or one sole visible supported row; otherwise it indents. Enter starts a
+  line and Up moves the caret. After a choice, Up/Down, paging, Home/End, Enter/Tab
   acceptance and Ctrl+PgUp/PgDn documentation paging act on the list. A click
   focuses the list for pointer selection and copy.
 - Typing that continues the same word keeps the list on screen as a read-only
@@ -1309,6 +1309,19 @@ The shared `lspcompletion.PrimaryEdit` chooses the strict UTF-16 range or backwa
 Unicode identifier prefix, so validation and application cannot derive different
 prefix edits. No request or documentation observation changes source, saved
 bytes, author history or the private composer.
+
+The completion client advertises literal `asIs` as its default and supports the
+standard `adjustIndentation` item mode. Literal mode preserves the provider's
+insertion whitespace and line endings. Adjusted mode uses the exact source indentation before the current caret,
+the file's tab/space policy and its first line ending for inserted continuation
+lines. Leading literal indentation, including a placeholder's initial whitespace,
+is normalized. A repeated stop that also occurs outside continuation indentation
+keeps its original value everywhere, so linked fields cannot diverge. Additional
+edits remain literal. For numeric snippets the initial syntax and expanded plan
+must still match before the editor adjusts and reparses them, retaining nested
+stops, mirrors and choices.
+An oversized or inconsistent adjustment refuses the entire insertion. No mode
+turns a documentation resolve into authority to change the original edit.
 
 Bounds are 2 MiB source, 1 MiB encoded result, 256 original items, 64 KiB consumed
 strings, 32 JSON container levels, 64 additional edits per item and 1 MiB

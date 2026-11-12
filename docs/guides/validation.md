@@ -834,3 +834,23 @@ Connected coverage checks peer publication, Reset, source bytes and unchanged di
 Leaf regressions combine wrapping/folding, linked views, tab-width changes,
 whitespace, Unicode, pointer capture outside the bar and bounded sampling/cache
 reuse on 20,000 lines. Benchmarks distinguish unchanged paint and cache rebuilds.
+
+## Native multiline completion indentation
+
+`TestCompletionIndentVisualAcceptance` uses `CRUDE_VISUAL_COMPLETION_INDENT=1`,
+`CRUDE_COMPLETION_INDENT_RESULT`, and `CRUDE_CAPTURE_EVIDENCE` pointing to a new
+result file. The fixture supplies a deterministic standard completion response,
+not an installed server. Its connected source contains CRLF, tabs and a wide
+placeholder; the response has `adjustIndentation`, an import and a numeric mirror.
+F4 observes the initial document. Type `i`, F4, Tab, F4, type `Z`, F4, Ctrl+Z, F4,
+Ctrl+Z, F4, then F9. Wait for `COMPLETION_INDENT_READY phase=N` after each F4.
+At 160×40 and 80×24 require six `COMPLETION_INDENT_VERIFIED` records, no row
+selection key, unchanged disk, and `COMPLETION_INDENT_JOIN phase=6 passed=true
+headless=false`. Inspect the list, selected field and mirrored edit in both sizes.
+The separate installed-gopls completion journey checks the changed negotiation
+against an actual provider; it does not establish that gopls returned this mode.
+
+Connected tests cover two shells, snippet mirror editing, Undo, an import, late
+acceptance after Escape, typing and peer edits. Parser/editor checks cover literal
+mode, nested and repeated fields, choices, per-file tabs and spaces, CRLF, wide
+characters, cursor inside indentation, original syntax mismatch and size bounds.

@@ -743,3 +743,22 @@ func (s *completionTestService) AssistanceCapabilities(string) types.LSPAssistan
 	}
 	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }
+
+func TestCompletionRejectedInsertionExplainsNextStep(t *testing.T) {
+	app, port := completionTestApp(t, 80, 24, "pr")
+	port.set.Entries[0].Insertion = types.CompletionItem{Label: "bad", InsertText: "x", AdjustIndentation: true, SnippetSource: "unexpected"}
+	completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
+	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
+	if app.EditorState.Editor.Value() != "pr" || app.EditorState.Editor.Modified() {
+		t.Fatal("rejected completion changed text")
+	}
+	found := false
+	for _, notice := range app.ws.Status().Notifications(true) {
+		if notice.Summary == "Could not insert this suggestion. Try another suggestion." && strings.Contains(notice.Detail, "unexpected snippet source") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("rejected completion did not give an actionable summary and technical detail")
+	}
+}
