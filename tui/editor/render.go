@@ -74,6 +74,8 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	if e.indentGuides {
 		indentSize = e.indentStyle().size
 	}
+	guideColor := e.tokens.Color(ui.ColorBorder)
+	guides := e.newGuideLevels(indentSize)
 	buf := surf.Buffer()
 	// Every cell is the editor's: rows the body loop does not reach (the
 	// horizontal scrollbar row, its corner) must never show what the editor
@@ -107,6 +109,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		inline := e.inlineLine(lineIdx)
 		diags := e.lineDiagnostics(lineIdx)
 		spaces := e.whitespaceInfo(lineIdx)
+		guideTo := 0
+		if indentSize > 0 && row.index == 0 {
+			guideTo = guides.level(lineIdx) * indentSize
+		}
+		guideAt := func(col int) bool { return col < guideTo && col%indentSize == 0 }
 		occurrences := e.lineOccurrences(lineIdx, showOccurrences)
 
 		ri := 0
@@ -254,8 +261,8 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						cluster := clusters[ri]
 						marker := ""
 						if cluster == " " {
-							if indentSize > 0 && spaces != nil && sourceCol < spaces.leading && sourceCol%indentSize == 0 {
-								marker = "│"
+							if guideAt(sourceCol) {
+								marker = indentGuideGlyph
 							} else if e.renderWhitespace == "all" || e.renderWhitespace == "boundary" {
 								marker = spaces.marker(sourceCol, e.renderWhitespace == "boundary")
 							}
@@ -296,7 +303,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 								bg = e.tokens.OccurrenceFill(occurrenceWrite)
 							}
 							fg := e.cellColor(e.th.Colors.Fg)
-							if marker != "" {
+							if marker == indentGuideGlyph {
+								fg = guideColor
+							} else if marker != "" {
 								fg = e.tokens.Color(ui.ColorMuted)
 							}
 							if marker == "" && sourceCol < len(colorMap) && colorMap[sourceCol] != "" {
@@ -341,7 +350,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						hlBg := e.searchHighlightBg(searchIsCurrent)
 						buf.Set(cx, bufY, cell.NewCell(' ', cell.ContrastInk(hlBg), hlBg, 0))
 					default:
-						buf.Set(cx, bufY, blankCell)
+						if guideAt(sourceCol) {
+							buf.Set(cx, bufY, cell.NewClusterCell(indentGuideGlyph, 1, guideColor, bgColor, 0))
+						} else {
+							buf.Set(cx, bufY, blankCell)
+						}
 					}
 				}
 			}

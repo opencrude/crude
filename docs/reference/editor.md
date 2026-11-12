@@ -166,7 +166,9 @@ selection, history, the savepoint or dirty state.
   syntax, diagnostics, search, inlays, ghost text and pointer hits reproject through
   the same width. Native parsing and canonical source revisions do not change.
   Back/Forward retains line and source-byte column, not an old display column.
-- **Line numbers** hides only the number lane. Diagnostic and change lanes remain
+- **Line numbers** is on by default. Stored editor choices decode onto the
+  built-in defaults, so an editor section without `line_numbers` keeps the lane;
+  only an explicit off hides it. Hiding removes only the number lane. Diagnostic and change lanes remain
   visible and actionable. A changed gutter retires pointer capture and reveals
   the same source caret in the new geometry.
 - **Syntax colors** selects the pinned Chroma palette's source-token colors.
@@ -203,7 +205,14 @@ registry, menu, searchable Editor actions and `editor.action` control. The gutte
 chevron stays available with line numbers hidden. The collapsed source header
 shows an ellipsis and hidden-line count. Expanding a parent retains nested choices.
 Current native node ranges and lexically qualified bracket/comment/string spans
-supply ranges; crossing/out-of-bounds ranges are rejected. No stale parse supplies
+supply ranges; crossing/out-of-bounds ranges are rejected. A node that only fills
+its parent's body (it starts on the line after the header and ends at or just
+before the parent's last line) is not a fold: each block has one chevron, on its
+header, and Fold from inside a body folds the block. A nested range with its own
+bracket pair stays. Folding never moves the rows above the change: the view keeps
+its top row and wrapped offset. Only a caret that becomes hidden moves, to its
+fold header, and the view then scrolls just enough to show it. A gutter click
+never scrolls to a caret that was already offscreen. No stale parse supplies
 new positions, no language-name branch guesses a fold, and there is no advertised
 LSP folding or indentation-only fallback.
 
@@ -275,12 +284,20 @@ than one object per displayed row.
 
 ## Indentation guides and minimap
 
-The existing Editor page contains **Indent guides** and **Minimap**, both opt-in
-presentation choices. They follow live application/workspace inheritance and reach
+The existing Editor page contains **Indent guides** (on by default) and
+**Minimap** (opt-in). They follow live application/workspace inheritance and reach
 open, linked and new views. Neither writes source, changes selected bytes nor
-adds an Undo record. Guides mark each effective indentation step in existing
-leading whitespace. Tab stops, explicit file indentation and EditorConfig use the
-same geometry. At a guide position the line replaces a whitespace marker; other
+adds an Undo record. Guides are a dim dashed rule (`╎`, border color) at each
+effective indentation step in leading whitespace. Tab stops, explicit file
+indentation and EditorConfig use the same geometry. Guide levels are a port of
+VS Code's `getLinesIndentGuides` (`tui/editor/indent_guides.go`, MIT): a line
+with text has ceil(indent / indent size) guides; a whitespace-only line takes
+its level from the nearest lines with text above and below, so a block's guides
+do not break at blank lines. The only language fact is the catalog's
+`off_side` flag, copied from VS Code's `folding.offSide`: in those languages a
+blank line before a dedent takes the level below. Guides are derived per frame
+from the current text, with one scan per blank run, so they follow edits
+immediately. At a guide position the guide replaces a whitespace marker; other
 whitespace markers remain visible. Guides never overwrite source text or inlays.
 
 Minimap widens the existing vertical scrollbar, not the editor document or its

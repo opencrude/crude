@@ -43,6 +43,7 @@ type Language struct {
 	BlockComment  *BlockComment
 	Grammar       string
 	Formatter     *Formatter
+	OffSide       bool
 	Provenance    []Provenance
 }
 
@@ -411,7 +412,7 @@ func (c *Catalog) language(record LanguageRecord) Language {
 		Interpreters: slices.Clone(record.Interpreters), LSPLanguageID: record.LSPLanguageID, Roots: slices.Clone(record.Roots),
 		WorkspaceRoots: slices.Clone(record.WorkspaceRoots), Servers: slices.Clone(record.Servers),
 		CommentTokens: slices.Clone(record.CommentTokens), Grammar: record.Grammar,
-		Provenance: c.provenance(record.Sources),
+		OffSide: record.OffSide, Provenance: c.provenance(record.Sources),
 	}
 	if record.BlockComment != nil {
 		block := *record.BlockComment

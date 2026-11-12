@@ -53,7 +53,11 @@ type LanguageRecord struct {
 	BlockComment  *BlockComment    `json:"block_comment,omitempty"`
 	Grammar       string           `json:"grammar,omitempty"`
 	Formatter     *FormatterRecord `json:"formatter,omitempty"`
-	Sources       []string         `json:"sources,omitempty"`
+	// OffSide marks a language whose blocks end by dedent, not by a closing
+	// token (VS Code language configuration folding.offSide). Indent guides
+	// then give a blank line before a dedent the depth of the line below.
+	OffSide bool     `json:"off_side,omitempty"`
+	Sources []string `json:"sources,omitempty"`
 }
 
 // BlockComment is a pair of block comment delimiters.

@@ -191,6 +191,59 @@ func TestHiddenFilesDefaultAndExplicitPreference(t *testing.T) {
 	}
 }
 
+// Line numbers are on unless the user turns them off. An editor section that
+// only stores other choices (the shape written before line numbers had a live
+// consumer) must not hide the number lane.
+func TestLineNumbersDefaultOnAndExplicitOffPersists(t *testing.T) {
+	for _, tc := range []struct {
+		name, config string
+		want         bool
+	}{
+		{"empty", `{}`, true},
+		{"other editor choices", `{"editor":{"auto_save":"off","auto_save_delay":1000,"render_whitespace":"none","syntax_theme":"catppuccin","tab_size":4}}`, true},
+		{"explicitly hidden", `{"editor":{"line_numbers":false}}`, false},
+		{"explicitly shown", `{"editor":{"line_numbers":true}}`, true},
+		{"invalid value", `{"editor":{"line_numbers":"no"}}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(tc.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := loadFileConfigFrom(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			editor := FileConfigToAppSettings(cfg).Editor
+			if editor.LineNumbers != tc.want {
+				t.Fatalf("LineNumbers=%v, want %v", editor.LineNumbers, tc.want)
+			}
+			if !editor.IndentGuides {
+				t.Fatal("indent guides are on unless explicitly turned off")
+			}
+		})
+	}
+	// Turning the lane off through the stored-edit path survives a reload.
+	before := FileConfigToAppSettings(FileConfig{})
+	after := before
+	after.Editor.LineNumbers = false
+	raw, err := typesmodel.PatchStoredSettings(nil, typesmodel.SettingsEdits(before, after))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadFileConfigFrom(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if FileConfigToAppSettings(cfg).Editor.LineNumbers {
+		t.Fatalf("explicit off was lost: stored %s", raw)
+	}
+}
+
 func TestApplyAppSettingsPersistsMultiAgentOff(t *testing.T) {
 	agents := session.DefaultAgentsConfig()
 	fc := FileConfig{Agents: &agents}

@@ -214,3 +214,98 @@ func TestFoldStaysHiddenDuringColdWidthPreparation(t *testing.T) {
 		t.Fatal("prepared width lost folded rows")
 	}
 }
+
+// Toggling a fold must not move the rows the user is looking at: the
+// clicked header keeps its screen row, the top of the view stays put, and an
+// offscreen caret is not pulled into view (the old path scrolled back to it).
+func TestFoldToggleKeepsTheViewportStill(t *testing.T) {
+	var text strings.Builder
+	text.WriteString("package p\n")
+	for i := range 60 {
+		text.WriteString("func f" + strings.Repeat("x", i%3) + "() {\n    a()\n    b()\n    c()\n}\n")
+	}
+	e := loadEditorText(t, "many.go", text.String())
+	const w, h = 80, 20
+	paintEditor(e, w, h)
+	for range 10 {
+		e.HandleEvent(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	}
+	buf := paintEditor(e, w, h)
+	top := e.scrollRow()
+	if top == 0 {
+		t.Fatal("fixture did not scroll")
+	}
+	y := -1
+	for row := 6; row < 12; row++ {
+		if line := e.rowAt(top + row).line; (line-1)%5 == 0 {
+			y = row
+			break
+		}
+	}
+	if y < 0 {
+		t.Fatal("no fold header near the middle of the view")
+	}
+	header := e.rowAt(top + y).line
+	before := plainRow(buf, y, w)
+	above := plainRow(buf, y-1, w)
+	g := e.gutterGeometry()
+	for _, step := range []string{"fold", "unfold"} {
+		e.HandleEvent(tea.MouseClickMsg{X: g.foldX, Y: y, Button: tea.MouseLeft})
+		buf = paintEditor(e, w, h)
+		if e.scrollRow() != top || e.rowAt(top+y).line != header {
+			t.Fatalf("%s moved the view: top %d -> %d, row %d shows line %d, want %d", step, top, e.scrollRow(), y, e.rowAt(top+y).line, header)
+		}
+		if got := plainRow(buf, y, w); !strings.Contains(got, "func f") || plainRow(buf, y-1, w) != above {
+			t.Fatalf("%s repainted the header elsewhere: %q / %q (was %q)", step, plainRow(buf, y-1, w), got, before)
+		}
+		if e.CursorLine() != 0 {
+			t.Fatalf("%s moved the caret to line %d", step, e.CursorLine())
+		}
+	}
+	if !strings.Contains(plainRow(buf, y+1, w), "a()") {
+		t.Fatal("unfold did not restore the block under its header")
+	}
+
+	// A keyboard fold from inside a block keeps its visible header in place
+	// and puts the caret on the folded block's first line.
+	e.SetCursorPosition(header+2, 4)
+	paintEditor(e, w, h)
+	top = e.scrollRow()
+	e.HandleEvent(tea.KeyPressMsg{Code: '-', Mod: tea.ModAlt})
+	if got := plainRow(paintEditor(e, w, h), y, w); !strings.Contains(got, "func f") {
+		t.Fatalf("keyboard fold moved the header row: %q", got)
+	}
+	if len(e.folds.collapsed) != 1 || e.scrollRow() != top || e.rowAt(top+y).line != header || e.CursorLine() != e.folds.collapsed[0].Start {
+		t.Fatalf("keyboard fold moved the view: top %d -> %d, caret line %d, header %d, row shows %d, folds %v", top, e.scrollRow(), e.CursorLine(), header, e.rowAt(top+y).line, e.folds.collapsed)
+	}
+}
+
+// Each block shows one chevron, on its header. The body node of a block (its
+// statement list) used to add a second chevron on the first body line, and a
+// keyboard fold chose it instead of the block. A sole nested block with its
+// own braces keeps its chevron.
+func TestFoldShowsOneChevronPerBlock(t *testing.T) {
+	src := "package p\n\nfunc many() {\n\ta := 1\n\tb := 2\n\tc := 3\n}\n\nfunc sole() {\n\tif ok {\n\t\tcall()\n\t\tcall()\n\t}\n}\n"
+	e := loadEditorText(t, "blocks.go", src)
+	buf := paintEditor(e, 80, 20)
+	e.refreshFolds()
+	for _, line := range []int{2, 8, 9} {
+		if _, ok := e.foldAt(line); !ok {
+			t.Fatalf("block header on line %d has no fold: %v", line+1, e.folds.ranges)
+		}
+	}
+	if r, ok := e.foldAt(3); ok {
+		t.Fatalf("first body line carries a second fold %v: %v", r, e.folds.ranges)
+	}
+	g := e.gutterGeometry()
+	chevron := func(y int) bool { return strings.TrimSpace(plainRow(buf, y, g.numberX)) != "" }
+	if !chevron(2) || chevron(3) {
+		t.Fatalf("painted chevrons: header %q, first body line %q", plainRow(buf, 2, g.numberX), plainRow(buf, 3, g.numberX))
+	}
+	e.SetCursorPosition(4, 1)
+	e.HandleEvent(tea.KeyPressMsg{Code: '-', Mod: tea.ModAlt})
+	paintEditor(e, 80, 20)
+	if len(e.folds.collapsed) != 1 || e.folds.collapsed[0] != (FoldRange{2, 6}) || e.CursorLine() != 2 {
+		t.Fatalf("keyboard fold inside a body folded %v, caret line %d", e.folds.collapsed, e.CursorLine())
+	}
+}

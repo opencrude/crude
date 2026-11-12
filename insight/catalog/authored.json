@@ -37,7 +37,7 @@
       }
     },
     "python": {
-      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates. Formatter: black, as Crude used before; --stdin-filename lets it find the project configuration.",
+      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates. Formatter: black, as Crude used before; --stdin-filename lets it find the project configuration. Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
       "roots": [
         "pyproject.toml",
         "pyrightconfig.json",
@@ -55,7 +55,8 @@
           "{file}",
           "-"
         ]
-      }
+      },
+      "off_side": true
     },
     "javascript": {
       "note": "Earlier Crude root rules are shared by all script language identities.",
@@ -177,6 +178,30 @@
       "servers": [
         "lua-language-server"
       ]
+    },
+    "clojure": {
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/clojure/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
+      "off_side": true
+    },
+    "fsharp": {
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/fsharp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
+      "off_side": true
+    },
+    "markdown": {
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/markdown-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
+      "off_side": true
+    },
+    "pug": {
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/pug/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
+      "off_side": true
+    },
+    "sql": {
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/sql/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
+      "off_side": true
+    },
+    "yaml": {
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
+      "off_side": true
     }
   },
   "servers": {

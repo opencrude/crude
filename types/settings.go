@@ -227,6 +227,13 @@ func lspUnset(s LSPSettings) bool {
 		!s.Hover && !s.Definition && !s.InlayHints && s.MinSeverity == "" && len(s.Languages) == 0
 }
 
+// DefaultEditorSettings is the application editor layer before any stored
+// choice. Stored leaves decode onto it, so a preference that is on by default
+// (Line numbers, Indent guides) stays on until the user explicitly turns it off.
+func DefaultEditorSettings() EditorSettings {
+	return NormalizeEditorSettings(EditorSettings{TabSize: 4, LineNumbers: true, IndentGuides: true, SyntaxTheme: "catppuccin", RenderWhitespace: "none", AutoSave: AutoSaveOff})
+}
+
 func NormalizeEditorSettings(s EditorSettings) EditorSettings {
 	if s.IndentStyle != "space" && s.IndentStyle != "tab" {
 		s.IndentStyle = ""
