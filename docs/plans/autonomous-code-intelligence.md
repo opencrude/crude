@@ -88,6 +88,7 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-11 | The HTML, C and Lisp constructs were examples, not a requirement for a custom three-template library. Complete the existing LSP integration and reuse established expansion tools where justified. No local model now; a possible custom-trained model belongs to later work. Use inline commands, especially Python, for coherent batched edits. | User |
 
 | 2026-11-11 | After restarting the core, continue implementation through the editor gaps instead of stopping at an LSP slice. Add JetBrains-style general editing actions and motions. Ctrl+D duplicates, and Tab accepts a sole visible suggestion without Down first; these are examples, not the scope boundary. Retain no-local-model and shared-owner constraints. | User |
+| 2026-11-12 | Finish and verify the editor work already in this checkpoint. Do not introduce additional features in this checkpoint; keep the remaining editor workflows open. | User |
 
 ### Open decisions
 
@@ -111,7 +112,7 @@ Update a row only with evidence.
 | Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
 | Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostic facts, including unopened files. Focused freshness/gap tests and native installed-server captures verify clearing and explicit incomplete coverage. Declared scope is not a complete-project or per-feature proof; richer fact kinds remain open. |
 | Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
-| Editor features | Shared, revision-checked editor and agent answers | Banked slices include navigation, completion and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostics and [semantic colors](#semantic-token-presentation-2026-11-11). Completion/inlay request lifetimes are fenced; the inlay details reader, broader editor parity and native Windows crash resolution remain open. |
+| Editor features | Shared, revision-checked editor and agent answers | Banked slices include navigation, completion and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostics and [semantic colors](#semantic-token-presentation-2026-11-11). The current checkpoint adds guarded completion acceptance, commit characters and document highlights. The inlay reader has inspected Linux captures; installed-server tooltip/resolve, native Windows acceptance, broader editor parity and Windows crash resolution remain open. |
 
 Known exception: the compilation-database and CMake importers in
 `insight/project/` read build-file formats. The generic recipe layer must call
@@ -189,20 +190,39 @@ combined check is corrected; the separate whole-repository lint run passed. The
 evidence is in the
 [request-lifetime checkpoint](../issues/2026-11-11-editor-polish.md#completion-and-inlay-request-lifetimes-2026-11-11).
 
-**Current checkpoint: usable inlay details (2026-11-11).** The reader now shows
+**Inlay details: Linux visual acceptance (2026-11-12).** The reader shows
 the selected label and available tooltip instead of protocol bookkeeping. It uses
 content-sized presentation, scrolling and the original row/source validation.
 It preserves read-only actions, cancellation, native copy and keyboard/pointer
 paths. The implementation and its shutdown fences pass the full ordinary suite,
-allocation gate, lint and focused race checks. Capture assertions passed at
-160×40 and 80×24, but image inspection and native Windows acceptance remain open.
+allocation gate, lint and focused race checks. Native Linux captures at 160×40
+and 80×24 passed all seven reader phases, and their images were inspected
+(2026-11-12). Native Windows acceptance remains open.
 
-Exit: reproduce and fix the existing native reader failure; test empty, unsupported,
-failed, resolved and malicious text; verify exact-row selection, Back/Close,
-source invalidation, copying and scrolling at desktop and 80×24. Run affected
-checks and native captures. Do not change provider commands/edits into actions,
-create a new settings page or imply installed-server tooltip resolve where absent.
-Commit characters, linked editing, CodeLens and remaining editor rows stay open.
+**Completion ownership and commit characters (2026-11-12).** Accepting a
+suggestion is now a guarded edit in the existing document projection. From the
+acceptance key, later input waits in the ordinary deferred-input queue; the
+insertion commits only at the canonical revision the core validated, and is never
+rebased. A refused receipt or newer canonical text removes it from every view and
+replays the held keys once. This corrects Tab, Enter, row activation and the new
+key together. The client negotiates `commitCharactersSupport`; rows keep the item
+list (even empty) or the provider's `allCommitCharacters`. A commit character
+accepts the chosen row, or the sole Tab-acceptable row unless the typed word is
+itself a suggestion, and is then typed after the insertion; on failure it is typed
+alone. Evidence and limits are in the
+[checkpoint](../issues/2026-11-11-editor-polish.md#completion-ownership-and-commit-characters-2026-11-12).
+
+**Current checkpoint: document highlights (2026-11-12).** Read and write
+occurrences of the symbol at the caret use a negotiated
+`textDocument/documentHighlight` provider and restrained theme tokens.
+Requests are automatic after the caret rests, fenced by exact source, caret,
+context and provider, and never become selections or edits. No provider, an empty
+answer or a failure paints nothing and says nothing. The connected and installed
+provider journeys and Linux images at both sizes are recorded in the
+[highlight evidence](../issues/2026-11-11-editor-polish.md#document-highlights-2026-11-12).
+The ordinary suite, focused race checks and complete allocation gate pass after
+a divider-allocation fix. Linked editing, CodeLens, workspace symbols and the
+other editor rows remain open; they are not part of this checkpoint.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named

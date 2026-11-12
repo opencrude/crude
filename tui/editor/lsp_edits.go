@@ -108,14 +108,39 @@ type completionEdit struct {
 // InsertText and NewText carry expanded text; the optional initial snippet plan
 // must match exactly. Additional edits remain literal, in original coordinates.
 func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
+	if state := e.DocumentState(); state.UndoPending || state.HistoryQueued || state.Conflict != nil || e.HoldsDocumentInput() {
+		return ErrDocumentPending // these ranges describe the pre-undo snapshot
+	}
+	return e.applyCompletion(item)
+}
+
+// ApplyHeldCompletion applies a suggestion as the guarded edit of h. Input that
+// arrived after the acceptance key stays queued behind it. Its canonical command
+// commits at the hold's revision or leaves this view; it is never rebased.
+func (e *Editor) ApplyHeldCompletion(h DocumentHold, item model.CompletionItem) error {
+	p := e.documentProjection
+	if p == nil || h.projection != p || p.hold == nil || p.hold.sequence != h.sequence || p.hold.applied ||
+		p.snapshot.Revision != p.hold.revision || len(p.pending) != 0 || p.inflight != nil || p.undoPending || p.conflict != nil {
+		return ErrDocumentPending
+	}
+	before := e.captureViewState()
+	if err := e.applyCompletion(item); err != nil {
+		return err
+	}
+	if len(p.pending) == 0 {
+		p.hold = nil // byte-identical: nothing waits for a receipt
+		return nil
+	}
+	p.hold.applied, p.hold.before, p.hold.editor = true, before, e
+	return nil
+}
+
+func (e *Editor) applyCompletion(item model.CompletionItem) error {
 	if e.HasMultipleCarets() {
 		return fmt.Errorf("press Esc to use one caret before accepting a suggestion")
 	}
 	if e.buf == nil || !e.open || e.readOnly {
 		return fmt.Errorf("completion: document is not editable")
-	}
-	if state := e.DocumentState(); state.UndoPending || state.HistoryQueued || state.Conflict != nil {
-		return ErrDocumentPending // these ranges describe the pre-undo snapshot
 	}
 	if len(item.AdditionalTextEdits) >= document.MaxEdits {
 		return fmt.Errorf("completion: too many edits")
@@ -264,6 +289,9 @@ func lspEditOffset(text string, line, col int) (int, error) {
 func (e *Editor) ApplySourceEdits(revision uint64, edits []document.Edit) error {
 	if !e.IsOpen() || e.ReadOnly() || e.Revision() != revision {
 		return document.ErrRevision
+	}
+	if e.HoldsDocumentInput() {
+		return ErrDocumentPending
 	}
 	if err := e.buf.checkOffsets(edits); err != nil {
 		return err

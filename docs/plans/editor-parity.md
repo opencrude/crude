@@ -59,8 +59,11 @@ have one shared row owner. EditorConfig indentation and explicit file choices
 now use the source-table policy. Multiple selections now use native edit vectors
 and private history, with native and repository acceptance. Minimap and indent
 guides now share the existing Editor page and scroll/source geometry. The inlay
-details reader is implemented but its final acceptance remains open. Remaining
-gaps include linked editing and CodeLens. Completion and inlay request lifetimes
+details reader has Linux native acceptance; Windows remains open. Suggestion
+acceptance is a guarded edit that never commits over another shell's change,
+and provider commit characters accept a chosen or sole row. Occurrences of the
+symbol at the caret use the document-highlight provider. Remaining gaps include
+linked editing and CodeLens. Completion and inlay request lifetimes
 now retain their ordering and work-capacity fences.
 Semantic colors now use the connected provider and shared source projection; their
 scope and verified limits are in the semantic-token checkpoint evidence.
@@ -233,10 +236,12 @@ pass/fail criteria for a bundled library.
   coverage/deadlines. Build, lint, documentation and all allocation gates pass.
   The original Windows GC finding remains open. See the
   [continuation evidence](../issues/2026-11-11-editor-polish.md#lsp-continuation-2026-11-11).
-- Static trigger characters and incomplete-list request context are implemented.
-  Commit-character acceptance remains
-  unadvertised. Add it only with complete native input, transaction and Undo
-  coverage. Do not guess or widen server edit ranges.
+- Static trigger characters, incomplete-list request context and commit
+  characters are implemented. Acceptance by any key is a guarded edit: later keys
+  wait behind it and it commits only at the validated canonical revision, never
+  rebased over another shell's change. See the
+  [ownership evidence](../issues/2026-11-11-editor-polish.md#completion-ownership-and-commit-characters-2026-11-12).
+  Do not guess or widen server edit ranges.
 - Keep ordinary editing usable while a server is unavailable. Preserve exact
   server-row identity for additional edits, resolve and imported symbols.
 - Support nested snippets deliberately if added: inner completion must have a
@@ -288,11 +293,17 @@ new request. Installed-gopls and two-shell evidence is recorded in the
 [checkpoint](../issues/2026-11-11-editor-polish.md#semantic-token-presentation-2026-11-11).
 Modifier-specific styling and server-initiated semantic refresh remain open.
 
+Document highlights are implemented: occurrences of the symbol at the resting
+caret use a negotiated static provider, exact source and caret fences and quiet
+theme fills, and never become selections. See
+[editor reference](../reference/editor.md#occurrences-of-the-symbol-at-the-caret).
+Installed-gopls and native Linux captures at 160×40 and 80×24 are recorded in the
+[checkpoint](../issues/2026-11-11-editor-polish.md#document-highlights-2026-11-12).
+
 | Missing/partial workflow | Complete expected result and implementation constraint |
 |---|---|
 | Workspace symbols and breadcrumbs | Search project symbols from the existing palette/native list; selecting one goes to exact source and participates in Back/Forward. Document outline already exists. Reuse it for breadcrumb hierarchy, not another symbol cache. |
-| Inlay details | The reader shows the selected hint and tooltip in plain language, with exact row/source fences and inert provider actions. Native capture assertions passed at both sizes; full-suite and allocation gates pass. Image inspection and native Windows acceptance remain open. |
-| Document highlights | Current symbol reads/writes are distinguished with restrained theme tokens; async answers are fenced by exact source and caret invocation. They never become editable selections. |
+| Inlay details | The reader shows the selected hint and tooltip in plain language, with exact row/source fences and inert provider actions. Linux native captures at 160×40 and 80×24 passed all seven phases and the images were inspected on 2026-11-12. Native Windows acceptance and installed-server tooltip/resolve evidence remain open. |
 | Linked editing | Paired tag-name edits use negotiated ranges, one local transaction and source-qualified invalidation. Never keep mirrored editing after a peer touches its range. |
 | Call/type hierarchy | Expand incoming/outgoing calls or supertypes/subtypes in the shared bounded tree/list. Lazy requests, cancellation and exact location navigation; no unrelated popup framework. |
 | CodeLens | Only actual provider-supported actions appear. Resolve on demand; edits go through review and command effects through existing authorization. Never print protocol identifiers as user labels. |

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"time"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -60,6 +62,18 @@ type completionRead struct {
 	itemID string
 	accept bool
 	cancel context.CancelFunc
+	// hold queues later editor input behind an acceptance until its row read
+	// returns and the inserted text commits, so keys keep their order.
+	hold editor.DocumentHold
+}
+
+// stop cancels the read and releases its input hold unless the suggestion was
+// applied; the document owner's receipt then settles the hold.
+func (r *completionRead) stop() {
+	r.cancel()
+	if r.accept {
+		r.owner.editor.ReleaseDocumentHold(r.hold)
+	}
 }
 
 type completionRetryDueMsg struct{ owner *completionState }
@@ -88,7 +102,7 @@ func (m *App) retireCompletion(s *completionState) {
 	s.released = true
 	s.cancel()
 	if s.pending != nil {
-		s.pending.cancel()
+		s.pending.stop()
 	}
 	m.runDetachedAsyncCmd(func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -483,7 +497,7 @@ func (m *App) readCompletion(s *completionState, itemID string, accept bool) tea
 		return nil
 	}
 	if s.pending != nil {
-		s.pending.cancel()
+		s.pending.stop()
 		s.pending = nil
 	}
 	var row *types.LSPCompletionEntry
@@ -499,8 +513,16 @@ func (m *App) readCompletion(s *completionState, itemID string, accept bool) tea
 	if !accept && (s.observed[itemID] || !s.set.ResolveSupported) {
 		return nil
 	}
+	read := &completionRead{owner: s, itemID: itemID, accept: accept}
+	if accept {
+		hold, ok := s.editor.HoldDocumentInput()
+		if !ok {
+			return nil
+		}
+		read.hold = hold
+	}
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
-	read := &completionRead{owner: s, itemID: itemID, accept: accept, cancel: cancel}
+	read.cancel = cancel
 	s.pending = read
 	status := "Loading documentation..."
 	if accept {
@@ -520,7 +542,11 @@ func (m *App) readCompletion(s *completionState, itemID string, accept bool) tea
 
 func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 	read := msg.read
-	if read == nil || !m.completionCurrent(read.owner) || read.owner.pending != read {
+	if read == nil {
+		return false
+	}
+	defer read.stop()
+	if !m.completionCurrent(read.owner) || read.owner.pending != read {
 		return false
 	}
 	s := read.owner
@@ -555,7 +581,7 @@ func (m *App) handleCompletionRead(msg completionReadMsg) bool {
 		return false
 	}
 	if read.accept {
-		if err := s.editor.ApplyCompletion(row.Insertion); err != nil {
+		if err := s.editor.ApplyHeldCompletion(read.hold, row.Insertion); err != nil {
 			m.Feedback.NotifyErrorDetail("Could not insert this suggestion. Try another suggestion.", err.Error())
 			return false
 		}
@@ -603,6 +629,9 @@ func (m *App) handleCompletionAction(action *ui.Action) (tea.Cmd, bool) {
 // supported row. Other keys edit the source as usual. Up, Enter and paging act on
 // the list only after the user chose a row.
 func (m *App) routeCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	if cmd, held := m.routeHeldEditorKey(msg); held {
+		return cmd, true
+	}
 	s := m.completion
 	if s == nil || m.EditorState == nil || m.EditorState.Editor != s.editor {
 		return nil, false
@@ -623,6 +652,9 @@ func (m *App) routeCompletionKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			m.closeCompletionPopup()
 			m.queueSignatureHelpAfterInsertion(s.editor)
 		}
+		return cmd, true
+	}
+	if cmd, committed := m.commitCompletion(msg); committed {
 		return cmd, true
 	}
 	if !s.shown || s.stale || s.screen == nil || !m.completionCurrent(s) {
@@ -686,7 +718,67 @@ func editorTypingKey(msg tea.KeyPressMsg) bool {
 		(msg.Text != "" || msg.Code == tea.KeyBackspace || msg.Code == tea.KeyDelete)
 }
 
+// routeHeldEditorKey gives a plain key to the editor while an accepted
+// suggestion is not yet committed. The editor queues it behind that insertion,
+// so typing continues in order and the list cannot act on it. Esc and command
+// chords keep their normal meaning.
+func (m *App) routeHeldEditorKey(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	ed := m.EditorState.Editor
+	if ed == nil || !ed.HoldsDocumentInput() || msg.Code == tea.KeyEsc || msg.Mod&^tea.ModShift != 0 {
+		return nil, false
+	}
+	return ed.HandleEvent(msg), true
+}
+
+// commitCompletion accepts a suggestion when its commit character is typed,
+// then types that character after the insertion. The row is the chosen one, or
+// the sole visible supported row when Tab could accept it and the typed word is
+// not itself a suggestion. Otherwise the key is ordinary typing.
+func (m *App) commitCompletion(msg tea.KeyPressMsg) (tea.Cmd, bool) {
+	s := m.completion
+	if s == nil || !s.shown || s.stale || s.screen == nil || s.set == nil || s.pending != nil && s.pending.accept ||
+		msg.Mod&^tea.ModShift != 0 || utf8.RuneCountInString(msg.Text) != 1 || !m.completionCurrent(s) {
+		return nil, false
+	}
+	id := s.screen.SelectedID()
+	if id == "" {
+		if m.ws.LSPMgr().Settings().CompletionAcceptance() == "enter" || completionTypedIsSuggestion(s.set.Entries) {
+			return nil, false
+		}
+		id = s.screen.SoleID()
+	}
+	i := slices.IndexFunc(s.set.Entries, func(row types.LSPCompletionEntry) bool { return row.ID == id })
+	if id == "" || i < 0 || !slices.Contains(s.set.Entries[i].CommitCharacters, msg.Text) ||
+		s.screen.SelectedID() != id && !s.screen.Select(id) {
+		return nil, false
+	}
+	dismissCompletionGhost(s.editor)
+	m.markCompletionDirty(s)
+	read := m.readCompletion(s, id, true)
+	if read == nil {
+		return nil, false
+	}
+	// The editor holds input for the acceptance, so the character is queued
+	// behind the insertion. If the insertion fails, it is typed alone.
+	return tea.Batch(read, s.editor.HandleEvent(msg)), true
+}
+
+// completionTypedIsSuggestion: the typed word is itself a complete suggestion
+// (its row is hidden because accepting it changes nothing). A commit character
+// then must not replace it with a different sole row.
+func completionTypedIsSuggestion(rows []types.LSPCompletionEntry) bool {
+	return slices.ContainsFunc(rows, func(row types.LSPCompletionEntry) bool {
+		return row.Prefix != "" && completionInsertText(row.Insertion) == row.Prefix
+	})
+}
+
 func (m *App) handleCompletionKey(fw *wm.FloatingWindow, msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if cmd, held := m.routeHeldEditorKey(msg); held {
+		return m, cmd
+	}
+	if cmd, committed := m.commitCompletion(msg); committed {
+		return m, cmd
+	}
 	accept := m.ws.LSPMgr().Settings().CompletionAcceptance()
 	native := false
 	if msg.Mod == 0 {

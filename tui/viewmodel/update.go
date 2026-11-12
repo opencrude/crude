@@ -120,6 +120,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.autoCompletionCmd(time.Now()))
 	command = tea.Batch(command, m.syncInlayHints())
 	command = tea.Batch(command, m.syncSemanticTokens())
+	command = tea.Batch(command, m.syncOccurrences())
 	m.syncEditorGhost()
 	m.syncEditorSnippet()
 	m.syncMemoryBrowserLifecycle()
@@ -1075,6 +1076,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case semanticResultMsg:
 		cmds = append(cmds, m.handleSemanticResult(msg))
 	case semanticReleasedMsg:
+	case occurrenceDueMsg:
+		cmds = append(cmds, m.startOccurrenceRequest(msg))
+	case occurrenceResultMsg:
+		m.handleOccurrenceResult(msg)
 	case inlayDueMsg:
 		cmds = append(cmds, m.startInlayRequest(msg))
 	case inlayResultMsg:

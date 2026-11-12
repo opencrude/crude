@@ -808,6 +808,7 @@ func (m *App) stopAsyncIO() {
 	m.closeCodeActions()
 	m.resetInlayHints()
 	m.resetSemanticTokens()
+	m.resetOccurrences()
 	m.StopRemotes()
 	m.fenceLiveDocumentTopics()
 	m.stopEditorSyntax()

@@ -148,7 +148,14 @@ func (e *Editor) reconcileSnippetSelection() {
 		valid = valid && min(start, end) >= active.start && max(start, end) <= active.end
 	}
 	if state := e.DocumentState(); state.Conflict != nil || state.UndoPending || state.HistoryQueued {
-		valid = false
+		// Input queued behind a guarded suggestion has not changed the active
+		// field. Preserve it through ordered replay; a real undo/conflict still
+		// retires the snippet immediately.
+		p := e.documentProjection
+		orderedInput := p != nil && (p.hold != nil || p.replaying)
+		if state.Conflict != nil || state.UndoPending || !orderedInput {
+			valid = false
+		}
 	}
 	if !valid {
 		e.CancelSnippet()

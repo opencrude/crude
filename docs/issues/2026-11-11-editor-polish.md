@@ -662,8 +662,133 @@ installed-server resolve evidence. Focused race checks pass. The full suite
 exposed a core deletion-progress ordering race; a focused reproduction and the
 real delete journey now pass under race. The updated code passes the complete
 ordinary suite, allocation gate, whole-repository lint, build, generated-wire,
-design/docs and Windows/macOS component cross-build checks. The missing image
-inspection and native Windows acceptance remain open.
+design/docs and Windows/macOS component cross-build checks. Image inspection was
+later completed in the [inlay reader checkpoint](#inlay-reader-image-inspection-2026-11-12);
+native Windows acceptance remains open.
+
+## Completion ownership and commit characters (2026-11-12)
+
+The earlier two-shell probe committed a disjoint peer edit after the core had
+validated an accepted row and before this shell's insertion reached the document
+owner. The shell's optimistic projection then rebased the old suggestion, with its
+import, onto text the provider never saw. Tab, Enter and pointer acceptance shared
+the defect; a commit-character prototype only made it easier to reach.
+
+Accepting a suggestion is now a guarded edit in the existing document projection
+(`tui/editor/shared_document.go`). From the acceptance key, later input waits in the
+existing deferred-input queue, so keys keep their order. The insertion is applied
+locally but commits only at the canonical revision that the core validated. It is
+never rebased: a refused receipt, or newer canonical text that arrives first,
+removes it from every view, cancels its snippet, restores the caret and shows
+"The file changed before the suggestion was inserted. Request suggestions again."
+Held keys then replay once. A failed, cancelled or Escaped acceptance releases the
+hold the same way. Ordinary typing, paste and literal inline text are unchanged.
+
+The client now advertises `commitCharactersSupport`. `lspcompletion` keeps an
+item's own list (an explicit empty list included) and the workspace otherwise
+applies the provider's static `allCommitCharacters`; malformed lists refuse the
+result. The characters cross the generated wire with each row. A commit character
+accepts the chosen row, or the sole Tab-acceptable row unless the typed word is
+itself a suggestion, and is typed after the insertion; if acceptance fails, it is
+typed alone.
+
+Regressions: `TestHeldCompletion*` and `TestReleasedHoldReplaysTyping...` check
+commit, owner refusal, publication and sync refusal and replay order in the
+projection. `TestAcceptedSuggestionNeverCommitsOverAnUnseenPeerChange` drives two
+real shells against one core: a peer edit lands between the row check and the
+commit while the user keeps typing; both shells end with the peer edit and the
+typed key, without the stale import or a conflict. `TestCommitCharacter*`,
+`TestFailedCommitAcceptanceStillTypesTheCharacter`,
+`TestCommitCharactersStayOrdinaryTypingWithoutAClearRow` and
+`TestTypingAfterTabWaitsForTheAcceptedSuggestion` cover the keyboard contract;
+parser, normalization and capability tests cover negotiation and precedence. Two
+older expectations changed deliberately: a key typed after Tab now follows the
+insertion instead of cancelling it. A subsequent full-suite run exposed a chosen
+row inside a snippet losing its field when Tab queued behind the receipt. The
+field now survives ordered input and replay; `TestTabPrefersAChosenRowThenTheNextField`
+and `TestTypingAfterHeldCompletionKeepsTheArgumentField` check the final caret,
+text and snippet. `TestInvalidPeerDeltaDoesNotRetireHeldCompletion` checks that a
+rejected peer snapshot leaves the held edit and queued input intact.
+
+Limits: held input waits for one core round trip, as Undo already does. A crash
+while a guarded insertion is in flight is recovered by the existing reviewed
+draft flow, not by the hold.
+
+## Document highlights (2026-11-12)
+
+Occurrences of the symbol at the resting caret were the next open editor row.
+The client now advertises `documentHighlight` without dynamic registration and
+queries only a static provider. `lspnav.ParseHighlights` keeps null, empty and
+occurrence answers distinct with the navigation parser's closed-object rules; the
+workspace checks every range against the exact synchronized source and reuses the
+navigation fence for producer, wire, preference and context. `lsp.highlights`
+crosses the generated wire through `shellport.Highlights`.
+
+The focused editor asks once after the caret rests for 250 ms. The editor converts
+ranges to visual columns once and paints a quiet `OccurrenceFill` (writes a little
+stronger) under find matches and selection. Marks show only while the caret is on
+one of them and the source is unchanged. Moving inside the symbol does not ask
+again; a caret on nothing asks once. Failures and unsupported providers are quiet.
+Occurrences follow the Find references preference. The shell holds answers until
+their exact context publication and retires them on context, provider, preference
+or focus change. It also waits for the exact source to synchronize before sending
+the request. Nested and multiline ranges retain their full coverage.
+
+Evidence: `TestDocumentHighlights*` (framed capability and request shape),
+`TestHighlightsKeepKinds...`, `TestHighlightNormalization...`,
+`TestOccurrencesPaintAtVisualColumns...` (tab and wide character, read and write
+fills, no selection or caret change, hide on edit), the occurrence context,
+provider and synchronization lifecycle tests, `TestShutdownRetiresPendingOccurrences`,
+and `TestConnectedOccurrencesFollowTheRestingCaretOnly` (two shells, exact source and
+caret per shell, no repeated question, hide before acknowledgement) and
+`TestInstalledProviderPaintsOccurrencesOfTheSymbolAtTheCaret` with installed
+gopls (`CRUDE_SEMANTIC_GOPLS`), which paints the parameter's use from the real
+answer. `TestOccurrencesVisualAcceptance` ran through `scripts/tuishot.sh` with
+installed gopls at 160×40 and 80×24, one at a time: `OCCURRENCE_VERIFIED` at both
+sizes and a clean exit. The inspected images show a quiet fill on both `name`
+occurrences at 160×40 and on the declaration at 80×24, where the use is
+scrolled off to the right; caret, text and selection are unchanged.
+
+## Inlay reader image inspection (2026-11-12)
+
+`TestInlayReaderLongVisualAcceptance` ran through `scripts/tuishot.sh` at 160×40
+and 80×24, one capture at a time, with the scrollbar drag coordinates taken from
+the headless run. Both captures logged seven `INLAY_READER_VERIFIED` phases and
+`INLAY_READER_JOIN phase=7 passed=true headless=false`. The fixture prints
+`INLAY_READER_READY phase=N+1` after observing phase N; await that marker.
+
+Inspected images: the list shows one `: int · Line 3 · Type` row with Show
+details and Close, without protocol bookkeeping. The detail reader shows the
+label, the complete tooltip from the first line, a native scrollbar and Load
+details, Back and Close. Ctrl+End and the thumb drag reach "Final useful hint."
+At 80×24 the reader grows to the last row and overlays the footer like other
+popovers; its frame, corners and buttons are complete, not clipped. Escape twice
+restores the editor with the inline hint and an unchanged source. The provider
+is deterministic; installed-server tooltip/resolve and Windows remain open.
+
+## Checkpoint validation (2026-11-12)
+
+Linux `make test` passes on the corrected source, including all grouped
+viewmodel cases. Focused editor, viewmodel and workspace race checks pass,
+including shutdown and context regressions. Whole-repository lint passes with
+`golangci-lint` v2.15.0 built by Go 1.27.4. Protocol generation/check, design and
+documentation checks, the site gate and Windows/macOS component cross-builds
+pass. The native Windows and installed-server tooltip limits above still apply.
+The allocation gate passed the completion-normalization and new highlight
+benchmarks, but divider mutation exceeded its unchanged allocation ceiling. The
+new highlight reconciliation cloned the full language catalog on every input
+update. It now checks for the highlight port first and reads the existing
+references preference as a constant-size value; the focused connected and
+installed-provider journeys pass. After the fix, the focused remote-port,
+highlight lifecycle and connected-provider race checks pass, as do `make test-lsp`,
+`go build ./...`, whole-repository lint and Windows/macOS component cross-builds.
+Fresh native installed-server captures at 160×40 and 80×24 were inspected and
+exited cleanly. Three isolated divider repetitions fell from 34,152–34,153 B /
+230 allocations to 1,720 B / 43 allocations, below the unchanged 11,750 B / 54
+limit. The full suite and complete allocation gate pass on the corrected source.
+The gate measured the divider at 1,720 B / 43 allocations, highlight projection
+at 219,665 B / 22 and highlight normalization at 348,378 B / 6,844. No existing
+ceiling was raised.
 
 ## Remaining acceptance
 

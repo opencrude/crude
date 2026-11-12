@@ -41,6 +41,9 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 	if run, known := a.prepareNavigation(request); known {
 		return run, true
 	}
+	if run, known := a.prepareHighlights(request); known {
+		return run, true
+	}
 	if run, known := a.prepareCodeActions(request); known {
 		return run, true
 	}
@@ -162,7 +165,7 @@ func (a *actor) publishLSPIfChanged() {
 func independentLSPRead(method string) bool {
 	switch method {
 	case coreprotocol.LSPSnapshotMethod, coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp,
-		coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationTargetMethod,
+		coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationTargetMethod, coreprotocol.LSPHighlightsMethod,
 		coreprotocol.LSPCompletionsMethod, coreprotocol.LSPCompletionInspectMethod, coreprotocol.LSPCompletionReleaseMethod,
 		coreprotocol.LSPInlayHintsMethod, coreprotocol.LSPInlayInspectMethod, coreprotocol.LSPInlayReleaseMethod,
 		coreprotocol.LSPSemanticMethod, coreprotocol.LSPSemanticReleaseMethod,

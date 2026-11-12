@@ -26,6 +26,17 @@ import (
 // suffixes retain malformed JSON, missing results and exact opaque tokens.
 func completionWireClient(t *testing.T, capability string, reply func(codeActionWireRequest) string) (*Client, *atomic.Int32) {
 	t.Helper()
+	caps := "{}"
+	if capability != "" {
+		caps = `{"completionProvider":` + capability + `}`
+	}
+	return capabilityWireClient(t, caps, reply)
+}
+
+// capabilityWireClient initializes a real framed client whose server
+// advertises exactly caps, then answers every request with reply.
+func capabilityWireClient(t *testing.T, caps string, reply func(codeActionWireRequest) string) (*Client, *atomic.Int32) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	clientStream, serverStream := net.Pipe()
 	conn, err := transport.NewConnection(ctx, clientStream, nil)
@@ -62,10 +73,6 @@ func completionWireClient(t *testing.T, capability string, reply func(codeAction
 			}
 			var fields string
 			if request.Method == "initialize" {
-				caps := "{}"
-				if capability != "" {
-					caps = `{"completionProvider":` + capability + `}`
-				}
 				fields = `,"result":{"capabilities":` + caps + `}`
 			} else {
 				count.Add(1)
@@ -98,7 +105,7 @@ func TestCompletionCapabilityLeaf(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		leaf := CompletionClientCapabilities(enabled)
 		raw, err := json.Marshal(leaf)
-		want := `{"completionItem":{"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail"]},"snippetSupport":` +
+		want := `{"completionItem":{"commitCharactersSupport":true,"documentationFormat":["plaintext","markdown"],"insertReplaceSupport":true,"insertTextModeSupport":{"valueSet":[1,2]},"resolveSupport":{"properties":["documentation","detail"]},"snippetSupport":` +
 			strconv.FormatBool(enabled) + `},"contextSupport":true,"dynamicRegistration":false,"insertTextMode":1}`
 		if err != nil || string(raw) != want {
 			t.Fatalf("capability grants changed:\n%s\nwant %s\n%v", raw, want, err)
@@ -118,14 +125,15 @@ func TestCompletionInitializedStaticAdvertisement(t *testing.T) {
 	for _, tc := range []struct {
 		name, capability string
 		request, resolve bool
+		commit           string
 	}{
-		{"absent", "", false, false},
-		{"null", "null", false, false},
-		{"options", "{}", true, false},
-		{"no-resolve", `{"resolveProvider":false}`, true, false},
-		{"resolve", `{"resolveProvider":true}`, true, true},
-		{"unknown", `{"future":{"resolveProvider":true}}`, true, false},
-		{"triggers", `{"triggerCharacters":["."],"allCommitCharacters":[";"],"resolveProvider":true}`, true, true},
+		{"absent", "", false, false, ""},
+		{"null", "null", false, false, ""},
+		{"options", "{}", true, false, ""},
+		{"no-resolve", `{"resolveProvider":false}`, true, false, ""},
+		{"resolve", `{"resolveProvider":true}`, true, true, ""},
+		{"unknown", `{"future":{"resolveProvider":true}}`, true, false, ""},
+		{"triggers", `{"triggerCharacters":["."],"allCommitCharacters":[";"],"resolveProvider":true}`, true, true, ";"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, calls := completionWireClient(t, tc.capability, func(request codeActionWireRequest) string {
@@ -141,6 +149,9 @@ func TestCompletionInitializedStaticAdvertisement(t *testing.T) {
 			})
 			if c.CompletionResolveSupported() != tc.resolve {
 				t.Fatal("resolve grant differs from initialized advertisement")
+			}
+			if commit := strings.Join(c.CompletionCommitCharacters(), ""); commit != tc.commit {
+				t.Fatalf("commit characters %q differ from the advertisement %q", commit, tc.commit)
 			}
 			raw, err := c.RequestCompletionsRaw(context.Background(), "custom:source", 0, 0, protocol.CompletionContext{})
 			if tc.request {

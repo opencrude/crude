@@ -534,9 +534,22 @@ deterministic provider, the connected editor and `CRUDE_VISUAL_INLAY_READER=1`.
 Set `CRUDE_INLAY_READER_RESULT` and `CRUDE_CAPTURE_EVIDENCE` to the same new
 file. F4 observes each boundary; Alt+J, Enter, Tab, Ctrl+End, Ctrl+Home, the
 recorded `INLAY_READER_SCROLL` thumb drag and Escape perform the user actions.
-Await each `INLAY_READER_READY` line and finish with `quit:F9`. Verify all seven
+Take the drag cells from a `TestInlayReaderLongVisualHeadless` run at the same
+size. Await each `INLAY_READER_READY` line (observing phase N prints
+`phase=N+1`) and finish with `quit:F9`. Verify all seven
 phases, unchanged source and drafts, actual scrollbar release and clean exit.
 This fixture does not prove installed-server tooltip or resolve support.
+
+Occurrences of the symbol at the caret use
+`TestConnectedOccurrencesFollowTheRestingCaretOnly` (two framed shells, exact
+source and caret, no repeated question, hide on edit) and
+`TestInstalledProviderPaintsOccurrencesOfTheSymbolAtTheCaret`, which needs
+`CRUDE_SEMANTIC_GOPLS` and checks the painted fill from a real gopls answer.
+For native captures set `CRUDE_VISUAL_OCCURRENCES=1`, `CRUDE_SEMANTIC_GOPLS`,
+`CRUDE_OCCURRENCE_VISUAL_RESULT` and `CRUDE_CAPTURE_EVIDENCE` to one new file and
+`CRUDE_ARGS='-test.run=^TestOccurrencesVisualAcceptance$ -test.count=1'` with the
+compiled viewmodel test binary. Send F4, await `OCCURRENCE_READY`, then `quit:F9`;
+`TestOccurrencesVisualHeadless` runs the same check at 160x40 and 80x24.
 
 These local Linux regressions are not adaptive human-workflow, distinct-host/device,
 native containment or complete-project acceptance.

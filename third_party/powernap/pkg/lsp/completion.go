@@ -27,17 +27,19 @@ var (
 // The caller owns initialize wiring. Resolve supports documentation and detail,
 // never deferred edits or commands. Request context supports invocation,
 // advertised characters and incomplete-list refresh, not dynamic registration
-// or list defaults.
+// or list defaults. Item commit characters are supported; the provider's
+// allCommitCharacters supplies the default.
 func CompletionClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		"dynamicRegistration": false,
 		"contextSupport":      true,
 		"insertTextMode":      1, // Unspecified item mode remains literal as-is.
 		"completionItem": map[string]any{
-			"insertTextModeSupport": map[string]any{"valueSet": []int{1, 2}},
-			"snippetSupport":        enableSnippets,
-			"insertReplaceSupport":  true,
-			"documentationFormat":   []string{"plaintext", "markdown"},
+			"insertTextModeSupport":   map[string]any{"valueSet": []int{1, 2}},
+			"snippetSupport":          enableSnippets,
+			"insertReplaceSupport":    true,
+			"commitCharactersSupport": true,
+			"documentationFormat":     []string{"plaintext", "markdown"},
 			"resolveSupport": map[string]any{
 				"properties": []string{"documentation", "detail"},
 			},
@@ -137,6 +139,15 @@ func (c *Client) ResolveCompletionRaw(ctx context.Context, original json.RawMess
 		return nil, ErrCompletionInvalid
 	}
 	return bytes.Clone(raw), nil
+}
+
+// CompletionCommitCharacters is the initialized provider's static default.
+// Items that carry their own commitCharacters replace it.
+func (c *Client) CompletionCommitCharacters() []string {
+	if !c.initialized.Load() || c.capabilities.CompletionProvider == nil {
+		return nil
+	}
+	return slices.Clone(c.capabilities.CompletionProvider.AllCommitCharacters)
 }
 
 // CompletionResolveSupported observes only the initialized static advertisement.

@@ -35,6 +35,12 @@ func Offset(text string, line, col int) (int, error) {
 			end--
 		}
 	}
+	return offsetInLine(text, start, end, col)
+}
+
+// offsetInLine is the sole strict UTF-16 column resolver, shared by one-off
+// positions and a prepared source's repeated position observations.
+func offsetInLine(text string, start, end, col int) (int, error) {
 	units := 0
 	for off, r := range text[start:end] {
 		if units == col {

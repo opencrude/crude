@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"crude/document"
@@ -224,11 +225,26 @@ func insertionPrimary(raw []byte) (types.LSPTextEdit, error) {
 // backward Unicode letter/digit/underscore prefix is replaced. It owns no editor
 // state, applies no edits, and never modifies the caller's item or snippet plan.
 func PrimaryEdit(text string, line, col int, item types.CompletionItem) (types.LSPTextEdit, error) {
-	if len(text) > MaxSourceBytes || len(text) > document.MaxBytes || !utf8.ValidString(text) ||
-		!insertionCoordinate(line) || !insertionCoordinate(col) {
+	if len(text) > MaxSourceBytes || len(text) > document.MaxBytes || !utf8.ValidString(text) {
 		return types.LSPTextEdit{}, invalid("completion source or cursor bound/encoding")
 	}
-	cursor, err := lspedit.Offset(text, line, col)
+	return primaryEdit(text, line, col, item, func(line, col int) (int, error) { return lspedit.Offset(text, line, col) })
+}
+
+// PrimaryEditOnSource uses a previously validated immutable source index. It
+// shares the same insertion and range rules as PrimaryEdit for repeated rows.
+func PrimaryEditOnSource(source *lspedit.Source, line, col int, item types.CompletionItem) (types.LSPTextEdit, error) {
+	if source == nil {
+		return types.LSPTextEdit{}, invalid("completion source or cursor bound/encoding")
+	}
+	return primaryEdit(source.Text(), line, col, item, source.Offset)
+}
+
+func primaryEdit(text string, line, col int, item types.CompletionItem, offset func(int, int) (int, error)) (types.LSPTextEdit, error) {
+	if len(text) > MaxSourceBytes || len(text) > document.MaxBytes || !insertionCoordinate(line) || !insertionCoordinate(col) {
+		return types.LSPTextEdit{}, invalid("completion source or cursor bound/encoding")
+	}
+	cursor, err := offset(line, col)
 	if err != nil {
 		return types.LSPTextEdit{}, invalid("completion cursor outside source boundary")
 	}
@@ -240,8 +256,8 @@ func PrimaryEdit(text string, line, col int, item types.CompletionItem) (types.L
 			edit.Line != edit.EndLine || edit.Line != line {
 			return types.LSPTextEdit{}, invalid("primary requires single-line int32 range at cursor")
 		}
-		start, startErr := lspedit.Offset(text, edit.Line, edit.Col)
-		end, endErr := lspedit.Offset(text, edit.EndLine, edit.EndCol)
+		start, startErr := offset(edit.Line, edit.Col)
+		end, endErr := offset(edit.EndLine, edit.EndCol)
 		if startErr != nil || endErr != nil || start > cursor || cursor > end {
 			return types.LSPTextEdit{}, invalid("primary range must contain cursor at source boundaries")
 		}
@@ -254,11 +270,17 @@ func PrimaryEdit(text string, line, col int, item types.CompletionItem) (types.L
 			}
 			start -= size
 		}
-		startLine, startCol, err := lspedit.Position(text, start)
-		if err != nil {
+		// The backward identifier scan stops at line breaks. Compute the
+		// start column from the already validated cursor, not by rescanning
+		// the entire document for every candidate.
+		startCol := col
+		for _, r := range text[start:cursor] {
+			startCol -= utf16.RuneLen(r)
+		}
+		if startCol < 0 {
 			return types.LSPTextEdit{}, invalid("prefix outside source boundary")
 		}
-		edit = types.LSPTextEdit{Line: startLine, Col: startCol, EndLine: line, EndCol: col, NewText: item.InsertText}
+		edit = types.LSPTextEdit{Line: line, Col: startCol, EndLine: line, EndCol: col, NewText: item.InsertText}
 		if edit.NewText == "" && !item.HasInsertText && item.Snippet == nil {
 			edit.NewText = item.Label
 		}
