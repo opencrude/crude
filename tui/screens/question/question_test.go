@@ -68,18 +68,19 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 	for _, r := range "note" {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	// Plain Enter inserts a newline. A commit chord advances to review, never
-	// sends the last answer; the visible button requires no terminal chord.
-	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if got := screen.Answer(1); strings.Contains(got, "\n") {
-		t.Fatalf("plain enter advanced instead of inserting a newline: %q", got)
+	// The write-in has the composer's keys: the newline chord breaks the line
+	// and Enter goes to the next step. On the last answer that is the review,
+	// never the submission.
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	for _, r := range "more" {
+		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	if host.Focused() != InputID {
-		t.Fatalf("newline keystroke moved focus to %v", host.Focused())
+	if got := screen.Answer(1); got != "note\nmore" || host.Focused() != InputID || screen.Reviewing() {
+		t.Fatalf("newline chord left the write-in: answer=%q focus=%v", got, host.Focused())
 	}
-	result = host.Handle(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: tea.KeyEnter})
+	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Cmd != nil || !screen.Reviewing() {
-		t.Fatal("final answer must enter review without submitting")
+		t.Fatal("Enter on the final answer must open the review without submitting")
 	}
 	result = submitReview(t, host, screen)
 	message, ok := result.Cmd().(ResultMsg)
@@ -89,7 +90,7 @@ func TestScreenSelectsOptionsAndReturnsAllAnswers(t *testing.T) {
 	if got, want := message.Result.Answers["1"], "red"; got != want {
 		t.Fatalf("first answer=%q, want %q", got, want)
 	}
-	if got, want := message.Result.Answers["2"], "note"; got != want {
+	if got, want := message.Result.Answers["2"], "note\nmore"; got != want {
 		t.Fatalf("second answer=%q, want %q", got, want)
 	}
 }
@@ -142,12 +143,12 @@ func TestScreenMultiSelectValidatesAndReturnsSelectedOptions(t *testing.T) {
 	host := newTestHost(t, screen)
 	host.Focus(OptionsID)
 
-	// Stacked rows toggle in place: Enter flips membership, arrows move the
-	// highlight, and the deck stays on the question until Next.
-	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Space marks rows in place and arrows move the highlight; the deck stays
+	// on the question until Enter accepts the marks.
+	host.Handle(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if screen.Current() != 0 {
+	host.Handle(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	if screen.Current() != 0 || screen.Reviewing() {
 		t.Fatalf("multi toggle advanced to %d", screen.Current())
 	}
 	if got := screen.choices[0]; len(got) != 2 || got[0] != "option:0" || got[1] != "option:1" {
@@ -157,7 +158,7 @@ func TestScreenMultiSelectValidatesAndReturnsSelectedOptions(t *testing.T) {
 	buf := surface.NewCellBuffer(80, 12)
 	host.Paint(buf)
 	painted := bufferText(buf)
-	for _, want := range []string{"[x]", "alpha", "beta", "Write your response"} {
+	for _, want := range []string{"[x]", "alpha", "beta", "[ ] Type your own answer"} {
 		if !bufferContains(buf, want) {
 			t.Fatalf("stack missing %q:\n%s", want, painted)
 		}
@@ -169,9 +170,9 @@ func TestScreenMultiSelectValidatesAndReturnsSelectedOptions(t *testing.T) {
 		t.Fatalf("stack painted a dropdown/marker glyph:\n%s", painted)
 	}
 
-	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "question.next"})
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Cmd != nil || !screen.Reviewing() {
-		t.Fatal("multi-select answer bypassed review")
+		t.Fatal("Enter must accept the marks and open the review, never submit")
 	}
 	result = submitReview(t, host, screen)
 	message := result.Cmd().(ResultMsg)
@@ -189,24 +190,24 @@ func TestScreenCustomAnswerAcceptsPaste(t *testing.T) {
 	host := newTestHost(t, screen)
 	host.Focus(OptionsID)
 
-	// Rows: known / rule / Write your response. Down lands on the write-in
-	// row; Enter selects it and hands focus to the text line.
+	// The write-in is the row below the last choice: Down moves into it.
 	buf := surface.NewCellBuffer(80, 12)
 	host.Paint(buf)
-	if !bufferContains(buf, "Write your response") {
-		t.Fatalf("write-in row not painted:\n%s", bufferText(buf))
+	_, knownY, _ := bufferFind(buf, "○ known")
+	_, writeY, ok := bufferFind(buf, "○ Type your own answer")
+	if !ok || writeY != knownY+1 {
+		t.Fatalf("write-in is not the row below the choices:\n%s", bufferText(buf))
 	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if host.Focused() != InputID {
-		t.Fatalf("custom row focus=%v, want %v", host.Focused(), InputID)
-	}
-	if got := screen.choices[0]; len(got) != 1 || got[0] != customOptionID {
-		t.Fatalf("custom not selected: %v", got)
+		t.Fatalf("Down from the last choice focus=%v, want %v", host.Focused(), InputID)
 	}
 
 	host.Handle(tea.PasteMsg{Content: "pasted answer"})
-	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModCtrl, Code: tea.KeyEnter})
+	if got := screen.choices[0]; len(got) != 1 || got[0] != customOptionID {
+		t.Fatalf("pasted text did not choose the own answer: %v", got)
+	}
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Cmd != nil || !screen.Reviewing() {
 		t.Fatal("pasted custom answer bypassed review")
 	}
@@ -214,6 +215,35 @@ func TestScreenCustomAnswerAcceptsPaste(t *testing.T) {
 	message := result.Cmd().(ResultMsg)
 	if got, want := message.Result.Answers["1"], "pasted answer"; got != want {
 		t.Fatalf("custom answer=%q, want %q", got, want)
+	}
+}
+
+// Typing on a choice starts an own answer, like typing in the composer, and
+// Up on its first line returns to the choices.
+func TestScreenTypingOnAChoiceWritesOwnAnswer(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.Reset(`[{"question":"Choose or type","options":["alpha","beta"]},{"question":"Next"}]`)
+	host := newTestHost(t, screen)
+	host.Focus(OptionsID)
+	for _, r := range "Hi" {
+		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if host.Focused() != InputID || screen.input.Value() != "Hi" || screen.Answer(0) != "Hi" || screen.Current() != 0 {
+		t.Fatalf("typing on a choice: focus=%v value=%q answer=%q", host.Focused(), screen.input.Value(), screen.Answer(0))
+	}
+	buf := surface.NewCellBuffer(80, 12)
+	host.Paint(buf)
+	if !bufferContains(buf, "● Hi") {
+		t.Fatalf("the typed answer is not marked as the choice:\n%s", bufferText(buf))
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyUp})
+	if selected, _ := screen.options.Selected(); host.Focused() != OptionsID || selected.ID != "option:1" {
+		t.Fatalf("Up from the write-in focus=%v selected=%q", host.Focused(), selected.ID)
+	}
+	host.Focus(InputID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if screen.Current() != 1 || screen.Answer(0) != "Hi" {
+		t.Fatalf("Enter in the write-in did not go to the next question: index=%d", screen.Current())
 	}
 }
 
@@ -225,7 +255,7 @@ func TestScreenClearingWriteInReleasesOnlyTheWriteInClaim(t *testing.T) {
 	screen.Reset(`[{"question":"Choose all","options":["alpha","beta"],"multiple":true}]`)
 	host := newTestHost(t, screen)
 	host.Focus(OptionsID)
-	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 	host.Focus(InputID)
 	for _, r := range "accidental" {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
@@ -280,7 +310,7 @@ func TestScreenRailShowsAnswerStateAndSelectsQuestions(t *testing.T) {
 	buf := surface.NewCellBuffer(80, 12)
 	host.Paint(buf)
 	painted := bufferText(buf)
-	for _, want := range []string{"1. Color", "2. Note", "red", "blue", "Write your response"} {
+	for _, want := range []string{"1. Color", "2. Note", "red", "blue", "Type your own answer"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("pane missing %q:\n%s", want, painted)
 		}
@@ -425,9 +455,10 @@ func TestScreenTextOnlyEscapeLandsOnRailDirectly(t *testing.T) {
 	}
 }
 
-// Under tmux without extended keys Ctrl+Enter arrives as plain Enter, so the
-// write-in also commits on Alt+Enter, which survives every multiplexer.
-func TestScreenWriteInCommitsOnAltEnter(t *testing.T) {
+// The newline chord follows the terminal's keyboard profile. Alt+Enter
+// survives every multiplexer, so it always breaks the line, as in the chat
+// composer; it never goes to the next step.
+func TestScreenWriteInBreaksLinesOnAltEnter(t *testing.T) {
 	screen := New(theme.DefaultDark())
 	if got := screen.Reset(`[{"question":"Add a note"}]`); got != 1 {
 		t.Fatalf("Reset()=%d, want 1", got)
@@ -437,13 +468,18 @@ func TestScreenWriteInCommitsOnAltEnter(t *testing.T) {
 	for _, r := range "note" {
 		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModAlt, Code: tea.KeyEnter})
+	host.Handle(tea.KeyPressMsg{Mod: tea.ModAlt, Code: tea.KeyEnter})
+	host.Handle(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if screen.Reviewing() || screen.input.Value() != "note\nx" {
+		t.Fatalf("Alt+Enter did not break the line: %q", screen.input.Value())
+	}
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Cmd != nil || !screen.Reviewing() {
-		t.Fatal("Alt+Enter must advance to review, never send it")
+		t.Fatal("Enter must open the review, never send it")
 	}
 	result = submitReview(t, host, screen)
 	message, ok := result.Cmd().(ResultMsg)
-	if !ok || message.Result.Answers["1"] != "note" {
+	if !ok || message.Result.Answers["1"] != "note\nx" {
 		t.Fatalf("commit result=%#v", result.Cmd())
 	}
 }
@@ -470,4 +506,31 @@ func submitReview(t *testing.T, host *ui.Host, screen *Screen) ui.EventResult {
 		t.Fatal("explicit review Submit did not emit owner result")
 	}
 	return result
+}
+
+// Moving between questions of one request never shrinks the deck, so the
+// transcript above it does not jump at each step.
+func TestScreenDeckHeightIsStableAcrossQuestions(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.Reset(`[
+		{"question":"Long","options":["one","two","three","four","five","six"]},
+		{"question":"Short","options":["yes"]}
+	]`)
+	host := newTestHost(t, screen)
+	host.Resize(80, 30)
+	host.Layout()
+	first := screen.PreferredHeight(30)
+	host.Focus(OptionsID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.MarkLayout()
+	host.Layout()
+	if screen.Current() != 1 || screen.PreferredHeight(30) != first {
+		t.Fatalf("deck height changed from %d to %d between questions", first, screen.PreferredHeight(30))
+	}
+	screen.Reset(`[{"question":"Short","options":["yes"]}]`)
+	host.MarkLayout()
+	host.Layout()
+	if screen.PreferredHeight(30) >= first {
+		t.Fatal("a new request kept the height of the previous one")
+	}
 }

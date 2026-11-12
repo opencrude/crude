@@ -298,15 +298,25 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 			defer cancel()
 			return out, store.SetPinned(ctx, in.ID, in.ExpectedRevision, in.Pinned, memory.ActorUser)
 		})
-	case coreprotocol.ForgetMemoryRecord:
-		return serviceCall(request, func(ctx context.Context, in coreprotocol.ForgetMemoryRecordRequest) (coreprotocol.ForgetMemoryRecordResult, error) {
-			var out coreprotocol.ForgetMemoryRecordResult
+	case coreprotocol.DeleteMemory:
+		return serviceCall(request, func(ctx context.Context, in coreprotocol.DeleteMemoryRequest) (coreprotocol.DeleteMemoryResult, error) {
+			var out coreprotocol.DeleteMemoryResult
 			if store == nil {
 				return out, workspace.ErrMemoryUnavailable
 			}
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
-			return out, store.Supersede(ctx, in.ID, in.ExpectedRevision, "", memory.ActorUser, "")
+			return out, store.Delete(ctx, in.ID, in.ExpectedRevision)
+		})
+	case coreprotocol.DeleteMemoryEpisode:
+		return serviceCall(request, func(ctx context.Context, in coreprotocol.DeleteMemoryEpisodeRequest) (coreprotocol.DeleteMemoryEpisodeResult, error) {
+			var out coreprotocol.DeleteMemoryEpisodeResult
+			if store == nil {
+				return out, workspace.ErrMemoryUnavailable
+			}
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return out, store.DeleteEpisode(ctx, in.ID)
 		})
 	case coreprotocol.CorrectMemory:
 		return serviceCall(request, func(ctx context.Context, in coreprotocol.CorrectMemoryRequest) (coreprotocol.CorrectMemoryResult, error) {
@@ -364,7 +374,7 @@ func serviceMutation(method string) bool {
 	switch method {
 	case coreprotocol.RemoveCodeTools, coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitStageReviewed, coreprotocol.GitUnstageReviewed, coreprotocol.GitStageHunk, coreprotocol.GitUnstageHunk, coreprotocol.GitCommitStaged, coreprotocol.GitCheckout, coreprotocol.DiscardGitReviewed, coreprotocol.DiscardGitHunk,
 		coreprotocol.GitLFS, coreprotocol.GitFetch, coreprotocol.GitPull, coreprotocol.GitPush, coreprotocol.GitMerge, coreprotocol.GitAbortOperation, coreprotocol.GitContinueOperation, coreprotocol.ResolveGitConflict,
-		coreprotocol.PinMemory, coreprotocol.ForgetMemoryRecord, coreprotocol.CorrectMemory, coreprotocol.MarkBoardRead:
+		coreprotocol.PinMemory, coreprotocol.DeleteMemory, coreprotocol.DeleteMemoryEpisode, coreprotocol.CorrectMemory, coreprotocol.MarkBoardRead:
 		return true
 	}
 	return false

@@ -66,6 +66,21 @@ func missing(value string) string {
 	return value
 }
 
+// browseHint names the keys that act on the selected row.
+func browseHint(mode string) string {
+	if mode == ModeEpisodes {
+		return "Enter open · Delete remove · / search"
+	}
+	return "Enter edit · Delete remove · / search"
+}
+
+func memoryDay(timestamp int64) string {
+	if timestamp <= 0 {
+		return "unknown"
+	}
+	return time.Unix(0, timestamp).Format(time.DateOnly)
+}
+
 func memoryTime(timestamp int64) string {
 	if timestamp <= 0 {
 		return "Not recorded"

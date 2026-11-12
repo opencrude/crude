@@ -10,10 +10,10 @@ import (
 )
 
 // This file owns the dedicated answer controls for the question deck: the
-// stacked option rows, the write-in prompt area, and the focus gates that give
-// each pane its Tab/Esc policy. Nothing here touches the shared form field
-// types; the deck composes existing shared primitives (VirtualList, TextArea)
-// instead.
+// stacked option rows, the write-in prompt area that follows them, and the
+// focus gates that give each pane its Tab/Esc policy. Nothing here touches the
+// shared form field types; the deck composes existing shared primitives
+// (VirtualList, TextArea) instead.
 
 const (
 	// OptionsID is the focusable wrapped question/choice reader and final review.
@@ -28,6 +28,13 @@ const (
 	focusForwardAction  = "question.focus.forward"
 	focusBackwardAction = "question.focus.backward"
 	railFocusAction     = "question.rail.focus"
+	// writeAction moves from the choices into the write-in; its payload is
+	// text typed on a choice, which the write-in receives.
+	writeAction = "question.write"
+	// lastChoiceAction moves from the write-in back up to the last choice.
+	lastChoiceAction = "question.rows.last"
+	// confirmAction is Enter on a row. Space and clicks activate the row.
+	confirmAction = "question.option.confirm"
 )
 
 // focusGate wraps a retained control and carries the pane's canonical focus
@@ -115,15 +122,19 @@ var _ ui.Component = (*focusGate)(nil)
 
 // answerInput wraps the shared prompt-area (TextArea) with change detection
 // so typing in the write-in editor updates answer state without polling. It
-// is deliberately the same control as the session chat composer: multi-line,
-// Enter inserts a newline, the commit chord advances, and it carries no raised form
-// background; the deck paints flat ColorBg everywhere.
+// has the keys of the session chat composer: Enter goes to the next step, the
+// newline chord breaks the line, and Up on the first line returns to the
+// choices above. It carries no raised form background; the deck paints flat
+// ColorBg everywhere.
 type answerInput struct {
 	*ui.TextArea
 	onChange func(value string)
 }
 
 func (a *answerInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() && evt.Key.Code == tea.KeyUp && evt.Key.Mod == 0 && a.CursorVisualLine() == 0 {
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: lastChoiceAction}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	}
 	before := a.Value()
 	result := a.TextArea.Handle(ctx, evt)
 	if a.Value() != before {
@@ -138,10 +149,10 @@ func (a *answerInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 
 var _ ui.Component = (*answerInput)(nil)
 
-// optionItems builds the stacked answer rows: one line per option followed by
-// a divider rule and the write-in row. Choice state rides the icon column
+// optionItems builds the stacked answer rows, one per option. The write-in
+// directly below them is the last choice. Choice state rides the icon column
 // (single ○/●, multiple [ ]/[x]) while the shared list row colors carry the
-// highlight, never a prompt glyph.
+// highlight.
 func optionItems(item Item, choices []string) []ui.ListItem {
 	if len(item.Options) == 0 {
 		return nil
@@ -150,7 +161,7 @@ func optionItems(item Item, choices []string) []ui.ListItem {
 	for _, id := range choices {
 		chosen[id] = true
 	}
-	items := make([]ui.ListItem, 0, len(item.Options)+2)
+	items := make([]ui.ListItem, 0, len(item.Options))
 	for index, option := range item.Options {
 		id := fmt.Sprintf("option:%d", index)
 		items = append(items, ui.ListItem{
@@ -160,10 +171,6 @@ func optionItems(item Item, choices []string) []ui.ListItem {
 			Payload: id,
 		})
 	}
-	items = append(items,
-		ui.ListItem{ID: "custom-sep", Separator: true},
-		ui.ListItem{ID: customOptionID, Label: "Write your response", Icon: choiceGlyph(item.Multiple, chosen[customOptionID]), Payload: customOptionID},
-	)
 	return items
 }
 

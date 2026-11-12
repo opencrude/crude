@@ -102,7 +102,11 @@ CREATE TABLE IF NOT EXISTS memory_revisions (
 );
 CREATE TRIGGER IF NOT EXISTS memory_revisions_no_update BEFORE UPDATE ON memory_revisions
     BEGIN SELECT RAISE(ABORT, 'memory revisions are immutable'); END;
-CREATE TRIGGER IF NOT EXISTS memory_revisions_no_delete BEFORE DELETE ON memory_revisions
+-- History stays immutable while its memory exists. Only Delete, the user's
+-- complete removal, erases it, after the memory row itself is gone.
+DROP TRIGGER IF EXISTS memory_revisions_no_delete;
+CREATE TRIGGER memory_revisions_no_delete BEFORE DELETE ON memory_revisions
+    WHEN EXISTS (SELECT 1 FROM workspace_memories WHERE id = OLD.memory_id)
     BEGIN SELECT RAISE(ABORT, 'memory revisions are immutable'); END;
 
 CREATE TABLE IF NOT EXISTS memory_observations (
@@ -125,8 +129,9 @@ CREATE TABLE IF NOT EXISTS memory_episodes (
 );
 CREATE TRIGGER IF NOT EXISTS memory_episodes_no_update BEFORE UPDATE ON memory_episodes
     BEGIN SELECT RAISE(ABORT, 'memory episodes are immutable'); END;
-CREATE TRIGGER IF NOT EXISTS memory_episodes_no_delete BEFORE DELETE ON memory_episodes
-    BEGIN SELECT RAISE(ABORT, 'memory episodes are immutable'); END;
+-- Episodes are never edited. DeleteEpisode, the user's complete removal, is
+-- their only delete.
+DROP TRIGGER IF EXISTS memory_episodes_no_delete;
 
 CREATE TABLE IF NOT EXISTS memory_exposures (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -624,6 +629,49 @@ func (st *Store) Supersede(ctx context.Context, id string, expectedRevision int6
 		return err
 	}
 	return tx.Commit()
+}
+
+// Delete permanently removes one memory: the record, every revision, its
+// feedback, exposures and journal entries, and its search index row. It is the
+// user's complete removal; agents retire knowledge with Supersede, which keeps
+// history. expectedRevision fences a change the user has not seen. A memory
+// that no longer exists is already removed.
+func (st *Store) Delete(ctx context.Context, id string, expectedRevision int64) error {
+	if expectedRevision <= 0 {
+		return fmt.Errorf("%w: expected_revision is required", ErrRevisionConflict)
+	}
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var revision int64
+	switch err := tx.QueryRowContext(ctx, `SELECT revision FROM workspace_memories WHERE id=?`, id).Scan(&revision); {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	case revision != expectedRevision:
+		return fmt.Errorf("%w: %s expected %d current %d", ErrRevisionConflict, id, expectedRevision, revision)
+	}
+	for _, statement := range []string{
+		`DELETE FROM memory_feedback WHERE memory_id=?`,
+		`DELETE FROM memory_exposures WHERE memory_id=?`,
+		`DELETE FROM workspace_memories WHERE id=?`,
+		`DELETE FROM memory_revisions WHERE memory_id=?`,
+		`DELETE FROM memory_journal WHERE memory_id=?`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement, id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteEpisode permanently removes one episode at the user's request.
+func (st *Store) DeleteEpisode(ctx context.Context, id string) error {
+	_, err := st.db.ExecContext(ctx, `DELETE FROM memory_episodes WHERE id=?`, id)
+	return err
 }
 
 func (st *Store) Update(

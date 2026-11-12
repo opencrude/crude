@@ -187,7 +187,14 @@ func TestMemoryBrowserCorrectionCommandUsesCASAndPreservesConflictedDraft(t *tes
 	detailRequest := memoryBrowserCommandMessage[memorybrowser.DetailMsg](t, intent.Cmd)
 	detailResult := memoryBrowserCommandMessage[memoryBrowserDetailResultMsg](t, app.handleMemoryBrowserDetail(detailRequest))
 	app.applyMemoryBrowserDetail(detailResult)
-	app.memoryBrowser.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.correct"})
+	app.width, app.height = 120, 40
+	app.rootHost.Resize(120, 40)
+	app.mainSurf = surface.NewSurface("memory-shell", 120, 40, cell.TransparentBlank())
+	app.configureShell()
+	app.rootHost.MarkLayout()
+	app.rootHost.Layout()
+	app.rootHost.Focus(memorybrowser.FormID)
+	app.rootHost.Handle(tea.KeyPressMsg{Code: '!', Text: "!"})
 	newer := record
 	newer.Content = "Concurrent verified correction"
 	if _, err := wsOf(app).WorkspaceDB.Memory.Update(context.Background(), record.ID, newer, memory.ActorAuto, "other"); err != nil {
@@ -211,7 +218,7 @@ func TestMemoryBrowserCorrectionCommandUsesCASAndPreservesConflictedDraft(t *tes
 	}
 	app.applyMemoryBrowserMutation(result)
 	draft, ok := app.memoryBrowser.Draft()
-	if !ok || draft.Revision != record.Revision || draft.Content != record.Content || len(draft.Evidence) != 1 || draft.Evidence[0] != record.Evidence[0] {
+	if !ok || draft.Revision != record.Revision || draft.Title != record.Title+"!" || draft.Content != record.Content || len(draft.Evidence) != 1 || draft.Evidence[0] != record.Evidence[0] {
 		t.Fatalf("CAS discarded the user's correction: %#v", draft)
 	}
 	if !errors.Is(app.memoryBrowser.MutationError(), memory.ErrRevisionConflict) {
@@ -289,9 +296,6 @@ func TestMemoryBrowserDetailStaleResultsAndDuplicateMutationIntent(t *testing.T)
 	wrong := result
 	wrong.WorkspaceGeneration++
 	app.applyMemoryBrowserDetail(wrong)
-	if app.memoryBrowser.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.correct"}).Action != nil {
-		t.Fatal("stale detail enabled correction")
-	}
 	app.applyMemoryBrowserDetail(result)
 	mutation := memoryBrowserCommandMessage[memorybrowser.MutationMsg](t, app.memoryBrowser.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.pin"}).Cmd)
 	command = app.handleMemoryBrowserMutation(mutation)

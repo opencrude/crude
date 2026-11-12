@@ -3,16 +3,17 @@ package memorybrowser
 import "crude/memory"
 
 const (
-	ModeKnowledge   = "knowledge"
-	ModeEpisodes    = "episodes"
-	MutationPin     = "pin"
-	MutationCorrect = "correct"
-	MutationRetire  = "retire"
-	pageBrowse      = "browse"
-	pageDetail      = "detail"
-	pageCorrect     = "correct"
-	pageRetire      = "retire"
-	pageMenu        = "actions"
+	ModeKnowledge         = "knowledge"
+	ModeEpisodes          = "episodes"
+	MutationPin           = "pin"
+	MutationCorrect       = "correct"
+	MutationDelete        = "delete"
+	MutationDeleteEpisode = "delete-episode"
+	pageBrowse            = "browse"
+	pageDetail            = "detail"
+	pageEdit              = "edit"
+	pageDelete            = "delete"
+	pageMenu              = "actions"
 )
 
 type SearchMsg struct {

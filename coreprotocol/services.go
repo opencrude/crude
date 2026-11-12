@@ -34,7 +34,8 @@ const (
 	SearchMemoryEpisodes = "memory.episodes"
 	InspectMemory        = "memory.inspect"
 	PinMemory            = "memory.pin"
-	ForgetMemoryRecord   = "memory.forget"
+	DeleteMemory         = "memory.delete"
+	DeleteMemoryEpisode  = "memory.delete_episode"
 	CorrectMemory        = "memory.correct"
 	BoardSnapshot        = "board.snapshot"
 	MarkBoardRead        = "board.mark_read"
@@ -199,11 +200,17 @@ type PinMemoryRequest struct {
 type PinMemoryResult struct {
 }
 
-type ForgetMemoryRecordRequest struct {
+type DeleteMemoryRequest struct {
 	ID               string `json:"id"`
 	ExpectedRevision int64  `json:"expected_revision"`
 }
-type ForgetMemoryRecordResult struct {
+type DeleteMemoryResult struct {
+}
+
+type DeleteMemoryEpisodeRequest struct {
+	ID string `json:"id"`
+}
+type DeleteMemoryEpisodeResult struct {
 }
 
 type CorrectMemoryRequest struct {

@@ -8,7 +8,9 @@ import (
 
 	"crude/core"
 	"crude/coreprotocol"
+	"crude/memory"
 	"crude/shellport"
+	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
@@ -65,7 +67,7 @@ func invokeLocalControl(t *testing.T, runtime *core.Runtime, shells []remoteJour
 	})
 }
 
-func TestConnectedLocalMemorySearchInspectPinRetire(t *testing.T) {
+func TestConnectedLocalMemorySearchEditPinDelete(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "")
 	root := t.TempDir()
 	one, two := newRemoteJourneyShell(t, runtime, root), newRemoteJourneyShell(t, runtime, root)
@@ -95,8 +97,8 @@ func TestConnectedLocalMemorySearchInspectPinRetire(t *testing.T) {
 	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/list/control", ui.ControlOperation{Verb: "activate", ItemID: record.ID}, control.Read, false); r.State != control.Applied {
 		t.Fatal("inspect", r)
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Revision: 1") {
-		t.Fatal("detail not painted")
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "revision 1") || !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Ctrl+S") {
+		t.Fatal("editor not painted")
 	}
 	activate := ui.ControlOperation{Verb: "activate"}
 	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/menu", activate, control.Write, false); r.State != control.Applied {
@@ -109,45 +111,46 @@ func TestConnectedLocalMemorySearchInspectPinRetire(t *testing.T) {
 	if err != nil || !detail.Record.Pinned || detail.Record.Revision != 2 {
 		t.Fatalf("pin durable: %+v %v", detail, err)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/menu", activate, control.Write, false); r.State != control.Applied {
+	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/delete", activate, control.Write, false); r.State != control.Applied {
 		t.Fatal(r)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/action-list", ui.ControlOperation{Verb: "activate", ItemID: "memorybrowser.retire"}, control.Write, false); r.State != control.Applied {
-		t.Fatal(r)
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "permanently") {
+		t.Fatal("delete confirmation missing")
 	}
-	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "revision 2?") {
-		t.Fatal("exact retire preview missing")
-	}
-	// Another shell curates the record after preview. The old revision must fail
-	// without retiring that newer work or reporting an Applied receipt.
+	// Another shell curates the record after the preview. The old revision must
+	// fail without deleting that newer work or reporting an Applied receipt.
 	if err := two.app.ws.PinMemory(context.Background(), record.ID, 2, false); err != nil {
 		t.Fatal(err)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/confirm-retire", activate, control.Delete, false); r.State != control.Failed {
-		t.Fatal("stale retirement applied", r)
+	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/confirm-delete", activate, control.Delete, false); r.State != control.Failed {
+		t.Fatal("stale delete applied", r)
 	}
 	detail, err = one.app.ws.InspectMemory(context.Background(), record.ID)
-	if err != nil || detail.Record.Revision != 3 || detail.Record.Pinned || detail.Record.Status == "superseded" {
+	if err != nil || detail.Record.Revision != 3 || detail.Record.Pinned {
 		t.Fatalf("newer work lost: %+v %v", detail, err)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/back", activate, control.Write, false); r.State != control.Applied {
+	for range 2 {
+		if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/back", activate, control.Write, false); r.State != control.Applied {
+			t.Fatal(r)
+		}
+	}
+	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/list/control", ui.ControlOperation{Verb: "activate", ItemID: record.ID}, control.Read, false); r.State != control.Applied {
+		t.Fatal("reopen", r)
+	}
+	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/delete", activate, control.Write, false); r.State != control.Applied {
 		t.Fatal(r)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/menu", activate, control.Write, false); r.State != control.Applied {
-		t.Fatal(r)
+	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/confirm-delete", activate, control.Delete, false); r.State != control.Applied {
+		t.Fatal("delete", r)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/action-list", ui.ControlOperation{Verb: "activate", ItemID: "memorybrowser.reload"}, control.Read, false); r.State != control.Applied {
-		t.Fatal(r)
+	if listed, err := one.app.ws.SearchMemories(context.Background(), memory.ListQuery{Status: "all"}); err != nil || len(listed) != 0 {
+		t.Fatalf("deleted memory is still stored: %+v %v", listed, err)
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/action-list", ui.ControlOperation{Verb: "activate", ItemID: "memorybrowser.retire"}, control.Write, false); r.State != control.Applied {
-		t.Fatal(r)
+	if !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "Deleted") {
+		t.Fatal("delete outcome not painted")
 	}
-	if r := invokeLocalControl(t, runtime, shells, one, "memorybrowser/actions/confirm-retire", activate, control.Delete, false); r.State != control.Applied {
-		t.Fatal("retire", r)
-	}
-	detail, err = one.app.ws.InspectMemory(context.Background(), record.ID)
-	if err != nil || detail.Record.Revision != 4 || !strings.Contains(ansi.Strip(one.app.View().RenderContent()), "superseded") {
-		t.Fatalf("retire not durable/painted: %+v %v", detail, err)
+	if focused := one.app.rootHost.Focused(); focused != memorybrowser.ListID && focused != memorybrowser.SearchID {
+		t.Fatalf("focus after delete = %s; it must leave the confirmation", focused)
 	}
 	if two.app.Input.Value() != "peer memory draft" || two.app.memoryBrowserVisible() {
 		t.Fatal("peer changed")

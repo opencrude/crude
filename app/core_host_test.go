@@ -47,6 +47,9 @@ func coreTestHome(t *testing.T) string {
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	// A re-executed test binary is a development build: without an explicit
+	// profile it would select the development profile beside this one.
+	t.Setenv("CRUDE_HOME", home)
 	t.Setenv("CRUDE_APP_TEST_MAIN", "1")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

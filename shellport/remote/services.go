@@ -231,8 +231,11 @@ func (m memoryStore) InspectMemory(ctx context.Context, id string) (workspace.Me
 func (m memoryStore) PinMemory(ctx context.Context, id string, expectedRevision int64, pinned bool) error {
 	return m.w.rpc().PinMemory(ctx, id, expectedRevision, pinned)
 }
-func (m memoryStore) ForgetMemoryRecord(ctx context.Context, id string, expectedRevision int64) error {
-	return m.w.rpc().ForgetMemoryRecord(ctx, id, expectedRevision)
+func (m memoryStore) DeleteMemory(ctx context.Context, id string, expectedRevision int64) error {
+	return m.w.rpc().DeleteMemory(ctx, id, expectedRevision)
+}
+func (m memoryStore) DeleteMemoryEpisode(ctx context.Context, id string) error {
+	return m.w.rpc().DeleteMemoryEpisode(ctx, id)
 }
 func (m memoryStore) CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error) {
 	return m.w.rpc().CorrectMemory(ctx, replacement)
@@ -250,8 +253,11 @@ func (w *Workspace) InspectMemory(ctx context.Context, id string) (workspace.Mem
 func (w *Workspace) PinMemory(ctx context.Context, id string, expectedRevision int64, pinned bool) error {
 	return memoryStore{w: w}.PinMemory(ctx, id, expectedRevision, pinned)
 }
-func (w *Workspace) ForgetMemoryRecord(ctx context.Context, id string, expectedRevision int64) error {
-	return memoryStore{w: w}.ForgetMemoryRecord(ctx, id, expectedRevision)
+func (w *Workspace) DeleteMemory(ctx context.Context, id string, expectedRevision int64) error {
+	return memoryStore{w: w}.DeleteMemory(ctx, id, expectedRevision)
+}
+func (w *Workspace) DeleteMemoryEpisode(ctx context.Context, id string) error {
+	return memoryStore{w: w}.DeleteMemoryEpisode(ctx, id)
 }
 func (w *Workspace) CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error) {
 	return memoryStore{w: w}.CorrectMemory(ctx, replacement)

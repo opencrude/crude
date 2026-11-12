@@ -57,7 +57,10 @@ type Screen struct {
 	episodes         []memory.Episode
 	detail           DetailData
 	draft            *memory.Record
-	retirePreview    *memory.Record
+	deletePreview    *DetailData
+	returnPage       string
+	discardArmed     bool
+	notice           string
 	actionSpecs      []ui.ActionBarButton
 	compactActions   bool
 	dockHeaderInset  int
@@ -106,7 +109,7 @@ func New(th *theme.Theme) *Screen {
 	s.scrollbar.SetSurfaceBackground(ui.ColorBg)
 	s.empty = ui.NewLabel(EmptyID, "No knowledge yet. Browsing remains available with extraction off.", th)
 	s.empty.SetColorRole(ui.ColorMuted)
-	s.status = ui.NewLabel(StatusID, "Workspace-wide · Enter inspect · / search", th)
+	s.status = ui.NewLabel(StatusID, browseHint(ModeKnowledge), th)
 	s.status.SetColorRole(ui.ColorMuted)
 	area := ui.NewTextArea(ui.NewID(DetailID, "control"), tokens, true)
 	area.SetReadOnly(true)
@@ -200,8 +203,11 @@ func (s *Screen) ApplyDetail(msg DetailMsg, detail DetailData, err error) bool {
 	s.detailLoading, s.detailError = false, err
 	if err == nil {
 		s.detail = detail
-		if s.page == pageDetail || s.page == pageMenu {
+		if s.page == pageDetail {
 			s.setReader(detailText(detail))
+		}
+		if s.draft != nil && !s.formModel.AnyDirty() && detail.Record.Revision != s.draft.Revision && editable(detail.Record) {
+			s.loadEditor(detail.Record)
 		}
 	}
 	s.syncActions()
@@ -221,13 +227,25 @@ func (s *Screen) ApplyMutation(msg MutationMsg, record memory.Record, err error)
 	s.mutating, s.mutationError = false, err
 	s.freezeCorrection(false)
 	if err == nil {
-		s.detail.Record = record
-		s.draft, s.retirePreview = nil, nil
-		s.showPage(pageDetail)
-		s.setReader(detailText(s.detail))
+		switch msg.Kind {
+		case MutationDelete, MutationDeleteEpisode:
+			s.notice = "Deleted. It is gone from memory and its history."
+			s.detail, s.draft, s.deletePreview = DetailData{}, nil, nil
+			s.showPage(pageBrowse)
+		case MutationCorrect:
+			s.detail.Record = record
+			s.loadEditor(record)
+			s.notice = fmt.Sprintf("Saved as revision %d.", record.Revision)
+		case MutationPin:
+			s.detail.Record = record
+			if s.draft != nil {
+				s.draft.Revision, s.draft.Pinned = record.Revision, record.Pinned
+			}
+			s.returnToEditor()
+		}
 	}
 	s.syncActions()
-	if err != nil && s.page == pageRetire {
+	if err != nil && s.page == pageDelete {
 		s.actions.FocusFirst()
 		s.actionList.SelectIndex(0)
 	}
@@ -282,29 +300,40 @@ func (s *Screen) syncList() {
 }
 
 func (s *Screen) syncStatus() {
-	text, role := "Workspace-wide · Enter inspect · / search", ui.ColorMuted
+	text, role := browseHint(s.mode), ui.ColorMuted
+	deleting := s.mutationIntent.Kind == MutationDelete || s.mutationIntent.Kind == MutationDeleteEpisode
 	switch {
+	case s.mutating && deleting:
+		text = "Deleting…"
 	case s.mutating:
-		text = "Saving revision…"
+		text = "Saving…"
+	case s.mutationError != nil && deleting && errors.Is(s.mutationError, memory.ErrRevisionConflict):
+		text, role = "This memory changed after you opened it. Open it again, check it, then delete.", ui.ColorError
+	case s.mutationError != nil && deleting:
+		text, role = "Delete failed: "+s.mutationError.Error(), ui.ColorError
+	case s.mutationError != nil && (errors.Is(s.mutationError, memory.ErrRevisionConflict) || errors.Is(s.mutationError, memory.ErrRetired)):
+		text, role = "This memory changed in another place. Your text is kept: copy it, go back and open the memory again.", ui.ColorError
 	case s.mutationError != nil:
 		text, role = "Save failed: "+s.mutationError.Error(), ui.ColorError
-		if errors.Is(s.mutationError, memory.ErrRevisionConflict) || errors.Is(s.mutationError, memory.ErrRetired) {
-			text = "Revision conflict. Draft kept; copy it, cancel, reload, then review."
-		}
-	case s.page != pageBrowse && s.detailError != nil:
-		text, role = "Inspect failed: "+s.detailError.Error(), ui.ColorError
-	case s.page != pageBrowse && s.detailLoading:
+	case s.discardArmed:
+		text, role = "You have unsaved changes. Press Esc again to discard them, or Ctrl+S to save.", ui.ColorWarning
+	case s.notice != "":
+		text = s.notice
+	case s.page == pageDetail && s.detailError != nil:
+		text, role = "Could not load the history: "+s.detailError.Error(), ui.ColorError
+	case s.page == pageDetail && s.detailLoading:
 		text = "Loading revisions, evidence and feedback…"
 	case s.searchError != nil:
 		text, role = "Search failed: "+s.searchError.Error()+" · Retry", ui.ColorError
 	case s.loading:
 		text = "Loading workspace memory…"
-	case s.page == pageRetire:
-		text = "Retire this exact revision? Cancel is selected; history remains."
-	case s.page == pageCorrect:
-		text = fmt.Sprintf("Correcting r%d · evidence and source retained in history", s.draft.Revision)
-	case s.mode == ModeEpisodes:
-		text = "Workspace-wide · latest 100 episodes · observations, not knowledge"
+	case s.page == pageDelete:
+		text = "Check the memory below, then choose Delete or Cancel."
+	case s.page == pageEdit:
+		record := s.detail.Record
+		text = fmt.Sprintf("%s · revision %d · updated %s · Ctrl+S save · Esc back", record.Kind, record.Revision, memoryDay(record.UpdatedAt))
+	case s.page == pageBrowse && s.mode == ModeEpisodes:
+		text = "Latest 100 episodes · observations, not knowledge · " + browseHint(s.mode)
 	}
 	s.status.SetText(text)
 	s.status.SetColorRole(role)
@@ -331,7 +360,7 @@ func (s *Screen) Children() []ui.Component {
 		} else {
 			kids = append(kids, s.list, s.scrollbar)
 		}
-	case pageCorrect:
+	case pageEdit:
 		kids = append(kids, s.title, s.form, s.formScroll)
 	case pageMenu, pageBrowseActions:
 		kids = append(kids, s.title, s.actionList)
@@ -468,7 +497,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	layoutRow(s.status, 1, 1)
 	bodyY := min(2, footerY)
 	body := ui.Rect{Y: bodyY, W: width, H: max(0, footerY-bodyY)}
-	if s.page == pageCorrect {
+	if s.page == pageEdit {
 		barW := 0
 		if s.formScroll.NeededForViewport(body.H) {
 			barW = min(ui.ScrollbarWidth, width)
@@ -494,6 +523,9 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	if evt.Key.Code == tea.KeyTab {
 		return s.focusResult(s.preferredBody())
+	}
+	if evt.Key.String() == "ctrl+s" && s.page == pageEdit {
+		return s.saveCorrection()
 	}
 	if s.page == pageBrowse {
 		result := s.list.Handle(ui.EventContext{}, evt)
@@ -540,8 +572,13 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "memorybrowser.back", "form.cancel":
 		return s.back()
 	case "memorybrowser.menu":
+		s.returnPage = s.page
 		s.showPage(pageMenu)
 		return s.focusResult(ActionListID)
+	case "memorybrowser.details":
+		s.showPage(pageDetail)
+		s.setReader(detailText(s.detail))
+		return s.focusResult(DetailID)
 	case "memorybrowser.browse-actions":
 		s.showPage(pageBrowseActions)
 		return s.focusResult(ActionListID)
@@ -553,15 +590,19 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		}
 		record := cloneRecord(s.detail.Record)
 		return s.mutation(MutationPin, record, !record.Pinned)
-	case "memorybrowser.correct":
-		return s.beginCorrection()
-	case "memorybrowser.retire":
-		return s.beginRetire()
+	case "memorybrowser.delete":
+		if s.page == pageBrowse {
+			return s.deleteSelected()
+		}
+		return s.beginDelete()
 	case "memorybrowser.save":
 		return s.saveCorrection()
-	case "memorybrowser.confirm-retire":
-		if s.retirePreview != nil {
-			return s.mutation(MutationRetire, *s.retirePreview, false)
+	case "memorybrowser.confirm-delete":
+		if preview := s.deletePreview; preview != nil {
+			if preview.Record.ID == "" {
+				return s.mutation(MutationDeleteEpisode, memory.Record{ID: preview.Episode.ID}, false)
+			}
+			return s.mutation(MutationDelete, preview.Record, false)
 		}
 		return ui.EventResult{Handled: true}
 	case "form.exit.forward", "form.exit.backward":
@@ -569,6 +610,10 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	case "actionbar.exit.forward", "actionbar.exit.backward":
 		return s.focusResult(s.preferredBody())
 	case "form.changed":
+		if s.discardArmed || s.notice != "" || s.mutationError != nil {
+			s.discardArmed, s.notice, s.mutationError = false, "", nil
+			s.syncStatus()
+		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	return ui.EventResult{Action: &action}
@@ -597,21 +642,41 @@ func (s *Screen) inspectSelected() ui.EventResult {
 	if !ok {
 		return ui.EventResult{Handled: true}
 	}
-	s.detail = DetailData{}
-	s.mutationError = nil
+	s.openItem(item)
+	reload := s.ReloadDetail()
+	if s.page == pageEdit {
+		return s.commandResult(reload).Merge(s.focusResult(FormID))
+	}
+	return s.commandResult(reload).Merge(s.focusResult(DetailID))
+}
+
+// selectItem makes one list row the current memory without opening it.
+func (s *Screen) selectItem(item ui.ListItem) {
+	s.detail, s.draft, s.deletePreview = DetailData{}, nil, nil
+	s.mutationError, s.notice, s.discardArmed = nil, "", false
 	switch value := item.Payload.(type) {
 	case memory.ScoredRecord:
 		s.detail.Record = cloneRecord(value.Record)
 	case memory.Episode:
 		s.detail.Episode = value
 	}
+}
+
+// openItem shows a knowledge record as its editor and anything that cannot be
+// edited (an episode or retired knowledge) in the reader.
+func (s *Screen) openItem(item ui.ListItem) {
+	s.selectItem(item)
+	if editable(s.detail.Record) {
+		s.loadEditor(s.detail.Record)
+		s.showPage(pageEdit)
+		return
+	}
 	s.showPage(pageDetail)
 	s.setReader(detailText(s.detail))
-	return s.commandResult(s.ReloadDetail()).Merge(s.focusResult(DetailID))
 }
 
 func (s *Screen) ReloadDetail() tea.Cmd {
-	if !s.open || s.detail.ID() == "" || s.draft != nil || s.retirePreview != nil {
+	if !s.open || s.detail.ID() == "" {
 		return nil
 	}
 	s.detailSequence++
@@ -622,32 +687,51 @@ func (s *Screen) ReloadDetail() tea.Cmd {
 	return func() tea.Msg { return msg }
 }
 
-func (s *Screen) beginCorrection() ui.EventResult {
-	if !s.canMutate() {
-		return ui.EventResult{Handled: true}
+func editable(record memory.Record) bool {
+	return record.ID != "" && record.Revision > 0 && record.Status != memory.StatusSuperseded
+}
+
+// loadEditor fills the edit form from one exact revision; that revision fences
+// the save. Reloading the open record keeps the form and its focus.
+func (s *Screen) loadEditor(record memory.Record) {
+	record = cloneRecord(record)
+	values := []struct{ id, value string }{
+		{"title", record.Title},
+		{"content", record.Content},
+		{"applies_when", record.AppliesWhen},
+		{"paths", strings.Join(record.ScopePaths, "\n")},
+		{"evidence", evidenceText(record.Evidence)},
 	}
-	record := cloneRecord(s.detail.Record)
-	s.draft = &record
+	reload := s.draft != nil && s.draft.ID == record.ID && s.form != nil
+	s.draft, s.discardArmed = &record, false
+	if reload {
+		for _, value := range values {
+			field := s.formModel.Field(value.id)
+			field.Value = ui.StringValue(value.value)
+			field.Initial, field.Dirty = field.Value, false
+		}
+		s.form.SetForm(s.formModel, "", "")
+		return
+	}
 	s.formModel = ui.NewFormModel()
-	for _, field := range []*ui.FieldState{
-		{ID: "title", Label: "Title", Type: ui.FieldText, Value: ui.StringValue(record.Title), Required: true},
-		{ID: "content", Label: "Content", Type: ui.FieldTextArea, Rows: 4, Value: ui.StringValue(record.Content), Required: true},
-		{ID: "applies_when", Label: "Applies when (blank keeps existing)", Type: ui.FieldTextArea, Rows: 2, Value: ui.StringValue(record.AppliesWhen)},
-		{ID: "paths", Label: "Scope paths (one per line)", Type: ui.FieldTextArea, Rows: 2, Value: ui.StringValue(strings.Join(record.ScopePaths, "\n"))},
-		{ID: "evidence", Label: "Evidence (retained)", Type: ui.FieldTextArea, Rows: 3, ReadOnly: true, Value: ui.StringValue(evidenceText(record.Evidence))},
+	for index, field := range []*ui.FieldState{
+		{Label: "Title", Type: ui.FieldText, Required: true},
+		{Label: "Content", Type: ui.FieldTextArea, Rows: 6, Required: true},
+		{Label: "Applies when", Type: ui.FieldTextArea, Rows: 2},
+		{Label: "Scope paths (one per line)", Type: ui.FieldTextArea, Rows: 2},
+		{Label: "Evidence", Type: ui.FieldTextArea, Rows: 3, ReadOnly: true},
 	} {
+		field.ID, field.Value = values[index].id, ui.StringValue(values[index].value)
 		field.Initial = field.Value
 		s.formModel.AddField(field)
 	}
 	s.form = ui.NewDockedForm(FormID, s.formModel, "", "", s.tokens)
 	s.form.SetCompact(false)
 	s.form.SetFieldGap(0)
+	s.form.SetChordAction("ctrl+s", "memorybrowser.save")
 	s.wireCorrectionClipboard()
 	s.formScroll = ui.NewScrollbarControl(FormScrollID, s.form.Scroll(), s.tokens)
 	s.formScroll.SetSurfaceBackground(ui.ColorBg)
-	s.mutationError = nil
-	s.showPage(pageCorrect)
-	return s.focusResult(FormID)
 }
 
 func (s *Screen) Draft() (memory.Record, bool) {
@@ -669,8 +753,13 @@ func (s *Screen) Draft() (memory.Record, bool) {
 
 func (s *Screen) saveCorrection() ui.EventResult {
 	record, ok := s.Draft()
-	if !ok || s.mutating {
+	if !ok || s.mutating || s.page != pageEdit {
 		return ui.EventResult{Handled: true}
+	}
+	if !s.formModel.AnyDirty() {
+		s.notice, s.discardArmed = "No changes to save.", false
+		s.syncStatus()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	s.formModel.ValidateAll()
 	if s.formModel.AnyErrors() || strings.TrimSpace(record.Content) == "" || strings.TrimSpace(record.Title) == "" {
@@ -681,60 +770,124 @@ func (s *Screen) saveCorrection() ui.EventResult {
 	return s.mutation(MutationCorrect, record, record.Pinned)
 }
 
-func (s *Screen) beginRetire() ui.EventResult {
-	if !s.canMutate() {
+// deleteSelected asks to delete the selected list row without opening it.
+func (s *Screen) deleteSelected() ui.EventResult {
+	item, ok := s.list.list.Selected()
+	if !ok || s.mutating {
 		return ui.EventResult{Handled: true}
 	}
-	record := cloneRecord(s.detail.Record)
-	s.retirePreview = &record
-	s.mutationError = nil
-	s.showPage(pageRetire)
-	s.setReader(fmt.Sprintf("Retire %s at revision %d?\n\n%s\n\nThe exact revision is checked before saving. Retired knowledge is excluded from recall; immutable history stays available. Cancel makes no change.", record.Title, record.Revision, detailText(DetailData{Record: record})))
+	s.selectItem(item)
+	return s.beginDelete()
+}
+
+func (s *Screen) beginDelete() ui.EventResult {
+	if s.mutating || s.detail.ID() == "" {
+		return ui.EventResult{Handled: true}
+	}
+	if s.page == pageMenu {
+		s.page = s.returnPage
+	}
+	preview := s.detail
+	s.deletePreview, s.returnPage = &preview, s.page
+	s.mutationError, s.notice, s.discardArmed = nil, "", false
+	s.showPage(pageDelete)
+	s.setReader(deleteText(preview))
 	s.actions.FocusFirst()
 	s.actionList.SelectIndex(0)
 	return s.focusResult(s.actionFocus())
 }
 
+func deleteText(detail DetailData) string {
+	if detail.Record.ID == "" {
+		episode := detail.Episode
+		return fmt.Sprintf("Delete this episode permanently?\n\n%s\nOutcome: %s\n\nYou cannot undo this.", episode.Method, episode.Outcome)
+	}
+	record := detail.Record
+	return fmt.Sprintf("Delete %q permanently?\n\nThis removes the memory, all its revisions, feedback and search entries. Agents cannot recall it again. You cannot undo this.\n\n%s", record.Title, record.Content)
+}
+
 func (s *Screen) canMutate() bool {
-	return s.mode == ModeKnowledge && s.detail.Record.ID != "" && s.detail.Record.Revision > 0 && s.detail.Record.Status != memory.StatusSuperseded && !s.detailLoading && s.detailError == nil && !s.mutating
+	return s.mode == ModeKnowledge && editable(s.detail.Record) && !s.mutating
 }
 
 func (s *Screen) mutation(kind string, record memory.Record, pinned bool) ui.EventResult {
-	if s.mutating || record.ID == "" || record.Revision < 1 || record.Status == memory.StatusSuperseded {
+	if s.mutating || record.ID == "" {
+		return ui.EventResult{Handled: true}
+	}
+	if kind != MutationDeleteEpisode && record.Revision < 1 {
+		return ui.EventResult{Handled: true}
+	}
+	if (kind == MutationPin || kind == MutationCorrect) && !editable(record) {
 		return ui.EventResult{Handled: true}
 	}
 	s.mutationSequence++
-	s.mutating, s.mutationError = true, nil
+	s.mutating, s.mutationError, s.notice = true, nil, ""
 	s.freezeCorrection(true)
-	s.syncActions()
-	s.syncStatus()
 	msg := MutationMsg{Target: s, Epoch: s.epoch, Sequence: s.mutationSequence, Kind: kind, ID: record.ID, ExpectedRevision: record.Revision, Pinned: pinned, Replacement: cloneRecord(record)}
 	s.mutationIntent = msg
+	s.syncActions()
+	s.syncStatus()
 	return s.commandResult(func() tea.Msg { return msg })
+}
+
+// returnToEditor leaves a secondary page for the record's editor when there
+// is one, otherwise for the list.
+func (s *Screen) returnToEditor() {
+	if s.draft != nil {
+		s.showPage(pageEdit)
+		return
+	}
+	s.showPage(pageBrowse)
 }
 
 func (s *Screen) back() ui.EventResult {
 	if s.mutating {
 		return ui.EventResult{Handled: true}
 	}
-	if s.page == pageBrowse {
+	s.notice = ""
+	switch s.page {
+	case pageBrowse:
 		msg := CancelMsg{Target: s, Epoch: s.epoch}
 		return s.commandResult(func() tea.Msg { return msg })
-	}
-	if s.page == pageBrowseActions {
+	case pageBrowseActions:
 		s.showPage(pageBrowse)
 		return s.focusResult(SearchID)
+	case pageEdit:
+		if s.formModel.AnyDirty() && !s.discardArmed {
+			s.discardArmed = true
+			s.syncStatus()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		return s.closeRecord()
+	case pageDelete:
+		s.deletePreview, s.mutationError = nil, nil
+		if s.returnPage == pageBrowse {
+			return s.closeRecord()
+		}
+		s.showPage(s.returnPage)
+		if s.page == pageEdit {
+			return s.focusResult(FormID)
+		}
+		s.setReader(detailText(s.detail))
+		return s.focusResult(DetailID)
+	case pageMenu, pageDetail:
+		s.mutationError = nil
+		if s.draft == nil {
+			return s.closeRecord()
+		}
+		s.showPage(pageEdit)
+		return s.focusResult(FormID)
 	}
-	if s.page == pageDetail {
-		s.detailSequence++
-		s.detailLoading = false
-		s.showPage(pageBrowse)
-		return s.focusResult(ListID)
-	}
-	s.draft, s.retirePreview, s.mutationError = nil, nil, nil
-	s.showPage(pageDetail)
-	s.setReader(detailText(s.detail))
-	return s.focusResult(DetailID)
+	return s.closeRecord()
+}
+
+func (s *Screen) closeRecord() ui.EventResult {
+	s.detailSequence++
+	s.detailLoading = false
+	s.detail, s.draft, s.deletePreview = DetailData{}, nil, nil
+	s.mutationError, s.discardArmed = nil, false
+	s.showPage(pageBrowse)
+	return s.focusResult(ListID)
 }
 
 func (s *Screen) showPage(page string) {
@@ -754,26 +907,26 @@ func (s *Screen) syncActions() {
 	}
 	switch s.page {
 	case pageBrowse, pageBrowseActions:
-		s.actionSpecs = []ui.ActionBarButton{button("Inspect", "inspect", len(s.list.list.Items()) > 0 && !s.loading && s.searchError == nil), button("Retry", "retry", true), button("Hide", "hide", true)}
+		ready := len(s.list.list.Items()) > 0 && !s.loading && s.searchError == nil && !s.mutating
+		s.actionSpecs = []ui.ActionBarButton{button("Open", "inspect", ready), button("Delete", "delete", ready), button("Retry", "retry", true), button("Hide", "hide", true)}
 		if s.page == pageBrowseActions {
 			s.actionSpecs = append(s.actionSpecs, button("Back", "back", true))
 		}
-	case pageCorrect:
-		s.actionSpecs = []ui.ActionBarButton{button("Cancel", "back", !s.mutating), button("Copy draft", "copy", true), button("Save", "save", !s.mutating)}
-	case pageRetire:
-		s.actionSpecs = []ui.ActionBarButton{button("Cancel", "back", !s.mutating), button("Retire", "confirm-retire", !s.mutating)}
+	case pageEdit:
+		save := button("Save", "save", !s.mutating)
+		save.Shortcut, save.Variant = "ctrl+s", ui.VariantPrimary
+		s.actionSpecs = []ui.ActionBarButton{button("Back", "back", !s.mutating), save, button("Delete", "delete", !s.mutating), button("More", "menu", !s.mutating)}
+	case pageDelete:
+		s.actionSpecs = []ui.ActionBarButton{button("Cancel", "back", !s.mutating), button("Delete", "confirm-delete", !s.mutating)}
 		s.actionSpecs[1].Variant = ui.VariantDanger
 	case pageMenu:
-		s.actionSpecs = []ui.ActionBarButton{button("Back", "back", true), button("Copy full detail", "copy", true), button("Reload detail", "reload", !s.detailLoading)}
-		if s.mode == ModeKnowledge {
-			pin := "Pin"
-			if s.detail.Record.Pinned {
-				pin = "Unpin"
-			}
-			s.actionSpecs = append(s.actionSpecs, button(pin, "pin", s.canMutate()), button("Correct", "correct", s.canMutate()), button("Retire", "retire", s.canMutate()))
+		pin := "Pin"
+		if s.detail.Record.Pinned {
+			pin = "Unpin"
 		}
+		s.actionSpecs = []ui.ActionBarButton{button("Back", "back", true), button(pin, "pin", s.canMutate()), button("History and details", "details", true), button("Copy", "copy", true)}
 	default:
-		s.actionSpecs = []ui.ActionBarButton{button("Back", "back", !s.mutating), button("Copy", "copy", true), button("Actions", "menu", !s.mutating)}
+		s.actionSpecs = []ui.ActionBarButton{button("Back", "back", !s.mutating), button("Copy", "copy", true), button("Delete", "delete", !s.mutating && s.detail.ID() != "")}
 	}
 	s.actions.SetButtons(s.actionSpecs...)
 	items := make([]ui.ListItem, 0, len(s.actionSpecs))
@@ -799,7 +952,7 @@ func (s *Screen) preferredBody() ui.ComponentID {
 	switch s.page {
 	case pageBrowse:
 		return SearchID
-	case pageCorrect:
+	case pageEdit:
 		return FormID
 	case pageMenu, pageBrowseActions:
 		return ActionListID
@@ -846,7 +999,7 @@ func (s *Screen) setReader(text string) {
 
 func (s *Screen) copyDetail() ui.EventResult {
 	text := s.reader.area.Value()
-	if draft, ok := s.Draft(); ok {
+	if draft, ok := s.Draft(); ok && (s.page == pageEdit || s.page == pageMenu) {
 		payload, err := json.MarshalIndent(draft, "", "  ")
 		if err == nil {
 			text = string(payload)
@@ -879,6 +1032,8 @@ func (p *browserList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return p.owner.back()
 		case key.Code == tea.KeyTab:
 			return p.owner.focusResult(p.owner.actionFocus())
+		case key.Code == tea.KeyDelete:
+			return p.owner.deleteSelected()
 		case key.String() == "/":
 			p.owner.FocusSearch()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint | ui.InvalidateFocus}

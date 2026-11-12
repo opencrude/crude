@@ -35,6 +35,16 @@ type Form struct {
 	ruleBleedX       int
 	ruleBleedW       int
 	pointerField     int
+	chordActions     map[string]string
+}
+
+// SetChordAction makes a key chord, for example "ctrl+s", emit action from any
+// field before the field sees it. Text fields otherwise consume Ctrl chords.
+func (f *Form) SetChordAction(chord, action string) {
+	if f.chordActions == nil {
+		f.chordActions = map[string]string{}
+	}
+	f.chordActions[chord] = action
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
@@ -507,6 +517,9 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 	if evt.IsKey() {
 		key := evt.Key
 		field := f.fields[f.focused]
+		if action, ok := f.chordActions[key.String()]; ok && !field.SelectOpen() {
+			return EventResult{Handled: true, Action: &Action{ID: action}}
+		}
 		if key.Code == tea.KeyEsc && !field.SelectOpen() {
 			// Escape first clears a text selection. Without a selection it
 			// always navigates back, so a focused text field never swallows it.

@@ -380,8 +380,12 @@ func (l *local) PinMemory(ctx context.Context, id string, expectedRevision int64
 	return l.ws.PinMemory(ctx, id, expectedRevision, pinned)
 }
 
-func (l *local) ForgetMemoryRecord(ctx context.Context, id string, expectedRevision int64) error {
-	return l.ws.ForgetMemoryRecord(ctx, id, expectedRevision)
+func (l *local) DeleteMemory(ctx context.Context, id string, expectedRevision int64) error {
+	return l.ws.DeleteMemory(ctx, id, expectedRevision)
+}
+
+func (l *local) DeleteMemoryEpisode(ctx context.Context, id string) error {
+	return l.ws.DeleteMemoryEpisode(ctx, id)
 }
 
 func (l *local) CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error) {

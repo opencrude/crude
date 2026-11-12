@@ -131,11 +131,11 @@ func (m *App) describeLocalControl(owner shellControlHost, localID ui.ComponentI
 		switch action {
 		case "memorybrowser.activate", "memorybrowser.inspect", "memorybrowser.retry", "memorybrowser.reload":
 			return control.Read, false, nil
-		case "set_value", "replace", "undo", "redo", "select_range", "tabs.activate", "tabs.enter", "memorybrowser.hide", "memorybrowser.back", "form.cancel", "memorybrowser.menu", "memorybrowser.browse-actions", "memorybrowser.correct", "memorybrowser.retire", "form.changed":
+		case "set_value", "replace", "undo", "redo", "select_range", "tabs.activate", "tabs.enter", "memorybrowser.hide", "memorybrowser.back", "form.cancel", "memorybrowser.menu", "memorybrowser.browse-actions", "memorybrowser.details", "memorybrowser.delete", "form.changed":
 			return control.Write, false, nil
 		case "memorybrowser.pin", "memorybrowser.save":
 			return control.Write, false, nil
-		case "memorybrowser.confirm-retire":
+		case "memorybrowser.confirm-delete":
 			return control.Delete, false, nil
 		case "memorybrowser.copy":
 			return "", false, &control.Fault{Code: control.Unavailable, Message: "clipboard export has no semantic receipt"}

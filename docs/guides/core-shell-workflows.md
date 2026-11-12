@@ -55,7 +55,7 @@ terminal window is closed (SIGHUP) or terminated (SIGTERM) quits like Quit and
 detaches, so it does not stay behind as a lost connection that blocks the stop
 for the reconnect window. Refusal releases
 all reservations without stopping work or replacing owners. Finish or close the
-named work and retry, or select an isolated development profile. Only explicit
+named work and retry, or use a separate profile. Only explicit
 `--core-stop --force` overrides those protections. Do not delete owner
 records, locks or images to bypass refusal. See the
 [current protocol contract](../reference/core-client-protocol.md).
@@ -66,23 +66,33 @@ hard-link publication as `core.sock`. Dialers never need to tolerate public mode
 during startup. Unsupported socket-link filesystems fail explicitly; canonical
 address limits and exact-inode cleanup still apply.
 
-### Developing crude inside crude
+### Development and release profiles
 
-A shell refuses automatic handover to another source cohort while the core has
-an attached shell, active/pending work or any owner that cannot be fenced idle, so
-a dev build started from a terminal inside your running crude
-cannot disturb it. Run the dev build with its own profile instead:
+A source build (`buildinfo.Version` is `dev`: `go run .`, `go build`, `make
+build`) selects `~/.crude-dev` as its profile home when `CRUDE_HOME` is unset.
+Its core endpoint, config, workspaces, sessions, logs and crash reports live in
+`~/.crude-dev/.crude`, so it starts its own core beside the release core in
+`~/.crude` and never attaches to, hands over or migrates release data. The title
+reads `<workspace> - Crude dev`. Release builds set `Version` and keep `~/.crude`.
 
-```powershell
-go run ./internal/wiregen
-go run ./internal/wiregen -check
-$env:CRUDE_HOME = "$HOME\crude-dev"; go run .
-```
+On first start, when `~/.crude-dev/.crude` does not exist, the shell copies the
+release `config.json` once: preferences and API-key accounts. OAuth credentials
+are not copied, because a shared rotating refresh token lets either profile end
+the other's sign-in. Later starts never change either profile.
+
+`buildinfo.SelectHome` fixes each process's profile at startup and removes
+`CRUDE_HOME` from its environment. The shell passes it explicitly to the core it
+starts; terminals, tools and agent commands do not inherit it. A `go run .` in
+a Crude terminal therefore selects its own development profile. An explicit
+`CRUDE_HOME` still wins, for example `CRUDE_HOME=$HOME go run .` deliberately
+uses the release profile. Tests do not call `SelectHome`; `internal/testhome`
+isolates them.
 
 ```sh
 go run ./internal/wiregen       # explicit generation after production-source edits
 go run ./internal/wiregen -check # nonmutating freshness check
-CRUDE_HOME=~/crude-dev go run .
+go run .                        # development profile ~/.crude-dev
+CRUDE_HOME=~/crude-review go run .  # another isolated profile
 ```
 
 Use the canonical native cgo environment for generation/builds. `make build`,
@@ -90,11 +100,8 @@ Use the canonical native cgo environment for generation/builds. `make build`,
 `go build` or `go run .` does not implicitly generate or check it.
 
 `CRUDE_HOME` (`buildinfo.Home`) replaces the home directory for every crude data
-path — core endpoint, config, workspaces, sessions, history and logs — so the dev
-build starts its own core beside yours. Child tools still see the real `HOME`.
-Copy `config.json` into `<CRUDE_HOME>/.crude/` if the dev profile should reuse
-your accounts. Test binaries always isolate `CRUDE_HOME` through
-`internal/testhome`.
+path. Child tools still see the real `HOME`. Test binaries always isolate
+`CRUDE_HOME` through `internal/testhome`.
 
 For Linux visual capture, the **canonical** `<CRUDE_HOME>/.crude/corewire/core.sock`
 address must fit within 103 bytes. Session scratch paths are often too long;

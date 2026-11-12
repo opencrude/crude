@@ -185,7 +185,24 @@ func (a *answerList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			scroll.ScrollTo(scroll.MaxOffset())
 		case tea.KeySpace:
 			evt = ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter})
+		case tea.KeyEnter:
+			// Enter confirms; the screen decides whether that chooses the
+			// row or, with several choices, goes to the next step.
+			if row, ok := a.Selected(); ok && row.Selectable() && evt.Key.Mod == 0 {
+				return ui.EventResult{Handled: true, Action: &ui.Action{ID: confirmAction, Payload: row}, Invalidate: ui.InvalidatePaint}
+			}
+			goto delegate
+		case tea.KeyDown:
+			// Below the last choice is the write-in.
+			if last := a.lastSelectable(); last < 0 || a.SelectedIndex() != last {
+				goto delegate
+			}
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: writeAction}}
 		default:
+			// Typing on a choice writes an own answer, as in the composer.
+			if text := evt.Key.Text; text != "" && evt.Key.Mod&^tea.ModShift == 0 {
+				return ui.EventResult{Handled: true, Action: &ui.Action{ID: writeAction, Payload: text}}
+			}
 			goto delegate
 		}
 		if evt.Key.Code != tea.KeyEnter {
@@ -206,6 +223,37 @@ delegate:
 		}
 	}
 	return result
+}
+
+func (a *answerList) lastSelectable() int {
+	for index := len(a.items) - 1; index >= 0; index-- {
+		if a.items[index].Selectable() {
+			return index
+		}
+	}
+	return -1
+}
+
+// selectLast selects the last choice, shown from its first line.
+func (a *answerList) selectLast() {
+	if index := a.lastSelectable(); index >= 0 {
+		a.SelectIndex(index)
+		a.revealSelectionStart()
+	}
+}
+
+// measured reports whether row heights come from real geometry.
+func (a *answerList) measured() bool { return !a.dirty }
+
+// rowsAt returns the wrapped height of every row at the pane width the
+// list will have (one column is its scrollbar gutter).
+func (a *answerList) rowsAt(paneW int) int {
+	a.reflow(max(1, paneW-1))
+	rows := 0
+	for _, item := range a.VirtualList.Items() {
+		rows += item.Height
+	}
+	return rows
 }
 
 func (a *answerList) revealSelectionStart() {

@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/buildinfo"
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
@@ -149,10 +150,14 @@ func (m *App) terminalIdentity() string {
 		}
 		return r
 	}, workspaceName))
-	if workspaceName == "" || workspaceName == "." || workspaceName == string(filepath.Separator) {
-		return "Crude"
+	product := "Crude"
+	if buildinfo.UsesDevelopmentProfile() {
+		product = "Crude dev"
 	}
-	return workspaceName + " - Crude"
+	if workspaceName == "" || workspaceName == "." || workspaceName == string(filepath.Separator) {
+		return product
+	}
+	return workspaceName + " - " + product
 }
 
 // contentLayout is the per-frame shell geometry computed by

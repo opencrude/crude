@@ -13,7 +13,10 @@ type MemoryStore interface {
 	SearchMemories(ctx context.Context, query memory.ListQuery) ([]memory.ScoredRecord, error)
 	InspectMemory(ctx context.Context, id string) (workspace.MemoryDetail, error)
 	PinMemory(ctx context.Context, id string, expectedRevision int64, pinned bool) error
-	ForgetMemoryRecord(ctx context.Context, id string, expectedRevision int64) error
+	// DeleteMemory and DeleteMemoryEpisode are the user's complete removal:
+	// the memory, its history and its search entries are gone.
+	DeleteMemory(ctx context.Context, id string, expectedRevision int64) error
+	DeleteMemoryEpisode(ctx context.Context, id string) error
 	CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error)
 }
 
