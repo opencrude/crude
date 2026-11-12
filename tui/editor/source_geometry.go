@@ -30,7 +30,7 @@ func (pt *PieceTable) positionAtOffset(offset int) Position {
 		return pt.lineOffsets[i] > offset
 	}) - 1
 	content, _ := pt.lineView(line)
-	return Position{Line: line, Col: ByteOffsetToVisualCol(string(content), offset-pt.lineOffsets[line], pt.tabSize)}
+	return Position{Line: line, Col: ByteOffsetToVisualCol(content, offset-pt.lineOffsets[line], pt.tabSize)}
 }
 
 // snapPosition clamps to document content and floors columns inside a tab or

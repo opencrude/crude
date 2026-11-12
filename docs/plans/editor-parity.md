@@ -57,8 +57,9 @@ Extend these owners rather than building replacements.
 The initial audit found no integrated folding or wrap projection; these now
 have one shared row owner. EditorConfig indentation and explicit file choices
 now use the source-table policy. Multiple selections now use native edit vectors
-and private history, with native and repository acceptance. Remaining gaps
-include indent guides, semantic token projection, linked editing and CodeLens.
+and private history, with native and repository acceptance. Minimap and indent
+guides now share the existing Editor page and scroll/source geometry. Remaining
+gaps include semantic token projection, linked editing and CodeLens.
 Some LSP method constants exist in the vendored transport; a constant is not a
 working workspace/shell workflow. AI literal ghost projection and budget libraries
 exist, but a shipped automatic inference service does not follow from them.
@@ -93,10 +94,9 @@ These changes do not complete the remaining sections below.
 `tui/editor/inline_projection.go`, `tui/editor/buffer.go`,
 `tui/viewmodel/editor_save.go`, `types/types.go`, existing preferences plumbing.
 
-**Remaining gap:** Minimap has a stored field with no implemented view. Word wrap
-now uses the shared row projection below.
-Line numbers, Syntax colors and Show whitespace now reach current, linked and
-new editor views and live peer settings. Colors reproject without reparsing;
+Minimap, indent guides and Word wrap now use the shared scroll and row projection.
+Line numbers, Syntax colors, Show whitespace, Indent guides and Minimap reach
+current, linked and new editor views and live peer settings. Colors reproject without reparsing;
 whitespace stays out of source and copy. Autosave and format-on-save also have
 consumers. Tab size now supplies shared display geometry and the fallback indent
 width. Source-byte history/recovery and navigation anchors keep the same source
@@ -107,6 +107,10 @@ native controls. First file-open input uses prepared project policy. Private pan
 memory restores sparse choices without overwriting newer selections. Connected
 peer/profile/control and native 160×40/80×24 journeys pass; indentation is still
 separate from display width. Detailed evidence belongs in the checkpoint issue.
+The minimap and guides also pass native pointer/typing/Undo journeys at 160×40
+and 80×24, connected preference/reset checks, affected race and the extended
+allocation gate. The source-range and byte-geometry fixes keep existing limits;
+see [orientation evidence](../issues/2026-11-11-editor-polish.md#editor-orientation-2026-11-11).
 
 **Implementation contract:**
 

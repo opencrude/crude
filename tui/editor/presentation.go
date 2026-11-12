@@ -27,6 +27,8 @@ func (e *Editor) SetPresentation(settings types.EditorSettings) {
 			view.refreshSyntaxPalette()
 		}
 		view.renderWhitespace = settings.RenderWhitespace
+		view.indentGuides = settings.IndentGuides
+		view.setMinimap(settings.Minimap)
 	})
 }
 func (e *Editor) refreshSyntaxPalette() {
@@ -37,11 +39,13 @@ func (e *Editor) refreshSyntaxPalette() {
 
 type whitespaceGeometry struct {
 	leading, trailing int
+	complete          bool
 	tabs              [][2]int
 }
 
 func (e *Editor) whitespaceInfo(line int) *whitespaceGeometry {
-	if e.renderWhitespace != "all" && e.renderWhitespace != "boundary" {
+	markers := e.renderWhitespace == "all" || e.renderWhitespace == "boundary"
+	if !markers && !e.indentGuides {
 		return nil
 	}
 	rawLine, err := e.buf.lineView(line)
@@ -56,13 +60,18 @@ func (e *Editor) whitespaceInfo(line int) *whitespaceGeometry {
 	if cached == nil {
 		return nil
 	}
-	if cached.whitespace != nil {
+	if cached.whitespace != nil && (cached.whitespace.complete || !markers) {
 		return cached.whitespace
 	}
 	raw := cached.raw
 	leading := len(raw) - len(strings.TrimLeft(raw, " \t"))
+	info := &whitespaceGeometry{leading: ByteOffsetToVisualCol(raw, leading, e.TabWidth()), complete: markers}
+	if !markers {
+		cached.whitespace = info
+		return info
+	}
 	trailing := len(strings.TrimRight(raw, " \t"))
-	info := &whitespaceGeometry{leading: ByteOffsetToVisualCol(raw, leading, e.TabWidth()), trailing: ByteOffsetToVisualCol(raw, trailing, e.TabWidth())}
+	info.trailing = ByteOffsetToVisualCol(raw, trailing, e.TabWidth())
 	for offset, col := 0, 0; offset < len(raw); {
 		n, w := firstSourceUnit(e.TabWidth(), raw[offset:], col)
 		if n == 0 {

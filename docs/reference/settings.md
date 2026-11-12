@@ -115,8 +115,9 @@ navigation and exact discard decisions; × and Close close the whole window.
 
 ### Editor presentation
 
-The Editor page's Tab size, Word wrap, Line numbers, Syntax colors and Show
-whitespace preferences reach existing, linked and newly opened documents. A saved choice is
+The Editor page's Tab size, Word wrap, Line numbers, Syntax colors, Show
+whitespace, Indent guides and Minimap preferences reach existing, linked and newly
+opened documents. A saved choice is
 published to peer shells; Reset restores live inheritance. Source bytes, selected
 characters, dirty state and Undo remain unchanged by presentation changes.
 Tab size is a 1–32-column inherited display width and fallback indent for
@@ -131,8 +132,11 @@ transaction. See [file policy](editor.md#indentation-and-block-only-comments).
 Syntax palettes affect source ink only. Hiding numbers keeps diagnostic/change
 lanes. Whitespace markers never enter copied or saved text. See
 [editor presentation](editor.md#display-preferences) for projection contracts.
-Minimap still has no completed consumer; its stored field is not evidence of
-implemented behavior. The remaining semantic work is tracked in [Complete editor experience](../plans/editor-parity.md).
+Indent guides and Minimap are opt-in. Guides follow the effective indentation step;
+the minimap uses the same scroll model and hides in narrow panes. Reset removes
+only explicit choices and restores live inheritance. See
+[orientation](editor.md#indentation-guides-and-minimap) for sampling and geometry
+bounds. The remaining semantic work is tracked in [Complete editor experience](../plans/editor-parity.md).
 
 ### First-use profile choices and AI setup
 

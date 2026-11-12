@@ -57,8 +57,9 @@ func TerminalWidthProbeCorpus() []string {
 	return corpus
 }
 
-// FirstGrapheme returns the first grapheme cluster and its cell width.
-func FirstGrapheme(s string) (cluster string, width int) {
+// FirstGrapheme returns a borrowed first cluster and its cell width. Strings and
+// source bytes use the same calibrated iterator, without a whole-line copy.
+func FirstGrapheme[T string | []byte](s T) (cluster T, width int) {
 	return ansi.FirstGraphemeCluster(s, WidthMethod)
 }
 

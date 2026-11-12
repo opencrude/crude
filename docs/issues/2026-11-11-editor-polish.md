@@ -427,8 +427,7 @@ output and delivered no mouse event. That gesture was removed. Alt-click adds or
 removes a caret and Alt-drag forms the rectangle through the existing captured
 gesture. Ctrl-click navigation remains unchanged. Replacement Linux captures at
 160×40 and 80×24 verify all eleven phases, source selection paint, header count,
-Ctrl+D, Undo, rectangle editing, Escape, unchanged disk and joined cleanup. Both
-sizes were inspected; no capture window remains. This is native input evidence,
+Ctrl+D, Undo, rectangle editing, Escape, unchanged disk and joined cleanup. Representative frames at both sizes were inspected; no capture window remains. This is native input evidence,
 not installed language-server or Windows acceptance.
 
 The full ordinary repository inventory passes. Affected editor/UI/shell/client
@@ -465,7 +464,7 @@ action-picker filtering and a second Undo. The other two unformatted lines stay
 unchanged, disk stays unchanged, private drafts remain and provider shutdown joins.
 The initial capture failed because Alacritty's default Shift+End binding sent no
 key; recorded input proved that boundary. The replacement selects through native
-Shift+Right. Both screenshot sets were inspected and no capture window remains.
+Shift+Right. Representative frames at both sizes were inspected and no capture window remains.
 Build, lint, generated-wire checks and Windows/macOS component builds pass.
 The full ordinary inventory is accounted for by the initial passing groups and the
 remaining viewmodel/workspace groups after correcting an obsolete test that required
@@ -475,6 +474,46 @@ race paths and the unchanged allocation gate pass. The final dirty-buffer/menu r
 command first expired during build without a test result; its separate completion
 passes both regressions with the original 90-second test deadline.
 This is not native Windows acceptance or a resolution of the open GC finding.
+
+## Editor orientation (2026-11-11)
+
+Minimap and indentation guides now consume the existing Editor page's saved
+preferences and share the source geometry and scrollbar owner. Native 160×40 and
+80×24 captures pass eight phases: change preferences, Save/Close, source paint,
+click, captured drag, typing and Undo. Representative final frames were inspected
+at both sizes: labels and controls fit, guides stay in indentation, the viewport
+tint follows the map, and Undo returns to the retained selection. Disk and private drafts
+stay unchanged, shutdown joins and no capture window remains.
+
+Tests first reproduced an inert minimap preference and a wrapped scrollbar offset
+being copied into a logical source-line field. The shared visual-row conversion
+fixes both ordinary scrollbar and map navigation. The connected journey then found
+that author Undo could restore an off-screen caret after an independent scroll;
+canonical history now reveals its restored view, like standalone Undo. Linked and
+peer views keep their own carets.
+
+Additional coverage catches blank-looking wrapped continuations, hidden rows,
+wide/combining text, tab policy, narrow layouts, captured release outside the bar,
+cache retirement, live peer preferences and Reset. Prefix-limited samples beyond
+their budget show an ellipsis, not false empty source. Preparation and warm paint
+costs are measured separately in the performance reference. The first exhaustive
+inventory exposed an unintended foreground change in inactive scrollbar cells.
+Keeping the source surface's existing blank fill fixed both affected golden tests;
+no baseline changed. Final affected race, build/lint/docs and component cross-build
+checks pass. The complete ordinary inventory is accounted for by its initially
+passing packages and the corrected golden/editor plus app/session/viewmodel/workspace
+groups. The allocation gate exposed repeated line copies in multi-caret Undo;
+profiling and a failing zero-copy regression led to the shared byte-slice grapheme
+path, not a higher ceiling or disabled worker. Its focused Unicode/editor tests
+pass and Undo allocations fell by more than half. A separate wrapped-typing gate
+failure was traced to copying the entire source for a one-grapheme Backspace read.
+The source-range owner now copies only the requested bytes; its regression fails on
+the old implementation and preserves Unicode, CRLF and detached results. Five
+isolated measurements are below the unchanged limit. The complete extended gate
+passes: wrapped typing and paint measured 6,021,472 B and 157 allocations against
+the unchanged 6,950,000 B and 207 allocation ceilings. Final affected tests and
+race checks include the source-range correction.
+This is Linux native evidence, not native Windows acceptance or a GC-crash fix.
 
 ## Remaining acceptance
 

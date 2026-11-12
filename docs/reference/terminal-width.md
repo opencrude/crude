@@ -114,6 +114,10 @@ Printable ASCII followed by ASCII or EOF uses the existing exact boundary fast
 path, shared with the ANSI decoder. A non-ASCII successor still goes through full
 segmentation, so combining marks, variation selectors and keycaps remain attached.
 There is no editor-local width correction or alternative Unicode iterator.
+The shared `rendering.FirstGrapheme` wrapper accepts both string and byte-slice
+inputs. Source-coordinate conversion uses borrowed bytes without copying a whole
+line per caret; both input forms use the same profile and grapheme boundaries.
+
 `correctClusterWidth` applies the measured profile before the default model:
 
 | Input | Width |

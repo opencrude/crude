@@ -106,3 +106,11 @@ BenchmarkMultipleCaretStages/32/undo 2180000 548
 BenchmarkMultipleCaretStages/256/mutation 1690000 4168
 BenchmarkMultipleCaretStages/256/paint 880000 1503
 BenchmarkMultipleCaretStages/256/undo 6240000 5034
+
+# Minimap/guide stable grid paint and pane-bounded image preparation.
+BenchmarkEditorOrientation/200/false 240000 185
+BenchmarkEditorOrientation/200/true 240000 185
+BenchmarkEditorOrientation/20000/false 240000 185
+BenchmarkEditorOrientation/20000/true 240000 185
+BenchmarkMinimapRebuild/200 10800 194
+BenchmarkMinimapRebuild/20000 10800 194

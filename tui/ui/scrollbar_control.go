@@ -25,7 +25,18 @@ type ScrollbarControl struct {
 	direction         Direction
 	onScroll          func(oldOffset, newOffset int)
 	pointerTargetSize int
+	overview          *ScrollbarOverview
 }
+
+// ScrollbarOverview is an immutable, row-major miniature of the same content
+// indexed by ScrollModel. Its caller owns sampling; this control owns viewport
+// shading, the track, hit testing and captured navigation. Nil keeps normal bars.
+type ScrollbarOverview struct {
+	Width, Height int
+	Cells         []rune
+}
+
+func (s *ScrollbarControl) SetOverview(value *ScrollbarOverview) { s.overview = value }
 
 // NewScrollbarControl creates a scrollbar bound to scroll.
 func NewScrollbarControl(id ComponentID, scroll *ScrollModel, tokens *TokenSet) *ScrollbarControl {
@@ -128,6 +139,34 @@ func (s *ScrollbarControl) Paint(buf *surface.CellBuffer, originX, originY int, 
 	ox, oy := originX+r.X, originY+r.Y
 	if !bg.IsDefault() {
 		FillRect(buf, 0, 0, Rect{X: ox, Y: oy, W: r.W, H: r.H}, cell.BlankCell(bg))
+	}
+	if image := s.overview; image != nil && s.direction == Vertical && image.Width > 0 && image.Height > 0 && len(image.Cells) == image.Width*image.Height {
+		top, thumb := s.scroll.ThumbBounds(r.H)
+		for y := 0; y < r.H; y++ {
+			fill, fg := bg, thumbFG
+			if y >= top && y < top+thumb {
+				fill = hoverBG
+				fg = activeFG
+			}
+			for x := 0; x < r.W-1; x++ {
+				glyph := ' '
+				if y < image.Height && x < image.Width && image.Cells[y*image.Width+x] != 0 {
+					glyph = image.Cells[y*image.Width+x]
+				}
+				buf.Set(ox+x, oy+y, cell.NewCell(glyph, fg, fill, 0))
+			}
+			if s.scroll.MaxOffset() > 0 {
+				glyph, ink := '│', trackFG
+				if y >= top && y < top+thumb {
+					glyph, ink = '┃', activeFG
+					if ctx.Hovered || s.dragging {
+						glyph = '█'
+					}
+				}
+				buf.Set(ox+r.W-1, oy+y, cell.NewCell(glyph, ink, bg, 0))
+			}
+		}
+		return
 	}
 	if s.scroll.MaxOffset() <= 0 {
 		// Fill the reserved gutter so it doesn't show through as a light strip.
@@ -263,6 +302,12 @@ func (s *ScrollbarControl) beginDrag(coordinate int) bool {
 	if coordinate >= top && coordinate < top+th {
 		s.dragging = true
 		s.dragOffset = coordinate - top
+		return true
+	}
+	if s.overview != nil && s.direction == Vertical {
+		s.dragging = true
+		s.dragOffset = th / 2
+		s.dragTo(coordinate)
 		return true
 	}
 	page := max(1, s.scroll.Viewport()-1)
