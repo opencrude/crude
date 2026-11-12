@@ -57,6 +57,7 @@ var nativeEditorActions = []EditorAction{
 	editorAction("select.caretAbove", "Add caret above", false, "ctrl+alt+shift+up"),
 	editorAction("select.caretBelow", "Add caret below", false, "ctrl+alt+shift+down"),
 	editorAction("select.singleCaret", "Keep one caret", false),
+	editorAction("edit.formatSelection", "Format selection", true, "alt+f8"),
 	editorAction("view.indentation", "Indentation…", false),
 	editorAction("view.indentationDetect", "Detect indentation from text", false),
 	editorAction("view.indentationInherit", "Use project indentation", false),

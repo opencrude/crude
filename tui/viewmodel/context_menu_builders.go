@@ -39,6 +39,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		}
 	}
 	st := &ui.ContextMenuState{Title: "Editor"}
+	token := ed.ActionToken()
 
 	// Cut/Copy/Paste (no section label: the popup title "Editor"
 	// already provides context, and the items speak for themselves)
@@ -65,13 +66,13 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Format document", Detail: "Shift+Alt+F", Disabled: ed.ReadOnly(), Action: func() {
 				m.runDetachedAsyncCmd(m.requestActiveEditorFormat())
 			}},
+			{Label: "Format selection", Detail: ui.FormatShortcut(m.actionRegistry.HintFor("edit.formatSelection")), Disabled: ed.ReadOnly() || !ed.HasSelection(), Action: func() { m.runDetachedAsyncCmd(m.runEditorAction(ed, token, "edit.formatSelection")) }},
 			{Label: "Format project", Disabled: ed.ReadOnly(), Action: func() {
 				m.runDetachedAsyncCmd(m.requestProjectFormat())
 			}},
 		},
 	})
 
-	token := ed.ActionToken()
 	editing := ui.ContextMenuSection{SectionLabel: "Lines and selection"}
 	for _, id := range []ui.ActionID{"edit.duplicateLine", "edit.joinLines", "edit.deleteLine", "edit.toggleComment", "select.expand", "select.shrink"} {
 		action, _ := ui.FindEditorAction(id)

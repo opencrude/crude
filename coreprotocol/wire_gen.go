@@ -15012,6 +15012,94 @@ func (z *SecretStrings) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *SelectionFormattingReply) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o, err = z.Result.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Result")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *SelectionFormattingReply) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	bts, err = z.Result.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Result")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *SelectionFormattingReply) Msgsize() (s int) {
+	s = 1 + z.Result.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *SelectionFormattingRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o, err = z.Request.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Request")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *SelectionFormattingRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	bts, err = z.Request.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Request")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *SelectionFormattingRequest) Msgsize() (s int) {
+	s = 1 + z.Request.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z SessionCapabilityChange) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 2

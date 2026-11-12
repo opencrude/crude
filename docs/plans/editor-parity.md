@@ -279,7 +279,7 @@ overlapping cursors, one-step Undo, peer edits, cancellation and render/hit agre
 | Linked editing | Paired tag-name edits use negotiated ranges, one local transaction and source-qualified invalidation. Never keep mirrored editing after a peer touches its range. |
 | Call/type hierarchy | Expand incoming/outgoing calls or supertypes/subtypes in the shared bounded tree/list. Lazy requests, cancellation and exact location navigation; no unrelated popup framework. |
 | CodeLens | Only actual provider-supported actions appear. Resolve on demand; edits go through review and command effects through existing authorization. Never print protocol identifiers as user labels. |
-| Formatting selection and save actions | One formatter selection authority; support range formatting where offered. Organize imports/fix-on-save are explicit opt-ins, serialized with format/save against one source revision. No duplicate file writer or surprise multi-file save. |
+| Save actions | Selection formatting is now implemented and verified through the advertised range formatter, native/menu/control entries and one shared Undo. Organize imports/fix-on-save remain explicit opt-ins to implement, serialized with format/save against one source revision. No duplicate file writer or surprise multi-file save. |
 | Whitespace cleanup | EditorConfig indentation is connected. Trim trailing whitespace/final newline remain explicit save policies to implement, visible in review and reversible. Never silently rewrite historical mixed line endings on open. |
 | Pull diagnostics and dynamic features | Add only supported negotiated workflows; retain previous result IDs/cancellation semantics where specified. A missing provider, queue or failed analysis must not be labelled a clean project. |
 

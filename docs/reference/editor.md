@@ -533,6 +533,39 @@ These limits are not evidence of VS Code or JetBrains parity.
   Directory watches include their ancestors up to the workspace root because
   Windows reports a directory's rename to its parent, not to the watched contents.
 
+## Format selection
+
+**Format selection** (Alt+F8, editor context menu, Editor actions and
+`editor.action` with `edit.formatSelection`) formats only nonempty selected
+source ranges. It uses the existing document's synchronized language server and
+its advertised standard `textDocument/rangeFormatting` capability. It does not
+run the whole-file catalog formatter, start another producer or save the file.
+Format Document and Format Project keep their existing catalog authority.
+
+The request carries canonical source identity, private source-byte ranges and
+effective indentation. The adapter converts exact bytes to UTF-16 positions;
+returned edits use the strict shared LSP edit parser. The core rechecks source,
+wire version, provider lifetime, settings and semantic context before returning
+one bounded plan. Edits outside a requested range, overlap, invalid UTF-16/UTF-8,
+invalid JSON or aggregate bounds fail the entire command. Select a complete block
+if the server needs to format more text; Crude never silently widens the selection.
+Empty/null results mean no changes; unsupported servers get an explicit notice.
+
+The invoking editor remains responsive. Source, selection, file, tab, indentation
+or workspace changes retire the request. A result arriving before its context
+publication waits for that exact clock, not a timer or a speculative apply.
+The native simultaneous-edit writer preserves private ranges and makes all ranges
+one author Undo group. That mutation drains through normal document commands in
+the same Update; it does not wait for a later tick to reach peer shells. Ordinary
+save and recovery own persistence. Cancellation/shutdown uses joined client I/O.
+
+Requests admit up to 256 ranges and use the established ten-second manual request
+lifetime. Replacement and edit counts retain shared document/parser bounds.
+Multiple selected ranges are requested against one immutable source, then applied
+together; one failed response cannot leave partly formatted text. General
+organize-imports/fix-on-save and EditorConfig whitespace cleanup are separate,
+remaining workflows, not implied by range formatting.
+
 ## Language server transport
 
 The Powernap transport closes the subprocess stream and joins JSON-RPC reader

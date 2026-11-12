@@ -411,3 +411,19 @@ func validateSurrogates(raw []byte) error {
 	}
 	return nil
 }
+
+// ParseTextEdits shares the strict WorkspaceEdit array parser, including duplicate
+// members, surrogate escapes, required keys and aggregate replacement bounds.
+func ParseTextEdits(raw []byte) ([]types.LSPTextEdit, error) {
+	if len(raw) > MaxRawBytes || !utf8.Valid(raw) {
+		return nil, fmt.Errorf("LSP edit: invalid response encoding or size")
+	}
+	if err := validateJSON(raw); err != nil {
+		return nil, err
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	budget := parseBudget{}
+	return budget.edits(raw)
+}

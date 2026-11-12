@@ -29,6 +29,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `reviewed_edit.go` | `ReviewedEdits` | Connected canonical rename preview, opaque approval, pending release and original-result inspection |
 | `code_actions.go` | `CodeActions` | Exact canonical action-list discovery, retained-row preview and pending-list release; reuses `ReviewedEdits` for Apply and inspection |
 | `navigation.go` | `Navigation` | Read-only qualified definition/type/implementation/reference answers and explicit selected-target observation |
+| `formatting.go` | optional `SelectionFormatter` | Exact canonical range-format plans from the selected language server; the original editor owns fenced native application and Undo, never Save. |
 | `completion.go` | `Completions` | Canonical source/view-bound original completions, selected documentation-only resolve, acceptance preflight and exact-sequence release |
 | `history_safety.go` | `HistorySafety` | Native review-safety administration with bounded traversal, original evidence, exact human consent and original core receipt observation |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |

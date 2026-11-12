@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -163,18 +164,32 @@ func TestInputContractsPasteStaysWithFocusedRootControl(t *testing.T) {
 
 func TestInputContractsEditorMenuHasNoNoopFormatSelection(t *testing.T) {
 	app, _ := newInputContractEditorApp(t, "selection.go")
-	app.EditorState.Editor.SetSelection(0, 0, 0, 7)
-	if !app.EditorState.Editor.HasSelection() {
-		t.Fatal("precondition: editor selection is not active")
+	ed := app.EditorState.Editor
+	item, ok := contextMenuItem(app.buildEditorContextMenu(tea.Mouse{}), "Format selection")
+	if !ok || !item.Disabled {
+		t.Fatal("no selection must not expose an enabled formatting action")
 	}
-
-	menu := app.buildEditorContextMenu(tea.Mouse{})
-	for _, section := range menu.Sections {
-		for _, item := range section.Items {
-			if strings.EqualFold(item.Label, "Format selection") {
-				t.Fatal("editor menu still exposes the clickable no-op Format selection row")
-			}
-		}
+	ed.SetSelection(0, 0, 0, 7)
+	before := ed.Value()
+	item, ok = contextMenuItem(app.buildEditorContextMenu(tea.Mouse{}), "Format selection")
+	if !ok || item.Disabled || item.Action == nil {
+		t.Fatal("selected text has no formatting entry")
+	}
+	messages := make(chan tea.Msg, 1)
+	t.Cleanup(installDetachedMessageSinkForTest(app, func(msg tea.Msg) { messages <- msg }))
+	item.Action()
+	select {
+	case msg := <-messages:
+		runAppCommand(t, app, func() tea.Msg { return msg })
+	case <-time.After(5 * time.Second):
+		t.Fatal("menu did not dispatch its action")
+	}
+	explained := false
+	for _, notice := range app.ws.Status().Notifications(true) {
+		explained = explained || strings.Contains(notice.Summary, "Selection formatting needs")
+	}
+	if !explained || ed.Value() != before {
+		t.Fatal("missing server must produce useful feedback without changing source")
 	}
 }
 

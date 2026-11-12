@@ -251,3 +251,30 @@ func validateCompletionEdit(text string, wire model.LSPTextEdit) (completionEdit
 func lspEditOffset(text string, line, col int) (int, error) {
 	return lspedit.Offset(text, line, col)
 }
+
+// ApplySourceEdits applies a checked plan through the native simultaneous writer
+// and author history. It preserves every private selection without saving files.
+func (e *Editor) ApplySourceEdits(revision uint64, edits []document.Edit) error {
+	if !e.IsOpen() || e.ReadOnly() || e.Revision() != revision {
+		return document.ErrRevision
+	}
+	if err := e.buf.checkOffsets(edits); err != nil {
+		return err
+	}
+	if len(edits) == 0 {
+		return nil
+	}
+	if _, _, err := document.Apply(e.buf.cachedBytes, edits); err != nil {
+		return err
+	}
+	e.CancelSnippet()
+	e.DismissGhostText()
+	e.typingGroup = 0
+	spans := e.selectionSpans()
+	return e.applyMappedCaretEdits(edits, spans, func(s selectionSpan) SourceSelection {
+		mapped := remapSourceSelection(s.SourceSelection, edits)
+		mapped.Anchor = e.buf.positionToOffset(e.buf.positionAtOffset(mapped.Anchor))
+		mapped.Cursor = e.buf.positionToOffset(e.buf.positionAtOffset(mapped.Cursor))
+		return mapped
+	})
+}

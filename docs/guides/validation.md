@@ -794,3 +794,23 @@ recovery, per-caret vertical goals, wrapping, rectangle paint, snippet retiremen
 limit failures and each line command visiting source once. The dense workload
 benchmark measures key-to-grid-paint and grouped Undo; it does not measure physical
 terminal display latency.
+
+## Native selection formatting
+
+`TestSelectionFormattingVisualAcceptance` uses an installed server selected by
+`CRUDE_FORMAT_CLANGD`, `CRUDE_VISUAL_RANGE_FORMAT=1`, `CRUDE_RANGE_RESULT`, and
+`CRUDE_CAPTURE_EVIDENCE` pointing to a new result file. The fixture opens a
+three-line CRLF source with wide/combining characters and deliberately unformatted
+neighboring lines. F4 observes; Ctrl+Home, Down, Home, then seventeen Shift+Right
+keys select the middle line. The default Alacritty Shift+End binding scrolls its
+terminal view without sending a key; native evidence must use delivered input. Alt+F8 formats it; Ctrl+Z restores it. Alt+/, type `Format selection`, Enter
+uses the searchable native entry, then Ctrl+Z restores it. Follow every F4 with
+`await:RANGE_READY phase=N`; F9 quits after six phases. Require six `RANGE_VERIFIED`
+records, joined provider cleanup with no remaining process, unchanged disk and
+`RANGE_JOIN phase=6 passed=true headless=false` at both 160×40 and 80×24.
+
+Connected fault tests retain delayed formatter output while a second shell types;
+the edit must commit before the server reply is released, and the reply must then
+be discarded. Other checks cover exact menu/control tokens, selection changes,
+multiple ranges in one Undo, unsupported/empty/malformed replies, strict Unicode
+positions, returned edits outside the selection and invalid aggregate plans.

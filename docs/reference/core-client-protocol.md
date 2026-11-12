@@ -88,6 +88,19 @@ pending, coalesces the burst, and disarms after publishing. Retained idle actors
 do not run a periodic publication clock; accepted mutations and state-topic
 source-generation fences remain immediate and independent of presentation.
 
+Passive LSP reads use the actor's existing bounded, cancellable, joined job
+admission independently of the file-effect lane. Hover, signatures, navigation,
+completion, inlay inspection, code-action discovery and selection formatting
+cannot hold document edits behind a slow provider reply. Source/provider fences
+reject obsolete evidence. Setup, lifecycle operations and reviewed effects retain
+the ordered effect lane; unknown methods never opt themselves into a read path.
+This does not bypass the shared 16-job admission bound or process governor.
+
+`lsp.selection_formatting` returns a detached, source-qualified edit plan through
+`coreprotocol/formatting.go`. It never writes text or disk. The requesting shell
+fences its private selection and applies the plan through ordinary document edits;
+there is no second canonical formatting writer or raw caller-supplied LSP route.
+
 Before publishing a retained actor, its factory worker restores saved Notices
 and initializes configured capability metadata. Neither requires a model session
 or a shell to open Settings. Initialization never connects MCP, downloads skills

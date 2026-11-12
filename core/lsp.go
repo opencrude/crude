@@ -32,6 +32,9 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 	if run, known := a.prepareInlay(request); known {
 		return run, true
 	}
+	if run, known := a.prepareSelectionFormatting(request); known {
+		return run, true
+	}
 	if run, known := a.prepareNavigation(request); known {
 		return run, true
 	}
@@ -148,4 +151,19 @@ func (a *actor) publishLSPIfChanged() {
 		a.lspVersion = version
 		a.broadcast(coreprotocol.Change{LSP: true})
 	}
+}
+
+// These requests return passive, source-qualified evidence. They use the actor's
+// existing bounded/joined job admission, not the serialized file-effect lane.
+// Preview/apply commands, setup and server lifecycle changes stay ordered there.
+func independentLSPRead(method string) bool {
+	switch method {
+	case coreprotocol.LSPSnapshotMethod, coreprotocol.LSPRequestDocumentSymbols, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp,
+		coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationTargetMethod,
+		coreprotocol.LSPCompletionsMethod, coreprotocol.LSPCompletionInspectMethod, coreprotocol.LSPCompletionReleaseMethod,
+		coreprotocol.LSPInlayHintsMethod, coreprotocol.LSPInlayInspectMethod, coreprotocol.LSPInlayReleaseMethod,
+		coreprotocol.LSPCodeActions, coreprotocol.LSPReleaseCodeActions, coreprotocol.LSPSelectionFormattingMethod:
+		return true
+	}
+	return false
 }

@@ -99,6 +99,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainRemoteUICommands())
 	command = tea.Batch(command, m.drainTerminalCommands())
 	command = tea.Batch(command, m.continueRemoteWorkspaceSwitch())
+	command = tea.Batch(command, m.syncSelectionFormatting())
 	command = tea.Batch(command, m.drainLiveEditorCommands())
 	command = tea.Batch(command, m.drainEditorSyntaxCommands())
 	command = tea.Batch(command, m.drainComparisonGeometry())
@@ -216,6 +217,14 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case editor.SelectionNoticeMsg:
 		m.Feedback.NotifyInfo(msg.Message)
+		return m, nil
+	case editor.FormatSelectionMsg:
+		if m.EditorState != nil && m.EditorState.Editor == msg.Editor && msg.Editor.ActionToken() == msg.Token {
+			return m, m.requestSelectionFormat(msg.Editor)
+		}
+		return m, nil
+	case selectionFormatResult:
+		m.applySelectionFormatting(msg)
 		return m, nil
 	case editor.IndentationMenuMsg:
 		if msg.Editor == m.EditorState.Editor {

@@ -1660,7 +1660,7 @@ func (a *actor) startJob(command actorCommand) bool {
 		apply := run()
 		a.jobs <- actorJobResult{command: command, apply: apply, lifecycle: lifecycle, journal: journal, admitted: true, settings: settingsExclusive, finish: historyFinish}
 	}
-	if resourceKnown || lspKnown || historyRestore || (filesKnown && filesMutation(request.Method)) {
+	if resourceKnown || lspKnown && !independentLSPRead(request.Method) || historyRestore || (filesKnown && filesMutation(request.Method)) {
 		lane := a.resourceLane
 		if terminalMethod(request.Method) {
 			lane = a.terminalLane

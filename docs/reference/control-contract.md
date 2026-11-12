@@ -119,6 +119,11 @@ sparse file choices; an empty object restores project inheritance. It is a priva
 policy change, not a document edit or save. The token fences policy/fold changes
 as well as source/selection. Leading-whitespace conversion uses `editor.action`
 and its normal canonical history settlement.
+`edit.formatSelection` uses that same action route. Its admitted receipt starts an
+asynchronous source/selection-qualified request; it is not evidence that a server
+returned edits, that the document committed or that a file was saved. Empty,
+unsupported and refused results remain visible in ordinary editor feedback.
+
 
 Numeric snippet alternatives resolve Write only against the exact open picker,
 native list and interaction owner. Semantic activation shares the ordinary
