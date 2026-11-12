@@ -7,6 +7,32 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Inlay reader layout (2026-11-11)
+
+`BenchmarkInlayReaderStableLayout` measures a warm measure/layout pair for the
+popup's chosen size, with short and 1,200-line tooltips. Before the two-width
+wrap cache, two 200 ms Linux amd64 / Go 1.27.4 runs at GOMAXPROCS=2 measured
+1.48–1.50 µs, 256 B and 16 allocations for a short reader, and 0.839–0.855 ms,
+153,728 B and 4,812 allocations for the long reader. The two widths are the
+reader body and its scrollbar-reserved width.
+
+Three 300 ms runs after the fix measured 0.53–0.88 µs and zero allocations for
+both cases. Other tests were running during these measurements. These are layout
+measurements, not painted-frame or terminal-presentation latency. The allocation
+gate records zero for both workloads; no existing ceiling was raised. A separate
+regression verifies both widths invalidate when content or the terminal profile
+changes, rather than turning the cache into stale geometry.
+
+A separate temporary probe times installation of selected detail and its first
+measure/layout, including literal escaping and original JSON validation. Three
+300 ms runs on the same host, while other tests ran, measured 3.79–4.02 ms for
+1,200 Unicode tooltip lines and 6.30–6.70 ms with 1,800 lines plus one near-1 MiB
+original object. A combined valid fixture with 32 tooltip parts and two near-1 MiB
+JSON objects measured 10.13–10.77 ms and about 2.60 MB / 42,382 allocations.
+These are single-operation timings, not end-to-end presented-frame latency or a
+platform-independent ceiling. The benchmark's first overlarge top-level tooltip
+was rejected by the existing per-field bound and is not included in these figures.
+
 ## Semantic-token source and paint (2026-11-11)
 
 The protocol consumer processes 20,000 relative token tuples against one

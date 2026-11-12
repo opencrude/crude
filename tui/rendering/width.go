@@ -18,6 +18,10 @@ import (
 // for layout columns.
 var WidthMethod = ansi.GraphemeWidth
 
+// WidthProfileGeneration changes whenever the effective terminal profile is
+// published. Width-derived caches must include it in their source key.
+func WidthProfileGeneration() uint64 { return ansi.TerminalWidthGeneration() }
+
 // TerminalWidthProbeCorpus lists product chrome graphemes whose measured width
 // must be learned from the effective terminal or multiplexer. Bubble Tea adds
 // language/emoji representatives and deduplicates this list.

@@ -863,15 +863,18 @@ Source edits remain immediate; only read requests are debounced.
 
 **Alt+J** opens the native read-only list. Enter inspects the selected original
 row, never edits source, opens a label location or executes an adjunct command.
-The copyable detail shows the complete accepted source/provider/context identity,
-requested range, local wire source, expiry, labels/parts and tooltips, together
-with inert edit/command/location metadata. Original and resolved JSON are escaped
-literal previews with explicit byte-count truncation, not reconstructed JSON.
-Detail defaults to **Close**. **Resolve tooltips** is explicit and available only
-when advertised; only top-level and label-part tooltip enrichment is accepted.
+The list shows each hint with its one-based line and kind. The copyable detail
+shows the selected label and available top-level or label-part tooltips. It does
+not show internal identities, protocol coordinates or raw provider JSON. Provider
+text is literal: terminal and bidirectional controls are escaped, and links are
+not executed. Failure details are logged off the UI thread. The content-sized
+window uses the native scrollbar when the detail overflows. Detail
+defaults to **Close**. **Load details** is explicit and appears only when
+advertised; only top-level and label-part tooltip enrichment is accepted.
 **Back** or Escape from detail cancels the selected reader before returning to
 the original list; Escape from the list closes it. An old reader cannot reopen
-detail after Back or replace a newer selected row.
+detail after Back or replace a newer selected row. The App joins each started
+inspection during shutdown; a cancelled or timed-out answer cannot be installed.
 
 The core retains one original set per exact owner/view/monotonic sequence.
 All answers, including null, empty array and statically unsupported, use the
@@ -906,7 +909,7 @@ end, permitting zero-length and final empty-line EOF requests. The coordinator
 permits 16 active views, separately bounded 128 sequence/tombstone records and
 16 MiB of retained original-object bytes, with a five-minute lifetime. The
 editor additionally bounds combined projection runs to 131,072; the inspector
-caps complete display at 256 KiB with honest raw-preview limits. These are
+caps complete displayed text at 256 KiB and reports any truncation. These are
 consumer/accounting bounds, not initial RPC-frame, native heap/RSS or complete
 project-context guarantees. Dynamic registration, global refresh notifications,
 hint command/edit/location execution and broader IDE workflow acceptance are

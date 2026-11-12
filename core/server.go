@@ -404,6 +404,16 @@ func (c *Connection) serveCommand(ctx context.Context, s corewire.Stream, reader
 			}
 		case <-cmd.done:
 			coreRequests.Since(request.Method, admitted)
+			// The worker has completed, so its last progress note is already
+			// queued or sent. A ready final must not overtake that pending note.
+			// Older notes remain coalesced in the existing one-slot channel.
+			select {
+			case text := <-cmd.progress:
+				if send(s, &coreprotocol.Reply{Progress: text}) != nil {
+					return
+				}
+			default:
+			}
 			if err := sendCommandResult(s, cmd.response); err != nil {
 				return
 			}

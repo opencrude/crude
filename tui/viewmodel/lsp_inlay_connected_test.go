@@ -285,11 +285,10 @@ func TestConnectedInlayNativeInspectorResolveBackCloseAndSemanticReceipt(t *test
 	if resolves != 1 || string(original) != inlayConnectedOriginal || !json.Valid(original) {
 		t.Fatal("selected Resolve did not retain original opaque JSON", resolves, string(original))
 	}
-	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyTab}) // native reader
-	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
-	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "9007199254740993") || !strings.Contains(paint, "NEVER INSERT") {
-		t.Fatalf("literal original evidence is not actually scrollable/rendered:\n%s", paint)
+	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "literal tooltip only") || strings.Contains(paint, "9007199254740993") || strings.Contains(paint, "NEVER INSERT") {
+		t.Fatalf("resolved useful tooltip was not painted safely:\n%s", paint)
 	}
+	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyTab}) // native reader
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
 	remoteJourneyUntil(t, f.shells, func() bool { return s.screen.InList() && !s.reading })
 	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -371,6 +370,41 @@ func TestConnectedInlaySettingsEpochRevokesAndNoRestartForViewGate(t *testing.T)
 	after := one.app.inlayViews[f.main].request.result.Boundary.Producer
 	if before.InstanceID == "" || before != after {
 		t.Fatal("view-only inlay feature toggles restarted the language service", before, after)
+	}
+	f.unchanged(t)
+}
+
+// Failure feedback must name the action that actually requests fresh evidence;
+// reopening the same failed request alone cannot recover it.
+func TestConnectedInlayErrorGuidesRefreshAndRecovers(t *testing.T) {
+	f := newInlayConnectedFixture(t, true, inlayConnectedAnswer)
+	one := f.shells[0]
+	f.engine.mu.Lock()
+	f.engine.answer = "{"
+	f.engine.mu.Unlock()
+	f.palette(t, "Refresh Inlay Hints")
+	remoteJourneyUntil(t, f.shells, func() bool {
+		v := one.app.inlayViews[f.main]
+		return v != nil && v.request != nil && v.request.err != nil
+	})
+	renameConnectedKey(t, one, tea.KeyPressMsg{Code: 'j', Mod: tea.ModAlt})
+	s := one.app.inlayInspector
+	if s == nil || !s.shown {
+		t.Fatal("failed request has no readable error")
+	}
+	text := inlayVisualReader(s)
+	if !strings.Contains(text, "Refresh Inlay Hints") || strings.Contains(text, "invalid") {
+		t.Fatal("error does not point to the real recovery action", text)
+	}
+	renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEsc})
+	f.engine.mu.Lock()
+	f.engine.answer = inlayConnectedAnswer
+	f.engine.mu.Unlock()
+	f.palette(t, "Refresh Inlay Hints")
+	f.waitPainted(t)
+	f.open(t)
+	if got := f.main.Value(); got != inlayConnectedSource || one.app.Input.Value() != "private first inlay draft" {
+		t.Fatal("refresh changed source or draft", got)
 	}
 	f.unchanged(t)
 }

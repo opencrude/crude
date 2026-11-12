@@ -598,13 +598,15 @@ an empty token set by default. The catalog now supplies its documented semantic
 token setting at initialization and in `workspace/configuration`, with explicit
 settings taking precedence. Installed-server headless and sequential native
 captures without the fixture override record all three typing/Undo phases at
-160×40 and 80×24, preserve source/draft/disk and join the provider. The edited
-images were inspected: both show semantic colors; the wide image also shows the
-diagnostic underline. At 80×24, the source line extends beyond the right edge.
-A separate End-key capture was made but was not visually verified. Linux build,
-lint, design/docs, generated wire and Windows/macOS component cross-build checks
-pass. A 45-second parser fuzz run completed without a crash; it is not proof of
-native-platform behavior.
+160×40 and 80×24, preserve source/draft/disk and join the provider. The images
+could not be visually inspected in this session. At 80×24, the source line
+extends beyond the right edge; an additional End-key capture was recorded but
+was not visually verified. Linux build, design/docs, generated wire and
+Windows/macOS component cross-build checks passed. The combined check did not
+propagate a lint failure in the semantic parser. The expression was corrected,
+and an independent whole-repository lint run passed. A 45-second parser fuzz
+run completed without a crash;
+it is not proof of native-platform behavior.
 
 The [Windows GC crash](2026-11-11-workspace-gc-crash.md) is still open. Linux
 checks or cross-builds do not establish its cause or repair it.
@@ -622,22 +624,46 @@ requests while a peer retained the same source. The owner now retains each fence
 across file close, discards old evidence and semantic delta bases, and removes the
 fences on owner detach. All three focused regressions and a two-shell native-key
 close/reopen, edit and Undo journey pass. The full ordinary suite, affected race,
-build/lint, documentation and Windows/macOS component cross-build checks pass on
-the corrected tree. The unchanged allocation gate passes, without raised ceilings.
+build, documentation and Windows/macOS component cross-build checks passed on
+that tree. Its combined check masked the semantic-parser lint failure noted above.
+The unchanged allocation gate passed, without raised ceilings.
 Installed-gopls inlay journeys run at 160×40 and 80×24; provider processes join.
 The installed server did not advertise tooltip resolve, so the resolve check uses
 a deterministic fixture. Windows cross-builds do not resolve the open GC crash.
 
-## Inlay details presentation gap (2026-11-11)
+## Inlay details presentation (2026-11-11)
 
-Fresh Linux 160×40 and 80×24 captures show inline labels and working inspector
-interaction. They also expose an existing usability defect: the detail reader
-shows byte offsets, zero-based protocol coordinates, opaque fields and raw JSON
-instead of leading with the hint and useful documentation. This violates
-[user language](../reference/user-language.md). Fix the existing reader and its
-entry points without weakening source/row validation or making provider commands,
-edits or locations executable. The installed gopls did not advertise tooltip
-resolve; deterministic protocol tests are not installed-server resolve evidence.
+A native reader probe reproduced internal row IDs, raw JSON, protocol coordinates
+and source/provider bookkeeping instead of useful hint details. The existing list
+now shows the label, one-based line and kind; the detail starts with the label and
+literal tooltip text. Empty, unsupported and failed states give concise messages;
+failed requests direct the user to the actual Refresh Inlay Hints command. Terminal
+and bidirectional controls are escaped; normal emoji remains intact. Provider
+commands, edits and locations remain inert. Exact row/source checks, native copy,
+Back cancellation and the safe Close default remain in their original owners.
+
+The original usability probe now passes. A separate projection failure regression
+first showed an error as a successful list; it now displays an actionable failure.
+The connected recovery test sends malformed evidence, follows Refresh, and returns
+to working hints without changing source or the private draft. A blocking-logger
+regression exposed synchronous failure logging on Update; the App now owns that
+logging asynchronously. Another probe found that a started detail inspection was
+cancelled but not joined at shutdown. It now uses the App's client I/O lifetime.
+Wheel and native thumb drag share the reader viewport. Terminal profile changes
+invalidate cached list and text geometry without altering the selected hint.
+
+Sequential Linux captures at 160×40 and 80×24 exercise installed-gopls hint list,
+inspection, Back/Close and view-local Show/Hide/Refresh. The server does not
+advertise tooltip resolution. A separate deterministic-provider journey checks a
+35-line tooltip with actual keyboard and thumb-drag input, including the final
+line and capture release at both sizes. The capture assertions passed, but the
+images could not be visually inspected in this session. The fixture is not
+installed-server resolve evidence. Focused race checks pass. The full suite
+exposed a core deletion-progress ordering race; a focused reproduction and the
+real delete journey now pass under race. The updated code passes the complete
+ordinary suite, allocation gate, whole-repository lint, build, generated-wire,
+design/docs and Windows/macOS component cross-build checks. The missing image
+inspection and native Windows acceptance remain open.
 
 ## Remaining acceptance
 

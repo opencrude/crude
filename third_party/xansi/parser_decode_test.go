@@ -8,6 +8,19 @@ import (
 	"github.com/charmbracelet/x/ansi/parser"
 )
 
+func TestTerminalWidthGenerationFollowsEveryProfilePublication(t *testing.T) {
+	initial := TerminalWidthGeneration()
+	SetTerminalWidthProfile(TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
+	measured := TerminalWidthGeneration()
+	if measured <= initial || GraphemeWidth.StringWidth("☰") != 1 {
+		t.Fatal("measured profile was not published atomically", initial, measured)
+	}
+	SetTerminalWidthProfile(TerminalWidthProfile{})
+	if next := TerminalWidthGeneration(); next <= measured || GraphemeWidth.StringWidth("☰") != 2 {
+		t.Fatal("clearing corrections did not publish a new profile", measured, next)
+	}
+}
+
 func TestTrigramWidthUsesModernGuessThenTerminalMeasurement(t *testing.T) {
 	SetTerminalWidthProfile(TerminalWidthProfile{})
 	t.Cleanup(func() { SetTerminalWidthProfile(TerminalWidthProfile{}) })

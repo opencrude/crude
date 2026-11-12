@@ -412,7 +412,7 @@ func DecodeContext(ctx context.Context, text string, legend Legend, data []uint3
 		// Single-line capability requires an overlong token to stop at this
 		// line's end, not to spill onto the next line or reject useful ink.
 		target := tokenCol + uint64(length)
-		for col < target && offset < len(text) && text[offset] != '\n' && !(text[offset] == '\r' && offset+1 < len(text) && text[offset+1] == '\n') {
+		for col < target && offset < len(text) && text[offset] != '\n' && (text[offset] != '\r' || offset+1 >= len(text) || text[offset+1] != '\n') {
 			r, n := utf8.DecodeRuneInString(text[offset:])
 			units := uint64(utf16.RuneLen(r))
 			if col+units > target {

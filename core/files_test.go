@@ -9,6 +9,7 @@ import (
 	"crude/workspace"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -23,10 +24,32 @@ func TestFilesDeleteReportsJoinedProgress(t *testing.T) {
 	if err := c.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
+	// The wire intentionally coalesces intermediate notes. Hold the worker
+	// only after publishing its first real phase, until this original caller
+	// has observed it; then assert the last phase and actual deletion.
+	r.mu.Lock()
+	a := r.workspaces[attached.WorkspaceID]
+	original := a.progress
+	firstObserved := make(chan struct{})
+	var release sync.Once
+	a.progress = func(owner coreprotocol.Owner, event coreprotocol.Progress) {
+		original(owner, event)
+		if event.Text == "Keeping safety copy of" {
+			select {
+			case <-firstObserved:
+			case <-t.Context().Done():
+			}
+		}
+	}
+	r.mu.Unlock()
+	defer release.Do(func() { close(firstObserved) })
 	var phases []string
 	var result coreprotocol.FileOperationResult
 	err := c.CallCancellableWithProgress(t.Context(), attached.WorkspaceID, coreprotocol.FilesDelete, &coreprotocol.FilePathRequest{Path: path}, &result, func(phase string) {
 		phases = append(phases, phase)
+		if phase == "Keeping safety copy of" {
+			release.Do(func() { close(firstObserved) })
+		}
 	})
 	if err != nil || result.Error != "" {
 		t.Fatalf("delete: %+v %v", result, err)

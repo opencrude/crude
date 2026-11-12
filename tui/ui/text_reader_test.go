@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestTextReaderScrollAndResizeKeepTextReachable(t *testing.T) {
@@ -109,5 +110,22 @@ func TestTextReaderSeverityInkSurvivesWrappingSelectionAndTheme(t *testing.T) {
 	text.SetValue("Replacement")
 	if c := paint().Get(0, 0); c.FG.Equal(tokens.Color(ColorError)) {
 		t.Fatal("replacement text retained a retired diagnostic color")
+	}
+}
+
+// A reader's retained measurement cannot survive an effective terminal width
+// change even when its content and layout constraints stay the same.
+func TestTextReaderMeasureTracksTerminalWidthProfile(t *testing.T) {
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	r := NewTextReader("width-reader", NewTokenSet(theme.DefaultDark()))
+	r.TextArea().SetValue("☰☰")
+	cs := Constraints{MaxW: 2, MaxH: 8}
+	if size := r.Measure(LayoutContext{}, cs); size.H != 1 {
+		t.Fatalf("initial rows=%d", size.H)
+	}
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 2}})
+	if size := r.Measure(LayoutContext{}, cs); size.H != 2 {
+		t.Fatalf("terminal correction left stale reader rows=%d", size.H)
 	}
 }

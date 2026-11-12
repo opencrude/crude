@@ -9,10 +9,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -35,7 +37,6 @@ const (
 	maxFieldBytes   = 64 << 10
 	maxSummaryBytes = 128 << 10 // escaped aggregate caller fields
 	maxRawBytes     = 1 << 20   // each original/resolved object
-	maxRawPreview   = 48 << 10  // escaped output, each
 	maxDisplayBytes = 256 << 10 // complete reader, including generated labels
 )
 
@@ -53,22 +54,22 @@ type BackMsg struct{ Target *Screen }
 // dispatches asynchronous work; InspectMsg is an intent for that parent.
 type Screen struct {
 	ui.Base
-	tokens    *ui.TokenSet
-	list      *ui.List
-	scrollbar *ui.ScrollbarControl
-	text      *reader
-	actions   *ui.ActionBar
-	result    types.LSPInlaySet
-	hasResult bool
-	selected  int // retained result ordinal
-	rowEpoch  uint64
-	busy      bool
-	inspected bool
-	hint      types.LSPInlayHint
-	original  string
-	resolved  string
-	state     string
-	detail    string
+	tokens          *ui.TokenSet
+	list            *ui.List
+	scrollbar       *ui.ScrollbarControl
+	detailScrollbar *ui.ScrollbarControl
+	text            *reader
+	actions         *ui.ActionBar
+	result          types.LSPInlaySet
+	hasResult       bool
+	selected        int // retained result ordinal
+	rowEpoch        uint64
+	busy            bool
+	inspected       bool
+	hint            types.LSPInlayHint
+	state           string
+	textWidth       int
+	widthGeneration uint64
 }
 
 func New(th *theme.Theme) *Screen {
@@ -83,6 +84,9 @@ func New(th *theme.Theme) *Screen {
 	s.scrollbar = ui.NewScrollbarControl("inlay/scrollbar", s.list.Scroll(), ts)
 	s.text = &reader{ui.NewTextArea(TextID, ts, true)}
 	s.text.SetReadOnly(true)
+	s.detailScrollbar = ui.NewScrollbarControl("inlay/detail-scrollbar", s.text.Scroll(), ts)
+	s.detailScrollbar.SetPointerTargetSize(1)
+	s.detailScrollbar.SetSurfaceBackground(ui.ColorPopupBg)
 	s.actions = ui.NewActionBar(ActionsID, ts)
 	s.actions.SetShowRule(true)
 	s.actions.SetSurfaceBackground(ui.ColorPopupBg)
@@ -98,6 +102,7 @@ func (s *Screen) SetTokens(ts *ui.TokenSet) {
 	s.tokens = ts
 	s.list.SetTokens(ts)
 	s.scrollbar.SetTokens(ts)
+	s.detailScrollbar.SetTokens(ts)
 	s.text.SetTokens(ts)
 	s.text.SetBackgroundColor(ts.Color(ui.ColorPopupBg))
 	s.actions.SetTokens(ts)
@@ -112,7 +117,7 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 func (s *Screen) clearInspection() {
 	s.inspected = false
 	s.hint = types.LSPInlayHint{}
-	s.original, s.resolved, s.state, s.detail = "", "", "", ""
+	s.state = ""
 }
 
 func (s *Screen) reset() {
@@ -126,24 +131,20 @@ func (s *Screen) reset() {
 func (s *Screen) SetLoading() {
 	s.reset()
 	s.busy = true
-	s.setText("Requesting inlay hints…\n\nWaiting for source/provider/context-qualified evidence.\n" +
-		"This reader is read-only. No commands, edits or label locations are executed.")
+	s.setText("Loading inlay hints…")
 	s.rebuildActions()
 }
 
-func (s *Screen) SetError(message string) {
-	s.reset() // Failure never leaves an old Inspect or Resolve action active.
-	if len(message) > maxFieldBytes || !utf8.ValidString(message) {
-		message = "Invalid or oversized failure display data."
-	}
-	s.setText("Inlay hints failed\n\nFailure (literal): " + strconv.Quote(message) +
-		"\n\nRead-only: no commands, edits or label locations were executed.")
+// Diagnostic details stay in the caller's log, not in the reading surface.
+func (s *Screen) SetError() {
+	s.reset()
+	s.setText("Could not load inlay hints.\n\nClose. Use Refresh Inlay Hints in the command palette.")
 	s.rebuildActions()
 }
 
 func (s *Screen) SetResult(result types.LSPInlaySet) {
 	if !validResult(result) {
-		s.SetError("Invalid or oversized inlay display data; the answer was refused.")
+		s.SetError()
 		return
 	}
 	s.reset()
@@ -157,41 +158,38 @@ func (s *Screen) SetResult(result types.LSPInlaySet) {
 	if len(result.Hints) > 0 {
 		items := make([]ui.ListItem, len(result.Hints))
 		for i, hint := range result.Hints {
-			// Position and original index precede the label: equal anchors and
-			// long shared labels stay disambiguated even in a 60-column body.
-			items[i] = ui.ListItem{
-				ID: fmt.Sprintf("%d/%d", s.rowEpoch, hint.Index), Payload: i, Command: true,
-				Label: fmt.Sprintf("%d:%d #%d %s %s", hint.Position.Line, hint.Position.Character,
-					hint.Index, kindText(hint), strconv.Quote(hint.Label)),
+			location := "Line " + strconv.FormatUint(uint64(hint.Position.Line)+1, 10)
+			if kind := kindText(hint); kind != "" {
+				location += " · " + kind
 			}
+			items[i] = ui.ListItem{ID: fmt.Sprintf("%d/%d", s.rowEpoch, hint.Index), Payload: i, Command: true,
+				Label: singleLine(hint.Label), Detail: location}
 		}
 		s.list.SetItems(items)
 	} else {
-		description := map[string]string{
-			types.LSPInlayNull:        "Provider returned null.",
-			types.LSPInlayEmpty:       "Provider returned an empty array [].",
-			types.LSPInlayUnsupported: "Inlay hints are unsupported for this source/provider.",
-		}[result.Answer]
-		s.setText(description + "\n\nThis is not proof that no hints exist or that the project is clean.\n\n" + s.provenanceText())
+		message := "No inlay hints in the visible lines."
+		if result.Answer == types.LSPInlayUnsupported {
+			message = "This language server does not support inlay hints."
+		}
+		s.setText(message)
 	}
 	s.rebuildActions()
 }
 
 // SetInspection refuses cross-row, stale, malformed and changed-geometry input.
-// Raw JSON is validated, never decoded/reconstructed; only its bounded escaped
-// literal preview is retained. Possession of display identities grants no authority.
+// Raw JSON is validated, but never shown or retained by this reading surface.
+// Possession of display identities grants no authority.
 func (s *Screen) SetInspection(in types.LSPInlayInspection) {
 	if !s.hasResult || s.selected < 0 || in.SetID != s.result.ID ||
 		in.Digest != s.result.Digest || in.Index != s.result.Hints[s.selected].Index ||
 		in.WireVersion != s.result.WireVersion || in.Range != s.result.Range ||
 		!sameBoundary(in.Boundary, s.result.Boundary) || !validInspection(in) ||
 		!sameGeometry(in.Hint, s.result.Hints[s.selected]) {
-		s.SetError("Invalid, mismatched or oversized inlay inspection display data; the inspection was refused.")
+		s.SetError()
 		return
 	}
 	s.hint = cloneHint(in.Hint)
-	s.original, s.resolved = rawPreview(in.OriginalJSON), rawPreview(in.ResolvedJSON)
-	s.state, s.detail = in.ResolveState, in.Detail
+	s.state = in.ResolveState
 	s.inspected, s.busy = true, false
 	s.setText(s.detailText())
 	s.rebuildActions()
@@ -224,60 +222,49 @@ func (s *Screen) DefaultFocus() ui.ComponentID {
 
 func (s *Screen) setText(value string) {
 	s.text.CancelPointerCapture()
-	s.text.SetValue(limitText(value, maxDisplayBytes))
+	value = limitText(value, maxDisplayBytes)
+	// Capture the profile before measuring. If calibration publishes while
+	// measuring, the next Measure sees a new generation and recalculates.
+	s.widthGeneration = rendering.WidthProfileGeneration()
+	s.textWidth = max(1, ui.TooltipFrameWidth(value, 70)-ui.TooltipChrome)
+	s.text.SetValue(value)
 	s.text.SetCursorFlat(0)
 	s.text.SetScrollOffset(0)
 }
 
 func kindText(h types.LSPInlayHint) string {
 	if !h.HasKind {
-		return "kind absent"
+		return ""
 	}
 	switch h.Kind {
 	case 1:
-		return "type"
+		return "Type"
 	case 2:
-		return "parameter"
+		return "Parameter"
 	default:
-		return fmt.Sprintf("kind %d", h.Kind)
+		return ""
 	}
 }
 
-func formatRange(r types.LSPInlayRange) string {
-	return fmt.Sprintf("[%d:%d, %d:%d] anchors", r.Start.Line, r.Start.Character, r.End.Line, r.End.Character)
-}
-
-func (s *Screen) provenanceText() string {
-	r, b := s.result, s.result.Boundary
-	// Every untrusted string is quoted, including unknown-input descriptions.
+// Treat provider text as literal content. Preserve useful line breaks and tabs;
+// escape terminal controls, bidirectional controls and Unicode line separators
+// instead of interpreting ANSI, links or commands. List rows use the same
+// escaping on a single line.
+func literal(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
 	var out strings.Builder
-	fmt.Fprintf(&out, "Read-only: unversioned standard hints.\n"+
-		"Commands, text edits and label locations are inert metadata; never executed.\n"+
-		"Unknown-input limits: even an empty UnknownInputs list is not proof of complete build context or semantic freshness.\n\n"+
-		"Set ID: %q\nDigest: %q\nView ID: %q\nSequence: %d\nAnswer: %q\n"+
-		"Source wire version: %d\nRequested range (zero-based UTF-16): %s\n"+
-		"Expiry: %q\nResolve tooltips supported: %t\nDetail (literal): %q\n\n"+
-		"Source kind: %q\nWorkspace generation: %q\nDocument ID: %q\nSource path: %q\n"+
-		"Source lifetime: %q\nSource revision: %d\n"+
-		"Provider: %q\nProvider instance: %q\nTool identity: %q\n"+
-		"Context ID: %q\nContext root: %q\nContext generation: %d\nUnknownInputs:\n",
-		r.ID, r.Digest, r.ViewID, r.Sequence, r.Answer, r.WireVersion, formatRange(r.Range),
-		r.ExpiresAt.String(), r.ResolveSupported, r.Detail,
-		b.Source.Kind, b.Source.WorkspaceGeneration, b.Source.DocumentID, b.Source.Path,
-		b.Source.Lifetime, b.Source.Revision, b.Producer.Provider, b.Producer.InstanceID,
-		b.Producer.ToolIdentity, b.Context.ID, b.Context.Root, b.Context.Generation)
-	if len(b.Context.UnknownInputs) == 0 {
-		out.WriteString("  [] (not proof of completeness)\n")
-	}
-	for _, value := range b.Context.UnknownInputs {
-		fmt.Fprintf(&out, "  %q\n", value)
+	for _, r := range value {
+		if (unicode.IsControl(r) && r != '\n' && r != '\t') || unicode.Is(unicode.Bidi_Control, r) || r == '\u2028' || r == '\u2029' {
+			q := strconv.QuoteRune(r)
+			out.WriteString(q[1 : len(q)-1])
+		} else {
+			out.WriteRune(r)
+		}
 	}
 	return out.String()
 }
-
-func markupText(out *strings.Builder, label string, m types.LSPInlayMarkup) {
-	fmt.Fprintf(out, "%s present: %t; form: %q; kind: %q\n%s value (literal): %q\n",
-		label, m.Present, m.Form, m.Kind, label, m.Value)
+func singleLine(value string) string {
+	return strings.NewReplacer("\n", `\n`, "\t", `\t`).Replace(literal(value))
 }
 
 func (s *Screen) detailText() string {
@@ -286,29 +273,32 @@ func (s *Screen) detailText() string {
 		h = s.hint
 	}
 	var out strings.Builder
-	fmt.Fprintf(&out, "Inlay hint #%d · %s\nPosition (zero-based UTF-16): %d:%d\n"+
-		"Source byte: %d\nLabel (literal): %q\nLabel parts form: %t\n"+
-		"Padding left/right: %t/%t\nInert text edits present: %t; opaque data present: %t\n",
-		h.Index, kindText(h), h.Position.Line, h.Position.Character, h.SourceByte,
-		h.Label, h.LabelIsParts, h.PaddingLeft, h.PaddingRight, h.HasTextEdits, h.HasData)
-	markupText(&out, "Tooltip", h.Tooltip)
-	for i, part := range h.Parts {
-		fmt.Fprintf(&out, "\nPart %d value (literal): %q\nInert command present: %t\n", i, part.Value, part.HasCommand)
-		markupText(&out, "Part tooltip", part.Tooltip)
-		if part.Location == nil {
-			out.WriteString("Inert label location: absent\n")
-		} else {
-			fmt.Fprintf(&out, "Inert label location URI: %q\nLocation range: %s\n",
-				part.Location.URI, formatRange(part.Location.Range))
-		}
+	out.WriteString(singleLine(h.Label))
+	hasDetails := false
+	if h.Tooltip.Present && strings.TrimSpace(h.Tooltip.Value) != "" {
+		out.WriteString("\n\n")
+		out.WriteString(literal(h.Tooltip.Value))
+		hasDetails = true
 	}
-	out.WriteString("\n" + s.provenanceText())
-	if !s.inspected {
-		out.WriteString("\nOriginal raw evidence: awaiting selected-row inspection.\nNo tooltips have been resolved by this reader.\n")
-	} else {
-		fmt.Fprintf(&out, "\nResolve state (literal): %q\nInspection detail (literal): %q\n"+
-			"Raw previews are quoted literal bytes, not reconstructed JSON. Explicit output limits apply.\n"+
-			"Original raw JSON:\n%s\n\nResolved raw JSON:\n%s\n", s.state, s.detail, s.original, s.resolved)
+	for _, part := range h.Parts {
+		if !part.Tooltip.Present || strings.TrimSpace(part.Tooltip.Value) == "" {
+			continue
+		}
+		out.WriteString("\n\n")
+		out.WriteString(singleLine(part.Value))
+		out.WriteByte('\n')
+		out.WriteString(literal(part.Tooltip.Value))
+		hasDetails = true
+	}
+	if !hasDetails {
+		switch {
+		case !s.inspected:
+			out.WriteString("\n\nLoading hint details…")
+		case s.result.ResolveSupported && s.state != "resolved-tooltips":
+			out.WriteString("\n\nNo details yet. Select Load details.")
+		default:
+			out.WriteString("\n\nNo details are available.")
+		}
 	}
 	return out.String()
 }
@@ -321,15 +311,16 @@ func (s *Screen) rebuildActions() {
 	s.actions.SetCancelAction(ActionClose)
 	var buttons []ui.ActionBarButton
 	if s.InList() {
-		buttons = append(buttons, ui.ActionBarButton{ID: "inlay/actions/inspect", Label: "Inspect",
+		buttons = append(buttons, ui.ActionBarButton{ID: "inlay/actions/inspect", Label: "Show details",
 			Action: ActionInspect, Enabled: !s.busy, Variant: ui.VariantPrimary})
 	} else if s.hasResult && s.selected >= 0 {
 		s.actions.SetCancelAction(ActionBack)
-		buttons = append(buttons,
-			ui.ActionBarButton{ID: "inlay/actions/resolve", Label: "Resolve tooltips",
-				Action: ActionResolve, Enabled: s.canResolve(), Variant: ui.VariantPrimary},
-			ui.ActionBarButton{ID: "inlay/actions/back", Label: "Back", Action: ActionBack,
-				Enabled: true, Variant: ui.VariantSecondary})
+		if s.result.ResolveSupported {
+			buttons = append(buttons, ui.ActionBarButton{ID: "inlay/actions/resolve", Label: "Load details",
+				Action: ActionResolve, Enabled: s.canResolve(), Variant: ui.VariantPrimary})
+		}
+		buttons = append(buttons, ui.ActionBarButton{ID: "inlay/actions/back", Label: "Back", Action: ActionBack,
+			Enabled: true, Variant: ui.VariantSecondary})
 	}
 	buttons = append(buttons, ui.ActionBarButton{ID: "inlay/actions/close", Label: "Close",
 		Action: ActionClose, Enabled: true, Variant: ui.VariantSecondary})
@@ -342,11 +333,27 @@ func (s *Screen) Children() []ui.Component {
 	if s.InList() {
 		return []ui.Component{s.list, s.scrollbar, s.actions}
 	}
-	return []ui.Component{s.text, s.actions}
+	return []ui.Component{s.text, s.detailScrollbar, s.actions}
 }
 
-func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: 100, H: 24})
+func (s *Screen) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
+	actions := s.actions.Measure(ctx, cs)
+	width, height := 0, 0
+	if s.InList() {
+		list := s.list.ContentSize(cs, 10)
+		width, height = list.W, list.H
+	} else {
+		if generation := rendering.WidthProfileGeneration(); s.widthGeneration != generation {
+			s.textWidth = max(1, ui.TooltipFrameWidth(s.text.Value(), 70)-ui.TooltipChrome)
+			s.widthGeneration = generation
+		}
+		width = max(1, s.textWidth+ui.ScrollbarWidth)
+	}
+	width = min(max(width, actions.W), max(1, cs.MaxW))
+	if !s.InList() {
+		height = s.text.VisualLineCount(max(1, width-ui.ScrollbarWidth))
+	}
+	return cs.ClampSize(ui.Size{W: width, H: max(1, height) + s.actions.PreferredHeight()})
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -363,7 +370,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.list.Layout(ctx, ui.Rect{W: w - barW, H: bodyH})
 		s.scrollbar.Layout(ctx, ui.Rect{X: w - barW, W: barW, H: bodyH})
 	} else {
-		s.text.Layout(ctx, ui.Rect{W: w, H: bodyH})
+		barW := 0
+		if w > 1 && bodyH > 0 && s.text.VisualLineCount(w) > bodyH {
+			barW = ui.ScrollbarWidth
+		}
+		s.text.Layout(ctx, ui.Rect{W: w - barW, H: bodyH})
+		s.detailScrollbar.Layout(ctx, ui.Rect{X: w - barW, W: barW, H: bodyH})
 	}
 	s.actions.Layout(ctx, ui.Rect{Y: bodyH, W: w, H: barH})
 }
@@ -402,7 +414,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 			case string:
 				// Native Button activation carries its literal label, unlike
 				// List activation's exact retained row.
-				ok = ok && payload == "Inspect"
+				ok = ok && payload == "Show details"
 			default:
 				ok = false
 			}
@@ -456,7 +468,7 @@ func focus(id ui.ComponentID) ui.EventResult {
 }
 
 func (s *Screen) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleGroup, Label: "Read-only source-qualified inlay hints"}
+	return ui.Semantics{Role: ui.RoleGroup, Label: "Inlay hints"}
 }
 
 // Only Tab ownership changes; native selection/copy/scroll and Escape's
@@ -616,27 +628,10 @@ func limitText(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	suffix := "\n[OUTPUT TRUNCATED: bounded literal preview; remaining evidence is not displayed.]\n"
+	suffix := "\n[Some details are not shown.]\n"
 	n := limit - len(suffix)
 	for n > 0 && !utf8.RuneStart(value[n]) {
 		n--
 	}
 	return value[:n] + suffix
-}
-
-func rawPreview(raw []byte) string {
-	if len(raw) == 0 {
-		return "Not supplied (no resolved raw evidence)."
-	}
-	// Quote at most the output cap's worth of input before the final cap, so
-	// large accepted operands do not create multi-megabyte display intermediates.
-	n := min(len(raw), maxRawPreview/6)
-	for n < len(raw) && n > 0 && !utf8.RuneStart(raw[n]) {
-		n--
-	}
-	quoted := strconv.Quote(string(raw[:n]))
-	if n != len(raw) {
-		quoted += fmt.Sprintf("\n[OUTPUT TRUNCATED: literal prefix of %d/%d raw bytes; output preview limit %d bytes.]", n, len(raw), maxRawPreview)
-	}
-	return quoted
 }

@@ -616,12 +616,12 @@ func (m *inlayVisualModel) observeInlay(phase int) error {
 				s.index != -1 || s.readCancel != nil) {
 				return fmt.Errorf("Escape Back did not retire chosen-row reader/advance its sequence")
 			}
-			return featureVisualPaint(v, `"string"`, `"first:"`, `"count:"`, "Inspect", "Close")
+			return featureVisualPaint(v, "string", "first:", "count:", "Show details", "Close")
 		}); err != nil {
 			return err
 		}
 	case 2, 3:
-		label = "SELECTED_ROW_RAW_DETAIL"
+		label = "SELECTED_ROW_DETAILS"
 		if phase == 3 {
 			label = "EXPLICIT_RESOLVE_OR_UNSUPPORTED"
 		}
@@ -644,22 +644,24 @@ func (m *inlayVisualModel) observeInlay(phase int) error {
 				return fmt.Errorf("advertised explicit Resolve has no original resolved raw evidence: %+v", in)
 			}
 			detail := inlayVisualReader(s)
-			for _, want := range []string{
-				"Position (zero-based UTF-16):", "Tooltip present:", "Original raw JSON:",
-				"Read-only: unversioned standard hints.", "Source wire version:", "Source revision:",
-				"Provider instance:", "Context generation:", "Unknown-input limits:",
-				"Commands, text edits and label locations are inert metadata; never executed.",
-				"Resolve state (literal):",
-			} {
-				if !strings.Contains(detail, want) {
-					return fmt.Errorf("mounted native reader missing %q:\n%s", want, detail)
+			if !strings.Contains(detail, in.Hint.Label) {
+				return fmt.Errorf("selected hint is absent from the reader: %s", detail)
+			}
+			for _, bad := range []string{"Source byte:", "zero-based UTF-16", "Original raw JSON", "Resolved raw JSON", "Source wire version:", "Provider instance:", "Unknown-input"} {
+				if strings.Contains(detail, bad) {
+					return fmt.Errorf("reader exposed internal field %q: %s", bad, detail)
 				}
 			}
-			if !strings.Contains(detail, fmt.Sprintf("%q", string(in.OriginalJSON))) {
-				return fmt.Errorf("mounted raw preview is not literal original JSON: %s", detail)
-			}
+
 			m.selectedReader, m.readerSequence = s, s.sequence
-			return featureVisualPaint(v, "Inlay hint #0", "Resolve tooltips", "Back", "Close")
+			if m.firstSet.ResolveSupported {
+				return featureVisualPaint(v, in.Hint.Label, "Load details", "Back", "Close")
+			}
+			paint := ansi.Strip(v.View().RenderContent())
+			if strings.Contains(paint, "Load details") {
+				return fmt.Errorf("unsupported tooltip read was offered")
+			}
+			return featureVisualPaint(v, in.Hint.Label, "Back", "Close")
 		}); err != nil {
 			return err
 		}

@@ -38,6 +38,8 @@ shared control, never to one popup.
   composes a read-only TextArea with the shared ScrollbarControl bound to that
   same model. It reserves a scrollbar column only when the wrapped content
   exceeds the assigned height; keys, wheel and thumb dragging cannot diverge.
+  Wrap counts retain the two most recent widths and the content and terminal-width
+  profile generations. Repeated layout does not rewrap unchanged long text.
 - TextArea may color individual graphemes by their starting flat rune offset.
   Semantic roles follow theme changes and native selection contrast. Content
   edits retire the colors; they never change wrapping, copy text or input routing.
