@@ -88,7 +88,11 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
   today, for example `.inc` and `.v`), the first by catalog ID wins. Content
   rules that separate them are later work. The measured cost is under 1
   microsecond for each path.
-- `Server.WithHints` fills resource defaults. Explicit values always win.
+- `Server.WithHints` fills defaults. Explicit values always win. The authored
+  gopls entry enables its experimental `semanticTokens` setting, which defaults
+  off upstream, and supplies the same effective value at initialization and in
+  `workspace/configuration`. An explicit startup or workspace choice takes
+  precedence. No server-specific Go branch selects this behavior.
 - `Package.AssetFor` selects the release asset for the first matching
   platform name from `CurrentTargets`.
 - `Package.DownloadFor(command, targets)` is the install contract: the HTTPS

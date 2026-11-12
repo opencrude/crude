@@ -26,6 +26,11 @@ type LSPService interface {
 	InlayHintsState() (enabled bool, generation uint64)
 	CompletionsState() (enabled bool, generation uint64)
 	AssistanceCapabilities(path string) types.LSPAssistanceCapabilities
+	// FileProducer is the current connected producer for this path, or zero.
+	// It is a small snapshot read and does not copy trigger lists.
+	FileProducer(path string) types.InsightProducer
+	// FileSynchronized reads the exact file/source/context admission snapshot.
+	FileSynchronized(source types.InsightSource, context uint64) bool
 	FileDiagnostics(filePath string) (types.InsightDiagnostics, bool)
 	// Watchers report disk events, never read contents or take ownership of editor
 	// overlays. Include manifests/configuration, not just known source extensions.
@@ -47,9 +52,9 @@ type LSPService interface {
 	// Assembly is the project's code-intelligence plan: languages found,
 	// the server for each, where it comes from and what it checks.
 	Assembly() types.AssemblyPlan
-	// ServerReady returns true when at least one LSP client has reached the
-	// connected state. Used by the right-click context menu to enable LSP-backed
-	// items.
+	// ServerReady reports the selected status, normally for the active file.
+	// Without an active document it can fall back to another server. Use
+	// FileProducer for an exact file.
 	ServerReady() bool
 	SetActiveFile(path string)
 	Settings() types.LSPSettings

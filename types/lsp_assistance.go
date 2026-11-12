@@ -2,16 +2,24 @@ package types
 
 import "slices"
 
-// LSPAssistanceCapabilities is the initialized server's static editing contract.
-// The manager supplies Producer for the exact server attached to each open file.
-// Reading this value never starts a server or sends a request.
+// LSPAssistanceCapabilities is the initialized server's editing contract and
+// the last synchronized source/context for the exact open file. Reading this
+// value never starts a server or sends a request.
 type LSPAssistanceCapabilities struct {
 	Producer            InsightProducer
+	SynchronizedSource  InsightSource
+	SynchronizedContext uint64
 	Completion          bool
 	CompletionTriggers  []string
 	SignatureHelp       bool
 	SignatureTriggers   []string
 	SignatureRetriggers []string
+}
+
+// MatchesSynchronizedSource is an admission hint, not provider evidence. The
+// request owner still validates its source, context and producer before publish.
+func (c LSPAssistanceCapabilities) MatchesSynchronizedSource(source InsightSource, context uint64) bool {
+	return c.Producer.InstanceID != "" && context != 0 && c.SynchronizedContext == context && c.SynchronizedSource == source
 }
 
 func CloneLSPAssistance(in LSPAssistanceCapabilities) LSPAssistanceCapabilities {

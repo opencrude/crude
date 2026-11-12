@@ -74,6 +74,8 @@ type DocumentService struct {
 	reviewed        map[string]*reviewedEdit
 	codeActions     map[string]*codeActionSet
 	inlayViews      map[inlayViewKey]*inlayView
+	semanticViews   map[inlayViewKey]*semanticView
+	semanticRunning int
 	completionViews map[completionViewKey]*completionView
 }
 
@@ -719,6 +721,7 @@ func (s *DocumentService) ReleaseDetached(owner document.Owner) {
 	defer s.mu.Unlock()
 	s.closeCodeActionsLocked(owner, "")
 	s.closeInlayViewsLocked(owner, "")
+	s.closeSemanticViewsLocked(owner, "")
 	s.closeCompletionViewsLocked(owner, "")
 	for id, review := range s.reviewed {
 		if review.owner == owner {
@@ -748,6 +751,10 @@ func (s *DocumentService) Close() {
 		view.cancel()
 	}
 	s.inlayViews = nil
+	for _, view := range s.semanticViews {
+		view.cancel()
+	}
+	s.semanticViews = nil
 	for _, view := range s.completionViews {
 		view.cancel()
 	}
@@ -792,6 +799,7 @@ func (s *DocumentService) CloseView(owner document.Owner, id string) error {
 		}
 		s.closeCodeActionsLocked(owner, id)
 		s.closeInlayViewsLocked(owner, id)
+		s.closeSemanticViewsLocked(owner, id)
 		s.closeCompletionViewsLocked(owner, id)
 		delete(d.owners, owner)
 		s.closeLanguageView(d)
@@ -801,6 +809,7 @@ func (s *DocumentService) CloseView(owner document.Owner, id string) error {
 	}
 	s.closeCodeActionsLocked(owner, id)
 	s.closeInlayViewsLocked(owner, id)
+	s.closeSemanticViewsLocked(owner, id)
 	s.closeCompletionViewsLocked(owner, id)
 	delete(d.owners, owner)
 	s.closeLanguageView(d)

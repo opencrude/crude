@@ -219,3 +219,14 @@ func (l *lspReplica) RequestSignatureHelp(ctx context.Context, path string, line
 func (l *lspReplica) AssistanceCapabilities(path string) types.LSPAssistanceCapabilities {
 	return types.CloneLSPAssistance(l.snapshot.Assistance[filepath.Clean(path)])
 }
+
+// FileProducer observes the same per-path snapshot as AssistanceCapabilities,
+// without cloning its independent completion and signature trigger lists.
+func (l *lspReplica) FileProducer(path string) types.InsightProducer {
+	return l.snapshot.Assistance[filepath.Clean(path)].Producer
+}
+
+// FileSynchronized observes only the detached per-file synchronization snapshot.
+func (l *lspReplica) FileSynchronized(source types.InsightSource, context uint64) bool {
+	return l.snapshot.Assistance[filepath.Clean(source.Path)].MatchesSynchronizedSource(source, context)
+}

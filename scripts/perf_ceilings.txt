@@ -117,3 +117,14 @@ BenchmarkMinimapRebuild/20000 10800 194
 
 # 255 source-ordered snippet stops following 60,000 indentation bytes.
 BenchmarkCompletionLeadingStopsDense 33000 6
+
+# Semantic tokens: 20,000 tuples and separately timed dense source mutation,
+# first grid paint after typing, and steady grid paint (20,000 token spans).
+BenchmarkSemanticDecodeDense 965000 2
+BenchmarkSemanticParseDense 1360000 34
+BenchmarkSemanticEditingDense/semanticfalse/mutation 1810000 128
+BenchmarkSemanticEditingDense/semanticfalse/paint 830000 209
+BenchmarkSemanticEditingDense/semanticfalse/stable_paint 248000 357
+BenchmarkSemanticEditingDense/semantictrue/mutation 1930000 237
+BenchmarkSemanticEditingDense/semantictrue/paint 725000 218
+BenchmarkSemanticEditingDense/semantictrue/stable_paint 246000 314

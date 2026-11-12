@@ -15100,6 +15100,162 @@ func (z *SelectionFormattingRequest) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z SemanticReleaseRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.ViewID)
+	o = msgp.AppendUint64(o, z.Sequence)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *SemanticReleaseRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.ViewID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ViewID")
+		return
+	}
+	z.Sequence, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Sequence")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z SemanticReleaseRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ViewID) + msgp.Uint64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *SemanticReply) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o, err = z.Set.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Set")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *SemanticReply) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	bts, err = z.Set.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Set")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *SemanticReply) Msgsize() (s int) {
+	s = 1 + z.Set.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *SemanticRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o, err = z.Source.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Source")
+		return
+	}
+	o = msgp.AppendString(o, z.ViewID)
+	o = msgp.AppendUint64(o, z.Sequence)
+	o, err = z.Range.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Range")
+		return
+	}
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *SemanticRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	bts, err = z.Source.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Source")
+		return
+	}
+	z.ViewID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ViewID")
+		return
+	}
+	z.Sequence, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Sequence")
+		return
+	}
+	bts, err = z.Range.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Range")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *SemanticRequest) Msgsize() (s int) {
+	s = 1 + z.Source.Msgsize() + msgp.StringPrefixSize + len(z.ViewID) + msgp.Uint64Size + z.Range.Msgsize()
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z SessionCapabilityChange) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 2

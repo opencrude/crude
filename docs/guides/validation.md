@@ -854,3 +854,25 @@ Connected tests cover two shells, snippet mirror editing, Undo, an import, late
 acceptance after Escape, typing and peer edits. Parser/editor checks cover literal
 mode, nested and repeated fields, choices, per-file tabs and spaces, CRLF, wide
 characters, cursor inside indentation, original syntax mismatch and size bounds.
+
+
+## Native semantic-token presentation
+
+Set `CRUDE_SEMANTIC_GOPLS` to an installed gopls and run
+`TestSemanticVisualHeadless` for both sizes. The disposable connected fixture uses
+normal catalog settings, not a test-only semantic response or option. For Linux
+native capture, build the viewmodel test binary and run `scripts/tuishot.sh` with
+`CRUDE_VISUAL_SEMANTIC=1`, a new `CRUDE_SEMANTIC_RESULT`, and
+`CRUDE_CAPTURE_EVIDENCE` set to that same file. Run one capture at a time at
+160×40 and 80×24: F4, type `X`, F4, Ctrl+Z, F4, F9. Wait for
+`SEMANTIC_READY phase=N` after each F4. Require three `SEMANTIC_VERIFIED` records
+and `SEMANTIC_JOIN phase=3 passed=true headless=false ... remaining=[]`. The
+observer checks that the installed provider actually classified the parameter,
+that its themed cell is painted, canonical bytes and revision agree, Undo works,
+the private draft and disk stay unchanged, and the provider is joined. Examine
+screenshots separately; textual assertions do not constitute visual inspection.
+
+Connected and parser regressions cover exact-context arrival, two shell views,
+peer edits, stale/cancelled work, malformed delta fallback, range bounds,
+full/delta negotiation and release-before-request ordering. Deterministic fixtures
+establish protocol behavior, not the installed provider's offered capabilities.

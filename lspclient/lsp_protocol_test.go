@@ -94,6 +94,16 @@ func TestProtocolServerHelper(t *testing.T) {
 				capabilities["completionProvider"] = map[string]any{"triggerCharacters": []string{":", "@"}}
 				capabilities["signatureHelpProvider"] = map[string]any{"triggerCharacters": []string{"?"}, "retriggerCharacters": []string{";"}}
 			}
+			if strings.HasPrefix(mode, "semantic-") {
+				switch mode {
+				case "semantic-full":
+					capabilities["semanticTokensProvider"] = map[string]any{"legend": map[string]any{"tokenTypes": []string{"variable", "parameter"}, "tokenModifiers": []string{"declaration"}}, "full": map[string]any{"delta": true}, "range": true}
+				case "semantic-range":
+					capabilities["semanticTokensProvider"] = map[string]any{"legend": map[string]any{"tokenTypes": []string{"variable"}, "tokenModifiers": []string{}}, "range": true}
+				case "semantic-invalid":
+					capabilities["semanticTokensProvider"] = map[string]any{"legend": map[string]any{"tokenTypes": []string{"variable", "variable"}, "tokenModifiers": []string{}}, "full": true}
+				}
+			}
 			if strings.HasPrefix(mode, "rename-") {
 				capabilities["renameProvider"] = true
 			}
@@ -141,6 +151,12 @@ func TestProtocolServerHelper(t *testing.T) {
 					time.Sleep(time.Hour)
 				}
 			}
+		case "textDocument/semanticTokens/full":
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": json.RawMessage(`{"resultId":"exact","data":[0,0,1,0,0]}`)})
+		case "textDocument/semanticTokens/full/delta":
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": json.RawMessage(`{"resultId":"next","edits":[{"start":0,"deleteCount":1,"data":[0]}]}`)})
+		case "textDocument/semanticTokens/range":
+			write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "result": json.RawMessage(`{"data":[0,0,1,0,0]}`)})
 		case "textDocument/signatureHelp":
 			if mode == "signature-stale" {
 				root, _ := os.Getwd()

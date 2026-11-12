@@ -400,6 +400,8 @@ type App struct {
 	completionSequence    uint64
 	inlayViews            map[*editor.Editor]*inlayViewState
 	inlayViewSequence     uint64
+	semanticViews         map[*editor.Editor]*semanticViewState
+	semanticViewSequence  uint64
 	inlayInspector        *inlayInspectorState
 	editorSnippet         *editorSnippetState
 	editorGhost           *editorGhostView

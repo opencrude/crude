@@ -166,6 +166,7 @@ type Editor struct {
 	syntaxPlain                      bool
 	canonicalInsight                 *types.DocumentInsight
 	canonicalInk                     *types.DocumentInsight
+	semantic                         *types.LSPSemanticSet
 
 	lineRunesCacheValid bool
 	lineRunesCacheLine  int

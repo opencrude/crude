@@ -174,9 +174,9 @@ func (m *LSPManager) applyAggregateStateLocked(state lspClientState) {
 	}
 }
 
-// ServerReady returns true when at least one LSP client has reached
-// the connected state. Used by the right-click context menu to
-// enable LSP-backed items.
+// ServerReady reports the selected status, usually for the active file. Without
+// an active document it can fall back to another connected server. FileProducer
+// observes the connected producer for a particular path.
 func (m *LSPManager) ServerReady() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

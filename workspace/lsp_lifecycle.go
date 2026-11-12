@@ -872,7 +872,9 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 	pending := doc.pendingPublication
 	doc.pendingPublication = nil
 	doc.syncPending = false
-	m.broadcastLocked()
+	// The per-file synchronization snapshot is now observable by shells.
+	// A wake without a new version would not publish this readiness change.
+	m.bumpVersionLocked()
 	m.mu.Unlock()
 	if sendErr == nil && pending != nil {
 		m.receiveDiagnostics(key, state, *pending)

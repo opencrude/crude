@@ -169,6 +169,7 @@ type DocumentState struct {
 }
 
 func (e *Editor) detachDocument() {
+	e.ClearSemanticTokens()
 	e.clearSecondary()
 	e.DismissGhostText()
 	e.CancelSnippet()

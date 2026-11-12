@@ -111,7 +111,7 @@ Update a row only with evidence.
 | Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
 | Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostic facts, including unopened files. Focused freshness/gap tests and native installed-server captures verify clearing and explicit incomplete coverage. Declared scope is not a complete-project or per-feature proof; richer fact kinds remain open. |
 | Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
-| Editor features | Shared, revision-checked editor and agent answers | Banked slices: navigation, completion documentation and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostic reader, prediction prerequisites and [LSP assistance continuation](#lsp-assistance-continuation-2026-11-11). Broader editor parity and native Windows crash resolution remain open. |
+| Editor features | Shared, revision-checked editor and agent answers | Banked slices include navigation, completion and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostics and [semantic colors](#semantic-token-presentation-2026-11-11). Completion/inlay request lifetime defects, broader editor parity and native Windows crash resolution remain open. |
 
 Known exception: the compilation-database and CMake importers in
 `insight/project/` read build-file formats. The generic recipe layer must call
@@ -176,18 +176,25 @@ race/build/docs/cross-build and extended allocation gate pass. Native 160×40 an
 journey passes but does not prove that gopls returned this mode. See
 [completion indentation evidence](../issues/2026-11-11-editor-polish.md#multiline-completion-indentation-2026-11-11).
 
-**Next checkpoint: semantic token presentation.** Negotiate advertised full,
-range and delta forms through the existing LSP/workspace owners. Validate legends,
-UTF-16 spans, ordering, delta edits and provider/source/context generations; a
-rejected delta requests full evidence without displaying stale tokens. Combine
-current semantic tokens with lexical fallback in the one editor paint projection,
-and reproject on theme changes without a new server request. Verify supported,
-unsupported, empty, malformed, delayed, peer-edited and cancelled cases, one
-installed provider, source/Undo stability, and native 160×40/80×24 views. Gate
-dense mutation and paint separately without relaxing existing limits. No local
-model, new Settings page, language-specific product branch or duplicate source
-owner is in scope. Linked editing, CodeLens, commit characters and the other
-rows of the editor handoff remain open.
+Semantic token presentation now uses the existing provider, source and theme
+owners. Full/range/delta validation, lexical fallback, cancellation, per-file
+producer and synchronization fences pass the documented Linux tests and native
+installed-server journeys. See the [banked evidence](#semantic-token-presentation-2026-11-11).
+
+**Next checkpoint: completion and inlay request lifetimes.** Fix the reproduced
+release-before-request race, preserve newer view sequences, and bound actual
+provider work even when cancellation is ignored. A known non-admission must recover
+without replaying an uncertain request. Inlay views follow their own file's
+producer rather than another shell's selected server. Use the existing document,
+request and presentation owners; do not add another source or retry authority.
+
+Exit: real core and two-shell entry points cover release ordering, replacement,
+capacity, retry, peer focus/edit, provider loss and late results, with unchanged
+source, private drafts and author Undo. Verify supported/unsupported and installed
+provider behavior at 160×40 and 80×24, affected race/build/docs/cross-build and the
+unchanged allocation and full-suite gates. No local model, new Settings page or
+language-specific product branch is in scope. Commit characters, linked editing,
+CodeLens and the other editor rows remain open.
 
 Continue structural editing and the remaining geometry/preferences, folding and
 semantic workflows with their existing owners. No local model, language-named
@@ -1568,6 +1575,24 @@ four items have passed and the current references describe the result.
 
 History of finished slices, kept as evidence. [Stage status](#stage-status) is
 the authoritative summary; this text does not describe remaining work.
+
+### Semantic token presentation (2026-11-11)
+
+Full, range and delta evidence is negotiated through the existing language server,
+validated against exact source, legend and UTF-16 boundaries, and painted over the
+lexical fallback using the current theme. Invalid deltas request one full result;
+release ordering, actual running work, producer replacement and synchronization
+publication fence stale or premature reads. The catalog enables the installed
+server's documented semantic-token setting without a language-specific Go branch.
+
+The complete ordinary suite, affected race paths, LSP gate, build/lint/docs,
+Windows/macOS component cross-builds and extended allocation gate pass. Sequential
+Linux 160×40 and 80×24 installed-gopls captures verify typing, Undo, source/draft
+stability and provider cleanup; the images were inspected. The
+[checkpoint evidence](../issues/2026-11-11-editor-polish.md#semantic-token-presentation-2026-11-11)
+records failed reproductions, limits and measurements. Modifier-specific styling,
+server-initiated refresh, native Windows acceptance and the Windows GC crash remain
+open; this slice is not editor parity.
 
 ### LSP assistance continuation (2026-11-11)
 
