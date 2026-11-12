@@ -18,11 +18,14 @@ type foldState struct {
 	buffer               *PieceTable
 	revision, generation uint64
 	hiddenGeneration     uint64
-	native               *syntax.Result
-	lexical              *syntaxDocument
-	ranges               []FoldRange
-	collapsed            []FoldRange
-	hidden               []FoldRange // non-overlapping outer intervals, binary-searchable
+	// The ranges were computed for this revision, tab width and language.
+	computed  bool
+	tabSize   int
+	facts     *languageFacts
+	lines     foldLines // per-view line facts and scan scratch
+	ranges    []FoldRange
+	collapsed []FoldRange
+	hidden    []FoldRange // non-overlapping outer intervals, binary-searchable
 }
 
 func (e *Editor) remapFolds() {
@@ -57,7 +60,7 @@ func (e *Editor) remapFolds() {
 	}
 	unchangedEmpty := len(f.ranges) == 0 && len(f.collapsed) == 0 && len(f.hidden) == 0
 	f.buffer, f.revision = e.buf, e.Revision()
-	f.native, f.lexical = nil, nil
+	f.computed = false
 	if !unchangedEmpty {
 		f.changed()
 	}
@@ -102,104 +105,30 @@ func normalizeFolds(ranges []FoldRange) []FoldRange {
 	}
 	return out
 }
+
+// refreshFolds recomputes the fold ranges once per revision, tab width or
+// document language (see indent_folds.go). Only lines an edit touched are
+// read again. A collapsed choice survives only while the same range is still
+// offered.
 func (e *Editor) refreshFolds() {
 	e.remapFolds()
 	f := &e.folds
-	native, lexical := e.structuralSource()
-	if native == nil && lexical == nil || native == f.native && lexical == f.lexical {
+	tabSize, facts := max(1, e.TabWidth()), e.languageFacts()
+	if f.computed && f.tabSize == tabSize && f.facts == facts {
 		return
 	}
-	f.native, f.lexical = native, lexical
-	var ranges []syntax.Range
-	var brackets []syntax.Bracket
-	if native != nil {
-		ranges, brackets = native.Selections, native.Brackets
-	} else {
-		ranges, brackets = lexical.selections, lexical.brackets
-	}
-	e.buf.ensureCache()
-	offsets := e.buf.lineOffsets
-	size := len(e.buf.cachedBytes)
-	lineAt := func(off int) int {
-		return max(0, sort.Search(len(offsets), func(i int) bool { return offsets[i] > off })-1)
-	}
-	var next []FoldRange
-	offer := func(start, end int) {
-		if start < 0 || end <= start || end > size {
-			return
-		}
-		a, b := lineAt(start), lineAt(end-1)
-		if b > a {
-			next = append(next, FoldRange{a, b})
-		}
-	}
-	for _, r := range ranges {
-		if r.Start == 0 && int(r.End) >= size {
-			continue
-		}
-		offer(int(r.Start), int(r.End))
-	}
-	bracketed := make(map[FoldRange]bool, len(brackets))
-	for _, r := range brackets {
-		if r.Offset < r.Mate {
-			before := len(next)
-			offer(int(r.Offset), int(r.Mate)+1)
-			if len(next) > before {
-				bracketed[next[len(next)-1]] = true
-			}
-		}
-	}
-	// Multi-line literal/comment spans come from the same lexical owner. A
-	// quoted bracket never creates a separate guessed fold.
-	if native != nil {
-		for _, s := range native.Spans {
-			if s.Kind == syntax.Comment || s.Kind == syntax.String {
-				offer(int(s.Start), int(s.End))
-			}
-		}
-	} else {
-		start := 0
-		for _, s := range lexical.spans {
-			if structuralExcluded(s.kind) {
-				offer(start, s.end)
-			}
-			start = s.end
-		}
-	}
-	next = withoutInteriorFolds(normalizeFolds(next), bracketed)
+	f.computed, f.tabSize, f.facts = true, tabSize, facts
+	c := &f.lines
+	c.sync(e, tabSize, facts)
+	next := c.scan.compute(len(c.lines), func(l int) (int, int) { return c.line(e, l) }, facts.offSide, maxIndentFolds)
 	if slices.Equal(next, f.ranges) {
 		return
 	}
-	f.ranges = next
-	f.collapsed = slices.DeleteFunc(f.collapsed, func(r FoldRange) bool { return !containsFold(next, r) })
+	f.ranges = normalizeFolds(slices.Clone(next))
+	f.collapsed = slices.DeleteFunc(f.collapsed, func(r FoldRange) bool { return !containsFold(f.ranges, r) })
 	f.changed()
 }
 
-// withoutInteriorFolds drops a range that only fills its parent's body: it
-// starts on the line after the parent's header and ends on or just before the
-// parent's last line. Such a node (a statement list or block body) would put a
-// second chevron on the first body line of every block while folding almost
-// exactly what the parent's chevron folds. A range with its own bracket pair
-// on those lines is a real nested block and stays. ranges is normalized.
-func withoutInteriorFolds(ranges []FoldRange, bracketed map[FoldRange]bool) []FoldRange {
-	out := ranges[:0]
-	var parents []FoldRange
-	for _, r := range ranges {
-		for len(parents) > 0 && r.Start > parents[len(parents)-1].End {
-			parents = parents[:len(parents)-1]
-		}
-		interior := false
-		if len(parents) > 0 && !bracketed[r] {
-			p := parents[len(parents)-1]
-			interior = r.Start == p.Start+1 && r.End >= p.End-1
-		}
-		parents = append(parents, r)
-		if !interior {
-			out = append(out, r)
-		}
-	}
-	return out
-}
 func (e *Editor) foldAt(line int) (FoldRange, bool) {
 	r := e.folds.ranges
 	i := sort.Search(len(r), func(i int) bool { return r[i].Start >= line })

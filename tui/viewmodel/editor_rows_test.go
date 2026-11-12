@@ -65,7 +65,7 @@ func TestEditorRowsConnectedPrivateFoldsResumePeerEditAndUndo(t *testing.T) {
 	renameConnectedKey(t, left, tea.KeyPressMsg{Code: '-', Mod: tea.ModAlt})
 	left.app.View()
 	right.app.View()
-	if ed.ScrollModel().Content() != 3 || other.ExportFolds() != nil || ed.Value() != other.Value() {
+	if ed.ScrollModel().Content() != 4 || other.ExportFolds() != nil || ed.Value() != other.Value() {
 		t.Fatal("folding did not stay private")
 	}
 	right.app.Input.SetInput("private draft")
@@ -93,7 +93,7 @@ func TestEditorRowsConnectedPrivateFoldsResumePeerEditAndUndo(t *testing.T) {
 		}
 		back.app.View()
 		runAppCommand(t, back.app, back.app.drainEditorSyntaxCommands())
-		return back.app.EditorState.Tabs[path].Editor.ScrollModel().Content() == 3
+		return back.app.EditorState.Tabs[path].Editor.ScrollModel().Content() == 4
 	})
 	resumed := back.app.EditorState.Tabs[path].Editor
 	t.Cleanup(func() {

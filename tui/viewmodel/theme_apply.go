@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"crude/shellport"
+	"crude/tui/screens/panelchrome"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -86,6 +87,7 @@ func applyThemePreferences(th *theme.Theme, settings ttypes.AppSettings) {
 		enabled := true
 		th.Tree.Config.UseNerdFont = &enabled
 	}
+	th.Glyphs = theme.WithFontGlyphs(th.Glyphs, panelchrome.NerdFont(th))
 }
 
 // clampFramePad bounds a frame padding to a sane range: paddings are blank

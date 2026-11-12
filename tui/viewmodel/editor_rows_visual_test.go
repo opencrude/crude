@@ -240,11 +240,11 @@ func (m *rowsVisualModel) observeRows(phase int) error {
 		rows := ed.ScrollModel().Content()
 		switch phase {
 		case 1:
-			if rows != 3 || !strings.Contains(frame, "4 lines") || strings.Contains(frame, "call(") {
+			if rows != 4 || !strings.Contains(frame, "3 lines") || strings.Contains(frame, "call(") {
 				return fmt.Errorf("outer fold not painted: rows=%d", rows)
 			}
 		case 3:
-			if rows != 5 || !strings.Contains(frame, "2 lines") || strings.Contains(frame, "call(") {
+			if rows != 6 || !strings.Contains(frame, "1 line") || strings.Contains(frame, "call(") {
 				return fmt.Errorf("pointer fold missed hidden source: rows=%d %s", rows, m.lastPointer)
 			}
 		default:

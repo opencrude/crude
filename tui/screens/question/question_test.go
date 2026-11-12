@@ -534,3 +534,37 @@ func TestScreenDeckHeightIsStableAcrossQuestions(t *testing.T) {
 		t.Fatal("a new request kept the height of the previous one")
 	}
 }
+
+// The empty space under the write-in belongs to it: a click anywhere below
+// the last choice, down to the action bar, focuses the write-in and puts the
+// caret after the typed text, in the deck and in the taller modal prompt.
+func TestScreenClickBelowWriteInFocusesIt(t *testing.T) {
+	for _, h := range []int{12, 24} {
+		screen := New(theme.DefaultDark())
+		screen.Reset(`[{"question":"Choose or type","options":["known"]},{"question":"Next"}]`)
+		host := newTestHost(t, screen)
+		host.Resize(80, h)
+		host.Layout()
+		host.Focus(OptionsID)
+		for _, r := range "draft" {
+			host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		host.Focus(OptionsID)
+		buf := surface.NewCellBuffer(80, h)
+		host.Paint(buf)
+		x, writeY, ok := bufferFind(buf, "● draft")
+		_, actionsY, actionsOK := bufferFind(buf, "[ Next ]")
+		if !ok || !actionsOK || actionsY-writeY < 3 {
+			t.Fatalf("height %d: no empty space under the write-in:\n%s", h, bufferText(buf))
+		}
+		host.Handle(tea.MouseClickMsg{X: x + 20, Y: actionsY - 2, Button: tea.MouseLeft})
+		host.Handle(tea.MouseReleaseMsg{X: x + 20, Y: actionsY - 2, Button: tea.MouseLeft})
+		if host.Focused() != InputID {
+			t.Fatalf("height %d: click under the write-in focus=%v, want %v", h, host.Focused(), InputID)
+		}
+		host.Handle(tea.KeyPressMsg{Code: '!', Text: "!"})
+		if got := screen.input.Value(); got != "draft!" {
+			t.Fatalf("height %d: typing after the click gave %q, want caret at the end", h, got)
+		}
+	}
+}

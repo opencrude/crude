@@ -39,12 +39,13 @@ type Language struct {
 	WorkspaceRoots []string
 	Servers        []string
 	// Editor data; see LanguageRecord.
-	CommentTokens []string
-	BlockComment  *BlockComment
-	Grammar       string
-	Formatter     *Formatter
-	OffSide       bool
-	Provenance    []Provenance
+	CommentTokens  []string
+	BlockComment   *BlockComment
+	Grammar        string
+	Formatter      *Formatter
+	OffSide        bool
+	FoldingMarkers *FoldingMarkers
+	Provenance     []Provenance
 }
 
 // Formatter formats a document through standard input and output.
@@ -418,6 +419,10 @@ func (c *Catalog) language(record LanguageRecord) Language {
 		block := *record.BlockComment
 		out.BlockComment = &block
 	}
+	if record.FoldingMarkers != nil {
+		markers := *record.FoldingMarkers
+		out.FoldingMarkers = &markers
+	}
 	if record.Formatter != nil {
 		out.Formatter = &Formatter{Command: record.Formatter.Command, Args: slices.Clone(record.Formatter.Args)}
 	}
@@ -443,6 +448,10 @@ func cloneLanguageRecord(v LanguageRecord) LanguageRecord {
 	if v.BlockComment != nil {
 		block := *v.BlockComment
 		v.BlockComment = &block
+	}
+	if v.FoldingMarkers != nil {
+		markers := *v.FoldingMarkers
+		v.FoldingMarkers = &markers
 	}
 	if v.Formatter != nil {
 		f := *v.Formatter

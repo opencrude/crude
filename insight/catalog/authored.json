@@ -2,7 +2,7 @@
   "note": "Crude-authored overlay for the code-intelligence catalog. It holds facts that no upstream source provides, and choices that keep earlier Crude behavior. internal/catalogimport applies it after the upstream data. Every entry needs a note that says why it exists.",
   "languages": {
     "go": {
-      "note": "Earlier Crude root rules: a go.work file takes precedence over a nearer go.mod. Formatter: gofmt reads stdin and writes stdout, the same output as the go/format package Crude used before.",
+      "note": "Earlier Crude root rules: a go.work file takes precedence over a nearer go.mod. Formatter: gofmt reads stdin and writes stdout, the same output as the go/format package Crude used before. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/go/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "roots": [
         "go.work",
         "go.mod"
@@ -15,10 +15,14 @@
       ],
       "formatter": {
         "command": "gofmt"
+      },
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
       }
     },
     "rust": {
-      "note": "Earlier Crude root rules. Linguist also assigns .rs to RenderScript; this entry is Rust only. Formatter: rustfmt, as Crude used before.",
+      "note": "Earlier Crude root rules. Linguist also assigns .rs to RenderScript; this entry is Rust only. Formatter: rustfmt, as Crude used before. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/rust/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "linguist": [
         "Rust"
       ],
@@ -34,10 +38,14 @@
           "--emit",
           "stdout"
         ]
+      },
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
       }
     },
     "python": {
-      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates. Formatter: black, as Crude used before; --stdin-filename lets it find the project configuration. Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
+      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates. Formatter: black, as Crude used before; --stdin-filename lets it find the project configuration. Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "roots": [
         "pyproject.toml",
         "pyrightconfig.json",
@@ -56,10 +64,14 @@
           "-"
         ]
       },
-      "off_side": true
+      "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*#\\s*region\\b",
+        "end": "^\\s*#\\s*endregion\\b"
+      }
     },
     "javascript": {
-      "note": "Earlier Crude root rules are shared by all script language identities.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -67,10 +79,14 @@
       ],
       "servers": [
         "typescript-language-server"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      }
     },
     "jsx": {
-      "note": "Earlier Crude root rules are shared by all script language identities.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -78,10 +94,14 @@
       ],
       "servers": [
         "typescript-language-server"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      }
     },
     "typescript": {
-      "note": "Earlier Crude root rules are shared by all script language identities.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -89,10 +109,14 @@
       ],
       "servers": [
         "typescript-language-server"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      }
     },
     "tsx": {
-      "note": "Earlier Crude root rules are shared by all script language identities.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -100,16 +124,24 @@
       ],
       "servers": [
         "typescript-language-server"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      }
     },
     "html": {
-      "note": "Earlier Crude default server first.",
+      "note": "Earlier Crude default server first. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/html/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "servers_prepend": [
         "vscode-html-language-server"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*<!--\\s*#region\\b.*-->",
+        "end": "^\\s*<!--\\s*#endregion\\b.*-->"
+      }
     },
     "c": {
-      "note": "Earlier Crude sent .h files as C. Upstream lists .h under C++.",
+      "note": "Earlier Crude sent .h files as C. Upstream lists .h under C++. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "extensions_add": [
         ".h"
       ],
@@ -120,10 +152,14 @@
       ],
       "servers": [
         "clangd"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*#\\s*pragma\\s+region\\b",
+        "end": "^\\s*#\\s*pragma\\s+endregion\\b"
+      }
     },
     "cpp": {
-      "note": "See the c entry for .h ownership.",
+      "note": "See the c entry for .h ownership. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "extensions_remove": [
         ".h"
       ],
@@ -134,10 +170,14 @@
       ],
       "servers": [
         "clangd"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*#\\s*pragma\\s+region\\b",
+        "end": "^\\s*#\\s*pragma\\s+endregion\\b"
+      }
     },
     "c-sharp": {
-      "note": "The LSP language identifier for C# is csharp. Earlier Crude default server and solution-first root rules.",
+      "note": "The LSP language identifier for C# is csharp. Earlier Crude default server and solution-first root rules. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/csharp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
       "lsp_language_id": "csharp",
       "roots": [
         "*.sln",
@@ -150,7 +190,11 @@
       ],
       "servers_prepend": [
         "csharp-ls"
-      ]
+      ],
+      "folding_markers": {
+        "start": "^\\s*#region\\b",
+        "end": "^\\s*#endregion\\b"
+      }
     },
     "zig": {
       "note": "Earlier Crude root rules.",
@@ -184,24 +228,40 @@
       "off_side": true
     },
     "fsharp": {
-      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/fsharp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
-      "off_side": true
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/fsharp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/fsharp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*//\\s*#region\\b|^\\s*\\(\\*\\s*#region(.*)\\*\\)",
+        "end": "^\\s*//\\s*#endregion\\b|^\\s*\\(\\*\\s*#endregion\\s*\\*\\)"
+      }
     },
     "markdown": {
-      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/markdown-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
-      "off_side": true
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/markdown-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/markdown-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*<!--\\s*#?region\\b.*-->",
+        "end": "^\\s*<!--\\s*#?endregion\\b.*-->"
+      }
     },
     "pug": {
       "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/pug/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
       "off_side": true
     },
     "sql": {
-      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/sql/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
-      "off_side": true
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/sql/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/sql/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*--\\s*#region\\b",
+        "end": "^\\s*--\\s*#endregion\\b"
+      }
     },
     "yaml": {
-      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
-      "off_side": true
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*#\\s*region\\b",
+        "end": "^\\s*#\\s*endregion\\b"
+      }
     }
   },
   "servers": {

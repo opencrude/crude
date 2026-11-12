@@ -56,8 +56,18 @@ type LanguageRecord struct {
 	// OffSide marks a language whose blocks end by dedent, not by a closing
 	// token (VS Code language configuration folding.offSide). Indent guides
 	// then give a blank line before a dedent the depth of the line below.
-	OffSide bool     `json:"off_side,omitempty"`
-	Sources []string `json:"sources,omitempty"`
+	OffSide bool `json:"off_side,omitempty"`
+	// FoldingMarkers start and end a region that folds whatever its
+	// indentation (VS Code language configuration folding.markers). Both are
+	// RE2 patterns matched against one line without its terminator.
+	FoldingMarkers *FoldingMarkers `json:"folding_markers,omitempty"`
+	Sources        []string        `json:"sources,omitempty"`
+}
+
+// FoldingMarkers is a pair of region marker patterns.
+type FoldingMarkers struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
 // BlockComment is a pair of block comment delimiters.
@@ -237,6 +247,13 @@ func validateLanguage(language LanguageRecord) error {
 	if b := language.BlockComment; b != nil && (b.Start == "" || b.End == "" || len(b.Start) > 16 || len(b.End) > 16 ||
 		strings.ContainsAny(b.Start+b.End, "\r\n\x00")) {
 		return fmt.Errorf("%w: language %s block comment", errInvalidInput, language.ID)
+	}
+	if m := language.FoldingMarkers; m != nil {
+		for _, pattern := range []string{m.Start, m.End} {
+			if _, err := regexp.Compile(pattern); pattern == "" || len(pattern) > 256 || strings.ContainsAny(pattern, "\r\n\x00") || err != nil {
+				return fmt.Errorf("%w: language %s folding marker %q", errInvalidInput, language.ID, pattern)
+			}
+		}
 	}
 	if language.Grammar != "" && !idPattern.MatchString(language.Grammar) {
 		return fmt.Errorf("%w: language %s grammar %q", errInvalidInput, language.ID, language.Grammar)

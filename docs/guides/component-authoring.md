@@ -389,7 +389,9 @@ Never paint `❯` (or `Glyphs.Prompt`) as a selection marker, list cursor,
 tab marker, chat prefix, or input prompt. Selectable rows react with
 hover background and selected/focused background only. Chat input has
 no leading glyph and no leading space. File-tree expand/collapse still
-uses `TreeCollapsed` / `TreeExpanded`. Path breadcrumbs still use
+uses `TreeCollapsed` / `TreeExpanded`; editor fold headers use the
+`FoldCollapsed` / `FoldExpanded` chevrons, which follow the Nerd Font
+preference (`theme.WithFontGlyphs`). Path breadcrumbs still use
 `BreadcrumbSep` (`▸`). Settings and dock titles use `ui.TitleBreadcrumb`
 (` · `).
 

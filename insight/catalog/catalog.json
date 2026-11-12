@@ -531,6 +531,10 @@
         "end": "*/"
       },
       "grammar": "c",
+      "folding_markers": {
+        "start": "^\\s*#\\s*pragma\\s+region\\b",
+        "end": "^\\s*#\\s*pragma\\s+endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -572,6 +576,10 @@
         "end": "*/"
       },
       "grammar": "c-sharp",
+      "folding_markers": {
+        "start": "^\\s*#region\\b",
+        "end": "^\\s*#endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -1024,6 +1032,10 @@
       "grammar": "cpp",
       "formatter": {
         "command": "clang-format"
+      },
+      "folding_markers": {
+        "start": "^\\s*#\\s*pragma\\s+region\\b",
+        "end": "^\\s*#\\s*pragma\\s+endregion\\b"
       },
       "sources": [
         "crude-authored",
@@ -2202,6 +2214,10 @@
       },
       "grammar": "fsharp",
       "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*//\\s*#region\\b|^\\s*\\(\\*\\s*#region(.*)\\*\\)",
+        "end": "^\\s*//\\s*#endregion\\b|^\\s*\\(\\*\\s*#endregion\\s*\\*\\)"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -2651,6 +2667,10 @@
       "grammar": "go",
       "formatter": {
         "command": "gofmt"
+      },
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
       },
       "sources": [
         "crude-authored",
@@ -3177,6 +3197,10 @@
         "end": "-->"
       },
       "grammar": "html",
+      "folding_markers": {
+        "start": "^\\s*<!--\\s*#region\\b.*-->",
+        "end": "^\\s*<!--\\s*#endregion\\b.*-->"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -3466,6 +3490,10 @@
         "end": "*/"
       },
       "grammar": "javascript",
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -3763,6 +3791,10 @@
         "end": "*/"
       },
       "grammar": "javascript",
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -4388,6 +4420,10 @@
       },
       "grammar": "markdown",
       "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*<!--\\s*#?region\\b.*-->",
+        "end": "^\\s*<!--\\s*#?endregion\\b.*-->"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -5733,6 +5769,10 @@
         ]
       },
       "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*#\\s*region\\b",
+        "end": "^\\s*#\\s*endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -6237,6 +6277,10 @@
           "stdout"
         ]
       },
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix"
@@ -6683,6 +6727,10 @@
       },
       "grammar": "sql",
       "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*--\\s*#region\\b",
+        "end": "^\\s*--\\s*#endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -7375,6 +7423,10 @@
         "end": "*/"
       },
       "grammar": "tsx",
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -7435,6 +7487,10 @@
         "end": "*/"
       },
       "grammar": "typescript",
+      "folding_markers": {
+        "start": "^\\s*//\\s*#?region\\b",
+        "end": "^\\s*//\\s*#?endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -8154,6 +8210,10 @@
         ]
       },
       "off_side": true,
+      "folding_markers": {
+        "start": "^\\s*#\\s*region\\b",
+        "end": "^\\s*#\\s*endregion\\b"
+      },
       "sources": [
         "crude-authored",
         "helix",
