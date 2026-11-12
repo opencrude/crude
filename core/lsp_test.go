@@ -86,3 +86,16 @@ func TestLSPSnapshotSettingsDetached(t *testing.T) {
 		t.Fatal("snapshot shared settings")
 	}
 }
+
+func TestPassiveLSPReadsDoNotUseFileEffectLane(t *testing.T) {
+	for _, method := range []string{coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPNavigationMethod, coreprotocol.LSPCompletionsMethod, coreprotocol.LSPInlayHintsMethod, coreprotocol.LSPCodeActions, coreprotocol.LSPSelectionFormattingMethod} {
+		if !independentLSPRead(method) {
+			t.Fatal("read blocks file effects", method)
+		}
+	}
+	for _, method := range []string{coreprotocol.DocumentEdit, coreprotocol.LSPStop, coreprotocol.LSPRefresh, coreprotocol.LSPNotifyWatchedFilesChanged, coreprotocol.ReviewedEditApply, coreprotocol.LSPPrepareCodeAction, coreprotocol.LSPPrepareRename, "lsp.unknown"} {
+		if independentLSPRead(method) {
+			t.Fatal("effect escaped ordered owner", method)
+		}
+	}
+}

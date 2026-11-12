@@ -11,6 +11,12 @@ import (
 	"crude/tui/ui"
 )
 
+// FormatSelectionMsg retains the invoking view while the shell starts LSP work.
+type FormatSelectionMsg struct {
+	Editor *Editor
+	Token  string
+}
+
 // IndentationMenuMsg opens the native menu for this exact editor.
 type IndentationMenuMsg struct{ Editor *Editor }
 
@@ -22,6 +28,10 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 	action, ok := ui.FindEditorAction(msg.ID)
 	if !ok || e.readOnly && action.MutatesText {
 		return nil
+	}
+	if msg.ID == "edit.formatSelection" {
+		token := e.ActionToken()
+		return func() tea.Msg { return FormatSelectionMsg{e, token} }
 	}
 	if e.DeferDocumentEvent(msg) {
 		return nil

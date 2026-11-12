@@ -230,6 +230,7 @@ type App struct {
 	editorSyntaxJobs       map[<-chan struct{}]*editor.Editor
 	editorConfigRequests   map[*editor.Editor]*editorConfigRequest
 	editorConfigGeneration uint64
+	selectionFormatting    *selectionFormatState
 	// Rectangles computed by computeContentLayout each frame; they drive
 	// shell slot geometry AND viewmodel policy (mouse region classification
 	// for editor/divider/status and focus-stack updates).

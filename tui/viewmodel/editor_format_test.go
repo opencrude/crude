@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/tui/ui"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,5 +48,24 @@ func TestFormatDocumentKeyBindingFormatsAndMenuOffersIt(t *testing.T) {
 	}
 	if _, found := contextMenuItem(menu, "Format project"); !found {
 		t.Fatal("editor menu does not offer project formatting")
+	}
+}
+
+func TestFormatSelectionHasNativeActionAndDoesNotFallbackToWholeFile(t *testing.T) {
+	app := newFullTestApp(t)
+	ed := newSaveTestEditorAt(t, app, filepath.Join(t.TempDir(), "selection.go"), "package p\nfunc  f( ) {}\nfunc  g( ) {}\n")
+	ed.SetSelection(1, 0, 1, 14)
+	action, ok := ui.FindEditorAction("edit.formatSelection")
+	if !ok || action.Label != "Format selection" {
+		t.Fatal("Format selection is not a native editor action")
+	}
+	before := ed.Value()
+	pressKeys(t, app, tea.KeyPressMsg{Code: tea.KeyF8, Mod: tea.ModAlt})
+	if ed.Value() != before {
+		t.Fatal("selection formatting fell back to a whole-file formatter")
+	}
+	menu := app.buildEditorContextMenu(tea.Mouse{})
+	if _, ok := contextMenuItem(menu, "Format selection"); !ok {
+		t.Fatal("selection formatting is not discoverable in the editor menu")
 	}
 }

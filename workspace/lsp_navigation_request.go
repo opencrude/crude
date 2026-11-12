@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 
@@ -115,15 +116,20 @@ func (m *LSPManager) navigationFence(boundary types.InsightBoundary, wire int, k
 	if err != nil {
 		return nil, err
 	}
+	return m.semanticFence(boundary, wire, gate, "navigation")
+}
+
+// semanticFence is the shared exact-source, producer and policy lifetime guard.
+func (m *LSPManager) semanticFence(boundary types.InsightBoundary, wire int, gate func(types.LSPSettings) bool, operation string) (func() error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	doc := m.documents[filepath.Clean(boundary.Source.Path)]
 	if doc == nil || wire <= 0 || boundary.Source.DocumentID == "" {
-		return nil, errors.New("navigation source is not synchronized")
+		return nil, fmt.Errorf("%s source is not synchronized", operation)
 	}
 	state := m.states[doc.key]
 	if state == nil || state.client == nil {
-		return nil, errors.New("navigation provider is unavailable")
+		return nil, fmt.Errorf("%s provider is unavailable", operation)
 	}
 	client, generation := state.client, m.settingsGeneration
 	current := func() bool {
@@ -135,13 +141,13 @@ func (m *LSPManager) navigationFence(boundary types.InsightBoundary, wire int, k
 			!state.closing && !state.stopped && state.teardownErr == nil
 	}
 	if !current() {
-		return nil, errors.New("navigation source, provider or context is no longer synchronized")
+		return nil, fmt.Errorf("%s source, provider or context is no longer synchronized", operation)
 	}
 	return func() error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if !current() {
-			return errors.New("navigation source, provider or context changed; request navigation again")
+			return fmt.Errorf("%s source, provider or context changed; request it again", operation)
 		}
 		return nil
 	}, nil

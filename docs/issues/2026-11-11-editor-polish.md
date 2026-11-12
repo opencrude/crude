@@ -439,6 +439,43 @@ existing allocation gate passes unchanged; new dense-edit measurements and budge
 are recorded in the performance reference. The extended allocation gate also
 passes, including all twelve new multiple-caret workload/stage budgets.
 
+## Selection formatting (2026-11-11)
+
+Format selection now follows the selected language server's advertised standard
+range-format capability. Native Alt+F8, menu, searchable Editor actions and the
+exact-view semantic action share source/selection fencing. Complete ranges are
+validated before a simultaneous edit and one author Undo group. Whole-document
+catalog formatting is not a fallback; unsupported/empty/invalid responses do not
+write text or disk. Strict raw parsing, UTF-16 positions, outside-range refusal,
+multiple selections, private drafts, stale menus and changed selections have tests.
+
+Fault injection found that passive LSP reads occupied the file-effect lane. A
+blocked formatting response held a second shell's edit until the test deadline.
+The core now uses its existing bounded/joined jobs independently for passive reads;
+mutating/lifecycle/review operations stay ordered. The peer's real key now commits
+before the delayed reply is released, and that obsolete reply cannot change text.
+A second failure exposed a fast answer ahead of its context publication. Retaining
+the exact answer until its clock arrives fixes that ordering without a sleep.
+Applying that retained answer must precede document-command draining in Update;
+otherwise the author changed while the peer waited for another input.
+
+Installed clangd 18 passes range formatting and Undo. Linux native captures at
+160×40 and 80×24 verify six phases, including actual selection, Alt+F8, Undo,
+action-picker filtering and a second Undo. The other two unformatted lines stay
+unchanged, disk stays unchanged, private drafts remain and provider shutdown joins.
+The initial capture failed because Alacritty's default Shift+End binding sent no
+key; recorded input proved that boundary. The replacement selects through native
+Shift+Right. Both screenshot sets were inspected and no capture window remains.
+Build, lint, generated-wire checks and Windows/macOS component builds pass.
+The full ordinary inventory is accounted for by the initial passing groups and the
+remaining viewmodel/workspace groups after correcting an obsolete test that required
+Format selection to be absent. That regression now checks disabled-without-selection
+and useful no-server feedback, not absence of the implemented feature. Affected
+race paths and the unchanged allocation gate pass. The final dirty-buffer/menu race
+command first expired during build without a test result; its separate completion
+passes both regressions with the original 90-second test deadline.
+This is not native Windows acceptance or a resolution of the open GC finding.
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers

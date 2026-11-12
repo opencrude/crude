@@ -799,6 +799,7 @@ func (m *App) StopAsyncIO() {
 
 func (m *App) stopAsyncIO() {
 	m.cancelEditorConfiguration()
+	m.cancelSelectionFormatting()
 	m.closeProjectTools()
 	m.closeEditorGhost()
 	m.closeSignatureHelp()

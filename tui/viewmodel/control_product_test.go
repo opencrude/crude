@@ -64,6 +64,10 @@ func productRequest(t *testing.T, m *App, id, resource, session string, input an
 				m.shellControlPending--
 			}
 			run(next)
+		default:
+			if got != nil {
+				runAppCommand(t, m, func() tea.Msg { return got })
+			}
 		}
 	}
 	run(cmd)

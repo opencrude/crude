@@ -154,11 +154,19 @@ the full ordinary inventory, affected race, build/lint/docs/cross-build and exte
 allocation gates pass. Dense 256-caret mutation, grid paint and Undo take 3.80–3.84 ms
 combined, instead of the initial 134.63 ms. See the multiple-selection evidence.
 
-Next, finish selection-only formatting and the remaining semantic workflows through
-the existing formatter, document and LSP owners. Add real range-format negotiation,
-source/selection fencing, native and semantic entry points and one-step Undo. Do
-not format or save unrelated source as a fallback. Preserve history, diagnostics
-and linked-view identity. A stored preference with no consumer is not accepted.
+Selection-only formatting now uses the advertised range formatter, strict source
+ranges, native/menu/control entries and one author Undo. Installed clangd native
+journeys pass at both sizes; invalid/stale/empty/unsupported and delayed peer-edit
+checks pass. Passive LSP reads no longer occupy the file-effect lane. Ordinary
+inventory, affected race, build/lint/docs/cross-build and unchanged allocation gates
+pass. The checkpoint issue records the aborted final build and its passing test run.
+
+Next, finish editor orientation preferences: consume the existing Minimap setting
+and add indentation guides on the existing Editor page. Reuse source/row geometry,
+theme tokens, the one scroll model and captured scrollbar interaction. Check
+source/selection stability, linked views, narrow panes, wrapping/folding, settings
+inheritance and native pointer navigation. Keep work bounded by visible geometry;
+no full-file reflow in Paint. Then continue the remaining semantic workflows.
 Do not add another Settings page.
 
 Continue structural editing and the remaining geometry/preferences, folding and

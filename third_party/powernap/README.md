@@ -98,6 +98,17 @@ consumer validator rather than being erased by interface decode/re-marshaling.
 The fork rejects ambiguous top-level envelopes atomically. It does not bound
 initial frame allocation or make provider data trusted.
 
+## Range formatting
+
+`RequestRangeFormatting` requires initialized static range-format capability and
+sends standard `textDocument/rangeFormatting` with exact UTF-16 range/options.
+Initialization advertises no dynamic registration. Unsupported/malformed capability
+never sends a probe or substitutes whole-document formatting. The 1 MiB response
+bound and cancellation settlement match other passive raw replies. Strict text-edit
+validation, source/provider provenance and mutation authority stay with the caller.
+Transport tests cover boolean/options capabilities, disabled/missing providers,
+exact parameters, invalid widths and cancellation after a reply.
+
 ## Process and transport lifetime
 
 `Client.Kill() error` cancels the client and joins connection teardown.
