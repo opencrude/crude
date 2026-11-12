@@ -879,8 +879,12 @@ same canonical source, synchronization, provider, settings and context fences.
 Disable/re-enable has a separate feature epoch; it revokes old evidence without
 restarting the producer or restamping diagnostics. Source changes, equal-text
 Undo, close/reopen, detach, provider/context replacement, expiry, hide and workspace
-boundaries retire the appropriate evidence. The shell waits for the exact
-replicated context cursor before painting or reporting a negative result.
+boundaries retire the appropriate evidence. Each view follows its own file's
+connected producer and synchronized source, not the selected status of another
+pane or shell. The shell waits for the exact replicated context cursor before
+painting or reporting a negative result. A definite capacity refusal retries with
+bounded backoff while the same view, source and context stay current; an uncertain
+or failed request is not replayed.
 Standard inlay responses carry **no document version**; the wire value records
 the synchronized request source, not provider-reported semantic freshness.
 

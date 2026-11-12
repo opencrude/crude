@@ -30,7 +30,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 | `code_actions.go` | `CodeActions` | Exact canonical action-list discovery, retained-row preview and pending-list release; reuses `ReviewedEdits` for Apply and inspection |
 | `navigation.go` | `Navigation` | Read-only qualified definition/type/implementation/reference answers and explicit selected-target observation |
 | `formatting.go` | optional `SelectionFormatter` | Exact canonical range-format plans from the selected language server; the original editor owns fenced native application and Undo, never Save. |
-| `completion.go` | `Completions` | Canonical source/view-bound original completions, selected documentation-only resolve, acceptance preflight and exact-sequence release |
+| `completion.go` | `Completions` | Canonical source/view-bound original completions, selected documentation-only resolve, acceptance preflight and ordered release |
 | `semantic.go` | optional `SemanticTokens` | Source-qualified semantic color reads and private view release; delta bases stay in core |
 | `history_safety.go` | `HistorySafety` | Native review-safety administration with bounded traversal, original evidence, exact human consent and original core receipt observation |
 | `git.go` | `SourceControl`, `GitService` | Git reads and mutations |
@@ -341,7 +341,7 @@ No shell-local provider, raw object or label-keyed resolve path remains.
 |---|---|---|
 | `RequestLSPCompletions` | Acknowledged source, private view/sequence, UTF-16 cursor and LSP trigger context | `lsp.completions` |
 | `InspectLSPCompletion` | Exact original set ID/digest/item ID; documentation-only resolve or initial-edit validation | `lsp.completion_inspect` |
-| `ReleaseLSPCompletions` | Retire only the owner's exact private sequence | `lsp.completion_release` |
+| `ReleaseLSPCompletions` | Fence the owner's private view through this sequence | `lsp.completion_release` |
 
 All use the joined cancellable exchange off Update. `LSPService.CompletionsState`
 reads the detached gate/feature generation, not a second settings owner. Only
@@ -374,7 +374,7 @@ fallback and uses the existing joined cancellable exchange off Update.
 |---|---|---|
 | `RequestLSPInlayHints` | Acknowledged source, private view ID/sequence and visible anchor range | `lsp.inlay_hints` |
 | `InspectLSPInlayHint` | Original set ID/digest/index and explicit tooltip-only resolve | `lsp.inlay_inspect` |
-| `ReleaseLSPInlayHints` | Retire the exact private view sequence without affecting a newer one | `lsp.inlay_release` |
+| `ReleaseLSPInlayHints` | Fence the private view through this sequence without affecting a newer one | `lsp.inlay_release` |
 
 `LSPService.InlayHintsState` reads the detached gate/feature epoch without cloning
 all language settings. Source/provider/context evidence stays core-owned; hint

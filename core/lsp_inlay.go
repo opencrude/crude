@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 
 	"crude/coreprotocol"
 	"crude/document"
+	"crude/workspace"
 )
 
 func (a *actor) prepareInlay(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
@@ -22,6 +24,9 @@ func (a *actor) prepareInlay(request coreprotocol.Request) (func(context.Context
 		}
 		return func(ctx context.Context) coreprotocol.Response {
 			set, err := w.RequestLSPInlayHints(ctx, owner, in.Source, in.ViewID, in.Sequence, in.Range)
+			if errors.Is(err, workspace.ErrInlayBusy) {
+				return fault(request, "busy", err.Error())
+			}
 			if err != nil {
 				return fault(request, "inlay_hints_failed", err.Error())
 			}

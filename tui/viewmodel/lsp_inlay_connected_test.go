@@ -42,6 +42,7 @@ type inlayConnectedRuntime struct {
 	original                      []byte
 	resolveGate, resolveEntered   chan struct{}
 	resolveCancelled              chan struct{}
+	requestGate, requestEntered   chan struct{}
 }
 
 type inlayConnectedClient struct {
@@ -57,15 +58,22 @@ func (r *inlayConnectedRuntime) NewClient(spec types.LSPServerSpec, root string,
 func (c *inlayConnectedClient) RequestInlayHints(_ context.Context, path string, span types.LSPInlayRange) (types.LSPInlayResponse, error) {
 	r := c.engine
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	doc := c.docs[path]
 	r.calls = append(r.calls, inlayConnectedCall{path: path, text: doc.text, wire: doc.version, span: span})
 	raw := []byte(r.answer)
-	if r.unsupported {
+	unsupported, resolve := r.unsupported, r.resolveSupported
+	gate, entered := r.requestGate, r.requestEntered
+	r.mu.Unlock()
+	if entered != nil {
+		entered <- struct{}{}
+	}
+	if gate != nil {
+		<-gate
+	} // Simulate a provider that does not honor cancellation.
+	if unsupported {
 		raw = nil
 	}
-	return types.LSPInlayResponse{JSON: raw, WireVersion: doc.version,
-		Unsupported: r.unsupported, ResolveSupported: r.resolveSupported && !r.unsupported}, nil
+	return types.LSPInlayResponse{JSON: raw, WireVersion: doc.version, Unsupported: unsupported, ResolveSupported: resolve && !unsupported}, nil
 }
 
 func (c *inlayConnectedClient) ResolveInlayHint(ctx context.Context, path string, wire int, original []byte) (types.LSPInlayResponse, error) {

@@ -2,12 +2,14 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 	"unicode/utf16"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/retry"
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/types"
@@ -32,6 +34,7 @@ type inlayRequest struct {
 	view                            *inlayViewState
 	port                            shellport.InlayHints
 	source                          types.InsightSource
+	producer                        types.InsightProducer
 	revision                        uint64
 	contextOwner                    string
 	contextGeneration, settingEpoch uint64
@@ -42,6 +45,7 @@ type inlayRequest struct {
 	cancel                          context.CancelFunc
 	deadline                        time.Time
 	started, installed              bool
+	busyAttempts                    int
 	result                          *types.LSPInlaySet
 	err                             error
 }
@@ -119,7 +123,7 @@ func (m *App) syncInlayHints() tea.Cmd {
 	}
 	service := m.ws.LSPMgr()
 	enabled, epoch := service.InlayHintsState()
-	enabled = enabled && service.ServerReady()
+	port, connected := m.ws.(shellport.InlayHints)
 	if enabled && m.lspRequestCtx == nil {
 		// Initialize the workspace owner before admitting any view. Its reset
 		// also retires the preceding generation's ephemeral inlay map.
@@ -130,7 +134,7 @@ func (m *App) syncInlayHints() tea.Cmd {
 			return
 		}
 		state := m.inlayViews[ed]
-		if state == nil && enabled {
+		if state == nil && enabled && connected && service.FileProducer(ed.FilePath()).InstanceID != "" {
 			state = m.inlayView(ed)
 		}
 		if state != nil {
@@ -150,18 +154,18 @@ func (m *App) syncInlayHints() tea.Cmd {
 		mark(m.EditorState.Editor)
 	}
 	contextOwner, contextGeneration := service.ContextCursor()
-	port, connected := m.ws.(shellport.InlayHints)
 	for _, view := range m.inlayViews {
 		source, acknowledged := view.editor.CurrentInsightSource()
 		first, last, painted := view.editor.VisibleSourceLines()
-		if !enabled || !connected || !view.visible || view.hidden || !acknowledged || !painted ||
+		producer := service.FileProducer(view.editor.FilePath())
+		if !enabled || !connected || producer.InstanceID == "" || !view.visible || view.hidden || !acknowledged || !painted ||
 			contextOwner == "" || contextOwner != source.WorkspaceGeneration {
 			m.retireInlayRequest(view)
 			continue
 		}
 		request := view.request
 		if request != nil && (request.source != source || request.revision != view.editor.Revision() ||
-			request.settingEpoch != epoch || request.contextOwner != contextOwner ||
+			request.settingEpoch != epoch || request.producer != producer || request.contextOwner != contextOwner ||
 			contextGeneration > request.contextGeneration || first < request.first || last > request.last) {
 			m.retireInlayRequest(view)
 			request = nil
@@ -171,6 +175,9 @@ func (m *App) syncInlayHints() tea.Cmd {
 			request = nil
 		}
 		if request == nil {
+			if !service.FileSynchronized(source, contextGeneration) {
+				continue
+			}
 			first, last = max(0, first-8), min(view.editor.LineCount()-1, last+8)
 			endCol := 0
 			for _, r := range view.editor.LineText(last) {
@@ -180,7 +187,7 @@ func (m *App) syncInlayHints() tea.Cmd {
 			ctx, cancel := context.WithCancel(base)
 			view.sequence++
 			request = &inlayRequest{view: view, port: port, source: source, revision: view.editor.Revision(),
-				contextOwner: contextOwner, contextGeneration: contextGeneration, settingEpoch: epoch,
+				producer: producer, contextOwner: contextOwner, contextGeneration: contextGeneration, settingEpoch: epoch,
 				first: first, last: last, sequence: view.sequence, ctx: ctx, cancel: cancel,
 				span: types.LSPInlayRange{Start: types.LSPInlayPosition{Line: first},
 					End: types.LSPInlayPosition{Line: last, Character: endCol}}}
@@ -220,7 +227,7 @@ func (m *App) inlayRequestCurrent(r *inlayRequest) bool {
 		r.view.hidden || !r.view.visible || r.view.workspace != m.ws || m.asyncIOStopped.Load() ||
 		!m.acceptsLSPGeneration(r.view.generation) || r.ctx.Err() != nil ||
 		!r.view.editor.IsOpen() || r.view.editor.Revision() != r.revision || !r.view.editor.MatchesInsightSource(r.source) ||
-		m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
+		m.ws.LSPMgr() == nil || m.ws.LSPMgr().FileProducer(r.source.Path) != r.producer {
 		return false
 	}
 	enabled, epoch := m.ws.LSPMgr().InlayHintsState()
@@ -233,39 +240,54 @@ func (m *App) startInlayRequest(msg inlayDueMsg) tea.Cmd {
 	if !m.inlayRequestCurrent(r) || r.started {
 		return nil
 	}
+	if !m.ws.LSPMgr().FileSynchronized(r.source, r.contextGeneration) {
+		m.retireInlayRequest(r.view)
+		return nil
+	}
 	r.started, r.deadline = true, time.Now().Add(10*time.Second)
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(r.ctx, 10*time.Second)
+	return m.clientIOCommand(r.ctx, func(parent context.Context) tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 		defer cancel()
 		result, err := r.port.RequestLSPInlayHints(ctx, r.source, r.view.id, r.sequence, r.span)
+		if cancelled := ctx.Err(); cancelled != nil {
+			err = errors.Join(err, cancelled)
+		}
 		return inlayResultMsg{owner: r, result: result, err: err}
-	}
+	})
 }
 
-func (m *App) handleInlayResult(msg inlayResultMsg) {
+func (m *App) handleInlayResult(msg inlayResultMsg) tea.Cmd {
 	r := msg.owner
 	if !m.inlayRequestCurrent(r) {
-		return
+		return nil
 	}
 	if msg.err != nil {
+		if r.started && knownLSPBusy(msg.err) {
+			r.started = false
+			r.deadline = time.Time{}
+			r.busyAttempts++
+			delay := retry.Jitter(r.busyAttempts, 250*time.Millisecond, 5*time.Second)
+			return tea.Tick(delay, func(time.Time) tea.Msg { return inlayDueMsg{owner: r} })
+		}
 		r.deadline, r.err = time.Time{}, msg.err
 		m.updateInlayInspector(r)
-		return
+		return nil
 	}
 	result := msg.result
 	if result.ID == "" || len(result.Digest) != 64 || result.Boundary.Source != r.source ||
 		result.ViewID != r.view.id || result.Sequence != r.sequence || result.Range != r.span ||
-		result.WireVersion <= 0 || result.Boundary.Context.Generation < r.contextGeneration ||
+		result.WireVersion <= 0 || result.Boundary.Producer != r.producer || result.Boundary.Context.Generation < r.contextGeneration ||
 		result.ExpiresAt.IsZero() || !time.Now().Before(result.ExpiresAt) {
 		r.deadline = time.Time{}
 		r.err = fmt.Errorf("inlay result lost its original source, view, range or context identity")
 		m.updateInlayInspector(r)
-		return
+		return nil
 	}
 	r.contextGeneration = result.Boundary.Context.Generation
 	r.result = &result
 	// The independent context replica may still lag. syncInlayHints installs
 	// only after its exact cursor reaches this boundary.
+	return nil
 }
 
 func (m *App) setInlayViewHidden(hidden bool) {

@@ -825,11 +825,26 @@ func TestInlayActiveViewsAndSequenceTombstonesHaveSeparateBounds(t *testing.T) {
 	if err := f.w.LiveDocuments.CloseView(f.owner, f.source.DocumentID); err != nil {
 		t.Fatal(err)
 	}
-	f.w.LiveDocuments.mu.Lock()
-	remaining := len(f.w.LiveDocuments.inlayViews)
-	f.w.LiveDocuments.mu.Unlock()
+	s := f.w.LiveDocuments
+	s.mu.Lock()
+	remaining := len(s.inlayViews)
+	for _, view := range s.inlayViews {
+		if view.ctx.Err() == nil || view.view.ID != "" || len(view.items) != 0 || view.rawBytes != 0 || view.check != nil {
+			s.mu.Unlock()
+			t.Fatal("file close retained active inlay evidence")
+		}
+	}
+	s.mu.Unlock()
+	if remaining != tracked {
+		t.Fatal("file close discarded bounded sequence fences", remaining, tracked)
+	}
+	s.Detach(f.owner)
+	s.ReleaseDetached(f.owner)
+	s.mu.Lock()
+	remaining = len(s.inlayViews)
+	s.mu.Unlock()
 	if remaining != 0 {
-		t.Fatal("closing document did not reclaim sequence map", remaining)
+		t.Fatal("owner detach did not reclaim inlay sequence fences", remaining)
 	}
 }
 
@@ -873,11 +888,12 @@ func TestInlayRawEvidenceBoundAndReleaseCloseShutdownReclamation(t *testing.T) {
 	if total, _ := rawBytes(); total != len(original) {
 		t.Fatal("failed oversized response retained bytes", total)
 	}
+	_, beforeClose := rawBytes()
 	if err := f.w.LiveDocuments.CloseView(f.owner, f.source.DocumentID); err != nil {
 		t.Fatal(err)
 	}
-	if total, count := rawBytes(); total != 0 || count != 0 {
-		t.Fatal("close did not reclaim raw data and tombstones", total, count)
+	if total, count := rawBytes(); total != 0 || count != beforeClose {
+		t.Fatal("close did not discard raw data while retaining sequence fences", total, count, beforeClose)
 	}
 	snap, err := f.w.LiveDocuments.Open(f.owner, f.path)
 	if err != nil {

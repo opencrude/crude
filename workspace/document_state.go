@@ -51,6 +51,13 @@ func (s *DocumentService) ownerEpoch(id string) uint64 {
 	defer s.ownerMu.Unlock()
 	return s.epochs[id]
 }
+
+// attachedOwner checks the existing attachment fence without creating an owner.
+func (s *DocumentService) attachedOwner(owner document.Owner) bool {
+	s.ownerMu.Lock()
+	defer s.ownerMu.Unlock()
+	return owner.ClientID != "" && owner.Epoch != 0 && !s.detached[owner] && s.epochs[owner.ClientID] == owner.Epoch
+}
 func (s *DocumentService) admitOwner(owner document.Owner) bool {
 	s.ownerMu.Lock()
 	defer s.ownerMu.Unlock()

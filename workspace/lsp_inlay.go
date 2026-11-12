@@ -25,6 +25,9 @@ const (
 	inlayLifetime         = 5 * time.Minute
 )
 
+// ErrInlayBusy is a definite non-admission: no provider or sequence changed.
+var ErrInlayBusy = errors.New("inlay request capacity is occupied")
+
 type inlayViewKey struct {
 	owner document.Owner
 	view  string
@@ -58,11 +61,19 @@ func validLSPView(view string, sequence uint64) bool {
 }
 
 func (s *DocumentService) pruneInlayViewsLocked() {
+	now := time.Now()
 	for key, view := range s.inlayViews {
-		_, err := s.readOnlyLSPSourceLocked(key.owner, view.source)
-		if time.Now().After(view.expires) || err != nil || view.check != nil && view.check() != nil {
+		if now.After(view.expires) {
 			view.cancel()
 			delete(s.inlayViews, key)
+			continue
+		}
+		if view.ctx.Err() != nil {
+			continue
+		} // Keep the sequence fence, not evidence.
+		_, err := s.readOnlyLSPSourceLocked(key.owner, view.source)
+		if err != nil || view.check != nil && view.check() != nil {
+			view.retire()
 		}
 	}
 }
@@ -70,8 +81,15 @@ func (s *DocumentService) pruneInlayViewsLocked() {
 func (s *DocumentService) closeInlayViewsLocked(owner document.Owner, documentID string) {
 	for key, view := range s.inlayViews {
 		if key.owner == owner && (documentID == "" || view.source.DocumentID == documentID) {
-			view.cancel()
-			delete(s.inlayViews, key)
+			// Detach ends the owner epoch. Closing one file does not: another
+			// shell can retain its source while this owner reopens the file.
+			// Keep the bounded sequence fence, but discard all old evidence.
+			if documentID == "" {
+				view.cancel()
+				delete(s.inlayViews, key)
+			} else {
+				view.retire()
+			}
 		}
 	}
 }
@@ -102,7 +120,7 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 		err = errors.New("inlay view request was superseded")
 	}
 	if err == nil && previous == nil && len(s.inlayViews) >= inlayMaxSequences {
-		err = errors.New("inlay view sequence tracking is full; close an earlier document view")
+		err = ErrInlayBusy
 	}
 	if err == nil {
 		active := 0
@@ -112,8 +130,11 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 			}
 		}
 		if active >= inlayMaxViews {
-			err = errors.New("close or hide an earlier inlay view before requesting another")
+			err = ErrInlayBusy
 		}
+	}
+	if err == nil && s.inlayRunning >= inlayMaxViews {
+		err = ErrInlayBusy
 	}
 	if err != nil {
 		s.mu.Unlock()
@@ -130,6 +151,7 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 		s.inlayViews = make(map[inlayViewKey]*inlayView)
 	}
 	s.inlayViews[key] = entry
+	s.inlayRunning++
 	s.mu.Unlock()
 
 	requestCtx, cancel := context.WithCancel(ctx)
@@ -138,6 +160,7 @@ func (w *Workspace) RequestLSPInlayHints(ctx context.Context, owner document.Own
 		stop()
 		cancel()
 		s.mu.Lock()
+		s.inlayRunning--
 		if s.inlayViews[key] == entry && entry.view.ID == "" {
 			entry.retire() // retain only a bounded sequence tombstone on failure
 		}

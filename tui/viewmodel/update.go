@@ -1078,7 +1078,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case inlayDueMsg:
 		cmds = append(cmds, m.startInlayRequest(msg))
 	case inlayResultMsg:
-		m.handleInlayResult(msg)
+		cmds = append(cmds, m.handleInlayResult(msg))
 	case inlayInspectionMsg:
 		m.handleInlayInspection(msg)
 	case inlay.InspectMsg:
@@ -1131,8 +1131,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.handleReviewedEditReleased(msg)
 	case reviewedEditCleanupMsg:
 		m.handleReviewedEditCleanup(msg)
+	case completionRetryDueMsg:
+		cmds = append(cmds, m.startCompletionRequest(msg.owner))
 	case completionResultMsg:
-		m.handleCompletionResult(msg)
+		cmds = append(cmds, m.handleCompletionResult(msg))
 		cmds = append(cmds, m.syncCompletion())
 	case completionReadMsg:
 		m.handleCompletionRead(msg)
