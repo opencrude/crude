@@ -201,7 +201,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	if reset {
 		base := app
 		if input.Scope == "application" {
-			base = types.AppSettings{}
+			base = types.AppSettings{Editor: types.DefaultEditorSettings()}
 			types.ApplyAppDefaults(&base)
 		}
 		raw, err := controlFieldJSON(base, input.Path)

@@ -173,6 +173,31 @@ and affected race checks pass. Windows/macOS component builds are not native UI
 acceptance. Final allocation-gate evidence belongs in the checkpoint issue, not
 an all-editor-parity claim.
 
+After a restart the user reported three regressions. (1) Line numbers were gone:
+the preference had no consumer until display preferences went live, and the
+application layer decoded an absent `line_numbers` as off. Stored editor leaves
+now decode onto `types.DefaultEditorSettings` (numbers on), and application Reset
+uses the same defaults. (2) The view jumped on fold/unfold: every toggle ran the
+caret-reveal path, so a gutter click scrolled back to an offscreen caret and the
+top row lost its wrapped offset. A fold change now keeps the top row and only
+reveals a caret that it had to move. (3) Every block showed a second chevron on
+its first body line from the body's own node; such interior ranges are no longer
+folds. Evidence: `TestLineNumbersDefaultOnAndExplicitOffPersists`,
+`TestFoldToggleKeepsTheViewportStill` and `TestFoldShowsOneChevronPerBlock`
+(each failed on the previous source), plus a 160×40 capture of a gutter fold and
+unfold with the caret offscreen and an 80×24 capture of the numbered gutter.
+
+Indent guides are now on by default and drawn as a dim dashed rule. Their levels
+are a port of VS Code's `getLinesIndentGuides`, so guides continue through blank
+lines inside a block. The catalog gained one data fact, `off_side`, copied from
+VS Code's `folding.offSide` with the source file and commit in each authored
+note. Evidence: `TestIndentGuidesContinueThroughBlankLines` and
+`TestIndentGuidesOffSideBlankLineTakesTheLevelBelow`. Open: guides on wrapped
+continuation rows and VS Code's active-guide highlight are not ported. The fold
+chevron rule above (no fold for a range that only fills its parent's body) is a
+Crude rule, not a port; replacing native-node fold sources with an established
+fold source is still a decision for this plan.
+
 ## Context-aware completion without a model
 
 **Owners:** existing LSP transport, workspace completion, `snippet/`,

@@ -129,10 +129,10 @@ The header exposes the effective policy and its menu identifies the source.
 These choices do not rewrite existing indentation; Convert is a separate native
 transaction. See [file policy](editor.md#indentation-and-block-only-comments).
 
-Syntax palettes affect source ink only. Hiding numbers keeps diagnostic/change
-lanes. Whitespace markers never enter copied or saved text. See
+Syntax palettes affect source ink only. Line numbers are on unless explicitly
+turned off; hiding them keeps diagnostic/change lanes. Whitespace markers never enter copied or saved text. See
 [editor presentation](editor.md#display-preferences) for projection contracts.
-Indent guides and Minimap are opt-in. Guides follow the effective indentation step;
+Indent guides are on by default; Minimap is opt-in. Guides follow the effective indentation step;
 the minimap uses the same scroll model and hides in narrow panes. Reset removes
 only explicit choices and restores live inheritance. See
 [orientation](editor.md#indentation-guides-and-minimap) for sampling and geometry

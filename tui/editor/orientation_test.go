@@ -89,7 +89,7 @@ func TestOrientationGuidesAndMinimapPreserveSourceAndGeometry(t *testing.T) {
 	paintEditor(peer, 80, 12)
 	x := e.GutterWidth()
 	for _, col := range []int{0, 2, 4} {
-		if b.Get(x+col, 0).Char != '│' {
+		if b.Get(x+col, 0).Char != '╎' {
 			t.Fatal("guide missed source indentation", col, b.Get(x+col, 0))
 		}
 	}
@@ -107,7 +107,7 @@ func TestOrientationGuidesAndMinimapPreserveSourceAndGeometry(t *testing.T) {
 	}
 	e.SetPresentation(types.EditorSettings{LineNumbers: true, TabSize: 8, IndentSize: 4, IndentGuides: true, Minimap: true, RenderWhitespace: "all"})
 	b = paintEditor(e, 100, 12)
-	if b.Get(x, 0).Char != '│' || b.Get(x+4, 0).Char != '│' || b.Get(x+8, 0).Char != '│' || b.Get(x+9, 0).Char != '·' || e.SelectedText() != "alpha" {
+	if b.Get(x, 0).Char != '╎' || b.Get(x+4, 0).Char != '╎' || b.Get(x+8, 0).Char != '╎' || b.Get(x+9, 0).Char != '·' || e.SelectedText() != "alpha" {
 		t.Fatal("guides and whitespace did not share tab/source columns")
 	}
 	paintEditor(e, 35, 12)
@@ -257,5 +257,67 @@ func TestByteGeometryUsesTheSameUnicodeBoundaries(t *testing.T) {
 	}
 	if LineVisualWidth(raw, 4) != 10 || string(raw) != text {
 		t.Fatal("byte geometry changed width or source")
+	}
+}
+
+// Guide levels follow VS Code's getLinesIndentGuides: guides run unbroken
+// through blank lines inside a block and stay out of blank lines between
+// top-level blocks. Tabs count as indentation stops.
+func TestIndentGuidesContinueThroughBlankLines(t *testing.T) {
+	source := "func f() {\n\tif x {\n\t\ta()\n\n\t\tb()\n\n\t}\n\n\tc()\n}\n\nfunc g() {\n\n\td()\n}\n"
+	e := loadEditorText(t, "blank.go", source)
+	e.SetPresentation(types.EditorSettings{LineNumbers: true, TabSize: 4, IndentGuides: true})
+	b := paintEditor(e, 80, 20)
+	x := e.GutterWidth()
+	guides := func(y int) string {
+		var out strings.Builder
+		for col := 0; col < 12; col += 4 {
+			if b.Get(x+col, y).Char == '╎' {
+				out.WriteByte('|')
+			} else {
+				out.WriteByte('.')
+			}
+		}
+		return out.String()
+	}
+	for _, tc := range []struct {
+		line int
+		want string
+	}{
+		{2, "||."},  // a(): two levels of leading tabs
+		{3, "||."},  // blank inside the if body
+		{5, "||."},  // blank before the closing brace keeps the body guide
+		{7, "|.."},  // blank inside f between two statements
+		{10, "..."}, // blank between top-level functions
+		{12, "|.."}, // blank just after an opening line
+		{0, "..."},  // a header line has no leading whitespace
+	} {
+		if got := guides(tc.line); got != tc.want {
+			t.Errorf("line %d guides %s, want %s", tc.line+1, got, tc.want)
+		}
+	}
+	if e.Value() != source || e.Modified() {
+		t.Fatal("guides changed the document")
+	}
+}
+
+// An off-side language (blocks end by dedent; catalog data from VS Code's
+// folding.offSide) gives a blank line before a dedent the level below it. A
+// brace language keeps the level of the block that ends below.
+func TestIndentGuidesOffSideBlankLineTakesTheLevelBelow(t *testing.T) {
+	source := "def f():\n    a()\n\ndef g():\n    b()\n"
+	for _, tc := range []struct {
+		name, want string
+	}{{"guides.py", "."}, {"guides.c", "|"}} {
+		e := loadEditorText(t, tc.name, source)
+		e.SetPresentation(types.EditorSettings{LineNumbers: true, TabSize: 4, IndentSize: 4, IndentGuides: true})
+		b := paintEditor(e, 80, 10)
+		got := "."
+		if b.Get(e.GutterWidth(), 2).Char == '╎' {
+			got = "|"
+		}
+		if got != tc.want || b.Get(e.GutterWidth(), 1).Char != '╎' {
+			t.Errorf("%s: blank line guide %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }

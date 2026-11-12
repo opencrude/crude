@@ -139,9 +139,14 @@ func (e *Editor) refreshFolds() {
 		}
 		offer(int(r.Start), int(r.End))
 	}
+	bracketed := make(map[FoldRange]bool, len(brackets))
 	for _, r := range brackets {
 		if r.Offset < r.Mate {
+			before := len(next)
 			offer(int(r.Offset), int(r.Mate)+1)
+			if len(next) > before {
+				bracketed[next[len(next)-1]] = true
+			}
 		}
 	}
 	// Multi-line literal/comment spans come from the same lexical owner. A
@@ -161,13 +166,39 @@ func (e *Editor) refreshFolds() {
 			start = s.end
 		}
 	}
-	next = normalizeFolds(next)
+	next = withoutInteriorFolds(normalizeFolds(next), bracketed)
 	if slices.Equal(next, f.ranges) {
 		return
 	}
 	f.ranges = next
 	f.collapsed = slices.DeleteFunc(f.collapsed, func(r FoldRange) bool { return !containsFold(next, r) })
 	f.changed()
+}
+
+// withoutInteriorFolds drops a range that only fills its parent's body: it
+// starts on the line after the parent's header and ends on or just before the
+// parent's last line. Such a node (a statement list or block body) would put a
+// second chevron on the first body line of every block while folding almost
+// exactly what the parent's chevron folds. A range with its own bracket pair
+// on those lines is a real nested block and stays. ranges is normalized.
+func withoutInteriorFolds(ranges []FoldRange, bracketed map[FoldRange]bool) []FoldRange {
+	out := ranges[:0]
+	var parents []FoldRange
+	for _, r := range ranges {
+		for len(parents) > 0 && r.Start > parents[len(parents)-1].End {
+			parents = parents[:len(parents)-1]
+		}
+		interior := false
+		if len(parents) > 0 && !bracketed[r] {
+			p := parents[len(parents)-1]
+			interior = r.Start == p.Start+1 && r.End >= p.End-1
+		}
+		parents = append(parents, r)
+		if !interior {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 func (e *Editor) foldAt(line int) (FoldRange, bool) {
 	r := e.folds.ranges
@@ -205,7 +236,7 @@ func (e *Editor) toggleFold(line int) {
 	} else {
 		e.folds.collapsed = append(e.folds.collapsed, r)
 	}
-	e.finishFoldChange()
+	e.finishFoldChange(false)
 }
 func (e *Editor) foldAction(id ui.ActionID) {
 	e.refreshFolds()
@@ -249,12 +280,18 @@ func (e *Editor) foldAction(id ui.ActionID) {
 			stack = append(stack, r.End)
 		}
 	}
-	e.finishFoldChange()
+	e.finishFoldChange(true)
 }
-func (e *Editor) finishFoldChange() {
+
+// finishFoldChange keeps the viewport where the user left it. Rows above the
+// changed range never move and the top row keeps its wrapped offset. Only a
+// caret inside a newly hidden range moves, to its fold header. The view then
+// scrolls just enough to show that caret (or, for keyboard actions, the
+// caret that issued the command); a pointer toggle never scrolls to a caret
+// that was already offscreen.
+func (e *Editor) finishFoldChange(revealCaret bool) {
 	e.folds.changed()
 	e.wrapBefore = false
-	e.wrapOffset = 0
 	e.stopPointerSelection()
 	e.CancelPointerCapture()
 	e.ClearHover()
@@ -262,11 +299,28 @@ func (e *Editor) finishFoldChange() {
 	if r, hidden := e.hiddenFold(e.cursor.Line); hidden {
 		e.cursor = Position{Line: r.Start, Col: e.lineVisualWidth(r.Start)}
 		e.ClearSelection()
+		revealCaret = true
 	}
 	if r, hidden := e.hiddenFold(e.scrollY); hidden {
-		e.scrollY = r.Start
+		e.scrollY, e.wrapOffset = r.Start, 0
 	}
-	e.ensureCursorVisible()
+	h := e.bodyHeight()
+	top := e.scrollRow()
+	if revealCaret {
+		row, col := e.visualPosition(e.cursor, false)
+		top = min(top, row)
+		top = max(top, row-h+1)
+		if !e.wrapsRows() && e.viewW > 0 {
+			w := max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
+			if col < e.scrollX || col >= e.scrollX+w {
+				e.scrollX = max(0, col-w/3)
+			}
+		}
+	}
+	if top = min(max(0, top), max(0, e.visualRowCount()-h)); top != e.scrollRow() {
+		e.setScrollRow(top)
+	}
+	e.syncScrollChrome(h)
 }
 
 // FoldMemory is private client presentation, not an edit/history record. The
@@ -303,7 +357,7 @@ func (e *Editor) RestoreFolds(memory *FoldMemory) {
 		return
 	}
 	e.folds = foldState{buffer: e.buf, revision: e.Revision(), ranges: slices.Clone(next), collapsed: next, generation: e.folds.generation + 1}
-	e.finishFoldChange()
+	e.finishFoldChange(false)
 }
 
 func containsFold(ranges []FoldRange, r FoldRange) bool {

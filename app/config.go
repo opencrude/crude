@@ -249,8 +249,15 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	if fc.Theme != nil {
 		s.Theme = *fc.Theme
 	}
+	s.Editor = ttypes.DefaultEditorSettings()
 	if fc.Editor != nil {
 		s.Editor = *fc.Editor
+		if len(fc.raw) != 0 {
+			var groups map[string]json.RawMessage
+			_ = json.Unmarshal(fc.raw, &groups)
+			s.Editor = ttypes.DefaultEditorSettings()
+			_ = ttypes.DecodeStoredSettings(groups["editor"], &s.Editor)
+		}
 	}
 	if fc.LSP != nil {
 		s.LSP = *fc.LSP

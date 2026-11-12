@@ -834,7 +834,9 @@
           "-"
         ]
       },
+      "off_side": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -2199,7 +2201,9 @@
         "end": "*)"
       },
       "grammar": "fsharp",
+      "off_side": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -4383,7 +4387,9 @@
         "end": "-->"
       },
       "grammar": "markdown",
+      "off_side": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -5594,7 +5600,9 @@
         "//-"
       ],
       "grammar": "pug",
+      "off_side": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -5724,6 +5732,7 @@
           "-"
         ]
       },
+      "off_side": true,
       "sources": [
         "crude-authored",
         "helix",
@@ -6673,7 +6682,9 @@
         "end": "*/"
       },
       "grammar": "sql",
+      "off_side": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -8142,7 +8153,9 @@
           "-"
         ]
       },
+      "off_side": true,
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]

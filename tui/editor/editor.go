@@ -221,6 +221,7 @@ type Editor struct {
 	syntaxColors          string
 	renderWhitespace      string
 	indentGuides, minimap bool
+	guideLanguage         guideLanguage
 	mini                  minimapProjection
 
 	// hover state for diagnostic tooltip popup.

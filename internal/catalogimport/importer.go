@@ -113,6 +113,7 @@ type authoredLanguage struct {
 	ServersPrepend   []string  `json:"servers_prepend"`
 	// Formatter replaces the upstream formatter; an empty command removes it.
 	Formatter *catalog.FormatterRecord `json:"formatter"`
+	OffSide   *bool                    `json:"off_side"`
 }
 
 type authoredLaunch struct {
@@ -268,6 +269,9 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 			if strings.TrimSpace(patch.Formatter.Command) != "" {
 				record.Formatter = &catalog.FormatterRecord{Command: patch.Formatter.Command, Args: slices.Clone(patch.Formatter.Args)}
 			}
+		}
+		if patch.OffSide != nil {
+			record.OffSide = *patch.OffSide
 		}
 		if len(patch.ServersPrepend) > 0 {
 			rest := slices.DeleteFunc(slices.Clone(record.Servers), func(s string) bool { return slices.Contains(patch.ServersPrepend, s) })

@@ -31,6 +31,7 @@ func (e *Editor) SetPresentation(settings types.EditorSettings) {
 		view.setMinimap(settings.Minimap)
 	})
 }
+
 func (e *Editor) refreshSyntaxPalette() {
 	e.chromaStyle = rendering.SourceStyle(theme.SyntaxPalette(e.th, e.syntaxColors))
 	clear(e.chromaLineCache)

@@ -39,7 +39,7 @@ func orientationInk(app *App, ed *editor.Editor) (guide bool, mapX int) {
 	app.View()
 	r := app.editorRect
 	x, y := r.X+ed.PadL+ed.GutterWidth(), r.Y
-	guide = app.mainSurf.Buffer().Get(x, y).Char == '│'
+	guide = app.mainSurf.Buffer().Get(x, y).Char == '╎'
 	mapX = -1
 	for col := r.X + r.W - 1; col >= x; col-- {
 		for row := r.Y; row < r.Y+r.H; row++ {
