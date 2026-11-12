@@ -280,6 +280,9 @@ func (ts *TokenSet) Glyphs() theme.Glyphs {
 	if g.FocusEdge == "" {
 		g.FocusEdge = def.FocusEdge
 	}
+	if g.FoldExpanded == "" || g.FoldCollapsed == "" {
+		g.FoldExpanded, g.FoldCollapsed = def.FoldExpanded, def.FoldCollapsed
+	}
 	return g
 }
 

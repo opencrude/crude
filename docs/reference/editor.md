@@ -204,17 +204,28 @@ Fold/Unfold, Fold all/Unfold all and Fold level use the shared native action
 registry, menu, searchable Editor actions and `editor.action` control. The gutter
 chevron stays available with line numbers hidden. The collapsed source header
 shows an ellipsis and hidden-line count. Expanding a parent retains nested choices.
-Current native node ranges and lexically qualified bracket/comment/string spans
-supply ranges; crossing/out-of-bounds ranges are rejected. A node that only fills
-its parent's body (it starts on the line after the header and ends at or just
-before the parent's last line) is not a fold: each block has one chevron, on its
-header, and Fold from inside a body folds the block. A nested range with its own
-bracket pair stays. Folding never moves the rows above the change: the view keeps
+Fold ranges are a port of VS Code's indentation range provider
+(`tui/editor/indent_folds.go`, MIT), the provider VS Code uses when no language
+server supplies folding ranges. A line folds the following lines that are indented
+more; in a brace language the closing line stays visible below the folded
+header. Each block has one chevron, on its header. Region markers (for example
+`// region` / `// endregion` in Go) fold whatever their indentation. The only
+language facts are the catalog's `off_side` flag (trailing blank lines stay
+outside the block) and `folding_markers`, both copied from VS Code language
+configurations with the source file and commit in each authored note. Marker
+patterns run as Go RE2, where `\s` is ASCII whitespace. Over 5,000 ranges
+(VS Code's default limit) the least-indented ranges are kept. Each view caches the
+indentation and marker kind of every line; an edit marks only the lines it
+touched through the buffer's line-change journal, so a keystroke reads those
+lines and rescans cached facts. A tab width or language change, or a gap in
+the journal, rebuilds the cache. Crude does not request LSP folding ranges.
+The gutter marks a fold header with a chevron (`FoldExpanded`/`FoldCollapsed`
+glyph tokens): VS Code's codicon chevrons with a Nerd Font, `⌄`/`›` otherwise.
+Folding never moves the rows above the change: the view keeps
 its top row and wrapped offset. Only a caret that becomes hidden moves, to its
 fold header, and the view then scrolls just enough to show it. A gutter click
-never scrolls to a caret that was already offscreen. No stale parse supplies
-new positions, no language-name branch guesses a fold, and there is no advertised
-LSP folding or indentation-only fallback.
+never scrolls to a caret that was already offscreen. No language-name branch
+guesses a fold.
 
 Disjoint source changes shift retained folds; changes touching their lines open
 them. Replacements and missing journal entries discard them. Navigation into hidden

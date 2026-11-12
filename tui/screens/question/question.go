@@ -411,7 +411,10 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		readerH = min(readerH, s.options.rowsAt(s.paneW))
 	}
 	s.optionsGate.Layout(ctx, ui.Rect{X: s.paneX, W: s.paneW, H: readerH})
-	s.inputGate.Layout(ctx, ui.Rect{X: s.paneX, Y: readerH, W: s.paneW, H: s.inputH})
+	// The write-in owns the free rows under it as well, so a click anywhere
+	// in that space focuses it. inputH still bounds how much room the
+	// write-in takes from the choices above.
+	s.inputGate.Layout(ctx, ui.Rect{X: s.paneX, Y: readerH, W: s.paneW, H: max(s.inputH, bodyH-readerH)})
 	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
 	s.divider.Layout(ctx, ui.Rect{X: railW, Y: 0, W: 1, H: bodyH})
 }

@@ -16,23 +16,23 @@ func TestFoldNativeCommandsShareRowsAndRevealSearch(t *testing.T) {
 	e.SetCursorPosition(2, 4)
 	e.HandleEvent(tea.KeyPressMsg{Code: '-', Mod: tea.ModAlt})
 	paintEditor(e, 80, 14)
-	if e.ScrollModel().Content() != 6 {
+	if e.ScrollModel().Content() != 7 {
 		t.Fatal("Fold did not remove exactly its hidden source rows", e.ScrollModel().Content())
 	}
 	e.SetCursorPosition(1, 0)
 	e.HandleEvent(ActionMsg{ID: "view.fold"})
 	paintEditor(e, 80, 14)
-	if e.ScrollModel().Content() != 4 || e.Value() != foldFixture || e.Modified() {
+	if e.ScrollModel().Content() != 5 || e.Value() != foldFixture || e.Modified() {
 		t.Fatal("outer fold edited source or counted hidden rows")
 	}
 	e.HandleEvent(ActionMsg{ID: "view.unfold"})
 	paintEditor(e, 80, 14)
-	if e.ScrollModel().Content() != 6 {
+	if e.ScrollModel().Content() != 7 {
 		t.Fatal("unfold lost nested collapsed state")
 	}
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyDown})
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyDown})
-	if e.CursorLine() != 5 {
+	if e.CursorLine() != 4 {
 		t.Fatal("vertical motion entered hidden source", e.CursorLine())
 	}
 	e.SetQuery("call")
@@ -58,13 +58,13 @@ func TestFoldGutterAndLinkedEditDoNotShareViewChoices(t *testing.T) {
 	e.HandleEvent(tea.MouseClickMsg{X: g.numberX - 1, Y: 1, Button: tea.MouseLeft})
 	paintEditor(e, 80, 14)
 	paintEditor(peer, 50, 14)
-	if e.ScrollModel().Content() != 4 || peer.ScrollModel().Content() != 8 {
+	if e.ScrollModel().Content() != 5 || peer.ScrollModel().Content() != 8 {
 		t.Fatal("gutter choice missing or leaked to linked view")
 	}
 	peer.SetCursorPosition(0, 0)
 	peer.HandleEvent(tea.KeyPressMsg{Code: tea.KeyEnter})
 	paintEditor(e, 80, 14)
-	if e.ScrollModel().Content() != 5 {
+	if e.ScrollModel().Content() != 6 {
 		t.Fatal("disjoint edit lost folded source mapping")
 	}
 	peer.SetCursorPosition(4, 8)
@@ -96,7 +96,7 @@ func TestFoldMemoryIsExactPrivateSourceAndKeepsNestedChoices(t *testing.T) {
 	restored := loadEditorText(t, "fold.go", foldFixture)
 	restored.RestoreFolds(&memory)
 	paintEditor(restored, 80, 14)
-	if !reflect.DeepEqual(restored.ExportFolds(), e.ExportFolds()) || restored.ScrollModel().Content() != 4 {
+	if !reflect.DeepEqual(restored.ExportFolds(), e.ExportFolds()) || restored.ScrollModel().Content() != 5 {
 		t.Fatal("restored folds lost source or nesting")
 	}
 	restored.HandleEvent(ActionMsg{ID: "view.unfoldAll"})
@@ -121,12 +121,12 @@ func TestFoldAndWrapUseOneScrollbarAndUnicodePointerProjection(t *testing.T) {
 	e.SetCursorPosition(1, 0)
 	e.HandleEvent(ActionMsg{ID: "view.fold"})
 	paintWrapped(t, e, 40, 14)
-	if e.ScrollModel().Content() != 4 {
+	if e.ScrollModel().Content() != 5 {
 		t.Fatal("fold left wrapped hidden rows in scrollbar", e.ScrollModel().Content())
 	}
 	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true, WordWrap: true})
 	paintWrapped(t, e, 50, 14)
-	if e.ScrollModel().Content() != 4 {
+	if e.ScrollModel().Content() != 5 {
 		t.Fatal("tab/width change lost folding")
 	}
 	e.SetCursorPosition(3, 8)
@@ -163,7 +163,7 @@ func TestFoldRangesRejectCrossingAndKeepLiteralDelimitersSafe(t *testing.T) {
 	e.SetCursorPosition(3, 0)
 	e.HandleEvent(ActionMsg{ID: "view.fold"})
 	paintEditor(e, 80, 14)
-	if e.ScrollModel().Content() != 5 {
+	if e.ScrollModel().Content() != 6 {
 		t.Fatal("CRLF counted as source cells or fake lines", e.ScrollModel().Content())
 	}
 	e.SetCursorPosition(4, 2)
@@ -179,7 +179,7 @@ func TestFoldAllKeepsOffscreenSyntaxProjectionBounded(t *testing.T) {
 	e.SetCursorPosition(1, 0)
 	e.HandleEvent(ActionMsg{ID: "view.fold"})
 	paintEditor(e, 80, 12)
-	if e.ScrollModel().Content() != 3 || len(e.chromaLineCache) > 12 {
+	if e.ScrollModel().Content() != 4 || len(e.chromaLineCache) > 12 {
 		t.Fatal("folded source was eagerly projected", e.ScrollModel().Content(), len(e.chromaLineCache))
 	}
 }
@@ -193,7 +193,7 @@ func TestFoldStaysHiddenDuringColdWidthPreparation(t *testing.T) {
 	release := pauseSyntaxWorkers(t)
 	e.SetPresentation(wrapSettings(8))
 	painted := paintEditor(e, 80, 12)
-	if e.ScrollModel().Content() != 4 || painted.Get(e.GutterWidth(), 2).Char != 'l' {
+	if e.ScrollModel().Content() != 5 || painted.Get(e.GutterWidth(), 3).Char != 'l' {
 		release()
 		t.Fatal("pending width preparation revealed hidden source")
 	}
@@ -210,7 +210,7 @@ func TestFoldStaysHiddenDuringColdWidthPreparation(t *testing.T) {
 	}
 	settleRows(t, e)
 	paintEditor(e, 80, 12)
-	if e.ScrollModel().Content() != 4 {
+	if e.ScrollModel().Content() != 5 {
 		t.Fatal("prepared width lost folded rows")
 	}
 }
@@ -280,10 +280,11 @@ func TestFoldToggleKeepsTheViewportStill(t *testing.T) {
 	}
 }
 
-// Each block shows one chevron, on its header. The body node of a block (its
-// statement list) used to add a second chevron on the first body line, and a
-// keyboard fold chose it instead of the block. A sole nested block with its
-// own braces keeps its chevron.
+// Each block shows one chevron, on its header. Native syntax nodes used to
+// add a second chevron on the first body line (the block's statement list),
+// and a keyboard fold chose it instead of the block. Indentation folding
+// offers one range per indented block; a nested block keeps its chevron and
+// the closing brace stays visible, as in VS Code.
 func TestFoldShowsOneChevronPerBlock(t *testing.T) {
 	src := "package p\n\nfunc many() {\n\ta := 1\n\tb := 2\n\tc := 3\n}\n\nfunc sole() {\n\tif ok {\n\t\tcall()\n\t\tcall()\n\t}\n}\n"
 	e := loadEditorText(t, "blocks.go", src)
@@ -302,10 +303,14 @@ func TestFoldShowsOneChevronPerBlock(t *testing.T) {
 	if !chevron(2) || chevron(3) {
 		t.Fatalf("painted chevrons: header %q, first body line %q", plainRow(buf, 2, g.numberX), plainRow(buf, 3, g.numberX))
 	}
+	// The gutter paints the fold chevron tokens, not the tree triangles.
+	if got := string(buf.Get(g.foldX, 2).Char); got != e.tokens.Glyphs().FoldExpanded || got == e.tokens.Glyphs().TreeExpanded {
+		t.Fatalf("fold header glyph %q, want %q", got, e.tokens.Glyphs().FoldExpanded)
+	}
 	e.SetCursorPosition(4, 1)
 	e.HandleEvent(tea.KeyPressMsg{Code: '-', Mod: tea.ModAlt})
 	paintEditor(e, 80, 20)
-	if len(e.folds.collapsed) != 1 || e.folds.collapsed[0] != (FoldRange{2, 6}) || e.CursorLine() != 2 {
+	if len(e.folds.collapsed) != 1 || e.folds.collapsed[0] != (FoldRange{2, 5}) || e.CursorLine() != 2 {
 		t.Fatalf("keyboard fold inside a body folded %v, caret line %d", e.folds.collapsed, e.CursorLine())
 	}
 }

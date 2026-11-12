@@ -308,5 +308,6 @@ func (e *Editor) copyFolds() foldState {
 	f.ranges = slices.Clone(f.ranges)
 	f.collapsed = slices.Clone(f.collapsed)
 	f.hidden = slices.Clone(f.hidden)
+	f.lines, f.computed = foldLines{}, false // caches are per view
 	return f
 }

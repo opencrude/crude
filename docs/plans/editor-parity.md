@@ -154,9 +154,9 @@ visible setting actually changes its stated behavior and reset restores inherita
 Implemented: the source-line/visible-row index combines wrapping and folding.
 Paint, scrollbars, pointer/drag, vertical and page motion, search/navigation,
 diagnostic and inlay anchors use it. Source bytes, Undo and LSP coordinates stay
-unchanged. Native source ranges and lexically qualified delimiters/comments/strings
-supply folds without per-language Go branches. There is no advertised LSP folding
-or indentation-only fallback. Alt+-/Alt+=, gutter toggles, Fold/Unfold all and Fold
+unchanged. Fold ranges are a port of VS Code's indentation range provider with
+catalog `off_side` and `folding_markers` data; there is no per-language Go
+branch and no LSP folding request. Alt+-/Alt+=, gutter toggles, Fold/Unfold all and Fold
 levels 1–9 share the native registry, menu, picker and semantic executor.
 
 Nested choices and source-qualified private pane memory survive reopening;
@@ -193,10 +193,18 @@ lines inside a block. The catalog gained one data fact, `off_side`, copied from
 VS Code's `folding.offSide` with the source file and commit in each authored
 note. Evidence: `TestIndentGuidesContinueThroughBlankLines` and
 `TestIndentGuidesOffSideBlankLineTakesTheLevelBelow`. Open: guides on wrapped
-continuation rows and VS Code's active-guide highlight are not ported. The fold
-chevron rule above (no fold for a range that only fills its parent's body) is a
-Crude rule, not a port; replacing native-node fold sources with an established
-fold source is still a decision for this plan.
+continuation rows and VS Code's active-guide highlight are not ported.
+
+Decision (2026-11-12): fold ranges no longer come from every native syntax node.
+The Crude-only rule that dropped a node filling its parent's body is removed.
+Folds are a port of VS Code's `computeRanges` (indentation plus region markers,
+5,000-range limit), with `folding_markers` copied into the catalog from VS Code's
+built-in language configurations. A folded brace block now keeps its closing
+line visible, as in VS Code. Evidence: `TestIndentFoldsMatchVSCodeSuite` (VS
+Code's own indentation and region cases), `TestIndentFoldsLimitKeepsOuterBlocks`,
+`TestEditorFoldsUseCatalogMarkersAndOffSide` and `TestFoldShowsOneChevronPerBlock`.
+Open: LSP `textDocument/foldingRange`, which VS Code prefers when a server
+offers it.
 
 ## Context-aware completion without a model
 

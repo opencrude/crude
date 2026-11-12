@@ -1,7 +1,5 @@
 package editor
 
-import "crude/insight/catalog"
-
 // Indentation guides port VS Code's guide levels:
 // GuidesTextModelPart.getLinesIndentGuides, _getIndentLevelForWhitespaceLine
 // and computeIndentLevel (microsoft/vscode, src/vs/editor/common/model/
@@ -115,19 +113,4 @@ func (g *guideLevels) whitespaceLevel() int {
 }
 
 // offSideLanguage reads the catalog fact once per document path.
-func (e *Editor) offSideLanguage() bool {
-	path := e.filePath
-	if path == "" {
-		path = e.title
-	}
-	if !e.guideLanguage.known || e.guideLanguage.path != path {
-		language, ok := catalog.Current().LanguageForPath(path, nil)
-		e.guideLanguage = guideLanguage{path: path, offSide: ok && language.OffSide, known: true}
-	}
-	return e.guideLanguage.offSide
-}
-
-type guideLanguage struct {
-	path           string
-	offSide, known bool
-}
+func (e *Editor) offSideLanguage() bool { return e.languageFacts().offSide }

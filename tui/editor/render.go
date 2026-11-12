@@ -160,9 +160,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				glyph := " "
 				if row.index == 0 {
 					if r, ok := e.foldAt(lineIdx); ok {
-						glyph = e.tokens.Glyphs().TreeExpanded
+						glyph = e.tokens.Glyphs().FoldExpanded
 						if containsFold(e.folds.collapsed, r) {
-							glyph = e.tokens.Glyphs().TreeCollapsed
+							glyph = e.tokens.Glyphs().FoldCollapsed
 						}
 					}
 				}
@@ -361,6 +361,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		}
 		if r, ok := e.foldAt(lineIdx); ok && row.index == 0 && containsFold(e.folds.collapsed, r) {
 			label := " … " + e.itoa(r.End-r.Start) + " lines"
+			if r.End-r.Start == 1 {
+				label = " … 1 line"
+			}
 			start := max(sw, min(sw+lineVisW-startCol, sbX-rendering.VisibleWidth(label)))
 			buf.WriteString(start, bufY, rendering.TruncateVisual(label, max(0, sbX-start), "…"), infoColor, bgColor, 0)
 		}
