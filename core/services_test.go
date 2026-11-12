@@ -157,9 +157,9 @@ func TestMemoryServiceCapturedStoreCASAndAudit(t *testing.T) {
 	if result.Error != nil {
 		t.Fatal(result.Error)
 	}
-	result = prepare(coreprotocol.ForgetMemoryRecord, coreprotocol.ForgetMemoryRecordRequest{ID: first.ID, ExpectedRevision: first.Revision})(ctx)
+	result = prepare(coreprotocol.DeleteMemory, coreprotocol.DeleteMemoryRequest{ID: first.ID, ExpectedRevision: first.Revision})(ctx)
 	if result.Error == nil {
-		t.Fatal("stale retirement accepted")
+		t.Fatal("stale deletion accepted")
 	}
 	result = prepare(coreprotocol.InspectMemory, coreprotocol.InspectMemoryRequest{ID: first.ID})(ctx)
 	var detail coreprotocol.InspectMemoryResult
@@ -172,7 +172,7 @@ func TestMemoryServiceCapturedStoreCASAndAudit(t *testing.T) {
 	if !detail.Detail.Record.Pinned || detail.Detail.Record.Revision != 2 || len(detail.Detail.Revisions) != 2 || detail.Detail.Record.Content != "Exact original assertion" {
 		t.Fatalf("audit lost: %+v", detail)
 	}
-	result = prepare(coreprotocol.ForgetMemoryRecord, coreprotocol.ForgetMemoryRecordRequest{ID: first.ID, ExpectedRevision: 2})(ctx)
+	result = prepare(coreprotocol.DeleteMemory, coreprotocol.DeleteMemoryRequest{ID: first.ID, ExpectedRevision: 2})(ctx)
 	if result.Error != nil {
 		t.Fatal(result.Error)
 	}
@@ -182,6 +182,6 @@ func TestMemoryServiceCapturedStoreCASAndAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.Error != nil || len(listed.Records) != 0 {
-		t.Fatalf("retired assertion recalled: %+v %+v", result, listed)
+		t.Fatalf("deleted assertion recalled: %+v %+v", result, listed)
 	}
 }

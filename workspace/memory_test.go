@@ -67,8 +67,8 @@ func TestWorkspaceMemoryBrowserServiceCASAndAudit(t *testing.T) {
 	if err := ws.PinMemory(ctx, first.ID, first.Revision, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := ws.ForgetMemoryRecord(ctx, first.ID, first.Revision); !errors.Is(err, memory.ErrRevisionConflict) {
-		t.Fatalf("retire should reject stale preview: %v", err)
+	if err := ws.DeleteMemory(ctx, first.ID, first.Revision); !errors.Is(err, memory.ErrRevisionConflict) {
+		t.Fatalf("delete should reject a stale preview: %v", err)
 	}
 	first.Content = "Stale correction"
 	if _, err := ws.CorrectMemory(ctx, first); !errors.Is(err, memory.ErrRevisionConflict) {
@@ -78,16 +78,15 @@ func TestWorkspaceMemoryBrowserServiceCASAndAudit(t *testing.T) {
 	if err != nil || detail.Record.Revision != 2 || !detail.Record.Pinned || len(detail.Revisions) != 2 || detail.Revisions[0].Content != "Initial content" {
 		t.Fatalf("audit: %#v %v", detail, err)
 	}
-	if err := ws.ForgetMemoryRecord(ctx, first.ID, detail.Record.Revision); err != nil {
+	if err := ws.DeleteMemory(ctx, first.ID, detail.Record.Revision); err != nil {
 		t.Fatal(err)
 	}
-	records, err := ws.SearchMemories(ctx, memory.ListQuery{})
+	records, err := ws.SearchMemories(ctx, memory.ListQuery{Status: "all"})
 	if err != nil || len(records) != 0 {
-		t.Fatalf("retired record recalled: %#v %v", records, err)
+		t.Fatalf("deleted record is still listed: %#v %v", records, err)
 	}
-	detail, err = ws.InspectMemory(ctx, first.ID)
-	if err != nil || detail.Record.Status != memory.StatusSuperseded || len(detail.Revisions) != 3 {
-		t.Fatalf("retired audit: %#v %v", detail, err)
+	if revisions, err := store.Memory.Revisions(ctx, first.ID); err != nil || len(revisions) != 0 {
+		t.Fatalf("deleted record kept its history: %#v %v", revisions, err)
 	}
 }
 

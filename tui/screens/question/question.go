@@ -75,9 +75,11 @@ type Screen struct {
 	reviewVisited bool
 	paneX         int
 	paneW         int
-	paneIndent    int
 	inputH        int
 	railVisible   bool
+	// tallest keeps the deck height stable while one request is answered:
+	// moving between questions never shrinks the deck under the transcript.
+	tallest int
 }
 
 func New(th *theme.Theme) *Screen {
@@ -95,7 +97,9 @@ func New(th *theme.Theme) *Screen {
 	s.options = newAnswerList(ui.NewID(OptionsID, "rows"), s.tokens)
 	s.options.SetActivateAction("question.option.activate")
 
-	field := ui.NewTextArea(InputID, s.tokens, true)
+	// The write-in follows the chat composer: Enter goes to the next step and
+	// the newline chord breaks the line.
+	field := ui.NewTextArea(InputID, s.tokens, false)
 	field.SetSubmitAction("question.next")
 	// Prompt-area chrome rule (mirrors the session chat composer): the
 	// shared InputColors default is a raised popup fill; decks stay flat.
@@ -142,7 +146,7 @@ func (s *Screen) ResetWithError(questionsJSON string) (int, error) {
 	s.answers = make([]string, len(items))
 	s.choices = make([][]string, len(items))
 	s.custom = make([]string, len(items))
-	s.index = 0
+	s.index, s.tallest = 0, 0
 	s.reviewing, s.reviewVisited = false, false
 	s.railLabels = make([]string, len(items))
 	for index, item := range items {
@@ -309,14 +313,6 @@ func (s *Screen) Children() []ui.Component {
 	return children
 }
 
-func (s *Screen) inputIndent(paneW int) int {
-	indent := 0
-	if s.tokens != nil {
-		indent = max(0, s.tokens.FormIndent())
-	}
-	return min(indent, max(0, paneW-8))
-}
-
 // inputNaturalH reports the prompt-area's wrap-aware row count at the given
 // width, clamped to at least one row and at most maxH (Constraints clamp
 // against MaxH, so a zero bound would collapse the measure to zero).
@@ -335,7 +331,7 @@ func (s *Screen) preferredInputH(maxHeight int) int {
 	if s.paneW <= 0 || maxHeight <= 0 {
 		return 1
 	}
-	return s.inputNaturalH(max(1, s.paneW-s.paneIndent), maxHeight)
+	return s.inputNaturalH(max(1, s.paneW), maxHeight)
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
@@ -356,7 +352,12 @@ func (s *Screen) PreferredHeight(maxHeight int) int {
 	}
 	// A request is a bounded dock, not the entire transcript. Both very long
 	// questions and review answers scroll inside this budget.
-	return min(maxHeight, min(20, max(8, body+chrome)))
+	height := min(20, max(8, body+chrome))
+	if s.options.measured() {
+		s.tallest = max(s.tallest, height)
+		height = s.tallest
+	}
+	return min(maxHeight, height)
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -386,8 +387,13 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.paneX = railW + 2
 	}
 	s.paneW = max(0, r.W-s.paneX)
-	s.paneIndent = s.inputIndent(s.paneW)
-	inputW := max(0, s.paneW-s.paneIndent)
+	// With choices the write-in reads as the last choice: it shows the same
+	// mark, and typing chooses it. A pane too narrow for the mark omits it.
+	prompt := ""
+	if item, ok := s.currentItem(); ok && len(item.Options) > 0 && !s.reviewing && s.paneW >= 6 {
+		prompt = choiceGlyph(item.Multiple, containsCustom(s.choices[s.index]))
+	}
+	s.input.SetPrompt(prompt)
 	// Keep reading, editing and actions in disjoint rectangles even on tiny
 	// grids. The write-in is capped independently; it never hides a long choice.
 	s.inputH = 0
@@ -396,16 +402,16 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		if bodyH > 1 {
 			room = max(1, room)
 		}
-		s.inputH = min(6, room, s.inputNaturalH(inputW, max(1, room)))
+		s.inputH = min(6, room, s.inputNaturalH(s.paneW, max(1, room)))
 	}
 	readerH := max(0, bodyH-s.inputH-1)
+	if !s.reviewing {
+		// The write-in is the row after the last choice, not a strip at the
+		// bottom of the deck.
+		readerH = min(readerH, s.options.rowsAt(s.paneW))
+	}
 	s.optionsGate.Layout(ctx, ui.Rect{X: s.paneX, W: s.paneW, H: readerH})
-	s.inputGate.Layout(ctx, ui.Rect{
-		X: s.paneX + s.paneIndent,
-		Y: readerH,
-		W: inputW,
-		H: s.inputH,
-	})
+	s.inputGate.Layout(ctx, ui.Rect{X: s.paneX, Y: readerH, W: s.paneW, H: s.inputH})
 	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
 	s.divider.Layout(ctx, ui.Rect{X: railW, Y: 0, W: 1, H: bodyH})
 }
@@ -471,6 +477,30 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return result
 	case "question.option.activate":
 		return s.handleOptionActivate(action)
+	case confirmAction:
+		// Space marks choices of a multiple-choice question; Enter accepts
+		// them and goes on, as Enter does everywhere in the form.
+		if item, ok := s.currentItem(); ok && item.Multiple && !s.reviewing {
+			return s.advance()
+		}
+		return s.handleOptionActivate(action)
+	case writeAction:
+		if s.reviewing {
+			return ui.EventResult{Handled: true}
+		}
+		if text, _ := action.Payload.(string); text != "" {
+			s.input.InsertString(text)
+			s.onInputChanged(s.input.Value())
+		}
+		result := s.focusResult(InputID, true)
+		result.Invalidate |= ui.InvalidateLayout
+		return result
+	case lastChoiceAction:
+		if s.reviewing {
+			return ui.EventResult{Handled: true}
+		}
+		s.options.selectLast()
+		return s.focusResult(OptionsID, false)
 	case "question.next":
 		return s.advance()
 	case "question.submit":
@@ -507,8 +537,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 
 // handleOptionActivate applies a stacked-row activation shared by Enter/Space
 // and mouse clicks. Single-choice rows record the answer and advance;
-// multi-choice rows toggle in place; the write-in row selects the custom
-// answer and focuses the text line beneath the stack.
+// multi-choice rows toggle in place.
 func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
 	if s.reviewing {
 		row, ok := action.Payload.(ui.ListItem)
@@ -530,16 +559,6 @@ func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	id, _ := row.Payload.(string)
-	if id == customOptionID {
-		s.selectCustom()
-		target := InputID
-		if item.Multiple && !containsCustom(s.choices[s.index]) {
-			target = OptionsID
-		}
-		result := s.focusResult(target, true)
-		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
-		return result
-	}
 	index := optionIndex(id)
 	if index < 0 || index >= len(item.Options) {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -555,23 +574,6 @@ func (s *Screen) handleOptionActivate(action ui.Action) ui.EventResult {
 	s.syncAnswer()
 	s.syncRail()
 	return s.advance()
-}
-
-// selectCustom activates the write-in answer. Single-choice questions replace
-// their pick; multi-select toggles membership without losing the retained draft.
-func (s *Screen) selectCustom() {
-	item, ok := s.currentItem()
-	if !ok {
-		return
-	}
-	if item.Multiple {
-		s.toggleChoice(customOptionID)
-	} else {
-		s.choices[s.index] = []string{customOptionID}
-	}
-	s.syncAnswer()
-	s.syncOptions()
-	s.syncRail()
 }
 
 // toggleChoice flips one option's membership in a multi-select question.
@@ -623,6 +625,10 @@ func (s *Screen) openCurrent() {
 		return
 	}
 	s.input.SetValue(s.custom[s.index])
+	s.input.SetPlaceholder("Type your answer")
+	if item, _ := s.currentItem(); len(item.Options) > 0 {
+		s.input.SetPlaceholder("Type your own answer")
+	}
 	s.options.SetItems(nil)
 	s.inputGate.escAction = focusBackwardAction
 	s.inputGate.escPayload = OptionsID
@@ -650,15 +656,18 @@ func (s *Screen) openCurrent() {
 }
 
 // actionHint is the trailing guidance painted at the far end of the pinned
-// actions row. The write-in has no in-field placeholder, so the text-only form
-// names its only input there; every form points at the pinned decisions.
+// actions row. It names the keys of the current step.
 func (s *Screen) actionHint() string {
-	if !s.reviewing {
-		if item, ok := s.currentItem(); ok && len(item.Options) == 0 {
-			return "Type your answer · Tab: actions"
-		}
+	item, ok := s.currentItem()
+	switch {
+	case s.reviewing || !ok:
+		return "Tab: actions"
+	case len(item.Options) == 0:
+		return "Enter: next · " + ui.FormatShortcut(ui.NewlineChord) + ": new line"
+	case item.Multiple:
+		return "Space: select · Enter: next"
 	}
-	return "Tab: actions"
+	return "Enter: choose"
 }
 
 // syncOptions rebuilds the reading rows, carrying the cursor across toggles.

@@ -272,11 +272,10 @@ func (m *App) handleMemoryBrowserMutation(msg memorybrowser.MutationMsg) tea.Cmd
 			result.Record = msg.Replacement
 			result.Record.Pinned = msg.Pinned
 			result.Record.Revision++
-		case memorybrowser.MutationRetire:
-			result.Err = service.ForgetMemoryRecord(ctx, msg.ID, msg.ExpectedRevision)
-			result.Record = msg.Replacement
-			result.Record.Status = memory.StatusSuperseded
-			result.Record.Revision++
+		case memorybrowser.MutationDelete:
+			result.Err = service.DeleteMemory(ctx, msg.ID, msg.ExpectedRevision)
+		case memorybrowser.MutationDeleteEpisode:
+			result.Err = service.DeleteMemoryEpisode(ctx, msg.ID)
 		case memorybrowser.MutationCorrect:
 			replacement := msg.Replacement
 			replacement.ID, replacement.Revision = msg.ID, msg.ExpectedRevision
@@ -298,6 +297,14 @@ func (m *App) applyMemoryBrowserMutation(msg memoryBrowserMutationResultMsg) tea
 	m.markMemoryBrowserDirty()
 	if msg.Err != nil {
 		return nil
+	}
+	if kind := msg.Request.Kind; kind == memorybrowser.MutationDelete || kind == memorybrowser.MutationDeleteEpisode {
+		// The confirmation is gone: keyboard focus returns to the list, never
+		// to a Delete button that now acts on another memory.
+		if m.rootHost != nil {
+			m.rootHost.Layout()
+		}
+		m.memoryBrowser.FocusList()
 	}
 	return tea.Batch(m.memoryBrowser.Refresh(), m.memoryBrowser.ReloadDetail())
 }

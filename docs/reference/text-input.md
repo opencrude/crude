@@ -256,8 +256,9 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   Docked agent questions/confirmations are pending continuation, not global shell
   modality. Deliberate composer focus may edit a future draft, but plain Enter
   cannot send or steer while that prompt remains unresolved. Slash commands and
-  newline editing remain available. Question write-ins use the same multiline
-  editor; their commit chord advances to review and never bypasses explicit Submit.
+  newline editing remain available. Question write-ins use the composer keys:
+  Enter goes to the next step (the review after the last question) and the
+  newline chord breaks the line; nothing bypasses the explicit Submit.
 - Submitted-input receipts also fence draft/editor state, owner epoch, generation
   and workspace. Cursor, selection, scroll, references and undo/edit ABA changes
   protect a newer draft from consumption. Stop preserves accepted input in chat

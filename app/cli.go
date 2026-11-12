@@ -273,6 +273,13 @@ func Main() int {
 		fmt.Println(buildinfo.VersionString())
 		return 0
 	}
+	if home, err := buildinfo.SelectHome(); err == nil && buildinfo.UsesDevelopmentProfile() {
+		if release, err := os.UserHomeDir(); err == nil {
+			if err := seedDevelopmentProfile(home, release); err != nil {
+				fmt.Fprintf(os.Stderr, "crude: could not copy settings into the development profile %s: %v\n", home, err)
+			}
+		}
+	}
 	if role := crashReportRole(flags); role != "" {
 		home, err := buildinfo.Home()
 		if err == nil {

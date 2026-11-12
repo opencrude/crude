@@ -524,7 +524,8 @@ MemoryStore is the memory browse and curation surface.
 | `SearchMemories` | 1 | reads | yes | memory.search |
 | `InspectMemory` | 1 | reads | yes | memory.inspect |
 | `PinMemory` | 1 | mutates | yes | memory.pin |
-| `ForgetMemoryRecord` | 1 | mutates | yes | memory.forget |
+| `DeleteMemory` | 1 | mutates | yes | memory.delete |
+| `DeleteMemoryEpisode` | 1 | mutates | yes | memory.delete_episode |
 | `CorrectMemory` | 1 | mutates | yes | memory.correct |
 
 ### `Capabilities`

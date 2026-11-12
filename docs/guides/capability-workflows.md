@@ -268,12 +268,24 @@ agent context acceptance. HOLD/VETO/posts never wake workers, grant permission,
 reserve files or schedule work. The initial human UI is inspection/search only.
 
 **Workspace Memory**, `/memory`, Ctrl+Alt+M and the footer share one retained
-workspace browser. Knowledge and Episodes are separate tabs. Detail is scrollable
-and copyable: source/applicability, evidence origins/synopses/outcomes, immutable
-revisions, feedback and exposure. Actions support pin, correction and retire.
-Correction/retire use the exact expected revision; stale extraction cannot replace
-the correction or revive retired advice. Exposure is not usefulness. Disabling
-automatic extraction does not remove browsing.
+workspace browser. Knowledge and Episodes are separate tabs. Enter opens a
+knowledge item ready to edit in place (title, content, applicability, scope
+paths; evidence is read-only); Ctrl+S or **Save** writes a new revision against
+the exact revision that was opened, and the editor stays open. Esc with unsaved
+changes asks once, then discards. An unchanged open editor follows newer
+revisions; an edited one keeps the user's text on a conflict. **More** holds
+pin/unpin, **History and details** (scrollable, copyable source, evidence,
+immutable revisions, feedback, exposure) and copy. Retired knowledge and
+episodes open read-only.
+
+**Delete** (the Delete key on a list row, or the button in the editor) is the
+user's complete removal of any memory. Its confirmation focuses Cancel and shows
+the content. Knowledge deletion removes the record, every revision, feedback,
+exposure, journal entry and search entry in one transaction, fenced by the
+opened revision: a memory changed elsewhere is not deleted until the user opens
+it again. Episode deletion removes the episode. Revisions and episodes stay
+immutable otherwise; agents retire knowledge with history kept. Exposure is not
+usefulness. Disabling automatic extraction does not remove browsing.
 
 During active development, memory and session capability settings require the
 current schema. Startup does not automatically convert outdated formats. Breaking

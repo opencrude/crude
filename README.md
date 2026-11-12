@@ -105,8 +105,11 @@ On Windows, run `scripts/bootstrap_libghostty.ps1`. Then dot-source
 `scripts/libghostty_env.ps1` and run `go run .` in PowerShell.
 To make a standalone Linux binary, run `make build`.
 
-When you develop Crude inside Crude, set a different `CRUDE_HOME`.
-This keeps your development core separate from your working core.
+A source build (`go run .`, `make build`) uses its own profile in
+`~/.crude-dev`, with its own core and data. It never attaches to or changes
+the profile of an installed release in `~/.crude`. On first start it copies
+your release settings and API-key accounts; sign in again for accounts that use
+a browser sign-in. Set `CRUDE_HOME` to choose another profile.
 
 ## Change Crude
 

@@ -88,16 +88,10 @@ func commandMessage[T any](t *testing.T, result ui.EventResult) T {
 	return message
 }
 
-func TestBrowserPaintShowsRecordsAndDetail(t *testing.T) {
+func TestBrowserPaintShowsRecordsAndOpensTheEditor(t *testing.T) {
 	screen, host := browserHost(t, testRecords())
 	text := bufferText(paintHost(host, 78, 20))
-	for _, want := range []string{
-		"Knowledge",
-		"Episodes",
-		"Validation gate",
-		"moveWordLeft climbs blank lines",
-		"Inspect",
-	} {
+	for _, want := range []string{"Knowledge", "Episodes", "Validation gate", "moveWordLeft climbs blank lines", "Open", "Delete"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("paint missing %q:\n%s", want, text)
 		}
@@ -106,12 +100,76 @@ func TestBrowserPaintShowsRecordsAndDetail(t *testing.T) {
 	if request.Target != screen || request.ID != "mem-1" {
 		t.Fatalf("detail intent = %#v", request)
 	}
+	host.MarkLayout()
+	text = bufferText(paintHost(host, 78, 20))
+	for _, want := range []string{"Title", "Validation gate", "Run go test ./...", "Save", "Ctrl+S"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("Enter must open the memory ready to edit; missing %q:\n%s", want, text)
+		}
+	}
+	if host.Focused() != FormID {
+		t.Fatalf("focus = %s; the editor must take focus", host.Focused())
+	}
 	detail := DetailData{Record: testRecords()[0].Record, Revisions: []memory.Revision{{Record: testRecords()[0].Record, Op: "remember"}}}
 	screen.ApplyDetail(request, detail, nil)
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.menu"})
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.details"})
 	host.MarkLayout()
 	text = bufferText(paintHost(host, 78, 20))
 	if !strings.Contains(text, "Knowledge · Validation gate") || !strings.Contains(text, "Revision: 1") {
-		t.Fatalf("detail missing:\n%s", text)
+		t.Fatalf("history and details missing:\n%s", text)
+	}
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.back"})
+	if screen.page != pageEdit {
+		t.Fatalf("Back from details returned to %s, not the editor", screen.page)
+	}
+}
+
+func TestBrowserEditInPlaceSavesWithTheOpenedRevision(t *testing.T) {
+	screen, host := browserHost(t, testRecords())
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.MarkLayout()
+	paintHost(host, 78, 20)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
+	for _, character := range " Also run vet." {
+		host.Handle(tea.KeyPressMsg{Code: character, Text: string(character)})
+	}
+	mutation := commandMessage[MutationMsg](t, host.Handle(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}))
+	if mutation.Kind != MutationCorrect || mutation.ID != "mem-1" || mutation.ExpectedRevision != 1 || !strings.HasSuffix(mutation.Replacement.Content, "Also run vet.") {
+		t.Fatalf("Ctrl+S must save the typed text against the opened revision: %#v", mutation)
+	}
+	saved := mutation.Replacement
+	saved.Revision = 2
+	screen.ApplyMutation(mutation, saved, nil)
+	if screen.page != pageEdit || screen.formModel.AnyDirty() || screen.draft.Revision != 2 {
+		t.Fatalf("after saving, the editor stays open on revision 2: page=%s dirty=%v draft=%#v", screen.page, screen.formModel.AnyDirty(), screen.draft)
+	}
+	if !strings.Contains(screen.status.Text(), "revision 2") {
+		t.Fatalf("status = %q", screen.status.Text())
+	}
+	if result := host.Handle(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}); result.Cmd != nil {
+		t.Fatal("saving without changes made a new revision")
+	}
+}
+
+func TestBrowserEscapeWarnsBeforeDiscardingAnEdit(t *testing.T) {
+	screen, host := browserHost(t, testRecords())
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.MarkLayout()
+	paintHost(host, 78, 20)
+	host.Handle(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if screen.page != pageEdit || !strings.Contains(screen.status.Text(), "unsaved changes") {
+		t.Fatalf("first Esc must keep the edit and warn: page=%s status=%q", screen.page, screen.status.Text())
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if screen.page != pageBrowse || screen.draft != nil {
+		t.Fatalf("second Esc must discard and return to the list: page=%s", screen.page)
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if screen.page != pageBrowse {
+		t.Fatal("Esc on an unchanged memory must return at once")
 	}
 }
 
@@ -145,93 +203,79 @@ func TestBrowserSearchIsTypedAndRejectsOldResults(t *testing.T) {
 	}
 }
 
-func TestBrowserRetireCancelFirstAndCASPreview(t *testing.T) {
+func TestBrowserDeleteFromTheListIsCancelFirstAndExact(t *testing.T) {
 	screen, host := browserHost(t, testRecords())
-	request := commandMessage[DetailMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	screen.ApplyDetail(request, DetailData{Record: testRecords()[0].Record}, nil)
-	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.retire"})
-	if result.Cmd != nil {
-		t.Fatal("opening confirmation started a mutation")
+	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyDelete}); result.Cmd != nil {
+		t.Fatal("Delete key removed a memory without confirmation")
 	}
 	host.MarkLayout()
-	host.Layout()
-	host.Focus(ActionsID)
-	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil || screen.page != pageDetail {
-		t.Fatalf("default Enter must cancel: %#v page=%s", result, screen.page)
+	text := bufferText(paintHost(host, 78, 20))
+	if screen.page != pageDelete || !strings.Contains(text, "permanently") || !strings.Contains(text, "cannot undo") {
+		t.Fatalf("delete confirmation missing:\n%s", text)
 	}
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.retire"})
+	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil || screen.page != pageBrowse {
+		t.Fatalf("default Enter must cancel back to the list: %#v page=%s", result, screen.page)
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyDelete})
 	host.MarkLayout()
-	host.Layout()
-	host.Focus(ActionsID)
+	paintHost(host, 78, 20)
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
 	mutation := commandMessage[MutationMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	if mutation.Target != screen || mutation.ID != "mem-1" || mutation.ExpectedRevision != 1 || mutation.Kind != MutationRetire {
-		t.Fatalf("retire preview = %#v", mutation)
-	}
-	screen.detail.Record.Revision = 5
-	if mutation.ExpectedRevision != 1 {
-		t.Fatal("preview was mutated after confirmation")
+	if mutation.Target != screen || mutation.ID != "mem-1" || mutation.ExpectedRevision != 1 || mutation.Kind != MutationDelete {
+		t.Fatalf("delete intent = %#v", mutation)
 	}
 	screen.ApplyMutation(mutation, memory.Record{}, memory.ErrRevisionConflict)
-	if screen.page != pageRetire || screen.retirePreview == nil || screen.retirePreview.Revision != 1 {
-		t.Fatal("conflict discarded the immutable retirement preview")
+	if screen.page != pageDelete || screen.deletePreview == nil || screen.deletePreview.Record.Revision != 1 || !strings.Contains(screen.status.Text(), "changed after you opened it") {
+		t.Fatalf("conflict lost the exact preview: page=%s status=%q", screen.page, screen.status.Text())
 	}
 	host.MarkLayout()
-	host.Layout()
-	host.Focus(ActionsID)
-	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil || screen.page != pageDetail {
-		t.Fatal("retirement conflict did not restore Cancel as the safe default")
+	paintHost(host, 78, 20)
+	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil || screen.page != pageBrowse {
+		t.Fatal("a failed delete did not restore Cancel as the safe default")
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyDelete})
+	host.MarkLayout()
+	paintHost(host, 78, 20)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
+	mutation = commandMessage[MutationMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	screen.ApplyMutation(mutation, memory.Record{}, nil)
+	if screen.page != pageBrowse || !strings.Contains(screen.status.Text(), "Deleted") {
+		t.Fatalf("success must return to the list and say so: page=%s status=%q", screen.page, screen.status.Text())
 	}
 }
 
-func TestBrowserNarrowRetireCancelAndConfirmation(t *testing.T) {
+func TestBrowserDeleteFromTheEditorReturnsToIt(t *testing.T) {
 	screen, host := browserHost(t, testRecords())
-	detail := commandMessage[DetailMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	screen.ApplyDetail(detail, DetailData{Record: testRecords()[0].Record}, nil)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.delete"})
+	if screen.page != pageDelete {
+		t.Fatalf("page = %s", screen.page)
+	}
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.back"})
+	if screen.page != pageEdit || screen.draft == nil {
+		t.Fatalf("Cancel must return to the open editor: page=%s", screen.page)
+	}
+}
+
+func TestBrowserNarrowDeleteCancelAndConfirmation(t *testing.T) {
+	screen, host := browserHost(t, testRecords())
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	paintHost(host, 20, 11)
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.retire"})
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.delete"})
 	host.MarkLayout()
 	host.Layout()
 	host.Focus(ActionListID)
-	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil || screen.page != pageDetail {
+	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil || screen.page != pageEdit {
 		t.Fatal("narrow default confirmation must cancel")
 	}
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.retire"})
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.delete"})
 	host.MarkLayout()
 	host.Layout()
 	host.Focus(ActionListID)
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	mutation := commandMessage[MutationMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	if mutation.ExpectedRevision != 1 || mutation.Kind != MutationRetire {
+	if mutation.ExpectedRevision != 1 || mutation.Kind != MutationDelete {
 		t.Fatalf("narrow confirmation preview = %#v", mutation)
-	}
-}
-
-func TestBrowserConfirmationFocusAdaptsWhenActionLayoutChanges(t *testing.T) {
-	screen, host := browserHost(t, testRecords())
-	detail := commandMessage[DetailMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	screen.ApplyDetail(detail, DetailData{Record: testRecords()[0].Record}, nil)
-	paintHost(host, 24, 11)
-	if !screen.compactActions {
-		t.Fatal("detail actions should use narrow list")
-	}
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.menu"})
-	host.MarkLayout()
-	host.Layout()
-	host.Focus(ActionListID)
-	for index, item := range screen.actionList.Items() {
-		if item.ID == "memorybrowser.retire" {
-			screen.actionList.SelectIndex(index)
-			break
-		}
-	}
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if result.Cmd != nil || host.Focused() != ActionsID {
-		t.Fatalf("Cancel must own focus after list-to-bar adaptation: %s %#v", host.Focused(), result)
-	}
-	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if result.Cmd != nil || screen.page != pageDetail {
-		t.Fatal("default Enter mutated after action-layout adaptation")
 	}
 }
 
@@ -266,6 +310,7 @@ func TestBrowserFullDetailScrollAndCopy(t *testing.T) {
 	record := testRecords()[0].Record
 	detail := DetailData{Record: record, Revisions: []memory.Revision{{Record: record, Op: "remember"}}, Feedback: []memory.Feedback{{RevisionRef: memory.RevisionRef{ID: record.ID, Revision: 1}, Kind: memory.FeedbackUseful, Evidence: record.Evidence}}, Exposures: []memory.Exposure{{RevisionRef: memory.RevisionRef{ID: record.ID, Revision: 1}, Kind: "automatic", SessionID: "s2"}}}
 	screen.ApplyDetail(request, detail, nil)
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.details"})
 	host.MarkLayout()
 	paintHost(host, 78, 14)
 	host.Focus(DetailID)
@@ -303,25 +348,37 @@ func TestBrowserFullDetailScrollAndCopy(t *testing.T) {
 func TestBrowserCorrectionConflictKeepsDraftEvidenceAndRevision(t *testing.T) {
 	screen, host := browserHost(t, testRecords())
 	request := commandMessage[DetailMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	screen.ApplyDetail(request, DetailData{Record: testRecords()[0].Record}, nil)
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.correct"})
 	screen.formModel.SetValue("content", ui.StringValue("User correction must survive a late extraction"))
 	screen.formModel.SetValue("applies_when", ui.StringValue("Only for focused tests"))
+	newer := testRecords()[0].Record
+	newer.Revision, newer.Content = 2, "Agent update"
+	screen.ApplyDetail(request, DetailData{Record: newer}, nil)
 	mutation := commandMessage[MutationMsg](t, screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.save"}))
+	if mutation.ExpectedRevision != 1 {
+		t.Fatalf("a late detail replaced the revision of the user's edit: %#v", mutation)
+	}
 	screen.ApplyMutation(mutation, memory.Record{}, memory.ErrRevisionConflict)
 	draft, ok := screen.Draft()
 	if !ok || draft.Content != mutation.Replacement.Content || draft.AppliesWhen != mutation.Replacement.AppliesWhen || draft.Revision != 1 || len(draft.Evidence) != 1 || draft.Evidence[0].ToolCallID != "tool-test" {
 		t.Fatalf("conflict changed correction draft: %#v", draft)
 	}
-	if screen.page != pageCorrect || screen.MutationError() == nil {
-		t.Fatal("conflict closed the correction")
-	}
-	if screen.ReloadDetail() != nil {
-		t.Fatal("reload must not overwrite a correction draft")
+	if screen.page != pageEdit || screen.MutationError() == nil || !strings.Contains(screen.status.Text(), "Your text is kept") {
+		t.Fatal("conflict closed the edit or did not explain it")
 	}
 }
 
-func TestBrowserEpisodesAreNotMutableKnowledge(t *testing.T) {
+func TestBrowserUntouchedEditorFollowsANewerRevision(t *testing.T) {
+	screen, host := browserHost(t, testRecords())
+	request := commandMessage[DetailMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
+	newer := testRecords()[0].Record
+	newer.Revision, newer.Content = 3, "Agent update"
+	screen.ApplyDetail(request, DetailData{Record: newer}, nil)
+	if screen.formModel.Field("content").Value.String() != "Agent update" || screen.draft.Revision != 3 || screen.formModel.AnyDirty() {
+		t.Fatal("an unchanged editor must show the current revision")
+	}
+}
+
+func TestBrowserEpisodesOpenReadOnlyAndCanBeDeleted(t *testing.T) {
 	screen, host := browserHost(t, testRecords())
 	request := commandMessage[SearchMsg](t, screen.HandleAction(ui.EventContext{}, ui.Action{ID: "tabs.activate", Payload: ModeEpisodes}))
 	if request.Mode != ModeEpisodes {
@@ -337,19 +394,22 @@ func TestBrowserEpisodesAreNotMutableKnowledge(t *testing.T) {
 	if !strings.Contains(screen.reader.area.Value(), "failed") || !strings.Contains(screen.reader.area.Value(), "not verified general knowledge") {
 		t.Fatal("episode outcome/source distinction missing")
 	}
-	for _, action := range []string{"pin", "correct", "retire"} {
+	for _, action := range []string{"pin", "save"} {
 		result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser." + action})
-		if result.Cmd != nil || screen.draft != nil || screen.retirePreview != nil {
+		if result.Cmd != nil || screen.draft != nil {
 			t.Fatalf("episode accepted %s", action)
 		}
+	}
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.delete"})
+	mutation := commandMessage[MutationMsg](t, screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.confirm-delete"}))
+	if mutation.Kind != MutationDeleteEpisode || mutation.ID != "ep1" {
+		t.Fatalf("episode delete intent = %#v", mutation)
 	}
 }
 
 func TestBrowserDetailAndMutationCloseReopenRejectStaleResults(t *testing.T) {
 	screen, host := browserHost(t, testRecords())
 	detail := commandMessage[DetailMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	screen.ApplyDetail(detail, DetailData{Record: testRecords()[0].Record}, nil)
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.correct"})
 	screen.formModel.SetValue("content", ui.StringValue("Retained user draft"))
 	screen.formModel.SetValue("paths", ui.StringValue(""))
 	mutation := commandMessage[MutationMsg](t, screen.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.save"}))
@@ -371,16 +431,16 @@ func TestBrowserPaintDoesNotEscapeNestedBounds(t *testing.T) {
 	for _, width := range []int{1, 8, 24, 80} {
 		for _, height := range []int{1, 6, 12} {
 			screen, _ := browserHost(t, testRecords())
-			for _, page := range []string{pageBrowse, pageBrowseActions, pageDetail, pageCorrect, pageRetire, pageMenu} {
+			for _, page := range []string{pageBrowse, pageBrowseActions, pageDetail, pageEdit, pageDelete, pageMenu} {
 				if page == pageDetail {
 					screen.detail = DetailData{Record: testRecords()[0].Record}
 					screen.setReader(detailText(screen.detail))
 				}
-				if page == pageCorrect {
-					screen.beginCorrection()
+				if page == pageEdit {
+					screen.loadEditor(screen.detail.Record)
 				}
-				if page == pageRetire {
-					screen.beginRetire()
+				if page == pageDelete {
+					screen.beginDelete()
 				}
 				screen.showPage(page)
 				screen.Layout(ui.LayoutContext{}, ui.Rect{X: 3, Y: 2, W: width, H: height})
@@ -441,8 +501,8 @@ func TestBrowserDockHeaderAndSharedActions(t *testing.T) {
 	paintHost(host, 100, 18)
 	result := host.Handle(tea.MouseClickMsg{X: screen.actions.Bounds().X + 3, Y: screen.actions.Bounds().Y, Button: tea.MouseLeft})
 	request := commandMessage[DetailMsg](t, result)
-	if request.ID != testRecords()[0].ID || screen.page != pageDetail {
-		t.Fatalf("shared action click did not inspect the selected record: %#v", request)
+	if request.ID != testRecords()[0].ID || screen.page != pageEdit {
+		t.Fatalf("shared action click did not open the selected record: %#v", request)
 	}
 }
 
@@ -451,16 +511,16 @@ func TestBrowserNormalNarrowGeometryAndTheme(t *testing.T) {
 		for _, height := range []int{0, 1, 6, 11, 20} {
 			t.Run(fmt.Sprintf("%dx%d", width, height), func(t *testing.T) {
 				screen, host := browserHost(t, testRecords())
-				for _, page := range []string{pageBrowse, pageBrowseActions, pageDetail, pageCorrect, pageRetire, pageMenu} {
+				for _, page := range []string{pageBrowse, pageBrowseActions, pageDetail, pageEdit, pageDelete, pageMenu} {
 					if page == pageDetail {
 						screen.detail = DetailData{Record: testRecords()[0].Record}
 						screen.setReader(detailText(screen.detail))
 					}
-					if page == pageCorrect {
-						screen.beginCorrection()
+					if page == pageEdit {
+						screen.loadEditor(screen.detail.Record)
 					}
-					if page == pageRetire {
-						screen.beginRetire()
+					if page == pageDelete {
+						screen.beginDelete()
 					}
 					screen.showPage(page)
 					screen.Layout(ui.LayoutContext{}, ui.Rect{X: 3, Y: 2, W: width, H: height})

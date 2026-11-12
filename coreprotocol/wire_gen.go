@@ -4842,6 +4842,160 @@ func (z DecisionResult) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z DeleteMemoryEpisodeRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 1
+	o = append(o, 0x91)
+	o = msgp.AppendString(o, z.ID)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *DeleteMemoryEpisodeRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 1 {
+		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z DeleteMemoryEpisodeRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z DeleteMemoryEpisodeResult) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 0
+	o = append(o, 0x90)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *DeleteMemoryEpisodeResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 0 {
+		err = msgp.ArrayError{Wanted: 0, Got: zb0001}
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z DeleteMemoryEpisodeResult) Msgsize() (s int) {
+	s = 1
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z DeleteMemoryRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendInt64(o, z.ExpectedRevision)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *DeleteMemoryRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.ExpectedRevision, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ExpectedRevision")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z DeleteMemoryRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.Int64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z DeleteMemoryResult) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 0
+	o = append(o, 0x90)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *DeleteMemoryResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 0 {
+		err = msgp.ArrayError{Wanted: 0, Got: zb0001}
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z DeleteMemoryResult) Msgsize() (s int) {
+	s = 1
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *DiagnosticsInspectRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 1
@@ -6437,86 +6591,6 @@ func (z *FileSearchResult) Msgsize() (s int) {
 	for za0001 := range z.Matches {
 		s += z.Matches[za0001].Msgsize()
 	}
-	return
-}
-
-// MarshalMsg implements msgp.Marshaler
-func (z ForgetMemoryRecordRequest) MarshalMsg(b []byte) (o []byte, err error) {
-	o = msgp.Require(b, z.Msgsize())
-	// array header, size 2
-	o = append(o, 0x92)
-	o = msgp.AppendString(o, z.ID)
-	o = msgp.AppendInt64(o, z.ExpectedRevision)
-	return
-}
-
-// UnmarshalMsg implements msgp.Unmarshaler
-func (z *ForgetMemoryRecordRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
-	var zb0001 uint32
-	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err)
-		return
-	}
-	if uint64(zb0001)*1 > uint64(len(bts)) {
-		err = msgp.ErrShortBytes
-		return
-	}
-	if zb0001 != 2 {
-		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
-		return
-	}
-	z.ID, bts, err = msgp.ReadStringBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "ID")
-		return
-	}
-	z.ExpectedRevision, bts, err = msgp.ReadInt64Bytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err, "ExpectedRevision")
-		return
-	}
-	o = bts
-	return
-}
-
-// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z ForgetMemoryRecordRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.Int64Size
-	return
-}
-
-// MarshalMsg implements msgp.Marshaler
-func (z ForgetMemoryRecordResult) MarshalMsg(b []byte) (o []byte, err error) {
-	o = msgp.Require(b, z.Msgsize())
-	// array header, size 0
-	o = append(o, 0x90)
-	return
-}
-
-// UnmarshalMsg implements msgp.Unmarshaler
-func (z *ForgetMemoryRecordResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
-	var zb0001 uint32
-	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
-	if err != nil {
-		err = msgp.WrapError(err)
-		return
-	}
-	if uint64(zb0001)*1 > uint64(len(bts)) {
-		err = msgp.ErrShortBytes
-		return
-	}
-	if zb0001 != 0 {
-		err = msgp.ArrayError{Wanted: 0, Got: zb0001}
-		return
-	}
-	o = bts
-	return
-}
-
-// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z ForgetMemoryRecordResult) Msgsize() (s int) {
-	s = 1
 	return
 }
 

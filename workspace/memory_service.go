@@ -91,13 +91,22 @@ func (w *Workspace) PinMemory(ctx context.Context, id string, expectedRevision i
 	return w.WorkspaceDB.Memory.SetPinned(ctx, id, expectedRevision, pinned, memory.ActorUser)
 }
 
-func (w *Workspace) ForgetMemoryRecord(ctx context.Context, id string, expectedRevision int64) error {
+func (w *Workspace) DeleteMemory(ctx context.Context, id string, expectedRevision int64) error {
 	if !w.MemoryAvailable() {
 		return ErrMemoryUnavailable
 	}
 	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
 	defer cancel()
-	return w.WorkspaceDB.Memory.Supersede(ctx, id, expectedRevision, "", memory.ActorUser, "")
+	return w.WorkspaceDB.Memory.Delete(ctx, id, expectedRevision)
+}
+
+func (w *Workspace) DeleteMemoryEpisode(ctx context.Context, id string) error {
+	if !w.MemoryAvailable() {
+		return ErrMemoryUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
+	defer cancel()
+	return w.WorkspaceDB.Memory.DeleteEpisode(ctx, id)
 }
 
 func (w *Workspace) CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error) {

@@ -65,7 +65,7 @@ func TestQuestionLongContentIsFullyReachableAndBounded(t *testing.T) {
 				scroll.ScrollTo(offset)
 				buf := paintQuestion(host, width, 12)
 				text := bufferText(buf)
-				for _, marker := range []string{"QUESTION_BEGIN", "QUESTION_END", "OPTION_BEGIN", "OPTION_END", "Short choice", "Write your response"} {
+				for _, marker := range []string{"QUESTION_BEGIN", "QUESTION_END", "OPTION_BEGIN", "OPTION_END", "Short choice", "Type your own answer"} {
 					seen[marker] = seen[marker] || strings.Contains(text, marker)
 				}
 				if !bufferContains(buf, "Review") || !bufferContains(buf, "Cancel") {
@@ -253,18 +253,23 @@ func TestQuestionTinyBoundsNeverPaintOutsideScreen(t *testing.T) {
 	}
 }
 
-func TestQuestionMultipleCanDeselectCustomWithoutLosingDraft(t *testing.T) {
+// With several choices the own answer is chosen exactly while it has text, so
+// clicking it and typing adds it, and clearing it removes only it.
+func TestQuestionMultipleOwnAnswerFollowsItsText(t *testing.T) {
 	s, host := questionHost(t, []Item{{Question: "Choose", Options: []string{"Known"}, Multiple: true}}, 80, 14)
 	clickQuestionText(t, host, 80, 14, "Known")
-	clickQuestionText(t, host, 80, 14, "Write your response")
-	host.Handle(tea.PasteMsg{Content: "Retained write-in"})
-	clickQuestionText(t, host, 80, 14, "Write your response")
-	if s.Answer(0) != "Known" || s.custom[0] != "Retained write-in" || containsCustom(s.choices[0]) {
-		t.Fatal("custom checkbox could not be deselected independently of its retained draft")
+	clickQuestionText(t, host, 80, 14, "Type your own answer")
+	if host.Focused() != InputID {
+		t.Fatalf("clicking the own answer focus=%v", host.Focused())
 	}
-	clickQuestionText(t, host, 80, 14, "Write your response")
-	if s.Answer(0) != "Known, Retained write-in" {
-		t.Fatal("reselecting custom did not restore its draft")
+	host.Handle(tea.PasteMsg{Content: "Written"})
+	if s.Answer(0) != "Known, Written" || !bufferContains(paintQuestion(host, 80, 14), "[x] Written") {
+		t.Fatalf("typed own answer not chosen: %q", s.Answer(0))
+	}
+	host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if s.Answer(0) != "Known" || containsCustom(s.choices[0]) {
+		t.Fatalf("cleared own answer stayed chosen: %q", s.Answer(0))
 	}
 }
 

@@ -180,10 +180,15 @@ func (v *WorkspaceView) PinMemory(ctx context.Context, iD string, expectedRevisi
 	return err
 }
 
-func (v *WorkspaceView) ForgetMemoryRecord(ctx context.Context, iD string, expectedRevision int64) error {
-	var out coreprotocol.ForgetMemoryRecordResult
-	err := v.Client.Call(ctx, v.ID, coreprotocol.ForgetMemoryRecord, coreprotocol.ForgetMemoryRecordRequest{ID: iD, ExpectedRevision: expectedRevision}, &out)
+func (v *WorkspaceView) DeleteMemory(ctx context.Context, iD string, expectedRevision int64) error {
+	var out coreprotocol.DeleteMemoryResult
+	err := v.Client.Call(ctx, v.ID, coreprotocol.DeleteMemory, coreprotocol.DeleteMemoryRequest{ID: iD, ExpectedRevision: expectedRevision}, &out)
 	return err
+}
+
+func (v *WorkspaceView) DeleteMemoryEpisode(ctx context.Context, iD string) error {
+	var out coreprotocol.DeleteMemoryEpisodeResult
+	return v.Client.Call(ctx, v.ID, coreprotocol.DeleteMemoryEpisode, coreprotocol.DeleteMemoryEpisodeRequest{ID: iD}, &out)
 }
 
 func (v *WorkspaceView) CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error) {
