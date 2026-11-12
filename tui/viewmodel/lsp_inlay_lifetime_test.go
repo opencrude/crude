@@ -5,8 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/tui/screens/inlay"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestInlayPeerFocusKeepsTheOtherFileHintsAndEditing(t *testing.T) {
@@ -68,5 +71,97 @@ func TestInlayCloseAndReopenWhilePeerKeepsFile(t *testing.T) {
 	}
 	if disk, err := os.ReadFile(f.engine.main); err != nil || string(disk) != inlayConnectedSource {
 		t.Fatal("close/reopen wrote disk", err)
+	}
+}
+
+// A terminal correction can make an already-rendered label unrepresentable.
+// The open list or pending tooltip read must become an actionable error, not
+// continue showing a result whose inline labels have disappeared.
+func TestInlayOpenReaderReportsReprojectionFailure(t *testing.T) {
+	for _, state := range []string{"list", "reading"} {
+		t.Run(state, func(t *testing.T) {
+			ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
+			t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+			f := newInlayConnectedFixture(t, true, `[{"position":{"line":2,"character":9},"label":"☰","kind":1}]`)
+			one := f.shells[0]
+			renameConnectedKey(t, one, tea.KeyPressMsg{Code: 'j', Mod: tea.ModAlt})
+			remoteJourneyUntil(t, f.shells, func() bool { return one.app.inlayInspector != nil && one.app.inlayInspector.screen.InList() })
+			s := one.app.inlayInspector
+			var gate, cancelled chan struct{}
+			if state == "reading" {
+				renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyEnter})
+				remoteJourneyUntil(t, f.shells, func() bool { return s.screen.InDetail() && !s.reading })
+				gate = make(chan struct{})
+				entered, stopped := make(chan struct{}, 1), make(chan struct{}, 1)
+				cancelled = stopped
+				f.engine.mu.Lock()
+				f.engine.resolveGate, f.engine.resolveEntered, f.engine.resolveCancelled = gate, entered, cancelled
+				f.engine.mu.Unlock()
+				defer func() {
+					select {
+					case <-gate:
+					default:
+						close(gate)
+					}
+				}()
+				renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
+				renameConnectedKey(t, one, tea.KeyPressMsg{Code: tea.KeyLeft})
+				_, activate := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+				intent := captureNavigationCommand[inlay.InspectMsg](t, one, activate)
+				one.app.runDetachedAsyncCmd(one.app.inspectInlayHintCmd(intent))
+				select {
+				case <-entered:
+				case <-time.After(5 * time.Second):
+					t.Fatal("tooltip read did not start")
+				}
+			}
+			ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 0}})
+			_, cmd := one.app.Update(tea.TerminalWidthProfileMsg{Measured: 1, Changed: true})
+			runAppCommand(t, one.app, cmd)
+			r := one.app.inlayViews[f.main].request
+			if r == nil || r.err == nil || f.main.HasInlayProjection() {
+				t.Fatal("fixture did not reproduce failed reprojection")
+			}
+			if one.app.inlayInspector != s || s.screen.InList() || s.screen.InDetail() || !strings.Contains(inlayVisualReader(s), "Could not load inlay hints") {
+				t.Fatalf("open reader still shows success after failed reprojection: list=%t text=%q", s.screen.InList(), inlayVisualReader(s))
+			}
+			if state == "reading" {
+				select {
+				case <-cancelled:
+				case <-time.After(5 * time.Second):
+					t.Fatal("failed reprojection did not cancel the tooltip read")
+				}
+				close(gate)
+				if s.reading || s.readCancel != nil {
+					t.Fatal("failed reprojection retained the selected reader")
+				}
+			}
+			if f.main.Value() != inlayConnectedSource || one.app.Input.Value() != "private first inlay draft" {
+				t.Fatal("reprojection changed source or draft")
+			}
+		})
+	}
+}
+
+// A timed-out request remains observable as an error while its exact view is
+// current. Cancelling the provider must not close that error before the user
+// can follow its recovery instruction.
+func TestInlayTimedOutRequestKeepsActionableReader(t *testing.T) {
+	app, ed, _ := inlayRetryFixture(t, nil)
+	app.openInlayInspectorCmd()
+	s := app.inlayInspector
+	if s == nil || s.request == nil {
+		t.Fatal("reader not opened")
+	}
+	r := s.request
+	r.started = true
+	r.deadline = time.Now().Add(-time.Second)
+	app.syncInlayHints()
+	text := inlayVisualReader(s)
+	if app.inlayInspector != s || !s.shown || !strings.Contains(text, "Refresh Inlay Hints") {
+		t.Fatal("timed-out request discarded its recovery reader", text)
+	}
+	if r.ctx.Err() == nil || ed.Value() != "abc\n" || ed.Modified() {
+		t.Fatal("timeout did not cancel provider or changed source")
 	}
 }

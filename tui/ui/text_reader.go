@@ -1,18 +1,22 @@
 package ui
 
-import "crude/tui/surface"
+import (
+	"crude/tui/rendering"
+	"crude/tui/surface"
+)
 
 // TextReader composes the native read-only text control with an on-demand
 // scrollbar. Both controls use TextArea's one scroll model; selection, wrapping,
 // keyboard movement and pointer capture remain owned by the native controls.
 type TextReader struct {
 	Base
-	text      *TextArea
-	scrollbar *ScrollbarControl
-	measured  bool
-	measureAt Constraints
-	revision  uint64
-	size      Size
+	text            *TextArea
+	scrollbar       *ScrollbarControl
+	measured        bool
+	measureAt       Constraints
+	revision        uint64
+	widthGeneration uint64
+	size            Size
 }
 
 func NewTextReader(id ComponentID, tokens *TokenSet) *TextReader {
@@ -42,9 +46,10 @@ func (r *TextReader) Measure(ctx LayoutContext, cs Constraints) Size {
 	// Measurement uses the width without a scrollbar. Actual overflow layout
 	// can use one less column; do not bounce the text wrap cache every frame.
 	revision := r.text.edit.contentRevision
-	if !r.measured || r.measureAt != cs || r.revision != revision {
+	generation := rendering.WidthProfileGeneration()
+	if !r.measured || r.measureAt != cs || r.revision != revision || r.widthGeneration != generation {
 		r.size = r.text.Measure(ctx, cs)
-		r.measured, r.measureAt, r.revision = true, cs, revision
+		r.measured, r.measureAt, r.revision, r.widthGeneration = true, cs, revision, generation
 	}
 	return r.size
 }

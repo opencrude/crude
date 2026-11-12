@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"time"
 
@@ -13,17 +14,18 @@ import (
 )
 
 type inlayInspectorState struct {
-	request    *inlayRequest
-	screen     *inlay.Screen
-	ctx        context.Context
-	cancel     context.CancelFunc
-	focus      FocusTarget
-	shown      bool
-	reading    bool
-	sequence   uint64
-	index      int
-	readCancel context.CancelFunc
-	deadline   time.Time
+	request             *inlayRequest
+	screen              *inlay.Screen
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	focus               FocusTarget
+	shown               bool
+	requestFailureShown bool // One error transition for this retained request.
+	reading             bool
+	sequence            uint64
+	index               int
+	readCancel          context.CancelFunc
+	deadline            time.Time
 }
 
 type inlayInspectionMsg struct {
@@ -62,7 +64,7 @@ func (m *App) openInlayInspectorCmd() tea.Cmd {
 	work := m.syncInlayHints()
 	view := m.inlayViews[m.EditorState.Editor]
 	if view == nil || view.hidden || view.request == nil {
-		m.Feedback.NotifyInfo("Show inlay hints in an acknowledged, visible editor first")
+		m.Feedback.NotifyInfo("Inlay hints are not ready. Show them in the editor, then try again.")
 		return work
 	}
 	base, _ := m.lspRequestContext()
@@ -75,7 +77,7 @@ func (m *App) openInlayInspectorCmd() tea.Cmd {
 	m.inlayInspector = s
 	w, h := min(104, max(1, m.width-4)), min(28, max(1, m.height-4))
 	frame, fw := m.newEditorPopover(ui.OverlayInlayHints, "Inlay hints", s.screen, s.screen.DefaultFocus(), ui.Rect{W: w, H: h})
-	if !m.placeEditorPicker(fw, frame, view.editor) {
+	if !m.placeEditorPickerHeight(fw, frame, view.editor, 18) {
 		m.closeInlayInspector()
 		return work
 	}
@@ -132,20 +134,45 @@ func (m *App) markInlayInspectorDirty(s *inlayInspectorState) {
 	}
 }
 
-func (m *App) updateInlayInspector(r *inlayRequest) {
-	s := m.inlayInspector
-	if s == nil || s.request != r || s.shown {
+// A shell logger may block on a flush or its backing store. Retain the exact
+// logger and failure on the App's joined async owner; never do that I/O on Update.
+func (m *App) logInlayFailure(operation string, err error) {
+	if err == nil || m.ws == nil {
 		return
 	}
-	if r.err != nil && r.result == nil {
-		s.screen.SetError(r.err.Error())
-		s.shown = true
-	} else if r.result != nil && r.installed {
-		result := *r.result
-		if r.err != nil {
-			result.Detail += "\nRendering limitation: " + r.err.Error()
+	logger := m.ws.Logger()
+	if logger == nil {
+		return
+	}
+	m.runDetachedAsyncCmd(func() tea.Msg {
+		logger.Warn("LSP", "request_failed", "operation", operation, "error", err.Error())
+		return nil
+	})
+}
+
+func (m *App) updateInlayInspector(r *inlayRequest) {
+	s := m.inlayInspector
+	if s == nil || s.request != r {
+		return
+	}
+	if r.err != nil {
+		if s.requestFailureShown {
+			return
 		}
-		s.screen.SetResult(result)
+		// A later reprojection can fail after the reader was shown. Retire
+		// its selected read before replacing the stale success presentation.
+		s.requestFailureShown = true
+		s.sequence++
+		if s.readCancel != nil {
+			s.readCancel()
+			s.readCancel = nil
+		}
+		s.reading, s.deadline, s.index = false, time.Time{}, -1
+		m.logInlayFailure("inlay hints", r.err)
+		s.screen.SetError()
+		s.shown = true
+	} else if !s.shown && r.result != nil && r.installed {
+		s.screen.SetResult(*r.result)
 		s.shown = true
 	} else {
 		return
@@ -165,9 +192,11 @@ func (m *App) syncInlayInspector() {
 	if s.reading && !s.deadline.IsZero() && time.Now().After(s.deadline) {
 		if s.readCancel != nil {
 			s.readCancel()
+			s.readCancel = nil
 		}
-		s.reading = false
-		s.screen.SetError("Read-only inlay inspection timed out. Close and inspect again; no command or edit was executed.")
+		s.sequence++
+		s.reading, s.deadline, s.index = false, time.Time{}, -1
+		s.screen.SetError()
 		m.markInlayInspectorDirty(s)
 	}
 	m.updateInlayInspector(s.request)
@@ -191,11 +220,14 @@ func (m *App) inspectInlayHintCmd(msg inlay.InspectMsg) tea.Cmd {
 	s.screen.SetBusy(true)
 	m.markInlayInspectorDirty(s)
 	sequence, result, port := s.sequence, *s.request.result, s.request.port
-	return func() tea.Msg {
+	return m.clientIOCommand(ctx, func(parent context.Context) tea.Msg {
 		defer cancel()
-		detail, err := port.InspectLSPInlayHint(ctx, result.ID, result.Digest, msg.Index, msg.Resolve)
+		detail, err := port.InspectLSPInlayHint(parent, result.ID, result.Digest, msg.Index, msg.Resolve)
+		if cancelled := parent.Err(); cancelled != nil {
+			detail, err = types.LSPInlayInspection{}, errors.Join(err, cancelled)
+		}
 		return inlayInspectionMsg{owner: s, sequence: sequence, index: msg.Index, inspection: detail, err: err}
-	}
+	})
 }
 
 func (m *App) handleInlayInspection(msg inlayInspectionMsg) bool {
@@ -207,8 +239,13 @@ func (m *App) handleInlayInspection(msg inlayInspectionMsg) bool {
 		return false
 	}
 	s.reading, s.deadline = false, time.Time{}
+	if s.readCancel != nil {
+		s.readCancel()
+		s.readCancel = nil
+	}
 	if msg.err != nil {
-		s.screen.SetError(msg.err.Error())
+		m.logInlayFailure("inlay hint details", msg.err)
+		s.screen.SetError()
 		m.markInlayInspectorDirty(s)
 		return false
 	}
@@ -216,7 +253,7 @@ func (m *App) handleInlayInspection(msg inlayInspectionMsg) bool {
 	if result == nil || detail.SetID != result.ID || detail.Digest != result.Digest || detail.Index != msg.index ||
 		detail.WireVersion != result.WireVersion || detail.Range != result.Range ||
 		!reflect.DeepEqual(detail.Boundary, result.Boundary) {
-		s.screen.SetError("The inlay inspection no longer identifies its exact original set and row.")
+		s.screen.SetError()
 		m.markInlayInspectorDirty(s)
 		return false
 	}

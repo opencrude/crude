@@ -459,6 +459,9 @@ and a final typed result. Its explicit `Reply.Admitted` note attests that the
 original command has been synchronously enqueued by its retained owner, not that
 its job succeeded, its result exists or any shell applied it. Exact reattachments
 wait for that same enqueue boundary. Progress never enters a session or domain event queue.
+Progress is coalesced per command; a stream sends its last pending note before the
+final result when the worker ends. A different waiter may already have consumed
+that note; progress is not replayed or proof of the final result.
 The core retains the exact admitted preimage/result across carrier loss until the
 client sends `TopicAck{Seq: 1}` after decoding the final result (including a known
 fault). A failed final ACK or ACK-close cannot turn that known outcome into

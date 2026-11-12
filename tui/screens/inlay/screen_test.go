@@ -2,7 +2,6 @@ package inlay
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,7 +121,7 @@ func TestRenderedNativeJourney(t *testing.T) {
 			s.SetResult(r)
 			host := mount(s, size[0], size[1])
 			shown := paint(host, size[0], size[1])
-			for _, want := range []string{`3:4 #7 parameter "count:"`, `3:4 #19 type "Widget"`, "Inspect", "Close"} {
+			for _, want := range []string{"count:", "Widget", "Line 4", "Parameter", "Type", "Show details", "Close"} {
 				if !strings.Contains(shown, want) {
 					t.Fatalf("narrow list lost distinct readable row %q:\n%s", want, shown)
 				}
@@ -136,8 +135,8 @@ func TestRenderedNativeJourney(t *testing.T) {
 				t.Fatal("inspect did not enter safe-default detail")
 			}
 			shown = paint(host, size[0], size[1])
-			if !strings.Contains(shown, "Inlay hint #19") || !strings.Contains(shown, "Back") ||
-				!strings.Contains(shown, "Resolve tooltips") || !strings.Contains(shown, "Close") {
+			if !strings.Contains(shown, "Widget") || !strings.Contains(shown, "Back") ||
+				!strings.Contains(shown, "Load details") || !strings.Contains(shown, "Close") {
 				t.Fatalf("real Host did not remount detail/footer:\n%s", shown)
 			}
 			if got := s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionResolve}); got.Cmd != nil {
@@ -161,7 +160,7 @@ func TestRenderedNativeJourney(t *testing.T) {
 				t.Fatal("busy list activated")
 			}
 			s.SetBusy(false)
-			// Actual Inspect button takes the same selected ORIGINAL index.
+			// Actual Show details button takes the same selected ORIGINAL index.
 			key(host, tea.KeyTab)
 			key(host, tea.KeyLeft)
 			assertInspect(t, key(host, tea.KeyEnter), s, 19, false)
@@ -257,21 +256,17 @@ func TestDetachedLiteralEvidenceAndNativeCopy(t *testing.T) {
 	in.Boundary.Context.UnknownInputs[0] = "forged-inspection"
 	in.OriginalJSON[2] = 'X'
 	in.ResolvedJSON[2] = 'X'
-	for _, want := range []string{strconv.Quote(unsafe), "9007199254740993", "1e+09",
-		"never.run", "arguments", "newText", "never insert", "Source revision: 29", "source-document", "source-lifetime",
-		"workspace-generation", "source-context", "unknown-build-input", "provider-instance",
-		"test-provider", "tool-identity", "Source wire version: 17", "[2:0, 9:0] anchors",
-		"2030-01-02", "unversioned standard hints", "inert metadata", "Unknown-input limits",
-		"Original raw JSON", "Resolved raw JSON", "Part tooltip", "markdown", `\r\n`, `\u2028\u2029`} {
+	for _, want := range []string{"count:", `\x1b]52;c;injected\a`, `\u2028\u2029`, "\t\n"} {
 		if !strings.Contains(value, want) {
-			t.Fatalf("complete inert evidence omitted %q:\n%s", want, value)
+			t.Fatalf("useful literal content missing %q: %s", want, value)
 		}
 	}
-	for _, forbidden := range []string{"\x1b", "\a", "\r", "\u2028", "\u2029", "forged"} {
+	for _, forbidden := range []string{"\x1b", "\a", "\r", "\u2028", "\u2029", "forged", "9007199254740993", "never.run", "Source revision:", "unknown-build-input", "provider-instance", "Original raw JSON", "Resolved raw JSON"} {
 		if strings.Contains(value, forbidden) {
-			t.Fatalf("unsafe or aliased literal survived: %q", forbidden)
+			t.Fatalf("unsafe, aliased or internal data survived: %q", forbidden)
 		}
 	}
+
 	host.MarkLayout()
 	host.Focus(s.DefaultFocus())
 	key(host, tea.KeyTab)
@@ -309,9 +304,9 @@ func TestDetachedLiteralEvidenceAndNativeCopy(t *testing.T) {
 
 func TestDistinctNonHintStatesAndClearedActions(t *testing.T) {
 	for answer, want := range map[string]string{
-		types.LSPInlayNull:        "Provider returned null.",
-		types.LSPInlayEmpty:       "Provider returned an empty array [].",
-		types.LSPInlayUnsupported: "Inlay hints are unsupported",
+		types.LSPInlayNull:        "No inlay hints in the visible lines.",
+		types.LSPInlayEmpty:       "No inlay hints in the visible lines.",
+		types.LSPInlayUnsupported: "does not support inlay hints.",
 	} {
 		t.Run(answer, func(t *testing.T) {
 			s, r := New(nil), fixture()
@@ -319,9 +314,8 @@ func TestDistinctNonHintStatesAndClearedActions(t *testing.T) {
 			s.SetResult(r)
 			host := mount(s, 60, 16)
 			shown := paint(host, 60, 16)
-			if !strings.Contains(shown, want) || !strings.Contains(shown, "not proof") ||
-				!strings.Contains(s.text.Value(), "unknown-build-input") || s.InList() {
-				t.Fatalf("distinct answer or qualified limits missing:\n%s", shown)
+			if !strings.Contains(shown, want) || strings.Contains(shown, "unknown-build-input") || s.InList() {
+				t.Fatalf("empty or unsupported answer was not readable:\n%s", shown)
 			}
 			assertClose(t, key(host, tea.KeyEsc), s)
 		})
@@ -333,7 +327,7 @@ func TestDistinctNonHintStatesAndClearedActions(t *testing.T) {
 		if state == "loading" {
 			s.SetLoading()
 		} else {
-			s.SetError("failed\r\n\x1b[31m")
+			s.SetError()
 		}
 		host := mount(s, 60, 16)
 		if !strings.Contains(paint(host, 60, 16), "Close") || s.InList() ||
@@ -382,7 +376,7 @@ func TestRefuseForgedInspectionAndMalformedDisplay(t *testing.T) {
 			in := inspection(r, 0)
 			change(&in)
 			s.SetInspection(in)
-			if s.hasResult || s.canResolve() || !strings.Contains(s.text.Value(), "refused") ||
+			if s.hasResult || s.canResolve() || !strings.Contains(s.text.Value(), "Could not load inlay hints") ||
 				s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionResolve}).Cmd != nil {
 				t.Fatal("forged inspection retained actionable old result")
 			}
@@ -411,7 +405,7 @@ func TestRefuseForgedInspectionAndMalformedDisplay(t *testing.T) {
 			old := s.list.Items()[0]
 			change(&r)
 			s.SetResult(r)
-			if s.hasResult || !strings.Contains(s.text.Value(), "refused") ||
+			if s.hasResult || !strings.Contains(s.text.Value(), "Could not load inlay hints") ||
 				s.HandleAction(ui.EventContext{}, ui.Action{ID: ActionInspect, Payload: old}).Cmd != nil {
 				t.Fatal("malformed result retained old action")
 			}
@@ -464,11 +458,10 @@ func TestBoundedRawScrollingGeometryAndThemes(t *testing.T) {
 		t.Fatalf("test input size %d", len(raw))
 	}
 	in.OriginalJSON, in.ResolvedJSON = []byte(raw), []byte(raw)
+	in.Hint.Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("Useful explanation for this hint.\n", 50) + "Final useful detail."}
 	s.SetInspection(in)
-	if !s.inspected || len(s.text.Value()) > 256<<10 ||
-		strings.Count(s.text.Value(), "OUTPUT TRUNCATED") != 2 ||
-		!strings.Contains(s.text.Value(), "/1048576 raw bytes") {
-		t.Fatal("raw evidence was refused, silently clipped or unbounded")
+	if !s.inspected || len(s.text.Value()) > 256<<10 || strings.Contains(s.text.Value(), "opaque") || !strings.Contains(s.text.Value(), "Final useful detail.") {
+		t.Fatal("long hint details or bounded raw validation were lost")
 	}
 	host.MarkLayout()
 	host.Focus(TextID)
@@ -477,7 +470,7 @@ func TestBoundedRawScrollingGeometryAndThemes(t *testing.T) {
 		key(host, tea.KeyPgDown)
 	}
 	after = paint(host, 60, 16)
-	if s.text.ScrollOffset() == 0 || before == after || !strings.Contains(after, "Close") {
+	if s.text.ScrollOffset() == 0 || before == after || !strings.Contains(after, "Close") || !strings.Contains(after, "Final useful detail.") || s.detailScrollbar.Bounds().W != 1 {
 		t.Fatal("native reader did not scroll beneath pinned actions")
 	}
 	for _, size := range [][2]int{{100, 24}, {60, 16}, {9, 5}, {1, 1}, {60, 16}} {
@@ -503,7 +496,7 @@ func TestBoundedRawScrollingGeometryAndThemes(t *testing.T) {
 	assertBounds(t, s, 0, 0)
 	// Direct output cap has an explicit marker and remains valid UTF-8.
 	if got := limitText(strings.Repeat("界", 100000), 256<<10); len(got) > 256<<10 ||
-		!strings.Contains(got, "OUTPUT TRUNCATED") {
+		!strings.Contains(got, "Some details are not shown") {
 		t.Fatal("aggregate output limit was silent or exceeded")
 	}
 }

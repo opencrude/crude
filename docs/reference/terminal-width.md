@@ -21,7 +21,9 @@ cells. If the terminal differs as well, cursor and hit-test positions drift.
 ## One Shared Method And Profile
 
 Crude uses `ansi.GraphemeWidth` everywhere. A process-wide immutable terminal
-profile refines that method after asynchronous calibration:
+profile refines that method after asynchronous calibration. Its atomic generation
+changes with every profile publication, including clearing corrections; retained
+width measurements use that generation as part of their cache key:
 
 | Path | Role |
 |------|------|

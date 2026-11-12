@@ -8,6 +8,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestReadOnlyTextAreaEscapeRemainsHostOwned(t *testing.T) {
@@ -42,6 +43,50 @@ func TestTextAreaVisualLineCountCacheInvalidatesOnContentChanges(t *testing.T) {
 	engine.Clear()
 	if got := engine.VisualLineCount(2); got != 1 {
 		t.Fatalf("cleared rows=%d", got)
+	}
+}
+
+// A reader alternates between the full width and the width reserved for its
+// scrollbar. Neither unchanged width should rewrap every line on each layout.
+func TestTextAreaVisualLineCountAlternatingWidthsUsesCachedRows(t *testing.T) {
+	engine := newTextAreaEngine()
+	engine.SetValue(strings.Repeat("aaaa bbbb\n", 1200))
+	check := func(wide, narrow int) {
+		t.Helper()
+		if got := engine.VisualLineCount(10); got != wide {
+			t.Fatalf("wide rows=%d want %d", got, wide)
+		}
+		if got := engine.VisualLineCount(5); got != narrow {
+			t.Fatalf("narrow rows=%d want %d", got, narrow)
+		}
+	}
+	check(1201, 2401)
+	if alloc := testing.AllocsPerRun(10, func() { engine.VisualLineCount(10); engine.VisualLineCount(5) }); alloc != 0 {
+		t.Fatalf("unchanged alternating widths rebuilt rows: %.0f allocations", alloc)
+	}
+	engine.SetValue("abcd efgh\n")
+	check(2, 3)
+	if alloc := testing.AllocsPerRun(10, func() { engine.VisualLineCount(10); engine.VisualLineCount(5) }); alloc != 0 {
+		t.Fatalf("replacement did not warm both widths: %.0f allocations", alloc)
+	}
+}
+
+// A terminal width correction changes the wrapped rows without editing text.
+func TestTextAreaVisualLineCountRechecksTerminalWidthProfile(t *testing.T) {
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 1}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	e := newTextAreaEngine()
+	e.SetValue("☰☰")
+	if got := e.VisualLineCount(2); got != 1 {
+		t.Fatalf("initial rows=%d", got)
+	}
+	e.VisualLineCount(3)
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"☰": 2}})
+	if got := e.VisualLineCount(2); got != 2 {
+		t.Fatalf("profile change kept stale rows=%d, want 2", got)
+	}
+	if got := e.VisualLineCount(3); got != 2 {
+		t.Fatalf("profile change kept stale second width=%d, want 2", got)
 	}
 }
 

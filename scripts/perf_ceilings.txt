@@ -115,6 +115,10 @@ BenchmarkEditorOrientation/20000/true 240000 185
 BenchmarkMinimapRebuild/200 10800 194
 BenchmarkMinimapRebuild/20000 10800 194
 
+# Repeated intrinsic measure + layout of short and 1,200-line inlay readers.
+BenchmarkInlayReaderStableLayout/short 0 0
+BenchmarkInlayReaderStableLayout/long 0 0
+
 # 255 source-ordered snippet stops following 60,000 indentation bytes.
 BenchmarkCompletionLeadingStopsDense 33000 6
 

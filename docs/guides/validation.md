@@ -525,11 +525,21 @@ boundary after the ordinary keys listed in `lsp_inlay_visual_test.go`. Set
 `INLAY_READY phase=N` marker after each observation before sending the next key.
 Follow the actually observed `RESOLVE_SUPPORTED` value, never treat unsupported tooltip
 resolution as an executed read. Inspect native inline/list/detail and hidden
-frames at 160x40 and 80x24, use the printed literal `POINTER_COUNT` cell for the
+frames at 160x40 and 80x24. The reader shows hint text, not protocol bookkeeping;
+original row identity remains in the test receipt. Use the `POINTER_COUNT` cell for the
 final click, and finish with `quit:F9`. Check all ten `F4 VERIFIED` markers,
 `INLAY_VISUAL_SUCCESS`, exact provider join and clean product exit separately.
-These deterministic local Linux regressions are not adaptive human-workflow,
-distinct-host/device, native containment or complete-project acceptance.
+For long-tooltip native input, `TestInlayReaderLongVisualAcceptance` uses a
+deterministic provider, the connected editor and `CRUDE_VISUAL_INLAY_READER=1`.
+Set `CRUDE_INLAY_READER_RESULT` and `CRUDE_CAPTURE_EVIDENCE` to the same new
+file. F4 observes each boundary; Alt+J, Enter, Tab, Ctrl+End, Ctrl+Home, the
+recorded `INLAY_READER_SCROLL` thumb drag and Escape perform the user actions.
+Await each `INLAY_READER_READY` line and finish with `quit:F9`. Verify all seven
+phases, unchanged source and drafts, actual scrollbar release and clean exit.
+This fixture does not prove installed-server tooltip or resolve support.
+
+These local Linux regressions are not adaptive human-workflow, distinct-host/device,
+native containment or complete-project acceptance.
 
 Completion documentation uses `TestCompletionVisualHeadless` with the actual
 installed gopls and framed core at 160x40 and 80x24. The independently authored

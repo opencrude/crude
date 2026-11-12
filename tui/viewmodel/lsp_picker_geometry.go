@@ -10,8 +10,12 @@ import (
 // help geometry places the result. Neither picker keeps another geometry cache
 // or a second caret/scroll projection.
 func (m *App) placeEditorPicker(window *wm.FloatingWindow, frame *ui.WindowFrameWidget, ed *editor.Editor) bool {
+	return m.placeEditorPickerHeight(window, frame, ed, 14)
+}
+
+func (m *App) placeEditorPickerHeight(window *wm.FloatingWindow, frame *ui.WindowFrameWidget, ed *editor.Editor, maxHeight int) bool {
 	size := frame.Frame().Measure(ui.LayoutContext{}, ui.Constraints{
-		MaxW: min(90, max(1, m.width-4)), MaxH: min(14, max(1, m.height-4)),
+		MaxW: min(90, max(1, m.width-4)), MaxH: min(maxHeight, max(1, m.height-4)),
 	})
 	bounds, visible := m.editorHelpBounds(ed, size.W, size.H)
 	if !visible {
@@ -48,7 +52,7 @@ func (m *App) positionEditorPickers() {
 	if state := m.inlayInspector; state != nil {
 		if window := m.overlayHost.Window(ui.OverlayInlayHints); window != nil {
 			if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
-				m.placeEditorPicker(window, frame, state.request.view.editor)
+				m.placeEditorPickerHeight(window, frame, state.request.view.editor, 18)
 			}
 		}
 	}

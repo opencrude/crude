@@ -41,18 +41,19 @@ type ListRowPainter func(buf *surface.CellBuffer, x, y, width int, item ListItem
 // List is a uniform-height selectable list with shared Selection + Scroll models.
 type List struct {
 	Base
-	items         []ListItem
-	sel           *SelectionModel
-	scroll        *ScrollModel
-	tokens        *TokenSet
-	activate      string // action ID on Enter/click
-	hoverIdx      int
-	followPointer bool
-	rowPainter    ListRowPainter
-	defaultBgRole SemanticColor
-	defaultBgSet  bool
-	contentWidth  int
-	measured      bool
+	items           []ListItem
+	sel             *SelectionModel
+	scroll          *ScrollModel
+	tokens          *TokenSet
+	activate        string // action ID on Enter/click
+	hoverIdx        int
+	followPointer   bool
+	rowPainter      ListRowPainter
+	defaultBgRole   SemanticColor
+	defaultBgSet    bool
+	contentWidth    int
+	widthGeneration uint64
+	measured        bool
 }
 
 // NewList creates a list (clamp navigation, not wrap).
@@ -261,7 +262,8 @@ func (l *List) Measure(_ LayoutContext, cs Constraints) Size {
 // still fill their parent through Measure. Width is derived once per item/theme
 // change, not once per frame; Selection and Scroll remain the only row owners.
 func (l *List) ContentSize(cs Constraints, maxRows int) Size {
-	if !l.measured {
+	generation := rendering.WidthProfileGeneration()
+	if !l.measured || l.widthGeneration != generation {
 		l.contentWidth = 0
 		for _, item := range l.items {
 			width := rendering.VisibleWidth(item.Label)
@@ -276,7 +278,7 @@ func (l *List) ContentSize(cs Constraints, maxRows int) Size {
 			}
 			l.contentWidth = max(l.contentWidth, width)
 		}
-		l.measured = true
+		l.measured, l.widthGeneration = true, generation
 	}
 	height := min(min(len(l.items), max(0, maxRows)), max(0, cs.MaxH))
 	width := l.contentWidth

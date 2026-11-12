@@ -1163,23 +1163,26 @@ var _ TextClipboardTarget = (*TextArea)(nil)
 // Pointer capture belongs to TextArea, independently of this selection anchor.
 // ---------------------------------------------------------------------------
 type textAreaEngine struct {
-	buf               [][]rune
-	curLine           int
-	curCol            int
-	lastVisCol        int
-	selActive         bool
-	selAnchor         int
-	selEnd            int
-	lastInputTime     time.Time
-	frame             int
-	textWidth         int
-	atomicRanges      []AtomicRange
-	undo              []textAreaSnapshot
-	redo              []textAreaSnapshot
-	contentRevision   uint64
-	wrapCacheRevision uint64
-	wrapCacheWidth    int
-	wrapCacheCount    int
+	buf                   [][]rune
+	curLine               int
+	curCol                int
+	lastVisCol            int
+	selActive             bool
+	selAnchor             int
+	selEnd                int
+	lastInputTime         time.Time
+	frame                 int
+	textWidth             int
+	atomicRanges          []AtomicRange
+	undo                  []textAreaSnapshot
+	redo                  []textAreaSnapshot
+	contentRevision       uint64
+	wrapCacheRevision     uint64
+	wrapProfileGeneration uint64
+	wrapCacheWidth        int
+	wrapCacheCount        int
+	wrapPreviousWidth     int
+	wrapPreviousCount     int
 }
 
 type textAreaSnapshot struct {
@@ -1717,8 +1720,21 @@ func (e *textAreaEngine) VisualLineCount(textW int) int {
 	if textW < 1 {
 		textW = 1
 	}
-	if e.wrapCacheRevision == e.contentRevision && e.wrapCacheWidth == textW {
-		return e.wrapCacheCount
+	profile := rendering.WidthProfileGeneration()
+	if e.wrapCacheRevision == e.contentRevision && e.wrapProfileGeneration == profile {
+		if e.wrapCacheWidth == textW {
+			return e.wrapCacheCount
+		}
+		if e.wrapPreviousWidth == textW {
+			// Promote the other warm width. Composite readers measure with
+			// and without a scrollbar and must not rewrap on each layout.
+			e.wrapCacheWidth, e.wrapPreviousWidth = e.wrapPreviousWidth, e.wrapCacheWidth
+			e.wrapCacheCount, e.wrapPreviousCount = e.wrapPreviousCount, e.wrapCacheCount
+			return e.wrapCacheCount
+		}
+		e.wrapPreviousWidth, e.wrapPreviousCount = e.wrapCacheWidth, e.wrapCacheCount
+	} else {
+		e.wrapPreviousWidth, e.wrapPreviousCount = 0, 0
 	}
 	count := 0
 	for _, l := range e.buf {
@@ -1729,6 +1745,7 @@ func (e *textAreaEngine) VisualLineCount(textW int) int {
 		count = 1
 	}
 	e.wrapCacheRevision, e.wrapCacheWidth, e.wrapCacheCount = e.contentRevision, textW, count
+	e.wrapProfileGeneration = profile
 	return count
 }
 

@@ -183,15 +183,19 @@ installed-server journeys. See the [banked evidence](#semantic-token-presentatio
 
 Completion/inlay release ordering, peer focus, close/reopen and provider-work
 capacity now use the original view and document owners. The full suite,
-affected race paths, installed-server journeys at both sizes, build/lint/docs,
-component cross-builds and allocation gate pass. The evidence is in the
+affected race paths, installed-server journeys at both sizes, build/docs,
+component cross-builds and allocation gate passed. A lint failure masked by the
+combined check is corrected; the separate whole-repository lint run passed. The
+evidence is in the
 [request-lifetime checkpoint](../issues/2026-11-11-editor-polish.md#completion-and-inlay-request-lifetimes-2026-11-11).
 
-**Next checkpoint: usable inlay details (2026-11-11).** The existing reader shows
-internal protocol bookkeeping instead of useful hint text. Show the selected
-label and available tooltip in concise, safe text, with compact content-sized
-presentation and scrolling where needed. Keep original row/source validation,
-read-only actions, cancellation, native copy and keyboard/pointer paths.
+**Current checkpoint: usable inlay details (2026-11-11).** The reader now shows
+the selected label and available tooltip instead of protocol bookkeeping. It uses
+content-sized presentation, scrolling and the original row/source validation.
+It preserves read-only actions, cancellation, native copy and keyboard/pointer
+paths. The implementation and its shutdown fences pass the full ordinary suite,
+allocation gate, lint and focused race checks. Capture assertions passed at
+160×40 and 80×24, but image inspection and native Windows acceptance remain open.
 
 Exit: reproduce and fix the existing native reader failure; test empty, unsupported,
 failed, resolved and malicious text; verify exact-row selection, Back/Close,
@@ -1588,8 +1592,9 @@ admission counts actual provider work until return, and a definite busy refusal
 can retry only for the same current view and source. Inlays follow their own
 file's producer and synchronization state, not another shell's selected file.
 Connected tests cover two-shell edit/Undo, cancellation, retries and reopen. The
-full ordinary suite, affected race, build/lint/docs, cross-build and allocation
-gates pass. Linux installed-gopls inlay captures pass at both sizes; this does
+full ordinary suite, affected race, build/docs, cross-build and allocation gates
+passed. The combined check masked a lint failure; see the issue for the correction.
+Linux installed-gopls inlay captures pass at both sizes; this does
 not establish installed-server tooltip resolve or native Windows acceptance.
 See [the detailed evidence](../issues/2026-11-11-editor-polish.md#completion-and-inlay-request-lifetimes-2026-11-11).
 
@@ -1602,10 +1607,13 @@ release ordering, actual running work, producer replacement and synchronization
 publication fence stale or premature reads. The catalog enables the installed
 server's documented semantic-token setting without a language-specific Go branch.
 
-The complete ordinary suite, affected race paths, LSP gate, build/lint/docs,
-Windows/macOS component cross-builds and extended allocation gate pass. Sequential
+The complete ordinary suite, affected race paths, LSP gate, build/docs,
+Windows/macOS component cross-builds and extended allocation gate passed. The
+combined check masked a lint failure in the semantic parser; its correction
+passed a separate whole-repository lint run. Sequential
 Linux 160×40 and 80×24 installed-gopls captures verify typing, Undo, source/draft
-stability and provider cleanup; the images were inspected. The
+stability and provider cleanup through recorded assertions. Their images could
+not be visually inspected in this session. The
 [checkpoint evidence](../issues/2026-11-11-editor-polish.md#semantic-token-presentation-2026-11-11)
 records failed reproductions, limits and measurements. Modifier-specific styling,
 server-initiated refresh, native Windows acceptance and the Windows GC crash remain

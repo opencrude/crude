@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -105,11 +106,12 @@ func TestInlayEveryAnswerWaitsForTheOriginalContextCursor(t *testing.T) {
 				t.Fatal("exact context observation did not publish the accepted answer", answer)
 			}
 			if answer != "hints" {
-				want := map[string]string{"null": "Provider returned null.", "empty": "Provider returned an empty array [].",
-					"unsupported": "Inlay hints are unsupported for this source/provider."}[answer]
-				if text := inlayVisualReader(s); !strings.Contains(text, want) ||
-					!strings.Contains(text, "not proof that no hints exist or that the project is clean") {
-					t.Fatal("published negative answer lost its original meaning and limits", answer, text)
+				want := "No inlay hints in the visible lines."
+				if answer == "unsupported" {
+					want = "This language server does not support inlay hints."
+				}
+				if text := inlayVisualReader(s); !strings.Contains(text, want) || strings.Contains(text, "UnknownInputs") {
+					t.Fatal("published negative answer is not useful", answer, text)
 				}
 			}
 			service.cursor = 9
@@ -161,5 +163,30 @@ func TestInlayWaitsForSynchronizedFileAndRetiresReplacedProducer(t *testing.T) {
 	app.syncInlayHints()
 	if view.request != nil || ed.HasInlayProjection() || ed.Value() != "abc\n" || ed.Modified() {
 		t.Fatal("server loss retained labels or changed source")
+	}
+}
+
+// A valid hint set that cannot be projected must not look like successful
+// inline hints merely because its diagnostic detail is no longer displayed.
+func TestInlayProjectionFailureExplainsRetryWithoutInternalData(t *testing.T) {
+	app, ed, _ := inlayRetryFixture(t, nil)
+	app.openInlayInspectorCmd()
+	s := app.inlayInspector
+	if s == nil || s.request == nil {
+		t.Fatal("inlay inspector did not open")
+	}
+	r := s.request
+	r.result = &types.LSPInlaySet{ID: "result", Digest: strings.Repeat("a", 64), ViewID: r.view.id, Sequence: r.sequence, Range: r.span, WireVersion: 1,
+		Boundary: types.InsightBoundary{Source: r.source, Context: types.InsightContext{Generation: r.contextGeneration}, Producer: r.producer},
+		Answer:   types.LSPInlayHints, ExpiresAt: time.Now().Add(time.Minute), Hints: []types.LSPInlayHint{{Index: 0, SourceByte: 1, Position: types.LSPInlayPosition{Line: 0, Character: 1}, Label: "hint"}}}
+	r.installed = true
+	r.err = errors.New("internal source-byte projection secret")
+	app.updateInlayInspector(r)
+	text := inlayVisualReader(s)
+	if !s.shown || s.screen.InList() || !strings.Contains(text, "Could not load inlay hints") || !strings.Contains(text, "Refresh Inlay Hints") || strings.Contains(text, "projection secret") {
+		t.Fatal("projection failure was hidden or exposed internals", text)
+	}
+	if ed.Value() != "abc\n" || ed.Modified() {
+		t.Fatal("inlay failure changed source")
 	}
 }
