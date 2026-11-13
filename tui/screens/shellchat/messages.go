@@ -65,6 +65,9 @@ func (s *Screen) installMessages(rows []chatprojection.MessageRow, paint PaintPa
 		s.selection.Clear()
 	}
 	sameRows := !sourceChanged && paint.Generation != 0 && s.rowsGeneration == paint.Generation
+	if !sourceChanged && !sameRows {
+		s.selection.reflow(rows)
+	}
 	starts := s.paintState.globalStart
 	if sameRows {
 		hasSel := paint.HasSelection || s.selection.HasActive()
@@ -191,6 +194,9 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		pl = row.Native[localRow]
 	} else {
 		pl = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: row.Lines[localRow], Role: ui.ColorFg}}}
+	}
+	if source, ok := s.selection.sourceRange(); ok {
+		selStart, selEnd = chatprojection.SourceSelectionCols(pl, source)
 	}
 	// A divider drag may deliberately retain the old reflow width. Painting
 	// still belongs to today's viewport: clip content/gutters to its real cells.

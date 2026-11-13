@@ -15,14 +15,8 @@ import (
 func wrapPaintLine(line PaintLine, width int) []PaintLine {
 	plain := line.PlainText()
 	var rows []PaintLine
-	start := 0
-	for i, text := range rendering.WordWrap(plain, max(1, width)) {
-		if i > 0 {
-			for start < len(plain) && plain[start] == ' ' {
-				start++
-			}
-		}
-		end := start + len(text)
+	for _, wrapped := range rendering.WordWrapRanges(plain, max(1, width)) {
+		start, end := wrapped.Start, wrapped.End
 		row := line
 		row.Spans = nil
 		offset := 0
@@ -30,7 +24,7 @@ func wrapPaintLine(line PaintLine, width int) []PaintLine {
 			spanEnd := offset + len(span.Text)
 			from, to := max(start, offset), min(end, spanEnd)
 			if from < to {
-				span.Text = span.Text[from-offset : to-offset]
+				span = span.Slice(from-offset, to-offset)
 				row.Spans = append(row.Spans, span)
 			}
 			offset = spanEnd
@@ -39,7 +33,6 @@ func wrapPaintLine(line PaintLine, width int) []PaintLine {
 			}
 		}
 		rows = append(rows, row)
-		start = end
 	}
 	return rows
 }
@@ -65,7 +58,7 @@ func TruncatePaintLine(pl PaintLine, maxW int) PaintLine {
 			remain -= w
 			continue
 		}
-		span.Text = rendering.TruncateVisual(span.Text, remain, "")
+		span = span.Slice(0, len(rendering.TruncateVisual(span.Text, remain, "")))
 		out = append(out, span)
 		break
 	}

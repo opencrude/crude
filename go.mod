@@ -174,3 +174,5 @@ replace modernc.org/memory => ./third_party/modernc-memory
 // Website npm dependencies may contain unrelated Go packages; keep
 // `go list ./...`, tests and lint scoped to the product module.
 ignore site/node_modules
+
+replace charm.land/glamour/v2 => ./third_party/glamour

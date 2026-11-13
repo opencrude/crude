@@ -154,7 +154,8 @@ func styleReferenceLabels(line PaintLine, labels []string) PaintLine {
 		return line
 	}
 
-	var styled PaintLine
+	styled := line
+	styled.Spans = nil
 	spanStart := 0
 	for _, span := range line.Spans {
 		spanEnd := spanStart + len(span.Text)
@@ -180,8 +181,7 @@ func styleReferenceLabels(line PaintLine, labels []string) PaintLine {
 			if start == end {
 				continue
 			}
-			fragment := span
-			fragment.Text = span.Text[start:end]
+			fragment := span.Slice(start, end)
 			absolute := spanStart + start
 			if referenceRangeContains(ranges, absolute) {
 				fragment.Role = ui.ColorAccent2

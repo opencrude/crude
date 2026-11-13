@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/chatprojection"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -33,6 +34,7 @@ type chatLayout struct {
 // ui.VirtualList RowPainter. ScrollModel, main scrollbar drag, and mouse
 // text selection live here; chatprojection.Renderer exports message rows.
 type Screen struct {
+	clipboardCopy func(string) tea.Cmd
 	ui.Base
 	th                *theme.Theme
 	tokens            *ui.TokenSet
@@ -75,6 +77,16 @@ type Screen struct {
 }
 
 func (s *Screen) SetAgentID(id string) { s.agentID = id }
+
+// SetClipboardCopy connects the shell's existing asynchronous clipboard owner,
+// as for shared text controls. Standalone hosts use the shared terminal command.
+func (s *Screen) SetClipboardCopy(copy func(string) tea.Cmd) { s.clipboardCopy = copy }
+func (s *Screen) copyText(text string) tea.Cmd {
+	if s.clipboardCopy != nil {
+		return s.clipboardCopy(text)
+	}
+	return rendering.CopyToClipboardCmd(text)
+}
 
 // AgentID is the agent whose conversation this chat shows.
 func (s *Screen) AgentID() string { return s.agentID }

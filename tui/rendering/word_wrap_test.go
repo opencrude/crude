@@ -103,3 +103,22 @@ func BenchmarkWordWrapLong(b *testing.B) {
 		_ = WordWrap(source, 47)
 	}
 }
+
+func TestWordWrapRangesRetainRepeatedTextAndUnicodeOffsets(t *testing.T) {
+	source := "  alpha   alpha 界 é"
+	want := []WrapRange{{0, 7}, {10, 15}, {16, len(source)}}
+	got := WordWrapRanges(source, 8)
+	if len(got) != len(want) {
+		t.Fatalf("source segments=%v", got)
+	}
+	for i, r := range got {
+		if r != want[i] {
+			t.Fatalf("segment %d=%v want %v", i, r, want[i])
+		}
+	}
+	emoji := "👩‍💻"
+	got = WordWrapRanges(emoji+emoji, 2)
+	if len(got) != 2 || got[0] != (WrapRange{0, len(emoji)}) || got[1] != (WrapRange{len(emoji), 2 * len(emoji)}) {
+		t.Fatalf("grapheme offsets=%v", got)
+	}
+}

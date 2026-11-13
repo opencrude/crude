@@ -550,6 +550,9 @@ func assertSameRows(t *testing.T, label string, live, hydrated chatprojection.Me
 		t.Fatalf("%s native line counts differ: %d vs %d", label, len(live.Native), len(hydrated.Native))
 	}
 	for i := range live.Native {
+		if live.Native[i].SourceAware != hydrated.Native[i].SourceAware {
+			t.Fatalf("%s row %d copy-source mode differs after hydration", label, i)
+		}
 		if live.Native[i].PaneBackground != hydrated.Native[i].PaneBackground {
 			t.Fatalf("%s row %d background differs after hydration", label, i)
 		}
@@ -563,6 +566,10 @@ func assertSameRows(t *testing.T, label string, live, hydrated chatprojection.Me
 			if !reflect.DeepEqual(w.Action, g.Action) {
 				t.Fatalf("%s row %d span %d action differs:\n live     %+v\n hydrated %+v", label, i, s, w.Action, g.Action)
 			}
+			if !reflect.DeepEqual(w.Copy, g.Copy) {
+				t.Fatalf("%s row %d span %d source range differs: %+v vs %+v", label, i, s, w.Copy, g.Copy)
+			}
+			w.Copy.Text, g.Copy.Text = nil, nil // Immutable sources are local to each projection.
 			w.Action, g.Action = nil, nil
 			if w != g {
 				t.Fatalf("%s row %d span %d differs:\n live     %+v\n hydrated %+v", label, i, s, want[s], got[s])

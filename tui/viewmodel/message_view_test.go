@@ -40,7 +40,7 @@ func TestChatMessagesFromViewsProjectsDataWithoutPresentationState(t *testing.T)
 	if msg.ToolName != "read_file" || msg.ToolLivedAdded != 3 || msg.ToolLivedRemoved != 1 || msg.PermTag != "allowed" {
 		t.Fatalf("tool projection mismatch: %#v", msg)
 	}
-	if msg.CachedLines != nil || msg.StreamCompletedLines != nil {
+	if msg.CachedLines != nil {
 		t.Fatal("workspace hydration populated frontend presentation state")
 	}
 }

@@ -16,16 +16,13 @@ func TestRendererSyncMessagesPreservesUnchangedCaches(t *testing.T) {
 	messages := []types.ChatMessage{{InternalID: "domain-1", Role: types.RoleAssistant, Content: "hello", Time: now}}
 	r.SyncMessages(messages, 1, 0)
 	r.sync.Messages[0].CachedLines = []string{"rendered"}
-	r.sync.Messages[0].StreamCompletedLines = []string{"streamed"}
 
 	r.SyncMessages(messages, 2, 0)
 
 	if got := r.sync.Messages[0].CachedLines; len(got) != 1 || got[0] != "rendered" {
 		t.Fatalf("unchanged cache was discarded: %#v", got)
 	}
-	if got := r.sync.Messages[0].StreamCompletedLines; len(got) != 1 || got[0] != "streamed" {
-		t.Fatalf("unchanged streaming cache was discarded: %#v", got)
-	}
+
 }
 
 func TestRendererSyncMessagesAcceptsResetWithReusedRevision(t *testing.T) {

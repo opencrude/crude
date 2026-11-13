@@ -18,6 +18,7 @@ import (
 type RowSpan struct {
 	Text   string
 	Link   *cell.Link
+	Copy   rendering.CopyRange
 	Role   ui.SemanticColor
 	BgRole ui.SemanticColor
 	BgSet  bool
@@ -37,7 +38,8 @@ type RowSpan struct {
 // background applied at compose/paint time (not stored as ANSI). An empty
 // spacer uses Spans with empty text (see buildPlainBodyLine).
 type PaintLine struct {
-	Spans []RowSpan
+	SourceAware bool // Unattributed spans are layout, not copyable source.
+	Spans       []RowSpan
 	// PaneBackground fills the whole transcript row, including its margins,
 	// with ColorSubPaneBg. It follows content through wrapping and grouping;
 	// transcript-owned leading spacers never carry it.
@@ -51,6 +53,9 @@ type PaintLine struct {
 func (pl PaintLine) PlainText() string {
 	if len(pl.Spans) == 0 {
 		return ""
+	}
+	if len(pl.Spans) == 1 {
+		return pl.Spans[0].Text
 	}
 	var b strings.Builder
 	for _, s := range pl.Spans {
@@ -95,4 +100,17 @@ func (sl SubPaneLine) PlainText() string {
 func NativeLine(pl PaintLine) SubPaneLine {
 	t := pl.PlainText()
 	return SubPaneLine{Native: &pl, Text: t}
+}
+
+// Slice retains source identity when a layout or style consumer splits a span.
+// An expanded source unit (such as a tab) remains atomic for selection.
+func (s RowSpan) Slice(start, end int) RowSpan {
+	start = max(0, min(start, len(s.Text)))
+	end = max(start, min(end, len(s.Text)))
+	if s.Copy.Valid() && s.Copy.End-s.Copy.Start == len(s.Text) {
+		s.Copy.Start += start
+		s.Copy.End = s.Copy.Start + end - start
+	}
+	s.Text = s.Text[start:end]
+	return s
 }

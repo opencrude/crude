@@ -79,20 +79,10 @@ func (s *MessageSync) SyncMessages(messages []types.ChatMessage, sourceVersion, 
 			structureChanged = true
 			changedIDs = append(changedIDs, message.InternalID)
 		} else if !sameMessageData(message, &incoming) {
-			cachedLines := message.CachedLines
 			cursorLine := message.CursorLine
-			streamLines := message.StreamCompletedLines
-			streamLen := message.StreamCompletedLen
 			*message = incoming
-			message.CachedLines = cachedLines
 			message.CursorLine = cursorLine
-			message.StreamCompletedLines = streamLines
-			message.StreamCompletedLen = streamLen
 			message.CachedLines = nil
-			if strings.Contains(message.Content, "\n") {
-				message.StreamCompletedLines = nil
-				message.StreamCompletedLen = 0
-			}
 			changedIDs = append(changedIDs, message.InternalID)
 		}
 		if index < previousLen && previousMessages[index].InternalID != message.InternalID {
@@ -271,14 +261,9 @@ func (s *MessageSync) ApplyChanges(changed []types.ChatMessage, removed, order [
 		} else if !sameMessageData(message, &next) {
 			oldToolID := message.ToolID
 			cursorLine := message.CursorLine
-			streamLines, streamLen := message.StreamCompletedLines, message.StreamCompletedLen
 			*message = next
 			message.CachedLines = nil
 			message.CursorLine = cursorLine
-			message.StreamCompletedLines, message.StreamCompletedLen = streamLines, streamLen
-			if strings.Contains(message.Content, "\n") {
-				message.StreamCompletedLines, message.StreamCompletedLen = nil, 0
-			}
 			if oldToolID != "" && oldToolID != message.ToolID && s.MsgByID[oldToolID] == message {
 				delete(s.MsgByID, oldToolID)
 			}

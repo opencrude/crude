@@ -13,6 +13,7 @@ import (
 type AnsiRun struct {
 	Text string
 	Link *cell.Link
+	Copy CopyRange
 	FG   cell.Color
 	BG   cell.Color
 	Attr cell.Attrs
@@ -33,17 +34,20 @@ type AnsiRunParser struct {
 	attr   cell.Attrs
 	state  byte
 	link   *cell.Link
+	copy   *copyParser
 }
 
 func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 	var runs []AnsiRun
 	var b strings.Builder
+	var sourceRun CopyRange
 	flush := func() {
 		if b.Len() == 0 {
 			return
 		}
-		runs = append(runs, AnsiRun{Text: b.String(), Link: p.link, FG: p.fg, BG: p.bg, Attr: p.attr})
+		runs = append(runs, AnsiRun{Text: b.String(), Link: p.link, Copy: sourceRun, FG: p.fg, BG: p.bg, Attr: p.attr})
 		b.Reset()
+		sourceRun = CopyRange{}
 	}
 
 	for len(line) > 0 {
@@ -52,6 +56,10 @@ func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 			break
 		}
 		line, p.state = line[n:], state
+		if p.copy != nil && p.copy.control(sequence) {
+			flush()
+			continue
+		}
 		if width == 0 {
 			if link, ok := oscHyperlink(sequence); ok {
 				flush()
@@ -65,6 +73,18 @@ func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 				flush()
 			}
 			continue
+		}
+		if p.copy != nil {
+			source := p.copy.active
+			if !p.copy.atomic && source.Text != nil {
+				source.End = min(source.End, source.Start+len(sequence))
+				p.copy.active.Start = source.End
+			}
+			if b.Len() == 0 {
+				sourceRun = source
+			} else {
+				sourceRun.End = source.End
+			}
 		}
 		b.WriteString(sequence)
 	}

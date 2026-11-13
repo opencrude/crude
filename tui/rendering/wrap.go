@@ -170,40 +170,57 @@ func ExpandTabs(s string, tabWidth int) string {
 	return out.String()
 }
 
-func WordWrap(s string, maxWidth int) []string {
-	if maxWidth <= 0 {
-		return []string{s}
-	}
-	if VisibleWidth(s) <= maxWidth {
-		return []string{s}
-	}
+// WrapRange is a byte interval in the original immutable text. Wrapping owns
+// these boundaries; paint and source projection must not infer them afterward.
+type WrapRange struct{ Start, End int }
 
-	type cluster struct {
-		str   string
-		width int
+func WordWrap(s string, maxWidth int) []string {
+	if maxWidth <= 0 || VisibleWidth(s) <= maxWidth {
+		return []string{s}
 	}
-	// One cluster per grapheme, never more than one per byte. Preallocating
-	// avoids repeatedly copying the slice for very long logical lines.
+	ranges := wordWrapRanges(s, maxWidth)
+	lines := make([]string, len(ranges))
+	for i, r := range ranges {
+		lines[i] = s[r.Start:r.End]
+	}
+	return lines
+}
+
+// WordWrapRanges applies the existing word/grapheme wrap policy and returns
+// source slices instead of rebuilding strings. Text, copy offsets and composer
+// rune starts all derive from this one segmentation.
+func WordWrapRanges(s string, maxWidth int) []WrapRange {
+	if maxWidth <= 0 || VisibleWidth(s) <= maxWidth {
+		return []WrapRange{{0, len(s)}}
+	}
+	return wordWrapRanges(s, maxWidth)
+}
+
+func wordWrapRanges(s string, maxWidth int) []WrapRange {
+	type cluster struct{ end, width int }
 	clusters := make([]cluster, 0, len(s))
 	var state byte
 	rest := s
-	for len(rest) > 0 {
-		c, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
-		clusters = append(clusters, cluster{str: c, width: cw})
-		rest = rest[len(c):]
-		state = newState
-	}
-	n := len(clusters)
 	remainingW := 0
-	for _, cluster := range clusters {
-		remainingW += cluster.width
+	for len(rest) > 0 {
+		c, cw, _, next := ansi.DecodeSequence(rest, state, nil)
+		rest = rest[len(c):]
+		state = next
+		clusters = append(clusters, cluster{end: len(s) - len(rest), width: cw})
+		remainingW += cw
 	}
-
-	var result []string
-	i := 0
-	for i < n {
+	begin := func(i int) int {
+		if i == 0 {
+			return 0
+		}
+		return clusters[i-1].end
+	}
+	isSpace := func(i int) bool { return s[begin(i):clusters[i].end] == " " }
+	n := len(clusters)
+	var result []WrapRange
+	for i := 0; i < n; {
 		if len(result) > 0 {
-			for i < n && clusters[i].str == " " {
+			for i < n && isSpace(i) {
 				remainingW -= clusters[i].width
 				i++
 			}
@@ -211,53 +228,34 @@ func WordWrap(s string, maxWidth int) []string {
 				break
 			}
 		}
-
 		if remainingW <= maxWidth {
-			var line strings.Builder
-			for k := i; k < n; k++ {
-				line.WriteString(clusters[k].str)
-			}
-			result = append(result, line.String())
+			result = append(result, WrapRange{begin(i), len(s)})
 			break
 		}
-
-		lineEnd := i + 1
-		lastSpace := -1
-		w := clusters[i].width
-
+		lineEnd, lastSpace := i+1, -1
+		width := clusters[i].width
 		for j := i + 1; j < n; j++ {
-			rw := clusters[j].width
-			if w+rw > maxWidth {
+			if width+clusters[j].width > maxWidth {
 				break
 			}
-			w += rw
+			width += clusters[j].width
 			lineEnd = j + 1
-			if clusters[j].str == " " {
+			if isSpace(j) {
 				lastSpace = j
 			}
 		}
+		end, next := lineEnd, lineEnd
 		if lastSpace >= i {
-			var line strings.Builder
-			for k := i; k < lastSpace; k++ {
-				line.WriteString(clusters[k].str)
-				remainingW -= clusters[k].width
-			}
-			remainingW -= clusters[lastSpace].width
-			result = append(result, line.String())
-			i = lastSpace + 1
-		} else {
-			var line strings.Builder
-			for k := i; k < lineEnd; k++ {
-				line.WriteString(clusters[k].str)
-				remainingW -= clusters[k].width
-			}
-			result = append(result, line.String())
-			i = lineEnd
+			end, next = lastSpace, lastSpace+1
 		}
+		result = append(result, WrapRange{begin(i), begin(end)})
+		for k := i; k < next; k++ {
+			remainingW -= clusters[k].width
+		}
+		i = next
 	}
-
 	if len(result) == 0 {
-		return []string{""}
+		return []WrapRange{{0, 0}}
 	}
 	return result
 }
@@ -291,76 +289,19 @@ func TruncateLine(s string, max int) string {
 }
 
 // FindSegmentStarts returns the rune offset where each WordWrap segment of one
-// logical line begins. It walks the line once. Asking for one start per segment
+// logical line begins. It projects canonical byte segments to rune offsets in
+// one walk. Asking for one start per segment
 // re-parsed the whole line for every row, so a 1 MiB single-line paste spent
 // minutes in cursor projection before the view could repaint.
 func FindSegmentStarts(logLine []rune, textW int) []int {
-	if textW <= 0 {
-		return []int{0}
-	}
-	type cluster struct {
-		runeStart int
-		width     int
-		str       string
-	}
-	// One cluster per grapheme, never more than one per rune.
-	clusters := make([]cluster, 0, len(logLine))
-	rest := string(logLine)
-	var state byte
-	runePos := 0
-	for len(rest) > 0 {
-		c, cw, _, newState := ansi.DecodeSequence(rest, state, nil)
-		clusters = append(clusters, cluster{runeStart: runePos, width: cw, str: c})
-		runePos += len([]rune(c))
-		rest = rest[len(c):]
-		state = newState
-	}
-	n := len(clusters)
-	if n == 0 {
-		return []int{0}
-	}
-	prefix := make([]int, n+1)
-	for i, cluster := range clusters {
-		prefix[i+1] = prefix[i] + cluster.width
-	}
-
-	starts := make([]int, 0, 8)
-	ci := 0
-	for ci < n {
-		if len(starts) > 0 {
-			for ci < n && clusters[ci].str == " " {
-				ci++
-			}
-			if ci >= n {
-				break
-			}
-		}
-		starts = append(starts, clusters[ci].runeStart)
-		if prefix[n]-prefix[ci] <= textW {
-			break
-		}
-		lineEnd := ci + 1
-		lastSpace := -1
-		w := clusters[ci].width
-		for j := ci + 1; j < n; j++ {
-			rw := clusters[j].width
-			if w+rw > textW {
-				break
-			}
-			w += rw
-			lineEnd = j + 1
-			if clusters[j].str == " " {
-				lastSpace = j
-			}
-		}
-		if lastSpace >= ci {
-			ci = lastSpace + 1
-		} else {
-			ci = lineEnd
-		}
-	}
-	if len(starts) == 0 {
-		return []int{0}
+	text := string(logLine)
+	ranges := WordWrapRanges(text, textW)
+	starts := make([]int, len(ranges))
+	byteStart, runeStart := 0, 0
+	for i, r := range ranges {
+		runeStart += utf8.RuneCountInString(text[byteStart:r.Start])
+		starts[i] = runeStart
+		byteStart = r.Start
 	}
 	return starts
 }
