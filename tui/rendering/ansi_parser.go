@@ -50,6 +50,7 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 	curAttr := cell.Attrs(0)
 
 	var state byte
+	var link *cell.Link
 	for len(ansiStr) > 0 {
 		cluster, dw, n, next := WidthMethod.DecodeSequenceInString(ansiStr, state, nil)
 		if n == 0 {
@@ -57,6 +58,10 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 		}
 		ansiStr, state = ansiStr[n:], next
 		if dw == 0 {
+			if next, ok := oscHyperlink(cluster); ok {
+				link = next
+				continue
+			}
 			if params, ok := sgrParameters(cluster); ok {
 				parseSGR(params, &curFG, &curBG, &curAttr)
 			} else if cluster == "\n" {
@@ -78,7 +83,9 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 			curX += dw
 			continue
 		}
-		buf.Set(curX, curY, cell.NewClusterCell(cluster, dw, curFG, curBG, curAttr))
+		c := cell.NewClusterCell(cluster, dw, curFG, curBG, curAttr)
+		c.Link = link
+		buf.Set(curX, curY, c)
 		curX += dw
 	}
 }

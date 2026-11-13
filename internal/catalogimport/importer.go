@@ -115,7 +115,8 @@ type authoredLanguage struct {
 	Formatter *catalog.FormatterRecord `json:"formatter"`
 	OffSide   *bool                    `json:"off_side"`
 	// FoldingMarkers replaces the region markers; it has no upstream source.
-	FoldingMarkers *catalog.FoldingMarkers `json:"folding_markers"`
+	FoldingMarkers *catalog.FoldingMarkers  `json:"folding_markers"`
+	Editing        *catalog.LanguageEditing `json:"editing"`
 }
 
 type authoredLaunch struct {
@@ -278,6 +279,9 @@ func Import(pins Pins, helixTOML, masonJSON, authoredJSON []byte) (catalog.Docum
 		if patch.FoldingMarkers != nil {
 			markers := *patch.FoldingMarkers
 			record.FoldingMarkers = &markers
+		}
+		if patch.Editing != nil {
+			record.Editing = patch.Editing
 		}
 		if len(patch.ServersPrepend) > 0 {
 			rest := slices.DeleteFunc(slices.Clone(record.Servers), func(s string) bool { return slices.Contains(patch.ServersPrepend, s) })

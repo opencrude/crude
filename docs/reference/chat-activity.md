@@ -602,6 +602,26 @@ not change table widths, wrapping, selection text, or the painted transcript.
   and append a durable `turn_stopped` boundary; never strike through cancelled
   content or invalidate a prior completed turn.
 
+## Full hyperlink destinations
+
+Glamour can shorten displayed table-link addresses with an ellipsis. Its OSC 8
+metadata still contains the complete destination. The shared ANSI decoder now
+retains that destination separately from visible text through native row spans,
+clipping/wrapping, surface composition and both direct-cell and diagnostic ANSI
+output. It never reconstructs an address from an abbreviated label. Repainting or
+occluding a glyph also replaces its link; a changed destination counts as changed
+cell content even when the label stays the same. Selection/copy remain visible text.
+
+Only valid HTTP, HTTPS and mail destinations become terminal hyperlinks. Controls,
+unsafe schemes and oversized metadata are rejected; other terminal controls remain
+discarded. A target is limited to 8 KiB and parameters to 256 bytes. Rejected links
+stay ordinary text; no shortened target is emitted. Each cell retains one shared
+immutable target pointer, not a URL copy (48 bytes per cell instead of 40 on
+64-bit hosts).
+The outer terminal and every multiplexer must support OSC 8. SSH transports the
+same standard terminal output; this does not launch a browser on the remote host,
+change tmux settings or guarantee support in a terminal that ignores OSC 8.
+
 ## Markdown and assignment rendering
 
 - **Markdown keeps its established hierarchy:** use Glamour's differentiated
@@ -687,6 +707,9 @@ existing aggregate totals.
   with explicit More overflow. Adding an app utility must not crowd out a
   completion notice or the useful composer hints. `configureFooterScreen`
   supplies the two groups; the component owns their width and hit geometry.
+- The YOLO warning belongs only to the displayed agent's owning session. Editor
+  and terminal contexts do not borrow the last agent's warning. Descendant tabs
+  use the same owning-session policy; background updates do not change this scope.
 - Agent header is muted telemetry only: model, `↑` latest reported input tokens
   over that request's runtime context capacity/occupancy, `↓` cumulative agent
   output, reported cache-hit rate, and known estimated cost. It never

@@ -2,7 +2,7 @@
   "note": "Crude-authored overlay for the code-intelligence catalog. It holds facts that no upstream source provides, and choices that keep earlier Crude behavior. internal/catalogimport applies it after the upstream data. Every entry needs a note that says why it exists.",
   "languages": {
     "go": {
-      "note": "Earlier Crude root rules: a go.work file takes precedence over a nearer go.mod. Formatter: gofmt reads stdin and writes stdout, the same output as the go/format package Crude used before. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/go/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude root rules: a go.work file takes precedence over a nearer go.mod. Formatter: gofmt reads stdin and writes stdout, the same output as the go/format package Crude used before. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/go/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/go/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 ca804e575bd47ec0981e7e30c0d027d3ecfa3e1a4b3cad567d21768cd0aed5a7).",
       "roots": [
         "go.work",
         "go.mod"
@@ -19,10 +19,48 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\bcase\\b.*:|\\bdefault\\b:|(\\b(func|if|else|switch|select|for|struct)\\b.*)?{[^}\"'`]*|\\([^)\"'`]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*(\\bcase\\b.*:|\\bdefault\\b:|}[)}]*[),]?|\\)[,]?)$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "rust": {
-      "note": "Earlier Crude root rules. Linguist also assigns .rs to RenderScript; this entry is Rust only. Formatter: rustfmt, as Crude used before. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/rust/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude root rules. Linguist also assigns .rs to RenderScript; this entry is Rust only. Formatter: rustfmt, as Crude used before. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/rust/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/rust/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 543f4d958163e2ec7ca52a1d201bbad3e92fcf35d605505f17905436664a011e).",
       "linguist": [
         "Rust"
       ],
@@ -42,10 +80,48 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*\\{[^}\"']*$|^.*\\([^\\)\"']*$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*(\\s*\\/[*].*[*]\\/\\s*)*[})]"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "python": {
-      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates. Formatter: black, as Crude used before; --stdin-filename lets it find the project configuration. Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude default server and root rules. Upstream lists other servers; they stay as later candidates. Formatter: black, as Crude used before; --stdin-filename lets it find the project configuration. Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/python/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 141f93a99e92b9d399cbe4e18f36757fc6bcb94df765607b57b149c1749fda28).",
       "roots": [
         "pyproject.toml",
         "pyrightconfig.json",
@@ -68,10 +144,36 @@
       "folding_markers": {
         "start": "^\\s*#\\s*region\\b",
         "end": "^\\s*#\\s*endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*(?:def|class|for|if|elif|else|while|try|with|finally|except|async).*?:\\s*$"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          }
+        ]
       }
     },
     "javascript": {
-      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 5d64c3902b9bdb6c88ea19d538192e9a6bbbcec2358e0c652774c9ffbb123c23).",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -83,10 +185,167 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "jsx": {
-      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/javascript/javascript-language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 5d64c3902b9bdb6c88ea19d538192e9a6bbbcec2358e0c652774c9ffbb123c23).",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -98,10 +357,167 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "typescript": {
-      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 6ef03aca8ca0e3173482eefeea958b88cbd7df09077fb5c8ec0689d1c6970794).",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -113,10 +529,167 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "tsx": {
-      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude root rules are shared by all script language identities. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/typescript-basics/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 6ef03aca8ca0e3173482eefeea958b88cbd7df09077fb5c8ec0689d1c6970794).",
       "roots": [
         "tsconfig.json",
         "jsconfig.json",
@@ -128,20 +701,225 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "html": {
-      "note": "Earlier Crude default server first. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/html/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude default server first. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/html/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/html/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 fe60c83b36cfbc70c73d48405f6acb4f88562273b43db2e88f45bc5c1d75524f).",
       "servers_prepend": [
         "vscode-html-language-server"
       ],
       "folding_markers": {
         "start": "^\\s*<!--\\s*#region\\b.*-->",
         "end": "^\\s*<!--\\s*#endregion\\b.*-->"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "<!--",
+            "-->"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "<(?!\\?|(?:area|base|br|col|frame|hr|html|img|input|keygen|link|menuitem|meta|param|source|track|wbr)\\b|[^>]*\\/>)([-_\\.A-Za-z0-9]+)(?=\\s|>)\\b[^>]*>(?!.*<\\/\\1>)|<!--(?!.*-->)|\\{[^}\"']*$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*(<\\/(?!html)[-_\\.A-Za-z0-9]+\\b[^>]*>|-->|\\})"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\"/>]|\"[^\"]*\"|'[^']*')*?(?!\\/)>)[^<]*$",
+              "flags": "i"
+            },
+            "after_text": {
+              "pattern": "^<\\/([_:\\w][_:\\w-.\\d]*)\\s*>",
+              "flags": "i"
+            },
+            "action": {
+              "indent": "indentOutdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\"/>]|\"[^\"]*\"|'[^']*')*?(?!\\/)>)[^<]*$",
+              "flags": "i"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          }
+        ]
       }
     },
     "c": {
-      "note": "Earlier Crude sent .h files as C. Upstream lists .h under C++. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Earlier Crude sent .h files as C. Upstream lists .h under C++. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 932f33e3f6cd95f28bc4d8ecf633977529a1b19060e11763caf51eec40fe82ae).",
       "extensions_add": [
         ".h"
       ],
@@ -156,10 +934,59 @@
       "folding_markers": {
         "start": "^\\s*#\\s*pragma\\s+region\\b",
         "end": "^\\s*#\\s*pragma\\s+endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "cpp": {
-      "note": "See the c entry for .h ownership. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "See the c entry for .h ownership. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/cpp/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 932f33e3f6cd95f28bc4d8ecf633977529a1b19060e11763caf51eec40fe82ae).",
       "extensions_remove": [
         ".h"
       ],
@@ -174,6 +1001,55 @@
       "folding_markers": {
         "start": "^\\s*#\\s*pragma\\s+region\\b",
         "end": "^\\s*#\\s*pragma\\s+endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     },
     "c-sharp": {
@@ -217,11 +1093,35 @@
       ]
     },
     "lua": {
-      "note": "Earlier Crude used the workspace folder as the root.",
+      "note": "Earlier Crude used the workspace folder as the root. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/lua/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 df548aa9a1290cadf7fb3762c7770eb28c68f05d24b08e4e1504e0e3d3e73998).",
       "roots": [],
       "servers": [
         "lua-language-server"
-      ]
+      ],
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^((?!(\\-\\-)).)*((\\b(else|function|then|do|repeat)\\b((?!\\b(end|until)\\b).)*)|(\\{\\s*))$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*((\\b(elseif|else|end|until)\\b)|(\\})|(\\)))"
+          }
+        }
+      }
     },
     "clojure": {
       "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/clojure/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent.",
@@ -256,11 +1156,503 @@
       }
     },
     "yaml": {
-      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation.",
+      "note": "Blocks end by dedent: VS Code's built-in language configuration sets folding.offSide (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Indent guides use it for blank lines before a dedent. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/yaml/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 306c8f6951dddc6214ff80766123a0315fc63773a0bd2909423968fa712b4a26).",
       "off_side": true,
       "folding_markers": {
         "start": "^\\s*#\\s*region\\b",
         "end": "^\\s*#\\s*endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^\\s*.*(:|-) ?(&amp;\\w+)?(\\{[^}\"']*|\\([^)\"']*)?$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s+\\}$"
+          }
+        }
+      }
+    },
+    "css": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/css/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 97891fb0d515aa124c0eab14e961aeebb50ea0c7d3634e01853f6f41ce61f28d).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "(^.*\\{[^}]*$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*\\}"
+          }
+        }
+      }
+    },
+    "dockerfile": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/docker/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 46d552df9fd0b3114510a5c1b6f1797eb1bdc80ef5697be96944bc0d97444157).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^\\s*.*(:|-) ?(&amp;\\w+)?(\\{[^}\"']*|\\([^)\"']*)?$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s+\\}$"
+          }
+        }
+      }
+    },
+    "java": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/java/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 36e8cad32d299787f0d4cd28d902fc0e7496c835c31f3141e6d143029d618892).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
+      }
+    },
+    "json": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/json/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 0963af900927e3398cc4e40a853b4091d23361ef2d3f89f8f663c8219a2fc8ca).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "({+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"}]*)$)|(\\[+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"\\]]*)$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[}\\]],?\\s*$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
+      }
+    },
+    "jsonc": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/json/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 0963af900927e3398cc4e40a853b4091d23361ef2d3f89f8f663c8219a2fc8ca).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "({+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"}]*)$)|(\\[+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"\\]]*)$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[}\\]],?\\s*$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
+      }
+    },
+    "less": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/less/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 8a9ec5b648cfe2331a05a1a3cdc88ebdf374d35dc28b721c34cdebf8ef52007f).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "(^.*\\{[^}]*$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*\\}"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
+      }
+    },
+    "php": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/php/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 1af320109beafeb17278cc833f607c6972227262686e54ae3f17b1d07660b837).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "((else\\s?)?if|else|for(each)?|while|switch|case).*:\\s*((/[/*].*|)?$|\\?>)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^(.*\\*\\/)?\\s*(\\b(else:)|\\bend(if|for(each)?|while|switch);)"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^\\s*(((if|else ?if|while|for|foreach)\\s*\\(.*\\)\\s*)|else\\s*)$"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*\\/\\*\\*(?!\\/)([^\\*]|\\*(?!\\/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*\\/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*\\/\\*\\*(?!\\/)([^\\*]|\\*(?!\\/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|(\\ \\ ))*\\ \\*(\\ ([^\\*]|\\*(?!\\/))*)?$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|(\\ \\ ))*\\ \\*\\/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|(\\ \\ ))*\\ \\*[^/]*\\*\\/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for(each)?|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
+      }
+    },
+    "ruby": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/ruby/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 fb4f26a17fe832f2002dc9c198e3ce26770f055f7ffb7864c09bab6962f79fe5).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^\\s*((begin|class|(private|protected)\\s+def|def|else|elsif|ensure|for|if|module|rescue|unless|until|when|in|while|case)|([^#]*\\sdo\\b)|([^#]*=\\s*(case|if|unless)))\\b([^#\\{;]|(\"|'|/).*\\4)*(#.*)?$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*([}\\]]([,)]?\\s*(#|$)|\\.[a-zA-Z_]\\w*\\b)|(end|rescue|ensure|else|elsif)\\b|(in|when)\\s)"
+          }
+        }
+      }
+    },
+    "scss": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/scss/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 03a2713a4f4eb738bcb1fc829ea452ebfec40c1409da2aafa60ee52c939254a3).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "(^.*\\{[^}]*$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*\\}"
+          }
+        },
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^[\\s]*///.*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "/// "
+            }
+          }
+        ]
+      }
+    },
+    "swift": {
+      "note": "Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/swift/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 9bda4ba38c9d4b0ee3ef0acbc8f9fa85639d37a3b9bd1226868dfa5558146594).",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
       }
     }
   },

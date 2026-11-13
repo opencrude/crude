@@ -245,23 +245,7 @@ func (e *Editor) multipleIndent(delta int) error {
 // These recipes are shared by scalar and multiple-caret editing. They compute
 // bytes and the post-edit caret without moving or mutating the live document.
 func (e *Editor) newlineCaretEdit(start, end int) caretEdit {
-	a, b := e.buf.positionAtOffset(start), e.buf.positionAtOffset(end)
-	before := e.LineText(a.Line)[:VisualColToByteOffset(e.LineText(a.Line), a.Col, e.TabWidth())]
-	after := e.LineText(b.Line)[VisualColToByteOffset(e.LineText(b.Line), b.Col, e.TabWidth()):]
-	indent := leadingWhitespace(before)
-	base := indent
-	term := e.lineEnding()
-	split := false
-	if r, ok := lastRune(strings.TrimRight(before, " \t")); ok && (r == '(' || r == '[' || r == '{') {
-		indent += e.levelUnit(indent)
-		split = strings.TrimSpace(after) == string(autoClosePairs[r])
-	}
-	p := replacement(start, end, term+indent)
-	if split {
-		p.End += len(leadingWhitespace(after))
-		p.Text += term + base
-	}
-	return p
+	return e.smartNewline(start, end)
 }
 func (e *Editor) backwardCaretEdit(pos Position, smart bool) caretEdit {
 	end := e.buf.positionToOffset(pos)
@@ -328,6 +312,9 @@ func (e *Editor) typedCaretEdit(s SourceSelection, text string) caretEdit {
 			p.anchor, p.cursor = len(string(r)), len(string(r))
 		}
 		e.cursor = old
+	}
+	if p.Text == text {
+		p = e.dedentTyped(p, text)
 	}
 	return p
 }

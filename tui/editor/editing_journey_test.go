@@ -130,6 +130,7 @@ func TestEditingJourneyEveryCommandRestoresBytesAndView(t *testing.T) {
 			e := opsEditor(t, "sample.go", tc.before)
 			tc.setup(e)
 			before := e.captureViewState()
+			settleSyntax(t, e)
 			tc.edit(e)
 			require.Equal(t, tc.after, e.Value())
 			after := e.captureViewState()

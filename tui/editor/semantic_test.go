@@ -132,9 +132,27 @@ func BenchmarkSemanticEditingDense(b *testing.B) {
 						b.Fatal(err)
 					}
 				}
+				if stage == "stable_paint" {
+					e.SetCursorPosition(0, 5)
+					if enabled {
+						set.Boundary.Source, _ = e.CurrentInsightSource()
+						if err := e.SetSemanticTokens(&set); err != nil {
+							b.Fatal(err)
+						}
+					}
+					paintEditor(e, 120, 40)
+					joinSyntax(b, e)
+				}
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
+					// Stable paint has no new provider publication or source
+					// mutation. Prepare that immutable state once, not an
+					// O(source) off-timer reinstallation before every frame.
+					if stage == "stable_paint" {
+						paintEditor(e, 120, 40)
+						continue
+					}
 					b.StopTimer()
 					e.SetCursorPosition(0, 5)
 					if enabled {
@@ -148,8 +166,10 @@ func BenchmarkSemanticEditingDense(b *testing.B) {
 						}
 					}
 					paintEditor(e, 120, 40)
+					joinSyntax(b, e)
 					if stage == "paint" {
 						e.HandleEvent(key)
+						joinSyntax(b, e)
 					}
 					b.StartTimer()
 					switch stage {

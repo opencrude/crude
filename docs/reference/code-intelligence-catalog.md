@@ -15,7 +15,7 @@ language, a server or a tool itself.
 
 | Entry | What it says |
 |---|---|
-| Language | One LSP language identity: the files it covers (extensions, file names and patterns), its Linguist names, its `languageId`, root markers, workspace root markers, its servers in order of preference, and editor data: line comment tokens, block comment delimiters, the syntax grammar name and a formatter. A language without a server stays for its editor data. |
+| Language | One LSP language identity: the files it covers (extensions, file names and patterns), its Linguist names, its `languageId`, root markers, workspace root markers, its servers in order of preference, and editor data: line comment tokens, block comment delimiters, the syntax grammar name, a formatter and declarative editing rules. A language without a server stays for its editor data. |
 | Server | How to start a language server: command, arguments, environment, settings, initialization options, the package that provides the command, resource hints, and the declared diagnostic scope. |
 | Package | How to install a tool: package URL, license, languages, and release assets for each platform. |
 
@@ -55,7 +55,14 @@ development tool and never runs in the product. Its inputs are pinned in
 
 go-enry runs only in the importer. Linking its classifier into Crude costs
 about 9.6 MB of binary size and 20 ms and 16 MB of allocation at every process
-start (measured 2026-11-02). The catalog without it costs about 1.4 MB.
+start (measured 2026-11-02). The current catalog parse cost is recorded below.
+
+The authored overlay also carries VS Code `brackets`, `onEnterRules` and
+`indentationRules` for editor input. Patterns and optional flags retain their
+ECMAScript meaning; the catalog validates actions, bounds and patterns and returns
+detached data. Each imported configuration records its upstream file, commit and
+SHA-256 in the authored note. Language configurations are data, not executable
+extensions or Marketplace packages. Folding keeps its separate RE2 marker contract.
 
 The importer keeps only declarative fields. It never runs code from a source.
 It skips what Crude cannot use and lists each skip with `-v`.
@@ -69,8 +76,9 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
 
 ## Behavior
 
-- `Builtin` parses the embedded catalog once. The measured cost is about 4 ms
-  and 1.4 MB of allocation, one time per process.
+- `Builtin` parses and validates the embedded catalog once, including editing
+  patterns. Three Linux amd64 runs with the editing data measured 6.3–6.9 ms and
+  3.74 MB of cumulative allocation, one time per process. This is not retained RSS.
 - `Current` is what every product path reads: the embedded catalog plus the
   packs that `UsePacks` loaded. Each Crude process calls `UsePacks` once at
   start with `<data folder>/catalog`. Every `*.json` file there is a pack, in
@@ -86,8 +94,10 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
   then the longest extension, then the interpreter in a `#!` first line of the
   optional file head. When several languages claim one file (five extensions
   today, for example `.inc` and `.v`), the first by catalog ID wins. Content
-  rules that separate them are later work. The measured cost is under 1
-  microsecond for each path.
+  rules that separate them are later work. A mixed six-path benchmark with
+  detached editing data measured 1.2–1.6 microseconds, 818 B and 12 objects per
+  lookup on Linux amd64. The editor caches compiled editing rules by catalog and
+  path, so it does not pay this lookup/compile cost on each key.
 - `Server.WithHints` fills defaults. Explicit values always win. The authored
   gopls entry enables its experimental `semanticTokens` setting, which defaults
   off upstream, and supplies the same effective value at initialization and in

@@ -44,10 +44,8 @@ func (e *Editor) insertText(s string) {
 	e.notifyContentChanged()
 }
 
-// insertNewline inserts a line break with auto-indent: the new line
-// inherits the current line's leading whitespace (up to the cursor), plus
-// one extra indent level when the text before the cursor ends with an
-// opening brace/bracket/paren. Recorded as a single undo step.
+// insertNewline uses the shared catalog-driven Enter recipe. New text and
+// indentation are one scalar or multiple-caret transaction and Undo step.
 func (e *Editor) insertNewline() {
 	off := e.buf.positionToOffset(e.cursor)
 	e.applySingleCaretEdit(e.newlineCaretEdit(off, off))

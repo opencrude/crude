@@ -347,13 +347,16 @@ func (a Attrs) Has(mask Attrs) bool {
 // A Transparent cell does not overwrite the cell below during compositing.
 // This is how "holes" in floating windows let background content show through.
 type Cell struct {
-	Char        rune   // The character to display (0 for continuation cells)
-	Content     string // Full grapheme cluster text (Char is just the first rune)
-	Width       uint8  // Display width: 0 (continuation), 1+ (primary span)
-	FG          Color  // Foreground color
-	BG          Color  // Background color
-	Attr        Attrs  // Text rendering attributes
-	Transparent bool   // If true, compositing skips this cell (shows below)
+	// Keep pointer-sized fields together. Each linked glyph shares one immutable
+	// target; cells never retain their own URL copy.
+	Content     string // Full grapheme cluster text
+	Link        *Link  // Full destination; never derived from the displayed label
+	Char        rune
+	Attr        Attrs
+	FG          Color
+	BG          Color
+	Width       uint8
+	Transparent bool
 }
 
 // NewCell creates a normal-width cell with the given character and style.
@@ -416,6 +419,7 @@ func (c Cell) IsVisible() bool {
 // Equal reports whether two cells are identical in all fields.
 func (c Cell) Equal(other Cell) bool {
 	return c.Char == other.Char &&
+		c.Link.Equal(other.Link) &&
 		c.Width == other.Width &&
 		c.FG.Equal(other.FG) &&
 		c.BG.Equal(other.BG) &&

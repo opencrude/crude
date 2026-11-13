@@ -39,11 +39,12 @@ or network requests in Update or Paint.
 | Comment toggle did nothing for block-only comment syntax | Catalog block delimiters support linewise toggle. A mixed selection keeps already wrapped lines, never nests them. A selection containing partial delimiters is left intact rather than generating broken comments. | `TestToggleCommentUsesBlockDelimitersWithoutALinePrefix`, `TestBlockCommentMixedSelectionNeverNestsAndUndoKeepsSource`. |
 | Tab and indent commands imposed four spaces | `tui/editor/indentation.go` detects tabs or space steps from bounded source evidence, cached by shared buffer revision. Tab reaches the next detected stop; Enter, Backspace and selected-line operations use the same style. Ambiguous/new content uses the configured Tab size. | `TestIndentCommandsContinueDocumentStyle`, `TestTabUsesNextStopAndCachedStyleFollowsLinkedEdits`. |
 | Splitting a padded bracket pair left the closing bracket over-indented | Enter consumes intervening whitespace in the same undo transaction and aligns the closing line with its opening line. | `TestEnterBetweenPaddedPairKeepsClosingIndentAndOneUndo`. |
+| Enter ignored language rules and typed closing brackets kept excess indentation | Pinned VS Code configuration data in the catalog drives one generic scalar/multiple-caret input recipe. Exact syntax excludes strings/comments; paste and stale results do not rewrite indentation. | `TestSmartEnterUsesLanguageConfiguration`, `TestTypedClosingBracketDedentsInOneUndo`, `TestEditorSmartIndentVisualHeadless`; native journeys and limits are recorded in the editor issue. |
 
 These fixes do **not** establish all-language parity, installed-server acceptance
-for the tester's 4.1 binary, repaired historical JSON files, general auto-dedent,
-or a built-in template library. Configurable tab width and wrapping/folding have
-since landed through the geometry owner described below.
+for the tester's 4.1 binary, repaired historical JSON files or a built-in template
+library. Configurable tab width, wrapping/folding and catalog-driven Smart Enter
+have since landed through the shared owners described below.
 
 ## Inventory: existing is not missing
 
@@ -291,10 +292,12 @@ screen. Assert the actual displayed signature, not only that intent was queued.
 `syntax/`, catalog data, existing document transaction and author undo owners.
 
 - Matching-delimiter paint and navigation are implemented through exact syntax
-  results. Finish Smart Enter and closing-delimiter dedent: exclude strings/comments and use
-  current syntax/context rules. A stale parser must not rewrite indentation based
-  on guessed brackets. Continue comment leaders and language indentation through
-  data-driven rules; do not hard-code colon/newline behavior per language.
+  results. Smart Enter and closing-delimiter dedent now use VS Code configuration
+  data and one generic scalar/multiple-caret recipe. Exact syntax excludes bracket
+  tokens in strings/comments; stale analysis preserves literal editing. Comment
+  leaders and indentation use ordered catalog rules, not language-named code.
+  See the [current indentation contract](../reference/editor.md#indentation-and-block-only-comments).
+  Verification and remaining platform limits belong in the checkpoint evidence.
 - Extend the implemented deterministic expand/shrink selection stack with
   negotiated semantic selection ranges. Current native structure and lexical
   bracket ranges already participate; no stale result may supply a source range.

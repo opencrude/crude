@@ -181,14 +181,6 @@ func leadingWhitespace(s string) string {
 	return s
 }
 
-func lastRune(s string) (rune, bool) {
-	if s == "" {
-		return 0, false
-	}
-	runes := []rune(s)
-	return runes[len(runes)-1], true
-}
-
 // ── auto-closing pairs ───────────────────────────────────────────────
 
 // typeRune handles a printable typed character: wraps the selection when

@@ -84,7 +84,7 @@ func opaqueCellRow(row []cell.Cell) bool {
 			x++
 			continue
 		}
-		continuation := cell.Cell{FG: c.FG, BG: c.BG, Attr: c.Attr}
+		continuation := cell.Cell{FG: c.FG, BG: c.BG, Attr: c.Attr, Link: c.Link}
 		for x++; x < end; x++ {
 			if row[x] != continuation {
 				return false
@@ -243,6 +243,7 @@ func clearIntersectingSpans(dst *CellBuffer, x, y, width int) {
 		blank.Char = ' '
 		blank.Content = " "
 		blank.Width = 1
+		blank.Link = nil
 		for offset := 0; offset < int(primary.Width); offset++ {
 			dst.setRaw(start+offset, y, blank)
 		}

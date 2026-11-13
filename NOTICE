@@ -8,3 +8,8 @@ Third-party code retains its own licenses and notices, including the MIT
 license text in LICENSE-MIT. See codexio/NOTICE, third_party/ and
 third_party/libghostty-vt/GHOSTTY-LICENSE. Release archives include dependency notices under
 licenses/. These notices do not replace or relicense upstream code.
+VS Code language-configuration data in insight/catalog and the generic Enter /
+indentation algorithms adapted in tui/editor/smart_indent.go are derived from
+microsoft/vscode at e608ca420ca76f4bfc2cfbff02538d66242e8174. Copyright (c)
+Microsoft Corporation. All rights reserved. These portions retain the MIT license
+in LICENSE-MIT; source paths are recorded with the data and adapter.

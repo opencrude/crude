@@ -53,6 +53,7 @@ func TestAutoIndent_InheritsLeadingWhitespace(t *testing.T) {
 func TestAutoIndent_ExtraLevelAfterOpenBrace(t *testing.T) {
 	e := opsEditor(t, "test.go", "func main() {")
 	e.cursor = Position{Line: 0, Col: 13}
+	settleSyntax(t, e)
 	press(e, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, "func main() {\n    ", e.Value())
 	assert.Equal(t, Position{Line: 1, Col: 4}, e.cursor)
@@ -61,6 +62,7 @@ func TestAutoIndent_ExtraLevelAfterOpenBrace(t *testing.T) {
 func TestAutoIndent_ExtraLevelKeepsTabStyle(t *testing.T) {
 	e := opsEditor(t, "test.go", "\tif x {")
 	e.cursor = Position{Line: 0, Col: e.lineVisualWidth(0)}
+	settleSyntax(t, e)
 	press(e, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, "\tif x {\n\t\t", e.Value())
 	assert.Equal(t, Position{Line: 1, Col: 8}, e.cursor)
@@ -76,6 +78,7 @@ func TestAutoIndent_ExtraLevelAfterBracketAndParen(t *testing.T) {
 	} {
 		e := opsEditor(t, "test.go", tt.content)
 		e.cursor = Position{Line: 0, Col: e.lineVisualWidth(0)}
+		settleSyntax(t, e)
 		press(e, tea.KeyPressMsg{Code: tea.KeyEnter})
 		assert.Equal(t, tt.content+"\n    ", e.Value(), "content %q", tt.content)
 	}
@@ -84,6 +87,7 @@ func TestAutoIndent_ExtraLevelAfterBracketAndParen(t *testing.T) {
 func TestAutoIndent_MidIndentEnterInheritsUpToCursor(t *testing.T) {
 	e := opsEditor(t, "test.go", "        x")
 	e.cursor = Position{Line: 0, Col: 4}
+	settleSyntax(t, e)
 	press(e, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, "    \n        x", e.Value())
 	assert.Equal(t, Position{Line: 1, Col: 4}, e.cursor)
@@ -92,6 +96,7 @@ func TestAutoIndent_MidIndentEnterInheritsUpToCursor(t *testing.T) {
 func TestAutoIndent_SingleUndoStep(t *testing.T) {
 	e := opsEditor(t, "test.go", "    foo {")
 	e.cursor = Position{Line: 0, Col: 9}
+	settleSyntax(t, e)
 	press(e, tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.Equal(t, "    foo {\n        ", e.Value())
 	e.Undo()

@@ -18,6 +18,7 @@ type occurrenceCursorService struct {
 	producer       types.InsightProducer
 	settings       types.LSPSettings
 	unsynchronized bool
+	settingsReads  int
 }
 
 func (s *occurrenceCursorService) ContextCursor() (string, uint64) {
@@ -28,6 +29,7 @@ func (s *occurrenceCursorService) FileSynchronized(types.InsightSource, uint64) 
 	return !s.unsynchronized
 }
 func (s *occurrenceCursorService) Settings() types.LSPSettings {
+	s.settingsReads++
 	return types.CloneLSPSettings(s.settings)
 }
 func (s *occurrenceCursorService) ReferencesEnabled() bool {
@@ -197,8 +199,15 @@ func TestOccurrencesSteadyStateDoesNotCopySettings(t *testing.T) {
 	if app.occurrence == nil {
 		t.Fatal("no occurrence request")
 	}
-	allocations := testing.AllocsPerRun(100, func() { app.syncOccurrences() })
-	if allocations != 0 {
-		t.Fatalf("stable occurrences allocated %.0f objects per update", allocations)
+	request, reads := app.occurrence, service.settingsReads
+	for range 100 {
+		if cmd := app.syncOccurrences(); cmd != nil || app.occurrence != request {
+			t.Fatal("a stable caret scheduled another occurrence request")
+		}
+	}
+	// Count the actual clone owner. Process-wide allocation counters also
+	// include unrelated real-shell jobs and made this check fail in a group.
+	if service.settingsReads != reads {
+		t.Fatalf("stable occurrences copied settings %d times", service.settingsReads-reads)
 	}
 }

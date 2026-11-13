@@ -4,6 +4,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 )
 
@@ -15,6 +16,7 @@ type cellStyleState struct {
 	fg   cell.Color
 	bg   cell.Color
 	attr cell.Attrs
+	link *cell.Link
 }
 
 // GenerateANSI converts a cell buffer into a full ANSI escape sequence string.
@@ -67,6 +69,7 @@ func GenerateANSI(buf *surface.CellBuffer) string {
 				continue
 			}
 
+			setLink(&sb, c.Link, &cur)
 			// Determine target style
 			targetFG := c.FG
 			targetBG := c.BG
@@ -95,6 +98,7 @@ func GenerateANSI(buf *surface.CellBuffer) string {
 			// filled by the terminal (the wide char occupies 2 columns).
 		}
 
+		setLink(&sb, nil, &cur)
 		// Reset style at end of row if non-default.
 		// This ensures each row starts clean, which is important for
 		// terminals that wrap lines, and a style leak from one row would
@@ -138,6 +142,7 @@ func GenerateDiffANSI(w, h int, diff *DiffResult) string {
 		// Cursor positioning: \x1b[row;colH (1-based coordinates)
 		fmt.Fprintf(&sb, "\x1b[%d;%dH", change.Y+1, change.X+1)
 
+		setLink(&sb, change.Cell.Link, &cur)
 		// Set style
 		setStyle(&sb, change.Cell.FG, change.Cell.BG, change.Cell.Attr, &cur)
 
@@ -149,6 +154,7 @@ func GenerateDiffANSI(w, h int, diff *DiffResult) string {
 		}
 	}
 
+	setLink(&sb, nil, &cur)
 	// Final reset if needed
 	if !cur.fg.IsDefault() || !cur.bg.IsDefault() || cur.attr != 0 {
 		sb.WriteString("\x1b[0m")
@@ -229,5 +235,17 @@ func setStyle(sb *strings.Builder, targetFG, targetBG cell.Color, targetAttr cel
 
 	sb.WriteString("m")
 
-	*cur = cellStyleState{fg: targetFG, bg: targetBG, attr: targetAttr}
+	cur.fg, cur.bg, cur.attr = targetFG, targetBG, targetAttr
+}
+
+func setLink(out *strings.Builder, link *cell.Link, current *cellStyleState) {
+	if current.link.Equal(link) {
+		return
+	}
+	if link == nil {
+		out.WriteString(ansi.ResetHyperlink())
+	} else {
+		out.WriteString(ansi.SetHyperlink(link.Target(), link.Params()))
+	}
+	current.link = link
 }

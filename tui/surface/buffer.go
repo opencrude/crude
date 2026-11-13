@@ -81,6 +81,7 @@ func (b *CellBuffer) SetSpan(x, y int, c cell.Cell) {
 		FG:          c.FG,
 		BG:          c.BG,
 		Attr:        c.Attr,
+		Link:        c.Link,
 		Transparent: c.Transparent,
 	}
 	for offset := 1; offset < span; offset++ {
@@ -167,9 +168,13 @@ func (b *CellBuffer) Resize(w, h int) {
 //
 // Uses charmbracelet/x/ansi for grapheme cluster iteration and width measurement.
 // Returns the x position after the last written cell.
-func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr cell.Attrs) int {
+func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr cell.Attrs, links ...*cell.Link) int {
 	if y < 0 || y >= b.height {
 		return x
+	}
+	var link *cell.Link
+	if len(links) > 0 {
+		link = links[0]
 	}
 	curX := x
 	rest := text
@@ -204,7 +209,7 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 				cellBG = under.BG
 			}
 		}
-		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), FG: fg, BG: cellBG, Attr: attr})
+		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), Link: link, FG: fg, BG: cellBG, Attr: attr})
 		curX += w
 	}
 	return curX

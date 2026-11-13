@@ -49,10 +49,11 @@ type editorViewState struct {
 }
 
 type Editor struct {
-	th       *theme.Theme
-	buf      *PieceTable
-	filePath string
-	title    string
+	th           *theme.Theme
+	buf          *PieceTable
+	filePath     string
+	title        string
+	editLanguage editLanguage
 
 	// buffer is the shared Buffer from BufferManager. When set, the Editor
 	// delegates all text access (Value, LineCount, LineText, Save, etc.)

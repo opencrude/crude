@@ -32,7 +32,7 @@ func BenchmarkSnippetTypingDense(b *testing.B) {
 			for _, paint := range []bool{false, true} {
 				b.Run(fmt.Sprintf("lines%d/mirrors%d/paint%t", lines, mirrors, paint), func(b *testing.B) {
 					e := NewPreview(theme.DefaultDark(), "snippet.txt", "\n"+strings.Repeat("unchanged source\n", lines), 1)
-					b.Cleanup(e.Close)
+					b.Cleanup(func() { closeSyntax(e) })
 					e.readOnly = false
 					item := numericCompletion(b, "${1:a}"+strings.Repeat(" $1", mirrors-1)+"$0")
 					if err := e.ApplyCompletion(item); err != nil {
@@ -42,6 +42,7 @@ func BenchmarkSnippetTypingDense(b *testing.B) {
 					e.SetCursorPosition(0, 1)
 					surf := surface.NewSurface("snippet", 120, 40, cell.TransparentBlank())
 					e.Render(surf, ui.PaintContext{Theme: e.th, Focused: true})
+					joinSyntax(b, e)
 					b.ReportAllocs()
 					b.ResetTimer()
 					insert := true
@@ -58,6 +59,12 @@ func BenchmarkSnippetTypingDense(b *testing.B) {
 							b.Fatal("benchmark lost its real snippet workload")
 						}
 						insert = !insert
+						// Complete the source job owned by this first paint
+						// before timing another key. Its preparation has a
+						// separate gate and must not overlap the next sample.
+						b.StopTimer()
+						joinSyntax(b, e)
+						b.StartTimer()
 					}
 				})
 			}

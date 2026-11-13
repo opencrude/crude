@@ -71,6 +71,7 @@ func (msg SyntaxReadyMsg) Failure() string {
 }
 
 func (e *Editor) initChroma() {
+	e.editingLanguage()
 	e.refreshSyntaxPalette()
 	path := e.filePath
 	if path == "" {

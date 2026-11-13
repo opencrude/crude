@@ -54,8 +54,9 @@ an external disk conflict. See [private shared-editor recovery](core-client-prot
   never into following words. At line start it joins the previous line; Delete
   at a line end (including an empty line) removes the complete terminator. CRLF
   is one terminator, excluded from line content. Enter follows the document's
-  first terminator, inherits indentation and opens a matching bracket pair onto
-  separate lines. Paste gives every pasted line break (LF, CRLF or a lone CR)
+  first terminator and uses the catalog's Smart Enter rules, including matching
+  bracket pairs and comment leaders. Paste gives every pasted line break (LF,
+  CRLF or a lone CR)
   that same terminator, so a paste never mixes terminators or leaves a bare CR
   inside a line. A terminal sends the line breaks of a bracketed paste as CR;
   see [text input](text-input.md#clipboard).
@@ -128,7 +129,33 @@ Detection inspects at most 2,000 lines and 256 leading spaces per line. It cache
 by shared PieceTable revision and uses the most frequent neighboring space-indent
 step of 2–8 columns, or tabs. Ambiguous content uses the effective tab width. Enter
 between a padded matching pair consumes the old padding and aligns the closing
-line in the same Undo transaction.
+line in the same Undo transaction. Explicit comment-continuation text keeps the
+source padding required before its closing marker.
+
+Smart Enter uses ordered `on_enter_rules`, `indentation_rules` and `brackets`
+from the catalog's `editing` data. The built-in rules are copied from 22 language
+entries in VS Code's pinned language configurations; each authored note includes
+the file, commit and SHA-256. The consumer follows VS Code's Enter, inherited
+indentation and electric-bracket support, with no language-named Go branches.
+Explicit rules take precedence over bracket fallback and indentation inference.
+Comment leaders, case labels and one-line body indentation follow those rules,
+not a Crude language heuristic. A new catalog pack uses the same consumer.
+
+Current source syntax removes configured brackets from string/comment/regex
+contexts before matching. Provisional paint and stale syntax never authorize an
+indent rewrite: Enter then inherits only the current leading whitespace, and a
+closing key stays literal. The electric fallback aligns a first closing bracket
+with its proven opening line when no indentation pattern applies. Paste and
+completion remain literal insertions. Scalar and multiple-caret plans share one
+recipe and the existing document/history transaction, including tabs, independent
+indent/tab sizes, CRLF, linked views, selection replacement and one-step Undo.
+
+Patterns retain ECMAScript lookahead, backreferences and flags through the pinned
+`regexp2` dependency, not a partial RE2 translation. Matching errors fail closed.
+Input matching skips lines over 16 KiB; inherited indentation and bracket lookup
+stop after 2,000 preceding lines and refuse an unknown match. The engine's timeout
+is a safety check with a coarse clock, not a strict two-millisecond input-latency
+guarantee. No native parsing, file I/O or LSP on-type formatting runs in Update.
 
 The pinned official EditorConfig parser owns parent traversal, `root`, section
 order, glob matching and `unset`. Crude consumes `indent_style`, `indent_size`
