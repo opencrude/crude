@@ -90,6 +90,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-11 | After restarting the core, continue implementation through the editor gaps instead of stopping at an LSP slice. Add JetBrains-style general editing actions and motions. Ctrl+D duplicates, and Tab accepts a sole visible suggestion without Down first; these are examples, not the scope boundary. Retain no-local-model and shared-owner constraints. | User |
 | 2026-11-12 | Finish and verify the editor work already in this checkpoint. Do not introduce additional features in this checkpoint; keep the remaining editor workflows open. | User |
 
+| 2026-11-13 | Implement Smart Enter and closing-bracket auto-dedent from the same pinned VS Code language configurations as folding. Keep language rules in catalog data and one generic consumer; preserve editing/history and repair the failing gate without relaxing it. Use Python for edits. | User |
+
 ### Open decisions
 
 None. The 2026-11-03 setup questions are answered in
@@ -119,6 +121,18 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Smart Enter and auto-dedent (2026-11-13): implemented and verified.** Ordered
+`onEnterRules`, `indentationRules` and bracket fallback come from pinned VS Code
+language configurations through the catalog and one scalar/multiple-caret recipe.
+Exact syntax excludes string/comment brackets; stale analysis does not authorize
+indent rewrites. Input and connected tests preserve file policy, CRLF, selection,
+linked views and one-step canonical/private Undo. Native Linux Kitty and Alacritty
+journeys pass at 160×40 and 80×24; the full ordinary suite, affected race checks and
+unchanged allocation gate pass. See the
+[checkpoint evidence and limits](../issues/2026-11-11-editor-polish.md#smart-enter-contextual-status-and-full-link-targets-2026-11-13).
+Tool setup, LSP on-type formatting and the remaining editor backlog were not added
+to this checkpoint. Native Windows/macOS input remains unverified.
 
 **Complete editor interactions (2026-11-11).** The user restarted the core and
 requests implementation through the remaining experience, not another handoff.

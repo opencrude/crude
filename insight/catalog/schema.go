@@ -60,8 +60,9 @@ type LanguageRecord struct {
 	// FoldingMarkers start and end a region that folds whatever its
 	// indentation (VS Code language configuration folding.markers). Both are
 	// RE2 patterns matched against one line without its terminator.
-	FoldingMarkers *FoldingMarkers `json:"folding_markers,omitempty"`
-	Sources        []string        `json:"sources,omitempty"`
+	FoldingMarkers *FoldingMarkers  `json:"folding_markers,omitempty"`
+	Editing        *LanguageEditing `json:"editing,omitempty"`
+	Sources        []string         `json:"sources,omitempty"`
 }
 
 // FoldingMarkers is a pair of region marker patterns.
@@ -254,6 +255,9 @@ func validateLanguage(language LanguageRecord) error {
 				return fmt.Errorf("%w: language %s folding marker %q", errInvalidInput, language.ID, pattern)
 			}
 		}
+	}
+	if err := validateEditing(language.Editing); err != nil {
+		return fmt.Errorf("%w: language %s editing: %v", errInvalidInput, language.ID, err)
 	}
 	if language.Grammar != "" && !idPattern.MatchString(language.Grammar) {
 		return fmt.Errorf("%w: language %s grammar %q", errInvalidInput, language.ID, language.Grammar)

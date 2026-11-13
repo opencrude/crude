@@ -103,7 +103,7 @@ func bridgeAnsiRuns(runs []rendering.AnsiRun, st ansiBridgeState) PaintLine {
 }
 
 func ansiRunToSpan(r rendering.AnsiRun, st ansiBridgeState) RowSpan {
-	span := RowSpan{Text: r.Text, Attr: r.Attr}
+	span := RowSpan{Text: r.Text, Attr: r.Attr, Link: r.Link}
 	if !r.FG.IsDefault() {
 		if role, ok := st.fgRoles[r.FG]; ok {
 			span.Role = role
@@ -131,7 +131,7 @@ func ansiRunToSpan(r rendering.AnsiRun, st ansiBridgeState) RowSpan {
 // styling (same role, same override flags/colours, same attrs, same bg).
 // Returns true if coalesced.
 func coalesceInto(dst *RowSpan, span RowSpan) bool {
-	if dst.Role != span.Role {
+	if dst.Role != span.Role || !dst.Link.Equal(span.Link) {
 		return false
 	}
 	if dst.Attr != span.Attr {

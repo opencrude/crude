@@ -5,6 +5,81 @@
 > acceptance remain open. Broader editor parity remains in
 > [Complete editor experience](../plans/editor-parity.md).
 
+## Smart Enter, contextual status and full link targets (2026-11-13)
+
+Smart Enter and closing-delimiter auto-dedent now use the pinned VS Code language
+configurations as catalog data and one generic scalar/multiple-caret consumer.
+Exact source syntax excludes brackets in strings/comments; stale results and paste
+do not authorize an indent rewrite. All 22 authored entries retain the upstream
+file, commit and verified SHA-256. The remaining editor backlog is not part of this
+checkpoint.
+
+`TestSmartEnterUsesLanguageConfiguration` and the related closing-key, custom-pack,
+linked-view and late-syntax regressions drive real input and assert exact source,
+one-step Undo/Redo, CRLF, independent indent/tab widths and literal paste. Existing
+editor and signature-help fixtures now publish the actual syntax readiness their
+assertions require, without weakening source, caret or history expectations.
+
+The connected `TestEditorSmartIndentVisualHeadless` and native
+`TestEditorSmartIndentVisualAcceptance` open real files, use project indentation,
+press Enter and a closing key, continue a doc comment and undo/redo through the
+core. They also preserve the chat draft and disk bytes. Linux Kitty and Alacritty
+captures from `scripts/tuishot.sh` passed at 160×40 and 80×24; Smart Enter, dedent
+and comment frames were inspected. Session evidence is
+`smart-{160x40,80x24}-final-{kitty,alacritty}.evidence` and the matching `-shots`
+folders, including the final decimal-formatting gate repair. Capture windows closed. Earlier Alacritty/xdotool
+attempts delivered unexpected bracket text and did not pass; input probes later
+confirmed the expected `}` bytes and key message, and the full journeys passed
+without a product input workaround. Native Windows and macOS input remain unverified.
+
+The YOLO warning now reads the displayed agent's owning-session policy, not a
+cached bit from the previous tab. `TestYoloHeaderFollowsDisplayedAgentNotLastSession`
+paints both widths across editor/root/descendant switches and background state;
+`TestYoloHeaderDoesNotFollowAgentIntoTerminalPlacements` uses real dock, tab and
+floating-terminal placement.
+
+Long Markdown table links reproduced a separate failure: Glamour retained the full
+OSC 8 target, but the paint bridge dropped it. Shared immutable link metadata now
+survives decoding, native rows, clipping, composition and both terminal outputs.
+`TestMarkdownShortenedLinksKeepFullTerminalTarget` failed before the fix at both
+widths and now checks final terminal-cell destinations and repaint, not only
+upstream ANSI. Boundary tests cover target-only changes, wide glyphs, SGR resets
+and unsafe schemes/controls. An isolated real tmux 3.8 capture retained the full
+address despite its shortened label. SSH and other terminal/multiplexer versions
+were not run; every hop must support OSC 8. No remote browser launcher or
+passthrough workaround was added.
+
+A later full-suite run exposed a process-wide allocation assertion in
+`TestOccurrencesSteadyStateDoesNotCopySettings`: it reported three objects per
+update only in the group, while 20 isolated runs passed. The guard now counts the
+actual `Settings` clone owner and also rejects a new request for a stable caret.
+A Go source-overlay negative control restored the full-settings access and failed
+with exactly 100 copies; the real owner passed ten runs and three race runs. No
+production occurrence code changed, and no tests were skipped; the guard still
+catches the original settings-copy defect. Dense snippet measurements
+also join each first paint's owned source job before the next key; the original
+allocation ceilings remain unchanged.
+
+The final full `make test` and `make bench-gate` runs both passed after these
+owner corrections. Failed or aborted intermediate runs are not counted as passes.
+The final allocation gate reported:
+
+| Case | Final bytes / objects | Unchanged ceiling |
+|---|---|---|
+| Semantic-enabled dense mutation | 866,356 / 38 | 1,930,000 / 237 |
+| Single-caret dense mutation | 1,045,888 / 30 | 1,660,000 / 86 |
+| Dense 64-mirror typing and paint | 2,589,577 / 387 | 4,150,000 / 1,320 |
+| Dense orientation, off and on | 239,957 / 83 | 240,000 / 185 |
+
+Build, lint (v2.15.0 for Go 1.27), design audit, docs and website gates passed. Affected editor/catalog/rendering packages and connected
+Smart Enter/YOLO journeys passed with the race detector. Pure catalog, cell,
+surface and compositor components cross-built for Windows and macOS. Native
+parser-dependent UI cross-builds need the target platform toolchain and were not
+attested. Catalog and wire-cohort freshness checks passed. The performance
+fixture repair is described in
+[stage isolation](../reference/performance-baselines.md#dense-editing-stage-isolation-2026-11-13);
+no ceiling was raised.
+
 ## Report and causes
 
 The user reported that accepting a completion with Tab stopped recommendations

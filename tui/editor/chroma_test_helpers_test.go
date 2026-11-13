@@ -52,3 +52,20 @@ func closeSyntax(e *Editor) {
 		<-done
 	}
 }
+
+// joinSyntax waits only for work the preceding frame already started. Unlike
+// settleSyntax it does not admit a fresh parse of source changed by Undo; that
+// is not part of off-timer preparation for a mutation/paint stage.
+func joinSyntax(tb testing.TB, e *Editor) {
+	tb.Helper()
+	job := e.syntaxJob
+	if job == nil {
+		return
+	}
+	select {
+	case <-job.done:
+	case <-time.After(10 * time.Second):
+		tb.Fatal("owned syntax job did not retire")
+	}
+	e.finishSyntax()
+}

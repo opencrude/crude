@@ -535,6 +535,55 @@
         "start": "^\\s*#\\s*pragma\\s+region\\b",
         "end": "^\\s*#\\s*pragma\\s+endregion\\b"
       },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          }
+        }
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -1037,6 +1086,55 @@
         "start": "^\\s*#\\s*pragma\\s+region\\b",
         "end": "^\\s*#\\s*pragma\\s+endregion\\b"
       },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          }
+        }
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -1118,7 +1216,32 @@
         "end": "*/"
       },
       "grammar": "css",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "(^.*\\{[^}]*$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*\\}"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -1509,7 +1632,32 @@
       "formatter": {
         "command": "dockerfmt"
       },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^\\s*.*(:|-) ?(&amp;\\w+)?(\\{[^}\"']*|\\([^)\"']*)?$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s+\\}$"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -2672,6 +2820,44 @@
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
       },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\bcase\\b.*:|\\bdefault\\b:|(\\b(func|if|else|switch|select|for|struct)\\b.*)?{[^}\"'`]*|\\([^)\"'`]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*(\\bcase\\b.*:|\\bdefault\\b:|}[)}]*[),]?|\\)[,]?)$"
+          }
+        }
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -3201,6 +3387,54 @@
         "start": "^\\s*<!--\\s*#region\\b.*-->",
         "end": "^\\s*<!--\\s*#endregion\\b.*-->"
       },
+      "editing": {
+        "brackets": [
+          [
+            "<!--",
+            "-->"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\"/>]|\"[^\"]*\"|'[^']*')*?(?!\\/)>)[^<]*$",
+              "flags": "i"
+            },
+            "after_text": {
+              "pattern": "^<\\/([_:\\w][_:\\w-.\\d]*)\\s*>",
+              "flags": "i"
+            },
+            "action": {
+              "indent": "indentOutdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "<(?!(?:area|base|br|col|embed|hr|img|input|keygen|link|menuitem|meta|param|source|track|wbr))([_:\\w][_:\\w-.\\d]*)(?:(?:[^'\"/>]|\"[^\"]*\"|'[^']*')*?(?!\\/)>)[^<]*$",
+              "flags": "i"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "<(?!\\?|(?:area|base|br|col|frame|hr|html|img|input|keygen|link|menuitem|meta|param|source|track|wbr)\\b|[^>]*\\/>)([-_\\.A-Za-z0-9]+)(?=\\s|>)\\b[^>]*>(?!.*<\\/\\1>)|<!--(?!.*-->)|\\{[^}\"']*$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*(<\\/(?!html)[-_\\.A-Za-z0-9]+\\b[^>]*>|-->|\\})"
+          }
+        }
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -3437,7 +3671,100 @@
         "end": "*/"
       },
       "grammar": "java",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -3493,6 +3820,163 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          }
+        }
       },
       "sources": [
         "crude-authored",
@@ -3660,7 +4144,42 @@
         "vscode-json-language-server"
       ],
       "grammar": "json",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "({+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"}]*)$)|(\\[+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"\\]]*)$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[}\\]],?\\s*$"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -3730,7 +4249,42 @@
         "end": "*/"
       },
       "grammar": "json",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "({+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"}]*)$)|(\\[+(?=((\\\\.|[^\"\\\\])*\"(\\\\.|[^\"\\\\])*\")*[^\"\\]]*)$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[}\\]],?\\s*$"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -3794,6 +4348,163 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          }
+        }
       },
       "sources": [
         "crude-authored",
@@ -4173,7 +4884,46 @@
         "end": "*/"
       },
       "grammar": "less",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "(^.*\\{[^}]*$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*\\}"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -4270,6 +5020,30 @@
         "end": "--]]"
       },
       "grammar": "lua",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^((?!(\\-\\-)).)*((\\b(else|function|then|do|repeat)\\b((?!\\b(end|until)\\b).)*)|(\\{\\s*))$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*((\\b(elseif|else|end|until)\\b)|(\\})|(\\)))"
+          }
+        }
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -5271,7 +6045,111 @@
         "end": "*/"
       },
       "grammar": "php",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*\\/\\*\\*(?!\\/)([^\\*]|\\*(?!\\/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*\\/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*\\/\\*\\*(?!\\/)([^\\*]|\\*(?!\\/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|(\\ \\ ))*\\ \\*(\\ ([^\\*]|\\*(?!\\/))*)?$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|(\\ \\ ))*\\ \\*\\/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|(\\ \\ ))*\\ \\*[^/]*\\*\\/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for(each)?|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "((else\\s?)?if|else|for(each)?|while|switch|case).*:\\s*((/[/*].*|)?$|\\?>)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^(.*\\*\\/)?\\s*(\\b(else:)|\\bend(if|for(each)?|while|switch);)"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^\\s*(((if|else ?if|while|for|foreach)\\s*\\(.*\\)\\s*)|else\\s*)$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -5773,6 +6651,32 @@
         "start": "^\\s*#\\s*region\\b",
         "end": "^\\s*#\\s*endregion\\b"
       },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*(?:def|class|for|if|elif|else|while|try|with|finally|except|async).*?:\\s*$"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          }
+        ]
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -6235,7 +7139,32 @@
         "#"
       ],
       "grammar": "ruby",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^\\s*((begin|class|(private|protected)\\s+def|def|else|elsif|ensure|for|if|module|rescue|unless|until|when|in|while|case)|([^#]*\\sdo\\b)|([^#]*=\\s*(case|if|unless)))\\b([^#\\{;]|(\"|'|/).*\\4)*(#.*)?$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*([}\\]]([,)]?\\s*(#|$)|\\.[a-zA-Z_]\\w*\\b)|(end|rescue|ensure|else|elsif)\\b|(in|when)\\s)"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -6280,6 +7209,44 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*\\{[^}\"']*$|^.*\\([^\\)\"']*$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*(\\s*\\/[*].*[*]\\/\\s*)*[})]"
+          }
+        }
       },
       "sources": [
         "crude-authored",
@@ -6395,7 +7362,43 @@
         "end": "*/"
       },
       "grammar": "scss",
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^[\\s]*///.*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "/// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "(^.*\\{[^}]*$)"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*\\}"
+          }
+        }
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -6920,7 +7923,38 @@
       "formatter": {
         "command": "swift-format"
       },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ]
+      },
       "sources": [
+        "crude-authored",
         "helix",
         "linguist"
       ]
@@ -7427,6 +8461,163 @@
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
       },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          }
+        }
+      },
       "sources": [
         "crude-authored",
         "helix",
@@ -7490,6 +8681,163 @@
       "folding_markers": {
         "start": "^\\s*//\\s*#?region\\b",
         "end": "^\\s*//\\s*#?endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "${",
+            "}"
+          ],
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "on_enter_rules": [
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\*/$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*/\\*\\*(?!/)([^\\*]|\\*(?!/))*$"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": " * "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+            },
+            "previous_line_text": {
+              "pattern": "(?=^(\\s*(/\\*\\*|\\*)).*)(?=(?!(\\s*\\*/)))"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "* "
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$"
+            },
+            "action": {
+              "indent": "none",
+              "remove_text": 1
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*(\\bcase\\s.+:|\\bdefault:)$"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*(\\bcase\\b|\\bdefault\\b))"
+            },
+            "action": {
+              "indent": "indent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s+([^{i\\s]|i(?!f\\b))"
+            },
+            "previous_line_text": {
+              "pattern": "^\\s*(((else ?)?if|for|while)\\s*\\(.*\\)\\s*|else\\s*)$"
+            },
+            "action": {
+              "indent": "outdent"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\([^\\)]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\).*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\{[^\\}]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\}.*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^.*\\[[^\\]]*$"
+            },
+            "after_text": {
+              "pattern": "^\\s*\\].*$"
+            },
+            "action": {
+              "indent": "indentOutdent",
+              "append_text": "\t"
+            }
+          },
+          {
+            "before_text": {
+              "pattern": "^\\s*//\\s*\\S|\\s//\\s+\\S"
+            },
+            "after_text": {
+              "pattern": "^(?!\\s*$)"
+            },
+            "action": {
+              "indent": "none",
+              "append_text": "// "
+            }
+          }
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^.*(\\{[^}]*|\\([^)]*|\\[[^\\]]*)$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s*[\\}\\]\\)].*$"
+          },
+          "indent_next_line_pattern": {
+            "pattern": "^((.*=>\\s*)|((.*[^\\w]+|\\s*)((if|while|for)\\s*\\(.*\\)\\s*|else\\s*)))$"
+          },
+          "un_indented_line_pattern": {
+            "pattern": "^(\\t|[ ])*[ ]\\*[^/]*\\*/\\s*$|^(\\t|[ ])*[ ]\\*/\\s*$|^(\\t|[ ])*\\*([ ]([^\\*]|\\*(?!/))*)?$"
+          }
+        }
       },
       "sources": [
         "crude-authored",
@@ -8213,6 +9561,30 @@
       "folding_markers": {
         "start": "^\\s*#\\s*region\\b",
         "end": "^\\s*#\\s*endregion\\b"
+      },
+      "editing": {
+        "brackets": [
+          [
+            "{",
+            "}"
+          ],
+          [
+            "[",
+            "]"
+          ],
+          [
+            "(",
+            ")"
+          ]
+        ],
+        "indentation_rules": {
+          "increase_indent_pattern": {
+            "pattern": "^\\s*.*(:|-) ?(&amp;\\w+)?(\\{[^}\"']*|\\([^)\"']*)?$"
+          },
+          "decrease_indent_pattern": {
+            "pattern": "^\\s+\\}$"
+          }
+        }
       },
       "sources": [
         "crude-authored",

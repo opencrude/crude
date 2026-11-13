@@ -12,6 +12,7 @@ import (
 // bridge so it can reuse the canonical SGR parser instead of duplicating it.
 type AnsiRun struct {
 	Text string
+	Link *cell.Link
 	FG   cell.Color
 	BG   cell.Color
 	Attr cell.Attrs
@@ -31,6 +32,7 @@ type AnsiRunParser struct {
 	fg, bg cell.Color
 	attr   cell.Attrs
 	state  byte
+	link   *cell.Link
 }
 
 func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
@@ -40,7 +42,7 @@ func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 		if b.Len() == 0 {
 			return
 		}
-		runs = append(runs, AnsiRun{Text: b.String(), FG: p.fg, BG: p.bg, Attr: p.attr})
+		runs = append(runs, AnsiRun{Text: b.String(), Link: p.link, FG: p.fg, BG: p.bg, Attr: p.attr})
 		b.Reset()
 	}
 
@@ -51,6 +53,11 @@ func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 		}
 		line, p.state = line[n:], state
 		if width == 0 {
+			if link, ok := oscHyperlink(sequence); ok {
+				flush()
+				p.link = link
+				continue
+			}
 			if params, ok := sgrParameters(sequence); ok {
 				flush()
 				parseSGR(params, &p.fg, &p.bg, &p.attr)

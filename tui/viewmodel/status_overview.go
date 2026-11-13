@@ -144,11 +144,11 @@ func (m *App) configureFooterScreen() {
 func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 	var segments []shellheader.Segment
 	context, metrics, target := m.activeHeaderContext()
-	if m.OverlayState.IsYolo() {
-		segments = append(segments, shellheader.Segment{Text: "! YOLO", Role: ui.ColorError, Action: "tabs", TargetID: target, Priority: 0})
-	}
 	if strings.HasPrefix(target, "agent:") {
 		agentID := strings.TrimPrefix(target, "agent:")
+		if m.ws.YoloForAgent(agentID) {
+			segments = append(segments, shellheader.Segment{Text: "! YOLO", Role: ui.ColorError, Action: "tabs", TargetID: target, Priority: 0})
+		}
 		if m.ws.PlanModeForAgent(agentID) {
 			segments = append(segments, shellheader.Segment{Text: "Plan mode", Role: ui.ColorAccent, Action: "tabs", TargetID: target, Priority: 0})
 		}

@@ -65,17 +65,8 @@ func TruncatePaintLine(pl PaintLine, maxW int) PaintLine {
 			remain -= w
 			continue
 		}
-		out = append(out, RowSpan{
-			Text:    rendering.TruncateVisual(span.Text, remain, ""),
-			Role:    span.Role,
-			Attr:    span.Attr,
-			BgRole:  span.BgRole,
-			BgSet:   span.BgSet,
-			FGColor: span.FGColor,
-			FGSet:   span.FGSet,
-			BGColor: span.BGColor,
-			BGSet:   span.BGSet,
-		})
+		span.Text = rendering.TruncateVisual(span.Text, remain, "")
+		out = append(out, span)
 		break
 	}
 	pl.Spans = out
@@ -148,7 +139,7 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 				cellAttr &^= cell.AttrDim | cell.AttrReverse
 			}
 
-			curX = buf.WriteString(curX, y, cluster, cellFG, cellBG, cellAttr)
+			curX = buf.WriteString(curX, y, cluster, cellFG, cellBG, cellAttr, span.Link)
 			col = nextCol
 		}
 	}

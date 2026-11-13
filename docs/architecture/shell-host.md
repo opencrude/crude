@@ -29,6 +29,7 @@ with z-ordering.
 - `Cell.Char` — the rune
 - `Cell.Width` — measured display width (1+ for a primary, 0 for continuation)
 - `Cell.FG` / `Cell.BG` — colors (`ColorDefault` = inherit during Blit)
+- `Cell.Link` — shared immutable full hyperlink target, independent of visible text
 - `Cell.Transparent` — if true, Blit skips this cell
 
 ## Blit semantics

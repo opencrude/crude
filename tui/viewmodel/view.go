@@ -517,7 +517,6 @@ func (m *App) configureHeaderScreen() {
 	left[0] = shellheader.Wordmark(health.brand)
 	if m.headerScreen.SetProjection(shellheader.Projection{
 		ModelName: m.ModelName,
-		YOLO:      m.OverlayState.IsYolo(),
 		StartTime: m.ws.StartTime(),
 		// No ViewLabel: the active agent already has its own window tab, so
 		// the header stays on app + model only.

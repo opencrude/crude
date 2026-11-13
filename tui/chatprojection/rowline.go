@@ -17,6 +17,7 @@ import (
 // SemanticColor role by the bridge so they follow theme preset switches.
 type RowSpan struct {
 	Text   string
+	Link   *cell.Link
 	Role   ui.SemanticColor
 	BgRole ui.SemanticColor
 	BgSet  bool

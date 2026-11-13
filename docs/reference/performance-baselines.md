@@ -80,6 +80,40 @@ These are single-operation timings, not end-to-end presented-frame latency or a
 platform-independent ceiling. The benchmark's first overlarge top-level tooltip
 was rejected by the existing per-field bound and is not included in these figures.
 
+## Dense editing stage isolation (2026-11-13)
+
+The previous allocation gate reproduced failures in semantic-enabled mutation
+(276 objects against 237) and single-caret mutation (1,689,380 B against
+1,660,000 B). A heap profile showed source/lexer jobs from the preceding off-timer
+paint/Undo overlapping the next measured operation. The dense stage benchmarks
+now join the real source job at their off-timer preparation boundaries and during
+cleanup. The edits, paints, document sizes, assertions and existing ceilings remain
+unchanged. Syntax preparation keeps its separate benchmarks. This correction
+isolates the stated stage; it is not a claim that background analysis is free.
+Only an already admitted source job is joined. Starting a new complete parse after
+every off-timer Undo changed the preparation workload and made the benchmark take
+minutes, so it is not used. Stable paint installs its immutable provider snapshot
+once: reinstalling the same full token set before each frame measured neither a
+stable state nor a meaningful wall-clock workload.
+
+The snippet typing + first-paint benchmark also joins that frame's admitted job
+between measured keys. Joining only the initial job left a later cancelled parse
+overlapping the next sample (1,970 objects against the unchanged 1,320 limit).
+Three isolated dense 64-mirror runs after the boundary correction measured
+383–386 objects and 2.56–2.60 MB; keys, source, mirrors and first paints still run
+inside the timer. Full source preparation completes outside this stage, not in a
+suppressed or fake worker.
+
+Full-link metadata adds one shared pointer to a cell (40 to 48 bytes on amd64).
+The unchanged orientation gate then exposed a 240,064 B/frame result against its
+240,000 B limit at 20,000 lines. The exact heap profile also found the editor's
+hand-built decimal strings in every gutter/status/fold-label paint. Replacing that
+helper with `strconv.Itoa` keeps the same text, uses the standard small-number
+representation and cuts 154 allocations to 83. Three runs of each dense orientation
+case now measure 239,957 B/frame, with the 240,000 B / 185-object ceiling unchanged.
+The fresh test surface still remains in the benchmark; it was not reused to hide
+its memory cost.
+
 ## Semantic-token source and paint (2026-11-11)
 
 The protocol consumer processes 20,000 relative token tuples against one

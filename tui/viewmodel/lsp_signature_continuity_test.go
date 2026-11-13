@@ -10,6 +10,7 @@ import (
 	"crude/document"
 	"crude/shellport"
 	"crude/snippet"
+	"crude/syntax"
 	"crude/tui/ui"
 	"crude/types"
 )
@@ -117,6 +118,26 @@ func TestParameterHelpFollowsMultilineAndIndentedArguments(t *testing.T) {
 			app, service, opening := automaticSignaturePending(t)
 			automaticSignatureAcknowledge(t, app, opening)
 			ed := app.EditorState.Editor
+			// This fixture supplies signature replies, not the core's syntax
+			// topic. Publish a real parse of its acknowledged source before
+			// asking Smart Enter to make a syntax-dependent source edit.
+			snapshot := ed.DocumentSnapshot()
+			language, ok := syntax.LanguageForPath(snapshot.Path)
+			if !ok {
+				t.Fatal("fixture has no syntax grammar")
+			}
+			parser, err := syntax.New(language)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := parser.Parse(t.Context(), snapshot.Revision, snapshot.Text)
+			parser.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ed.InstallDocumentInsight(types.DocumentInsight{DocumentID: snapshot.ID, Path: snapshot.Path, Revision: snapshot.Revision, Generation: snapshot.AnalysisGeneration, Version: 1, State: types.InsightCurrent, Syntax: &parsed}) {
+				t.Fatal("fixture did not publish its source analysis")
+			}
 			service.answer.Boundary.Source, _ = ed.CurrentInsightSource()
 			_, cmd := app.Update(struct{}{})
 			runAppCommand(t, app, cmd)

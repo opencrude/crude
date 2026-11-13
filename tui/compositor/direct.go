@@ -76,7 +76,7 @@ func (s cellSurface) Draw(dst uv.Screen, area uv.Rectangle) {
 				if text == "" {
 					text = runeText(c.Char)
 				}
-				s.row[x] = uv.Cell{Content: text, Width: int(c.Width), Style: style}
+				s.row[x] = uv.Cell{Content: text, Width: int(c.Width), Style: style, Link: directLink(c.Link)}
 				if c.Width == 1 {
 					// Filled backgrounds often occupy most of a row. Convert the
 					// run once, then bulk-copy UV values rather than reconstructing
@@ -112,7 +112,7 @@ func (s cellSurface) Draw(dst uv.Screen, area uv.Rectangle) {
 			if text == "" {
 				text = runeText(c.Char)
 			}
-			out = uv.Cell{Content: text, Width: int(c.Width), Style: style}
+			out = uv.Cell{Content: text, Width: int(c.Width), Style: style, Link: directLink(c.Link)}
 			dst.SetCell(x, y, &out)
 		}
 	}
@@ -186,4 +186,11 @@ func directStyle(c cell.Cell) uv.Style {
 		s.Underline = uv.UnderlineDotted
 	}
 	return s
+}
+
+func directLink(link *cell.Link) uv.Link {
+	if link == nil {
+		return uv.Link{}
+	}
+	return uv.Link{URL: link.Target(), Params: link.Params()}
 }

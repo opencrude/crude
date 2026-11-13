@@ -393,7 +393,7 @@ func BenchmarkMultipleCaretStages(b *testing.B) {
 		for _, stage := range []string{"mutation", "paint", "undo"} {
 			b.Run(fmt.Sprintf("%d/%s", count, stage), func(b *testing.B) {
 				e := NewPreview(theme.DefaultDark(), "dense.txt", strings.Repeat("word alpha 界 é\n", 20000), 1)
-				defer e.Close()
+				defer closeSyntax(e)
 				e.readOnly = false
 				var spans []selectionSpan
 				for line := 0; line < count; line++ {
@@ -405,6 +405,7 @@ func BenchmarkMultipleCaretStages(b *testing.B) {
 				}
 				e.ScrollToCursor()
 				paintEditor(e, 120, 40)
+				joinSyntax(b, e)
 				key := tea.KeyPressMsg{Code: 'X', Text: "X"}
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -415,19 +416,23 @@ func BenchmarkMultipleCaretStages(b *testing.B) {
 						b.StopTimer()
 						paintEditor(e, 120, 40)
 						e.Undo()
+						joinSyntax(b, e)
 						b.StartTimer()
 					case "paint":
 						b.StopTimer()
 						e.HandleEvent(key)
+						joinSyntax(b, e)
 						b.StartTimer()
 						paintEditor(e, 120, 40)
 						b.StopTimer()
 						e.Undo()
+						joinSyntax(b, e)
 						b.StartTimer()
 					case "undo":
 						b.StopTimer()
 						e.HandleEvent(key)
 						paintEditor(e, 120, 40)
+						joinSyntax(b, e)
 						b.StartTimer()
 						e.Undo()
 					}

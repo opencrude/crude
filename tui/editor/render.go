@@ -2,6 +2,7 @@ package editor
 
 import (
 	"image/color"
+	"strconv"
 	"strings"
 
 	"crude/tui/cell"
@@ -360,7 +361,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			}
 		}
 		if r, ok := e.foldAt(lineIdx); ok && row.index == 0 && containsFold(e.folds.collapsed, r) {
-			label := " … " + e.itoa(r.End-r.Start) + " lines"
+			label := " … " + strconv.Itoa(r.End-r.Start) + " lines"
 			if r.End-r.Start == 1 {
 				label = " … 1 line"
 			}
@@ -475,23 +476,11 @@ func (e *Editor) gutterGeometry() gutterGeometry {
 func (e *Editor) GutterWidth() int { return e.gutterWidth() }
 
 func (e *Editor) formatLineNum(n int, width int) string {
-	s := e.itoa(n)
+	s := strconv.Itoa(n)
 	if len(s) > width {
 		s = s[len(s)-width:]
 	}
 	return strings.Repeat(" ", max(0, width-len(s))) + s
-}
-
-func (e *Editor) itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	s := ""
-	for n > 0 {
-		s = string(rune('0'+n%10)) + s
-		n /= 10
-	}
-	return s
 }
 
 func (e *Editor) renderStatusLine(w int) string {
@@ -503,17 +492,17 @@ func (e *Editor) renderStatusLine(w int) string {
 	if errs, warns, hints := e.DiagnosticCounts(); errs > 0 || warns > 0 || hints > 0 {
 		var parts []string
 		if errs > 0 {
-			parts = append(parts, "✕"+e.itoa(errs))
+			parts = append(parts, "✕"+strconv.Itoa(errs))
 		}
 		if warns > 0 {
-			parts = append(parts, "⚠"+e.itoa(warns))
+			parts = append(parts, "⚠"+strconv.Itoa(warns))
 		}
 		if hints > 0 {
-			parts = append(parts, "ℹ"+e.itoa(hints))
+			parts = append(parts, "ℹ"+strconv.Itoa(hints))
 		}
 		left += "  " + strings.Join(parts, " ")
 	}
-	right := e.itoa(e.cursor.Line+1) + ":" + e.itoa(e.cursor.Col+1) + "  " + e.itoa(lc) + "L"
+	right := strconv.Itoa(e.cursor.Line+1) + ":" + strconv.Itoa(e.cursor.Col+1) + "  " + strconv.Itoa(lc) + "L"
 	padding := w - rendering.VisibleWidth(left) - rendering.VisibleWidth(right) - 2
 	if padding < 1 {
 		padding = 1
