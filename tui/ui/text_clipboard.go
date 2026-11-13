@@ -80,6 +80,22 @@ func ClipboardChordFor(m tea.KeyPressMsg) ClipboardChord {
 	return ClipboardChordNone
 }
 
+// EditorClipboardKey maps the CUA clipboard keys that VS Code and JetBrains
+// bind in their editors (Shift+Delete cut, Ctrl+Insert copy, Shift+Insert
+// paste) to the primary chord. Only source editors use it: in a single-line
+// field or the chat composer, Shift+Delete keeps its plain delete meaning.
+func EditorClipboardKey(m tea.KeyPressMsg) tea.KeyPressMsg {
+	switch {
+	case m.Code == tea.KeyDelete && m.Mod == tea.ModShift:
+		return tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}
+	case m.Code == tea.KeyInsert && m.Mod == tea.ModCtrl:
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	case m.Code == tea.KeyInsert && m.Mod == tea.ModShift:
+		return tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}
+	}
+	return m
+}
+
 // IsCopyChord reports whether the key is any copy chord (Ctrl+C or
 // Ctrl+Shift+C). Hosts that copy their own selection (editor, chat message
 // list, overlays) use it so every copy entry point accepts both chords.

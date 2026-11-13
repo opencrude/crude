@@ -173,7 +173,7 @@ func TestEditorGhostAutoPairsPeerAndEqualBytesCannotMasqueradeAsTypedThrough(t *
 			api := ghostEntry(t, e, 4, " suffix")
 			switch mutation {
 			case "peer":
-				if err := e.buf.applyOffsets([]document.Edit{{Start: 0, End: 0, Text: "peer "}}); err != nil {
+				if _, err := e.buf.applyOffsets([]document.Edit{{Start: 0, End: 0, Text: "peer "}}); err != nil {
 					t.Fatal(err)
 				}
 			case "equal-bytes":

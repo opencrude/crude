@@ -97,6 +97,25 @@ or menu cannot edit a different view or a newer source/selection.
 - Ctrl+Alt+B goes to the matching bracket; Shift extends the selection. Exact
   syntax/lexical results exclude strings and comments. Both delimiter cells use
   restrained accent ink. Missing or stale results never manufacture a match.
+- With no selection, Ctrl+C copies and Ctrl+X cuts the caret's whole line,
+  including its line break, as with VS Code's default
+  `editor.emptySelectionClipboard` (`tui/editor/clipboard.go`, ported from
+  `getPlainTextToCopy`, `DeleteOperations.cut` and `_simplePaste`). Pasting that
+  line inserts it above the caret's line and keeps the caret on its text. Several
+  carets on one line copy the line once. Shift+Delete cuts, Ctrl+Insert copies and
+  Shift+Insert pastes in the editor, as in JetBrains IDEs and VS Code on Windows;
+  so Shift+Delete with no selection removes the line. Text fields and the chat
+  composer keep their own Shift+Delete meaning.
+- Ctrl+U undoes caret and selection moves, and **Redo caret move** in the action
+  picker redoes them (`tui/editor/cursor_undo.go`, a port of VS Code's
+  `CursorUndoRedoController` and its tests). They never change text or the
+  document's Undo history; any source change clears them, and they keep the last
+  50 states. Alt+Shift+I (VS Code) or Alt+Shift+G (JetBrains) adds a caret at
+  the end of each selected line. VS Code's Ctrl+Shift+L and Ctrl+F2
+  also select all occurrences, and `Ctrl+Shift+\` also goes to the matching
+  bracket. Alt+PgUp/PgDn scroll the view by a page without moving the caret,
+  as in VS Code. Terminals that cannot report these modified keys still offer
+  every action through the action picker.
 - The action picker also offers case conversion, line sorting/reversal,
   character transposition, indentation and comment toggling. Text mutations
   are one native transaction with one Undo step; read-only views expose only
@@ -408,10 +427,21 @@ source revision, tab width and immutable selection identity.
 ## Edit transactions and history
 
 - Ctrl+Z undoes; Ctrl+Y and Ctrl+Shift+Z redo (Super equivalents when delivered
-  by the terminal). Navigation/focus changes separate typing. Adjacent plain
-  typing within 500 ms is one logical group; Enter, indentation, pair operations,
-  line moves/duplicate/delete, cut/paste, completion, formatting and replacement
-  are atomic commands. Replace All is one transaction, not one step per match.
+  by the terminal). Undo steps follow VS Code's undo stops
+  (`tui/editor/undo_stops.go`, ported from `cursorCommon.ts`,
+  `cursorTypeEditOperations.ts`, `cursorDeleteOperations.ts` and `cursor.ts`),
+  not typing speed. A step stays open while the user does the same kind of edit
+  at the caret it left: a word, a run of spaces, a run of Backspace or of Delete.
+  A space after a word joins the next word (`ab cd` is one step); two spaces
+  start a new one. Changing between typing, deleting left and deleting right,
+  deleting across a line break, auto-closing a pair, an automatic dedent, Enter
+  (which then joins the typing after it), a caret move, focus change, command,
+  paste or a change from another view or shell starts a new step. Tab, line
+  moves/duplicate/delete, cut, completion, formatting and replacement are atomic
+  commands. Replace All is one transaction, not one step per match.
+- Undo and Redo restore the step's carets and selections and then reveal them
+  with the least scrolling, as VS Code does. They never move the viewport back to
+  where it was when the edit was made.
 - Reaching the end of the requesting author's undo or redo history is an
   accepted no-op. It changes neither text, revision nor history and shows no
   error. An actual refusal states its cause without inventing another author.
@@ -885,8 +915,14 @@ spans. The shell waits for this file's exact synchronized source and context
 publication before requesting; it waits for the answer's context before painting.
 An unrelated starting server can delay that synchronization, but no automatic
 semantic RPC occupies a core job while the source is known to be unsynchronized.
-Source changes hide old semantic ink immediately, and views retire their requests
-on close, switch or server loss. Each view checks its own file's connected producer;
+Semantic colors follow VS Code's sparse token store
+(`tui/editor/semantic.go`, ported from `SparseTokensStore` and
+`SparseMultilineTokens` with their tests). Every source edit adjusts the stored
+tokens, so typing, a pending receipt or a later syntax publication never repaints
+unrelated identifiers with lexical ink; a newer full result replaces them and a
+range result replaces only its lines. A pending request is retired on edits
+without dropping the adjusted colors. Views clear them on close, workspace switch,
+server loss or a whole-source replacement that has no edit mapping. Each view checks its own file's connected producer;
 an unrelated pane or shell's active-file status cannot remove its colors. Producer
 replacement retires old answers before requesting new ones. No token changes
 selection, Undo or disk.

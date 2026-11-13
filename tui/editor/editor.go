@@ -118,14 +118,16 @@ type Editor struct {
 	// undoGroupDepth/undoGroupID implement undo grouping: changes recorded
 	// between beginUndoGroup and endUndoGroup share one group ID (numbered by
 	// PieceTable.undoGroupSeq) and undo/redo together as a single step.
-	undoGroupDepth       int
-	undoGroupID          int
-	undoGroupStart       int
-	undoGroupBefore      editorViewState
-	historyID            uint64
-	typingGroup          int
-	typingAt             time.Time
-	typingCursor         Position
+	undoGroupDepth  int
+	undoGroupID     int
+	undoGroupStart  int
+	undoGroupBefore editorViewState
+	historyID       uint64
+	// cursorHistory is Cursor Undo/Redo (cursor_undo.go); it never edits.
+	cursorHistory cursorUndoStack
+	// openUndo and prevEditOp follow VS Code's undo stops (undo_stops.go).
+	openUndo             openUndoStep
+	prevEditOp           editOperation
 	contentChangePending bool
 
 	// Numeric completion interaction is private to this view. The PieceTable
@@ -158,7 +160,11 @@ type Editor struct {
 	lineNumberOffset int
 
 	chromaStyle *chroma.Style
-	chromaLexer chroma.Lexer
+	// chromaInk caches each token type's colour string for chromaInkStyle,
+	// so projecting a line does not format one string per cell.
+	chromaInkStyle *chroma.Style
+	chromaInk      map[chroma.TokenType]string
+	chromaLexer    chroma.Lexer
 	// Document-owned syntax is prepared off-UI; only visible cell maps are cached.
 	chromaLineCache                  map[int]syntaxLine
 	chromaLineScratch                map[int]syntaxLine
@@ -171,7 +177,7 @@ type Editor struct {
 	syntaxPlain                      bool
 	canonicalInsight                 *types.DocumentInsight
 	canonicalInk                     *types.DocumentInsight
-	semantic                         *types.LSPSemanticSet
+	semantic                         semanticStore
 
 	lineRunesCacheValid bool
 	lineRunesCacheLine  int
@@ -1130,6 +1136,10 @@ func (e *Editor) CursorScreenPosition(sidebarW, chatAreaTop int) (int, int) {
 // reference", "find symbol") so the cursor lands precisely where the server
 // pointed.
 func (e *Editor) SetCursorPosition(line, col int) {
+	if e.buf != nil {
+		before, revision := e.captureViewState(), e.Revision()
+		defer e.recordCursorChange(before, revision)
+	}
 	e.wrapBefore = false
 	e.expansion = nil
 	e.DismissGhostText()

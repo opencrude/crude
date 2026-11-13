@@ -157,6 +157,30 @@ func (e *Editor) invalidateEditedSyntax() {
 	e.syntaxBuffer, e.syntaxRevision = e.buf, revision
 }
 
+// syntaxInkReady reports whether an exact source can paint the current
+// revision now: the shared publication, a finished private parse, or no
+// grammar at all.
+func (e *Editor) syntaxInkReady() bool {
+	if e.syntaxPlain || e.syntaxStopped || e.syntaxFailed || e.chromaLexer == nil {
+		return true
+	}
+	if _, ok := e.canonicalViewCurrent(); ok && e.canonicalSyntaxSource() {
+		return true
+	}
+	return e.syntaxDocument != nil && e.syntaxBuffer == e.buf && e.syntaxRevision == e.Revision()
+}
+
+// recolorSyntax reprojects visible ink after a semantic color change only when
+// an exact source can repaint it now. Otherwise the mapped ink stays on screen
+// and the next source handoff reprojects every line; clearing it here would
+// paint plain text until that source arrives.
+func (e *Editor) recolorSyntax() {
+	if e.syntaxInkReady() {
+		clear(e.chromaLineCache)
+		clear(e.chromaLineScratch)
+	}
+}
+
 func mapSyntaxLine(tabW int, line syntaxLine, edit bufferLineChange) syntaxLine {
 	start, end := edit.byteStart, edit.byteEnd
 	if start < 0 || end < start || end > len(line.text) {
@@ -403,8 +427,8 @@ func nativeSyntax(ctx context.Context, language syntax.LanguageID, source textSn
 // Lexical context is always the full immutable document. The viewport selects
 // only which compact source spans to project into grapheme/tab cell colours.
 func (e *Editor) ensureChromaColors(fromLine, toLine int) {
-	if e.semantic != nil && !e.semanticCurrent() {
-		e.ClearSemanticTokens()
+	if e.semantic.buffer != nil && !e.semanticCurrent() {
+		e.ClearSemanticTokens() // a whole-source replacement has no token mapping
 	}
 	if e.semanticCurrent() {
 		defer e.ensureSemanticFallback(fromLine, toLine)
@@ -485,9 +509,16 @@ func (e *Editor) lineColorMap(lineIdx int) []string {
 }
 
 func (e *Editor) chromaTokenColor(tt chroma.TokenType) string {
-	entry := e.chromaStyle.Get(tt)
-	if entry.Colour.IsSet() {
-		return entry.Colour.String()
+	if e.chromaInkStyle != e.chromaStyle || e.chromaInk == nil {
+		e.chromaInkStyle, e.chromaInk = e.chromaStyle, make(map[chroma.TokenType]string)
 	}
-	return ""
+	if colour, ok := e.chromaInk[tt]; ok {
+		return colour
+	}
+	colour := ""
+	if entry := e.chromaStyle.Get(tt); entry.Colour.IsSet() {
+		colour = entry.Colour.String()
+	}
+	e.chromaInk[tt] = colour
+	return colour
 }

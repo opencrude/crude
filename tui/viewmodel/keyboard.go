@@ -359,15 +359,14 @@ func (m *App) treeFilterBlocksEscPop() bool {
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.clearDiagHoverPopup()
+	msg = ui.EditorClipboardKey(msg)
 	if cmd, handled := m.routeCompletionKey(msg); handled {
 		return m, cmd
 	}
 	if ui.IsCopyChord(msg) {
-		if m.EditorState.Editor.HasSelection() {
-			selected := m.EditorState.Editor.SelectedText()
-			if selected != "" {
-				return m, rendering.CopyToClipboardCmd(selected)
-			}
+		// With no selection the editor copies the caret line, as VS Code does.
+		if text := m.EditorState.Editor.CopyText(); text != "" {
+			return m, rendering.CopyToClipboardCmd(text)
 		}
 		return m, nil
 	}

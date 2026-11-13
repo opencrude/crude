@@ -247,3 +247,62 @@ func TestLiveEditorHistoryRestoresDeletedSelectionAndCaret(t *testing.T) {
 		t.Fatalf("redo view: %q selected=%q cursor=%d", ed.Value(), ed.SelectedText(), ed.CursorCol())
 	}
 }
+
+// VS Code's undo stops survive the core round trip: a word, a space-led word
+// and a run of Backspace are three steps whatever the dispatch pacing.
+func TestLiveEditorHistoryFollowsVSCodeUndoStops(t *testing.T) {
+	for _, paced := range []bool{true, false} {
+		t.Run(map[bool]string{true: "paced", false: "burst"}[paced], func(t *testing.T) {
+			runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+			root := t.TempDir()
+			path := filepath.Join(root, "stops.txt")
+			if err := os.WriteFile(path, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			shell := newRemoteJourneyShell(t, runtime, root)
+			ed := liveTestOpen(t, shell.app, path)
+			shell.app.activateEditorTab(path)
+			shell.app.setFocusEditor()
+			var queued []tea.Cmd
+			send := func(msg tea.Msg) {
+				_, cmd := shell.app.Update(msg)
+				if paced {
+					runAppCommand(t, shell.app, cmd)
+					liveTestSync(t, shell.app)
+					return
+				}
+				queued = append(queued, cmd)
+			}
+			for _, r := range "ab cd" {
+				send(tea.KeyPressMsg{Code: r, Text: string(r)})
+			}
+			send(tea.KeyPressMsg{Code: tea.KeyBackspace})
+			send(tea.KeyPressMsg{Code: tea.KeyBackspace})
+			for _, cmd := range queued {
+				runAppCommand(t, shell.app, cmd)
+				liveTestSync(t, shell.app)
+			}
+			runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+			liveTestSync(t, shell.app)
+			if ed.Value() != "ab " {
+				t.Fatalf("typing produced %q", ed.Value())
+			}
+			for _, want := range []string{"ab cd", "ab", ""} {
+				_, cmd := shell.app.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+				runAppCommand(t, shell.app, cmd)
+				liveTestSync(t, shell.app)
+				if ed.Value() != want {
+					t.Fatalf("undo step: got %q want %q", ed.Value(), want)
+				}
+			}
+			for _, want := range []string{"ab", "ab cd", "ab "} {
+				_, cmd := shell.app.Update(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+				runAppCommand(t, shell.app, cmd)
+				liveTestSync(t, shell.app)
+				if ed.Value() != want {
+					t.Fatalf("redo step: got %q want %q", ed.Value(), want)
+				}
+			}
+		})
+	}
+}

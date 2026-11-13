@@ -138,5 +138,5 @@ BenchmarkSemanticEditingDense/semanticfalse/mutation 1810000 128
 BenchmarkSemanticEditingDense/semanticfalse/paint 830000 209
 BenchmarkSemanticEditingDense/semanticfalse/stable_paint 248000 357
 BenchmarkSemanticEditingDense/semantictrue/mutation 1930000 237
-BenchmarkSemanticEditingDense/semantictrue/paint 725000 218
+BenchmarkSemanticEditingDense/semantictrue/paint 725000 335
 BenchmarkSemanticEditingDense/semantictrue/stable_paint 246000 314

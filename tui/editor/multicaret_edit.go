@@ -3,7 +3,6 @@ package editor
 import (
 	tea "charm.land/bubbletea/v2"
 	"crude/document"
-	"crude/tui/rendering"
 	"crude/tui/ui"
 	"fmt"
 	"slices"
@@ -17,6 +16,9 @@ type caretEdit struct {
 	document.Edit
 	anchor, cursor int
 	primary        bool
+	// stop is the plan's VS Code undo stop (undo_stops.go); typing,
+	// deletion and Enter planners set it.
+	stop undoStop
 }
 
 func replacement(a, b int, text string) caretEdit {
@@ -117,17 +119,13 @@ func (e *Editor) multipleKey(key tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	if ui.IsCopyChord(key) {
-		return rendering.CopyToClipboardCmd(e.multipleText()), true
+		return e.copyCmd(), true
 	}
 	if ui.ClipboardChordFor(key) == ui.ClipboardChordCut {
-		text := e.multipleText()
 		if e.readOnly {
 			return nil, true
 		}
-		if err := e.multipleReplace(""); err != nil {
-			return selectionNotice(err), true
-		}
-		return rendering.CopyToClipboardCmd(text), true
+		return e.cutCmd(), true
 	}
 	if ui.IsPasteChord(key) {
 		return nil, false
@@ -257,6 +255,7 @@ func (e *Editor) backwardCaretEdit(pos Position, smart bool) caretEdit {
 	if smart {
 		if closer, ok := autoClosePairs[e.runeBeforeCursor()]; ok && e.runeAtCursor() == closer {
 			p.End = e.buf.positionToOffset(e.buf.nextPosition(pos))
+			p.stop = undoStop{op: editDeletingLeft, before: true} // _runAutoClosingPairDelete
 			return p
 		}
 	}
@@ -276,6 +275,7 @@ func (e *Editor) backwardCaretEdit(pos Position, smart bool) caretEdit {
 			p.Start = e.buf.positionToOffset(Position{Line: pos.Line, Col: target})
 		}
 	}
+	p.stop = e.deleteUndoStop(editDeletingLeft, p.Start, p.End)
 	return p
 }
 func (e *Editor) applySingleCaretEdit(p caretEdit) {
@@ -295,11 +295,13 @@ func (e *Editor) typedCaretEdit(s SourceSelection, text string) caretEdit {
 	if n != len(text) || n == 0 {
 		return p
 	}
+	p.stop = e.simpleTypingStop(text) // also AutoClosingOvertypeOperation
 	closer, opener := autoClosePairs[r]
 	if opener && a != b {
 		p.Text = string(r) + string(e.buf.cachedBytes[a:b]) + string(closer)
 		p.anchor = len(string(r))
 		p.cursor = len(p.Text) - len(string(closer))
+		p.stop = atomicUndoStop // SurroundSelectionOperation
 		return p
 	}
 	if a == b {
@@ -307,14 +309,19 @@ func (e *Editor) typedCaretEdit(s SourceSelection, text string) caretEdit {
 		e.cursor = e.buf.positionAtOffset(a)
 		if isPairCloser(r) && e.runeAtCursor() == r {
 			p = replacement(a, a+len(string(r)), string(r))
+			p.stop = e.simpleTypingStop(text)
 		} else if opener && e.shouldAutoClose(r) {
 			p.Text = string(r) + string(closer)
 			p.anchor, p.cursor = len(string(r)), len(string(r))
+			p.stop = undoStop{op: editTypingOther, before: true} // AutoClosingOpenCharTypeOperation
 		}
 		e.cursor = old
 	}
 	if p.Text == text {
-		p = e.dedentTyped(p, text)
+		if dedented := e.dedentTyped(p, text); dedented.Edit != p.Edit {
+			p = dedented
+			p.stop = undoStop{op: editTypingOther, before: true} // AutoIndentOperation
+		}
 	}
 	return p
 }

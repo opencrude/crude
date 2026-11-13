@@ -39,6 +39,16 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 	if msg.ID != "select.expand" && msg.ID != "select.shrink" {
 		e.expansion = nil
 	}
+	switch msg.ID {
+	case "view.scrollPageUp", "view.scrollPageDown":
+		// The view moves; the caret and selection stay, so nothing reveals them.
+		page := e.bodyHeight()
+		if msg.ID == "view.scrollPageUp" {
+			page = -page
+		}
+		e.scrollViewport(page)
+		return nil
+	}
 	if handled, err := e.selectionAction(msg.ID); handled {
 		if err != nil {
 			return selectionNotice(err)
@@ -54,7 +64,7 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 		e.CancelSnippet()
 		e.DismissGhostText()
 		e.stopPointerSelection()
-		e.typingGroup = 0
+		e.BreakUndoGroup()
 		e.cursorBlink.MarkActivity()
 		return selectionNotice(e.applyNativeCaretAction(msg.ID))
 	}
@@ -62,7 +72,7 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 		e.CancelSnippet()
 		e.DismissGhostText()
 		e.stopPointerSelection()
-		e.typingGroup = 0
+		e.BreakUndoGroup()
 		e.cursorBlink.MarkActivity()
 		return selectionNotice(e.applyNativeLineAction(msg.ID))
 	}
@@ -88,7 +98,7 @@ func (e *Editor) handleAction(msg ActionMsg) tea.Cmd {
 	e.stopPointerSelection()
 	e.DismissGhostText()
 	e.landing = nil
-	e.typingGroup = 0
+	e.BreakUndoGroup()
 	e.cursorBlink.MarkActivity()
 	if action.MutatesText {
 		e.CancelSnippet()

@@ -38,7 +38,7 @@ func TestPieceTableBatchCommitsExactBytesOneGeometryAndSequentialObservations(t 
 			t.Fatalf("observer saw incomplete source: %q", got)
 		}
 	}
-	if err := pt.applyOffsets(edits); err != nil {
+	if _, err := pt.applyOffsets(edits); err != nil {
 		t.Fatal(err)
 	}
 	want := "界\r\n!first two\r\nrows last\n😀tail\nEND"
@@ -69,7 +69,7 @@ func TestPieceTableBatchRefusesLaterInvalidEditBeforeSourceOrHistoryEffects(t *t
 		journal := pt.lineChanges
 		called := false
 		pt.mutationObserver = func(document.Edit) { called = true }
-		if err := pt.applyOffsets(edits); err == nil {
+		if _, err := pt.applyOffsets(edits); err == nil {
 			t.Fatal("invalid batch accepted")
 		}
 		if string(pt.Bytes()) != "abcdef" || pt.Revision() != revision ||
@@ -81,7 +81,7 @@ func TestPieceTableBatchRefusesLaterInvalidEditBeforeSourceOrHistoryEffects(t *t
 	pt := NewPieceTable()
 	pt.ReplaceAll("same")
 	revision := pt.Revision()
-	if err := pt.applyOffsets([]document.Edit{{Start: 0, End: 4, Text: "same"}}); err != nil || pt.Revision() != revision {
+	if _, err := pt.applyOffsets([]document.Edit{{Start: 0, End: 4, Text: "same"}}); err != nil || pt.Revision() != revision {
 		t.Fatal("byte-identical batch created a source generation")
 	}
 }
@@ -116,7 +116,7 @@ func FuzzPieceTableByteBatches(f *testing.F) {
 				e := edits[i]
 				want = want[:e.Start] + e.Text + want[e.End:]
 			}
-			if err := pt.applyOffsets(edits); err != nil {
+			if _, err := pt.applyOffsets(edits); err != nil {
 				t.Fatal(err)
 			}
 			if got := string(pt.Bytes()); got != want || pt.LineCount() != strings.Count(want, "\n")+1 {

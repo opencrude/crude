@@ -170,18 +170,20 @@ func TestEditingJourneySelectionCollapseAndTypingBoundaries(t *testing.T) {
 	press(e, tea.KeyPressMsg{Code: tea.KeyEnter})
 	typeChar(e, 'c')
 	typeChar(e, 'd')
-	for _, want := range []string{"ab\n", "ab", ""} {
+	// VS Code's EnterOperation pushes a stop before the line break and none
+	// after it: the break and the typing that follows undo together.
+	for _, want := range []string{"ab", ""} {
 		press(e, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 		require.Equal(t, want, e.Value())
 	}
-	for _, want := range []string{"ab", "ab\n", "ab\ncd"} {
+	for _, want := range []string{"ab", "ab\ncd"} {
 		press(e, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl | tea.ModShift})
 		require.Equal(t, want, e.Value())
 	}
 	press(e, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 	typeChar(e, 'X')
 	press(e, tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
-	require.Equal(t, "ab\nX", e.Value(), "new typing invalidates redo")
+	require.Equal(t, "abX", e.Value(), "new typing invalidates redo")
 }
 
 // A saved-state oracle is deliberately independent of the editor's recorded

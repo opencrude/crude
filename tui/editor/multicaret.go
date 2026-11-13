@@ -235,6 +235,14 @@ func (e *Editor) selectionAction(id ui.ActionID) (bool, error) {
 	case "select.singleCaret":
 		e.clearSecondary()
 		return true, nil
+	case "select.cursorUndo":
+		e.cursorUndo()
+		return true, nil
+	case "select.cursorRedo":
+		e.cursorRedo()
+		return true, nil
+	case "select.caretsAtLineEnds":
+		return true, e.caretsAtLineEnds()
 	case "select.nextOccurrence", "select.allOccurrences":
 		start, end := e.primaryRange().bounds()
 		spans := e.selectionSpans()
@@ -331,6 +339,33 @@ func (e *Editor) selectionAction(id ui.ActionID) (bool, error) {
 	}
 	return false, nil
 }
+
+// caretsAtLineEnds ports VS Code's InsertCursorAtEndOfEachLineSelected
+// (multicursor.ts getCursorsForSelection): each selected line gets a caret at
+// its end, and the last line one at the selection end unless it is column 0.
+func (e *Editor) caretsAtLineEnds() error {
+	var spans []selectionSpan
+	for _, s := range e.selectionSpans() {
+		a, b := s.bounds()
+		if a == b {
+			continue
+		}
+		start, end := e.buf.positionAtOffset(a), e.buf.positionAtOffset(b)
+		for line := start.Line; line < end.Line; line++ {
+			off := e.buf.positionToOffset(Position{Line: line, Col: e.lineVisualWidth(line)})
+			spans = append(spans, selectionSpan{SourceSelection: SourceSelection{off, off}})
+		}
+		if end.Col > 0 {
+			spans = append(spans, selectionSpan{SourceSelection: SourceSelection{b, b}})
+		}
+	}
+	if len(spans) == 0 {
+		return nil
+	}
+	spans[len(spans)-1].primary = true
+	return e.setSelections(spans)
+}
+
 func (e *Editor) multipleText() string {
 	e.normalizeCarets()
 	e.buf.ensureCache()

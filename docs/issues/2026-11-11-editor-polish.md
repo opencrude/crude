@@ -865,6 +865,34 @@ The gate measured the divider at 1,720 B / 43 allocations, highlight projection
 at 219,665 B / 22 and highlight normalization at 348,378 B / 6,844. No existing
 ceiling was raised.
 
+## Undo stops, color flash and IDE keys (2026-11-13)
+
+Reported: Undo and Redo grouped by time, typing `{` after `if home == ""`
+flashed the colors of the whole visible buffer, and common IDE keys such as
+Shift+Delete were missing.
+
+- **Flash.** `TestTypingABlockNeverFlashesUnrelatedSyntaxInk` reproduced it
+  first: 103 unrelated cells changed ink on each key. Two causes: each semantic
+  update cleared the projected line cache, and the view model dropped semantic
+  colors on every edit. Semantic colors now live in a port of VS Code's sparse
+  token store, which moves them with each edit (`tokensStore.test.ts` cases are
+  ported in `semantic_store_test.go`). The test now passes and is the gate.
+- **Undo.** VS Code's undo-stop rules replace the 500 ms timer
+  (`undo_stops.go`; `cursor.test.ts` "Undo stops" cases are ported). Caret moves
+  never create undo steps; Ctrl+U undoes them (`cursorUndo.test.ts` cases).
+  Undo reveals the caret and does not restore an old scroll position.
+- **Keys.** Line-wise Cut/Copy/Paste without a selection, Shift+Delete,
+  Ctrl+Insert, Shift+Insert, carets at line ends (Alt+Shift+I/G), Ctrl+Shift+L,
+  Ctrl+F2, `Ctrl+Shift+\` and Alt+PgUp/PgDn. The open gaps and the reason for
+  each are in the [editor parity plan](../plans/editor-parity.md).
+- **Evidence.** Native `scripts/tuishot.sh` semantic captures at 160x40 and
+  80x24 with installed gopls: three `SEMANTIC_VERIFIED` phases and
+  `SEMANTIC_JOIN phase=3 passed=true headless=false remaining=[]` at each size.
+  After typing and Undo, the parameter `name` keeps its semantic colors.
+  `go test ./tui/...`, lint, design audit, names, docs and bench gates pass.
+  The `semantictrue/paint` allocation ceiling changed for the reason recorded
+  in the [performance baselines](../reference/performance-baselines.md).
+
 ## Remaining acceptance
 
 Verify actual browser clipboard input and the affected installed language servers
