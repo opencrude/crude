@@ -328,7 +328,8 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 		fc.Accounts = cloneAccounts(s.Accounts)
 	}
 	if len(s.Agents.Categories) > 0 || s.Agents.ActiveProfile != "" ||
-		s.Agents.MaxConcurrent > 0 || s.Agents.Shell != "" || fc.Agents != nil && fc.Agents.Shell != "" {
+		s.Agents.MaxConcurrent > 0 || s.Agents.Shell != "" || s.Agents.MaxWaitMinutes > 0 ||
+		fc.Agents != nil && (fc.Agents.Shell != "" || fc.Agents.MaxWaitMinutes > 0) {
 		agents := session.DefaultAgentsConfig()
 		if fc.Agents != nil {
 			agents = session.CloneAgentsConfig(*fc.Agents)

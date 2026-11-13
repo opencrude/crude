@@ -7,7 +7,10 @@ import (
 	"crude/types"
 )
 
-const fieldAgentShell = "agent-shell"
+const (
+	fieldAgentShell = "agent-shell"
+	fieldMaxWait    = "agent-max-wait"
+)
 
 // agentShellField chooses the shell that runs every agent's commands, from the
 // shells detected on the core's machine. Auto names the shell it resolves to.

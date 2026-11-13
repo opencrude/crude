@@ -80,7 +80,7 @@ func TestAwaitCommandPromotesLongRunningCommand(t *testing.T) {
 		t.Fatal("command was tracked before promotion")
 	}
 
-	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "")
+	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "", nil)
 	if err != nil {
 		t.Fatalf("await: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestAwaitCommandReturnsFastCommandInline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "")
+	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "", nil)
 	if err != nil {
 		t.Fatalf("await: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestAwaitCommandBoundsLargeCompletedOutputAndRetainsHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "")
+	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "", nil)
 	if err != nil {
 		t.Fatalf("await: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestAwaitCommandTimeoutKillsInsteadOfPromoting(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 	started := time.Now()
-	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "")
+	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "", nil)
 	if err == nil {
 		t.Fatalf("timed out command reported success: %q", result.Content)
 	}
@@ -201,7 +201,7 @@ func TestAwaitCommandFailurePropagatesResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "")
+	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "", nil)
 	if err == nil {
 		t.Fatalf("failing command reported success: %q", result.Content)
 	}
@@ -224,7 +224,7 @@ func TestAwaitCommandCancelsWithTurnContext(t *testing.T) {
 		cancel()
 	}()
 
-	result, err := awaitCommandWithPromotion(ctx, mgr, uc, lg, "")
+	result, err := awaitCommandWithPromotion(ctx, mgr, uc, lg, "", nil)
 	if err != nil {
 		t.Fatalf("await: %v", err)
 	}

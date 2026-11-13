@@ -22,10 +22,12 @@ type connectionHealth struct {
 	status     shellport.RemoteStatus
 	brand      shellheader.ConnectionState
 	tuiBuildID string
+	tuiStarted time.Time
+	now        time.Time
 }
 
 func (m *App) connectionHealth() connectionHealth {
-	h := connectionHealth{name: m.remoteBackendName(), status: shellport.RemoteStatus{State: "connected", Carrier: "local"}, tuiBuildID: m.tuiBuildID}
+	h := connectionHealth{name: m.remoteBackendName(), status: shellport.RemoteStatus{State: "connected", Carrier: "local"}, tuiBuildID: m.tuiBuildID, tuiStarted: m.tuiStartedAt, now: time.Now()}
 	if link, ok := m.ws.(shellport.BackendLink); ok {
 		h.status = link.BackendStatus()
 	}
@@ -94,7 +96,18 @@ func (h connectionHealth) projection() connectionpopover.Projection {
 	if h.status.State != "connected" && h.status.CoreBuildID != "" {
 		coreBuild += " · last connection"
 	}
-	p.Detail = fmt.Sprintf("Connection   %s\nState        %s\nTransport    %s\nRound trip   %s\nTUI build    %s\nCore build   %s\n\n%s", h.name, state, carrier, rtt, firstNonempty(h.tuiBuildID, "Not available"), coreBuild, guidance)
+	coreUptime := "Not observed"
+	if !h.status.CoreStartedAt.IsZero() {
+		coreUptime = formatUptime(h.now.Sub(h.status.CoreStartedAt))
+		if h.status.State != "connected" {
+			coreUptime += " · last connection"
+		}
+	}
+	tuiUptime := "Not available"
+	if !h.tuiStarted.IsZero() {
+		tuiUptime = formatUptime(h.now.Sub(h.tuiStarted))
+	}
+	p.Detail = fmt.Sprintf("Connection   %s\nState        %s\nTransport    %s\nRound trip   %s\nTUI build    %s\nTUI uptime   %s\nCore build   %s\nCore uptime  %s\n\n%s", h.name, state, carrier, rtt, firstNonempty(h.tuiBuildID, "Not available"), tuiUptime, coreBuild, coreUptime, guidance)
 	if h.status.Notice != "" {
 		p.Detail += "\n\n" + h.status.Notice
 	}
@@ -231,4 +244,23 @@ func (m *App) handleConnectionHealthAction(msg connectionpopover.ActionMsg) tea.
 		return m.OpenRemotes()
 	}
 	return nil
+}
+
+// formatUptime keeps the two largest units: "45s", "12m 4s", "3h 20m", "2d 5h".
+func formatUptime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	seconds := int64(d / time.Second)
+	days, hours, minutes := seconds/86400, seconds/3600%24, seconds/60%60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	case minutes > 0:
+		return fmt.Sprintf("%dm %ds", minutes, seconds%60)
+	default:
+		return fmt.Sprintf("%ds", seconds)
+	}
 }

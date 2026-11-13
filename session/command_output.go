@@ -103,7 +103,9 @@ func awaitCommandWithPromotion(
 	uc *fileio.UntrackedCmd,
 	lg *logger.Logger,
 	agentID string,
+	humanInput <-chan struct{},
 ) (tools.ToolResult, error) {
+	reason := "threshold"
 	select {
 	case <-ctx.Done():
 		uc.Kill()
@@ -112,13 +114,17 @@ func awaitCommandWithPromotion(
 	case <-uc.Done():
 		return commandOutcome(mgr, uc)
 	case <-time.After(asyncPromotionThreshold):
+	case <-humanInput:
+		// The user is waiting for the agent: hand back a background handle
+		// now instead of holding their message until the threshold.
+		reason = "human_input"
 	}
 
 	if uc.Status() == fileio.AsyncRunning {
 		handle := mgr.NextAutoHandle()
 		if _, err := mgr.Promote(uc, handle); err == nil {
 			if lg != nil {
-				fields := []any{"handle", handle, "pid", uc.PID(), "threshold", asyncPromotionThreshold.String()}
+				fields := []any{"handle", handle, "pid", uc.PID(), "threshold", asyncPromotionThreshold.String(), "reason", reason}
 				if agentID != "" {
 					fields = append(fields, "agent_id", agentID)
 				}

@@ -52,11 +52,36 @@ func evidenceText(evidence []memory.Evidence) string {
 	if len(evidence) == 0 {
 		return "No evidence recorded; do not infer verification."
 	}
+	// One heading line per item; a link line only when one was recorded, so
+	// absent identities do not cost a row each.
 	var text strings.Builder
 	for index, item := range evidence {
-		fmt.Fprintf(&text, "%d. %s · %s\n   Session: %s\n   Message: %s\n   Tool call: %s\n   %s\n", index+1, item.Kind, item.Outcome, item.SessionID, missing(item.MessageID), missing(item.ToolCallID), item.Summary)
+		fmt.Fprintf(&text, "%d. %s · %s", index+1, strings.ReplaceAll(string(item.Kind), "_", " "), item.Outcome)
+		if item.SessionID != "" {
+			fmt.Fprintf(&text, " · session %s", item.SessionID)
+		}
+		text.WriteByte('\n')
+		var links []string
+		if item.MessageID != "" {
+			links = append(links, "message "+item.MessageID)
+		}
+		if item.ToolCallID != "" {
+			links = append(links, "tool call "+item.ToolCallID)
+		}
+		if len(links) > 0 {
+			fmt.Fprintf(&text, "   %s\n", strings.Join(links, " · "))
+		}
+		if summary := strings.TrimSpace(item.Summary); summary != "" {
+			fmt.Fprintf(&text, "   %s\n", summary)
+		}
 	}
 	return strings.TrimSuffix(text.String(), "\n")
+}
+
+// evidenceRows sizes the read-only evidence box to its text, within limits;
+// it scrolls past the limit.
+func evidenceRows(text string) int {
+	return min(8, max(2, strings.Count(text, "\n")+1))
 }
 
 func missing(value string) string {

@@ -877,16 +877,17 @@ func displayProvider(provider string) string {
 
 func (m *App) statusNotificationItems() []statusoverview.Item {
 	items := []statusoverview.Item{{ID: "notices", Label: "Notifications", Header: true}}
+	now := time.Now()
 	for _, notice := range m.ws.Status().Notifications(false) {
 		state := "Read"
 		if !notice.Read {
 			state = "Unread"
 		}
 		if !notice.ResolvedAt.IsZero() {
-			state += "  Resolved"
+			state += " · Resolved"
 		}
 		items = append(items, statusoverview.Item{
-			ID: "notice:" + notice.ID, Label: notice.Summary, Summary: state + "  " + relativeTime(notice.UpdatedAt), Icon: severityIcon(notice.Severity), Owner: notice.Owner,
+			ID: "notice:" + notice.ID, Label: notice.Summary, Summary: noticeAge(notice, now), Icon: severityIcon(notice.Severity), Owner: notice.Owner,
 			NotificationID:     notice.ID,
 			NotificationUnread: !notice.Read,
 			Lines: []statusoverview.DetailLine{
@@ -1291,11 +1292,18 @@ func formatDuration(duration time.Duration) string {
 	return fmt.Sprintf("%dh%02dm", int(duration.Hours()), int(duration.Minutes())%60)
 }
 
-func relativeTime(value time.Time) string {
-	if value.IsZero() {
-		return "unknown time"
+// noticeAge is the row's quiet trailing column: a compact age, marked when
+// unread or resolved. "Read" is the normal state and is not repeated per row;
+// the expanded detail keeps the exact time and read state.
+func noticeAge(notice ttypes.NotificationRecord, now time.Time) string {
+	age := ui.RelativeAge(notice.UpdatedAt, now)
+	switch {
+	case !notice.ResolvedAt.IsZero():
+		age = "Resolved · " + age
+	case !notice.Read:
+		age = "● " + age
 	}
-	return formatDuration(time.Since(value)) + " ago"
+	return age
 }
 
 func firstNonempty(values ...string) string {

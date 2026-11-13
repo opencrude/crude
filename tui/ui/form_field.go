@@ -32,6 +32,7 @@ type FormField struct {
 	surfaceSet      bool
 	compact         bool
 	hideDescription bool
+	fillWidth       bool
 	colWidths       []int
 }
 
@@ -112,6 +113,8 @@ func (ff *FormField) SetSurfaceBackground(role SemanticColor) {
 func (ff *FormField) SetCompact(v bool) { ff.compact = v }
 
 func (ff *FormField) SetHideDescription(v bool) { ff.hideDescription = v }
+
+func (ff *FormField) SetFillWidth(v bool) { ff.fillWidth = v }
 
 func (ff *FormField) SetColumnWidths(w []int) { ff.colWidths = w }
 
@@ -383,6 +386,8 @@ func (ff *FormField) boxWidth(width int) int {
 		segments := ff.cycleSegments(available)
 		last := segments[len(segments)-1]
 		return last.x + last.w
+	case ff.fillWidth && (ff.field.Type == FieldText || ff.field.Type == FieldTextArea):
+		return available
 	}
 	return min(available, wideControlW)
 }

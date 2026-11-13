@@ -494,7 +494,7 @@ func (panel *Panel) sync() {
 func (panel *Panel) syncHistory() {
 	rows := make([]ui.ListItem, 0, len(panel.snapshot.RecentCommits))
 	for _, commit := range panel.snapshot.RecentCommits {
-		rows = append(rows, ui.ListItem{ID: commit.Hash, Label: commit.Subject, Detail: commit.ShortHash + "  " + relativeTime(commit.When), Payload: commit})
+		rows = append(rows, ui.ListItem{ID: commit.Hash, Label: commit.Subject, Detail: commit.ShortHash + "  " + ui.RelativeAge(commit.When, time.Now()), Payload: commit})
 	}
 	if len(rows) == 0 {
 		rows = append(rows, ui.ListItem{ID: "empty", Label: "No commits yet", Disabled: true})
@@ -1108,24 +1108,6 @@ func (panel *Panel) HandleAction(_ ui.EventContext, action ui.Action) ui.EventRe
 
 func (panel *Panel) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Git", Value: panel.snapshot.Branch, Description: fmt.Sprintf("%d changed files, %d staged", panel.changeCount(), panel.stagedCount())}
-}
-
-func relativeTime(when time.Time) string {
-	if when.IsZero() {
-		return ""
-	}
-	elapsed := time.Since(when)
-	switch {
-	case elapsed < time.Minute:
-		return "now"
-	case elapsed < time.Hour:
-		return fmt.Sprintf("%dm", int(elapsed.Minutes()))
-	case elapsed < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(elapsed.Hours()))
-	case elapsed < 30*24*time.Hour:
-		return fmt.Sprintf("%dd", int(elapsed.Hours()/24))
-	}
-	return when.Format("Jan 2006")
 }
 
 // compile-time checks

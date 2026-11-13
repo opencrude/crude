@@ -36,6 +36,14 @@ func (r *Runtime) buildID() string {
 	return r.lifetime.buildID
 }
 
+// startedAt is when the host started this core, or zero before the host set
+// its lifetime policy.
+func (r *Runtime) startedAt() time.Time {
+	r.lifetime.mu.Lock()
+	defer r.lifetime.mu.Unlock()
+	return r.lifetime.started
+}
+
 // SetBuildID records the executable identity reported by core.status.
 func (r *Runtime) SetBuildID(id string) {
 	r.lifetime.mu.Lock()

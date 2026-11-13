@@ -1303,6 +1303,9 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 				m.agentsEnabled(), "Allow delegation to other agents."),
 			optionalNumberField(fieldMaxSubAgents, "Concurrent sub-agents", m.maxSubAgents(), "agents",
 				"How many sub-agents may run at once; more wait for a free slot. Auto is 4.", 1, types.MaxConcurrentSubAgents),
+			optionalNumberField(fieldMaxWait, "Longest wait", m.maxWaitMinutes(), "min",
+				fmt.Sprintf("Longer waits stop here so the agent checks again. Auto is %d.", types.DefaultMaxWaitMinutes),
+				1, types.MaxWaitMinutesLimit),
 			ui.SeparatorFieldState("commands", "Commands"),
 			m.agentShellField(),
 		)
@@ -2733,10 +2736,13 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 		agents.Enabled = ui.BoolFieldValue(field)
 	}
 	if field := m.categories[catMain].Form.Field(fieldMaxSubAgents); field != nil {
-		agents.MaxConcurrent = maxSubAgentsValue(field)
+		agents.MaxConcurrent = optionalIntValue(field)
 	}
 	if shell, ok := agentShellChoice(m.categories[catMain].Form); ok {
 		agents.Shell = shell
+	}
+	if field := m.categories[catMain].Form.Field(fieldMaxWait); field != nil {
+		agents.MaxWaitMinutes = optionalIntValue(field)
 	}
 }
 
@@ -3001,6 +3007,15 @@ func optionalNumberField(id, label string, value *int, unit, description string,
 	return field
 }
 
+// maxWaitMinutes is the configured wait bound; nil shows Auto.
+func (m *Model) maxWaitMinutes() *int {
+	if m.agents == nil || m.agents.MaxWaitMinutes <= 0 {
+		return nil
+	}
+	value := m.agents.MaxWaitMinutes
+	return &value
+}
+
 // maxSubAgents is the configured sub-agent limit; nil shows Auto.
 func (m *Model) maxSubAgents() *int {
 	if m.agents == nil || m.agents.MaxConcurrent <= 0 {
@@ -3010,7 +3025,7 @@ func (m *Model) maxSubAgents() *int {
 	return &value
 }
 
-func maxSubAgentsValue(field *ui.FieldState) int {
+func optionalIntValue(field *ui.FieldState) int {
 	if value := parseIntPtr(field.Value.String()); value != nil {
 		return *value
 	}

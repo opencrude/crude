@@ -29,6 +29,7 @@ type Form struct {
 	arrowExits       bool
 	compact          bool
 	hideDescriptions bool
+	fillWidth        bool
 	surfaceRole      SemanticColor
 	surfaceSet       bool
 	ruleFullBleed    bool
@@ -100,6 +101,16 @@ func (f *Form) SetCompact(v bool) {
 	}
 	for _, field := range f.fields {
 		field.SetCompact(v)
+	}
+}
+
+// SetFillWidth lets text and multi-line text boxes use the whole value
+// column instead of the settings reading measure. Use it for document-like
+// editors (a memory record) where the text is the content, not a setting.
+func (f *Form) SetFillWidth(v bool) {
+	f.fillWidth = v
+	for _, field := range f.fields {
+		field.SetFillWidth(v)
 	}
 }
 
@@ -236,6 +247,11 @@ func (f *Form) rebuild() {
 	if f.hideDescriptions {
 		for _, field := range f.fields {
 			field.SetHideDescription(true)
+		}
+	}
+	if f.fillWidth {
+		for _, field := range f.fields {
+			field.SetFillWidth(true)
 		}
 	}
 }

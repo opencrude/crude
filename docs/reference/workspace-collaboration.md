@@ -156,6 +156,21 @@ ordinary timeout and cancellation retain their existing results. Unaddressed
 events do not interrupt it. If no collaboration store or caller identity is
 available, the delay remains cancellable by its caller.
 
+**Every wait is bounded.** Settings › Agents › Main Agent › Longest wait
+(`agents.max_wait_minutes`; empty is Auto, 10 minutes; 1–240) caps one `wait`
+or `agent_wait`, whatever the model requests. A capped wait ends as an ordinary
+timeout whose result names the bound, so an event that never comes, a stopped
+child or an expiring prompt cache cannot hold a turn open; the agent decides
+whether to wait again. The bound applies at the next wait after a change.
+
+**A human message never waits behind a blocking command.** A synchronous
+`execute_command` (for example a shell `sleep` or a slow build) observes the
+same journal for unadmitted human steering addressed to its agent, including a
+message sent just before the command started. It then hands the command back as
+a background handle at once instead of at the promotion threshold; the command
+keeps running and the message is admitted at the next safe boundary. Peer
+traffic does not shorten a command.
+
 ## Work requests
 
 The immutable journal is the single request authority, not another scheduler.

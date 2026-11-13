@@ -60,6 +60,9 @@ type Welcome struct {
 	// CoreBuildID is the actual native core image, not the source cohort
 	// agreed above and not an assumption about the attaching shell image.
 	CoreBuildID string `json:"core_build_id"`
+	// CoreStartedAt is when this core process started serving. Shells show
+	// it as core uptime; a resume always reaches the same process.
+	CoreStartedAt time.Time `json:"core_started_at"`
 }
 
 // SessionEnd is the core's last message on the control stream: the session

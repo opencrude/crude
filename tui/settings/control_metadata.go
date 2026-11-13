@@ -30,6 +30,10 @@ func agentControlPath(category int, id string) string {
 		// One shell runs every agent's commands; it is not a role setting.
 		return "agents.shell"
 	}
+	if id == fieldMaxWait {
+		// One bound applies to every agent's waits.
+		return "agents.max_wait_minutes"
+	}
 	leaf := map[string]string{fieldConnection: "account_id", fieldModel: "Model", fieldThinkingEffort: "ThinkingEffort", "agent-description": "Description", "agent-instructions": "Instructions", fieldCtxWindow: "ModelContextWindow", fieldMaxOutput: "ModelMaxOutput", fieldTemperature: "ModelTemperature", fieldTopP: "ModelTopP", fieldContextCompaction: "context_compaction_percent", "context-retention-tokens": "context_retention_tokens", fieldServiceTier: "service_tier", fieldMultiAgent: "multi_agent", fieldMaxSubAgents: "MaxConcurrent"}[id]
 	if strings.HasPrefix(id, fieldModalityPrefix) {
 		leaf = "ModelModalities"
@@ -131,10 +135,13 @@ func (s *WorkspaceSettingsSurface) agentDraftAuthority() bool {
 		if c.roleIndex == catMain {
 			after.Agents.Enabled = ui.BoolFieldValue(c.draft.Field(fieldMultiAgent))
 			if field := c.draft.Field(fieldMaxSubAgents); field != nil {
-				after.Agents.MaxConcurrent = maxSubAgentsValue(field)
+				after.Agents.MaxConcurrent = optionalIntValue(field)
 			}
 			if shell, ok := agentShellChoice(c.draft); ok {
 				after.Agents.Shell = shell
+			}
+			if field := c.draft.Field(fieldMaxWait); field != nil {
+				after.Agents.MaxWaitMinutes = optionalIntValue(field)
 			}
 		}
 	} else {

@@ -18,7 +18,7 @@ import (
 // Main Agent's fields were not searched, so "command shell" found no page.
 func TestSettingsSearchFindsMainAgentFields(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{TerminalShells: []types.TerminalShell{{ID: "cmd", Label: "Command Prompt", Path: `C:\cmd.exe`}}}, nil)
-	for _, query := range []string{"command shell", "Concurrent sub-agents"} {
+	for _, query := range []string{"command shell", "Concurrent sub-agents", "Longest wait"} {
 		m.SetSearchQuery(query)
 		if visible := m.visibleCategoryIndices(); !slices.Contains(visible, catAgents) {
 			t.Fatalf("search %q shows pages %v; want the Agents page", query, visible)

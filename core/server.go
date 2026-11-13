@@ -172,7 +172,7 @@ func handshake(ctx context.Context, runtime *Runtime, conn corewire.Conn, auth A
 		return nil, nil, nil
 	}
 	var hello coreprotocol.Hello
-	welcome := coreprotocol.Welcome{Schema: coreprotocol.Schema, Build: buildinfo.ProtocolBuild, CoreBuildID: runtime.buildID()}
+	welcome := coreprotocol.Welcome{Schema: coreprotocol.Schema, Build: buildinfo.ProtocolBuild, CoreBuildID: runtime.buildID(), CoreStartedAt: runtime.startedAt()}
 	refuse := func(code, message string) (*Connection, corewire.Stream, error) {
 		welcome.Fault = &coreprotocol.Fault{Code: code, Message: message}
 		_ = send(control, &welcome)

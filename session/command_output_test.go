@@ -83,7 +83,7 @@ func TestCancelledCommandOutcomePreservesPartialOutput(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	result, err := awaitCommandWithPromotion(ctx, mgr, uc, nil, "")
+	result, err := awaitCommandWithPromotion(ctx, mgr, uc, nil, "", nil)
 	if err != nil {
 		t.Fatalf("cancel result: %v", err)
 	}

@@ -423,6 +423,7 @@ var AgentTools = []ToolDef{
 			Name: "wait",
 			Description: "Pause execution for a specified number of seconds. " +
 				"An addressed event or cancellation can end the wait early; normal delivery remains unchanged. " +
+				"A user setting caps one wait (10 minutes unless changed); the result says when the cap ended it. " +
 				"Use for: rate-limiting API calls or deliberate delays between operations. " +
 				"Do not wait for background commands: their completion, failure or timeout is delivered automatically as a command_outcome event.",
 			Parameters: json.RawMessage(`{

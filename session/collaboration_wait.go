@@ -44,7 +44,12 @@ func (s *Session) waitForCollaboration(ctx context.Context, store collaborationW
 	if timeout <= 0 {
 		timeout = 60
 	}
-	return s.waitForCollaborationDuration(ctx, store, params, time.Duration(timeout)*time.Second)
+	duration, bounded := s.boundWait(time.Duration(timeout) * time.Second)
+	observation, err := s.waitForCollaborationDuration(ctx, store, params, duration)
+	if err == nil && bounded && observation.Status == "timeout_no_match" {
+		observation.Reason += ". " + waitBoundNote(duration)
+	}
+	return observation, err
 }
 
 func (s *Session) waitForCollaborationDuration(ctx context.Context, store collaborationWaitStore, params map[string]any, timeout time.Duration) (collaborationWaitObservation, error) {

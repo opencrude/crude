@@ -8,6 +8,7 @@ import (
 
 	"crude/textdiff"
 	"crude/tui/cell"
+	"crude/tui/ui"
 )
 
 type GitLineKind uint8
@@ -295,7 +296,7 @@ func (e *Editor) CursorBlameSummary() string {
 	if b.Author == "" {
 		return ""
 	}
-	when := relativeTime(b.When)
+	when := ui.RelativeAge(b.When, time.Now())
 	if b.ShortHash == "" {
 		return fmt.Sprintf("%s  %s", b.Author, when)
 	}
@@ -318,27 +319,5 @@ func (e *Editor) gitGutterCell(kind GitLineKind) (rune, cell.Color) {
 		return '▌', e.cellColor(e.th.Tree.Colors.GitConflicted)
 	default:
 		return ' ', e.cellColor(e.th.Colors.Bg)
-	}
-}
-
-func relativeTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	d := time.Since(t)
-	if d < 0 {
-		d = -d
-	}
-	switch {
-	case d < time.Minute:
-		return "now"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	case d < 30*24*time.Hour:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	default:
-		return t.Format("2006-01-02")
 	}
 }
