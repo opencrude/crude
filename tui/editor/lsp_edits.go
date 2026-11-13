@@ -304,7 +304,7 @@ func (e *Editor) ApplySourceEdits(revision uint64, edits []document.Edit) error 
 	}
 	e.CancelSnippet()
 	e.DismissGhostText()
-	e.typingGroup = 0
+	e.BreakUndoGroup()
 	spans := e.selectionSpans()
 	return e.applyMappedCaretEdits(edits, spans, func(s selectionSpan) SourceSelection {
 		mapped := remapSourceSelection(s.SourceSelection, edits)

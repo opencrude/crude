@@ -64,11 +64,20 @@ func (e *Editor) InsightStatus() (types.InsightState, string) {
 	return view.State, view.Detail
 }
 
-func (e *Editor) ensureCanonicalColors(fromLine, toLine int) {
-	view := e.canonicalInsight
-	p := e.documentProjection
-	if view == nil || view.State != types.InsightCurrent || view.Syntax == nil ||
+// canonicalViewCurrent returns the shared syntax publication for exactly the
+// acknowledged revision, if it has arrived.
+func (e *Editor) canonicalViewCurrent() (*types.DocumentInsight, bool) {
+	view, p := e.canonicalInsight, e.documentProjection
+	if view == nil || p == nil || view.State != types.InsightCurrent || view.Syntax == nil ||
 		view.Path != e.filePath || view.Revision != p.snapshot.Revision || view.Syntax.Revision != view.Revision {
+		return nil, false
+	}
+	return view, true
+}
+
+func (e *Editor) ensureCanonicalColors(fromLine, toLine int) {
+	view, ok := e.canonicalViewCurrent()
+	if !ok {
 		return
 	}
 	if e.canonicalInk != view {

@@ -283,7 +283,8 @@ func (pt *PieceTable) insertAtOffset(offset int, text []byte) (EditInfo, error) 
 	}
 	pt.ensureCache()
 	offset = min(len(pt.cachedBytes), max(0, offset))
-	return EditInfo{}, pt.applyOffsets([]document.Edit{{Start: offset, End: offset, Text: string(text)}})
+	_, err := pt.applyOffsets([]document.Edit{{Start: offset, End: offset, Text: string(text)}})
+	return EditInfo{}, err
 }
 
 func (pt *PieceTable) Delete(start, end Position) (EditInfo, error) {
@@ -299,7 +300,8 @@ func (pt *PieceTable) deleteOffsets(start, end int) (EditInfo, error) {
 	if start >= end {
 		return EditInfo{}, nil
 	}
-	return EditInfo{}, pt.applyOffsets([]document.Edit{{Start: start, End: end}})
+	_, err := pt.applyOffsets([]document.Edit{{Start: start, End: end}})
+	return EditInfo{}, err
 }
 
 func (pt *PieceTable) checkOffsets(edits []document.Edit) error {
@@ -321,9 +323,9 @@ func (pt *PieceTable) checkOffsets(edits []document.Edit) error {
 // Validation precedes every effect; text and geometry advance once, not once
 // per mirror. The existing observer still receives every primitive in reverse
 // sequential coordinates, after the complete source has committed.
-func (pt *PieceTable) applyOffsets(edits []document.Edit) error {
+func (pt *PieceTable) applyOffsets(edits []document.Edit) ([]document.Edit, error) {
 	if err := pt.checkOffsets(edits); err != nil {
-		return err
+		return nil, err
 	}
 	before := pt.cachedBytes
 	changed := make([]document.Edit, 0, len(edits))
@@ -336,7 +338,7 @@ func (pt *PieceTable) applyOffsets(edits []document.Edit) error {
 		delta += strings.Count(edit.Text, "\n") - bytes.Count(before[edit.Start:edit.End], []byte{'\n'})
 	}
 	if len(changed) == 0 {
-		return nil
+		return nil, nil
 	}
 	lineAt := func(offset int) int {
 		return sort.Search(len(pt.lineOffsets), func(i int) bool { return pt.lineOffsets[i] > offset }) - 1
@@ -400,7 +402,7 @@ func (pt *PieceTable) applyOffsets(edits []document.Edit) error {
 	for i := len(changed) - 1; i >= 0; i-- {
 		pt.observeMutation(changed[i])
 	}
-	return nil
+	return changed, nil
 }
 
 func (pt *PieceTable) FilePath() string {

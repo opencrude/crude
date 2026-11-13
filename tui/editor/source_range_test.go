@@ -130,7 +130,7 @@ func TestSourceByteRangeIsPureWithColdAndWarmCaches(t *testing.T) {
 			e := &Editor{buf: NewPieceTable(), cursor: Position{Line: 1, Col: 4},
 				selecting: true, selAnchor: Position{Col: 1}, selEnd: Position{Line: 1, Col: 4},
 				scrollX: 3, scrollY: 1, goalCol: 8, goalSet: true,
-				typingGroup: 7, historyID: 123}
+				openUndo: openUndoStep{group: 7}, historyID: 123}
 			e.buf.ReplaceAll("a😀\r\n\tQ")
 			e.buf.changes = []Change{{Type: ActInsert, Text: []byte("history"), Offset: 1, Group: 7}}
 			e.buf.changeIndex, e.buf.undoGroupSeq = 1, 7
@@ -161,7 +161,7 @@ func TestSourceByteRangeIsPureWithColdAndWarmCaches(t *testing.T) {
 					Projection     *DocumentProjection
 				}{
 					e.captureViewState(), e.goalCol, e.goalSet, changes, e.buf.changeIndex,
-					[5]int{e.buf.undoGroupSeq, e.undoGroupDepth, e.undoGroupID, e.undoGroupStart, e.typingGroup},
+					[5]int{e.buf.undoGroupSeq, e.undoGroupDepth, e.undoGroupID, e.undoGroupStart, e.openUndo.group},
 					e.historyID, e.contentChangePending, e.buf, e.buffer, e.documentProjection,
 				}
 			}

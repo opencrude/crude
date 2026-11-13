@@ -96,6 +96,25 @@ ordinary and focused race coverage, build/lint/docs/site and the unchanged alloc
 gates pass. See [checkpoint evidence](../issues/2026-11-11-editor-polish.md#everyday-commands-and-sole-suggestions-2026-11-11).
 These changes do not complete the remaining sections below.
 
+Undo steps, semantic color retention and line clipboard commands are ported from
+VS Code's source and its test suites (undo stops, `tokensStore.test.ts`, line
+cut/paste cases), not reimplemented from memory. See the
+[editor reference](../reference/editor.md#edit-transactions-and-history). The
+connected typing gate `TestTypingABlockNeverFlashesUnrelatedSyntaxInk` paints
+every frame between a keystroke and its settled syntax and semantic publications
+and fails if any unrelated cell changes ink that neither publication painted.
+
+The 2026-11-13 key audit compared Crude with VS Code's editor command sources and
+the JetBrains default keymap. Added: line-wise Cut/Copy/Paste with no selection,
+Shift+Delete/Ctrl+Insert/Shift+Insert, Ctrl+U caret undo, carets at line ends
+(Alt+Shift+I/G), Ctrl+Shift+L and Ctrl+F2 for all occurrences, `Ctrl+Shift+\`
+for the matching bracket and Alt+PgUp/PgDn view scrolling. Still open, each
+with a reason: block comments (VS Code Ctrl+Shift+A, JetBrains Ctrl+Shift+/)
+need a block-comment action; Ctrl+]/Ctrl+[ indent conflict with Next Tab and
+terminal Esc; Ctrl+Up/Down line scrolling and JetBrains statement moves conflict
+with the paragraph motions; Remove Brackets and Complete Statement need
+language-aware actions.
+
 ## Source geometry and truthful preferences
 
 **Owners:** `tui/editor/coords.go`, `tui/editor/source_geometry.go`,

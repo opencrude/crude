@@ -340,10 +340,12 @@ func (e *Editor) applySourceOffsets(edits []document.Edit) error {
 			owner.hWidthDirty[first] = true
 		}
 	}
-	if err := e.buf.applyOffsets(edits); err != nil {
+	changed, err := e.buf.applyOffsets(edits)
+	if err != nil {
 		return err
 	}
 	if e.Revision() != revision {
+		e.acceptSemanticEdits(revision, changed)
 		owner.hWidthRevision = e.Revision()
 		owner.hWidthAllDirty = complete
 	}

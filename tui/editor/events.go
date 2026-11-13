@@ -26,6 +26,8 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	}
 	e.normalizeCarets()
 	defer e.reconcileSnippetSelection()
+	cursorBefore, revisionBefore := e.captureViewState(), e.Revision()
+	defer e.recordCursorChange(cursorBefore, revisionBefore)
 
 	switch msg := msg.(type) {
 	case ActionMsg:
@@ -35,6 +37,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	case PointerScrollMsg:
 		return e.handlePointerScroll(msg)
 	case tea.KeyPressMsg:
+		msg = ui.EditorClipboardKey(msg)
 		if e.handleGhostKey(msg) {
 			return nil
 		}
@@ -61,7 +64,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 				return nil
 			}
 			if ui.IsCopyChord(msg) {
-				return rendering.CopyToClipboardCmd(e.SelectedText())
+				return e.copyCmd()
 			}
 			if msg.Mod.Contains(tea.ModAlt) {
 				return nil // Alt+Up/Down are mutating line moves in an editable document.
@@ -85,27 +88,9 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			if e.DeferDocumentEvent(msg) {
 				return nil
 			}
-			typing := msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) == 0 && !e.HasSelection()
-			for _, r := range msg.Text {
-				if _, pair := autoClosePairs[r]; pair || isPairCloser(r) || r < 32 {
-					typing = false
-				}
-			}
-			if typing && e.typingGroup != 0 && time.Since(e.typingAt) < 500*time.Millisecond && e.typingCursor == e.cursor {
-				e.undoGroupDepth = 1
-				e.undoGroupID = e.typingGroup
-				e.startUndoGroup()
-			} else {
-				e.typingGroup = 0
-				e.beginUndoGroup()
-			}
-			defer func() {
-				group := e.undoGroupID
-				e.endUndoGroup()
-				if typing {
-					e.typingGroup, e.typingAt, e.typingCursor = group, time.Now(), e.cursor
-				}
-			}()
+			stop, revision := e.keyUndoStop(msg), e.Revision()
+			e.beginUndoStep(stop)
+			defer e.endUndoStep(stop, revision)
 		}
 		if cmd, handled := e.multipleKey(msg); handled {
 			return cmd
@@ -119,9 +104,16 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		if e.DeferDocumentEvent(msg) {
 			return nil
 		}
-		e.typingGroup = 0
+		e.BreakUndoGroup()
+		defer e.BreakUndoGroup() // paste pushes undo stops before and after
 		e.cursorBlink.MarkActivity()
 		text := e.pastedText(msg.Content)
+		if e.pasteOnNewLine(msg.Content) {
+			e.CancelSnippet()
+			e.DismissGhostText()
+			e.pasteLineAbove(text)
+			return nil
+		}
 		if e.HasMultipleCarets() {
 			return selectionNotice(e.multipleReplace(text))
 		}
@@ -134,7 +126,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 	case tea.MouseClickMsg:
 		defer e.DismissGhostText()
-		e.typingGroup = 0
+		e.BreakUndoGroup()
 		e.landing = nil
 		if msg.Button == tea.MouseLeft {
 			e.stopPointerSelection()
@@ -259,7 +251,14 @@ func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
 	case tea.MouseWheelDown:
 		row += scrollLines
 	}
-	e.setScrollRow(min(max(0, row), max(0, e.visualRowCount()-bodyH)))
+	e.scrollViewport(row - e.scrollRow())
+}
+
+// scrollViewport moves the view by rows without moving a caret, as the mouse
+// wheel and VS Code's scrollPageUp/scrollPageDown (Alt+PgUp/PgDn) do.
+func (e *Editor) scrollViewport(rows int) {
+	bodyH := e.bodyHeight()
+	e.setScrollRow(min(max(0, e.scrollRow()+rows), max(0, e.visualRowCount()-bodyH)))
 	e.syncScrollChrome(bodyH)
 }
 
@@ -573,13 +572,11 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 				return tea.PasteMsg{Content: string(data)}
 			}
 		}
+		if ui.IsCopyChord(key) {
+			return e.copyCmd()
+		}
 		if ui.ClipboardChordFor(key) == ui.ClipboardChordCut {
-			if e.HasSelection() {
-				text := e.SelectedText()
-				e.DeleteSelection()
-				return rendering.CopyToClipboardCmd(text)
-			}
-			return nil
+			return e.cutCmd()
 		}
 		switch key.String() {
 		case "ctrl+a":

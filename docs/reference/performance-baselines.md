@@ -162,6 +162,17 @@ allocation counts. The new ceilings use roughly 20% headroom above observed
 maxima; no existing ceiling changed. The complete gate must be run after all
 parallel tests and captures have ended.
 
+**Retained semantic colors (2026-11-13).** The rows above measured the first
+paint after a key while semantic colors were dropped on every edit, which was
+the reported color flash. Semantic colors now follow each edit (VS Code's sparse
+token store), so that paint projects the colored visible rows again after the
+private parse lands. Three repetitions measured 0.410–0.426 ms, 564–578 KB and
+269–276 allocations; the semantic-off paint is unchanged at 114–115 allocations.
+Caching each token type's color string removed one formatted string per painted
+cell (654 to about 272 allocations). The `semantictrue/paint` allocation ceiling
+moves from 218 to 335 (about 20% above the observed maximum); its byte ceiling and
+every other ceiling are unchanged.
+
 ## Multiline completion indentation (2026-11-11)
 
 `BenchmarkCompletionLeadingStopsDense` isolates source-coordinate discovery for

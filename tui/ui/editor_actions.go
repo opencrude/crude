@@ -37,7 +37,7 @@ var nativeEditorActions = []EditorAction{
 	editorAction("edit.sortLines", "Sort lines", true),
 	editorAction("edit.reverseLines", "Reverse lines", true),
 	editorAction("edit.transpose", "Transpose characters", true),
-	editorAction("move.matchingBracket", "Go to matching bracket", false, "ctrl+alt+b"),
+	editorAction("move.matchingBracket", "Go to matching bracket", false, "ctrl+alt+b", "ctrl+shift+\\"),
 	editorAction("select.matchingBracket", "Select to matching bracket", false, "ctrl+alt+shift+b"),
 	editorAction("select.line", "Select line", false, "ctrl+l"),
 	editorAction("select.expand", "Expand selection", false, "alt+w"),
@@ -53,10 +53,18 @@ var nativeEditorActions = []EditorAction{
 	// Alt-letter text can be ambiguous. Shift+Alt+F still formats the file.
 	editorAction("select.subwordNext", "Select next name part", false, "alt+shift+right"),
 	editorAction("select.nextOccurrence", "Select next occurrence", false, "alt+n"),
-	editorAction("select.allOccurrences", "Select all occurrences", false, "alt+f3"),
+	// VS Code: Ctrl+Shift+L and Ctrl+F2 (Change All Occurrences).
+	editorAction("select.allOccurrences", "Select all occurrences", false, "alt+f3", "ctrl+shift+l", "ctrl+f2"),
 	editorAction("select.caretAbove", "Add caret above", false, "ctrl+alt+shift+up"),
 	editorAction("select.caretBelow", "Add caret below", false, "ctrl+alt+shift+down"),
+	// VS Code Shift+Alt+I; JetBrains Shift+Alt+G (Add Carets to Ends of Selected Lines).
+	editorAction("select.caretsAtLineEnds", "Add carets to line ends", false, "alt+shift+i", "alt+shift+g"),
 	editorAction("select.singleCaret", "Keep one caret", false),
+	editorAction("select.cursorUndo", "Undo caret move", false, "ctrl+u"),
+	editorAction("select.cursorRedo", "Redo caret move", false),
+	// VS Code (Windows and Linux): scroll a page without moving the caret.
+	editorAction("view.scrollPageUp", "Scroll page up", false, "alt+pgup"),
+	editorAction("view.scrollPageDown", "Scroll page down", false, "alt+pgdown"),
 	editorAction("edit.formatSelection", "Format selection", true, "alt+f8"),
 	editorAction("view.indentation", "Indentation…", false),
 	editorAction("view.indentationDetect", "Detect indentation from text", false),

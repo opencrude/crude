@@ -151,10 +151,6 @@ func (e *Editor) startUndoGroup() {
 	e.beginDocumentEditGroup(fmt.Sprintf("editor-%x-%d", e.historyID, e.undoGroupID))
 }
 
-// BreakUndoGroup separates typing across explicit navigation or focus changes
-// without changing text, selection or retained undo/redo transactions.
-func (e *Editor) BreakUndoGroup() { e.typingGroup = 0 }
-
 func (e *Editor) endUndoGroup() {
 	if e.undoGroupDepth == 0 {
 		return
@@ -207,10 +203,21 @@ func (e *Editor) restoreViewState(s editorViewState) {
 	e.clearGoal()
 }
 
+// restoreHistoryView restores an undo step's carets and selection and then
+// reveals them with the least scrolling, as VS Code's cursor does for an undo
+// or redo (cursor.ts onModelContentChanged: setStates, then revealAll). The
+// viewport never jumps back to where it was when the step was recorded.
+func (e *Editor) restoreHistoryView(s editorViewState) {
+	scrollX, scrollY, wrapOffset := e.scrollX, e.scrollY, e.wrapOffset
+	e.restoreViewState(s) // WrapBefore is caret affinity and is restored
+	e.scrollX, e.scrollY, e.wrapOffset = scrollX, scrollY, wrapOffset
+	e.ensureCursorVisible()
+}
+
 func (e *Editor) undo() {
 	e.DismissGhostText()
 	e.CancelSnippet()
-	e.typingGroup = 0
+	e.BreakUndoGroup()
 	if e.documentProjection != nil {
 		e.requestDocumentUndo(false)
 		return
@@ -242,7 +249,7 @@ func (e *Editor) undo() {
 	}
 	e.buf.changeIndex = first
 	if c := e.buf.changes[first]; c.viewID == 0 || c.viewID == e.historyID {
-		e.restoreViewState(c.Before)
+		e.restoreHistoryView(c.Before)
 	}
 	e.invalidateEditorCaches()
 	e.ensureCursorVisible()
@@ -261,7 +268,7 @@ func (e *Editor) Undo() {
 func (e *Editor) redo() {
 	e.DismissGhostText()
 	e.CancelSnippet()
-	e.typingGroup = 0
+	e.BreakUndoGroup()
 	if e.documentProjection != nil {
 		e.requestDocumentUndo(true)
 		return
@@ -293,7 +300,7 @@ func (e *Editor) redo() {
 	}
 	e.buf.changeIndex = last
 	if c := e.buf.changes[last-1]; c.viewID == 0 || c.viewID == e.historyID {
-		e.restoreViewState(c.After)
+		e.restoreHistoryView(c.After)
 	}
 	e.clampCursorToLine()
 	e.invalidateEditorCaches()

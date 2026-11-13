@@ -688,8 +688,7 @@ func (e *Editor) CompleteDocumentHistorySync() {
 		// An undo elsewhere only transforms each pane's current anchors.
 		if target != nil && target.open && target.documentProjection == p &&
 			(p.historyViewID == 0 || target.historyID == p.historyViewID) {
-			target.restoreViewState(*p.restoreView)
-			target.ensureCursorVisible()
+			target.restoreHistoryView(*p.restoreView)
 		}
 		p.restoreView, p.restoreEditor = nil, nil
 	}

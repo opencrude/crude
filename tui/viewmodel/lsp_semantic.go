@@ -66,11 +66,14 @@ func (m *App) semanticView(ed *editor.Editor) *semanticViewState {
 	m.semanticViews[ed] = view
 	return view
 }
+
+// retireSemantic cancels the view's request. The editor keeps its colors: they
+// follow every edit and stay until a newer result replaces them, as in VS Code.
+// Only lost provider or source identity clears them (forgetSemantic).
 func (m *App) retireSemantic(view *semanticViewState, release bool) {
 	if r := view.request; r != nil {
 		view.request = nil
 		r.cancel()
-		view.editor.ClearSemanticTokens()
 	}
 	if release && view.retained {
 		port, sequence, id := view.port, view.sequence, view.id
@@ -81,6 +84,11 @@ func (m *App) retireSemantic(view *semanticViewState, release bool) {
 			return semanticReleasedMsg{port.ReleaseLSPSemantic(ctx, id, sequence)}
 		})
 	}
+}
+
+func (m *App) forgetSemantic(view *semanticViewState) {
+	m.retireSemantic(view, true)
+	view.editor.ClearSemanticTokens()
 }
 
 func (m *App) resetSemanticTokens() {
@@ -97,13 +105,13 @@ func (m *App) syncSemanticTokens() tea.Cmd {
 	for ed, view := range m.semanticViews {
 		view.visible = false
 		if !ed.IsOpen() || view.workspace != m.ws || !m.acceptsLSPGeneration(view.generation) {
-			m.retireSemantic(view, true)
+			m.forgetSemantic(view)
 			delete(m.semanticViews, ed)
 		}
 	}
 	if m.ws == nil || m.ws.LSPMgr() == nil || m.asyncIOStopped.Load() {
 		for _, view := range m.semanticViews {
-			m.retireSemantic(view, true)
+			m.forgetSemantic(view)
 		}
 		return nil
 	}
@@ -142,17 +150,22 @@ func (m *App) syncSemanticTokens() tea.Cmd {
 		source, ready := view.editor.CurrentInsightSource()
 		first, last, painted := view.editor.VisibleSourceLines()
 		producer := service.FileProducer(view.editor.FilePath())
-		if !connected || !view.visible || !painted || producer.InstanceID == "" || contextOwner == "" || contextOwner != source.WorkspaceGeneration {
+		if !connected || producer.InstanceID == "" || contextOwner == "" || contextOwner != source.WorkspaceGeneration {
+			m.forgetSemantic(view)
+			continue
+		}
+		if !view.visible || !painted {
+			// A hidden view keeps its adjusted colors for its return.
 			m.retireSemantic(view, true)
 			continue
 		}
 		r := view.request
 		if r != nil && r.producer != producer {
-			m.retireSemantic(view, true)
+			m.forgetSemantic(view)
 			r = nil
 		}
 		if !ready {
-			// Pending local text hides old colors immediately but preserves the
+			// Pending local text keeps the adjusted colors and preserves the
 			// core's private full base for a later source-qualified delta.
 			m.retireSemantic(view, false)
 			continue

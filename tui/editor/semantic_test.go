@@ -43,12 +43,18 @@ func TestSemanticPaintUsesExactSourceAndThemeWithoutEditing(t *testing.T) {
 	if got := b.Get(x, 0).FG; !got.Equal(e.cellColor(e.th.Colors.Code.Function)) {
 		t.Fatal("theme did not reproject semantic ink", got)
 	}
+	// An unacknowledged edit adjusts provider colors instead of dropping them
+	// (VS Code's SparseMultilineTokens): the inserted space is not part of the
+	// token and "call" keeps its ink one cell later.
 	e.ClearSelection()
 	e.SetCursorPosition(0, 0)
-	e.InsertRune('X')
+	e.InsertRune(' ')
+	e.SetCursorPosition(1, 0) // keep the caret cell out of the measured ink
 	b = paintEditor(e, 80, 8)
-	if got := b.Get(x, 0).FG; got.Equal(e.cellColor(e.th.Colors.Code.Function)) {
-		t.Fatal("old semantic ink survived an unacknowledged edit", got)
+	for col := 1; col <= 4; col++ {
+		if got := b.Get(x+col, 0).FG; !got.Equal(e.cellColor(e.th.Colors.Code.Function)) {
+			t.Fatalf("adjusted token lost its ink at column %d: %+v", col, b.Get(x+col, 0))
+		}
 	}
 	if err := e.SetSemanticTokens(&set); err == nil {
 		t.Fatal("stale semantic source accepted")
@@ -56,7 +62,7 @@ func TestSemanticPaintUsesExactSourceAndThemeWithoutEditing(t *testing.T) {
 }
 
 // The syntax publication and semantic reply can arrive in either order. Unknown
-// semantic types must keep lexical ink, and edits retire old semantic ink.
+// semantic types must keep lexical ink, and edits adjust semantic ink.
 func TestSemanticColorsOverlayLexicalFallbackInEitherArrivalOrder(t *testing.T) {
 	for _, first := range []string{"semantic", "syntax"} {
 		t.Run(first, func(t *testing.T) {
@@ -95,11 +101,16 @@ func TestSemanticColorsOverlayLexicalFallbackInEitherArrivalOrder(t *testing.T) 
 			}
 			install()
 			paintEditor(e, 80, 8)
-			e.SetCursorPosition(0, 4)
+			// Typing inside the token keeps its ink while the edit is pending,
+			// as VS Code adjusts tokens instead of repainting lexical colors.
+			e.SetCursorPosition(0, 2)
 			e.InsertRune('X')
+			e.SetCursorPosition(1, 0) // keep the caret cell out of the measured ink
 			b = paintEditor(e, 80, 8)
-			if b.Get(x+1, 0).FG.Equal(e.cellColor(e.th.Colors.Code.Function)) {
-				t.Fatal("semantic ink survived an unacknowledged edit")
+			for col := 0; col <= 4; col++ {
+				if !b.Get(x+col, 0).FG.Equal(e.cellColor(e.th.Colors.Code.Function)) {
+					t.Fatalf("pending edit dropped semantic ink at column %d", col)
+				}
 			}
 		})
 	}
