@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"crude/tui/rendering"
+	"crude/tui/ui"
 	"crude/types"
 )
 
@@ -12,9 +13,7 @@ func renderMarkdown(content string, mdRenderer *rendering.MarkdownRenderer) (str
 		return "", false
 	}
 	content = presentProposedPlan(content)
-	if content != "" && strings.TrimSpace(content) == content && strings.IndexFunc(content, func(character rune) bool {
-		return character != ' ' && (character < 'a' || character > 'z') && (character < 'A' || character > 'Z')
-	}) < 0 {
+	if plainMarkdown(content) {
 		return "", false
 	}
 	r, err := mdRenderer.Render(content)
@@ -25,33 +24,16 @@ func renderMarkdown(content string, mdRenderer *rendering.MarkdownRenderer) (str
 	return strings.TrimRight(r, "\n"), true
 }
 
-func updateStreamingCache(msg *types.ChatMessage, mdRenderer *rendering.MarkdownRenderer, contentWidth int) {
-	lastNL := strings.LastIndex(msg.Content, "\n")
-	completedLen := 0
-	if lastNL >= 0 {
-		completedLen = lastNL + 1
+func streamingCompletedRows(msg *types.ChatMessage, md *rendering.MarkdownRenderer, tokens *ui.TokenSet, width int) []PaintLine {
+	end := strings.LastIndex(msg.Content, "\n") + 1
+	if end == 0 {
+		return nil
 	}
-	if msg.StreamCompletedLen == completedLen {
-		return
+	native, ok := renderMarkdownRows(msg.Content[:end], md, tokens, msg.InternalID, true)
+	if !ok {
+		native = buildPlainBodyLines(rendering.WrapText(msg.Content[:end], width))
 	}
-	if completedLen == 0 {
-		msg.StreamCompletedLines = nil
-		msg.StreamCompletedLen = 0
-		return
-	}
-	completed := msg.Content[:completedLen]
-	rendered, isMarkdown := renderMarkdown(completed, mdRenderer)
-	var lines []string
-	if isMarkdown {
-		lines = strings.Split(rendered, "\n")
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			lines = lines[:len(lines)-1]
-		}
-	} else {
-		lines = rendering.WrapText(strings.TrimRight(completed, "\n"), contentWidth)
-	}
-	msg.StreamCompletedLines = lines
-	msg.StreamCompletedLen = completedLen
+	return native
 }
 
 // presentProposedPlan shows Plan mode's proposed_plan block as a titled
@@ -71,4 +53,48 @@ func presentProposedPlan(content string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderMarkdownRows(content string, md *rendering.MarkdownRenderer, tokens *ui.TokenSet, messageID string, codeActions bool) ([]PaintLine, bool) {
+	if md == nil || plainMarkdown(content) {
+		return nil, false
+	}
+	p, err := md.RenderMapped(presentProposedPlan(content))
+	if err != nil {
+		return nil, false
+	}
+	return BridgeSourceRows(p, tokens, messageID, codeActions), true
+}
+
+func plainMarkdown(content string) bool {
+	return content != "" && strings.TrimSpace(content) == content && strings.IndexFunc(content, func(c rune) bool { return c != ' ' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') }) < 0
+}
+
+// Plain messages need no Markdown parser, but still retain source across wraps.
+func plainSourceLines(content string, width int) []PaintLine {
+	if strings.ContainsAny(content, "\t\r\x1b") {
+		var rows []PaintLine
+		for _, line := range BridgeSourceRows(rendering.PlainProjection(content), nil, "", false) {
+			rows = append(rows, wrapPaintLine(line, width)...)
+		}
+		return rows
+	}
+	source := &rendering.CopyText{Value: content}
+	var segments []rendering.WrapRange
+	base := 0
+	for text := range strings.SplitSeq(content, "\n") {
+		for _, r := range rendering.WordWrapRanges(text, max(1, width)) {
+			segments = append(segments, rendering.WrapRange{Start: base + r.Start, End: base + r.End})
+		}
+		base += len(text) + 1
+	}
+	// A render owns one immutable row/span slab. Each row has disjoint,
+	// capacity-fenced storage; no row text or maximum-size buffer is rebuilt.
+	lines := make([]PaintLine, len(segments))
+	spans := make([]RowSpan, len(segments))
+	for i, r := range segments {
+		spans[i] = RowSpan{Text: content[r.Start:r.End], Role: ui.ColorFg, Copy: rendering.CopyRange{Text: source, Start: r.Start, End: r.End}}
+		lines[i] = PaintLine{SourceAware: true, Spans: spans[i : i+1 : i+1]}
+	}
+	return lines
 }

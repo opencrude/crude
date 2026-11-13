@@ -80,6 +80,30 @@ These are single-operation timings, not end-to-end presented-frame latency or a
 platform-independent ceiling. The benchmark's first overlarge top-level tooltip
 was rejected by the existing per-field bound and is not included in these figures.
 
+## Source-aware chat wrapping (2026-11-13)
+
+The first source-aware copy projection exceeded the existing dense width-commit
+ceiling: 604,185 B / 2,978 allocations against 455,000 B / 2,180. An exact heap
+profile traced the excess to narrow plain-text fallback rows, not Markdown
+parsing: wrapping rebuilt strings, paint rebuilt rows, and each row's plain-text
+mirror copied them again.
+
+`WordWrapRanges` now publishes byte boundaries from the existing word/grapheme
+segmentation. `WordWrap`, composer rune starts and native row wrapping all derive
+from those same boundaries. Source rows slice their immutable text and use one
+owned, capacity-fenced row/span slab per render; this is not a retained fixture
+or a cache that skips reflow. A single-span `PlainText` needs no string copy.
+A temporary before/after probe compared 8,692 deterministic wrap and rune-start
+cases (including repeated spaces, ANSI, CJK, combining text and emoji); all were
+byte-identical. The permanent source-offset and selection regressions cover
+repeated text, partial tabs, soft wraps and wrapped table-cell ownership.
+
+Three sequential one-second Linux amd64 / Go 1.27.4 runs at GOMAXPROCS=2 measured
+443,914–445,707 B and 848–904 allocations for the unchanged
+`BenchmarkDenseChatWidthCommit_500HeavyMsgs`, at 0.506–0.535 ms per commit/first
+shell frame. This does not measure terminal scanout. The allocation ceiling and
+benchmark workload are unchanged; mutation/presentation still execute in full.
+
 ## Dense editing stage isolation (2026-11-13)
 
 The previous allocation gate reproduced failures in semantic-enabled mutation

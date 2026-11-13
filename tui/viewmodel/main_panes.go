@@ -154,6 +154,7 @@ func (p *mainPaneLayout) agentView(agentID string) *mainPaneView {
 		v.chat = shellchat.NewWithID(p.app.Theme, ui.NewID(base, "chat"))
 		v.input = shellinput.NewWithID(p.app.Theme, ui.NewID(base, "input"))
 	}
+	v.chat.SetClipboardCopy(p.app.clipboardCopyCommand)
 	v.deck = newDeckMount(p.app)
 	v.deck.Base = ui.NewBase(ui.NewID(base, "deck"))
 	_, v.deck.projection = p.app.sessionProjectionForAgent(agentID)

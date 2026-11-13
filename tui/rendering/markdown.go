@@ -15,6 +15,7 @@ import (
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
+	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
 )
 
@@ -24,13 +25,27 @@ import (
 // away, silently deleting the user's or model's words. With HTML parsing off,
 // every angle bracket stays ordinary text and no escaping pass is needed.
 type MarkdownRenderer struct {
-	md goldmark.Markdown
+	md      goldmark.Markdown
+	options ansi.Options
 }
 
 // Render returns the ANSI-styled Markdown projection of in.
 func (r *MarkdownRenderer) Render(in string) (string, error) {
 	var buf bytes.Buffer
 	err := r.md.Convert([]byte(in), &buf)
+	return buf.String(), err
+}
+
+func (r *MarkdownRenderer) render(in string, trace *markdownTrace) (string, error) {
+	source := []byte(in)
+	node := r.md.Parser().Parse(text.NewReader(source))
+	options := r.options
+	if trace != nil {
+		options.Source = trace
+	}
+	out := renderer.NewRenderer(renderer.WithNodeRenderers(util.Prioritized(ansi.NewRenderer(options), 1000)))
+	var buf bytes.Buffer
+	err := out.Render(&buf, source, node)
 	return buf.String(), err
 }
 
@@ -51,7 +66,7 @@ func newMarkdownRenderer(options ansi.Options) *MarkdownRenderer {
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 	)
 	md.SetRenderer(renderer.NewRenderer(renderer.WithNodeRenderers(util.Prioritized(ansi.NewRenderer(options), 1000))))
-	return &MarkdownRenderer{md: md}
+	return &MarkdownRenderer{md: md, options: options}
 }
 
 func MakeMdRenderer(width int, th *theme.Theme) *MarkdownRenderer {

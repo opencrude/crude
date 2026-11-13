@@ -1,6 +1,8 @@
 package chatprojection
 
 import (
+	"strings"
+
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/ui"
@@ -103,7 +105,7 @@ func bridgeAnsiRuns(runs []rendering.AnsiRun, st ansiBridgeState) PaintLine {
 }
 
 func ansiRunToSpan(r rendering.AnsiRun, st ansiBridgeState) RowSpan {
-	span := RowSpan{Text: r.Text, Attr: r.Attr, Link: r.Link}
+	span := RowSpan{Text: r.Text, Attr: r.Attr, Link: r.Link, Copy: r.Copy}
 	if !r.FG.IsDefault() {
 		if role, ok := st.fgRoles[r.FG]; ok {
 			span.Role = role
@@ -146,6 +148,44 @@ func coalesceInto(dst *RowSpan, span RowSpan) bool {
 	if dst.BgSet != span.BgSet || (dst.BgSet && dst.BgRole != span.BgRole) {
 		return false
 	}
+	if dst.Copy.Text != span.Copy.Text {
+		return false
+	}
+	if dst.Copy.Text != nil {
+		linear := dst.Copy.End-dst.Copy.Start == len(dst.Text) && span.Copy.End-span.Copy.Start == len(span.Text)
+		if linear {
+			if dst.Copy.End != span.Copy.Start {
+				return false
+			}
+			dst.Copy.End = span.Copy.End
+		} else if dst.Copy != span.Copy {
+			// An expanded source unit (a tab) cannot absorb neighboring text:
+			// partial selection must still address the following source bytes.
+			return false
+		}
+	}
 	dst.Text += span.Text
 	return true
+}
+
+// BridgeSourceRows consumes only this projection's private source annotations.
+// Default ANSI decoding cannot manufacture a source reference or code action.
+func BridgeSourceRows(p rendering.TextProjection, tokens *ui.TokenSet, messageID string, codeActions bool) []PaintLine {
+	parser := p.Parser()
+	state := newAnsiBridgeState(tokens)
+	var rows []PaintLine
+	value := strings.TrimRight(strings.TrimPrefix(p.ANSI, "\n"), "\n")
+	for _, line := range strings.Split(value, "\n") {
+		row := bridgeAnsiRuns(parser.ParseLine(line), state)
+		row.SourceAware = true
+		if code := parser.CopyAction(); code != nil {
+			if codeActions {
+				row = codeCopyLine(code, messageID)
+			} else {
+				continue
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
 }

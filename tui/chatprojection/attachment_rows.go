@@ -4,9 +4,11 @@ import (
 	"strings"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/attachment"
+	"unicode/utf8"
 )
 
 // Protect source spans before Markdown changes source positions. Private-use
@@ -48,37 +50,54 @@ func attachmentSource(msg types.ChatMessage) (string, map[rune]attachment.Target
 	return string(source), markers
 }
 
-func restoreAttachmentSpans(line PaintLine, msgID string, markers map[rune]attachment.Target, offsets map[rune]int) PaintLine {
+type attachmentCopyOffset struct {
+	runes  int
+	bytes  int
+	source *rendering.CopyText
+}
+
+func restoreAttachmentSpans(line PaintLine, msgID string, markers map[rune]attachment.Target, offsets map[rune]attachmentCopyOffset) PaintLine {
 	if len(markers) == 0 {
 		return line
 	}
 	out := line
 	out.Spans = nil
 	for _, span := range line.Spans {
+		byteStart := 0
 		var pending strings.Builder
 		flush := func() {
 			if pending.Len() > 0 {
-				fragment := span
-				fragment.Text = pending.String()
+				fragment := span.Slice(byteStart, byteStart+pending.Len())
 				out.Spans = append(out.Spans, fragment)
 				pending.Reset()
 			}
 		}
-		for _, r := range span.Text {
+		for pos, r := range span.Text {
 			target, ok := markers[r]
 			if !ok {
+				if pending.Len() == 0 {
+					byteStart = pos
+				}
 				pending.WriteRune(r)
 				continue
 			}
 			flush()
 			label := []rune(target.Label)
-			at := offsets[r]
+			offset := offsets[r]
+			at := offset.runes
 			if at >= len(label) {
 				continue
 			}
-			offsets[r]++
+			if offset.source == nil {
+				offset.source = &rendering.CopyText{Value: target.Label, Block: -int(r)}
+			}
+			offset.runes++
+			from := offset.bytes
+			offset.bytes += utf8.RuneLen(label[at])
+			offsets[r] = offset
 			fragment := span
 			fragment.Text = string(label[at])
+			fragment.Copy = rendering.CopyRange{Text: offset.source, Start: from, End: offset.bytes}
 			fragment.Role, fragment.BgRole, fragment.BgSet = ui.ColorAccent2, ui.ColorSelection, true
 			fragment.FGSet, fragment.BGSet = false, false
 			fragment.Attr |= cell.AttrBold

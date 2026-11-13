@@ -53,13 +53,13 @@ type Renderer struct {
 	paneScrollbarW   int
 	nativeCache      map[string][]PaintLine
 	tokens           *ui.TokenSet
-	// streamNative caches the bridged native rows for the completed portion of
-	// a streaming assistant message, keyed by InternalID. streamNativeLen
-	// records the StreamCompletedLen the cache was built from so it is only
-	// re-bridged when the completed length changes (once per invalidation,
-	// never per frame).
-	streamNative    map[string][]PaintLine
-	streamNativeLen map[string]int
+	// Only the active streaming message retains a completed-prefix projection.
+	// Source bytes and renderer identity qualify it across tokens and reflow.
+	streamCache struct {
+		id, source string
+		md         *rendering.MarkdownRenderer
+		rows       []PaintLine
+	}
 	// thinkingBodyOnly is enabled for retained PaneThinking projections. The
 	// parent pane owns lifecycle/disclosure chrome; this renderer supplies only
 	// wrapped reasoning body rows and cursor/strike styling.
@@ -134,15 +134,13 @@ func (r *Renderer) SetThinkingBodyOnly(v bool) {
 
 func NewRenderer(t *theme.Theme) *Renderer {
 	r := &Renderer{
-		theme:           t,
-		sourceID:        nextRendererSourceID.Add(1),
-		vl:              *newItemList(),
-		sync:            NewMessageSync(),
-		nativeCache:     make(map[string][]PaintLine),
-		streamNative:    make(map[string][]PaintLine),
-		streamNativeLen: make(map[string]int),
-		expanded:        make(map[string]bool),
-		frameSensitive:  make(map[string]struct{}),
+		theme:          t,
+		sourceID:       nextRendererSourceID.Add(1),
+		vl:             *newItemList(),
+		sync:           NewMessageSync(),
+		nativeCache:    make(map[string][]PaintLine),
+		expanded:       make(map[string]bool),
+		frameSensitive: make(map[string]struct{}),
 	}
 	r.tokens = ui.NewTokenSet(t)
 	return r
@@ -154,22 +152,23 @@ func (r *Renderer) invalidateMessageCache(msg *types.ChatMessage) {
 	}
 	msg.CachedLines = nil
 	delete(r.nativeCache, msg.InternalID)
-	delete(r.streamNative, msg.InternalID)
-	delete(r.streamNativeLen, msg.InternalID)
 }
 
 // streamNativeRows returns the bridged native rows for the completed portion
-// of a streaming message, re-bridging only when StreamCompletedLen changes.
+// of a streaming message, re-bridging only when completed-source length changes.
 func (r *Renderer) streamNativeRows(msg *types.ChatMessage, tokens *ui.TokenSet) []PaintLine {
 	if msg == nil {
 		return nil
 	}
-	if cached, ok := r.streamNative[msg.InternalID]; ok && r.streamNativeLen[msg.InternalID] == msg.StreamCompletedLen {
-		return cached
+	end := strings.LastIndex(msg.Content, "\n") + 1
+	md := r.MdRenderer()
+	source := msg.Content[:end]
+	if r.streamCache.id == msg.InternalID && r.streamCache.source == source && r.streamCache.md == md {
+		return r.streamCache.rows
 	}
-	rows := BridgeAnsiLines(msg.StreamCompletedLines, tokens)
-	r.streamNative[msg.InternalID] = rows
-	r.streamNativeLen[msg.InternalID] = msg.StreamCompletedLen
+	width, _ := r.availableMessageWidths()
+	rows := streamingCompletedRows(msg, md, tokens, width)
+	r.streamCache.id, r.streamCache.source, r.streamCache.md, r.streamCache.rows = msg.InternalID, source, md, rows
 	return rows
 }
 
@@ -343,11 +342,11 @@ func (r *Renderer) SetSize(w, h int) {
 		}
 		for i := range r.sync.Messages {
 			r.sync.Messages[i].CachedLines = nil
-			r.sync.Messages[i].StreamCompletedLines = nil
-			r.sync.Messages[i].StreamCompletedLen = 0
 		}
-		r.streamNative = make(map[string][]PaintLine)
-		r.streamNativeLen = make(map[string]int)
+		r.streamCache.id = ""
+		r.streamCache.source = ""
+		r.streamCache.rows = nil
+		r.streamCache.md = nil
 		r.mdRenderer = nil
 		r.vl.InvalidateHeights()
 		r.vl.InvalidateAll()
@@ -393,10 +392,7 @@ func (r *Renderer) AppendToken(token string) {
 	last.Content += token
 	r.bumpVersion()
 	last.CachedLines = nil
-	if strings.Contains(token, "\n") {
-		last.StreamCompletedLines = nil
-		last.StreamCompletedLen = 0
-	}
+
 	r.vl.InvalidateItem(last.InternalID)
 }
 
@@ -1715,6 +1711,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	suppressHeader := r.shouldSuppressHeader(msgIdx)
 
 	ctx := r.buildRenderContext(origMsg, suppressHeader)
+	ctx.sourceMessage = origMsg
 	if r.streaming && r.isLastMessage(origMsg) && origMsg.Role == types.RoleAssistant {
 		ctx.streamNative = r.streamNativeRows(origMsg, r.Tokens())
 	}
@@ -1885,6 +1882,10 @@ func (r *Renderer) RebuildItems() {
 }
 
 func (r *Renderer) InvalidateAllMessages() {
+	r.streamCache.id = ""
+	r.streamCache.source = ""
+	r.streamCache.rows = nil
+	r.streamCache.md = nil
 	r.lazyWidthReflow = false
 	perf.MarkCacheInvalidation()
 	for i := range r.sync.Messages {

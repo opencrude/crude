@@ -610,7 +610,9 @@ retains that destination separately from visible text through native row spans,
 clipping/wrapping, surface composition and both direct-cell and diagnostic ANSI
 output. It never reconstructs an address from an abbreviated label. Repainting or
 occluding a glyph also replaces its link; a changed destination counts as changed
-cell content even when the label stays the same. Selection/copy remain visible text.
+cell content even when the label stays the same. Hyperlink targets are independent
+of selection source ranges: a descriptive link label copies as text, not as a
+reconstructed URL. The existing whole-message copy commands retain the Markdown.
 
 Only valid HTTP, HTTPS and mail destinations become terminal hyperlinks. Controls,
 unsafe schemes and oversized metadata are rejected; other terminal controls remain
@@ -634,12 +636,46 @@ change tmux settings or guarantee support in a terminal that ignores OSC 8.
   only the raw-HTML parsers removed: chat text is not HTML, so `<context>` or
   `Vec<T>` stays literal instead of being sanitized away. Never add an escaping
   pre-pass or restore `glamour.NewTermRenderer` for chat.
-- **Each fenced block copies its source.** A complete fence gets one
-  `Copy code` chip row under it. The chip carries the exact block text
-  (`ChatCopyCodePayload`), never the painted rows: Glamour pads fenced rows and
-  uses no-break spaces inside inline code, so a selection copy would keep that
-  layout text. `ExtractLastCodeBlock` still serves the chat-wide **Copy last
-  code block** command; it is not the per-block path.
+- **Markdown selection copies content, not layout.** The existing Goldmark parser
+  and pinned Glamour ANSI renderer produce the paint and immutable copy ranges in
+  the same pass. Native `RowSpan.Copy` ranges survive wrapping, clipping, search
+  styles and nested-pane decoration. The chat selection owner reads those ranges;
+  it never strips guessed indentation from painted rows. Inline-code no-break
+  padding, margins, code-chip labels and soft-wrap newlines are not source.
+  Actual tabs, repeated/trailing spaces, blank code lines and CRLF remain source.
+  Paragraph/list/table-cell boundaries come from parsed nodes (tables copy as
+  tab-separated cells), not the terminal's box characters. Selecting rendered
+  Markdown copies semantic content, not Markdown delimiters; use the existing
+  whole-message copy command when the original Markdown is needed.
+- **Code actions use those same parsed nodes.** Fenced and indented code blocks,
+  including blocks in lists/quotes, get one `Copy code` chip under the block. The
+  payload is Goldmark's container-adjusted code content, including its final
+  newline, never painted text. `ExtractLastCodeBlock` uses the identical parser
+  configuration and code-node extractor for **Copy last code block**. CommonMark's
+  open-at-EOF code block is also copyable; there is no second fence scanner.
+- **Copy ranges belong to the row projection.** No source metadata is persisted
+  in canonical messages, stored in screen cells, or retained in a global lookup.
+  Streaming keeps one completed-prefix native projection qualified by exact
+  source bytes and renderer identity. Text changes, width/theme changes and
+  conversation switches cannot reuse a stale source map. The chat's one selection
+  owner retains source endpoints across reflow; it clears selection if that source
+  changes or disappears. When both endpoints belong to one semantic text, copy
+  and highlight use that source range. Selecting a wrapped table cell therefore
+  does not include neighboring cells. Mixed-source selections collect the mapped
+  runs. Source-bearing rows never fall back to copying padding.
+  Non-Markdown chrome keeps its established visible-text selection behavior.
+- **Private trace annotations never reach the terminal.** The narrow vendored
+  Glamour hook marks semantic runs and suspends them around generated margins.
+  The shared ANSI decoder consumes these private APC records against the current
+  projection, before painting. Source controls cannot create code actions or
+  source references. Goldmark still owns Markdown, Glamour/Lip Gloss own layout,
+  Chroma owns highlighting, and the existing grapheme-width profile owns width.
+  See `third_party/glamour/CRUDE.md` for the pinned upstream and local changes.
+  OSC 8 remains for links, and the existing clipboard transport remains responsible
+  for OSC 52. Mouse release, keyboard copy and the block button use the shell's
+  existing ordered clipboard worker; `Screen.SetClipboardCopy` connects it in the
+  same way as shared text controls. This improves Crude-handled selection over
+  SSH/tmux; external terminal-native selection can only copy the visible grid.
 - **Child assignments display typed fields, never their envelope.** Providers
   receive `prompt.BuildChild`'s escaped `<delegated_assignment>`; live events,
   persisted snapshots and recovery checkpoints carry `childAssignmentDisplay`

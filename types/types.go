@@ -976,10 +976,8 @@ type ChatMessage struct {
 	PermTag         string
 	PendingSteering bool
 
-	CachedLines          []string
-	CursorLine           int
-	StreamCompletedLines []string
-	StreamCompletedLen   int
+	CachedLines []string
+	CursorLine  int
 }
 
 type AgentEventMsg struct {

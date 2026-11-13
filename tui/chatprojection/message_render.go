@@ -37,21 +37,22 @@ func (ml messageLines) withCursor(cursorIdx, spinFrame int, activeTyping bool) m
 }
 
 type renderContext struct {
-	th           *theme.Theme
-	tokens       *ui.TokenSet
-	contentWidth int
-	innerW       int
-	width        int
-	height       int
-	chatHeight   int
-	spinFrame    int
-	activeTyping bool
-	username     string
-	streaming    bool
-	isLastMsg    bool
-	phase        string
-	mdRenderer   *rendering.MarkdownRenderer
-	projectPaths *tools.ProjectPaths
+	sourceMessage *types.ChatMessage // Canonical source; Content below is a paint-safe projection.
+	th            *theme.Theme
+	tokens        *ui.TokenSet
+	contentWidth  int
+	innerW        int
+	width         int
+	height        int
+	chatHeight    int
+	spinFrame     int
+	activeTyping  bool
+	username      string
+	streaming     bool
+	isLastMsg     bool
+	phase         string
+	mdRenderer    *rendering.MarkdownRenderer
+	projectPaths  *tools.ProjectPaths
 	// disclosure is the resolved expand/collapse mode for this message
 	// (see disclosure.go). Deterministic defaults keep live and hydrated
 	// sessions rendering the same shape.
@@ -63,9 +64,16 @@ type renderContext struct {
 	// each tool's preparing/doing/done title and expandable content.
 	planSuperseded bool
 	// streamNative holds the pre-bridged native rows for the completed portion
-	// of a streaming assistant message (built once per StreamCompletedLen change
+	// of a streaming assistant message (built once per completed-source change
 	// by the Renderer, never per frame). Set only for the streaming cursor.
 	streamNative []PaintLine
+}
+
+func (c renderContext) markdownContent(message types.ChatMessage) string {
+	if c.sourceMessage != nil {
+		return c.sourceMessage.Content
+	}
+	return message.Content
 }
 
 func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
@@ -77,11 +85,13 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 		ml.native = append(ml.native, header)
 	}
 
-	source, markers := attachmentSource(msg)
-	offsets := make(map[rune]int)
-	rendered, isMarkdown := renderMarkdown(source, ctx.mdRenderer)
+	rawMessage := msg
+	rawMessage.Content = ctx.markdownContent(msg)
+	source, markers := attachmentSource(rawMessage)
+	offsets := make(map[rune]attachmentCopyOffset)
+	mapped, isMarkdown := renderMarkdownRows(source, ctx.mdRenderer, ctx.tokens, msg.InternalID, false)
 	if isMarkdown {
-		for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
+		for _, pl := range mapped {
 			if len(markers) == 0 {
 				pl = styleReferenceLabels(pl, referenceLabels)
 			}
@@ -153,15 +163,15 @@ func renderCollaborationMessage(msg types.ChatMessage, ctx renderContext) messag
 	ml.lines = append(ml.lines, header.PlainText())
 	ml.native = append(ml.native, header)
 
-	rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
+	mapped, isMarkdown := renderMarkdownRows(ctx.markdownContent(msg), ctx.mdRenderer, ctx.tokens, msg.InternalID, false)
 	var body []PaintLine
 	if isMarkdown {
-		body = BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens)
+		body = mapped
 	} else {
 		body = buildPlainBodyLines(rendering.WrapText(msg.Content, max(1, ctx.contentWidth-2)))
 	}
 	for _, line := range body {
-		withRail := PaintLine{Spans: []RowSpan{{Text: "│ ", Role: ui.ColorMuted}}}
+		withRail := PaintLine{SourceAware: line.SourceAware, Spans: []RowSpan{{Text: "│ ", Role: ui.ColorMuted}}}
 		withRail.Spans = append(withRail.Spans, line.Spans...)
 		ml.lines = append(ml.lines, withRail.PlainText())
 		ml.native = append(ml.native, withRail)
@@ -199,9 +209,9 @@ func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressH
 		ml.lines = append(ml.lines, header.PlainText())
 		ml.native = append(ml.native, header)
 	}
-	rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
+	mapped, isMarkdown := renderMarkdownRows(ctx.markdownContent(msg), ctx.mdRenderer, ctx.tokens, msg.InternalID, false)
 	if isMarkdown {
-		for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
+		for _, pl := range mapped {
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
 		}
@@ -225,17 +235,15 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 
 	var bodyLines []string
 	var bodyNative []PaintLine
+	var isMarkdown bool
 	if ctx.streaming && ctx.isLastMsg {
-		updateStreamingCache(&msg, ctx.mdRenderer, ctx.contentWidth)
-		if len(msg.StreamCompletedLines) > 0 {
-			native := ctx.streamNative
-			if len(native) != len(msg.StreamCompletedLines) {
-				native = BridgeAnsiLines(msg.StreamCompletedLines, ctx.tokens)
-			}
-			for _, pl := range native {
-				bodyLines = append(bodyLines, pl.PlainText())
-				bodyNative = append(bodyNative, pl)
-			}
+		native := ctx.streamNative
+		if native == nil {
+			native = streamingCompletedRows(&msg, ctx.mdRenderer, ctx.tokens, ctx.contentWidth)
+		}
+		for _, pl := range native {
+			bodyLines = append(bodyLines, pl.PlainText())
+			bodyNative = append(bodyNative, pl)
 		}
 		lastNL := strings.LastIndex(msg.Content, "\n")
 		var lastLineText string
@@ -246,27 +254,19 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 		}
 		lastLineText = strings.TrimRight(lastLineText, "\n")
 		if lastLineText != "" {
-			wrapped := rendering.WrapText(lastLineText, ctx.contentWidth)
-			for _, line := range wrapped {
-				pl := buildPlainBodyLine(line)
-				bodyLines = append(bodyLines, line)
+			for _, pl := range plainSourceLines(lastLineText, ctx.contentWidth) {
+				bodyLines = append(bodyLines, pl.PlainText())
 				bodyNative = append(bodyNative, pl)
 			}
 		}
 	} else {
-		source, chips := decorateCodeBlocks(msg.Content)
-		rendered, isMarkdown := renderMarkdown(source, ctx.mdRenderer)
-		if isMarkdown {
-			bodyNative = BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens)
-			bodyNative = injectCodeChips(bodyNative, msg.InternalID, chips)
-			bodyLines = make([]string, len(bodyNative))
-			for index, pl := range bodyNative {
-				bodyLines[index] = pl.PlainText()
-			}
-		} else {
-			wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-			bodyNative = buildPlainBodyLines(wrapped)
-			bodyLines = wrapped
+		bodyNative, isMarkdown = renderMarkdownRows(ctx.markdownContent(msg), ctx.mdRenderer, ctx.tokens, msg.InternalID, true)
+		if !isMarkdown {
+			bodyNative = plainSourceLines(msg.Content, ctx.contentWidth)
+		}
+		bodyLines = make([]string, len(bodyNative))
+		for i, line := range bodyNative {
+			bodyLines[i] = line.PlainText()
 		}
 	}
 
@@ -478,12 +478,12 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 		}
 		return messageLines{lines: []string{header.PlainText()}, native: []PaintLine{header}}
 	}
-	rendered, markdown := renderMarkdown(msg.Content, md)
+	mapped, markdown := renderMarkdownRows(ctx.markdownContent(msg), md, ctx.tokens, msg.InternalID, false)
 	if !markdown {
-		rendered = msg.Content
+		mapped = buildPlainBodyLines(strings.Split(msg.Content, "\n"))
 	}
 	var rows []PaintLine
-	for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
+	for _, pl := range mapped {
 		rows = append(rows, wrapPaintLine(pl, ctx.contentWidth)...)
 	}
 	native := rows
@@ -502,15 +502,15 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 // the complete canonical body is never truncated by this presentation.
 func ThinkingPreviewLine(content string, display reasoning.Display, md *rendering.MarkdownRenderer, tokens *ui.TokenSet) PaintLine {
 	body := thinkingPreviewBody(content, display)
-	rendered, ok := renderMarkdown(body, md)
+	mapped, ok := renderMarkdownRows(body, md, tokens, "", false)
 	if !ok {
-		rendered = body
+		mapped = buildPlainBodyLines(strings.Split(body, "\n"))
 	}
 	line := PaintLine{}
-	for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), tokens) {
+	for _, pl := range mapped {
 		for len(pl.Spans) > 0 {
 			last := &pl.Spans[len(pl.Spans)-1]
-			last.Text = strings.TrimRight(last.Text, " \t")
+			*last = last.Slice(0, len(strings.TrimRight(last.Text, " \t")))
 			if last.Text != "" {
 				break
 			}
@@ -519,7 +519,7 @@ func ThinkingPreviewLine(content string, display reasoning.Display, md *renderin
 		if len(pl.Spans) == 0 {
 			continue
 		}
-		pl.Spans[0].Text = strings.TrimLeft(pl.Spans[0].Text, " \t")
+		pl.Spans[0] = pl.Spans[0].Slice(len(pl.Spans[0].Text)-len(strings.TrimLeft(pl.Spans[0].Text, " \t")), len(pl.Spans[0].Text))
 		if len(line.Spans) > 0 {
 			line.Spans = append(line.Spans, RowSpan{Text: " ", Role: ui.ColorMuted})
 		}

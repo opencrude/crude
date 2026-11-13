@@ -214,7 +214,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.chatScreen.ClearSelection()
 		if selected != "" {
-			return m, rendering.CopyToClipboardCmd(selected)
+			return m, m.clipboardCopyCommand(selected)
 		}
 		return m, nil
 	}

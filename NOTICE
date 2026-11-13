@@ -13,3 +13,7 @@ indentation algorithms adapted in tui/editor/smart_indent.go are derived from
 microsoft/vscode at e608ca420ca76f4bfc2cfbff02538d66242e8174. Copyright (c)
 Microsoft Corporation. All rights reserved. These portions retain the MIT license
 in LICENSE-MIT; source paths are recorded with the data and adapter.
+The ANSI renderer and styles in third_party/glamour are pinned from
+charm.land/glamour/v2 v2.0.0. Copyright Charmbracelet, Inc. These portions retain
+the MIT license in third_party/glamour/LICENSE; local source-tracing changes are
+described in third_party/glamour/CRUDE.md.

@@ -1,5 +1,7 @@
 package viewmodel
 
+import tea "charm.land/bubbletea/v2"
+
 func (m *App) copyEditorSelection() {
 	if m.EditorState.Editor == nil || !m.EditorState.Editor.HasSelection() {
 		return
@@ -54,4 +56,11 @@ func (m *App) copyToClipboard(s string) {
 		operation: clipboardAsyncWriteText,
 		text:      s,
 	})
+}
+
+// clipboardCopyCommand keeps release-copy in the same ordered worker as other
+// shell copies. Admission records owner/generation before any async work starts.
+func (m *App) clipboardCopyCommand(text string) tea.Cmd {
+	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{operation: clipboardAsyncWriteText, text: text})
+	return m.clipboardAsyncCommand(request)
 }

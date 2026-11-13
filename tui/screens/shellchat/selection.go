@@ -1,7 +1,6 @@
 package shellchat
 
 import (
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,16 +15,18 @@ const selScrollInterval = 60 * time.Millisecond
 
 // textSelection owns mouse text selection over flattened message rows.
 type textSelection struct {
-	selecting     bool
-	selAnchorLine int
-	selAnchorCol  int
-	selEndLine    int
-	selEndCol     int
-	selAutoScroll bool
-	selMouseY     int
-	dragged       bool
-	sourceID      uint64
-	pressAction   *ui.Action
+	selecting               bool
+	selAnchorLine           int
+	selAnchorCol            int
+	selEndLine              int
+	selEndCol               int
+	selAutoScroll           bool
+	selMouseY               int
+	dragged                 bool
+	sourceID                uint64
+	pressAction             *ui.Action
+	anchorSource, endSource chatprojection.CopyAnchor
+	sourceAnchored          bool
 }
 
 func (ts *textSelection) Clear() {
@@ -38,6 +39,9 @@ func (ts *textSelection) Clear() {
 	ts.selMouseY = 0
 	ts.dragged = false
 	ts.pressAction = nil
+	ts.sourceAnchored = false
+	ts.anchorSource = chatprojection.CopyAnchor{}
+	ts.endSource = chatprojection.CopyAnchor{}
 }
 
 func (ts *textSelection) HasActive() bool {
@@ -61,13 +65,15 @@ func (ts *textSelection) SelectedText(rows []chatprojection.MessageRow) string {
 	if !ts.selecting {
 		return ""
 	}
+	if source, ok := ts.sourceRange(); ok {
+		return source.String()
+	}
 	sLine, sCol, eLine, eCol := ts.Range()
 	return extractSelectedText(rows, sLine, sCol, eLine, eCol)
 }
 
 func extractSelectedText(rows []chatprojection.MessageRow, startLine, startCol, endLine, endCol int) string {
-	allLines := flattenMessageLines(rows)
-	return rendering.ExtractSelectedText(allLines, startLine, startCol, endLine, endCol)
+	return chatprojection.CopySelection(rows, startLine, startCol, endLine, endCol)
 }
 
 func flattenMessageLines(rows []chatprojection.MessageRow) []string {
@@ -168,6 +174,7 @@ func (s *Screen) handleSelectionClick(ctx ui.EventContext, msg tea.MouseClickMsg
 	s.selection.dragged = msg.Mod != 0
 	s.selection.sourceID = s.rowsSourceID
 	s.selection.pressAction = s.inlineActionAt(lineIdx, s.selection.selAnchorCol)
+	s.selection.captureSource(s.rows)
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 }
 
@@ -200,6 +207,7 @@ func (s *Screen) handleSelectionMotion(ctx ui.EventContext, msg tea.MouseMotionM
 		}
 	}
 	s.selection.selMouseY = ctx.LocalY
+	s.selection.captureSource(s.rows)
 
 	if !s.selection.selAutoScroll && (s.selection.selMouseY <= -1 || s.selection.selMouseY >= viewportH) {
 		s.selection.selAutoScroll = true
@@ -221,6 +229,7 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 		s.selection.selEndLine = lineIdx
 		s.selection.selEndCol = rendering.Max(0, ctx.LocalX-s.layout.padLR)
 	}
+	s.selection.captureSource(s.rows)
 	// A click without drag on a disclosure row toggles the block instead of
 	// copying an empty selection. Drags (anchor != end) always select.
 	clickNoDrag := !s.selection.dragged && s.selection.sourceID == s.rowsSourceID && s.selection.selAnchorLine == s.selection.selEndLine &&
@@ -234,15 +243,9 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 		}
 		toggleMsgID = s.disclosureRowAt(lineIdx)
 	}
-	s.selection.selecting = false
-	s.selection.selAutoScroll = false
-	sLine, sCol, eLine, eCol := s.selection.Range()
-	text := extractSelectedText(s.rows, sLine, sCol, eLine, eCol)
-	text = strings.TrimRight(text, " \t\n\r")
-	s.selection.selAnchorLine = 0
-	s.selection.selAnchorCol = 0
-	s.selection.selEndLine = 0
-	s.selection.selEndCol = 0
+	text := s.selection.SelectedText(s.rows)
+
+	s.selection.Clear()
 	if inlineAction != nil {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint, Action: inlineAction}
 	}
@@ -258,7 +261,7 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 	}
 	var cmd tea.Cmd
 	if text != "" {
-		cmd = rendering.CopyToClipboardCmd(text)
+		cmd = s.copyText(text)
 	}
 	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 }
@@ -332,6 +335,7 @@ func (s *Screen) handleSelectionTick() ui.EventResult {
 		}
 	}
 
+	s.selection.captureSource(s.rows)
 	if s.selection.selMouseY <= -1 || s.selection.selMouseY >= viewportH {
 		return ui.EventResult{
 			Handled:    true,
@@ -347,4 +351,35 @@ func selectionTickCmd() tea.Cmd {
 	return tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
 		return types.SelectionTickMsg(t)
 	})
+}
+
+func (s *textSelection) captureSource(rows []chatprojection.MessageRow) {
+	a, aok := chatprojection.AnchorAt(rows, s.selAnchorLine, s.selAnchorCol)
+	b, bok := chatprojection.AnchorAt(rows, s.selEndLine, s.selEndCol)
+	s.anchorSource, s.endSource, s.sourceAnchored = a, b, aok && bok
+}
+func (s *textSelection) reflow(rows []chatprojection.MessageRow) {
+	if !s.selecting || !s.sourceAnchored {
+		return
+	}
+	a, ac, aok := chatprojection.LocateAnchor(rows, s.anchorSource)
+	b, bc, bok := chatprojection.LocateAnchor(rows, s.endSource)
+	if !aok || !bok {
+		s.Clear()
+		return
+	}
+	s.selAnchorLine, s.selAnchorCol, s.selEndLine, s.selEndCol = a, ac, b, bc
+	s.captureSource(rows)
+}
+
+// One semantic text owns its logical order even when table layout interleaves
+// neighboring cells between its wrapped rows. Copy and highlight use this same
+// range; mixed-source selections still collect the selected mapped runs.
+func (s *textSelection) sourceRange() (rendering.CopyRange, bool) {
+	a, b := s.anchorSource, s.endSource
+	if !s.selecting || !s.sourceAnchored || a.Source != b.Source || a.Offset == b.Offset {
+		return rendering.CopyRange{}, false
+	}
+	source := rendering.CopyRange{Text: a.Source, Start: min(a.Offset, b.Offset), End: max(a.Offset, b.Offset)}
+	return source, source.Valid()
 }
