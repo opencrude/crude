@@ -716,10 +716,10 @@ func (s *Screen) loadEditor(record memory.Record) {
 	s.formModel = ui.NewFormModel()
 	for index, field := range []*ui.FieldState{
 		{Label: "Title", Type: ui.FieldText, Required: true},
-		{Label: "Content", Type: ui.FieldTextArea, Rows: 6, Required: true},
+		{Label: "Content", Type: ui.FieldTextArea, Rows: 8, Required: true},
 		{Label: "Applies when", Type: ui.FieldTextArea, Rows: 2},
-		{Label: "Scope paths (one per line)", Type: ui.FieldTextArea, Rows: 2},
-		{Label: "Evidence", Type: ui.FieldTextArea, Rows: 3, ReadOnly: true},
+		{Label: "Scope paths", Type: ui.FieldTextArea, Rows: 2, Placeholder: "One path per line"},
+		{Label: "Evidence", Type: ui.FieldTextArea, Rows: evidenceRows(values[4].value), ReadOnly: true},
 	} {
 		field.ID, field.Value = values[index].id, ui.StringValue(values[index].value)
 		field.Initial = field.Value
@@ -727,6 +727,9 @@ func (s *Screen) loadEditor(record memory.Record) {
 	}
 	s.form = ui.NewDockedForm(FormID, s.formModel, "", "", s.tokens)
 	s.form.SetCompact(false)
+	// A memory is a short document: its text gets the whole panel width
+	// rather than the settings reading measure.
+	s.form.SetFillWidth(true)
 	s.form.SetFieldGap(0)
 	s.form.SetChordAction("ctrl+s", "memorybrowser.save")
 	s.wireCorrectionClipboard()

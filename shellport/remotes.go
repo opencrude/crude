@@ -34,6 +34,8 @@ type RemoteStatus struct {
 	RTT         time.Duration
 	Notice      string
 	CoreBuildID string
+	// CoreStartedAt is the attached core process start; zero when unknown.
+	CoreStartedAt time.Time
 }
 
 // BackendLink projects the attached SDK session without network work on Update.

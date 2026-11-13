@@ -2868,7 +2868,9 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
 	}
 	r.session.logger.Info("EXEC", "subagent_auto_start", "agent_id", a.AgentID, "pid", uc.PID(), "cmd", cmd)
-	return awaitCommandWithPromotion(ctx, mgr, uc, r.session.logger, string(a.AgentID))
+	observe, stopObserving := context.WithCancel(ctx)
+	defer stopObserving()
+	return awaitCommandWithPromotion(ctx, mgr, uc, r.session.logger, string(a.AgentID), r.session.humanInputWake(observe, string(a.AgentID)))
 }
 
 func generateShortID() string {

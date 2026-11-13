@@ -578,3 +578,30 @@ func TestBrowserNarrowSearchMoreRetainsActionsAndQuery(t *testing.T) {
 		t.Fatal("list Tab did not focus the aligned More control")
 	}
 }
+
+// A memory's text uses the panel width instead of the 60-column settings
+// measure, and evidence spends no rows on identities that were not recorded.
+func TestBrowserEditorUsesPanelWidthAndCompactEvidence(t *testing.T) {
+	records := testRecords()
+	records[0].Content = strings.TrimSpace(strings.Repeat("alpha ", 30))
+	records[0].Evidence = []memory.Evidence{{SessionID: "s1", Kind: memory.EvidenceUser, Outcome: memory.OutcomeUnmeasured, Summary: "Owner said so"}}
+	_, host := browserHost(t, records)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.MarkLayout()
+	text := bufferText(paintHost(host, 150, 30))
+	widest := 0
+	for _, line := range strings.Split(text, "\n") {
+		widest = max(widest, strings.Count(line, "alpha"))
+	}
+	if widest < 15 {
+		t.Fatalf("content wraps at the narrow settings measure (%d words on its widest row):\n%s", widest, text)
+	}
+	for _, unwanted := range []string{"Message:", "Tool call:", "Not recorded", "(one per line)"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("editor still spends space on %q:\n%s", unwanted, text)
+		}
+	}
+	if !strings.Contains(text, "1. user statement · unmeasured · session s1") || !strings.Contains(text, "Owner said so") {
+		t.Fatalf("evidence lost its facts:\n%s", text)
+	}
+}

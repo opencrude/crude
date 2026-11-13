@@ -206,7 +206,18 @@ type AgentsSettings struct {
 	// Shell is the agent command shell: AgentShellAuto (or empty) or a
 	// detected TerminalShell ID. It applies to every agent's commands.
 	Shell string `json:"shell,omitempty"`
+	// MaxWaitMinutes bounds every agent wait (wait, agent_wait); zero is
+	// Auto (DefaultMaxWaitMinutes). A longer request ends at the bound and
+	// the agent may wait again.
+	MaxWaitMinutes int `json:"max_wait_minutes,omitempty"`
 }
+
+// DefaultMaxWaitMinutes is the Auto bound on one agent wait; MaxWaitMinutesLimit
+// is the largest value Settings accepts.
+const (
+	DefaultMaxWaitMinutes = 10
+	MaxWaitMinutesLimit   = 240
+)
 
 // AgentProfileSettings is a named, reusable specialization of a built-in role.
 type AgentProfileSettings struct {

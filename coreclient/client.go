@@ -74,6 +74,7 @@ type Client struct {
 	grace         time.Duration
 	localHost     bool
 	coreBuildID   string
+	coreStarted   time.Time
 	carrierChange chan struct{} // cancellation-aware carrier ownership gate
 	lifetime      context.Context
 	cancel        context.CancelFunc
@@ -267,7 +268,7 @@ func DialWithOptions(ctx context.Context, dial Dialer, clientID string, options 
 		return nil, err
 	}
 	lifetime, lifetimeCancel := context.WithCancel(context.Background())
-	c := &Client{dial: dial, lifetime: lifetime, cancel: lifetimeCancel, clientID: clientID, carrierChange: make(chan struct{}, 1), owner: welcome.Owner, resume: coreprotocol.SessionResume{SessionID: welcome.SessionID, Secret: welcome.Secret}, grace: welcome.Grace, localHost: welcome.LocalHost, coreBuildID: welcome.CoreBuildID,
+	c := &Client{dial: dial, lifetime: lifetime, cancel: lifetimeCancel, clientID: clientID, carrierChange: make(chan struct{}, 1), owner: welcome.Owner, resume: coreprotocol.SessionResume{SessionID: welcome.SessionID, Secret: welcome.Secret}, grace: welcome.Grace, localHost: welcome.LocalHost, coreBuildID: welcome.CoreBuildID, coreStarted: welcome.CoreStartedAt,
 		carrier: conn, control: control, ready: make(chan struct{}), done: make(chan struct{}), stopped: make(chan struct{}), controlEnded: make(chan struct{}, 1),
 		privateEffects: make(chan PrivateEffect), privateWake: make(chan struct{}, 1), controls: make(chan coreprotocol.ControlEnvelope, coreprotocol.ControlMaxOutstanding),
 		controlReceived: make(map[string]*receivedControl), hosts: newHostInbox(),
@@ -621,6 +622,10 @@ func (c *Client) reconnect() (corewire.Conn, corewire.Stream, error) {
 // CoreBuildID is the image identity observed at this session's handshake.
 // A different core process requires a fresh session, not a relabelled resume.
 func (c *Client) CoreBuildID() string { return c.coreBuildID }
+
+// CoreStartedAt is when the attached core process started, as reported at
+// this session's handshake; zero when the core did not report it.
+func (c *Client) CoreStartedAt() time.Time { return c.coreStarted }
 
 func randomID() string {
 	var id [16]byte

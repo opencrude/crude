@@ -175,7 +175,11 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 				return tools.ToolResult{}, fmt.Errorf("wait: seconds must be > 0")
 			}
 			s.logger.Info("TOOL", "wait", "seconds", seconds)
-			dur := time.Duration(seconds * float64(time.Second))
+			dur, bounded := s.boundWait(time.Duration(seconds * float64(time.Second)))
+			waited := fmt.Sprintf("Waited %.1f seconds.", dur.Seconds())
+			if bounded {
+				waited += " " + waitBoundNote(dur)
+			}
 			identity, _ := ctx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
 			if store := s.CollaborationStore(); store != nil && identity.AgentID != "" {
 				observation, err := s.waitForCollaborationDuration(ctx, store, nil, dur)
@@ -184,7 +188,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 				}
 				switch observation.Status {
 				case "timeout_no_match":
-					return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
+					return tools.ToolResult{Content: waited}, nil
 				case "caller_interrupted":
 					return tools.ToolResult{Content: "Wait cancelled", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, nil
 				case "directed_event":
@@ -197,7 +201,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			defer timer.Stop()
 			select {
 			case <-timer.C:
-				return tools.ToolResult{Content: fmt.Sprintf("Waited %.1f seconds.", seconds)}, nil
+				return tools.ToolResult{Content: waited}, nil
 			case <-ctx.Done():
 				return tools.ToolResult{Content: "Wait cancelled", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, nil
 			}
@@ -336,5 +340,8 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
 	}
 	s.logger.Info("EXEC", "auto_start", "pid", uc.PID(), "cmd", cmd)
-	return awaitCommandWithPromotion(ctx, s.asyncMgr, uc, s.logger, "")
+	identity, _ := ctx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
+	observe, stopObserving := context.WithCancel(ctx)
+	defer stopObserving()
+	return awaitCommandWithPromotion(ctx, s.asyncMgr, uc, s.logger, "", s.humanInputWake(observe, identity.AgentID))
 }

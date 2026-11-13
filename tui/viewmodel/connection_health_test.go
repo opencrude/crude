@@ -321,3 +321,25 @@ func TestConnectionHealthSelectionKeepsOwnershipAndCopies(t *testing.T) {
 		t.Fatalf("live refresh did not resume after selection: %s", text)
 	}
 }
+
+func TestConnectionDetailsShowTUIAndCoreUptime(t *testing.T) {
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	h := connectionHealth{
+		name: "Local", tuiBuildID: "tui", tuiStarted: now.Add(-65 * time.Minute), now: now,
+		status: shellport.RemoteStatus{State: "connected", Carrier: "local", CoreBuildID: "core", CoreStartedAt: now.Add(-51 * time.Hour)},
+	}
+	detail := h.projection().Detail
+	for _, want := range []string{"TUI uptime   1h 5m", "Core uptime  2d 3h"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("connection details lack %q:\n%s", want, detail)
+		}
+	}
+	h.status = shellport.RemoteStatus{State: "reconnecting", CoreStartedAt: now.Add(-90 * time.Second)}
+	if detail := h.projection().Detail; !strings.Contains(detail, "Core uptime  1m 30s · last connection") {
+		t.Fatalf("a lost link must label core uptime as last observed:\n%s", detail)
+	}
+	h.status = shellport.RemoteStatus{State: "connected"}
+	if detail := h.projection().Detail; !strings.Contains(detail, "Core uptime  Not observed") {
+		t.Fatalf("unknown core start must not invent an uptime:\n%s", detail)
+	}
+}
