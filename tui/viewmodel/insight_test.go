@@ -126,7 +126,9 @@ func TestInsightPreMountAckAndStaleWorkspaceFence(t *testing.T) {
 
 func TestInsightCoverageDoesNotMeanNoCompilerErrors(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
-		grantSemanticFixture(t, w)
+		// Syntax needs no execution grant. Keep this syntax-only fixture
+		// restricted instead of probing language servers installed on the host.
+		restrictFixture(t, w)
 	})
 	root := t.TempDir()
 	path := filepath.Join(root, "unknown.cr")
@@ -141,7 +143,7 @@ func TestInsightCoverageDoesNotMeanNoCompilerErrors(t *testing.T) {
 	})
 	shell.app.View()
 	_, metrics, _ := shell.app.activeHeaderContext()
-	if metrics != "" {
-		t.Fatalf("unsupported native syntax disguised as semantic success: %q", metrics)
+	if metrics != "Restricted mode" {
+		t.Fatalf("unsupported native syntax must retain the real execution status, got %q", metrics)
 	}
 }

@@ -22,6 +22,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 // Capture sequentially with scripts/tuishot.sh, a prebuilt viewmodel test binary,
@@ -597,23 +598,35 @@ func (m *lspVisualModel) journeyLSPNumericSnippet(phase int, do func(string, any
 }
 
 func lspVisualProcesses(root, executable string) ([]int, error) {
-	entries, err := os.ReadDir("/proc")
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return nil, err
+	}
+	executableInfo, err := os.Stat(executable)
+	if err != nil {
+		return nil, err
+	}
+	processes, err := process.Processes()
 	if err != nil {
 		return nil, err
 	}
 	var pids []int
-	for _, entry := range entries {
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil {
+	for _, candidate := range processes {
+		exe, err := candidate.Exe()
+		if err != nil || exe == "" {
 			continue
 		}
-		proc := filepath.Join("/proc", entry.Name())
-		exe, err := os.Readlink(filepath.Join(proc, "exe"))
-		if err != nil || exe != executable {
+		info, err := os.Stat(exe)
+		if err != nil || !os.SameFile(executableInfo, info) {
 			continue
 		}
-		if cwd, err := os.Readlink(filepath.Join(proc, "cwd")); err == nil && cwd == root {
-			pids = append(pids, pid)
+		cwd, err := candidate.Cwd()
+		if err != nil || cwd == "" {
+			continue
+		}
+		info, err = os.Stat(cwd)
+		if err == nil && os.SameFile(rootInfo, info) {
+			pids = append(pids, int(candidate.Pid))
 		}
 	}
 	return pids, nil

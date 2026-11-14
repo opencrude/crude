@@ -12,6 +12,12 @@ import (
 func opsEditor(t *testing.T, name, content string) *Editor {
 	t.Helper()
 	e := New(theme.DefaultDark())
+	t.Cleanup(func() {
+		closeSyntax(e)
+		if done := e.RowsDone(); done != nil {
+			<-done
+		}
+	})
 	e.filePath = name
 	e.title = name
 	if content != "" {

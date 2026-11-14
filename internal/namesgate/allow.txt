@@ -2,6 +2,8 @@
 # Each line covers one literal in one file. These files use a name that the
 # catalog also knows, for a purpose that is not code intelligence.
 app/core_restart.go	.json	Crude's own restart record file.
+types/language_servers.go	.cmd	Native Windows command-wrapper suffix matching, not project language recognition.
+types/language_servers.go	.bat	Native Windows command-wrapper suffix matching, not project language recognition.
 core/control_execution_resources.go	.gitattributes	Git LFS tracking writes this Git-defined repository file; enforce execution claims, not language detection.
 docconv/docconv.go	.ipynb	Document conversion for read_file and web_fetch, not language support.
 search/web.go	.ipynb	Maps a web MIME type to the document converter.

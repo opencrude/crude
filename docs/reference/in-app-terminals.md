@@ -10,8 +10,8 @@ not Ghostty. Emulation is **libghostty-vt** at the commit in
 `CGO_ENABLED=0` builds compile a stub that returns an error from
 `terminalvt.New`; they do not keep a hand-written parser.
 
-`go.mitchellh.com/libghostty` requires Go 1.26. Crude stays on Go 1.25 and
-owns the adapter instead of that module.
+Crude uses Go 1.27.4 and retains its local cgo adapter. The toolchain upgrade
+does not change the pinned native library or adopt `go.mitchellh.com/libghostty`.
 
 Bootstrap: `scripts/bootstrap_libghostty.sh` (Zig 0.16.x under `~/tools`,
 `tic` from ncurses-bin).

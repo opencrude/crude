@@ -34,7 +34,7 @@ func New(id LanguageID) (*Session, error) {
 	query, queryErr := ts.NewQuery(g.language, g.query)
 	if queryErr != nil {
 		parser.Close()
-		return nil, fmt.Errorf("syntax highlight query: %w", queryErr)
+		return nil, fmt.Errorf("syntax highlight query: %w", *queryErr)
 	}
 	return &Session{parser: parser, query: query, identity: g.identity}, nil
 }

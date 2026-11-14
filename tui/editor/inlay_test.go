@@ -21,7 +21,7 @@ import (
 func newInlayTestEditor(t testing.TB, text string) *Editor {
 	t.Helper()
 	e := New(theme.DefaultDark())
-	t.Cleanup(e.Close)
+	t.Cleanup(func() { closeSyntax(e) })
 	s := document.Snapshot{
 		ID: "inlay-document", Path: "/virtual/inlay.txt", Revision: 41,
 		AnalysisGeneration: "inlay-workspace", AnalysisLifetime: "inlay-open",

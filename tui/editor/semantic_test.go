@@ -127,6 +127,7 @@ func BenchmarkSemanticEditingDense(b *testing.B) {
 		for _, stage := range []string{"mutation", "paint", "stable_paint"} {
 			b.Run(fmt.Sprintf("semantic%t/%s", enabled, stage), func(b *testing.B) {
 				e := newInlayTestEditor(b, strings.Repeat(line, lines))
+				defer closeSyntax(e)
 				spans := make([]types.LSPSemanticSpan, lines)
 				for i := range spans {
 					spans[i] = types.LSPSemanticSpan{Start: i * len(line), End: i*len(line) + 5, Type: 0}
@@ -180,7 +181,11 @@ func BenchmarkSemanticEditingDense(b *testing.B) {
 					joinSyntax(b, e)
 					if stage == "paint" {
 						e.HandleEvent(key)
-						joinSyntax(b, e)
+						// The shell drains SyntaxCommand after input. HandleEvent
+						// alone does not admit the new source job, so joining only
+						// an old job let Render start source work inside this
+						// paint-only sample.
+						settleSyntax(b, e)
 					}
 					b.StartTimer()
 					switch stage {

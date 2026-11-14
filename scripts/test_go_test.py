@@ -23,13 +23,20 @@ class GoGroupsTests(unittest.TestCase):
         self.assertEqual(test_go.partition(["TestOne"]), [["TestOne"]])
         self.assertFalse(re.fullmatch(test_go.pattern(["TestOne"]), "TestOneMore"))
 
+    def test_growing_inventory_keeps_each_group_bounded(self):
+        names = [f"TestCase{i}" for i in range(1649)] + list(test_go.STRESS_TESTS)
+        groups = test_go.partition(names)
+        self.assertCountEqual([name for group in groups for name in group], names)
+        self.assertTrue(all(0 < len(group) <= 200 for group in groups))
+        self.assertEqual(groups[-1], ["TestUploadBlackholeRecoveryDurableOwners"])
+
     def test_both_modes_run_every_package_and_case_once(self):
         names = ["TestFirst", "TestLast", "ExampleUsage", "FuzzParser", "TestUploadBlackholeRecoveryDurableOwners"]
         for race in (False, True):
             with self.subTest(race=race):
                 commands = []
                 listing = "\n".join([*names, "BenchmarkNotATest", "ok ignored timing output"])
-                outputs = ["crude/a\ncrude/app\ncrude/session\ncrude/tui/viewmodel\ncrude/workspace\ncrude/z\n", listing, listing, listing, listing]
+                outputs = ["crude/a\ncrude/app\ncrude/core\ncrude/session\ncrude/tui/viewmodel\ncrude/workspace\ncrude/z\n", listing, listing, listing, listing, listing]
                 with mock.patch.object(test_go.subprocess, "check_output", side_effect=outputs), \
                      mock.patch.object(test_go, "run", side_effect=commands.append):
                     test_go.main(["--race"] if race else [])
@@ -39,7 +46,7 @@ class GoGroupsTests(unittest.TestCase):
                     self.assertIn("-count=1", command)
                     self.assertIn("-timeout=300s" if race else "-timeout=180s", command)
                     self.assertNotIn("-skip", command)
-                for package in ("./app", "./session", "./tui/viewmodel", "./workspace"):
+                for package in ("./app", "./core", "./session", "./tui/viewmodel", "./workspace"):
                     patterns = [command[-1] for command in commands if package in command]
                     for name in names:
                         self.assertEqual(sum(bool(re.fullmatch(pattern, name)) for pattern in patterns), 1)

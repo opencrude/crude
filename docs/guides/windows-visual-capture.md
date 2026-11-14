@@ -43,8 +43,12 @@ From the repository root:
 pwsh scripts/tuishot.ps1 .\tmp\crude-shots
 ```
 
-The script saves `01-boot.png`, prints the exact HWND and client geometry, and
-closes the dedicated window before returning.
+Use `-WindowX` and `-WindowY` to place the dedicated window on a second monitor.
+Negative coordinates are supported. For example, `-WindowX -1900 -WindowY 0`
+selects a display to the left of the main display without changing its profile.
+
+The script saves `01-boot.png`, prints the exact HWND, client geometry and
+requested grid, and closes the dedicated window before returning.
 
 Capture tests must not call `t.Log`, `t.Error`, `t.Fatal`, `fmt.Print` or another
 raw terminal writer while the TUI runs. Keep findings in the visual model.
@@ -121,6 +125,8 @@ Available steps:
 | Step | Meaning |
 |---|---|
 | `key:<spec>` | Send one key or chord. |
+| `await:<literal line>` | Wait for an exact line in a new `CRUDE_CAPTURE_EVIDENCE` file. |
+| `quit:<spec>` | Send the final key and require a clean product exit. |
 | `type:<text>` | Send literal Unicode text. |
 | `move:<col>,<row>` | Move the pointer to a cell. |
 | `click:<col>,<row>[,<button>]` | Click left (1), middle (2), or right (3). |
@@ -131,9 +137,20 @@ Available steps:
 | `sleep:<seconds>` | Wait without capturing. |
 | `shot[:label]` | Save an additional screenshot. |
 
+Ready waits fail if the product exits or the window closes. A previous run's
+evidence is refused. `quit:` must be the last step; it checks the product exit,
+not only the terminal window. Run `pwsh scripts/test_tuishot.ps1` for the wait
+and exit regressions without opening a window.
+
 Windows Terminal is launched in focus mode with `--size <columns>,<rows>`.
-This removes tab-strip ambiguity and lets the script map the client rectangle
-directly to the requested terminal grid.
+This removes tab-strip ambiguity. Profile padding can make the actual grid
+smaller than the requested size; acceptance fixtures must record their received
+window size and use their published hit targets. Pointer steps measure an actual
+cell through the exact window's text provider, excluding profile padding and
+scrollbars. Win32 and
+text-provider measurements use per-monitor physical coordinates, including
+negative desktop positions and different display scaling. A missing grid fails
+closed instead of guessing from the full client rectangle.
 
 ## Safety and ownership
 
@@ -172,6 +189,7 @@ Parameters may be passed directly or supplied through environment variables:
 |---|---|---:|
 | `-Cols` | `COLS` | 160 |
 | `-Rows` | `ROWS` | 40 |
+| `-WindowX`, `-WindowY` | — | 0, 0 |
 | `-PaintWait` | `PAINT_WAIT` | 5 seconds |
 | `-StepWait` | `STEP_WAIT` | 0.7 seconds |
 | `-CrudeBin` | `CRUDE_BIN` | build a temporary binary |

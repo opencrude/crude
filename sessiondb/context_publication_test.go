@@ -106,6 +106,12 @@ func BenchmarkPublishContextRecoveryImage(b *testing.B) {
 				b.Fatal(err)
 			}
 			checkpoint := RecoveryCheckpoint{Status: recovery.Status{ID: "incident", AgentID: "root", Generation: 1}, PendingInput: provider.PlainInput("inspect image"), InputAdmitted: true, Archive: state.Messages, ActiveContext: state.Messages}
+			// Measure repeated publication of the same immutable image, not a
+			// cold cache fill amortized over a machine-dependent iteration count.
+			state, err = PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", RuntimeAgentID: "root", ExpectedRevision: state.Revision, Recovery: &checkpoint})
+			if err != nil {
+				b.Fatal(err)
+			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
