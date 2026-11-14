@@ -33,23 +33,18 @@ func TestLSPIssuesFollowTheRestartBudget(t *testing.T) {
 	}
 }
 
-// The user's example: clangd reports a missing header in the project's C
-// files. A server whose closed files Crude checks and that finds errors in
-// more than one file, and in at least one in five of them, probably cannot
-// see the project. A server that reports the project itself sends only files
-// with problems, so the ratio says nothing about it.
+// The user's example: clangd reports a missing header in the project's only
+// C header, one checked file of one. A server whose closed files Crude checks
+// and that finds errors in at least one in five of them probably cannot see
+// the project. A server that reports the project itself sends only files with
+// problems, so the ratio says nothing about it.
 func TestLSPIssueForAServerThatCannotSeeTheProject(t *testing.T) {
 	clangd := ttypes.LSPServerHealth{ID: "c", Name: "clangd", Status: "Connected", Scope: ttypes.CoverageOpenFiles,
-		FilesTracked: 2, FilesAffected: 2, Errors: 19}
+		FilesTracked: 1, FilesAffected: 1, Errors: 21}
 	issues := lspIssues([]ttypes.LSPServerHealth{clangd})
 	if len(issues) != 1 || issues[0].ID != "lsp-results:c" || !issues[0].Investigate ||
-		issues[0].Summary != "clangd reports errors in 2 of 2 checked files" {
+		issues[0].Summary != "clangd reports errors in many of the files it checked" {
 		t.Fatalf("issues = %+v", issues)
-	}
-	// Counts change while the cause stays the same: the detail is stable.
-	clangd.FilesTracked, clangd.FilesAffected = 3, 2
-	if again := lspIssues([]ttypes.LSPServerHealth{clangd}); len(again) != 1 || again[0].Detail != issues[0].Detail {
-		t.Fatalf("the cause changed with the counts: %+v", again)
 	}
 	healthy := clangd
 	healthy.FilesTracked, healthy.FilesAffected = 40, 3
@@ -60,6 +55,29 @@ func TestLSPIssueForAServerThatCannotSeeTheProject(t *testing.T) {
 	}
 }
 
+// Found after a real core restart: the issue text carried the counts ("7 of
+// 13 checked files"). Each file that the closed-file check finished made a
+// new report, so the issue never stayed the same for the settle time and
+// Aeron never heard about it. While Crude checks files, the report and its
+// time do not change.
+func TestLSPIssueStaysTheSameReportWhileCountsChange(t *testing.T) {
+	center := NewStatusCenter(nil, nil)
+	pyright := ttypes.LSPServerHealth{ID: "py", Name: "pyright-langserver", Status: "Connected", Scope: ttypes.CoverageOpenFiles,
+		FilesTracked: 3, FilesAffected: 2, Errors: 5}
+	syncLSPIssuesFrom(center, []ttypes.LSPServerHealth{pyright}, ttypes.AssemblyPlan{})
+	first := center.Issues()
+	if len(first) != 1 {
+		t.Fatalf("issues = %+v", first)
+	}
+	for tracked := 4; tracked <= 13; tracked++ {
+		pyright.FilesTracked, pyright.FilesAffected = tracked, tracked/2
+		syncLSPIssuesFrom(center, []ttypes.LSPServerHealth{pyright}, ttypes.AssemblyPlan{})
+	}
+	if again := center.Issues(); len(again) != 1 || !again[0].UpdatedAt.Equal(first[0].UpdatedAt) || !again[0].ResolvedAt.IsZero() {
+		t.Fatalf("new counts made a new report: before %+v after %+v", first, again)
+	}
+}
+
 // An error message from the server itself, such as a failed workspace load,
 // is a problem even while the server runs.
 func TestLSPIssueForAServerErrorMessage(t *testing.T) {
@@ -67,19 +85,6 @@ func TestLSPIssueForAServerErrorMessage(t *testing.T) {
 		ErrorMessage: "Failed to load workspaces."}})
 	if len(issues) != 1 || issues[0].ID != "lsp-message:r" || !issues[0].Investigate || issues[0].Detail != "Failed to load workspaces." {
 		t.Fatalf("issues = %+v", issues)
-	}
-}
-
-// Found live: one Dockerfile, one YAML file or one TypeScript file with real
-// errors raised "the server cannot find the project's headers" and woke Aeron
-// for an ordinary error in that file. One file is never "many files".
-func TestLSPIssueIgnoresErrorsInASingleFile(t *testing.T) {
-	for _, tracked := range []int{1, 2, 5} {
-		server := ttypes.LSPServerHealth{ID: "d", Name: "docker-langserver", Status: "Connected", Scope: ttypes.CoverageOpenFiles,
-			FilesTracked: tracked, FilesAffected: 1, Errors: 2}
-		if issues := lspIssues([]ttypes.LSPServerHealth{server}); len(issues) != 0 {
-			t.Fatalf("errors in 1 of %d files raised %+v", tracked, issues)
-		}
 	}
 }
 

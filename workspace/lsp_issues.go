@@ -26,7 +26,7 @@ func SyncLSPIssues(center *StatusCenter, manager *LSPManager) {
 	if center == nil || manager == nil {
 		return
 	}
-	syncLSPIssuesFrom(center, manager.ServerHealthSnapshots(), manager.Assembly())
+	syncLSPIssuesFrom(center, append(manager.ServerHealthSnapshots(), manager.retainedResultHealth()...), manager.Assembly())
 }
 
 func syncLSPIssuesFrom(center *StatusCenter, servers []ttypes.LSPServerHealth, plan ttypes.AssemblyPlan) {
@@ -60,12 +60,14 @@ func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
 			})
 		}
 		if lspResultsSuspect(server) {
-			// The detail stays the same while the counts change, so the
-			// workspace Aeron hears about it once, not on every new count.
+			// Summary and detail do not carry the counts. The counts change
+			// while Crude checks files; the issue must stay the same report so
+			// that it settles and the workspace Aeron hears about it once.
+			// diagnostics.workspace shows the current counts.
 			out = append(out, ttypes.IssueSnapshot{
 				ID: lspResultsIssuePrefix + server.ID, Owner: owner, Severity: ttypes.SeverityWarning,
-				Summary:     fmt.Sprintf("%s reports errors in %d of %d checked files", server.Name, server.FilesAffected, server.FilesTracked),
-				Detail:      "Errors in many files often mean that the server cannot find the project's headers, modules or build settings.",
+				Summary:     server.Name + " reports errors in many of the files it checked",
+				Detail:      "Errors in at least one in five checked files often mean that the server cannot find the project's headers, modules or build settings.",
 				Investigate: true,
 			})
 		}
@@ -74,14 +76,15 @@ func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
 }
 
 // lspResultsSuspect is the one structural rule for a server that cannot see
-// the project: errors in more than one file, and in at least one in five of
-// the files it checked. One file with errors is an error in that file, not a
-// sign about the project. The rule applies only to servers whose closed files
-// Crude checks, because a server that reports the project itself sends
-// results only for files with problems.
+// the project: errors in at least one in five of the files it checked. The
+// project's only C header with a missing include is one file of one, so one
+// file counts. The workspace Aeron tells a misconfiguration from errors in
+// the user's code and asks only about the first. The rule applies only to
+// servers whose closed files Crude checks, because a server that reports the
+// project itself sends results only for files with problems.
 func lspResultsSuspect(server ttypes.LSPServerHealth) bool {
 	return server.Error == "" && server.Scope == ttypes.CoverageOpenFiles &&
-		server.FilesAffected >= 2 && server.FilesAffected*5 >= server.FilesTracked
+		server.FilesAffected > 0 && server.FilesAffected*5 >= server.FilesTracked
 }
 
 // lspCommandIssues reports language servers that the user's settings name but

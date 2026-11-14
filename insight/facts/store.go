@@ -94,7 +94,9 @@ func (s *Store) CanPublishWithReserve(p types.InsightDiagnosticPublication, docu
 // ContextSummary counts only published, non-stale results, grouped by the
 // authoritative context ID. FilesAffected means files with an error, not
 // warnings only. Observation timestamps are store-owned and never provider data.
+// Provider is the producer that published the results.
 type ContextSummary struct {
+	Provider                             string
 	FilesTracked, FilesAffected          int
 	Errors, Warnings, Information, Hints int
 	LastDiagnostics                      time.Time
@@ -112,6 +114,9 @@ func (s *Store) ContextSummaries() map[string]ContextSummary {
 		}
 		id, path := a.Boundary.Context.ID, a.Boundary.Source.Path
 		summary := out[id]
+		if summary.Provider == "" {
+			summary.Provider = a.Boundary.Producer.Provider
+		}
 		if files[id] == nil {
 			files[id] = make(map[string]bool)
 		}
