@@ -39,6 +39,9 @@ type discoveredLanguage struct {
 	files    int
 	sample   string
 	depth    int
+	// paths lists the language's files for the project check. The listing
+	// bound (assemblyMaxEntries) also bounds it.
+	paths []string
 }
 
 type assemblyDiscovery struct {
@@ -189,6 +192,7 @@ func discoverProjectLanguagesBounded(ctx context.Context, root string, settings 
 			out.languages[id] = found
 		}
 		found.files++
+		found.paths = append(found.paths, entry.Path)
 		if entry.Depth < found.depth || entry.Depth == found.depth && entry.Path < found.sample {
 			found.sample, found.depth = entry.Path, entry.Depth
 		}
@@ -344,7 +348,7 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 			}
 			language.Status = ttypes.ToolReady
 			language.Scope = ttypes.CoverageOpenFiles
-			language.Reason = "Checks open files only."
+			language.Reason = openFilesCoverage(settings)
 			if spec.DiagnosticScope == ttypes.CoverageProject {
 				language.Scope = ttypes.CoverageProject
 				language.Root, _ = fileuri.ToPath(resolveLSPRoot(found.sample, root, spec.RootMarkers, spec.WorkspaceRootMarkers))

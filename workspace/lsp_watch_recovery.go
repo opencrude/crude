@@ -21,6 +21,9 @@ func (m *LSPManager) SetProjectWatchReliable(reliable bool) {
 	m.cancelAssemblyInvalidationLocked()
 	m.invalidateAssemblyDiscoveryLocked()
 	if reliable {
+		m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true },
+			"File observation resumed. Crude will check this file again.")
+		m.requestProjectCheckLocked()
 		// The lost watch generation may have missed ignores or an entire source
 		// subtree. Refresh even if there are no active project producers.
 		m.scheduleAssemblyInvalidationLocked(context.Background())

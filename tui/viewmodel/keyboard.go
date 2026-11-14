@@ -644,6 +644,11 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m.handleTextOverlayKey(msg, &cmds)
 
 		default:
+			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok && msg.Code == tea.KeyEsc {
+				if screen := m.termScreens[id]; screen != nil && screen.ReadOnly() && !screen.HasSelection() {
+					return m, m.closePopupWindowByID(fw.ID)
+				}
+			}
 			if ui.IsTerminalOverlay(ui.OverlayID(fw.ID)) {
 				if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 					cmds = append(cmds, cmd)

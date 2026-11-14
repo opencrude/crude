@@ -45,6 +45,7 @@ type LSPIntegration struct {
 	// memory-only; construction and joined cancellation still belong here.
 	startAdmission func() error
 	launch         *lspLaunch
+	evidence       *serverEvidence // latest launch, retained after Stop or failed initialization
 	stop           *lspStop
 	teardownErr    error
 	rootURI        string
@@ -92,6 +93,7 @@ func WithServerEnv(env map[string]string) LSPIntegrationOption {
 }
 
 type lspLaunch struct {
+	evidence   *serverEvidence
 	cancel     context.CancelFunc
 	done       chan struct{}
 	client     *lsp.Client
@@ -257,7 +259,8 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 	}
 	started := time.Now()
 	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	launch := &lspLaunch{cancel: cancel, done: make(chan struct{})}
+	launch := &lspLaunch{cancel: cancel, done: make(chan struct{}), evidence: &serverEvidence{}}
+	l.evidence = launch.evidence
 	l.launch = launch
 	l.mu.Unlock()
 	defer cancel()
@@ -274,6 +277,7 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 		client, err = lsp.NewClient(lsp.ClientConfig{
 			Command: l.serverCmd, Args: l.serverArgs, RootURI: l.rootURI,
 			Environment: l.environment, Configuration: l.config, InitOptions: l.initOptions,
+			StderrSink: launch.evidence.stderr,
 			TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
 				nr, nw, mon := wrapLSPPipe(reader, writer)
 				pipe = mon
@@ -302,7 +306,11 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 				return l.captureShowDocument(client, params)
 			})
 			client.RegisterNotificationHandler("window/showMessage", func(_ context.Context, _ string, params json.RawMessage) {
+				l.captureServerMessage(launch, "window/showMessage", params)
 				l.captureShowMessage(client, params)
+			})
+			client.RegisterNotificationHandler("window/logMessage", func(_ context.Context, _ string, params json.RawMessage) {
+				l.captureServerMessage(launch, "window/logMessage", params)
 			})
 			client.RegisterNotificationHandler("$/progress", func(_ context.Context, _ string, params json.RawMessage) {
 				var progress struct {
@@ -874,6 +882,14 @@ func (l *LSPIntegration) updateProgress(launch *lspLaunch, token, kind string) {
 		return
 	}
 	l.signalLocked()
+}
+
+// Busy reports active work-done progress, such as an initial project load.
+// The manager uses it to tell a settled project report from one in flight.
+func (l *LSPIntegration) Busy() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.progress) > 0
 }
 
 // Settled diagnostics bound how long a quiet server is trusted: the wait after

@@ -38,7 +38,7 @@ func TestConnectedPanelNavigationCannotLaunchTerminal(t *testing.T) {
 		}
 		return external.Call(t.Context(), coreprotocol.Request{ID: id, Owner: external.Owner, WorkspaceID: target.WorkspaceID, Method: method, Payload: raw})
 	}
-	if out := call("attach", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}); out.Error != nil {
+	if out := call("attach", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); out.Error != nil {
 		t.Fatal(out.Error)
 	}
 	if out := call("grant", coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write}, Shell: target.Shell}); out.Error != nil {

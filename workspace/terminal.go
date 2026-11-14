@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -149,7 +150,11 @@ type TerminalManager struct {
 	root       string
 	host       HostInfo
 	settings   ttypes.TerminalSettings
-	nextNumber int
+	// shellEnvironment is the sole retained base for this workspace's new
+	// terminals. Nil means no same-host shell has supplied one. Never expose it
+	// through Settings, Host, inventory, persistence or diagnostics.
+	shellEnvironment []string
+	nextNumber       int
 }
 
 type terminalSession struct {
@@ -370,6 +375,18 @@ func (m *TerminalManager) SetSettings(settings ttypes.TerminalSettings) {
 	m.mu.Unlock()
 }
 
+// SetShellEnvironment replaces the in-memory base after a successful same-host
+// attach. The latest such attach wins; remote/absent attaches do not call this.
+// Running terminals keep their original environment.
+func (m *TerminalManager) SetShellEnvironment(env []string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.shellEnvironment = slices.Clone(env)
+	m.mu.Unlock()
+}
+
 // Settings returns the configuration new terminals start with.
 func (m *TerminalManager) Settings() ttypes.TerminalSettings {
 	if m == nil {
@@ -386,6 +403,31 @@ func (m *TerminalManager) Host() HostInfo {
 		return DetectHost()
 	}
 	return m.host
+}
+
+var terminalEnvironmentVariable = regexp.MustCompile(`\$\{(env:[^{}]+|workspaceFolder)\}`)
+
+// terminalEnviron resolves only the supported VS Code variable forms, once,
+// against the unmodified base. Overrides cannot depend on map iteration order
+// or recursively expand values inherited from the shell.
+func terminalEnviron(base []string, overrides map[string]string, root string) []string {
+	values := make(map[string]string, len(base))
+	for _, entry := range base {
+		key, value, _ := strings.Cut(entry, "=")
+		values[environmentKey(key)] = value
+	}
+	env := PTYEnviron(base)
+	for _, key := range slices.Sorted(maps.Keys(overrides)) {
+		value := terminalEnvironmentVariable.ReplaceAllStringFunc(overrides[key], func(variable string) string {
+			name := variable[2 : len(variable)-1]
+			if name == "workspaceFolder" {
+				return root
+			}
+			return values[environmentKey(strings.TrimPrefix(name, "env:"))]
+		})
+		env = setEnv(env, key, value)
+	}
+	return env
 }
 
 // Create starts a new PTY session. Command empty means the user shell.
@@ -427,7 +469,17 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 	if title == "" {
 		title = "Terminal"
 	}
-	settings := m.Settings()
+	m.mu.Lock()
+	settings := ttypes.CloneTerminalSettings(m.settings)
+	base := slices.Clone(m.shellEnvironment)
+	m.mu.Unlock()
+	if base == nil {
+		base = os.Environ()
+	} else if settings.LoginShell == "" {
+		// The attaching shell has already initialized PATH and its tool setup.
+		// A login profile could replace them; only an explicit On opts into it.
+		settings.LoginShell = "off"
+	}
 	command, args := opts.Command, opts.Args
 	interactive := command == ""
 	if command == "" {
@@ -436,10 +488,7 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 			return TerminalInfo{}, err
 		}
 	}
-	env := PTYEnviron(nil)
-	for _, key := range slices.Sorted(maps.Keys(settings.Environment)) {
-		env = setEnv(env, key, settings.Environment[key])
-	}
+	env := terminalEnviron(base, settings.Environment, m.root)
 	io, err := startTerminalIO(command, args, env, cwd, cols, rows)
 	if err != nil {
 		return TerminalInfo{}, fmt.Errorf("start %s: %w", command, err)

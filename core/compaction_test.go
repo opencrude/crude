@@ -77,7 +77,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 	}
 	t.Cleanup(c.Close)
 	var attached coreprotocol.AttachResult
-	if err := coreprotocol.Decode(callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
+	if err := coreprotocol.Decode(callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: t.TempDir()}).Payload, &attached); err != nil {
 		t.Fatal(err)
 	}
 	var created workspace.NewSessionResult

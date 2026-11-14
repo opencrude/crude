@@ -14,12 +14,32 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types/control"
 )
 
 const (
 	ScreenID        ui.ComponentID = "session-background-jobs"
 	ActionTerminate string         = "backgroundjobs.terminate"
 	ActionBlur      string         = "backgroundjobs.blur"
+	// ActionReveal shows the command's originating call in the conversation.
+	ActionReveal string = "backgroundjobs.reveal"
+	// ActionOutput opens the command's live output window.
+	ActionOutput string = "backgroundjobs.output"
+)
+
+const (
+	outputLabel    = "Output"
+	terminateLabel = "Terminate"
+	// Bracketed button widths: "[ " + label + " ]".
+	outputButtonW    = 10
+	terminateButtonW = 13
+)
+
+// Control columns inside one job row, left to right.
+const (
+	columnCommand = iota
+	columnOutput
+	columnTerminate
 )
 
 const completedRetention = 15 * time.Second
@@ -48,7 +68,7 @@ type Screen struct {
 	ruleBleedW int
 	rows       []Job
 	columns    columnLayout
-	buttons    map[ui.ComponentID]*terminateButton
+	controls   map[ui.ComponentID]*rowControl
 	buttonJobs map[ui.ComponentID]Job
 	children   []ui.Component
 }
@@ -57,7 +77,7 @@ func New(th *theme.Theme) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
-	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th), buttons: make(map[ui.ComponentID]*terminateButton)}
+	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th), controls: make(map[ui.ComponentID]*rowControl)}
 	s.rebuild(time.Now())
 	return s
 }
@@ -86,7 +106,7 @@ func (s *Screen) Refresh(now time.Time) bool {
 func (s *Screen) VisibleCount() int { return s.visible }
 
 func (s *Screen) ActionFocused(id ui.ComponentID) bool {
-	_, ok := s.buttons[id]
+	_, ok := s.controls[id]
 	return ok
 }
 
@@ -96,9 +116,8 @@ func (s *Screen) NeedsAttention() bool {
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
-	for _, button := range s.buttons {
-		button.SetTokens(tokens)
-		button.SetSurfaceBackground(tokens.Color(ui.ColorBg))
+	for _, control := range s.controls {
+		control.setTokens(tokens)
 	}
 }
 
@@ -122,31 +141,59 @@ func (s *Screen) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	s.columns = s.columnWidths(rect.W)
 	s.children = s.children[:0]
 	s.buttonJobs = make(map[ui.ComponentID]Job)
-	buttons := make(map[ui.ComponentID]*terminateButton)
-	for index, job := range s.rows {
-		if job.Status != "running" || index+4 >= rect.H || s.columns.actionW == 0 {
-			continue
+	controls := make(map[ui.ComponentID]*rowControl)
+	place := func(kind, column, row int, job Job, r ui.Rect, label string) {
+		if r.W <= 0 {
+			return
 		}
-		id := ui.NewID(ScreenID, "terminate/"+job.OwnerID+"/"+job.Handle)
-		button := s.buttons[id]
-		if button == nil {
-			button = &terminateButton{Button: ui.NewButton(id, "Terminate", string(id))}
-			button.SetVariant(ui.VariantSecondary)
+		id := ui.NewID(ScreenID, controlName(kind)+"/"+job.OwnerID+"/"+job.Handle+"/"+fmt.Sprint(job.PID)+"/"+fmt.Sprint(job.StartedAt.UnixNano()))
+		control := s.controls[id]
+		if control == nil {
+			control = newRowControl(id, kind)
 		}
-		label := "Terminate"
-		if s.columns.actionW < rendering.VisibleWidth(label)+4 {
-			label = string(ui.FirstRune(s.tokens.Glyphs().Close, '✕'))
-		}
-		button.SetLabel(label)
-		button.SetTokens(s.tokens)
-		button.SetSurfaceBackground(s.tokens.Color(ui.ColorBg))
-		button.Layout(ctx, ui.Rect{X: s.columns.actionX, Y: 4 + index, W: s.columns.actionW, H: 1})
-		buttons[id] = button
-		button.job = job
+		control.row, control.column, control.job = row, column, job
+		control.setLabel(label)
+		control.setTokens(s.tokens)
+		control.Layout(ctx, r)
+		controls[id] = control
 		s.buttonJobs[id] = job
-		s.children = append(s.children, button)
+		s.children = append(s.children, control)
 	}
-	s.buttons = buttons
+	cols := s.columns
+	for index, job := range s.rows {
+		y := 4 + index
+		if y >= rect.H {
+			break
+		}
+		// The command reads as a link to its call in the conversation. The
+		// link's one-cell padding sits in the column gap so the text stays
+		// aligned with the COMMAND header.
+		if text := s.commandText(job); text != "" && cols.commandW > 0 {
+			w := min(rendering.VisibleWidth(text)+2, cols.commandW+1)
+			place(controlReveal, columnCommand, index, job, ui.Rect{X: max(0, cols.commandX-1), Y: y, W: w, H: 1}, text)
+		}
+		if cols.outputW > 0 {
+			place(controlOutput, columnOutput, index, job, ui.Rect{X: cols.outputX, Y: y, W: cols.outputW, H: 1}, outputLabel)
+		}
+		if job.Status == "running" && cols.terminateW > 0 {
+			label := terminateLabel
+			if cols.terminateW < terminateButtonW {
+				label = string(ui.FirstRune(s.tokens.Glyphs().Close, '✕'))
+			}
+			place(controlTerminate, columnTerminate, index, job, ui.Rect{X: cols.terminateX, Y: y, W: cols.terminateW, H: 1}, label)
+		}
+	}
+	s.controls = controls
+}
+
+// commandText is the command cell's text: the whole command when it fits,
+// leaving room for an error summary on failed rows.
+func (s *Screen) commandText(job Job) string {
+	w := s.columns.commandW
+	if job.Error != "" && (job.Status == "failed" || job.Status == "killed") {
+		return rendering.TruncateVisual(job.Command, max(1, w-1), "…")
+	}
+	return rendering.TruncateLine(job.Command, w)
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
@@ -200,8 +247,12 @@ type columnLayout struct {
 	pidX, pidW       int
 	exitX, exitW     int
 	actionX, actionW int
-	showDuration     bool
-	showEnd          bool
+	// Output and Terminate share the action column; Terminate appears only
+	// on running rows but its column is kept so Output buttons line up.
+	outputX, outputW       int
+	terminateX, terminateW int
+	showDuration           bool
+	showEnd                bool
 }
 
 func (s *Screen) columnWidths(total int) columnLayout {
@@ -216,9 +267,14 @@ func (s *Screen) columnWidths(total int) columnLayout {
 		cols.pidW = max(cols.pidW, rendering.VisibleWidth(fmt.Sprint(job.PID)))
 		cols.exitW = max(cols.exitW, rendering.VisibleWidth(fmt.Sprint(job.ExitCode)))
 		commandWidth = max(commandWidth, rendering.VisibleWidth(job.Command))
+		cols.outputW = outputButtonW
 		if job.Status == "running" {
-			cols.actionW = 13
+			cols.terminateW = terminateButtonW
 		}
+	}
+	cols.actionW = cols.outputW
+	if cols.terminateW > 0 {
+		cols.actionW += 1 + cols.terminateW
 	}
 	baseWidth := cols.statusW + cols.handleW + commandWidth + 2*gap
 	if cols.actionW > 0 {
@@ -226,8 +282,20 @@ func (s *Screen) columnWidths(total int) columnLayout {
 	}
 	cols.showDuration = total >= baseWidth+cols.durationW+gap
 	cols.showEnd = cols.showDuration && total >= baseWidth+cols.durationW+cols.pidW+cols.exitW+3*gap
-	if cols.actionW > 0 && total < baseWidth {
-		cols.actionW = min(max(0, total), rendering.VisibleWidth(s.tokens.Glyphs().Close)+4)
+	if cols.terminateW > 0 && total < baseWidth {
+		// Narrow decks keep both decisions; Terminate becomes its glyph.
+		compact := rendering.VisibleWidth(s.tokens.Glyphs().Close) + 4
+		cols.actionW -= cols.terminateW - compact
+		cols.terminateW = compact
+	}
+	if cols.actionW > max(0, total) {
+		// Too narrow for both: stopping a running command outranks Output.
+		if cols.terminateW > 0 {
+			cols.outputW, cols.actionW = 0, cols.terminateW
+		}
+		cols.actionW = min(cols.actionW, max(0, total))
+		cols.terminateW = min(cols.terminateW, cols.actionW)
+		cols.outputW = min(cols.outputW, cols.actionW)
 	}
 	right := max(0, total)
 	reserve := func(width int) (int, int) {
@@ -239,6 +307,13 @@ func (s *Screen) columnWidths(total int) columnLayout {
 	}
 	if cols.actionW > 0 {
 		cols.actionX, cols.actionW = reserve(cols.actionW)
+		cols.outputX = cols.actionX
+		cols.terminateX = cols.actionX
+		if cols.outputW > 0 {
+			cols.outputW = min(cols.outputW, cols.actionW)
+			cols.terminateX = cols.actionX + cols.outputW + 1
+		}
+		cols.terminateW = max(0, min(cols.terminateW, cols.actionX+cols.actionW-cols.terminateX))
 	}
 	if cols.showEnd {
 		cols.exitX, cols.exitW = reserve(cols.exitW)
@@ -246,6 +321,15 @@ func (s *Screen) columnWidths(total int) columnLayout {
 	}
 	if cols.showDuration {
 		cols.durationX, cols.durationW = reserve(cols.durationW)
+	}
+	// On narrow decks, keep the two actions and readable command text. The
+	// status glyph is sufficient; the handle remains in every control's
+	// accessible label instead of squeezing the command to a few cells.
+	if right < cols.statusW+cols.handleW+min(commandWidth, 20)+2*gap {
+		cols.statusW, cols.handleW = min(1, right), 0
+		cols.commandX = min(right, cols.statusW+gap)
+		cols.commandW = max(0, right-cols.commandX)
+		return cols
 	}
 	cols.statusW = min(cols.statusW, max(0, right-6-7-2*gap))
 	if cols.statusW == 0 {
@@ -402,27 +486,98 @@ type TerminateRequest struct {
 	Job    Job
 }
 
+// RevealRequest asks the host to show the command's originating call.
+type RevealRequest struct {
+	Target *Screen
+	Job    Job
+}
+
+// OutputRequest asks the host to open the command's live output window.
+type OutputRequest struct {
+	Target *Screen
+	Job    Job
+}
+
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
-	if action.ID == "backgroundjobs.focus.next" || action.ID == "backgroundjobs.focus.previous" {
-		id, _ := action.Payload.(ui.ComponentID)
-		for index, child := range s.children {
-			if child.ID() != id {
-				continue
-			}
-			step := 1
-			if action.ID == "backgroundjobs.focus.previous" {
-				step = -1
-			}
-			index = (index + step + len(s.children)) % len(s.children)
-			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: s.children[index].ID()}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-		}
-		return ui.EventResult{Handled: true}
+	if move, ok := action.Payload.(focusMove); ok && action.ID == actionFocusMove {
+		return s.moveFocus(move)
 	}
-	job, ok := s.buttonJobs[ui.ComponentID(action.ID)]
-	if !ok || job.Status != "running" {
+	control, ok := s.controls[ui.ComponentID(action.ID)]
+	if !ok {
 		return ui.EventResult{Action: &action}
 	}
-	return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionTerminate, Payload: TerminateRequest{Target: s, Job: job}}}
+	job := s.buttonJobs[control.ID()]
+	switch control.kind {
+	case controlReveal:
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionReveal, Payload: RevealRequest{Target: s, Job: job}}}
+	case controlOutput:
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionOutput, Payload: OutputRequest{Target: s, Job: job}}}
+	case controlTerminate:
+		if job.Status == "running" {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionTerminate, Payload: TerminateRequest{Target: s, Job: job}}}
+		}
+	}
+	return ui.EventResult{Handled: true}
+}
+
+// moveFocus walks the row/column control grid: Left/Right within a row,
+// Up/Down to the nearest control in the same column, Tab in reading order.
+func (s *Screen) moveFocus(move focusMove) ui.EventResult {
+	from := -1
+	for index, child := range s.children {
+		if child.ID() == move.from {
+			from = index
+			break
+		}
+	}
+	if from < 0 || len(s.children) == 0 {
+		return ui.EventResult{Handled: true}
+	}
+	current := s.children[from].(*rowControl)
+	target := -1
+	switch move.kind {
+	case moveNext, movePrevious:
+		step := 1
+		if move.kind == movePrevious {
+			step = -1
+		}
+		target = (from + step + len(s.children)) % len(s.children)
+	case moveLeft, moveRight:
+		step := 1
+		if move.kind == moveLeft {
+			step = -1
+		}
+		if next := from + step; next >= 0 && next < len(s.children) && s.children[next].(*rowControl).row == current.row {
+			target = next
+		}
+	case moveUp, moveDown:
+		row := current.row + 1
+		if move.kind == moveUp {
+			row = current.row - 1
+		}
+		best := -1
+		for index, child := range s.children {
+			control := child.(*rowControl)
+			if control.row != row {
+				continue
+			}
+			if best < 0 || abs(control.column-current.column) < abs(s.children[best].(*rowControl).column-current.column) {
+				best = index
+			}
+		}
+		target = best
+	}
+	if target < 0 {
+		return ui.EventResult{Handled: true}
+	}
+	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: s.children[target].ID()}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func (s *Screen) Handle(_ ui.EventContext, event ui.Event) ui.EventResult {
@@ -478,35 +633,138 @@ func (s *Screen) visibleJobs(now time.Time) []Job {
 var _ ui.Component = (*Screen)(nil)
 var _ ui.ActionHandler = (*Screen)(nil)
 
-type terminateButton struct {
-	*ui.Button
-	job Job
+const actionFocusMove = "backgroundjobs.focus.move"
+
+type moveKind uint8
+
+const (
+	moveNext moveKind = iota
+	movePrevious
+	moveLeft
+	moveRight
+	moveUp
+	moveDown
+)
+
+type focusMove struct {
+	from ui.ComponentID
+	kind moveKind
 }
 
-func (button *terminateButton) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
+const (
+	controlReveal = iota
+	controlOutput
+	controlTerminate
+)
+
+func controlName(kind int) string {
+	switch kind {
+	case controlReveal:
+		return "command"
+	case controlOutput:
+		return "output"
+	default:
+		return "terminate"
+	}
+}
+
+// rowControl is one native control in a job row: the command link, Output or
+// Terminate. It adds grid navigation and the row's command identity to the
+// shared Button/ActionLink behavior.
+type rowControl struct {
+	ui.Component
+	kind   int
+	row    int
+	column int
+	job    Job
+	button *ui.Button
+	link   *ui.ActionLink
+}
+
+func newRowControl(id ui.ComponentID, kind int) *rowControl {
+	control := &rowControl{kind: kind}
+	if kind == controlReveal {
+		control.link = ui.NewActionLink(id, "", string(id))
+		control.link.SetVariant(ui.VariantSecondary)
+		control.Component = control.link
+		return control
+	}
+	control.button = ui.NewButton(id, "", string(id))
+	control.button.SetVariant(ui.VariantSecondary)
+	control.Component = control.button
+	return control
+}
+
+func (c *rowControl) setLabel(label string) {
+	if c.link != nil {
+		c.link.SetLabel(label)
+	} else {
+		c.button.SetLabel(label)
+	}
+}
+
+func (c *rowControl) setTokens(tokens *ui.TokenSet) {
+	if c.link != nil {
+		c.link.SetTokens(tokens)
+		return
+	}
+	c.button.SetTokens(tokens)
+	c.button.SetSurfaceBackground(tokens.Color(ui.ColorBg))
+}
+
+func (c *rowControl) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
 	if event.IsKey() {
-		action := ""
+		kind, ok := moveKind(0), true
 		switch event.Key.Code {
 		case tea.KeyUp:
-			action = "backgroundjobs.focus.previous"
+			kind = moveUp
 		case tea.KeyDown:
-			action = "backgroundjobs.focus.next"
+			kind = moveDown
+		case tea.KeyLeft:
+			kind = moveLeft
+		case tea.KeyRight:
+			kind = moveRight
 		case tea.KeyTab:
-			action = "backgroundjobs.focus.next"
+			kind = moveNext
 			if event.Key.Mod.Contains(tea.ModShift) {
-				action = "backgroundjobs.focus.previous"
+				kind = movePrevious
 			}
+		default:
+			ok = false
 		}
-		if action != "" {
-			return ui.EventResult{Handled: true, Action: &ui.Action{ID: action, Payload: button.ID()}}
+		if ok {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: actionFocusMove, Payload: focusMove{from: c.ID(), kind: kind}}}
 		}
 	}
-	return button.Button.Handle(ctx, event)
+	return c.Component.Handle(ctx, event)
 }
 
-func (button *terminateButton) Semantics() ui.Semantics {
-	semantics := button.Button.Semantics()
-	semantics.Label = "Terminate " + button.job.Handle
-	semantics.Description = "Stops only this background command"
+func (c *rowControl) base() *ui.Button {
+	if c.link != nil {
+		return &c.link.Button
+	}
+	return c.button
+}
+
+// ControlActions and HandleControl keep the shared semantic-control contract
+// of the wrapped Button/ActionLink.
+func (c *rowControl) ControlActions() []control.Descriptor { return c.base().ControlActions() }
+func (c *rowControl) HandleControl(ctx ui.EventContext, op ui.ControlOperation) (ui.EventResult, error) {
+	return c.base().HandleControl(ctx, op)
+}
+
+func (c *rowControl) Semantics() ui.Semantics {
+	semantics := c.Component.Semantics()
+	switch c.kind {
+	case controlReveal:
+		semantics.Label = "Show " + c.job.Handle + " in the conversation"
+		semantics.Description = c.job.Command
+	case controlOutput:
+		semantics.Label = "Show output of " + c.job.Handle
+		semantics.Description = "Opens the live output of this background command"
+	default:
+		semantics.Label = "Terminate " + c.job.Handle
+		semantics.Description = "Stops only this background command"
+	}
 	return semantics
 }

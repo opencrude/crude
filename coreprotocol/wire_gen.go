@@ -1528,11 +1528,19 @@ func (z *ApplicationPreferencesResult) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
-func (z AttachRequest) MarshalMsg(b []byte) (o []byte, err error) {
+func (z *AttachRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 1
-	o = append(o, 0x91)
+	// array header, size 2
+	o = append(o, 0x92)
 	o = msgp.AppendString(o, z.Root)
+	if z.Environment == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Environment)))
+		for za0001 := range z.Environment {
+			o = msgp.AppendString(o, z.Environment[za0001])
+		}
+	}
 	return
 }
 
@@ -1548,8 +1556,8 @@ func (z *AttachRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 1 {
-		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
 		return
 	}
 	z.Root, bts, err = msgp.ReadStringBytes(bts)
@@ -1557,13 +1565,43 @@ func (z *AttachRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Root")
 		return
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Environment = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Environment")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Environment != nil && cap(z.Environment) >= int(zb0002) {
+			z.Environment = (z.Environment)[:zb0002]
+		} else {
+			z.Environment = make([]string, zb0002)
+		}
+		for za0001 := range z.Environment {
+			z.Environment[za0001], bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Environment", za0001)
+				return
+			}
+		}
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z AttachRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Root)
+func (z *AttachRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Root) + msgp.ArrayHeaderSize
+	for za0001 := range z.Environment {
+		s += msgp.StringPrefixSize + len(z.Environment[za0001])
+	}
 	return
 }
 
@@ -3009,6 +3047,68 @@ func (z *CommandIdentity) UnmarshalMsg(bts []byte) (o []byte, err error) {
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z CommandIdentity) Msgsize() (s int) {
 	s = 1 + msgp.StringPrefixSize + len(z.Method) + msgp.StringPrefixSize + len(z.ID)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *CommandViewOpenRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o = msgp.AppendString(o, z.AgentID)
+	o, err = z.Ref.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Ref")
+		return
+	}
+	o = msgp.AppendInt(o, z.Cols)
+	o = msgp.AppendInt(o, z.Rows)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *CommandViewOpenRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	z.AgentID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AgentID")
+		return
+	}
+	bts, err = z.Ref.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Ref")
+		return
+	}
+	z.Cols, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Cols")
+		return
+	}
+	z.Rows, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Rows")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *CommandViewOpenRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.AgentID) + z.Ref.Msgsize() + msgp.IntSize + msgp.IntSize
 	return
 }
 

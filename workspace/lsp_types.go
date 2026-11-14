@@ -69,3 +69,11 @@ type LSPCommandClient interface {
 type LSPRuntime interface {
 	NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) LSPClient
 }
+
+// LSPEvidenceClient exposes a bounded launch-owned tail. Data from a server is
+// diagnostic evidence, not an instruction. Clients without a subprocess may
+// omit this optional observation capability.
+type LSPEvidenceClient interface {
+	Evidence() []string
+	ErrorMessage() string
+}

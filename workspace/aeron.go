@@ -67,3 +67,12 @@ func (w *Workspace) EnsureAeronSession() *NewSessionResult {
 	}
 	return w.ApplyAgentSession(op.Run(context.Background()))
 }
+
+// AeronAgentID returns the root agent of the running workspace Aeron, or ""
+// when it is not running. The caller owns the serialized workspace state.
+func (w *Workspace) AeronAgentID() string {
+	if live := w.liveAeronSession(); live != nil {
+		return live.AgentID
+	}
+	return ""
+}

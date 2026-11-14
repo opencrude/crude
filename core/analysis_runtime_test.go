@@ -76,8 +76,8 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	}
 	one, two := newResourceWire(t, r, "analysis-author"), newResourceWire(t, r, "analysis-peer")
 	var attached [2]coreprotocol.AttachResult
-	one.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: roots[0]}, &attached[0])
-	two.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: roots[1]}, &attached[1])
+	one.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: roots[0]}, &attached[0])
+	two.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: roots[1]}, &attached[1])
 	mu.Lock()
 	first, second := managers[roots[0]], managers[roots[1]]
 	firstEngine, secondEngine := engines[roots[0]], engines[roots[1]]
@@ -153,7 +153,7 @@ func TestAnalysisCoreCloseReportsAndRetainsUnverifiedAdmission(t *testing.T) {
 	t.Cleanup(func() { _ = r.Close() })
 	client := newResourceWire(t, r, "unverified-analysis")
 	var attached coreprotocol.AttachResult
-	client.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	client.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var saved coreprotocol.WorkspacePreferencesResult
 	client.call(t, attached.WorkspaceID, coreprotocol.WorkspaceOverridesSet,
 		coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{

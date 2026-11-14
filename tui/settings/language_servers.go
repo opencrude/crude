@@ -41,6 +41,8 @@ func (m *Model) collectLSP(cfg *types.LSPSettings) {
 		AutoComplete:       m.value(catLSP, "auto-complete") == "on",
 		CompletionDelayMS:  &delay,
 		CompletionAccept:   m.value(catLSP, "completion-accept"),
+		ProjectCheck:       m.value(catLSP, "project-check"),
+		AskAeron:           m.value(catLSP, "ask-aeron"),
 		MinSeverity:        m.value(catLSP, "min-severity"),
 		UpdateDebounceMS:   parseOpt(m.value(catLSP, "debounce"), 300),
 		Languages:          cloneLSPLanguages(m.lspLanguages),
@@ -68,6 +70,12 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 		{ID: "servers-nav", Label: "Language tools", Type: ui.FieldNav, Target: "settings.lsp.servers", Columns: []string{lspServerSummary(lsp.Languages)}, Description: "Review installed tools and configure language servers."},
 		ui.SeparatorFieldState("features", "Features"),
 		ui.BoolFieldState("diagnostics", "Diagnostics", lsp.Diagnostics, "Publish errors, warnings and hints from the server."),
+		ui.SegmentedFieldState("project-check", "Check closed files", []ui.FormOption{
+			{ID: types.ProjectCheckIdle, Label: "When idle"}, {ID: types.ProjectCheckAlways, Label: "Always"}, {ID: types.ProjectCheckOff, Label: "Off"},
+		}, lsp.ProjectCheckMode(), "Check files that are not open. When idle waits on battery or a busy computer."),
+		ui.SegmentedFieldState("ask-aeron", "When a server has a problem", []ui.FormOption{
+			{ID: "on", Label: "Ask Aeron"}, {ID: "off", Label: "Do nothing"},
+		}, aeronChoice(lsp), "Aeron looks for the cause and asks you before it changes anything."),
 		ui.BoolFieldState("hover", "Hover documentation", lsp.Hover, "Show symbol documentation under the cursor."),
 		ui.BoolFieldState("goto-definition", "Go to definition", lsp.Definition, "Jump to where a symbol is defined."),
 		ui.BoolFieldState("find-references", "Find references", lsp.References, "List every reference to the symbol."),
@@ -448,4 +456,12 @@ func joinShellWords(words []string) string {
 		out = append(out, `"`+escaped+`"`)
 	}
 	return strings.Join(out, " ")
+}
+
+// aeronChoice is the visible choice of lsp.ask_aeron: on unless turned off.
+func aeronChoice(lsp types.LSPSettings) string {
+	if lsp.AeronInvestigates() {
+		return "on"
+	}
+	return "off"
 }

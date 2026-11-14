@@ -638,7 +638,9 @@ func (s *Screen) IsCurrentIntent(epoch, sequence uint64) bool {
 }
 
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.filter, s.folderName, s.saveForm, s.saveStatus, s.breadcrumb, s.tree, s.scrollbar, s.actions}
+	// The save form paints after the tree: its open encoding dropdown covers
+	// the rows above it.
+	return []ui.Component{s.filter, s.folderName, s.breadcrumb, s.tree, s.scrollbar, s.saveStatus, s.actions, s.saveForm}
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -686,16 +688,21 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.saveForm.Layout(ctx, ui.Rect{})
 	const headerRows = 3
 	filterY, breadcrumbY, treeY := headerRows, headerRows+2, headerRows+4
-	if s.mode == ModeSaveFile {
-		filterY, breadcrumbY, treeY = 0, 2, 4
-	}
 	s.filter.Layout(ctx, pickerRect(content, 1, filterY, r.W-2, 1))
 	s.breadcrumb.Layout(ctx, pickerRect(content, 1, breadcrumbY, r.W-2, 1))
 	reserved := 0
 	if s.mode == ModeSaveFile {
-		reserved = 6
-		s.saveForm.Layout(ctx, pickerRect(content, 1, r.H-7, r.W-2, 3))
-		s.saveStatus.Layout(ctx, pickerRect(content, 1, r.H-3, r.W-2, 1))
+		// Bottom up: rule and decisions, a status row, then the form, with
+		// one breathing row between the tree and the form.
+		statusY := r.H - 3
+		formY := statusY - saveFormRows
+		reserved = saveFormRows + 2
+		form := pickerRect(content, 1, formY, r.W-2, saveFormRows)
+		// The encoding dropdown may open over the browser above the form;
+		// while open, any click in the window closes it first.
+		s.saveForm.SetOverlayRoom(form.Y, maxInt(0, r.H-form.Y-form.H))
+		s.saveForm.Layout(ctx, form)
+		s.saveStatus.Layout(ctx, pickerRect(content, 1, statusY, r.W-2, 1))
 	}
 	treeH := maxInt(0, r.H-treeY-2-reserved)
 	if s.model != nil {
@@ -735,12 +742,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	accent := s.tokens.Color(ui.ColorAccent)
 	muted := s.tokens.Color(ui.ColorMuted)
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	if s.mode == ModeSaveFile && !s.creating {
-		return
-	}
 	x := ox + r.X + 1
 	y := oy + r.Y
-	if s.mode != ModeSaveFile && r.W > 2 && r.H > 0 {
+	if r.W > 2 && r.H > 0 {
 		x = buf.WriteString(x, y, rendering.TruncateVisual("◆ crude", r.W-2, "…"), accent, bg, cell.AttrBold)
 	}
 	label := "ATTACH FILES"
@@ -754,16 +758,14 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		subtitle = "Choose a file to open in this pane · fuzzy-search as you type"
 	case ModeSaveFile:
 		label = "SAVE FILE"
-		subtitle = "Choose a folder and enter a file name"
+		subtitle = "Choose a folder, file name, and encoding."
 	}
 	if s.creating {
 		label = "NEW FOLDER"
 		subtitle = "Create a folder inside the chosen location"
 	}
 	if r.H > 0 && x < ox+r.X+r.W-1 {
-		if s.mode != ModeSaveFile {
-			label = "  " + label
-		}
+		label = "  " + label
 		buf.WriteString(x, y, rendering.TruncateVisual(label, ox+r.X+r.W-1-x, "…"), fg, bg, cell.AttrBold)
 	}
 	if r.H > 1 && r.W > 2 {

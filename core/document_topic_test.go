@@ -22,9 +22,9 @@ func TestDocumentTopicConnectedAckOrdersDeltasAndSavepoint(t *testing.T) {
 	}
 	a, b := newResourceWire(t, r, "doc-author"), newResourceWire(t, r, "doc-peer")
 	var attach coreprotocol.AttachResult
-	a.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attach)
+	a.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attach)
 	var peer coreprotocol.AttachResult
-	b.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &peer)
+	b.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &peer)
 	var snapshot document.Snapshot
 	a.call(t, attach.WorkspaceID, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}, &snapshot)
 	b.call(t, attach.WorkspaceID, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}, &snapshot)

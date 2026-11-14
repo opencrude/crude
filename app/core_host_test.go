@@ -90,7 +90,7 @@ func attach(t *testing.T, client *coreclient.Client, root string) coreprotocol.A
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var result coreprotocol.AttachResult
-	if err := client.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &result); err != nil {
+	if err := client.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &result); err != nil {
 		t.Fatalf("attach %s: %v", root, err)
 	}
 	return result

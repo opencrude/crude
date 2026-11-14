@@ -921,9 +921,13 @@ one Git-style pattern per line.
 Terminal is an application/workspace IDE category with field-level live
 inheritance (`TerminalSettings`, override key `terminal`), placed after
 Interface. It holds the shell (Auto, a shell detected on the core's machine, or
-Custom with a command), shell-style arguments, Login shell, extra environment
-variables, Open new terminals (Docked/Floating) and Scrollback (1,000–10,000
-lines, 10,000 default). A workspace may choose a different shell while still
+Custom with a command), shell-style arguments, Login shell (Auto, On, Off),
+extra environment variables, Open new terminals (Docked/Floating) and Scrollback
+(1,000–10,000 lines, 10,000 default). Environment values may use VS Code's
+`${env:NAME}` and `${workspaceFolder}` references, for example
+`PATH=${workspaceFolder}/.venv/bin:${env:PATH}`. The workspace Aeron may write
+`terminal.environment` at workspace scope after the user agrees; every other
+agent and every application-scope write stays human-only. A workspace may choose a different shell while still
 inheriting every other terminal field. Auto order, detection and failure rules
 are in [in-app terminals](in-app-terminals.md#shell-selection).
 
@@ -1102,6 +1106,23 @@ file and is ignored. Restore default returns a row to the catalog.
 start or request gated features. The tool inventory reads the selected core's
 shared store; it is not another launch configuration or inherited preference
 store.
+
+**Check closed files** (`lsp.project_check`) on Code Intelligence is **When
+idle** (default), **Always** or **Off**. Crude checks files that are not open
+with servers that do not report such files themselves, one file at a time while
+the user does not type. When idle also waits on battery power, while the
+computer is busy and until a new server's memory hint is free. It does not
+restart language servers. See
+[project check](editor.md#project-check-of-closed-files).
+
+**When a server has a problem** (`lsp.ask_aeron`) is **Ask Aeron** (default) or
+**Do nothing**. With Ask Aeron, a language-server problem that Crude finds (a
+server that used up its restart budget or failed to start, an error message
+from a server, a server whose checked files have errors in at least one in
+five) wakes the workspace Aeron once per cause. Aeron investigates and asks the
+user before it changes anything. Only the user changes this field; no agent,
+Aeron included, may write it. See
+[Crude asks Aeron](main-view-panes.md#crude-asks-aeron-for-help).
 
 The **Suggestions** group on Code Intelligence contains:
 

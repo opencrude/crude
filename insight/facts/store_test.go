@@ -456,3 +456,42 @@ func TestMatchingInvalidationAndRemovalAreScopedAndReleaseCapacity(t *testing.T)
 		t.Fatalf("capacity was not released: %v", err)
 	}
 }
+
+func TestContextSummaryAndCapacityReserve(t *testing.T) {
+	s, b := store(t, 3, 4), boundary()
+	observe(t, s, b)
+	p := publication(b, 1)
+	p.Diagnostics = []types.LSPDiagnostic{{Message: "error", Severity: types.DiagError}, {Message: "warning", Severity: types.DiagWarning}}
+	if !s.CanPublishWithReserve(p, 1, 1, 1024) {
+		t.Fatal("small result did not fit reserve")
+	}
+	publish(t, s, p)
+	b.Source.DocumentID, b.Source.Path = "clean", "/project/clean.go"
+	observe(t, s, b)
+	p = publication(b, 1)
+	p.Diagnostics = nil
+	publish(t, s, p)
+	summary := s.ContextSummaries()[b.Context.ID]
+	if summary.FilesTracked != 2 || summary.FilesAffected != 1 || summary.Errors != 1 || summary.Warnings != 1 || summary.LastDiagnostics.IsZero() {
+		t.Fatalf("summary: %+v", summary)
+	}
+	usage := s.Usage()
+	if usage.Documents != 2 || usage.Diagnostics != 2 || usage.Bytes <= 0 || usage.MaxDocuments != 3 {
+		t.Fatal(usage)
+	}
+	p = publication(b, 2)
+	p.Diagnostics = []types.LSPDiagnostic{{Message: "a"}, {Message: "b"}}
+	if s.CanPublishWithReserve(p, 1, 1, 1024) {
+		t.Fatal("publication consumed diagnostic reserve")
+	}
+	if err := s.Invalidate("doc-1", "changed"); err != nil {
+		t.Fatal(err)
+	}
+	summary = s.ContextSummaries()[b.Context.ID]
+	if summary.FilesTracked != 1 || summary.Errors != 0 || summary.FilesAffected != 0 {
+		t.Fatalf("stale counted: %+v", summary)
+	}
+	if got := s.Usage(); got != usage {
+		t.Fatalf("invalidation released capacity: %+v", got)
+	}
+}

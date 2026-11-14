@@ -10,15 +10,18 @@ import (
 // Workspace-owner operations a connected shell requests. Each names its exact
 // agent/session target; none depends on which tab a shell has selected.
 const (
-	AgentYolo             = "agent.yolo"
-	AgentPlanMode         = "agent.plan_mode"
-	AgentGoal             = "agent.goal"
-	AgentLoop             = "agent.loop"
-	AgentAppendMessages   = "agent.append_messages"
-	AgentRecover          = "agent.recover"
-	AgentRecoverCancel    = "agent.recover_cancel"
-	AgentStopCommand      = "agent.stop_command"
-	AgentCompact          = "agent.compact"
+	AgentYolo           = "agent.yolo"
+	AgentPlanMode       = "agent.plan_mode"
+	AgentGoal           = "agent.goal"
+	AgentLoop           = "agent.loop"
+	AgentAppendMessages = "agent.append_messages"
+	AgentRecover        = "agent.recover"
+	AgentRecoverCancel  = "agent.recover_cancel"
+	AgentStopCommand    = "agent.stop_command"
+	AgentCompact        = "agent.compact"
+	// CommandViewOpen creates a private terminal mirror; all subsequent
+	// operations use the existing terminal row, stream and lease contracts.
+	CommandViewOpen       = "command_view.open"
 	WorkspaceStartup      = "workspace.startup"
 	WorkspaceOverrides    = "workspace.overrides"
 	WorkspaceOverridesSet = "workspace.overrides_save"
@@ -86,6 +89,13 @@ type RecoveryRequest struct {
 type StopCommandRequest struct {
 	AgentID string             `json:"agent_id"`
 	Ref     fileio.AsyncCmdRef `json:"ref"`
+}
+
+type CommandViewOpenRequest struct {
+	AgentID string             `json:"agent_id"`
+	Ref     fileio.AsyncCmdRef `json:"ref"`
+	Cols    int                `json:"cols"`
+	Rows    int                `json:"rows"`
 }
 
 type AgentIDRequest struct {

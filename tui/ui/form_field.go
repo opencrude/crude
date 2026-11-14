@@ -388,6 +388,8 @@ func (ff *FormField) boxWidth(width int) int {
 		return last.x + last.w
 	case ff.fillWidth && (ff.field.Type == FieldText || ff.field.Type == FieldTextArea):
 		return available
+	case ff.field.Width > 0:
+		return min(available, ff.field.Width)
 	}
 	return min(available, wideControlW)
 }
@@ -417,17 +419,25 @@ func (ff *FormField) selectPanel(width int) (int, int) {
 		return ff.controlX(width), ff.controlWidth(width)
 	}
 	vx := ff.valueX(width)
-	return vx, max(1, min(width-vx, max(ff.boxWidth(width), 32)))
+	panelW := 32
+	if ff.field.Width > 0 {
+		// A sized select drops down as wide as its box, like a combo box,
+		// widened only when the box cannot show an option row.
+		panelW = max(ff.boxWidth(width), ff.maxOptionWidth()+2*selectOverlayChrome+2)
+	}
+	return vx, max(1, min(width-vx, max(ff.boxWidth(width), panelW)))
 }
 
-func (ff *FormField) layoutOverlay(ctx LayoutContext, formH int) {
+// layoutOverlay places an open dropdown inside the form-local row range
+// [top, bottom). It opens below the control when it fits, otherwise above.
+func (ff *FormField) layoutOverlay(ctx LayoutContext, top, bottom int) {
 	if ff.selectList == nil || !ff.selectOpen {
 		return
 	}
 	r := ff.Bounds()
 	rows := ff.selectPanelHeight()
 	ff.overlayY = 1
-	if r.Y+1+rows > formH && r.Y-rows >= 0 {
+	if r.Y+1+rows > bottom && r.Y-rows >= top {
 		ff.overlayY = -rows
 	}
 	controlX, controlW := ff.selectPanel(r.W)

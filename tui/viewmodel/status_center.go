@@ -31,32 +31,14 @@ func (m *App) notifyStatus(severity ttypes.StatusSeverity, source, summary, deta
 	})
 }
 
-func (m *App) syncLSPStatusIssues() {
-	if m.ws == nil || m.ws.Status() == nil || m.ws.LSPMgr() == nil {
+// syncLanguageServerSettings gives an open Settings page the latest
+// language-server state. Issues for failed servers belong to the core
+// (workspace.SyncLSPIssues); the shell only presents them.
+func (m *App) syncLanguageServerSettings() {
+	if m.ws == nil || m.ws.LSPMgr() == nil {
 		return
 	}
-	center := m.ws.Status()
-	failed := make(map[string]bool)
-	snapshots := m.ws.LSPMgr().ServerHealthSnapshots()
-	m.syncSettingsLanguageServers(snapshots)
-	for _, server := range snapshots {
-		issueID := "lsp:" + server.ID
-		if server.Error == "" {
-			center.ResolveIssue(issueID)
-			continue
-		}
-		failed[issueID] = true
-		center.SetIssue(ttypes.IssueSnapshot{
-			ID: issueID, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID},
-			Severity: ttypes.SeverityError, Summary: server.Name + " failed", Detail: server.Error,
-			Actions: []ttypes.StatusAction{{ID: "lsp:restart", Label: "Retry", Enabled: true}},
-		})
-	}
-	for _, issue := range center.Issues() {
-		if issue.Owner.Kind == ttypes.ResourceLSP && !failed[issue.ID] {
-			center.ResolveIssue(issue.ID)
-		}
-	}
+	m.syncSettingsLanguageServers(m.ws.LSPMgr().ServerHealthSnapshots())
 }
 
 func (m *App) syncAgentStatusInventory() {
@@ -103,5 +85,5 @@ func (m *App) controlLanguageServers(msg settingsui.LanguageServerControlMsg) {
 		}
 	}
 	m.settingsLSPHealth = nil
-	m.syncLSPStatusIssues()
+	m.syncLanguageServerSettings()
 }

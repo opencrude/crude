@@ -185,6 +185,11 @@ type FieldState struct {
 	// Numeric marks a single-line number without a unit (temperature): it
 	// gets the same short box as unit fields.
 	Numeric bool
+	// Width is the preferred spacious control box width in cells; 0 uses the
+	// shared reading measure. Dialog forms use it so a short choice (an
+	// encoding) reads as a compact dropdown, not a pane-wide slab. A select
+	// with a Width opens a dropdown of the same width as its box.
+	Width int
 }
 
 // FieldStyle refines how a field's control is painted without changing its

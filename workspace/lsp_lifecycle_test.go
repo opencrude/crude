@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/sysload"
 	model "crude/types"
 )
 
@@ -42,6 +43,8 @@ type lifecycleClient struct {
 	started, stopped    bool
 	startErr, stopErr   error
 	startAdmission      func() error
+	evidence            []string
+	errorMessage        string
 }
 
 func (r *lifecycleRuntime) NewClient(spec model.LSPServerSpec, root string, startAdmission func() error) LSPClient {
@@ -197,6 +200,12 @@ func lifecycleManager(t *testing.T) (*LSPManager, *lifecycleRuntime, string) {
 	t.Helper()
 	r := &lifecycleRuntime{}
 	m := NewLSPManager(nil, r)
+	// A quiet computer on wall power, so that the project check does not
+	// depend on the machine that runs the tests.
+	m.loadProbe = func() sysload.Sample {
+		return sysload.Sample{PowerKnown: true, IdleCores: -1, MemoryKnown: true, AvailableMemory: 8 << 30}
+	}
+	m.contention = func() bool { return false }
 	root := t.TempDir()
 	m.SetWorkspaceRoot(root)
 	trustAnalysis(t, m, root)
@@ -510,4 +519,71 @@ func TestLSPUnexpectedExitRestartsWithinBound(t *testing.T) {
 		t.Fatal("explicit restart refused after a crash loop")
 	}
 	awaitLSP(t, connected(lspAutomaticRestarts+2))
+}
+
+func (c *lifecycleClient) Evidence() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.evidence...)
+}
+func (c *lifecycleClient) ErrorMessage() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopped {
+		return ""
+	}
+	return c.errorMessage
+}
+
+func TestLSPServerEvidenceSurvivesCrashBudgetAndResetsLiveError(t *testing.T) {
+	m, r, root := probeManager(t)
+	path := filepath.Join(root, "main.py")
+	editorSource(t, m, path, "x\n")
+	awaitLSP(t, func() bool { h := m.ServerHealthSnapshots(); return len(h) == 1 && h[0].Connected })
+	client := r.snapshot()[0]
+	client.mu.Lock()
+	client.evidence = []string{"stderr: missing executable"}
+	client.errorMessage = "Build tool is missing"
+	client.mu.Unlock()
+	health := m.ServerHealthSnapshots()[0]
+	if len(health.Evidence) != 1 || health.ErrorMessage == "" {
+		t.Fatalf("live evidence missing: %+v", health)
+	}
+	// Hold the actual joined Stop, making the automatic restart observable.
+	stopGate := make(chan struct{})
+	releaseStop := sync.OnceFunc(func() { close(stopGate) })
+	defer releaseStop()
+	client.mu.Lock()
+	client.stopGate = stopGate
+	client.mu.Unlock()
+	close(client.done)
+	awaitLSP(t, func() bool { h := m.ServerHealthSnapshots()[0]; return h.Restarting && h.Restarts == 1 })
+	releaseStop()
+	awaitLSP(t, func() bool {
+		h := m.ServerHealthSnapshots()
+		return len(r.snapshot()) == 2 && len(h) == 1 && h[0].Connected
+	})
+	health = m.ServerHealthSnapshots()[0]
+	if health.Restarting || health.ErrorMessage != "" || len(health.Evidence) != 0 {
+		t.Fatalf("new launch inherited evidence or restart state: %+v", health)
+	}
+	m.mu.Lock()
+	m.crashes[health.ID] = []time.Time{time.Now(), time.Now(), time.Now(), time.Now()}
+	m.mu.Unlock()
+	client = r.snapshot()[1]
+	client.mu.Lock()
+	client.evidence = []string{"stderr: final failure"}
+	client.errorMessage = "Final error"
+	client.mu.Unlock()
+	close(client.done)
+	awaitLSP(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		state := m.states[health.ID]
+		return state != nil && state.status == LSPFailed && state.client == nil
+	})
+	health = m.ServerHealthSnapshots()[0]
+	if health.Restarting || health.Restarts != 5 || health.ErrorMessage != "" || len(health.Evidence) != 1 || health.Evidence[0] != "stderr: final failure" {
+		t.Fatalf("failed launch lost evidence or promised another restart: %+v", health)
+	}
 }

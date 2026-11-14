@@ -5,7 +5,8 @@
 ## Lifetime and termination
 
 - The background-jobs session deck opens passively; each running row has a
-  native Terminate button. Explicit button interaction retains keyboard focus;
+  native Output and Terminate buttons. Output remains available on retained
+  finished rows. Explicit button interaction retains keyboard focus;
   Esc returns it to the composer. Finished rows have no termination target.
 - Termination captures the exact owning backend and the observed
   `fileio.AsyncCmdRef` (handle, PID, start time), never the active session or a
@@ -23,7 +24,9 @@
   detached process kept the pipe open. Settle, session close and core shutdown
   therefore never wait on processes Crude does not own.
 - Background-job columns are content-sized with terminal-width helpers.
-  Optional PID/exit telemetry yields before handles are shortened; elapsed labels
+  Optional PID/exit telemetry yields first. Narrow decks retain Output,
+  Terminate and command text; the status becomes a glyph and the handle is
+  retained in control labels; elapsed labels
   use whole seconds (`2m 05s`, `1h 03m 09s`), never fractional seconds.
 - **One agent command shell.** Settings › Agents › Main Agent › Command shell
   (`agents.shell`; empty is Auto) chooses the shell for every agent's
@@ -80,6 +83,38 @@
   handles under `STARTF_USESTDHANDLES`, with inheritance disabled, so redirected
   host streams cannot replace the pseudoconsole's captured console streams.
 
+## Reading and finding a command
+
+The command text in each deck row is a native `ui.ActionLink`. Activation
+resolves its exact process lifetime to the originating transcript call, opens
+its disclosure (including a hidden activity-tree leaf), and places it near the
+top of the owning conversation. Repeated activation never collapses it.
+Expansion and the scroll anchor are committed together at the final render
+width. Only that retained item is invalidated; no transcript regrouping or
+second scroll model runs on each click.
+
+Output opens the established floating `WindowFrame` and `shellterm` reader.
+It echoes the complete command and displays captured output with libghostty
+colors, carriage-return progress and scrollback, not the bounded chat preview.
+Home/End and Page Up/Down read history; End follows new output. Selection/copy,
+wheel scrolling and resize reuse the terminal view. New output preserves a
+historical viewport. Escape clears selection first, then closes the reader.
+Closing the window never stops the command; Terminate remains the explicit
+process action in the deck. Typing and paste cannot write to a command viewer.
+The window title shows completion, failure, a time limit or an unknown outcome.
+
+The core installs a private read-only resource in `TerminalService`; it does not
+create a PTY or a new command. Fileio output/status broadcasts wake a bounded
+64-KiB catch-up reader without changing the model's output cursor. The existing
+acknowledged terminal topic owns pacing, incremental rows and reconnect; idle
+viewers do not poll. The original shell attachment owns each mirror and its
+resize-only lease. Close cancels its reader; detach retires its resources;
+workspace shutdown joins all readers. Late opens cannot revive detached owners.
+At most eight viewers per attachment are retained; reaching the limit refuses a
+new view instead of evicting another open window. Scrollback uses the existing
+Terminal setting. The retained tool output remains unchanged beyond that display
+history. Terminal query replies and OSC clipboard effects are inert in a viewer.
+
 ## Completion delivery and output
 
 - The core's canonical service-notice ingress records command operations and
@@ -120,6 +155,10 @@
   and no output teaser. Settlement captures the same head/tail byte-bounded
   excerpt as synchronous execution without consuming either model output cursor.
   It survives journal/SQLite hydration even if the agent never reads the job.
+- The delivery body the agent reads includes complete output up to 16 KiB, as
+  a synchronous result shows it, so a short result ("DONE", a test summary)
+  needs no `read_async_output` turn. Longer or partial output keeps the status
+  and the exact read cursor; the typed excerpt beside the body is unchanged.
   Expansion exposes every retained excerpt row and exact command/exit/time/range
   evidence; omitted bytes are explicit, not invented empty output.
   Never paint model-facing completion guidance as an oversized peer-message card

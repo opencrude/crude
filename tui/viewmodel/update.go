@@ -789,7 +789,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	diskSyncCmd = tea.Batch(diskCmds...)
 
-	m.syncLSPStatusIssues()
+	m.syncLanguageServerSettings()
 	m.syncAgentStatusInventory()
 	m.syncPerfAttention(now)
 	perfCmd := m.requestPerfSnapshot(false)
@@ -989,6 +989,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.markProjectSearchDirty()
 			m.findInFilesRequest = 0
 		}
+	case commandOutputOpenedMsg:
+		cmds = append(cmds, m.applyCommandOutputOpened(msg))
 	case terminalCreatedMsg:
 		cmds = append(cmds, m.applyTerminalCreated(msg))
 	case terminalProjectionMsg:

@@ -350,7 +350,7 @@ func TestWorkspaceDeletionCanceledFactoryStillOpeningIsActionablyRefused(t *test
 	t.Cleanup(opener.Close)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	request := deletionRequest(t, opener, "canceled-attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+	request := deletionRequest(t, opener, "canceled-attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 	result := make(chan coreprotocol.Response, 1)
 	go func() { result <- opener.Call(ctx, request) }()
 	select {

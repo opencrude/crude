@@ -59,7 +59,7 @@ func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	var attached coreprotocol.AttachResult
-	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: ws.RootPath}, &attached); err != nil {
+	if err := c.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: ws.RootPath}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.RegisterControlShell(ctx, attached.WorkspaceID); err != nil {

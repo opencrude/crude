@@ -4,6 +4,7 @@ import (
 	"crude/shellport"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -124,7 +125,7 @@ func (m *App) openNextAgentPrompt() {
 	}
 	if m.agentPrompt == nil && m.overlayHost != nil && !m.overlayHost.IsOpen(ui.OverlayDirtyClose) {
 		for _, state := range m.agentPrompts {
-			if state.inline {
+			if state.inline || m.aeronPromptWaits(state) {
 				continue
 			}
 			m.agentPrompt = state
@@ -137,6 +138,14 @@ func (m *App) openNextAgentPrompt() {
 		}
 	}
 	m.syncAgentPromptBlocking()
+}
+
+// aeronPromptWaits keeps a question from the background Aeron closed while
+// the user types or clicks, so the modal never takes keys meant for other
+// work. The Aeron tick opens it once the user pauses.
+func (m *App) aeronPromptWaits(state *agentPromptState) bool {
+	return m.isAeronAgent(state.request.agentID) && !m.LastInteractionTime.IsZero() &&
+		time.Since(m.LastInteractionTime) < aeronEnsureQuietPeriod
 }
 
 func (m *App) agentPromptInlineEligible(agentID string) bool {

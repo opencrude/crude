@@ -155,6 +155,8 @@ func (a *actor) publishLSPIfChanged() {
 	}
 	if version := a.ws.LSPMgr.Version(); version != a.lspVersion {
 		a.lspVersion = version
+		// The core owns language-server issues, so they exist without a shell.
+		workspace.SyncLSPIssues(a.ws.Status, a.ws.LSPMgr)
 		a.broadcast(coreprotocol.Change{LSP: true})
 	}
 }

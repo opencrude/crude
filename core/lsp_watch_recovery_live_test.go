@@ -57,7 +57,7 @@ func TestLiveLSPDiagnosticsRecoverAfterDirectoryAdmissionFailure(t *testing.T) {
 	})
 	wire := newResourceWire(t, r, "watch-recovery-editor")
 	var attached coreprotocol.AttachResult
-	wire.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	wire.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	a, err := r.workspace(t.Context(), attached.WorkspaceID, root)
 	if err != nil {
 		t.Fatal(err)

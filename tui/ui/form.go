@@ -37,6 +37,36 @@ type Form struct {
 	ruleBleedW       int
 	pointerField     int
 	chordActions     map[string]string
+	overlayAbove     int
+	overlayBelow     int
+}
+
+// SetOverlayRoom lets an open dropdown paint into rows the parent owns above
+// and below the form, parent-supplied at layout time like SetRuleBleed. A
+// short dialog form (Save File) can then open its choice list over the
+// content above it instead of clipping it to the form's own rows. While a
+// dropdown is open the form also takes pointer input over that room, so a
+// click elsewhere closes the dropdown first, as everywhere else.
+func (f *Form) SetOverlayRoom(above, below int) {
+	f.overlayAbove, f.overlayBelow = max(0, above), max(0, below)
+}
+
+// PointerHitBounds extends pointer ownership over the overlay room only
+// while a dropdown is open (PointerHitBoundsProvider).
+func (f *Form) PointerHitBounds(screen Rect) Rect {
+	if f.overlayAbove == 0 && f.overlayBelow == 0 || !f.selectOpen() {
+		return screen
+	}
+	return Rect{X: screen.X, Y: screen.Y - f.overlayAbove, W: screen.W, H: screen.H + f.overlayAbove + f.overlayBelow}
+}
+
+func (f *Form) selectOpen() bool {
+	for _, field := range f.fields {
+		if field.SelectOpen() {
+			return true
+		}
+	}
+	return false
 }
 
 // SetChordAction makes a key chord, for example "ctrl+s", emit action from any
@@ -375,7 +405,7 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 		}
 	}
 	for _, field := range f.fields {
-		field.layoutOverlay(ctx, r.H)
+		field.layoutOverlay(ctx, -f.overlayAbove, r.H+f.overlayBelow)
 	}
 }
 
@@ -416,15 +446,29 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		fieldCtx.Hovered = ctx.Hovered && index == f.hovered && !fieldCtx.Focused
 		field.Paint(inner, off, 0, fieldCtx)
 	}
+	if f.overlayAbove == 0 && f.overlayBelow == 0 {
+		f.paintOverlays(inner, off, 0, ctx, r)
+		surface.Blit(buf, originX+r.X-off, originY+r.Y, inner, nil)
+		return
+	}
+	surface.Blit(buf, originX+r.X-off, originY+r.Y, inner, nil)
+	if f.selectOpen() {
+		// Transparent cells keep the parent's ink outside the dropdown panel.
+		over := surface.NewCellBuffer(inner.Width(), f.overlayAbove+r.H+f.overlayBelow)
+		f.paintOverlays(over, off, f.overlayAbove, ctx, r)
+		surface.Blit(buf, originX+r.X-off, originY+r.Y-f.overlayAbove, over, nil)
+	}
+}
+
+func (f *Form) paintOverlays(buf *surface.CellBuffer, ox, oy int, ctx PaintContext, r Rect) {
 	for index, field := range f.fields {
 		if !field.SelectOpen() {
 			continue
 		}
 		fieldCtx := ctx
 		fieldCtx.Focused = ctx.Focused && index == f.focused
-		field.PaintOverlay(inner, off, 0, fieldCtx, r)
+		field.PaintOverlay(buf, ox, oy, fieldCtx, r)
 	}
-	surface.Blit(buf, originX+r.X-off, originY+r.Y, inner, nil)
 }
 
 func (f *Form) Handle(ctx EventContext, evt Event) EventResult {

@@ -83,7 +83,7 @@ func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
 		wg.Add(1)
 		go func(i int, c *Connection) {
 			defer wg.Done()
-			result := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+			result := callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 			var attached coreprotocol.AttachResult
 			if err := coreprotocol.Decode(result.Payload, &attached); err != nil {
 				t.Error(err)
@@ -159,7 +159,7 @@ func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer replacement.Close()
-	callCore(t, replacement, "attach-again", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+	callCore(t, replacement, "attach-again", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 	again := callCore(t, replacement, "submit", ids[0], coreprotocol.SubmitInput, submit)
 	if string(again.Payload) != string(resultPayload(admitted)) {
 		var recovered coreprotocol.InputResult
@@ -364,7 +364,7 @@ func TestActorRejectsQueuedDetachedOwnerAndStaleDecision(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	result := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()})
+	result := callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: t.TempDir()})
 	var attached coreprotocol.AttachResult
 	if err := coreprotocol.Decode(result.Payload, &attached); err != nil {
 		t.Fatal(err)

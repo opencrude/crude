@@ -61,7 +61,7 @@ func FuzzCoreCapabilities(f *testing.F) {
 		})
 		w := newResourceWire(t, r, "capability-owner")
 		var attached coreprotocol.AttachResult
-		w.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+		w.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 		ws := attached.WorkspaceID
 		var created workspace.NewSessionResult
 		w.call(t, ws, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}, &created)

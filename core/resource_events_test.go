@@ -128,7 +128,7 @@ func resourceConnection(t *testing.T, r *Runtime, root, id string) (*Connection,
 	}
 	t.Cleanup(c.Close)
 	var attached coreprotocol.AttachResult
-	decodeResource(t, callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}), &attached)
+	decodeResource(t, callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}), &attached)
 	return c, attached.WorkspaceID
 }
 

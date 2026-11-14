@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -183,5 +184,31 @@ func TestAeronQuestionIsAModalPrompt(t *testing.T) {
 	app.openNextAgentPrompt()
 	if !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) || app.agentPrompts[0].inline {
 		t.Fatal("Aeron's question moved out of the modal when its tab opened")
+	}
+}
+
+// Aeron works in the background, so its question must not open under the
+// user's keys while the user types; it opens at the next tick after a pause.
+func TestAeronQuestionWaitsWhileTheUserTypes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		aeronToolReply(w, "question", map[string]any{"questions": []map[string]any{{
+			"header": "Fix", "question": "Fix the configuration?", "options": []string{"Fix it", "Not now"},
+		}}}, 1)
+	}))
+	t.Cleanup(server.Close)
+	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.URL), t.TempDir())
+	app := shell.app
+	remoteJourneyCreate(t, shell)
+	runAppCommand(t, app, app.taskWorkspaceAeron("Crude found a problem in this workspace: clangd failed. Investigate it.", "Investigate"))
+	app.LastInteractionTime = time.Now().Add(time.Hour) // the user keeps typing
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return len(app.agentPrompts) == 1 })
+	if app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
+		t.Fatal("Aeron's question opened while the user was typing")
+	}
+	app.LastInteractionTime = time.Now().Add(-aeronEnsureQuietPeriod)
+	app.workspaceAeronTick(time.Now())
+	if !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) || app.agentPrompts[0].inline {
+		t.Fatal("Aeron's question did not open after the user paused")
 	}
 }

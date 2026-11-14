@@ -56,6 +56,11 @@ type Screen struct {
 	scroll               *ui.ScrollModel
 	scrollbar            *ui.ScrollbarControl
 
+	// readOnly presents a mirror (a background command's output): it scrolls,
+	// selects and copies like a terminal but never sends input or asks for
+	// input control, and the mirror writes its own closing status line.
+	readOnly bool
+
 	focusKnown         bool
 	focused            bool
 	selecting          bool
@@ -125,11 +130,16 @@ func (s *Screen) SetControlled(v bool) {
 		s.pending = kept
 	}
 	if v {
-		s.queue(Command{Kind: CommandFocus, Focused: s.focused})
+		if !s.readOnly {
+			s.queue(Command{Kind: CommandFocus, Focused: s.focused})
+		}
 		s.requestResize()
 	}
 }
 func (s *Screen) Controlled() bool { return s.controlled }
+
+// ReadOnly identifies a passive output viewer, not an interactive PTY.
+func (s *Screen) ReadOnly() bool { return s.readOnly }
 
 // SetProjection detaches a snapshot, rejecting older generations.
 func (s *Screen) SetProjection(p workspace.TerminalProjection) {
@@ -217,7 +227,7 @@ func (s *Screen) TakePendingCommands() []Command { out := s.pending; s.pending =
 func (s *Screen) queue(c Command)                { c.ID = s.termID; s.pending = append(s.pending, c) }
 func (s *Screen) requestResize() {
 	c, r := workspace.NormalizeTerminalSize(s.Bounds().W, s.Bounds().H)
-	if s.controlled && !s.exited && (c != s.cols || r != s.rows) {
+	if s.controlled && (!s.exited || s.readOnly) && !s.Bounds().Empty() && (c != s.cols || r != s.rows) {
 		for _, p := range s.pending {
 			if p.Kind == CommandResize && p.Cols == c && p.Rows == r {
 				return
@@ -261,7 +271,7 @@ func (s *Screen) requestRows() {
 // bounded service read off Update. Every invalidation reads the desired viewport
 // directly rather than installing the active grid and blanking history first.
 func (s *Screen) ViewportRead() Command {
-	return Command{ID: s.termID, Kind: CommandReadRows, Start: s.view.ViewportStart(), Viewport: s.view.Intent(), HistoryEpoch: s.view.Grid.HistoryEpoch, HistoryBase: s.view.Grid.HistoryBase}
+	return Command{ID: s.termID, Kind: CommandReadRows, Start: s.view.ViewportStart(), Viewport: s.view.Intent(), Generation: s.view.Generation, HistoryEpoch: s.view.Grid.HistoryEpoch, HistoryBase: s.view.Grid.HistoryBase}
 }
 func (s *Screen) AcceptsViewport(intent uint64) bool {
 	return intent == 0 || intent == s.view.Intent()
@@ -300,7 +310,7 @@ func (s *Screen) SetCopy(fn func(string) tea.Cmd) { s.copy = fn }
 func (s *Screen) HasSelection() bool     { return s.view.HasSelection() }
 func (s *Screen) CopySelection() tea.Cmd { return s.copySelection() }
 func (s *Screen) SelectAll()             { s.view.SelectAll(); s.requestSelectionRows() }
-func (s *Screen) PasteActive() bool      { return !s.closed && !s.exited && s.controlled }
+func (s *Screen) PasteActive() bool      { return !s.closed && !s.exited && s.controlled && !s.readOnly }
 func (s *Screen) PasteText(text string) {
 	if !s.PasteActive() {
 		return
@@ -340,7 +350,7 @@ func (s *Screen) SetTermFocused(v bool) {
 	s.focusKnown = true
 	s.focused = v
 	s.resetCursorBlink(time.Now())
-	if s.controlled && !s.exited {
+	if s.controlled && !s.exited && !s.readOnly {
 		s.queue(Command{Kind: CommandFocus, Focused: v})
 	}
 }
@@ -365,6 +375,11 @@ func (s *Screen) TickCursor(now time.Time) bool {
 }
 
 func (s *Screen) SetFloating(v bool) { s.floating = v }
+
+// SetReadOnly makes the screen a passive mirror: scrolling, selection and
+// copy work; typing, paste and mouse reporting are not sent anywhere, and
+// unhandled keys (Esc) reach the containing window.
+func (s *Screen) SetReadOnly(v bool) { s.readOnly = v }
 
 func (s *Screen) SetExited(v bool) { s.exited = v }
 
@@ -451,9 +466,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	} else {
 		s.TickCursor(time.Now())
 	}
-	s.view.Paint(buf, ox+r.X, oy+r.Y, r.W, r.H, s.tokens, s.focused, s.blinkOn)
+	s.view.Paint(buf, ox+r.X, oy+r.Y, r.W, r.H, s.tokens, s.focused && !s.readOnly, s.blinkOn)
 	s.paintScrollbackScrollbar(buf, ox+r.X, oy+r.Y)
-	if s.exited && s.tokens != nil {
+	if s.exited && s.tokens != nil && !s.readOnly {
 		msg := " [process exited] "
 		y := oy + r.Y + max(0, r.H-2)
 		if r.H > 0 {
@@ -491,7 +506,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		return res
 	}
 	if evt.Kind == ui.EventCustom {
-		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited && !s.closed {
+		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited && !s.closed && !s.readOnly {
 			if !s.controlled {
 				return s.takeControlResult()
 			}
@@ -551,6 +566,9 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 	}
+	if s.readOnly {
+		return s.handleReadOnlyKey(key)
+	}
 	if !s.controlled || s.exited {
 		return s.takeControlResult()
 	}
@@ -563,6 +581,43 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 		result.Invalidate &^= ui.InvalidatePaint
 	}
 	return result
+}
+
+// handleReadOnlyKey gives a mirror the reader keys of the shared interaction
+// matrix: Ctrl+C copies, page/arrow keys scroll, Esc clears a selection
+// first. Every other key is left to the containing window.
+func (s *Screen) handleReadOnlyKey(key tea.KeyPressMsg) ui.EventResult {
+	scroll := func(apply func()) ui.EventResult {
+		apply()
+		s.requestRows()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
+	page := max(1, s.rows-1)
+	switch {
+	case key.String() == "ctrl+c":
+		if !s.view.HasSelection() {
+			return ui.EventResult{}
+		}
+		return ui.EventResult{Handled: true, Cmd: s.copySelection(), Invalidate: ui.InvalidatePaint}
+	case key.Code == tea.KeyEsc && s.view.HasSelection():
+		s.view.ClearSelection()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	case key.Mod != 0:
+		return ui.EventResult{}
+	case key.Code == tea.KeyPgUp:
+		return scroll(func() { s.view.ScrollDelta(-page) })
+	case key.Code == tea.KeyPgDown:
+		return scroll(func() { s.view.ScrollDelta(page) })
+	case key.Code == tea.KeyUp:
+		return scroll(func() { s.view.ScrollDelta(-1) })
+	case key.Code == tea.KeyDown:
+		return scroll(func() { s.view.ScrollDelta(1) })
+	case key.Code == tea.KeyHome:
+		return scroll(s.view.ScrollTop)
+	case key.Code == tea.KeyEnd:
+		return scroll(s.view.ScrollBottom)
+	}
+	return ui.EventResult{}
 }
 
 func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -589,7 +644,7 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	// Shift bypasses application mouse tracking (standard escape hatch so
 	// the user can always select/copy).
-	if s.view.Grid.Modes.MouseTracking && !mouseShift(evt) && s.controlled && !s.exited {
+	if s.view.Grid.Modes.MouseTracking && !mouseShift(evt) && s.controlled && !s.exited && !s.readOnly {
 		return s.send(Command{Kind: CommandMouse, Mouse: neutralMouse(evt, cellX, cellY)})
 	}
 	switch evt.Kind {
@@ -606,7 +661,7 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		// Alternate screen has no scrollback: translate the wheel into
 		// arrow keys (less/vim/man scrolling) like Ghostty's alt-scroll.
-		if s.view.Grid.Modes.AltScreen {
+		if s.view.Grid.Modes.AltScreen && !s.readOnly {
 			code := terminalvt.KeyUp
 			if delta > 0 {
 				code = terminalvt.KeyDown
@@ -716,7 +771,7 @@ func (s *Screen) takeControlResult() ui.EventResult {
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionTakeControl, Payload: s.termID}}
 }
 func (s *Screen) send(c Command) ui.EventResult {
-	if s.closed || s.exited {
+	if s.closed || s.exited || s.readOnly {
 		return ui.EventResult{Handled: true}
 	}
 	if !s.controlled {

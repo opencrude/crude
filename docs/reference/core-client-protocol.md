@@ -88,6 +88,15 @@ pending, coalesces the burst, and disarms after publishing. Retained idle actors
 do not run a periodic publication clock; accepted mutations and state-topic
 source-generation fences remain immediate and independent of presentation.
 
+An attach from a shell on the same computer (an unauthenticated local
+connection, not an SSH relay) carries that shell's environment
+(`AttachRequest.Environment`, at most 4,096 entries and 1 MiB). The core refuses
+an environment from any other connection. It keeps the environment of the most
+recent successful local attach per workspace in memory only, as the base of new
+terminals; it is never persisted, logged, put in a receipt or shown in
+diagnostics, and detaching keeps it. See
+[terminal environment](in-app-terminals.md#terminal-environment).
+
 Passive LSP reads use the actor's existing bounded, cancellable, joined job
 admission independently of the file-effect lane. Hover, signatures, navigation,
 completion, inlay inspection, semantic tokens, code-action discovery and selection

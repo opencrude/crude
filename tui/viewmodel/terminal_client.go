@@ -422,6 +422,10 @@ func (m *App) terminalContextMenu(id string) *ui.ContextMenuState {
 			m.runDetachedAsyncCmd(m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandClear}))
 		})},
 	}
+	if screen.ReadOnly() {
+		items = []ui.ContextMenuItem{items[0], items[2], {Label: "Close output", Action: guard(func() { m.closeTerminal(id) })}}
+		return &ui.ContextMenuState{Title: screen.Title(), Sections: []ui.ContextMenuSection{{Items: items}}}
+	}
 	if !screen.Controlled() {
 		items = append(items, ui.ContextMenuItem{Label: "Take input control", Action: guard(func() {
 			m.runDetachedAsyncCmd(m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandTakeControl}))

@@ -20,6 +20,9 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 	if run, apply, handled := a.prepareControlDiagnostics(in, owner); handled {
 		return run, apply, true
 	}
+	if in.CommandID == "lsp.restart" {
+		return a.prepareControlLSP(in, owner)
+	}
 	if strings.HasPrefix(in.CommandID, "execution.") {
 		return a.prepareControlExecution(in, owner)
 	}

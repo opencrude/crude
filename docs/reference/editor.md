@@ -1702,6 +1702,99 @@ Only reports inside both the workspace root and the producer root are accepted.
   diagnostic opens the file and applies the location unless the buffer has
   unsaved changes.
 
+#### Closed files, disk views and restarts
+
+These rules are generic. No rule names a language or server.
+
+- **A disk view is free for other files.** An agent probe or the project check
+  that borrows a file which no editor holds, and whose text is the file on disk,
+  does not advance the editor context. The server sees nothing new, so open
+  files are not sent again and keep their current results. Only a view with text
+  that differs from disk (an unsaved buffer) advances the context.
+- **A closed disk view keeps its result.** When the last holder releases it, its
+  current result becomes the file's project result, bound to the same server
+  instance: `unopened:<path>` when the server reports closed files itself
+  (catalog `diagnostic_scope: project`, or the server was seen doing it),
+  otherwise `checked:<path>`. A watched change of the file marks a `checked:`
+  result out of date; the server maintains `unopened:` results. A `checked:`
+  result describes the file on disk under one launch configuration, so it stays
+  current when its server stops (eviction at `lsp.max_servers`, idle retirement
+  or a crash). Only a change of the file, a new launch command or analysis
+  boundary, Refresh, an explicit Restart of that server or an unreliable file
+  watch makes it out of date. Before this rule, every stop marked the results
+  out of date, the next pass started the server again and evicted another, and
+  servers rotated without end. A change to a file that the closed files depend
+  on (a header, a configuration file) does not check them again by itself;
+  Refresh does.
+- **A new server instance settles.** After it connects and has been idle (no
+  work-done progress) and quiet (no closed-file report) for three seconds, the
+  results that stopped instances of the same server gave for files no view holds
+  are removed. Until then they stay visible as out of date. A new server reports
+  only files that still have problems, so without this step a file fixed during
+  a restart, a crash or a settings change kept its old error forever.
+
+#### Project check of closed files
+
+`workspace/lsp_project_check.go` gives closed files the diagnostics of open files
+for every server that does not report closed files itself. It uses the assembly
+listing and the disk-view path above, one file at a time:
+
+- It runs only while the user does not type or open files for three seconds
+  and no agent request borrows a server view. After each file it waits at
+  least as long as that file took, so a server works at most half of the time.
+- **When idle** (default) it also yields to the rest of the computer, after
+  established background indexers. It waits on battery power or battery saver,
+  as KDE Baloo pauses content indexing. It waits while the computer is busy, as
+  the Windows Search indexer backs off: on Linux, busy means pressure stall
+  information (`/proc/pressure`) shows at least 10% stalled time for CPU,
+  memory or I/O since the last sample, systemd's default pressure threshold
+  (200 ms per 2 s). Where pressure is not available it means less than one idle
+  core. A file whose server is not running waits until the computer has the
+  server's memory hint (`lsp.server_memory_mb`) free. **Always** turns these
+  three waits off, like the Windows `DisableBackoff` policy; typing and agent
+  requests still come first. `sysload/` owns the measurements; it reads power
+  from `/sys/class/power_supply` (Linux) or `GetSystemPowerStatus` (Windows).
+  macOS power is not read, so battery power does not pause the check there.
+- **Crude's own work is not the computer's load.** After each file the check
+  starts a new load interval (`sysload.Probe.Rebase`), so the decision for the
+  next file measures only the rest time, not the stall that Crude's own server
+  caused on the previous file. A server that reports work in progress (for
+  example indexing) is waited for as itself ("while the language server
+  prepares the project"), whatever the mode, not as "the computer is busy".
+  Contention from other programs, the user's builds and agent commands still
+  makes the check wait, so it never adds load to a computer that is already
+  contended.
+- **Load is never blamed on a file.** A file without an answer while the
+  computer had contention over the kernel's last ten seconds (PSI `avg10`) or
+  while its server reported work in progress is not remembered as
+  unanswerable, and it does not count toward the two-file limit. The pass stops
+  for that server and tries its files again after one minute, or sooner when
+  something else asks for a pass. Only silence on a quiet computer is
+  remembered (`ProjectCheckUnchecked`).
+- Problems says why it waits: "closed-file check waits while you type", "on
+  battery power", "while the computer is busy", "for free memory", "while the
+  language server prepares the project" or "while an agent checks code", with
+  its progress.
+- Crude does not lower the server's process priority, as Baloo does for its
+  own extractor: the same server answers the editor, so a lower priority would
+  slow the user's own diagnostics whenever the computer is busy.
+- Files nearest to the open files come first. Files of one server stay together,
+  so few servers run at the same time. Vendored paths that follow GitHub
+  Linguist's `vendor.yml` conventions (`third_party/`, `vendor/`,
+  `node_modules/` and similar) are skipped.
+- A file with a current result, an open view or a server that reports the
+  project is skipped. A server that fails, stops or gives no result for two
+  files in a row on a quiet computer is not asked again in that pass, and those
+  files wait for a change, a new launch configuration, Refresh or Restart. A
+  file waits at most ten seconds for its result.
+- A pass starts after the assembly plan, a start or Refresh, a settled new
+  server instance, a watched file change or a settings change. Stop, a root
+  change and a launch-setting change cancel it; Close joins it.
+- **Check closed files** (`lsp.project_check`: When idle, Always or Off) on Code
+  Intelligence controls it, together with the existing Diagnostics switch.
+  Problems shows "checking closed files (N of M)". Refresh restarts the servers,
+  removes old results and so checks the closed files again.
+
 #### Assembly service and coverage
 
 The assembly service (`workspace/lsp_assembly.go`) plans the project's code
@@ -1772,9 +1865,12 @@ focused file and includes the final empty line after a line terminator. The
 Problems footer shows counts and marks restricted or stopped services as off,
 and failures as errors. **Refresh** in the Problems header (and **Restart
 language servers**) restarts every server and removes the results the stopped
-servers reported for files no editor holds, because a new server reports only
-files that still have problems. Automatic restarts and Stop keep those results
-visible as out of date until a server replaces them.
+servers reported for files with no live editor or agent-probe view. This includes
+results originally reported to a now-closed view, not only unopened-project
+reports: a new server need not report files that are now clean. Live views keep
+their out-of-date evidence until replacement, without changing unsaved text.
+Automatic restarts and Stop keep retained results visible as out of date until
+a server replaces them.
 Workspace health shows counts or the manager's status
 message and routes its next action to the existing trust, settings or server
 controls. No result is a clean-project claim. Diagnostic provenance remains in

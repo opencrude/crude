@@ -46,7 +46,7 @@ func analysisControlGateway(t *testing.T, runtime *core.Runtime, one remoteJourn
 		}
 		return client.Call(t.Context(), coreprotocol.Request{ID: id, Owner: client.Owner, WorkspaceID: target.WorkspaceID, Method: method, Payload: raw})
 	}
-	if response := call(coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}); response.Error != nil {
+	if response := call(coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); response.Error != nil {
 		t.Fatal(response.Error)
 	}
 	if response := call(coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: effects, Shell: target.Shell}); response.Error != nil {

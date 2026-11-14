@@ -86,6 +86,10 @@ type Client struct {
 
 // ClientConfig represents the configuration for creating a new LSP client.
 type ClientConfig struct {
+	// Crude pinned-copy extension: optional bounded, nonblocking stderr capture.
+	// The sink runs on the stderr drain goroutine and must copy retained bytes.
+	// It observes data in addition to the existing log; nil preserves logging only.
+	StderrSink func([]byte)
 	// TransportWrap optionally wraps the LSP stream sides after the server
 	// process starts. Consumers use it to decouple pipe I/O from their own
 	// goroutines (async serialized writes) and to observe connection death.

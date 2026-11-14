@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -99,10 +100,10 @@ func ghosttyVersionMatchesPin(version string) bool {
 // database entry must also resolve. PTYEnviron therefore points TERMINFO at
 // TerminfoDir(), which materializes the embedded pinned entry under the app
 // data dir when no system database provides it.
-func PTYEnviron(extra []string) []string {
-	env := append([]string{}, extra...)
-	if len(env) == 0 {
-		env = append(env, os.Environ()...)
+func PTYEnviron(base []string) []string {
+	env := slices.Clone(base)
+	if base == nil {
+		env = os.Environ()
 	}
 	env = setEnv(env, "TERM", types.GhosttyTermName)
 	env = setEnv(env, "COLORTERM", "truecolor")
@@ -157,13 +158,18 @@ func TerminfoDir() string {
 	return dir
 }
 
-func setEnv(env []string, key, value string) []string {
-	prefix := key + "="
-	for i, e := range env {
-		if strings.HasPrefix(e, prefix) {
-			env[i] = prefix + value
-			return env
-		}
+func environmentKey(key string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(key)
 	}
-	return append(env, prefix+value)
+	return key
+}
+
+func setEnv(env []string, key, value string) []string {
+	name := environmentKey(key)
+	env = slices.DeleteFunc(env, func(entry string) bool {
+		entryKey, _, _ := strings.Cut(entry, "=")
+		return environmentKey(entryKey) == name
+	})
+	return append(env, key+"="+value)
 }

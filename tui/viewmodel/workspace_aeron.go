@@ -113,6 +113,15 @@ func (m *App) requestWorkspaceAeronEnsure() {
 // workspaceAeronTick is the only automatic start point. It yields to user
 // work, history restore and any lifecycle operation already in flight.
 func (m *App) workspaceAeronTick(now time.Time) tea.Cmd {
+	if m.agentPrompt == nil {
+		// A waiting Aeron question opens when the user pauses.
+		for _, state := range m.agentPrompts {
+			if !state.inline && !m.aeronPromptWaits(state) {
+				m.openNextAgentPrompt()
+				break
+			}
+		}
+	}
 	if !m.aeronEnsureScheduled || m.aeronEnsureInFlight || m.aeronEnsureFailed {
 		return nil
 	}

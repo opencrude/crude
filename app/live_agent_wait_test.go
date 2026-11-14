@@ -87,7 +87,7 @@ func TestLiveAgentWaitDirectedEventJourney(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	var attached coreprotocol.AttachResult
-	if err := client.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: project}, &attached); err != nil {
+	if err := client.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: project}, &attached); err != nil {
 		t.Fatal("cannot attach private live wait workspace")
 	}
 	var created workspace.NewSessionResult

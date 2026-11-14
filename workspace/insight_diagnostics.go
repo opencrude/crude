@@ -171,6 +171,9 @@ func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, p typ
 		m.bumpVersionLocked()
 		return
 	}
+	if doc.diskView && path == m.checkPath && !m.projectPublicationFitsLocked(p) {
+		p.Diagnostics, p.Limited, p.Detail = nil, true, "The diagnostic store is full. Closed-file coverage is limited."
+	}
 	_, err := sources.Insight.diagnostics.Publish(p)
 	if errors.Is(err, facts.ErrSequence) {
 		return // Await re-observes the same callback, not a new product fact.
@@ -181,6 +184,9 @@ func (m *LSPManager) receiveDiagnostics(key string, owner *lspClientState, p typ
 			m.bumpVersionLocked()
 		}
 		return
+	}
+	if err == nil && !p.Limited {
+		delete(m.checkResults, path)
 	}
 	if errors.Is(err, facts.ErrLimit) {
 		sources.Insight.mu.Lock()

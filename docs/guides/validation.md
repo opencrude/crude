@@ -513,8 +513,9 @@ review, Cancel). Verify `passed=true`, the full phase count, unchanged source
 and private draft, and inspect the screenshots at 160x40 and 80x24. A capture
 script's exit alone does not establish that the fixture assertions passed.
 
-Read-only inlay hints use `TestInlayVisualHeadless` with installed gopls v0.21.1
-and explicit generic `gopls.hints` fixture settings. The test independently checks
+Read-only inlay hints use `TestInlayVisualHeadless` with installed gopls
+v0.22.0 (`visualGoplsVersion`) and explicit generic `gopls.hints` fixture
+settings. The test independently checks
 three literal labels and UTF-16/source-byte anchors, the original provider
 response, actual painted cells, source caret/pointer placement, view-local
 Show/Hide/Refresh, original-row inspection and unchanged text/revision/private
@@ -567,7 +568,7 @@ installed gopls and framed core at 160x40 and 80x24. The independently authored
 Alpha/Beta comments must appear only for the selected original row. Browsing,
 Escape, original snippet acceptance, ordinary typing and two author Undos preserve
 canonical source, private draft and disk invariants. Original initialize and RPC
-traces qualify the result: gopls v0.21.1 supplies documentation eagerly and does
+traces qualify the result: gopls v0.22.0 supplies documentation eagerly and does
 not advertise resolve. This is initial-documentation evidence, not a successful
 real-gopls resolve. `TestConnectedCompletion*` and the framed `lspclient` and
 nested Powernap tests separately exercise advertised exact-object resolve,

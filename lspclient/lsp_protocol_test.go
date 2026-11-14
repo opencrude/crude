@@ -72,6 +72,16 @@ func TestProtocolServerHelper(t *testing.T) {
 		method, _ := msg["method"].(string)
 		switch method {
 		case "initialize":
+			if strings.HasPrefix(mode, "evidence") {
+				_, _ = fmt.Fprint(os.Stderr, "server could not load configuration\n")
+				write(map[string]any{"jsonrpc": "2.0", "method": "window/showMessage", "params": map[string]any{"type": 1, "message": "Missing build tool"}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "window/logMessage", "params": map[string]any{"type": 2, "message": "Using incomplete project context"}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "window/logMessage", "params": map[string]any{"type": 3, "message": "normal chatter"}})
+				if mode == "evidence-fail" {
+					write(map[string]any{"jsonrpc": "2.0", "id": msg["id"], "error": map[string]any{"code": -32603, "message": "initialization refused"}})
+					continue
+				}
+			}
 			cwd, _ := os.Getwd()
 			trace = append(trace, map[string]any{"cwd": cwd})
 			// Notification before the initialize response catches the old mu

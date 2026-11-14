@@ -43,7 +43,7 @@ func TestSettingsLaneCapturesOnlyAfterPriorPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	attached := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()})
+	attached := callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: t.TempDir()})
 	var owner coreprotocol.AttachResult
 	if err = coreprotocol.Decode(attached.Payload, &owner); err != nil {
 		t.Fatal(err)

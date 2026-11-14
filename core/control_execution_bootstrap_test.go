@@ -42,7 +42,7 @@ func TestControlExecutionBootstrap(t *testing.T) {
 				t.Cleanup(func() { _ = r.Close() })
 				c := controlWireClient(t, r, "bootstrap")
 				var attached coreprotocol.AttachResult
-				if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: a.ws.RootPath}, &attached); err != nil {
+				if err := c.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: a.ws.RootPath}, &attached); err != nil {
 					t.Fatal(err)
 				}
 				if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute}}, nil); err != nil {

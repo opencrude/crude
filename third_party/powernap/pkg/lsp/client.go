@@ -674,14 +674,17 @@ func startServerProcess(ctx context.Context, config ClientConfig) (_ io.ReadWrit
 		buf := make([]byte, 4096)
 		for {
 			n, err := stderr.Read(buf)
+			if n > 0 {
+				if config.StderrSink != nil {
+					config.StderrSink(buf[:n])
+				}
+				slog.Error("Language server stderr", "command", config.Command, "output", string(buf[:n]))
+			}
 			if err != nil {
 				if err != io.EOF && !errors.Is(err, os.ErrClosed) {
 					slog.Error("Error reading stderr", "error", err)
 				}
 				break
-			}
-			if n > 0 {
-				slog.Error("Language server stderr", "command", config.Command, "output", string(buf[:n]))
 			}
 		}
 	}()

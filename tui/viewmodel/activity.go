@@ -403,6 +403,16 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 			return m.terminateBackgroundJob(request)
 		}
 		return nil
+	case backgroundjobs.ActionOutput:
+		if request, ok := action.Payload.(backgroundjobs.OutputRequest); ok {
+			return m.openCommandOutput(request)
+		}
+		return nil
+	case backgroundjobs.ActionReveal:
+		if request, ok := action.Payload.(backgroundjobs.RevealRequest); ok {
+			m.revealBackgroundJob(request)
+		}
+		return nil
 	case "skills.manage":
 		return m.openCapabilityManager(activitySkills, "", "")
 	case "capabilities.pick":

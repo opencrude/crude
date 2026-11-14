@@ -180,7 +180,7 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 	// Ordered registration acknowledgement removes worker-start scheduling from
 	// the acceptance input. StartReplica itself remains the worker owner.
 	var attached coreprotocol.AttachResult
-	if err := target.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+	if err := target.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	if err := target.RegisterCapabilityHost(ctx, attached.WorkspaceID); err != nil {

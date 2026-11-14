@@ -11,11 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"crude/fileio"
+	"crude/insight/facts"
 	"crude/insight/governor"
 	ttypes "crude/types"
 )
@@ -39,6 +41,17 @@ type lspClientState struct {
 	waiting     bool
 	stopped     bool
 	lastUsed    time.Time
+	// connectedAt and reportedAt time the instance's own project report:
+	// settled is set once it is idle and quiet, and older results for files
+	// no view holds give way to it. reportsProject records that the server
+	// reported files that are not open, so Crude need not check them.
+	connectedAt    time.Time
+	reportedAt     time.Time
+	settled        bool
+	reportsProject bool
+	restarting     bool
+	evidence       []string
+	errorMessage   string
 }
 
 type lspDocument struct {
@@ -58,6 +71,9 @@ type lspDocument struct {
 	// borrowed this document. Either keeps the server view alive.
 	editor bool
 	probes int
+	// diskView marks a borrowed view whose text is the file on disk. Opening
+	// or closing it does not change what the server sees of the project.
+	diskView bool
 }
 
 type lspClosedDocument struct {
@@ -94,6 +110,7 @@ func (m *LSPManager) SetRuntime(runtime LSPRuntime) {
 	}
 	m.runtime = runtime
 	m.settingsGeneration++
+	m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true }, "Language service configuration changed.")
 	m.advanceContextLocked("Language service configuration changed.")
 	m.requestAssemblyLocked()
 	if len(m.states) > 0 || len(m.documents) > 0 {
@@ -117,7 +134,9 @@ func (m *LSPManager) setWorkspaceRootLocked(root string) {
 	m.workspaceRoot = root
 	m.discovery = nil
 	m.projects = nil
+	m.cancelProjectCheckLocked()
 	m.settingsGeneration++
+	m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true }, "Language service configuration changed.")
 	m.advanceContextLocked("Project root changed; retained context is stale.")
 	for _, state := range m.states {
 		m.retireLocked(state)
@@ -163,11 +182,14 @@ func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
 		}
 	}
 	if viewOnly {
+		m.requestProjectCheckLocked() // a pass stops itself when the check is turned off
 		m.bumpVersionLocked()
 		m.mu.Unlock()
 		return
 	}
+	m.cancelProjectCheckLocked()
 	m.settingsGeneration++
+	m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true }, "Language service configuration changed.")
 	m.advanceContextLocked("Language service configuration changed.")
 	// Changed launch policy invalidates the old process identity, never mutates
 	// a live connection's environment/settings beneath its outstanding requests.
@@ -202,7 +224,7 @@ func sameLSPProducerSettings(a, b ttypes.LSPSettings) bool {
 	a.DiagInEditor, a.DiagInTree, a.DiagInStatus = b.DiagInEditor, b.DiagInTree, b.DiagInStatus
 	a.MinSeverity, a.AutoComplete = b.MinSeverity, b.AutoComplete
 	a.CompletionDelayMS, a.CompletionAccept = b.CompletionDelayMS, b.CompletionAccept
-	a.InlayHints = b.InlayHints
+	a.InlayHints, a.ProjectCheck = b.InlayHints, b.ProjectCheck
 	return reflect.DeepEqual(a, b)
 }
 
@@ -216,6 +238,7 @@ func (m *LSPManager) StartForWorkspace(root string) {
 	}
 	m.setWorkspaceRootLocked(root)
 	m.paused, m.manualStart = false, true
+	m.requestProjectCheckLocked()
 	clear(m.crashes)
 	for _, state := range m.states {
 		state.stopped = false
@@ -275,6 +298,7 @@ func (m *LSPManager) runWorker(done chan struct{}) {
 		// Observe each exact ticket before sleeping. Capacity changes wake the
 		// existing joined worker, never a detached waiter or a busy retry loop.
 		m.mu.Lock()
+		m.tickProjectCheckLocked(time.Now())
 		cases := []reflect.SelectCase{
 			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(m.wake)},
 			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ticker.C)},
@@ -341,14 +365,16 @@ func (m *LSPManager) reconcile() bool {
 				m.mu.Unlock()
 				return true
 			}
-			if state.stopped {
+			m.captureServerEvidenceLocked(state)
+			if state.stopped || state.restarting && state.epoch == m.settingsGeneration {
 				state.client, state.closing, state.status = nil, false, LSPIdle
+				state.instance, state.errorMessage = "", ""
 			} else {
 				delete(m.states, key)
 			}
 			for _, doc := range m.documents {
 				if doc.key == key {
-					if !state.stopped {
+					if !state.stopped && !state.restarting {
 						doc.key = ""
 					}
 					doc.opened = false
@@ -368,6 +394,7 @@ func (m *LSPManager) reconcile() bool {
 	// An unexpected exit restarts the server a bounded number of times, as
 	// established IDEs do; a crash loop then stays failed until the user acts.
 	for key, state := range m.states {
+		m.captureServerEvidenceLocked(state)
 		if state.client == nil || state.teardownErr != nil {
 			continue
 		}
@@ -375,17 +402,24 @@ func (m *LSPManager) reconcile() bool {
 		case <-state.client.Done():
 			client := state.client
 			restart := m.allowAutomaticRestartLocked(key, time.Now())
+			state.restarting = restart
 			state.status, state.err = LSPFailed, lspExitError(state.cmd, restart)
+			if restart && !m.keyWantedLocked(key) {
+				state.err = filepath.Base(state.cmd) + " stopped unexpectedly. Open a file to start it again."
+			}
 			m.clearServerDiagnosticsLocked(key)
 			m.recomputeActiveStatusLocked()
 			m.mu.Unlock()
 			stopErr := client.Stop()
 			m.mu.Lock()
 			if m.states[key] == state && !m.retainUnverifiedStopLocked(key, state, stopErr) {
-				state.client = nil
-				if restart && !state.stopped && !m.paused && !m.closed {
-					// The documents re-resolve and start a fresh process.
+				m.captureServerEvidenceLocked(state)
+				state.client, state.errorMessage = nil, ""
+				if restart && state.restarting && !state.stopped && !m.paused && !m.closed {
+					// Keep the restart intent on this state until its fresh launch.
+					// Explicit retirement while Stop ran supersedes this intent.
 					m.retireLocked(state)
+					state.restarting = m.keyWantedLocked(key)
 					m.signalLocked()
 				}
 				m.recomputeActiveStatusLocked()
@@ -642,9 +676,45 @@ func (c *leasedLSPClient) Stop() error {
 	return nil
 }
 
+func (c *leasedLSPClient) Busy() bool {
+	busy, ok := c.LSPClient.(lspBusyClient)
+	return ok && busy.Busy()
+}
+
 func (c *leasedLSPClient) OnUnopenedDiagnostics(fn func(string, ttypes.InsightDiagnosticPublication)) {
 	if unopened, ok := c.LSPClient.(lspUnopenedDiagnostics); ok {
 		unopened.OnUnopenedDiagnostics(fn)
+	}
+}
+
+func (c *leasedLSPClient) Evidence() []string {
+	if client, ok := c.LSPClient.(LSPEvidenceClient); ok {
+		return client.Evidence()
+	}
+	return nil
+}
+
+func (c *leasedLSPClient) ErrorMessage() string {
+	if client, ok := c.LSPClient.(LSPEvidenceClient); ok {
+		return client.ErrorMessage()
+	}
+	return ""
+}
+
+// The joined worker observes bounded transport memory, including the final
+// stderr drain after Stop. Only a change wakes status consumers.
+func (m *LSPManager) captureServerEvidenceLocked(state *lspClientState) {
+	client, ok := state.client.(LSPEvidenceClient)
+	if !ok {
+		return
+	}
+	evidence, message := client.Evidence(), ""
+	if !state.closing && !state.stopped && state.status == LSPConnected {
+		message = client.ErrorMessage()
+	}
+	if !slices.Equal(state.evidence, evidence) || state.errorMessage != message {
+		state.evidence, state.errorMessage = slices.Clone(evidence), message
+		m.bumpVersionLocked()
 	}
 }
 
@@ -667,7 +737,8 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 			m.mu.Unlock()
 			return
 		}
-		state.client = nil
+		m.captureServerEvidenceLocked(state)
+		state.client, state.errorMessage, state.restarting = nil, "", false
 		if !stale {
 			state.status, state.err = LSPFailed, lspStartError(state.cmd, err)
 			m.clearServerDiagnosticsLocked(key)
@@ -677,6 +748,9 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 	} else {
 		state.assistance = ttypes.CloneLSPAssistance(assistance)
 		state.status, state.err, state.lastUsed = LSPConnected, "", time.Now()
+		state.restarting = false
+		m.captureServerEvidenceLocked(state)
+		state.connectedAt, state.reportedAt, state.settled = state.lastUsed, time.Time{}, false
 	}
 	state.cancel = nil
 	m.recomputeActiveStatusLocked()
@@ -718,7 +792,7 @@ func (m *LSPManager) retireLocked(state *lspClientState) {
 		return
 	}
 	state.closing = true
-	state.waiting = false
+	state.waiting, state.restarting, state.errorMessage = false, false, ""
 	if state.ticket != nil {
 		state.ticket.Cancel() // No effect after Begin; the exact lease stays retained.
 	}
@@ -746,6 +820,8 @@ func (m *LSPManager) retainUnverifiedStopLocked(key string, state *lspClientStat
 		state.lease.Retain("Language server teardown is unverified; inspect the retained producer before restarting.")
 	}
 	state.teardownErr = err
+	state.restarting, state.errorMessage = false, ""
+	m.captureServerEvidenceLocked(state)
 	state.closing, state.waiting, state.cancel = false, false, nil
 	state.status = LSPFailed
 	state.err = "Language server teardown is unverified; its process slot is retained. Inspect the failure before restarting Crude: " + err.Error()
@@ -780,7 +856,7 @@ func (m *LSPManager) OpenFile(_ context.Context, source ttypes.InsightSource, te
 			doc.text = text
 			doc.revision++
 		}
-		doc.editor = true
+		doc.editor, doc.diskView = true, false
 	} else {
 		m.documents[path] = &lspDocument{text: text, source: source, revision: 1, editor: true}
 		// The open document now owns this file's facts. The project view of
@@ -788,7 +864,7 @@ func (m *LSPManager) OpenFile(_ context.Context, source ttypes.InsightSource, te
 		m.removeProjectFactsLocked(func(b ttypes.InsightBoundary) bool { return b.Source.Path == path })
 		m.advanceContextLocked("Canonical source view opened; dependent units need reanalysis.")
 	}
-	m.activeFilePath = path
+	m.activeFilePath, m.lastEdit = path, time.Now()
 	m.recomputeActiveStatusLocked()
 	m.signalLocked()
 }
@@ -838,11 +914,15 @@ func (m *LSPManager) syncDocument(path string, doc *lspDocument) {
 	}
 	if err := m.sources.Insight.diagnostics.Observe(boundary); err != nil {
 		doc.syncPending = false
-		state.err = err.Error()
-		state.status = LSPFailed
-		m.bumpVersionLocked()
-		m.mu.Unlock()
-		return
+		if !errors.Is(err, facts.ErrLimit) {
+			state.err, state.status = err.Error(), LSPFailed
+			m.bumpVersionLocked()
+			m.mu.Unlock()
+			return
+		}
+		// Fact capacity is not a transport failure. Still synchronize the
+		// editor so navigation and other requests keep working.
+		m.noteDiagnosticLimitLocked(m.sources, err)
 	}
 	state.lastUsed = time.Now()
 	m.mu.Unlock()
@@ -936,7 +1016,13 @@ func (m *LSPManager) dropDocumentLocked(path string, doc *lspDocument) {
 	if client != nil {
 		m.closedDocuments = append(m.closedDocuments, lspClosedDocument{path, client})
 	}
-	m.advanceContextLocked("Producer document view closed or exceeded its limit.")
+	if doc != nil && doc.diskView && !doc.editor {
+		// The server saw the file as it is on disk; closing that view changes
+		// nothing else. Its result stays as the file's project result.
+		m.retainDiskViewLocked(path, doc)
+	} else {
+		m.advanceContextLocked("Producer document view closed or exceeded its limit.")
+	}
 	if m.workerRunning {
 		m.signalLocked()
 	}
@@ -953,10 +1039,11 @@ func (m *LSPManager) QueueFileUpdate(source ttypes.InsightSource, text string) {
 	if doc.text == text && doc.source == source {
 		return
 	}
-	doc.source = source
+	doc.source, doc.diskView = source, false
 	m.advanceContextLocked("Canonical source changed; dependent units need reanalysis.")
 	doc.text = text
 	doc.revision++
+	m.lastEdit = time.Now()
 	if len(m.docSymbols[path]) > 0 {
 		m.symbolCount -= len(m.docSymbols[path])
 		delete(m.docSymbols, path)
@@ -1080,6 +1167,7 @@ func (m *LSPManager) invalidateWatchedContext(ctx context.Context, path string) 
 func (m *LSPManager) watchedClientsLocked(path string, invalidate bool) []LSPClient {
 	if invalidate {
 		m.advanceContextLocked("Observed project input changed; dependent context is unverified.")
+		m.invalidateCheckedFactsLocked(path)
 	}
 	var clients []LSPClient
 	if !m.paused && !m.closed && m.analysisErrorLocked() == nil {
@@ -1115,6 +1203,7 @@ func (m *LSPManager) Stop() {
 func (m *LSPManager) stopLocked() {
 	m.paused, m.manualStart = true, false
 	m.cancelUpdatesLocked()
+	m.cancelProjectCheckLocked()
 	for _, state := range m.states {
 		m.retireLocked(state)
 	}
@@ -1146,26 +1235,35 @@ func (m *LSPManager) Close() {
 	if m.assemblyCancel != nil {
 		m.assemblyCancel()
 	}
-	done := m.workerDone
+	done, checkDone := m.workerDone, m.checkDone
 	m.mu.Unlock()
 	if done != nil {
 		<-done
+	}
+	if checkDone != nil {
+		<-checkDone
 	}
 	// A cancelled listing returns at its next directory; the bound only
 	// protects shutdown from a blocked filesystem call.
 	m.joinAssembly(5 * time.Second)
 }
 
-// Refresh is the user's explicit request to check the project again: every
-// language server restarts, and the results the stopped servers reported for
-// files no editor holds are removed. A new server reports only files that
-// still have problems, so without the removal a file fixed since the old
-// report would keep its out-of-date error forever. Automatic restarts (watch
-// recovery, settings changes) keep those results as out of date instead.
+// Refresh explicitly rechecks the project: restart every server, discard
+// closed-file results and clear unusable attempts. Ordinary stops preserve
+// Crude's checked results. File changes invalidate only that path; dependency
+// changes do not automatically recheck other closed files. Use Refresh or
+// RestartServer to request that broader check.
 func (m *LSPManager) Refresh(root string) {
 	m.mu.Lock()
 	m.stopLocked()
-	m.removeProjectFactsLocked(func(ttypes.InsightBoundary) bool { return true })
+	clear(m.checkResults)
+	if m.sources != nil && m.sources.Insight != nil {
+		if m.sources.Insight.diagnostics.RemoveMatching(func(b ttypes.InsightBoundary) bool {
+			return m.documents[b.Source.Path] == nil
+		}) > 0 {
+			m.bumpVersionLocked()
+		}
+	}
 	m.mu.Unlock()
 	m.StartForWorkspace(root)
 }
@@ -1178,6 +1276,11 @@ func (m *LSPManager) RestartServer(id string) bool {
 		return false
 	}
 	delete(m.crashes, id)
+	root, _ := fileuri.ToPath(state.rootURI)
+	m.invalidateCheckedResultsLocked(func(path, command, key string) bool {
+		return key == id || key == "" && command == state.cmd && pathWithin(root, path)
+	}, "The server was restarted. Crude will check this file again.")
+	m.requestProjectCheckLocked()
 	m.paused, m.manualStart = false, true
 	state.stopped = false
 	m.retireLocked(state)
@@ -1233,10 +1336,16 @@ func (m *LSPManager) requestClientWithin(ctx context.Context, path string, limit
 	return client, ctx, valid, cancel
 }
 
+// clearServerDiagnosticsLocked marks out of date what the stopped server
+// itself maintained. Crude's own result for a closed file describes the file
+// on disk under this launch configuration, not the server process: it stays
+// current until the file changes, the configuration changes or the user
+// refreshes. Otherwise every idle stop or eviction would send the project
+// check through the same files again and start the server again, forever.
 func (m *LSPManager) clearServerDiagnosticsLocked(key string) {
 	if m.sources != nil && m.sources.Insight != nil {
 		m.sources.Insight.diagnostics.InvalidateMatching(func(b ttypes.InsightBoundary) bool {
-			return isProjectFact(b) && b.Context.ID == key
+			return isProjectFact(b) && !isCheckedFact(b) && b.Context.ID == key
 		}, "Language server stopped; retained results are out of date.")
 	}
 	m.advanceContextLocked("Language server state changed; retained facts are stale.")

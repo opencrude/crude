@@ -107,6 +107,9 @@ type Agents interface {
 	// reply.
 	RejectAgentRecoveryCancellation(id, incident string)
 	PrepareAsyncCommandTermination(agentID string, ref fileio.AsyncCmdRef) (func() error, error)
+	// PrepareOpenCommandView captures the command owner; its body opens a
+	// private, read-only resource through the existing terminal service.
+	PrepareOpenCommandView(agentID string, ref fileio.AsyncCmdRef, owner workspace.TerminalController, cols, rows int) (func(context.Context) (workspace.TerminalInfo, error), error)
 	// PrepareCompactForAgent registers lifecycle ownership synchronously so the
 	// TUI can paint and cancel the operation before its tea.Cmd begins I/O.
 	PrepareCompactForAgent(agentID string) (session.PreparedCompaction, types.CompactResultMsg)

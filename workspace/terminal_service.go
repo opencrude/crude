@@ -43,6 +43,7 @@ type TerminalChangedMsg struct {
 	Generation uint64
 }
 type terminalResource struct {
+	command       *commandView
 	engine        *terminalvt.Engine
 	lease         TerminalLease
 	generation    uint64
@@ -69,14 +70,15 @@ type TerminalInput struct {
 // manager before creation; callers must create terminals through this service.
 // Selection, scroll offsets, theme and placement belong to clients, not here.
 type TerminalService struct {
-	mu            sync.Mutex
-	manager       *TerminalManager
-	items         map[string]*terminalResource
-	leaseSequence uint64
-	detached      map[TerminalController]bool
-	closed        bool
-	idleFenced    bool
-	creating      int
+	mu             sync.Mutex
+	manager        *TerminalManager
+	items          map[string]*terminalResource
+	leaseSequence  uint64
+	detached       map[TerminalController]bool
+	closed         bool
+	idleFenced     bool
+	creating       int
+	commandWorkers sync.WaitGroup
 }
 
 func NewTerminalService(manager *TerminalManager) (*TerminalService, error) {
@@ -257,7 +259,11 @@ func (s *TerminalService) Acquire(id string, owner TerminalController) (Terminal
 	if r == nil {
 		return TerminalLease{}, fmt.Errorf("terminal %s not found", id)
 	}
-	if info, ok := s.manager.Get(id); !ok || !info.Alive {
+	if r.command != nil {
+		if r.command.owner != owner {
+			return TerminalLease{}, ErrTerminalControl
+		}
+	} else if info, ok := s.manager.Get(id); !ok || !info.Alive {
 		return TerminalLease{}, ErrTerminalControl
 	}
 	if owner.ClientID == "" || owner.Epoch == 0 || s.detached[owner] {
@@ -278,7 +284,14 @@ func (s *TerminalService) Detach(owner TerminalController) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.detached[owner] = true
-	for _, r := range s.items {
+	for id, r := range s.items {
+		if r.command != nil && r.command.owner == owner {
+			r.command.cancel()
+			delete(s.items, id)
+			s.notify(r)
+			r.engine.Close()
+			continue
+		}
 		if r.lease.Owner == owner {
 			r.lease = TerminalLease{}
 		}
@@ -319,16 +332,20 @@ func (s *TerminalService) controlled(lease TerminalLease) (*terminalResource, er
 	if r == nil || lease.Generation == 0 || r.lease != lease {
 		return nil, ErrTerminalControl
 	}
-	if info, ok := s.manager.Get(lease.TerminalID); !ok || !info.Alive {
-		return nil, ErrTerminalControl
+	if r.command == nil {
+		if info, ok := s.manager.Get(lease.TerminalID); !ok || !info.Alive {
+			return nil, ErrTerminalControl
+		}
 	}
 	return r, nil
 }
 func (s *TerminalService) Input(lease TerminalLease, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := s.controlled(lease); err != nil {
+	if r, err := s.controlled(lease); err != nil {
 		return err
+	} else if r.command != nil {
+		return ErrTerminalControl
 	}
 	return s.manager.Write(lease.TerminalID, data)
 }
@@ -376,6 +393,14 @@ func (s *TerminalService) input(input TerminalInput) error {
 
 func (s *TerminalService) inputLocked(r *terminalResource, input TerminalInput) error {
 	id := input.Lease.TerminalID
+	if r.command != nil && input.Kind != "resize" {
+		// Focus reports have no target on a passive mirror. No other input
+		// is permitted even when a client sends it directly to the core.
+		if input.Kind == "focus" {
+			return nil
+		}
+		return ErrTerminalControl
+	}
 	switch input.Kind {
 	case "key":
 		return s.manager.Write(id, r.engine.EncodeKey(input.Key))
@@ -411,12 +436,17 @@ func (s *TerminalService) resizeLocked(r *terminalResource, id string, cols, row
 	if cols > terminalvt.MaxCols || rows > terminalvt.MaxRows {
 		return terminalvt.ErrBounds
 	}
-	if err := s.manager.Resize(id, cols, rows); err != nil {
-		return err
+	if r.command == nil {
+		if err := s.manager.Resize(id, cols, rows); err != nil {
+			return err
+		}
 	}
 	if err := r.engine.Resize(cols, rows); err != nil {
 		r.err = err.Error()
 		return err
+	}
+	if r.command != nil {
+		r.command.info.Cols, r.command.info.Rows = cols, rows
 	}
 	r.generation++
 	s.notify(r)
@@ -452,6 +482,9 @@ func (s *TerminalService) rows(id string, request terminalvt.RowRequest, stream 
 		return TerminalProjection{}, err
 	}
 	info, ok := s.manager.Get(id)
+	if r.command != nil {
+		info, ok = r.command.info, true
+	}
 	if !ok {
 		return TerminalProjection{}, fmt.Errorf("terminal %s not found", id)
 	}
@@ -462,11 +495,18 @@ func (s *TerminalService) Close(id string) {
 	r := s.items[id]
 	delete(s.items, id)
 	if r != nil {
+		if r.command != nil {
+			r.command.cancel()
+		}
 		s.notify(r)
 		r.engine.Close()
 	}
 	s.mu.Unlock()
 	// Never join a reader waiting to enter Send while holding the engine lock.
+	if r != nil && r.command != nil {
+		<-r.command.done
+		return
+	}
 	s.manager.Close(id)
 }
 func (s *TerminalService) CloseAll() {
@@ -480,4 +520,5 @@ func (s *TerminalService) CloseAll() {
 	for _, id := range ids {
 		s.Close(id)
 	}
+	s.commandWorkers.Wait()
 }

@@ -60,7 +60,16 @@ workspace layers. Language-server launch and resource fields
 options and resource limits) are human-owned: an agent may toggle a configured
 server's `enabled` field but cannot change what runs. The one exception is the
 workspace's Aeron (a session rooted in the `aeron` role): it installs and
-configures language servers for the user and may write every `lsp.*` path.
+configures language servers for the user and may write the `lsp.*` paths and
+`terminal.environment` at workspace scope only. Application scope and
+`lsp.ask_aeron` (whether Crude wakes Aeron) stay human-only for Aeron too.
+`lsp.restart` (domain, execute) restarts one exact server from the
+`diagnostics.workspace` lsp view, or `all`; its receipt says the restart was
+requested, not that the server connected. `diagnostics.workspace` view
+`problems` lists project problems per server and file with counts and the top
+messages; the lsp view adds recent unexpected exits, whether Crude is
+restarting the server, the server's own bounded evidence (labelled as server
+data) and the closed-file check.
 `settings.fields` reports that same caller-specific authority. Exact leaf writes
 can create a missing map entry from its declared schema (for example, a new
 language launch command); they share `types.ApplySettingsEdits` with ordinary

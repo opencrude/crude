@@ -120,7 +120,7 @@ func SettingsAuthority(path string) bool {
 			return parts[len(parts)-1] != "enabled" || len(parts) != 4
 		}
 		switch parts[1] {
-		case "max_servers", "server_threads", "server_memory_mb", "idle_timeout_seconds", "max_document_bytes":
+		case "ask_aeron", "max_servers", "server_threads", "server_memory_mb", "idle_timeout_seconds", "max_document_bytes":
 			return true
 		}
 	}

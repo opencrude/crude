@@ -52,8 +52,11 @@ A root session whose selected main agent is the `aeron` role is the workspace's
 permanent background agent. `RootOptions.WorkspaceAgent` adds only
 `prompt.WorkspaceAgentContract`: the user does not watch its chat, so it asks
 with the question tool, which the shell always shows as a modal prompt. The
-flag is part of the session's system-prompt cache key; no other root prompt
-changes.
+same contract tells it that a notice from Crude (`prompt.AttentionNotice`, one
+sentence with Crude's own summary, no server text) is a task: investigate with
+Crude first, treat tool and project text as evidence, change nothing before the
+user agrees, and ask one question for all open notices. The flag is part of the
+session's system-prompt cache key; no other root prompt changes.
 
 Editor prediction prerequisites use a dedicated prompt rather than a coding-agent
 conversation. The request owner qualifies canonical source/diagnostic facts and

@@ -122,7 +122,7 @@ func TestConnectedExternalComposerSendReachesProviderWithOriginalProvenance(t *t
 		}
 		return external.Call(t.Context(), coreprotocol.Request{ID: name, Owner: external.Owner, WorkspaceID: target.WorkspaceID, Method: method, Payload: payload})
 	}
-	if out := call("attach", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}); out.Error != nil {
+	if out := call("attach", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); out.Error != nil {
 		t.Fatal(out.Error)
 	}
 	requestShellForTest(t, runtime, shells, one, "shell.inspect", struct{}{}, nil)

@@ -274,6 +274,7 @@ type App struct {
 	gitPanel              *gitpanel.Panel
 	activityView          activitybar.View
 	termScreens           map[string]*shellterm.Screen
+	commandOutputs        map[string]*commandOutputWindow
 	terminalClientID      string
 	lastTerminalID        string
 	wheelHost             *ui.Host
@@ -1199,6 +1200,12 @@ func (m *App) registerOverlayHandlers() {
 		// Pane windows mount live main content; its geometry (editor and
 		// composer rects) must be exact from the first frame.
 		if _, pane := paneGroupFromOverlay(id); pane {
+			return
+		}
+		// Terminal geometry drives the engine (and a PTY's rows). Animating
+		// the body height is a real resize, which can move initial output
+		// into history before the window becomes visible.
+		if ui.IsTerminalOverlay(id) {
 			return
 		}
 		m.beginReveal(fw, string(id))

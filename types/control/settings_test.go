@@ -54,3 +54,11 @@ func TestSettingsChangesAuthorityDerivedCollectorFacts(t *testing.T) {
 		t.Fatal("derived provider globally ordinary")
 	}
 }
+
+func TestTerminalEnvironmentRemainsAuthority(t *testing.T) {
+	for _, path := range []string{"terminal.environment", "terminal.environment.PATH", "terminal.environment.VIRTUAL_ENV", "lsp.ask_aeron"} {
+		if !control.SettingsAuthority(path) {
+			t.Fatalf("terminal environment no longer needs caller-specific authority: %s", path)
+		}
+	}
+}

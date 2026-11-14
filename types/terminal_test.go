@@ -48,7 +48,7 @@ func TestResolveTerminalLaunch(t *testing.T) {
 
 func TestNormalizeTerminalSettingsDefaultsAndBounds(t *testing.T) {
 	got := NormalizeTerminalSettings(TerminalSettings{ScrollbackLines: 999999, Placement: "sideways", LoginShell: "maybe"})
-	want := TerminalSettings{Shell: TerminalShellAuto, LoginShell: "on", ScrollbackLines: DefaultTerminalScrollback, Placement: TerminalPlacementDocked}
+	want := TerminalSettings{Shell: TerminalShellAuto, ScrollbackLines: DefaultTerminalScrollback, Placement: TerminalPlacementDocked}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("normalized = %+v; want %+v", got, want)
 	}
@@ -79,5 +79,22 @@ func TestTerminalWorkspaceOverrideIsFieldLevel(t *testing.T) {
 	overrides.ClearCategory("terminal")
 	if !overrides.IsEmpty() {
 		t.Fatal("clearing the terminal page left overrides behind")
+	}
+}
+
+func TestNormalizeTerminalSettingsPreservesLoginChoice(t *testing.T) {
+	for _, choice := range []string{"", "on", "off"} {
+		if got := NormalizeTerminalSettings(TerminalSettings{LoginShell: choice}).LoginShell; got != choice {
+			t.Fatalf("login choice %q became %q", choice, got)
+		}
+	}
+	app := AppSettings{}
+	ApplyAppDefaults(&app)
+	if app.Terminal.LoginShell != "" || MergeAppWorkspace(app, WorkspaceOverrides{}).Terminal.LoginShell != "" {
+		t.Fatal("default settings lost the automatic login choice")
+	}
+	app.Terminal.LoginShell = "on"
+	if MergeAppWorkspace(app, WorkspaceOverrides{}).Terminal.LoginShell != "on" {
+		t.Fatal("workspace inheritance lost the explicit application login choice")
 	}
 }

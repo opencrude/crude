@@ -3,6 +3,9 @@
 package coreprotocol
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"crude/sessiondb"
@@ -82,9 +85,40 @@ type Receipt struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
+const (
+	MaxAttachEnvironmentEntries = 4096
+	MaxAttachEnvironmentBytes   = 1 << 20
+)
+
 type AttachRequest struct {
 	Root string `json:"root"`
+	// Environment is the same-host shell's initialized environment. Nil means
+	// absent; an empty, non-nil slice is an explicitly empty environment. Only
+	// authenticated local IPC may supply it. The core keeps it in memory for
+	// new terminals, never in settings, receipts or diagnostic output.
+	Environment []string `json:"environment,omitempty"`
 }
+
+// ValidateEnvironment bounds shell input without exposing variable names or
+// values in errors. Byte accounting includes each entry's terminating NUL.
+func (r AttachRequest) ValidateEnvironment() error {
+	if len(r.Environment) > MaxAttachEnvironmentEntries {
+		return fmt.Errorf("could not open the project; the shell environment has more than %d entries; remove unused variables and try again", MaxAttachEnvironmentEntries)
+	}
+	remaining := MaxAttachEnvironmentBytes
+	for _, entry := range r.Environment {
+		if len(entry) >= remaining {
+			return errors.New("could not open the project; the shell environment is larger than 1 MiB; remove unused variables and try again")
+		}
+		remaining -= len(entry) + 1
+		// Windows also supplies drive-directory entries such as =C:=C:\work.
+		if len(entry) < 2 || !strings.Contains(entry[1:], "=") || strings.ContainsRune(entry, 0) {
+			return errors.New("could not open the project; a shell environment entry is not valid; use NAME=value entries without NUL bytes")
+		}
+	}
+	return nil
+}
+
 type AttachResult struct {
 	WorkspaceID string            `json:"workspace_id"`
 	Epoch       uint64            `json:"epoch"`

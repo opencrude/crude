@@ -90,8 +90,8 @@ func FuzzCoreInputAdmissionReceipts(f *testing.F) {
 		t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 		peers := [2]*resourceWire{newResourceWire(t, r, "input-author"), newResourceWire(t, r, "input-peer")}
 		var attached coreprotocol.AttachResult
-		peers[0].call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
-		peers[1].call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, nil)
+		peers[0].call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
+		peers[1].call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, nil)
 		ws := attached.WorkspaceID
 		var created workspace.NewSessionResult
 		peers[0].call(t, ws, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}, &created)
@@ -231,7 +231,7 @@ func FuzzCoreSessionSettingsReset(f *testing.F) {
 		})
 		w := newResourceWire(t, r, "reset-owner")
 		var attached coreprotocol.AttachResult
-		w.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+		w.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 		ws := attached.WorkspaceID
 		var created workspace.NewSessionResult
 		w.call(t, ws, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}, &created)

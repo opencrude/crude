@@ -211,7 +211,7 @@ func TestCLIProtocolJourney(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = shell.Close() })
 	var attached coreprotocol.AttachResult
-	if err := shell.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+	if err := shell.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	if err := shell.RegisterControlShell(ctx, attached.WorkspaceID); err != nil {
@@ -228,7 +228,7 @@ func TestCLIProtocolJourney(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = peer.Close() })
 	var peerAttached coreprotocol.AttachResult
-	if err := peer.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &peerAttached); err != nil {
+	if err := peer.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &peerAttached); err != nil {
 		t.Fatal(err)
 	}
 	if peerAttached.WorkspaceID != attached.WorkspaceID {

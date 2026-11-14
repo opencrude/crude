@@ -14,7 +14,7 @@ detailed contracts.
 | `main.go`, `app/` | CLI parsing, application config, core spawning (`core_image.go` staged executable, detach), MCP control entry. No session or orchestrator knowledge. |
 | `buildinfo/` | Build identity and `buildinfo.Home`, the single Crude data root (`CRUDE_HOME`). |
 | `crashlog/` | Process-local synchronous fatal output and recovered TUI panic reports; no event-loop or normal-log dependency. |
-| `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. |
+| `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. `core/attention.go` sends the workspace Aeron one notice per Investigate issue. |
 | `coreprotocol/` | Versioned, presentation-neutral core API types. |
 | `projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
 | `corewire/` | Bounded framed transport (local socket, SSH stdio bridge). |
@@ -45,6 +45,7 @@ detailed contracts.
 | `hostshell/` | Installed-shell inventory on the core's machine and the agent command shell resolver. |
 | `retry/` | The single automatic-cooldown contract (five-minute ceiling). |
 | `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
+| `sysload/` | Observes the computer for background work: power source, CPU/memory/I/O pressure (Linux PSI) or idle cores, and available memory. Read off the UI goroutine by the closed-file check ([editor](../reference/editor.md#project-check-of-closed-files)). |
 | `perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection; no sampling or state owner. |
 | `types/inspect/` | Owner-bound immutable diagnostic pages with encoded-byte/range/retention bounds; no telemetry registry, authorization or background collector. |
 | `network/` | Shared outbound HTTP transport, proxy, trust and client identity. |

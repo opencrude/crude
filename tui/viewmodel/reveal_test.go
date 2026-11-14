@@ -220,6 +220,8 @@ func TestReveal_TypingPopupsSkipAnimation(t *testing.T) {
 		{ui.OverlayInlayHints, ui.PopoverPolicy(true)},
 		{ui.OverlayOutline, ui.PopoverPolicy(true)},
 		{ui.OverlaySnippetChoices, ui.PopoverPolicy(true)},
+		{ui.TerminalOverlayID("interactive"), ui.DefaultOverlayPolicy()},
+		{ui.TerminalOverlayID("command-output"), ui.DefaultOverlayPolicy()},
 	} {
 		fw := newRevealTestWindow(t, string(tc.id))
 		app.overlayHost.Open(tc.id, fw, tc.pol, nil)

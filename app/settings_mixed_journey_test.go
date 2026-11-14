@@ -67,7 +67,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 			t.Fatal(err)
 		}
 		var attached coreprotocol.AttachResult
-		if err := client.Call(t.Context(), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+		if err := client.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 			t.Fatal(err)
 		}
 		return r, client, a, attached.WorkspaceID
@@ -166,7 +166,7 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 		t.Fatal("session settings leaked into a new session")
 	}
 	var attachment coreprotocol.AttachResult
-	if err := client.Call(t.Context(), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: other}, &attachment); err != nil {
+	if err := client.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: other}, &attachment); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.ApplyAppDefaults(t.Context(), application.committedDefaults()); err != nil {

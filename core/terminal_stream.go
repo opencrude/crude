@@ -35,6 +35,10 @@ func (c *Connection) serveTerminalTopic(ctx context.Context, s corewire.Stream, 
 	if service == nil {
 		return
 	}
+	if err := service.CheckViewer(open.Key, workspace.TerminalController{ClientID: c.Owner.ClientID, Epoch: c.Owner.Epoch}); err != nil {
+		fail(err)
+		return
+	}
 	dirty, unsubscribe, err := service.Subscribe(open.Key)
 	if err != nil {
 		fail(err)

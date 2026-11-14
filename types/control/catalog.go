@@ -160,6 +160,7 @@ var commandCatalog = func() []Descriptor {
 	add := func(id string, scope Scope, effect Effect, description, properties string, required ...string) {
 		out = append(out, catalogCommand(id, scope, effect, description, properties, required...))
 	}
+	add("lsp.restart", Domain, Execute, "Restart one language server by its exact ID from diagnostics.workspace page.view=lsp, or use all to refresh every server and recheck closed files. Commits the restart request, not successful initialization. Read diagnostics.workspace again for results. Does not change launch settings or workspace trust.", `{"server":{"type":"string","description":"Exact server ID from the lsp view, or all."}}`, "server")
 	add("settings.get", Domain, Read, "Read redacted settings and exact revisions. Session scope requires target.session_id.", `{"scope":{"type":"string","enum":["application","workspace","session"],"description":"Defaults to workspace."}}`)
 	add("settings.fields", Domain, Read, "Discover exact ordinary JSON field paths, redacted values, schemas, ownership and revisions. Echo cursor for the next bounded page.", `{"scope":{"type":"string","enum":["application","workspace","session"]},"prefix":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":128},"cursor":{"type":"string"}}`, "scope", "limit")
 	add("capabilities.inspect", Domain, Read, "List MCP connections (state, usable and switched-off tools, built-in provider keys stored or unset), skills and stored secret names. Secret values are never returned.", `{}`)

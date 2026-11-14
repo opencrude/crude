@@ -55,7 +55,7 @@ func TestConnectedTerminalCloseUnmountsEveryShell(t *testing.T) {
 				}
 				return controller.Call(t.Context(), coreprotocol.Request{ID: requestID, Owner: controller.Owner, WorkspaceID: target.WorkspaceID, Method: method, Payload: raw})
 			}
-			if got := call("attach", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}); got.Error != nil {
+			if got := call("attach", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); got.Error != nil {
 				t.Fatal(got.Error)
 			}
 			if route == "control" {

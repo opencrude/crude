@@ -83,6 +83,7 @@ var wireTypes = []any{
 	new(p1.CodeActionsReply),
 	new(p1.CodeActionsRequest),
 	new(p1.CommandIdentity),
+	new(p1.CommandViewOpenRequest),
 	new(p1.CommitMessageRequest),
 	new(p1.CommitMessageResult),
 	new(p1.CommitModelResult),

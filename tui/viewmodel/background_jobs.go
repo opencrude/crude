@@ -8,6 +8,7 @@ import (
 	"crude/fileio"
 	"crude/tui/screens/backgroundjobs"
 	"crude/types"
+	"crude/types/command"
 )
 
 func (m *App) terminateBackgroundJob(request backgroundjobs.TerminateRequest) tea.Cmd {
@@ -35,4 +36,32 @@ func (m *App) terminateBackgroundJob(request backgroundjobs.TerminateRequest) te
 		}
 		return nil
 	}
+}
+
+// revealBackgroundJob shows the command's originating call in its agent's
+// conversation: the call is expanded and scrolled into view near the top.
+func (m *App) revealBackgroundJob(request backgroundjobs.RevealRequest) {
+	job := request.Job
+	_, projection := m.sessionProjectionForAgent(job.OwnerID)
+	if projection == nil || projection.backgroundJobs != request.Target {
+		return
+	}
+	sub := m.subPaneProjections.GetExisting(job.OwnerID)
+	if sub == nil {
+		m.ensureAgentProjection(job.OwnerID)
+		m.syncAgentMessages(job.OwnerID, false)
+		sub = m.subPaneProjections.GetExisting(job.OwnerID)
+	}
+	if sub == nil || sub.renderer == nil {
+		return
+	}
+	_, ok := sub.renderer.RevealCommand(command.ExecutionID(job.PID, job.StartedAt))
+	if !ok {
+		m.Feedback.NotifyInfo("The conversation does not show this command.")
+		return
+	}
+	m.switchToAgentView(job.OwnerID)
+	m.setSessionDeckFocused(false)
+	m.ensureMainPanes().agentView(job.OwnerID).chat.ClearSelection()
+	m.forceFrame()
 }

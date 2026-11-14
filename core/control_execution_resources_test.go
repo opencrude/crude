@@ -34,7 +34,7 @@ func TestControlExecutionLiveDocumentTopicApplyAndUndo(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	var attached coreprotocol.AttachResult
-	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: a.ws.RootPath}, &attached); err != nil {
+	if err := c.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: a.ws.RootPath}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute}}, nil); err != nil {

@@ -159,6 +159,7 @@ Agents is the agent inventory, turn control and blocking-prompt surface.
 | `PrepareCancelAgentRecovery` | 1 | mutates | no: returns closure | agent.recover_cancel |
 | `RejectAgentRecoveryCancellation` | 1 | mutates | yes | none: withdraws the shell's optimistic Stop; the core never entered one |
 | `PrepareAsyncCommandTermination` | 1 | mutates | no: returns closure | agent.stop_command (exact AsyncCmdRef) |
+| `PrepareOpenCommandView` | 1 | opens a private reader | no: returns cancellable body | command_view.open; existing terminal topics/rows/resize-only lease after opening |
 | `PrepareCompactForAgent` | 1 | mutates | no: returns live PreparedCompaction | agent.compact (request progress, no live PreparedCompaction on wire) |
 | `HydrateSubAgents` | 1 | mutates | yes | none (workspace topic delivers hydrated children) |
 | `PrepareAgentInputAdmission` | 1 | mutates | no: returns *InputAdmissionIntent (opaque handle consumed by Commit/Apply) | agent.submit (intent/commit/apply collapse into one submit + request.receipt) |
