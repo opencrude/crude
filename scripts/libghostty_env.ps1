@@ -20,7 +20,16 @@ $env:CXX = "zig c++"
 # reports that as -Wdll-attribute-on-redeclaration on every build. It is
 # harmless, so silence exactly that diagnostic and keep every other warning.
 $quietDll = "-Wno-dll-attribute-on-redeclaration"
+# Compile cgo C/C++ (the tree-sitter grammars) for the x86-64 baseline, not the
+# build machine's native CPU. Unlike gcc, `zig cc` defaults to the host CPU, so
+# a binary built on a newer CI runner executes an illegal instruction inside
+# tree-sitter (ts_parser_new) on older user machines. This matches the pinned
+# `-Dcpu=baseline` libghostty-vt library, keeping the whole binary portable.
+$baselineCpu = "-mcpu=baseline"
 $cflags = if ($env:CGO_CFLAGS) { $env:CGO_CFLAGS } else { "-O2 -g" }
-if ($cflags -notlike "*$quietDll*") {
-    $env:CGO_CFLAGS = "$cflags $quietDll"
-}
+if ($cflags -notlike "*$quietDll*") { $cflags = "$cflags $quietDll" }
+if ($cflags -notlike "*$baselineCpu*") { $cflags = "$cflags $baselineCpu" }
+$env:CGO_CFLAGS = $cflags
+$cxxflags = if ($env:CGO_CXXFLAGS) { $env:CGO_CXXFLAGS } else { "-O2 -g" }
+if ($cxxflags -notlike "*$baselineCpu*") { $cxxflags = "$cxxflags $baselineCpu" }
+$env:CGO_CXXFLAGS = $cxxflags
