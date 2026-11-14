@@ -9,7 +9,7 @@
 | Package | Build host | End-user requirements |
 |---|---|---|
 | Linux amd64 | Native Linux, cgo + pinned baseline-CPU libghostty-vt | x86-64, glibc 2.35+ policy baseline, Bash, curl, GNU tar and coreutils; inspect each local binary's actual symbol requirements |
-| Windows amd64 | Native Windows, cgo + Zig | Windows x64 with ConPTY, PowerShell 5.1+; the installer adds Git Bash for this user when the machine has none; only available when included and verified in that release |
+| Windows amd64 | Native Windows, cgo + Zig (`scripts/libghostty_env.ps1` pins `zig cc` to `-mcpu=baseline`, matching the baseline-CPU libghostty-vt, so tree-sitter runs on every supported x86-64 CPU) | Windows x64 with ConPTY, PowerShell 5.1+; the installer adds Git Bash for this user when the machine has none; only available when included and verified in that release |
 
 No macOS, ARM64, 32-bit or Alpine/musl release artifacts are advertised. The
 embedded terminal requires cgo; a stub-only build is not a release. See
