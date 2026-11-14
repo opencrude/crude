@@ -458,3 +458,45 @@ func BenchmarkQuestionLongPaint(b *testing.B) {
 		host.Paint(buf)
 	}
 }
+
+// dragQuestionText drags across one painted phrase and returns what the Host
+// copied on release.
+func dragQuestionText(t *testing.T, host *ui.Host, width, height int, text string) []string {
+	t.Helper()
+	var copied []string
+	host.SetClipboardCopy(func(s string) tea.Cmd { copied = append(copied, s); return nil })
+	x, y, ok := bufferFind(paintQuestion(host, width, height), text)
+	if !ok {
+		t.Fatalf("missing target %q", text)
+	}
+	end := x + len([]rune(text)) - 1
+	host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: end, Y: y, Button: tea.MouseLeft})
+	paintQuestion(host, width, height)
+	host.Handle(tea.MouseReleaseMsg{X: end, Y: y, Button: tea.MouseLeft})
+	return copied
+}
+
+func TestQuestionAndChoiceTextAreSelectableWithoutChoosing(t *testing.T) {
+	const width, height = 64, 14
+	screen, host := questionHost(t, []Item{{Question: "Which database should we use?", Options: []string{"PostgreSQL cluster", "SQLite file"}}}, width, height)
+	host.SetPointerTextSelection(true)
+	if got := dragQuestionText(t, host, width, height, "database should"); len(got) != 1 || got[0] != "database should" {
+		t.Fatalf("question copy = %q", got)
+	}
+	if got := dragQuestionText(t, host, width, height, "PostgreSQL cluster"); len(got) != 1 || got[0] != "PostgreSQL cluster" {
+		t.Fatalf("choice copy = %q", got)
+	}
+	if screen.Reviewing() || screen.Answer(0) != "" {
+		t.Fatalf("selecting choice text chose it: reviewing=%v answer=%q", screen.Reviewing(), screen.Answer(0))
+	}
+	// A plain click still chooses on release.
+	x, y, _ := bufferFind(paintQuestion(host, width, height), "SQLite file")
+	if press := host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}); press.Action != nil || screen.Answer(0) != "" {
+		t.Fatal("press chose before release")
+	}
+	host.Handle(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+	if screen.Answer(0) != "SQLite file" {
+		t.Fatalf("click answer = %q, want SQLite file", screen.Answer(0))
+	}
+}

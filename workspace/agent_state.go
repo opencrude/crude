@@ -187,7 +187,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	// turn while its terminal done/error event catches up through the UI pump.
 	cancelledRecovery := false
 	if status, ok := evt.Data.(recovery.Status); ok && evt.Type == "recovery" {
-		cancelledRecovery = status.State == recovery.Cancelled
+		cancelledRecovery = status.State == recovery.Cancelled || status.State == recovery.Continued
 	}
 	inactive := (a.Cancelling || a.terminal || a.Completed) && !a.newerTurnRecovery(evt)
 	// Manual compaction is a separate session operation, not a new model turn.
@@ -359,7 +359,8 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 		a.ActiveCompaction = TurnStatus{}
 		a.Thinking, a.Streaming = false, false
 		// Waiting for configuration is still an owned, unfinished turn.
-		a.Running = status.State != recovery.Interrupted && status.State != recovery.Cancelled && status.State != recovery.Failed
+		a.Running = status.State != recovery.Interrupted && status.State != recovery.Cancelled &&
+			status.State != recovery.Continued && status.State != recovery.Failed
 		a.Cancelling, a.Completed = false, false
 		effects.setStatus(status.Summary)
 		effects.setThinking(a.Running, false, false)

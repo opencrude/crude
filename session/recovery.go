@@ -606,7 +606,38 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 
 // Caller holds lifecycleMu so parked-task disposition cannot overtake Continue.
 func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint64) error {
+	return s.settleParkedRecovery(agentID, recoveryID, generation, false)
+}
+
+// continueRecoveryForHuman settles one exact parked root incident because the
+// user sent a new message. It uses the Stop settlement (committed context,
+// unknown tool outcomes, finished turn record) without replaying the attempt,
+// and leaves the goal and the next turn to that message. Caller holds
+// lifecycleMu.
+func (s *Session) continueRecoveryForHuman(agentID, recoveryID string, generation uint64) error {
+	return s.settleParkedRecovery(agentID, recoveryID, generation, true)
+}
+
+// parkedRecoveryForHuman reports the exact parked root incident that a new
+// human message may continue: no live attempt, no child owner and no pending
+// terminal publication, which keeps its own exact retry.
+func (s *Session) parkedRecoveryForHuman(agentID string) (recoverytypes.Status, provider.UserInput, bool) {
 	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	checkpoint, parked := s.pendingRecoveries[agentID]
+	if !parked || s.recoverySlots[agentID] != nil || len(checkpoint.OwnerData) != 0 ||
+		len(checkpoint.TerminalSettlement) != 0 || checkpoint.Status.Generation == 0 {
+		return recoverytypes.Status{}, provider.UserInput{}, false
+	}
+	return checkpoint.Status, cloneUserInput(checkpoint.PendingInput), true
+}
+
+func (s *Session) settleParkedRecovery(agentID, recoveryID string, generation uint64, continued bool) error {
+	s.recoveryMu.Lock()
+	if slot := s.recoverySlots[agentID]; slot != nil && continued {
+		s.recoveryMu.Unlock()
+		return fmt.Errorf("%w: agent %s is retrying its run", errRecoveryStale, agentID)
+	}
 	if slot := s.recoverySlots[agentID]; slot != nil {
 		if slot.id != recoveryID || slot.generation != generation {
 			s.recoveryMu.Unlock()
@@ -637,6 +668,9 @@ func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint6
 		return fmt.Errorf("%w: agent %s has no matching open recovery incident", errRecoveryStale, agentID)
 	}
 	s.recoveryMu.Unlock()
+	if continued && (len(checkpoint.OwnerData) != 0 || len(checkpoint.TerminalSettlement) != 0) {
+		return fmt.Errorf("%w: agent %s's unfinished task needs Retry or Stop", errRecoveryStale, agentID)
+	}
 	s.orchMu.Lock()
 	currentOrchestrator := s.orchestrators[agentID]
 	s.orchMu.Unlock()
@@ -647,6 +681,9 @@ func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint6
 		currentOrchestrator.turnMu.Unlock()
 		if currentGeneration != generation {
 			return fmt.Errorf("%w: agent %s moved to turn generation %d", errRecoveryStale, agentID, currentGeneration)
+		}
+		if live && continued {
+			return fmt.Errorf("%w: agent %s has a live turn", errRecoveryStale, agentID)
 		}
 		if live {
 			cancelled, _ := currentOrchestrator.cancelTurnForGeneration(generation)
@@ -662,6 +699,12 @@ func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint6
 	cancelledStatus.State = recoverytypes.Cancelled
 	cancelledStatus.RetryAt = time.Time{}
 	cancelledStatus.Summary = "Run cancelled"
+	boundaryText, boundaryID, contextReason := rootprompt.TurnStoppedBoundary(), "turn-stopped:", "explicit_recovery_cancel"
+	if continued {
+		cancelledStatus.State = recoverytypes.Continued
+		cancelledStatus.Summary = "Continued with your message"
+		boundaryText, boundaryID, contextReason = rootprompt.TurnContinuedBoundary(), "turn-continued:", "human_continued"
+	}
 	cancelledStatus.Action = ""
 	cancelledStatus.UpdatedAt = time.Now()
 	if len(checkpoint.OwnerData) > 0 {
@@ -710,7 +753,7 @@ func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint6
 		cancelledStatus = checkpoint.Status
 		cancelledChild = &result
 	} else {
-		archive, active := stoppedRecoveryContext(checkpoint)
+		archive, active := stoppedRecoveryContext(checkpoint, boundaryText, boundaryID)
 		current, found, loadErr := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)
 		if loadErr != nil {
 			return fmt.Errorf("load the stopped context: %w", loadErr)
@@ -718,8 +761,8 @@ func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint6
 		if found {
 			active = append([]provider.ChatMessage(nil), current.Messages...)
 			if len(active) == 0 || active[len(active)-1].EffectiveOrigin() != provider.OriginTurnStopped {
-				boundary := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
-				boundary.InternalID = "turn-stopped:" + checkpoint.Status.ID
+				boundary := provider.NewTextMessage("user", boundaryText)
+				boundary.InternalID = boundaryID + checkpoint.Status.ID
 				boundary.Origin, boundary.Visibility = provider.OriginTurnStopped, provider.VisibilityContextOnly
 				active = append(active, boundary)
 			}
@@ -728,7 +771,7 @@ func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint6
 		checkpoint.Archive, checkpoint.ActiveContext = archive, active
 		checkpoint.Status = cancelledStatus
 		checkpoint.ContextOwnerID = s.sessionID
-		checkpoint.ContextReason = "explicit_recovery_cancel"
+		checkpoint.ContextReason = contextReason
 		s.msgsMu.Lock()
 		prefixLen := len(s.msgs)
 		s.msgsMu.Unlock()
@@ -774,7 +817,10 @@ func (s *Session) cancelRecoveryFor(agentID, recoveryID string, generation uint6
 			}, agentID)
 		}
 	}
-	if s.sender != nil {
+	if s.sender != nil && continued {
+		// The user's message starts the next turn; nothing was cancelled.
+		s.sender.SendAgentEventWithID("recovery", cancelledStatus, agentID)
+	} else if s.sender != nil {
 		s.sender.SendAgentEventWithID("recovery", cancelledStatus, agentID)
 		s.sender.SendAgentEventWithID("done", map[string]any{
 			"content": "Cancelled.", "reason": "cancelled",
@@ -906,7 +952,7 @@ func publishStoppedChildRecovery(handle *agent.SubAgentHandle, checkpoint sessio
 	return checkpoint, nil
 }
 
-func stoppedRecoveryContext(checkpoint sessiondb.RecoveryCheckpoint) ([]provider.ChatMessage, []provider.ChatMessage) {
+func stoppedRecoveryContext(checkpoint sessiondb.RecoveryCheckpoint, boundaryText, boundaryID string) ([]provider.ChatMessage, []provider.ChatMessage) {
 	archive := append([]provider.ChatMessage(nil), checkpoint.Archive...)
 	active := append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
 	if strings.TrimSpace(checkpoint.PendingInput.Text) != "" {
@@ -918,8 +964,8 @@ func stoppedRecoveryContext(checkpoint sessiondb.RecoveryCheckpoint) ([]provider
 	if len(active) > 0 && active[len(active)-1].EffectiveOrigin() == provider.OriginTurnStopped {
 		return archive, active
 	}
-	boundary := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
-	boundary.InternalID = "turn-stopped:" + checkpoint.Status.ID
+	boundary := provider.NewTextMessage("user", boundaryText)
+	boundary.InternalID = boundaryID + checkpoint.Status.ID
 	boundary.Origin = provider.OriginTurnStopped
 	boundary.Visibility = provider.VisibilityContextOnly
 	return append(archive, boundary), append(active, boundary)

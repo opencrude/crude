@@ -97,6 +97,9 @@ func (l *Label) Paint(buf *surface.CellBuffer, originX, originY int, _ PaintCont
 	buf.WriteString(x, y, text, fg, l.bg, l.attr)
 }
 
+// PointerTextSelectable lets a drag select the label's painted text.
+func (l *Label) PointerTextSelectable(int, int) bool { return true }
+
 // Semantics returns label semantics.
 func (l *Label) Semantics() Semantics {
 	lab := l.label

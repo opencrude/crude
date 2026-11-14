@@ -376,3 +376,95 @@ func waitRecoveryEvent(t *testing.T, sender *mockEventSender) recoverytypes.Stat
 		}
 	}
 }
+
+// A new human message is the user's answer to a parked failure: it settles
+// that exact incident as continued (never replaying the attempt, never a
+// cancellation) and runs as the next ordinary turn on the committed context.
+func TestHumanMessageContinuesParkedRootRecovery(t *testing.T) {
+	home := t.TempDir()
+	session, err := NewWithSessionDir("human-continue", testConfig(), home, filepath.Join(home, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(session.Close)
+	sender := newMockEventSender()
+	orchestrator, err := session.NewOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	nextTurn := make(chan struct{}, 1)
+	session.SetBeforeTurnHook(func(_ context.Context, _ string) error {
+		if calls.Add(1) == 1 {
+			panic("injected owner panic")
+		}
+		nextTurn <- struct{}{}
+		return errors.New("stop after the continued turn starts")
+	})
+	if !orchestrator.SubmitInput(provider.PlainInput("first task")) {
+		t.Fatal("initial turn was not admitted")
+	}
+	parked := waitRecoveryEvent(t, sender)
+	if parked.State != recoverytypes.NeedsAttention {
+		t.Fatalf("parked = %+v", parked)
+	}
+	waitParked := time.Now().Add(5 * time.Second)
+	for orchestrator.TurnActive() && time.Now().Before(waitParked) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Peer and control input still cannot take over the parked owner.
+	if orchestrator.SubmitInput(provider.UserInput{Text: "peer", Origin: provider.OriginPeer}) {
+		t.Fatal("non-human input replaced a parked task")
+	}
+	intent, err := session.PrepareInputAdmission(orchestrator.ID, provider.UserInput{InternalID: "human-next", Text: "please go on"}, 7)
+	if err != nil {
+		t.Fatalf("human message refused while parked: %v", err)
+	}
+	result := session.CommitInputAdmission(context.Background(), intent)
+	if !result.Accepted() || result.Receipt.InputID != "human-next" || result.Receipt.DraftRevision != 7 {
+		t.Fatalf("human message admission = %+v", result)
+	}
+	select {
+	case <-nextTurn:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the new message did not start the next turn")
+	}
+	incident, found, err := sessiondb.LoadRecoveryIncident(session.DB(), session.SessionID(), orchestrator.ID, parked.ID)
+	if err != nil || !found || incident.Status.State != recoverytypes.Continued {
+		t.Fatalf("parked incident = %+v found=%v err=%v", incident.Status, found, err)
+	}
+	if retry := session.RetryRecoveryFor(orchestrator.ID, parked.ID, parked.Generation); retry == nil {
+		t.Fatal("the settled incident can still be retried")
+	}
+	state, present, err := sessiondb.LoadContextState(session.DB(), session.SessionID(), session.SessionID())
+	if err != nil || !present {
+		t.Fatalf("context: present=%v err=%v", present, err)
+	}
+	boundary, message := -1, -1
+	for index, entry := range state.Messages {
+		switch {
+		case entry.InternalID == "turn-continued:"+parked.ID:
+			boundary = index
+		case entry.InternalID == "human-next":
+			message = index
+		case strings.HasPrefix(entry.InternalID, "turn-stopped:"):
+			t.Fatal("a continued run was recorded as stopped by the user")
+		}
+	}
+	if boundary < 0 || message < boundary {
+		t.Fatalf("context lacks boundary before the new message: boundary=%d message=%d", boundary, message)
+	}
+	for {
+		select {
+		case event := <-sender.ch:
+			if event.typ == "done" {
+				if data, ok := event.data.(map[string]any); ok && data["reason"] == "cancelled" {
+					t.Fatal("continuing published a cancellation")
+				}
+			}
+			continue
+		default:
+		}
+		break
+	}
+}

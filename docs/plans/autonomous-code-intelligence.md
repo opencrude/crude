@@ -93,6 +93,7 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-13 | Implement Smart Enter and closing-bracket auto-dedent from the same pinned VS Code language configurations as folding. Keep language rules in catalog data and one generic consumer; preserve editing/history and repair the failing gate without relaxing it. Use Python for edits. | User |
 
 | 2026-11-14 | Verify the recent developments on native Windows and move the project, local Go toolchain and CI to Go 1.27.4. Put further desktop captures on the second monitor. | User |
+| 2026-11-14 | Language-server controls: the Problems status button restarts only the failed server(s) (one button, "Restart failed servers" for several) instead of opening Settings. Language Tools shows each tool's live state and offers Restart/Stop or Start on the tool page plus Restart all; no Pause. An unexpected exit restarts automatically, at most four times in three minutes, then stays Failed until the user restarts it. | User |
 
 ### Open decisions
 

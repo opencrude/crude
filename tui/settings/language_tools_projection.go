@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -245,4 +246,53 @@ func languageToolRows(servers []lspServer, inventory types.CodeToolInventory) []
 		return a < b
 	})
 	return rows
+}
+
+// instances returns the live language-server instances that run this tool.
+// Installed tools match their exact executable; a configuration without an
+// installation record matches its command name.
+func (r languageToolRow) instances(health []types.LSPServerHealth) []types.LSPServerHealth {
+	executable := ""
+	switch {
+	case r.managed != nil:
+		executable = r.managed.Executable
+	case r.external != nil:
+		executable = r.external.Executable
+	}
+	var out []types.LSPServerHealth
+	for _, server := range health {
+		switch {
+		case executable != "" && filepath.IsAbs(server.Command):
+			if server.Command != executable {
+				continue
+			}
+		case r.command == "" || filepath.Base(server.Command) != filepath.Base(r.command):
+			continue
+		}
+		out = append(out, server)
+	}
+	return out
+}
+
+// runtimeState is the row's live state, or "" when no instance exists. A
+// failure outranks starting, which outranks running; a tool with no live
+// instance but a stopped one reads Stopped.
+func runtimeState(instances []types.LSPServerHealth) string {
+	state := ""
+	rank := map[string]int{"": 0, "Stopped": 1, "Running": 2, "Starting": 3, "Failed": 4}
+	for _, server := range instances {
+		current := "Stopped"
+		switch {
+		case server.Error != "":
+			current = "Failed"
+		case server.Starting || server.Status == "Waiting for slot" || server.Status == "Stopping":
+			current = "Starting"
+		case server.Connected:
+			current = "Running"
+		}
+		if rank[current] > rank[state] {
+			state = current
+		}
+	}
+	return state
 }

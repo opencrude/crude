@@ -70,6 +70,7 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 		deck:           deck,
 		deckHost:       ui.NewHost(r.theme, deck),
 	}
+	projection.deckHost.SetPointerTextSelection(true)
 	r.items[session] = projection
 	return projection
 }

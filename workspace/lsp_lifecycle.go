@@ -216,6 +216,7 @@ func (m *LSPManager) StartForWorkspace(root string) {
 	}
 	m.setWorkspaceRootLocked(root)
 	m.paused, m.manualStart = false, true
+	clear(m.crashes)
 	for _, state := range m.states {
 		state.stopped = false
 		if state.status == LSPFailed {
@@ -364,7 +365,8 @@ func (m *LSPManager) reconcile() bool {
 		m.mu.Unlock()
 		return false
 	}
-	// A disconnected server is not silently restarted every tick or keypress.
+	// An unexpected exit restarts the server a bounded number of times, as
+	// established IDEs do; a crash loop then stays failed until the user acts.
 	for key, state := range m.states {
 		if state.client == nil || state.teardownErr != nil {
 			continue
@@ -372,7 +374,8 @@ func (m *LSPManager) reconcile() bool {
 		select {
 		case <-state.client.Done():
 			client := state.client
-			state.status, state.err = LSPFailed, "Language server connection lost; use Restart Language Servers."
+			restart := m.allowAutomaticRestartLocked(key, time.Now())
+			state.status, state.err = LSPFailed, lspExitError(state.cmd, restart)
 			m.clearServerDiagnosticsLocked(key)
 			m.recomputeActiveStatusLocked()
 			m.mu.Unlock()
@@ -380,6 +383,11 @@ func (m *LSPManager) reconcile() bool {
 			m.mu.Lock()
 			if m.states[key] == state && !m.retainUnverifiedStopLocked(key, state, stopErr) {
 				state.client = nil
+				if restart && !state.stopped && !m.paused && !m.closed {
+					// The documents re-resolve and start a fresh process.
+					m.retireLocked(state)
+					m.signalLocked()
+				}
 				m.recomputeActiveStatusLocked()
 			}
 			m.mu.Unlock()
@@ -1169,6 +1177,7 @@ func (m *LSPManager) RestartServer(id string) bool {
 	if state == nil || m.closed || m.analysisErrorLocked() != nil {
 		return false
 	}
+	delete(m.crashes, id)
 	m.paused, m.manualStart = false, true
 	state.stopped = false
 	m.retireLocked(state)
@@ -1231,6 +1240,37 @@ func (m *LSPManager) clearServerDiagnosticsLocked(key string) {
 		}, "Language server stopped; retained results are out of date.")
 	}
 	m.advanceContextLocked("Language server state changed; retained facts are stale.")
+}
+
+const (
+	lspAutomaticRestarts      = 4
+	lspAutomaticRestartWindow = 3 * time.Minute
+)
+
+// allowAutomaticRestartLocked records one unexpected exit and reports whether
+// the server may restart by itself: at most four exits in three minutes.
+func (m *LSPManager) allowAutomaticRestartLocked(key string, now time.Time) bool {
+	if m.crashes == nil {
+		m.crashes = make(map[string][]time.Time)
+	}
+	recent := m.crashes[key][:0]
+	for _, at := range m.crashes[key] {
+		if now.Sub(at) < lspAutomaticRestartWindow {
+			recent = append(recent, at)
+		}
+	}
+	recent = append(recent, now)
+	m.crashes[key] = recent
+	return len(recent) <= lspAutomaticRestarts
+}
+
+func lspExitError(command string, restarting bool) string {
+	name := filepath.Base(command)
+	if restarting {
+		return name + " stopped unexpectedly. Crude is starting it again."
+	}
+	return fmt.Sprintf("%s stopped unexpectedly %d times in %d minutes. Find the cause, then restart it.",
+		name, lspAutomaticRestarts+1, int(lspAutomaticRestartWindow/time.Minute))
 }
 
 func lspServerKey(root string, spec ttypes.LSPServerSpec) string {

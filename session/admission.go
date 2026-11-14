@@ -10,6 +10,7 @@ import (
 	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
+	recoverytypes "crude/types/recovery"
 )
 
 type InputAdmissionStatus string
@@ -69,11 +70,16 @@ type InputAdmissionIntent struct {
 	orchestrator *Orchestrator
 	request      turnRequest
 	// queued marks input bound for the durable queue rather than a turn.
-	queued    bool
-	dequeue   bool
-	mu        sync.Mutex
-	committed bool
-	result    InputAdmissionResult
+	queued  bool
+	dequeue bool
+	// continued names the exact parked root incident that this human message
+	// settles before it is admitted as the next turn.
+	continued      *recoverytypes.Status
+	continuedInput provider.UserInput
+	draft          provider.UserInput
+	mu             sync.Mutex
+	committed      bool
+	result         InputAdmissionResult
 }
 
 // PrepareInputAdmission reserves the exact owner generation synchronously but
@@ -93,6 +99,28 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 		return nil, err
 	}
 	input = s.bindInputExecution(input)
+	if input.EffectiveOrigin() == provider.OriginHuman && !s.shouldQueueInput(orchestratorID) {
+		// A new message is the user's answer to a parked failure: it continues
+		// the conversation. Commit settles that exact incident, then reserves
+		// the turn; Prepare stays free of I/O.
+		if status, parkedInput, parked := s.parkedRecoveryForHuman(orchestratorID); parked {
+			s.orchMu.Lock()
+			orchestrator := s.orchestrators[orchestratorID]
+			s.orchMu.Unlock()
+			if orchestrator == nil || orchestrator.closing.Load() {
+				return nil, errors.New("input owner is unavailable")
+			}
+			input = cloneUserInput(input)
+			if input.InternalID == "" {
+				input.InternalID = newMessageID()
+			}
+			intent := &InputAdmissionIntent{SessionID: s.sessionID, AgentID: orchestratorID, InputID: input.InternalID,
+				DraftRevision: draftRevision, OwnerEpoch: orchestrator.RuntimeEpoch, session: s, orchestrator: orchestrator,
+				continued: &status, continuedInput: parkedInput, draft: input}
+			s.registerInputAdmission(intent)
+			return intent, nil
+		}
+	}
 	if s.shouldQueueInput(orchestratorID) {
 		s.orchMu.Lock()
 		orchestrator := s.orchestrators[orchestratorID]
@@ -174,6 +202,9 @@ func (s *Session) finishInputAdmission(intent *InputAdmissionIntent) {
 // cancel the reserved generation before/during this call; the local commit still
 // succeeds exactly once and returns preservation_pending without starting work.
 func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissionIntent) InputAdmissionResult {
+	if intent != nil && intent.continued != nil && intent.session == s && s != nil {
+		return s.commitContinuedInput(ctx, intent)
+	}
 	if intent != nil && intent.queued && intent.session == s && s != nil {
 		intent.mu.Lock()
 		defer intent.mu.Unlock()
@@ -298,6 +329,44 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		return intent.result
 	}
 	intent.result = InputAdmissionResult{Status: InputAdmissionAccepted, Receipt: receipt}
+	intent.committed = true
+	return intent.result
+}
+
+// commitContinuedInput settles the exact parked incident the intent captured,
+// then admits the message through the ordinary reserved path. A stale intent
+// (Retry, Stop or another shell settled the incident first) is rejected and
+// the draft is kept; a settled incident with a failed admission stays settled
+// and truthful, so the user can simply send again.
+func (s *Session) commitContinuedInput(ctx context.Context, intent *InputAdmissionIntent) InputAdmissionResult {
+	intent.mu.Lock()
+	defer intent.mu.Unlock()
+	if intent.committed {
+		return intent.result
+	}
+	defer s.finishInputAdmission(intent)
+	reject := func(kind InputAdmissionErrorKind, err error) InputAdmissionResult {
+		intent.committed = true
+		intent.result = InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: kind, Err: err}
+		return intent.result
+	}
+	if intent.orchestrator == nil || intent.SessionID != s.sessionID || intent.AgentID != intent.orchestrator.ID ||
+		intent.InputID == "" || intent.InputID != intent.draft.InternalID || intent.OwnerEpoch != intent.orchestrator.RuntimeEpoch {
+		return reject(InputAdmissionPreLocalRejection, errors.New("input admission intent is invalid"))
+	}
+	s.lifecycleMu.Lock()
+	err := s.continueRecoveryForHuman(intent.AgentID, intent.continued.ID, intent.continued.Generation)
+	s.lifecycleMu.Unlock()
+	if err != nil {
+		return reject(InputAdmissionPreLocalRejection, err)
+	}
+	// A parked loop iteration ends like a stopped one; the user took over.
+	s.loopTurnEnd(intent.continuedInput, true, false, false, "")
+	reserved, err := s.prepareReservedAdmission(intent.AgentID, intent.draft, intent.DraftRevision)
+	if err != nil {
+		return reject(InputAdmissionPreLocalRejection, err)
+	}
+	intent.result = s.CommitInputAdmission(ctx, reserved)
 	intent.committed = true
 	return intent.result
 }

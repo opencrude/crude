@@ -48,6 +48,7 @@ type List struct {
 	activate        string // action ID on Enter/click
 	hoverIdx        int
 	followPointer   bool
+	noTextSelection bool
 	rowPainter      ListRowPainter
 	defaultBgRole   SemanticColor
 	defaultBgSet    bool
@@ -503,6 +504,13 @@ func (l *List) Handle(ctx EventContext, evt Event) EventResult {
 	}
 	return EventResult{}
 }
+
+// SetPointerTextSelectable controls whether a drag selects painted row text.
+func (l *List) SetPointerTextSelectable(selectable bool) { l.noTextSelection = !selectable }
+
+// PointerTextSelectable lets a drag select painted rows. A menu-style list
+// that follows the pointer keeps press-drag-release choosing.
+func (l *List) PointerTextSelectable(int, int) bool { return !l.followPointer && !l.noTextSelection }
 
 func (l *List) Semantics() Semantics {
 	item, _ := l.Selected()

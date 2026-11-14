@@ -287,6 +287,9 @@ func (c *lspCatalog) refreshRows() {
 			continue
 		}
 		owner := c.installedBy(tool)
+		if live := runtimeState(tool.instances(m.lspHealth)); live != "" {
+			project = live
+		}
 		c.rows[tool.id] = tool
 		cells := []ui.TableCell{{Text: tool.name}}
 		if !c.compact {
@@ -377,6 +380,14 @@ func (c *lspCatalog) rebuildBar() {
 			if _, ok := c.detail.setupTarget(r.inventory.Project); ok {
 				buttons = append(buttons, ui.ActionBarButton{Label: "Set up tools", Action: "lsp.setup", Variant: ui.VariantPrimary, Enabled: !r.busy})
 			}
+			switch runtimeState(c.detail.instances(c.model().lspHealth)) {
+			case "Stopped":
+				buttons = append(buttons, ui.ActionBarButton{Label: "Start", Action: "lsp.server.restart", Variant: ui.VariantPrimary, Enabled: true})
+			case "Running", "Starting", "Failed":
+				buttons = append(buttons,
+					ui.ActionBarButton{Label: "Restart", Action: "lsp.server.restart", Variant: ui.VariantPrimary, Enabled: true},
+					ui.ActionBarButton{Label: "Stop", Action: "lsp.server.stop", Enabled: true})
+			}
 		}
 		buttons = append(buttons, ui.ActionBarButton{Label: "Back", Action: "lsp.tool.back", Enabled: !r.busy})
 		c.bar.SetButtons(buttons...)
@@ -388,6 +399,7 @@ func (c *lspCatalog) rebuildBar() {
 	}
 	c.bar.SetButtons(buttons...)
 	c.more.SetButtons(
+		ui.ActionBarButton{Label: "Restart all", Action: "lsp.server.restart-all", Enabled: len(c.model().lspHealth) > 0},
 		ui.ActionBarButton{Label: "History", Action: "lsp.history", Enabled: r.service != nil},
 		ui.ActionBarButton{Label: "Refresh", Action: "settings.code-tools.refresh", Enabled: !r.busy && r.service != nil},
 	)
@@ -469,6 +481,16 @@ func (c *lspCatalog) showDetail() {
 			// The subtitle states who installed the tool; Overview gives the
 			// facts. Long paths and digests keep the full row width.
 			languages := "Languages: " + mapDefault(tool.languages(), "None") + "\n"
+			for _, server := range tool.instances(m.lspHealth) {
+				line := "Server: " + mapDefault(runtimeState([]types.LSPServerHealth{server}), "Stopped")
+				if root := strings.TrimPrefix(server.RootURI, "file://"); root != "" {
+					line += " · " + root
+				}
+				if server.Error != "" {
+					line += "\n" + server.Error
+				}
+				languages += line + "\n"
+			}
 			switch {
 			case tool.managed != nil:
 				fields = append(fields, codeToolText("tool-overview", "Details", toolDescription(*tool.managed)))
@@ -754,6 +776,23 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 			}
 		}
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }}
+	case "lsp.server.restart", "lsp.server.stop", "lsp.server.restart-all":
+		control := LanguageServerControlMsg{Action: "restart", All: action.ID == "lsp.server.restart-all"}
+		if action.ID == "lsp.server.stop" {
+			control.Action = "stop"
+		}
+		if !control.All {
+			if c.detail == nil {
+				return c.changed()
+			}
+			for _, server := range c.detail.instances(m.lspHealth) {
+				control.IDs = append(control.IDs, server.ID)
+			}
+			if len(control.IDs) == 0 {
+				return c.changed()
+			}
+		}
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return control }}
 	case "lsp.open":
 		return c.openTool()
 	case "lsp.tool.back":

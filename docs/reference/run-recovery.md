@@ -304,9 +304,19 @@ select a process-global journal directory, invent another session identity or
 continue with a missing editor. Failed resume preserves pre-existing session
 artifacts while cleaning only temporary data created by that failed attempt.
 An old recovery cancellation fences the owning turn context itself, not merely
-the earlier incident lookup. New human/peer turn admission cannot overwrite a
-parked task. The composer refuses an ordinary send before consuming that draft;
-Retry now/Stop and slash remediation remain available.
+the earlier incident lookup. Peer, control, goal and loop admission cannot
+overwrite a parked task. A new human message to a parked main agent is the
+user's answer to the failure and continues the conversation: input admission
+(`Session.PrepareInputAdmission` → `commitContinuedInput`) captures the exact
+incident and generation, Commit settles it as `continued` through the Stop
+settlement (committed context, unknown tool outcomes, finished turn record, a
+`turn-continued:` context-only boundary from `prompt.TurnContinuedBoundary`)
+and then admits the message as the next ordinary turn. Nothing is replayed, no
+cancellation or goal pause is published, and a stale intent (Retry, Stop or
+another shell settled first) is rejected with the draft kept. A live retry
+attempt, a child's task and a pending terminal publication keep their exact
+Retry/Stop; the composer refuses a child's ordinary send before consuming the
+draft. Retry now/Stop and slash remediation remain available.
 
 Human steering admission shares the execution owner's Stop and terminal-seal
 fence, not just the collaboration run's still-nonterminal record. At natural

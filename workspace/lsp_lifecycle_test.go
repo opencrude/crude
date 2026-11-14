@@ -473,3 +473,41 @@ func (c *lifecycleClient) AwaitDiagnostics(_ context.Context, path string) (mode
 	}
 	return p, true
 }
+
+// A server that exits by itself starts again with the open documents, as in
+// established IDEs. A crash loop stops after a bounded number of restarts and
+// says so; the user's explicit Restart then starts it again.
+func TestLSPUnexpectedExitRestartsWithinBound(t *testing.T) {
+	m, r, root := lifecycleManager(t)
+	path := filepath.Join(root, "main.go")
+	editorSource(t, m, path, "unsaved")
+	connected := func(clients int) func() bool {
+		return func() bool {
+			h := m.ServerHealthSnapshots()
+			cs := r.snapshot()
+			return len(h) == 1 && h[0].Connected && len(cs) == clients && len(cs[clients-1].snapshot()) == 1
+		}
+	}
+	awaitLSP(t, connected(1))
+	for crash := 1; crash <= lspAutomaticRestarts; crash++ {
+		close(r.snapshot()[crash-1].done)
+		awaitLSP(t, connected(crash+1))
+		if got := r.snapshot()[crash].snapshot()[0]; got != "open:main.go:go:unsaved" {
+			t.Fatalf("restart %d did not reopen the document: %q", crash, got)
+		}
+	}
+	close(r.snapshot()[lspAutomaticRestarts].done)
+	awaitLSP(t, func() bool { h := m.ServerHealthSnapshots(); return len(h) == 1 && h[0].Error != "" })
+	time.Sleep(50 * time.Millisecond)
+	if cs := r.snapshot(); len(cs) != lspAutomaticRestarts+1 {
+		t.Fatalf("crash loop kept restarting: %d processes", len(cs))
+	}
+	server := m.ServerHealthSnapshots()[0]
+	if !strings.Contains(server.Error, "stopped unexpectedly 5 times") {
+		t.Fatalf("crash-loop error = %q", server.Error)
+	}
+	if !m.RestartServer(server.ID) {
+		t.Fatal("explicit restart refused after a crash loop")
+	}
+	awaitLSP(t, connected(lspAutomaticRestarts+2))
+}

@@ -79,6 +79,19 @@ func (m *App) problemsStatus(insights ttypes.ProjectInsights) problems.Status {
 		status.Action = "language:trust"
 	case ttypes.LanguageActionStartServers:
 		status.Action = "lsp:start-all"
+	case ttypes.LanguageActionRestartServer:
+		// One button restarts what failed: the named server, or every failed
+		// one when there are several. Running servers keep their work.
+		status.Action = "lsp:restart-failed"
+		failed := 0
+		for _, server := range m.ws.LSPMgr().ServerHealthSnapshots() {
+			if server.Error != "" {
+				failed++
+			}
+		}
+		if failed > 1 {
+			insights.Language.ActionLabel = "Restart failed servers"
+		}
 	}
 	if insights.Language.Action != ttypes.LanguageActionNone ||
 		insights.Language.State != ttypes.LanguageReady && insights.Language.Message != "" {

@@ -806,17 +806,21 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, nil
 	}
 
+	parked := false
+	if node := m.AgentView.ActiveNode(); node != nil && node.State != nil {
+		status := node.State.RecoveryStatus()
+		parked = status.State == recovery.Interrupted ||
+			status.State == recovery.NeedsAttention && !m.ws.AgentTurnActive(node.ID)
+	}
 	if msg.Code == tea.KeyEnter && !msg.Mod.Contains(tea.ModAlt) && !m.LSPPopup.RenameArmed {
 		if node := m.AgentView.ActiveNode(); node != nil && node.State != nil {
-			status := node.State.RecoveryStatus()
-			parked := status.State == recovery.Interrupted ||
-				status.State == recovery.NeedsAttention && !m.ws.AgentTurnActive(node.ID)
 			text := strings.TrimSpace(m.Input.Value())
-			if parked && text != "" && !strings.HasPrefix(text, "/") {
-				// Refuse admission before the text control consumes its draft:
-				// keep exact cursor, references, selection, undo and history.
+			// A new message to a main agent continues past its parked failure;
+			// the session settles the exact incident at admission. A child's
+			// task belongs to its parent, so refuse before the draft is consumed.
+			if parked && !node.IsOrchestrator() && text != "" && !strings.HasPrefix(text, "/") {
 				if m.Feedback != nil {
-					m.Feedback.NotifyInfo("Recovery is still pending. Use Retry now or Stop before sending; your draft is kept.")
+					m.Feedback.NotifyInfo("This agent's run stopped. Use Retry now or Stop first; your draft is kept.")
 				}
 				return m, nil
 			}
@@ -824,7 +828,8 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	}
 	canType := false
 	if n := m.AgentView.ActiveNode(); n != nil && n.State != nil {
-		canType = !n.State.Completed && n.State.IsActive()
+		// A parked run takes no notes: Enter sends a new message instead.
+		canType = !n.State.Completed && n.State.IsActive() && !parked
 	}
 	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
 	m.Input = updated

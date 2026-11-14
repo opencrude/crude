@@ -209,6 +209,9 @@ type Model struct {
 	resetPaths      [][]string
 	remoteAccess    remoteAccessState
 	codeTools       codeToolsSettingsState
+	// lspHealth is the shell's latest language-server runtime snapshot. The
+	// workspace LSP manager owns the state; Settings only projects it.
+	lspHealth []types.LSPServerHealth
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
 	agents                   *types.AgentsSettings
@@ -1988,6 +1991,11 @@ func (m *Model) syncAppearanceColors() {
 // the mounted component tree rather than a parallel legacy form event loop.
 func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case LanguageServerHealthMsg:
+		if msg.Target == m {
+			m.lspHealth = msg.Servers
+		}
+		return *m, nil
 	case CodeToolsResultMsg:
 		cmd := m.applyCodeToolsResult(msg)
 		return *m, cmd

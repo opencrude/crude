@@ -11,13 +11,18 @@ const (
 	Recovered      State = "recovered"
 	Interrupted    State = "interrupted"
 	Cancelled      State = "cancelled"
+	// Continued settles a parked incident because the user sent a new message:
+	// the interrupted attempt is not replayed and the conversation goes on.
+	Continued State = "continued"
 	// Failed settles an incident whose turn ended with a reported blocker that
 	// no automatic or in-place retry can fix (for example a provider refusal).
 	Failed State = "failed"
 )
 
 // Settled reports whether the incident no longer owns unfinished work.
-func (s State) Settled() bool { return s == Recovered || s == Cancelled || s == Failed }
+func (s State) Settled() bool {
+	return s == Recovered || s == Cancelled || s == Continued || s == Failed
+}
 
 // Status is the presentation-neutral, durable projection of one recovery
 // incident. ID stays stable across every transition for that incident.

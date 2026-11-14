@@ -46,6 +46,12 @@ func TurnStoppedBoundary() string {
 	return "The user stopped the previous turn. Completed tool effects remain. Running tools may have partial effects; inspect current state before resuming them. Calls with incomplete streamed arguments were not executed. Follow the user's next instruction; do not automatically repeat completed operations."
 }
 
+// TurnContinuedBoundary ends an interrupted attempt that the user answered
+// with a new message instead of a retry.
+func TurnContinuedBoundary() string {
+	return "The previous turn was interrupted by a failure and was not retried. Completed tool effects remain. Running tools may have partial effects; inspect current state before resuming them. Calls with incomplete streamed arguments were not executed. Follow the user's next message; continue the unfinished work only where it asks you to, and do not automatically repeat completed operations."
+}
+
 func ContinuePreviousResponse() string {
 	return "Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them."
 }

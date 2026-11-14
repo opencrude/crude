@@ -411,6 +411,12 @@ shared capability contract (`ui.TextClipboardTarget`, `textClipboardChord` in
 cuts the selection or the whole value, Esc drops the selection and stays
 unhandled when there is none, and a mouse drag keeps its selection in an
 editable control (copy-on-release is only for read-only reading surfaces).
+A component that paints readable text but has no text model of its own (a
+label, a list row painter, a question reader) implements
+`ui.PointerTextSource`; the Host then selects its painted cells by drag and
+copies them on release, and replays a plain click unchanged. Never hand-roll a
+second painted-text selection, and do not implement it on controls that own
+pointer drags (scrollbars, dividers, tabs, trees, drag-to-choose menus).
 Shortcut captions for modified Enter come from the chord tokens in
 `tui/ui/chords.go` (`ActionBarButton.Shortcut: ui.CommitChord`,
 `ui.FormatShortcut(ui.NewlineChord)`), never a hard-coded "Ctrl+Enter".
