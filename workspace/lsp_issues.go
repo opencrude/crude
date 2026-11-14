@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	ttypes "crude/types"
@@ -16,6 +17,7 @@ const (
 	lspIssuePrefix        = "lsp:"
 	lspMessageIssuePrefix = "lsp-message:"
 	lspResultsIssuePrefix = "lsp-results:"
+	lspCommandIssuePrefix = "lsp-command:"
 )
 
 // SyncLSPIssues publishes the issues that the language servers' state shows
@@ -24,12 +26,12 @@ func SyncLSPIssues(center *StatusCenter, manager *LSPManager) {
 	if center == nil || manager == nil {
 		return
 	}
-	syncLSPIssuesFrom(center, manager.ServerHealthSnapshots())
+	syncLSPIssuesFrom(center, manager.ServerHealthSnapshots(), manager.Assembly())
 }
 
-func syncLSPIssuesFrom(center *StatusCenter, servers []ttypes.LSPServerHealth) {
+func syncLSPIssuesFrom(center *StatusCenter, servers []ttypes.LSPServerHealth, plan ttypes.AssemblyPlan) {
 	open := make(map[string]bool)
-	for _, issue := range lspIssues(servers) {
+	for _, issue := range append(lspIssues(servers), lspCommandIssues(plan)...) {
 		open[issue.ID] = true
 		center.SetIssue(issue)
 	}
@@ -72,10 +74,32 @@ func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
 }
 
 // lspResultsSuspect is the one structural rule for a server that cannot see
-// the project: at least one in five of the files it checked has errors. It
-// applies only to servers whose closed files Crude checks, because a server
-// that reports the project itself sends results only for files with problems.
+// the project: errors in more than one file, and in at least one in five of
+// the files it checked. One file with errors is an error in that file, not a
+// sign about the project. The rule applies only to servers whose closed files
+// Crude checks, because a server that reports the project itself sends
+// results only for files with problems.
 func lspResultsSuspect(server ttypes.LSPServerHealth) bool {
 	return server.Error == "" && server.Scope == ttypes.CoverageOpenFiles &&
-		server.FilesTracked > 0 && server.FilesAffected > 0 && server.FilesAffected*5 >= server.FilesTracked
+		server.FilesAffected >= 2 && server.FilesAffected*5 >= server.FilesTracked
+}
+
+// lspCommandIssues reports language servers that the user's settings name but
+// that are not installed: a typing error in a command or a tool that was
+// removed. A catalog server that is not installed is a setup choice, not a
+// problem, so it raises nothing here.
+func lspCommandIssues(plan ttypes.AssemblyPlan) []ttypes.IssueSnapshot {
+	var out []ttypes.IssueSnapshot
+	for _, language := range plan.Languages {
+		if language.Status != ttypes.ToolMissing || language.Source != ttypes.ToolSourceSettings {
+			continue
+		}
+		out = append(out, ttypes.IssueSnapshot{
+			ID: lspCommandIssuePrefix + language.ID, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: lspCommandIssuePrefix + language.ID},
+			Severity: ttypes.SeverityWarning, Investigate: true,
+			Summary: fmt.Sprintf("%s server %s is not installed", language.Name, filepath.Base(language.Command)),
+			Detail:  language.Reason,
+		})
+	}
+	return out
 }

@@ -16,6 +16,12 @@ import (
 
 const coreWatchQueueSize = 1024
 
+// coreWatchSubtreeLimit bounds what a new directory may already hold when its
+// watch is added. Up to this many entries become ordinary create events; a
+// larger subtree (an unpacked archive, a package install) is a gap and the
+// producers reindex instead.
+const coreWatchSubtreeLimit = coreWatchQueueSize / 2
+
 type watchNotification struct {
 	path string
 	kind int
@@ -135,31 +141,46 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 			}
 		}
 		dirs := make(map[string]bool)
-		add := func(path string) bool {
+		// add watches path and every directory below it. With found, it also
+		// lists what the subtree already holds: entries created before their
+		// directory had a watch produced no event, so they become create
+		// events. complete is false when the subtree exceeds the bound.
+		add := func(path string, found *[]watchNotification) (admitted, complete bool) {
 			info, err := os.Lstat(path)
 			if err != nil || !info.IsDir() {
-				return false
+				return false, false
 			}
-			err = filepath.WalkDir(path, func(path string, entry fs.DirEntry, err error) error {
+			complete = true
+			err = filepath.WalkDir(path, func(entryPath string, entry fs.DirEntry, err error) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				if err != nil {
 					return err
 				}
+				if skipCoreWatchPath(root, entryPath) {
+					if entry.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if found != nil && entryPath != path {
+					if len(*found) >= coreWatchSubtreeLimit {
+						complete = false
+					} else {
+						*found = append(*found, watchNotification{entryPath, 1})
+					}
+				}
 				if !entry.IsDir() {
 					return nil
 				}
-				if skipCoreWatchPath(root, path) {
-					return filepath.SkipDir
-				}
-				if err := watcher.Add(path); err != nil {
+				if err := watcher.Add(entryPath); err != nil {
 					return err
 				}
-				dirs[coreWatchPathKey(path)] = true
+				dirs[coreWatchPathKey(entryPath)] = true
 				return nil
 			})
-			return err == nil
+			return err == nil, complete
 		}
 		start := time.Now()
 		// The initial traversal cannot observe files in directories not yet
@@ -172,7 +193,7 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 			admissionFailed = true
 			gap()
 		}
-		if !add(root) && ctx.Err() == nil {
+		if admitted, _ := add(root, nil); !admitted && ctx.Err() == nil {
 			admissionFailed = true
 			gap()
 		}
@@ -212,7 +233,8 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 				}
 				events, watchErrors = watcher.Events, watcher.Errors
 				dirs = make(map[string]bool)
-				admissionFailed = !addCoreWatchParent(watcher, root) || !add(root)
+				admitted, _ := add(root, nil)
+				admissionFailed = !addCoreWatchParent(watcher, root) || !admitted
 				recoverObservation()
 			case event, ok := <-events:
 				if !ok {
@@ -236,17 +258,32 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 				key := coreWatchPathKey(path)
 				relKey := coreWatchPathKey(rel)
 				git := relKey == ".git" || strings.HasPrefix(relKey, ".git"+string(filepath.Separator))
+				// A new directory is observed without a gap: its watch is added
+				// and what it already holds is reported as created, in order.
+				// Builds, interpreters and package managers create directories
+				// all the time; a gap would recheck the whole project and restart
+				// its servers each time. Only lost events are a gap.
+				var existing []watchNotification
 				if event.Op&fsnotify.Create != 0 {
 					info, err := os.Lstat(path)
 					if err == nil && info.IsDir() {
+						var found *[]watchNotification
 						if !git {
-							gap()
+							found = &existing
 						}
-						if !add(path) && ctx.Err() == nil {
-							admissionFailed = true
+						admitted, complete := add(path, found)
+						switch {
+						case ctx.Err() != nil:
+						case !admitted:
+							// A directory that vanished again holds nothing to observe.
+							if _, err := os.Lstat(path); !os.IsNotExist(err) {
+								admissionFailed = true
+								gap()
+								recoverObservation()
+							}
+						case !complete:
+							existing = nil
 							gap()
-						}
-						if !git || admissionFailed {
 							recoverObservation()
 						}
 					} else if err != nil && !os.IsNotExist(err) {
@@ -256,21 +293,18 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 					}
 				}
 				if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 && dirs[key] {
-					if !git {
-						gap()
-					}
-					// A replacement is not admitted reliably. Stay fenced until restart.
+					// A removed directory is reported as one delete below. Only the
+					// root itself cannot be readmitted: stay fenced until restart.
 					if key == coreWatchPathKey(root) {
+						gap()
 						admissionFailed = true
 						rootLost = true
+						recoverObservation()
 					}
 					for dir := range dirs {
 						if dir == key || strings.HasPrefix(dir, key+string(filepath.Separator)) {
 							delete(dirs, dir)
 						}
-					}
-					if !git {
-						recoverObservation()
 					}
 				}
 				if !git && notify != nil {
@@ -280,11 +314,15 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 					} else if event.Op&fsnotify.Create != 0 {
 						kind = 1
 					}
-					select {
-					case queue <- queuedNotification{watchNotification{path, kind}, generation}:
-					default:
-						gap()
-						recoverObservation()
+					for _, item := range append([]watchNotification{{path, kind}}, existing...) {
+						select {
+						case queue <- queuedNotification{item, generation}:
+							continue
+						default:
+							gap()
+							recoverObservation()
+						}
+						break
 					}
 				}
 				if ctx.Err() == nil && publish != nil {
@@ -294,7 +332,7 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 				if ctx.Err() == nil {
 					gap()
 					if ok && watchErr == fsnotify.ErrEventOverflow {
-						if !add(root) {
+						if admitted, _ := add(root, nil); !admitted {
 							admissionFailed = true
 						}
 						recoverObservation()

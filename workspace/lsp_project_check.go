@@ -479,6 +479,31 @@ func sharedDirectories(a, b string) int {
 // invalidateCheckedFactsLocked marks Crude's own results for path (a file or
 // a directory) out of date after the file changed; the next pass checks
 // them again. A server that reports closed files maintains its own results.
+// lspFileDeleted is the LSP FileChangeType of a deleted file or directory.
+const lspFileDeleted = 3
+
+// forgetCheckedFactsLocked drops Crude's results for a deleted file or for
+// every file below a deleted directory. A file that is gone has no problems;
+// an out-of-date row for it would stay in Problems forever, because nothing
+// checks a file that does not exist.
+func (m *LSPManager) forgetCheckedFactsLocked(path string) {
+	changed := false
+	if m.sources != nil && m.sources.Insight != nil {
+		changed = m.sources.Insight.diagnostics.RemoveMatching(func(b ttypes.InsightBoundary) bool {
+			return isCheckedFact(b) && pathWithin(path, b.Source.Path)
+		}) > 0
+	}
+	for candidate := range m.checkResults {
+		if pathWithin(path, candidate) {
+			delete(m.checkResults, candidate)
+			changed = true
+		}
+	}
+	if changed {
+		m.bumpVersionLocked()
+	}
+}
+
 func (m *LSPManager) invalidateCheckedFactsLocked(path string) {
 	m.invalidateCheckedResultsLocked(func(candidate, _, _ string) bool { return pathWithin(path, candidate) },
 		"The file changed after Crude checked it.")

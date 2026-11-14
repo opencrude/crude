@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,7 @@ import (
 
 // Exercise native observation, a real server, canonical unsaved edits and the
 // same diagnostic facts consumed by connected shells and agent probes.
-func TestLiveLSPDiagnosticsRecoverAfterDirectoryAdmissionFailure(t *testing.T) {
+func TestLiveLSPDiagnosticsRecoverAfterWatchGap(t *testing.T) {
 	if os.Getenv("CRUDE_LSP_LIVE") != "1" {
 		t.Skip("set CRUDE_LSP_LIVE=1 to run the installed-server journey")
 	}
@@ -74,15 +75,25 @@ func TestLiveLSPDiagnosticsRecoverAfterDirectoryAdmissionFailure(t *testing.T) {
 	// Replace only this fixture's observer to control a native directory race.
 	// The actual manager, server, wire commands and facts remain unchanged.
 	a.fileWatch.Close()
-	transient := filepath.Join(root, "temporary-build")
-	removed := make(chan error, 1)
+	// A build output that arrives with more files than the watch bound is a
+	// gap: the producers reindex after observation is restored.
+	unpacked := filepath.Join(t.TempDir(), "build-output")
+	if err := os.MkdirAll(unpacked, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= coreWatchSubtreeLimit; i++ {
+		if err := os.WriteFile(filepath.Join(unpacked, fmt.Sprintf("out-%04d.txt", i)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gapped := make(chan struct{}, 1)
 	recovered := make(chan struct{}, 1)
 	var armed, recovering atomic.Bool
 	watch, err := startCoreFileWatch(root, nil, manager.NotifyWatchedFilesChanged, func(reliable bool) {
 		manager.SetProjectWatchReliable(reliable)
 		if !reliable && armed.CompareAndSwap(true, false) {
 			recovering.Store(true)
-			removed <- os.Remove(transient)
+			gapped <- struct{}{}
 		} else if reliable && recovering.CompareAndSwap(true, false) {
 			recovered <- struct{}{}
 		}
@@ -104,16 +115,13 @@ func TestLiveLSPDiagnosticsRecoverAfterDirectoryAdmissionFailure(t *testing.T) {
 		t.Fatalf("initial source was not checked: %+v settled=%v err=%v", initial, settled, err)
 	}
 	armed.Store(true)
-	if err := os.Mkdir(transient, 0700); err != nil {
+	if err := os.Rename(unpacked, filepath.Join(root, "build-output")); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case err := <-removed:
-		if err != nil {
-			t.Fatal(err)
-		}
+	case <-gapped:
 	case <-ctx.Done():
-		t.Fatal("native directory admission was not reached")
+		t.Fatal("a subtree larger than the watch bound made no gap")
 	}
 	select {
 	case <-recovered:

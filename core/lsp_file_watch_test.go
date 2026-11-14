@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,8 +155,18 @@ func TestWatchGapFencesInflightCallbackFromReplacement(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("callback not blocked")
 	}
-	// Directory admission forces a gap while the old callback is in flight.
-	if err := os.Mkdir(filepath.Join(root, "newdir"), 0700); err != nil {
+	// A subtree larger than the watch bound forces a gap while the old
+	// callback is in flight. An ordinary new directory is not a gap.
+	big := filepath.Join(t.TempDir(), "big")
+	if err := os.MkdirAll(big, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= coreWatchSubtreeLimit; i++ {
+		if err := os.WriteFile(filepath.Join(big, fmt.Sprintf("f-%04d", i)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Rename(big, filepath.Join(root, "big")); err != nil {
 		t.Fatal(err)
 	}
 	watchAwait(t, "replacement producer", func() bool { connected, _, _ := m.Status(); return connected && len(r.snapshot()) >= 2 })

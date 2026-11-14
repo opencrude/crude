@@ -433,12 +433,13 @@ Tools; wheel down, F6, move outside the table, then F6 checks retained scroll.
 F9 exits and checks all observations; `CRUDE_REGRESSION_REPAIR_RESULT` records
 them. These are UI fixtures, not installed-server evidence.
 
-`CRUDE_LSP_LIVE=1 go test ./core -run
-'^TestLiveLSPDiagnosticsRecoverAfterDirectoryAdmissionFailure$'` separately uses
-a real installed gopls, native watcher failure/recovery, canonical unsaved
-invalid Go text and the connected diagnostic snapshot. Run it with and without
-the race detector. The native watcher regression must fail on the original
-permanently latched failure; root replacement and stale callbacks stay fenced.
+`CRUDE_LSP_LIVE=1 go test ./core -run '^TestLiveLSPDiagnosticsRecoverAfterWatchGap$'`
+separately uses a real installed gopls, a native watch gap (a new subtree larger
+than the watch bound) and its recovery, canonical unsaved invalid Go text and
+the connected diagnostic snapshot. Run it with and without the race detector.
+The native watcher regression must fail on a permanently latched failure; root
+replacement and stale callbacks stay fenced. An ordinary new or vanished
+directory is not a gap (`TestCoreFileWatchNewDirectoryIsNotAGap`).
 
 ### Shared language diagnostic acceptance
 

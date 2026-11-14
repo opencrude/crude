@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -159,7 +158,10 @@ func TestCoreFileWatchOrderedChangesAndCooperativeShutdown(t *testing.T) {
 	}
 }
 
-func TestCoreFileWatchPopulatedMoveSignalsGapAndWatchesSubtree(t *testing.T) {
+// A populated directory moved into the project is observed without a gap:
+// its watch is added and its files are reported as created. Moving it out is
+// one delete. A gap would recheck the whole project and restart its servers.
+func TestCoreFileWatchPopulatedMoveReportsSubtreeWithoutGap(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	src := filepath.Join(outside, "tree")
@@ -185,55 +187,104 @@ func TestCoreFileWatchPopulatedMoveSignalsGapAndWatchesSubtree(t *testing.T) {
 	if err := os.Rename(src, dest); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case v := <-gaps:
-		if v {
-			t.Fatal("gap marked reliable")
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("missing move-in gap")
-	}
-	// Wait for the directory event, which follows subtree registration.
-	for {
-		select {
-		case v := <-changes:
-			if v.path == dest {
-				goto registered
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("directory not registered")
-		}
-	}
-registered:
-	path = filepath.Join(dest, "nested", "file")
-	if err := os.WriteFile(path, []byte("b"), 0600); err != nil {
+	moved := filepath.Join(dest, "nested", "file")
+	awaitWatchChange(t, changes, gaps, moved, 1)
+	if err := os.WriteFile(moved, []byte("b"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for {
-		select {
-		case v := <-changes:
-			if v.path == path && v.kind == 2 {
-				goto observed
-			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("nested change not observed")
-		}
-	}
-observed:
+	awaitWatchChange(t, changes, gaps, moved, 2)
 	if err := os.Rename(dest, src); err != nil {
 		t.Fatal(err)
 	}
+	awaitWatchChange(t, changes, gaps, dest, 3)
+}
+
+// awaitWatchChange waits for one notification and fails on any gap.
+func awaitWatchChange(t *testing.T, changes <-chan watchNotification, gaps <-chan bool, path string, kind int) {
+	t.Helper()
 	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
 	for {
 		select {
-		case v := <-gaps:
-			if !v {
+		case v := <-changes:
+			if v.path == path && v.kind == kind {
 				return
 			}
+		case v := <-gaps:
+			if !v {
+				t.Fatalf("an orderly directory change made a gap while waiting for %s", path)
+			}
 		case <-timer.C:
-			t.Fatal("missing move-out gap")
+			t.Fatalf("no change %d for %s", kind, path)
 		}
+	}
+}
+
+// Found live: Python creating __pycache__, cargo creating target/ and a
+// developer's mkdir each made a gap, and each gap rechecked every closed file
+// and restarted the project's servers. Files written into a new directory
+// before its watch was added are reported, not lost, and nothing is a gap.
+func TestCoreFileWatchNewDirectoryIsNotAGap(t *testing.T) {
+	root := t.TempDir()
+	gaps := make(chan bool, 16)
+	changes := make(chan watchNotification, 256)
+	w, err := startCoreFileWatch(root, nil, func(_ context.Context, p string, k int) { changes <- watchNotification{p, k} }, func(v bool) { gaps <- v })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	<-w.ready
+	if first, second := <-gaps, <-gaps; first || !second {
+		t.Fatalf("startup reliability = %v, %v", first, second)
+	}
+	dir := filepath.Join(root, "__pycache__", "deep")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(dir, "mod.pyc")
+	if err := os.WriteFile(inner, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	awaitWatchChange(t, changes, gaps, inner, 1)
+	if err := os.RemoveAll(filepath.Join(root, "__pycache__")); err != nil {
+		t.Fatal(err)
+	}
+	awaitWatchChange(t, changes, gaps, filepath.Join(root, "__pycache__"), 3)
+}
+
+// A directory that arrives with more entries than the bound (an unpacked
+// archive or a package install) is still a gap: the producers reindex.
+func TestCoreFileWatchLargeNewSubtreeIsAGap(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "big")
+	if err := os.MkdirAll(outside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= coreWatchSubtreeLimit; i++ {
+		if err := os.WriteFile(filepath.Join(outside, fmt.Sprintf("f-%04d", i)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gaps := make(chan bool, 16)
+	w, err := startCoreFileWatch(root, nil, func(context.Context, string, int) {}, func(v bool) { gaps <- v })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	<-w.ready
+	if first, second := <-gaps, <-gaps; first || !second {
+		t.Fatalf("startup reliability = %v, %v", first, second)
+	}
+	if err := os.Rename(outside, filepath.Join(root, "big")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case v := <-gaps:
+		if v {
+			t.Fatal("a large subtree restored observation without a gap first")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a subtree larger than the bound made no gap")
 	}
 }
 
@@ -255,70 +306,38 @@ func TestCoreFileWatchAdmissionFailureStaysUnreliable(t *testing.T) {
 	}
 }
 
-// A build or package manager can remove a directory between its create event
-// and recursive watch admission. That is not permanent loss of the workspace.
-func TestCoreFileWatchVanishedDirectoryRestoresObservation(t *testing.T) {
+// A build or package manager can remove a directory right after creating it,
+// before its watch is added. That is not loss of the workspace: observation
+// stays reliable and the next source change arrives.
+func TestCoreFileWatchVanishedDirectoryKeepsObservation(t *testing.T) {
 	root := t.TempDir()
-	transient := filepath.Join(root, "transient")
-	states := make(chan bool, 32)
-	changes := make(chan watchNotification, 32)
-	removed := make(chan error, 1)
-	var armed atomic.Bool
+	gaps := make(chan bool, 64)
+	changes := make(chan watchNotification, 256)
 	w, err := startCoreFileWatch(root, nil, func(_ context.Context, path string, kind int) {
 		changes <- watchNotification{path, kind}
-	}, func(reliable bool) {
-		if !reliable && armed.CompareAndSwap(true, false) {
-			removed <- os.Remove(transient)
-		}
-		states <- reliable
-	})
+	}, func(reliable bool) { gaps <- reliable })
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer w.Close()
 	<-w.ready
-	if first, second := <-states, <-states; first || !second {
+	if first, second := <-gaps, <-gaps; first || !second {
 		t.Fatalf("startup reliability = %v, %v", first, second)
 	}
-	armed.Store(true)
-	if err := os.Mkdir(transient, 0700); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-removed:
-		if err != nil {
+	for i := 0; i < 20; i++ {
+		transient := filepath.Join(root, fmt.Sprintf("transient-%d", i))
+		if err := os.Mkdir(transient, 0700); err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("directory was not removed at the admission boundary")
-	}
-	deadline := time.NewTimer(3 * time.Second)
-	defer deadline.Stop()
-	for {
-		select {
-		case reliable := <-states:
-			if reliable {
-				goto recovered
-			}
-		case <-deadline.C:
-			t.Fatal("a vanished child directory permanently disabled language-server observation")
+		if err := os.Remove(transient); err != nil {
+			t.Fatal(err)
 		}
 	}
-recovered:
 	path := filepath.Join(root, "later.go")
 	if err := os.WriteFile(path, []byte("package later\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	for {
-		select {
-		case change := <-changes:
-			if change.path == path && change.kind == 1 {
-				return
-			}
-		case <-deadline.C:
-			t.Fatal("recovered observation did not deliver the next source change")
-		}
-	}
+	awaitWatchChange(t, changes, gaps, path, 1)
 }
 
 func TestCoreFileWatchQueueSaturationRequestsRecovery(t *testing.T) {
