@@ -31,7 +31,7 @@ func TestConnectedGenericCloseObservesOriginalReceiptAfterOwnerRemoved(t *testin
 		}
 		return external.Call(t.Context(), coreprotocol.Request{ID: id, Owner: external.Owner, WorkspaceID: target.WorkspaceID, Method: method, Payload: raw})
 	}
-	if result := call("attach", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}); result.Error != nil {
+	if result := call("attach", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); result.Error != nil {
 		t.Fatal(result.Error)
 	}
 	if result := call("grant", coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Write}, Shell: target.Shell}); result.Error != nil {

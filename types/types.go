@@ -763,6 +763,13 @@ type LSPSettings struct {
 	// A nil delay inherits the default; an explicit zero means no typing delay.
 	CompletionDelayMS *int   `json:"completion_delay_ms,omitempty"`
 	CompletionAccept  string `json:"completion_accept,omitempty"`
+	// ProjectCheck is idle (check files that are not open while the user and
+	// the computer are idle), always (also on battery and under load) or off.
+	ProjectCheck string `json:"project_check,omitempty"`
+	// AskAeron is on (the workspace Aeron investigates a language-server
+	// problem that Crude finds and asks the user before it changes anything)
+	// or off. Only the user changes it.
+	AskAeron string `json:"ask_aeron,omitempty"`
 	// MinSeverity is error, warning, info, or hint.
 	MinSeverity        string                         `json:"min_severity,omitempty"`
 	UpdateDebounceMS   int                            `json:"update_debounce_ms,omitempty"`
@@ -780,6 +787,28 @@ func (s LSPSettings) CompletionDelay() int {
 	}
 	return min(60000, max(0, *s.CompletionDelayMS))
 }
+
+// Project check modes.
+const (
+	ProjectCheckIdle   = "idle"
+	ProjectCheckAlways = "always"
+	ProjectCheckOff    = "off"
+)
+
+// ProjectCheckMode says whether Crude checks files that are not open when
+// their language server does not report them itself.
+func (s LSPSettings) ProjectCheckMode() string {
+	switch s.ProjectCheck {
+	case ProjectCheckOff, ProjectCheckAlways:
+		return s.ProjectCheck
+	}
+	return ProjectCheckIdle
+}
+
+// AeronInvestigates reports whether Crude asks the workspace Aeron to
+// investigate a language-server problem it finds. It is on unless the user
+// turned it off.
+func (s LSPSettings) AeronInvestigates() bool { return s.AskAeron != "off" }
 
 // CompletionAcceptance is the key policy for a visible suggestion list only.
 // Without that list, indentation, newlines and snippet navigation are unchanged.

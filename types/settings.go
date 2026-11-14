@@ -107,6 +107,8 @@ func DefaultLSPSettings() LSPSettings {
 		AutoComplete:       true,
 		CompletionDelayMS:  &delay,
 		CompletionAccept:   "tab-enter",
+		ProjectCheck:       ProjectCheckIdle,
+		AskAeron:           "on",
 		MinSeverity:        "hint",
 		UpdateDebounceMS:   300,
 		MaxServers:         6,
@@ -266,6 +268,10 @@ func NormalizeLSP(s LSPSettings) LSPSettings {
 	delay := s.CompletionDelay()
 	s.CompletionDelayMS = &delay
 	s.CompletionAccept = s.CompletionAcceptance()
+	s.ProjectCheck = s.ProjectCheckMode()
+	if s.AskAeron != "off" {
+		s.AskAeron = "on"
+	}
 	if s.ServerThreads == 0 {
 		s.ServerThreads = def.ServerThreads
 	}

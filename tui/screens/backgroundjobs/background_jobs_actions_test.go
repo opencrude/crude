@@ -13,6 +13,16 @@ import (
 	"crude/tui/ui"
 )
 
+func controlsOfKind(screen *Screen, kind int) []*rowControl {
+	var out []*rowControl
+	for _, child := range screen.Children() {
+		if control := child.(*rowControl); control.kind == kind {
+			out = append(out, control)
+		}
+	}
+	return out
+}
+
 func TestBackgroundJobsTerminateButtonsTargetExactRows(t *testing.T) {
 	now := time.Now()
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
@@ -27,10 +37,11 @@ func TestBackgroundJobsTerminateButtonsTargetExactRows(t *testing.T) {
 			host.Resize(width, 8)
 			buffer := surface.NewCellBuffer(width, 8)
 			host.Paint(buffer)
-			if len(screen.Children()) != 2 {
-				t.Fatalf("width=%d buttons=%d, want only the two running rows", width, len(screen.Children()))
+			terminate := controlsOfKind(screen, controlTerminate)
+			if len(terminate) != 2 {
+				t.Fatalf("width=%d terminate buttons=%d, want only the two running rows", width, len(terminate))
 			}
-			for _, child := range screen.Children() {
+			for _, child := range terminate {
 				bounds, ok := host.ScreenRect(child.ID())
 				if !ok || bounds.X < 0 || bounds.X+bounds.W > width || bounds.Y >= 8 {
 					t.Fatalf("width=%d invalid button bounds %+v", width, bounds)
@@ -52,25 +63,84 @@ func TestBackgroundJobsTerminateButtonsTargetExactRows(t *testing.T) {
 	}
 }
 
-func TestBackgroundJobsKeyboardCanReachEveryTerminateButton(t *testing.T) {
+// Every row offers its command as a link to the conversation and an Output
+// button; both target that exact command, finished rows included.
+func TestBackgroundJobsCommandLinkAndOutputTargetExactRows(t *testing.T) {
+	now := time.Now()
+	screen := New(theme.DefaultDark())
+	screen.SetJobs([]Job{
+		{OwnerID: "root", Handle: "server", Command: "npm run dev", Status: "running", PID: 12345, StartedAt: now.Add(-time.Minute)},
+		{OwnerID: "root", Handle: "done", Command: "go test ./...", Status: "completed", PID: 222, StartedAt: now.Add(-2 * time.Second), EndedAt: now},
+	}, now)
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(120, 8)
+	buffer := surface.NewCellBuffer(120, 8)
+	host.Paint(buffer)
+	links, outputs := controlsOfKind(screen, controlReveal), controlsOfKind(screen, controlOutput)
+	if len(links) != 2 || len(outputs) != 2 {
+		t.Fatalf("links=%d outputs=%d, want one of each per row", len(links), len(outputs))
+	}
+	for index, link := range links {
+		bounds, _ := host.ScreenRect(link.ID())
+		text := ""
+		for x := bounds.X; x < bounds.X+bounds.W; x++ {
+			text += string(buffer.Get(x, bounds.Y).Char)
+		}
+		if !strings.Contains(text, screen.rows[index].Command) {
+			t.Fatalf("link %q does not show its command %q", text, screen.rows[index].Command)
+		}
+		if buffer.Get(bounds.X+1, bounds.Y).Attr&cell.AttrUnderline == 0 {
+			t.Fatal("command link is not underlined at rest")
+		}
+		result := host.Handle(tea.MouseClickMsg{X: bounds.X + 2, Y: bounds.Y, Button: tea.MouseLeft})
+		host.Handle(tea.MouseReleaseMsg{X: bounds.X + 2, Y: bounds.Y, Button: tea.MouseLeft})
+		if result.Action == nil || result.Action.ID != ActionReveal || result.Action.Payload.(RevealRequest).Job != screen.rows[index] {
+			t.Fatalf("command click did not request its own reveal: %+v", result.Action)
+		}
+		out, _ := host.ScreenRect(outputs[index].ID())
+		result = host.Handle(tea.MouseClickMsg{X: out.X + 1, Y: out.Y, Button: tea.MouseLeft})
+		host.Handle(tea.MouseReleaseMsg{X: out.X + 1, Y: out.Y, Button: tea.MouseLeft})
+		if result.Action == nil || result.Action.ID != ActionOutput || result.Action.Payload.(OutputRequest).Job != screen.rows[index] {
+			t.Fatalf("Output did not request its own command: %+v", result.Action)
+		}
+	}
+	// Output buttons share one column even when only one row can terminate.
+	a, _ := host.ScreenRect(outputs[0].ID())
+	b, _ := host.ScreenRect(outputs[1].ID())
+	if a.X != b.X {
+		t.Fatalf("Output buttons are not aligned: %d vs %d", a.X, b.X)
+	}
+}
+
+func TestBackgroundJobsKeyboardWalksTheControlGrid(t *testing.T) {
 	screen := New(theme.DefaultDark())
 	now := time.Now()
-	screen.SetJobs([]Job{{Handle: "first", Status: "running", StartedAt: now}, {Handle: "second", Status: "running", StartedAt: now}}, now)
+	screen.SetJobs([]Job{{Handle: "first", Command: "sleep 1", Status: "running", StartedAt: now}, {Handle: "second", Command: "sleep 2", Status: "running", StartedAt: now}}, now)
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	host.Resize(120, 8)
 	host.Layout()
-	host.Focus(screen.Children()[0].ID())
+	first := controlsOfKind(screen, controlTerminate)[0]
+	host.Focus(first.ID())
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	if host.Focused() != screen.Children()[1].ID() {
-		t.Fatal("Down did not focus the next command's button")
+	second := controlsOfKind(screen, controlTerminate)[1]
+	if host.Focused() != second.ID() {
+		t.Fatal("Down did not keep the column on the next command")
 	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Action == nil || result.Action.Payload.(TerminateRequest).Job.Handle != "second" {
 		t.Fatal("Enter did not target the keyboard-selected command")
 	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if host.Focused() != controlsOfKind(screen, controlOutput)[1].ID() {
+		t.Fatal("Left did not move to the row's Output button")
+	}
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
-	if host.Focused() != screen.Children()[0].ID() {
-		t.Fatal("Shift+Tab did not focus the previous command's button")
+	if host.Focused() != controlsOfKind(screen, controlReveal)[1].ID() {
+		t.Fatal("Shift+Tab did not move to the row's command link")
+	}
+	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Action == nil || result.Action.ID != ActionReveal {
+		t.Fatal("Enter on the command link did not request a reveal")
 	}
 }
 

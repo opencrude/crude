@@ -69,11 +69,11 @@ func TestControlWireExactTargetAndImmutableOutcome(t *testing.T) {
 	a, b := controlWireClient(t, r, "shell-a"), controlWireClient(t, r, "shell-b")
 	root := t.TempDir()
 	var attached coreprotocol.AttachResult
-	if err := a.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+	if err := a.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	ws := attached.WorkspaceID
-	if err := b.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, nil); err != nil {
+	if err := b.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, nil); err != nil {
 		t.Fatal(err)
 	}
 	e := shellEnvelope("inspect-1", ws, a.Owner())

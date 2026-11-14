@@ -216,6 +216,9 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
+			if err := terminals.CheckViewer(input.ID, controller); err != nil {
+				return ok(wire(coreprotocol.Empty{}), err)
+			}
 			value, err := terminals.Rows(input.ID, terminalvt.RowRequest{Start: input.Start, Count: input.Count, ViewportStart: input.ViewportStart, HistoryEpoch: input.HistoryEpoch, HistoryBase: input.HistoryBase})
 			return ok(wire(value), err)
 		}, true
@@ -228,6 +231,9 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			if request.Method == coreprotocol.TerminalControl {
 				value, err := terminals.Acquire(input.ID, controller)
 				return ok(wire(value), err)
+			}
+			if err := terminals.CheckViewer(input.ID, controller); err != nil {
+				return ok(wire(coreprotocol.Empty{}), err)
 			}
 			terminals.Close(input.ID)
 			return ok(wire(coreprotocol.Empty{}), nil)

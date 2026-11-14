@@ -45,7 +45,7 @@ func TestSettingsLayerIsolationRealCoreSaveAndRestart(t *testing.T) {
 			t.Fatal(err)
 		}
 		var out coreprotocol.AttachResult
-		if err := client.Call(t.Context(), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &out); err != nil {
+		if err := client.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &out); err != nil {
 			t.Fatal(err)
 		}
 		return runtime, client, out.WorkspaceID

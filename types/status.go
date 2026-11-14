@@ -254,13 +254,16 @@ type IssueSnapshot struct {
 	UpdatedAt  time.Time
 	ResolvedAt time.Time
 	Actions    []StatusAction
+	// Investigate marks a problem that the workspace Aeron may investigate
+	// on its own. Only the owner that raises the issue sets it.
+	Investigate bool
 }
 
 // SameOpenReport reports whether issue is the open report already held as
 // previous. Republishing an unchanged open issue is not a status change.
 func (issue IssueSnapshot) SameOpenReport(previous IssueSnapshot) bool {
 	return previous.ResolvedAt.IsZero() && previous.Owner == issue.Owner && previous.Severity == issue.Severity &&
-		previous.Summary == issue.Summary && previous.Detail == issue.Detail
+		previous.Summary == issue.Summary && previous.Detail == issue.Detail && previous.Investigate == issue.Investigate
 }
 
 type LSPServerHealth struct {
@@ -288,4 +291,16 @@ type LSPServerHealth struct {
 	// user text.
 	Scope    string
 	Coverage string
+	// Restarts counts this server's unexpected exits in the automatic
+	// restart window. Restarting is true while Crude starts it again by
+	// itself; a failed server that is not restarting needs the user or Aeron.
+	Restarts   int
+	Restarting bool
+	// Evidence is a bounded tail of what the server said about its own
+	// trouble (standard error, error and warning messages), newest last.
+	// It is data from the server, never an instruction.
+	Evidence []string
+	// ErrorMessage is the latest window/showMessage of type Error that the
+	// running instance sent outside a command; empty when it sent none.
+	ErrorMessage string
 }

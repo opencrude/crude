@@ -440,6 +440,17 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 	if keep > 0 {
 		start = r.activityItemStart[keep]
 	}
+	if r.activityParents == nil || keep == 0 {
+		r.activityParents = make(map[string]string)
+	} else {
+		for _, item := range oldItems[keep:] {
+			if group, ok := item.Data.(*activityGroup); ok {
+				for _, member := range group.messages {
+					delete(r.activityParents, member.InternalID)
+				}
+			}
+		}
+	}
 	previous := make(map[string]renderItem, max(0, len(oldItems)-keep))
 	if keep < len(oldItems) {
 		for _, item := range oldItems[keep:] {
@@ -476,14 +487,9 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 			continue
 		}
 		group := newActivityGroup(members)
-		group.label = group.title()
+		r.updateActivityVisibility(group)
 		for _, member := range members {
-			if r.expanded[group.id] || r.expanded[member.InternalID] || activityRunning(member) || member.Role == types.RoleTool && recentRounds[activityRoundID(member)] {
-				group.visible = append(group.visible, member)
-			}
-		}
-		if hidden := len(members) - len(group.visible); hidden > 0 {
-			group.label += fmt.Sprintf(" · %d hidden", hidden)
+			r.activityParents[member.InternalID] = group.id
 		}
 		item, ok := previous[group.id]
 		if !ok {
@@ -634,6 +640,21 @@ func (r *Renderer) activityMessageItem(msg *types.ChatMessage, previous map[stri
 
 func activityCommand(msg *types.ChatMessage) bool {
 	return (msg.ToolName == "exec_command" || msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") && msg.ToolCommand != ""
+}
+
+// Disclosure only changes membership inside one retained tree. It must not
+// re-flatten or reclassify the rest of a dense conversation.
+func (r *Renderer) updateActivityVisibility(group *activityGroup) {
+	group.label = group.title()
+	group.visible = group.visible[:0]
+	for _, member := range group.messages {
+		if r.expanded[group.id] || r.expanded[member.InternalID] || activityRunning(member) || member.Role == types.RoleTool && r.activityRecentRounds[activityRoundID(member)] {
+			group.visible = append(group.visible, member)
+		}
+	}
+	if hidden := len(group.messages) - len(group.visible); hidden > 0 {
+		group.label += fmt.Sprintf(" · %d hidden", hidden)
+	}
 }
 
 func (r *Renderer) renderActivity(group *activityGroup) ([]string, []PaintLine) {

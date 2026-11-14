@@ -322,6 +322,9 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 
 func (m *App) terminalHeaderContext(id string) (context, metrics, target string) {
 	target = "terminal:" + id
+	if screen := m.termScreens[id]; screen != nil && screen.ReadOnly() {
+		return screen.Title(), "", ""
+	}
 	manager := m.termMgr()
 	if manager == nil {
 		return "Terminal", "", target
@@ -480,6 +483,15 @@ func (m *App) backgroundAgentCounts() (working, needsAction int) {
 func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	if m.LastSettings.UI.ContextHelp == "off" {
 		return nil
+	}
+	if m.windowManager != nil {
+		if window := m.windowManager.Focused(); window != nil {
+			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(window.ID)); ok {
+				if screen := m.termScreens[id]; screen != nil && screen.ReadOnly() {
+					return []ui.HintSegment{ui.ChordSeg("Esc", "close"), ui.ChordSeg("Ctrl+C", "copy"), ui.ChordSeg("PgUp/PgDn", "scroll"), ui.ChordSeg("End", "follow output")}
+				}
+			}
+		}
 	}
 	if m.LastSettings.UI.ContextHelp == "expanded" {
 		_, hints := m.contextualHelpSegments()

@@ -121,7 +121,7 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
 	var attached coreprotocol.AttachResult
-	if err := client.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: project}, &attached); err != nil {
+	if err := client.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: project}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	followLiveAgentCompletions(t, client, attached.WorkspaceID, doneAgents)

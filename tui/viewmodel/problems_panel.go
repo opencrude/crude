@@ -129,12 +129,27 @@ func (m *App) problemsStatus(insights ttypes.ProjectInsights) problems.Status {
 		parts = append(parts, fmt.Sprintf("%d stopped with an error", failed))
 		status.Attention = true
 	}
+	if check := projectCheckText(insights); check != "" {
+		parts = append(parts, check)
+	}
 	if len(parts) == 0 {
 		status.Text = "No language server is running."
 		return status
 	}
 	status.Text = strings.Join(parts, ", ")
 	return status
+}
+
+// projectCheckText tells how far the check of closed files is.
+func projectCheckText(insights ttypes.ProjectInsights) string {
+	if insights.ProjectCheckTotal == 0 {
+		return ""
+	}
+	progress := fmt.Sprintf("%d of %d", insights.ProjectCheckDone, insights.ProjectCheckTotal)
+	if insights.ProjectCheckWait != "" {
+		return "closed-file check waits " + insights.ProjectCheckWait + " (" + progress + ")"
+	}
+	return "checking closed files (" + progress + ")"
 }
 
 func plural(n int, noun string) string {

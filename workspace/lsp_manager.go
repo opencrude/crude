@@ -2,13 +2,16 @@ package workspace
 
 import (
 	"context"
+	"crude/insight/facts"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"crude/insight/governor"
+	"crude/sysload"
 	"crude/toolstore"
 	ttypes "crude/types"
 )
@@ -18,16 +21,35 @@ import (
 // serialized worker; merely enabling intelligence never opens sources. The
 // assembly service (lsp_assembly.go) lists file names to plan the project.
 type LSPManager struct {
-	analysisSettings       ttypes.WorkspaceAnalysisSettings
-	analysisRootIdentity   string
-	analysisBlocked        string
-	analysisGovernor       *governor.Governor
-	analysisWorkspace      string
-	analysisGeneration     string
-	analysisGovernorError  string
-	analysisRetained       bool
-	analysisIdentity       func(string) (string, error)
-	contextGeneration      uint64
+	analysisSettings      ttypes.WorkspaceAnalysisSettings
+	analysisRootIdentity  string
+	analysisBlocked       string
+	analysisGovernor      *governor.Governor
+	analysisWorkspace     string
+	analysisGeneration    string
+	analysisGovernorError string
+	analysisRetained      bool
+	analysisIdentity      func(string) (string, error)
+	contextGeneration     uint64
+	// factSequence orders the project results this manager publishes.
+	factSequence uint64
+	// Project check (lsp_project_check.go): checkPending asks for another
+	// pass; lastEdit is the user's last edit or file open.
+	checkPending bool
+	checkRunning bool
+	checkCancel  context.CancelFunc
+	checkDone    chan struct{}
+	checkPath    string
+	check        projectCheckProgress
+	checkResults map[string]projectCheckResult
+	// checkRetryAt delays a pass that stopped because a busy computer or
+	// server left files without an answer; any explicit request clears it.
+	checkRetryAt time.Time
+	lastEdit     time.Time
+	// load observes the computer; loadProbe and contention replace it in tests.
+	load                   sysload.Probe
+	loadProbe              func() sysload.Sample
+	contention             func() bool
 	sources                *DocumentService
 	editStages             editStageRegistry
 	reviewWatch            reviewedWatchRegistry
@@ -241,6 +263,8 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 	}
 	settings := ttypes.LSPSettings{Diagnostics: m.settings.Diagnostics, MinSeverity: m.settings.MinSeverity}
 	sources := m.sources
+	check := m.check
+	unchecked := len(m.checkResults)
 	m.mu.Unlock()
 	summary := ProjectInsights{}
 	if sources != nil && sources.Insight != nil {
@@ -251,6 +275,12 @@ func (m *LSPManager) ProjectInsights() ProjectInsights {
 	summary.ServerName, summary.ServerReady, summary.ServerBusy = ins.ServerName, ins.ServerReady, ins.ServerBusy
 	summary.ServerStarting, summary.ServerSyncing, summary.ServerFailed = ins.ServerStarting, ins.ServerSyncing, ins.ServerFailed
 	summary.ServerError, summary.Language, summary.SymbolsCount = ins.ServerError, ins.Language, ins.SymbolsCount
+	summary.ProjectCheckDone, summary.ProjectCheckTotal, summary.ProjectCheckWait = check.done, check.total, check.wait
+	summary.ProjectCheckUnchecked = unchecked
+	if unchecked > 0 {
+		summary.DiagnosticsLimited += unchecked
+		summary.CoverageDetail += fmt.Sprintf(" %d closed files could not be checked. Use Refresh to try again.", unchecked)
+	}
 	if watchUnreliable {
 		summary.DiagnosticsLimited++
 		summary.CoverageDetail += " Project file observation is incomplete; results may be out of date."
@@ -263,13 +293,18 @@ func (m *LSPManager) ProjectDiagnosticCounts() (int, int, int) {
 }
 
 // ServerHealthSnapshots exposes every configured/attempted server separately.
-// Diagnostic counts remain project-scoped until the cache records server origin.
+// Counts come from current published facts for each server context, not transport status.
 func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 	if m == nil {
 		return nil
 	}
 	m.mu.Lock()
 	out := make([]ttypes.LSPServerHealth, 0, len(m.states))
+	var counts map[string]facts.ContextSummary
+	if m.sources != nil && m.sources.Insight != nil {
+		counts = m.sources.Insight.diagnostics.ContextSummaries()
+	}
+	now := time.Now()
 	for id, state := range m.states {
 		health := ttypes.LSPServerHealth{
 			ID: id, Name: filepath.Base(state.cmd), Command: state.cmd, RootURI: state.rootURI,
@@ -277,6 +312,23 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 			Connected: state.status == LSPConnected,
 			Starting:  state.status == LSPStarting,
 			Syncing:   m.syncing, Busy: m.inflight > 0,
+		}
+		count := counts[id]
+		health.FilesTracked, health.FilesAffected = count.FilesTracked, count.FilesAffected
+		health.Errors, health.Warnings, health.Information, health.Hints = count.Errors, count.Warnings, count.Information, count.Hints
+		health.LastDiagnostics = count.LastDiagnostics
+		for _, at := range m.crashes[id] {
+			if now.Sub(at) < lspAutomaticRestartWindow {
+				health.Restarts++
+			}
+		}
+		health.Restarting = state.restarting && !state.stopped && !m.paused && !m.closed && state.teardownErr == nil && m.keyWantedLocked(id)
+		health.Evidence = slices.Clone(state.evidence)
+		if client, ok := state.client.(LSPEvidenceClient); ok {
+			health.Evidence = client.Evidence()
+			if !state.closing && !state.stopped && state.status == LSPConnected {
+				health.ErrorMessage = client.ErrorMessage()
+			}
 		}
 		if !state.closing && !state.stopped && state.teardownErr == nil &&
 			(state.status == LSPConnected || state.status == LSPStarting) {
@@ -287,8 +339,8 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 		}
 		// Coverage: what this producer checks. A project producer reports
 		// files that are not open; any other server checks open files only.
-		health.Scope, health.Coverage = ttypes.CoverageOpenFiles, "Checks open files only."
-		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == ttypes.CoverageProject {
+		health.Scope, health.Coverage = ttypes.CoverageOpenFiles, openFilesCoverage(m.settings)
+		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == ttypes.CoverageProject || state.reportsProject {
 			health.Scope, health.Coverage = ttypes.CoverageProject, "Checks the whole project, including files that are not open."
 			if m.projectWatchUnreliable {
 				health.Coverage = "Project file observation is incomplete; results may be out of date."

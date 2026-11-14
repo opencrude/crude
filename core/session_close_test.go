@@ -21,8 +21,8 @@ func TestSessionCleanCloseReleasesResourcesBeforeReturning(t *testing.T) {
 	first := newResourceWire(t, r, "closing-owner")
 	peer := newResourceWire(t, r, "remaining-owner")
 	var attached, peerAttached coreprotocol.AttachResult
-	first.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
-	peer.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &peerAttached)
+	first.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
+	peer.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &peerAttached)
 	var opened document.Snapshot
 	first.call(t, attached.WorkspaceID, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: "unsaved.txt"}, &opened)
 	var terminal workspace.TerminalInfo

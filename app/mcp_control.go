@@ -123,7 +123,7 @@ func RunMCP(ctx context.Context, flags CLIFlags) error {
 	}
 	defer func() { _ = client.Close() }()
 	var attached coreprotocol.AttachResult
-	if err := client.Call(startup, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+	if err := client.Call(startup, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		return err
 	}
 	server, err := cranemcp.New(startup, client, attached.WorkspaceID, grant)

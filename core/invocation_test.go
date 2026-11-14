@@ -34,7 +34,7 @@ func TestInvocationTypedCoreJourney(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	attach := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()})
+	attach := callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: t.TempDir()})
 	var attached coreprotocol.AttachResult
 	if err := coreprotocol.Decode(attach.Payload, &attached); err != nil {
 		t.Fatal(err)

@@ -21,7 +21,7 @@ func TestTerminalStreamGridAndOrderedInputIgnoreSlowViewer(t *testing.T) {
 	r, root := resourceRuntime(t)
 	w := newResourceWire(t, r, "stream-input-order")
 	var attached coreprotocol.AttachResult
-	w.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	w.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var info workspace.TerminalInfo
 	w.call(t, attached.WorkspaceID, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", "stty raw -echo; printf '\033[?1003h\033[?1006hREADY'; cat"}, Cols: 120, Rows: 4}, &info)
 	var lease workspace.TerminalLease
@@ -80,7 +80,7 @@ func TestTerminalStreamGridAndOrderedInputIgnoreSlowViewer(t *testing.T) {
 	// controller's independent input stream must still reach the real PTY.
 	peer := newResourceWire(t, r, "slow-terminal-viewer")
 	var peerAttached coreprotocol.AttachResult
-	peer.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &peerAttached)
+	peer.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &peerAttached)
 	peerSub := peer.c.SubscribeTerminal(ctx, attached.WorkspaceID, info.ID, func(_ workspace.TerminalProjection, err error) {
 		if err != nil {
 			return
@@ -282,7 +282,7 @@ func TestTerminalStreamHistoricalViewportStaysAnchoredDuringOutput(t *testing.T)
 	r, root := resourceRuntime(t)
 	w := newResourceWire(t, r, "history-stream")
 	var attached coreprotocol.AttachResult
-	w.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	w.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var info workspace.TerminalInfo
 	w.call(t, attached.WorkspaceID, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{Command: "/bin/sleep", Args: []string{"300"}, Cols: 30, Rows: 4}, &info)
 	r.mu.Lock()

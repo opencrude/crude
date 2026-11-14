@@ -29,12 +29,14 @@ func ControlSettingsAuthority(path string) bool {
 	return control.SettingsAuthority(path)
 }
 
-// aeronOwnsSetting reports that the caller is the workspace's Aeron and the
-// path is a language-server setting. Aeron installs and configures language
-// servers for the user, so it may write their launch commands and limits; every
-// other agent keeps the human-only rule.
-func (a *actor) aeronOwnsSetting(caller control.Caller, path string) bool {
-	if caller.Kind != control.AgentCaller || caller.AgentID == "" || !strings.HasPrefix(path, "lsp.") {
+// aeronOwnsSetting permits this workspace's Aeron to configure its language
+// servers and terminal environment. Application settings and every other
+// agent retain the human-only rule for these authority paths.
+func (a *actor) aeronOwnsSetting(caller control.Caller, scope, path string) bool {
+	if scope != "workspace" || path == "lsp.ask_aeron" || caller.Kind != control.AgentCaller || caller.AgentID == "" {
+		return false
+	}
+	if !strings.HasPrefix(path, "lsp.") && path != "terminal.environment" && !strings.HasPrefix(path, "terminal.environment.") {
 		return false
 	}
 	return workspace.SessionIsAeron(a.ws.SessionForAgent(caller.AgentID))
@@ -84,7 +86,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	if input.Path == "" {
 		return controlFailure(in, control.Invalid, "exact field path is required")
 	}
-	if ControlSettingsAuthority(input.Path) && !a.aeronOwnsSetting(in.Caller, input.Path) {
+	if ControlSettingsAuthority(input.Path) && !a.aeronOwnsSetting(in.Caller, input.Scope, input.Path) {
 		return controlFailure(in, control.Denied, "authority, secret and entity settings require a human-owned operation")
 	}
 	reset := in.CommandID == "settings.reset"

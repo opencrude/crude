@@ -28,7 +28,7 @@ func TestInsightTopicThreeShellsAndSlowAckDoesNotBlockText(t *testing.T) {
 	var snapshot document.Snapshot
 	for _, c := range clients {
 		var attach coreprotocol.AttachResult
-		c.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attach)
+		c.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attach)
 		if workspaceID != "" && workspaceID != attach.WorkspaceID {
 			t.Fatal("shells attached different canonical workspaces")
 		}

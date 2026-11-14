@@ -108,13 +108,13 @@ func (r *Renderer) invalidateRelatedPlanRows(messages []*types.ChatMessage, from
 // cached render so the next frame re-renders with the new geometry.
 func (r *Renderer) ToggleDisclosure(msgID string) {
 	if index, found := r.vl.byID[msgID]; found {
-		if _, ok := r.vl.Item(index).Data.(*activityGroup); ok {
+		if group, ok := r.vl.Item(index).Data.(*activityGroup); ok {
 			if r.expanded[msgID] {
 				delete(r.expanded, msgID)
 			} else {
 				r.expanded[msgID] = true
 			}
-			r.syncActivityItems(nil)
+			r.updateActivityVisibility(group)
 			r.vl.InvalidateItem(msgID)
 			return
 		}
@@ -133,19 +133,86 @@ func (r *Renderer) ToggleDisclosure(msgID string) {
 		r.syncActivityItems([]string{msgID}) // the hidden item enters/leaves the list
 		return
 	}
-	// A command leaf in the retained tree has no standalone render item.
-	// Its disclosure still needs to refresh the parent tree's geometry.
-	for _, item := range r.vl.Items() {
-		if group, ok := item.Data.(*activityGroup); ok {
-			for _, member := range group.messages {
-				if member.InternalID == msgID {
-					r.syncActivityItems([]string{msgID})
-					r.vl.InvalidateItem(group.id)
-					return
-				}
+	if parent := r.activityParents[msgID]; parent != "" {
+		if index, ok := r.vl.byID[parent]; ok {
+			if group, ok := r.vl.Item(index).Data.(*activityGroup); ok {
+				r.updateActivityVisibility(group)
+				r.vl.InvalidateItem(parent)
 			}
 		}
 	}
+}
+
+// RevealCommand expands the originating call of one command execution and
+// returns that call's message ID. Expanding a tree leaf also shows it when its
+// activity row hides older calls. It never collapses an already open call.
+func (r *Renderer) RevealCommand(executionID string) (string, bool) {
+	origin, ok := r.commandOrigins[executionID]
+	if !ok || executionID == "" || origin.message == nil {
+		return "", false
+	}
+	id := origin.message.InternalID
+	msg := r.sync.MsgByID[id]
+	if msg == nil {
+		msg = r.activityMessages[id]
+	}
+	if msg == nil {
+		return "", false
+	}
+	if r.disclosureState(msg) != DisclosureExpanded || !r.expanded[id] {
+		// An explicit expansion also keeps a hidden tree leaf visible.
+		r.expanded[id] = false
+		r.ToggleDisclosure(id)
+	}
+	r.revealMessage = id
+	return id, true
+}
+
+// applyCommandReveal runs after final width is known, before any rows paint.
+// Materialize only the target item, then reuse the authoritative scroll model.
+// Later background reflow preserves this exact item/local-line anchor.
+func (r *Renderer) applyCommandReveal(width int) {
+	id := r.revealMessage
+	if id == "" {
+		return
+	}
+	r.revealMessage = ""
+	itemID := id
+	if parent := r.activityParents[id]; parent != "" {
+		itemID = parent
+	}
+	index, ok := r.vl.byID[itemID]
+	if !ok {
+		return
+	}
+	item := r.vl.Item(index)
+	if item.Dirty || item.Rendered == nil {
+		item.Rendered = r.renderItem(index, item, width)
+		item.Height, item.Dirty = len(item.Rendered), false
+		r.vl.indexDirty = true
+		r.vl.revision++
+	}
+	local := 0
+	if group, ok := item.Data.(*activityGroup); ok {
+		local = -1
+		for line, leaf := range group.leafRows {
+			if leaf == id && (local < 0 || line < local) {
+				local = line
+			}
+		}
+		if local < 0 {
+			return
+		}
+	}
+	r.vl.BuildIndex()
+	line := r.vl.LineOfItem(index) + local
+	if scroll := r.authoritativeScroll(); scroll != nil {
+		scroll.SetContent(r.vl.TotalHeight())
+		scroll.SetAutoScroll(false)
+		scroll.ScrollTo(max(0, line-2))
+	}
+	r.vl.ScrollTo(max(0, line-2))
+	r.syncScrollFromVL()
 }
 
 // pruneExpanded drops disclosure entries for messages that are no longer in the

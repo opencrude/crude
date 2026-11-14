@@ -8,6 +8,7 @@ import (
 
 	"crude/collaboration"
 	"crude/fileio"
+	"crude/tools"
 	"crude/types/command"
 )
 
@@ -37,7 +38,7 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 	if store == nil {
 		return
 	}
-	body := fmt.Sprintf("Background command %q settled.\n%s", info.Handle, FormatCommandStatus(info))
+	body := commandOutcomeBody(info)
 	_, err := store.Publish(context.Background(), collaboration.PublishRequest{
 		SenderID: agentID, SenderName: "Background command " + info.Handle,
 		IdempotencyKey: fmt.Sprintf("command-outcome:%s:%s:%d:%d", agentID, info.Handle, info.PID, info.StartedAt.UnixNano()),
@@ -56,4 +57,25 @@ func (s *Session) publishCommandOutcome(agentID string, info fileio.AsyncCmdInfo
 	if err != nil && s.logger != nil && !errors.Is(err, collaboration.ErrNotFound) {
 		s.logger.Warn("ASYNC", "command_outcome_publish_failed", "agent_id", agentID, "handle", info.Handle, "error", err.Error())
 	}
+}
+
+// commandOutcomeInlineBytes bounds a delivery body that carries the complete
+// output. The journal stores the typed excerpt beside the body, so a small
+// body keeps the event within its page budget even for escape-heavy output.
+const commandOutcomeInlineBytes = 16 << 10
+
+// commandOutcomeBody is what the owning agent reads. Short complete output
+// (a test summary, "DONE") is included, as a synchronous result would show
+// it, so the agent need not spend a turn on read_async_output. Longer or
+// partial output keeps the status and the exact read cursor.
+func commandOutcomeBody(info fileio.AsyncCmdInfo) string {
+	prefix := fmt.Sprintf("Background command %q settled.\n", info.Handle)
+	if settled := info.SettledOutput; settled != nil && settled.OutputDescriptor.OmittedBytes == 0 {
+		result := *settled
+		result.Retrieval = ""
+		if body := prefix + tools.CommandResultContent(result); len(body) <= commandOutcomeInlineBytes {
+			return body
+		}
+	}
+	return prefix + FormatCommandStatus(info)
 }

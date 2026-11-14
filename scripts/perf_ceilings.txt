@@ -76,6 +76,8 @@ BenchmarkLargeDiffPreview 3200000 9000
 # 2,000 exact command start/settlement pairs and one active command; source
 # indexing is excluded from this steady-state presented-frame budget.
 BenchmarkDenseCommandSettlementPresentedFrame 27000 72
+# Expand/reveal and collapse a call in 4,000 fully hydrated transcript rows.
+BenchmarkDenseCommandReveal 1500000 175
 BenchmarkDenseSyntaxDiffPaint 180000 375
 BenchmarkDenseDiffPaint 173000 650
 BenchmarkGitDiffLongLinePaint/short 800 22

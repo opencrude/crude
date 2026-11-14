@@ -70,6 +70,8 @@ func (m *LSPManager) analysisErrorLocked() error {
 
 func (m *LSPManager) analysisBoundaryLocked(reason string) {
 	m.settingsGeneration++
+	// A new analysis boundary may answer closed files differently.
+	m.invalidateCheckedResultsLocked(func(string, string, string) bool { return true }, reason)
 	m.advanceContextLocked(reason)
 	m.docSymbols = make(map[string][]LSPSymbol)
 	m.symbolCount, m.symbolsCached = 0, false

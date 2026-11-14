@@ -50,7 +50,7 @@ func TestSharedDocumentsAuthoritativeBytesReceiptReplayAndDetach(t *testing.T) {
 	// workspace invalidation cursor followed by a read request.
 	observer := newResourceWire(t, r, "document-topic-observer")
 	var observerAttach coreprotocol.AttachResult
-	observer.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &observerAttach)
+	observer.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &observerAttach)
 	var observerDocument document.Snapshot
 	observer.call(t, ws, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}, &observerDocument)
 	updates := make(chan coreprotocol.DocumentUpdate, 8)

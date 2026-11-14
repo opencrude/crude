@@ -17,7 +17,9 @@ import (
 func TestSettledBackgroundCommandIsDeliveredToItsOwner(t *testing.T) {
 	s, store, _, child := collaborationContractFixture(t)
 	started := time.Now()
-	output := &command.Result{Output: "\x1b[31mFAILED\x1b[0m\r\n    retained stderr\n", OutputDescriptor: command.OutputDescriptor{Handle: "mcp_prepare", Status: command.Failed, TotalBytes: 120}}
+	code := 254
+	output := &command.Result{Command: "npm exec --yes --package=pkg@1.0.0 --call 'exit 0'", PID: 41, WallTimeSeconds: 47, ExitCode: &code,
+		Output: "\x1b[31mFAILED\x1b[0m\r\n    retained stderr\n", OutputDescriptor: command.OutputDescriptor{Handle: "mcp_prepare", Status: command.Failed, TotalBytes: 120}}
 	s.publishCommandOutcome(child.ID, fileio.AsyncCmdInfo{
 		Handle: "mcp_prepare", Command: "npm exec --yes --package=pkg@1.0.0 --call 'exit 0'", PID: 41,
 		Status: fileio.AsyncFailed, ExitCode: 254, OutputBytes: 120, StartedAt: started,
@@ -34,8 +36,13 @@ func TestSettledBackgroundCommandIsDeliveredToItsOwner(t *testing.T) {
 	event := pending[0].Event
 	if event.Origin != collaboration.OriginRuntime || event.Kind != collaboration.EventCommandOutcome ||
 		!strings.Contains(event.Body, `"mcp_prepare"`) || !strings.Contains(event.Body, `"exit_code":254`) ||
-		!strings.Contains(event.Body, "read_async_output") || !strings.Contains(event.Body, `"wall_time_seconds":47`) {
+		!strings.Contains(event.Body, `"wall_time_seconds":47`) {
 		t.Fatalf("command outcome event = %+v", event)
+	}
+	// Short complete output is in the body the agent reads, so it does not
+	// spend a turn reading it back.
+	if !strings.Contains(event.Body, "retained stderr") || strings.Contains(event.Body, "read_async_output") {
+		t.Fatalf("short output was not delivered with the outcome: %s", event.Body)
 	}
 	if event.Command == nil || event.Command.Handle != "mcp_prepare" || event.Command.ExitCode != 254 || !event.Command.ExitKnown || event.Command.OutputBytes != 120 {
 		t.Fatal("journal dropped typed command evidence")
@@ -102,5 +109,30 @@ func TestBackgroundDeliveryUsesStopFactsNotDiagnosticWords(t *testing.T) {
 	if page.Events[0].Command == nil || !page.Events[0].Command.TimedOut ||
 		page.Events[1].Command == nil || !page.Events[1].Command.Uncertain {
 		t.Fatal("journal lost timeout or uncertainty facts")
+	}
+}
+
+// Output that is long or only partly shown stays out of the body: the agent
+// gets the status and the exact cursor to read it.
+func TestLongCommandOutcomeKeepsTheReadCursor(t *testing.T) {
+	s, store, _, child := collaborationContractFixture(t)
+	for i, output := range []*command.Result{
+		{Output: strings.Repeat("line of test output\n", 2000), OutputDescriptor: command.OutputDescriptor{Handle: "long", Status: command.Completed, TotalBytes: 40000}},
+		{Output: "head ... tail", OutputDescriptor: command.OutputDescriptor{Handle: "partial", Status: command.Completed, TotalBytes: 90000, OmittedBytes: 80000}},
+	} {
+		s.publishCommandOutcome(child.ID, fileio.AsyncCmdInfo{Handle: output.OutputDescriptor.Handle, PID: 50 + i,
+			Status: fileio.AsyncCompleted, OutputBytes: output.OutputDescriptor.TotalBytes, StartedAt: time.Now(), SettledOutput: output})
+	}
+	page, err := store.Page(t.Context(), collaboration.PageQuery{RecipientID: child.ID})
+	if err != nil || len(page.Events) != 2 {
+		t.Fatalf("events=%+v err=%v", page.Events, err)
+	}
+	for _, event := range page.Events {
+		if !strings.Contains(event.Body, "read_async_output") || strings.Contains(event.Body, "line of test output") || strings.Contains(event.Body, "head ... tail") {
+			t.Fatalf("long or partial output in the body: %.300s", event.Body)
+		}
+		if event.Command == nil || event.Command.Output == nil {
+			t.Fatal("the journal lost the typed excerpt")
+		}
 	}
 }

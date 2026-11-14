@@ -103,7 +103,7 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 		return c.CallRequest(requestCtx, request)
 	}
 	var attached coreprotocol.AttachResult
-	if err := call("", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+	if err := call("", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	openPayload, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.DocumentOpenRequest{Path: path}))

@@ -54,6 +54,10 @@ func TestInlayVisualHeadless(t *testing.T) {
 	}
 }
 
+// visualGoplsVersion is the gopls release whose literal labels, ranges and
+// documentation the real-provider visual fixtures expect.
+const visualGoplsVersion = "v0.22.0"
+
 const inlayVisualDraft = "Private inlay draft stays unsent."
 const inlayVisualSource = "package journey\n\nfunc join(first string, count int) string { return first }\n\nfunc Call() string {\n\tanswer := join(\"hello\", 2)\n\treturn answer\n}\n"
 const inlayVisualMod = "module journey\n\ngo 1.22\n"
@@ -117,8 +121,8 @@ func runInlayVisual(t *testing.T, headless bool, width, height int) {
 		t.Fatalf("installed real gopls required: %v", err)
 	}
 	version, err := exec.Command(executable, "version").CombinedOutput()
-	if err != nil || !strings.Contains(string(version), "v0.21.1") {
-		t.Fatalf("fixture requires installed gopls v0.21.1: %s %v", version, err)
+	if err != nil || !strings.Contains(string(version), visualGoplsVersion) {
+		t.Fatalf("fixture requires installed gopls %s: %s %v", visualGoplsVersion, version, err)
 	}
 	goroot, err := exec.Command("go", "env", "GOROOT").Output()
 	if err != nil {

@@ -25,13 +25,13 @@ func TestBackgroundJobsPaintsCommandDetailsAcrossThemesAndSizes(t *testing.T) {
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
 			painted := bufferText(buf)
-			for _, want := range []string{"Background jobs", "STATUS", "HANDLE", "COMMAND", "RUNNING", "[build]"} {
+			for _, want := range []string{"Background jobs", "COMMAND", "Output"} {
 				if !strings.Contains(painted, want) {
 					t.Fatalf("size=%#v missing %q:\n%s", size, want, painted)
 				}
 			}
 			if size.W >= 60 {
-				for _, want := range []string{"DURATION", "PID", "EXIT", "42", "go test ./..."} {
+				for _, want := range []string{"STATUS", "HANDLE", "RUNNING", "[build]", "DURATION", "PID", "EXIT", "42", "go test ./..."} {
 					if !strings.Contains(painted, want) {
 						t.Fatalf("size=%#v missing %q:\n%s", size, want, painted)
 					}

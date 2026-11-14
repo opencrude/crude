@@ -69,6 +69,8 @@ type Renderer struct {
 	// presentation state only: never persisted.
 	expanded         map[string]bool
 	activityMessages map[string]*types.ChatMessage   // transient batch children, keyed by stable call ID
+	activityParents  map[string]string               // leaf ID to its retained group
+	revealMessage    string                          // explicit jump, applied with final render geometry
 	activityBatches  map[string][]*types.ChatMessage // rebuilt only when the canonical batch changes
 	// eligibility memoizes activityEligible per retained message. Grouping is
 	// rederived on every source sync, but a settled result's payload verdict
@@ -1135,7 +1137,7 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	}
 	scrollbarW := r.ScrollbarWidth()
 	scrollY, viewportH := r.effectiveScrollY(), r.vl.ViewportHeight()
-	if !r.materializing && r.exportSnapshot.Generation != 0 && r.exportRevision == r.vl.Revision() && r.exportWidth == width && r.exportScrollbarW == scrollbarW && r.exportScrollY == scrollY && r.exportViewportH == viewportH {
+	if r.revealMessage == "" && !r.materializing && r.exportSnapshot.Generation != 0 && r.exportRevision == r.vl.Revision() && r.exportWidth == width && r.exportScrollbarW == scrollbarW && r.exportScrollY == scrollY && r.exportViewportH == viewportH {
 		return r.exportSnapshot
 	}
 	geometryChanged := r.exportSnapshot.Generation == 0 || r.exportWidth != width || r.exportScrollbarW != scrollbarW
@@ -1150,6 +1152,7 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 		}
 	}
 	r.prepareRender(width)
+	r.applyCommandReveal(width)
 	r.materializeOffscreen(width)
 	// Newly materialized content may reveal a main scrollbar. Settle its width
 	// before publishing this snapshot, not on the first idle tick (which would

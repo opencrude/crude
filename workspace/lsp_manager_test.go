@@ -255,3 +255,26 @@ func TestCloseFile_WrongClient(t *testing.T) {
 	// CloseFile for a file whose root has no client must not panic.
 	m.CloseFile(ctx, "/tmp/test.go")
 }
+
+func TestLSPServerHealthCountsCurrentFactsIncludingCleanFiles(t *testing.T) {
+	m, r, root, producer := projectFixture(t)
+	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	client := startedProject(t, m, r)
+	problem := filepath.Join(root, "util.go")
+	clean := filepath.Join(root, "main.go")
+	warning := filepath.Join(root, "warning.go")
+	client.emitUnopened(problem, LSPDiagnostic{Message: "problem", Severity: model.DiagError}, LSPDiagnostic{Message: "info", Severity: model.DiagInfo}, LSPDiagnostic{Message: "hint", Severity: model.DiagHint})
+	client.emitUnopened(clean)
+	client.emitUnopened(warning, LSPDiagnostic{Message: "warning", Severity: model.DiagWarning})
+	health := m.ServerHealthSnapshots()[0]
+	if health.FilesTracked != 3 || health.FilesAffected != 1 || health.Errors != 1 || health.Warnings != 1 || health.Information != 1 || health.Hints != 1 || health.LastDiagnostics.IsZero() {
+		t.Fatalf("server counters omit current files: %+v", health)
+	}
+	m.mu.Lock()
+	m.sources.Insight.diagnostics.InvalidateMatching(func(b model.InsightBoundary) bool { return b.Source.Path == problem }, "File changed.")
+	m.mu.Unlock()
+	health = m.ServerHealthSnapshots()[0]
+	if health.FilesTracked != 2 || health.FilesAffected != 0 || health.Errors != 0 || health.Warnings != 1 {
+		t.Fatalf("server counted stale errors: %+v", health)
+	}
+}

@@ -150,7 +150,7 @@ func admitDeckController(t *testing.T, runtime *core.Runtime, root string) {
 		}
 		return r
 	}
-	r := call("attach-controller", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+	r := call("attach-controller", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 	var attached coreprotocol.AttachResult
 	if err := coreprotocol.Decode(r.Payload, &attached); err != nil {
 		t.Fatal(err)

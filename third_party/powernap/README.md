@@ -3,6 +3,13 @@
 This replacement module retains Crude's LSP transport hooks, UTF-16 position
 contract, document-save capability handling, and owned subprocess lifetime.
 
+## Server standard error
+
+`ClientConfig.StderrSink`, when set, receives each chunk of the server's standard
+error from the existing drain (including bytes returned with EOF), in addition to
+the log. Crude keeps a bounded tail of it as launch evidence; the sink must not
+block.
+
 ## Launch-bound configuration
 
 `NewConfiguration` builds one detached, immutable settings table before process

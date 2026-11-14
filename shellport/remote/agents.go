@@ -362,6 +362,20 @@ func (w *Workspace) PrepareAsyncCommandTermination(agentID string, ref fileio.As
 	}, nil
 }
 
+// PrepareOpenCommandView captures the payload on Update; the core binds it
+// to this connection's attachment, never the shell's supplied controller.
+func (w *Workspace) PrepareOpenCommandView(agentID string, ref fileio.AsyncCmdRef, _ workspace.TerminalController, cols, rows int) (func(context.Context) (workspace.TerminalInfo, error), error) {
+	request := coreprotocol.CommandViewOpenRequest{AgentID: agentID, Ref: ref, Cols: cols, Rows: rows}
+	return func(ctx context.Context) (workspace.TerminalInfo, error) {
+		var out workspace.TerminalInfo
+		err := w.callCancellable(ctx, coreprotocol.CommandViewOpen, &request, &out)
+		if err != nil && out.ID != "" {
+			w.terminals.Close(out.ID)
+		}
+		return out, err
+	}, nil
+}
+
 // PrepareCompactForAgent hands compaction to the core, which reduces its
 // boundary row once for every shell. The shell only awaits the result.
 func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedCompaction, types.CompactResultMsg) {

@@ -149,7 +149,7 @@ func TestResourceWireTerminalInputPreservesFrameOrder(t *testing.T) {
 	r, root := resourceRuntime(t)
 	w := newResourceWire(t, r, "input-order")
 	var attached coreprotocol.AttachResult
-	w.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	w.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var info workspace.TerminalInfo
 	w.call(t, attached.WorkspaceID, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", "stty raw -echo; printf READY; cat"}, Cols: 120, Rows: 4}, &info)
 	var lease workspace.TerminalLease
@@ -214,8 +214,8 @@ func TestResourceWireDetachCannotRetainQueuedAcquire(t *testing.T) {
 	a := newResourceWire(t, r, "old-controller")
 	b := newResourceWire(t, r, "new-controller")
 	var attached coreprotocol.AttachResult
-	a.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
-	b.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, nil)
+	a.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
+	b.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, nil)
 	var info workspace.TerminalInfo
 	a.call(t, attached.WorkspaceID, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{Command: "/bin/cat", Cols: 30, Rows: 4}, &info)
 	// Hold the real terminal lane, not a substitute queue. A snapshot response
@@ -261,7 +261,7 @@ func TestResourceWireDetachCannotRetainQueuedAcquire(t *testing.T) {
 	if reconnected.owner.Epoch <= a.owner.Epoch {
 		t.Fatal("connection epoch was reused")
 	}
-	reconnected.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, nil)
+	reconnected.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, nil)
 	var replacement workspace.TerminalLease
 	reconnected.call(t, attached.WorkspaceID, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: info.ID}, &replacement)
 	if replacement.Owner.Epoch != reconnected.owner.Epoch || replacement.Generation == lease.Generation {

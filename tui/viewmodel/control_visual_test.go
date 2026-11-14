@@ -232,7 +232,7 @@ func (m *controlVisualModel) connect() error {
 		return err
 	}
 	m.client = c
-	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: m.root}, nil); err != nil {
+	if err := c.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: m.root}, nil); err != nil {
 		return err
 	}
 	var target control.Target

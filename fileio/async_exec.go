@@ -124,6 +124,7 @@ type asyncCmdState struct {
 	cleanup          func()
 	mu               sync.Mutex
 	outputMu         sync.Mutex
+	outputChanged    chan struct{} // closed once on the next output/status/removal change
 	input            io.WriteCloser
 	interactionLease chan struct{}
 	outputCursor     int
@@ -163,6 +164,7 @@ func (st *asyncCmdState) settle(err error) error {
 // finishOutcome runs under st.mu after waiting for the owned leader. A request
 // to stop is not evidence that the tree actually stopped.
 func (st *asyncCmdState) finishOutcome(ctxErr, waitErr error) {
+	defer st.signalOutput()
 	st.info.EndedAt = time.Now()
 	if waitErr == nil {
 		st.info.Status, st.info.ExitCode = AsyncCompleted, 0
@@ -191,6 +193,7 @@ func (st *asyncCmdState) finishOutcome(ctxErr, waitErr error) {
 func (st *asyncCmdState) Write(data []byte) (int, error) {
 	st.outputMu.Lock()
 	n, err := st.output.Write(data)
+	st.signalOutputLocked()
 	st.outputMu.Unlock()
 	return n, err
 }
@@ -625,6 +628,54 @@ func (m *AsyncCommandManager) ReadOutputPage(handle string, sinceByte, maxBytes 
 
 }
 
+// ObserveOutput snapshots exact-identity bytes without consuming the agent's
+// cursor. changed closes on the next write, settlement or removal. The channel
+// is captured under the output lock with the snapshot, so a waiting viewer
+// cannot miss a write. No viewer callback runs in the process writer.
+func (m *AsyncCommandManager) ObserveOutput(ref AsyncCmdRef, sinceByte, maxBytes int) ([]byte, int, AsyncCmdInfo, <-chan struct{}, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state := m.commands[ref.Handle]
+	if state == nil {
+		return nil, 0, AsyncCmdInfo{}, nil, fmt.Errorf("%w: %q", ErrAsyncCommandNotFound, ref.Handle)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	info := state.info
+	if ref.PID <= 0 || ref.StartedAt.IsZero() || info.PID != ref.PID || !info.StartedAt.Equal(ref.StartedAt) {
+		return nil, 0, AsyncCmdInfo{}, nil, fmt.Errorf("%w: %q", ErrAsyncCommandReplaced, ref.Handle)
+	}
+	if sinceByte < 0 || maxBytes <= 0 || maxBytes > MaxOutputChunkBytes {
+		return nil, 0, info, nil, errors.New("async output range is invalid")
+	}
+	state.outputMu.Lock()
+	defer state.outputMu.Unlock()
+	if state.outputChanged == nil {
+		state.outputChanged = make(chan struct{})
+	}
+	total := state.output.Len()
+	var raw []byte
+	if sinceByte < total {
+		end := sinceByte + min(total-sinceByte, maxBytes)
+		raw = append([]byte(nil), state.output.Bytes()[sinceByte:end]...)
+	}
+	info.OutputBytes, info.SettledOutput = total, nil
+	return raw, total, info, state.outputChanged, nil
+}
+
+func (st *asyncCmdState) signalOutput() {
+	st.outputMu.Lock()
+	defer st.outputMu.Unlock()
+	st.signalOutputLocked()
+}
+
+func (st *asyncCmdState) signalOutputLocked() {
+	if st.outputChanged != nil {
+		close(st.outputChanged)
+		st.outputChanged = nil
+	}
+}
+
 func (m *AsyncCommandManager) ReadOutputLimit(handle string, sinceByte, maxBytes int) (out string, nextByte, totalBytes int, err error) {
 	page, err := m.ReadOutputPage(handle, sinceByte, maxBytes)
 	if err != nil {
@@ -685,7 +736,8 @@ func (info *AsyncCmdInfo) computeDuration() {
 
 func (m *AsyncCommandManager) Cleanup(handle string) {
 	m.mu.Lock()
-	if _, ok := m.commands[handle]; ok {
+	if state, ok := m.commands[handle]; ok {
+		state.signalOutput()
 		if m.logger != nil {
 			m.logger.Debug("ASYNC", "cleanup", "handle", handle)
 		}

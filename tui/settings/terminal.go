@@ -42,7 +42,9 @@ func (m *Model) buildTerminalForm(current types.TerminalSettings) *ui.FormModel 
 		ui.SelectFieldState(fieldTerminalShell, "Shell", current.Shell, terminalShellOptions(current.Shell, m.terminalShells), "The shell new terminals start. Auto prefers PowerShell 7 on Windows and your login shell elsewhere."),
 		ui.TextFieldState(fieldTerminalCommand, "Command", current.Command, "Executable for a Custom shell, found on PATH or given as an absolute path."),
 		args,
-		ui.BoolFieldState(fieldTerminalLogin, "Login shell", current.LoginShell == "on", "Start shells that support it (bash, zsh, fish, Git Bash) as login shells, so your profile loads."),
+		ui.SegmentedFieldState(fieldTerminalLogin, "Login shell", []ui.FormOption{
+			{ID: "auto", Label: "Auto"}, {ID: "on", Label: "On"}, {ID: "off", Label: "Off"},
+		}, loginShellChoice(current.LoginShell), "Auto loads your profile only when Crude does not have the environment of the shell that started it."),
 		env,
 		ui.SeparatorFieldState("terminal-behavior", "Behavior"),
 		ui.SegmentedFieldState(fieldTerminalPlacement, "Open new terminals", []ui.FormOption{{ID: types.TerminalPlacementDocked, Label: "Docked"}, {ID: types.TerminalPlacementFloating, Label: "Floating"}}, current.Placement, "Where a new terminal appears. Either can be moved later."),
@@ -92,9 +94,25 @@ func (m *Model) collectTerminal(cfg *types.TerminalSettings) {
 		Shell:           m.value(catTerminal, fieldTerminalShell),
 		Command:         strings.TrimSpace(m.value(catTerminal, fieldTerminalCommand)),
 		Args:            args,
-		LoginShell:      onOff(m.value(catTerminal, fieldTerminalLogin) == "on"),
+		LoginShell:      loginShellSetting(m.value(catTerminal, fieldTerminalLogin)),
 		Environment:     parseEnvironment(m.value(catTerminal, fieldTerminalEnv)),
 		ScrollbackLines: parseOpt(m.value(catTerminal, fieldTerminalScrollback), types.DefaultTerminalScrollback),
 		Placement:       m.value(catTerminal, fieldTerminalPlacement),
 	})
+}
+
+// loginShellChoice shows the stored login_shell value; empty is Auto.
+func loginShellChoice(value string) string {
+	if value == "on" || value == "off" {
+		return value
+	}
+	return "auto"
+}
+
+// loginShellSetting stores Auto as the absent value, so it stays inherited.
+func loginShellSetting(choice string) string {
+	if choice == "on" || choice == "off" {
+		return choice
+	}
+	return ""
 }

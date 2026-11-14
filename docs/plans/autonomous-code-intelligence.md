@@ -94,6 +94,11 @@ detail: read the sections that the current checkpoint names.
 
 | 2026-11-14 | Verify the recent developments on native Windows and move the project, local Go toolchain and CI to Go 1.27.4. Put further desktop captures on the second monitor. | User |
 | 2026-11-14 | Language-server controls: the Problems status button restarts only the failed server(s) (one button, "Restart failed servers" for several) instead of opening Settings. Language Tools shows each tool's live state and offers Restart/Stop or Start on the tool page plus Restart all; no Pause. An unexpected exit restarts automatically, at most four times in three minutes, then stays Failed until the user restarts it. | User |
+| 2026-11-14 | Close the LSP reliability and closed-file coverage gap in one focused, language-agnostic change. Adapt established designs instead of copying one editor; give the user one control. Stale results from a stopped server must never stay after a restart. Work alone, with inline Python for edits. | User |
+| 2026-11-14 | Every part of Crude must be able to get help from the workspace Aeron. When Crude finds a problem (a server that gave up, an error message from a server, a server that cannot see the project), Aeron wakes up, investigates with Crude's own abilities first, then the computer, and asks the user once with its findings before it changes anything. It may say that the fix needs approvals. The user must not be spammed; no per-language or per-configuration recipes. Terminals must start in the project's environment (a virtual environment is one example only). The closed-file check must never restart servers in a cycle. | User |
+| 2026-11-14 | Design (from review): problems are StatusCenter issues that their owner marks Investigate, raised on the core, not by a shell. One actor-owned dispatcher sends one runtime notice per cause through the collaboration journal (its idempotency key is the only memory), only while a shell is attached and Aeron is idle; no new event kind, ledger or core-side Aeron start. No catalog diagnostic codes: one structural rule (at least one in five checked files has errors). Aeron questions wait until the user pauses. Terminals use the attaching shell's environment, with VS Code's `${env:NAME}` and `${workspaceFolder}` in `terminal.environment`, which Aeron may set at workspace scope after the user agrees. `lsp.ask_aeron` lets the user turn the wake-up off. | Review, accepted by the main agent under the user's autonomy grant |
+| 2026-11-14 | The load sensor must not treat Crude's own work as the computer being busy and wait or give up because of it; it must still keep Crude from hanging the computer and must not cancel work wrongly. Design: rebase the load interval after each checked file, wait for a server's own work in progress as itself, and never remember a file without an answer under contention or server work (retry after one minute). | User |
+| 2026-11-14 | Background diagnostics must be aware of the computer and yield like established background indexers, with references from real projects, not memory: KDE Baloo (pause on battery), Windows Search (backoff under system activity, `DisableBackoff` override), Linux PSI with systemd's pressure threshold, LEDBAT's yield-to-foreground principle. The user keeps an Always override. | User |
 
 ### Open decisions
 
@@ -124,6 +129,80 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Crude asks Aeron for help; closed-file check without cycles (2026-11-14):
+implemented, live acceptance open.** Generic, no language branch:
+
+- The project check no longer rotates servers. Crude's result for a closed file
+  describes the file on disk under one launch configuration, so an eviction,
+  idle stop or crash keeps it current; a file change, a configuration or
+  analysis boundary, Refresh and an explicit Restart check it again. A file
+  that gives no usable result is remembered and not tried again until it or the
+  configuration changes. A full fact store ends the pass with limited coverage
+  and never marks a server failed.
+- Servers keep evidence: a bounded tail of standard error and error or warning
+  messages, the latest error message, recent unexpected exits and whether Crude
+  is restarting the server. `diagnostics.workspace` shows them, real per-server
+  counts, the closed-file check and a `problems` view; `lsp.restart` restarts
+  one server or all.
+- The core raises language-server issues itself (`workspace/lsp_issues.go`): a
+  server that used up its restart budget or failed to start, a server error
+  message, and a server whose checked files have errors in at least one in
+  five. The dispatcher (`core/attention.go`) sends the workspace Aeron one
+  notice per cause after the issue stayed the same for 30 seconds, while a shell
+  is attached and Aeron is idle (`lsp.ask_aeron`, Settings → Code intelligence →
+  **When a server has a problem**). Aeron's contract (`prompt/contracts.go`)
+  makes it investigate with Crude first and ask once before it changes anything;
+  its questions wait until the user pauses.
+- The load sensor does not count the check's own work: the load interval
+  starts again after each file, a server's own work in progress is waited for
+  as itself, and a file without an answer under contention is tried again
+  later instead of being remembered as unanswerable.
+- Terminals start with the attaching shell's environment; `terminal.environment`
+  expands `${env:NAME}` and `${workspaceFolder}`; Auto login shell uses a login
+  shell only without that environment. The tool setup order asks Aeron to set up
+  a project environment for terminals.
+
+Open: native live acceptance with a real Aeron model (the clangd header case in
+this repository), macOS and Windows terminal environment, and agent commands,
+language servers and MCP still inherit the core's environment.
+
+**Closed-file coverage and restart hygiene (2026-11-14): implemented.**
+One generic owner, no language branch:
+
+- A disk view (agent probe or project check of a file no editor holds) no
+  longer advances the editor context, so open files are not sent again and keep
+  their results. Before, every probe resent every open file twice.
+- A closed disk view keeps its result as the file's project result. A new server
+  instance that is idle and quiet for three seconds removes the results of
+  stopped instances for files no view holds. Refresh also removes them at once
+  (closed editor and released probe views included).
+- The project check gives closed files diagnostics for every server that does
+  not report them itself: one file at a time, only while the user is idle,
+  with rest equal to the work, nearest files first, Linguist vendored paths
+  skipped. When idle it also waits on battery power, while CPU, memory or I/O
+  pressure is at least 10% (systemd's default), or, for a server that is not
+  running, until its memory hint is free (`sysload/`). Setting **Check closed
+  files** (When idle / Always / Off); Problems shows progress and why it waits. Contract: [editor reference](../reference/editor.md#closed-files-disk-views-and-restarts).
+
+Evidence: workspace regressions for the open-file resend, retained disk-view
+results, settle-based retirement after a settings restart, and the one-at-a-time
+check fail before the change and pass after it. A live run found two more
+defects, now fixed with regressions: a project without open files never woke the
+worker, and pyright's empty close-time report erased the kept result and marked
+pyright as a project reporter. Native Linux capture (isolated profile, 160×40
+and 80×24): a trusted project with no open file lists pyright and JSON errors in
+closed `main.py`, `app/calc.py` and `config.json`, skips `third_party/`, and
+clears `main.py` after it was fixed on disk. Workspace, settings and viewmodel
+suites pass except the two known gopls v0.21.1 visual fixtures. The user's
+running core still runs the previous build until it is restarted.
+Resource awareness (same day): regressions cover battery, contention, free
+memory, the Always override and the first unmeasured sample; the last was found
+live, when the first file ran under a CPU load. Live on this laptop with 24
+busy loops on 12 cores: no closed file was checked during the load, and all
+three problems appeared after it ended. Battery pause is verified through a fake
+`/sys/class/power_supply` only; the laptop stayed on wall power. Windows power
+reading is cross-compiled, not run; macOS power is not read.
 
 The native Windows sweep is [banked below](#native-windows-verification-2026-11-14).
 The original Windows GC finding and remaining editor workflows stay open.

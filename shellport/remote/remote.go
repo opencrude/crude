@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sync"
 	"time"
@@ -197,7 +198,16 @@ func Attach(ctx context.Context, opts Options) (*Workspace, error) {
 
 func attach(ctx context.Context, client *coreclient.Client, root string) (coreprotocol.AttachResult, error) {
 	var result coreprotocol.AttachResult
-	err := client.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &result)
+	request := coreprotocol.AttachRequest{Root: root}
+	// LocalHost is negotiated by the transport owner. SSH relays and remote
+	// network sessions must not send this computer's paths or credentials.
+	if client.LocalHost() {
+		request.Environment = os.Environ()
+		if err := request.ValidateEnvironment(); err != nil {
+			return result, err
+		}
+	}
+	err := client.Call(ctx, "", coreprotocol.Attach, &request, &result)
 	if err == nil && result.WorkspaceID == "" {
 		err = errors.New("core returned no workspace")
 	}

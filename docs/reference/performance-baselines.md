@@ -7,6 +7,21 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Background command reveal (2026-11-14)
+
+`BenchmarkDenseCommandReveal` measures explicit expansion/reveal plus collapse,
+with the row export after each operation, in a fully hydrated 4,000-row
+conversation. It does not measure provider work or terminal scanout. A
+regression separately checks that a hidden activity leaf is visible in the
+first export after a width change, without rebuilding the transcript groups.
+
+Three 100-iteration Linux amd64 / Go 1.27.4 runs on i7-10750H with
+GOMAXPROCS=2 measured 0.622–0.690 ms, 1,241,009–1,241,180 B and 143 allocations
+per expand/collapse pair. Other validation commands were active. This is a new
+warm baseline, not a before/after speedup claim. The new allocation ceiling is
+1,500,000 B / 175 allocations, with about 20% headroom. No existing ceiling
+was raised.
+
 ## Completion source normalization (2026-11-12)
 
 `BenchmarkCompletionNormalization` measures the workspace's original completion

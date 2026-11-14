@@ -47,7 +47,7 @@ func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	attached := callCore(t, client, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+	attached := callCore(t, client, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 	var attachment coreprotocol.AttachResult
 	if err := coreprotocol.Decode(attached.Payload, &attachment); err != nil {
 		t.Fatal(err)

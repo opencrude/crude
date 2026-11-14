@@ -32,7 +32,7 @@ func TestBackgroundCommandStatusCanonicalAcrossShellsAndReconnect(t *testing.T) 
 			t.Fatal(err)
 		}
 		t.Cleanup(c.Close)
-		result := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+		result := callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 		var attached coreprotocol.AttachResult
 		if err := coreprotocol.Decode(result.Payload, &attached); err != nil {
 			t.Fatal(err)
@@ -126,7 +126,7 @@ func TestServiceNoticeFeedbackCanonicalAcrossShells(t *testing.T) {
 		}
 		defer c.Close()
 		clients[i] = c
-		result := callCore(t, c, "attach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+		result := callCore(t, c, "attach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 		var attached coreprotocol.AttachResult
 		if err := coreprotocol.Decode(result.Payload, &attached); err != nil {
 			t.Fatal(err)

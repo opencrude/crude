@@ -299,6 +299,18 @@ func (m *App) floatTerminalInfo(info workspace.TerminalInfo) {
 	m.openTerminalWindow(id, screen)
 }
 
+func (m *App) floatingTerminalSize() (int, int) {
+	w := max(48, min(m.width*70/100, 100))
+	h := max(14, min(m.height*60/100, 32))
+	if w > m.width-4 {
+		w = max(24, m.width-4)
+	}
+	if h > m.height-4 {
+		h = max(10, m.height-4)
+	}
+	return w, h
+}
+
 func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 	if m.overlayHost == nil || screen == nil {
 		return
@@ -310,14 +322,7 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 		}
 		return
 	}
-	w := max(48, min(m.width*70/100, 100))
-	h := max(14, min(m.height*60/100, 32))
-	if w > m.width-4 {
-		w = max(24, m.width-4)
-	}
-	if h > m.height-4 {
-		h = max(10, m.height-4)
-	}
+	w, h := m.floatingTerminalSize()
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, string(oid)+"-frame"),
@@ -329,7 +334,7 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 		w,
 		h,
 	)
-	if frame.Frame() != nil {
+	if frame.Frame() != nil && !screen.ReadOnly() {
 		frame.Frame().SetCloseGlyph("")
 		// JetBrains-style title-bar control: dock the tool window back into
 		// the panel (replaces the old in-body action bar).
@@ -349,7 +354,9 @@ func (m *App) openTerminalWindow(id string, screen *shellterm.Screen) {
 	)
 	// The dock title action owns its title-bar cells; clicks there must not
 	// start a window drag.
-	fw.SetTitleActionWidth(3)
+	if !screen.ReadOnly() {
+		fw.SetTitleActionWidth(3)
+	}
 	wm.CenterOnScreen(fw, m.width, m.height)
 	closedID := id
 	m.overlayHost.Open(oid, fw, ui.DefaultOverlayPolicy(), func() {
@@ -387,6 +394,7 @@ func (m *App) focusTerminal(id string) {
 }
 
 func (m *App) closeTerminal(id string) {
+	m.forgetCommandOutput(id)
 	if id == "" {
 		return
 	}
@@ -585,6 +593,7 @@ func (m *App) applyTerminalTitle(id, title string) {
 }
 
 func (m *App) discardTerminalUI() {
+	m.cancelCommandOutputOpens()
 	if m.ws.Terminals() != nil && m.terminalClientID != "" {
 		m.ws.Terminals().Detach(m.terminalController())
 	}

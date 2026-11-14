@@ -84,7 +84,7 @@ func controlFieldSchema(t reflect.Type, path string) map[string]any {
 		"preset":         {"dark", "light", "high-contrast", "warm", "midnight"},
 		"min_severity":   {"", "error", "warning", "info", "hint"},
 		"ThinkingEffort": {"", "none", "low", "medium", "high", "xhigh", "max"}, "thinking_effort": {"", "none", "low", "medium", "high", "xhigh", "max"},
-		"auto_save": {"off", "after_delay", "editor_focus_change", "terminal_focus_loss"}, "syntax_theme": {"catppuccin", "dracula", "github", "monokai", "solarized"}, "render_whitespace": {"none", "boundary", "all"}, "context_help": {"compact", "expanded", "off"}, "placement": {"docked", "floating"}, "login_shell": {"on", "off"}, "TurnLogsEnabled": {"", "on", "off"},
+		"auto_save": {"off", "after_delay", "editor_focus_change", "terminal_focus_loss"}, "syntax_theme": {"catppuccin", "dracula", "github", "monokai", "solarized"}, "render_whitespace": {"none", "boundary", "all"}, "context_help": {"compact", "expanded", "off"}, "placement": {"docked", "floating"}, "login_shell": {"", "on", "off"}, "TurnLogsEnabled": {"", "on", "off"},
 	}
 	if e, ok := enums[leaf]; ok {
 		schema["enum"] = e
@@ -275,7 +275,7 @@ func (a *actor) prepareControlSettingsFields(in control.Request) (func(context.C
 		if strings.Contains(path, ".Profiles") || strings.Contains(path, "Price") || strings.HasSuffix(path, "ActiveProfile") {
 			return
 		}
-		human := ControlSettingsAuthority(path) && !a.aeronOwnsSetting(in.Caller, path)
+		human := ControlSettingsAuthority(path) && !a.aeronOwnsSetting(in.Caller, input.Scope, path)
 		readonly := false
 		ownership := input.Scope
 		if input.Scope == "workspace" && (strings.HasPrefix(path, "accounts.") || strings.HasPrefix(path, "network.")) {

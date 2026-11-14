@@ -89,6 +89,15 @@ manager publish exited state. Natural completion and interruption therefore do
 not leave a finished process labelled running. Resize rejects a closing console;
 potentially blocking pseudoconsole close holds neither parser nor resize locks.
 
+## Read-only command output
+
+The Background jobs **Output** button reuses this engine, terminal grid topic,
+row reader and floating screen. Its private resource has no PTY and no input
+sink; the owner lease allows resize only. It is not listed as an interactive
+terminal. Local selection and reader keys remain available after completion.
+See [background command viewers](background-commands.md#reading-and-finding-a-command)
+for lifetime, history and process-control boundaries.
+
 ## Shell selection
 
 Settings › Terminal (application, with field-level workspace overrides) owns the
@@ -116,11 +125,33 @@ Auto names its target (`Auto (PowerShell 7)`) and the Command field previews the
 resolved executable. A selected shell that is not installed — for example one
 synced from another machine — stays visible as `zsh (not installed)` and terminal
 creation fails with guidance; it is never silently replaced. Custom requires a
-command. Login shell adds each shell's own login arguments (`-l`, Git Bash
-`--login -i`); user arguments follow. Running terminals keep the configuration
-they started with.
+command. Login shell **On** adds each shell's own login arguments (`-l`, Git Bash
+`--login -i`); user arguments follow. **Auto** (absent) adds them only when the
+core has no environment from an attaching shell; that environment is already
+initialized, and a login profile would rebuild `PATH`. Running terminals keep
+the configuration they started with.
+
+### Terminal environment
+
+A new terminal starts from the environment of the most recent shell that
+attached to this workspace from the same computer (`AttachRequest.Environment`,
+bounded, held only in memory, never persisted, logged or shown in diagnostics).
+A remote shell sends none, and detaching keeps the last environment. Without
+one the core's own environment is the base, as before. Then the PTY adjustments
+apply, then `terminal.environment`, whose values expand `${env:NAME}` against
+the base (an unknown name is empty) and `${workspaceFolder}` to the workspace
+root, in one pass, as VS Code's `terminal.integrated.env.*` does. Crude does not
+activate environments by language; the workspace Aeron sets
+`terminal.environment` for a project environment when the user agrees. Agent
+commands, language servers and MCP servers still start from the core's
+environment.
 
 ## PTY input and size contracts
+
+Floating terminal and command-output windows mount at their final body size.
+They do not use the height-reveal animation: its intermediate rows would resize
+the engine and push initial output into history before the first readable frame.
+Ordinary pointer resize still uses the shared acknowledged sizing path.
 
 PTY stdin is serialized by one dedicated `ptyWriter` goroutine. Its queue is
 bounded at 1 MiB: a write that cannot fit in full returns

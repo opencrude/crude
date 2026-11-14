@@ -16,6 +16,7 @@ Language servers consume decoded source; they do not own file encodings.
 
 | Date | Decision | From |
 |---|---|---|
+| 2026-11-14 | Restore the Save File picker header. Use bounded filename and encoding controls, with a real encoding dropdown rather than the stepper. Keep the shared form and window assets. | User |
 | 2026-11-09 | A double click on empty main-tab rail opens a new unnamed buffer. An explicit save opens a practical save window using Attach Files as a visual reference. Automatic saving does not affect unnamed buffers; after the first explicit save they follow the normal setting. | User |
 | 2026-11-09 | The save window must use visibly consistent form controls and offer encoding. Replacing a file asks a simple question; it must not open a diff automatically. Offer comparison through the existing comparison tab, without a second diff surface. Keep the UI clean and deliberate. | User |
 | 2026-11-09 | Encoding is a first-class IDE responsibility, not a Save File decoration. Treat opening, edits, autosave, search, comparison, formatting, recovery and tool writes consistently, with the care expected of JetBrains IDEs and VS Code. | User |
@@ -102,19 +103,31 @@ Settings journey also saves a new-file default and creates an unnamed file with
 that encoding. Its clipped BOM caption has a rendering regression; the shared
 codec now supplies the concise `UTF-8 BOM` label instead of a separate UI name.
 
+### Save File visual revision (2026-11-14)
+
+The previous stepper and title-free body were rejected. Save File now uses the
+shared Crude picker header, a short instruction, a bounded filename box and a
+compact native select dropdown for encoding. The dropdown opens over the browser;
+it does not move the fields or footer. Keyboard and pointer tests retain
+filename editing, explicit choice, pending-save fencing and connected encoding
+persistence. Native Linux captures at 160×40 and 80×24 verify the header,
+bounded controls, open dropdown and an actual UTF-16 LE save. These captures
+validate this revision, not the rejected stepper. Repository gate results are
+reported separately; Windows/macOS UI acceptance is not claimed.
+
 ## Integration and acceptance
 
 | Area | Required outcome | Current evidence |
 |---|---|---|
 | Editor lifecycle | Core-owned text, stable identity, undo, linked views, dirty state, restore, first save and autosave immunity while unnamed | Connected/core and scoped race checks pass, including profile release/return and workspace-switch Save |
-| Save window | Settings-style filename and encoding fields, a single title, native editing/selection, correct focus and bounded actions | Linux 160×40 and 80×24 keyboard/pointer captures inspected; native Form input tests pass |
+| Save window | Settings-style bounded filename and encoding dropdown, picker header, native editing/selection, correct focus and bounded actions | Linux 160×40 and 80×24 keyboard/pointer captures inspected; native Form input tests pass |
 | Replacement | Cancel-default standard confirmation; optional existing comparison tab; return preserves destination and encoding; preimage/history/unknown-result safety | Connected confirmation/Compare/return and stale-target tests pass; core retained-preimage, restore and uncertain-commit checks pass |
 | Encoding authority | One strict codec; canonical UTF-8 text; exact encoded disk hashes, receipts and preimages; no silent replacements | Four Unicode formats pass exact-byte, malformed-input, split-stream, first-save/autosave/reconcile/restart tests; UTF-32 is explicitly refused |
 | Text consumers | Search/replacement, local/Git comparison and gutter, formatting, LSP sources, text tools and attachment previews decode consistently; byte operations stay byte-exact | Affected packages and scoped race checks pass; regressions cover encoded search/replace/preview, tool read/edit/write, Git JSON transport/hunk stage and execution integration/undo |
 | Editor controls | Visible current encoding, explicit conversion versus reopen, protection of dirty work, pending operations and late results | Connected menu conversion, reload, autosave exclusion and undo pass; stale encoding-choice fence passes ordinary/race checks |
 | Preferences | Only useful policy: a default for new file encoding at application/workspace scopes, explicit per-save override, ordinary inheritance/reset/live save | Sparse save/explicit UTF-8/reset tests pass; native 80×24 preference save and new-buffer inheritance observed; all four captions pass the narrow rendering regression |
 | Self-control | Discoverable document/encoding operations and exact native controls; resolve real effects, owner, revision and outcome through the same commands | `TestControlUnnamedEncodingJourney` passes settings → new → edit → first save → convert → reload through the real core router; pathless edits have no invented file claim |
-| Terminal bounds | Keyboard and pointer; readable at 80×24 and desktop; no hidden decisions, clipped choice lists, extra title or duplicate diff | Final 80×24 and 160×40 captures inspected; Save File, optional comparison, all menu choices and the full `UTF-8 BOM` caption are readable; preference save reaches a new unnamed buffer |
+| Terminal bounds | Keyboard and pointer; readable at 80×24 and desktop; no hidden decisions, clipped choice lists, overlapping headers or duplicate diff | Final 80×24 and 160×40 captures inspected; Save File, optional comparison, all menu choices and the full `UTF-8 BOM` caption are readable; preference save reaches a new unnamed buffer |
 | Verification | Focused, affected-package, race, build, lint, docs and performance gates; native acceptance distinct from cross-build | Linux milestone gates pass with the aggregate-test limitation recorded below; Windows/macOS cross-builds pass, not native acceptance |
 
 ### Linux verification record (2026-11-09)

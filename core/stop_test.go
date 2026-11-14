@@ -39,7 +39,7 @@ func TestRepeatedStopEndsIdleNotStopping(t *testing.T) {
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	wire := newResourceWire(t, r, "stop-author")
 	var attached coreprotocol.AttachResult
-	wire.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	wire.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	ws := attached.WorkspaceID
 	var created workspace.NewSessionResult
 	wire.call(t, ws, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{}, &created)

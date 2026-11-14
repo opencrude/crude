@@ -41,9 +41,9 @@ func TestInsightDiagnosticsTwoWireShellsAndProbeShareExactFact(t *testing.T) {
 	})
 	a, b := newResourceWire(t, r, "facts-author"), newResourceWire(t, r, "facts-peer")
 	var attached coreprotocol.AttachResult
-	a.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	a.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	ws := attached.WorkspaceID
-	b.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	b.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var granted coreprotocol.WorkspacePreferencesResult
 	a.call(t, ws, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{
 		Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`)}},

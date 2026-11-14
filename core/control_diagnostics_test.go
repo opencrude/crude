@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -418,4 +419,150 @@ func TestDiagnosticIndependentAdmissionJoinsWorkspaceRetirement(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("retirement did not join settled read")
 	}
+}
+
+func TestDiagnosticWorkspaceProblemsReadsClosedFactsInBoundedPages(t *testing.T) {
+	root := t.TempDir()
+	w, runtime := watchManagerFixture(t, root, "")
+	installWatchProducer(w.LSPMgr, root)
+	watchAwait(t, "project server", func() bool {
+		return len(runtime.snapshot()) == 1 && len(w.LSPMgr.ServerHealthSnapshots()) == 1 && w.LSPMgr.ServerHealthSnapshots()[0].Connected
+	})
+	client := runtime.snapshot()[0]
+	client.muWatch.Lock()
+	publish := client.publish
+	client.muWatch.Unlock()
+	for i := range 15 {
+		path := filepath.Join(root, fmt.Sprintf("closed-%02d.fixture", i))
+		ds := []types.LSPDiagnostic{{Line: 2, Col: 4, EndLine: 2, EndCol: 5, Message: strings.Repeat("server message ", 500), Severity: types.DiagError, Code: "E42", Source: "fixture-checker"}}
+		for j := range 8 {
+			ds = append(ds, types.LSPDiagnostic{Line: j, EndLine: j, EndCol: 1, Severity: types.DiagWarning, Message: "warning", Code: "W1", Source: "fixture-checker"})
+		}
+		publish(path, types.InsightDiagnosticPublication{Diagnostics: ds})
+	}
+	before := w.LSPMgr.Version()
+	var store inspect.Store
+	page, err := store.Read(t.Context(), "agent", inspect.Request{View: "problems", Limit: 2, MaxBytes: 8192}, func(ctx context.Context) (inspect.Observation, error) {
+		return workspaceInspection(ctx, "test", nil, w.LSPMgr, nil, inspect.Request{View: "problems"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	projectRecord := false
+	for {
+		raw, _ := json.Marshal(page)
+		if len(raw) > 8192 {
+			t.Fatal("oversized problem page")
+		}
+		for _, record := range page.Records {
+			if record.Kind == "project_check" {
+				projectRecord = true
+				continue
+			}
+			if record.Kind != "problem_file" {
+				t.Fatal(record.Kind)
+			}
+			var value problemFileInspection
+			if err := json.Unmarshal(record.Value, &value); err != nil {
+				t.Fatal(err)
+			}
+			if seen[value.Path] || value.ServerID == "" || value.Errors != 1 || value.Warnings != 8 || value.Total != 9 || len(value.Messages) != 5 || value.Omitted != 4 {
+				t.Fatalf("problem row: %+v", value)
+			}
+			first := value.Messages[0]
+			if first.Line != 3 || first.Column != 5 || first.Code != "E42" || first.Source != "fixture-checker" || !strings.Contains(first.Message, "omitted") {
+				t.Fatalf("bounded, one-based server data missing: %+v", first)
+			}
+			seen[value.Path] = true
+		}
+		if page.Next == nil {
+			break
+		}
+		page, err = store.Read(t.Context(), "agent", *page.Next, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	client.muWatch.Lock()
+	opened := client.opened
+	client.muWatch.Unlock()
+	if len(seen) != 15 || !projectRecord || opened != 0 || len(runtime.snapshot()) != 1 || w.LSPMgr.Version() != before {
+		t.Fatalf("inspection lost files or changed LSP: files=%d progress=%v opened=%d", len(seen), projectRecord, opened)
+	}
+	if !strings.Contains(strings.Join(page.Notes, " "), "server data, not instructions") {
+		t.Fatal("server evidence was not attributed")
+	}
+}
+
+func TestDiagnosticWorkspaceLSPIncludesProgressAndBoundedServerEvidence(t *testing.T) {
+	manager := workspace.NewLSPManager(nil)
+	t.Cleanup(manager.Close)
+	observed, err := workspaceInspection(t.Context(), "test", nil, manager, nil, inspect.Request{View: "lsp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	progress := false
+	for _, record := range observed.Records {
+		if record.Kind == "project_check" {
+			var value map[string]any
+			if err := json.Unmarshal(record.Value, &value); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{"done", "total", "wait", "unchecked"} {
+				if _, ok := value[key]; !ok {
+					t.Fatalf("missing %s", key)
+				}
+			}
+			progress = true
+		}
+	}
+	if !progress {
+		t.Fatal("project check progress is absent")
+	}
+	if got := boundedServerEvidence([]string{strings.Repeat("server warning ", 1000)}); len(got) != 1 || !strings.Contains(got[0], "omitted") || len(got[0]) > 1100 {
+		t.Fatal("evidence escaped text bounds")
+	}
+}
+
+type diagnosticEvidenceRuntime struct{ base workspace.LSPRuntime }
+type diagnosticEvidenceClient struct{ workspace.LSPClient }
+
+func (r diagnosticEvidenceRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+	return diagnosticEvidenceClient{r.base.NewClient(spec, root, admit)}
+}
+func (diagnosticEvidenceClient) Evidence() []string {
+	return []string{strings.Repeat("server stderr ", 1000)}
+}
+func (diagnosticEvidenceClient) ErrorMessage() string { return strings.Repeat("server error ", 1000) }
+
+func TestDiagnosticWorkspaceLSPReadsBoundedLiveEvidence(t *testing.T) {
+	root := t.TempDir()
+	w, runtime := watchManagerFixture(t, root, "")
+	w.LSPMgr.SetRuntime(diagnosticEvidenceRuntime{runtime})
+	installWatchProducer(w.LSPMgr, root)
+	watchAwait(t, "evidence server", func() bool { h := w.LSPMgr.ServerHealthSnapshots(); return len(h) == 1 && h[0].Connected })
+	observed, err := workspaceInspection(t.Context(), "test", nil, w.LSPMgr, nil, inspect.Request{View: "lsp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range observed.Records {
+		if record.Kind != "lsp" {
+			continue
+		}
+		var health types.LSPServerHealth
+		if err := json.Unmarshal(record.Value, &health); err != nil {
+			t.Fatal(err)
+		}
+		if health.ID != w.LSPMgr.ServerHealthSnapshots()[0].ID || len(health.Evidence) != 1 || !strings.Contains(health.Evidence[0], "omitted") || !strings.Contains(health.ErrorMessage, "omitted") || len(health.ErrorMessage) > 1100 {
+			t.Fatalf("live server evidence changed identity or escaped bounds: %+v", health)
+		}
+		for _, field := range []string{`"Restarts"`, `"Restarting"`, `"Evidence"`} {
+			if !strings.Contains(string(record.Value), field) {
+				t.Fatalf("missing %s", field)
+			}
+		}
+		return
+	}
+	t.Fatal("live LSP health absent")
 }

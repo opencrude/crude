@@ -316,4 +316,13 @@ type ProjectInsights struct {
 	DiagnosticsUnverified int
 	DiagnosticsLimited    int
 	CoverageDetail        string
+	// The check of files that are not open: files checked and to check in
+	// this pass, and why it waits ("while you type"), empty while it works.
+	ProjectCheckDone  int
+	ProjectCheckTotal int
+	ProjectCheckWait  string
+	// ProjectCheckUnchecked counts closed files whose server gave no usable
+	// result; the check does not try them again until they or the
+	// configuration change, or the user restarts the server.
+	ProjectCheckUnchecked int
 }

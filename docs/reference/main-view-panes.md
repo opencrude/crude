@@ -384,7 +384,29 @@ ownership are all retained. A stray click must never destroy work in flight.
 - Aeron's questions and confirmations always use the modal agent prompt
   (`OverlayAgentPrompt`), also while its own tab is visible: it works in the
   background, so the modal is its channel to the user. Other agents keep the
-  in-tab deck when their tab is visible.
+  in-tab deck when their tab is visible. An Aeron prompt does not open while
+  the user types or clicks: it waits until the user has paused for the Aeron
+  quiet period (three seconds), so keys meant for other work never answer it.
+
+#### Crude asks Aeron for help
+
+The owner of a state raises its problems as StatusCenter issues on the core and
+marks the ones that Aeron may investigate (`IssueSnapshot.Investigate`). Today
+these are the language-server issues in `workspace/lsp_issues.go`. The
+dispatcher `core/attention.go` runs on the workspace actor after each status
+change, attach and detach. It sends one runtime notice to the workspace Aeron
+through the collaboration journal (sender **Crude**, body
+`prompt.AttentionNotice`) when all of these are true:
+
+- the issue stayed the same for 30 seconds and is still open;
+- Aeron was not told about this cause (the journal's idempotency key is the
+  issue and its detail; a new detail is a new cause);
+- a shell is attached, Aeron runs, has no turn and waits for no answer;
+- **When a server has a problem** is **Ask Aeron** (`lsp.ask_aeron`).
+
+At most three notices go out at once. Crude never starts Aeron for a notice; the
+shell's Aeron ensure stays the one start owner. Aeron's contract makes it
+investigate with Crude first and ask the user once before it changes anything.
 - Terminating is explicit: `terminateAgent` (tab and Agents-panel context
   menus) still cancels the turn, stops the orchestrator, and drops state.
   `cleanupAgent` remains the destructive path; do not wire it to tab close.

@@ -96,7 +96,7 @@ func TestAnalysisCoreReplacedFolderAsksAgainWithoutNotice(t *testing.T) {
 	})
 	client := newResourceWire(t, r, "replaced-folder")
 	var attached coreprotocol.AttachResult
-	client.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+	client.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var settings coreprotocol.SettingsFetchResult
 	client.call(t, attached.WorkspaceID, coreprotocol.SettingsFetch, coreprotocol.Empty{}, &settings)
 	if !settings.Effective.Analysis.DecisionNeeded() || settings.Effective.Analysis.Trusted() {

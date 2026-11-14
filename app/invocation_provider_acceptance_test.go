@@ -90,7 +90,7 @@ func TestInvocationProviderWireKeepsPolicyAndEphemeralAuth(t *testing.T) {
 	}
 	defer client.Close()
 	var attached coreprotocol.AttachResult
-	if err := client.Call(t.Context(), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: t.TempDir()}, &attached); err != nil {
+	if err := client.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: t.TempDir()}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	selection := invocationSelection(CLIFlags{Account: "saved", Model: "selected-wire-model", Provider: "openai", APIKey: key, SystemPrompt: "extra <unsafe> & instruction"})

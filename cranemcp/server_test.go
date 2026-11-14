@@ -50,7 +50,7 @@ func wire(t *testing.T, r *core.Runtime, id, root string) (*coreclient.Client, s
 		}
 	})
 	var attached coreprotocol.AttachResult
-	if err := c.Call(t.Context(), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
+	if err := c.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached); err != nil {
 		t.Fatal(err)
 	}
 	return c, attached.WorkspaceID

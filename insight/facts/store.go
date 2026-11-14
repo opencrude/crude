@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"crude/types"
@@ -33,11 +34,12 @@ var (
 )
 
 type entry struct {
-	boundary types.InsightBoundary
-	active   bool
-	sequence uint64
-	answer   types.InsightDiagnostics
-	weight   int
+	boundary    types.InsightBoundary
+	active      bool
+	sequence    uint64
+	answer      types.InsightDiagnostics
+	weight      int
+	publishedAt time.Time
 }
 
 // Store retains one batch per document, including stale batches. There is no
@@ -59,6 +61,87 @@ func (s *Store) Version() uint64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.version
+}
+
+// Usage is a cheap, payload-free capacity observation for the coordinator.
+type Usage struct {
+	Documents, MaxDocuments     int
+	Diagnostics, MaxDiagnostics int
+	Bytes                       int
+}
+
+func (s *Store) Usage() Usage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return Usage{len(s.documents), s.maxDocuments, s.diagnosticCount, s.maxDiagnostics, s.retainedBytes}
+}
+
+// CanPublishWithReserve checks the exact replacement weight without changing
+// the store. The coordinator serializes its background publication with other
+// writers; this observation is not a reservation or an authority grant.
+func (s *Store) CanPublishWithReserve(p types.InsightDiagnosticPublication, documents, diagnostics, bytes int) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e := s.documents[p.Boundary.Source.DocumentID]
+	if e == nil {
+		return false
+	}
+	return len(s.documents) <= s.maxDocuments-documents &&
+		s.diagnosticCount-len(e.answer.Diagnostics)+len(p.Diagnostics) <= s.maxDiagnostics-diagnostics &&
+		s.retainedBytes-e.weight+boundaryWeight(e.boundary)+publicationWeight(p) <= MaxRetainedBytes-bytes
+}
+
+// ContextSummary counts only published, non-stale results, grouped by the
+// authoritative context ID. FilesAffected means files with an error, not
+// warnings only. Observation timestamps are store-owned and never provider data.
+type ContextSummary struct {
+	FilesTracked, FilesAffected          int
+	Errors, Warnings, Information, Hints int
+	LastDiagnostics                      time.Time
+}
+
+func (s *Store) ContextSummaries() map[string]ContextSummary {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]ContextSummary)
+	files := make(map[string]map[string]bool)
+	for _, e := range s.documents {
+		a := e.answer
+		if a.ID == "" || a.State == types.InsightStale {
+			continue
+		}
+		id, path := a.Boundary.Context.ID, a.Boundary.Source.Path
+		summary := out[id]
+		if files[id] == nil {
+			files[id] = make(map[string]bool)
+		}
+		affected, tracked := files[id][path]
+		if !tracked {
+			summary.FilesTracked++
+		}
+		for _, d := range a.Diagnostics {
+			switch d.Severity {
+			case types.DiagError:
+				summary.Errors++
+				affected = true
+			case types.DiagWarning:
+				summary.Warnings++
+			case types.DiagInfo:
+				summary.Information++
+			case types.DiagHint:
+				summary.Hints++
+			}
+		}
+		if affected && !files[id][path] {
+			summary.FilesAffected++
+		}
+		files[id][path] = affected
+		if e.publishedAt.After(summary.LastDiagnostics) {
+			summary.LastDiagnostics = e.publishedAt
+		}
+		out[id] = summary
+	}
+	return out
 }
 
 // New bounds document slots and the TOTAL number of retained diagnostics.
@@ -182,7 +265,7 @@ func (s *Store) Publish(p types.InsightDiagnosticPublication) (types.InsightDiag
 		}
 	}
 	s.diagnosticCount += len(answer.Diagnostics) - len(e.answer.Diagnostics)
-	e.answer, e.sequence = answer, p.Sequence
+	e.answer, e.sequence, e.publishedAt = answer, p.Sequence, time.Now()
 	weight := boundaryWeight(e.boundary) + answerWeight(answer)
 	s.retainedBytes += weight - e.weight
 	e.weight = weight

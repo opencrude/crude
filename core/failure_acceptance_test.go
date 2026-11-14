@@ -130,7 +130,7 @@ func TestFailureAcceptanceLostWireResponseRecoversReceiptWithoutReplay(t *testin
 	r := failureRuntime(t)
 	root := t.TempDir()
 	f, owner, done := failureWire(t, r, "lost-response")
-	_, payload := f.result(t, f.send(t, "attach", "", coreprotocol.Attach, mustTestPayload(coreprotocol.AttachRequest{Root: root})))
+	_, payload := f.result(t, f.send(t, "attach", "", coreprotocol.Attach, mustTestPayload(&coreprotocol.AttachRequest{Root: root})))
 	var attached coreprotocol.AttachResult
 	if err := coreprotocol.Decode(payload, &attached); err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestFailureAcceptanceLostWireResponseRecoversReceiptWithoutReplay(t *testin
 	r.mu.Lock()
 	reconnected := r.clients[owner.ClientID]
 	r.mu.Unlock()
-	callCore(t, reconnected, "reattach", "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+	callCore(t, reconnected, "reattach", "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 	replayed := callCore(t, reconnected, frame.ID, attached.WorkspaceID, frame.Method, coreprotocol.FilePathRequest{Path: "once.txt"})
 	if string(replayed.Payload) != string(receipt.Response.Payload) {
 		t.Fatal("repeat identity did not return immutable outcome")
@@ -303,7 +303,7 @@ func TestFailureAcceptanceEvictedTopicCursorResetsWithoutBlockingMutation(t *tes
 	wire, owner, _ := failureWire(t, r, "slow-reader")
 	root := t.TempDir()
 	var attached coreprotocol.AttachResult
-	_, payload := wire.result(t, wire.send(t, "attach", "", coreprotocol.Attach, mustTestPayload(coreprotocol.AttachRequest{Root: root})))
+	_, payload := wire.result(t, wire.send(t, "attach", "", coreprotocol.Attach, mustTestPayload(&coreprotocol.AttachRequest{Root: root})))
 	if err := coreprotocol.Decode(payload, &attached); err != nil {
 		t.Fatal(err)
 	}

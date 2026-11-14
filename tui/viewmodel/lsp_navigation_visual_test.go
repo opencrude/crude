@@ -105,8 +105,8 @@ func runNavigationVisual(t *testing.T, headless bool, width, height int) {
 		t.Fatalf("installed real gopls required: %v", err)
 	}
 	version, err := exec.Command(executable, "version").CombinedOutput()
-	if err != nil || !strings.Contains(string(version), "v0.21.1") {
-		t.Fatalf("fixture requires installed gopls v0.21.1: %s %v", version, err)
+	if err != nil || !strings.Contains(string(version), visualGoplsVersion) {
+		t.Fatalf("fixture requires installed gopls %s: %s %v", visualGoplsVersion, version, err)
 	}
 	goroot, err := exec.Command("go", "env", "GOROOT").Output()
 	if err != nil {

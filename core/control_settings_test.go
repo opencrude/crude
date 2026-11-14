@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"crude/coreprotocol"
@@ -97,7 +98,7 @@ func TestAeronCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
 		}
 	}
 	// The exception does not include unrelated authority.
-	if a.aeronOwnsSetting(control.Caller{Kind: control.AgentCaller, AgentID: "aeron"}, "safety.confirm_at") {
+	if a.aeronOwnsSetting(control.Caller{Kind: control.AgentCaller, AgentID: "aeron"}, "workspace", "safety.confirm_at") {
 		t.Fatal("language-server setup granted unrelated authority")
 	}
 }
@@ -207,5 +208,96 @@ func TestControlSessionCodeIntelligenceSetAndReset(t *testing.T) {
 	run, _, _ := a.prepareControlDomain(control.Request{ID: "server", CommandID: "settings.set", Input: raw}, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
 	if out := run(context.Background()); out.Fault == nil || out.Fault.Code != control.Denied {
 		t.Fatalf("server command change accepted: %#v", out)
+	}
+}
+
+func TestAeronOwnsSettingOnlyAtWorkspaceScope(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	t.Cleanup(ws.Close)
+	ws.SetAppDefaults(types.AppSettings{Terminal: types.TerminalSettings{Environment: map[string]string{"PATH": "app-value"}}})
+	ws.SessionsByAgent["aeron"] = &workspace.Session{AgentID: "aeron",
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}}}
+	ws.SessionsByAgent["main"] = &workspace.Session{AgentID: "main",
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{}}}
+	a := &actor{ws: ws}
+	for _, scope := range []string{"workspace", "application", "session", ""} {
+		for _, caller := range []control.Caller{
+			{Kind: control.AgentCaller, AgentID: "aeron"},
+			{Kind: control.AgentCaller, AgentID: "main"},
+			{Kind: control.ExternalCaller, AgentID: "aeron"},
+		} {
+			for _, path := range []string{"lsp.languages.test.command", "terminal.environment", "terminal.environment.PATH", "terminal.environment_other", "terminal.command", "safety.confirm_at", "lsp.ask_aeron"} {
+				eligible := path == "lsp.languages.test.command" || path == "terminal.environment" || path == "terminal.environment.PATH"
+				want := eligible && scope == "workspace" && caller.Kind == control.AgentCaller && caller.AgentID == "aeron"
+				if got := a.aeronOwnsSetting(caller, scope, path); got != want {
+					t.Fatalf("caller=%+v scope=%q path=%q: allowed=%v, want %v", caller, scope, path, got, want)
+				}
+			}
+		}
+	}
+	for _, scope := range []string{"workspace", "application"} {
+		for _, agent := range []string{"main", "aeron"} {
+			caller := control.Caller{Kind: control.AgentCaller, AgentID: agent}
+			allowed := scope == "workspace" && agent == "aeron"
+			for _, path := range []string{"terminal.environment", "terminal.environment.PATH", "lsp.languages.test.command", "lsp.ask_aeron"} {
+				writeAllowed := allowed && path != "lsp.ask_aeron"
+				value := any("${workspaceFolder}/.venv/bin:${env:PATH}")
+				switch path {
+				case "terminal.environment":
+					value = map[string]string{"PATH": value.(string), "VIRTUAL_ENV": "${workspaceFolder}/.venv"}
+				case "lsp.languages.test.command":
+					value = filepath.Join(t.TempDir(), "test-server")
+				}
+				raw, _ := json.Marshal(map[string]any{"scope": scope, "path": path, "value": value})
+				request := control.Request{ID: scope + agent + path, CommandID: "settings.set", Caller: caller, Input: raw}
+				desc, err := a.staticControlDescriptor(request)
+				if err != nil || desc.HumanOnly == writeAllowed {
+					t.Fatalf("descriptor scope=%s agent=%s path=%s: %+v, %v", scope, agent, path, desc, err)
+				}
+				run, apply, handled := a.prepareControlSettings(request, coreprotocol.Owner{ClientID: "test", Epoch: 1})
+				if !handled {
+					t.Fatal("settings command was not handled")
+				}
+				out := run(t.Context())
+				if !writeAllowed {
+					if out.Fault == nil || out.Fault.Code != control.Denied {
+						t.Fatalf("human-only write accepted: scope=%s agent=%s path=%s: %+v", scope, agent, path, out)
+					}
+					continue
+				}
+				if out.Fault != nil || out.State != control.Committed {
+					t.Fatalf("workspace Aeron write failed: %s: %+v", path, out)
+				}
+				if apply != nil {
+					apply(out)
+				}
+			}
+			raw, _ := json.Marshal(map[string]any{"scope": scope, "prefix": "terminal.environment", "limit": 128})
+			run, _, _ := a.prepareControlSettingsFields(control.Request{ID: "fields", Caller: caller, Input: raw})
+			out := run(t.Context())
+			var page controlSettingsFieldsPage
+			if out.Fault != nil || json.Unmarshal(out.Output, &page) != nil || len(page.Fields) == 0 {
+				t.Fatalf("no environment field metadata: %+v", out)
+			}
+			for _, field := range page.Fields {
+				if field.HumanOnly == allowed || !allowed && len(field.Value) != 0 {
+					t.Fatalf("field authority disagrees with writes: %+v", field)
+				}
+			}
+		}
+	}
+	want := map[string]string{"PATH": "${workspaceFolder}/.venv/bin:${env:PATH}", "VIRTUAL_ENV": "${workspaceFolder}/.venv"}
+	if got := ws.TermMgr.Settings().Environment; !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminal launch settings did not receive Aeron's environment: %+v", got)
+	}
+	if got := ws.AppDefaults().Terminal.Environment["PATH"]; got != "app-value" {
+		t.Fatalf("workspace environment changed application defaults: %q", got)
+	}
+}
+
+func TestControlTerminalLoginAllowsAuto(t *testing.T) {
+	schema := controlFieldSchema(reflect.TypeFor[string](), "terminal.login_shell")
+	if !reflect.DeepEqual(schema["enum"], []string{"", "on", "off"}) {
+		t.Fatalf("login choices lost Auto: %+v", schema)
 	}
 }

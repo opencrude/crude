@@ -299,7 +299,7 @@ func TestConnectedUntitledEncodingChoiceReachesDiskAndAutosave(t *testing.T) {
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return !app.FilePicker.AsyncDirectoryLoading() })
 	_, cmd = app.Update(tea.PasteMsg{Content: "encoded.txt"})
 	runAppCommand(t, app, cmd)
-	for _, key := range []rune{tea.KeyDown, tea.KeyRight, tea.KeyRight, tea.KeyUp, tea.KeyEnter} {
+	for _, key := range []rune{tea.KeyDown, tea.KeyEnter, tea.KeyDown, tea.KeyDown, tea.KeyEnter, tea.KeyUp, tea.KeyEnter} {
 		_, cmd = app.Update(tea.KeyPressMsg{Code: key})
 		runAppCommand(t, app, cmd)
 	}

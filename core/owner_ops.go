@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"crude/types"
 
@@ -118,6 +119,8 @@ func (a *actor) publishStatusIfChanged() {
 	if version := a.ws.Status.Version(); version != a.statusVersion {
 		a.statusVersion = version
 		a.broadcast(coreprotocol.Change{Status: true})
+		// Issues and agent phases live here; either can make a notice due.
+		a.evaluateAttention(time.Now())
 	}
 }
 

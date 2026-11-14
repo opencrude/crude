@@ -322,7 +322,7 @@ func TestDiagnosticNativeRootDiscoveryPagingRunFenceAndExternalReadScope(t *test
 		}
 		return external.Call(t.Context(), coreprotocol.Request{ID: id, Owner: external.Owner, WorkspaceID: bound.WorkspaceID, Method: method, Payload: raw})
 	}
-	if out := call("attach-diagnostics", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}); out.Error != nil {
+	if out := call("attach-diagnostics", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); out.Error != nil {
 		t.Fatal(out.Error)
 	}
 	if out := call("grant-diagnostics", coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read}, Shell: bound.Shell}); out.Error != nil {

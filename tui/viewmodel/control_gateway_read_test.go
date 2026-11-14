@@ -136,7 +136,7 @@ func TestControlGatewayReadNativeRootAndExternalReadOnlyScope(t *testing.T) {
 		}
 		return external.Call(t.Context(), coreprotocol.Request{ID: name, Owner: external.Owner, WorkspaceID: target.WorkspaceID, Method: method, Payload: raw})
 	}
-	if out := call("attach-read", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}); out.Error != nil {
+	if out := call("attach-read", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); out.Error != nil {
 		t.Fatal(out.Error)
 	}
 	if out := call("grant-read", coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read}, Shell: target.Shell}); out.Error != nil {

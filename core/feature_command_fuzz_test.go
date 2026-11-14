@@ -77,9 +77,9 @@ func FuzzCoreFeatureDocuments(f *testing.F) {
 		}
 		peers := [2]*resourceWire{newResourceWire(t, r, "author-a"), newResourceWire(t, r, "author-b")}
 		var attached coreprotocol.AttachResult
-		peers[0].call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+		peers[0].call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 		var other coreprotocol.AttachResult
-		peers[1].call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &other)
+		peers[1].call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &other)
 		if attached.WorkspaceID != other.WorkspaceID {
 			t.Fatal("same root forked workspace")
 		}
@@ -165,7 +165,7 @@ func FuzzCoreFeatureFilesHistory(f *testing.F) {
 		r, root := featureRuntime(t, nil)
 		w := newResourceWire(t, r, "file-owner")
 		var attached coreprotocol.AttachResult
-		w.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+		w.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 		ws := attached.WorkspaceID
 		names := [3]string{"a.txt", "b.txt", "c.txt"}
 		var exists [3]bool
@@ -295,7 +295,7 @@ func FuzzCoreFeatureSettings(f *testing.F) {
 		})
 		w := newResourceWire(t, r, "settings-owner")
 		var attached coreprotocol.AttachResult
-		w.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, &attached)
+		w.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 		for i, action := range sequence[:min(len(sequence), featureFuzzActions)] {
 			secret := coreprotocol.SecretString{Keep: true}
 			beforeCommits := commits

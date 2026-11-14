@@ -29,7 +29,7 @@ func TestWorkspaceReturnUpdatesDurableRecencyWithoutNewSession(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	for i, root := range []string{a, b, a} {
 		var attached coreprotocol.AttachResult
-		out := callCore(t, c, fmt.Sprintf("attach-%d", i), "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root})
+		out := callCore(t, c, fmt.Sprintf("attach-%d", i), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root})
 		if err := coreprotocol.Decode(out.Payload, &attached); err != nil {
 			t.Fatal(err)
 		}

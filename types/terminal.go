@@ -29,7 +29,8 @@ type TerminalSettings struct {
 	Command string `json:"command,omitempty"`
 	// Args follow the shell's own startup arguments.
 	Args []string `json:"args,omitempty"`
-	// LoginShell starts shells that support it as login shells ("on"/"off").
+	// LoginShell is "on"/"off", or empty for Auto. Auto uses a login shell
+	// only when no initialized attaching-shell environment is available.
 	LoginShell  string            `json:"login_shell,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
 	// ScrollbackLines bounds each terminal's retained history.
@@ -56,8 +57,8 @@ func NormalizeTerminalSettings(s TerminalSettings) TerminalSettings {
 	if s.Shell == "" {
 		s.Shell = TerminalShellAuto
 	}
-	if s.LoginShell != "off" {
-		s.LoginShell = "on"
+	if s.LoginShell != "on" && s.LoginShell != "off" {
+		s.LoginShell = ""
 	}
 	if s.ScrollbackLines <= 0 {
 		s.ScrollbackLines = DefaultTerminalScrollback
@@ -156,7 +157,9 @@ func ResolveTerminalLaunch(settings TerminalSettings, shells []TerminalShell) (s
 		shell = shells[index]
 	}
 	var args []string
-	if settings.LoginShell == "on" {
+	// Without launch-context information, Auto keeps login initialization.
+	// The terminal owner resolves Auto to off for an attaching shell's base.
+	if settings.LoginShell != "off" {
 		args = append(args, shell.LoginArgs...)
 	}
 	args = append(append(args, shell.Args...), settings.Args...)

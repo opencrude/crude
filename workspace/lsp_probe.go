@@ -107,15 +107,21 @@ func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(tt
 		return nil, errors.New("language server access changed; check Code Intelligence settings and try again")
 	}
 	doc := m.documents[path]
+	onDisk := !source.snapshot.Dirty && !source.snapshot.Conflict && source.snapshot.DiskExists
 	if doc == nil {
-		doc = &lspDocument{text: string(source.snapshot.Text), source: source.ref, revision: 1}
+		doc = &lspDocument{text: string(source.snapshot.Text), source: source.ref, revision: 1, diskView: onDisk}
 		m.documents[path] = doc
 		m.removeProjectFactsLocked(func(b ttypes.InsightBoundary) bool { return b.Source.Path == path })
-		m.advanceContextLocked("Analysis source view opened; dependent context needs reanalysis.")
+		// A view of the file as it is on disk shows the server nothing new, so
+		// the other views keep their results and need not be sent again.
+		if !onDisk {
+			m.advanceContextLocked("Analysis source view opened; dependent context needs reanalysis.")
+		}
 	} else if doc.text != string(source.snapshot.Text) || doc.source != source.ref {
 		doc.text = string(source.snapshot.Text)
 		doc.source = source.ref
 		doc.revision++
+		doc.diskView = false
 		m.advanceContextLocked("Requested analysis source changed.")
 	}
 	view := LSPProbeView{BufferDiffers: source.snapshot.Dirty || source.snapshot.Conflict || !source.snapshot.DiskExists,

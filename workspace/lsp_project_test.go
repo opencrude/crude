@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -208,5 +209,80 @@ func TestRefreshReplacesTheStoppedServersProjectResults(t *testing.T) {
 	}
 	if summary := m.ProjectInsights(); summary.Errors != 1 || summary.FilesAffected != 1 {
 		t.Fatalf("summary after Refresh = %+v; want only the current error", summary)
+	}
+}
+
+func TestRefreshReplacesClosedDocumentAndReleasedProbeResults(t *testing.T) {
+	for _, origin := range []string{"closed editor", "released disk probe"} {
+		t.Run(origin, func(t *testing.T) {
+			m, runtime, root := probeManager(t)
+			path := filepath.Join(root, "closed.go")
+			createFile(t, path, "package main\n")
+			if origin == "closed editor" {
+				editorSource(t, m, path, "package main\n")
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			result, settled, _, err := m.ProbeDiagnostics(ctx, path)
+			if err != nil || !settled || len(result.Diagnostics) != 1 {
+				t.Fatalf("initial diagnostic: %+v, settled=%v, err=%v", result, settled, err)
+			}
+			if origin == "closed editor" {
+				closeEditor(t, m, path)
+			}
+			first := runtime.snapshot()[0]
+			late := first.publication(path, []LSPDiagnostic{{Message: "late old error", Severity: model.DiagError}})
+			m.Stop()
+			if batch, ok := m.FileDiagnostics(path); !ok || batch.State != model.InsightStale {
+				t.Fatalf("Stop lost out-of-date evidence: %+v, present=%v", batch, ok)
+			}
+			m.Refresh(root)
+			if batch, ok := m.FileDiagnostics(path); ok {
+				t.Fatalf("Refresh kept a %s result: %+v", origin, batch)
+			}
+			first.emit(late)
+			if _, ok := m.FileDiagnostics(path); ok {
+				t.Fatal("a retired callback revived a result after Refresh")
+			}
+			if summary := m.ProjectInsights(); summary.Errors != 0 || summary.FilesAffected != 0 {
+				t.Fatalf("Problems still counts the closed view: %+v", summary)
+			}
+		})
+	}
+}
+
+func TestRefreshKeepsLiveUnsavedDocumentUntilReplacementDiagnostics(t *testing.T) {
+	m, runtime, root := probeManager(t)
+	path := filepath.Join(root, "open.go")
+	createFile(t, path, "package main\n")
+	const unsaved = "package main\nvar unsaved = 1\n"
+	source := editorSource(t, m, path, unsaved)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	before, settled, _, err := m.ProbeDiagnostics(ctx, path)
+	if err != nil || !settled || len(before.Diagnostics) != 1 {
+		t.Fatalf("initial diagnostic: %+v, settled=%v, err=%v", before, settled, err)
+	}
+	first := runtime.snapshot()[0]
+	late := first.publication(path, []LSPDiagnostic{{Message: "retired error", Severity: model.DiagError}})
+	m.Refresh(root)
+	if retained, ok := m.FileDiagnostics(path); !ok || retained.ID != before.ID || retained.State != model.InsightStale {
+		t.Fatalf("Refresh discarded the live document's evidence: %+v, present=%v", retained, ok)
+	}
+	after, err := m.sources.Snapshot(source.ID)
+	if err != nil || after.Revision != source.Revision || string(after.Text) != unsaved {
+		t.Fatalf("Refresh changed unsaved work: %+v, err=%v", after, err)
+	}
+	awaitLSP(t, func() bool { return len(runtime.snapshot()) == 2 })
+	second := runtime.snapshot()[1]
+	waitDiagnosticSend(t, m, second, source)
+	second.emit(second.publication(path, nil))
+	first.emit(late)
+	if summary := m.ProjectInsights(); summary.Errors != 0 {
+		t.Fatalf("Problems kept an old error after replacement: %+v", summary)
+	}
+	second.emit(second.publication(path, []LSPDiagnostic{{Message: "current error", Severity: model.DiagError}}))
+	if summary := m.ProjectInsights(); summary.Errors != 1 {
+		t.Fatalf("Refresh suppressed a new error: %+v", summary)
 	}
 }

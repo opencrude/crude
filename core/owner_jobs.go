@@ -135,6 +135,27 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			defer stop()
 			return response(request, prepared.Run())
 		}, true
+	case coreprotocol.CommandViewOpen:
+		var in coreprotocol.CommandViewOpenRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad(err)
+		}
+		owner := workspace.TerminalController{ClientID: request.Owner.ClientID, Epoch: request.Owner.Epoch}
+		open, err := ws.PrepareOpenCommandView(in.AgentID, in.Ref, owner, in.Cols, in.Rows)
+		if err != nil {
+			return bad(err)
+		}
+		return func(ctx context.Context) coreprotocol.Response {
+			value, err := open(ctx)
+			if err != nil {
+				return fault(request, "unavailable", err.Error())
+			}
+			if err := ctx.Err(); err != nil {
+				ws.Terminals.Close(value.ID)
+				return fault(request, "cancelled", err.Error())
+			}
+			return response(request, value)
+		}, true
 	case coreprotocol.HistoryUndoScopes:
 		var in coreprotocol.UndoScopesRequest
 		if err := decodeRequest(request, &in); err != nil {
@@ -223,7 +244,7 @@ func ownerOperation(method string) bool {
 	}
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
-		coreprotocol.HistoryUndoScopes,
+		coreprotocol.HistoryUndoScopes, coreprotocol.CommandViewOpen,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true
 	}

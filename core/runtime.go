@@ -475,6 +475,15 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	if err := decodeRequest(request, &input); err != nil {
 		return fault(request, "invalid_request", err.Error())
 	}
+	c.mu.Lock()
+	localHost := c.localHost
+	c.mu.Unlock()
+	if input.Environment != nil && !localHost {
+		return fault(request, "forbidden", "Could not open the project. Remote shells cannot supply a local terminal environment. Connect without environment variables.")
+	}
+	if err := input.ValidateEnvironment(); err != nil {
+		return fault(request, "invalid_request", err.Error())
+	}
 	root, err := inspectProject(input.Root)
 	if err != nil {
 		return fault(request, "project_folder_required", err.Error())
@@ -512,6 +521,12 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 	default:
 	}
 	c.attached[id] = a
+	// The last successful same-host attach supplies this workspace's base for
+	// new terminals. Absent/remote attaches and detach leave it unchanged. This
+	// input is never journaled or included in the returned snapshot.
+	if input.Environment != nil {
+		a.ws.TermMgr.SetShellEnvironment(input.Environment)
+	}
 	c.mu.Unlock()
 	return response(request, coreprotocol.AttachResult{WorkspaceID: id, Epoch: c.Owner.Epoch, Revision: view.Revision, View: view})
 }
@@ -653,6 +668,7 @@ type actor struct {
 	stopGitFetch     func()
 	documentReleases []document.Owner
 	maintenance      actorMaintenance
+	attention        attentionState
 	topic            workspaceTopicState
 	states           workspaceStates
 }
@@ -805,14 +821,16 @@ func (a *actor) run() {
 	defer close(a.done)
 	defer a.cancel()
 	defer a.maintenance.stop()
+	defer a.attention.stop()
 	defer a.stopTopicPublication()
 	// Capture the next broadcast before publishing the current version. A
 	// mutation during publication closes that captured channel, so no generation
 	// can be swallowed between a snapshot and the next select.
 	_, statusChanged := a.ws.Status.Changed()
 	_, lspChanged := a.ws.LSPMgr.Changed()
-	a.publishStatusIfChanged()
+	// Language-server state first: it can raise status issues.
 	a.publishLSPIfChanged()
+	a.publishStatusIfChanged()
 	a.refreshMaintenance()
 	for {
 		select {
@@ -855,6 +873,8 @@ func (a *actor) run() {
 		case <-lspChanged:
 			_, lspChanged = a.ws.LSPMgr.Changed()
 			a.publishLSPIfChanged()
+		case now := <-a.attention.ready:
+			a.evaluateAttention(now)
 		case now := <-a.maintenance.ready:
 			a.maintenance.ready = nil
 			a.drainDocumentReleases()
@@ -965,11 +985,13 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 	}
 	if command.attach != nil {
 		a.subscribers[command.attach] = struct{}{}
+		a.evaluateAttention(time.Now())
 		command.view <- a.snapshot()
 		return false
 	}
 	if command.detach != nil {
 		delete(a.subscribers, command.detach)
+		a.evaluateAttention(time.Now())
 		if a.ws.Terminals != nil {
 			a.ws.Terminals.Detach(workspace.TerminalController{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
 		}
@@ -1695,8 +1717,9 @@ func (a *actor) finishJob(job actorJobResult) {
 	result := applyActorJob(job)
 	// Effects of an applied job (an accepted prompt starting a turn) reach
 	// shells now, not on the next tick.
-	a.publishStatusIfChanged()
+	// Language-server state first: it can raise status issues.
 	a.publishLSPIfChanged()
+	a.publishStatusIfChanged()
 	result.Revision = a.revision
 	if job.journal {
 		if err := a.receipts.complete(context.Background(), *job.command.request, result); err != nil {

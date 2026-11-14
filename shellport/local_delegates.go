@@ -256,6 +256,10 @@ func (l *local) PrepareAsyncCommandTermination(agentID string, ref fileio.AsyncC
 	return l.ws.PrepareAsyncCommandTermination(agentID, ref)
 }
 
+func (l *local) PrepareOpenCommandView(agentID string, ref fileio.AsyncCmdRef, owner workspace.TerminalController, cols, rows int) (func(context.Context) (workspace.TerminalInfo, error), error) {
+	return l.ws.PrepareOpenCommandView(agentID, ref, owner, cols, rows)
+}
+
 func (l *local) PrepareCompactForAgent(agentID string) (session.PreparedCompaction, types.CompactResultMsg) {
 	return l.ws.PrepareCompactForAgent(agentID)
 }
