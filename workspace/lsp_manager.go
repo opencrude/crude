@@ -294,6 +294,35 @@ func (m *LSPManager) ProjectDiagnosticCounts() (int, int, int) {
 
 // ServerHealthSnapshots exposes every configured/attempted server separately.
 // Counts come from current published facts for each server context, not transport status.
+// retainedResultHealth describes the results that Crude keeps for a server
+// that does not run now, for example after an idle stop or an eviction. The
+// results describe files, not the process: Problems shows them, so the issues
+// that they raise must stay too. Such results are Crude's checks of closed
+// files, so their scope is open files.
+func (m *LSPManager) retainedResultHealth() []ttypes.LSPServerHealth {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.sources == nil || m.sources.Insight == nil {
+		return nil
+	}
+	var out []ttypes.LSPServerHealth
+	for id, count := range m.sources.Insight.diagnostics.ContextSummaries() {
+		if _, running := m.states[id]; running || count.Provider == "" {
+			continue
+		}
+		out = append(out, ttypes.LSPServerHealth{
+			ID: id, Name: filepath.Base(count.Provider), Command: count.Provider, Status: "Stopped",
+			FilesTracked: count.FilesTracked, FilesAffected: count.FilesAffected,
+			Errors: count.Errors, Warnings: count.Warnings, Information: count.Information, Hints: count.Hints,
+			LastDiagnostics: count.LastDiagnostics, Scope: ttypes.CoverageOpenFiles,
+		})
+	}
+	return out
+}
+
 func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 	if m == nil {
 		return nil

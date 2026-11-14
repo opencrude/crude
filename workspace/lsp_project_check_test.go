@@ -692,3 +692,45 @@ func TestDeletedFilesLeaveProblems(t *testing.T) {
 		t.Fatalf("a file elsewhere lost its current result: %+v %v", batch, ok)
 	}
 }
+
+// Found after a real core restart: pyright stopped when it was idle, and its
+// issue resolved within seconds although its errors stayed in Problems, so
+// Aeron never heard about them. Results that Crude keeps for a stopped server
+// keep raising the issue until the files change.
+func TestLSPIssueOutlivesAnIdleServerStop(t *testing.T) {
+	m, _, root := probeManager(t)
+	path := filepath.Join(root, "main.py")
+	createFile(t, path, "x: int = 'text'\n")
+	startProjectCheck(t, m, root, map[string][]string{"python": {path}})
+	awaitProjectFact(t, m, path)
+	awaitProjectCheckEnd(t, m)
+	center := NewStatusCenter(nil, nil)
+	SyncLSPIssues(center, m)
+	open := func() []model.IssueSnapshot {
+		var out []model.IssueSnapshot
+		for _, issue := range center.Issues() {
+			if issue.ResolvedAt.IsZero() && strings.HasPrefix(issue.ID, lspResultsIssuePrefix) {
+				out = append(out, issue)
+			}
+		}
+		return out
+	}
+	before := open()
+	if len(before) != 1 {
+		t.Fatalf("errors in the only checked file raised %+v", center.Issues())
+	}
+	// An idle stop or an eviction retires the process the same way.
+	m.mu.Lock()
+	for _, state := range m.states {
+		m.retireLocked(state)
+	}
+	m.mu.Unlock()
+	awaitLSP(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return len(m.states) == 0 })
+	SyncLSPIssues(center, m)
+	if after := open(); len(after) != 1 || after[0].ID != before[0].ID || !after[0].UpdatedAt.Equal(before[0].UpdatedAt) {
+		t.Fatalf("a stopped server dropped its issue: %+v", center.Issues())
+	}
+	if batch, ok := m.FileDiagnostics(path); !ok || batch.State == model.InsightStale {
+		t.Fatalf("the stop changed the checked result: %+v %v", batch, ok)
+	}
+}

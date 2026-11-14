@@ -96,7 +96,7 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-14 | Language-server controls: the Problems status button restarts only the failed server(s) (one button, "Restart failed servers" for several) instead of opening Settings. Language Tools shows each tool's live state and offers Restart/Stop or Start on the tool page plus Restart all; no Pause. An unexpected exit restarts automatically, at most four times in three minutes, then stays Failed until the user restarts it. | User |
 | 2026-11-14 | Close the LSP reliability and closed-file coverage gap in one focused, language-agnostic change. Adapt established designs instead of copying one editor; give the user one control. Stale results from a stopped server must never stay after a restart. Work alone, with inline Python for edits. | User |
 | 2026-11-14 | Every part of Crude must be able to get help from the workspace Aeron. When Crude finds a problem (a server that gave up, an error message from a server, a server that cannot see the project), Aeron wakes up, investigates with Crude's own abilities first, then the computer, and asks the user once with its findings before it changes anything. It may say that the fix needs approvals. The user must not be spammed; no per-language or per-configuration recipes. Terminals must start in the project's environment (a virtual environment is one example only). The closed-file check must never restart servers in a cycle. | User |
-| 2026-11-14 | Design (from review): problems are StatusCenter issues that their owner marks Investigate, raised on the core, not by a shell. One actor-owned dispatcher sends one runtime notice per cause through the collaboration journal (its idempotency key is the only memory), only while a shell is attached and Aeron is idle; no new event kind, ledger or core-side Aeron start. No catalog diagnostic codes: one structural rule (errors in more than one checked file and in at least one in five). Aeron questions wait until the user pauses. Terminals use the attaching shell's environment, with VS Code's `${env:NAME}` and `${workspaceFolder}` in `terminal.environment`, which Aeron may set at workspace scope after the user agrees. `lsp.ask_aeron` lets the user turn the wake-up off. | Review, accepted by the main agent under the user's autonomy grant |
+| 2026-11-14 | Design (from review): problems are StatusCenter issues that their owner marks Investigate, raised on the core, not by a shell. One actor-owned dispatcher sends one runtime notice per cause through the collaboration journal (its idempotency key is the only memory), only while a shell is attached and Aeron is idle; no new event kind, ledger or core-side Aeron start. No catalog diagnostic codes: one structural rule (errors in at least one in five checked files). Aeron questions wait until the user pauses. Terminals use the attaching shell's environment, with VS Code's `${env:NAME}` and `${workspaceFolder}` in `terminal.environment`, which Aeron may set at workspace scope after the user agrees. `lsp.ask_aeron` lets the user turn the wake-up off. | Review, accepted by the main agent under the user's autonomy grant |
 | 2026-11-14 | Prove the system live and under load in an intensive session on a copy of Crude's source with injected issues, in every language that this computer can run, with sudden outside changes and corrupted files; fix every defect found; commit and push so that no work is lost. | User |
 | 2026-11-14 | The load sensor must not treat Crude's own work as the computer being busy and wait or give up because of it; it must still keep Crude from hanging the computer and must not cancel work wrongly. Design: rebase the load interval after each checked file, wait for a server's own work in progress as itself, and never remember a file without an answer under contention or server work (retry after one minute). | User |
 | 2026-11-14 | Background diagnostics must be aware of the computer and yield like established background indexers, with references from real projects, not memory: KDE Baloo (pause on battery), Windows Search (backoff under system activity, `DisableBackoff` override), Linux PSI with systemd's pressure threshold, LEDBAT's yield-to-foreground principle. The user keeps an Always override. | User |
@@ -148,10 +148,13 @@ implemented, live acceptance open.** Generic, no language branch:
   one server or all.
 - The core raises language-server issues itself (`workspace/lsp_issues.go`): a
   server that used up its restart budget or failed to start, a server error
-  message, a server whose checked files have errors in more than one file and
-  in at least one in five, and a server command from the user's settings that
-  is not installed (a typing error; a catalog server that is not installed is
-  a setup choice, not an issue). The dispatcher (`core/attention.go`) sends the workspace Aeron one
+  message, a server whose checked files have errors in at least one in five
+  (one header of one counts), and a server command from the user's settings
+  that is not installed (a typing error; a catalog server that is not
+  installed is a setup choice, not an issue). The issue text has no counts, so
+  it stays one report while the check runs, and results kept for a stopped
+  server keep raising it: before, the changing counts and idle stops reset or
+  resolved the issue, so it never settled and Aeron never heard of it. The dispatcher (`core/attention.go`) sends the workspace Aeron one
   notice per cause after the issue stayed the same for 30 seconds, while a shell
   is attached and Aeron is idle (`lsp.ask_aeron`, Settings → Code intelligence →
   **When a server has a problem**). Aeron's contract (`prompt/contracts.go`)
@@ -182,8 +185,11 @@ verified 0 errors; it found the missing rust-analyzer component and set the
 installed toolchain copy after the user agreed; it explained that the
 deliberate sample errors need no change. A fix made outside Crude showed in
 Problems in 7–10 s; a truncated file in 18 s. The live run found and fixed the
-single-file false alarm, the silent missing settings command, the directory
-gap cycle and deleted files that stayed in Problems.
+silent missing settings command, the directory gap cycle and deleted files
+that stayed in Problems. A "single-file false alarm" change from that run was
+wrong: it silenced the user's own case (the project's only C header), and the
+real core then raised nothing; it is reverted, and Aeron separates errors in
+the user's code from a misconfiguration.
 
 Open: macOS and Windows terminal environment, and agent commands, language
 servers and MCP still inherit the core's environment.
