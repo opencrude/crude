@@ -266,8 +266,10 @@ func (issue IssueSnapshot) SameOpenReport(previous IssueSnapshot) bool {
 type LSPServerHealth struct {
 	ID string
 	// InstanceID is the exact live producer instance; empty when no instance is running.
-	InstanceID      string
-	Name            string
+	InstanceID string
+	Name       string
+	// Command is the exact launch command of this producer.
+	Command         string
 	RootURI         string
 	Status          string
 	Error           string

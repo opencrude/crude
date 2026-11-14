@@ -58,6 +58,12 @@ type Host struct {
 	controls                map[ComponentID]*controlMount
 	controlScratch          map[ComponentID]*controlMount
 	controlEpoch            uint64
+	// pointerText enables painted-text drag selection; textDrag is its one
+	// gesture and replaying marks the held press being delivered as a click.
+	pointerText bool
+	replaying   bool
+	textDrag    hostTextDrag
+	copyText    func(string) tea.Cmd
 }
 
 // NewHost creates a host with the given theme and optional root.
@@ -348,6 +354,7 @@ func (h *Host) Layout() {
 }
 
 func (h *Host) clearPointerCapture() {
+	h.endTextDrag()
 	h.MarkComponentPaint(h.captured)
 	h.captured = RootID
 	h.captureBtn = 0
@@ -403,6 +410,7 @@ func (h *Host) Paint(buf *surface.CellBuffer) {
 		Frame:   h.frame,
 	}
 	h.paintNode(h.root, buf, 0, 0, pctx)
+	h.paintTextSelection(buf)
 	h.paintBuffer = nil // full Paint may target a diagnostic buffer, not the retained surface
 	h.paintedGeneration = h.paintGeneration
 }
@@ -587,6 +595,7 @@ func (h *Host) PaintRegions(buf *surface.CellBuffer, background cell.Cell) {
 		}
 		paintDamage(h.root)
 	}
+	h.paintTextSelection(buf)
 	h.paintBuffer, h.paintBackground = buf, background
 	h.paintWidth, h.paintHeight = buf.Width(), buf.Height()
 	h.paintedGeneration = h.paintGeneration
@@ -665,6 +674,9 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 
 	switch m := msg.(type) {
 	case tea.MouseMotionMsg:
+		if h.textDrag.active {
+			return h.moveTextDrag(m)
+		}
 		hit := h.HitTest(m.X, m.Y)
 		if hit != h.hovered {
 			h.SetHovered(hit)
@@ -672,6 +684,9 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 		id := h.pointerDispatchTarget(hit, m.Button, false)
 		return h.dispatchTo(id, m.X, m.Y, msg)
 	case tea.MouseClickMsg:
+		if h.beginTextDrag(m) {
+			return EventResult{Handled: true, Invalidate: InvalidateFocus}
+		}
 		h.ResetWheelGesture()
 		hit := h.HitTest(m.X, m.Y)
 		id := h.resolvePointerTarget(hit)
@@ -684,6 +699,9 @@ func (h *Host) Handle(msg tea.Msg) EventResult {
 		}
 		return res
 	case tea.MouseReleaseMsg:
+		if h.textDrag.active && m.Button == tea.MouseLeft {
+			return h.releaseTextDrag(m)
+		}
 		hit := h.HitTest(m.X, m.Y)
 		id := h.pointerDispatchTarget(hit, m.Button, true)
 		res := h.dispatchTo(id, m.X, m.Y, msg)

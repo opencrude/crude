@@ -38,6 +38,7 @@ type VirtualList struct {
 	bottomPadding          int // trailing blank content rows
 	bottomGravity          bool
 	pointerPolicy          PointerPolicy
+	noTextSelection        bool
 	selectionAnchorsScroll bool // when true, selection changes reveal rows (launcher/FIF)
 	revealSelection        bool // selection made before viewport geometry was available
 	opaqueRowFill          bool // ListRowColors pre-fill; chat turns this off
@@ -519,6 +520,12 @@ func (v *VirtualList) Handle(ctx EventContext, evt Event) EventResult {
 	}
 	return EventResult{}
 }
+
+// SetPointerTextSelectable controls whether a drag selects painted row text.
+func (v *VirtualList) SetPointerTextSelectable(selectable bool) { v.noTextSelection = !selectable }
+
+// PointerTextSelectable lets a drag select painted rows.
+func (v *VirtualList) PointerTextSelectable(int, int) bool { return !v.noTextSelection }
 
 func (v *VirtualList) Semantics() Semantics {
 	item, _ := v.Selected()

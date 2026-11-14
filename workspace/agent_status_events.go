@@ -232,6 +232,9 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		case recovery.Cancelled:
 			snapshot.Phase = ttypes.AgentCancelled
 			center.ResolveIssue("agent:" + evt.AgentID)
+		case recovery.Continued:
+			snapshot.Phase = ttypes.AgentPreparing
+			center.ResolveIssue("agent:" + evt.AgentID)
 		case recovery.Failed:
 			snapshot.Phase = ttypes.AgentFailed
 			center.ResolveIssue("agent:" + evt.AgentID)

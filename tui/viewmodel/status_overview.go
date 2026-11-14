@@ -975,6 +975,18 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 	case action == "lsp:start-all":
 		m.startLSPForWorkspace()
 		return nil
+	case action == "lsp:restart-failed":
+		// Restart only what failed; running servers keep their work.
+		restarted := 0
+		for _, server := range m.ws.LSPMgr().ServerHealthSnapshots() {
+			if server.Error != "" && m.ws.LSPMgr().RestartServer(server.ID) {
+				restarted++
+			}
+		}
+		if restarted == 0 {
+			m.Feedback.NotifyInfo("No language server needs a restart.")
+		}
+		return nil
 	case action == "lsp:setup":
 		return m.requestProjectTools(ttypes.ProjectToolSetupRequest{Explicit: true}, nil)
 	case action == "lsp:stop-all":

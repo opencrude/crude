@@ -89,7 +89,9 @@ func TestEditorSnippetNativeChoicePointerAndStaleInvocation(t *testing.T) {
 		t.Fatal("native choice list not mounted")
 	}
 	x, y := first.window.Position()
-	_, cmd := app.Update(tea.MouseClickMsg{X: x + rect.X + 2, Y: y + rect.Y + 1, Button: tea.MouseLeft})
+	// A row chooses on click release; a press alone may still become a text drag.
+	app.Update(tea.MouseClickMsg{X: x + rect.X + 2, Y: y + rect.Y + 1, Button: tea.MouseLeft})
+	_, cmd := app.Update(tea.MouseReleaseMsg{X: x + rect.X + 2, Y: y + rect.Y + 1, Button: tea.MouseLeft})
 	runAppCommand(t, app, cmd)
 	if ed.Value() != "print(value, blue, value)" {
 		t.Fatalf("native choice pointer selected wrong value: %q", ed.Value())

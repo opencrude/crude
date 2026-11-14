@@ -77,6 +77,9 @@ type LSPManager struct {
 	inflight                    int
 	version                     uint64
 	stateChanged                chan struct{}
+	// crashes holds recent unexpected exits per server key; it bounds
+	// automatic restarts. Explicit Restart and Start clear it.
+	crashes map[string][]time.Time
 }
 
 func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) {
@@ -269,7 +272,7 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 	out := make([]ttypes.LSPServerHealth, 0, len(m.states))
 	for id, state := range m.states {
 		health := ttypes.LSPServerHealth{
-			ID: id, Name: filepath.Base(state.cmd), RootURI: state.rootURI,
+			ID: id, Name: filepath.Base(state.cmd), Command: state.cmd, RootURI: state.rootURI,
 			Status: lspStatusLabel(state.status), Error: state.err,
 			Connected: state.status == LSPConnected,
 			Starting:  state.status == LSPStarting,

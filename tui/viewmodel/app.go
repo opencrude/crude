@@ -83,9 +83,11 @@ type App struct {
 
 	// TUI-owned presentation state. Workspace retains only domain data and
 	// services; these controls and render projections are owned by the host.
-	Theme                     *theme.Theme
-	Input                     input.Model
-	Feedback                  *feedbackSink
+	Theme    *theme.Theme
+	Input    input.Model
+	Feedback *feedbackSink
+	// settingsLSPHealth is the language-server snapshot last given to Settings.
+	settingsLSPHealth         []roottypes.LSPServerHealth
 	workspacePanelLastVersion uint64
 	workspacePanelLastSecond  int64
 	workspaceSessions         workspaceSessionCache
@@ -467,6 +469,7 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 	// the floating windows (see View()).
 	shell := newShellRoot(headerScreen, footerScreen, activityBar, sidebarScreen, termDock)
 	rootHost := ui.NewHost(th, shell)
+	rootHost.SetPointerTextSelection(true)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 	gitPanel.SetFocusHandler(rootHost.Focus, rootHost.Focused)
 

@@ -105,6 +105,12 @@ func (g *focusGate) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 
 func (g *focusGate) Semantics() ui.Semantics { return g.child.Semantics() }
 
+// PointerTextSelectable follows the wrapped control.
+func (g *focusGate) PointerTextSelectable(x, y int) bool {
+	source, ok := g.child.(ui.PointerTextSource)
+	return ok && source.PointerTextSelectable(x, y)
+}
+
 func (g *focusGate) CancelPointerCapture() {
 	if child, ok := g.child.(ui.PointerCaptureCanceller); ok {
 		child.CancelPointerCapture()

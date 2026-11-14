@@ -34,6 +34,22 @@ type CodeToolsResultMsg struct {
 	Err, RefreshError error
 }
 
+// LanguageServerHealthMsg delivers the shell's language-server runtime
+// snapshot to an open Settings model.
+type LanguageServerHealthMsg struct {
+	Target  *Model
+	Servers []types.LSPServerHealth
+}
+
+// LanguageServerControlMsg asks the shell to restart, start or stop exact
+// language-server instances (IDs from LSPServerHealth), or every server
+// when All is set. The workspace LSP manager performs it.
+type LanguageServerControlMsg struct {
+	Action string // "restart", "stop"
+	IDs    []string
+	All    bool
+}
+
 // OpenProjectToolsMsg asks the shell to open its native project setup review.
 // It grants no installation authority and retains the Settings window below it.
 type OpenProjectToolsMsg struct {

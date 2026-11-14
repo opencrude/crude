@@ -348,3 +348,50 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 func (s *recoveryJourneySender) SendAgentEventEnvelope(event agent.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }
+
+// Sending a new message is the user's answer to a parked failure: Enter on a
+// parked main agent goes to ordinary admission (where the session settles the
+// incident), not to a refusal or a note for the stopped run. This test app has
+// no session backend, so admission itself reports that the message was not
+// sent; the old paths produced different text. A child's parked task still
+// belongs to its parent and keeps the draft.
+func TestParkedRecoveryEnterSendsNewMessage(t *testing.T) {
+	notices := func(app *App) string {
+		var text strings.Builder
+		for _, record := range app.ws.Status().Notifications(true) {
+			text.WriteString(record.Summary + " " + record.Detail + "\n")
+		}
+		return text.String()
+	}
+	// Without a session backend a needs-attention node reads as a live turn;
+	// the session test covers a parked needs-attention owner end to end.
+	for _, state := range []recovery.State{recovery.Interrupted} {
+		t.Run(string(state), func(t *testing.T) {
+			app := newFullTestApp(t)
+			app.AddOrchestrator("owner")
+			_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
+				ID: "incident", AgentID: "owner", Generation: 1, State: state, UpdatedAt: time.Now(),
+			}})
+			app.Input.SetInput("please go on")
+			_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			got := notices(app)
+			if !strings.Contains(got, "Message was not sent") || strings.Contains(got, "Retry now") || strings.Contains(got, "Note was not") {
+				t.Fatalf("Enter did not go to message admission: %q", got)
+			}
+		})
+	}
+	t.Run("child", func(t *testing.T) {
+		app := newFullTestApp(t)
+		app.AddOrchestrator("root")
+		app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", workspace.NewAgentState("child", nil, nil))
+		app.switchToAgentView("child")
+		_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "child", Data: recovery.Status{
+			ID: "incident", AgentID: "child", Generation: 1, State: recovery.Interrupted, UpdatedAt: time.Now(),
+		}})
+		app.Input.SetInput("child draft")
+		_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if app.Input.Value() != "child draft" || !strings.Contains(notices(app), "Retry now or Stop") {
+			t.Fatalf("child send was not refused with its draft kept: draft=%q notices=%q", app.Input.Value(), notices(app))
+		}
+	})
+}

@@ -34,7 +34,7 @@ func (m *LSPManager) recomputeLanguageStatusLocked() {
 		} else {
 			name = filepath.Base(name)
 		}
-		s = types.LanguageServiceStatus{State: types.LanguageFailed, Label: "Language server failed", Message: fmt.Sprintf("%s failed. The server reported an error. Check its installation and restart it.", name), Action: types.LanguageActionRestartServer, ActionLabel: "Restart server"}
+		s = types.LanguageServiceStatus{State: types.LanguageFailed, Label: "Language server failed", Message: fmt.Sprintf("%s failed. The server reported an error. Check its installation and restart it.", name), Action: types.LanguageActionRestartServer, ActionLabel: "Restart " + name}
 	case m.analysisBlocked != "":
 		s = types.LanguageServiceStatus{State: types.LanguageFailed, Label: "Language server failed", Message: "Language servers could not start. This folder changed or cannot be verified. Trust this folder again in Workspace settings.", Action: types.LanguageActionTrustFolder, ActionLabel: "Trust folder"}
 	case !m.analysisSettings.Trusted():

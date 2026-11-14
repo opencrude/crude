@@ -98,7 +98,7 @@ an independent verifier confirms it, or the user or a stop rule ends it.
   waiting for Retry; see [run recovery](run-recovery.md)); three consecutive automatic turns
   that are empty, or whose tool calls all failed, block it. A turn parked for
   recovery changes nothing: recovery owns it and no goal turn can start until
-  it settles. An ordinary reopened session never restarts work by itself: an active
+  it settles (Retry, Stop, or a new human message, which continues it). An ordinary reopened session never restarts work by itself: an active
   goal waits until the user resumes it or sends a message, and the session
   offers **Resume the goal?** for waiting, paused and blocked goals.
 - A separately authorized [checkpointed core restart](core-restart.md) can consume
@@ -167,7 +167,8 @@ general cron service; a bare `/loop` inspects rather than invents a task.
   intervals coalesce into one iteration; there is no backlog of repeated calls.
   When several schedules are due, the oldest deadline is admitted first.
   A stopped or failed iteration pauses the schedule. A parked recovery retains
-  ownership until explicitly continued or stopped.
+  ownership until it is continued, stopped or answered by a new human message;
+  a parked loop iteration then pauses the schedule like a stopped one.
 - Active loops keep the core from being considered idle even with no shells
   attached. They run only while the owning session and core are running; they
   are not machine-wide jobs. Schedules expire after seven days and require a new

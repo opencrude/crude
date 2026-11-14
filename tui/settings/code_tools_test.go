@@ -859,3 +859,63 @@ func TestLanguageToolsScopeIsOneToolbarStop(t *testing.T) {
 		t.Fatal("Enter in the table did not open the selected tool")
 	}
 }
+
+// The language-tools table shows each tool's live server state, and the
+// tool page offers the action that fits it: Restart and Stop for a running
+// or failed server, Start for a stopped one. The request names the exact
+// instances; the shell's LSP owner performs it.
+func TestLanguageToolsShowServerStateAndControlExactInstances(t *testing.T) {
+	cfg := types.DefaultLSPSettings()
+	cfg.Languages["fixture"] = types.LSPLanguageSettings{Enabled: true, Command: "fixture-server", Extensions: []string{".fx"}, LanguageID: "fixture"}
+	m := New(theme.DefaultDark(), types.AppSettings{LSP: cfg}, nil)
+	m.SelectCategory(catLanguageServers)
+	s := NewSurface(theme.DefaultDark(), m)
+	m.Update(s.SetCodeTools(&codeToolsStub{})())
+	push := func(servers ...types.LSPServerHealth) {
+		m.Update(LanguageServerHealthMsg{Target: m, Servers: servers})
+		s.SetModel(m)
+	}
+	cell := func() string {
+		for _, row := range s.lsp.table.Rows() {
+			if row.Cells[0].Text == "fixture-server" || strings.Contains(row.ID, "fixture") {
+				return row.Cells[len(row.Cells)-1].Text
+			}
+		}
+		return "missing row"
+	}
+	selectFixture := func() {
+		for index, row := range s.lsp.table.Rows() {
+			if strings.Contains(row.ID, "fixture") {
+				s.lsp.table.SelectIndex(index)
+			}
+		}
+	}
+	buttons := func() string {
+		return strings.Join(s.lsp.bar.ButtonLabelsForTest(), ",")
+	}
+	failed := types.LSPServerHealth{ID: "fx-1", Name: "fixture-server", Command: "fixture-server", Error: "fixture-server stopped unexpectedly."}
+	push(failed)
+	if got := cell(); got != "Failed" {
+		t.Fatalf("failed server state = %q", got)
+	}
+	selectFixture()
+	s.lsp.openTool()
+	if got := buttons(); !strings.Contains(got, "Restart,Stop") {
+		t.Fatalf("failed tool buttons = %q", got)
+	}
+	result := s.lsp.HandleAction(ui.EventContext{}, ui.Action{ID: "lsp.server.restart"})
+	if result.Cmd == nil {
+		t.Fatal("Restart produced no request")
+	}
+	if msg, ok := result.Cmd().(LanguageServerControlMsg); !ok || msg.Action != "restart" || len(msg.IDs) != 1 || msg.IDs[0] != "fx-1" || msg.All {
+		t.Fatalf("restart request = %#v", result.Cmd())
+	}
+	push(types.LSPServerHealth{ID: "fx-1", Name: "fixture-server", Command: "fixture-server", Status: "Stopped"})
+	if got := buttons(); !strings.HasPrefix(got, "Start") || strings.Contains(got, "Stop") {
+		t.Fatalf("stopped tool buttons = %q", got)
+	}
+	push(types.LSPServerHealth{ID: "fx-1", Name: "fixture-server", Command: "/opt/bin/fixture-server", Connected: true})
+	if msg, ok := s.lsp.HandleAction(ui.EventContext{}, ui.Action{ID: "lsp.server.stop"}).Cmd().(LanguageServerControlMsg); !ok || msg.Action != "stop" || msg.IDs[0] != "fx-1" {
+		t.Fatalf("stop request = %#v", msg)
+	}
+}

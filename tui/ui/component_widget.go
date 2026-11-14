@@ -238,6 +238,9 @@ func NewWindowFrameWidget(
 	frame.SetClosable(closable)
 	frame.SetContent(body)
 	component := NewComponentWidget(th, frame, preferW, preferH)
+	// Native window content routes release actions, so painted text in its
+	// reading controls is selectable by drag.
+	component.host.SetPointerTextSelection(true)
 	component.host.Resize(preferW, preferH)
 	component.host.Layout()
 	return &WindowFrameWidget{

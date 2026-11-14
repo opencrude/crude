@@ -6,6 +6,7 @@ import (
 
 	"crude/shellport"
 	"crude/tui/screens/problems"
+	"crude/tui/ui"
 	"crude/types"
 )
 
@@ -89,5 +90,47 @@ func TestProblemsModelCarriesEveryDiagnostic(t *testing.T) {
 	second, ok := problemByRef(model, facts.ID, 1)
 	if !ok || second.Line != 5 || second.Col != 10 || second.Source != "compiler" || second.Severity != problems.Error || second.Path != path {
 		t.Fatalf("second problem = %+v", second)
+	}
+}
+
+type restartRecorder struct {
+	*coverageFixture
+	restarted []string
+}
+
+func (r *restartRecorder) RestartServer(id string) bool {
+	r.restarted = append(r.restarted, id)
+	return true
+}
+
+// The Problems button for a failed server restarts that server, never opens
+// Settings and never restarts the servers that still work. Several failures
+// share one button.
+func TestProblemsRestartButtonRestartsOnlyFailedServers(t *testing.T) {
+	app, ed, _, facts := qualifiedDiagnosticApp(t)
+	fixture := &restartRecorder{coverageFixture: &coverageFixture{LSPService: app.ws.LSPMgr()}}
+	app.ws = &diagnosticFixtureWorkspace{Workspace: app.ws, service: fixture, root: app.ws.RootPath()}
+	app.lspFacts = map[string]types.InsightDiagnostics{ed.FilePath(): facts}
+	failed := types.LanguageServiceStatus{State: types.LanguageFailed, Label: "Language server failed",
+		Message: "gopls failed. The server reported an error. Check its installation and restart it.",
+		Action:  types.LanguageActionRestartServer, ActionLabel: "Restart gopls"}
+	fixture.insights = types.ProjectInsights{Language: failed, DiagnosticsObserved: 1}
+	fixture.servers = []types.LSPServerHealth{{ID: "go", Name: "gopls", Error: "exit 2"}, {ID: "py", Name: "pyright", Connected: true}}
+	status := app.problemsModel().Status
+	if status.Action != "lsp:restart-failed" || status.ActionLabel != "Restart gopls" {
+		t.Fatalf("one failure: %+v", status)
+	}
+	app.Update(problems.ActionMsg{Action: status.Action})
+	if len(fixture.restarted) != 1 || fixture.restarted[0] != "go" || app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
+		t.Fatalf("restart = %v, settings open = %v", fixture.restarted, app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings))
+	}
+	fixture.restarted = nil
+	fixture.servers = append(fixture.servers, types.LSPServerHealth{ID: "ts", Name: "tsserver", Error: "exit 1"})
+	if status := app.problemsModel().Status; status.ActionLabel != "Restart failed servers" {
+		t.Fatalf("two failures: %+v", status)
+	}
+	app.Update(problems.ActionMsg{Action: "lsp:restart-failed"})
+	if strings.Join(fixture.restarted, ",") != "go,ts" {
+		t.Fatalf("restart = %v", fixture.restarted)
 	}
 }

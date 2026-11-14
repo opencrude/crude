@@ -711,8 +711,12 @@ Tea's update goroutine (the tab-close hang).
 - `lspPipeMonitor.Done()` closes when the connection dies for any reason (read
   EOF, write error, queue cap, graceful close). `workspace.LSPManager` observes
   `LSPClient.Done()`, marks that producer's retained diagnostics stale, marks it `LSPFailed` and
-  stops the process. A lost server is not silently restarted on every keypress or
-  open; the user restarts it explicitly. Test fakes return a nil `Done()` channel.
+  stops the process. An unexpected exit then restarts that server with its open
+  documents, at most four times in three minutes
+  (`allowAutomaticRestartLocked`, `lspAutomaticRestarts`); a fifth exit stays
+  Failed with "stopped unexpectedly 5 times in 3 minutes" until the user
+  restarts it, which clears the count. Stop, pause and shutdown never restart.
+  Test fakes return a nil `Done()` channel.
 - `LSPClient.Stop() error` and the nested `Client.Kill() error` carry the exact
   joined retirement outcome. Concurrent stops join the same attempt. Failed
   startup with `ErrProcessCleanupUnverified` retains its reservation even when

@@ -168,6 +168,9 @@ func (a *answerList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCont
 
 func (a *answerList) CancelPointerCapture() { a.bar.CancelPointerCapture() }
 
+// PointerTextSelectable selects question and choice text, never the scrollbar.
+func (a *answerList) PointerTextSelectable(x, _ int) bool { return x < a.bar.Bounds().X }
+
 func (a *answerList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if a.bar.IsDragging() || (evt.IsMouse() && a.bar.Bounds().Contains(ctx.LocalX, ctx.LocalY)) {
 		return a.bar.Handle(ui.ChildEventContext(ctx, a.bar.Bounds()), evt)
