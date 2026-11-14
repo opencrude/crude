@@ -45,7 +45,7 @@ func TestNarrowContentLayoutNeverFabricatesInnerColumns(t *testing.T) {
 		for id, slot := range app.shell.slots {
 			r := slot.rect
 			if r.X < 0 || r.W < 0 || r.X+r.W > terminalW {
-				t.Fatalf("content=%d slot %q escapes terminal width %d: %+v", wantContent, id, terminalW, r)
+				t.Fatalf("content=%d slot %d escapes terminal width %d: %+v", wantContent, id, terminalW, r)
 			}
 		}
 

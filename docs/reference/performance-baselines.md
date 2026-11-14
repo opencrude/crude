@@ -114,11 +114,38 @@ now join the real source job at their off-timer preparation boundaries and durin
 cleanup. The edits, paints, document sizes, assertions and existing ceilings remain
 unchanged. Syntax preparation keeps its separate benchmarks. This correction
 isolates the stated stage; it is not a claim that background analysis is free.
-Only an already admitted source job is joined. Starting a new complete parse after
+The native Windows sweep also exposed semantic benchmark fixtures that were only
+closed after all calibration runs. Each calibration now closes and joins its own
+editor before the next run. The shared inlay fixture uses the same joined cleanup.
+After a key in paint-only preparation, the fixture now drains the real
+`SyntaxCommand` path and waits for that source. `HandleEvent` alone did not admit
+the replacement job: joining a nonexistent job let Render start source work
+inside the paint allocation sample. The real shell drains this command after
+input. Syntax preparation remains separately measured; these paint-only samples
+do not establish key-to-presented-frame latency.
+
+For off-timer source restoration, only an already admitted job is joined.
+Starting a new complete parse after
 every off-timer Undo changed the preparation workload and made the benchmark take
 minutes, so it is not used. Stable paint installs its immutable provider snapshot
 once: reinstalling the same full token set before each frame measured neither a
 stable state nor a meaningful wall-clock workload.
+
+After that boundary correction, three native Windows 100-iteration samples
+consistently reported 221 objects for semantic-off paint (limit 209) and 213 for
+single-caret paint (limit 212). An exact object profile attributed per-line
+allocations to the lexical lookup cursor escaping through the returned semantic
+lookup closure. The shared projector now keeps its semantic cursor on the stack
+and calls lexical fallback directly; it adds no cache or second color path.
+
+Three more 100-iteration samples on Windows amd64 / Go 1.27.4, GOMAXPROCS=2,
+measured semantic-off/on paint at 141 objects and about 251.5 KB, and
+1/32/256-caret paint at 133/166/429 objects and about 255.1/256.6/261.6 KB.
+Every sample passes its existing byte and object ceilings. Other tests ran
+concurrently; these are grid allocation measurements, not presented-frame latency.
+The initial complete allocation sweep failed before these corrections. Only its
+failed paint and recovery workloads were repeated after the corrections; this
+is not a fresh pass of the entire allocation script.
 
 The snippet typing + first-paint benchmark also joins that frame's admitted job
 between measured keys. Joining only the initial job left a later cancelled parse
@@ -1327,6 +1354,19 @@ list-installation regression fails with 84 allocations before and passes with ze
 after. Source collisions, changed-row paint, snapshot lifetime, selection, scroll
 and disclosure contracts remain guarded. The existing 15,000 B / 315 allocations
 gate is unchanged. This benchmark paints the shell, not the ANSI/terminal path.
+
+## Recovery publication measurement on Windows (2026-11-14)
+
+`BenchmarkPublishContextRecoveryImage` measures repeated recovery publication of
+an unchanged immutable image. The first recovery publication now runs before the
+timer, after the initial input publication. Previously its one-time payload-cache
+fill was divided by the machine-dependent calibration count: ten-iteration Windows
+samples reported 1.69–2.11 MB/op even though later publications reused the payload.
+That made the steady-state allocation gate depend on disk speed and iteration
+count. The fixture still commits the full recovery once, then measures the same
+real subsequent publications; no publication, source bytes, durability check or
+allocation ceiling is removed. This benchmark does not attest cold first-recovery
+latency or allocation cost.
 
 ## Context Publication (2026-10-07)
 

@@ -105,8 +105,9 @@ func watchManagerFixture(t *testing.T, root, path string) (*workspace.Workspace,
 		t.Fatal(err)
 	}
 	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
-	m.RefreshAssembly()
-	watchAwait(t, "assembly", func() bool { return m.Assembly().State == types.AssemblyReady })
+	// These tests supply the producer directly. Starting assembly here races
+	// that producer with watch-recovery discovery, which correctly replaces it.
+	// The installed-server recovery test covers discovery plus native watching.
 	return w, r
 }
 

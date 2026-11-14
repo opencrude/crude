@@ -240,9 +240,17 @@ func TestChatFindCtrlFIsOnlyForChatFocus(t *testing.T) {
 func TestChatFindKeepsTheShellAwakeOnlyWhileCounting(t *testing.T) {
 	app, screen := findChatApp(t)
 	pressKey(app, 'f', "", tea.ModCtrl)
-	typeText(app, "needle")
-	if !screen.FindPending() && !screen.FindWaiting() {
-		t.Fatal("fixture did not retain the incomplete search")
+	settleChatFind(t, app)
+	if app.wantsFastTick() {
+		t.Fatal("fixture has unrelated work keeping the shell awake")
+	}
+	// Observe the real key path before presenting its first frame. A complete
+	// frame after each character can correctly finish this small search.
+	for _, r := range "needle" {
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if !screen.FindPending() {
+		t.Fatal("query did not schedule counting before its first frame")
 	}
 	if !app.wantsFastTick() {
 		t.Fatal("the shell stopped presenting while search was incomplete")
@@ -250,6 +258,9 @@ func TestChatFindKeepsTheShellAwakeOnlyWhileCounting(t *testing.T) {
 	settleChatFind(t, app)
 	if app.chatFindPending() || screen.FindPending() || screen.FindWaiting() {
 		t.Fatal("completed search kept pending frame work")
+	}
+	if count, _ := screen.FindCounts(); count != 2 || app.wantsFastTick() {
+		t.Fatalf("completed search must count both matches and return to idle: count=%d awake=%t", count, app.wantsFastTick())
 	}
 }
 
@@ -272,15 +283,21 @@ func TestChatFindFinishesHistoryThatAResizeLeftUndrawn(t *testing.T) {
 	app.width = 100 // the terminal was resized: a width-only reflow
 	app.paintShellFrame()
 
+	// Prove the undrawn-history workload before opening Find. Counting may
+	// legitimately finish during the frames produced by typing the query.
+	undrawn := 0
+	for _, row := range renderer.ExportMessageRowsSnapshot(app.chatReflowInnerW).Rows {
+		if row.Version == 0 {
+			undrawn++
+		}
+	}
+	if undrawn == 0 {
+		t.Fatal("setup: no undrawn history remains after the resize")
+	}
 	pressKey(app, 'f', "", tea.ModCtrl)
 	typeText(app, "viewport")
-	status := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app))
-	if !strings.Contains(status, "loading") && status != "Searching…" {
-		t.Fatalf("setup: every row was drawn, so find has nothing to wait for; status=%q", status)
-	}
-
 	settleChatFind(t, app)
-	status = ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app))
+	status := ui.FindReplaceFrameStatus(chatFindFrameOrFail(t, app))
 	if strings.Contains(status, "loading") || !strings.HasSuffix(status, "of 60") {
 		t.Fatalf("find must finish the whole history and count all 60 replies, status=%q", status)
 	}

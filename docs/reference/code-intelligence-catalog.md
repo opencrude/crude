@@ -98,6 +98,11 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
   detached editing data measured 1.2–1.6 microseconds, 818 B and 12 objects per
   lookup on Linux amd64. The editor caches compiled editing rules by catalog and
   path, so it does not pay this lookup/compile cost on each key.
+- An explicit server path keeps the matching catalog server's defaults. The
+  generic matcher compares executable basenames using the core host's filename
+  rules. On Windows it ignores case and the native `.exe`, `.com`, `.cmd` and
+  `.bat` suffixes, while retaining the exact configured path for launch. A
+  different program name does not inherit another server's settings.
 - `Server.WithHints` fills defaults. Explicit values always win. The authored
   gopls entry enables its experimental `semanticTokens` setting, which defaults
   off upstream, and supplies the same effective value at initialization and in

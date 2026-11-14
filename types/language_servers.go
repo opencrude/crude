@@ -5,6 +5,7 @@ import (
 	"math"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -65,11 +66,26 @@ func defaultServer(language catalog.Language, command string) (catalog.Server, b
 		if !ok {
 			continue
 		}
-		if command == "" || filepath.Base(command) == server.Command {
+		if command == "" || serverCommandBase(command) == serverCommandBase(server.Command) {
 			return server, true
 		}
 	}
 	return catalog.Server{}, false
+}
+
+// Catalog launch names omit native Windows executable and command-wrapper
+// suffixes. Match their basenames using host filename rules, but preserve the
+// configured command itself for launch and keep unrelated program names distinct.
+func serverCommandBase(command string) string {
+	name := filepath.Base(command)
+	if runtime.GOOS == "windows" {
+		name = strings.ToLower(name)
+		switch filepath.Ext(name) {
+		case ".exe", ".com", ".cmd", ".bat":
+			name = strings.TrimSuffix(name, filepath.Ext(name))
+		}
+	}
+	return name
 }
 
 func cloneJSONObject(src map[string]any) map[string]any {

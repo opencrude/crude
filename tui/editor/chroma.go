@@ -484,11 +484,27 @@ func (e *Editor) ensureChromaColors(fromLine, toLine int) {
 // Both canonical byte spans and provisional/lexical spans use one grapheme,
 // tab and theme projection. No second native-cell geometry path may drift.
 func (e *Editor) projectSyntaxLine(raw string, start int, tokenAt func(int) chroma.TokenType) syntaxLine {
-	tokenAt = e.semanticLineToken(start, tokenAt)
+	// Keep the monotonic semantic cursor on the stack. Wrapping tokenAt in a
+	// returned closure made each caller's lexical cursor escape, even with no
+	// semantic tokens. Both sources still use this one cell projection.
+	var tokens []semanticToken
+	if e.semanticCurrent() {
+		tokens = e.semantic.tokens
+	}
+	index := sort.Search(len(tokens), func(i int) bool { return tokens[i].end > start })
 	colours := make([]string, LineVisualWidth(raw, e.TabWidth()))
 	col, offset := 0, start
 	for rest := raw; rest != ""; {
-		colour := e.chromaTokenColor(tokenAt(offset))
+		for index < len(tokens) && tokens[index].end <= offset {
+			index++
+		}
+		var kind chroma.TokenType
+		if index < len(tokens) && tokens[index].start <= offset {
+			kind = tokens[index].kind
+		} else {
+			kind = tokenAt(offset)
+		}
+		colour := e.chromaTokenColor(kind)
 		size, width := firstSourceUnit(e.TabWidth(), rest, col)
 		if size == 0 {
 			break

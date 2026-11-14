@@ -26,3 +26,10 @@ byte with **unmodified** Glamour v2.0.0 on that same graph using a Go source
 overlay: there was no local output delta. The differences are upstream
 formatter reset sequences and the shared width of the definition-list arrow,
 not new wrap rules or relaxed assertions. The upstream issue corpus is included.
+
+Run the fork's ANSI tests with the root module's dependency graph. Running
+`go test ./...` inside this directory selects the older upstream graph, which
+is not the graph used to calibrate those outputs. An isolated copy of the root
+`go.mod`/`go.sum`, supplied through `go test -mod=mod -modfile=...`, lets the tests
+load their golden helper without changing product dependencies or fixtures.
+Native Windows validation uses this product graph; no goldens are regenerated.

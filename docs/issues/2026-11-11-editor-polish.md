@@ -1,9 +1,112 @@
 # Editor completion, paste and language-server capacity
 
-> Status: IN PROGRESS. The editor fixes and LSP continuation have Linux
-> verification. The original Windows memory-safety crash and tester-workload
+> Status: IN PROGRESS. The editor fixes and LSP continuation have Linux and
+> scoped native Windows verification. The original Windows memory-safety crash and tester-workload
 > acceptance remain open. Broader editor parity remains in
 > [Complete editor experience](../plans/editor-parity.md).
+
+## Native Windows verification (2026-11-14)
+
+The local default toolchain is now `go1.27.4+auto`; `go version` reports
+`go1.27.4 windows/amd64` both inside and outside the repository. The root module
+requires 1.27.4, and native CI reads that version from `go.mod`. CI now pins
+golangci-lint 2.15.0, which understands Go 1.27 export data. No hosted workflow
+was dispatched.
+
+The native installed-server semantic-color journey found a product defect:
+an explicit Windows server path ending in `.exe` did not match its catalog
+command, so it lost initialization settings, environment hints and producer
+metadata. One generic basename matcher now applies Windows case and executable
+suffix rules without changing the launch path or adding language-specific code.
+The native regression failed before the correction for four catalog fixtures.
+It now checks inherited defaults, explicit overrides and unrelated program names.
+The same previously failing installed gopls binary then returned and painted
+parameter tokens through typing and Undo at both terminal sizes. An upgraded
+gopls was not needed to repair that failure.
+
+Native `scripts/tuishot.ps1` journeys passed, with joined fixture outcomes and
+clean product exits:
+
+| Journey | Evidence names in the session's temporary directory |
+|---|---|
+| Smart Enter, closing-key dedent, doc comments and Undo/Redo | `smart-windows-final-{160x40,80x24}.evidence` |
+| Wrapping, keyboard and pointer folds, source navigation, Ctrl+D and Undo | `rows-secondary-final-{128x40,80x24}.evidence` |
+| Installed-server semantic colors, provisional typing and Undo | `semantic-windows-paint-final-{128x40,80x24}.evidence` |
+| Long inlay reader, context-menu entry, keyboard and scrollbar reading, Back and Close | `inlay-reader-windows-aligned-{128x40,80x24}.evidence` |
+
+The matching `-shots` directories contain the inspected frames. After the user's
+monitor request, all captures ran on the second display. The user's Windows
+Terminal profile remained unchanged. Its padding makes requested 128×40 and
+80×24 windows present actual 124×39 and 76×23 grids in the inlay evidence.
+Pointer coordinates use the terminal text provider's actual cells, not the
+padded top-level client rectangle.
+
+An independent native key probe received injected Alt+J as `alt+ت` under the
+current input layout. The inlay journey therefore used the existing editor
+context menu. Inspect Inlay Hints is contextual and is not a global palette
+entry; the failed palette attempt is not acceptance evidence. The shortcut's
+Latin key path remains covered by connected App tests, not native acceptance
+under this layout. Escape used the user's existing Caps Lock mapping.
+The long-tooltip fixture supplies deterministic protocol replies; it does not
+certify an installed server's tooltip or resolve support.
+
+The sweep also repaired a test helper that left editor workers alive, a
+host-server-dependent syntax-only fixture, and an assertion that required search
+to remain busy after it had already completed. Exact executable and working
+directory observation now replaces a Linux-only `/proc` observer in native LSP
+tests. A child-process regression checks live, foreign-directory and exited
+processes.
+
+Build, whole-repository lint, module verification, affected race paths, nested
+native parser/LSP ownership suites, both PowerShell installers, design checks
+and the website gate have passed. Normal inventory acceptance is complete across
+160 leaf packages and all 3,405 discovered cases in app, core, session, viewmodel
+and workspace. Successful original groups and the corrected continuation cover
+each discovered name; earlier failed commands remain recorded as failures.
+Earlier full runs failed on the readiness assumptions, an aggregate group
+deadline and the names gate's classification of Windows command-wrapper suffixes.
+The runner now caps exhaustive groups at 200 cases without raising deadlines
+or retrying failed groups; the suffix exceptions identify OS executable formats,
+not language rules.
+
+A later normal run reached viewmodel group 5 of 9 and exposed the same timing
+assumption in the search wake test. That fixture now finishes unrelated drawing,
+dispatches real query keys before their first frame, and checks that pending
+search wakes the shell. It then presents to completion and requires both matches
+and an idle shell. Twenty native normal runs and three race runs pass.
+A temporary source-overlay negative
+control removes only the production search-wake branch and fails at the wake
+assertion, so unrelated animation cannot satisfy the test.
+The completed continuation checked earlier successful group patterns against the
+current inventory and executed the remaining groups; it did not silently retry the old
+failed command or count its failure as a pass.
+
+The initial complete allocation script failed on dense editor paints and recovery
+publication. Paint fixtures now establish the real post-input source handoff;
+an object profile then found lexical cursors escaping through a returned semantic
+lookup closure. Removing that wrapper preserves the one lexical/semantic color
+projector and reduced semantic-off/on paint to 141 objects. Single-caret paint
+fell from 213 to 133 objects. Recovery measurement now warms the first recovery
+publication before timing repeated publication of the unchanged image, instead
+of amortizing a cold cache fill over a machine-dependent iteration count.
+All previously failed workloads pass the unchanged ceilings in three
+100-iteration samples. The complete allocation script was not repeated after
+these corrections; it is not reported as a fresh full pass. See
+[measurement boundaries and numbers](../reference/performance-baselines.md#dense-editing-stage-isolation-2026-11-13).
+
+The whole-repository race run was cancelled and is not reported as a pass.
+Pure-Go types cross-test binaries compile for Linux amd64 and macOS arm64.
+The editor's cgo component archives also cross-compile for those targets with
+the already installed Zig 0.16. The earlier cross-test commands were not valid
+acceptance checks: one disabled cgo despite the native grammar requirement, and
+the other used native-library link inputs unsuitable for those targets.
+These were validation-configuration mistakes, not evidence of absent compilers
+on the user's machine. Cross-linked editor test binaries and native Linux/macOS
+runtime behavior were not verified by this Windows sweep.
+Actionlint's local workflow structure/expression check passes; its ShellCheck
+integration was not run in this Windows validation.
+The original Windows GC/crash finding below remains open; these journeys do not
+establish its resolution or complete the broader editor backlog.
 
 ## Smart Enter, contextual status and full link targets (2026-11-13)
 

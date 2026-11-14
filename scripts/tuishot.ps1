@@ -6,6 +6,8 @@
 #
 # Steps mirror scripts/tuishot.sh:
 #   key:<key-spec>             key:ctrl+alt+p  key:Down  key:Escape
+#   await:<literal line>       wait for CRUDE_CAPTURE_EVIDENCE before more input
+#   quit:<key-spec>            final step; require clean product exit
 #   type:<literal text>        type:settings
 #   click:<col>,<row>[,<btn>]  btn 1=left 2=middle 3=right
 #   move:<col>,<row>
@@ -18,7 +20,7 @@
 #
 # Environment:
 #   COLS ROWS PAINT_WAIT STEP_WAIT CRUDE_ARGS CRUDE_CWD CRUDE_BIN
-#   KEEP_OPEN NIRCMD
+#   KEEP_OPEN NIRCMD CRUDE_CAPTURE_EVIDENCE
 
 [CmdletBinding()]
 param(
@@ -30,6 +32,8 @@ param(
 
     [int]$Cols = 160,
     [int]$Rows = 40,
+    [int]$WindowX = 0,
+    [int]$WindowY = 0,
     [double]$PaintWait = 5,
     [double]$StepWait = 0.7,
     [string]$CrudeArgs = "",
@@ -92,10 +96,10 @@ $BuiltBin = Join-Path $Work "crude-shot.exe"
 $LockPath = Join-Path $Work "capture.lock"
 
 New-Item -ItemType Directory -Force -Path $Work, $OutDir | Out-Null
-[IO.File]::WriteAllText($Log, "", [Text.UTF8Encoding]::new($false))
 
 $LockStream = $null
 $CaptureHwnd = [IntPtr]::Zero
+$PreviousDpiContext = [IntPtr]::Zero
 
 if (-not ("CrudeShot.Native" -as [type])) {
     Add-Type -TypeDefinition @'
@@ -179,6 +183,8 @@ namespace CrudeShot {
         private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int maxCount);
         [DllImport("user32.dll")]
         private static extern int GetWindowTextLength(IntPtr hWnd);
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
         [DllImport("user32.dll")]
         private static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
         [DllImport("user32.dll")]
@@ -343,6 +349,62 @@ function Wait-Seconds {
     Start-Sleep -Milliseconds ([Math]::Max(1, [int][Math]::Round($Seconds * 1000)))
 }
 
+function Test-CaptureSteps {
+    param([string[]]$CaptureSteps)
+    if ($env:CRUDE_CAPTURE_EVIDENCE -and (Test-Path -LiteralPath $env:CRUDE_CAPTURE_EVIDENCE) -and
+        (Get-Item -LiteralPath $env:CRUDE_CAPTURE_EVIDENCE).Length -gt 0) {
+        throw "use an empty or new CRUDE_CAPTURE_EVIDENCE file for this capture"
+    }
+    for ($i = 0; $i -lt $CaptureSteps.Count; $i++) {
+        if ($CaptureSteps[$i] -match '^quit:' -and $i -ne $CaptureSteps.Count - 1) {
+            throw "quit must be the final capture step"
+        }
+        if ($CaptureSteps[$i] -match '^await:' -and -not $env:CRUDE_CAPTURE_EVIDENCE) {
+            throw "await requires CRUDE_CAPTURE_EVIDENCE"
+        }
+    }
+}
+
+function Assert-CaptureRunning {
+    if ($CaptureHwnd -eq [IntPtr]::Zero -or -not [CrudeShot.Native]::IsWindow($CaptureHwnd)) {
+        throw "the dedicated CrudeShot window no longer exists"
+    }
+    if (Select-String -LiteralPath $Log -Pattern '^CRUDE-EXITED ' -Quiet) {
+        throw "the captured product exited before the next step"
+    }
+}
+
+function Wait-CaptureBoundary {
+    param([string]$Marker, [switch]$Exit, [int]$TimeoutMilliseconds = 30000)
+    if (-not $Exit -and (-not $env:CRUDE_CAPTURE_EVIDENCE -or [string]::IsNullOrEmpty($Marker))) {
+        throw "await requires CRUDE_CAPTURE_EVIDENCE and a marker"
+    }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        if ($Exit) {
+            $lines = @(Get-Content -LiteralPath $Log)
+            if ($lines -cmatch '^CRUDE-EXITED ') {
+                if ($lines -cnotcontains 'CRUDE-EXITED rc=0') {
+                    throw "the captured product did not exit cleanly"
+                }
+                Write-Host "verified expected clean product exit"
+                return
+            }
+        } else {
+            Assert-CaptureRunning
+            if ((Test-Path -LiteralPath $env:CRUDE_CAPTURE_EVIDENCE) -and
+                @(Get-Content -LiteralPath $env:CRUDE_CAPTURE_EVIDENCE) -ccontains $Marker) {
+                Write-Host "verified evidence: $Marker"
+                return
+            }
+        }
+        if ($clock.ElapsedMilliseconds -ge $TimeoutMilliseconds) { break }
+        Start-Sleep -Milliseconds 50
+    } while ($true)
+    if ($Exit) { throw "expected clean product exit was not observed" }
+    throw "capture did not publish: $Marker"
+}
+
 function Focus-CaptureWindow {
     if ($CaptureHwnd -eq [IntPtr]::Zero -or -not [CrudeShot.Native]::IsWindow($CaptureHwnd)) {
         throw "the dedicated CrudeShot window no longer exists"
@@ -398,20 +460,45 @@ function Save-Shot {
     Write-Host "saved $path"
 }
 
+# Windows Terminal's client includes profile padding and a scrollbar. Measure
+# an actual visible terminal cell instead of stretching a grid across that box.
+function Get-CaptureGrid {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    Assert-CaptureRunning
+    $window = [Windows.Automation.AutomationElement]::FromHandle($CaptureHwnd)
+    $condition = [Windows.Automation.PropertyCondition]::new(
+        [Windows.Automation.AutomationElement]::ClassNameProperty, "TermControl")
+    $terminal = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
+    if ($null -eq $terminal) { throw "cannot find the captured terminal's text grid" }
+    $pattern = $terminal.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
+    $visible = @($pattern.GetVisibleRanges())
+    if ($visible.Count -ne 1) { throw "the captured terminal has no unique visible text range" }
+    $cell = $visible[0].Clone()
+    $cell.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::End,
+        $cell, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
+    [void]$cell.MoveEndpointByUnit([Windows.Automation.Text.TextPatternRangeEndpoint]::End,
+        [Windows.Automation.Text.TextUnit]::Character, 1)
+    # The .NET client returns Rect[], not the COM provider's flat double array.
+    $bounds = @($cell.GetBoundingRectangles())
+    if ($bounds.Count -ne 1 -or $bounds[0].Width -le 0 -or $bounds[0].Height -le 0) {
+        throw "cannot measure the captured terminal's first cell"
+    }
+    return [pscustomobject]@{
+        Left = $bounds[0].X; Top = $bounds[0].Y
+        CellWidth = $bounds[0].Width; CellHeight = $bounds[0].Height
+    }
+}
+
 function Get-CellPoint {
     param([int]$Column, [int]$Row)
     if ($Column -lt 0 -or $Column -ge $Cols -or $Row -lt 0 -or $Row -ge $Rows) {
         throw "cell ($Column,$Row) is outside the ${Cols}x${Rows} grid"
     }
-    $rect = [CrudeShot.Native]::ClientScreenRect($CaptureHwnd)
-    $width = $rect.Right - $rect.Left
-    $height = $rect.Bottom - $rect.Top
-    if ($width -le 0 -or $height -le 0) {
-        throw "dedicated window has invalid client geometry"
-    }
+    $grid = Get-CaptureGrid
     return [pscustomobject]@{
-        X = $rect.Left + [int][Math]::Floor(($Column + 0.5) * $width / $Cols)
-        Y = $rect.Top + [int][Math]::Floor(($Row + 0.5) * $height / $Rows)
+        X = [int][Math]::Floor($grid.Left + ($Column + 0.5) * $grid.CellWidth)
+        Y = [int][Math]::Floor($grid.Top + ($Row + 0.5) * $grid.CellHeight)
     }
 }
 
@@ -545,6 +632,16 @@ try {
         throw "another scripts/tuishot.ps1 capture is already running"
     }
 
+    # Keep Win32, UI Automation and SendInput in physical coordinates when the
+    # capture moves between monitors with different scaling. Restore our thread
+    # context after closing the exact owned window.
+    $PreviousDpiContext = [CrudeShot.Native]::SetThreadDpiAwarenessContext([IntPtr](-4))
+    if ($PreviousDpiContext -eq [IntPtr]::Zero) {
+        throw "cannot enable per-monitor capture coordinates"
+    }
+    Test-CaptureSteps $Steps
+    [IO.File]::WriteAllText($Log, "", [Text.UTF8Encoding]::new($false))
+
     $Wt = Find-Executable "" "wt.exe"
     $NirCmd = Find-Executable $env:NIRCMD "nircmd.exe"
 
@@ -574,7 +671,7 @@ set "COLORTERM=truecolor"
 set "TERM=xterm-256color"
 cd /d "$CrudeCwd" || exit /b 1
 "$CrudeBin" $CrudeArgs 2>>"$Log"
-echo CRUDE-EXITED rc=%ERRORLEVEL%>>"$Log"
+>>"$Log" echo CRUDE-EXITED rc=%ERRORLEVEL%
 ping -n 900 127.0.0.1 >nul
 "@
     [IO.File]::WriteAllText($Launch, $launchText, [Text.ASCIIEncoding]::new())
@@ -586,7 +683,7 @@ ping -n 900 127.0.0.1 >nul
 
     $wtArguments = @(
         "-w", $WindowName,
-        "--pos", "0,0",
+        "--pos", "$WindowX,$WindowY",
         "--size", "$Cols,$Rows",
         "--focus",
         "new-tab",
@@ -634,7 +731,16 @@ ping -n 900 127.0.0.1 >nul
     Save-Shot "boot"
 
     foreach ($step in $Steps) {
-        if ($step -match "^key:(.*)$") {
+        Assert-CaptureRunning
+        if ($step -match "^await:(.*)$") {
+            $marker = $Matches[1]
+            Wait-CaptureBoundary -Marker $marker
+            Wait-Seconds $StepWait
+            Save-Shot "await-$marker"
+        } elseif ($step -match "^quit:(.*)$") {
+            Send-KeySpec $Matches[1]
+            Wait-CaptureBoundary -Exit
+        } elseif ($step -match "^key:(.*)$") {
             $spec = $Matches[1]
             Send-KeySpec $spec
             Wait-Seconds $StepWait
@@ -734,5 +840,8 @@ ping -n 900 127.0.0.1 >nul
     Remove-Item -LiteralPath $Launch -Force -ErrorAction SilentlyContinue
     if ($null -ne $LockStream) {
         $LockStream.Dispose()
+    }
+    if ($PreviousDpiContext -ne [IntPtr]::Zero) {
+        [void][CrudeShot.Native]::SetThreadDpiAwarenessContext($PreviousDpiContext)
     }
 }

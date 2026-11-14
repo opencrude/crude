@@ -8,6 +8,7 @@ import subprocess
 
 LARGE_PACKAGES = {
     "crude/app": "./app",
+    "crude/core": "./core",
     "crude/session": "./session",
     "crude/tui/viewmodel": "./tui/viewmodel",
     "crude/workspace": "./workspace",
@@ -19,6 +20,9 @@ def partition(names, count=4):
     """Every top-level case runs once; large upload stress has its own budget."""
     names = sorted(set(names))
     ordinary = [name for name in names if name not in STRESS_TESTS]
+    # Keep suite growth from exhausting a group's shared deadline before a
+    # newly started test can finish. This is not a retry or a larger timeout.
+    count = max(count, (len(ordinary) + 199) // 200)
     groups = [ordinary[index::count] for index in range(count)]
     groups += [[name] for name in names if name in STRESS_TESTS]
     groups = [group for group in groups if group]

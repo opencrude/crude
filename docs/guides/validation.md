@@ -41,10 +41,11 @@ make site-check                       # shadcn lint, Vite build and site accepta
 ```
 
 CI and the Make targets share `python scripts/test_go.py` (normal) and
-`python scripts/test_go.py --race`. They run every package, with app, session, workspace and
+`python scripts/test_go.py --race`. They run every package, with app, core, session, workspace and
 viewmodel exhaustively grouped by discovered top-level test/example/fuzz name,
-each exactly once. The multi-megabyte upload recovery stress case has its own
-group. Each normal group keeps the 180-second safety deadline; race groups keep
+each exactly once, with at most 200 cases per group. The multi-megabyte upload
+recovery stress case has its own group. Each normal group keeps the 180-second
+safety deadline; race groups keep
 300 seconds. No failed group is retried and no individual assertion, workload,
 opt-in skip or performance ceiling changes between the two modes.
 
@@ -56,7 +57,13 @@ or excluding tests. Runner regressions independently verify package coverage,
 exactly-once name matching, both modes and immediate propagation of a failure.
 Report an ungrouped timeout as a failure, never as a pass of that command.
 
-The app and workspace suites also use these exact-coverage groups. On native Windows,
+The core, app and workspace suites also use these exact-coverage groups.
+On Windows with Go 1.27.4, core exhausted the shared 180-second timer while
+a startup fixture had run for only 17 seconds. Core now uses the same exhaustive
+groups without extending any case deadline. A later 413-case viewmodel group
+reached its aggregate deadline while its current test was only one second old.
+The runner now adds groups as the inventory grows, rather than fixing the group
+count at four. On native Windows,
 the ungrouped suite reached its aggregate three-minute deadline in a newly
 started settings test; that test passes alone. The app suite also exhausted
 its aggregate deadline during a three-second-old bounded SSH transport test;
@@ -116,8 +123,9 @@ a race-only one.
   `misspell`, `staticcheck`, `unused` and `errcheck` plus `gofmt`, with zero
   issues allowed. Do not reintroduce dead code or unchecked errors.
   The linter must understand the active Go toolchain's export format. Go 1.27
-  needs a current linter; v2.4.0 cannot decode its export data. The continuation
-  validation uses v2.15.0 built with Go 1.27.4, with the same enabled rules.
+  needs a current linter; v2.4.0 cannot decode its export data. CI builds v2.15.0
+  with Go 1.27.4. Local validation uses v2.15.0 built with a compatible Go 1.27
+  toolchain, with the same enabled rules.
 - **Design audit** (`scripts/tui_design_audit.sh`) enforces that `workspace/`
   never imports `crude/tui`, raw ANSI SGR lives only in
   `tui/cell|compositor|rendering`, and hard-coded hex lives only in `tui/theme/`.

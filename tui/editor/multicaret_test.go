@@ -421,7 +421,9 @@ func BenchmarkMultipleCaretStages(b *testing.B) {
 					case "paint":
 						b.StopTimer()
 						e.HandleEvent(key)
-						joinSyntax(b, e)
+						// Match the shell's post-input source-job drain before
+						// measuring the grid, not worker scheduler timing.
+						settleSyntax(b, e)
 						b.StartTimer()
 						paintEditor(e, 120, 40)
 						b.StopTimer()

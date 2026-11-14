@@ -218,25 +218,6 @@ func semanticKind(name string) (chroma.TokenType, bool) {
 	}
 }
 
-// semanticLineToken returns a monotonic lookup closure for one visible line.
-// Its bytes share the same grapheme/tab projection as lexical source colors.
-func (e *Editor) semanticLineToken(start int, lexical func(int) chroma.TokenType) func(int) chroma.TokenType {
-	if !e.semanticCurrent() || len(e.semantic.tokens) == 0 {
-		return lexical
-	}
-	tokens := e.semantic.tokens
-	index := sort.Search(len(tokens), func(i int) bool { return tokens[i].end > start })
-	return func(offset int) chroma.TokenType {
-		for index < len(tokens) && tokens[index].end <= offset {
-			index++
-		}
-		if index < len(tokens) && tokens[index].start <= offset {
-			return tokens[index].kind
-		}
-		return lexical(offset)
-	}
-}
-
 // ensureSemanticFallback paints semantic spans even when a file has no local
 // grammar. Missing token kinds still use the ordinary plain-text fallback.
 func (e *Editor) ensureSemanticFallback(from, to int) {

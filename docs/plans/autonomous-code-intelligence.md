@@ -92,6 +92,8 @@ detail: read the sections that the current checkpoint names.
 
 | 2026-11-13 | Implement Smart Enter and closing-bracket auto-dedent from the same pinned VS Code language configurations as folding. Keep language rules in catalog data and one generic consumer; preserve editing/history and repair the failing gate without relaxing it. Use Python for edits. | User |
 
+| 2026-11-14 | Verify the recent developments on native Windows and move the project, local Go toolchain and CI to Go 1.27.4. Put further desktop captures on the second monitor. | User |
+
 ### Open decisions
 
 None. The 2026-11-03 setup questions are answered in
@@ -114,13 +116,16 @@ Update a row only with evidence.
 | Govern | One governor, four work classes, platform containment | `insight/governor` admits language-server processes only. Linux containment exists only as an isolated probe. |
 | Facts and coverage | Fact kinds, freshness states, checked scope | `insight/facts` stores diagnostic facts, including unopened files. Focused freshness/gap tests and native installed-server captures verify clearing and explicit incomplete coverage. Declared scope is not a complete-project or per-feature proof; richer fact kinds remain open. |
 | Syntax | Native Tree-sitter for accepted grammars | Initial grammars for Go, JavaScript, Python and TypeScript; see [native syntax](../reference/native-syntax.md). |
-| Editor features | Shared, revision-checked editor and agent answers | Banked slices include navigation, completion and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostics and [semantic colors](#semantic-token-presentation-2026-11-11). The current checkpoint adds guarded completion acceptance, commit characters and document highlights. The inlay reader has inspected Linux captures; installed-server tooltip/resolve, native Windows acceptance, broader editor parity and Windows crash resolution remain open. |
+| Editor features | Shared, revision-checked editor and agent answers | Banked slices include navigation, completion and adjusted insertion, parameter information, inlay hints, code actions, reviewed rename, diagnostics and [semantic colors](#semantic-token-presentation-2026-11-11). The current checkpoint adds guarded completion acceptance, commit characters and document highlights. The [Windows sweep](#native-windows-verification-2026-11-14) verifies selected Smart Enter, fold, semantic-color and long-reader journeys. Installed-server tooltip/resolve, wider device/workflow coverage, broader editor parity and the original Windows GC crash remain open. |
 
 Known exception: the compilation-database and CMake importers in
 `insight/project/` read build-file formats. The generic recipe layer must call
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+The native Windows sweep is [banked below](#native-windows-verification-2026-11-14).
+The original Windows GC finding and remaining editor workflows stay open.
 
 **Smart Enter and auto-dedent (2026-11-13): implemented and verified.** Ordered
 `onEnterRules`, `indentationRules` and bracket fallback come from pinned VS Code
@@ -132,7 +137,8 @@ journeys pass at 160×40 and 80×24; the full ordinary suite, affected race chec
 unchanged allocation gate pass. See the
 [checkpoint evidence and limits](../issues/2026-11-11-editor-polish.md#smart-enter-contextual-status-and-full-link-targets-2026-11-13).
 Tool setup, LSP on-type formatting and the remaining editor backlog were not added
-to this checkpoint. Native Windows/macOS input remains unverified.
+to this checkpoint. The later Windows sweep verifies its native input journeys;
+macOS input remains unverified.
 
 **Complete editor interactions (2026-11-11).** The user restarted the core and
 requests implementation through the remaining experience, not another handoff.
@@ -1617,6 +1623,33 @@ four items have passed and the current references describe the result.
 
 History of finished slices, kept as evidence. [Stage status](#stage-status) is
 the authoritative summary; this text does not describe remaining work.
+
+### Native Windows verification (2026-11-14)
+
+The local default toolchain and root module use Go 1.27.4. Native CI reads the
+module version, and its pinned linter now supports Go 1.27 export data.
+Explicit Windows server paths retain their matching catalog defaults through
+generic case/suffix matching; native regressions failed before the fix and now
+preserve user overrides and unrelated command names. The same installed gopls
+then paints actual parameter tokens through typing and Undo at both sizes.
+
+Native Smart Enter/dedent/comment, wrapping/folding/navigation/Undo, semantic-color
+and long inlay-reader journeys pass at wide and constrained sizes. Captures use
+the user's terminal profile, with later windows on the second monitor. The reader
+uses deterministic tooltip evidence and the existing context menu under the
+current keyboard layout, not an installed-server resolve claim.
+
+The ordinary Windows inventory is verified across successful original groups
+and the corrected continuation: 160 leaf packages and 3,405 cases in the five
+large packages. Search fixtures now assert real pre-frame work and final results;
+a negative control catches removal of the search wake owner. Build, full-repo
+lint, focused race, nested native ownership, installers and website checks pass.
+The shared lexical/semantic projector no longer allocates lookup closures per
+line, and all initially failed allocation workloads pass their unchanged ceilings.
+The whole race run was cancelled, and the whole allocation script was not rerun
+after its failed workloads were corrected. The original Windows GC finding,
+complete installed-tooltip support and broader editor parity remain open.
+See [the evidence and limits](../issues/2026-11-11-editor-polish.md#native-windows-verification-2026-11-14).
 
 ### Completion and inlay request lifetimes (2026-11-11)
 
