@@ -1147,6 +1147,9 @@ func (m *LSPManager) notifyWatchedFilesChanged(ctx context.Context, path string,
 		m.mu.Unlock()
 		return
 	}
+	if changeType == lspFileDeleted {
+		m.forgetCheckedFactsLocked(path)
+	}
 	clients := m.watchedClientsLocked(path, !invalidated)
 	m.mu.Unlock()
 	for _, client := range clients {

@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -660,4 +661,34 @@ func TestProjectCheckWaitsForItsOwnServerNotForTheComputer(t *testing.T) {
 	}
 	busy.Store(false)
 	awaitProjectFact(t, m, second)
+}
+
+// Found live: a Dockerfile with problems was deleted (rm -rf of its folder),
+// and its problems stayed in Problems as out of date for good, because
+// nothing checks a file that no longer exists. A deleted file, or every file
+// below a deleted directory, leaves Problems; a file elsewhere keeps its
+// result.
+func TestDeletedFilesLeaveProblems(t *testing.T) {
+	m, _, root := probeManager(t)
+	gone := filepath.Join(root, "docker", "Dockerfile")
+	kept := filepath.Join(root, "main.py")
+	if err := os.MkdirAll(filepath.Dir(gone), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createFile(t, gone, "x: int = 'text'\n")
+	createFile(t, kept, "x: int = 'text'\n")
+	startProjectCheck(t, m, root, map[string][]string{"python": {gone, kept}})
+	awaitProjectFact(t, m, gone)
+	awaitProjectFact(t, m, kept)
+	awaitProjectCheckEnd(t, m)
+	if err := os.RemoveAll(filepath.Dir(gone)); err != nil {
+		t.Fatal(err)
+	}
+	m.NotifyWatchedFilesChanged(t.Context(), filepath.Dir(gone), lspFileDeleted)
+	if _, ok := m.FileDiagnostics(gone); ok {
+		t.Fatal("a file below a deleted directory kept its problems")
+	}
+	if batch, ok := m.FileDiagnostics(kept); !ok || batch.State == model.InsightStale {
+		t.Fatalf("a file elsewhere lost its current result: %+v %v", batch, ok)
+	}
 }
