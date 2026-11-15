@@ -544,6 +544,11 @@ func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) 
 func (s *Session) rebuildEffectiveConfigLocked() {
 	s.settingsRevision++ // observation generation; field edits do not CAS against it
 	s.permissionReviewRevision.Add(1)
+	var reviewBefore ttypes.AutoPermissionSettings
+	if s.cfg != nil {
+		reviewBefore = s.cfg.Safety.AutoPermission.Normalized()
+	}
+	defer s.publishPermissionPolicyLocked(reviewBefore)
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
 	s.cfg = configWithSessionOverrides(s.workspaceCfg, s.sessionOverrides)

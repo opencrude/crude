@@ -66,13 +66,13 @@ func TestReviewerUnresolvedDenyModeNeverRequiresHumanInput(t *testing.T) {
 	}
 
 	mode = "malformed"
-	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "technical recovery") {
+	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "valid answer") {
 		t.Fatalf("exhausted review did not fail closed without a human: %+v", got)
 	}
 
 	before := calls.Load()
 	command := provider.ToolCall{Function: provider.FunctionCall{Name: "execute_command"}}
-	if got := s.permissionReviewer(a)(t.Context(), command, map[string]any{"command": "curl https://example.com"}, safety.RiskNetwork, func(agent.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "technical recovery") {
+	if got := s.permissionReviewer(a)(t.Context(), command, map[string]any{"command": "curl https://example.com"}, safety.RiskNetwork, func(agent.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "valid answer") {
 		t.Fatalf("failed unknown/network review did not fail closed: %+v", got)
 	}
 	if calls.Load() != before+1 {

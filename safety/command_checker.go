@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"crude/logger"
+	"crude/types/command"
 
 	"github.com/mattn/go-shellwords"
 	"mvdan.cc/sh/v3/expand"
@@ -70,10 +71,82 @@ type CommandSafetyResult struct {
 	Calls                []string
 	MatchedRule          string
 	ConfirmationRequired bool
+	// Unreadable reports a command the shell parser rejected. Crude cannot
+	// see every command it runs, so it always needs approval.
+	Unreadable bool
+	// Units are the simple commands of the line, rated one by one. Its risk
+	// is the risk of its riskiest unit.
+	Units []CommandUnit
+
+	// decomposed reports that the line's risk is exactly the risk of its
+	// units, so a session approval may cover each unit separately. A finding
+	// about the whole line (a pipe into a shell, a configuration write, an
+	// unreadable or obfuscated command, a rule on the whole text) needs the
+	// exact line.
+	decomposed bool
+	// ratedByUnit reports that the policy already rated each unit.
+	ratedByUnit bool
+	// context lists the units that change where or how the other units run:
+	// cd, pushd, popd, declarations and bare assignments.
+	context []string
+}
+
+// CommandUnit is one simple command as the shell runs it.
+type CommandUnit struct {
+	// Text is the shell source of the command: assignments, words, redirects
+	// and here-document bodies, in the parser's canonical form.
+	Text string
+	// Name is the program it runs after launchers such as env are unwrapped.
+	Name        string
+	Risk        CommandRisk
+	Reason      string
+	Suggestion  string
+	MatchedRule string
 }
 
 func (r *CommandSafetyResult) NeedsConfirmation() bool {
 	return r != nil && r.ConfirmationRequired && !r.Risk.IsAlwaysBlocked()
+}
+
+// ApprovalKeys are the keys that a session approval ("Always allow") of this
+// command records and that a later command must all match. scope names the
+// shell and working directory, because the same text means a different
+// command in another shell or directory.
+//
+// A decomposed line yields one key for each unit that needs approval, so a
+// later line built from approved units and safe commands needs no approval:
+// approving `cd repo && pyright --outputjson > out.json` also covers a later
+// `cd repo && pyright --outputjson > out.json | tail`. Each key holds the
+// line's directory and environment changes, so `rm -rf build` approved after
+// `cd a` does not cover it after `cd b`. Any other line yields one key for
+// its exact text.
+func (r *CommandSafetyResult) ApprovalKeys(scope string) []string {
+	if r == nil {
+		return nil
+	}
+	if r.decomposed {
+		prefix := scope + "\x00"
+		context := strings.Join(r.context, "\n")
+		var keys []string
+		for _, unit := range r.Units {
+			if unit.Risk != RiskSafe {
+				keys = append(keys, prefix+context+"\x00"+unit.Text)
+			}
+		}
+		if len(keys) > 0 {
+			return keys
+		}
+	}
+	return r.ExactApprovalKeys(scope)
+}
+
+// ExactApprovalKeys is the single key that approves only this exact text,
+// for input that is not a shell line, such as keystrokes to a running program.
+func (r *CommandSafetyResult) ExactApprovalKeys(scope string) []string {
+	if r == nil {
+		return nil
+	}
+	return []string{scope + "\x00\x00" + r.FullCommand}
 }
 
 var systemPrefixes []string
@@ -206,11 +279,6 @@ var configFilePatterns = []string{
 
 var credPattern = regexp.MustCompile(`(?i)(~\/\.ssh|~\/\.aws|~\/\.gcp|~\/\.azure|~\/\.config/gcloud|~\/\.docker|/etc/shadow|/etc/passwd|\$[A-Z_]+(KEY|SECRET|TOKEN|PASS|CREDENTIAL|API))`)
 
-var (
-	cdPrefixRe  = regexp.MustCompile(`(?i)^cd\s+(?:/d\s+)?(?:\S+|"[^"]*"|'[^']*')\s*&&\s*`)
-	cmdPrefixRe = regexp.MustCompile(`(?i)^cmd\s+/c\s+`)
-)
-
 // shellInterpreters can execute piped or scripted input as code.
 var shellInterpreters = []string{"sh", "bash", "zsh", "dash", "fish", "ksh", "ash"}
 
@@ -254,20 +322,16 @@ var expandCfg = &expand.Config{
 	},
 }
 
-// preprocessCommand prepares a command for the bash parser. On POSIX a
-// backslash is shell syntax (escapes, `\`+newline continuations), so it is
-// kept. Windows commands use it as the path separator; it becomes `/` there,
-// except before a line break, where it still continues the line.
-func preprocessCommand(cmd string) string {
-	normalized := cmd
-	if runtime.GOOS == "windows" {
-		normalized = windowsSeparatorsToSlash(normalized)
+// preprocessCommand prepares a command for the bash parser. The syntax is
+// the language of the shell that runs it, never the host OS: Git Bash on
+// Windows reads a backslash as an escape, exactly as bash does. cmd and
+// PowerShell use it as the path separator; it becomes `/` there, except
+// before a line break, where it still continues the line.
+func preprocessCommand(cmd string, shell command.Syntax) string {
+	if shell == command.SyntaxCmd || shell == command.SyntaxPowerShell {
+		return windowsSeparatorsToSlash(cmd)
 	}
-	for cdPrefixRe.MatchString(normalized) {
-		normalized = cdPrefixRe.ReplaceAllString(normalized, "")
-	}
-	normalized = cmdPrefixRe.ReplaceAllString(normalized, "")
-	return normalized
+	return cmd
 }
 
 func windowsSeparatorsToSlash(cmd string) string {
@@ -348,6 +412,14 @@ func wordString(w *syntax.Word) string {
 	return strings.TrimSpace(buf.String())
 }
 
+// printNode returns the parser's canonical source for a node, so spacing and
+// quoting style do not make two identical commands look different.
+func printNode(node syntax.Node) string {
+	var buf bytes.Buffer
+	_ = syntax.NewPrinter().Print(&buf, node)
+	return strings.TrimSpace(buf.String())
+}
+
 func resolveWord(w *syntax.Word) string {
 	if w == nil {
 		return ""
@@ -384,9 +456,25 @@ func isObfuscatedWord(w *syntax.Word) bool {
 // A shell that merely appears inside an && list, or whose output is piped
 // somewhere else, is not a sink, so ordinary tooling wrappers such as
 // `cd x && bash -c '...' | tail` are never mistaken for remote code execution.
-func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirectTargets []string, stmts []*syntax.CallExpr, obfuscated bool) {
+//
+// texts holds, for each entry of stmts, the canonical source of the statement
+// that runs it, including its redirects and here-document bodies. context
+// holds the statements that change where or how other commands run.
+func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirectTargets []string, stmts []*syntax.CallExpr, texts []string, context []string, obfuscated bool) {
+	owners := make(map[*syntax.CallExpr]*syntax.Stmt)
 	syntax.Walk(prog, func(node syntax.Node) bool {
 		switch n := node.(type) {
+		case *syntax.Stmt:
+			switch cmd := n.Cmd.(type) {
+			case *syntax.CallExpr:
+				if len(cmd.Args) == 0 {
+					context = append(context, printNode(n))
+				} else {
+					owners[cmd] = n
+				}
+			case *syntax.DeclClause:
+				context = append(context, printNode(n))
+			}
 		case *syntax.BinaryCmd:
 			if n.Op == syntax.Pipe || n.Op == syntax.PipeAll {
 				if isShellSink(callExpr(n.Y)) {
@@ -397,8 +485,18 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 			if len(n.Args) == 0 {
 				return true
 			}
-			calls = append(calls, resolveWord(n.Args[0]))
+			name := resolveWord(n.Args[0])
+			calls = append(calls, name)
 			stmts = append(stmts, n)
+			text := printNode(n)
+			if owner := owners[n]; owner != nil {
+				text = printNode(owner)
+			}
+			texts = append(texts, text)
+			switch strings.ToLower(filepath.Base(name)) {
+			case "cd", "pushd", "popd":
+				context = append(context, text)
+			}
 			if isObfuscatedWord(n.Args[0]) {
 				obfuscated = true
 			}
@@ -487,7 +585,7 @@ func pipelineFetchesRemote(calls []string) bool {
 	return false
 }
 
-func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult {
+func checkCommandSafetyBase(cmd string, lg *logger.Logger, policy CommandPolicy) *CommandSafetyResult {
 	res := &CommandSafetyResult{
 		FullCommand: cmd,
 	}
@@ -498,13 +596,14 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		return res
 	}
 
-	preprocessed := preprocessCommand(cmd)
+	preprocessed := preprocessCommand(cmd, policy.Syntax)
 
 	var calls []string
 	var pipedToShell bool
 	var redirectTargets []string
 	var allArgs []string
 	var shellCalls []shellCall
+	var texts, context []string
 	var prog *syntax.File
 
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
@@ -512,7 +611,7 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 	if parseErr == nil {
 		var stmts []*syntax.CallExpr
 		var obfuscated bool
-		calls, pipedToShell, redirectTargets, stmts, obfuscated = extractCmds(parsedProg)
+		calls, pipedToShell, redirectTargets, stmts, texts, context, obfuscated = extractCmds(parsedProg)
 		res.Obfuscated = obfuscated
 		allArgs = collectAllArgs(stmts)
 		for _, stmt := range stmts {
@@ -524,6 +623,10 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		}
 		prog = parsedProg
 	} else {
+		// The shell may still run part of a line its parser rejects (bash runs
+		// the lines before a syntax error), so an unreadable line always needs
+		// approval. The text scan below can only raise its risk.
+		res.Unreadable = true
 		calls, pipedToShell, redirectTargets, allArgs = extractCmdsSimple(preprocessed)
 		// Unparsed text cannot be split into argument lists reliably, so each
 		// command is judged against every argument: never less strict.
@@ -532,7 +635,7 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		}
 		if len(calls) == 0 {
 			res.Risk = RiskUnknown
-			res.Reason = fmt.Sprintf("Could not parse or extract command: %v", parseErr)
+			res.Reason = fmt.Sprintf("Crude could not read this command: %v", parseErr)
 			lg.Debug("COMMAND", "parse", "error", parseErr.Error(), "risk", res.Risk.String())
 			return res
 		}
@@ -668,19 +771,35 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 
 	// Every command in a list or pipeline runs, so the line is as risky as its
 	// riskiest command: `cd x && rm -rf y` is a recursive delete, not a cd.
-	var worst *CommandSafetyResult
-	for _, call := range shellCalls {
+	// Each command is rated under the configured policy on its own.
+	worst := -1
+	for i, call := range shellCalls {
 		verdict := classifyCall(call)
-		if worst == nil || riskRank(verdict.Risk) > riskRank(worst.Risk) {
-			worst = verdict
+		unit := CommandUnit{Name: verdict.BaseCommand, Risk: verdict.Risk, Reason: verdict.Reason, Suggestion: verdict.Suggestion}
+		if i < len(texts) {
+			unit.Text = texts[i]
+		}
+		policy.rateUnit(&unit, false)
+		res.Units = append(res.Units, unit)
+		// Among equally risky commands, report the one a rule rated.
+		if worst < 0 || riskRank(unit.Risk) > riskRank(res.Units[worst].Risk) ||
+			riskRank(unit.Risk) == riskRank(res.Units[worst].Risk) && res.Units[worst].MatchedRule == "" && unit.MatchedRule != "" {
+			worst = i
 		}
 	}
-	res.BaseCommand = worst.BaseCommand
-	res.Risk, res.Reason, res.Suggestion = worst.Risk, worst.Reason, worst.Suggestion
+	top := res.Units[worst]
+	res.BaseCommand = top.Name
+	res.Risk, res.Reason, res.Suggestion, res.MatchedRule = top.Risk, top.Reason, top.Suggestion, top.MatchedRule
+	res.ratedByUnit = true
+	res.context = context
+	// Only bash syntax is read exactly. cmd and PowerShell lines are
+	// approximated with the bash parser, so their approvals keep the exact line.
+	res.decomposed = prog != nil && (policy.Syntax == "" || policy.Syntax == command.SyntaxPOSIX)
 	if res.ReadsCredentials && riskRank(res.Risk) < riskRank(RiskDestructive) {
 		res.Risk = RiskDestructive
 		res.Reason = "Command reads credentials or secrets"
 		res.Suggestion = ""
+		res.decomposed = false
 	}
 	if riskRank(res.Risk) >= riskRank(RiskDestructive) {
 		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
@@ -722,8 +841,7 @@ func classifyCall(call shellCall) *CommandSafetyResult {
 		"getconf", "locale", "localectl", "timedatectl",
 		"dmesg", "journalctl", "help", "info", "man", "whatis",
 		"apropos", "cd", "pushd", "popd", "dirs",
-		"dir", "where", "findstr", "more", "less",
-		"python3":
+		"dir", "where", "findstr", "more", "less":
 		res.Risk = RiskSafe
 		return res
 
@@ -1010,6 +1128,8 @@ var launcherValueFlags = map[string]map[string]bool{
 		"--max-lines": true, "-d": true, "--delimiter": true, "-s": true, "--max-chars": true,
 		"-a": true, "--arg-file": true, "-E": true},
 	"time": {}, "nohup": {}, "setsid": {}, "exec": {}, "command": {},
+	// cmd /c and /k run the rest of the line; cmd options start with "/".
+	"cmd": {}, "cmd.exe": {},
 }
 
 // unwrapCommand returns the command a launcher runs (`env X=1 go test`,
@@ -1036,6 +1156,9 @@ func unwrapCommand(args []string) []string {
 				if valueFlags[a] && i < len(args) {
 					i++
 				}
+				continue
+			case (name == "cmd" || name == "cmd.exe") && len(a) == 2 && a[0] == '/':
+				i++
 				continue
 			case name == "env" && strings.Contains(a, "="):
 				i++

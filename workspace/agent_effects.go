@@ -20,14 +20,16 @@ type AgentEffects struct {
 
 // AgentPrompt retains the exact pending block identity and prompt payload.
 type AgentPrompt struct {
-	BlockID       string
-	Question      string
-	Operation     string
-	Tool          string
-	Target        string
-	Risk          string
-	Reason        string
-	Suggestion    string
+	BlockID    string
+	Question   string
+	Operation  string
+	Tool       string
+	Target     string
+	Risk       string
+	Reason     string
+	Suggestion string
+	// AutoReview tells the user why Auto Review left this request to them.
+	AutoReview    string
 	QuestionsJSON string
 	IsQuestion    bool
 }

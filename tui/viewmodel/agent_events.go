@@ -381,7 +381,7 @@ func (m *App) applyAgentEffects(agentID string, effects workspace.AgentEffects) 
 		request := agentPromptRequest{agentID: agentID, blockID: prompt.BlockID,
 			question: prompt.Question, operation: prompt.Operation, tool: prompt.Tool,
 			target: prompt.Target, risk: prompt.Risk, reason: prompt.Reason,
-			suggestion: prompt.Suggestion, questionsJSON: prompt.QuestionsJSON}
+			suggestion: prompt.Suggestion, autoReview: prompt.AutoReview, questionsJSON: prompt.QuestionsJSON}
 		if prompt.IsQuestion {
 			request.kind = agentPromptQuestions
 			m.enqueueAgentQuestions(request)

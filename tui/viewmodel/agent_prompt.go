@@ -33,6 +33,7 @@ type agentPromptRequest struct {
 	risk          string
 	reason        string
 	suggestion    string
+	autoReview    string
 	questionsJSON string
 }
 
@@ -84,16 +85,33 @@ func (m *App) enqueueAgentPrompt(req agentPromptRequest) {
 			return
 		}
 	} else {
-		state.offerAutoReview = m.autoReviewSetupAvailable(req.risk)
 		state.confirmation = confirmation.New(m.Theme)
-		state.confirmation.Reset(confirmation.Details{
-			Question: req.question, Operation: req.operation, Tool: req.tool, Target: req.target,
-			Risk: req.risk, Reason: req.reason, Suggestion: req.suggestion,
-			OfferAutoReview: state.offerAutoReview,
-		})
+		m.refreshConfirmationChoices(state, true)
 	}
 	m.agentPrompts = append(m.agentPrompts, state)
 	m.openNextAgentPrompt()
+}
+
+// refreshConfirmationChoices rebuilds a confirmation when the choice that
+// opens Auto Review appears or disappears. Auto Review can be turned on while
+// a request waits, so the choice is decided each time a request is shown.
+func (m *App) refreshConfirmationChoices(state *agentPromptState, force bool) bool {
+	if state == nil || state.confirmation == nil {
+		return false
+	}
+	offer := m.autoReviewSetupAvailable(state.request.risk)
+	if !force && offer == state.offerAutoReview {
+		return false
+	}
+	req := state.request
+	state.offerAutoReview = offer
+	state.choice = min(state.choice, len(confirmation.Choices(offer))-1)
+	state.confirmation.Reset(confirmation.Details{
+		Question: req.question, Operation: req.operation, Tool: req.tool, Target: req.target,
+		Risk: req.risk, Reason: req.reason, Suggestion: req.suggestion, AutoReview: req.autoReview,
+		OfferAutoReview: offer,
+	})
+	return true
 }
 
 // autoReviewSetupAvailable reports whether this request may offer the choice
@@ -124,6 +142,15 @@ func (m *App) openNextAgentPrompt() {
 			m.ws.ResolveConfirmation(state.request.agentID, state.request.blockID, "allow")
 			m.removeAgentPrompt(state)
 			continue
+		}
+		if m.refreshConfirmationChoices(state, false) {
+			if state.inline && state.projection != nil {
+				state.projection.deckHost.MarkLayout()
+			} else if m.agentPrompt == state {
+				// The open modal shows the old choices; present it again.
+				m.overlayHost.Close(ui.OverlayAgentPrompt)
+				m.agentPrompt = nil
+			}
 		}
 		if !state.inline && state.projection != nil && m.agentPromptInlineEligible(state.request.agentID) {
 			if m.agentPrompt == state {
@@ -232,6 +259,7 @@ func (m *App) openAgentConfirmationPrompt(state *agentPromptState) {
 		promptPart("Agent", m.promptOwnerLabel(state.request.agentID)),
 		promptPart("Operation", req.operation), promptPart("Tool", req.tool), promptPart("Target", req.target),
 		promptPart("Risk", req.risk), promptPart("Reason", req.reason), promptPart("Suggestion", req.suggestion),
+		promptPart("Auto Review", req.autoReview),
 	), "\n")
 	severity := ui.ConfirmPromptWarning
 	if req.risk == "destructive" || req.risk == "blocked" {

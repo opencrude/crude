@@ -106,7 +106,8 @@ func TestPatchAutoReviewSendsExactDeleteAndMoveForDecision(t *testing.T) {
 	root := t.TempDir()
 	for _, body := range []string{"*** Delete File: gone", "*** Update File: a\n*** Move to: b\n-a\n+b", "*** Add File: ../outside\n+x"} {
 		input := "*** Begin Patch\n" + body + "\n*** End Patch"
-		payload, ok := permissionReviewPayload(root, "apply_patch", map[string]any{"input": input}, safety.RiskProjectWrite, 4096)
+		payload, reason := permissionReviewPayload(root, "apply_patch", map[string]any{"input": input}, safety.RiskProjectWrite, 4096, nil)
+		ok := reason == ""
 		var envelope struct {
 			Arguments map[string]string `json:"arguments"`
 		}
