@@ -959,6 +959,9 @@ func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 		if m.settingsPrompt != nil && m.settingsPrompt.parent == win {
 			m.overlayHost.Close(ui.OverlaySettingsPrompt)
 		}
+		// A tool confirmation that sent the user here to turn on Auto Review
+		// stayed pending behind the settings window; re-present it now.
+		m.openNextAgentPrompt()
 	})
 	frame.Host().MarkLayout()
 	frame.Host().Layout()

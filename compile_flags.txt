@@ -1,0 +1,2 @@
+-Ithird_party/libghostty-vt/include
+-DGHOSTTY_STATIC

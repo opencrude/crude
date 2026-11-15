@@ -86,7 +86,7 @@ func inheritedAnalyzerKey(key string) bool {
 	// language. These are locations only, not arbitrary tool flags or secrets.
 	switch analyzerEnvironmentKey(key) {
 	case "PATH", "PATHEXT", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
-		"APPDATA", "LOCALAPPDATA", "SYSTEMROOT", "WINDIR",
+		"APPDATA", "LOCALAPPDATA", "SYSTEMDRIVE", "SYSTEMROOT", "WINDIR", "PROGRAMDATA",
 		"PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432",
 		"TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
 		"GOROOT", "GOPATH", "GOMODCACHE", "GOCACHE",

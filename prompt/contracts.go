@@ -54,6 +54,16 @@ const WorkspaceAgentContract = `<workspace_agent>
 <rule>Do not treat a problem that your own current work causes as a new task, and do not ask again about a notice the user already answered.</rule>
 </workspace_agent>`
 
+// WorkspaceAgentPeer tells every other root agent that the workspace's
+// permanent Aeron exists and how to reach it, so an agent does not search
+// history or create a second workspace agent to find it. It shares the slot of
+// WorkspaceAgentContract: Aeron gets its own contract, every other root gets
+// this note.
+const WorkspaceAgentPeer = `<workspace_agent_peer>
+<rule>This workspace has one permanent background agent, Aeron. Crude gives it the problems it finds, such as language-server and project-setup problems, and Aeron investigates them.</rule>
+<rule>To give Aeron a task or to see its work, find it with agent_list (query "aeron"), then use agent_send or agent_inspect with its exact ID. Do not search history for it or start another workspace agent.</rule>
+</workspace_agent_peer>`
+
 const EngineeringContract = `<engineering_contract>
 <rule>Before editing, establish the requested user-visible outcome and acceptance criteria from the current request and relevant conversation. Distinguish moving actual content or behavior from adding another entry point to it. Ask only when a consequential ambiguity cannot be resolved from that context.</rule>
 <rule>Investigate the affected flow end to end: entry points, authoritative data and state, component ownership, rendering, interactions, and lifecycle. Inspect related consumers and existing tests before choosing a fix; scale investigation to the task rather than auditing unrelated systems.</rule>

@@ -31,6 +31,59 @@ func TestConfirmationQuickKeysUseTypedActions(t *testing.T) {
 	}
 }
 
+// The Auto Review choice appears only when offered, keeps the three answers in
+// place, and never appears for a hard-blocked request or while it is already on.
+func TestAutoReviewChoiceOfferedOnlyWhenAppropriate(t *testing.T) {
+	base := Choices(false)
+	if len(base) != 3 || base[0].ID != ChoiceAllow || base[2].ID != ChoiceDeny {
+		t.Fatalf("base choices changed: %#v", base)
+	}
+	offered := Choices(true)
+	if len(offered) != 4 || offered[3].ID != ChoiceAutoReview {
+		t.Fatalf("auto review choice not appended last: %#v", offered)
+	}
+	if !OffersAutoReview(false, "project-write") {
+		t.Fatal("auto review should be offered while it is off")
+	}
+	if OffersAutoReview(true, "project-write") {
+		t.Fatal("auto review must not be offered while it is already on")
+	}
+	if OffersAutoReview(false, "blocked") {
+		t.Fatal("auto review must not be offered for a hard-blocked request")
+	}
+}
+
+// Choosing Auto Review does not answer the request: it emits its result without
+// the panel.close action, so the confirmation stays on screen while the user
+// turns the reviewer on. Deny still closes the panel.
+func TestAutoReviewChoiceKeepsRequestOnScreen(t *testing.T) {
+	// The shortcut reaches the choice through the real host.
+	_, host := testHost(t, Details{Question: "Proceed?", Operation: "write", Tool: "apply_patch", OfferAutoReview: true})
+	if result := host.Handle(tea.KeyPressMsg{Code: 'r', Text: "r"}); result.Cmd == nil || result.Cmd().(ResultMsg).Choice != ChoiceAutoReview {
+		t.Fatalf("r did not select auto review: %#v", result)
+	}
+	// The screen's own result decides whether the panel closes.
+	screen := New(theme.DefaultDark())
+	screen.Reset(Details{Question: "Proceed?", OfferAutoReview: true})
+	auto := screen.HandleAction(ui.EventContext{}, ui.Action{ID: choiceActionPrefix + ChoiceAutoReview})
+	if auto.Cmd == nil || auto.Cmd().(ResultMsg).Choice != ChoiceAutoReview {
+		t.Fatalf("auto review action result=%#v", auto)
+	}
+	if auto.Action != nil && auto.Action.ID == "panel.close" {
+		t.Fatal("auto review closed the confirmation panel")
+	}
+	deny := screen.HandleAction(ui.EventContext{}, ui.Action{ID: choiceActionPrefix + ChoiceDeny})
+	if deny.Action == nil || deny.Action.ID != "panel.close" {
+		t.Fatalf("deny should close the panel: %#v", deny)
+	}
+	// Without the offer, the auto review action is not an answer.
+	plain := New(theme.DefaultDark())
+	plain.Reset(Details{Question: "Proceed?"})
+	if got := plain.HandleAction(ui.EventContext{}, ui.Action{ID: choiceActionPrefix + ChoiceAutoReview}); got.Cmd != nil {
+		t.Fatal("auto review answered a confirmation that did not offer it")
+	}
+}
+
 func TestConfirmationEscapeCancelsTurnWithoutDenyingPermission(t *testing.T) {
 	screen, host := testHost(t, Details{Question: "Proceed?", Operation: "write", Tool: "apply_patch"})
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})

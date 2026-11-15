@@ -45,6 +45,16 @@ func run(args []string) (result error) {
 		}
 		time.Sleep(300 * time.Second)
 		return nil
+	case "env":
+		// Prints each named variable as KEY=[value]. It runs before any test
+		// isolation, so a deliberately minimal environment (no TEMP or
+		// USERPROFILE on Windows) cannot stop it before it reports.
+		for _, key := range args[1:] {
+			if _, err := fmt.Fprintf(os.Stdout, "%s=[%s]\n", key, os.Getenv(key)); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "emit":
 		if len(args) != 2 {
 			return fmt.Errorf("emit arguments")

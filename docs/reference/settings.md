@@ -575,8 +575,12 @@ enable switch, additional restrictions, and complete runtime policy live on its
 Model / Instructions / Review tabs in Agents. It cannot inherit the Main
 Agent's connection or change its fixed safety prompt; restrictions can only
 narrow approvals and are limited to 1,024 bytes. Enabling it requires an
-account and model. Security → Auto Review Policy is a synchronized projection
-of the same persisted policy, not a second runtime authority. Resetting the
+account and model. A tool confirmation offers an `Auto Review…` choice while the
+agent is off; it opens this same Agents page instead of answering the request,
+so the user turns on automatic review without hunting through Settings. It is
+not YOLO: the reviewer still asks or denies when unsure. Security → Auto Review
+Policy is a synchronized projection of the same persisted policy, not a second
+runtime authority. Resetting the
 agent identity does not reset that policy. Hard constraints are stated beside
 the controls they constrain and in this reference; they are not exposed as
 editable controls.

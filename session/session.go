@@ -1107,6 +1107,14 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 			release()
 		}
 	}()
+	// The registry lists the root under its session's root role, so the
+	// workspace Aeron is found as category "aeron". Read it before orchMu.
+	s.mu.Lock()
+	rootCategory := s.selectedMainAgent
+	s.mu.Unlock()
+	if rootCategory == "" {
+		rootCategory = CategoryDefault
+	}
 	s.orchMu.Lock()
 	if atomic.LoadInt32(&s.closing) == 1 {
 		s.orchMu.Unlock()
@@ -1137,7 +1145,7 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 		s.runtimeProfile.RemoveOverride(o.ID)
 		return nil, fmt.Errorf("session is closing")
 	}
-	registered, err := s.registerCollaborator(context.Background(), o.ID, s.AgentName(), s.sessionID, "", CategoryDefault, s.db)
+	registered, err := s.registerCollaborator(context.Background(), o.ID, s.AgentName(), s.sessionID, "", rootCategory, s.db)
 	if err != nil {
 		s.orchMu.Unlock()
 		s.runtimeProfile.RemoveOverride(o.ID)

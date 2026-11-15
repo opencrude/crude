@@ -3,6 +3,7 @@ package workspace
 import (
 	"testing"
 
+	"crude/collaboration"
 	"crude/session"
 	"crude/types"
 )
@@ -78,6 +79,26 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 	}
 	if got := w.WorkspaceDB.GetSetting(workspaceAeronSessionKey); got != first.SessionID {
 		t.Fatalf("remembered Aeron = %q, want %q", got, first.SessionID)
+	}
+	// Other agents find Aeron with agent_list query "aeron": the registry
+	// lists the root under its role, not as an ordinary default agent.
+	if w.Collaboration == nil {
+		t.Fatal("test workspace has no collaboration registry")
+	}
+	{
+		agents, err := w.Collaboration.ListAgents(t.Context(), collaboration.AgentQuery{Query: "aeron"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, listed := range agents {
+			if listed.ID == first.OrchID {
+				found = listed.Category == session.CategoryAeron
+			}
+		}
+		if !found {
+			t.Fatalf("workspace Aeron %q is not listed with category %q: %+v", first.OrchID, session.CategoryAeron, agents)
+		}
 	}
 	second := w.EnsureAeronSession()
 	if second.Error != "" || second.SessionID != first.SessionID || second.OrchID != first.OrchID {
