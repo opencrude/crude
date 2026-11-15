@@ -216,7 +216,7 @@ Releases are deliberately two different products:
 
 | Mode | What runs | When to use it |
 |---|---|---|
-| `verified` (default) | Source validation, the complete `verify.yml` chain (website lint/build, Linux lint/design/docs/performance/build/tests/race/fuzz, installer fixtures and native Windows tests), native builds, installer checks, exact inventory, draft creation | Any release you intend to publish as a normal build |
+| `verified` (default) | Source validation, the complete `verify.yml` chain (Linux lint/design/docs/performance/build/tests/race/fuzz, installer fixtures and native Windows tests), native builds, installer checks, exact inventory, draft creation | Any release you intend to publish as a normal build |
 | `instant` | Source validation, native builds, installer checks, exact inventory, draft creation | A time-sensitive build when the full chain is impractical; it deliberately skips `verify.yml` |
 
 `instant` is not a weaker verification label on the same evidence: it has no
@@ -298,9 +298,9 @@ gh workflow run pages.yml -R opencrude/opencrude.github.io
 
 When deliberately dispatched, `.github/workflows/tui.yml` calls
 `.github/workflows/verify.yml`.
-Linux runs the website lint/build, full-repo lint, design/docs/performance
-gates, build, full tests and full race tests. Windows builds/tests with native
-cgo and runs installer fixtures on both Windows PowerShell 5.1 and PowerShell 7.
+Linux runs full-repo lint, design/docs/performance gates, build, full tests and
+full race tests. Windows builds/tests with native cgo and runs installer
+fixtures on both Windows PowerShell 5.1 and PowerShell 7.
 Actions are pinned by SHA; Zig downloads have pinned SHA-256 checksums. No
 pull_request_target or inherited secrets.
 
@@ -342,9 +342,8 @@ The website deploys from the organization site repository
 `opencrude/opencrude.github.io`, which serves the root URL
 <https://opencrude.github.io/>. Its `pages.yml` is `workflow_dispatch` only: a
 push never publishes the website. The job checks out `site/` from this
-repository at the requested ref, installs from `site/package-lock.json`, runs
-the mandatory `@shadcn/lint` gate, builds `site/dist`, validates the built
-artifact, uploads only that directory and uses the official Pages actions
+repository at the requested ref, copies it with the two installers into the
+published directory, uploads that directory and uses the official Pages actions
 pinned by commit. See the [website guide](website.md).
 
 Before any public launch:

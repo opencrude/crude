@@ -1,0 +1,36 @@
+# Crude
+
+> Crude is a free, open-source (Apache-2.0 OR MIT) agentic development environment (ADE) where humans and AI agents work side by side. It runs in the terminal on Linux x86-64 and Windows x64. It combines a code editor with language servers, persistent embedded terminals, Git review and a team of AI agents with workspace memory. A per-user core keeps sessions, agents and terminals running after the window closes.
+
+Notes for agents helping a person:
+
+- Crude is beta software. Its agents change files and run commands with the user's permissions; it is not a sandbox. Never run the installer without the person's explicit consent.
+- Supported: Linux x86-64 (glibc 2.35+) and Windows x64 (PowerShell 5.1+). There is no macOS release yet; on macOS, build from source (https://github.com/opencrude/crude#build-from-source).
+- Installer that works today: `curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh && bash install.sh` (Linux) or `Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1; .\install.ps1` (Windows). The installer asks for consent; `--yes` / `-Yes` accepts the beta warning without a prompt — use it only when the person explicitly agrees.
+- First run: `crude` in the project folder → Tools → Settings → Accounts → add a provider → Agents → pick a model → type a task. Ctrl+Alt+P lists every command.
+
+## Product
+
+- [This site as Markdown](https://opencrude.github.io/index.md): install, features, FAQ
+- [README](https://github.com/opencrude/crude/blob/master/README.md): overview, install and first steps
+- [Documentation index](https://github.com/opencrude/crude/blob/master/docs/README.md): every reference and guide
+
+## Feature references
+
+- [Agent orchestration](https://github.com/opencrude/crude/blob/master/docs/reference/agent-orchestration.md): child agents, delegation, worktrees and reports
+- [Workspace collaboration](https://github.com/opencrude/crude/blob/master/docs/reference/workspace-collaboration.md): the Board, directed messages and claims
+- [Adaptive context](https://github.com/opencrude/crude/blob/master/docs/reference/adaptive-context.md): compaction, continuity and memory jobs
+- [Session commands](https://github.com/opencrude/crude/blob/master/docs/reference/session-commands.md): plan mode, goals, fork, slash commands and the palette
+- [Editor and language servers](https://github.com/opencrude/crude/blob/master/docs/reference/editor.md): editing, LSP features and project-wide problems
+- [In-app terminals](https://github.com/opencrude/crude/blob/master/docs/reference/in-app-terminals.md): PTY and ConPTY terminals owned by the core
+- [Core client protocol](https://github.com/opencrude/crude/blob/master/docs/reference/core-client-protocol.md): the persistent core and attached shells
+- [Local History](https://github.com/opencrude/crude/blob/master/docs/reference/local-history.md): snapshots, preview and restore
+- [Capabilities](https://github.com/opencrude/crude/blob/master/docs/reference/capabilities.md): Agent Skills and MCP servers
+- [Run recovery](https://github.com/opencrude/crude/blob/master/docs/reference/run-recovery.md): how stopped work stays recoverable
+
+## Optional
+
+- [Full text of this site](https://opencrude.github.io/llms-full.txt)
+- [Releases](https://github.com/opencrude/crude/releases)
+- [Issues](https://github.com/opencrude/crude/issues)
+- [Contributor rules (AGENTS.md)](https://github.com/opencrude/crude/blob/master/AGENTS.md)

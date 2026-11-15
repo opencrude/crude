@@ -1,0 +1,8 @@
+# Crude — https://opencrude.github.io/
+# Every crawler is welcome, including AI search and assistant crawlers.
+# Plain-text summaries for language models: /llms.txt and /llms-full.txt
+
+User-agent: *
+Allow: /
+
+Sitemap: https://opencrude.github.io/sitemap.xml

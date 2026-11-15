@@ -134,9 +134,8 @@ documents to read before changing each area.
 - [Releases and installation](guides/releases.md) — native Linux/Windows packages,
   verified/instant release modes, beta-risk consent, setup advice, and
   public-launch requirements.
-- [Website, shadcn/ui and GitHub Pages](guides/website.md) — React/Vite site,
-  mandatory `@shadcn/lint` gate, local preview, command-only Pages deployment
-  and custom-domain rules.
+- [Website and GitHub Pages](guides/website.md) — hand-written static page in
+  `site/`, local preview, command-only Pages deployment and custom-domain rules.
 - [Component authoring](guides/component-authoring.md) — building TUI screens
   with the native `tui/ui` component system.
 - [Core and shell workflows](guides/core-shell-workflows.md) — local/SSH

@@ -3,7 +3,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := libghostty
 
-.PHONY: libghostty ensure-libghostty protocol-generate protocol-check build test test-tui test-race-tui test-syntax test-lsp design-audit bench-gate docs-check site-check site-serve
+.PHONY: libghostty ensure-libghostty protocol-generate protocol-check build test test-tui test-race-tui test-syntax test-lsp design-audit bench-gate docs-check site-serve
 
 # Regenerate explicitly after production-source edits. Checks never mutate files.
 protocol-generate: ensure-libghostty
@@ -59,15 +59,9 @@ bench-gate: protocol-check
 docs-check:
 	bash scripts/docs_check.sh
 
-# shadcn/ui website acceptance and local preview (docs/guides/website.md).
-site-check:
-	npm --prefix site ci
-	npm --prefix site run lint
-	npm --prefix site run build
-	python3 scripts/test_site.py -v
-
+# Local preview of the website sources in site/ (docs/guides/website.md).
 site-serve:
-	npm --prefix site run dev
+	python3 -m http.server 8080 --directory site
 
 # --- Windows targets (use PowerShell + zig cc) ---
 libghostty-windows:

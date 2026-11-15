@@ -147,7 +147,7 @@ reported separately; Windows/macOS UI acceptance is not claimed.
   conversion/reload/undo and lifecycle recovery. The final stale encoding-choice
   fence and the complete settings/codec packages also pass under `-race`.
 - Wire generation freshness, native `go build ./...`, whole-repository lint,
-  `make design-audit docs-check site-check` and `make bench-gate` pass.
+  `make design-audit docs-check` and `make bench-gate` pass.
   No assertion, timeout, performance ceiling or visual golden is relaxed.
 - Final sequential 80×24 and 160×40 captures exit cleanly and leave no capture
   window. The narrow journey includes pointer Replace/Compare, keyboard Cancel,
