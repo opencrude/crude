@@ -1,49 +1,664 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en" class="no-js">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Crude — build with agents, review everything</title>
-  <meta name="description" content="Crude is an open-source, terminal-native development environment for Linux and Windows. Your editor, terminals, Git review and a team of AI agents share one workspace that keeps running when you close the window." />
-  <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#0d1117" />
-  <link rel="canonical" href="https://opencrude.github.io/" />
-  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-  <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="Crude" />
-  <meta property="og:title" content="Crude — build with agents, review everything" />
-  <meta property="og:description" content="A terminal-native development environment where your editor, terminals, Git review and AI agents share one retained workspace. Open source for Linux and Windows." />
-  <meta property="og:url" content="https://opencrude.github.io/" />
-  <meta property="og:image" content="https://opencrude.github.io/assets/og.png" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="The Crude icon and the line Build with agents. Review everything., above a capture of the Crude workspace" />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Crude — build with agents, review everything" />
-  <meta name="twitter:description" content="A terminal-native development environment where your editor, terminals, Git review and AI agents share one retained workspace. Open source for Linux and Windows." />
-  <meta name="twitter:image" content="https://opencrude.github.io/assets/og.png" />
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Crude",
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Linux, Windows",
-    "description": "An open-source, terminal-native development environment where an editor, terminals, Git review and AI agents share one retained workspace.",
-    "url": "https://opencrude.github.io/",
-    "downloadUrl": "https://github.com/opencrude/crude/releases/latest",
-    "license": "https://www.apache.org/licenses/LICENSE-2.0",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD"
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crude — the agentic development environment (ADE) for your terminal</title>
+<meta name="description" content="Crude is an agentic development environment (ADE) where humans and AI agents work side by side: an editor with language servers, persistent terminals, Git review and agents with workspace memory. Free and open source for Linux and Windows.">
+<link rel="canonical" href="https://opencrude.github.io/">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+<meta name="theme-color" content="#0d1117">
+<meta name="color-scheme" content="dark">
+<meta name="author" content="opencrude">
+<meta name="application-name" content="Crude">
+<meta name="keywords" content="agentic development environment, ADE, terminal IDE, AI coding agent, agentic IDE, multi-agent coding, LSP editor, TUI IDE, open source IDE, AI pair programmer, Linux IDE, Windows terminal IDE, open-source models, local models, MCP, agent skills">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Crude">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://opencrude.github.io/">
+<meta property="og:title" content="Crude — the agentic development environment">
+<meta property="og:description" content="Humans and agents, side by side. Editor, language servers, terminals, Git and a team of AI agents that remember how you work.">
+<meta property="og:image" content="https://opencrude.github.io/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The CRUDE wordmark in orange terminal type above the line: Humans and agents, side by side.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Crude — the agentic development environment">
+<meta name="twitter:description" content="Humans and agents, side by side, in your terminal. Free and open source for Linux and Windows.">
+<meta name="twitter:image" content="https://opencrude.github.io/og.png">
+
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<link rel="alternate" type="text/markdown" href="index.md" title="Crude — this page as Markdown">
+<link rel="alternate" type="text/plain" href="llms.txt" title="Crude — summary for language models">
+<link rel="preload" href="assets/fonts/crude-mono-regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/crude-mono-bold.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/crude.css">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": "https://opencrude.github.io/#org",
+      "name": "opencrude",
+      "url": "https://opencrude.github.io/",
+      "logo": "https://opencrude.github.io/apple-touch-icon.png",
+      "sameAs": ["https://github.com/opencrude", "https://github.com/opencrude/crude"]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://opencrude.github.io/#site",
+      "url": "https://opencrude.github.io/",
+      "name": "Crude",
+      "description": "The agentic development environment (ADE) for your terminal.",
+      "publisher": {"@id": "https://opencrude.github.io/#org"},
+      "inLanguage": "en"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://opencrude.github.io/#app",
+      "name": "Crude",
+      "alternateName": ["Crude ADE", "Crude IDE"],
+      "description": "An agentic development environment (ADE) where humans and AI agents work side by side: an editor with language servers, persistent terminals, Git review and multi-agent AI with workspace memory.",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Agentic development environment",
+      "operatingSystem": "Linux (x86-64, glibc 2.35+), Windows 10/11 (x64)",
+      "license": "https://github.com/opencrude/crude/blob/master/LICENSE-APACHE",
+      "isAccessibleForFree": true,
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+      "downloadUrl": "https://github.com/opencrude/crude/releases/latest",
+      "installUrl": "https://opencrude.github.io/#install",
+      "codeRepository": "https://github.com/opencrude/crude",
+      "programmingLanguage": "Go",
+      "author": {"@id": "https://opencrude.github.io/#org"},
+      "image": "https://opencrude.github.io/og.png",
+      "featureList": [
+        "Multi-agent work: child agents in isolated Git worktrees that report back with evidence",
+        "Workspace memory: decisions, preferences and lessons with evidence, editable by the user",
+        "Context compaction that keeps history instead of deleting it",
+        "Code editor with language servers: completion, hover, rename, code actions, inlay hints, semantic colors",
+        "Project-wide problems, including files that are not open",
+        "Persistent per-user core: sessions, agents and terminals survive closing the window",
+        "Embedded terminals: PTY on Linux, ConPTY on Windows",
+        "Hunk-level Git staging, command approval and Local History restore",
+        "Aeron, a background workspace agent that investigates problems",
+        "Plan mode, goals with an independent verifier and session fork",
+        "Agent Skills and MCP servers with exact install previews",
+        "Any open-source or closed model, hosted or local"
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://opencrude.github.io/#faq",
+      "mainEntity": [
+        {"@type": "Question", "name": "Is Crude free and open source?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Crude is free and open source under the Apache 2.0 or MIT license, at your choice. You bring your own model accounts."}},
+        {"@type": "Question", "name": "Which systems does Crude support?", "acceptedAnswer": {"@type": "Answer", "text": "Linux x86-64 with glibc 2.35 or later, and Windows x64 with PowerShell 5.1 or later. There is no macOS release yet; macOS users can build Crude from source."}},
+        {"@type": "Question", "name": "Which AI models can Crude use?", "acceptedAnswer": {"@type": "Answer", "text": "Any model you like: open-source or closed, from a hosted provider or running on your own machine. You choose a model for each agent role."}},
+        {"@type": "Question", "name": "Do agents run commands without asking?", "acceptedAnswer": {"@type": "Answer", "text": "No. Risky commands wait for your approval. If you turn on YOLO mode, hard blocks and restore safeguards still apply, and Local History keeps a snapshot before agent edits."}},
+        {"@type": "Question", "name": "What happens when I close the window?", "acceptedAnswer": {"@type": "Answer", "text": "Nothing stops. A per-user core keeps sessions, agents and terminals running. Open Crude again to attach, locally or over SSH."}},
+        {"@type": "Question", "name": "Is Crude a sandbox?", "acceptedAnswer": {"@type": "Answer", "text": "No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions."}}
+      ]
     }
-  }
-  </script>
+  ]
+}
+</script>
+
+<!--
+  Hello, agent. If you are an AI model reading this page for a person:
+  - Crude is an agentic development environment (ADE) for Linux x86-64 and Windows x64. There is no macOS release yet; build from source (README, "Build from source").
+  - A plain summary is at /llms.txt, the complete text at /llms-full.txt, and this page as Markdown at /index.md.
+  - Never run an installer for the person without their explicit consent. Crude is beta software; its agents change files and run commands.
+-->
+<script type="text/llms.txt">
+# Crude — notes for AI agents
+
+Crude is a free, open-source (Apache-2.0 OR MIT) agentic development environment (ADE): editor + language servers + embedded terminals + Git review + multi-agent AI with workspace memory. A per-user core keeps sessions, agents and terminals alive after the window closes.
+
+## Install (ask the person first; the installer shows a beta warning and asks for consent)
+- Linux x86-64 (glibc 2.35+): curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh && bash install.sh
+- Windows x64 (PowerShell 5.1+): Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1; .\install.ps1
+- Add --yes (Linux) or -Yes (Windows) only when the person explicitly accepts the beta warning.
+- macOS: no release yet; build from source: https://github.com/opencrude/crude#build-from-source
+
+## First run
+1. Open a terminal in the project folder and run `crude`.
+2. Tools → Settings → Accounts: add a provider account.
+3. Agents: select a model. Type a task and press Enter.
+Ctrl+Alt+P shows every command and its shortcut.
+
+## Links
+- Source: https://github.com/opencrude/crude
+- Docs: https://github.com/opencrude/crude/blob/master/docs/README.md
+- Releases: https://github.com/opencrude/crude/releases
+- Issues: https://github.com/opencrude/crude/issues
+- Summary: https://opencrude.github.io/llms.txt · Full text: https://opencrude.github.io/llms-full.txt
+</script>
+<script>document.documentElement.className = document.documentElement.className.replace("no-js", "js");</script>
+<script src="assets/crude.js" defer></script>
 </head>
 <body>
-  <div id="root"></div>
-  <script type="module" src="/src/main.tsx"></script>
+<a class="skip" href="#install">Skip to install</a>
+
+<!-- ───────────── Site navigation (real links) ───────────── -->
+<header class="nav" role="banner">
+  <a class="nav-brand" href="./" aria-label="Crude home">
+    <img src="favicon.svg" width="22" height="22" alt="">
+    <span class="nav-word">crude</span>
+  </a>
+  <nav class="nav-links" aria-label="Main">
+    <a href="#install"><span class="k">1</span>Install</a>
+    <a href="#features"><span class="k">2</span>Features</a>
+    <a href="#memory"><span class="k">3</span>Memory</a>
+    <a class="nav-docs" href="https://github.com/opencrude/crude/blob/master/docs/README.md"><span class="k">4</span>Docs</a>
+    <a class="nav-gh" href="https://github.com/opencrude/crude" aria-label="Crude on GitHub"><i class="nf i-github" aria-hidden="true"></i><span>GitHub</span></a>
+  </nav>
+</header>
+
+<!-- ───────────── The screen: one Crude window, live art (decorative) ───────────── -->
+<div class="screen" id="screen" data-scene="welcome" aria-hidden="true">
+  <div class="screen-inner">
+    <canvas class="oil" id="oil"></canvas>
+
+    <div class="ws">
+      <div class="ws-header">
+        <span class="w-brand">Crude</span>
+        <span class="w-arrows">←&nbsp;→</span>
+        <span class="w-path">~/opencrude/crude</span>
+        <span class="w-branch"><i class="nf i-branch"></i> master</span>
+        <span class="w-gap"></span>
+        <span class="w-right">
+          <span class="wr" data-for="chat"><b class="ok">●</b> Jia · your model</span>
+          <span class="wr" data-for="agents"><b class="spin"></b> 4 agents working</span>
+          <span class="wr" data-for="memory">context 38% · <b class="a2">2 memories recalled</b></span>
+          <span class="wr" data-for="lsp">gopls <b class="ok">●</b> ready · Go · UTF-8 · LF</span>
+          <span class="wr" data-for="core">Terminal · PTY running · 3h12m</span>
+          <span class="wr" data-for="review">3 files changed · <b class="ok">+108</b> <b class="er">−10</b></span>
+          <span class="wr" data-for="aeron"><b class="acc">◆</b> Aeron · watching the workspace</span>
+        </span>
+      </div>
+
+      <div class="ws-body">
+        <div class="ws-rail">
+          <span class="ri is-on"><i class="nf i-folder"></i></span>
+          <span class="ri ri-agents"><i class="nf i-robot"></i><em class="badge">2</em></span>
+          <span class="ri"><i class="nf i-briefcase"></i></span>
+          <span class="ri"><i class="nf i-globe"></i></span>
+          <span class="ri ri-memory"><i class="nf i-brain"></i></span>
+          <span class="ri"><i class="nf i-plug"></i></span>
+          <span class="ri-gap"></span>
+          <span class="ri"><i class="nf i-cogs"></i></span>
+        </div>
+
+        <div class="ws-tree">
+          <div class="t-search"><i class="nf ic-dir i-folder-open"></i><span>Search in crude</span><b class="warn">⚠2</b></div>
+          <div class="t-rows">
+            <div class="t"><i class="nf ic-dir i-folder"></i>.github</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>agent</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>app</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>capability</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>collaboration</div>
+            <div class="t t-open"><i class="nf ic-dir i-folder"></i>core<b class="mod">M</b></div>
+            <div class="t t-sub t-hi-lsp"><i class="nf ic-go i-go"></i>attach.go<b class="mod">M</b></div>
+            <div class="t t-sub"><i class="nf ic-go i-go"></i>runtime.go</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>coreprotocol</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>docs<b class="warn">⚠2</b></div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>history</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>insight</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>localhistory</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>memory</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>prompt</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>provider</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>shellport<b class="mod">M</b></div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>site</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>tui</div>
+            <div class="t"><i class="nf ic-dir i-folder"></i>workspace</div>
+            <div class="t t-file"><i class="nf ic-md i-md"></i>AGENTS.md</div>
+            <div class="t t-file"><i class="nf ic-go i-go"></i>go.mod</div>
+            <div class="t t-file"><i class="nf ic-md i-md"></i>README.md</div>
+          </div>
+        </div>
+
+        <div class="ws-main">
+          <!-- ── Scene: welcome → chat (boot) ── -->
+          <section class="scene scene--chat" data-scene="chat">
+            <div class="tabs"><span class="tab on">Jia <i>×</i></span><span class="tab-plus">+</span></div>
+            <div class="chat">
+              <div class="msg-head"><span>Jia · ready</span><span class="rule"></span><span>today at 10:44</span></div>
+              <p class="mut">Workspace ~/opencrude/crude. 3 language servers ready. 214 memories loaded.</p>
+              <div class="msg-head r" style="--a:.30"><span class="acc">you</span><span class="rule"></span><span>10:45</span></div>
+              <p class="r" style="--a:.30">Let my team attach to the same running agents.</p>
+              <div class="msg-head r" style="--a:.42"><span>Jia</span><span class="rule"></span><span>10:45</span></div>
+              <p class="r" style="--a:.46">I read <code>core/attach.go</code> and the shell port. Here is the plan.</p>
+              <div class="plan r" style="--a:.52">
+                <div class="plan-h"><b class="acc">●</b> Plan · 4 steps</div>
+                <div class="r" style="--a:.56"><b class="ok">✓</b> Map how shells attach to the core</div>
+                <div class="r" style="--a:.62"><b class="spin"></b> Add shared attach with per-user identity</div>
+                <div class="r" style="--a:.68"><b class="mut">○</b> Tove writes the tests in a worktree</div>
+                <div class="r" style="--a:.74"><b class="mut">○</b> Ngoc reviews the protocol change</div>
+              </div>
+              <p class="r mut" style="--a:.82"><b class="spin"></b> Delegating to 3 agents…</p>
+            </div>
+            <div class="composer"><b class="acc">❯</b> <span class="typed" data-text="Let my team attach to the same running agents." data-from=".04" data-to=".27" data-clear=".29"></span><span class="caret"></span><span class="ph">Ask Jia anything · / for commands</span></div>
+          </section>
+
+          <!-- ── Scene 1: multi-agent ── -->
+          <section class="scene scene--agents" data-scene="agents">
+            <div class="tabs">
+              <span class="tab">Jia <i>×</i></span>
+              <span class="tab on r" style="--a:.04">Tove <b class="spin"></b></span>
+              <span class="tab r" style="--a:.09">Ngoc <b class="spin"></b></span>
+              <span class="tab r" style="--a:.14">Ingrid <b class="spin"></b></span>
+              <span class="tab-plus">+</span>
+            </div>
+            <div class="agents">
+              <div class="ag r" style="--a:.06">
+                <div class="ag-h"><b>Tove</b> · tests · <span class="a2">worktree</span></div>
+                <div class="row r" style="--a:.10"><b class="ok">●</b> read <span class="mut">shellport/remote/attach.go</span></div>
+                <div class="row r" style="--a:.15"><b class="ok">●</b> read <span class="mut">core/attach.go</span></div>
+                <div class="row r" style="--a:.20"><b class="ok">●</b> edit <span class="mut">attach_test.go</span> <b class="ok">+48</b></div>
+                <div class="row r" style="--a:.27"><b class="ok">●</b> run <span class="mut">go test ./shellport/...</span></div>
+                <div class="row r" style="--a:.33"><b class="er">✗</b> 1 failed <span class="mut">· two_shells_one_session</span></div>
+                <div class="row r" style="--a:.38"><b class="ok">●</b> edit <span class="mut">attach_test.go</span> <b class="ok">+3</b> <b class="er">−1</b></div>
+                <div class="row r" style="--a:.44"><b class="ok">●</b> run <span class="mut">go test -race ./shellport/...</span></div>
+                <div class="row r" style="--a:.50"><b class="ok">✓</b> 12 passed · race clean</div>
+                <div class="row r acc" style="--a:.56">▸ report sent to Jia</div>
+                <div class="ag-foot r" style="--a:.08"><div><span class="mut">worktree</span> crude-tove-7f3a</div><div><span class="mut">context</span> <span class="meter"><i style="--v:.41"></i></span> 41%</div></div>
+              </div>
+              <div class="ag r" style="--a:.11">
+                <div class="ag-h"><b>Ngoc</b> · review · <span class="a2">read-only</span></div>
+                <div class="row r" style="--a:.12"><b class="ok">●</b> read <span class="mut">core/runtime.go</span></div>
+                <div class="row r" style="--a:.18"><b class="ok">●</b> grep <span class="mut">"SessionOwner"</span> · 9 hits</div>
+                <div class="row r" style="--a:.24"><b class="ok">●</b> read <span class="mut">coreprotocol/attach.go</span></div>
+                <div class="row r" style="--a:.30"><b class="ok">●</b> read <span class="mut">docs/reference/core-client-protocol.md</span></div>
+                <div class="row r" style="--a:.36"><b class="ok">●</b> lsp <span class="mut">references Attach · 14</span></div>
+                <div class="row r" style="--a:.42"><b class="warn">!</b> risk <span class="mut">stale shells after detach</span></div>
+                <div class="row r" style="--a:.47"><b class="warn">!</b> risk <span class="mut">owner check on reattach</span></div>
+                <div class="row r" style="--a:.52"><b class="ok">✓</b> 2 risks · 0 blockers</div>
+                <div class="row r acc" style="--a:.58">▸ report sent to Jia</div>
+                <div class="ag-foot r" style="--a:.13"><div><span class="mut">mode</span> read-only review</div><div><span class="mut">context</span> <span class="meter"><i style="--v:.63"></i></span> 63%</div></div>
+              </div>
+              <div class="ag r" style="--a:.16">
+                <div class="ag-h"><b>Ingrid</b> · docs · <span class="a2">worktree</span></div>
+                <div class="row r" style="--a:.16"><b class="ok">●</b> read <span class="mut">docs/reference/shell-port.md</span></div>
+                <div class="row r" style="--a:.22"><b class="ok">●</b> read <span class="mut">docs/reference/user-language.md</span></div>
+                <div class="row r" style="--a:.29"><b class="ok">●</b> edit <span class="mut">shell-port.md</span> <b class="ok">+22</b> <b class="er">−4</b></div>
+                <div class="row r" style="--a:.36"><b class="ok">●</b> run <span class="mut">make docs-check</span></div>
+                <div class="row r" style="--a:.42"><b class="ok">✓</b> docs check passed</div>
+                <div class="row r" style="--a:.48"><b class="ok">●</b> diff <span class="mut">3 sections · 1 table</span></div>
+                <div class="row r acc" style="--a:.60">▸ report sent to Jia</div>
+                <div class="ag-foot r" style="--a:.18"><div><span class="mut">worktree</span> crude-ingrid-c21b</div><div><span class="mut">context</span> <span class="meter"><i style="--v:.22"></i></span> 22%</div></div>
+              </div>
+            </div>
+            <div class="board r" style="--a:.22">
+              <div class="subtabs"><span class="on">Threads</span><span>Agents</span><span>Reports</span><span class="gap"></span><span class="btn">[ Search ]</span></div>
+              <div class="bt bt-h"><span>From → To</span><span>Type</span><span>Message</span></div>
+              <div class="bt r" style="--a:.26"><span>Jia → Tove</span><span class="mut">Work request</span><span>Write attach tests in a worktree</span></div>
+              <div class="bt r" style="--a:.30"><span>Jia → Ngoc</span><span class="mut">Work request</span><span>Review the protocol change</span></div>
+              <div class="bt r" style="--a:.54"><span><b>Tove → Jia</b></span><span><b>Report</b></span><span><b>12 tests pass. The worktree is ready to apply.</b></span></div>
+              <div class="bt r" style="--a:.58"><span><b>Ngoc → Jia</b></span><span><b>Report</b></span><span><b>2 risks, 0 blockers. Details inside.</b></span></div>
+              <div class="bt r" style="--a:.62"><span><b>Ingrid → Jia</b></span><span><b>Report</b></span><span><b>Shell port reference updated.</b></span></div>
+              <div class="bt-foot r" style="--a:.66">3 unread · 4 workspace agents · directed delivery is automatic</div>
+            </div>
+          </section>
+
+          <!-- ── Scene 2: memory ── -->
+          <section class="scene scene--memory" data-scene="memory">
+            <div class="tabs"><span class="tab">Jia <i>×</i></span><span class="tab on">Memory</span><span class="tab-plus">+</span></div>
+            <div class="mem">
+              <div class="mem-search"><i class="nf i-search"></i> <span class="mut">Search workspace memory</span><span class="gap"></span><span class="btn">[ New ]</span></div>
+              <div class="mem-list">
+                <div class="m r m-recall" style="--a:.04"><span class="kind k-pref">preference</span><span class="mt">Dev builds never touch the stable profile</span><span class="mm">rev 1 · 1 evidence</span><span class="tag-recall">recalled</span></div>
+                <div class="m r" style="--a:.08"><span class="kind k-dec">decision</span><span class="mt">Aeron contacts you only through prompts</span><span class="mm">rev 1 · 1 evidence</span></div>
+                <div class="m r" style="--a:.12"><span class="kind k-les">lesson</span><span class="mt">Run one visual capture at a time, then close it</span><span class="mm">rev 2 · 3 evidence</span></div>
+                <div class="m r m-recall" style="--a:.16"><span class="kind k-con">convention</span><span class="mt">Separate ports for source and release cores</span><span class="mm">rev 1 · 2 evidence</span><span class="tag-recall">recalled</span></div>
+                <div class="m r" style="--a:.20"><span class="kind k-fact">fact</span><span class="mt">The website deploys only by explicit dispatch</span><span class="mm">rev 1 · 1 evidence</span></div>
+                <div class="m r" style="--a:.24"><span class="kind k-pref">preference</span><span class="mt">Editor keys follow JetBrains conventions</span><span class="mm">rev 1 · 1 evidence</span></div>
+                <div class="m r" style="--a:.27"><span class="kind k-dec">decision</span><span class="mt">Language knowledge lives in data, not Go code</span><span class="mm">rev 3 · 4 evidence</span></div>
+                <div class="m r" style="--a:.30"><span class="kind k-ref">reference</span><span class="mt">Pinned grammar sources live in third_party/</span><span class="mm">rev 1 · 1 evidence</span></div>
+                <div class="mem-hist r" style="--a:.34">
+                  <div class="mh-h"><span>Past sessions</span><span class="gap"></span><span class="btn">[ Search history ]</span></div>
+                  <div class="mh r" style="--a:.36"><span class="mut">11h ago</span>Why problems never reached Aeron</div>
+                  <div class="mh r" style="--a:.38"><span class="mut">20h ago</span>Project-wide checks for closed files</div>
+                  <div class="mh r" style="--a:.40"><span class="mut">3d ago</span>A separate profile for source builds</div>
+                </div>
+              </div>
+              <div class="mem-detail r" style="--a:.28">
+                <div class="md-t">Dev builds never touch the stable profile</div>
+                <div class="md-b">Source builds run their own core and port. Nothing under <code>~/.crude</code> moves, changes or disappears.</div>
+                <div class="md-m"><span class="mut">applies when</span> changing the data folder or endpoint</div>
+                <div class="md-m"><span class="mut">evidence</span> your words · Nov 12 · <span class="mut">revision</span> 1</div>
+                <div class="md-a"><span class="btn">[ Edit ]</span> <span class="btn er">[ Forget ]</span></div>
+              </div>
+            </div>
+            <div class="mem-foot">
+              <div class="lifecycle r" style="--a:.72"><b class="spin"></b> Compacting context 420K — <span class="acc">history kept</span></div>
+              <div class="composer"><b class="acc">❯</b> <span class="typed" data-text="make go run . use its own port" data-from=".40" data-to=".58" data-clear="2"></span><span class="caret"></span></div>
+            </div>
+          </section>
+
+          <!-- ── Scene 3: editor + LSP ── -->
+          <section class="scene scene--lsp" data-scene="lsp">
+            <div class="tabs"><span class="tab">Jia <i>×</i></span><span class="tab on"><i class="nf ic-go i-go"></i> attach.go <i>×</i></span><span class="tab-plus">+</span></div>
+            <div class="editor">
+              <div class="code">
+                <div class="ln"><span class="g">41</span><span class="rail"></span><span class="c-com">// Attach connects a shell to the running core.</span></div>
+                <div class="ln"><span class="g">42</span><span class="rail"></span><span class="c-kw">func</span> (c <span class="c-op">*</span><span class="c-ty">Core</span>) <span class="c-fn">Attach</span>(ctx <span class="c-ty">context.Context</span>, req <span class="c-ty">AttachRequest</span>) (<span class="c-op">*</span><span class="c-ty">Shell</span>, <span class="c-ty">error</span>) {</div>
+                <div class="ln"><span class="g">43</span><span class="rail add"></span>    owner, err <span class="c-op">:=</span> c.sessions.<span class="c-fn">Owner</span>(req.SessionID)</div>
+                <div class="ln"><span class="g">44</span><span class="rail add"></span>    <span class="c-kw">if</span> err <span class="c-op">!=</span> <span class="c-kw">nil</span> {</div>
+                <div class="ln"><span class="g">45</span><span class="rail add"></span>        <span class="c-kw">return</span> <span class="c-kw">nil</span>, fmt.<span class="c-fn">Errorf</span>(<span class="c-str">"attach: %w"</span>, err)</div>
+                <div class="ln"><span class="g">46</span><span class="rail add"></span>    }</div>
+                <div class="ln"><span class="g">47</span><span class="rail add"></span>    <span class="c-kw">if</span> <span class="c-op">!</span>owner.<span class="c-fn">Allows</span>(<span class="hint">user:</span>req.User) {</div>
+                <div class="ln"><span class="g">48</span><span class="rail add"></span>        <span class="c-kw">return</span> <span class="c-kw">nil</span>, ErrNotPermitted</div>
+                <div class="ln"><span class="g">49</span><span class="rail add"></span>    }</div>
+                <div class="ln ln-50"><span class="g">50</span><span class="rail add"></span>    shell <span class="c-op">:=</span> <span class="c-fn">newShell</span>(<span class="hint">parent:</span>ctx, <span class="hint">session:</span><span class="v v-broken"><u class="squig">sessoin</u></span><span class="v v-typing">owner.<span class="caret"></span></span><span class="v v-fixed">owner.<span class="c-fn">Session</span>()</span>, <span class="hint">user:</span>req.User)</div>
+                <div class="ln"><span class="g">51</span><span class="rail add"></span>    c.shells.<span class="c-fn">Add</span>(shell)</div>
+                <div class="ln"><span class="g">52</span><span class="rail add"></span>    <span class="c-kw">return</span> shell, <span class="c-kw">nil</span></div>
+                <div class="ln"><span class="g">53</span><span class="rail"></span>}</div>
+                <div class="ln"><span class="g">54</span><span class="rail"></span></div>
+                <div class="ln"><span class="g">55</span><span class="rail"></span><span class="c-com">// Detach releases the shell. The session keeps running.</span></div>
+                <div class="ln"><span class="g">56</span><span class="rail"></span><span class="c-kw">func</span> (c <span class="c-op">*</span><span class="c-ty">Core</span>) <span class="c-fn">Detach</span>(id <span class="c-ty">ShellID</span>) { c.shells.<span class="c-fn">Remove</span>(id) }</div>
+              </div>
+              <div class="pop pop-diag"><div class="pop-t"><b class="er">✗</b> undefined: sessoin <span class="mut">· gopls</span></div><div class="pop-b mut">Did you mean <span class="a2">session</span>? <span class="btn">[ Show fixes ]</span></div></div>
+              <div class="pop pop-comp">
+                <div class="cmp on"><i class="c-fn">ƒ</i> Session()<span class="mut">*Session</span></div>
+                <div class="cmp"><i class="c-fn">ƒ</i> SessionID()<span class="mut">string</span></div>
+                <div class="cmp"><i class="c-fn">ƒ</i> Allows(u User)<span class="mut">bool</span></div>
+                <div class="cmp"><i class="c-ty">◆</i> User<span class="mut">User</span></div>
+                <div class="cmp-doc">Session returns the live session that this owner controls.</div>
+              </div>
+            </div>
+            <div class="problems">
+              <div class="subtabs"><span class="on">Problems</span><span>Notices</span><span class="gap"></span><span class="mut">gopls <b class="ok">●</b> · typescript <b class="ok">●</b> · pyright <b class="ok">●</b></span></div>
+              <div class="pb pb-bad"><b class="er">✗</b> core/attach.go:50:22 · undefined: sessoin <span class="mut">· gopls</span></div>
+              <div class="pb pb-bad"><b class="warn">⚠</b> docs/reference/shell-port.md · 2 broken links <span class="mut">· closed file</span></div>
+              <div class="pb pb-good"><b class="ok">✓</b> No problems in open files. <span class="mut">Checked 214 closed files while the machine was idle.</span></div>
+            </div>
+          </section>
+
+          <!-- ── Scene 4: persistent core ── -->
+          <section class="scene scene--core" data-scene="core">
+            <div class="tabs"><span class="tab">Jia <i>×</i></span><span class="tab on">Terminal 1 <i>×</i></span><span class="tab-plus">+</span></div>
+            <div class="term">
+              <div class="tl"><span class="prompt">~/opencrude/crude <i class="nf i-branch"></i> master ❯</span> go test ./...</div>
+              <div class="tl r" style="--a:.04"><b class="ok">ok</b>   crude/agent            2.114s</div>
+              <div class="tl r" style="--a:.08"><b class="ok">ok</b>   crude/app              0.981s</div>
+              <div class="tl r" style="--a:.12"><b class="ok">ok</b>   crude/collaboration    1.402s</div>
+              <div class="tl r" style="--a:.16"><b class="ok">ok</b>   crude/core             4.217s</div>
+              <div class="tl r" style="--a:.20"><b class="ok">ok</b>   crude/editor           3.630s</div>
+              <div class="tl r" style="--a:.24"><b class="ok">ok</b>   crude/localhistory     1.118s</div>
+              <div class="tl r" style="--a:.28"><span class="mut">=== RUN   TestSharedAttach/two_shells_one_session</span></div>
+              <div class="tl r" style="--a:.74"><b class="ok">ok</b>   crude/shellport/remote 2.771s</div>
+              <div class="tl r" style="--a:.78"><b class="ok">ok</b>   crude/workspace        9.880s</div>
+              <div class="tl r" style="--a:.82"><b class="ok">ok</b>   crude/tui/viewmodel   21.031s</div>
+              <div class="tl r" style="--a:.86"><b class="ok">PASS</b> <span class="mut">· every package · while the window was closed</span></div>
+              <div class="tl r" style="--a:.90"><span class="prompt">~/opencrude/crude <i class="nf i-branch"></i> master ❯</span><span class="caret"></span></div>
+            </div>
+          </section>
+
+          <!-- ── Scene 5: review ── -->
+          <section class="scene scene--review" data-scene="review">
+            <div class="tabs"><span class="tab">Jia <i>×</i></span><span class="tab on">Changes <i>×</i></span><span class="tab-plus">+</span></div>
+            <div class="review">
+              <div class="files">
+                <div class="f on"><b class="warn">M</b> core/attach.go <span class="ok">+38</span> <span class="er">−6</span></div>
+                <div class="f"><b class="ok">A</b> attach_test.go <span class="ok">+48</span></div>
+                <div class="f"><b class="warn">M</b> shell-port.md <span class="ok">+22</span> <span class="er">−4</span></div>
+              </div>
+              <div class="diff">
+                <div class="hunk"><span>@@ -47,6 +47,12 @@ func (c *Core) Attach</span><span class="gap"></span><span class="stage-btns"><span class="btn ok">[ Stage hunk ]</span> <span class="btn er">[ Discard ]</span></span><span class="staged ok">✓ Staged</span></div>
+                <div class="dl ctx"><span class="g">47</span>    if !owner.Allows(req.User) {</div>
+                <div class="dl del"><span class="g">48</span>-        return nil, errors.New("not allowed")</div>
+                <div class="dl add"><span class="g">48</span>+        return nil, ErrNotPermitted</div>
+                <div class="dl ctx"><span class="g">49</span>    }</div>
+                <div class="dl add"><span class="g">50</span>+    shell := newShell(ctx, owner.Session(), req.User)</div>
+                <div class="dl add"><span class="g">51</span>+    c.shells.Add(shell)</div>
+                <div class="dl add"><span class="g">52</span>+    return shell, nil</div>
+                <div class="dl del"><span class="g">50</span>-    return c.attachLegacy(ctx, req)</div>
+                <div class="dl ctx"><span class="g">53</span>}</div>
+                <div class="hunk hunk-file"><span>attach_test.go · new file</span><span class="gap"></span><span class="mut">+48</span></div>
+                <div class="dl add"><span class="g">1</span>+func TestSharedAttach(t *testing.T) {</div>
+                <div class="dl add"><span class="g">2</span>+    core := newTestCore(t)</div>
+                <div class="dl add"><span class="g">3</span>+    a, _ := core.Attach(ctx, attachAs("ada"))</div>
+                <div class="dl add"><span class="g">4</span>+    b, _ := core.Attach(ctx, attachAs("lin"))</div>
+                <div class="dl add"><span class="g">5</span>+    require.Same(t, a.Session(), b.Session())</div>
+                <div class="dl add"><span class="g">6</span>+}</div>
+              </div>
+            </div>
+            <div class="lh r" style="--a:.10">
+              <span class="acc">Local History</span>
+              <span class="lh-dot"></span><span class="mut">10:42</span> before Tove
+              <span class="lh-dot"></span><span class="mut">10:45</span> after Tove
+              <span class="lh-dot on"></span><span class="mut">10:51</span> saved
+              <span class="gap"></span><span class="btn">[ Restore ]</span>
+            </div>
+            <div class="dialog">
+              <div class="dlg-t">Allow this command?</div>
+              <div class="dlg-b">Tove wants to run:</div>
+              <div class="dlg-cmd">rm -rf ./build</div>
+              <div class="dlg-b mut">It deletes files in this workspace.</div>
+              <div class="dlg-a"><span class="btn">[ Allow once ]</span> <span class="btn btn-deny">[ Deny ]</span></div>
+            </div>
+          </section>
+
+          <!-- ── Scene 6: Aeron ── -->
+          <section class="scene scene--aeron" data-scene="aeron">
+            <div class="tabs"><span class="tab">Jia <i>×</i></span><span class="tab on"><b class="acc">◆</b> Aeron</span><span class="tab-plus">+</span></div>
+            <div class="aeron">
+              <div class="notice"><b class="warn">⚠</b> The ESLint server stopped in <code>site/</code>. Its dependencies are not installed. <span class="mut">10:52</span></div>
+              <div class="row r" style="--a:.10"><b class="spin"></b> Aeron is investigating…</div>
+              <div class="row r" style="--a:.18"><b class="ok">●</b> read <span class="mut">ESLint server log</span></div>
+              <div class="row r" style="--a:.26"><b class="ok">●</b> read <span class="mut">site/package.json · site/package-lock.json</span></div>
+              <div class="row r" style="--a:.34"><b class="ok">●</b> found <span class="mut">node_modules is missing; the lockfile is valid</span></div>
+              <div class="health r" style="--a:.38">
+                <div class="subtabs"><span class="on">Language servers</span><span>Tools</span></div>
+                <div class="hl"><b class="ok">●</b> gopls <span class="mut">Go · 412 files</span></div>
+                <div class="hl"><b class="ok">●</b> typescript-language-server <span class="mut">TypeScript · site/</span></div>
+                <div class="hl"><span class="st-bad"><b class="er">●</b> eslint <span class="mut">stopped · dependencies missing</span></span><span class="st-good"><b class="ok">●</b> eslint <span class="mut">ready · 0 problems</span></span></div>
+                <div class="hl"><b class="ok">●</b> marksman <span class="mut">Markdown · docs/</span></div>
+              </div>
+              <div class="row r ae-done" style="--a:.80"><b class="ok">✓</b> Installed with npm ci · ESLint ready · <b class="ok">0 problems</b></div>
+            </div>
+            <div class="question">
+              <div class="q-t"><b class="acc">◆</b> Aeron asks</div>
+              <div class="q-b">The ESLint server needs the site dependencies. Install them with <code>npm ci</code> in <code>site/</code>?</div>
+              <div class="q-o on"><span class="radio">◉</span> Yes, install them</div>
+              <div class="q-o"><span class="radio">○</span> Not now</div>
+              <div class="q-a"><span class="btn btn-primary">[ Submit ]</span></div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+      <div class="ws-footer">
+        <span class="hints">
+          <span class="hint-set" data-for="default">Alt+Enter new line · Ctrl+O attach file · ↑↓ history · Ctrl+F find in chat</span>
+          <span class="hint-set" data-for="core">Alt+F12 toggle terminal · Ctrl+C interrupt · Ctrl+Shift+C copy · Shift+PgUp/PgDn scrollback</span>
+        </span>
+        <span class="chips">
+          <span class="chip chip-problems" data-chip="lsp"><span class="pb-n">1 </span>Problems</span>
+          <span class="chip chip-notices" data-chip="aeron">1 Notices</span>
+          <span class="chip chip-terms" data-chip="core">1 Terminals</span>
+          <span class="chip chip-git" data-chip="review">Git</span>
+          <span class="chip chip-board" data-chip="agents">Board</span>
+          <span class="chip chip-memory" data-chip="memory">Memory</span>
+          <span class="chip chip-perf">Performance</span>
+          <span class="chip chip-ws" data-chip="chat">Workspace</span>
+        </span>
+      </div>
+    </div>
+      <!-- Window closed: the core keeps working -->
+    <div class="core-off">
+      <div class="co-l"><span class="mut">$</span> crude core status</div>
+      <div class="co-l"><span class="co-k">core</span><b class="ok">running</b> · pid 4121 · up 3h 12m</div>
+      <div class="co-l"><span class="co-k">agents</span>3 working</div>
+      <div class="co-l"><span class="co-k">terminals</span>2 alive · tests still running</div>
+      <div class="co-l"><span class="co-k">window</span><span class="acc">closed</span> — the work continues</div>
+    </div>
+    <div class="shutter"></div>
+    <div class="crt"></div>
+  </div>
+</div>
+
+<main id="main">
+  <!-- ───────────── Boot: the welcome screen ───────────── -->
+  <section class="boot" id="boot" aria-labelledby="hero-title">
+    <div class="boot-sticky">
+      <div class="hero">
+        <pre class="banner" aria-hidden="true"> ██████╗██████╗ ██╗   ██╗██████╗ ███████╗
+██╔════╝██╔══██╗██║   ██║██╔══██╗██╔════╝
+██║     ██████╔╝██║   ██║██║  ██║█████╗
+██║     ██╔══██╗██║   ██║██║  ██║██╔══╝
+╚██████╗██║  ██║╚██████╔╝██████╔╝███████╗
+ ╚═════╝╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝</pre>
+        <h1 id="hero-title" class="hero-title"><span class="ht-a">Humans and agents,</span> <span class="ht-b">side by side.</span></h1>
+        <p class="lede">Crude is an <b>agentic development environment</b> for your terminal. <span class="pass">Distill your crude ideas.</span></p>
+
+        <div class="install" id="install" data-install>
+          <div class="ins-row" data-os="linux">
+            <span class="ins-os"><i class="nf i-linux" aria-hidden="true"></i><span>Linux</span></span>
+            <code class="ins-cmd"><span class="ins-prompt" aria-hidden="true">❯ </span><span class="c-fn">curl</span> <span class="c-flag">-fsSL</span> <span class="c-str">https://opencrude.github.io/<wbr>install.sh</span> <span class="c-pipe">|</span> <span class="c-fn">bash</span></code>
+            <button class="ins-copy" type="button" data-copy="curl -fsSL https://opencrude.github.io/install.sh | bash" aria-label="Copy the Linux install command">[ Copy ]</button>
+          </div>
+          <div class="ins-row" data-os="windows">
+            <span class="ins-os"><i class="nf i-windows" aria-hidden="true"></i><span>Windows</span></span>
+            <code class="ins-cmd"><span class="ins-prompt" aria-hidden="true">❯ </span><span class="c-fn">irm</span> <span class="c-str">https://opencrude.github.io/<wbr>install.ps1</span> <span class="c-pipe">|</span> <span class="c-fn">iex</span></code>
+            <button class="ins-copy" type="button" data-copy="irm https://opencrude.github.io/install.ps1 | iex" aria-label="Copy the Windows install command">[ Copy ]</button>
+          </div>
+          <div class="ins-row" data-os="macos">
+            <span class="ins-os"><i class="nf i-apple" aria-hidden="true"></i><span>macOS</span></span>
+            <a class="ins-cmd ins-link" href="https://github.com/opencrude/crude#build-from-source">Build from source <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </div>
+
+      <div class="boot-caption" aria-hidden="false">
+        <span class="bc-t">Jia</span>
+        <p>Describe the idea. Jia plans it, agents build it, and <b>you review every change</b>.</p>
+      </div>
+
+      <div class="scroll-cue" aria-hidden="true"><span class="sc-arrow">↓</span> Scroll to open the workspace</div>
+    </div>
+  </section>
+
+  <!-- ───────────── Chapters ───────────── -->
+  <div class="chapters" id="features">
+    <article class="chapter" id="agents" data-scene="agents" aria-labelledby="h-agents">
+      <div class="ch-copy">
+        <p class="kicker">Multi-agent</p>
+        <h2 id="h-agents">Work in parallel.&#32;<br><span class="dim">Review one report.</span></h2>
+        <p class="ch-body">Jia, the lead agent, splits a task across child agents. Each one can work in its own Git worktree, so parallel edits stay separate until you review them. Every agent reports back with evidence: the tests it ran and the files it changed.</p>
+        <ul class="tags"><li>Git worktree per agent</li><li>Reports with evidence</li><li>Plan mode &amp; goals</li></ul>
+      </div>
+    </article>
+
+    <article class="chapter" id="memory" data-scene="memory" aria-labelledby="h-memory">
+      <div class="ch-copy">
+        <p class="kicker">Workspace memory</p>
+        <h2 id="h-memory">Never explain twice.&#32;<br><span class="dim">Crude remembers.</span></h2>
+        <p class="ch-body">Decisions, conventions and hard lessons become workspace memory, each with the evidence behind it. Relevant memories come back in every new session. Long sessions are compacted, never deleted, and every past session stays searchable.</p>
+        <ul class="tags"><li>Six memory kinds</li><li>Search past sessions</li><li>Edit or forget any memory</li></ul>
+      </div>
+    </article>
+
+    <article class="chapter" id="editor" data-scene="lsp" aria-labelledby="h-editor">
+      <div class="ch-copy">
+        <p class="kicker">Editor &amp; language servers</p>
+        <h2 id="h-editor">A real IDE.&#32;<br><span class="dim">Not a chat box.</span></h2>
+        <p class="ch-body">Completion, hover, rename, code actions and inlay hints come from real language servers. Agents ask the same servers for definitions, references and problems. Problems cover the whole project, even files you never opened.</p>
+        <ul class="tags"><li>Semantic colors</li><li>Multiple carets</li><li>Project-wide problems</li></ul>
+      </div>
+    </article>
+
+    <article class="chapter" id="core" data-scene="core" aria-labelledby="h-core">
+      <div class="ch-copy">
+        <p class="kicker">Persistent core</p>
+        <h2 id="h-core">Close the window.&#32;<br><span class="dim">Nothing stops.</span></h2>
+        <p class="ch-body">A per-user core owns your sessions, agents and terminals. Close Crude in the middle of a task, come back tomorrow, or attach from another machine over SSH. Builds and agents are still running.</p>
+        <ul class="tags"><li>PTY &amp; ConPTY terminals</li><li>Attach over SSH</li><li>Recoverable runs</li></ul>
+      </div>
+    </article>
+
+    <article class="chapter" id="review" data-scene="review" aria-labelledby="h-review">
+      <div class="ch-copy">
+        <p class="kicker">Review &amp; safety</p>
+        <h2 id="h-review">Agents propose.&#32;<br><span class="dim">You decide.</span></h2>
+        <p class="ch-body">Stage or discard every file and hunk. Risky commands wait for your approval. Local History keeps a snapshot of each change, so any file can come back, even after an agent edit.</p>
+        <ul class="tags"><li>Hunk staging</li><li>Command approval</li><li>Local History restore</li></ul>
+      </div>
+    </article>
+
+    <article class="chapter" id="aeron" data-scene="aeron" aria-labelledby="h-aeron">
+      <div class="ch-copy">
+        <p class="kicker">Aeron, the workspace agent</p>
+        <h2 id="h-aeron">Problems don’t wait.&#32;<br><span class="dim">Neither does Aeron.</span></h2>
+        <p class="ch-body">Aeron works in the background of every workspace. When a language server stops or project setup breaks, Aeron investigates and asks you only when the decision is yours. Your open tab and unsent text stay untouched.</p>
+        <ul class="tags"><li>Always on</li><li>Asks, never assumes</li><li>Never takes your focus</li></ul>
+      </div>
+    </article>
+  </div>
+
+  <!-- ───────────── Everything else: a live command palette ───────────── -->
+  <section class="more" id="more" aria-labelledby="h-more">
+    <div class="more-head">
+      <p class="kicker">Everything else</p>
+      <h2 id="h-more">One keystroke away.</h2>
+      <p class="ch-body">Crude puts every command in one palette. So does this page. Type to filter.</p>
+    </div>
+    <div class="palette" data-palette>
+      <div class="pal-frame-t">Commands <span class="mut">Ctrl+Alt+P</span></div>
+      <label class="pal-input"><span class="acc" aria-hidden="true">❯</span><span class="sr">Filter features</span><input type="search" placeholder="Search features — try “agent”, “git” or “model”" autocomplete="off" spellcheck="false" data-filter></label>
+      <ul class="pal-list" data-list>
+        <li><i class="nf i-robot" aria-hidden="true"></i><h3>Goals with a verifier</h3><p>An independent verifier decides when a goal is done.</p><span class="cat">Agents</span></li>
+        <li><i class="nf i-tasks" aria-hidden="true"></i><h3>Plan mode</h3><p>Agree on the plan before any file changes.</p><span class="cat">Agents</span></li>
+        <li><i class="nf i-fork" aria-hidden="true"></i><h3>Session fork</h3><p>Branch a conversation to try another approach.</p><span class="cat">Agents</span></li>
+        <li><i class="nf i-puzzle" aria-hidden="true"></i><h3>Skills &amp; MCP</h3><p>Add tools with an exact preview of source, revision and digest.</p><span class="cat">Agents</span></li>
+        <li><i class="nf i-cubes" aria-hidden="true"></i><h3>Any model, per role</h3><p>Any open-source or closed model, hosted or local. Pick one for each agent role.</p><span class="cat">Models</span></li>
+        <li><i class="nf i-pencil" aria-hidden="true"></i><h3>Reviewed rename</h3><p>Language-server renames you preview before they apply.</p><span class="cat">Editor</span></li>
+        <li><i class="nf i-cursor" aria-hidden="true"></i><h3>Multiple carets</h3><p>Edit many places at once, with JetBrains-style motions.</p><span class="cat">Editor</span></li>
+        <li><i class="nf i-search" aria-hidden="true"></i><h3>Find in files</h3><p>Search and replace across the whole project.</p><span class="cat">Editor</span></li>
+        <li><i class="nf i-map" aria-hidden="true"></i><h3>Minimap &amp; folding</h3><p>Indentation guides, folded rows and a minimap.</p><span class="cat">Editor</span></li>
+        <li><i class="nf i-columns" aria-hidden="true"></i><h3>Split panes</h3><p>Agents, editors and terminals side by side.</p><span class="cat">Workspace</span></li>
+        <li><i class="nf i-git" aria-hidden="true"></i><h3>Git staging &amp; merge</h3><p>Stage hunks, switch branches, resolve conflicts.</p><span class="cat">Git</span></li>
+        <li><i class="nf i-history" aria-hidden="true"></i><h3>Local History</h3><p>Every save and agent edit, restorable with a preview.</p><span class="cat">Safety</span></li>
+        <li><i class="nf i-shield" aria-hidden="true"></i><h3>Command approval</h3><p>Risky commands wait for you. YOLO mode keeps hard blocks.</p><span class="cat">Safety</span></li>
+        <li><i class="nf i-gauge" aria-hidden="true"></i><h3>Performance dashboard</h3><p>Frame times, memory and live system state, inside Crude.</p><span class="cat">Insight</span></li>
+        <li><i class="nf i-server" aria-hidden="true"></i><h3>Attach over SSH</h3><p>Run the core on a server. Attach from anywhere.</p><span class="cat">Core</span></li>
+        <li><i class="nf i-desktop" aria-hidden="true"></i><h3>GUI window</h3><p>Optional window with its own terminal and font. One command updates both.</p><span class="cat">Platform</span></li>
+        <li><i class="nf i-brush" aria-hidden="true"></i><h3>Themes</h3><p>Dark, light, midnight, warm and high contrast.</p><span class="cat">Appearance</span></li>
+      </ul>
+      <p class="pal-empty" data-empty hidden>No feature matches. Try another word.</p>
+      <div class="pal-foot mut">↑↓ navigate · Enter open docs · Esc clear</div>
+    </div>
+  </section>
+
+  <!-- ───────────── FAQ ───────────── -->
+  <section class="faq" id="faq" aria-labelledby="h-faq">
+    <h2 id="h-faq" class="faq-h">Questions</h2>
+    <details><summary>Is Crude free and open source?</summary><p>Yes. Crude is free and open source under the Apache 2.0 or MIT license, at your choice. You bring your own model accounts.</p></details>
+    <details><summary>Which systems does Crude support?</summary><p>Linux x86-64 with glibc 2.35 or later, and Windows x64 with PowerShell 5.1 or later. There is no macOS release yet. On macOS, build Crude from source.</p></details>
+    <details><summary>Which AI models can Crude use?</summary><p>Any model you like: open-source or closed, from a hosted provider or running on your own machine. You choose a model for each agent role.</p></details>
+    <details><summary>Do agents run commands without asking?</summary><p>No. Risky commands wait for your approval. If you turn on YOLO mode, hard blocks and restore safeguards still apply, and Local History keeps a snapshot before agent edits.</p></details>
+    <details><summary>What happens when I close the window?</summary><p>Nothing stops. A per-user core keeps sessions, agents and terminals running. Open Crude again to attach, locally or over SSH.</p></details>
+    <details><summary>Is Crude a sandbox?</summary><p>No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions.</p></details>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span class="foot-l mut">© 2026 opencrude · Apache-2.0 or MIT</span>
+  <nav class="foot-chips" aria-label="Project">
+    <a class="chip chip-board" href="https://github.com/opencrude/crude">GitHub</a>
+    <a class="chip chip-git" href="https://github.com/opencrude/crude/blob/master/docs/README.md">Docs</a>
+    <a class="chip chip-terms" href="https://github.com/opencrude/crude/releases">Releases</a>
+    <a class="chip chip-notices" href="https://github.com/opencrude/crude/issues">Issues</a>
+    <a class="chip chip-memory" href="llms.txt">llms.txt</a>
+    <a class="chip chip-ws" href="#install">Install</a>
+  </nav>
+</footer>
 </body>
 </html>

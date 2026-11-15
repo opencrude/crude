@@ -1,0 +1,135 @@
+# Crude — the agentic development environment
+
+> Humans and agents, side by side. Crude is an agentic development environment (ADE) for your terminal: a real editor, language servers, terminals and Git, with a team of AI agents that remember how you work.
+
+Crude is free and open source (Apache-2.0 OR MIT) for Linux x86-64 and Windows x64. Beta.
+
+**Beta warning.** Crude and its agents can change files and run commands. Agent commands run with your user permissions; Crude is not a sandbox. Commit your work and keep backups. The installer shows this warning and asks for consent before it changes anything.
+
+## Install
+
+| System | Command |
+|---|---|
+| Linux x86-64 (glibc 2.35+) | `curl -fsSL https://opencrude.github.io/install.sh \| bash` |
+| Windows x64 (PowerShell 5.1+) | `irm https://opencrude.github.io/install.ps1 \| iex` |
+| macOS | No release yet. [Build from source](https://github.com/opencrude/crude#build-from-source). |
+
+Prefer to read the script first:
+
+```bash
+curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh
+bash install.sh
+```
+
+```powershell
+Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1
+.\install.ps1
+```
+
+Run the same command again to update. Add `--gui` (Linux) or `-Gui` (Windows) for an optional window with its own terminal and font. No administrator rights are needed.
+
+### First run
+
+1. Open a terminal in your project folder and run `crude`.
+2. Go to **Tools → Settings → Accounts** and add a provider account.
+3. Go to **Agents** and select a model.
+4. Type your idea in the composer and press **Enter**.
+
+Press **Ctrl+Alt+P** to see every command and its shortcut. Press **Alt+F12** to open the terminal.
+
+## Multi-agent — Work in parallel. Review one report.
+
+Jia, the lead agent, splits a task across child agents. Each one can work in its own Git worktree, so parallel edits stay separate until you review them. Every agent reports back with evidence: the tests it ran and the files it changed.
+
+- Git worktree per agent
+- Reports with evidence
+- Plan mode & goals
+
+## Workspace memory — Never explain twice. Crude remembers.
+
+Decisions, conventions and hard lessons become workspace memory, each with the evidence behind it. Relevant memories come back in every new session. Long sessions are compacted, never deleted, and every past session stays searchable.
+
+- Six memory kinds
+- Search past sessions
+- Edit or forget any memory
+
+## Editor & language servers — A real IDE. Not a chat box.
+
+Completion, hover, rename, code actions and inlay hints come from real language servers. Agents ask the same servers for definitions, references and problems. Problems cover the whole project, even files you never opened.
+
+- Semantic colors
+- Multiple carets
+- Project-wide problems
+
+## Persistent core — Close the window. Nothing stops.
+
+A per-user core owns your sessions, agents and terminals. Close Crude in the middle of a task, come back tomorrow, or attach from another machine over SSH. Builds and agents are still running.
+
+- PTY & ConPTY terminals
+- Attach over SSH
+- Recoverable runs
+
+## Review & safety — Agents propose. You decide.
+
+Stage or discard every file and hunk. Risky commands wait for your approval. Local History keeps a snapshot of each change, so any file can come back, even after an agent edit.
+
+- Hunk staging
+- Command approval
+- Local History restore
+
+## Aeron, the workspace agent — Problems don’t wait. Neither does Aeron.
+
+Aeron works in the background of every workspace. When a language server stops or project setup breaks, Aeron investigates and asks you only when the decision is yours. Your open tab and unsent text stay untouched.
+
+- Always on
+- Asks, never assumes
+- Never takes your focus
+
+## Everything else — one keystroke away
+
+| Feature | What it does | Area |
+|---|---|---|
+| Goals with a verifier | An independent verifier decides when a goal is done. | Agents |
+| Plan mode | Agree on the plan before any file changes. | Agents |
+| Session fork | Branch a conversation to try another approach. | Agents |
+| Skills & MCP | Add tools with an exact preview of source, revision and digest. | Agents |
+| Any model, per role | Any open-source or closed model, hosted or local. Pick one for each agent role. | Models |
+| Reviewed rename | Language-server renames you preview before they apply. | Editor |
+| Multiple carets | Edit many places at once, with JetBrains-style motions. | Editor |
+| Find in files | Search and replace across the whole project. | Editor |
+| Minimap & folding | Indentation guides, folded rows and a minimap. | Editor |
+| Split panes | Agents, editors and terminals side by side. | Workspace |
+| Git staging & merge | Stage hunks, switch branches, resolve conflicts. | Git |
+| Local History | Every save and agent edit, restorable with a preview. | Safety |
+| Command approval | Risky commands wait for you. YOLO mode keeps hard blocks. | Safety |
+| Performance dashboard | Frame times, memory and live system state, inside Crude. | Insight |
+| Attach over SSH | Run the core on a server. Attach from anywhere. | Core |
+| GUI window | Optional window with its own terminal and font. One command updates both. | Platform |
+| Themes | Dark, light, midnight, warm and high contrast. | Appearance |
+
+## Questions
+
+**Is Crude free and open source?**
+Yes. Crude is free and open source under the Apache 2.0 or MIT license, at your choice. You bring your own model accounts.
+
+**Which systems does Crude support?**
+Linux x86-64 with glibc 2.35 or later, and Windows x64 with PowerShell 5.1 or later. There is no macOS release yet. On macOS, build Crude from source.
+
+**Which AI models can Crude use?**
+Any model you like: open-source or closed, from a hosted provider or running on your own machine. You choose a model for each agent role.
+
+**Do agents run commands without asking?**
+No. Risky commands wait for your approval. If you turn on YOLO mode, hard blocks and restore safeguards still apply, and Local History keeps a snapshot before agent edits.
+
+**What happens when I close the window?**
+Nothing stops. A per-user core keeps sessions, agents and terminals running. Open Crude again to attach, locally or over SSH.
+
+**Is Crude a sandbox?**
+No. Crude is beta software and agent commands run with your user permissions. Commit your work, keep backups and review agent actions.
+
+## Links
+
+- Source: https://github.com/opencrude/crude
+- Documentation: https://github.com/opencrude/crude/blob/master/docs/README.md
+- Releases: https://github.com/opencrude/crude/releases
+- Report a bug: https://github.com/opencrude/crude/issues

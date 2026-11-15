@@ -1,187 +1,60 @@
-# Website, shadcn/ui and GitHub Pages
+# Website and GitHub Pages
 
-> Status: Current guide for the shadcn/ui website, its mandatory lint gate, the Vite build, product captures and command-only Pages deployment from the organization site repository.
+> Status: current guide. It describes `site/`, the local preview and the
+> command-only Pages deployment of <https://opencrude.github.io/>.
 
-Canonical site: <https://opencrude.github.io/>
-
-The website source lives in [`site/`](../../site) and is a React 19 + Vite 7
-project. It uses **Tailwind CSS v4** and **shadcn/ui** components, with the
-**Geist Variable** sans and **Geist Mono** fonts self-hosted from
-`@fontsource-variable`. The built artifact is `site/dist`; GitHub Pages serves
-exactly that reviewed directory at the organization root. The source stays
-here; the organization site repository `opencrude/opencrude.github.io` only
-owns the deploy workflow (see [Deploy](#deploy)).
+The website is hand-written HTML, CSS and JavaScript in `site/`. There is no
+build step, no package manager and no generated artifact: GitHub Pages serves
+`site/` as it is.
 
 ## Why GitHub Pages
 
-GitHub Pages remains the right host for this project:
+Pages serves a directory from a repository without a server. The organization
+site repository `opencrude/opencrude.github.io` serves the root URL, so the
+canonical address has no path suffix. Everything the page needs must therefore
+work from the site root with relative references only.
 
-- The repository is public, so Pages is free for the `opencrude` organization.
-- It provides HTTPS, a stable project URL, custom-domain support and the same
-  repository permissions already used for releases.
-- The site is a static build. Pages needs no server, database or runtime beyond
-  the browser, and the deploy workflow uploads only `site/dist`.
-- Deployment is `workflow_dispatch` only, matching the repository rule that
-  Actions never start from a push, pull request, tag or schedule.
-
-Alternatives are reasonable only when their extra capability is needed:
-Cloudflare Pages offers edge functions and custom headers; Netlify and Vercel
-offer form handling and preview deploys; a separate website repository adds
-another source of truth. None of those is required for a landing page whose
-content already lives next to the product.
-
-## Stack and design rules
-
-| Piece | Choice |
-|---|---|
-| UI | React 19 + shadcn/ui (`new-york` style) |
-| Build | Vite 7 + TypeScript 5.9 |
-| Styling | Tailwind CSS v4 with shadcn theme tokens |
-| Primitives | Radix UI (`radix-ui` package) |
-| Fonts | `Geist Variable` for UI, `Geist Mono Variable` for code |
-| Icons | Lucide React, plus the small inline GitHub mark |
-| Lint | `@shadcn/lint` in ESLint 9, all six core rules at `error` |
-
-Rules for changes:
-
-- Compose pages from the shared components in `site/src/components/ui/`. Do not
-  rebuild a Button, Card, Tabs or Accordion look with a one-off `<div>`.
-- Use theme tokens (`bg-background`, `text-muted-foreground`, `border-border`,
-  `text-primary`, `text-brand`, `text-success`, `text-warning`) instead of raw
-  colors. The dark palette mirrors the product theme: `#0d1117` background,
-  `#f0883e` primary, `#a5d6ff` brand.
-- Use component variants and sizes for appearance. Do not restyle a component
-  through `className`; app code may use layout classes such as `mt-8` or
-  `w-full`. Add a variant to the component when a new treatment is genuinely
-  reusable.
-- Do not add arbitrary values such as `p-[13px]` in app code. Use the spacing,
-  radius and type scales; the component directory is exempt only for structural
-  values that the components own.
-- Keep the site static and self-contained. Do not add external scripts, fonts,
-  analytics or cookies without a deliberate privacy and performance decision.
-- Internal URLs are relative. Never add a root-relative `/...` link: the build
-  must work at any base path, including a local preview and a future domain.
-- Use the product's real captures. Do not invent a UI screenshot or present a
-  fixture conversation as live model output. See
-  [Product captures](#product-captures).
-- Keep the beta warning and explicit installer consent visible.
-- Preserve `lang`, one `h1` per page, image `alt` text, skip links, keyboard
-  focus and reduced-motion handling.
-
-## Mandatory shadcn lint
-
-`@shadcn/lint` is the design-system gate for this site. It is enabled in
-`site/eslint.config.js` and its policy is in `site/design-system.lint.json`:
-
-```json
-{
-  "rules": {
-    "shadcn/no-restyle": ["error", { "allow": ["layout"] }],
-    "shadcn/no-raw-colors": "error",
-    "shadcn/no-arbitrary-values": ["error", { "allow": ["layout"] }],
-    "shadcn/no-inline-styles": "error",
-    "shadcn/no-unknown-classes": "error",
-    "shadcn/require-static-classes": "error"
-  }
-}
-```
-
-The only overrides are inside `site/src/components/ui/**`, where components own
-their own appearance and may need structural values such as focus rings. Those
-overrides disable `no-restyle`, `no-arbitrary-values` and
-`require-static-classes`; `no-raw-colors` and `no-inline-styles` stay enabled.
-Do not disable a rule in app code to get a change through. Fix the component
-usage, add a variant, or document a genuinely necessary exception next to the
-code.
-
-Every website change must run:
-
-```bash
-npm --prefix site run lint
-npm --prefix site run build
-python3 scripts/test_site.py -v
-```
-
-`make site-check` runs all three from a clean dependency install.
-
-## Site layout
+## Site contents
 
 | Path | Purpose |
 |---|---|
-| `site/package.json`, `site/package-lock.json` | Pinned website dependencies and `lint`/`build` scripts |
-| `site/vite.config.ts` | React + Tailwind v4 plugins, `@` alias, relative base, `dist` output |
-| `site/components.json` | shadcn discovery: `new-york`, `src/index.css`, `@/components/ui` |
-| `site/design-system.lint.json` | The shadcn rule policy and component-directory override |
-| `site/eslint.config.js` | ESLint 9 + TypeScript + `@shadcn/lint` |
-| `site/src/App.tsx` | The landing page composition and content |
-| `site/src/components/ui/` | Button, Card, Badge, Tabs, Accordion and Separator |
-| `site/src/index.css` | Tailwind import, dark shadcn tokens, Geist font stack, grid utility |
-| `site/src/main.tsx` | React entry point and self-hosted Geist imports |
-| `site/public/` | Icon (`favicon.svg`, `apple-touch-icon.png`), robots, sitemap, 404 redirect |
-| `site/public/assets/` | Tour captures (`<scene>.webp`, 1920×1056 lossless) and the 1200×630 `og.png` |
-| `site/dist/` | Generated build; never committed and never edited by hand |
+| `site/index.html` | The page: hero, chapters, features, memory, install, FAQ |
+| `site/assets/crude.css` | All styling, including the media queries and reduced-motion rules |
+| `site/assets/crude.js` | Scroll engine, in-page links, copy buttons, glitch scheduler |
+| `site/assets/fonts/` | Self-hosted WOFF2 files, preloaded by `index.html` |
+| `site/og.png` | Social card, 1200x630 |
+| `site/apple-touch-icon.png`, `site/favicon.svg` | Icons |
+| `site/robots.txt`, `site/sitemap.xml`, `site/site.webmanifest` | Crawler and install metadata |
+| `site/index.md`, `site/llms.txt`, `site/llms-full.txt` | Plain-text copies for search engines and language models |
 
-The root module has `ignore site/node_modules` in `go.mod`, so `go list ./...`,
-the Go tests and `golangci-lint run ./...` never traverse npm dependency code.
-Keep that directive when changing the website toolchain.
+Rules that keep the page self-contained and honest:
 
-## Icon
+- Reference local files with relative URLs. A root-relative URL breaks the
+  page when it is served under a path.
+- Load no third-party script, stylesheet or font.
+- Show no version number, no model or vendor name, and no product screenshot.
+  The art is drawn live in HTML and CSS.
+- Keep the navigation order Install, Features, Memory, Docs, then GitHub.
+- Keep the install commands pointing at the canonical installer URLs.
 
-The Crude icon is a glossy crude-oil drop holding a terminal prompt on an
-orange tile. The canonical source is `assets/crude-icon.svg`; `site/public/favicon.svg`
-is an identical copy, and `assets/crude-icon-512.png` and
-`site/public/apple-touch-icon.png` are rasterized from it with `rsvg-convert`.
-Change the SVG first, then regenerate every raster in the same change.
+## Install commands
 
-## Product captures
+The page offers `https://opencrude.github.io/install.sh` and
+`https://opencrude.github.io/install.ps1`. The deploy workflow copies the two
+installers from the repository root into the published directory, so those
+addresses always serve the current installers and the page never duplicates
+them.
 
-The README (`assets/crude-*.png`) and the Tour (`site/public/assets/*.webp`)
-show the real product, captured with [`scripts/tuishot.sh`](validation.md) on a
-disposable clone of this repository with a live model. Rules:
-
-- Use an isolated short `CRUDE_HOME` and a disposable clone, never the working
-  checkout. Link the user's fonts (`~/.local/share/fonts`) into the isolated
-  home and give Alacritty a config with `JetBrainsMono Nerd Font`; otherwise
-  `HOME` isolation silently falls back to a default font.
-- Capture at `COLS=180 ROWS=48 FONT_SIZE=11` (1920×1056 after cropping the
-  window's partial last row). Move the pointer off the header first
-  (`move:100,30`): resting on the wordmark opens the connection popover.
-- Drive the scene with real work: let the agent finish, then capture. Never
-  edit pixels or text.
-- Export the site copies as lossless WebP and keep `SHOT_WIDTH`/`SHOT_HEIGHT`
-  in `App.tsx` equal to the capture size; `scripts/test_site.py` enforces it.
-
-## Local preview and checks
+## Local preview
 
 ```bash
-npm --prefix site ci
-make site-serve          # vite dev server
-# open the printed local URL
+make site-serve          # serves site/ at http://127.0.0.1:8080/
 ```
-
-Run the complete website acceptance check:
-
-```bash
-make site-check
-```
-
-`site-check` installs from the lockfile, runs ESLint with `@shadcn/lint`, runs
-the TypeScript + Vite production build, then runs
-`scripts/test_site.py`. The test validates the built artifact for metadata,
-canonical/Open Graph URLs, local asset resolution, CSS font references,
-sitemap/robots agreement, the 404 redirect, the shadcn lint policy, Geist font
-wiring, shadcn component imports, installer URLs, payload size and the absence
-of the old repository name.
-
-For visual acceptance, use a real browser at desktop and constrained widths.
-The repository capture workflow (`scripts/tuishot.sh`) is for the TUI product,
-not the website; use the browser directly for pages.
 
 ## Deploy
 
-GitHub serves the organization root only from a repository named
-`opencrude.github.io`. That repository holds one dispatch-only workflow and no
-site source. Push the site change here first, then deploy deliberately:
+Pages deploys only from an explicit dispatch. A push to any repository never
+publishes the website.
 
 ```bash
 gh workflow run pages.yml -R opencrude/opencrude.github.io        # master
@@ -189,35 +62,24 @@ gh workflow run pages.yml -R opencrude/opencrude.github.io -f ref=<sha>
 gh run watch -R opencrude/opencrude.github.io
 ```
 
-The workflow checks out this public repository at `ref`, installs from
-`site/package-lock.json`, runs the mandatory lint, builds `site/dist`,
-validates the built site with `scripts/test_site.py`, uploads only that
-directory and deploys with the official Pages actions pinned by commit. It
-needs no secret and never runs on a push. Pages on `opencrude/crude` is
-disabled, so old `/crude/` links reach the root `404.html`, which redirects
-to the home page.
+The job checks out `opencrude/crude` at the requested ref, copies `site/` and
+the two installers into the published directory, uploads that directory and
+uses the official Pages actions pinned by commit.
+
+After a deploy, open <https://opencrude.github.io/> and confirm the page, the
+install commands and the social card.
 
 ## Custom domain
 
-A custom domain can be added later without rebuilding the site:
-
-1. Add a `CNAME` file to `site/public/` containing exactly the domain (for
-   example `crude.dev`). Vite copies it into `dist`.
-2. In DNS, point a subdomain at `opencrude.github.io` with a `CNAME` record, or
-   use the GitHub-provided `A`/`AAAA` records for an apex domain.
-3. Set the custom domain in the Pages settings of `opencrude/opencrude.github.io`
-   and enable HTTPS.
-4. Update the canonical URL, Open Graph/Twitter URLs, `robots.txt`, `sitemap.xml`
-   and the `CANONICAL` constant in `scripts/test_site.py` in the same change.
-
-Do not add a `CNAME` before the domain is actually configured: Pages would
-serve the project site at the wrong canonical origin.
+1. Create the `CNAME` file in `site/` with the domain on one line.
+2. In DNS, point the domain at `opencrude.github.io` with a `CNAME` record, or
+   use the four `A` records that GitHub Pages documents for an apex domain.
+3. Set the domain in the Pages settings of `opencrude/opencrude.github.io`.
+4. Change the canonical URL, the sitemap, `robots.txt` and the social card to
+   the new address, then deploy again.
 
 ## Limits
 
-GitHub Pages is static hosting. It does not provide server-side code, private
-pages, custom response headers, form processing or authentication. The soft
-limits for a public Pages site are 1 GiB of published content and 100 GiB of
-bandwidth per month; the current build is well below both. Release downloads
-remain on GitHub Releases, not on Pages. Unknown paths reach a small 404 page
-that redirects to the canonical site.
+Pages serves static files and adds no headers. Any redirect or rewrite the
+page needs must happen in the page itself or in a `404.html` that you add
+deliberately.

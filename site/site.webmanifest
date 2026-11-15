@@ -1,0 +1,14 @@
+{
+  "name": "Crude",
+  "short_name": "Crude",
+  "description": "The agentic IDE that lives in your terminal.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "browser",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    { "src": "favicon.svg", "type": "image/svg+xml", "sizes": "any" },
+    { "src": "apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+  ]
+}

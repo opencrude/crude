@@ -11,11 +11,10 @@ passing.
 
 Command-only CI (`.github/workflows/tui.yml`, reusable
 `.github/workflows/verify.yml`) runs
-Linux workflow/installer checks, the mandatory shadcn website lint/build and
-acceptance test, full-repo lint, design/docs/performance gates, build, full
-tests and full race tests. A native Windows job builds/tests with cgo and
-exercises both PowerShell 5.1 and 7 installers. Release jobs reuse these checks;
-see [releases](releases.md). Native CI configuration is not proof that the
+Linux workflow/installer checks, full-repo lint, design/docs/performance gates,
+build, full tests and full race tests. A native Windows job builds/tests with
+cgo and exercises both PowerShell 5.1 and 7 installers. Release jobs reuse these
+checks; see [releases](releases.md). Native CI configuration is not proof that the
 corresponding run has passed. Push, pull-request, tag and schedule triggers are
 absent; a workflow starts only from an explicit dispatch. Local checks and
 manual publication do not require a hosted workflow. The `instant` release mode
@@ -37,7 +36,6 @@ make design-audit                     # layer boundary, raw SGR, hard-coded hex
 make docs-check                       # documentation acceptance gate
 make bench-gate                       # allocation ceilings and work budgets
 make test-race-tui                    # exhaustive repository race suite
-make site-check                       # shadcn lint, Vite build and site acceptance
 ```
 
 CI and the Make targets share `python scripts/test_go.py` (normal) and
