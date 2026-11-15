@@ -51,7 +51,9 @@ class ReleaseTests(unittest.TestCase):
             # The installers read these for the window icon and menu entry.
             for icon in ("crude-icon.png", "crude-icon.svg", "crude-icon.ico"):
                 self.assertIn(icon, names)
-            self.assertEqual(archive.extractfile("licenses/SYNTAX-QUERIES-NOTICE").read(),
+            notice = archive.extractfile("licenses/SYNTAX-QUERIES-NOTICE")
+            assert notice is not None
+            self.assertEqual(notice.read(),
                              (release.ROOT / "syntax/queries/NOTICE").read_bytes())
         with zipfile.ZipFile(windows) as archive:
             names = archive.namelist()
@@ -104,7 +106,9 @@ class ReleaseTests(unittest.TestCase):
         for name in ("GHOSTTY_PIN", "GHOSTTY_PIN.ps1", "GHOSTTY-LICENSE", "NATIVE-NOTICES", "README.md"):
             with self.subTest(name=name):
                 self.assertTrue((prefix / name).is_file())
-        pin = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (prefix / "GHOSTTY_PIN").read_text(), re.MULTILINE).group(1)
+        match = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (prefix / "GHOSTTY_PIN").read_text(), re.MULTILINE)
+        assert match is not None, "GHOSTTY_PIN has no GHOSTTY_COMMIT line"
+        pin = match.group(1)
         self.assertIn(pin, (prefix / "GHOSTTY_PIN.ps1").read_text())
         self.assertIn(pin, (prefix / "NATIVE-NOTICES").read_text())
 

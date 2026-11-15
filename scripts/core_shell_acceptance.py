@@ -29,9 +29,20 @@ def until(description, check, timeout=45):
     raise AssertionError("timeout: " + description)
 
 
+class FixtureServer(http.server.ThreadingHTTPServer):
+    """Loopback provider fixture; carries the state that its handler reads."""
+
+    state: dict
+
+
 class Fixture(http.server.BaseHTTPRequestHandler):
-    def log_message(self, *_):
+    def log_message(self, format: str, *args: object) -> None:
         pass
+
+    @property
+    def fixture(self) -> FixtureServer:
+        assert isinstance(self.server, FixtureServer)
+        return self.server
 
     def do_GET(self):
         body = json.dumps({"data": [{"id": "fixture-model"}], "models": []}).encode()
@@ -47,7 +58,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        state = self.server.state
+        state = self.fixture.state
         with state["lock"]:
             mode = state["mode"]
             state["requests"].append({"mode": mode, "body": request})
@@ -113,8 +124,12 @@ class Observer:
         env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "LD_LIBRARY_PATH") if k in os.environ}
         env.update(HOME=str(home), CRUDE_HOME=str(home))
         self.stderr = tempfile.TemporaryFile(mode="w+t")
-        self.process = subprocess.Popen([str(binary or self.build())], env=env, stdin=subprocess.PIPE,
-                                        stdout=subprocess.PIPE, stderr=self.stderr, text=True)
+        process = subprocess.Popen([str(binary or self.build())], env=env, stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, stderr=self.stderr, text=True)
+        assert process.stdin is not None and process.stdout is not None, "PIPE did not open both pipes"
+        self.process = process
+        self.stdin = process.stdin
+        self.stdout = process.stdout
         try:
             assert self.read().get("ready"), "typed observer did not become ready"
         except Exception:
@@ -125,25 +140,25 @@ class Observer:
             raise
 
     def read(self):
-        if not select.select([self.process.stdout], [], [], 20)[0]:
+        if not select.select([self.stdout], [], [], 20)[0]:
             raise TimeoutError("typed observer response timed out")
-        line = self.process.stdout.readline()
+        line = self.stdout.readline()
         if not line:
             self.stderr.seek(0)
             raise EOFError("typed observer exited: " + self.stderr.read()[-8000:])
         return json.loads(line)
 
     def call(self, method, payload=None, workspace=""):
-        self.process.stdin.write(json.dumps({"method": method, "workspace": workspace, "payload": payload or {}}) + "\n")
-        self.process.stdin.flush()
+        self.stdin.write(json.dumps({"method": method, "workspace": workspace, "payload": payload or {}}) + "\n")
+        self.stdin.flush()
         response = self.read()
         assert not response.get("error"), response
         return response["payload"]
 
     def close(self):
-        if self.process.stdin.closed:
+        if self.stdin.closed:
             return
-        self.process.stdin.close()  # EOF invokes SDK Close and ends the retained session.
+        self.stdin.close()  # EOF invokes SDK Close and ends the retained session.
         try:
             code = self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
@@ -151,7 +166,7 @@ class Observer:
             self.process.wait(timeout=5)
             raise AssertionError("typed observer failed to close on stdin EOF")
         finally:
-            self.process.stdout.close()
+            self.stdout.close()
             self.stderr.seek(0)
             error = self.stderr.read()[-8000:]
             self.stderr.close()
@@ -205,7 +220,7 @@ class Harness:
         self.state = {"lock": threading.Lock(), "mode": "stream", "release": threading.Event(),
                       "shutdown": threading.Event(), "requests": [], "errors": [],
                       "completed": {m: threading.Event() for m in ("stream", "question", "stop", "zero")}}
-        self.provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
+        self.provider = FixtureServer(("127.0.0.1", 0), Fixture)
         self.provider.daemon_threads = True
         self.provider.state = self.state
 
@@ -292,11 +307,15 @@ class Harness:
             assert actual == want, (mode, actual, want)
             assert not self.state["errors"], self.state["errors"]
 
+    def observe(self, method, payload=None, workspace=""):
+        assert self.observer is not None, "the typed observer is not attached"
+        return self.observer.call(method, payload, workspace)
+
     def status(self):
-        return self.observer.call("core.status")
+        return self.observe("core.status")
 
     def identities(self, workspace):
-        snapshot = self.observer.call("workspace.snapshot", workspace=workspace)
+        snapshot = self.observe("workspace.snapshot", workspace=workspace)
         roots = [(a["ID"], a["SessionID"]) for a in snapshot["agents"] if not a["ParentID"]]
         assert len(roots) == 1, roots
         return roots
@@ -326,9 +345,9 @@ class Harness:
         self.launch("shell-0", project)
         self.keys("shell-0", "C-M-n")
         self.visible(["shell-0"], "fixture-model")
-        attached = self.observer.call("workspace.attach", {"root": str(project)})
+        attached = self.observe("workspace.attach", {"root": str(project)})
         workspace = attached["workspace_id"]
-        until("created root published", lambda: len(self.observer.call("workspace.snapshot", workspace=workspace)["agents"]) == 1)
+        until("created root published", lambda: len(self.observe("workspace.snapshot", workspace=workspace)["agents"]) == 1)
         initial = self.identities(workspace)
         self.result["identity"] = initial
         for i in range(1, 10):
@@ -368,7 +387,7 @@ class Harness:
         # The completed tool evidence intentionally retains Q1/A1 in chat. Check
         # the actual pending block and blocking deck, not absence of history text.
         def question_resolved():
-            snapshot = self.observer.call("workspace.snapshot", workspace=workspace)
+            snapshot = self.observe("workspace.snapshot", workspace=workspace)
             return all(not a.get("Prompt") and not a.get("PendingBlockID") for a in snapshot["agents"]) and all(
                 "Choose a fixture answer" not in "\n".join(row for row in self.capture(n).splitlines() if "Q1:" not in row)
                 for n in self.windows)

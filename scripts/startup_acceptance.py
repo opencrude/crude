@@ -27,14 +27,25 @@ import traceback
 from core_shell_acceptance import Observer, proc, until
 
 
+class CatalogServer(http.server.ThreadingHTTPServer):
+    """Loopback catalog fixture; records every request its handler sees."""
+
+    requests: list
+
+
 class Catalog(http.server.BaseHTTPRequestHandler):
     """Deterministic loopback catalog; any provider execution fails acceptance."""
 
-    def log_message(self, *_):
+    def log_message(self, format: str, *args: object) -> None:
         pass
 
+    @property
+    def catalog(self) -> CatalogServer:
+        assert isinstance(self.server, CatalogServer)
+        return self.server
+
     def do_GET(self):
-        self.server.requests.append({"method": "GET", "path": self.path})
+        self.catalog.requests.append({"method": "GET", "path": self.path})
         body = b"{}"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -42,7 +53,7 @@ class Catalog(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        self.server.requests.append({"method": "POST", "path": self.path})
+        self.catalog.requests.append({"method": "POST", "path": self.path})
         self.send_error(503, "Provider execution forbidden in startup acceptance")
 
 
@@ -179,10 +190,17 @@ class Profile:
         until(self.name + ": completed path navigation " + str(path), completed, timeout=30)
         return self.capture(name, label)
 
-    def connect(self):
-        if self.observer:
+    def disconnect(self):
+        if self.observer is not None:
             self.observer.close()
             self.observer = None
+
+    def observe(self, method, payload=None, workspace=""):
+        assert self.observer is not None, "the typed observer is not attached"
+        return self.observer.call(method, payload, workspace)
+
+    def connect(self):
+        self.disconnect()
 
         def attempt():
             try:
@@ -203,7 +221,7 @@ class Profile:
         return owned
 
     def status(self, label):
-        status = self.observer.call("core.status")
+        status = self.observe("core.status")
         self.info["status"].append({"label": label, "value": status})
         return status
 
@@ -269,7 +287,7 @@ class Harness:
                            "Text captures are not screenshots; parent owns sequential tuishot visual acceptance",
                            "No account submission, external credentials, provider calls or AI turns",
                            "Core crash checks durable choices/files and explicit startup reconnect, not in-flight run recovery"]}
-        self.provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Catalog)
+        self.provider = CatalogServer(("127.0.0.1", 0), Catalog)
         self.provider.daemon_threads = True
         self.provider.requests = []
         self.endpoint = "http://127.0.0.1:%d" % self.provider.server_port
@@ -386,7 +404,7 @@ class Harness:
         assert "Welcome to Crude" not in text
         p.connect()
         p.no_project("corrupt-config-no-workspace")
-        inspected = p.observer.call("startup.inspect", {"root": str(p.home)})
+        inspected = p.observe("startup.inspect", {"root": str(p.home)})
         (p.out / "startup-inspect.json").write_text(json.dumps(inspected, indent=2))
         assert inspected.get("issues") and "configuration must contain one JSON object" in json.dumps(inspected["issues"]), inspected
         assert p.config.read_bytes() == original
@@ -424,8 +442,7 @@ class Harness:
         p.no_project("before-core-crash")
         before = p.config.read_bytes()
         sample = p.sample.read_bytes()
-        p.observer.close()
-        p.observer = None
+        p.disconnect()
         p.kill_exact(core)
         p.capture(n, "after-exact-core-sigkill")
         assert alive(p.shells[n][1]), "startup shell died with core"

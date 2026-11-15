@@ -95,7 +95,10 @@ def build(args):
     goos, goarch, cgo = run("go", "env", "GOOS", "GOARCH", "CGO_ENABLED").splitlines()
     if (goos, goarch, cgo) != (target, "amd64", "1"):
         raise ValueError("source scripts/libghostty_env for this native platform; CGO_ENABLED must be 1")
-    pin = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (ROOT / "third_party/libghostty-vt/GHOSTTY_PIN").read_text(), re.MULTILINE).group(1)
+    match = re.search(r"^GHOSTTY_COMMIT=([0-9a-f]{40})$", (ROOT / "third_party/libghostty-vt/GHOSTTY_PIN").read_text(), re.MULTILINE)
+    if match is None:
+        raise ValueError("third_party/libghostty-vt/GHOSTTY_PIN has no GHOSTTY_COMMIT line")
+    pin = match.group(1)
     prefix = ROOT / "third_party/libghostty-vt"
     library = "ghostty-vt-static.lib" if target == "windows" else "libghostty-vt.a"
     if (prefix / ".crude-pin").read_text().strip() != pin or (prefix / ".crude-cpu").read_text().strip() != "baseline" or not (prefix / "lib" / library).is_file():

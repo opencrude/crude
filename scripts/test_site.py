@@ -264,8 +264,11 @@ class SiteTests(unittest.TestCase):
         self.assertIn("Skip to content", self.app)
         self.assertIn("alt={alt}", self.app)
         # Declared image geometry must match the captures, or the layout shifts.
-        width = int(re.search(r"SHOT_WIDTH = (\d+);", self.app).group(1))
-        height = int(re.search(r"SHOT_HEIGHT = (\d+);", self.app).group(1))
+        width_match = re.search(r"SHOT_WIDTH = (\d+);", self.app)
+        height_match = re.search(r"SHOT_HEIGHT = (\d+);", self.app)
+        assert width_match is not None and height_match is not None, "the site declares no capture size"
+        width = int(width_match.group(1))
+        height = int(height_match.group(1))
         for scene in TOUR_SCENES:
             with self.subTest(capture=scene):
                 self.assertEqual(webp_dimensions(DIST / f"assets/{scene}.webp"), (width, height))
