@@ -49,6 +49,25 @@ func TestAnalyzerEnvironmentUsesPositiveInheritanceRatherThanSecretNameGuessing(
 	}
 }
 
+func TestAnalyzerEnvironmentKeepsWindowsToolchainLocations(t *testing.T) {
+	// Clang finds Visual Studio through %ProgramData% (or %SystemDrive% when it
+	// constructs the same path). Without either, it falls back to VS 2005-era
+	// include paths and reports missing C library headers for every file.
+	got, err := analyzerEnvironment([]string{
+		`SYSTEMDRIVE=C:`,
+		`PROGRAMDATA=C:\ProgramData`,
+	}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["SYSTEMDRIVE"] != "C:" || got["PROGRAMDATA"] != `C:\ProgramData` {
+		t.Fatalf("Windows toolchain locations did not cross analyzer inheritance: %v", got)
+	}
+	if _, err := lsp.NewProcessEnvironment(got); err != nil {
+		t.Fatalf("toolchain location launch environment: %v", err)
+	}
+}
+
 func TestAnalyzerEnvironmentDoesNotSearchWorkspaceOrRelativeAmbientPaths(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "project")
 	tools := filepath.Join(t.TempDir(), "tools")

@@ -90,17 +90,6 @@ func TestTerminalWriteDoesNotBlockUI(t *testing.T) {
 	}
 }
 
-func TestTerminalEnvironmentChild(t *testing.T) {
-	index := slices.Index(os.Args, "--terminal-environment-child")
-	if index < 0 {
-		return
-	}
-	for _, key := range os.Args[index+1:] {
-		fmt.Printf("%s=[%s]\n", key, os.Getenv(key))
-	}
-	os.Exit(0)
-}
-
 func terminalEnvironmentOutput(t *testing.T, manager *TerminalManager, opts TerminalCreateOpts) string {
 	t.Helper()
 	sink := &terminalTestSink{events: make(chan struct{}, 1)}
@@ -141,10 +130,6 @@ func terminalEnvironmentOutput(t *testing.T, manager *TerminalManager, opts Term
 }
 
 func TestTerminalEnvironmentExpandsEnvReferences(t *testing.T) {
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	root := t.TempDir()
 	manager := NewTerminalManager(root)
 	basePath := filepath.Join(root, "shell-tools")
@@ -153,8 +138,8 @@ func TestTerminalEnvironmentExpandsEnvReferences(t *testing.T) {
 	// The manager owns a detached snapshot, not the caller's slice.
 	base[0] = "PATH=changed-after-attach"
 	separator := string(os.PathListSeparator)
-	settings := ttypes.TerminalSettings{Shell: ttypes.TerminalShellCustom, Command: executable,
-		Args: []string{"-test.run=^TestTerminalEnvironmentChild$", "--", "--terminal-environment-child", "PATH", "VIRTUAL_ENV", "UNKNOWN", "LITERAL", "COPY", "PEER", "INDIRECT", "OUTER_TERM", "TERM"},
+	command, args := testterminal.Command(t, "env", "PATH", "VIRTUAL_ENV", "UNKNOWN", "LITERAL", "COPY", "PEER", "INDIRECT", "OUTER_TERM", "TERM")
+	settings := ttypes.TerminalSettings{Shell: ttypes.TerminalShellCustom, Command: command, Args: args,
 		Environment: map[string]string{
 			"PATH":        "${workspaceFolder}/.venv/bin" + separator + "${env:PATH}",
 			"VIRTUAL_ENV": "${workspaceFolder}/.venv",

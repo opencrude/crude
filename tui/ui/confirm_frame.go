@@ -64,6 +64,7 @@ const (
 	ConfirmActionSave    = "confirm.save"
 	ConfirmActionDiscard = "confirm.discard"
 	ConfirmActionCancel  = "confirm.cancel"
+	ConfirmActionAuto    = "confirm.auto"
 )
 
 // ConfirmButtonSpec describes one action button in a confirm dialog. The

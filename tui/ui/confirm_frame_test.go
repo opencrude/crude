@@ -92,6 +92,35 @@ func TestConfirmButtonRowStaysLabelSized(t *testing.T) {
 	}
 }
 
+// The tool confirmation's four-button row (with Auto Review) fits inside its
+// 70-column dialog: every button keeps its full label and no button leaves the
+// frame, so the last choice is never clipped.
+func TestConfirmFourButtonRowFitsToolConfirmation(t *testing.T) {
+	th := theme.DefaultDark()
+	cw := BuildConfirmFrame(th, ConfirmFrameSpec{
+		Title: "Confirmation required", Question: "Allow this operation?",
+		Buttons: []ConfirmButtonSpec{
+			{Label: "Allow", ActionID: ConfirmActionYes}, {Label: "Always allow", ActionID: ConfirmActionSave},
+			{Label: "Deny", ActionID: ConfirmActionNo}, {Label: "Auto Review…", ActionID: ConfirmActionAuto},
+		},
+		Width: 70,
+	})
+	w, h := cw.Measure(80, 40)
+	cw.Host().Resize(w, h)
+	cw.Host().Layout()
+	labels := []string{"Allow", "Always allow", "Deny", "Auto Review…"}
+	for i, label := range labels {
+		btn := cw.Host().registry[ConfirmButtonID(i)].(*Button)
+		b := btn.Bounds()
+		if b.W < len([]rune("[ "+label+" ]")) {
+			t.Fatalf("button %d %q clipped to width %d", i, label, b.W)
+		}
+		if b.X+b.W > w {
+			t.Fatalf("button %d %q ends at %d past dialog width %d", i, label, b.X+b.W, w)
+		}
+	}
+}
+
 // Danger dialogs get the error-colored border accent via the severity path.
 func TestConfirmFrameSeverityAccent(t *testing.T) {
 	th := theme.DefaultDark()

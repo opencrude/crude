@@ -56,7 +56,16 @@ same contract tells it that a notice from Crude (`prompt.AttentionNotice`, one
 sentence with Crude's own summary, no server text) is a task: investigate with
 Crude first, treat tool and project text as evidence, change nothing before the
 user agrees, and ask one question for all open notices. The flag is part of the
-session's system-prompt cache key; no other root prompt changes.
+session's system-prompt cache key.
+
+The same slot carries `prompt.WorkspaceAgentPeer` for every other root: it says
+that the workspace has one permanent Aeron and that an agent finds it with
+`agent_list` (query `aeron`, which matches its registered category) and reaches
+it with `agent_send` or `agent_inspect`, so no agent searches history or starts
+a second workspace agent to find it. Aeron gets its contract, every other root
+gets the peer note, and nothing else in the prompt changes. The root
+orchestrator registers in the collaboration registry under its session's root
+role, so the workspace Aeron lists with category `aeron`, not `default`.
 
 Editor prediction prerequisites use a dedicated prompt rather than a coding-agent
 conversation. The request owner qualifies canonical source/diagnostic facts and

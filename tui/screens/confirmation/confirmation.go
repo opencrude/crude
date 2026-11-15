@@ -10,6 +10,9 @@ import (
 	"crude/tui/ui"
 )
 
+// choiceActionPrefix names a Choice as an action-bar action.
+const choiceActionPrefix = "confirmation."
+
 const (
 	ScreenID  ui.ComponentID = "session-confirmation"
 	FormID    ui.ComponentID = "session-confirmation/form"
@@ -18,6 +21,47 @@ const (
 
 type Details struct {
 	Question, Operation, Tool, Target, Risk, Reason, Suggestion string
+	// OfferAutoReview adds the choice that opens the Auto Review Agent. The
+	// owner sets it while Auto Review is off and the request can be reviewed.
+	OfferAutoReview bool
+}
+
+// Choice is one answer a tool confirmation offers. The docked screen and the
+// modal frame both build their buttons from Choices, so they cannot drift.
+type Choice struct {
+	ID, Label, Shortcut string
+	Variant             ui.ButtonVariant
+}
+
+const (
+	ChoiceAllow  = "allow"
+	ChoiceAlways = "always"
+	ChoiceDeny   = "deny"
+	// ChoiceAutoReview does not answer the request. It opens the Auto Review
+	// Agent, which checks later requests for the user. It is not YOLO: the
+	// reviewer still asks or denies when it is not sure.
+	ChoiceAutoReview = "auto-review"
+)
+
+// Choices lists the answers in display order. Auto Review comes last so the
+// three answers keep their positions.
+func Choices(offerAutoReview bool) []Choice {
+	choices := []Choice{
+		{ID: ChoiceAllow, Label: "Allow", Shortcut: "y", Variant: ui.VariantPrimary},
+		{ID: ChoiceAlways, Label: "Always allow", Shortcut: "a", Variant: ui.VariantSecondary},
+		{ID: ChoiceDeny, Label: "Deny", Shortcut: "n", Variant: ui.VariantDanger},
+	}
+	if offerAutoReview {
+		choices = append(choices, Choice{ID: ChoiceAutoReview, Label: "Auto Review…", Shortcut: "r", Variant: ui.VariantSecondary})
+	}
+	return choices
+}
+
+// OffersAutoReview reports whether a request can use the Auto Review choice:
+// Auto Review is off and the request is not hard-blocked, which no reviewer
+// may approve.
+func OffersAutoReview(autoReviewOn bool, risk string) bool {
+	return !autoReviewOn && risk != "blocked"
 }
 
 type ResultMsg struct {
@@ -67,11 +111,12 @@ func (s *Screen) Reset(details Details) {
 		model.AddField(state)
 	}
 	s.form = ui.NewDockedForm(FormID, model, "Confirmation required", details.Question, s.tokens)
-	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "allow"), Label: "Allow", Action: "confirmation.allow", Shortcut: "y", Variant: ui.VariantPrimary, Enabled: true},
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "always"), Label: "Always allow", Action: "confirmation.always", Shortcut: "a", Variant: ui.VariantSecondary, Enabled: true},
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "deny"), Label: "Deny", Action: "confirmation.deny", Shortcut: "n", Variant: ui.VariantDanger, Enabled: true},
-	)
+	var buttons []ui.ActionBarButton
+	for _, choice := range Choices(details.OfferAutoReview) {
+		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, choice.ID), Label: choice.Label,
+			Action: choiceActionPrefix + choice.ID, Shortcut: choice.Shortcut, Variant: choice.Variant, Enabled: true})
+	}
+	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 	s.actions.SetCancelAction("confirmation.cancel")
 }
 
@@ -108,19 +153,18 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		return ui.EventResult{}
 	}
 	key := evt.Key
-	switch {
-	case key.Code == tea.KeyEsc:
+	switch key.Code {
+	case tea.KeyEsc:
 		return s.cancel()
-	case key.String() == "n":
-		return s.result("deny")
-	case key.String() == "y":
-		return s.result("allow")
-	case key.String() == "a":
-		return s.result("always")
-	case key.Code == tea.KeyEnter:
-		return s.result("allow")
-	case key.Code == tea.KeyLeft || key.Code == tea.KeyRight || key.Code == tea.KeyTab:
+	case tea.KeyEnter:
+		return s.result(ChoiceAllow)
+	case tea.KeyLeft, tea.KeyRight, tea.KeyTab:
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	}
+	for _, choice := range Choices(s.details.OfferAutoReview) {
+		if key.String() == choice.Shortcut {
+			return s.result(choice.ID)
+		}
 	}
 	return ui.EventResult{}
 }
@@ -128,9 +172,12 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	if action.ID == "confirmation.cancel" || action.ID == "form.cancel" {
 		return s.cancel()
 	}
-	choice := map[string]string{"confirmation.allow": "allow", "confirmation.always": "always", "confirmation.deny": "deny"}[action.ID]
-	if choice != "" {
-		return s.result(choice)
+	if choice, ok := strings.CutPrefix(action.ID, choiceActionPrefix); ok {
+		for _, offered := range Choices(s.details.OfferAutoReview) {
+			if offered.ID == choice {
+				return s.result(choice)
+			}
+		}
 	}
 	if action.ID == "form.exit.forward" || action.ID == "form.exit.backward" {
 		if action.ID == "form.exit.backward" {
@@ -151,9 +198,14 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 	return ui.EventResult{Action: &action}
 }
 func (s *Screen) result(choice string) ui.EventResult {
-	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "panel.close"}, Cmd: func() tea.Msg {
+	result := ui.EventResult{Handled: true, Cmd: func() tea.Msg {
 		return ResultMsg{Target: s, Choice: choice}
 	}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+	if choice != ChoiceAutoReview {
+		// Auto Review answers nothing, so the request stays on screen.
+		result.Action = &ui.Action{ID: "panel.close"}
+	}
+	return result
 }
 func (s *Screen) cancel() ui.EventResult {
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: "panel.close"}, Cmd: func() tea.Msg {

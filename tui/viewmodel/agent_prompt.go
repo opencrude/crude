@@ -37,12 +37,13 @@ type agentPromptRequest struct {
 }
 
 type agentPromptState struct {
-	request      agentPromptRequest
-	choice       int
-	question     *question.Screen
-	confirmation *confirmation.Screen
-	inline       bool
-	projection   *sessionProjection
+	request         agentPromptRequest
+	choice          int
+	offerAutoReview bool
+	question        *question.Screen
+	confirmation    *confirmation.Screen
+	inline          bool
+	projection      *sessionProjection
 }
 
 func (s *agentPromptState) panelID() string {
@@ -83,14 +84,23 @@ func (m *App) enqueueAgentPrompt(req agentPromptRequest) {
 			return
 		}
 	} else {
+		state.offerAutoReview = m.autoReviewSetupAvailable(req.risk)
 		state.confirmation = confirmation.New(m.Theme)
 		state.confirmation.Reset(confirmation.Details{
 			Question: req.question, Operation: req.operation, Tool: req.tool, Target: req.target,
 			Risk: req.risk, Reason: req.reason, Suggestion: req.suggestion,
+			OfferAutoReview: state.offerAutoReview,
 		})
 	}
 	m.agentPrompts = append(m.agentPrompts, state)
 	m.openNextAgentPrompt()
+}
+
+// autoReviewSetupAvailable reports whether this request may offer the choice
+// that opens the Auto Review Agent: it is off and the request is not a hard
+// block that no reviewer can approve.
+func (m *App) autoReviewSetupAvailable(risk string) bool {
+	return confirmation.OffersAutoReview(m.ws.LoadAppSettings().Safety.AutoPermission.Enabled == "on", risk)
 }
 
 func (m *App) agentYoloEnabled(agentID string) bool {
@@ -123,7 +133,7 @@ func (m *App) openNextAgentPrompt() {
 			m.openInlineAgentPrompt(state)
 		}
 	}
-	if m.agentPrompt == nil && m.overlayHost != nil && !m.overlayHost.IsOpen(ui.OverlayDirtyClose) {
+	if m.agentPrompt == nil && m.overlayHost != nil && !m.overlayHost.IsOpen(ui.OverlayDirtyClose) && !m.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
 		for _, state := range m.agentPrompts {
 			if state.inline || m.aeronPromptWaits(state) {
 				continue
@@ -227,9 +237,14 @@ func (m *App) openAgentConfirmationPrompt(state *agentPromptState) {
 	if req.risk == "destructive" || req.risk == "blocked" {
 		severity = ui.ConfirmPromptDanger
 	}
+	choices := confirmation.Choices(state.offerAutoReview)
+	buttons := make([]ui.ConfirmButtonSpec, len(choices))
+	for i, choice := range choices {
+		buttons[i] = ui.ConfirmButtonSpec{Label: choice.Label, ActionID: confirmChoiceActionID(choice.ID)}
+	}
 	frame := ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
 		Title: "Confirmation required", Question: req.question, Detail: detail, Severity: severity,
-		Buttons:      []ui.ConfirmButtonSpec{{Label: "Allow", ActionID: ui.ConfirmActionYes}, {Label: "Always allow", ActionID: ui.ConfirmActionSave}, {Label: "Deny", ActionID: ui.ConfirmActionNo}},
+		Buttons:      buttons,
 		FocusedIndex: state.choice, Width: 70, DetailMaxLines: 10,
 	})
 	w, h := frame.Measure(80, 40)
@@ -272,9 +287,10 @@ func (m *App) handleAgentPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	count := len(confirmation.Choices(state.offerAutoReview))
 	switch msg.Code {
 	case tea.KeyLeft, tea.KeyUp:
-		if n := ui.MoveConfirmFocus(cw, -1, 3); n >= 0 {
+		if n := ui.MoveConfirmFocus(cw, -1, count); n >= 0 {
 			state.choice = n
 		}
 	case tea.KeyRight, tea.KeyDown, tea.KeyTab:
@@ -282,7 +298,7 @@ func (m *App) handleAgentPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 		if msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift) {
 			delta = -1
 		}
-		if n := ui.MoveConfirmFocus(cw, delta, 3); n >= 0 {
+		if n := ui.MoveConfirmFocus(cw, delta, count); n >= 0 {
 			state.choice = n
 		}
 	case tea.KeyEnter:
@@ -298,12 +314,50 @@ func (m *App) resolveAgentConfirmationChoice(choice int) {
 	if state == nil || state.inline {
 		return
 	}
-	choiceName := map[int]string{0: "allow", 1: "always", 2: "deny"}[choice]
-	if choiceName == "" {
-		choiceName = "deny"
+	choices := confirmation.Choices(state.offerAutoReview)
+	choiceName := confirmation.ChoiceDeny
+	if choice >= 0 && choice < len(choices) {
+		choiceName = choices[choice].ID
+	}
+	if choiceName == confirmation.ChoiceAutoReview {
+		m.openAutoReviewSetup(state)
+		return
 	}
 	m.resolveAgentPromptConfirmation(state.request, choiceName)
 	m.finishAgentPrompt()
+}
+
+// confirmChoiceActionID maps a confirmation choice to the modal confirm frame's
+// action vocabulary so its button variants read like the docked screen.
+func confirmChoiceActionID(choiceID string) string {
+	switch choiceID {
+	case confirmation.ChoiceAllow:
+		return ui.ConfirmActionYes
+	case confirmation.ChoiceAlways:
+		return ui.ConfirmActionSave
+	case confirmation.ChoiceAutoReview:
+		return ui.ConfirmActionAuto
+	default:
+		return ui.ConfirmActionNo
+	}
+}
+
+// openAutoReviewSetup opens the Auto Review Agent settings so the user can turn
+// on automatic review. The request stays pending and reopens when the settings
+// window closes; opening setup never answers the request and never enables YOLO.
+func (m *App) openAutoReviewSetup(state *agentPromptState) {
+	if state == nil {
+		return
+	}
+	if m.agentPrompt == state {
+		m.overlayHost.Close(ui.OverlayAgentPrompt)
+		m.agentPrompt = nil
+	}
+	// A docked prompt closed its panel on the click; let it re-present.
+	state.inline = false
+	if cmd := m.openApplicationAgent("role/auto-review"); cmd != nil {
+		m.editorCommands = append(m.editorCommands, cmd)
+	}
 }
 
 func (m *App) promptOwnerLabel(agentID string) string {
@@ -319,6 +373,10 @@ func (m *App) promptOwnerLabel(agentID string) string {
 func (m *App) resolvePromptConfirmation(target *confirmation.Screen, choice string) {
 	state := m.promptForScreen(target)
 	if state == nil {
+		return
+	}
+	if choice == confirmation.ChoiceAutoReview {
+		m.openAutoReviewSetup(state)
 		return
 	}
 	m.resolveAgentPromptConfirmation(state.request, choice)

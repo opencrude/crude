@@ -30,7 +30,7 @@ func BuildRoot(options RootOptions) string {
 	if options.PlanMode {
 		planMode = PlanModeContract
 	}
-	workspaceAgent := ""
+	workspaceAgent := WorkspaceAgentPeer
 	if options.WorkspaceAgent {
 		workspaceAgent = WorkspaceAgentContract
 	}

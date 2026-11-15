@@ -178,18 +178,27 @@ func TestCollaborationEventMarksRareRunningAgentBroadcast(t *testing.T) {
 	}
 }
 
-// Only the workspace's Aeron learns that the question tool is its channel to
-// the user; every other root prompt stays byte-identical.
+// The workspace-agent slot differs only by role: Aeron gets its own contract
+// naming the question tool as its channel to the user; every other root learns
+// that Aeron exists and how to reach it. Nothing else changes.
 func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
 	plain := BuildRoot(RootOptions{WorkDir: "/workspace"})
 	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true})
 	if strings.Contains(plain, "<workspace_agent>") {
 		t.Fatal("an ordinary root prompt carries the workspace-agent contract")
 	}
+	if strings.Contains(aeron, "<workspace_agent_peer>") {
+		t.Fatal("Aeron's root prompt carries the peer note instead of its own contract")
+	}
 	if !strings.Contains(aeron, WorkspaceAgentContract) || !strings.Contains(aeron, "question tool") {
 		t.Fatal("Aeron's root prompt does not name the question tool as its channel")
 	}
-	if strings.Replace(aeron, WorkspaceAgentContract+"\n", "", 1) != plain {
+	if !strings.Contains(plain, WorkspaceAgentPeer) || !strings.Contains(plain, "agent_list") {
+		t.Fatal("an ordinary root prompt does not tell the agent how to reach Aeron")
+	}
+	// The slot is the only difference: swapping each role's section yields the
+	// same remaining prompt.
+	if strings.Replace(aeron, WorkspaceAgentContract, "", 1) != strings.Replace(plain, WorkspaceAgentPeer, "", 1) {
 		t.Fatal("the workspace-agent flag changed more than its own section")
 	}
 }
