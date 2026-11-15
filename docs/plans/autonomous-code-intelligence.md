@@ -189,7 +189,13 @@ silent missing settings command, the directory gap cycle and deleted files
 that stayed in Problems. A "single-file false alarm" change from that run was
 wrong: it silenced the user's own case (the project's only C header), and the
 real core then raised nothing; it is reverted, and Aeron separates errors in
-the user's code from a misconfiguration.
+the user's code from a misconfiguration. The same check found that a build
+writing files during the closed-file check (rust-analyzer's `target/`) ended
+each wait early; Crude took that for a silent server, gave up on it after two
+files and marked the rest unchecked, so the C header could miss Problems. A
+wait that a change ends now waits again within the file's 10 s; only the end
+of that time counts as silence. The `problems` view lists each unchecked file
+and why.
 
 Open: macOS and Windows terminal environment, and agent commands, language
 servers and MCP still inherit the core's environment.

@@ -134,6 +134,11 @@ func (m *LSPManager) acquireProbe(ctx context.Context, path string, gate func(tt
 	return &lspProbe{path: path, doc: doc, source: source, generation: generation, gate: gate, view: view}, nil
 }
 
+// errProbeStateChanged means that the server got the file again while the
+// request waited, for example after a change elsewhere in the project. The
+// request itself did not fail.
+var errProbeStateChanged = errors.New("the file or language server state changed during the request; run the request again")
+
 func (m *LSPManager) runProbe(ctx context.Context, probe *lspProbe, fn func(context.Context, LSPClient, string, LSPProbeView) error) error {
 	path, doc, generation := probe.path, probe.doc, probe.generation
 	source, gate, view := probe.source, probe.gate, probe.view
@@ -175,7 +180,7 @@ func (m *LSPManager) runProbe(ctx context.Context, probe *lspProbe, fn func(cont
 	m.mu.Unlock()
 	sources.mu.Unlock()
 	if !current {
-		return errors.New("the file or language server state changed during the request; run the request again")
+		return errProbeStateChanged
 	}
 	return nil
 }

@@ -734,3 +734,57 @@ func TestLSPIssueOutlivesAnIdleServerStop(t *testing.T) {
 		t.Fatalf("the stop changed the checked result: %+v %v", batch, ok)
 	}
 }
+
+// interruptingCheckClient models a project where something writes files while
+// Crude checks: each first wait for a file ends early, because a watch event
+// made Crude send the file again (live: rust-analyzer's build output under
+// target/ while clangd and pyright were checked).
+type interruptingCheckRuntime struct {
+	*lifecycleRuntime
+	manager *LSPManager
+	root    string
+}
+type interruptingCheckClient struct {
+	*lifecycleClient
+	manager     *LSPManager
+	root        string
+	mu          sync.Mutex
+	interrupted map[string]bool
+}
+
+func (r interruptingCheckRuntime) NewClient(spec model.LSPServerSpec, root string, admit func() error) LSPClient {
+	return &interruptingCheckClient{lifecycleClient: r.lifecycleRuntime.NewClient(spec, root, admit).(*lifecycleClient),
+		manager: r.manager, root: r.root, interrupted: map[string]bool{}}
+}
+func (c *interruptingCheckClient) AwaitDiagnostics(ctx context.Context, path string) (model.InsightDiagnosticPublication, bool) {
+	c.mu.Lock()
+	first := !c.interrupted[path]
+	c.interrupted[path] = true
+	c.mu.Unlock()
+	if first {
+		c.manager.NotifyWatchedFilesChanged(ctx, filepath.Join(c.root, "target", "build.log"), 2)
+		return model.InsightDiagnosticPublication{}, false
+	}
+	return c.lifecycleClient.AwaitDiagnostics(ctx, path)
+}
+
+// Found live: a build that wrote files while Crude checked closed files made
+// the first waits end early. Crude counted that as a silent server, gave up
+// on it after two files and marked the rest "did not answer", so the
+// project's C header never reached Problems or Aeron.
+func TestProjectCheckWaitsAgainWhenAnOutsideChangeInterruptsIt(t *testing.T) {
+	m, r, root := probeManager(t)
+	m.SetRuntime(interruptingCheckRuntime{lifecycleRuntime: r, manager: m, root: root})
+	paths := []string{filepath.Join(root, "a.py"), filepath.Join(root, "b.py"), filepath.Join(root, "c.py")}
+	for _, path := range paths {
+		createFile(t, path, "x\n")
+	}
+	startProjectCheck(t, m, root, map[string][]string{"python": paths})
+	for _, path := range paths {
+		awaitProjectFact(t, m, path)
+	}
+	awaitProjectCheckEnd(t, m)
+	if unchecked := m.UncheckedFiles(); len(unchecked) != 0 || m.ProjectInsights().ProjectCheckUnchecked != 0 {
+		t.Fatalf("an outside change was blamed on the server: %+v", unchecked)
+	}
+}

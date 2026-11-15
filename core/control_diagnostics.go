@@ -342,6 +342,10 @@ func workspaceInspection(ctx context.Context, id string, status *workspace.Statu
 			value := problemInspection(path, batch)
 			add("problem_file", path, value, value.ServerID, value.Provider, value.Path)
 		}
+		for _, file := range lsp.UncheckedFiles() {
+			add("unchecked_file", file.Path, map[string]any{"path": diagnosticText(file.Path), "provider": diagnosticLabel(filepath.Base(file.Command)),
+				"outcome": diagnosticText(file.Outcome)}, file.Path, file.Command, file.Outcome)
+		}
 	}
 	if ws != nil && (view == "summary" || view == "capabilities") {
 		snapshot, err := ws.CapabilityRuntimeSnapshot(ctx)
