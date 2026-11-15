@@ -53,8 +53,9 @@ class SSHHarness(Harness):
                           "PermitTunnel no\nPermitTTY no\nLogLevel VERBOSE\n")
         self.sshd_log = open(self.out / "sshd.log", "w")
         self.sshd = subprocess.Popen(["/usr/sbin/sshd", "-D", "-e", "-f", str(config)], stdout=self.sshd_log, stderr=self.sshd_log)
+        sshd = self.sshd
         def listening():
-            if self.sshd.poll() is not None:
+            if sshd.poll() is not None:
                 raise RuntimeError("owned nonroot sshd exited: " + (self.out / "sshd.log").read_text())
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=.2):

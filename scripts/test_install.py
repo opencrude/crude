@@ -455,7 +455,11 @@ shutil.copyfile(source, a[a.index('--output')+1])
     def test_symlinks_are_rejected(self):
         name = self.archive()
         with tarfile.open(self.fixtures / name, "r:gz") as source:
-            members = [(item, source.extractfile(item).read()) for item in source.getmembers()]
+            members = []
+            for item in source.getmembers():
+                extracted = source.extractfile(item)
+                assert extracted is not None, item.name
+                members.append((item, extracted.read()))
         with tarfile.open(self.fixtures / name, "w:gz") as target:
             for item, data in members:
                 target.addfile(item, io.BytesIO(data))
@@ -499,17 +503,18 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertEqual(self.dest.read_bytes(), before)
 
     def test_actual_release_binary_install_and_repeat(self):
-        if RELEASE_DIR is None:
+        if RELEASE_DIR is None or RELEASE_VERSION is None:
             self.skipTest("real archive supplied only in release smoke")
+        version = RELEASE_VERSION
         import shutil
-        name = f"crude_{RELEASE_VERSION}_linux_amd64.tar.gz"
+        name = f"crude_{version}_linux_amd64.tar.gz"
         shutil.copyfile(RELEASE_DIR / name, self.fixtures / name)
         shutil.copyfile(RELEASE_DIR / "SHA256SUMS", self.fixtures / "SHA256SUMS")
-        self.env["LATEST"] = RELEASE_VERSION
+        self.env["LATEST"] = version
         for _ in range(2):
             self.run_installer("--no-path", "--no-gui")
             result = subprocess.check_output([str(self.dest), "--version"], env=self.env, text=True)
-            self.assertTrue(result.startswith(f"crude {RELEASE_VERSION} ("), result)
+            self.assertTrue(result.startswith(f"crude {version} ("), result)
         self.assertFalse((self.home / ".crude").exists(), "--version must not open a profile or core")
 
 
