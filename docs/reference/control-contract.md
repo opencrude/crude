@@ -67,7 +67,7 @@ configures language servers for the user and may write the `lsp.*` paths and
 `diagnostics.workspace` lsp view, or `all`; its receipt says the restart was
 requested, not that the server connected. `diagnostics.workspace` view
 `problems` lists project problems per server and file with counts and the top
-messages; the lsp view adds recent unexpected exits, whether Crude is
+messages, and each closed file that Crude could not check with the reason; the lsp view adds recent unexpected exits, whether Crude is
 restarting the server, the server's own bounded evidence (labelled as server
 data) and the closed-file check.
 `settings.fields` reports that same caller-specific authority. Exact leaf writes

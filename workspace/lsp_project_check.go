@@ -438,7 +438,7 @@ func (m *LSPManager) checkClosedFile(ctx context.Context, path string) (failed b
 	if !diskView {
 		return false, nil // an editor or agent view owns the file now
 	}
-	err = m.runProbe(fileCtx, probe, func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
+	check := func(ctx context.Context, client LSPClient, path string, view LSPProbeView) error {
 		answer, settled := m.awaitProbeDiagnostics(ctx, client, path, view)
 		if !settled {
 			return errProjectCheckUnsettled
@@ -447,7 +447,25 @@ func (m *LSPManager) checkClosedFile(ctx context.Context, path string) (failed b
 			return facts.ErrLimit
 		}
 		return nil
-	})
+	}
+	// A change elsewhere in the project (a build that writes its output, a
+	// server that writes its cache) makes Crude send the file again, and the
+	// wait for the old send ends early. That is not silence: wait for the
+	// answer to the new send within the same time. Only the end of that time
+	// says that the server did not answer.
+	for {
+		m.mu.Lock()
+		seen := m.contextGeneration
+		m.mu.Unlock()
+		err = m.runProbe(fileCtx, probe, check)
+		m.mu.Lock()
+		interrupted := errors.Is(err, errProbeStateChanged) ||
+			errors.Is(err, errProjectCheckUnsettled) && m.contextGeneration != seen
+		m.mu.Unlock()
+		if !interrupted || fileCtx.Err() != nil {
+			break
+		}
+	}
 	if err != nil && !errors.Is(err, errProjectCheckUnsettled) && ctx.Err() == nil {
 		if fileCtx.Err() != nil {
 			return false, errProjectCheckUnsettled
@@ -507,6 +525,25 @@ func (m *LSPManager) forgetCheckedFactsLocked(path string) {
 func (m *LSPManager) invalidateCheckedFactsLocked(path string) {
 	m.invalidateCheckedResultsLocked(func(candidate, _, _ string) bool { return pathWithin(path, candidate) },
 		"The file changed after Crude checked it.")
+}
+
+// UncheckedFile is a closed file that the project check could not check, and
+// why. It is shown to agents so that they can find the cause.
+type UncheckedFile struct {
+	Path, Command, Outcome string
+}
+
+// UncheckedFiles lists the closed files that the project check remembers as
+// not checked, sorted by path.
+func (m *LSPManager) UncheckedFiles() []UncheckedFile {
+	m.mu.Lock()
+	out := make([]UncheckedFile, 0, len(m.checkResults))
+	for path, result := range m.checkResults {
+		out = append(out, UncheckedFile{Path: path, Command: result.command, Outcome: result.outcome})
+	}
+	m.mu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }
 
 func (m *LSPManager) rememberProjectCheckLocked(path, command, key, outcome string) {
