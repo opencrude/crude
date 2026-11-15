@@ -1,7 +1,9 @@
 package core
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -196,5 +198,92 @@ func TestCoreFileWatchWindowsRootKernelOverflowIsReportedAndCloseJoins(t *testin
 		case <-timer.C:
 			t.Fatal("root-local kernel overflow was not reported")
 		}
+	}
+}
+
+func TestCoreWatchDirectoryReadAllowsConcurrentRemoval(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "transient")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(dir, "file")
+	if err := os.WriteFile(child, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := (coreWatchWalkFS{root: root}).open("transient")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = handle.Close() }()
+	entries, err := handle.ReadDir(-1)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "file" {
+		t.Fatalf("read directory = %v, %v", entries, err)
+	}
+	if err := os.Remove(child); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dir); err != nil {
+		t.Fatalf("the watch scan blocked removal of its directory: %v", err)
+	}
+	if _, err := os.Lstat(dir); !os.IsNotExist(err) {
+		t.Fatalf("removed directory remains visible: %v", err)
+	}
+}
+
+func TestCoreWatchDirectoryReadAllowsConcurrentRename(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	destination := filepath.Join(root, "destination")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	handle, err := (coreWatchWalkFS{root: root}).open("source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = handle.Close() }()
+	if _, err := handle.ReadDir(-1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(source, destination); err != nil {
+		t.Fatalf("the watch scan blocked rename of its directory: %v", err)
+	}
+	if info, err := os.Stat(destination); err != nil || !info.IsDir() {
+		t.Fatalf("renamed directory is unavailable: %v", err)
+	}
+}
+
+func TestCoreWatchWalkRejectsNonlocalNames(t *testing.T) {
+	walk := coreWatchWalkFS{root: t.TempDir()}
+	for _, name := range []string{"../outside", `..\outside`, `C:\outside`} {
+		if _, err := walk.Open(name); !errors.Is(err, fs.ErrInvalid) {
+			t.Errorf("Open(%q) = %v, want invalid path", name, err)
+		}
+	}
+}
+
+func TestCoreWatchWalkVisitsLongWindowsPaths(t *testing.T) {
+	root := t.TempDir()
+	dir := root
+	for i := 0; i < 6; i++ {
+		dir = filepath.Join(dir, strings.Repeat("a", 50))
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "source.go")
+	if err := os.WriteFile(target, []byte("package source\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	err := walkCoreWatch(root, func(path string, _ fs.DirEntry, err error) error {
+		if path == target {
+			found = true
+		}
+		return err
+	})
+	if err != nil || !found {
+		t.Fatalf("long path walk: found=%v, error=%v", found, err)
 	}
 }

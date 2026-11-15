@@ -56,6 +56,7 @@ There is no other installer, approval store or registration table.
 | 2026-11-04 | The sidebar page is removed. Aeron opens like any agent (tab or window, normal composer). Its questions and confirmations always use the modal agent prompt, and its system prompt tells it that the question tool is its channel to the user. Do not expose its structured work order. |
 | 2026-11-10 | Remove workspace Aeron from the normal Agents list. A header link, **Open workspace Aeron**, opens the same retained agent. |
 | 2026-11-10 | Header means the **Workspace panel header**, like Problems, not the application header. Remove Aeron/Naveen from that panel's normal agent list too. |
+| 2026-11-15 | The automatic "tools are available" message after each edit or write was silly: it went away before the user saw it and came back after the next edit. Show it once, in a lasting and consistent place. Done: one Notices entry with a **Set up tools** action per set of missing tools, counted in the footer, never raised again after the user reads or dismisses it ([settings](../reference/settings.md#project-tool-setup)). The rejected setup page itself is unchanged. |
 
 ## Direction: a workspace Aeron does the setup (2026-11-04)
 

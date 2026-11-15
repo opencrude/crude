@@ -116,3 +116,34 @@ func TestInstallerGitBashIsDetected(t *testing.T) {
 		t.Fatalf("Auto agent shell = %+v; want the installer's Git Bash", auto)
 	}
 }
+
+func TestGitBashDetectedFromGitExecutableLayouts(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows shells")
+	}
+	for _, layout := range []string{"cmd", "bin", "mingw32/bin", "mingw64/bin", "MiNgW64/BIN"} {
+		t.Run(layout, func(t *testing.T) {
+			root := t.TempDir()
+			gitDir := filepath.Join(root, filepath.FromSlash(layout))
+			bashDir := filepath.Join(root, "bin")
+			for _, dir := range []string{gitDir, bashDir} {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fakeExecutable(t, gitDir, "git.exe")
+			gitBash := fakeExecutable(t, bashDir, "bash.exe")
+			for _, key := range []string{"ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA", "SystemRoot", "ComSpec"} {
+				t.Setenv(key, "")
+			}
+			t.Setenv("PATH", gitDir)
+			shell, err := Requested("bash")
+			if err != nil || shell.ID != "git-bash" || !strings.EqualFold(shell.Path, gitBash) {
+				t.Fatalf("Git at %s: bash = %+v, %v; want Git Bash %q", layout, shell, err, gitBash)
+			}
+			if selected := ResolveAgent("git-bash"); !selected.Usable() || !strings.EqualFold(selected.Path, gitBash) {
+				t.Fatalf("configured Git Bash = %+v, want %q", selected, gitBash)
+			}
+		})
+	}
+}

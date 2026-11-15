@@ -1832,10 +1832,14 @@ producers. Close cancels timers and joins scans.
 
 The retained core watches source changes, including files nobody opened. On
 Windows it holds one root-recursive native watch and one parent-nonrecursive
-directory-name watch filtered to the root name, with no descendant handles that
-would block populated directory moves. Windows path identity is case-insensitive;
-event/display spelling is preserved. Native `OVERLAPPED` and buffers remain
-heap-owned and pinned through completion/cancellation and joined Close. Overflow,
+directory-name watch filtered to the root name, with no persistent descendant
+watch handles. Directory scans use delete-sharing handles and close each handle
+before descending, so they do not prevent removal or rename of the directory
+being read. Windows can still refuse to move an ancestor while a descendant is
+being read; that handle is temporary, not a retained watch. Windows path
+identity is case-insensitive; event/display spelling is preserved. Native
+`OVERLAPPED` and buffers remain heap-owned and pinned through
+completion/cancellation and joined Close. Overflow,
 read/admission failures and root loss fence project coverage. Root replacement
 does not restore reliability automatically: the watcher must restart. Unrelated
 sibling subtree activity is outside the native observation scope.

@@ -702,6 +702,32 @@ func (m *App) textClipboardMenu(title string, hit textClipboardHit) *ui.ContextM
 // openContextMenuState measures, positions, and opens a context menu popup at
 // the pointer. A nil or empty state is a no-op.
 func (m *App) openContextMenuState(mouse tea.Mouse, st *ui.ContextMenuState) tea.Cmd {
+	return m.openContextMenuPlaced(st, func(w, h int) (int, int) {
+		return m.clampShellPopupPosition(mouse.X, mouse.Y, w, h)
+	})
+}
+
+// openMenuFor opens a menu at the control that asked for it, given as the
+// control's screen rect: below it, or above it when the frame has no room
+// below. When the menu would pass the frame's right side, its right edge
+// aligns with the control's right edge.
+func (m *App) openMenuFor(anchor ui.Rect, st *ui.ContextMenuState) tea.Cmd {
+	return m.openContextMenuPlaced(st, func(w, h int) (int, int) {
+		frame := m.frameInsets()
+		x, y := anchor.X, anchor.Y+anchor.H
+		if x+w > m.width-frame.Right {
+			x = anchor.X + anchor.W - w
+		}
+		if y+h > m.height-frame.Bottom && anchor.Y-h >= frame.Top {
+			y = anchor.Y - h
+		}
+		return m.clampShellPopupPosition(x, y, w, h)
+	})
+}
+
+// openContextMenuPlaced measures and opens a menu where place puts a menu
+// of that size.
+func (m *App) openContextMenuPlaced(st *ui.ContextMenuState, place func(w, h int) (int, int)) tea.Cmd {
 	if st == nil || len(st.Sections) == 0 {
 		return nil
 	}
@@ -722,7 +748,7 @@ func (m *App) openContextMenuState(mouse tea.Mouse, st *ui.ContextMenuState) tea
 		h = ch
 	}
 	w, h = m.contextMenuSize(w, h)
-	x, y := m.clampShellPopupPosition(mouse.X, mouse.Y, w, h)
+	x, y := place(w, h)
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayContextMenu), "", frame, w, h,
 		wm.WithDecoration(false),

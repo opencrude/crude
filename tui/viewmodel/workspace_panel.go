@@ -153,7 +153,18 @@ func (app *App) openTerminalPicker() {
 		}
 		items = append(items, ui.ContextMenuItem{Label: terminal.DisplayName(), Detail: placement, Action: func() { app.focusTerminal(id) }})
 	}
-	app.openContextMenuState(tea.Mouse{X: max(0, app.width-30), Y: max(app.shellTopRow(), app.height-app.chromeBottomRows()-len(items)-3)}, &ui.ContextMenuState{Title: "Terminals", Sections: []ui.ContextMenuSection{{Items: items}}})
+	menu := &ui.ContextMenuState{Title: "Terminals", Sections: []ui.ContextMenuSection{{Items: items}}}
+	// The menu opens at its button in the panel header, or at the footer's
+	// Terminals item when the panel is hidden.
+	if anchor, ok := app.screenRectOf(ui.NewID(termdock.HeaderID, "terminal.picker")); ok && !anchor.Empty() {
+		app.openMenuFor(anchor, menu)
+		return
+	}
+	if anchor, ok := app.footerSegmentRect("terminals"); ok {
+		app.openMenuFor(anchor, menu)
+		return
+	}
+	app.openContextMenuState(tea.Mouse{X: max(0, app.width-30), Y: max(app.shellTopRow(), app.height-app.chromeBottomRows()-len(items)-3)}, menu)
 }
 
 func workspacePanelID(view statusoverview.ViewID) string {

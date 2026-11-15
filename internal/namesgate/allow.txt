@@ -57,7 +57,6 @@ safety/command_checker.go	ncat	Safety rule: network listener commands.
 safety/command_policy.go	.bash	Safety rule: shell scripts that a command runs.
 safety/command_policy.go	.sh	Safety rule: shell scripts that a command runs.
 safety/command_policy.go	.zsh	Safety rule: shell scripts that a command runs.
-session/auto_permission.go	.env	Safety rule: secret files that need approval.
 workspace/editor_prediction_service.go	.env	Privacy rule: files never sent for AI predictions.
 workspace/editor_prediction_service.go	.kube	Privacy rule: folders never sent for AI predictions.
 workspace/editor_prediction_service.go	.pem	Privacy rule: files never sent for AI predictions.

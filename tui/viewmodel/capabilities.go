@@ -407,5 +407,28 @@ func (app *App) openFooterMenu() {
 			app.runDetachedAsyncCmd(func() tea.Msg { return message })
 		}})
 	}
-	app.openContextMenuState(tea.Mouse{X: max(0, app.width-20), Y: max(0, app.height-app.chromeBottomRows()-len(items)-2)}, &ui.ContextMenuState{Title: "Views", Sections: []ui.ContextMenuSection{{Items: items}}})
+	menu := &ui.ContextMenuState{Title: "Views", Sections: []ui.ContextMenuSection{{Items: items}}}
+	if anchor, ok := app.footerSegmentRect("footer-more"); ok {
+		app.openMenuFor(anchor, menu)
+		return
+	}
+	app.openContextMenuState(tea.Mouse{X: max(0, app.width-20), Y: max(0, app.height-app.chromeBottomRows()-len(items)-2)}, menu)
+}
+
+// footerSegmentRect is the screen rect of the footer item for action.
+func (app *App) footerSegmentRect(action string) (ui.Rect, bool) {
+	if app.rootHost == nil || app.footerScreen == nil {
+		return ui.Rect{}, false
+	}
+	footer, ok := app.rootHost.ScreenRect(shellfooter.ScreenID)
+	if !ok || footer.Empty() {
+		return ui.Rect{}, false
+	}
+	segment, ok := app.footerScreen.SegmentBounds(action)
+	if !ok {
+		return ui.Rect{}, false
+	}
+	segment.X += footer.X
+	segment.Y += footer.Y
+	return segment, true
 }

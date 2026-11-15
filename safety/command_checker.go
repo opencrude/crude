@@ -327,8 +327,8 @@ var expandCfg = &expand.Config{
 // Windows reads a backslash as an escape, exactly as bash does. cmd and
 // PowerShell use it as the path separator; it becomes `/` there, except
 // before a line break, where it still continues the line.
-func preprocessCommand(cmd string, shell command.Syntax) string {
-	if shell == command.SyntaxCmd || shell == command.SyntaxPowerShell {
+func preprocessCommand(cmd string, shellSyntax command.Syntax) string {
+	if shellSyntax == command.SyntaxCmd || shellSyntax == command.SyntaxPowerShell {
 		return windowsSeparatorsToSlash(cmd)
 	}
 	return cmd

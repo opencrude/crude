@@ -117,16 +117,33 @@ func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
 }
 
 func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
+	const memoryModel = "steering-memory-fixture"
 	var requests atomic.Int32
 	firstStarted := make(chan struct{}, 1)
 	releaseFirst := make(chan struct{})
 	secondRequest := make(chan []provider.ChatMessage, 1)
+	memoryRequest := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
+			Model    string                 `json:"model"`
 			Messages []provider.ChatMessage `json:"messages"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decode provider request: %v", err)
+			return
+		}
+		if request.Model == memoryModel {
+			select {
+			case memoryRequest <- struct{}{}:
+			default:
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"memories\\\":[]}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return
+		}
+		if request.Model != "history-model" {
+			t.Errorf("unexpected provider request for model %q", request.Model)
+			http.Error(w, "unexpected model", http.StatusBadRequest)
 			return
 		}
 		if requests.Add(1) == 1 {
@@ -136,7 +153,12 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"initial response\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 			return
 		}
-		secondRequest <- request.Messages
+		select {
+		case secondRequest <- request.Messages:
+		default:
+			// An unexpected extra root request must be reported by the
+			// assertion below, not block its provider handler indefinitely.
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"steering applied\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
@@ -148,7 +170,13 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	workspace := NewWorkspace(project, "model", "user", ttypes.Settings{}, &testLogger{})
 	defer workspace.Close()
 	workspace.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
-	frontend, err := workspace.CreateSession(historyE2EConfig(server.URL), home)
+	cfg := historyE2EConfig(server.URL)
+	// Force real background extraction to overlap the assertions. Memory
+	// normally inherits the main model, so counting every provider request
+	// as an agent turn made this test fail when maintenance ran.
+	cfg.Memory.ExtractEveryTurns = 1
+	cfg.Memory.MemoryCategory = ttypes.CategorySettings{AccountID: "test-account", Model: memoryModel}
+	frontend, err := workspace.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +210,11 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	steeringEvent := page.Events[0]
 	close(releaseFirst)
 	waitHistoryAgentDone(t, sender, root.ID)
+	select {
+	case <-memoryRequest:
+	case <-time.After(10 * time.Second):
+		t.Fatal("background memory extraction did not reach its provider")
+	}
 
 	var requestMessages []provider.ChatMessage
 	select {

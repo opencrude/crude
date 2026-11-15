@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	ttypes "crude/types"
 )
@@ -26,9 +27,18 @@ func detect() []ttypes.TerminalShell {
 	add("cmd", "Command Prompt", commandPromptPath(), nil, nil)
 	gitBash := installedPaths(append(programFiles, filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs")), `Git\bin\bash.exe`)
 	// System32\bash.exe is the WSL launcher, so Git Bash is located from its
-	// installation or from git.exe (Git\cmd\git.exe), never from PATH bash.
+	// installation or git.exe, never from PATH bash. Git for Windows places
+	// its real git.exe in mingw32\bin or mingw64\bin, while the shell wrapper
+	// remains in the installation's bin directory.
+	// https://gitforwindows.org/git-wrapper.html
 	if git, err := exec.LookPath("git.exe"); err == nil {
-		gitBash = append(gitBash, filepath.Join(filepath.Dir(filepath.Dir(git)), "bin", "bash.exe"))
+		bin := filepath.Dir(git)
+		root := filepath.Dir(bin)
+		if strings.EqualFold(filepath.Base(bin), "bin") &&
+			(strings.EqualFold(filepath.Base(root), "mingw32") || strings.EqualFold(filepath.Base(root), "mingw64")) {
+			root = filepath.Dir(root)
+		}
+		gitBash = append(gitBash, filepath.Join(root, "bin", "bash.exe"))
 	}
 	// The Windows installer puts a Git Bash in the user's own profile when the
 	// machine has none. It is private to Crude and needs no PATH entry.

@@ -11,8 +11,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -98,22 +102,95 @@ func (s *Store) SnapshotMessageScope(ctx context.Context, sessionID, messageID s
 	return manifest, nil
 }
 
+// SnapshotIfChanged records the workspace when it differs from the latest
+// snapshot. Requests that wait while another capture holds the store share
+// the next scan: it starts after each of them asked, so its result is as
+// current as a scan of their own. Concurrent agents then wait for at most
+// two scans instead of one scan per agent.
 func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Manifest, bool, error) {
 	if err := s.beginOperation(); err != nil {
 		return Manifest{}, false, err
 	}
 	defer s.endOperation()
+	request := &captureRequest{opts: opts, done: make(chan struct{})}
+	s.capturesMu.Lock()
+	s.captures = append(s.captures, request)
+	s.capturesMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	select {
+	case <-request.done:
+		return request.manifest, request.changed, request.err
+	default:
+	}
+	s.capturesMu.Lock()
+	batch := s.captures
+	s.captures = nil
+	s.capturesMu.Unlock()
 	unlock, err := s.lockMutation(ctx)
 	if err != nil {
+		s.requeueCaptures(batch, request)
 		return Manifest{}, false, err
 	}
 	defer unlock()
-	entries, err := s.scan(ctx, opts, true)
-	if err != nil {
-		return Manifest{}, false, err
+	for len(batch) > 0 {
+		group, rest := sameScan(batch)
+		batch = rest
+		entries, err := s.scan(ctx, group[0].opts, true)
+		if err != nil && ctx.Err() != nil {
+			// This caller stopped waiting. The others keep their place and
+			// the next holder of the store serves them.
+			s.requeueCaptures(append(group, batch...), request)
+			return Manifest{}, false, err
+		}
+		for _, waiting := range group {
+			if err == nil {
+				waiting.manifest, waiting.changed, waiting.err = s.recordIfChanged(waiting.opts, entries)
+			} else {
+				waiting.err = err
+			}
+			close(waiting.done)
+		}
 	}
+	return request.manifest, request.changed, request.err
+}
+
+type captureRequest struct {
+	opts     SnapshotOptions
+	done     chan struct{}
+	manifest Manifest
+	changed  bool
+	err      error
+}
+
+// sameScan splits off the requests whose options select the same files as
+// the first one.
+func sameScan(batch []*captureRequest) (group, rest []*captureRequest) {
+	first := batch[0].opts
+	for _, request := range batch {
+		opts := request.opts
+		if opts.DisableGitIgnore == first.DisableGitIgnore && opts.MaxFileSize == first.MaxFileSize &&
+			slices.Equal(opts.ExtraIgnorePatterns, first.ExtraIgnorePatterns) && slices.Equal(opts.IncludePaths, first.IncludePaths) {
+			group = append(group, request)
+		} else {
+			rest = append(rest, request)
+		}
+	}
+	return group, rest
+}
+
+// requeueCaptures returns unserved requests, except the caller's own, to the
+// front of the queue.
+func (s *Store) requeueCaptures(batch []*captureRequest, self *captureRequest) {
+	batch = slices.DeleteFunc(batch, func(request *captureRequest) bool { return request == self })
+	s.capturesMu.Lock()
+	s.captures = append(batch, s.captures...)
+	s.capturesMu.Unlock()
+}
+
+// recordIfChanged saves entries as a new snapshot unless the latest
+// snapshot already holds them.
+func (s *Store) recordIfChanged(opts SnapshotOptions, entries map[string]Entry) (Manifest, bool, error) {
 	records, err := s.timeline(1)
 	if err != nil {
 		return Manifest{}, false, err
@@ -305,12 +382,12 @@ func (s *Store) scanWithin(ctx context.Context, opts SnapshotOptions, storeObjec
 	if roots != nil {
 		included = roots
 	}
-	hardlinks := make(map[string]string)
 	scanStarted := time.Now().UnixNano()
 	seen := make(map[string]bool)
 	if roots == nil {
 		defer func() { s.forgetUnseen(seen) }()
 	}
+	var files []scanFile
 	visit := func(path string, dirEntry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if roots != nil && os.IsNotExist(walkErr) {
@@ -340,57 +417,19 @@ func (s *Store) scanWithin(ctx context.Context, opts SnapshotOptions, storeObjec
 			}
 			return nil
 		}
+		forced := pathForcedIncluded(rel, included)
+		if !dirEntry.IsDir() {
+			files = append(files, scanFile{rel: rel, path: path, dirEntry: dirEntry, forced: forced})
+			return nil
+		}
 		info, err := dirEntry.Info()
 		if err != nil {
 			return err
 		}
-		forced := pathForcedIncluded(rel, included)
-		if !forced && matcher.ignored(rel, info.IsDir()) {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
+		if !forced && matcher.ignored(rel, true) {
+			return filepath.SkipDir
 		}
-		mode := info.Mode()
-		switch {
-		case mode.IsDir():
-			entries[rel] = Entry{Type: EntryDirectory, Mode: storedMode(mode)}
-		case mode&os.ModeSymlink != 0:
-			target, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			entries[rel] = Entry{Type: EntrySymlink, Mode: storedMode(mode), SymlinkTarget: target}
-		case mode.IsRegular():
-			if !forced && info.Size() > maxFileSize {
-				return nil
-			}
-			identity, hasIdentity := fileIdentityKey(path, info)
-			entry, cached := s.cachedEntry(rel, info, identity, storeObjects)
-			if !cached {
-				if storeObjects {
-					entry, err = s.storeRegularFile(ctx, path)
-				} else {
-					entry, err = hashRegularFile(path, mode)
-				}
-				if err != nil {
-					return err
-				}
-				s.rememberEntry(rel, info, identity, storeObjects, entry, scanStarted)
-			}
-			entry.Mode = storedMode(mode)
-			if identity, ok := identity, hasIdentity; ok {
-				if canonical := hardlinks[identity]; canonical != "" {
-					entry.Type = EntryHardlink
-					entry.HardlinkTarget = canonical
-				} else {
-					hardlinks[identity] = rel
-				}
-			}
-			entries[rel] = entry
-		default:
-			entries[rel] = Entry{Type: EntrySpecial, Mode: storedMode(mode), SpecialMode: mode.Type().String()}
-		}
+		entries[rel] = Entry{Type: EntryDirectory, Mode: storedMode(info.Mode())}
 		return nil
 	}
 	if roots == nil {
@@ -408,10 +447,130 @@ func (s *Store) scanWithin(ctx context.Context, opts SnapshotOptions, storeObjec
 			}
 		}
 	}
+	if err == nil {
+		err = s.scanFiles(ctx, files, entries, matcher, maxFileSize, storeObjects, scanStarted)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("localhistory: scan workspace: %w", err)
 	}
 	return entries, nil
+}
+
+// scanFile is one non-directory entry found by the walk.
+type scanFile struct {
+	rel, path string
+	dirEntry  fs.DirEntry
+	forced    bool
+
+	info     os.FileInfo
+	entry    Entry
+	include  bool
+	read     bool // content must be read; the stat cache did not cover it
+	identity string
+	linkable bool
+	err      error
+}
+
+// scanFiles inspects the walked files. Each file needs several metadata
+// calls: its type, its ignore rule, its identity and its cached object. On
+// Windows every such call costs tens of microseconds, so they run on a few
+// workers, as Git's preloaded index does. Content reads, cache updates and
+// hardlink detection then run in walk order, as before.
+func (s *Store) scanFiles(ctx context.Context, files []scanFile, entries map[string]Entry, matcher *ignoreMatcher, maxFileSize int64, storeObjects bool, scanStarted int64) error {
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range min(scanWorkers, len(files)) {
+		wg.Go(func() {
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= len(files) {
+					return
+				}
+				s.inspectFile(ctx, &files[i], matcher, maxFileSize, storeObjects)
+			}
+		})
+	}
+	wg.Wait()
+	hardlinks := make(map[string]string)
+	for i := range files {
+		file := &files[i]
+		if file.err != nil {
+			return file.err
+		}
+		if !file.include {
+			continue
+		}
+		entry := file.entry
+		if file.read {
+			var err error
+			if storeObjects {
+				entry, err = s.storeRegularFile(ctx, file.path)
+			} else {
+				entry, err = hashRegularFile(file.path, file.info.Mode())
+			}
+			if err != nil {
+				return err
+			}
+			s.rememberEntry(file.rel, file.info, file.identity, storeObjects, entry, scanStarted)
+		}
+		if file.info.Mode().IsRegular() {
+			entry.Mode = storedMode(file.info.Mode())
+			if file.linkable {
+				if canonical := hardlinks[file.identity]; canonical != "" {
+					entry.Type = EntryHardlink
+					entry.HardlinkTarget = canonical
+				} else {
+					hardlinks[file.identity] = file.rel
+				}
+			}
+		}
+		entries[file.rel] = entry
+	}
+	return nil
+}
+
+// scanWorkers bounds the concurrent metadata calls of one scan.
+var scanWorkers = min(runtime.GOMAXPROCS(0), 8)
+
+// inspectFile classifies one walked file without reading its content.
+func (s *Store) inspectFile(ctx context.Context, file *scanFile, matcher *ignoreMatcher, maxFileSize int64, storeObjects bool) {
+	if file.err = ctx.Err(); file.err != nil {
+		return
+	}
+	info, err := file.dirEntry.Info()
+	if err != nil {
+		file.err = err
+		return
+	}
+	file.info = info
+	if !file.forced && matcher.ignored(file.rel, info.IsDir()) {
+		return
+	}
+	mode := info.Mode()
+	switch {
+	case mode&os.ModeSymlink != 0:
+		target, err := os.Readlink(file.path)
+		if err != nil {
+			file.err = err
+			return
+		}
+		file.entry = Entry{Type: EntrySymlink, Mode: storedMode(mode), SymlinkTarget: target}
+	case mode.IsRegular():
+		if !file.forced && info.Size() > maxFileSize {
+			return
+		}
+		file.identity, file.linkable = fileIdentityKey(file.path, info)
+		var cached bool
+		file.entry, cached = s.cachedEntry(file.rel, info, file.identity, storeObjects)
+		file.read = !cached
+	case mode.IsDir():
+		// The entry became a directory after the walk listed it. The next
+		// scan walks it; this one records it without contents.
+		file.entry = Entry{Type: EntryDirectory, Mode: storedMode(mode)}
+	default:
+		file.entry = Entry{Type: EntrySpecial, Mode: storedMode(mode), SpecialMode: mode.Type().String()}
+	}
+	file.include = true
 }
 
 func normalizedIncludedPaths(paths []string) []string {

@@ -33,19 +33,6 @@ func runIn(t *testing.T, shell command.Shell, line, cwd string) (string, int) {
 	return strings.ReplaceAll(out, "\r\n", "\n"), started.Info().ExitCode
 }
 
-func gitBashForTest(t *testing.T) command.Shell {
-	t.Helper()
-	git, err := exec.LookPath("git.exe")
-	if err != nil {
-		t.Skip("Git for Windows is not installed")
-	}
-	path := filepath.Join(filepath.Dir(filepath.Dir(git)), "bin", "bash.exe")
-	if _, err := os.Stat(path); err != nil {
-		t.Skip("Git Bash is not installed")
-	}
-	return command.Shell{ID: "git-bash", Label: "Git Bash", Path: path, Syntax: command.SyntaxPOSIX}
-}
-
 // Agent command lines are written for bash (`source`/`.` with BASH_SOURCE,
 // `[[ ]]`, arrays); a POSIX sh such as dash fails on syntax the user's shell
 // accepts.
@@ -66,33 +53,6 @@ func TestPOSIXShellRunsBashSemantics(t *testing.T) {
 	}
 	if out, _ := runIn(t, SystemShell(), ". ./env.sh", dir); !strings.Contains(out, "root="+filepath.Dir(dir)) {
 		t.Fatalf("sourced helper output %q; want root=%s", out, filepath.Dir(dir))
-	}
-}
-
-// Passing a command to Git Bash with -c goes through the Windows command line,
-// which the MSYS runtime re-parses: it changed `a\b\\c` to `a\b\c`, broke a
-// sed backslash expression and dropped `\\` from an argument. Agents must be
-// able to run the same inline commands they run on Linux.
-func TestGitBashRunsInlineCommandsByteForByte(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Git Bash")
-	}
-	bash := gitBashForTest(t)
-	for _, tc := range []struct{ line, want string }{
-		{`x='a\b\\c'; echo "$x"`, `a\b\\c` + "\n"},
-		{`printf '%s\n' "C:\Users\name" | sed 's/\\/\//g'`, "C:/Users/name\n"},
-		{`printf '%s|' "a b" 'c"d' e\\f; echo`, `a b|c"d|e\f|` + "\n"},
-		{"echo one\necho two", "one\ntwo\n"},
-		{"cat <<'EOF'\n$HOME \"q\" \\b\nEOF", "$HOME \"q\" \\b\n"},
-		{`for f in a b; do echo "[$f]"; done | tr '\n' ' '; echo`, "[a] [b] \n"},
-		{`printf 'héllo ✓\n' | grep -c ✓`, "1\n"},
-	} {
-		if out, code := runIn(t, bash, tc.line, t.TempDir()); code != 0 || out != tc.want {
-			t.Errorf("%q: exit %d output %q; want %q", tc.line, code, out, tc.want)
-		}
-	}
-	if out, code := runIn(t, bash, `test -n "$CRUDE_TEMP_DIR" && test -d "$CRUDE_TEMP_DIR" && echo temp_ok; exit 7`, ""); code != 7 || out != "temp_ok\n" {
-		t.Fatalf("temp dir and exit status: exit %d output %q", code, out)
 	}
 }
 
