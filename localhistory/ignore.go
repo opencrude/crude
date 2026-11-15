@@ -6,9 +6,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/go-git/go-billy/v5/osfs"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )
 
@@ -18,14 +18,6 @@ var defaultIgnoredDirectories = []string{
 	"__pycache__/", ".pytest_cache/", ".mypy_cache/", ".venv/", "venv/",
 	"bin/", "obj/",
 }
-
-var defaultIgnoredDirectoryNames = func() map[string]bool {
-	names := make(map[string]bool, len(defaultIgnoredDirectories))
-	for _, pattern := range defaultIgnoredDirectories {
-		names[strings.TrimSuffix(pattern, "/")] = true
-	}
-	return names
-}()
 
 type ignoreMatcher struct {
 	matcher  gitignore.Matcher
@@ -106,55 +98,18 @@ func newIgnoreMatcher(root string, opts SnapshotOptions) (*ignoreMatcher, error)
 		return nil, err
 	}
 	hard := &ignoreMatcher{root: root, gitAdmin: admin}
-	patterns := make([]gitignore.Pattern, 0, len(defaultIgnoredDirectories)+len(opts.ExtraIgnorePatterns))
+	defaults := make([]gitignore.Pattern, 0, len(defaultIgnoredDirectories))
 	for _, pattern := range defaultIgnoredDirectories {
-		patterns = append(patterns, gitignore.ParsePattern(pattern, nil))
+		defaults = append(defaults, gitignore.ParsePattern(pattern, nil))
 	}
-	if !opts.DisableGitIgnore {
-		worktree := osfs.New(root)
-		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if path != root && hard.hardExcluded(path) {
-				if entry.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !entry.IsDir() {
-				return nil
-			}
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				return relErr
-			}
-			domain := []string(nil)
-			if rel != "." {
-				domain = strings.Split(filepath.ToSlash(rel), "/")
-			}
-			if path != root && defaultIgnoredDirectoryNames[entry.Name()] &&
-				gitignore.NewMatcher(patterns).Match(domain, true) {
-				return filepath.SkipDir
-			}
-			local, readErr := gitignore.ReadPatterns(worktree, domain)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				return readErr
-			}
-			patterns = append(patterns, local...)
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
+	overrides := make([]gitignore.Pattern, 0, len(opts.ExtraIgnorePatterns))
 	for _, pattern := range opts.ExtraIgnorePatterns {
-		patterns = append(patterns, gitignore.ParsePattern(pattern, nil))
+		overrides = append(overrides, gitignore.ParsePattern(pattern, nil))
 	}
 	if file, err := os.Open(filepath.Join(root, ".crudehistoryignore")); err == nil {
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
-			patterns = append(patterns, gitignore.ParsePattern(scanner.Text(), nil))
+			overrides = append(overrides, gitignore.ParsePattern(scanner.Text(), nil))
 		}
 		closeErr := file.Close()
 		if err := scanner.Err(); err != nil {
@@ -166,8 +121,78 @@ func newIgnoreMatcher(root string, opts SnapshotOptions) (*ignoreMatcher, error)
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	hard.matcher = gitignore.NewMatcher(patterns)
+	var repository []gitignore.Pattern
+	if !opts.DisableGitIgnore {
+		repository, err = repositoryIgnorePatterns(root, hard, defaults, overrides)
+		if err != nil {
+			return nil, err
+		}
+	}
+	hard.matcher = gitignore.NewMatcher(slices.Concat(defaults, repository, overrides))
 	return hard, nil
+}
+
+// repositoryIgnorePatterns reads Git's exclude and .gitignore files in one
+// walk, parent directory before child. Later patterns take priority, so a
+// deeper file overrides its parents and Crude's own overrides stay last.
+//
+// Like Git, the walk does not enter an ignored directory. Patterns from a
+// directory can match only paths inside it, so the skipped files could not
+// change a result for any path that a scan visits. Reading them made each
+// capture walk every ignored tree; on Windows that took seconds per turn.
+func repositoryIgnorePatterns(root string, hard *ignoreMatcher, defaults, overrides []gitignore.Pattern) ([]gitignore.Pattern, error) {
+	var patterns []gitignore.Pattern
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			return nil
+		}
+		var domain []string
+		if path != root {
+			if hard.hardExcluded(path) {
+				return filepath.SkipDir
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			domain = strings.Split(filepath.ToSlash(rel), "/")
+			if gitignore.NewMatcher(slices.Concat(defaults, patterns, overrides)).Match(domain, true) {
+				return filepath.SkipDir
+			}
+		}
+		for _, name := range repositoryIgnoreFiles {
+			patterns = append(patterns, readIgnoreFile(filepath.Join(path, name), domain)...)
+		}
+		return nil
+	})
+	return patterns, err
+}
+
+// repositoryIgnoreFiles are read in each visited directory, in the order of
+// go-git's gitignore.ReadPatterns.
+var repositoryIgnoreFiles = []string{filepath.Join(".git", "info", "exclude"), ".gitignore"}
+
+// readIgnoreFile reads one ignore file with the line rules of go-git's
+// gitignore.ReadPatterns, which reads a whole tree and cannot read one file.
+// As there, a file that cannot be read adds no patterns.
+func readIgnoreFile(path string, domain []string) []gitignore.Pattern {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	var patterns []gitignore.Pattern
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "#") && strings.TrimSpace(line) != "" {
+			patterns = append(patterns, gitignore.ParsePattern(line, domain))
+		}
+	}
+	return patterns
 }
 
 func (m *ignoreMatcher) ignored(rel string, isDir bool) bool {

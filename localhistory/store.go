@@ -60,6 +60,10 @@ type Store struct {
 	verified          map[string]FileObject
 	verifiedSnapshots map[string]bool
 	verifiedMu        sync.Mutex
+	// captures holds SnapshotIfChanged requests that wait for the store.
+	// The next caller that holds mu serves all of them with one scan.
+	captures   []*captureRequest
+	capturesMu sync.Mutex
 }
 
 // statEntry is a file's observed metadata and the content it had then.
@@ -176,7 +180,66 @@ func Open(storeRoot, workspaceRoot string) (*Store, error) {
 		_ = instanceLock.Unlock()
 		return nil, fmt.Errorf("localhistory: recover interrupted restore: %w", err)
 	}
+	store.loadStatCache()
 	return store, nil
+}
+
+// statCacheFile keeps the stat cache from one Store to the next, so the first
+// capture after a core restart reads only the files that changed. It is only
+// a cache: a missing, damaged or older file is ignored, and each entry must
+// match the file and still have its object, exactly like an entry kept in
+// memory between two scans.
+const statCacheFile = "stat-cache.json"
+
+type savedStats struct {
+	Version int         `json:"version"`
+	Entries []savedStat `json:"entries"`
+}
+
+type savedStat struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	ModTime  int64  `json:"mtime"`
+	Change   int64  `json:"change,omitempty"`
+	Identity string `json:"identity,omitempty"`
+	Scanned  int64  `json:"scanned"`
+	Entry    Entry  `json:"entry"`
+}
+
+func (s *Store) loadStatCache() {
+	data, err := os.ReadFile(filepath.Join(s.root, statCacheFile))
+	if err != nil {
+		return
+	}
+	var saved savedStats
+	if json.Unmarshal(data, &saved) != nil || saved.Version != FormatVersion {
+		return
+	}
+	cache := make(map[string]statEntry, len(saved.Entries))
+	for _, stat := range saved.Entries {
+		cache[stat.Path] = statEntry{size: stat.Size, modTime: stat.ModTime, change: stat.Change,
+			identity: stat.Identity, scanned: stat.Scanned, stored: true, entry: stat.Entry}
+	}
+	s.statMu.Lock()
+	s.statCache = cache
+	s.statMu.Unlock()
+}
+
+func (s *Store) saveStatCache() error {
+	saved := savedStats{Version: FormatVersion}
+	s.statMu.Lock()
+	for rel, stat := range s.statCache {
+		if stat.stored {
+			saved.Entries = append(saved.Entries, savedStat{Path: rel, Size: stat.size, ModTime: stat.modTime,
+				Change: stat.change, Identity: stat.identity, Scanned: stat.scanned, Entry: stat.entry})
+		}
+	}
+	s.statMu.Unlock()
+	data, err := json.Marshal(saved)
+	if err != nil {
+		return err
+	}
+	return writeBytesAtomic(filepath.Join(s.root, statCacheFile), data, 0o600)
 }
 
 func (s *Store) Root() string          { return s.root }
@@ -196,6 +259,8 @@ func (s *Store) Close() error {
 	s.opWg.Wait()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A cache that cannot be saved only costs the next Store a full read.
+	_ = s.saveStatCache()
 	err := s.db.Close()
 	if s.instanceLock != nil {
 		if unlockErr := s.instanceLock.Unlock(); err == nil {

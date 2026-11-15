@@ -36,7 +36,9 @@
   system. `hostshell.ResolveAgent` resolves the choice for each command, so a
   settings change applies to the next command. A chosen shell that is not
   installed is never replaced: the command fails with the Settings path, and the
-  prompt says commands cannot run. `fileio.shellCommand` is the only place that
+  prompt says commands cannot run. Windows discovery recognizes Git for Windows
+  wrappers and its MinGW `git.exe` locations without using the WSL `bash.exe`.
+  `fileio.shellCommand` is the only place that
   turns an agent command into a process:
   - Git Bash on Windows runs the command from a temporary `.sh` file. Passing it
     with `-c` goes through the Windows command line, which the MSYS runtime

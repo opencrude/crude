@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 import re
 import struct
+import subprocess
 import sys
+import tempfile
 import unittest
 from urllib.parse import unquote, urlsplit
 import xml.etree.ElementTree as ElementTree
@@ -284,10 +286,10 @@ class SiteTests(unittest.TestCase):
         self.assertIn("Windows x64", self.app)
 
     def test_site_does_not_reference_the_old_repository(self):
-        for base in (SITE / "src", SITE / "public", DIST):
+        for label, base in (("src", SITE / "src"), ("public", SITE / "public"), ("build", DIST)):
             for path in base.rglob("*"):
                 if path.is_file() and path.suffix in {".html", ".css", ".js", ".txt", ".xml", ".svg", ".tsx", ".ts"}:
-                    with self.subTest(file=str(path.relative_to(ROOT))):
+                    with self.subTest(file=f"{label}/{path.relative_to(base).as_posix()}"):
                         self.assertNotIn("uoosef403", path.read_text(encoding="utf-8"))
 
     def test_no_external_scripts_or_stylesheets(self):
@@ -316,6 +318,34 @@ class SiteTests(unittest.TestCase):
             if path.is_file() and path.suffix in {".tsx", ".ts", ".css"}:
                 text = path.read_text(encoding="utf-8")
                 self.assertNotRegex(text, r"(?i)\b(lorem ipsum|todo|coming soon)\b")
+
+
+class SiteAcceptanceRunnerTests(unittest.TestCase):
+    def test_external_dist_is_checked_for_old_repository_references(self):
+        with tempfile.TemporaryDirectory(dir=os.environ.get("CRUDE_TEMP_DIR")) as tmp:
+            dist = Path(tmp)
+            index = dist / "index.html"
+            environment = dict(os.environ, SITE_DIST=str(dist), PYTHONDONTWRITEBYTECODE="1")
+            command = [
+                sys.executable,
+                str(ROOT / "scripts" / "test_site.py"),
+                "SiteTests.test_site_does_not_reference_the_old_repository",
+            ]
+
+            def run_check():
+                return subprocess.run(
+                    command, cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30
+                )
+
+            index.write_text("<html>clean build</html>", encoding="utf-8")
+            clean = run_check()
+            self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+
+            index.write_text("<html>uoosef403</html>", encoding="utf-8")
+            invalid = run_check()
+            self.assertNotEqual(invalid.returncode, 0)
+            self.assertIn("uoosef403", invalid.stdout + invalid.stderr)
+            self.assertNotIn("ValueError", invalid.stdout + invalid.stderr)
 
 
 if __name__ == "__main__":

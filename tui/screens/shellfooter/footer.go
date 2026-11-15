@@ -231,6 +231,17 @@ func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: strings.Join(parts, " ")}
 }
 
+// SegmentBounds is the footer-local rect of the painted item for action
+// after the latest paint, so a menu can open at the item that asked for it.
+func (s *Screen) SegmentBounds(action string) (ui.Rect, bool) {
+	for _, hit := range s.hits {
+		if hit.action == action && hit.end > hit.start {
+			return ui.Rect{X: hit.start, Y: 1, W: hit.end - hit.start, H: 1}, true
+		}
+	}
+	return ui.Rect{}, false
+}
+
 func (s *Screen) Overflow() []Segment { return append([]Segment(nil), s.overflow...) }
 
 // segmentFit reuses bounded footer-sized scratch between frames. Guidance and

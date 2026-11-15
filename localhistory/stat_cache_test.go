@@ -118,3 +118,56 @@ func BenchmarkSnapshotIfChangedUnchangedTree(b *testing.B) {
 		}
 	}
 }
+
+// The stat cache outlives a core restart, so the first capture of the next
+// Store reads only changed files. A change made while no Store was open is
+// still observed, and a damaged cache file is ignored.
+func TestStatCacheSurvivesReopenWithoutHidingChanges(t *testing.T) {
+	storeRoot, workspace := t.TempDir(), t.TempDir()
+	store, err := Open(storeRoot, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agedFile(t, workspace, "same.txt", "unchanged", time.Hour)
+	agedFile(t, workspace, "edit.txt", "before", time.Hour)
+	first := snapshotEntry(t, store, "edit.txt")
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	agedFile(t, workspace, "edit.txt", "after!", 30*time.Minute)
+
+	store, err = Open(storeRoot, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(workspace, "same.txt")
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := fileIdentityKey(path, info)
+	if _, cached := store.cachedEntry("same.txt", info, identity, true); !cached {
+		t.Fatal("the reopened store must reuse the saved entry of an unchanged file")
+	}
+	if got := snapshotEntry(t, store, "edit.txt"); got.Hash == first.Hash {
+		t.Fatal("a change made while the store was closed was missed")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(storeRoot, statCacheFile), []byte("{damaged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err = Open(storeRoot, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, cached := store.cachedEntry("same.txt", info, identity, true); cached {
+		t.Fatal("a damaged cache file was trusted")
+	}
+	if got := snapshotEntry(t, store, "same.txt"); got.Hash == "" {
+		t.Fatal("capture failed after a damaged cache file")
+	}
+}

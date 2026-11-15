@@ -1534,6 +1534,31 @@ reader buffer per file (about 9 GiB/op). Small files now bypass CDC as one
 content-addressed chunk and large-file CDC buffers are pooled. Wall time remains
 review-only; the benchmark is retained in `localhistory/benchmark_test.go`.
 
+## Local History message-boundary capture on Windows (2026-11-15)
+
+The user reported long **Preparing** phases on Windows at session start, when
+a turn continues or ends, and with several main agents at once. Session logs
+showed that the time from admission to the first model request was the
+before-message capture (2.4-31 s); the request itself followed in 20-70 ms.
+Measured on the user's Windows 11 machine against Crude's own repository
+(9,846 entries, 1,397 directories, 878 of them ignored), with other agents
+active:
+
+| Stage | Before | After |
+|---|---|---|
+| Ignore files (one walk, ignored trees skipped) | 1.8-4.0 s | 0.12-0.2 s |
+| Unchanged capture | 3.7 s (8-9 s under load) | 0.54-0.85 s |
+| Three captures at once | 3.5 / 7.4 / 11.2 s | 0.45 / 0.98 / 0.98 s |
+| First capture after a core restart | 18.3 s under load | 0.54 s |
+
+The causes were an ignore-file walk that read every ignored tree and re-read
+each subtree once per ancestor; one read-access open plus one object `stat` per
+file on one thread, each tens of microseconds behind the antivirus filter;
+captures that queued one full scan per waiting agent; and a stat cache that
+the next core started without. Profiles came from `go test -cpuprofile` over a
+temporary capture of the real tree. Wall time is review-only, as for the
+incremental benchmark above.
+
 ## Layer 1: Leaf allocation gate
 
 `scripts/tui_bench_gate.sh` (wired into `make bench-gate`) runs the canonical

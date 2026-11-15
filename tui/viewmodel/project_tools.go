@@ -2,7 +2,10 @@ package viewmodel
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -86,6 +89,46 @@ func projectToolSetupDisplay(task prompt.ToolSetupTask) string {
 		noun = "tool"
 	}
 	return fmt.Sprintf("Set up %d code intelligence %s: %s.", len(names), noun, strings.Join(names, ", "))
+}
+
+// noticeProjectTools keeps one Notices entry, with a Set up tools action, for
+// each set of tools that this project can still get. The review token also
+// changes with every project change, such as each file edit, so the notice
+// is keyed by the tools themselves. A notice that the user read or
+// dismissed is not raised again.
+func (m *App) noticeProjectTools(review types.ProjectToolReview) {
+	if m.ws == nil || m.ws.Status() == nil || len(review.Items) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(review.Items))
+	tools := make([]string, 0, len(review.Items))
+	for _, item := range review.Items {
+		ids = append(ids, item.ID)
+		tool := item.Package
+		if len(item.Languages) > 0 {
+			tool += " (" + strings.Join(item.Languages, ", ") + ")"
+		}
+		tools = append(tools, tool)
+	}
+	sort.Strings(ids)
+	sum := sha256.Sum256([]byte(strings.Join(ids, "\n")))
+	key := "project-tools:" + hex.EncodeToString(sum[:])
+	if m.projectTools.notified == key {
+		return
+	}
+	m.projectTools.notified = key
+	for _, notice := range m.ws.Status().Notifications(true) {
+		if notice.DedupKey == key {
+			return
+		}
+	}
+	m.ws.Status().Notify(types.NotificationRecord{
+		DedupKey: key, Owner: types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.ws.RootPath()},
+		Severity: types.SeverityInfo, Source: "code-intelligence",
+		Summary: "Code intelligence tools are available for this project.",
+		Detail:  "Tools: " + strings.Join(tools, "; ") + ". Choose Set up tools to review them.",
+		Actions: []types.StatusAction{{ID: "lsp:setup", Label: "Set up tools", Enabled: true}},
+	})
 }
 
 func (m *App) projectToolsCurrent(request *projectToolsRequest) bool {
@@ -185,10 +228,7 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 		if !request.selection.Explicit && (msg.preview.Quiet || m.overlayHost == nil || len(m.overlayHost.All()) != 0) {
 			m.projectTools.request = nil
 			request.cancel()
-			if m.projectTools.notified != msg.preview.Review.Token && m.Feedback != nil {
-				m.projectTools.notified = msg.preview.Review.Token
-				m.Feedback.NotifyInfo("Code intelligence tools are available. Choose Set up tools in the Workspace panel.")
-			}
+			m.noticeProjectTools(msg.preview.Review)
 			return true, nil
 		}
 		m.showProjectTools(request)

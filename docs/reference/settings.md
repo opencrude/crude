@@ -1244,7 +1244,12 @@ known. Installable candidates have check rows. Unavailable candidates show their
 reason in a complete reader, not an inert switch. An unavailable-only result
 does not open an automatic review. The user can deselect tools. **Not now** records the refusal; closing
 without submitting does not manufacture a decision. Later needs give a quiet
-notice instead of interrupting editing. **Project Languages → Set up tools**
+notice instead of interrupting editing: one lasting entry in **Notices**, with a
+**Set up tools** action, for each set of missing tools. The footer's Notices
+count shows it until the user reads it. The entry is keyed by the tools, not by
+the review token, which changes with every project change such as each file
+edit; a read or dismissed entry does not come back for the same tools.
+**Project Languages → Set up tools**
 opens a fresh explicit review, including still-missing tools refused or failed
 earlier. This is a new human decision, not replay of the old approval.
 

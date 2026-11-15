@@ -68,6 +68,25 @@
   and whose observation is older than the timestamp granule (a same-granule
   write is invisible to metadata, so such files are re-read). Paths the walk did
   not visit leave the cache. Restore planning never uses it and reads every file.
+- A scan walks directories in order and gives the per-file metadata calls (type,
+  ignore rule, identity, cached object) to at most eight workers, as Git's
+  preloaded index does; content reads, cache updates and hardlink detection stay
+  in walk order. On Windows each such call costs tens of microseconds, and
+  identity opens a file for attributes only, so the antivirus filter does not
+  scan it and a file without read sharing still has an identity.
+- Ignore files are read in one walk, parent before child, with the priority
+  defaults < Git exclude and `.gitignore` files (deeper last) < extra patterns
+  and `.crudehistoryignore`. Like Git, the walk does not enter an ignored
+  directory, so an ignore file inside it cannot bring its contents back.
+- `SnapshotIfChanged` requests that wait while another capture holds the store
+  share the next scan, which starts after each of them asked. Each still records
+  its own snapshot when the entries changed. Concurrent agents therefore wait for
+  at most two scans at a message boundary, not one scan per agent. A caller that
+  stops waiting leaves the other requests queued for the next holder.
+- `Close` saves the stat cache to `stat-cache.json` in the store and `Open`
+  loads it, so the first capture after a core restart reads only changed files.
+  Saved entries pass the same metadata, timestamp-granule and object checks as
+  entries kept in memory; a missing, damaged or older file is ignored.
 
 ## Retention cost
 

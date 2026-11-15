@@ -526,3 +526,42 @@ func TestTermDockLayoutSitsRightOfSidebar(t *testing.T) {
 		t.Fatalf("dock W=%d want %d", got, want)
 	}
 }
+
+// The terminal menu opens at the header button that asked for it, not at a
+// fixed place near the bottom of the screen.
+func TestTerminalPickerOpensAtItsHeaderButton(t *testing.T) {
+	for _, size := range [][2]int{{160, 40}, {80, 24}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			app := newFullTestApp(t)
+			wsOf(app).Logger = stubLogger{}
+			app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+			for number := 1; number <= 2; number++ {
+				id := fmt.Sprintf("terminal-fixture-%d", number)
+				terminal := shellterm.New(app.Theme, id, "Terminal")
+				t.Cleanup(terminal.Close)
+				app.termDock.Mount(id, terminal)
+			}
+			app.paintShellFrame()
+			button, ok := app.screenRectOf(ui.NewID(termdock.HeaderID, "terminal.picker"))
+			if !ok || button.Empty() {
+				t.Fatal("the panel header shows no terminal menu button")
+			}
+			_, cmd := app.Update(tea.MouseClickMsg{X: button.X, Y: button.Y, Button: tea.MouseLeft})
+			runAppCommand(t, app, cmd)
+			_, cmd = app.Update(tea.MouseReleaseMsg{X: button.X, Y: button.Y, Button: tea.MouseLeft})
+			runAppCommand(t, app, cmd)
+			window := app.overlayHost.Window(ui.OverlayContextMenu)
+			if window == nil || app.LastContextMenu == nil || app.LastContextMenu.Title != "Terminals" {
+				t.Fatal("the button did not open the terminal menu")
+			}
+			x, y := window.Position()
+			w, h := window.Size()
+			if x > button.X+button.W-1 || x+w <= button.X {
+				t.Fatalf("menu columns %d..%d do not meet the button at %d..%d", x, x+w-1, button.X, button.X+button.W-1)
+			}
+			if y != button.Y+button.H && y+h != button.Y {
+				t.Fatalf("menu rows %d..%d are not next to the button row %d", y, y+h-1, button.Y)
+			}
+		})
+	}
+}

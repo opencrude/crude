@@ -4,12 +4,50 @@ import (
 	"context"
 	"crude/coreprotocol"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 )
+
+func TestCoreWatchWalkPreservesOrderAndSkip(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"branch", "ignored"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"branch/child", "ignored/child", "z"} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(name)), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var visited []string
+	err := walkCoreWatch(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		visited = append(visited, filepath.ToSlash(rel))
+		if entry.IsDir() && rel == "ignored" {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".", "branch", "branch/child", "ignored", "z"}
+	if !slices.Equal(visited, want) {
+		t.Fatalf("walk = %q, want %q", visited, want)
+	}
+}
 
 func TestCoreFileWatchMetadataAndLifetime(t *testing.T) {
 	root := t.TempDir()

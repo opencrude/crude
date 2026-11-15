@@ -151,7 +151,7 @@ func startCoreFileWatch(root string, publish func(coreprotocol.FileChange), noti
 				return false, false
 			}
 			complete = true
-			err = filepath.WalkDir(path, func(entryPath string, entry fs.DirEntry, err error) error {
+			err = walkCoreWatch(path, func(entryPath string, entry fs.DirEntry, err error) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}

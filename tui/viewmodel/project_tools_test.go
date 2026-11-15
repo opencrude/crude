@@ -211,6 +211,65 @@ func TestProjectToolsQuietAndStaleReviewsNeverInterruptOrInstall(t *testing.T) {
 	app.closeProjectTools()
 }
 
+// Each file edit starts a new project review with a new token. The user
+// gets one lasting notice with a Set up tools action for each set of tools,
+// not a short message after every edit.
+func TestProjectToolsNoticeIsOnePersistentActionPerToolSet(t *testing.T) {
+	app, port := projectToolsTestApp(t, 100, 30)
+	port.preview.Quiet = true
+	notices := func() []types.NotificationRecord {
+		var out []types.NotificationRecord
+		for _, notice := range app.ws.Status().Notifications(true) {
+			if notice.Source == "code-intelligence" {
+				out = append(out, notice)
+			}
+		}
+		return out
+	}
+	for edit := range 3 {
+		port.preview.Review.AssemblyGeneration = uint64(edit + 1)
+		port.preview.Review.Token = fmt.Sprintf("after-edit-%d", edit)
+		runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+	}
+	got := notices()
+	if len(got) != 1 {
+		t.Fatalf("edits raised %d code intelligence notices, want 1: %+v", len(got), got)
+	}
+	notice := got[0]
+	if notice.Transient || notice.Read || notice.Dismissed {
+		t.Fatalf("the notice is not kept for the user to see: %+v", notice)
+	}
+	if len(notice.Actions) != 1 || notice.Actions[0].ID != "lsp:setup" || notice.Actions[0].Label != "Set up tools" || !notice.Actions[0].Enabled {
+		t.Fatalf("the notice gives no Set up tools action: %+v", notice.Actions)
+	}
+	if !strings.Contains(notice.Detail, "fixture-server") {
+		t.Fatalf("the notice does not name the tool: %q", notice.Detail)
+	}
+	if app.ws.Status().UnreadCount() == 0 {
+		t.Fatal("the footer Notices count does not show the notice")
+	}
+
+	// A dismissed notice stays dismissed while the same tools are missing,
+	// also after the shell starts again.
+	app.ws.Status().Dismiss(notice.ID)
+	app.projectTools.notified = ""
+	port.preview.Review.Token = "after-restart"
+	runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+	if got := notices(); len(got) != 1 || !got[0].Dismissed {
+		t.Fatalf("a dismissed notice came back: %+v", got)
+	}
+
+	// A new tool is new information.
+	port.preview.Review.Items = append(port.preview.Review.Items, types.ProjectToolCandidate{ID: "second", Package: "second-server", Languages: []string{"lua"}})
+	runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+	if got := notices(); len(got) != 2 || got[0].Dismissed || !strings.Contains(got[0].Detail, "second-server (lua)") {
+		t.Fatalf("a new set of tools raised no new notice: %+v", got)
+	}
+	if app.overlayHost.IsOpen(projectToolsOverlay) || len(port.choices) != 0 {
+		t.Fatal("an automatic review interrupted editing or decided something")
+	}
+}
+
 func TestProjectToolsCloseAndUnavailableReview(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {

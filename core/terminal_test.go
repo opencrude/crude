@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +18,7 @@ import (
 	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/corewire"
+	"crude/internal/testterminal"
 	"crude/shellport/remote"
 	"crude/types"
 	"crude/types/inspect"
@@ -28,26 +28,15 @@ import (
 const attachEnvironmentProbe = "CRUDE_ATTACH_ENVIRONMENT_TEST"
 const daemonEnvironmentProbe = "CRUDE_DAEMON_ENVIRONMENT_TEST"
 
-func TestAttachingEnvironmentPTYChild(t *testing.T) {
-	if !slices.Contains(os.Args, "--attaching-environment-child") {
-		return
-	}
-	fmt.Printf("SHELL=[%s]\nDAEMON=[%s]\n", os.Getenv(attachEnvironmentProbe), os.Getenv(daemonEnvironmentProbe))
-	os.Exit(0)
-}
-
 func attachingEnvironmentRuntime(t *testing.T, logger workspace.Logger) *Runtime {
 	t.Helper()
 	setCoreTestHome(t, t.TempDir())
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	executable, args := testterminal.Command(t, "env", attachEnvironmentProbe, daemonEnvironmentProbe)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, logger)
 		ws.SetAppDefaults(types.AppSettings{Terminal: types.TerminalSettings{
 			Shell: types.TerminalShellCustom, Command: executable,
-			Args: []string{"-test.run=^TestAttachingEnvironmentPTYChild$", "--", "--attaching-environment-child"},
+			Args: args,
 		}})
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -130,10 +119,10 @@ func attachingEnvironmentTerminal(t *testing.T, c *coreclient.Client, workspaceI
 			// the screen is the outcome, whether or not the exit frame came yet.
 			text := projectionText(p)
 			last = text
-			if p.Info.Alive && !strings.Contains(text, "DAEMON=[") {
+			if p.Info.Alive && !strings.Contains(text, daemonEnvironmentProbe+"=[") {
 				continue
 			}
-			if !strings.Contains(text, "SHELL=["+shell+"]") || !strings.Contains(text, "DAEMON=["+daemon+"]") {
+			if !strings.Contains(text, attachEnvironmentProbe+"=["+shell+"]") || !strings.Contains(text, daemonEnvironmentProbe+"=["+daemon+"]") {
 				t.Fatalf("terminal environment = %q, want shell=%q daemon=%q", text, shell, daemon)
 			}
 			if p.Info.ExitCode != 0 {
