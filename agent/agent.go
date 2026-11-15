@@ -83,12 +83,19 @@ type Agent struct {
 	// Command review uses its syntax; nil is a POSIX shell.
 	CommandShell       func() command.Shell
 	PermissionReviewer PermissionReviewer
-	Depth              int
-	ParentID           AgentID
-	WorkDir            string
-	GuidancePaths      []string
-	MaxRetries         int
-	MaxOutputTokens    int
+	// CommandApprovals holds the session's "Always allow" answers for
+	// commands. Nil records nothing.
+	CommandApprovals CommandApprovals
+	// PermissionPolicyChanged returns a channel that closes at the next
+	// change of the session's permission policy, such as Auto Review being
+	// turned on. A waiting permission request is then checked again.
+	PermissionPolicyChanged func() <-chan struct{}
+	Depth                   int
+	ParentID                AgentID
+	WorkDir                 string
+	GuidancePaths           []string
+	MaxRetries              int
+	MaxOutputTokens         int
 	// ContextCompactionPercent is the user's compaction choice: 0 lets Crude
 	// decide from cost and capacity (the default), 1-100 compacts at that
 	// fullness of the window, and CompactionOff disables automatic compaction.

@@ -318,6 +318,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 		treeCmd := m.applyTreeHiddenSetting()
+		// Auto Review may have been turned on or off: waiting confirmations
+		// show or hide the choice that opens it.
+		m.openNextAgentPrompt()
 		if m.aeronEnsureFailed {
 			// Aeron may have waited for an account or model. A settings
 			// change is the user's chance to provide it.

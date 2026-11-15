@@ -185,16 +185,19 @@ type Session struct {
 	delegationMu             sync.Mutex
 	delegationNoticeMu       sync.Mutex
 	permissionReviewRevision atomic.Uint64
-	delegationNotices        []provider.ChatMessage
-	orchestrators            map[string]*Orchestrator
-	orchMu                   sync.Mutex
-	orchWg                   sync.WaitGroup
-	orchNextID               atomic.Int64
-	recoveryMu               sync.Mutex
-	recoverySlots            map[string]*recoverySlot
-	pendingRecoveries        map[string]sessiondb.RecoveryCheckpoint
-	admissionMu              sync.Mutex
-	pendingAdmissions        map[*InputAdmissionIntent]struct{}
+	// permissionPolicyChange closes when the Auto Review settings change.
+	permissionPolicyMu     sync.Mutex
+	permissionPolicyChange chan struct{}
+	delegationNotices      []provider.ChatMessage
+	orchestrators          map[string]*Orchestrator
+	orchMu                 sync.Mutex
+	orchWg                 sync.WaitGroup
+	orchNextID             atomic.Int64
+	recoveryMu             sync.Mutex
+	recoverySlots          map[string]*recoverySlot
+	pendingRecoveries      map[string]sessiondb.RecoveryCheckpoint
+	admissionMu            sync.Mutex
+	pendingAdmissions      map[*InputAdmissionIntent]struct{}
 	// queued is the durable input queue held while the root compacts.
 	queueMu      sync.Mutex
 	queueAdmitMu sync.Mutex

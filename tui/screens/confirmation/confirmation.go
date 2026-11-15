@@ -21,6 +21,8 @@ const (
 
 type Details struct {
 	Question, Operation, Tool, Target, Risk, Reason, Suggestion string
+	// AutoReview tells the user why Auto Review left this request to them.
+	AutoReview string
 	// OfferAutoReview adds the choice that opens the Auto Review Agent. The
 	// owner sets it while Auto Review is off and the request can be reviewed.
 	OfferAutoReview bool
@@ -97,6 +99,7 @@ func (s *Screen) Reset(details Details) {
 		{"risk", "Risk", riskLabel(details.Risk)}, {"operation", "Operation", details.Operation},
 		{"tool", "Tool", details.Tool}, {"target", "Target", details.Target},
 		{"reason", "Reason", details.Reason}, {"suggestion", "Suggestion", details.Suggestion},
+		{"auto-review", "Auto Review", details.AutoReview},
 	} {
 		if field.value == "" {
 			continue

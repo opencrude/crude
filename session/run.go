@@ -1343,29 +1343,6 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 			return true
 		}
 	}
-	if data != nil && data["risk"] != "" {
-		riskStr := data["risk"]
-		for _, r := range []safety.CommandRisk{
-			safety.RiskDestructive, safety.RiskNetwork,
-			safety.RiskProjectWrite, safety.RiskUnknown,
-		} {
-			if r.String() == riskStr {
-				sr := &safety.CommandSafetyResult{Risk: r, BaseCommand: data["tool"]}
-				if s.permStore.IsCommandAllowed(sr) {
-					s.logger.Debug("PERM", "command_auto_allowed", "risk", riskStr, "tool", data["tool"])
-					o.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: "always"})
-					agentID := evt.AgentID
-					if agentID == "" {
-						agentID = o.ID
-					}
-					evt.Type, evt.AgentID = "blocking_auto", agentID
-					sendRuntimeEvent(sender, evt)
-					return true
-				}
-				break
-			}
-		}
-	}
 	// Question prompts carry map[string]any; log the same fields for both
 	// shapes so a long human wait stays diagnosable.
 	field := func(key string) string {
@@ -1397,17 +1374,6 @@ func (s *Session) handleConfirmationAlways(data map[string]string) {
 		s.grantPatchAlways(data["patch_input"])
 	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		s.permStore.GrantAlways(safety.CRUDEOp(opStr), tool, target)
-	default:
-		for _, r := range []safety.CommandRisk{
-			safety.RiskDestructive, safety.RiskNetwork,
-			safety.RiskProjectWrite, safety.RiskUnknown,
-		} {
-			if r.String() == opStr {
-				s.permStore.GrantCommandRisk(r)
-				s.logger.Debug("PERM", "risk_granted", "risk", opStr)
-				break
-			}
-		}
 	}
 }
 

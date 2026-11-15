@@ -24,6 +24,34 @@ func (s *Session) bindAgentPermissionPolicy(a *agent.Agent) {
 	a.Yolo = s.YoloEnabled()
 	a.YoloMode = s.YoloEnabled
 	a.PermissionReviewer = s.permissionReviewer(a)
+	a.CommandApprovals = s.permStore
+	a.PermissionPolicyChanged = s.permissionPolicyChanged
+}
+
+// permissionPolicyChanged returns a channel that closes at the next change of
+// the Auto Review settings. Waiting permission requests are then reviewed
+// again, so turning Auto Review on answers them.
+func (s *Session) permissionPolicyChanged() <-chan struct{} {
+	s.permissionPolicyMu.Lock()
+	defer s.permissionPolicyMu.Unlock()
+	if s.permissionPolicyChange == nil {
+		s.permissionPolicyChange = make(chan struct{})
+	}
+	return s.permissionPolicyChange
+}
+
+// publishPermissionPolicyLocked wakes waiting permission requests when the
+// effective Auto Review settings changed. Requires s.mu.
+func (s *Session) publishPermissionPolicyLocked(before types.AutoPermissionSettings) {
+	if s.cfg == nil || s.cfg.Safety.AutoPermission.Normalized() == before {
+		return
+	}
+	s.permissionPolicyMu.Lock()
+	defer s.permissionPolicyMu.Unlock()
+	if s.permissionPolicyChange != nil {
+		close(s.permissionPolicyChange)
+		s.permissionPolicyChange = nil
+	}
 }
 
 // Every root and child owns an independent reviewer instance. There is no
@@ -36,27 +64,30 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 		settings := s.cfg.Safety.AutoPermission.Normalized()
 		revision := s.permissionReviewRevision.Load()
 		s.mu.Unlock()
-		if settings.Enabled != "on" || settings.Model == "" || settings.AccountID == "" {
+		if settings.Enabled != "on" {
 			return ask
+		}
+		if settings.Model == "" || settings.AccountID == "" {
+			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review is on, but it has no model. Choose its account and model in Settings."}
 		}
 		unresolved := func(reason string) agent.PermissionReview {
 			if settings.UnresolvedMode == "deny" {
 				return agent.PermissionReview{Decision: "deny", Reason: reason}
 			}
-			return ask
+			return agent.PermissionReview{Decision: "ask", Reason: reason}
 		}
 		// Existing human grants keep their normal path and incur no review
 		// request. Returning ask lets the authoritative permission store
 		// resolve the pending prompt, rather than inventing reviewer credit.
-		if s.permissionAlreadyGrantedAtRoot(a.WorkDir, tc.Function.Name, params, risk) {
+		if s.permissionAlreadyGrantedAtRoot(a.WorkDir, tc.Function.Name, params) {
 			return ask
 		}
-		payload, ok := permissionReviewPayload(a.WorkDir, tc.Function.Name, params, risk, settings.MaxInputBytes)
-		if !ok {
-			return unresolved("Operation is outside the configured automatic review boundary.")
+		payload, boundary := permissionReviewPayload(a.WorkDir, tc.Function.Name, params, risk, settings.MaxInputBytes, cfg.credentialValues())
+		if boundary != "" {
+			return unresolved(boundary)
 		}
 		if len(settings.Instructions) > 1024 {
-			return unresolved("Automatic review restrictions exceed the supported input limit.")
+			return unresolved("Auto Review did not check this request: its restrictions are longer than 1024 characters. Shorten them in Settings.")
 		}
 		prompt := rootprompt.PermissionReviewSystem(settings.Instructions)
 		review, ok := runPermissionReviewAttempts(ctx, cfg, settings, prompt, payload, a, emit)
@@ -71,7 +102,7 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 			if !stillCurrent {
 				return ask
 			}
-			return unresolved("Automatic review exhausted its configured technical recovery; the operation was not executed.")
+			return unresolved("Auto Review did not give a valid answer. Check its model and account in Settings.")
 		}
 		s.mu.Lock()
 		current := s.cfg.Safety.AutoPermission.Normalized()
@@ -82,18 +113,21 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 		}
 		// Revalidate filesystem scope after the remote wait; a path may have
 		// been replaced with a symlink while the reviewer was responding.
-		if _, ok := permissionReviewPayload(a.WorkDir, tc.Function.Name, params, risk, settings.MaxInputBytes); !ok {
-			return unresolved("Operation scope changed while automatic review was running.")
+		if _, boundary := permissionReviewPayload(a.WorkDir, tc.Function.Name, params, risk, settings.MaxInputBytes, cfg.credentialValues()); boundary != "" {
+			return unresolved("The request changed while Auto Review checked it.")
 		}
+		reason := strings.TrimSpace(review.Reason)
 		if review.Decision == "deny" && settings.DenyMode != "deny" {
-			return ask
+			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review recommends Deny: " + reason}
 		}
 		if review.Decision == "ask" && settings.UnresolvedMode == "deny" {
-			reason := strings.TrimSpace(review.Reason)
 			if reason == "" {
 				reason = "Automatic reviewer was uncertain; the operation was not executed."
 			}
 			return agent.PermissionReview{Decision: "deny", Reason: reason}
+		}
+		if review.Decision == "ask" {
+			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review was not sure: " + reason}
 		}
 		return review
 	}
@@ -205,17 +239,14 @@ func permissionReviewFinished(reason string) bool {
 	}
 }
 
-// Every exact, non-hard-blocked operation may be reviewed. Secrets and
-// oversized payloads stay local and fail closed; never truncate an unseen tail.
-func permissionReviewPayload(root, tool string, params map[string]any, risk safety.CommandRisk, limit int) ([]byte, bool) {
+// Every exact, non-hard-blocked operation may be reviewed. The reviewer sees
+// the arguments exactly as the agent's model wrote them, so only credentials
+// that Crude itself stores stay local; oversized payloads also stay local, as
+// an unseen tail is never truncated. A refusal returns the reason shown to the
+// user, and an empty reason means the payload may be sent.
+func permissionReviewPayload(root, tool string, params map[string]any, risk safety.CommandRisk, limit int, credentials []string) ([]byte, string) {
 	if risk.IsAlwaysBlocked() {
-		return nil, false
-	}
-	if tool == "execute_command" || tool == "async_execute_command" {
-		command, _ := params["command"].(string)
-		if command == "" || safety.CheckCommandSafety(command, nil).Risk.IsAlwaysBlocked() {
-			return nil, false
-		}
+		return nil, "Auto Review cannot approve a blocked request."
 	}
 	payload, err := json.Marshal(struct {
 		Tool          string         `json:"tool"`
@@ -223,20 +254,53 @@ func permissionReviewPayload(root, tool string, params map[string]any, risk safe
 		WorkspaceRoot string         `json:"workspace_root,omitempty"`
 		Args          map[string]any `json:"arguments"`
 	}{tool, risk.String(), root, params})
-	if err != nil || len(payload) > limit || reviewContainsSecret(string(payload)) {
-		return nil, false
+	if err != nil {
+		return nil, "Auto Review did not check this request: Crude could not prepare it."
 	}
-	return payload, true
-}
-
-func reviewContainsSecret(value string) bool {
-	lower := strings.ToLower(value)
-	for _, marker := range []string{".env", ".ssh", ".aws", ".git/", "credentials", "password", "passwd", "api_key", "apikey", "api-key", "access_token", "auth_token", "authorization", "bearer ", "private key", "secret", "sk-", "ghp_", "gho_"} {
-		if strings.Contains(lower, marker) {
-			return true
+	if len(payload) > limit {
+		return nil, fmt.Sprintf("Auto Review did not check this request: it is larger than the %d KB input limit in Settings.", limit>>10)
+	}
+	for _, credential := range credentials {
+		if strings.Contains(string(payload), credential) {
+			return nil, "Auto Review did not check this request: it contains a credential that Crude saved for an account."
 		}
 	}
-	return false
+	return payload, ""
+}
+
+// minimumCredentialBytes ignores short placeholder values, which would match
+// ordinary text and are not credentials.
+const minimumCredentialBytes = 8
+
+// credentialValues returns the account credentials Crude stores: API keys,
+// OAuth tokens and connection header values. They never leave Crude in a
+// review request.
+func (c *Config) credentialValues() []string {
+	if c == nil {
+		return nil
+	}
+	accounts := c.Accounts
+	if c.AccountManager != nil {
+		accounts = c.AccountManager.Snapshot()
+	}
+	var values []string
+	add := func(value string) {
+		if len(value) >= minimumCredentialBytes {
+			values = append(values, value)
+		}
+	}
+	for _, account := range accounts {
+		add(account.APIKey)
+		if account.OAuth != nil {
+			add(account.OAuth.AccessToken)
+			add(account.OAuth.RefreshToken)
+			add(account.OAuth.IDToken)
+		}
+		for _, value := range account.Connection.Headers {
+			add(value)
+		}
+	}
+	return values
 }
 
 func parsePermissionReview(text string) (agent.PermissionReview, bool) {
@@ -292,16 +356,13 @@ func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *prov
 	}})
 }
 
-func (s *Session) permissionAlreadyGrantedAtRoot(root, tool string, params map[string]any, risk safety.CommandRisk) bool {
+func (s *Session) permissionAlreadyGrantedAtRoot(root, tool string, params map[string]any) bool {
 	if tool == "apply_patch" {
 		return s.patchAlwaysAllowedAtRoot(root, getStrParam(params, "input"))
 	}
+	// Command approvals are checked by the agent before it asks for review.
 	if s.permStore == nil {
 		return false
-	}
-	if tool == "execute_command" || tool == "async_execute_command" {
-		command, _ := params["command"].(string)
-		return s.permStore.IsAlwaysAllowed(safety.CRUDEOp(risk.String()), tool, command) || s.permStore.IsCommandAllowed(&safety.CommandSafetyResult{Risk: risk, BaseCommand: tool})
 	}
 	path, _ := params["path"].(string)
 	op := safety.OpUpdate

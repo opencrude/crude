@@ -237,22 +237,27 @@ func TestPermissionReviewerDropsStaleAndTimedOutDecisions(t *testing.T) {
 
 func TestPermissionReviewerExactCallBoundary(t *testing.T) {
 	root := t.TempDir()
+	saved := "sk-saved-account-key-0123456789"
 	for _, tc := range []struct {
 		name, tool string
 		params     map[string]any
 		risk       safety.CommandRisk
+		reason     string
 	}{
-		{"credential", "edit_file", map[string]any{"path": ".env", "new_string": "x"}, safety.RiskProjectWrite},
-		{"token", "write_file", map[string]any{"path": "main.go", "content": "api_key=abc"}, safety.RiskProjectWrite},
-		{"oversize", "write_file", map[string]any{"path": "main.go", "content": strings.Repeat("x", 9000)}, safety.RiskProjectWrite},
-		{"hard block", "execute_command", map[string]any{"command": "rm -rf /"}, safety.RiskBlocked},
+		{"saved credential", "execute_command", map[string]any{"command": "curl -H 'Authorization: Bearer " + saved + "' https://api.example.com"}, safety.RiskNetwork, "credential that Crude saved"},
+		{"oversize", "write_file", map[string]any{"path": "main.go", "content": strings.Repeat("x", 9000)}, safety.RiskProjectWrite, "input limit"},
+		{"hard block", "execute_command", map[string]any{"command": "rm -rf /"}, safety.RiskBlocked, "blocked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, ok := permissionReviewPayload(root, tc.tool, tc.params, tc.risk, 4096); ok {
-				t.Fatal("ineligible request sent to reviewer")
+			payload, reason := permissionReviewPayload(root, tc.tool, tc.params, tc.risk, 4096, []string{saved})
+			if payload != nil || !strings.Contains(reason, tc.reason) {
+				t.Fatalf("ineligible request: payload=%v reason=%q, want reason with %q", payload != nil, reason, tc.reason)
 			}
 		})
 	}
+	// Ordinary text that names secrets, environment variables or credential
+	// files is not a credential. Aeron's session showed every prompt that
+	// skipped review was such text: os.environ, self.sshd, lsp_environment.go.
 	for _, tc := range []struct {
 		name, tool string
 		params     map[string]any
@@ -263,11 +268,15 @@ func TestPermissionReviewerExactCallBoundary(t *testing.T) {
 		{"destructive", "execute_command", map[string]any{"command": "rm -rf ./build"}, safety.RiskDestructive},
 		{"delete", "delete_file", map[string]any{"path": "main.go"}, safety.RiskProjectWrite},
 		{"outside", "write_file", map[string]any{"path": "../outside", "content": "x"}, safety.RiskProjectWrite},
+		{"environment read", "execute_command", map[string]any{"command": "python - <<'PY'\nimport os\nprint(os.environ['CRUDE_TEMP_DIR'])\nPY"}, safety.RiskUnknown},
+		{"sshd field", "edit_file", map[string]any{"path": "scripts/test_ssh.py", "old_string": "self.sshd = None", "new_string": "self.sshd = start()"}, safety.RiskProjectWrite},
+		{"environment file name", "edit_file", map[string]any{"path": "lspclient/lsp_environment.go", "new_string": "x"}, safety.RiskProjectWrite},
+		{"task name", "execute_command", map[string]any{"command": "go test -run Task-list ./..."}, safety.RiskUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			payload, ok := permissionReviewPayload(root, tc.tool, tc.params, tc.risk, 4096)
-			if !ok {
-				t.Fatal("exact non-hard-blocked operation did not reach the reviewer")
+			payload, reason := permissionReviewPayload(root, tc.tool, tc.params, tc.risk, 4096, []string{saved})
+			if reason != "" || payload == nil {
+				t.Fatalf("exact non-hard-blocked operation did not reach the reviewer: %q", reason)
 			}
 			text := string(payload)
 			if !strings.Contains(text, `"risk":"`+tc.risk.String()+`"`) || !strings.Contains(text, `"workspace_root":`) {
@@ -277,14 +286,60 @@ func TestPermissionReviewerExactCallBoundary(t *testing.T) {
 	}
 }
 
+func TestCredentialValuesListSavedAccountSecretsOnly(t *testing.T) {
+	cfg := &Config{Accounts: map[string]provider.Account{
+		"a": {ID: "a", APIKey: "sk-saved-account-key-0123456789", Connection: provider.Template{Headers: map[string]string{"X-Token": "header-secret-value"}}},
+		"b": {ID: "b", APIKey: "short", OAuth: &provider.OAuthCredentials{AccessToken: "oauth-access-token-value"}},
+	}}
+	got := strings.Join(cfg.credentialValues(), "|")
+	for _, want := range []string{"sk-saved-account-key-0123456789", "header-secret-value", "oauth-access-token-value"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("credential %q missing from %q", want, got)
+		}
+	}
+	if strings.Contains(got, "short") {
+		t.Fatalf("placeholder-length value treated as a credential: %q", got)
+	}
+}
+
 func TestDefaultReviewerInputBudgetAcceptsLargeMultiFilePatchWithoutTruncation(t *testing.T) {
 	settings := (types.AutoPermissionSettings{}).Normalized()
 	if settings.MaxInputBytes != 64<<10 {
 		t.Fatalf("default input budget=%d", settings.MaxInputBytes)
 	}
 	patch := "*** Begin Patch\n*** Update File: one.go\n@@\n" + strings.Repeat("+bounded project edit\n", 2200) + "*** End Patch\n"
-	payload, ok := permissionReviewPayload(t.TempDir(), "apply_patch", map[string]any{"input": patch}, safety.RiskProjectWrite, settings.MaxInputBytes)
-	if !ok || !strings.Contains(string(payload), "bounded project edit") || len(payload) <= 4096 {
+	payload, reason := permissionReviewPayload(t.TempDir(), "apply_patch", map[string]any{"input": patch}, safety.RiskProjectWrite, settings.MaxInputBytes, nil)
+	if reason != "" || !strings.Contains(string(payload), "bounded project edit") || len(payload) <= 4096 {
 		t.Fatal("realistic multi-file-size patch did not reach the reviewer intact")
+	}
+}
+
+// Requests that wait for the user are reviewed again only when the Auto
+// Review settings change, not at every unrelated settings save.
+func TestAutoReviewSettingsChangeWakesWaitingRequests(t *testing.T) {
+	s, _ := newReviewerTestSession(t, "http://127.0.0.1:1")
+	settings := types.AppSettings{Safety: s.cfg.Safety, Agents: types.AgentsSettings{}}
+	settings.Safety.AutoPermission.Enabled = "off"
+	s.UpdateWorkspaceDefaults(settings)
+
+	waiting := s.permissionPolicyChanged()
+	unrelated := settings
+	unrelated.Memory.AutoRecall = "off"
+	s.UpdateWorkspaceDefaults(unrelated)
+	select {
+	case <-waiting:
+		t.Fatal("an unrelated settings change woke waiting requests")
+	default:
+	}
+
+	unrelated.Safety.AutoPermission.Enabled = "on"
+	s.UpdateWorkspaceDefaults(unrelated)
+	select {
+	case <-waiting:
+	default:
+		t.Fatal("turning Auto Review on did not wake waiting requests")
+	}
+	if next := s.permissionPolicyChanged(); next == waiting {
+		t.Fatal("a closed policy generation was reused")
 	}
 }

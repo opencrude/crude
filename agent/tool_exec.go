@@ -16,6 +16,7 @@ import (
 	"crude/safety"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/command"
 	"crude/types/toolresult"
 )
 
@@ -368,46 +369,59 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 		}
 		autoAllowed := false
+		reviewNote := ""
+		approvalKeys := a.commandApprovalKeys(tc.Function.Name, params, policy, sr)
 		if !a.yoloEnabled() && sr.NeedsConfirmation() {
-			var denied *execResult
-			autoAllowed, denied = a.reviewPermission(ctx, tc, params, sr.Risk, emit)
-			if denied != nil {
-				return *denied
+			if a.CommandApprovals != nil && a.CommandApprovals.CommandApproved(approvalKeys) {
+				// "Always allow" earlier in this session covers every command here.
+				autoAllowed = true
+				emitPermissionDecision(emit, tc, "always")
+			} else {
+				var denied *execResult
+				autoAllowed, reviewNote, denied = a.reviewPermission(ctx, tc, params, sr.Risk, emit)
+				if denied != nil {
+					return *denied
+				}
 			}
 		}
 		if !autoAllowed && !a.yoloEnabled() && sr.NeedsConfirmation() {
 			drainStaleBlockResponses(blockResolveCh)
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
-				"block_id":   blockID,
-				"operation":  sr.Risk.String(),
-				"tool":       tc.Function.Name,
-				"target":     cmd,
-				"question":   fmt.Sprintf("Allow this %s command?", sr.Risk.String()),
-				"risk":       sr.Risk.String(),
-				"reason":     sr.Reason,
-				"suggestion": sr.Suggestion,
-				"rule":       sr.MatchedRule,
+				"block_id":    blockID,
+				"operation":   sr.Risk.String(),
+				"tool":        tc.Function.Name,
+				"target":      cmd,
+				"question":    fmt.Sprintf("Allow this %s command?", sr.Risk.String()),
+				"risk":        sr.Risk.String(),
+				"reason":      sr.Reason,
+				"suggestion":  sr.Suggestion,
+				"rule":        sr.MatchedRule,
+				"auto_review": reviewNote,
 			}})
-			response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
-			if !ok {
-				emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
-				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
-			}
-			resp := response.Value
-			emitPermissionDecision(emit, tc, resp)
+			wait := a.awaitPermission(ctx, blockResolveCh, blockID, func() (bool, *execResult) {
+				allowed, _, denied := a.reviewPermission(ctx, tc, params, sr.Risk, emit)
+				return allowed, denied
+			})
 			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
-			if resp == "deny" {
-				errMsg := fmt.Sprintf("Command denied by the user.\nReason: %s", sr.Reason)
-				a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
-				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
-			}
-			a.logger.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", "execute_command")
-			if resp == "always" {
-				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
-					"operation": sr.Risk.String(),
-					"tool":      tc.Function.Name,
-					"target":    cmd,
-				}})
+			switch {
+			case wait.reviewed && wait.denied != nil:
+				return *wait.denied
+			case wait.reviewed:
+				a.logger.Info("BLOCK", "reviewed", "operation", sr.Risk.String(), "tool", tc.Function.Name)
+			case !wait.answered:
+				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
+			default:
+				resp := wait.response.Value
+				emitPermissionDecision(emit, tc, resp)
+				if resp == "deny" {
+					errMsg := fmt.Sprintf("Command denied by the user.\nReason: %s", sr.Reason)
+					a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
+					return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
+				}
+				a.logger.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", tc.Function.Name)
+				if resp == "always" && a.CommandApprovals != nil {
+					a.CommandApprovals.ApproveCommand(approvalKeys)
+				}
 			}
 		} else if a.yoloEnabled() {
 			a.logger.Debug("SAFETY", "yolo_skip", "tool", "execute_command")
@@ -456,9 +470,10 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 	}
 
 	autoAllowed := false
+	reviewNote := ""
 	if fileCheck && !a.yoloEnabled() {
 		var denied *execResult
-		autoAllowed, denied = a.reviewPermission(ctx, tc, params, safety.RiskProjectWrite, emit)
+		autoAllowed, reviewNote, denied = a.reviewPermission(ctx, tc, params, safety.RiskProjectWrite, emit)
 		if denied != nil {
 			return *denied
 		}
@@ -467,27 +482,37 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
 		drainStaleBlockResponses(blockResolveCh)
 		blockingData := map[string]string{
-			"block_id":   blockID,
-			"operation":  fileOp,
-			"tool":       tc.Function.Name,
-			"target":     fileTarget,
-			"question":   question,
-			"risk":       "write",
-			"reason":     fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
-			"suggestion": "",
+			"block_id":    blockID,
+			"operation":   fileOp,
+			"tool":        tc.Function.Name,
+			"target":      fileTarget,
+			"question":    question,
+			"risk":        "write",
+			"reason":      fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
+			"suggestion":  "",
+			"auto_review": reviewNote,
 		}
 		if tc.Function.Name == "apply_patch" {
 			blockingData["patch_input"] = getStr(params, "input")
 		}
 		emit(AgentEvent{Type: "blocking", Data: blockingData})
-		response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
-		if !ok {
-			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
+		wait := a.awaitPermission(ctx, blockResolveCh, blockID, func() (bool, *execResult) {
+			allowed, _, denied := a.reviewPermission(ctx, tc, params, safety.RiskProjectWrite, emit)
+			return allowed, denied
+		})
+		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
+		if wait.reviewed && wait.denied != nil {
+			return *wait.denied
+		}
+		if !wait.reviewed && !wait.answered {
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled.", Outcome: toolresult.Outcome{State: toolresult.Cancelled}}, toolError: true}
 		}
-		resp := response.Value
-		emitPermissionDecision(emit, tc, resp)
-		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
+		resp := wait.response.Value
+		if wait.reviewed {
+			resp = "reviewed"
+		} else {
+			emitPermissionDecision(emit, tc, resp)
+		}
 		if resp == "deny" {
 			errMsg := fmt.Sprintf("%s operation denied by the user.\nTarget: %s", fileOp, fileTarget)
 			a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
@@ -636,7 +661,7 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 				reviewCall := tc
 				reviewCall.Function.Arguments = string(encoded)
 				var denied *execResult
-				authorized, denied = a.reviewPermission(ctx, reviewCall, evidence, risk, emit)
+				authorized, _, denied = a.reviewPermission(ctx, reviewCall, evidence, risk, emit)
 				if denied != nil {
 					return *denied
 				}
@@ -749,6 +774,33 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		failure = panicErr
 	}
 	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed, failure: failure, duration: time.Duration(toolDur) * time.Millisecond}
+}
+
+// commandApprovalKeys returns the session approval keys of a command call.
+// The scope holds the shell program, its syntax and the working directory:
+// the same text is a different command in another shell or directory, and
+// the user can change the command shell in Settings at any time. Keystrokes
+// to a running program are approved only as that exact input to that process.
+func (a *Agent) commandApprovalKeys(tool string, params map[string]any, policy safety.CommandPolicy, sr *safety.CommandSafetyResult) []string {
+	if tool == "write_stdin" {
+		return sr.ExactApprovalKeys("stdin\x00" + fmt.Sprint(params["session_id"]))
+	}
+	dir := getStr(params, "cwd")
+	if tool == "exec_command" {
+		dir = getStr(params, "workdir")
+	}
+	syntax := policy.Syntax
+	if syntax == "" {
+		syntax = command.SyntaxPOSIX
+	}
+	program := strings.TrimSpace(getStr(params, "shell"))
+	if tool != "exec_command" || program == "" {
+		program = ""
+		if a.CommandShell != nil {
+			program = a.CommandShell().Path
+		}
+	}
+	return sr.ApprovalKeys("shell:" + string(syntax) + "\x00" + program + "\x00" + dir)
 }
 
 func emitPermissionDecision(emit func(AgentEvent), tc provider.ToolCall, response string) {

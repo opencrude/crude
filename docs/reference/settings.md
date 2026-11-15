@@ -727,13 +727,25 @@ a permission prompt would otherwise be required and YOLO is off. Children keep
 their existing capability policies; this setting does not loosen those policies.
 
 The reviewer sees only a fixed safety instruction, optional extra restrictions,
-and bounded tool arguments—not conversation history, environment variables, or
-file contents fetched behind the user's back. Recognizable credential markers,
-out-of-workspace paths, symlinks, oversized arguments, delete/move operations,
-and unknown/network/destructive shell commands stay on the human path without a
-review request. Shell metacharacters and compound commands are also excluded.
-This filter reduces risk; it is not a guarantee that arbitrary secrets or prompt
-injections can be recognized. Eligible arguments are sent to the chosen provider.
+and the exact tool arguments the agent's model wrote—not conversation history,
+environment variables, or file contents fetched behind the user's back. Every
+non-hard-blocked call can be reviewed, including unknown, network and
+destructive commands. Two requests stay on the human path without a review
+request: arguments larger than the input limit (an unseen tail is never
+truncated) and arguments that contain a credential Crude saved for an account
+(API key, OAuth token or connection header value of 8 or more bytes). Text
+that only names secrets, such as `os.environ`, `.env` or `lsp_environment.go`,
+is not a credential; a substring list of such names skipped review for
+ordinary work. Eligible arguments are sent to the chosen provider.
+
+When Auto Review leaves a request to the user, the prompt says why in its
+**Auto Review** line: it was not sure (with its reason), it recommends Deny,
+it did not give a valid answer, it has no model, or the request was outside the
+limits above. When the Auto Review settings change while requests wait—for
+example the user turns it on from the `Auto Review…` choice—each waiting
+request is reviewed again; a request it decides closes without an answer from
+the user, and an answer the user gives first always wins. Other settings
+changes do not trigger a review.
 
 A strict `allow` response grants only this call. A model `deny` asks the human by
 default; users may choose automatic denial instead. **Unresolved review**
@@ -749,6 +761,30 @@ ceiling. Stale settings and turn cancellation always abandon the result. No
 reviewer result creates an “Always allow” grant, and no unresolved mode can turn
 failure or uncertainty into approval. Hard command blocks apply to synchronous
 and asynchronous execution before review.
+
+**Always allow** on a command prompt approves that command for the rest of the
+session, in the same command shell program and working directory. Crude reads the line
+with the bash parser and records each simple command that needs approval—its
+program, arguments, redirects and here-document body—together with the line's
+`cd`/`pushd`/`popd` commands, declarations and assignments. A later line runs
+without a prompt when each of its commands is approved or safe, so approving
+`cd repo && pyright --outputjson > out.json` also covers that command followed
+by `| tail -5`, but not other arguments, another output file, another
+directory, another shell (the command shell can change in Settings at any
+time), or another script for the same interpreter. A line
+whose risk comes from the whole line (a pipe into a shell, a configuration
+write, a credential read, an obfuscated or unreadable command, a rule that
+names the whole line) and every cmd or PowerShell line is approved only as that
+exact text. Keystrokes sent to a running program are approved only as that
+exact input to that process. Approvals live in memory and end with the session.
+
+The command syntax is the syntax of the configured agent command shell for
+each call, never the host OS: Git Bash on Windows reads a backslash as an
+escape, as bash does, while cmd and PowerShell read it as a path separator.
+A line the parser rejects always needs approval, whatever the confirmation
+threshold, because the shell may still run the lines before the error.
+Unknown-command, local-script and configured rules rate each command of a line;
+a rule may also name the whole line.
 
 System-path classification protects the filesystem root itself and descendants
 of named system directories such as `/etc` and `/usr`. An absolute path under

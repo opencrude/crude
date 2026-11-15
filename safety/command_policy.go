@@ -84,34 +84,24 @@ func CheckCommandSafetyWithPolicy(cmd string, lg *logger.Logger, policy CommandP
 	if policy.Syntax == command.SyntaxPowerShell {
 		checked = withoutPowerShellLiteralAssignments(cmd)
 	}
-	result := checkCommandSafetyBase(checked, lg)
+	result := checkCommandSafetyBase(checked, lg, policy)
+	// Approvals and prompts name the command the shell receives.
+	result.FullCommand = cmd
 	if result.Risk.IsAlwaysBlocked() {
 		return result
 	}
-	if result.Risk == RiskUnknown {
-		result.Risk = policy.UnknownCommandRisk
-		result.Reason = "Unknown command policy: " + result.Risk.String()
-	}
-	if isScriptExecution(result) {
-		result.Risk = policy.ScriptExecutionRisk
-		result.Reason = "Local script execution policy: " + result.Risk.String()
-	}
-	candidate := strings.TrimSpace(result.BaseCommand)
-	if len(result.Calls) > 0 {
-		candidate = strings.Join(result.Calls, " ")
-	}
-	for _, rule := range policy.Rules {
-		candidates := []string{candidate, strings.TrimPrefix(candidate, "./"), strings.TrimSpace(cmd), strings.TrimPrefix(strings.TrimSpace(cmd), "./")}
-		matched := false
-		for _, value := range candidates {
-			globMatch, _ := filepath.Match(rule.Pattern, value)
-			matched = matched || globMatch || rule.Pattern == value
-		}
-		if matched {
-			result.Risk = rule.Risk
-			result.MatchedRule = rule.Pattern
+	if !result.ratedByUnit {
+		// A finding about the whole line: rate it as one command.
+		line := CommandUnit{Name: result.BaseCommand, Text: strings.TrimSpace(cmd), Risk: result.Risk, Reason: result.Reason, Suggestion: result.Suggestion}
+		policy.rateUnit(&line, result.PipedToShell)
+		result.Risk, result.Reason, result.Suggestion, result.MatchedRule = line.Risk, line.Reason, line.Suggestion, line.MatchedRule
+	} else if result.MatchedRule == "" {
+		// A rule may name the whole line, such as `make check && make lint`.
+		// It then decides the line, so an approval keeps the exact line.
+		if rule, ok := policy.matchRule(strings.TrimSpace(cmd)); ok {
+			result.Risk, result.MatchedRule = rule.Risk, rule.Pattern
 			result.Reason = "Configured command rule " + rule.Pattern + ": " + rule.Risk.String()
-			break
+			result.decomposed = false
 		}
 	}
 	// After the rules: a rule names the commands the checker saw, so it cannot
@@ -121,8 +111,52 @@ func CheckCommandSafetyWithPolicy(cmd string, lg *logger.Logger, policy CommandP
 		result.MatchedRule = ""
 		result.Reason = "PowerShell runs code in parentheses, braces, block comments and & calls. Crude cannot check that code, so it needs approval."
 	}
-	result.ConfirmationRequired = riskRank(result.Risk) >= riskRank(policy.ConfirmAt) && result.Risk != RiskSafe
+	if result.Unreadable && riskRank(result.Risk) < riskRank(RiskUnknown) {
+		result.Risk = RiskUnknown
+		result.MatchedRule = ""
+	}
+	result.ConfirmationRequired = result.Unreadable || riskRank(result.Risk) >= riskRank(policy.ConfirmAt) && result.Risk != RiskSafe
 	return result
+}
+
+// rateUnit applies the configured policy to one command: the unknown-command
+// policy, the local-script policy and then the first rule that names it. A
+// hard block is never changed.
+func (policy CommandPolicy) rateUnit(unit *CommandUnit, pipedToShell bool) {
+	if unit.Risk.IsAlwaysBlocked() {
+		return
+	}
+	if unit.Risk == RiskUnknown {
+		unit.Risk = policy.UnknownCommandRisk
+		unit.Reason = "Unknown command policy: " + unit.Risk.String()
+	}
+	if isScriptName(unit.Name, pipedToShell) {
+		unit.Risk = policy.ScriptExecutionRisk
+		unit.Reason = "Local script execution policy: " + unit.Risk.String()
+	}
+	for _, candidate := range []string{strings.TrimSpace(unit.Name), strings.TrimSpace(unit.Text)} {
+		if rule, ok := policy.matchRule(candidate); ok {
+			unit.Risk, unit.MatchedRule = rule.Risk, rule.Pattern
+			unit.Reason = "Configured command rule " + rule.Pattern + ": " + rule.Risk.String()
+			return
+		}
+	}
+}
+
+// matchRule returns the first rule whose glob or exact text names value, with
+// or without a leading "./".
+func (policy CommandPolicy) matchRule(value string) (CommandRule, bool) {
+	if value == "" {
+		return CommandRule{}, false
+	}
+	for _, rule := range policy.Rules {
+		for _, candidate := range []string{value, strings.TrimPrefix(value, "./")} {
+			if matched, _ := filepath.Match(rule.Pattern, candidate); matched || rule.Pattern == candidate {
+				return rule, true
+			}
+		}
+	}
+	return CommandRule{}, false
 }
 
 func riskRank(risk CommandRisk) int {
@@ -144,20 +178,19 @@ func riskRank(risk CommandRisk) int {
 	}
 }
 
-func isScriptExecution(result *CommandSafetyResult) bool {
-	if result == nil {
+// isScriptName reports a command that runs a local script: a *.sh, *.bash
+// or *.zsh file, or a shell that reads a script rather than a pipe.
+func isScriptName(name string, pipedToShell bool) bool {
+	if strings.TrimSpace(name) == "" {
 		return false
 	}
-	if strings.TrimSpace(result.BaseCommand) == "" {
-		return false
-	}
-	base := strings.ToLower(filepath.Base(result.BaseCommand))
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(name)))
 	if strings.HasSuffix(base, ".sh") || strings.HasSuffix(base, ".bash") || strings.HasSuffix(base, ".zsh") {
 		return true
 	}
 	switch base {
 	case "sh", "bash", "zsh", "dash", "fish", "source", ".":
-		return !result.PipedToShell
+		return !pipedToShell
 	default:
 		return false
 	}
