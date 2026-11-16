@@ -102,27 +102,29 @@ type Screen struct {
 	focus          func(ui.ComponentID)
 	icons          *filetree.IconResolver
 
-	results       []fileio.ProjectSearchMatch
-	groups        []resultGroup
-	rows          []displayRow
-	collapsed     map[string]bool
-	selected      int
-	selRow        int
-	histIdx       int
-	histDraft     string
-	loading       bool
-	errText       string
-	notice        string
-	duration      time.Duration
-	generation    int
-	previewSrc    *editor.Editor
-	caseSensitive bool
-	wholeWord     bool
-	regex         bool
-	replacing     bool
-	resultH       int
-	listY0        int
-	previewSurf   *surface.Surface
+	results        []fileio.ProjectSearchMatch
+	groups         []resultGroup
+	rows           []displayRow
+	collapsed      map[string]bool
+	selected       int
+	selRow         int
+	histIdx        int
+	histDraft      string
+	loading        bool
+	errText        string
+	notice         string
+	duration       time.Duration
+	generation     int
+	previewSrc     *editor.Editor
+	caseSensitive  bool
+	wholeWord      bool
+	regex          bool
+	replacing      bool
+	resultH        int
+	listY0         int
+	previewSurf    *surface.Surface
+	rowsGeneration uint64
+	listGeneration uint64
 }
 
 func New(th *theme.Theme) *Screen {
@@ -461,6 +463,10 @@ func (s *Screen) sync() {
 }
 
 func (s *Screen) syncList() {
+	if s.listGeneration == s.rowsGeneration {
+		return
+	}
+	s.listGeneration = s.rowsGeneration
 	items := make([]ui.VirtItem, 0, len(s.rows))
 	for i, row := range s.rows {
 		if row.kind == rowHeader {

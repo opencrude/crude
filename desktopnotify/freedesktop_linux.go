@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -82,6 +83,11 @@ func openFreedesktop(conn *dbus.Conn, id Identity, activated func(string)) (*fdo
 		return nil, fmt.Errorf("%w: %v", ErrNoService, err)
 	}
 	icon, _ := iconFile(id)
+	if icon != "" {
+		// The specification accepts an icon-theme name or a file URI, not a
+		// bare absolute path. Some desktops treat the latter as a theme name.
+		icon = (&url.URL{Scheme: "file", Path: icon}).String()
+	}
 	b := &fdoBackend{
 		conn: conn, object: object, name: id.Name, icon: icon, activated: activated,
 		signals: make(chan *dbus.Signal, 16), stop: make(chan struct{}), done: make(chan struct{}),

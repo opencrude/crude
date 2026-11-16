@@ -529,6 +529,15 @@ rank before discovery suggestions, across files and inside each file group.
 Filename-only and fuzzy-only results are not replacement spans; regex/whole-word
 modes do not introduce fuzzy content hits. The editor Find path never uses fzf.
 
+Literal scans use `strcase`'s Unicode simple-fold search rather than a regexp
+machine or a lowercased copy with changed byte offsets; explicit regex keeps
+Go's regexp matcher. One immutable fuzzy query is prepared per project scan.
+No persistent index or content cache is introduced: each query still reads the
+current files, with the existing encoding, size, ignore and cancellation rules.
+The result list reconciles on source-row changes only. Moving selection updates
+the preview without reinstalling every list item; a new query closes the retired
+preview and invalidates all old actions.
+
 Replacement plans are computed off Update from the canonical source, reject
 stale/invalid spans, and deduplicate identical hits. Planning is bounded
 to 16 MiB of source; preview is bounded to 1 MiB. An immutable, Cancel-default

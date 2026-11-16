@@ -82,6 +82,55 @@ func TestActionBarAlignStartPacksFromLeft(t *testing.T) {
 	}
 }
 
+func TestActionBarReducesGapsBeforeTruncatingDecisions(t *testing.T) {
+	bar := NewActionBar("decisions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{Label: "Accept left", Action: "left", Shortcut: "1", Enabled: true},
+		ActionBarButton{Label: "Accept right", Action: "right", Shortcut: "2", Enabled: true},
+		ActionBarButton{Label: "Accept both", Action: "both", Shortcut: "3", Enabled: true},
+		ActionBarButton{Label: "Previous", Action: "previous", Shortcut: "p", Enabled: true},
+		ActionBarButton{Label: "Next", Action: "next", Shortcut: "n", Enabled: true},
+	)
+	bar.SetAlignEnd(false)
+	for _, width := range []int{72, 70, 66, 110} {
+		bar.Layout(LayoutContext{}, Rect{W: width, H: 1})
+		for _, button := range bar.buttons {
+			bounds := button.button.Bounds()
+			if bounds.W < len(button.title)+4 || bounds.X+bounds.W > width {
+				t.Fatalf("width %d clipped %q to %+v", width, button.title, bounds)
+			}
+			result := bar.Handle(EventContext{LocalX: bounds.X + 1}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+			if result.Action == nil || result.Action.ID != button.action {
+				t.Fatalf("width %d: click did not activate %s: %+v", width, button.action, result)
+			}
+		}
+	}
+}
+
+func TestActionBarReconcileKeepsConstrainedCaptions(t *testing.T) {
+	specs := []ActionBarButton{
+		{Label: "Save", Action: "save", Shortcut: "Ctrl+S", Enabled: false},
+		{Label: "Open in editor", Action: "open", Shortcut: "E", Enabled: true},
+		{Label: "Complete merge", Action: "complete", Enabled: false},
+		{Label: "Abort…", Action: "abort", Enabled: true},
+		{Label: "Close", Action: "close", Enabled: true},
+	}
+	bar := NewActionBar("decisions", NewTokenSet(theme.DefaultDark()), specs...)
+	bar.Layout(LayoutContext{}, Rect{W: 76, H: 1})
+	specs[0].Enabled = true // Choosing a change enables Save without a relayout.
+	bar.SetButtons(specs...)
+	buffer := surface.NewCellBuffer(76, 1)
+	bar.Paint(buffer, 0, 0, PaintContext{})
+	var painted strings.Builder
+	for x := range 76 {
+		painted.WriteRune(buffer.Get(x, 0).Char)
+	}
+	for _, want := range []string{"Save", "Open in editor", "Complete merge", "Abort…", "Close"} {
+		if !strings.Contains(painted.String(), want) {
+			t.Fatalf("reconciled buttons lost %q: %s", want, painted.String())
+		}
+	}
+}
+
 func TestActionBarUpReturnsToForm(t *testing.T) {
 	bar := NewActionBar("actions", NewTokenSet(theme.DefaultDark()),
 		ActionBarButton{ID: "save", Label: "Save", Action: "save", Enabled: true},

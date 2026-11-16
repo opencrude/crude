@@ -1,6 +1,7 @@
 package textsearch
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,25 @@ func TestFuzzyRequiresCompleteQueryAndUsefulEvidence(t *testing.T) {
 		if ok && len(pos) != len([]rune(strings.Join(strings.Fields(tc.query), ""))) {
 			t.Fatal("partial query accepted")
 		}
+	}
+}
+
+func TestCompiledFuzzyKeepsTermsAndDetachedSourcePositions(t *testing.T) {
+	matcher := CompileFuzzy("beta alpha", false)
+	for range 8 {
+		t.Run("concurrent", func(t *testing.T) {
+			t.Parallel()
+			for range 100 {
+				positions, _, ok := matcher.Match("Alpha beta")
+				if !ok || !slices.Equal(positions, []int{0, 1, 2, 3, 4, 6, 7, 8, 9}) {
+					t.Fatalf("positions=%v matched=%v", positions, ok)
+				}
+				positions[0] = 100 // Returned results never alias query or pooled scratch.
+				if _, _, ok := matcher.Match("alpha gamma"); ok {
+					t.Fatal("partial phrase accepted")
+				}
+			}
+		})
 	}
 }
 

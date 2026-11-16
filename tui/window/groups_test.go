@@ -298,3 +298,20 @@ func TestTabLeavingGroupRestoresMostRecentlySelectedTab(t *testing.T) {
 		t.Fatalf("after close the pane shows %d, want the previously selected tab %d", got, b)
 	}
 }
+
+func TestSelectingCurrentTabKeepsSelectionHistoryUnchanged(t *testing.T) {
+	w := newTestWindow()
+	a := w.OpenTab("a", "", true).ID
+	b := w.OpenTab("b", "", true).ID
+	w.SwitchTo(w.IndexOf(a))
+	before, clock := w.Tabs(), w.activations
+	w.SwitchTo(w.IndexOf(a))
+	w.SelectGroupTab(w.ActiveGroup(), a)
+	if !slices.Equal(before, w.Tabs()) || w.activations != clock {
+		t.Fatal("selecting the current tab changed selection history")
+	}
+	w.CloseTabByID(a)
+	if w.ActiveTab().ID != b {
+		t.Fatal("the most recently selected remaining tab was lost")
+	}
+}

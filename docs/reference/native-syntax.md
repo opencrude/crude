@@ -157,7 +157,7 @@ hosted or native Windows run has passed.
 
 The corpus checks independently expected colours and TypeScript arrow AST,
 long offscreen context changes and undo, CRLF/Unicode, random malformed edits
-against fresh parsing, cancellation/revision/input ownership, real Go/TSX
+against fresh parsing, cancellation/revision/input ownership, real Go/JavaScript
 sources and fuzz seeds. Allocation benchmarks are gated separately from typing
 and native RSS. See [performance baselines](performance-baselines.md).
 

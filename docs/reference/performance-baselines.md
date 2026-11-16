@@ -7,6 +7,48 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Find in Files scan and navigation (2026-11-16)
+
+The user reported slow project search. The real checkout reproduced 5.69–6.08 s
+per query (`direction is`, `ProjectSearch`, `noSuchStateMachine`), with
+4.13–4.16 million Go allocations. CPU profiles put most work in case-insensitive
+regexp scanning and repeated fuzzy term preparation/token scans, not file I/O.
+
+Literal matching now uses pinned `strcase` v0.0.6 for allocation-free Unicode
+simple-fold search and `strings.Cut` for case-sensitive search. The shared matcher
+retains original byte spans, whole-word checks and the regexp path for regular
+expressions. Regressions compare against Go regexp and exercise every Unicode
+simple-fold pair. Fuzzy queries compile once per project scan; fzf V1 rejects
+impossible whole-line candidates before the unchanged token/V2 scoring path.
+One bounded borrowed scratch buffer serves each match; returned positions remain
+detached. Files without hits are not line-indexed after discovery capacity fills.
+Exact hits still lead and are not displaced by the discovery limit.
+
+Linux amd64, Go 1.27.4, i7-10750H, GOMAXPROCS=2, three one-iteration samples:
+
+| Workload | Before | After |
+|---|---:|---:|
+| 512-file fixture, absent query | 154–177 ms; ~74,565 allocations | 15.5–18.8 ms; ~7,970 allocations |
+| Same fixture, rare late exact hit | 157–161 ms; ~74,550 allocations | 75.5–82.0 ms; ~7,965 allocations |
+| Same fixture, full suggestion set plus late exact hit | 116–131 ms; ~36,520 allocations | 17.7–18.3 ms; ~20,015 allocations |
+| Real checkout, three representative queries | 5.69–6.08 s; 587–644 MB | 0.82–0.95 s; 515–517 MB |
+
+These are uncached scan measurements with warm filesystem caches, not key-to-screen
+latency or resident memory. The shared 120 ms query debounce remains. Reproduce the
+checkout measurement with `CRUDE_SEARCH_BENCH_ROOT` and
+`BenchmarkSearchProjectRepository`; `BenchmarkSearchProjectDense` is reproducible
+without that checkout.
+
+Result rows now reconcile only when their source structure changes, not on every
+selection or layout. Three 200 ms samples of `BenchmarkProjectSearchSelection`
+with 1,000 results improve from 0.624–0.653 ms / ~279.6 KB / ~6,970 allocations to
+0.123–0.128 ms / ~53.5 KB / ~703 allocations. Preview and selection still update
+on every action. Clearing/replacing results closes the old preview.
+
+New Linux-only scan and navigation allocation ceilings have approximately 20%
+headroom. Other operating systems have no measured baseline for these new cases.
+Existing limits remain unchanged.
+
 ## Background command reveal (2026-11-14)
 
 `BenchmarkDenseCommandReveal` measures explicit expansion/reveal plus collapse,
@@ -169,6 +211,16 @@ Three isolated dense 64-mirror runs after the boundary correction measured
 383–386 objects and 2.56–2.60 MB; keys, source, mirrors and first paints still run
 inside the timer. Full source preparation completes outside this stage, not in a
 suppressed or fake worker.
+
+A later Linux handoff run exposed the remaining same-frame overlap: an 8-mirror
+key/grid sample reached 1,394 objects against 1,110 while Render admitted a lexer
+inside the sample. Draining the real `SyntaxCommand` after the measured key and
+before the measured grid paint separates source preparation, just as in the
+paint-only stages above. Three 100-iteration samples now measure 237 objects /
+2,107,367 B with eight mirrors and 421 objects / 2,298,518 B with 64 mirrors.
+Every key, mirror and grid paint still runs; exact mirror-text assertions were
+added. Full source preparation remains real but outside this stage's timer.
+This is a measurement-boundary correction, not a product latency improvement.
 
 Full-link metadata adds one shared pointer to a cell (40 to 48 bytes on amd64).
 The unchanged orientation gate then exposed a 240,064 B/frame result against its

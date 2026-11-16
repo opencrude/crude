@@ -121,6 +121,39 @@ func (wm *WindowManager) Windows() []*FloatingWindow {
 // Callers inspecting composition requirements need not allocate a window list.
 func (wm *WindowManager) HasWindows() bool { return len(wm.windows) != 0 }
 
+// ConstrainModals keeps decisions reachable when the terminal shrinks.
+// Non-modal windows retain their user-controlled geometry. Shrinking a modal
+// retires its old drag/resize gesture, but preserves its content and focus.
+func (wm *WindowManager) ConstrainModals(screenW, screenH int) {
+	if screenW <= 0 || screenH <= 0 {
+		return
+	}
+	for _, fw := range wm.windows {
+		if !fw.modal {
+			continue
+		}
+		w, h := min(fw.w, screenW), min(fw.h, screenH)
+		x, y := max(0, min(fw.x, screenW-w)), max(0, min(fw.y, screenH-h))
+		if w == fw.w && h == fw.h && x == fw.x && y == fw.y {
+			continue
+		}
+		// Terminal bounds take priority over the window's preferred minimum.
+		// Keep that minimum for subsequent pointer resizing.
+		fw.w, fw.h, fw.x, fw.y = w, h, x, y
+		fw.computeContentArea()
+		fw.MarkContentDirty()
+		fw.SetDragging(false)
+		fw.SetResizing(false, EdgeNone)
+		if wm.activeDrag == fw {
+			wm.activeDrag = nil
+		}
+		if wm.activeResize == fw {
+			wm.activeResize = nil
+		}
+		wm.needsRender = true
+	}
+}
+
 // WindowAt resolves the current pointer owner without focusing or raising it.
 // Input policy and tab menus must use the same z-order and modal boundary as
 // normal mouse dispatch, never creation order or a consumer's window map.

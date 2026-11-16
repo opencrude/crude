@@ -1,19 +1,24 @@
 package desktopnotify
 
 import (
+	"bufio"
 	"errors"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/godbus/dbus/v5"
+
+	"crude/assets"
 )
 
 // fakeServer is an org.freedesktop.Notifications service on a private
-// session bus. Run the test inside dbus-run-session; it is skipped when no
-// session bus exists.
+// session bus. Each test owns its daemon; the desktop bus is never used.
 type fakeServer struct {
 	mu     sync.Mutex
 	caps   []string
@@ -69,12 +74,10 @@ func (s *fakeServer) lastCall(t *testing.T) notifyCall {
 
 func startFakeServer(t *testing.T, caps ...string) (*fakeServer, *dbus.Conn) {
 	t.Helper()
-	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
-		t.Skip("no session bus; run inside dbus-run-session")
-	}
+	startPrivateBus(t)
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
-		t.Skipf("session bus: %v", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	server := &fakeServer{caps: caps}
@@ -88,10 +91,49 @@ func startFakeServer(t *testing.T, caps ...string) (*fakeServer, *dbus.Conn) {
 	return server, conn
 }
 
+func startPrivateBus(t *testing.T) {
+	t.Helper()
+	binary, err := exec.LookPath("dbus-daemon")
+	if err != nil {
+		t.Skip("dbus-daemon is required for the private notification bus")
+	}
+	cmd := exec.Command(binary, "--session", "--nofork", "--nopidfile",
+		"--print-address=1", "--address=unix:tmpdir="+t.TempDir())
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan struct{})
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		_ = output.Close()
+		<-readDone
+	})
+	address := make(chan string, 1)
+	go func() {
+		defer close(readDone)
+		line, _ := bufio.NewReader(output).ReadString('\n')
+		address <- strings.TrimSpace(line)
+	}()
+	select {
+	case value := <-address:
+		if value == "" {
+			t.Fatal("private bus did not publish its address")
+		}
+		t.Setenv("DBUS_SESSION_BUS_ADDRESS", value)
+	case <-time.After(5 * time.Second):
+		t.Fatal("private bus did not become ready")
+	}
+}
+
 func TestFreedesktopShowReplaceWithdrawAndClick(t *testing.T) {
 	server, serverConn := startFakeServer(t, "actions", "body-markup", "body")
 	clicks := make(chan string, 4)
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "Crude logo #1")
 	b, err := openBackend(Identity{Name: "Crude", IconPNG: []byte("png"), Dir: dir}, func(key string) { clicks <- key })
 	if err != nil {
 		t.Fatal(err)
@@ -107,8 +149,9 @@ func TestFreedesktopShowReplaceWithdrawAndClick(t *testing.T) {
 	if first.body != "&lt;b&gt;x&lt;/b&gt; &amp; y" {
 		t.Fatalf("body %q: a markup server must receive escaped text", first.body)
 	}
-	if want := filepath.Join(dir, "icon.png"); first.icon != want {
-		t.Fatalf("icon = %q, want %q", first.icon, want)
+	icon, err := url.Parse(first.icon)
+	if want := filepath.Join(dir, "icon.png"); err != nil || icon.Scheme != "file" || icon.Host != "" || icon.Path != want || icon.Fragment != "" {
+		t.Fatalf("icon = %q, want an escaped file URI for %q: %v", first.icon, want, err)
 	}
 	if len(first.actions) != 2 || first.actions[0] != fdoDefaultAction {
 		t.Fatalf("actions = %v, want the default action", first.actions)
@@ -216,12 +259,41 @@ func TestFreedesktopForgetsAMessageTheUserClosed(t *testing.T) {
 }
 
 func TestFreedesktopNoServiceIsReported(t *testing.T) {
-	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
-		t.Skip("no session bus; run inside dbus-run-session")
-	}
+	startPrivateBus(t)
 	if _, err := openBackend(Identity{Name: "Crude"}, nil); err == nil {
-		t.Skip("a notification service runs on this bus")
+		t.Fatal("a private bus without a service must report ErrNoService")
 	} else if !errors.Is(err, ErrNoService) {
 		t.Fatalf("err = %v, want ErrNoService", err)
+	}
+}
+
+// Opt-in native desktop acceptance. The ordinary suite always uses private
+// buses; this test shows and withdraws only its own silent sample notification.
+func TestFreedesktopNativeLogoAcceptance(t *testing.T) {
+	if os.Getenv("CRUDE_NATIVE_NOTIFICATION") != "1" {
+		t.Skip("explicit native desktop notification acceptance")
+	}
+	b, err := openBackend(Identity{Name: "Crude", IconPNG: assets.IconPNG, Dir: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := b.withdraw("native-logo-check"); err != nil {
+			t.Error(err)
+		}
+		b.close()
+	}()
+	if err := b.show(Notification{Key: "native-logo-check", Title: "Crude logo check", Body: "Crude's application icon.", Silent: true}); err != nil {
+		t.Fatal(err)
+	}
+	if path := os.Getenv("CRUDE_NOTIFICATION_RESULT"); path != "" {
+		if err := os.WriteFile(path, []byte("NATIVE_NOTIFICATION_READY\n"+b.(*fdoBackend).icon+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	select {
+	case <-time.After(8 * time.Second):
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
 	}
 }

@@ -4,8 +4,11 @@ package textsearch
 
 import (
 	"regexp"
+	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/charlievieth/strcase"
 )
 
 type Options struct{ CaseSensitive, WholeWord, Regex bool }
@@ -18,6 +21,7 @@ type Match struct {
 type Matcher struct {
 	re      *regexp.Regexp
 	options Options
+	literal string
 }
 
 func Compile(query string, options Options) (*Matcher, error) {
@@ -28,6 +32,7 @@ func Compile(query string, options Options) (*Matcher, error) {
 	pattern := query
 	if !options.Regex {
 		pattern = regexp.QuoteMeta(pattern)
+		m.literal = query
 	}
 	flags := "m"
 	if !options.CaseSensitive {
@@ -47,6 +52,12 @@ func (m *Matcher) FindAll(text string, limit int) []Match {
 	if m == nil || m.re == nil {
 		return nil
 	}
+	// Literal search does not need a regexp VM or a lowercased source copy.
+	// strcase uses the same Unicode simple folding and retains source byte
+	// ranges, including different-width equivalents such as K/K and S/ſ.
+	if m.literal != "" && utf8.ValidString(text) {
+		return m.findLiteral(text, limit)
+	}
 	var matches []Match
 	n := -1
 	if limit > 0 && !m.options.WholeWord {
@@ -58,6 +69,33 @@ func (m *Matcher) FindAll(text string, limit int) []Match {
 			continue
 		}
 		matches = append(matches, Match{Start: start, End: end, Indices: indices})
+		if limit > 0 && len(matches) >= limit {
+			break
+		}
+	}
+	return matches
+}
+
+func (m *Matcher) findLiteral(text string, limit int) []Match {
+	var matches []Match
+	for offset := 0; offset < len(text); {
+		var before, after string
+		var found bool
+		if m.options.CaseSensitive {
+			before, after, found = strings.Cut(text[offset:], m.literal)
+		} else {
+			before, after, found = strcase.Cut(text[offset:], m.literal)
+		}
+		if !found {
+			break
+		}
+		start := offset + len(before)
+		end := len(text) - len(after)
+		offset = end
+		if m.options.WholeWord && !wholeWord(text, start, end) {
+			continue
+		}
+		matches = append(matches, Match{Start: start, End: end, Indices: []int{start, end}})
 		if limit > 0 && len(matches) >= limit {
 			break
 		}

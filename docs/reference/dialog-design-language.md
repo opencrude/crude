@@ -26,6 +26,9 @@ implementation is `tui/ui/confirm_frame.go` (confirms) and
   warning → `ColorWarning`, otherwise default popup chrome.
 - Dialogs are **movable by the frame title row** (`wm.WithMovable(true)`).
   Row 0 of the frame is the title bar whether or not WM decoration is on.
+- Terminal resize constrains modal windows to the available screen, retires
+  their old drag/resize gesture and relayouts the same content. Decisions and
+  keyboard focus stay reachable; non-modal floating views keep their geometry.
 - Modals keep `WithModal(true)` + outside-click ignore: click outside never
   silently dismisses a destructive dialog; the user must choose. Z-order is
   the standard WM stack — a modal blocks clicks to windows below it, and it

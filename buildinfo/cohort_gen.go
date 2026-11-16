@@ -6,4 +6,4 @@ package buildinfo
 // It is distinct from Schema (wire semantics) and ExecutableID (local image bytes).
 // Supported builds require go run ./internal/wiregen -check; plain go build does
 // not run generators or establish freshness after source edits.
-const ProtocolBuild = "f16db4cce7af77a9a04cff8b1f39e117b6b79fde85f16dffcc8a3df99b2c3c08"
+const ProtocolBuild = "cd1d648ea0190a12fb3f1b1feece0b8cdeb3cbcf114cba5fa640394259fed973"
