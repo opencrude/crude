@@ -40,10 +40,10 @@ func TestBlockingPromptStillAllowsNewlineAndSlash(t *testing.T) {
 	if event != nil || model.Value() != "draft\n" {
 		t.Fatalf("pending prompt blocked a newline: event=%T text=%q", event, model.Value())
 	}
-	model.SetInput("/help")
+	model.SetInput("/settings")
 	model, _, event = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, true, true)
 	command, ok := event.(SlashCommandEvent)
-	if !ok || command.Command != "/help" || model.Value() != "" {
+	if !ok || command.Command != "/settings" || model.Value() != "" {
 		t.Fatalf("pending prompt blocked a shell command: event=%#v text=%q", event, model.Value())
 	}
 }

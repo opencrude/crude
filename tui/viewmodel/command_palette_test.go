@@ -436,6 +436,7 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 		"settings.open",
 		"settings.workspace",
 		"status.overview",
+		"terminal.menu",
 		"terminal.new",
 		"terminal.picker",
 		"terminal.toggle",

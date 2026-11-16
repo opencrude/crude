@@ -140,7 +140,9 @@ func runEditorFileFlow(t *testing.T, mode string, headless bool, width, height i
 			m.ed.InsertRune('!')
 			settleLive(t, app)
 			if mode == "disk" {
-				write(strings.Replace(fileFlowSource, "omega", "DISK OMEGA", 1))
+				// The line the user changed changes on disk too, so the
+				// outside edit needs a decision instead of a merge.
+				write(strings.NewReplacer("one", "ONE", "omega", "DISK OMEGA").Replace(fileFlowSource))
 			}
 		}
 	case "search":
@@ -298,7 +300,7 @@ func (m *fileFlowVisualModel) observeFileFlow() error {
 		case "disk":
 			switch m.phase {
 			case 0:
-				return require("File changed on disk", "Overwrite", "Discard", "Compare", "Cancel")
+				return require("Changed on disk. Conflicts", "File changed on disk", "Overwrite", "Discard", "Compare", "Cancel")
 			case 1:
 				if v.diskConflict != nil || !m.ed.Modified() {
 					return fmt.Errorf("Cancel did not keep unsaved work")
@@ -314,7 +316,13 @@ func (m *fileFlowVisualModel) observeFileFlow() error {
 						return fmt.Errorf("native choices = %v", choices)
 					}
 				}
-				return require("Accept left", "Accept right", "Accept both", "Previous", "Next", "[x]", "[ ]")
+				if strings.Contains(frame, "Refresh") || strings.Contains(frame, "Unified / Split") || strings.Contains(frame, m.path) {
+					return fmt.Errorf("the comparison repeats editor chrome")
+				}
+				if v.width >= 120 {
+					return require("Keep on disk", "Keep your text", "Keep both", "Previous", "Next", "Save", "[x]", "[ ]")
+				}
+				return require("On disk", "Your text", "Both", "Save", "[x]", "[ ]")
 			case 4:
 				want := strings.NewReplacer("one", "one!", "omega", "DISK OMEGA").Replace(fileFlowSource)
 				if m.ed.Modified() || m.ed.Value() != want || m.ed.DocumentState().InFlight {
@@ -334,7 +342,12 @@ func (m *fileFlowVisualModel) observeFileFlow() error {
 				if m.phase == 1 && (choices[0] != workspace.GitChooseCurrent || choices[1] != workspace.GitChooseIncoming) {
 					return fmt.Errorf("Git choices = %v", choices)
 				}
-				return require("Resolve conflicts", "Accept left", "Accept right", "Accept both", "Previous", "Next", "Save")
+				// The bar names the sides ("Keep current", or "[ Current ]"
+				// where the dialog is narrow) and finishes with Resolve file.
+				if !strings.Contains(frame, "Keep current") && !strings.Contains(frame, "[ Current ]") {
+					return fmt.Errorf("the decision bar does not name the current side")
+				}
+				return require("Resolve conflicts", "Incoming", "Both", "Resolve file", "Complete merge")
 			}
 			if len(dialog.resolver.Conflicts()) != 0 {
 				return fmt.Errorf("Git choices not saved and staged")

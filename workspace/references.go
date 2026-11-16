@@ -37,6 +37,9 @@ type SessionReferences interface {
 	CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error)
 	RestorePrompt(entry history.Entry) (string, []string, error)
 	ImportReference(old sessiondb.Reference) (sessiondb.Reference, error)
+	// ImportReferenceFrom copies an attachment that source owns, for a prompt
+	// copied in one session and pasted in another.
+	ImportReferenceFrom(source SessionReferences, old sessiondb.Reference) (sessiondb.Reference, error)
 	DeleteReference(id string) error
 	RenameReference(id, label string) (string, bool)
 	GetReference(id string) (sessiondb.Reference, bool)
@@ -234,6 +237,17 @@ func (s *ReferenceStore) ImportReference(old sessiondb.Reference) (sessiondb.Ref
 		}
 	}
 	return s.CreateReference(sessiondb.CreateRequest{Kind: old.Kind, Title: old.Title, Mime: old.Mime, Content: old.Content, FilePath: path, Inline: old.Inline})
+}
+
+// ImportReferenceFrom copies source's current revision of old into this
+// session. A reference that left source keeps its copied snapshot.
+func (s *ReferenceStore) ImportReferenceFrom(source SessionReferences, old sessiondb.Reference) (sessiondb.Reference, error) {
+	if source != nil {
+		if current, ok := source.GetReference(old.ID); ok && current.Active() {
+			old = current
+		}
+	}
+	return s.ImportReference(old)
 }
 
 func (s *ReferenceStore) DeleteReference(id string) error {

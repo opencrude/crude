@@ -79,6 +79,10 @@ type TerminalService struct {
 	idleFenced     bool
 	creating       int
 	commandWorkers sync.WaitGroup
+	// reviveMu orders saving and reviving terminal buffers (terminal_revive.go).
+	reviveMu   sync.Mutex
+	revivePath string
+	revived    bool
 }
 
 func NewTerminalService(manager *TerminalManager) (*TerminalService, error) {
@@ -250,6 +254,53 @@ func (s *TerminalService) ApplyInput(stream string, sequence, acknowledged uint6
 	return err
 }
 func (s *TerminalService) Acquire(id string, owner TerminalController) (TerminalLease, error) {
+	return s.acquire(id, owner, false, nil)
+}
+
+// TakeOver gives input control to owner even when another window holds it.
+// It is the explicit user choice "Take input control", never an automatic
+// claim: the previous controller's next input fails with ErrTerminalControl.
+func (s *TerminalService) TakeOver(id string, owner TerminalController) (TerminalLease, error) {
+	return s.acquire(id, owner, true, nil)
+}
+
+// TerminalClaim is how strongly a window asks for input control.
+type TerminalClaim uint8
+
+const (
+	// ClaimFree takes control only when no window holds it.
+	ClaimFree TerminalClaim = iota
+	// ClaimFromAbsent also replaces a controller whose window lost its
+	// connection. Only the core knows connections; a local service treats it
+	// as ClaimFree.
+	ClaimFromAbsent
+	// ClaimTakeOver replaces any controller. It is the explicit user choice.
+	ClaimTakeOver
+)
+
+// AcquireFromAbsent is Acquire for a service without connections.
+func (s *TerminalService) AcquireFromAbsent(id string, owner TerminalController) (TerminalLease, error) {
+	return s.Acquire(id, owner)
+}
+
+// TakeOverFrom replaces exactly holder, for example a controller whose window
+// closed while its session waits to reconnect. Any other holder keeps control.
+func (s *TerminalService) TakeOverFrom(id string, holder, owner TerminalController) (TerminalLease, error) {
+	return s.acquire(id, owner, true, &holder)
+}
+
+// Controller reports the window that holds input control, if any.
+func (s *TerminalService) Controller(id string) (TerminalController, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.items[id]
+	if r == nil || r.lease.Generation == 0 {
+		return TerminalController{}, false
+	}
+	return r.lease.Owner, true
+}
+
+func (s *TerminalService) acquire(id string, owner TerminalController, takeOver bool, from *TerminalController) (TerminalLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.idleFenced {
@@ -272,7 +323,8 @@ func (s *TerminalService) Acquire(id string, owner TerminalController) (Terminal
 	if r.lease.Owner == owner {
 		return r.lease, nil
 	}
-	if r.lease.Owner.ClientID != "" {
+	// A private command viewer is never taken over; it has one owner.
+	if r.lease.Owner.ClientID != "" && (!takeOver || r.command != nil || from != nil && r.lease.Owner != *from) {
 		return TerminalLease{}, ErrTerminalControl
 	}
 	s.leaseSequence++
@@ -510,6 +562,8 @@ func (s *TerminalService) Close(id string) {
 	s.manager.Close(id)
 }
 func (s *TerminalService) CloseAll() {
+	// Keep every interactive buffer before its process stops.
+	s.saveRevival()
 	s.mu.Lock()
 	s.closed = true
 	ids := make([]string, 0, len(s.items))

@@ -121,9 +121,14 @@ func (v *View) install(g terminalvt.Projection, generation uint64) bool {
 	v.trimCache()
 	return true
 }
-func (v *View) Bottom() int    { return max(0, v.Grid.Total-v.Grid.GridRows) }
-func (v *View) Pinned() bool   { return v.follow }
-func (v *View) Intent() uint64 { return v.intent }
+func (v *View) Bottom() int { return max(0, v.Grid.Total-v.Grid.GridRows) }
+
+// Installed reports whether any authoritative page has been installed. A view
+// mounted for a retained terminal (another shell's, or one from before this
+// shell attached) starts empty and must read the live tail before painting.
+func (v *View) Installed() bool { return v.rows != nil }
+func (v *View) Pinned() bool    { return v.follow }
+func (v *View) Intent() uint64  { return v.intent }
 func (v *View) DesiredOffset() int {
 	if v.follow {
 		return v.Bottom()
@@ -134,7 +139,7 @@ func (v *View) DesiredOffset() int {
 // ViewportStart uses the service's active-grid sentinel for a follow intent, so
 // output between admission and execution cannot leave End behind the live tail.
 func (v *View) ViewportStart() int {
-	if v.follow {
+	if v.follow || v.rows == nil {
 		return -1
 	}
 	return v.target

@@ -51,12 +51,42 @@ The core document owns the decision state; the shell only asks.
   unnamed document becomes empty, so closing frees it. Closing one of several
   views of the same document never asks. The editor context menu has
   **Discard unsaved changes**, the same reload without closing.
-- When a file changes on disk while its text is unsaved, the core marks the
-  document in conflict and refuses saves with fault code `document_conflict`.
-  The shell says so once, does not autosave, and a manual Save opens
-  **File changed on disk** (`ui.BuildDiskConflictFrame`): **Overwrite**,
-  **Discard**, **Compare**, **Cancel**. A save that meets the conflict in the
-  core opens the same dialog.
+- An open file that changes on disk is applied at once by the core
+  (`DocumentService.reconcileLocked`), never at the next Save or close:
+  - Saved text follows the file with the smallest exact edits
+    (`worktree.TextEdits`), so carets, selections and folds away from the
+    changed lines stay where they were.
+  - Unsaved text takes the external changes when they touch no unsaved edit: a
+    strict three-way merge (base = saved text, ours = document, theirs = file;
+    `mergeDiskEdits` with `document.Rebase`, which refuses touching edits). A
+    change made the same way on both sides is no conflict. The file becomes the
+    save baseline and the user's edits stay unsaved. Both commits use
+    `document.DiskRequestID`, so shells know the user did not make them.
+  - Anything else (overlapping edits, a changed encoding, an unreadable file,
+    a save in flight) marks the document in conflict and refuses saves with
+    fault code `document_conflict`. A later file that merges, or the saved
+    bytes coming back, settles the conflict by itself. A deleted file also
+    sets `Snapshot.Removed`.
+- One shell policy decides what the user hears (`editor_disk_awareness.go`).
+  It speaks only when unsaved work is affected, and once:
+  - Saved text that followed the file: nothing.
+  - External changes merged into unsaved text: one info notice, which opens
+    the file.
+  - A conflict or deletion: every view of the file shows the disk bar
+    (`ui.NoticeBar`, `editorDiskBar`) with **Compare** / **Overwrite** /
+    **Discard** (deleted: **Save** / **Close**); the tab is marked and its
+    tooltip says why. A warning notice comes only when no view of the file is
+    visible.
+  - Each file says each thing once until its text is saved or discarded.
+    Notices raised within 300 ms (a branch switch, a formatter run) are one
+    notice naming up to three files. Whatever ends the state (any choice, the
+    file changing back, another window) removes the bar and closes a waiting
+    **File changed on disk** dialog.
+  The shell does not autosave a conflicted file. A manual Save opens **File
+  changed on disk** (`ui.BuildDiskConflictFrame`): **Overwrite**, **Discard**,
+  **Compare**, **Cancel**; a save that meets the conflict in the core opens
+  the same dialog. The bar and the dialog share `applyDiskChoice`. Discarding
+  a deleted file's text closes it, because there is no saved text to load.
 - `document.reload` with a `document.Resolution` settles the conflict: the
   current file becomes the save baseline and the text stays (Overwrite) or
   becomes the resolved text (Compare, then Save). A resolution made against a

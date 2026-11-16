@@ -347,6 +347,9 @@ func NewWorkspace(
 		ws.HistoryService = NewLocalHistoryService(rootPath, historyStore, lg)
 	}
 	ws.Terminals, _ = NewTerminalService(ws.TermMgr) // newly allocated, empty manager
+	if ws.Terminals != nil && wsDir != "" {
+		ws.Terminals.SetRevivalPath(filepath.Join(wsDir, "terminal-buffers.json"))
+	}
 	ws.LiveDocuments = NewDocumentService(rootPath, ws.Documents, ws.LSPMgr, workspaceSQLDB(wsDB))
 	ws.ProjectContext = NewProjectContextService(rootPath, ws.LiveDocuments.Insight.generation)
 
@@ -817,6 +820,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.LiveDocuments.SetEventBus(w.eventBus)
 	w.TermMgr = NewTerminalManager(abs)
 	w.Terminals, _ = NewTerminalService(w.TermMgr)
+	if w.Terminals != nil && wsDir != "" {
+		w.Terminals.SetRevivalPath(filepath.Join(wsDir, "terminal-buffers.json"))
+	}
 	w.Status = NewStatusCenter(workspaceSQLDB(wsDB), w.Logger)
 	w.registryCostWriter = newRegistryCostWriter(wsDB, w.Logger)
 	status := w.Status

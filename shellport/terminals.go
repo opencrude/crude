@@ -20,6 +20,12 @@ type TerminalHost interface {
 // TerminalService owns the one parser and reply state for every PTY.
 type TerminalService interface {
 	Acquire(id string, owner workspace.TerminalController) (workspace.TerminalLease, error)
+	// AcquireFromAbsent claims control for input typed in this window: it
+	// also replaces a controller whose window lost its connection.
+	AcquireFromAbsent(id string, owner workspace.TerminalController) (workspace.TerminalLease, error)
+	// TakeOver is the explicit "Take input control" choice: it also replaces
+	// a controller in another window. Acquire never does.
+	TakeOver(id string, owner workspace.TerminalController) (workspace.TerminalLease, error)
 	Close(id string)
 	Clear(lease workspace.TerminalLease) error
 	Create(opts workspace.TerminalCreateOpts) (workspace.TerminalInfo, error)

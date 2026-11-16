@@ -747,6 +747,15 @@ func (m *TerminalManager) waitLoop(s *terminalSession) {
 	m.mu.Unlock()
 }
 
+// isInteractive reports a terminal that runs the user's shell, not its own
+// command.
+func (m *TerminalManager) isInteractive(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.items[id]
+	return s != nil && s.interactive
+}
+
 func (m *TerminalManager) emit(msg any) {
 	m.mu.Lock()
 	bus := m.bus

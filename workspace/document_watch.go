@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"crude/document"
+	"crude/worktree"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -200,7 +201,7 @@ func (s *DocumentService) reconcileLocked(id string) error {
 	if !exists && d.snapshot.DiskExists && d.relocation == nil {
 		// Removal is not a text edit. Preserve the retained text and history;
 		// a save cannot silently recreate a deliberately removed resource.
-		d.snapshot.Conflict = true
+		d.snapshot.Conflict, d.snapshot.Removed, d.snapshot.DiskSeen = true, true, hash
 		persistErr := s.persistDocument(d)
 		if persistErr == nil {
 			*original = *d
@@ -209,6 +210,7 @@ func (s *DocumentService) reconcileLocked(id string) error {
 		}
 		return persistErr
 	}
+	d.snapshot.Removed = false
 	if d.diskIntent != nil && hash == d.diskIntent.Hash && exists == d.diskIntent.Exists {
 		d.snapshot.Saved = bytes.Clone(text)
 		d.snapshot.DiskHash = hash
@@ -229,12 +231,25 @@ func (s *DocumentService) reconcileLocked(id string) error {
 	if d.diskIntent == nil && hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists {
 		// Exact pending disk commit reconciled above.
 	} else if d.snapshot.Dirty || d.diskIntent != nil {
-		// Preserve both local work and its original disk precondition; save must
-		// still fail closed rather than authorizing overwrite of external bytes.
-		d.snapshot.Conflict = true
+		// External changes that touch no unsaved edit join the text, like a
+		// clean three-way merge; the file becomes the save baseline and the
+		// unsaved edits stay unsaved. Anything else keeps both versions and
+		// fails saves closed rather than overwrite external bytes. A save in
+		// flight keeps its own precondition and never merges.
+		if d.diskIntent != nil || !s.mergeDiskLocked(d, id, disk) {
+			d.snapshot.Conflict = true
+		}
 	} else {
-		c := document.Change{DocumentID: id, RequestID: "disk", BaseRevision: d.snapshot.Revision, Edits: []document.Edit{{Start: 0, End: len(d.snapshot.Text), Text: string(text)}}}
-		if _, err = s.commit(d, c); err != nil {
+		// The smallest exact edits keep carets, selections and folds outside
+		// the changed lines where they were.
+		edits, editErr := worktree.TextEdits(d.snapshot.Text, text)
+		if editErr != nil {
+			edits = []document.Edit{{Start: 0, End: len(d.snapshot.Text), Text: string(text)}}
+		}
+		if len(edits) > 0 {
+			_, err = s.commit(d, document.Change{DocumentID: id, RequestID: document.DiskRequestID, BaseRevision: d.snapshot.Revision, Edits: edits})
+		}
+		if err != nil {
 			d.snapshot.Conflict = true
 		} else {
 			d.snapshot.Saved = bytes.Clone(text)
@@ -245,6 +260,10 @@ func (s *DocumentService) reconcileLocked(id string) error {
 			d.snapshot.Dirty = false
 			d.snapshot.Conflict = false
 		}
+	}
+	d.snapshot.DiskSeen = [32]byte{}
+	if d.snapshot.Conflict {
+		d.snapshot.DiskSeen = hash
 	}
 	if persistErr := s.persistDocument(d); persistErr != nil {
 		// Never install unpersisted text/history, but prevent a stale clean

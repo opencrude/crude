@@ -12815,9 +12815,10 @@ func (z RecoveryRequest) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ReferenceCommand) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 10
+	o = append(o, 0x9a)
 	o = msgp.AppendString(o, z.SessionID)
+	o = msgp.AppendString(o, z.SourceSessionID)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.Revision)
 	if z.Create == nil {
@@ -12849,13 +12850,18 @@ func (z *ReferenceCommand) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 10 {
+		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
 		return
 	}
 	z.SessionID, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "SessionID")
+		return
+	}
+	z.SourceSessionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "SourceSessionID")
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -12915,7 +12921,7 @@ func (z *ReferenceCommand) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ReferenceCommand) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.SessionID) + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Revision)
+	s = 1 + msgp.StringPrefixSize + len(z.SessionID) + msgp.StringPrefixSize + len(z.SourceSessionID) + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Revision)
 	if z.Create == nil {
 		s += msgp.NilSize
 	} else {
@@ -18982,9 +18988,11 @@ func (z *TerminalFrame) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z TerminalIDRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 1
-	o = append(o, 0x91)
+	// array header, size 3
+	o = append(o, 0x93)
 	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendBool(o, z.TakeOver)
+	o = msgp.AppendBool(o, z.FromAbsent)
 	return
 }
 
@@ -19000,13 +19008,23 @@ func (z *TerminalIDRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 1 {
-		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.TakeOver, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TakeOver")
+		return
+	}
+	z.FromAbsent, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "FromAbsent")
 		return
 	}
 	o = bts
@@ -19015,7 +19033,7 @@ func (z *TerminalIDRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z TerminalIDRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID)
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.BoolSize + msgp.BoolSize
 	return
 }
 

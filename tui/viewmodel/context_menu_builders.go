@@ -14,6 +14,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/diffview"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
@@ -725,6 +726,32 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			},
 		})
 	}
+	if view := m.localDiffs[tab.ID]; view != nil && tab.Resource.Kind == window.ResourceLocalDiff {
+		// The comparison's rare choices live here, not in its content: the
+		// page keeps only the versions and the decisions between them.
+		presentation := "Show unified"
+		if view.screen.ComparisonReader().PreferredPresentation() != diffview.SideBySide {
+			presentation = "Show side by side"
+		}
+		path := view.screen.Comparison().Path
+		st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Comparison", Items: []ui.ContextMenuItem{
+			{Label: "Find in comparison", Detail: "Ctrl+F", Action: func() {
+				if index := m.Win.IndexOf(tab.ID); index >= 0 {
+					m.Win.SwitchTo(index)
+					m.handleTabSwitch()
+				}
+				view.screen.OpenFind()
+				m.forceFrame()
+			}},
+			{Label: presentation, Action: func() { view.screen.TogglePresentation(); m.forceFrame() }},
+			{Label: "Open the file", Disabled: !m.localDiffSourceLive(view), Action: func() {
+				if m.localDiffSourceLive(view) {
+					m.returnToEditor(view.source)
+				}
+			}},
+			{Label: "Copy path", Disabled: path == "", Action: func() { m.copyToClipboard(path) }},
+		}})
+	}
 	if tab.Resource.Kind == window.ResourceGitReview || tab.Resource.Kind == window.ResourceLocalDiff {
 		st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Tab", Items: []ui.ContextMenuItem{
 			{Label: "Close tab", Action: func() { m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID))) }},
@@ -763,10 +790,13 @@ func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			// Copy/Cut act on the whole draft, matching every other text
 			// control's menu. The Ctrl+C/Ctrl+X chords keep their selection
 			// semantics (copy a selection, or clear the draft).
+			// Both keep the draft's attachments for a later paste.
 			{Label: "Copy", Detail: "Ctrl+C", Disabled: m.Input.Value() == "", Action: func() {
+				m.Input.RememberFragment(0, len([]rune(m.Input.Value())))
 				m.copyToClipboard(m.Input.Value())
 			}},
 			{Label: "Cut", Detail: "Ctrl+X", Disabled: m.Input.Value() == "", Action: func() {
+				m.Input.RememberFragment(0, len([]rune(m.Input.Value())))
 				m.copyToClipboard(m.Input.Value())
 				m.Input.ClearDraft()
 			}},

@@ -409,6 +409,10 @@ func (m *App) syncEditorTabPresentation() {
 		if ed.Modified() {
 			state = window.TabModified
 		}
+		if conflict, _ := m.editorDiskState(ed); conflict {
+			// The file needs a decision: the tab says so even when hidden.
+			state = window.TabError
+		}
 		if tab.State != state {
 			m.Win.SetTabState(i, state)
 		}

@@ -75,6 +75,7 @@ func (s *Screen) SetPrepared(p Prepared) {
 	}
 	s.syncScroll()
 	s.resetChoices()
+	s.syncBar()
 	if s.resolve.enabled && s.hunkIndex >= 0 {
 		// A resolution starts at its first change.
 		s.revealChange()
@@ -179,7 +180,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	top := s.top()
 	s.resolve.bar.Layout(ctx, ui.Rect{})
 	if top > 0 {
-		s.resolve.bar.Layout(ctx, ui.Rect{W: r.W, H: top})
+		s.layoutBar(ctx, r.W)
 	}
 	r = ui.Rect{X: r.X, Y: r.Y + top, W: r.W, H: max(0, r.H-top)}
 	s.scroll.SetViewport(max(0, r.H-2))
@@ -213,6 +214,9 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 }
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	ui.FillRect(buf, ox, oy, s.Bounds(), cell.BlankCell(s.tokens.Color(ui.ColorBg)))
+	if s.top() > 0 {
+		s.paintBar(buf, ox, oy)
+	}
 }
 func (s *Screen) Semantics() ui.Semantics {
 	if s.resolve.enabled {

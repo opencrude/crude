@@ -416,7 +416,7 @@ func (c *Client) runTerminalInput(ctx context.Context, workspaceID, id string, i
 					return err
 				}
 				if result.Fault != nil {
-					if result.Fault.Code == "terminal_control" {
+					if result.Fault.Code == coreprotocol.FaultTerminalControl {
 						return fmt.Errorf("%w: %s", workspace.ErrTerminalControl, result.Fault.Message)
 					}
 					return result.Fault

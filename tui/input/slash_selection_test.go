@@ -93,13 +93,3 @@ func TestSlashNameMatchTakesPriorityOverRetainedDescription(t *testing.T) {
 		t.Fatalf("Enter selected a lower-priority description match: event=%#v text=%q", event, updated.Value())
 	}
 }
-
-func TestSlashUnknownEnterStillDispatchesAndClears(t *testing.T) {
-	model := NewModel(theme.DefaultDark())
-	model.SetInput("/not-a-command")
-	updated, _, event := model.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
-	command, ok := event.(SlashCommandEvent)
-	if !ok || command.Command != "/not-a-command" || updated.Value() != "" || updated.SlashActive() {
-		t.Fatalf("unknown command behavior changed: event=%#v text=%q", event, updated.Value())
-	}
-}

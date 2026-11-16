@@ -5,6 +5,9 @@ import (
 	"strings"
 
 	"crude/textdiff"
+	"crude/tui/cell"
+	"crude/tui/rendering"
+	"crude/tui/surface"
 	"crude/tui/ui"
 )
 
@@ -32,25 +35,125 @@ const (
 // boxWidth is the gutter width of one choice box and its gap.
 const boxWidth = 4 // "[x] "
 
+// commitButton is the owner's one finishing action (Save, Resolve file). The
+// bar enables it when every change has a choice and the owner allows it.
+type commitButton struct {
+	label, shortcut, action string
+	allowed                 bool
+}
+
 type resolution struct {
 	enabled  bool
 	initial  Choice
 	choices  []Choice
 	bar      *ui.ActionBar
 	onChange func()
+	commit   commitButton
+	// message replaces the decision state in the bar while the owner has
+	// something more important to say (preparing, an error).
+	message     string
+	messageRole ui.SemanticColor
+	statusW     int
+	// buttonsW is the narrowest the bar's buttons get: labels without
+	// their key captions, which the bar drops first.
+	buttonsW int
+	// compact names the sides without "Keep" and leaves navigation to the
+	// keys, when the full bar does not fit.
+	compact bool
 }
 
 func newResolutionBar(id ui.ComponentID, tokens *ui.TokenSet) *ui.ActionBar {
-	bar := ui.NewActionBar(ui.NewID(id, "resolve"), tokens,
-		ui.ActionBarButton{Label: "Accept left", Shortcut: "1", Action: ActionAcceptLeft, Enabled: true},
-		ui.ActionBarButton{Label: "Accept right", Shortcut: "2", Action: ActionAcceptRight, Enabled: true},
-		ui.ActionBarButton{Label: "Accept both", Shortcut: "3", Action: ActionAcceptBoth, Enabled: true},
-		ui.ActionBarButton{Label: "Previous", Shortcut: "p", Action: ActionPrevious, Enabled: true},
-		ui.ActionBarButton{Label: "Next", Shortcut: "n", Action: ActionNext, Enabled: true},
-	)
+	bar := ui.NewActionBar(ui.NewID(id, "resolve"), tokens)
 	bar.SetAlignEnd(false)
 	bar.SetSurfaceBackground(ui.ColorBg)
 	return bar
+}
+
+// sideLabel is the short name of one side for its Keep button: the version
+// name without its detail ("Current · main" keeps "current").
+func sideLabel(label, fallback string) string {
+	label, _, _ = strings.Cut(label, " · ")
+	label = strings.TrimSpace(label)
+	if label == "" {
+		return fallback
+	}
+	return strings.ToLower(label[:1]) + label[1:]
+}
+
+// barButtons lists the decisions for the current comparison: keep one side or
+// both, move between changes when there are several, and finish. compact
+// names only the sides and leaves navigation to n and p.
+func (s *Screen) barButtons(compact bool) []ui.ActionBarButton {
+	c := s.prepared.Comparison
+	open := len(s.resolve.choices) > 0
+	keep := func(side string) string {
+		if compact {
+			return strings.ToUpper(side[:1]) + side[1:]
+		}
+		return "Keep " + side
+	}
+	buttons := []ui.ActionBarButton{
+		{ID: ui.NewID(s.ID(), "keep-left"), Label: keep(sideLabel(c.BeforeLabel, "left")), Shortcut: "1", Action: ActionAcceptLeft, Enabled: open, Variant: ui.VariantSecondary},
+		{ID: ui.NewID(s.ID(), "keep-right"), Label: keep(sideLabel(c.AfterLabel, "right")), Shortcut: "2", Action: ActionAcceptRight, Enabled: open, Variant: ui.VariantSecondary},
+		{ID: ui.NewID(s.ID(), "keep-both"), Label: keep("both"), Shortcut: "3", Action: ActionAcceptBoth, Enabled: open, Variant: ui.VariantSecondary},
+	}
+	if len(s.resolve.choices) > 1 && !compact {
+		buttons = append(buttons,
+			ui.ActionBarButton{ID: ui.NewID(s.ID(), "previous"), Label: "Previous", Shortcut: "p", Action: ActionPrevious, Enabled: true, Variant: ui.VariantGhost},
+			ui.ActionBarButton{ID: ui.NewID(s.ID(), "next"), Label: "Next", Shortcut: "n", Action: ActionNext, Enabled: true, Variant: ui.VariantGhost})
+	}
+	if commit := s.resolve.commit; commit.action != "" {
+		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(s.ID(), "commit"), Label: commit.label, Shortcut: commit.shortcut, Action: commit.action,
+			Enabled: commit.allowed && s.Decided(), Variant: ui.VariantPrimary})
+	}
+	return buttons
+}
+
+// titlesWidth is the width of buttons without their key captions.
+func titlesWidth(buttons []ui.ActionBarButton) int {
+	w := 0
+	for i, b := range buttons {
+		w += rendering.VisibleWidth(b.Label) + 4
+		if i > 0 {
+			w += 2
+		}
+	}
+	return w
+}
+
+func (s *Screen) syncBar() {
+	if !s.resolve.enabled {
+		return
+	}
+	buttons := s.barButtons(s.resolve.compact)
+	s.resolve.buttonsW = titlesWidth(buttons)
+	s.resolve.bar.SetButtons(buttons...)
+}
+
+// SetCommit gives the bar the owner's finishing button. It is enabled while
+// every change has a choice and allowed is true (nothing is loading or
+// running).
+func (s *Screen) SetCommit(label, shortcut, action string, allowed bool) {
+	commit := commitButton{label: label, shortcut: shortcut, action: action, allowed: allowed}
+	if commit == s.resolve.commit {
+		return
+	}
+	s.resolve.commit = commit
+	s.syncBar()
+}
+
+// BarID is the resolution bar, for keyboard focus (Tab from the panes).
+func (s *Screen) BarID() ui.ComponentID { return s.resolve.bar.ID() }
+
+// CommitAllowed reports whether the finishing action may run now.
+func (s *Screen) CommitAllowed() bool {
+	return s.resolve.enabled && s.resolve.commit.allowed && s.Decided()
+}
+
+// SetMessage shows the owner's state (preparing, an error) in place of the
+// decision state; empty restores it.
+func (s *Screen) SetMessage(text string, role ui.SemanticColor) {
+	s.resolve.message, s.resolve.messageRole = text, role
 }
 
 // SetResolvable turns per-change decisions on or off. initial is the choice
@@ -60,6 +163,7 @@ func newResolutionBar(id ui.ComponentID, tokens *ui.TokenSet) *ui.ActionBar {
 func (s *Screen) SetResolvable(enabled bool, initial Choice) {
 	s.resolve.enabled, s.resolve.initial = enabled, initial
 	s.resetChoices()
+	s.syncBar()
 }
 
 // SetOnResolutionChange reports every change of a choice to the owner.
@@ -90,7 +194,47 @@ func (s *Screen) Choices() []Choice { return append([]Choice(nil), s.resolve.cho
 func (s *Screen) SetChoices(choices []Choice) {
 	if len(choices) == len(s.resolve.choices) {
 		copy(s.resolve.choices, choices)
+		s.syncBar()
 	}
+}
+
+// ChangeKey identifies a change by its content, so a decision survives when
+// the comparison is prepared again and the same change is still there.
+type ChangeKey struct{ Left, Right string }
+
+// ChoiceKeys returns the content key of every change, in order.
+func (s *Screen) ChoiceKeys() []ChangeKey {
+	keys := make([]ChangeKey, len(s.prepared.changes))
+	for i, h := range s.prepared.changes {
+		keys[i] = ChangeKey{Left: strings.Join(h.OldLines, ""), Right: strings.Join(h.NewLines, "")}
+	}
+	return keys
+}
+
+// RestoreChoices applies earlier decisions to the changes that are still the
+// same; new changes keep their initial choice. It reports how many decisions
+// it kept.
+func (s *Screen) RestoreChoices(decisions map[ChangeKey]Choice) int {
+	kept := 0
+	for i, key := range s.ChoiceKeys() {
+		if choice, ok := decisions[key]; ok && i < len(s.resolve.choices) {
+			s.resolve.choices[i] = choice
+			kept++
+		}
+	}
+	s.syncBar()
+	return kept
+}
+
+// Decisions maps every change's content key to its current choice.
+func (s *Screen) Decisions() map[ChangeKey]Choice {
+	out := make(map[ChangeKey]Choice, len(s.resolve.choices))
+	for i, key := range s.ChoiceKeys() {
+		if i < len(s.resolve.choices) {
+			out[key] = s.resolve.choices[i]
+		}
+	}
+	return out
 }
 
 // Decided reports whether every change has a choice.
@@ -118,11 +262,70 @@ func (s *Screen) ResolutionStatus() string {
 			open++
 		}
 	}
+	if total == 1 {
+		if open > 0 {
+			return "1 change to choose"
+		}
+		return "1 change chosen"
+	}
 	status := fmt.Sprintf("Change %d of %d", max(0, s.hunkIndex)+1, total)
 	if open > 0 {
 		return status + fmt.Sprintf(" · %d to choose", open)
 	}
 	return status + " · all chosen"
+}
+
+// barStatusWidth is the state column of the bar: it fits "Change 12 of 34 ·
+// 12 to choose", so the buttons keep their place while the state changes.
+const barStatusWidth = 30
+
+// layoutBar places the state text and the decisions on the bar row. The
+// buttons get their room first; the text takes the rest of a stable column
+// (longer messages get more room at the next layout and are cut until then).
+func (s *Screen) layoutBar(ctx ui.LayoutContext, w int) {
+	if compact := titlesWidth(s.barButtons(false)) > w; compact != s.resolve.compact {
+		s.resolve.compact = compact
+		s.syncBar()
+	}
+	text := max(barStatusWidth, rendering.VisibleWidth(s.barStatus()))
+	full := s.resolve.bar.Measure(ctx, ui.Constraints{MaxW: w, MaxH: 1}).W
+	s.resolve.statusW = max(0, min(text, w-full-2))
+	if s.resolve.statusW < min(text, barStatusWidth) {
+		// The state is worth more than key captions: the buttons drop
+		// them before the state gives way.
+		s.resolve.statusW = max(0, min(rendering.VisibleWidth(s.barStatus()), w-s.resolve.buttonsW-2))
+	}
+	if s.resolve.statusW < 12 {
+		// Too narrow for both: the decisions keep the row.
+		s.resolve.statusW = 0
+	}
+	x := 0
+	if s.resolve.statusW > 0 {
+		x = s.resolve.statusW + 2
+	}
+	s.resolve.bar.Layout(ctx, ui.Rect{X: min(x, w), W: max(0, w-x), H: 1})
+}
+
+func (s *Screen) barStatus() string {
+	if s.resolve.message != "" {
+		return s.resolve.message
+	}
+	if len(s.prepared.changes) == 0 {
+		return "No differences"
+	}
+	return s.ResolutionStatus()
+}
+
+func (s *Screen) paintBar(buf *surface.CellBuffer, ox, oy int) {
+	if s.resolve.statusW <= 0 {
+		return
+	}
+	r := s.Bounds()
+	role := ui.ColorFg
+	if s.resolve.message != "" {
+		role = s.resolve.messageRole
+	}
+	buf.WriteString(ox+r.X, oy+r.Y, rendering.TruncateVisual(s.barStatus(), s.resolve.statusW, "…"), s.tokens.Color(role), s.tokens.Color(ui.ColorBg), cell.AttrBold)
 }
 
 // choose sets one change and makes it current.
@@ -161,6 +364,7 @@ func (s *Screen) toggle(index int, left bool) bool {
 }
 
 func (s *Screen) changed() {
+	s.syncBar()
 	if s.resolve.onChange != nil {
 		s.resolve.onChange()
 	}

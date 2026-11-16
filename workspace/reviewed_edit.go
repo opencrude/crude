@@ -691,7 +691,7 @@ func (s *DocumentService) commitReviewedDocumentLocked(p *reviewedEdit, index in
 		return err
 	}
 	trial.snapshot.Saved = bytes.Clone(trial.snapshot.Text)
-	trial.snapshot.DiskExists = true
+	trial.snapshot.DiskExists, trial.snapshot.Removed, trial.snapshot.DiskSeen = true, false, [32]byte{}
 	trial.snapshot.DiskHash = disk.Hash
 	trial.snapshot.Encoding = disk.Encoding
 	trial.snapshot.SavedEncoding = disk.Encoding

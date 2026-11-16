@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"crude/textencoding"
 	"crude/tui/editor"
 	"crude/tui/ui"
+	"crude/tui/window"
 	"crude/workspace"
 )
 
@@ -74,26 +76,108 @@ func (m *App) resolveDiskConflict(p *diskConflictPrompt, choice int) tea.Cmd {
 	}
 	m.diskConflict = nil
 	m.overlayHost.Close(diskConflictOverlay)
-	ed := p.editor
-	if p.owner != m.ws || p.generation != m.workspaceSwitchGen.Load() || !ed.IsOpen() {
+	if p.owner != m.ws || p.generation != m.workspaceSwitchGen.Load() {
 		return nil
 	}
+	return m.applyDiskChoice(p.editor, choice, p.closeAfter)
+}
+
+// applyDiskChoice is the one place a disk-conflict choice takes effect, from
+// the dialog or the editor's disk bar: Overwrite keeps the text and saves it
+// over the file, Discard loads the file, Compare opens both versions.
+func (m *App) applyDiskChoice(ed *editor.Editor, choice int, closeAfter bool) tea.Cmd {
+	if ed == nil || !ed.IsOpen() {
+		return nil
+	}
+	ed = ed.Primary()
 	switch choice {
 	case ui.DiskConflictOverwrite:
-		if m.resolveLiveDisk(ed, &document.Resolution{}, 0, p.closeAfter) {
+		if m.resolveLiveDisk(ed, &document.Resolution{}, 0, closeAfter) {
 			return nil
 		}
-		return m.resolveLocalDisk(ed, true, p.closeAfter)
+		return m.resolveLocalDisk(ed, true, closeAfter)
 	case ui.DiskConflictDiscard:
-		if m.discardLiveEditor(ed, p.closeAfter) {
+		if m.discardLiveEditor(ed, closeAfter) {
 			return nil
 		}
-		return m.resolveLocalDisk(ed, false, p.closeAfter)
+		return m.resolveLocalDisk(ed, false, closeAfter)
 	case ui.DiskConflictCompare:
 		m.cancelEditorClose(ed)
 		return m.compareEditorWithDisk(ed)
 	}
 	return nil
+}
+
+// Disk bar actions. The payload is the editor of the view that shows the bar.
+const (
+	actionDiskCompare   = "editor.disk.compare"
+	actionDiskOverwrite = "editor.disk.overwrite"
+	actionDiskDiscard   = "editor.disk.discard"
+	actionDiskClose     = "editor.disk.close"
+)
+
+// editorDiskBar is the state row above an editor whose file changed on disk
+// in a way Crude could not merge, or was deleted. It shows on every view of
+// the file while the state lasts and goes as soon as the state ends, whoever
+// settled it. It returns nil when the file needs no decision.
+func (m *App) editorDiskBar(v *mainPaneView, tab window.TabID, ed *editor.Editor) *ui.NoticeBar {
+	conflict, removed := m.editorDiskState(ed)
+	if v == nil || !conflict {
+		return nil
+	}
+	if v.diskBar == nil {
+		v.diskBar = ui.NewNoticeBar(ui.ComponentID(fmt.Sprintf("main-panes/view-%d/disk", tab)), m.rootHost.Tokens())
+	}
+	switch {
+	case removed:
+		v.diskBar.Set("Deleted on disk. Your text is still open.", ui.ColorWarning, ed,
+			ui.ActionBarButton{Label: "Save", Action: actionDiskOverwrite, Enabled: !ed.ReadOnly(), Variant: ui.VariantSecondary},
+			ui.ActionBarButton{Label: "Close", Action: actionDiskClose, Enabled: true, Variant: ui.VariantSecondary})
+	case ed.Modified():
+		v.diskBar.Set("Changed on disk. Conflicts with your unsaved edits.", ui.ColorWarning, ed,
+			ui.ActionBarButton{Label: "Compare", Action: actionDiskCompare, Enabled: true, Variant: ui.VariantSecondary},
+			ui.ActionBarButton{Label: "Overwrite", Action: actionDiskOverwrite, Enabled: !ed.ReadOnly(), Variant: ui.VariantSecondary},
+			ui.ActionBarButton{Label: "Discard", Action: actionDiskDiscard, Enabled: true, Variant: ui.VariantSecondary})
+	default:
+		// Saved text that could not follow the file: reading it failed.
+		v.diskBar.Set("Changed on disk. Crude cannot read the new file.", ui.ColorWarning, ed,
+			ui.ActionBarButton{Label: "Reload", Action: actionDiskDiscard, Enabled: true, Variant: ui.VariantSecondary},
+			ui.ActionBarButton{Label: "Compare", Action: actionDiskCompare, Enabled: true, Variant: ui.VariantSecondary})
+	}
+	return v.diskBar
+}
+
+// handleEditorDiskAction carries out a disk bar button.
+func (m *App) handleEditorDiskAction(action ui.Action) (tea.Cmd, bool) {
+	choice := -1
+	switch action.ID {
+	case actionDiskCompare:
+		choice = ui.DiskConflictCompare
+	case actionDiskOverwrite:
+		choice = ui.DiskConflictOverwrite
+	case actionDiskDiscard:
+		choice = ui.DiskConflictDiscard
+	case actionDiskClose:
+	default:
+		return nil, false
+	}
+	ed, _ := action.Payload.(*editor.Editor)
+	if ed == nil || !ed.IsOpen() {
+		return nil, true
+	}
+	if conflict, _ := m.editorDiskState(ed); !conflict {
+		return nil, true // settled meanwhile; the bar is already gone
+	}
+	if choice >= 0 {
+		return m.applyDiskChoice(ed, choice, false), true
+	}
+	if v := m.editorViewOf(ed); v != nil {
+		return m.handleAgentTabClose(m.Win.IndexOf(v.Tab)), true
+	}
+	for _, v := range m.documentViews(editorDocumentKey(ed)) {
+		return m.handleAgentTabClose(m.Win.IndexOf(v.Tab)), true
+	}
+	return nil, true
 }
 
 // discardEditorChanges returns the file to its saved text without closing it.
@@ -140,6 +224,18 @@ func (m *App) discardLiveEditor(ed *editor.Editor, closeView bool) bool {
 	state := m.liveEditors[ed.Primary()]
 	if state == nil {
 		return false
+	}
+	if ed.DiskConflict() && ed.DiskRemoved() {
+		// The file is gone, so there is no saved text to load: discarding
+		// the changes of a deleted file means closing it.
+		if closeView {
+			state.save, state.closeAfter, state.closeView = false, false, false
+			m.closeEditorTabForce(editorDocumentKey(ed))
+			m.continuePendingTabClose()
+		} else {
+			m.Feedback.NotifyInfo("The file was deleted on disk. Save it to create it again, or close it.")
+		}
+		return true
 	}
 	state.reload, state.resolve, state.resolveRevision = true, nil, 0
 	state.save, state.format, state.closeAfter = false, false, false

@@ -236,6 +236,17 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   Windows associations, macOS `open`, Linux `xdg-open`) for explicit desktop
   actions and other file types. History previews import session-owned copies;
   they never edit history assets.
+- Composer copy and cut keep what they put on the clipboard: Ctrl+C/Ctrl+X on
+  a selection, Cut without one, and menu Copy/Cut record the text with the
+  exact attachment spans it shows (`input.PromptFragment`) in one per-window
+  `PromptClipboard` shared by every composer and session draft. Other
+  applications get the text with labels. A paste whose normalized text equals
+  the recorded text reproduces the attachments off Update: the same session
+  keeps the same attachment, another session of the workspace imports its own
+  copy (`reference.import` with `source_session_id`), and labels follow the
+  destination. The paste joins the ordered paste queue, holds Send, lands at
+  the caret, and cleans up copies if its draft owner changed. Plain copies
+  clear the record, so unrelated text never gains attachments.
 - Prompt history entries retain exact chip spans and immutable attachment
   snapshots, not session-local labels alone. `history.Store` is the sole recall
   source; input emits owner/generation-keyed recall events, and

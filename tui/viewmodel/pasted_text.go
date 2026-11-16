@@ -19,6 +19,12 @@ type pastedTextStoredMsg struct {
 	ref        sessiondb.Reference
 	err        error
 	done       bool
+	// fragment is a pasted composer fragment; text and refs reproduce it in
+	// this session, and created names the attachment copies made for it.
+	fragment *input.PasteFragmentEvent
+	text     string
+	refs     []sessiondb.Reference
+	created  []string
 }
 
 func (m *App) storePastedText(event input.PasteAttachmentEvent) tea.Cmd {
@@ -75,6 +81,7 @@ func (m *App) applyPastedText(msg pastedTextStoredMsg) {
 			if sameOwner {
 				m.Input.CompletePaste(request.event)
 			}
+			m.discardFragmentCopies(request)
 			continue
 		}
 		m.attachPastedText(request)
@@ -83,6 +90,11 @@ func (m *App) applyPastedText(msg pastedTextStoredMsg) {
 
 func (m *App) attachPastedText(msg pastedTextStoredMsg) {
 	if msg.generation != m.workspaceSwitchGen.Load() || m.ActiveSession != msg.session || m.RefStore() != msg.store {
+		m.discardFragmentCopies(msg)
+		return
+	}
+	if msg.fragment != nil {
+		m.attachPastedFragment(msg)
 		return
 	}
 	if !m.Input.CompletePaste(msg.event) {

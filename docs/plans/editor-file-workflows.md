@@ -155,6 +155,29 @@ decoder regression and repository gates are checked separately. Windows/macOS
 component cross-builds are not native UI acceptance. This record does not close
 the encoding and Save As scope below.
 
+### Outside edits and comparison pages (2026-11-16)
+
+User acceptance rejected the previous behaviour: an outside edit to a file
+with unsaved changes stayed hidden until Save or close; the comparison page
+repeated the file path and the editor's generic actions; its tab had no
+tooltip; and settling the conflict elsewhere left the page stale with dead
+controls. The replacement, recorded in [editor](../reference/editor.md) and
+[main view panes](../reference/main-view-panes.md):
+
+- The core applies outside edits at once: saved text follows the file with
+  minimal edits; non-overlapping changes merge into unsaved text; only real
+  overlaps become a conflict. One shell policy speaks only when unsaved work is
+  affected, once per file until it is saved, batched; a conflict in a visible
+  editor is the disk bar, not a notice.
+- Comparison pages show the versions and the decisions only, follow their
+  sources (including a file that changes again during a conflict) and close
+  when nothing is left to choose. Every main tab kind and terminal tab has a
+  tooltip.
+- Linux native captures at 160×40 and 80×24 pass for the `disk` and `git` file
+  flows; live tmux journeys checked merge, conflict bar clicks, the hidden-file
+  notice, comparison refresh with kept choices, settling elsewhere and the
+  saved bytes.
+
 ### Handoff and search verification (2026-11-16)
 
 - All twelve Linux native journeys pass at 160×40 and 80×24, with clean exits,

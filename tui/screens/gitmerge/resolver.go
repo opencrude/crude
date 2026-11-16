@@ -42,6 +42,9 @@ const (
 	actionComplete = "git-merge.complete"
 	actionClose    = "git-merge.close"
 	actionFile     = "git-merge.file"
+
+	// resolverBodyY is the first row below the summary.
+	resolverBodyY = 1
 )
 
 // Decision is one user decision for the owner to carry out.
@@ -257,11 +260,14 @@ func operationLabel(operation string) (doing, finish string) {
 	return "Merging", "Complete merge"
 }
 
+// syncActions keeps the file decision in the comparison's own bar (Keep
+// buttons, change navigation, Resolve file) and the operation decisions in
+// the dialog's action row.
 func (r *Resolver) syncActions() {
 	_, finish := operationLabel(r.operation)
 	idle := r.busy == "" && r.loading == ""
+	r.viewer.SetCommit("Resolve file", "Ctrl+S", actionSave, idle && r.file != nil)
 	r.actions.SetButtons(
-		ui.ActionBarButton{ID: "git-merge/save", Label: "Save", Shortcut: "Ctrl+S", Action: actionSave, Enabled: idle && r.decided(), Variant: ui.VariantPrimary},
 		ui.ActionBarButton{ID: "git-merge/open", Label: "Open in editor", Shortcut: "E", Action: actionOpen, Enabled: idle && r.file != nil, Variant: ui.VariantSecondary},
 		ui.ActionBarButton{ID: "git-merge/complete", Label: finish, Action: actionComplete, Enabled: idle && len(r.conflicts) == 0, Variant: ui.VariantPrimary},
 		ui.ActionBarButton{ID: "git-merge/abort", Label: "Abort…", Action: actionAbort, Enabled: idle, Variant: ui.VariantDanger},
@@ -297,11 +303,11 @@ func (r *Resolver) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
 }
 
-// Layout: summary and status rows, then the file list beside the
-// comparison, then actions.
+// Layout: the summary row, then the file list beside the comparison (whose
+// bar holds the file's decisions), then the operation actions.
 func (r *Resolver) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 	r.SetBounds(bounds)
-	bodyY, bodyH := 2, max(0, bounds.H-4)
+	bodyY, bodyH := resolverBodyY, max(0, bounds.H-resolverBodyY-2)
 	r.listW = 0
 	if bounds.W >= 80 {
 		r.listW = min(34, bounds.W/4)
@@ -311,7 +317,13 @@ func (r *Resolver) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 	if r.listW > 0 {
 		viewX = r.listW + 1
 	}
-	r.viewer.Layout(ctx, ui.Rect{X: viewX, Y: bodyY, W: max(0, bounds.W-viewX), H: bodyH})
+	if r.file == nil && r.loading == "" {
+		// No file to decide: no comparison and no decision bar, only the
+		// message Paint writes in their place.
+		r.viewer.Layout(ctx, ui.Rect{})
+	} else {
+		r.viewer.Layout(ctx, ui.Rect{X: viewX, Y: bodyY, W: max(0, bounds.W-viewX), H: bodyH})
+	}
 	r.actions.Layout(ctx, ui.Rect{Y: max(0, bounds.H-1), W: bounds.W, H: min(1, bounds.H)})
 }
 
@@ -334,13 +346,8 @@ func (r *Resolver) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Pai
 		summary, role = "✓ Every conflict is resolved. "+finish+" to finish.", ui.ColorSuccess
 	}
 	buf.WriteString(x, y, rendering.TruncateVisual(summary, bounds.W, "…"), tokens.Color(role), bg, cell.AttrBold)
-	status := "Left is the current side, right is the incoming side. Accept each change, then Save."
-	if r.file != nil {
-		status = r.file.Path + " · " + r.viewer.ResolutionStatus()
-	}
-	buf.WriteString(x, y+1, rendering.TruncateVisual(status, bounds.W, "…"), tokens.Color(ui.ColorMuted), bg, 0)
 	if r.listW > 0 {
-		for row := 2; row < bounds.H-2; row++ {
+		for row := resolverBodyY; row < bounds.H-2; row++ {
 			buf.WriteString(x+r.listW, y+row, "│", tokens.Color(ui.ColorPopupDivider), bg, 0)
 		}
 	}
@@ -350,8 +357,7 @@ func (r *Resolver) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.Pai
 			message = "Every file is resolved and staged. " + finish + " to record it, or Abort to return to the branch as it was."
 		}
 		left := r.listW + 3
-		ui.FillRect(buf, originX, originY, r.viewer.Bounds(), cell.BlankCell(bg))
-		buf.WriteString(x+left, y+3, rendering.TruncateVisual(message, max(0, bounds.W-left), "…"), tokens.Color(ui.ColorMuted), bg, 0)
+		buf.WriteString(x+left, y+resolverBodyY+1, rendering.TruncateVisual(message, max(0, bounds.W-left), "…"), tokens.Color(ui.ColorMuted), bg, 0)
 	}
 }
 

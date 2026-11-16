@@ -18,6 +18,12 @@ const (
 	CommandTakeControl
 	CommandRename
 	CommandClear
+	// CommandTakeOver is the explicit "Take input control" choice. It also
+	// replaces a controller in another window; CommandTakeControl never does.
+	CommandTakeOver
+	// CommandClaimInput claims control for input typed into a viewer. It also
+	// replaces a controller whose window lost its connection.
+	CommandClaimInput
 )
 
 // Command is an intent, never pre-encoded PTY bytes. The host binds the exact

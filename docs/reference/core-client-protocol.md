@@ -812,7 +812,13 @@ backup and exact recovery tombstone. It discards only private pending text,
 never collaborators' text. Pending/unknown commands must settle by receipt first
 and are never automatically replayed. An external disk conflict is a different
 precondition with its own dialog: `document.reload` with a `document.Resolution`
-settles it, and saves report it with fault code `document_conflict`.
+settles it, and saves report it with fault code `document_conflict`. The core
+applies an outside edit itself (clean text follows the file, non-overlapping
+changes merge into unsaved text) as a change with RequestID
+`document.DiskRequestID`; `Snapshot.Removed` marks a conflict whose file was
+deleted, and `Snapshot.DiskSeen` (set only during a conflict) names the latest
+file version, so a comparison follows a file that changes again while the
+decision waits. See [editor](editor.md#unsaved-changes-discard-and-disk-conflicts).
 
 `workspace.TerminalService` installs one neutral `terminalvt` engine before first
 PTY output and owns all child query replies. Readers receive packed changed-row grid publications and explicit on-demand

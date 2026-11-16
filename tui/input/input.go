@@ -43,6 +43,12 @@ type SlashCommandEvent struct {
 
 func (SlashCommandEvent) event() {}
 
+// UnknownCommandEvent reports a draft that is only a mistyped command. The
+// draft stays so the user can correct it.
+type UnknownCommandEvent struct{ Name string }
+
+func (UnknownCommandEvent) event() {}
+
 type SettingsOpenEvent struct{}
 
 func (SettingsOpenEvent) event() {}
@@ -56,24 +62,44 @@ type CmdInfo struct {
 	Label string
 	Desc  string
 	Icon  string
+	// Args marks a command that reads the rest of its line (/plan <prompt>).
+	// Every other command runs alone and leaves the text after it as the draft.
+	Args bool
 }
 
 var availableCmds = []CmdInfo{
-	{Name: "plan", Label: "plan", Desc: "Plan mode: explore read-only and agree a plan before changing anything"},
-	{Name: "goal", Label: "goal", Desc: "Set or view a goal the agent pursues until a verifier confirms it"},
+	{Name: "plan", Label: "plan", Desc: "Plan mode: explore read-only and agree a plan before changing anything", Args: true},
+	{Name: "goal", Label: "goal", Desc: "Set or view a goal the agent pursues until a verifier confirms it", Args: true},
 	{Name: "fork", Label: "fork", Desc: "Continue this conversation in a new session; this one stays as it is"},
 	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
 	{Name: "retry", Label: "retry", Desc: "Continue this agent's pending recovery without replaying completed work"},
 	{Name: "undo", Label: "undo", Desc: "Revert this agent's files; retain conversation history"},
 	{Name: "history", Label: "history", Desc: "Search and reuse prompts with their attachments"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
-	{Name: "loop", Label: "loop", Desc: "Schedule and manage recurring session prompts in the core"},
+	{Name: "loop", Label: "loop", Desc: "Schedule and manage recurring session prompts in the core", Args: true},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
-	{Name: "skills", Label: "skills", Desc: "Search and activate or deactivate skills"},
-	{Name: "mcps", Label: "mcps", Desc: "Search and activate or deactivate MCPs"},
+	{Name: "skills", Label: "skills", Desc: "Search and activate or deactivate skills", Args: true},
+	{Name: "mcps", Label: "mcps", Desc: "Search and activate or deactivate MCPs", Args: true},
 	{Name: "settings", Label: "settings", Desc: "Open session AI settings (models and multi-agent)"},
 	{Name: "fast", Label: "fast", Desc: "Toggle the provider's fast tier for this session's main agent"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
+}
+
+// hiddenCmds are commands the shell runs but does not list.
+var hiddenCmds = []CmdInfo{{Name: "debug-lsp"}, {Name: "undo-n"}, {Name: "undo-all"}}
+
+// slashCommand returns the command a draft line names, if any. Text that
+// starts with an unknown "/word" (a path, for example) is not a command.
+func slashCommand(name string) (CmdInfo, bool) {
+	name = strings.ToLower(strings.TrimPrefix(name, "/"))
+	for _, list := range [][]CmdInfo{availableCmds, hiddenCmds} {
+		for _, c := range list {
+			if c.Name == name {
+				return c, true
+			}
+		}
+	}
+	return CmdInfo{}, false
 }
 
 func AvailableCmds() []CmdInfo {
@@ -116,6 +142,10 @@ type Model struct {
 	slashActive bool
 	slashList   *ui.List
 	slashFilter string
+	// slash is the command token at the caret. A token that is the whole
+	// draft is the command line itself; any other token was typed inside a
+	// prompt and runs without consuming the rest of the draft.
+	slash slashToken
 
 	showHint  bool
 	width     int
@@ -124,6 +154,9 @@ type Model struct {
 	blocking  bool
 	spinFrame int
 	refStore  ReferenceStore
+	// clipboard is shared by every composer copy of one shell.
+	clipboard *PromptClipboard
+	copyText  func(string) tea.Cmd
 
 	actionRegistry ActionRegistry
 }
@@ -177,6 +210,7 @@ func NewModel(t *theme.Theme) Model {
 		slashList: slashList,
 		histIdx:   -1,
 		showHint:  true,
+		clipboard: NewPromptClipboard(),
 	}
 	m.syncShellChrome()
 	return m
@@ -193,6 +227,10 @@ func (m Model) NewDraft() Model {
 	}
 	next.SetSpinFrame(m.spinFrame)
 	next.showHint = m.showHint
+	next.clipboard = m.clipboard // one copy memory per shell, across sessions
+	if m.copyText != nil {
+		next.SetClipboardCopy(m.copyText)
+	}
 	return next
 }
 
@@ -631,11 +669,7 @@ func (m Model) ComposerViewport() (first, last, total int) {
 }
 
 func (m Model) showSlashPopup() bool {
-	if !m.slashActive || m.slashList == nil {
-		return false
-	}
-	inputVal := m.input.Value()
-	return strings.HasPrefix(inputVal, "/") && !strings.Contains(inputVal, " ") && !strings.Contains(inputVal, "\n")
+	return m.slashActive && m.slashList != nil && len(m.slashList.Items()) > 0
 }
 
 func (m Model) activePromptRefs() []sessiondb.Reference {

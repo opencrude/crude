@@ -37,15 +37,19 @@ type ReferenceCreateRequest struct {
 	Inline     bool           `json:"inline"`
 }
 type ReferenceCommand struct {
-	SessionID string                  `json:"session_id"`
-	ID        string                  `json:"id,omitempty"`
-	Revision  string                  `json:"revision,omitempty"`
-	Create    *ReferenceCreateRequest `json:"create,omitempty"`
-	Original  string                  `json:"original,omitempty"`
-	Content   string                  `json:"content,omitempty"`
-	Label     string                  `json:"label,omitempty"`
-	Offset    int64                   `json:"offset,omitempty"`
-	Digest    string                  `json:"digest,omitempty"`
+	SessionID string `json:"session_id"`
+	// SourceSessionID names the session that owns ID when reference.import
+	// copies an attachment into SessionID from another session of the same
+	// workspace (a prompt copied in one session and pasted in another).
+	SourceSessionID string                  `json:"source_session_id,omitempty"`
+	ID              string                  `json:"id,omitempty"`
+	Revision        string                  `json:"revision,omitempty"`
+	Create          *ReferenceCreateRequest `json:"create,omitempty"`
+	Original        string                  `json:"original,omitempty"`
+	Content         string                  `json:"content,omitempty"`
+	Label           string                  `json:"label,omitempty"`
+	Offset          int64                   `json:"offset,omitempty"`
+	Digest          string                  `json:"digest,omitempty"`
 }
 type ReferenceContentResult struct {
 	View     ReferenceView `json:"view"`

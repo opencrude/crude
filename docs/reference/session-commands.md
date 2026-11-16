@@ -4,7 +4,15 @@
 
 The composer's slash commands act on the selected session (`/plan`, `/goal`, `/loop`,
 `/fork`, `/compact`, `/retry`, `/undo`, `/history`, `/sessions`, `/memory`,
-`/skills`, `/mcps`, `/settings`, `/fast`, `/yolo`). The command palette
+`/skills`, `/mcps`, `/settings`, `/fast`, `/yolo`). A command can be typed
+anywhere in a draft: `/` at the start of a word opens the list for the name at
+the caret, and choosing a command (click, Enter or Tab) removes only its name
+and runs it. The rest of the prompt, its attachments, undo history and caret
+stay. A name that matches no command (a path such as `/usr/bin`) stays prose. A
+draft that starts with a command that takes no arguments runs the command and
+keeps the text after it as the draft; `/plan`, `/goal`, `/loop`, `/skills` and
+`/mcps` read the rest of the line. A draft that is only an unknown `/name` is
+explained and kept for correction, never sent or cleared. The command palette
 (Ctrl+Alt+P) lists only global commands with their live shortcuts; there is no
 Help window and no `/model` (model choice lives in `/settings`). Plan mode,
 goals and fork follow the established Codex contracts (`/plan`, `/goal`,

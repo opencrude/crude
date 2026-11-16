@@ -31,6 +31,14 @@ func (v *WorkspaceView) ImportReference(ctx context.Context, sessionID string, r
 	err := v.Client.Call(ctx, v.ID, coreprotocol.ReferenceImport, &coreprotocol.ReferenceCommand{SessionID: sessionID, ID: ref.Reference.ID, Revision: ref.Revision}, &out)
 	return out, err
 }
+
+// ImportReferenceFrom copies an exact attachment revision from another
+// session of this workspace into sessionID.
+func (v *WorkspaceView) ImportReferenceFrom(ctx context.Context, sessionID, sourceSessionID string, ref coreprotocol.ReferenceView) (coreprotocol.ReferenceView, error) {
+	var out coreprotocol.ReferenceView
+	err := v.Client.Call(ctx, v.ID, coreprotocol.ReferenceImport, &coreprotocol.ReferenceCommand{SessionID: sessionID, SourceSessionID: sourceSessionID, ID: ref.Reference.ID, Revision: ref.Revision}, &out)
+	return out, err
+}
 func (v *WorkspaceView) SaveReferenceContent(ctx context.Context, sessionID string, ref coreprotocol.ReferenceView, original, content string) (coreprotocol.ReferenceView, error) {
 	originalHash, contentHash := sha256.Sum256([]byte(original)), sha256.Sum256([]byte(content))
 	return v.Client.UploadReference(ctx, v.ID, coreprotocol.ReferenceUploadCommand{SessionID: sessionID, Purpose: coreprotocol.ReferenceUploadReplace, ID: ref.Reference.ID, Revision: ref.Revision, OriginalDigest: hex.EncodeToString(originalHash[:]), Size: int64(len(content)), Digest: hex.EncodeToString(contentHash[:])}, bytes.NewBufferString(content))

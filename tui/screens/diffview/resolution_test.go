@@ -70,7 +70,8 @@ func TestResolutionKeysAndGutterBoxesDecideChanges(t *testing.T) {
 		t.Fatal("an open change must block the result")
 	}
 	painted := paintText(host, 100, 12)
-	for _, want := range []string{"Accept left", "Accept right", "Accept both", "[ ]"} {
+	// The bar names the sides as the panes do, and states the open choice.
+	for _, want := range []string{"1 change to choose", "Keep on disk", "Keep your changes", "Keep both", "[ ]"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("missing %q in:\n%s", want, painted)
 		}
@@ -88,7 +89,7 @@ func TestResolutionKeysAndGutterBoxesDecideChanges(t *testing.T) {
 	if painted := paintText(host, 100, 12); strings.Count(painted, "[x]") != 2 {
 		t.Fatalf("both boxes must be checked:\n%s", painted)
 	}
-	if status := s.ResolutionStatus(); status != "Change 1 of 1 · all chosen" {
+	if status := s.ResolutionStatus(); status != "1 change chosen" {
 		t.Fatalf("status %q", status)
 	}
 }

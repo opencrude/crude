@@ -118,9 +118,25 @@ func (t *terminalReplica) fetch(ctx context.Context) ([]workspace.TerminalInfo, 
 // Acquire takes control for this connection. The core binds the lease to the
 // connection's own identity; the shell's local controller value is not trusted.
 func (t *terminalReplica) Acquire(id string, _ workspace.TerminalController) (workspace.TerminalLease, error) {
+	return t.control(id, workspace.ClaimFree)
+}
+
+// AcquireFromAbsent claims control for input typed in this window. It also
+// replaces a controller whose window lost its connection.
+func (t *terminalReplica) AcquireFromAbsent(id string, _ workspace.TerminalController) (workspace.TerminalLease, error) {
+	return t.control(id, workspace.ClaimFromAbsent)
+}
+
+// TakeOver is the explicit user choice to type here while another window
+// holds input control.
+func (t *terminalReplica) TakeOver(id string, _ workspace.TerminalController) (workspace.TerminalLease, error) {
+	return t.control(id, workspace.ClaimTakeOver)
+}
+
+func (t *terminalReplica) control(id string, claim workspace.TerminalClaim) (workspace.TerminalLease, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
-	lease, err := t.w.rpc().ControlTerminal(ctx, id)
+	lease, err := t.w.rpc().ControlTerminal(ctx, id, claim)
 	if err == nil {
 		t.leaseMu.Lock()
 		if t.leases == nil {

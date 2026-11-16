@@ -300,9 +300,12 @@ F4 observes the mounted frame and source state; after each F4 use
 
 - **close:** Ctrl+W, F4, Escape, F4, Ctrl+W, D, F4. Cancel preserves the dirty
   text; Discard closes it without writing the unsaved text to disk.
-- **disk:** Ctrl+S, F4, Escape, F4, Ctrl+S, Left, Enter, F4. Compare opens the
-  shared reader. N, 1, F4 keeps the user's first change and the disk's second
-  change. Ctrl+S, F4 verifies that the combined result is saved.
+- **disk:** the file changes on disk at the line the user edited, so the editor
+  shows the disk bar at once. Ctrl+S, F4, Escape, F4, Ctrl+S, Left, Enter, F4.
+  Compare opens the shared reader without a path row or generic toolbar; its
+  one bar names the sides (Keep on disk / Keep your text, or On disk / Your
+  text when narrow). N, 1, F4 keeps the user's first change and the disk's
+  second change. Ctrl+S, F4 verifies that the combined result is saved.
 - **git:** F4 observes two regions from a real stopped local merge. 1, N, 2,
   F4 selects current for the first and incoming for the second. Ctrl+S, F4
   verifies that the result is written and staged.

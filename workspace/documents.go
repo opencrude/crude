@@ -678,7 +678,7 @@ func (s *DocumentService) save(ctx context.Context, owner document.Owner, id str
 		trial.snapshot.DiskHash = r.DiskHash
 		trial.snapshot.DiskExists = true
 		trial.snapshot.Dirty = false
-		trial.snapshot.Conflict = false
+		trial.snapshot.Conflict, trial.snapshot.Removed, trial.snapshot.DiskSeen = false, false, [32]byte{}
 	}
 	trial.diskIntent = nil
 	if errors.Is(r.Err, ErrDocumentConflict) {

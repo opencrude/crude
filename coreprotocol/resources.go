@@ -73,6 +73,13 @@ type ProjectFormatRequest struct {
 }
 type TerminalIDRequest struct {
 	ID string `json:"id"`
+	// TakeOver asks terminal.control for input control even when another
+	// window holds it. Only an explicit user choice sets it.
+	TakeOver bool `json:"take_over,omitempty"`
+	// FromAbsent also replaces a controller whose window lost its connection
+	// and waits to reconnect. Typing in this window sets it; a plain claim
+	// never takes a lease from an absent controller.
+	FromAbsent bool `json:"from_absent,omitempty"`
 }
 type TerminalRowsRequest struct {
 	ID            string `json:"id"`

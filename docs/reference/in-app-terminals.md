@@ -41,8 +41,9 @@ without this database: child rc scripts break (`tput colors` returns empty).
 | Mouse reporting | Ghostty mouse encoder when the child enables tracking (X10/normal/button/any, SGR/URXVT/UTF-8) |
 | Shift override | Shift+click/drag bypasses tracking for selection (standard escape hatch) |
 | Selection | Client-local `termview` click/drag, double-click word and triple-click line; shared selection colors keep readable child ink and atomic wide glyphs, resolving child reverse/faint before selection |
-| Copy | Copy-on-select + `Ctrl+Shift+C`; `Ctrl+Shift+A` selects all; client-local extraction uses projected soft-wrap metadata to unwrap and trim text |
-| Control keys | A focused dock/window PTY owns Ctrl+C/D/Z/\\/S/Q and application bindings before shell selection handling. Ctrl+C is always child input; explicit Ctrl+Shift+C is copy-only even without a selection. Exact Shift-only history chords are local; extra modifiers pass through. |
+| Copy | Explicit only: `Ctrl+Shift+C` or menu Copy (and Ctrl+C with a selection where Windows terminals copy). Selecting never writes the clipboard; the selection stays until the next input. `Ctrl+Shift+A` selects all; client-local extraction uses projected soft-wrap metadata to unwrap and trim text |
+| Paste | `Ctrl+Shift+V`, `Shift+Insert`, `Cmd+V` and bracketed paste; Ctrl+V only where Windows terminals paste with it (`shellterm.IsPasteChord`). Elsewhere Ctrl+V is the child's literal-next key |
+| Control keys | A focused dock/window PTY owns Ctrl+C/D/Z/\\/S/Q/V and application bindings before shell selection handling. Ctrl+C is child input (on Windows only without a selection); explicit Ctrl+Shift+C is copy-only even without a selection. Exact Shift-only history chords are local; extra modifiers pass through. |
 | OSC 52 clipboard | Child writes become an offer, never an automatic system-clipboard write; the controlling shell exposes **Copy offered text** in the terminal menu. Clipboard reads are ignored |
 | Scrollback | Wheel scrolls viewport; `Shift+PgUp/PgDn/Home/End` on the primary screen; typing/paste snaps to bottom; right-edge scrollbar overlay while scrolled |
 | Alt screen wheel | No tracking + alternate screen → wheel sends arrow keys (3×), like Ghostty's alternate-scroll |
@@ -191,7 +192,33 @@ the terminal.
 Input and resize require the exact `TerminalLease`: terminal ID, client ID,
 attachment epoch and lease generation. A second controller cannot silently steal
 it; release/detach invalidates only the exact owner. Viewers may read rows and
-select/scroll locally without input authority. The local/test adapter admits
+select/scroll locally without input authority.
+
+`terminal.control` has three claim strengths (`workspace.TerminalClaim`).
+`ClaimFree` (a shell mounts a terminal) succeeds only without a controller, so
+a brief network loss never moves control and a resumed session keeps its
+retained input. `ClaimFromAbsent` (keys typed into a viewer) also replaces a
+controller whose session lost its carrier and waits for the reconnect grace;
+only the core knows carriers. `ClaimTakeOver` (menu **Take input control**)
+replaces any controller; the previous controller's next input fails with the
+typed `terminal_control` fault and its shell explains how to take control
+back. A viewer screen keeps keys and pastes typed before control arrives
+(bounded to 256), asks once, and sends them in order when control arrives; a
+refusal drops them with one notice. A stronger pending claim decides over a
+weaker refusal.
+
+## Reattach and retained buffers
+
+Closing a Crude window never loses a terminal or its text: the core keeps the
+PTY, the engine and its scrollback. Every shell that shows a terminal (mounted
+by Alt+F12, the panel, the picker, a tab or a window) reads its live tail
+itself, because a silent shell at its prompt produces no output that would
+start a stream. When a shell shows no terminal yet, Alt+F12 and the panel
+toggle bring back every retained terminal as dock tabs and focus the last one
+used here, else the newest. Several windows may show the same terminal at once
+(`TestConnectedReattachedShellShowsRetainedTerminalBufferAndTypesAtOnce`,
+`TestConnectedReattachedShellRestoresEveryRetainedTerminal`,
+`TestConnectedPeerWindowsShareTerminalBufferAndHandOverControlExplicitly`). The local/test adapter admits
 key/paste/focus/resize commands on Update into a bounded 256-command FIFO, then
 executes service calls off Update. Resize geometry is acknowledged from the
 returned projection, not optimistically committed by Paint. Async results are
@@ -428,6 +455,25 @@ old output/title/exit messages may still be queued; a replacement manager
 therefore cannot reuse the old session's ID and stale messages cannot resolve
 to a new PTY or lazily materialize its screen.
 
+## Terminal revival across a core stop
+
+A process cannot outlive its core, but its buffer can. `TerminalService.CloseAll`
+first saves every live interactive terminal (the user's shell, not a terminal
+that runs its own command or has exited) to
+`workspaces/<hash>/terminal-buffers.json`: name, folder, size, placement and the
+screen with scrollback as VT bytes from `terminalvt.Engine.Snapshot` (the
+libghostty formatter; no modes, palette or cursor), at most 8 MiB per terminal,
+newest lines kept. The first attach to the next core (`TerminalService.StartRevive`)
+creates each terminal again in its folder (the project root if the folder is
+gone), feeds the saved bytes into the new engine before the new shell's output,
+adds one dim line that says a new shell started, and publishes inventory
+(`TerminalRevivedMsg`). Revival runs once per service; saving waits for it and
+CloseAll joins it. Terminals that cannot start stay saved for a later core; a
+core that never revived the file keeps its entries when it stops again.
+Explicit stop, version handover and workspace close save; a crash or kill does
+not (`TestStoppedCoreTerminalsComeBackWithTheirBuffers`,
+`TestUnrevivedTerminalBuffersSurviveAnotherStop`).
+
 ## Shutdown
 
 An open terminal is not by itself active work for explicit core stop or version
@@ -530,8 +576,10 @@ and the outstanding native/performance acceptance gates.
 - **Context menu:** right-click anchors the shared menu at the pointer, with
   Copy, Paste, Select all, Clear, New, Rename, placement and Kill. Clear changes
   the display and scrollback, not the process or its negotiated modes. Copy is unavailable
-  without a selection; Paste and Rename require the exact controlling lease.
-  Only a viewer sees Take input control. Inactive tab menus retain the clicked
+  without a selection; Rename and Clear require the exact controlling lease, and
+  Paste in a viewer waits for input control like typed keys. Only a viewer sees
+  Take input control; Command Palette > Terminal Actions opens this menu for the
+  current terminal from the keyboard. Inactive tab menus retain the clicked
   terminal identity. Workspace changes, close and replacement fence callbacks;
   asynchronous paste also retains the exact original lease.
 

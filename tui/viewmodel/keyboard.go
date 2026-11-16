@@ -13,6 +13,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
+	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
@@ -178,7 +179,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// A retained selection in another pane must never turn Ctrl+C into copy or
 	// eat EOF, suspend, flow control, or ordinary application key bindings.
 	if m.terminalOwnsKeys() {
-		if ui.IsPasteChord(msg) {
+		if shellterm.IsPasteChord(msg) {
 			screen := m.mainTerminalOwnsKeys()
 			if m.terminalDockOwnsKeys() {
 				screen = m.termDock.Active()
@@ -872,6 +873,8 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		}
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommandWithRefs(e.Command, e.ReferenceIDs))
+	case input.UnknownCommandEvent:
+		m.Feedback.NotifyError(fmt.Sprintf("%s is not a command. Type / to see the commands, or add text to send it as a message.", e.Name))
 	case input.HistoryRecallEvent:
 		cmds = append(cmds, m.recallPrompt(e))
 	case input.SettingsOpenEvent:
@@ -882,6 +885,8 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		}
 	case input.PasteAttachmentEvent:
 		cmds = append(cmds, m.storePastedText(e))
+	case input.PasteFragmentEvent:
+		cmds = append(cmds, m.pasteFragment(e))
 	case input.PastePendingEvent:
 		m.Feedback.NotifyInfo("Pasted text is still being attached; your draft is kept")
 	case input.AttachFilesEvent:

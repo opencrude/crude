@@ -222,6 +222,8 @@ type App struct {
 	untitledSave    *untitledSaveOwner
 	editorReload    *editorReloadPrompt
 	diskConflict    *diskConflictPrompt
+	// diskNotices is the policy state of disk-change notices.
+	diskNotices     diskNotices
 	liveConflict    *liveConflictPrompt
 	paneFileOpenSeq uint64
 	// paneRestoreCeiling accepts the pane opens queued by one layout
@@ -258,37 +260,40 @@ type App struct {
 	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
-	headerScreen          *shellheader.Screen
-	footerScreen          *shellfooter.Screen
-	tabScreen             *shelltabs.Screen
-	sidebarScreen         *shelltree.Screen
-	activityBar           *activitybar.Screen
-	activityList          *activitylist.Screen
-	agentFolded           map[string]bool      // agent IDs whose children the Agents sidebar hides
-	aeronPrepared         map[string]bool      // Aeron agents already minimized in this shell
-	aeronEnsureInFlight   bool                 // one workspace-Aeron ensure request is running
-	aeronEnsureScheduled  bool                 // an ensure waits for its start time and a free lifecycle slot
-	aeronEnsureEarliest   time.Time            // do not start the ensure before this time
-	aeronEnsureFailed     bool                 // Aeron could not start; wait for a settings change or new work
-	aeronOrders           []provider.UserInput // work waiting until the workspace Aeron is open
-	aeronEnsureError      string               // the last open failure, shown when the user opens Aeron
-	aeronOpenRequested    bool                 // the user opened Aeron before the core returned it
-	tooltip               pointerTooltip       // the one hover tooltip of the shell
-	gitPanel              *gitpanel.Panel
-	activityView          activitybar.View
-	termScreens           map[string]*shellterm.Screen
-	commandOutputs        map[string]*commandOutputWindow
-	terminalClientID      string
-	lastTerminalID        string
-	wheelHost             *ui.Host
-	terminalLeases        map[string]workspace.TerminalLease
-	terminalReads         map[string]bool
-	terminalDirty         map[string]bool
-	terminalPlacements    map[string]workspace.TerminalPlacement
-	terminalQueue         []tea.Cmd
-	terminalBusy          bool
-	terminalClipboard     map[string]string
-	terminalClosed        map[string]bool
+	headerScreen         *shellheader.Screen
+	footerScreen         *shellfooter.Screen
+	tabScreen            *shelltabs.Screen
+	sidebarScreen        *shelltree.Screen
+	activityBar          *activitybar.Screen
+	activityList         *activitylist.Screen
+	agentFolded          map[string]bool      // agent IDs whose children the Agents sidebar hides
+	aeronPrepared        map[string]bool      // Aeron agents already minimized in this shell
+	aeronEnsureInFlight  bool                 // one workspace-Aeron ensure request is running
+	aeronEnsureScheduled bool                 // an ensure waits for its start time and a free lifecycle slot
+	aeronEnsureEarliest  time.Time            // do not start the ensure before this time
+	aeronEnsureFailed    bool                 // Aeron could not start; wait for a settings change or new work
+	aeronOrders          []provider.UserInput // work waiting until the workspace Aeron is open
+	aeronEnsureError     string               // the last open failure, shown when the user opens Aeron
+	aeronOpenRequested   bool                 // the user opened Aeron before the core returned it
+	tooltip              pointerTooltip       // the one hover tooltip of the shell
+	gitPanel             *gitpanel.Panel
+	activityView         activitybar.View
+	termScreens          map[string]*shellterm.Screen
+	commandOutputs       map[string]*commandOutputWindow
+	terminalClientID     string
+	lastTerminalID       string
+	wheelHost            *ui.Host
+	terminalLeases       map[string]workspace.TerminalLease
+	terminalReads        map[string]bool
+	terminalDirty        map[string]bool
+	terminalPlacements   map[string]workspace.TerminalPlacement
+	terminalQueue        []tea.Cmd
+	terminalBusy         bool
+	terminalClipboard    map[string]string
+	terminalClosed       map[string]bool
+	// terminalClaims records why this shell asked for a terminal's input
+	// control, so the answer is reported (or kept quiet) for that reason.
+	terminalClaims        map[string]terminalClaim
 	termDock              *termdock.Screen
 	termDockHeight        int
 	termDockFocused       bool
@@ -548,11 +553,15 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 		sessionProjections:  sessionProjections,
 	}
 	app.Feedback = newFeedbackSink(app)
+	// Composer copies use the shell's ordered clipboard worker like every
+	// other reading surface, never a separate writer.
+	app.Input.SetClipboardCopy(app.clipboardCopyCommand)
 	if _, connected := ws.(shellport.ClientFiles); connected {
 		app.Tree.Model = newClientFileTree(app)
 		app.sidebarScreen.SetModel(app.Tree.Model)
 	}
 	app.initWorkspacePanels()
+	app.termDock.SetTooltipFunc(app.terminalTooltip)
 	if app.sidebarScreen != nil {
 		app.sidebarScreen.SetPathSearchHandler(app.beginTreePathSearch)
 	}

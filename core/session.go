@@ -159,6 +159,21 @@ func (c *Connection) unbind(conn corewire.Conn) {
 	c.grace = time.AfterFunc(grace, c.Close)
 }
 
+// ownerAway reports a session that no longer exists, or that lost its carrier
+// and waits for its reconnect grace. Such a window cannot type. A session
+// that never had a carrier (an in-process client) is present.
+func (r *Runtime) ownerAway(owner coreprotocol.Owner) bool {
+	r.mu.Lock()
+	c := r.clients[owner.ClientID]
+	r.mu.Unlock()
+	if c == nil || c.Owner.Epoch != owner.Epoch {
+		return true
+	}
+	c.carrierMu.Lock()
+	defer c.carrierMu.Unlock()
+	return c.closing || c.carrier == nil && !c.graceDeadline.IsZero()
+}
+
 // Carrier reports the current carrier kind and RTT; empty while detached.
 func (c *Connection) Carrier() (corewire.Carrier, time.Duration) {
 	c.carrierMu.Lock()
