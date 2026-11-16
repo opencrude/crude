@@ -39,6 +39,7 @@ type WorkspaceState struct {
 	Terminals     *TerminalInfos
 	Git           *GitSnapshotResult
 	Board         *BoardSnapshotResult
+	Presence      *PresenceSnapshot
 	Fault         *Fault
 }
 

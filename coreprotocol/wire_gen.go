@@ -11406,6 +11406,74 @@ func (z PinMemoryResult) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *PresenceSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendBool(o, z.Present)
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.Notifier.ClientID)
+	o = msgp.AppendUint64(o, z.Notifier.Epoch)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *PresenceSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Present, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Present")
+		return
+	}
+	var zb0002 uint32
+	zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Notifier")
+		return
+	}
+	if uint64(zb0002)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0002 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0002}
+		return
+	}
+	z.Notifier.ClientID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Notifier", "ClientID")
+		return
+	}
+	z.Notifier.Epoch, bts, err = msgp.ReadUint64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Notifier", "Epoch")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *PresenceSnapshot) Msgsize() (s int) {
+	s = 1 + msgp.BoolSize + 1 + msgp.StringPrefixSize + len(z.Notifier.ClientID) + msgp.Uint64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *PreviewCodeToolRemovalRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 2
@@ -17025,6 +17093,52 @@ func (z *SettingsFetchResult) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z ShellPresenceReport) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendBool(o, z.Present)
+	o = msgp.AppendBool(o, z.Notifies)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *ShellPresenceReport) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Present, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Present")
+		return
+	}
+	z.Notifies, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Notifies")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z ShellPresenceReport) Msgsize() (s int) {
+	s = 1 + msgp.BoolSize + msgp.BoolSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *ShellSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 3
@@ -20581,8 +20695,8 @@ func (z *WorkspaceSnapshot) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *WorkspaceState) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 9
-	o = append(o, 0x99)
+	// array header, size 10
+	o = append(o, 0x9a)
 	if z.Registry == nil {
 		o = msgp.AppendNil(o)
 	} else {
@@ -20665,6 +20779,15 @@ func (z *WorkspaceState) MarshalMsg(b []byte) (o []byte, err error) {
 			return
 		}
 	}
+	if z.Presence == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o, err = z.Presence.MarshalMsg(o)
+		if err != nil {
+			err = msgp.WrapError(err, "Presence")
+			return
+		}
+	}
 	if z.Fault == nil {
 		o = msgp.AppendNil(o)
 	} else {
@@ -20688,8 +20811,8 @@ func (z *WorkspaceState) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 9 {
-		err = msgp.ArrayError{Wanted: 9, Got: zb0001}
+	if zb0001 != 10 {
+		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -20887,6 +21010,22 @@ func (z *WorkspaceState) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		if err != nil {
 			return
 		}
+		z.Presence = nil
+	} else {
+		if z.Presence == nil {
+			z.Presence = new(PresenceSnapshot)
+		}
+		bts, err = z.Presence.UnmarshalMsg(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Presence")
+			return
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
 		z.Fault = nil
 	} else {
 		if z.Fault == nil {
@@ -20969,6 +21108,11 @@ func (z *WorkspaceState) Msgsize() (s int) {
 		s += msgp.NilSize
 	} else {
 		s += 1 + z.Board.Snapshot.Msgsize()
+	}
+	if z.Presence == nil {
+		s += msgp.NilSize
+	} else {
+		s += z.Presence.Msgsize()
 	}
 	if z.Fault == nil {
 		s += msgp.NilSize

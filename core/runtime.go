@@ -669,6 +669,7 @@ type actor struct {
 	documentReleases []document.Owner
 	maintenance      actorMaintenance
 	attention        attentionState
+	presence         map[coreprotocol.Owner]shellPresence // attached shells' reports; see presence.go
 	topic            workspaceTopicState
 	states           workspaceStates
 }
@@ -991,6 +992,7 @@ func (a *actor) runCommand(command actorCommand) (retired bool) {
 	}
 	if command.detach != nil {
 		delete(a.subscribers, command.detach)
+		a.forgetPresence(command.detach.Owner)
 		a.evaluateAttention(time.Now())
 		if a.ws.Terminals != nil {
 			a.ws.Terminals.Detach(workspace.TerminalController{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})

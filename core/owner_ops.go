@@ -31,6 +31,13 @@ func (a *actor) executeOwner(request coreprotocol.Request) (coreprotocol.Respons
 		}
 		a.publishStatusIfChanged()
 		return response(request, out), true
+	case coreprotocol.ShellPresenceMethod:
+		var in coreprotocol.ShellPresenceReport
+		if err := decodeRequest(request, &in); err != nil {
+			return fault(request, "invalid_request", err.Error()), true
+		}
+		a.reportPresence(request.Owner, in, time.Now())
+		return response(request, coreprotocol.Empty{}), true
 	case coreprotocol.CancelRequest:
 		var in coreprotocol.CancelRequestPayload
 		if err := decodeRequest(request, &in); err != nil {

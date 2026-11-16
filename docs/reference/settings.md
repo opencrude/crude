@@ -1010,6 +1010,15 @@ available regardless of the preference. Captured attachments and remote files ar
 client-local copies, never passed to a local app as a foreign-core path. See
 [attachment identity and opening](chat-activity.md#data-and-parity).
 
+**Notifications** (IDE group, after Terminal) is an application/workspace page
+for `ui.desktop_notifications`: a master **Desktop notifications** switch,
+switches for **Questions and approvals**, **Stopped runs** and **Finished
+work**, **Sound**, and **Away after** (1 to 60 minutes, default 5). Every switch
+is On unless stored Off. Notifications reach only an away user through the one
+shell that the core elects; see [desktop notifications](desktop-notifications.md).
+Interface and Notifications share the stored `ui` section; each page's Reset
+removes only its own keys.
+
 Session settings stay on the per-session Panel Deck (`/settings`). Titles are breadcrumbs: `Session Settings · Main Agent · Model`
 for any depth. The root page is a compact agent table (model, then
 account, aligned `·` columns). It lists built-in roles followed by the current

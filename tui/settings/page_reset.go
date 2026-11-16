@@ -41,7 +41,9 @@ func pageOwnershipFor(category int, scope types.SettingsScope) (pageOwnership, b
 		}
 		return pageOwnership{include: include, exclude: [][]string{{"lsp", "languages"}}}, true
 	case catUI:
-		return pageOwnership{include: [][]string{{"ui"}}}, true
+		return pageOwnership{include: [][]string{{"ui"}}, exclude: [][]string{{"ui", "desktop_notifications"}}}, true
+	case catNotifications:
+		return pageOwnership{include: [][]string{{"ui", "desktop_notifications"}}}, true
 	case catMemory:
 		return pageOwnership{include: [][]string{{"memory"}}, exclude: [][]string{{"memory", "memory_category"}}}, true
 	case catSafety:

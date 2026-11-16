@@ -497,6 +497,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "history.open":
 		return m.openLocalHistory()
+	case "notifications.test":
+		m.testDesktopNotification()
 	case "history.snapshot":
 		return m.captureHistoryCmd()
 

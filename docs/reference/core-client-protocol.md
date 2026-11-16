@@ -443,6 +443,7 @@ closed and typed, not arbitrary method invocation. Current families are:
 | Receipts | `request.receipt`, `request.cancel` (exact in-flight job) |
 | LSP | `lsp.snapshot`, `.notify_watched_files_changed`, `.set_active_file`, `.start_for_workspace`, `.stop`, `.restart_server`, `.stop_server`, `.navigation`, `.navigation_target`, `.completions`, `.completion_inspect`, `.completion_release`, `.inlay_hints`, `.inlay_inspect`, `.inlay_release`, `.document_symbols`, `.hover`, `.signature_help`; retained actions `.code_actions`, `.action_preview`, `.actions_release`; reviewed `.rename_preview`, `.edit_apply`, `.edit_release`, `.edit_receipt` |
 | Status | `status.snapshot`, `status.mutate` (notifications/issues/operations); shell transients stay local |
+| Presence | `shell.presence` (one shell's present/notifies report); the election is published on `state.presence` ([desktop notifications](desktop-notifications.md)) |
 | Documents | `document.open`, `.read`, `.close`, `.edit`, `.undo`, `.redo`, `.save`, `.format`; per-open document topic; `.sync` only for explicit recovery/shutdown; separate `.snapshot_save` checked disk commit |
 | Bulk transfer | `StreamBulk` method-specific metadata, ordered chunks, final digest; no connection-private response tokens |
 | Terminals | `terminal.list`, `.create`, `.rows`, `.control`, `.release`, `.close`; terminal grid topics and ordered lease input streams; explicit typed input/resize commands remain available |
@@ -946,7 +947,8 @@ Secret updates are write-only with explicit keep/replace/clear semantics; no raw
 API keys, OAuth tokens, proxy passwords, credential headers or secret-bearing
 extra bodies belong in read models or documentation examples. Client-local
 desktop/clipboard effects require explicit interaction, not a core-side action
-on every connected desktop.
+on every connected desktop. Desktop notifications are shown only by the one
+shell that the `state.presence` election names, never by the core.
 
 Terminal create acknowledgements mount their exact returned ID/title on Update
 without waiting for the independently delivered inventory. Switching from Notices

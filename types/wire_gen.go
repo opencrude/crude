@@ -3988,6 +3988,177 @@ func (z *CostValue) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *DesktopNotificationSettings) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 6
+	o = append(o, 0x96)
+	if z.Enabled == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBool(o, *z.Enabled)
+	}
+	if z.Input == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBool(o, *z.Input)
+	}
+	if z.Stopped == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBool(o, *z.Stopped)
+	}
+	if z.Finished == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBool(o, *z.Finished)
+	}
+	if z.Sound == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBool(o, *z.Sound)
+	}
+	o = msgp.AppendInt(o, z.AwayMinutes)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *DesktopNotificationSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Enabled = nil
+	} else {
+		if z.Enabled == nil {
+			z.Enabled = new(bool)
+		}
+		*z.Enabled, bts, err = msgp.ReadBoolBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Enabled")
+			return
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Input = nil
+	} else {
+		if z.Input == nil {
+			z.Input = new(bool)
+		}
+		*z.Input, bts, err = msgp.ReadBoolBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Input")
+			return
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Stopped = nil
+	} else {
+		if z.Stopped == nil {
+			z.Stopped = new(bool)
+		}
+		*z.Stopped, bts, err = msgp.ReadBoolBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Stopped")
+			return
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Finished = nil
+	} else {
+		if z.Finished == nil {
+			z.Finished = new(bool)
+		}
+		*z.Finished, bts, err = msgp.ReadBoolBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Finished")
+			return
+		}
+	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Sound = nil
+	} else {
+		if z.Sound == nil {
+			z.Sound = new(bool)
+		}
+		*z.Sound, bts, err = msgp.ReadBoolBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Sound")
+			return
+		}
+	}
+	z.AwayMinutes, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AwayMinutes")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *DesktopNotificationSettings) Msgsize() (s int) {
+	s = 1
+	if z.Enabled == nil {
+		s += msgp.NilSize
+	} else {
+		s += msgp.BoolSize
+	}
+	if z.Input == nil {
+		s += msgp.NilSize
+	} else {
+		s += msgp.BoolSize
+	}
+	if z.Stopped == nil {
+		s += msgp.NilSize
+	} else {
+		s += msgp.BoolSize
+	}
+	if z.Finished == nil {
+		s += msgp.NilSize
+	} else {
+		s += msgp.BoolSize
+	}
+	if z.Sound == nil {
+		s += msgp.NilSize
+	} else {
+		s += msgp.BoolSize
+	}
+	s += msgp.IntSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *DocumentInsight) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 8
@@ -12746,8 +12917,8 @@ func (z *TurnIdentity) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *UISettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 11
-	o = append(o, 0x9b)
+	// array header, size 12
+	o = append(o, 0x9c)
 	o = msgp.AppendInt(o, z.SidebarWidth)
 	if z.ShowHiddenFiles == nil {
 		o = msgp.AppendNil(o)
@@ -12763,6 +12934,11 @@ func (z *UISettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendBool(o, z.AnimationsEnabled)
 	o = msgp.AppendString(o, z.ContextHelp)
 	o = msgp.AppendString(o, z.AttachmentOpen)
+	o, err = z.DesktopNotifications.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "DesktopNotifications")
+		return
+	}
 	return
 }
 
@@ -12778,8 +12954,8 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 11 {
-		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
+	if zb0001 != 12 {
+		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
 		return
 	}
 	z.SidebarWidth, bts, err = msgp.ReadIntBytes(bts)
@@ -12848,6 +13024,11 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "AttachmentOpen")
 		return
 	}
+	bts, err = z.DesktopNotifications.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "DesktopNotifications")
+		return
+	}
 	o = bts
 	return
 }
@@ -12860,7 +13041,7 @@ func (z *UISettings) Msgsize() (s int) {
 	} else {
 		s += msgp.BoolSize
 	}
-	s += msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp) + msgp.StringPrefixSize + len(z.AttachmentOpen)
+	s += msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp) + msgp.StringPrefixSize + len(z.AttachmentOpen) + z.DesktopNotifications.Msgsize()
 	return
 }
 

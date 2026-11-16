@@ -423,6 +423,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		Category{Name: "Acquisition", Group: "AI", Description: "When agents may pick or install capabilities on their own, and the limits they work within.", Form: m.buildAcquisitionForm()},
 		Category{Name: "Language Tools", Group: "IDE", Description: "Configure language servers and review installed tools.", Form: formModel()},
 		Category{Name: "Terminal", Group: "IDE", Description: "The shell integrated terminals start, its environment, and where new terminals open.", Form: m.buildTerminalForm(current.Terminal)},
+		Category{Name: "Notifications", Group: "IDE", Description: "Desktop messages when an agent needs you. To check them, run Test Desktop Notification.", Form: m.buildNotificationsForm(current.UI.DesktopNotifications)},
 	)
 	for index := range m.categories {
 		category := index
@@ -1831,6 +1832,10 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		}
 		return
 	}
+	if category == catNotifications && fieldID == fieldNotifyEnabled {
+		syncNotificationsForm(m.categories[catNotifications].Form)
+		return
+	}
 	if category == catTerminal && fieldID == fieldTerminalShell {
 		m.syncTerminalCommand(m.categories[catTerminal].Form)
 		return
@@ -2414,7 +2419,11 @@ func (m *Model) workspaceOverridesPage(index int) bool {
 	case catEditor:
 		return m.storedOverrides.CategoryOverridden("editor")
 	case catUI:
-		return m.storedOverrides.CategoryOverridden("interface")
+		_, other := uiOverrideKeys(m.storedOverrides.UI)
+		return other
+	case catNotifications:
+		notifications, _ := uiOverrideKeys(m.storedOverrides.UI)
+		return notifications
 	case catMemory:
 		return m.storedOverrides.CategoryOverridden("memory")
 	case catSafety, catAutoReviewPolicy:
@@ -2550,6 +2559,8 @@ func railPosition(index int) int {
 	case catTerminal:
 		// Terminal follows Interface, the other window-chrome page.
 		return catUI*4 + 1
+	case catNotifications:
+		return catUI*4 + 2
 	case catAgents:
 		// The Agents catalog takes the Main Agent role's place.
 		return catMain * 4
@@ -2586,6 +2597,7 @@ const (
 	catAcquisition
 	catLanguageServers
 	catTerminal
+	catNotifications
 )
 
 // AppSettings returns the values held by the shared form models.
@@ -2940,6 +2952,7 @@ func (m *Model) collectUI(cfg *types.UISettings) {
 	cfg.ShowDiagnostics = m.value(catUI, "diagnostics") == "on"
 	cfg.ContextHelp = defaultString(m.value(catUI, "context-help"), "compact")
 	cfg.AttachmentOpen = m.value(catUI, "attachment-open")
+	m.collectDesktopNotifications(&cfg.DesktopNotifications)
 }
 
 func defaultString(value, fallback string) string {

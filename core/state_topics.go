@@ -14,7 +14,7 @@ import (
 	"crude/workspace"
 )
 
-var workspaceStateTopics = [...]string{coreprotocol.TopicStatus, coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory, coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard}
+var workspaceStateTopics = [...]string{coreprotocol.TopicStatus, coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory, coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard, coreprotocol.TopicPresence}
 
 // A state slot has one latest immutable publication and one conflated pending
 // derivation. Each family has its own joined worker: a slow Git read can never
@@ -157,6 +157,11 @@ func (a *actor) queueState(topic string) {
 				value.Snapshot = snapshot
 			}
 			return coreprotocol.WorkspaceState{Git: &value}
+		}
+	case coreprotocol.TopicPresence:
+		value := electPresence(a.presence)
+		run = func(context.Context) coreprotocol.WorkspaceState {
+			return coreprotocol.WorkspaceState{Presence: &value}
 		}
 	case coreprotocol.TopicBoard:
 		board := a.ws.Collaboration

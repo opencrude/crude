@@ -426,6 +426,7 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 		"lsp.problems",
 		"lsp.restart",
 		"memory.browse",
+		"notifications.test",
 		"performance.open",
 		"remote.connect",
 		"remote.health",

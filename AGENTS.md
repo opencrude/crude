@@ -243,6 +243,7 @@ most often broken there.
 | Keyboard/mouse behavior | [interaction matrix](docs/reference/interaction-matrix.md) | Esc is back; Ctrl+C is copy |
 | Dialogs and confirms | [dialog design language](docs/reference/dialog-design-language.md) | Use the shared confirm frame |
 | Any user-visible text: status, errors, prompts, help | [user language](docs/reference/user-language.md) | State and next step; never show internal state names |
+| Desktop notifications, shell presence | [desktop notifications](docs/reference/desktop-notifications.md) | Only the elected shell notifies an away user; never announce what the user saw |
 | Main panes, tabs, agent tabs | [main view panes](docs/reference/main-view-panes.md) | Closing an agent tab minimizes, never terminates |
 | Chat transcript, tool rows, activity strip | [chat activity](docs/reference/chat-activity.md) | Live and hydrated rows must paint identically |
 | Composer, text fields, clipboard, cursor | [text input](docs/reference/text-input.md) | Lifecycle events never consume the draft |

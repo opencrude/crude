@@ -14,12 +14,14 @@ detailed contracts.
 | `main.go`, `app/` | CLI parsing, application config, core spawning (`core_image.go` staged executable, detach), MCP control entry. No session or orchestrator knowledge. |
 | `buildinfo/` | Build identity and `buildinfo.Home`, the single Crude data root (`CRUDE_HOME`). |
 | `crashlog/` | Process-local synchronous fatal output and recovered TUI panic reports; no event-loop or normal-log dependency. |
-| `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. `core/attention.go` sends the workspace Aeron one notice per Investigate issue. |
+| `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. `core/attention.go` sends the workspace Aeron one notice per Investigate issue; `core/presence.go` elects the shell that shows desktop notifications. |
 | `coreprotocol/` | Versioned, presentation-neutral core API types. |
 | `projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
 | `corewire/` | Bounded framed transport (local socket, SSH stdio bridge). |
 | `coreclient/` | Client multiplexer and detached read mirrors (`WorkspaceView`). |
 | `shellport/` | The `shellport.Workspace` seam the TUI consumes; `shellport/remote` is the CLI runtime path. |
+| `desktopnotify/` | Native desktop notifications for one shell process: WinRT toasts on Windows, freedesktop D-Bus on Linux, a macOS slot. Delivery only; policy is in `tui/viewmodel/desktop_notices.go` ([desktop notifications](../reference/desktop-notifications.md)). |
+| `assets/` | Brand images; `assets.IconPNG` is the notification icon. |
 | `clientstate/` | Client-private composer and unresolved-editor persistence with profile locks and epochs. |
 | `workspace/` | Per-project state machine: sessions, agent inventory, conversation, LSP manager, documents, file ops, search, terminals, Git, Local History lifecycle. Never imports `tui/`. |
 | `types/` | Neutral contracts shared by every layer (settings, reasoning, accounting, activity, capability registration). |
@@ -162,6 +164,7 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `frame_scheduler.go` | Presentation coalescing (16 ms deadline) |
 | `git_snapshot.go` | Silent Git snapshot reconciliation |
 | `slash_commands.go`, `command_palette.go` | Slash commands and palette |
+| `desktop_notices.go` | Shell presence reports and the desktop-notification policy: news, settle, banner or quiet update, withdraw, click |
 
 ### `workspace/`
 | File | Role |
@@ -225,6 +228,7 @@ All Crude data lives under `buildinfo.Home` (the user's home directory unless
 | `.crude/workspaces/<hash>/sessions/<id>.db` | One SQLite database per session |
 | `.crude/workspaces/<hash>/sessions/<id>/` | Session-owned files (temporary directory, attachments, child-agent data) |
 | `.crude/corewire/core.sock` | The per-user core socket |
+| `.crude/notifications/icon.png` | The icon that desktop notifications show (written by the shell) |
 | `.crude/bin/crude-core-<build-id>` | The staged, immutable core executable |
 | `.crude/crashes/tui-<time>-<pid>-<nonce>.log` | Private synchronous TUI crash reports |
 | `.crude/crashes/core-<time>-<pid>-<nonce>.log` | Private synchronous core crash reports on that core's host |
