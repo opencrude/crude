@@ -7,6 +7,8 @@ import (
 	"crude/tui/rendering"
 )
 
+// /compact is not in this list: the owning session accepts it during a turn
+// (see TestRemoteAppJourneyCompactDuringActiveTurnIsAccepted).
 func TestSlashMutationsRejectActiveTurnWithoutStartingAsyncWork(t *testing.T) {
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
@@ -17,7 +19,7 @@ func TestSlashMutationsRejectActiveTurnWithoutStartingAsyncWork(t *testing.T) {
 	node.State.Running = true
 	node.State.Thinking = true
 
-	for _, command := range []string{"/undo", "/compact"} {
+	for _, command := range []string{"/undo"} {
 		if cmd := app.executeSlashCommand(command); cmd != nil {
 			t.Fatalf("%s scheduled backend work during an active turn", command)
 		}

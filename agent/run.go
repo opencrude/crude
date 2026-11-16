@@ -424,7 +424,18 @@ steps:
 			archiveMsgs = removeMessagesByInternalID(archiveMsgs, runtimeNoticeIDs)
 		}
 		ctxWindow = a.Provider.ContextWindow(a.Model)
-		if a.ContextCompactionPercent != CompactionOff && ctxWindow > 0 {
+		// A human /compact accepted during this run is honoured here, before
+		// the next request, whatever the automatic policy says.
+		requested := ""
+		if a.CompactionRequest != nil {
+			requested = a.CompactionRequest()
+		}
+		if requested != "" && ctxWindow <= 0 {
+			data := compactionEventData(requested, "requested", checkpointRole(a.Depth), 0, 0, 0, 0, ctxWindow)
+			data["error"] = "the model's context window is unknown, so its context cannot be compacted"
+			emit(AgentEvent{Type: "context_compaction_failed", Data: data})
+		}
+		if (a.ContextCompactionPercent != CompactionOff || requested != "") && ctxWindow > 0 {
 			activeTokens := contextUsage.projected(msgs, allTools, a.Model)
 			hardLimit := max(1, ctxWindow-a.outputTokenLimit(ctxWindow, 0)-contextSafetyReserve(ctxWindow))
 			fixed := estimateCanonicalRequest(msgs[:1], allTools, a.Model)
@@ -446,8 +457,12 @@ steps:
 			// into one after real growth, also past an explicit percentage. Only
 			// capacity overrides a deferral.
 			deferred := planner.deferred(msgs, activeTokens) && activeTokens < hardLimit && !overflowPressure
-			if deferred {
+			if deferred && requested == "" {
 				plan.swap, plan.force = false, false
+			}
+			trigger := "automatic"
+			if requested != "" {
+				plan.force, plan.reason, trigger = true, "requested with /compact", "requested"
 			}
 			l.Debug("COMPACT", "plan", "active", activeTokens, "hard_limit", hardLimit, "tail", tailTokens, "prepare", plan.prepare, "swap", plan.swap, "force", plan.force,
 				"excess", planner.excess, "units", planner.units, "checkpoint", planner.checkpoint, "growth", planner.maxGrowth,
@@ -665,12 +680,15 @@ steps:
 				slot.start(a, msgs, allTools, cut, tailHasHuman, checkpointTarget, ctxWindow, activeTokens-tailTokens)
 			}
 			if plan.force || serial && plan.swap {
-				requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
+				requestID := requested
+				if requestID == "" {
+					requestID = fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
+				}
 				compactor := a.backgroundCompactor(ctxWindow, checkpointTarget, tailHasHuman)
 				if a.PrepareCompaction != nil {
 					if err := a.PrepareCompaction(CompactionSource{
 						Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: activeTokens,
-						ContextWindow: ctxWindow, RequestID: requestID, Trigger: "automatic", Role: role,
+						ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
 						AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 					}); err != nil {
 						stopOnCompaction(&compactionStorageError{fmt.Errorf("persist compaction source: %w", err)})
@@ -682,7 +700,7 @@ steps:
 				// smaller than the reported context minus the verbatim tail.
 				source := msgs[:cut]
 				sourceTokens := max(estimateCanonicalRequest(source, allTools, a.Model), activeTokens-tailTokens)
-				outcome, compactErr := compactor.compactWithModel(ctx, source, allTools, requestID, sourceTokens, "automatic", emit)
+				outcome, compactErr := compactor.compactWithModel(ctx, source, allTools, requestID, sourceTokens, trigger, emit)
 				atCapacity := overflowPressure || activeTokens >= hardLimit
 				if compactErr != nil && ctx.Err() == nil && atCapacity && compactionModelUnavailable(compactErr) &&
 					a.CompactionProvider != nil && !provider.SameConnection(a.CompactionProvider, a.Provider) {
@@ -691,10 +709,10 @@ steps:
 					// limits are already adapted by the extractor). The
 					// agent's own connection writes this one checkpoint.
 					l.Warn("COMPACT", "compaction_model_fallback", "error", compactErr.Error())
-					outcome, compactErr = a.compactorFor(true, ctxWindow, checkpointTarget, tailHasHuman).compactWithModel(ctx, source, allTools, requestID, sourceTokens, "automatic", emit)
+					outcome, compactErr = a.compactorFor(true, ctxWindow, checkpointTarget, tailHasHuman).compactWithModel(ctx, source, allTools, requestID, sourceTokens, trigger, emit)
 				}
 				if compactErr == nil {
-					adopted, err := adopt(outcome, cut, requestID, "automatic", false)
+					adopted, err := adopt(outcome, cut, requestID, trigger, false)
 					if adopted {
 						continue steps
 					}
@@ -712,7 +730,7 @@ steps:
 						compactErr = err
 					}
 				}
-				data := compactionEventData(requestID, "automatic", role, outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
+				data := compactionEventData(requestID, trigger, role, outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
 				data["account_id"], data["provider_id"], data["model_id"] = outcome.AccountID, outcome.ProviderID, outcome.ModelID
 				data["stage_label"], data["retry"], data["error"] = outcome.StageName, outcome.RetryAttempt, compactErrorText(compactErr)
 				if ctx.Err() != nil {
@@ -724,6 +742,9 @@ steps:
 				if !errors.As(compactErr, &storage) && deferCompaction(activeTokens) {
 					data["deferred"] = true
 					data["error"] = compactErrorText(compactErr) + "; continuing with the full context and retrying later"
+					if trigger == "requested" {
+						data["error"] = compactErrorText(compactErr) + "; continuing with the full context"
+					}
 					emit(AgentEvent{Type: "context_compaction_failed", Data: data})
 					l.Warn("COMPACT", "automatic_deferred", "active", activeTokens, "retry_at", planner.deferredUntil, "hard_limit", hardLimit, "error", compactErr.Error())
 				} else {

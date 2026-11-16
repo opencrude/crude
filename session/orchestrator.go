@@ -28,7 +28,13 @@ type Orchestrator struct {
 	turnCancel     context.CancelFunc
 	turnCancelling bool
 	turnSealed     bool
-	inputCh        chan turnRequest
+	// compactionRequest is a human compaction the current turn accepted. The
+	// run takes it before its next model request; a turn that ends first hands
+	// it to the session's exclusive compaction. compactionSealed closes
+	// acceptance at that hand-off, so a later request waits for the gate.
+	compactionRequest string
+	compactionSealed  bool
+	inputCh           chan turnRequest
 }
 
 type turnRequest struct {
@@ -68,6 +74,7 @@ func (o *Orchestrator) reserveTurn(input provider.UserInput, deliveries []collab
 	o.turnGeneration++
 	o.turnCancel, o.turnCancelling = cancel, false
 	o.turnSealed = false
+	o.compactionRequest, o.compactionSealed = "", false
 	return turnRequest{input: input, ctx: ctx, generation: o.turnGeneration, deliveries: append([]collaboration.PendingDelivery(nil), deliveries...), recovery: recovery}, true
 }
 
@@ -104,6 +111,7 @@ func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) b
 	o.turnCancel = cancel
 	o.turnCancelling = false
 	o.turnSealed = false
+	o.compactionRequest, o.compactionSealed = "", false
 	copy := checkpoint
 	request := turnRequest{
 		input: cloneUserInput(checkpoint.PendingInput), ctx: ctx,
@@ -180,6 +188,7 @@ func (o *Orchestrator) endTurn(generation uint64) []string {
 	o.turnCancel = nil
 	o.turnCancelling = false
 	o.turnSealed = false
+	o.compactionRequest, o.compactionSealed = "", false
 	o.RunID = ""
 	o.RunVersion = 0
 	o.turnMu.Unlock()
@@ -248,6 +257,52 @@ func (o *Orchestrator) ResolveBlock(response ttypes.BlockResponse) bool {
 	default:
 		return false
 	}
+}
+
+// requestCompaction gives a human compaction to the running turn. It reports
+// the request the turn will honour (an earlier one when already requested).
+// A stopping or ending turn does not accept it; the caller then waits for the
+// turn gate instead.
+func (o *Orchestrator) requestCompaction(operationID string) (string, bool) {
+	if o == nil {
+		return "", false
+	}
+	o.turnMu.Lock()
+	defer o.turnMu.Unlock()
+	if o.turnCancel == nil || o.turnCancelling || o.compactionSealed || o.closing.Load() {
+		return "", false
+	}
+	if o.compactionRequest == "" {
+		o.compactionRequest = operationID
+	}
+	return o.compactionRequest, true
+}
+
+// takeCompactionRequest consumes the request at a safe step boundary of the
+// exact turn generation that accepted it.
+func (o *Orchestrator) takeCompactionRequest(generation uint64) string {
+	o.turnMu.Lock()
+	defer o.turnMu.Unlock()
+	if generation != o.turnGeneration || o.turnCancelling {
+		return ""
+	}
+	id := o.compactionRequest
+	o.compactionRequest = ""
+	return id
+}
+
+// sealCompactionRequests closes acceptance as the turn ends and returns the
+// request it did not take.
+func (o *Orchestrator) sealCompactionRequests(generation uint64) string {
+	o.turnMu.Lock()
+	defer o.turnMu.Unlock()
+	if generation != o.turnGeneration {
+		return ""
+	}
+	o.compactionSealed = true
+	id := o.compactionRequest
+	o.compactionRequest = ""
+	return id
 }
 
 func (o *Orchestrator) TurnActive() bool {

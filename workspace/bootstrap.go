@@ -317,20 +317,21 @@ func (w *Workspace) HandleCompactForAgent(agentID string) ttypes.CompactResultMs
 // PrepareCompactForAgent registers lifecycle ownership synchronously so the
 // TUI can paint and cancel the operation before its tea.Cmd begins I/O.
 func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedCompaction, ttypes.CompactResultMsg) {
+	const unavailable = "This agent has no open session. Context was not compacted."
 	if w == nil || w.AgentMgr == nil {
-		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
+		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: unavailable}
 	}
 	node := w.AgentMgr.Get(agentID)
 	if node == nil {
-		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
+		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: unavailable}
 	}
 	if node.Parent != nil {
-		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "Child contexts compact automatically while their delegated work is active"}
+		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "Child agents compact their context automatically. Run /compact in the main agent tab."}
 	}
 	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
 		return sess.backend.PrepareCompaction(agentID)
 	}
-	return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
+	return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: unavailable}
 }
 
 // humanName is how the human appears to people and agents: their username.

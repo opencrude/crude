@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"crude/coreprotocol"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -113,19 +112,15 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		if err := decodeRequest(request, &in); err != nil {
 			return bad(err)
 		}
-		if ws.AgentTurnActive(in.AgentID) {
-			return done(wire(types.CompactResultMsg{Error: "Stop the active turn before compacting context"}))
-		}
+		// The owning session alone decides admission: it compacts now, after
+		// a finishing turn, or at the active turn's next step.
 		prepared, result := ws.PrepareCompactForAgent(in.AgentID)
 		if prepared.Run == nil {
 			return done(wire(result))
 		}
-		// The boundary row is reduced once here, so every shell shows it.
-		if reduced := ws.ApplyAgentEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: in.AgentID, Data: map[string]any{
-			"request_id": prepared.OperationID, "trigger": "manual", "role": "root",
-			"provider_id": prepared.ProviderID, "model_id": prepared.ModelID,
-			"stage": 0, "completed_stages": 0, "stage_count": 4, "retry_limit": 3,
-		}}); reduced.Accepted {
+		// The boundary row is reduced before the job starts, so every shell
+		// shows the admitted operation at once.
+		if reduced := ws.ApplyAgentEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: in.AgentID, Data: prepared.Started}); reduced.Accepted {
 			a.reduced(reduced)
 		}
 		return func(ctx context.Context) coreprotocol.Response {
