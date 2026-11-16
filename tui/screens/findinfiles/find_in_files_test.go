@@ -60,13 +60,14 @@ func TestResultActivationCapturesExactMatchAndQueryInvalidatesRows(t *testing.T)
 	s.SetQuery("alpha")
 	s.ScheduleSearch()
 	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 1, LineText: "alpha", Context: "alpha", ContextStart: 1, EndColumn: 5}}, nil, 0)
+	preview := s.previewSrc
 	cmd := s.openSelected()
 	s.SetQuery("beta")
 	s.ScheduleSearch()
 	if got := cmd().(OpenMsg).Match.Path; got != "a" {
 		t.Fatalf("activation lost exact identity: %q", got)
 	}
-	if s.openSelected() != nil || s.previewSrc != nil || len(s.results) != 0 {
+	if s.openSelected() != nil || s.previewSrc != nil || len(s.results) != 0 || preview.IsOpen() {
 		t.Fatal("stale result remains actionable")
 	}
 }

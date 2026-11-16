@@ -28,6 +28,34 @@ func TestNewWindowManager(t *testing.T) {
 	}
 }
 
+func TestConstrainModalsKeepsDecisionsAndFocusOnScreen(t *testing.T) {
+	mgr := NewWindowManager()
+	ordinary := NewFloatingWindow("editor", "", testWidget{}, 150, 40)
+	ordinary.SetPosition(20, 10)
+	mgr.AddWindow(ordinary)
+	dialog := NewFloatingWindow("decision", "", testWidget{}, 116, 36,
+		WithModal(true), WithMinSize(60, 20))
+	dialog.SetPosition(2, 2)
+	mgr.AddWindow(dialog)
+	mgr.activeDrag, mgr.activeResize = dialog, dialog
+	dialog.SetDragging(true)
+	dialog.SetResizing(true, EdgeBottomRight)
+	for _, size := range [][2]int{{80, 24}, {40, 10}, {160, 40}} {
+		mgr.ConstrainModals(size[0], size[1])
+		x, y := dialog.Position()
+		w, h := dialog.Size()
+		if x < 0 || y < 0 || x+w > size[0] || y+h > size[1] {
+			t.Fatalf("screen %v: decision outside terminal: %d,%d %dx%d", size, x, y, w, h)
+		}
+		if mgr.Focused() != dialog || !dialog.Focused() || mgr.activeDrag != nil || mgr.activeResize != nil {
+			t.Fatal("resize lost modal focus or retained the old gesture")
+		}
+		if ow, oh := ordinary.Size(); ow != 150 || oh != 40 {
+			t.Fatal("modal constraint changed a floating editor")
+		}
+	}
+}
+
 func TestWindowAtSharesZOrderAndModalAuthorityWithoutMutation(t *testing.T) {
 	mgr := NewWindowManager()
 	a := NewFloatingWindow("a", "", testWidget{}, 20, 10)

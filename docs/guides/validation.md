@@ -289,6 +289,42 @@ change.
 
 ## Visual capture
 
+### Editor discard, disk conflicts and comparison choices
+
+`TestEditorFileFlowVisualAcceptance` runs a disposable connected shell with
+`CRUDE_VISUAL_FILE_FLOW=close`, `disk`, `git`, `icons`, `search` or `dense-search`. Compile the viewmodel
+test binary and use `scripts/tuishot.sh` sequentially at 160×40 and 80×24.
+Set `CRUDE_FILE_FLOW_RESULT` and `CRUDE_CAPTURE_EVIDENCE` to the same new file.
+F4 observes the mounted frame and source state; after each F4 use
+`await:FILE_FLOW_READY phase=N`, starting at 1. Finish with `quit:F9`.
+
+- **close:** Ctrl+W, F4, Escape, F4, Ctrl+W, D, F4. Cancel preserves the dirty
+  text; Discard closes it without writing the unsaved text to disk.
+- **disk:** Ctrl+S, F4, Escape, F4, Ctrl+S, Left, Enter, F4. Compare opens the
+  shared reader. N, 1, F4 keeps the user's first change and the disk's second
+  change. Ctrl+S, F4 verifies that the combined result is saved.
+- **git:** F4 observes two regions from a real stopped local merge. 1, N, 2,
+  F4 selects current for the first and incoming for the second. Ctrl+S, F4
+  verifies that the result is written and staged.
+- **icons:** F4 verifies file-type icons in both split panes. Drag `b.md`
+  into the right pane, then F4 verifies that the left pane returns to its most
+  recently selected `a.go`, not its nearest remaining tab. The moved file alone
+  receives focus.
+- **search:** Ctrl+Alt+F, type `direction is`, F4. A real project search must
+  show the exact match above an earlier fuzzy match in the same file. Letters
+  scattered across unrelated prose must not become another result.
+- **dense-search:** A 512-file fixture exercises the full 1,000-result set and
+  an exact hit in the last file. Ctrl+Alt+F, type `direction is`, F4; Down, F4.
+  Re-invoke Ctrl+Alt+F and type `rareNeedle state`, F4, then repeat with
+  `noSuchStateMachine`, F4, then `rareNeedle state`, F4. Enter, F4 verifies
+  landing on line 130 of the current result, not an old query's match.
+
+The same ordinary key sequence runs in `TestEditorFileFlowHeadless`, at both
+sizes. The Git dialog starts before terminal-size negotiation, so the narrow
+journey also checks resize of an already open modal. All paths check exact disk
+text on exit and join their private runtime. No user core or inference is used.
+Headless success is not native visual or native Windows acceptance.
+
 ### Editor action and structural-motion acceptance
 
 `TestEditorActionsVisualAcceptance` uses `CRUDE_VISUAL_EDITOR_ACTIONS=1` and

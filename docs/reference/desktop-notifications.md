@@ -192,6 +192,9 @@ Xfce, Cinnamon, dunst, mako and swaync implement it.
   body is escaped.
 - `replaces_id` replaces in place; `CloseNotification` withdraws;
   `NotificationClosed` forgets a message that the user closed.
+- The embedded PNG is sent as an escaped `file://` URI in `app_icon`, as the
+  specification requires. A bare absolute path is interpreted as an icon-theme
+  name by some desktops. No distro-specific icon registration is needed.
 - Signals are matched by the service's bus name, object path and interface,
   so another program cannot fake a click.
 - Every call has a 5-second deadline, so a stalled service cannot stop the
@@ -219,8 +222,15 @@ use `osascript display notification`: it shows Script Editor as the sender.
 
 - `desktopnotify`: Center coalescing, withdraw and close, retry of a missing
   service, click routing, text cleaning, SSH detection; Windows XML escaping
-  and tags; Linux against a fake notification service on a real session bus
-  (run the Linux test binary inside `dbus-run-session`).
+  and tags; Linux against a fake notification service on a private session bus. Each
+  test starts and joins its own `dbus-daemon`; it never claims the desktop
+  notification service. Without `dbus-daemon`, these Linux bus tests skip.
+- `CRUDE_NATIVE_NOTIFICATION=1` enables
+  `TestFreedesktopNativeLogoAcceptance`. It shows one silent sample through the
+  actual backend for eight seconds, then withdraws only that sample and closes.
+  `CRUDE_NOTIFICATION_RESULT` receives its readiness marker and icon URI.
+  Native Budgie 10.9.1 acceptance reproduced the missing icon with a bare path
+  and verified the logo with the standard URI; other desktops were not run.
 - `core/presence_test.go`: election rules.
 - `tui/viewmodel/desktop_notices_test.go`: baseline, seen news, election,
   settle, cooldown, withdraw, idle, click, workspace switch, kind switches,

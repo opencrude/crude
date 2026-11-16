@@ -60,6 +60,7 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 	}
 
 	var re *regexp.Regexp
+	fuzzy := textsearch.CompileFuzzy(query, opts.CaseSensitive)
 	matcher, err := textsearch.Compile(query, textsearch.Options{CaseSensitive: opts.CaseSensitive, WholeWord: opts.WholeWord, Regex: opts.Regex})
 	if err != nil {
 		return nil, fmt.Errorf("invalid query: %w", err)
@@ -104,7 +105,7 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		pathPositions, pathScore, nameMatched := projectSearchMatch(rel, query, opts.CaseSensitive, re)
+		pathPositions, pathScore, nameMatched := projectSearchMatch(rel, fuzzy, re)
 
 		info, statErr := entry.Info()
 		if statErr != nil || info.Size() > maxProjectSearchFileSize {
@@ -126,6 +127,16 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 		}
 
 		text := string(decoded)
+		hits := matcher.FindAll(text, maxProjectSearchResults-len(results))
+		fuzzyContent := !opts.Regex && !opts.WholeWord && !strings.ContainsAny(query, "\r\n\t") && len(suggestions) < maxProjectSearchResults
+		// Most files have no exact hit. Once discovery capacity is full, do
+		// not split or index their lines just to throw that work away.
+		if len(hits) == 0 && !fuzzyContent {
+			if nameMatched && len(suggestions) < maxProjectSearchResults {
+				suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+			}
+			return nil
+		}
 		lines := strings.Split(text, "\n")
 		starts := make([]int, len(lines))
 		for i := 1; i < len(lines); i++ {
@@ -133,7 +144,7 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 		}
 		contentMatches := 0
 		exactLines := make(map[int]bool)
-		for _, hit := range matcher.FindAll(text, maxProjectSearchResults-len(results)) {
+		for _, hit := range hits {
 			if len(results) >= maxProjectSearchResults {
 				return fs.SkipAll
 			}
@@ -176,7 +187,7 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 		}
 		// Fuzzy content is project discovery only. Exact hits remain authoritative
 		// and every suggestion is explicitly non-replaceable.
-		if !opts.Regex && !opts.WholeWord && !strings.ContainsAny(query, "\r\n\t") {
+		if fuzzyContent {
 			for lineIdx, line := range lines {
 				if len(suggestions) >= maxProjectSearchResults {
 					break
@@ -189,7 +200,7 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 						return err
 					}
 				}
-				positions, score, ok := textsearch.Fuzzy(line, query, opts.CaseSensitive)
+				positions, score, ok := fuzzy.Match(line)
 				if !ok || len(positions) == 0 {
 					continue
 				}
@@ -264,7 +275,7 @@ func boolScore(v bool, score int) int {
 	return 0
 }
 
-func projectSearchMatch(text, query string, caseSensitive bool, re *regexp.Regexp) ([]int, int, bool) {
+func projectSearchMatch(text string, fuzzy *textsearch.FuzzyMatcher, re *regexp.Regexp) ([]int, int, bool) {
 	if re != nil {
 		loc := re.FindStringIndex(text)
 		if loc == nil {
@@ -278,7 +289,7 @@ func projectSearchMatch(text, query string, caseSensitive bool, re *regexp.Regex
 		}
 		return positions, 9000 - start, true
 	}
-	return fuzzyRuneMatch(text, query, caseSensitive)
+	return fuzzy.Match(text)
 }
 
 func fuzzyRuneMatch(text, query string, caseSensitive bool) ([]int, int, bool) {

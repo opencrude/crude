@@ -16,6 +16,7 @@ Language servers consume decoded source; they do not own file encodings.
 
 | Date | Decision | From |
 |---|---|---|
+| 2026-11-16 | Improve Find in Files performance; the current search feels slow. | User |
 | 2026-11-14 | Restore the Save File picker header. Use bounded filename and encoding controls, with a real encoding dropdown rather than the stepper. Keep the shared form and window assets. | User |
 | 2026-11-09 | A double click on empty main-tab rail opens a new unnamed buffer. An explicit save opens a practical save window using Attach Files as a visual reference. Automatic saving does not affect unnamed buffers; after the first explicit save they follow the normal setting. | User |
 | 2026-11-09 | The save window must use visibly consistent form controls and offer encoding. Replacing a file asks a simple question; it must not open a diff automatically. Offer comparison through the existing comparison tab, without a second diff surface. Keep the UI clean and deliberate. | User |
@@ -115,6 +116,70 @@ bounded controls, open dropdown and an actual UTF-16 LE save. These captures
 validate this revision, not the rejected stepper. Repository gate results are
 reported separately; Windows/macOS UI acceptance is not claimed.
 
+### File-decision handoff acceptance (2026-11-16)
+
+The editor/file changes in `1b937e0b`, followed by the fixed-size wire decoder
+repair in `01cb8d96`, have Linux native journey coverage through
+`TestEditorFileFlowVisualAcceptance`. Ten sequential captures at 160×40 and
+80×24 verify:
+
+- Save / Discard / Cancel, preserving dirty text on Cancel and closing without
+  writing it on Discard.
+- The disk-conflict dialog, Cancel, Compare, per-change choices, and saving the
+  combined result to the actual file.
+- Two regions from a real Git merge, choosing current/incoming independently,
+  then saving and staging the result.
+- File icons in split panes and a real pointer tab move that restores the source
+  pane's most recently selected file and focuses only the moved file.
+- Real project search with an exact match above an earlier fuzzy suggestion,
+  excluding a phrase assembled from unrelated prose.
+
+The performance follow-up reruns those ten journeys plus two `dense-search`
+captures. A 512-file project checks the 1,000-result limit, an exact hit in the
+last file, keyboard navigation, replacement of the query, no-results state and
+Open landing on the current match. All twelve native Linux journeys pass.
+The [performance record](../reference/performance-baselines.md#find-in-files-scan-and-navigation-2026-11-16)
+separates scanner and navigation measurements from physical-display latency.
+
+Acceptance found and corrected two shared presentation defects: constrained
+action bars now reduce gaps before clipping labels and retain their compact
+captions when choices enable Save; terminal resize keeps modal decisions on
+screen without replacing their content or focus. The headless counterpart checks
+the same flows, but is not substituted for the native captures.
+The full suite also exposed a selection-history mutation when pressing the
+already selected tab. That selection is now a no-op; the existing all-edge
+ancestor-drag regression and the MRU close/move checks remain unchanged.
+
+All accepted captures exit cleanly and join their private runtime. The wire
+decoder regression and repository gates are checked separately. Windows/macOS
+component cross-builds are not native UI acceptance. This record does not close
+the encoding and Save As scope below.
+
+### Handoff and search verification (2026-11-16)
+
+- All twelve Linux native journeys pass at 160×40 and 80×24, with clean exits,
+  exact disk outcomes and inspected screenshots. Budgie notification-logo
+  acceptance also passes through the actual freedesktop backend.
+- Build, protocol-cohort freshness, whole-repository lint (zero issues), design,
+  names and documentation checks pass. The complete `make bench-gate` passes,
+  including the new search/navigation budgets; no existing limit was raised.
+- `textsearch`, `fileio`, Find in Files and editor package race tests pass.
+  Connected search/replacement, conflict, close and file-flow race journeys pass.
+  The earlier exhaustive workspace/viewmodel race groups passed before the search
+  performance follow-up; they are not relabelled as an exhaustive final-tree race
+  run. Windows/macOS affected-component cross-builds pass, not native UI tests.
+- **The final `make test` run is not green.** It stops in core group 2 at
+  `TestSessionCoreCloseIsConsumedAndConcurrentCloseJoins`
+  (`core/session_close_test.go:114`): the client reports `core client disconnected`
+  instead of the expected lost-session ending. No core, client or transport
+  shutdown source was changed. The failed group was not retried or suppressed.
+  Every group the failure prevented from starting passes separately: core groups
+  3–4, all five session groups, all nine viewmodel groups and all five workspace
+  groups. This does not turn the failed full-suite command into a pass.
+
+The requested performance improvement and feature visual acceptance are verified.
+An all-green repository handoff remains open on the core shutdown-test failure.
+
 ## Integration and acceptance
 
 | Area | Required outcome | Current evidence |
@@ -128,7 +193,7 @@ reported separately; Windows/macOS UI acceptance is not claimed.
 | Preferences | Only useful policy: a default for new file encoding at application/workspace scopes, explicit per-save override, ordinary inheritance/reset/live save | Sparse save/explicit UTF-8/reset tests pass; native 80×24 preference save and new-buffer inheritance observed; all four captions pass the narrow rendering regression |
 | Self-control | Discoverable document/encoding operations and exact native controls; resolve real effects, owner, revision and outcome through the same commands | `TestControlUnnamedEncodingJourney` passes settings → new → edit → first save → convert → reload through the real core router; pathless edits have no invented file claim |
 | Terminal bounds | Keyboard and pointer; readable at 80×24 and desktop; no hidden decisions, clipped choice lists, overlapping headers or duplicate diff | Final 80×24 and 160×40 captures inspected; Save File, optional comparison, all menu choices and the full `UTF-8 BOM` caption are readable; preference save reaches a new unnamed buffer |
-| Verification | Focused, affected-package, race, build, lint, docs and performance gates; native acceptance distinct from cross-build | Linux milestone gates pass with the aggregate-test limitation recorded below; Windows/macOS cross-builds pass, not native acceptance |
+| Verification | Focused, affected-package, race, build, lint, docs and performance gates; native acceptance distinct from cross-build | Handoff/search native, scoped race, build/lint/docs and complete benchmark gates pass. The final full suite retains the core shutdown-test failure recorded above; Windows/macOS cross-builds are not native acceptance |
 
 ### Linux verification record (2026-11-09)
 

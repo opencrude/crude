@@ -85,6 +85,8 @@ run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./synta
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkChatFind' ./tui/screens/shellchat
 run_bench '^BenchmarkFooterOverflowPaint$' ./tui/screens/shellfooter
+run_bench '^BenchmarkSearchProjectDense$' ./fileio
+run_bench '^BenchmarkProjectSearchSelection$' ./tui/screens/findinfiles
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
 run_bench '^BenchmarkDenseCommand(SettlementPresentedFrame|Reveal)$' ./tui/chatprojection
 run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview

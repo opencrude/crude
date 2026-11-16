@@ -243,7 +243,7 @@ func TestSyntaxUnsupportedLanguagesDoNotPretendCoverage(t *testing.T) {
 }
 
 func TestSyntaxRealProjectSources(t *testing.T) {
-	for _, path := range []string{"../tui/editor/editor.go", "../site/src/App.tsx"} {
+	for _, path := range []string{"../tui/editor/editor.go", "../site/assets/crude.js"} {
 		t.Run(path, func(t *testing.T) {
 			source, err := os.ReadFile(path)
 			if err != nil {
@@ -316,7 +316,7 @@ func BenchmarkNativeSyntaxColdSession(b *testing.B) {
 }
 
 func BenchmarkNativeSyntaxRealSources(b *testing.B) {
-	for _, path := range []string{"../tui/editor/editor.go", "../site/src/App.tsx"} {
+	for _, path := range []string{"../tui/editor/editor.go", "../site/assets/crude.js"} {
 		source, err := os.ReadFile(path)
 		if err != nil {
 			b.Fatal(err)

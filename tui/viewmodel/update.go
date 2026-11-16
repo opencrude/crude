@@ -520,6 +520,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.compositor != nil {
 			m.compositor.Resize(msg.Width, msg.Height)
 		}
+		if m.windowManager != nil {
+			m.windowManager.ConstrainModals(msg.Width, msg.Height)
+		}
 		if initialSize && m.ActiveSession != nil {
 			if err := m.ActiveSessionConnectionIssue(); err != nil {
 				m.showAccountRecovery(true, err.Error())

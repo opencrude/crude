@@ -334,6 +334,9 @@ func (w *Window) SwitchTo(index int) {
 // selectTab makes id the selected tab of group and records it as the group's
 // most recently selected tab.
 func (w *Window) selectTab(group GroupID, id TabID) {
+	if w.groupActive[group] == id {
+		return
+	}
 	w.groupActive[group] = id
 	w.activations++
 	for i := range w.tabs {

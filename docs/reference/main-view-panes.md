@@ -55,8 +55,10 @@ primary view hands the primary editor to a sibling tab, which keeps its own
 caret and scroll. Closing the last view uses the dirty-safe close path.
 Bulk closes (Close Other Files in Pane, Close Files to the Right) operate on
 views, so they never close a file another pane still shows.
-Each leaf retains its own selected tab. Selecting a tab focuses its group;
-ordinary tab cycling stays within that group. Group cycling follows recursive
+Each leaf retains its own selected tab. Selecting a tab focuses its group.
+Selecting the current tab does not advance its selection history or change a
+drag preview's source state.
+Ordinary tab cycling stays within that group. Group cycling follows recursive
 first-to-second visual order. Removing an empty group collapses its parent and
 preserves the sibling subtree and sizing. Moving its last tab out also removes
 the empty source group. Merge All keeps the focused group's identity and

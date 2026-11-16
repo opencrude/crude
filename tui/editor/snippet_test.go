@@ -35,6 +35,8 @@ func BenchmarkSnippetTypingDense(b *testing.B) {
 					b.Cleanup(func() { closeSyntax(e) })
 					e.readOnly = false
 					item := numericCompletion(b, "${1:a}"+strings.Repeat(" $1", mirrors-1)+"$0")
+					originalLine := strings.Repeat("a ", mirrors-1) + "a"
+					editedLine := strings.Repeat("ax ", mirrors-1) + "ax"
 					if err := e.ApplyCompletion(item); err != nil {
 						b.Fatal(err)
 					}
@@ -53,17 +55,32 @@ func BenchmarkSnippetTypingDense(b *testing.B) {
 						}
 						e.HandleEvent(key)
 						if paint {
+							// This stage measures the key and the first grid
+							// paint, not source preparation. Drain the shell's
+							// real source command before painting: otherwise
+							// Render can start a lexer whose process-wide
+							// allocations overlap this measured sample.
+							b.StopTimer()
+							settleSyntax(b, e)
+							b.StartTimer()
 							e.Render(surf, ui.PaintContext{Theme: e.th, Focused: true})
 						}
 						if !e.SnippetActive() {
 							b.Fatal("benchmark lost its real snippet workload")
 						}
-						insert = !insert
 						// Complete the source job owned by this first paint
 						// before timing another key. Its preparation has a
 						// separate gate and must not overlap the next sample.
 						b.StopTimer()
 						joinSyntax(b, e)
+						want := originalLine
+						if insert {
+							want = editedLine
+						}
+						if got := e.LineText(0); got != want {
+							b.Fatalf("snippet mirror text = %q, want %q", got, want)
+						}
+						insert = !insert
 						b.StartTimer()
 					}
 				})

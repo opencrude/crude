@@ -126,10 +126,11 @@ func (ab *ActionBar) SetButtons(btns ...ActionBarButton) {
 		button, ok := existing[id]
 		if !ok {
 			button.button = NewButton(id, label, spec.Action)
+		} else if button.label != label {
+			button.button.SetLabel(label)
 		}
 		button.title, button.label, button.action, button.shortcut = spec.Label, label, spec.Action, spec.Shortcut
 		button.variant, button.enabled = spec.Variant, spec.Enabled
-		button.button.SetLabel(label)
 		button.button.SetActionID(spec.Action)
 		button.button.SetTokens(ab.tokens)
 		button.button.SetDisabled(!spec.Enabled)
@@ -356,7 +357,7 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	}
 	// Shortcut hints yield before any decision disappears. Keep the complete
 	// labels as source state so widening restores them and key routing remains
-	// unchanged. Remaining overflow is shared across the widest buttons.
+	// unchanged. Gaps yield next; only remaining overflow shrinks labels.
 	if totalW > r.W {
 		totalW = max(0, len(widths)-1) * ab.gap
 		for i := range ab.buttons {
@@ -367,10 +368,12 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 		}
 	}
 	gap := ab.gap
+	if totalW > r.W && len(widths) > 1 {
+		buttonsW := totalW - (len(widths)-1)*gap
+		gap = min(gap, max(0, (r.W-buttonsW)/(len(widths)-1)))
+		totalW = buttonsW + (len(widths)-1)*gap
+	}
 	if totalW > r.W {
-		if len(widths) > 1 {
-			gap = min(gap, max(0, (r.W-len(widths))/(len(widths)-1)))
-		}
 		available := max(0, r.W-max(0, len(widths)-1)*gap)
 		lo, hi := 0, available
 		for lo < hi {

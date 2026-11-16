@@ -1,6 +1,67 @@
 package textsearch
 
-import "testing"
+import (
+	"math/rand"
+	"reflect"
+	"regexp"
+	"testing"
+	"unicode"
+)
+
+func TestLiteralSearchPreservesEverySimpleFoldPair(t *testing.T) {
+	for r := rune(0); r <= unicode.MaxRune; r++ {
+		fold := unicode.SimpleFold(r)
+		if fold == r {
+			continue
+		}
+		matcher, err := Compile(string(fold), Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(r)
+		got := matcher.FindAll(text, 1)
+		if len(got) != 1 || got[0].Start != 0 || got[0].End != len(text) {
+			t.Fatalf("fold U+%04X/U+%04X: %+v", r, fold, got)
+		}
+	}
+}
+
+func TestLiteralSearchMatchesUnicodeRegexpSemantics(t *testing.T) {
+	rng := rand.New(rand.NewSource(17))
+	alphabet := []rune("aAkKsSİıKſé界 _-\n.")
+	texts := []string{"İ foo KELVIN ſample", "FOO foo_food foo\nfoo", "é foo éfoo 界foo", "\xff foo \ufffd"}
+	for range 100 {
+		text := make([]rune, 80)
+		for i := range text {
+			text[i] = alphabet[rng.Intn(len(alphabet))]
+		}
+		texts = append(texts, string(text))
+	}
+	for _, query := range []string{"foo", "k", "s", "i", "a", " _", "\n", ".", "é", "界", "\ufffd"} {
+		for _, caseSensitive := range []bool{false, true} {
+			for _, wholeWord := range []bool{false, true} {
+				opts := Options{CaseSensitive: caseSensitive, WholeWord: wholeWord}
+				literal, err := Compile(query, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				opts.Regex = true
+				oracle, err := Compile(regexp.QuoteMeta(query), opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, text := range texts {
+					for _, limit := range []int{0, 1, 3} {
+						got, want := literal.FindAll(text, limit), oracle.FindAll(text, limit)
+						if !reflect.DeepEqual(got, want) {
+							t.Fatalf("%q in %q options=%+v limit=%d: got %+v, want %+v", query, text, opts, limit, got, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}
 
 func TestExactSourceMatches(t *testing.T) {
 	for _, tc := range []struct {

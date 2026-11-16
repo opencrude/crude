@@ -72,6 +72,7 @@ func buildGroups(results []fileio.ProjectSearchMatch) []resultGroup {
 // rebuildRows flattens groups into display rows, omitting the match rows of
 // collapsed groups.
 func (s *Screen) rebuildRows() {
+	s.rowsGeneration++
 	s.rows = s.rows[:0]
 	for gi, g := range s.groups {
 		if len(g.rows) == 0 {
@@ -90,6 +91,10 @@ func (s *Screen) rebuildRows() {
 // setResults replaces the flat result set and rebuilds groups, rows, and the
 // initial selection (the first match row).
 func (s *Screen) setResults(results []fileio.ProjectSearchMatch) {
+	if s.previewSrc != nil {
+		s.previewSrc.Close()
+		s.previewSrc = nil
+	}
 	s.results = results
 	s.collapsed = make(map[string]bool)
 	s.groups = buildGroups(results)
