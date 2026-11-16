@@ -258,7 +258,7 @@ func TestConfirmHoverDistinctFromFocus(t *testing.T) {
 	cw.Host().Resize(w, h)
 	cw.Host().Layout()
 	cw.Host().Focus(ConfirmButtonID(0)) // keyboard focus on Save
-	SetConfirmHover(cw, 1)              // mouse over Don't Save
+	SetConfirmHover(cw, 1)              // mouse over Discard
 	surf := surface.NewSurface("hv", w, h, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th, Focused: true})
 	buf := surf.Buffer()

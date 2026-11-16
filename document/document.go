@@ -76,6 +76,17 @@ type Change struct {
 	GroupID               string
 	Edits                 []Edit
 }
+
+// Resolution settles a document whose file changed on disk while its text was
+// unsaved. The current file becomes the save baseline. Replace sets the text to
+// Text; otherwise the current text stays. A nonzero DiskHash must equal the
+// file version the user reviewed, so an unseen version is never accepted.
+type Resolution struct {
+	Text     []byte
+	Replace  bool
+	DiskHash [32]byte
+}
+
 type Receipt struct {
 	RequestID, DocumentID string
 	Before, Revision      uint64

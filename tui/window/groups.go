@@ -215,7 +215,7 @@ func (w *Window) SelectGroupTab(group GroupID, id TabID) bool {
 	if index < 0 || w.tabs[index].Group != group {
 		return false
 	}
-	w.groupActive[group] = id
+	w.selectTab(group, id)
 	return true
 }
 
@@ -385,12 +385,17 @@ func (w *Window) repairGroupSelection(group GroupID, removed TabID, oldIndex int
 	if w.groupActive[group] != removed {
 		return
 	}
-	selected := TabID(0)
+	// The most recently selected tab returns, like an editor stack. Tabs that
+	// were never selected fall back to the neighbour before the removed tab.
+	selected, recent := TabID(0), uint64(0)
 	for i, tab := range w.tabs {
 		if tab.Group != group {
 			continue
 		}
-		if i < oldIndex || selected == 0 {
+		switch {
+		case tab.activated > recent:
+			selected, recent = tab.ID, tab.activated
+		case recent == 0 && (i < oldIndex || selected == 0):
 			selected = tab.ID
 		}
 	}
@@ -428,7 +433,7 @@ func (w *Window) MoveTabToGroup(id TabID, target GroupID, beforeTab TabID) bool 
 	if existing := w.documentTab(target, tab); existing != 0 && existing != id {
 		// The pane already shows this document: keep that view, select it.
 		w.absorbed = append(w.absorbed, id)
-		w.groupActive[target] = existing
+		w.selectTab(target, existing)
 		w.focus(target)
 		if source != target {
 			w.RemoveEmptyGroup(source)
@@ -439,7 +444,7 @@ func (w *Window) MoveTabToGroup(id TabID, target GroupID, beforeTab TabID) bool 
 	w.tabs = append(w.tabs, Tab{})
 	copy(w.tabs[insert+1:], w.tabs[insert:])
 	w.tabs[insert] = tab
-	w.groupActive[target] = id
+	w.selectTab(target, id)
 	w.focus(target)
 	if source != target {
 		w.RemoveEmptyGroup(source)
@@ -567,7 +572,7 @@ func (w *Window) MergeGroup(source, target GroupID) bool {
 		}
 	}
 	w.tabs = append(retained[:insert], append(moved, retained[insert:]...)...)
-	w.groupActive[target] = selected
+	w.selectTab(target, selected)
 	if w.focusedGroup == source {
 		w.focus(target)
 	}

@@ -32,15 +32,17 @@ const (
 	tabGap       = 2 // column between tabs
 )
 
-// TabItem is one entry in a Tabs control. Tab bars paint labels only: an icon
-// here would be a tofu risk (the legacy shell tab bar deliberately omitted the
-// window tab icon), and every consumer is label-first.
+// TabItem is one entry in a Tabs control. Icon is optional: a file tab carries
+// the file-type icon the file tree and Find in Files show for that file, in
+// IconColor. Tabs without an icon paint their label only.
 type TabItem struct {
 	ID           string
 	Label        string
 	CompactLabel string
 	Closable     bool
 	Attention    bool
+	Icon         string
+	IconColor    cell.Color
 }
 
 // TabDrag identifies a dragged tab and the current screen-coordinate pointer.
@@ -366,6 +368,9 @@ func (t *Tabs) displayLabel(i int) string {
 	if item.Attention {
 		label = "● " + label
 	}
+	if item.Icon != "" {
+		label = item.Icon + " " + label
+	}
 	return rendering.TruncateVisual(label, tabMaxLabelW, "…")
 }
 
@@ -623,6 +628,10 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		pad := max(0, hit.end-hit.labelStart-labelW-closeW)
 		text := label + strings.Repeat(" ", pad) + close
 		buf.WriteString(x, y, rendering.TruncateVisual(text, hit.end-hit.labelStart, ""), itemFG, itemBG, attr)
+		if item.Icon != "" && item.IconColor != cell.NoColor && strings.HasPrefix(label, item.Icon) {
+			// The icon keeps its file-type ink on every tab state.
+			buf.WriteString(x, y, item.Icon, item.IconColor, itemBG, 0)
+		}
 		// The active tab owns its slice of the baseline: same slot as the
 		// rule, accent ink, so the selected mode is unambiguous even when the
 		// strip itself is unfocused.

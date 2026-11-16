@@ -45,13 +45,13 @@ func (m *App) confirmModalInput(id ui.OverlayID, msg tea.KeyPressMsg, busy bool,
 	case tea.KeyEnter:
 		return true, activate(ui.ConfirmButtonIndexFromID(frame.Host().Focused()))
 	case tea.KeyLeft, tea.KeyUp:
-		ui.MoveConfirmFocus(frame, -1, 2)
+		ui.MoveConfirmFocus(frame, -1, ui.ConfirmButtonCount(frame))
 	case tea.KeyRight, tea.KeyDown, tea.KeyTab:
 		delta := 1
 		if msg.Code == tea.KeyTab && msg.Mod.Contains(tea.ModShift) {
 			delta = -1
 		}
-		ui.MoveConfirmFocus(frame, delta, 2)
+		ui.MoveConfirmFocus(frame, delta, ui.ConfirmButtonCount(frame))
 	}
 	m.forceFrame()
 	return true, nil
@@ -68,6 +68,16 @@ func (m *App) refreshConfirmModal(id ui.OverlayID, frame *ui.ComponentWidget) {
 		window.SetSize(w, h)
 		window.MarkContentDirty()
 		m.forceFrame()
+	}
+}
+
+// setConfirmButtonDisabled disables one button of a confirm frame in place.
+func setConfirmButtonDisabled(frame *ui.ComponentWidget, index int, disabled bool) {
+	if frame == nil || frame.Host() == nil {
+		return
+	}
+	if button, ok := frame.Host().Component(ui.ConfirmButtonID(index)).(*ui.Button); ok {
+		button.SetDisabled(disabled)
 	}
 }
 

@@ -327,6 +327,70 @@ func (z *Receipt) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *Resolution) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	if z.Text == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendBytes(o, z.Text)
+	}
+	o = msgp.AppendBool(o, z.Replace)
+	o = msgp.AppendBytes(o, (z.DiskHash)[:])
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *Resolution) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Text = nil
+	} else {
+		z.Text, bts, err = msgp.ReadBytesBytes(bts, z.Text)
+		if err != nil {
+			err = msgp.WrapError(err, "Text")
+			return
+		}
+		if z.Text == nil {
+			z.Text = make([]byte, 0)
+		}
+	}
+	z.Replace, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Replace")
+		return
+	}
+	bts, err = msgp.ReadExactBytes(bts, (z.DiskHash)[:])
+	if err != nil {
+		err = msgp.WrapError(err, "DiskHash")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *Resolution) Msgsize() (s int) {
+	s = 1 + msgp.BytesPrefixSize + len(z.Text) + msgp.BoolSize + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize))
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 14

@@ -238,17 +238,25 @@ func TestLiveEditorRealAppsShareUndoSaveAndClose(t *testing.T) {
 	}
 	a.InsertRune('C')
 	one.app.showDirtyClosePrompt(path)
-	if frame := one.app.View().RenderContent(); !strings.Contains(frame, "Close view") {
-		t.Fatal("shared close still advertises destructive discard")
+	if frame := one.app.View().RenderContent(); !strings.Contains(frame, "Discard") || !strings.Contains(frame, "Save") || !strings.Contains(frame, "Cancel") {
+		t.Fatal("the close prompt must offer Save, Discard and Cancel")
 	}
+	// Discard returns the shared document to the saved file, then closes the
+	// view. The other shell sees the saved text, clean.
 	one.app.dirtyPromptDiscard()
 	if one.app.EditorState.Tabs[path] == nil {
-		t.Fatal("close destroyed unpublished typing")
+		t.Fatal("close ran before the discard reached the document")
 	}
-	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
+	for range 4 {
+		runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
+		liveTestSync(t, one.app)
+	}
 	liveTestSync(t, two.app)
-	if one.app.EditorState.Tabs[path] != nil || b.Value() != "CabcB" || !b.Modified() {
-		t.Fatalf("close failed to retain canonical work: %q", b.Value())
+	if one.app.EditorState.Tabs[path] != nil || b.Value() != "abcB" || b.Modified() {
+		t.Fatalf("discard failed: open=%v text=%q modified=%v", one.app.EditorState.Tabs[path] != nil, b.Value(), b.Modified())
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "abcB" {
+		t.Fatalf("discard must not write the file: %q %v", data, err)
 	}
 }
 

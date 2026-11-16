@@ -480,6 +480,21 @@ func (e *Editor) ApplyDisk(data []byte, encoding textencoding.Encoding, hash [sh
 	e.emitContentChanged()
 }
 
+// AcceptDiskBaseline settles a disk conflict and keeps the text: the next save
+// writes it over the changed file.
+func (e *Editor) AcceptDiskBaseline(data []byte, hash [sha256.Size]byte, exists bool) {
+	if e.buffer != nil {
+		e.buffer.AcceptDiskBaseline(data, hash, exists)
+	}
+}
+
+// DiskConflict reports that the shared document's file changed on disk while
+// its text was unsaved. Save is refused until the user chooses a version.
+func (e *Editor) DiskConflict() bool {
+	p := e.Primary().documentProjection
+	return p != nil && p.snapshot.Conflict
+}
+
 func (e *Editor) MatchesDisk(hash [32]byte) bool {
 	return e.buffer != nil && e.buffer.MatchesDisk(hash)
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -27,14 +28,15 @@ const (
 // misaligned with it.
 const RailInset = 1
 
-// TabProjection is one tab row for the shell tab bar. Tab bars paint labels
-// only: the window tab icon is never drawn (tofu risk), so it is not plumbed
-// into the strip.
+// TabProjection is one tab row for the shell tab bar. Icon is the file-type
+// icon of a file tab; other tabs have none and paint their label only.
 type TabProjection struct {
 	ID        string
 	Label     string
 	Closable  bool
 	Attention bool
+	Icon      string
+	IconColor cell.Color
 }
 
 // Screen hosts the main tab strip. The strip owns its own baseline row and
@@ -51,6 +53,7 @@ type Screen struct {
 	barFocused bool
 	emptyClick time.Time
 	emptyX     int
+	icon       func(window.Tab) (string, cell.Color)
 }
 
 // New creates a shell tab bar screen.
@@ -115,6 +118,22 @@ func (s *Screen) SetTooltipFunc(fn func(window.TabID) string) {
 	})
 }
 
+// SetIconFunc supplies the icon of a window tab. One owner resolves it for
+// every strip, so a file shows the same icon in each pane and window.
+func (s *Screen) SetIconFunc(fn func(window.Tab) (string, cell.Color)) { s.icon = fn }
+
+func (s *Screen) projectTab(tab window.Tab) TabProjection {
+	label := tab.DisplayTitle
+	if label == "" {
+		label = tab.Title
+	}
+	item := TabProjection{ID: TabIDString(tab.ID), Label: label, Closable: tab.Closable, Attention: tabAttention(tab)}
+	if s.icon != nil {
+		item.Icon, item.IconColor = s.icon(tab)
+	}
+	return item
+}
+
 // SetNewButton opts into the retained trailing New session control.
 func (s *Screen) SetNewButton(v bool) { s.newEnabled = v }
 
@@ -136,6 +155,8 @@ func (s *Screen) SetProjection(items []TabProjection, activeID string, hoverInde
 			Label:     item.Label,
 			Closable:  item.Closable,
 			Attention: item.Attention,
+			Icon:      item.Icon,
+			IconColor: item.IconColor,
 		}
 	}
 	s.tabs.SetItems(tabItems, activeID)
@@ -147,11 +168,7 @@ func (s *Screen) SetProjection(items []TabProjection, activeID string, hoverInde
 func (s *Screen) SetProjectionFromTabs(tabs []window.Tab, active window.TabID, focused bool) {
 	items := make([]TabProjection, len(tabs))
 	for i, tab := range tabs {
-		label := tab.DisplayTitle
-		if label == "" {
-			label = tab.Title
-		}
-		items[i] = TabProjection{ID: TabIDString(tab.ID), Label: label, Closable: tab.Closable, Attention: tabAttention(tab)}
+		items[i] = s.projectTab(tab)
 	}
 	s.SetProjection(items, TabIDString(active), s.tabs.HoverIndex(), focused)
 }
@@ -166,19 +183,9 @@ func (s *Screen) SetProjectionFromWindow(w *window.Window, hoverIndex int, barFo
 	items := make([]TabProjection, len(tabs))
 	activeID := ""
 	for i, tab := range tabs {
-		label := tab.DisplayTitle
-		if label == "" {
-			label = tab.Title
-		}
-		id := TabIDString(tab.ID)
-		items[i] = TabProjection{
-			ID:        id,
-			Label:     label,
-			Closable:  tab.Closable,
-			Attention: tabAttention(tab),
-		}
+		items[i] = s.projectTab(tab)
 		if i == w.ActiveIndex() {
-			activeID = id
+			activeID = items[i].ID
 		}
 	}
 	s.SetProjection(items, activeID, hoverIndex, barFocused)

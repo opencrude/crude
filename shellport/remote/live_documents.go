@@ -290,9 +290,9 @@ func (w *Workspace) FormatDocumentRequest(ctx context.Context, id string, revisi
 	err := w.documentCall(ctx, requestID, coreprotocol.DocumentFormat, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision}, &out)
 	return out, err
 }
-func (w *Workspace) ReloadDocumentRequest(ctx context.Context, id string, revision uint64, requestID string) (document.Snapshot, error) {
+func (w *Workspace) ReloadDocumentRequest(ctx context.Context, id string, revision uint64, requestID string, resolve *document.Resolution) (document.Snapshot, error) {
 	var out document.Snapshot
-	err := w.documentCall(ctx, requestID, coreprotocol.DocumentReload, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision}, &out)
+	err := w.documentCall(ctx, requestID, coreprotocol.DocumentReload, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Resolve: resolve}, &out)
 	return out, err
 }
 func (w *Workspace) DocumentSnapshotReceipt(ctx context.Context, requestID string) (document.Snapshot, bool, error) {

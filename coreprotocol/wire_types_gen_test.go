@@ -343,6 +343,7 @@ var wireTypes = []any{
 	new(p2.Edit),
 	new(p2.Owner),
 	new(p2.Receipt),
+	new(p2.Resolution),
 	new(p2.Snapshot),
 	new(p2.SyncResult),
 	new(p3.AsyncCmdInfo),

@@ -24,6 +24,11 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
 	ok := func(value coreprotocol.Value, err error) coreprotocol.Response {
+		if errors.Is(err, workspace.ErrDocumentConflict) {
+			// A typed code lets shells offer the conflict choices without
+			// matching message text.
+			return fault(request, coreprotocol.FaultDocumentConflict, err.Error())
+		}
 		if err != nil {
 			return fault(request, "resource_failed", err.Error())
 		}
@@ -160,10 +165,13 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 		if input.Encoding != nil && (request.Method != coreprotocol.DocumentSave || !input.Encoding.Valid()) {
 			return bad(errors.New("encoding applies only to a save with a supported file encoding"))
 		}
+		if input.Resolve != nil && request.Method != coreprotocol.DocumentReload {
+			return bad(errors.New("a resolution applies only to a reload"))
+		}
 		store, files := a.ws.LocalHistory, a.ws.FileOps
 		return func(ctx context.Context) coreprotocol.Response {
 			if request.Method == coreprotocol.DocumentReload {
-				value, err := docs.Reload(ctx, owner, input.ID, request.ID, input.Revision)
+				value, err := docs.Reload(ctx, owner, input.ID, request.ID, input.Revision, input.Resolve)
 				return ok(wire(value), err)
 			}
 			if request.Method == coreprotocol.DocumentFormat {

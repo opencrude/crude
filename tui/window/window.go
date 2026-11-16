@@ -63,6 +63,9 @@ type Tab struct {
 	Pinned       bool
 	Layout       TabLayout
 	Resource     Resource
+	// activated orders the tabs of a group by last selection. When the
+	// selected tab leaves its group, the most recently selected one returns.
+	activated uint64
 }
 
 func newTab(title, icon string, closable bool, layout TabLayout) Tab {
@@ -99,6 +102,8 @@ type Window struct {
 	// absorbed are document tabs removed because a move or merge brought them
 	// into a pane that already shows the same document (see absorbDuplicate).
 	absorbed []TabID
+	// activations is the clock behind Tab.activated.
+	activations uint64
 
 	hint  string
 	Hover ui.Hover
@@ -170,7 +175,7 @@ func (w *Window) AddTab(group GroupID, resource Resource, title string, activate
 	copy(w.tabs[insert+1:], w.tabs[insert:])
 	w.tabs[insert] = tab
 	if activate || w.groupActive[group] == 0 {
-		w.groupActive[group] = tab.ID
+		w.selectTab(group, tab.ID)
 	}
 	if activate {
 		w.focus(group)
@@ -271,7 +276,7 @@ func (w *Window) appendTab(tab Tab, activate bool) *Tab {
 	tab.Group = w.focusedGroup
 	w.tabs = append(w.tabs, tab)
 	if activate || w.groupActive[tab.Group] == 0 {
-		w.groupActive[tab.Group] = tab.ID
+		w.selectTab(tab.Group, tab.ID)
 	}
 	return &w.tabs[len(w.tabs)-1]
 }
@@ -322,7 +327,20 @@ func (w *Window) SwitchTo(index int) {
 	if index >= 0 && index < len(w.tabs) {
 		tab := w.tabs[index]
 		w.focus(tab.Group)
-		w.groupActive[tab.Group] = tab.ID
+		w.selectTab(tab.Group, tab.ID)
+	}
+}
+
+// selectTab makes id the selected tab of group and records it as the group's
+// most recently selected tab.
+func (w *Window) selectTab(group GroupID, id TabID) {
+	w.groupActive[group] = id
+	w.activations++
+	for i := range w.tabs {
+		if w.tabs[i].ID == id {
+			w.tabs[i].activated = w.activations
+			return
+		}
 	}
 }
 
@@ -337,11 +355,11 @@ func (w *Window) cycleTab(delta int) {
 	selected := w.groupActive[w.focusedGroup]
 	for i, tab := range tabs {
 		if tab.ID == selected {
-			w.groupActive[w.focusedGroup] = tabs[(i+delta+len(tabs))%len(tabs)].ID
+			w.selectTab(w.focusedGroup, tabs[(i+delta+len(tabs))%len(tabs)].ID)
 			return
 		}
 	}
-	w.groupActive[w.focusedGroup] = tabs[0].ID
+	w.selectTab(w.focusedGroup, tabs[0].ID)
 }
 
 func (w *Window) ActiveIndex() int {

@@ -25,10 +25,10 @@ preserve or intentionally improve.
 | Composer | Alt+C | |
 | Modified Enter | Semantic chords, captions resolved per terminal | Ctrl+Enter / Shift+Enter exist only where the terminal disambiguates them (Windows console, kitty keyboard protocol); tmux and legacy terminals send plain Enter, and Windows Terminal takes Alt+Enter for fullscreen. Every caption comes from `ui.FormatShortcut` of a chord token and every matcher from the same token: **commit** (`CommitChord`) and editor **code actions** (`CodeActionsChord`) accept Ctrl+Enter and Alt+Enter; **new line** (`NewlineChord`) accepts Shift+Enter, Alt+Enter and Ctrl+J (LF, delivered everywhere); **previous match** accepts Shift+Enter and Shift+F3; **replace all** accepts Ctrl+Alt+Enter and Alt+Enter. A caption always names a key this terminal delivers; `TestNoHardCodedModifiedEnterCaptions` rejects hard-coded ones. |
 | Quit application | Ctrl+Q | |
-| Close active editor tab / empty pane | Ctrl+W | Editor uses the dirty-close Save / Don't Save / Cancel prompt; an empty focused group alone is removed without closing neighboring resources; terminal focus keeps the key as PTY input |
+| Close active editor tab / empty pane | Ctrl+W | Editor uses the dirty-close Save / Discard / Cancel prompt; an empty focused group alone is removed without closing neighboring resources; terminal focus keeps the key as PTY input |
 | Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. In a text control Esc first drops the selection; the chat composer's ladder is selection → draft → cancel the turn. Cancelling requires live work (turn, pending prompt, compaction) or a recovery parked for retry: Esc with nothing to stop does nothing, a stopping turn is never re-entered, and palette Cancel Agent on an idle agent says "Nothing to stop". |
 | Previous / next tab | Ctrl+[ / Ctrl+] | Within the focused main group, outside terminal key ownership, including editor focus |
-| Main tab actions and focus | Click tab / ×; tab context menu; close shortcut | Pointer selection and close return keys to the selected editor/chat, or workspace home when the last tab closes. Hover and overflow browsing never pin keyboard focus to the strip. Deliberate Ctrl+T + arrow/Home/End navigation retains strip focus until Enter/Down/Tab/Esc commits or leaves it; closing ends that navigation. Dirty-close Save / Don't Save / Cancel keeps its safe modal and never restores stale strip focus. Background tab updates preserve the current focus. |
+| Main tab actions and focus | Click tab / ×; tab context menu; close shortcut | Pointer selection and close return keys to the selected editor/chat, or workspace home when the last tab closes. Hover and overflow browsing never pin keyboard focus to the strip. Deliberate Ctrl+T + arrow/Home/End navigation retains strip focus until Enter/Down/Tab/Esc commits or leaves it; closing ends that navigation. Dirty-close Save / Discard / Cancel keeps its safe modal and never restores stale strip focus. Background tab updates preserve the current focus. |
 | New unnamed buffer | Double-click empty main tab-rail space | Opens in that pane. Save opens the Save File window. Automatic save does not affect it before the first explicit save. |
 | Tab tooltip | Rest the pointer on a main tab | After a short delay a passive tooltip shows the file's absolute path (and **Unsaved changes** when dirty) or the agent's name, role and state with its model. Moving to the next tab while it is open shows that tab's tooltip at once. Leaving the tab, a key, click, wheel or paste closes it; it does not return for the same tab until the pointer leaves and comes back. It never takes focus or changes the selection. |
 | Attach file / choose folder | Ctrl+O | Opens Attach File from non-terminal shell views. An Open Workspace picker confirms its highlighted folder, or its current root without a highlight. |
@@ -239,7 +239,8 @@ window derive from current bytes, not replayed change guesses.
 | Git line edits / blame | (gutter + header + inspector) | `+` added / `~` modified in the gutter; branch and compact current-line blame are in the header; full blame and Copy blame commit remain in editor detail/context actions |
 | Horizontal scroll | Two-finger horizontal / wheel-left/right; Shift+vertical wheel fallback | Scrollbar extent is the widest line in the whole document and does not change with vertical viewport |
 | Text cursor | Shared 400 ms phase after 800 ms activity hold | Muted reverse-video block; idle shell remains at 2.5 FPS so blink never freezes |
-| Compare with disk / saved version | Editor context menu | Complete read-only main tab, native split divider, synchronized old/new vertical scroll, unified fallback, find/hunk navigation. Refresh replaces only the exact snapshot; Close never consumes source edits. |
+| Compare with disk / saved version | Editor context menu; Compare in **File changed on disk** | Complete main tab, native split divider, synchronized old/new vertical scroll, unified fallback, find. Accept left/right/both per change from the decision bar (1/2/3, n/p) or the gutter boxes; Save (Ctrl+S) writes the result. Refresh replaces only the exact snapshot; Close never consumes source edits. |
+| Discard unsaved changes | Editor context menu; **Discard** in the close and disk-conflict dialogs | Returns the file to its saved text as one undoable change; never writes the file. |
 | Private editor drafts / discard backups | Palette **Recover Editor Drafts** | Metadata-only private profile/workspace listing, explicit Preview/Copy/Open draft/Compare, default Close/Esc. Exact CAS protects unread/newer recovery. An already-open draft is compared, never replaced; reopening retains unknown command evidence without replay. |
 | Go to line | Ctrl+G; editor View menu **Go to line** | The shared text prompt states what it accepts (1-N, or line:column), pre-filled with the cursor's line and selected so typing replaces it. Enter jumps, Esc leaves the cursor where it was. Input that is not a line, or a line this file does not have, keeps the prompt open and states the cause in the dialog's guidance row (the first edit clears it); nothing moves. A column past the end of the line lands at the line end. |
 | Go to / search result landing | Go to line, LSP navigation, Find in Files Open | A target already visible does not shift the viewport. Pre-render jumps wait for actual geometry; short files stay at the top. An off-screen target lands with surrounding lines above and below. A visible, non-editing landing range clears on input/edit; typing never replaces the destination as a selection. |
@@ -465,8 +466,8 @@ resource menu as Home, plus New Workspace/Refresh. Open/Delete are disabled on
 the current workspace; old-menu callbacks cannot act on a replacement attachment.
 
 Connected switching keeps the old attachment, tabs and processes until the
-destination is ready. Unsaved shared editors offer Save / Close view / Cancel;
-Close view retains shared unsaved bytes and authorizes only that exact revision.
+destination is ready. Unsaved shared editors offer Save / Keep unsaved / Cancel;
+Keep unsaved retains shared unsaved bytes and authorizes only that exact revision.
 Save completes before the same switch intent continues. Cancel, failed saves,
 peer/local edits during preparation and failed attachments keep the current
 workspace and drafts. Pending local edits and history settle through the existing
@@ -554,15 +555,13 @@ The read-only review supports wheel and line/page keys. Committed sparse edits
 preserve peer-private anchors. Unknown outcomes show Check result/Close, never a
 second Apply; recovery uses the exact retained Local History snapshot.
 
-Resolve shared changes in the editor context menu opens the native modal for parked
-or recovered drafts. Keep draft (default/Esc) changes nothing. Compare with
-shared opens immutable, read-only shared/local snapshots and does not consume the
-draft. Use shared text requires explicit discard confirmation and durable private
-backup, then clears only the exact private recovery record by tombstone. It never
-rewrites collaborators' accepted text. Pending/unknown commands require original
-receipt reconciliation first, never replay. External disk conflicts need separate
-comparison/reconciliation; accepting shared text is not permission to overwrite
-external changes. Failure keeps the draft and actionable reason visible.
+**Changes not applied…** in the editor context menu (enabled only when edits in
+the view did not reach the shared document) opens Discard / Compare / Keep. Keep
+(default/Esc) changes nothing. Compare opens read-only file/your-text snapshots.
+Discard keeps a durable private backup, then clears only the exact private
+recovery record by tombstone; it never rewrites collaborators' text. Unknown
+commands settle by receipt first, never replay. A file that changed on disk uses
+**File changed on disk** instead (see [editor](editor.md#unsaved-changes-discard-and-disk-conflicts)).
 
 ## File tree filter and guide geometry
 

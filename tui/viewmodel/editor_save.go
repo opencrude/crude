@@ -253,11 +253,11 @@ func (m *App) applyEditorDisk(msg editorDiskResultMsg) {
 	}
 	if msg.missing {
 		ed.NoteDiskMissing()
-		m.markEditorDiskConflict(ed, "File was deleted on disk; local text retained. Save manually to recreate it.")
+		m.markEditorDiskConflict(ed, ed.BaseTitle()+" was deleted on disk. Your text stays open. Save it to create the file again.")
 		return
 	}
 	if msg.err != nil {
-		m.markEditorDiskConflict(ed, "Cannot read changed file: "+msg.err.Error())
+		m.markEditorDiskConflict(ed, "Could not read the changed file. "+msg.err.Error())
 		return
 	}
 	if ed.MatchesDisk(msg.hash) {
@@ -266,7 +266,7 @@ func (m *App) applyEditorDisk(msg editorDiskResultMsg) {
 	if !ed.Modified() {
 		ed.ApplyDisk(msg.data, msg.encoding, msg.hash)
 	} else {
-		m.markEditorDiskConflict(ed, "File changed on disk; local edits retained. Compare before saving.")
+		m.markEditorDiskConflict(ed, ed.BaseTitle()+" changed on disk. Save it to choose which version to keep.")
 	}
 }
 
@@ -280,7 +280,7 @@ func (m *App) markEditorDiskConflict(ed *editor.Editor, message string) {
 	}
 	m.editorSaves[ed.BufferID()] = &editorSaveState{err: workspace.ErrDocumentConflict}
 	if m.Feedback != nil {
-		m.Feedback.NotifyError(message)
+		m.Feedback.NotifyInfo(message)
 	}
 }
 
@@ -346,6 +346,14 @@ func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.Do
 	}
 	if state := m.liveEditors[ed.Primary()]; state != nil {
 		if reason != workspace.DocumentSaveManual && (state.reload || m.editorReload != nil && m.editorReload.editor.Primary() == ed.Primary()) {
+			return nil
+		}
+		if ed.DiskConflict() {
+			// The file changed on disk: ask which version to keep instead of
+			// sending a save the core refuses.
+			if reason == workspace.DocumentSaveManual {
+				m.openDiskConflict(ed, closeAfter)
+			}
 			return nil
 		}
 		state.save, state.reason, state.closeAfter = true, reason, closeAfter
@@ -465,10 +473,16 @@ func (m *App) handleEditorSaveResult(msg editorSaveResultMsg) tea.Cmd {
 			delete(m.editorSaves, id)
 			return nil
 		}
+		if errors.Is(result.Err, workspace.ErrDocumentConflict) {
+			if result.Request.Reason == workspace.DocumentSaveManual {
+				m.openDiskConflict(tab.Editor, state.closeAfter)
+			} else if m.Feedback != nil {
+				m.Feedback.NotifyInfo(tab.Editor.BaseTitle() + " changed on disk. Save it to choose which version to keep.")
+			}
+			return nil
+		}
 		if m.Feedback != nil {
-			if errors.Is(result.Err, workspace.ErrDocumentConflict) {
-				m.Feedback.NotifyError("Save blocked: file changed on disk")
-			} else if result.Committed {
+			if result.Committed {
 				m.Feedback.NotifyError(fmt.Sprintf("Saved, but durability could not be confirmed: %v", result.Err))
 			} else {
 				m.Feedback.NotifyError(fmt.Sprintf("Save failed: %v", result.Err))

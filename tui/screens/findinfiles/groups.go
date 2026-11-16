@@ -37,9 +37,10 @@ type resultGroup struct {
 }
 
 // buildGroups groups results by file. Group order follows the first
-// occurrence in the score-sorted result list; within a group, rows are
-// ordered by line and column (filename-only rows first, since their line
-// is zero).
+// occurrence in the score-sorted result list, so files with exact matches come
+// first. Within a group, exact matches come before fuzzy suggestions; each kind
+// is ordered by line and column (filename-only rows first, since their line is
+// zero).
 func buildGroups(results []fileio.ProjectSearchMatch) []resultGroup {
 	byPath := make(map[string]int)
 	groups := make([]resultGroup, 0, 8)
@@ -56,6 +57,9 @@ func buildGroups(results []fileio.ProjectSearchMatch) []resultGroup {
 		rows := groups[gi].rows
 		sort.SliceStable(rows, func(a, b int) bool {
 			ra, rb := results[rows[a]], results[rows[b]]
+			if ra.FuzzyOnly != rb.FuzzyOnly {
+				return !ra.FuzzyOnly
+			}
 			if ra.Line != rb.Line {
 				return ra.Line < rb.Line
 			}

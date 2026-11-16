@@ -41,7 +41,7 @@ func (s ConfirmPromptSeverity) Icon() string { return s.icon() }
 // Severity only disambiguates generic Yes (danger dialog → danger).
 func actionVariant(actionID string, sev ConfirmPromptSeverity) ButtonVariant {
 	switch actionID {
-	case ConfirmActionSave:
+	case ConfirmActionSave, ConfirmActionOverwrite:
 		return VariantPrimary
 	case ConfirmActionDiscard:
 		return VariantDanger
@@ -65,6 +65,10 @@ const (
 	ConfirmActionDiscard = "confirm.discard"
 	ConfirmActionCancel  = "confirm.cancel"
 	ConfirmActionAuto    = "confirm.auto"
+	// ConfirmActionOverwrite writes the user's version over a changed file.
+	ConfirmActionOverwrite = "confirm.overwrite"
+	// ConfirmActionCompare opens a comparison instead of deciding.
+	ConfirmActionCompare = "confirm.compare"
 )
 
 // ConfirmButtonSpec describes one action button in a confirm dialog. The
@@ -261,21 +265,56 @@ func splitLongToken(tok string, width int) []string {
 	return parts
 }
 
-// BuildDirtyCloseFrame is the 3-button unsaved-changes dialog.
+// Unsaved-changes dialog buttons, in order.
+const (
+	DirtyCloseSave = iota
+	DirtyCloseDiscard
+	DirtyCloseCancel
+)
+
+// BuildDirtyCloseFrame is the one unsaved-changes dialog: Save, Discard,
+// Cancel. Every close of a file with unsaved changes uses it.
 func BuildDirtyCloseFrame(th *theme.Theme, filename string, focusedIndex int) *ComponentWidget {
-	detail := "'" + filename + "' has unsaved changes."
 	return BuildConfirmFrame(th, ConfirmFrameSpec{
 		Title:    "Unsaved changes",
-		Question: "What do you want to do with the unsaved changes?",
-		Detail:   detail,
+		Question: "Save the changes to " + filename + "?",
+		Detail:   "If you discard them, your changes are lost.",
 		Severity: ConfirmPromptWarning,
 		Buttons: []ConfirmButtonSpec{
 			{Label: "Save", ActionID: ConfirmActionSave},
-			{Label: "Don't Save", ActionID: ConfirmActionDiscard},
+			{Label: "Discard", ActionID: ConfirmActionDiscard},
 			{Label: "Cancel", ActionID: ConfirmActionCancel},
 		},
 		FocusedIndex: focusedIndex,
 		Width:        62,
+	})
+}
+
+// Disk-conflict dialog buttons, in order.
+const (
+	DiskConflictOverwrite = iota
+	DiskConflictDiscard
+	DiskConflictCompare
+	DiskConflictCancel
+)
+
+// BuildDiskConflictFrame is the one dialog for a file that changed on disk
+// while it had unsaved changes. Save, close and every other entry point use
+// it, so the choices and their words never change.
+func BuildDiskConflictFrame(th *theme.Theme, filename string, focusedIndex int) *ComponentWidget {
+	return BuildConfirmFrame(th, ConfirmFrameSpec{
+		Title:    "File changed on disk",
+		Question: filename + " changed on disk. Keep your changes?",
+		Detail:   "Overwrite saves your version. Discard loads the disk version. Compare shows both, so you can choose each change.",
+		Severity: ConfirmPromptWarning,
+		Buttons: []ConfirmButtonSpec{
+			{Label: "Overwrite", ActionID: ConfirmActionOverwrite},
+			{Label: "Discard", ActionID: ConfirmActionDiscard},
+			{Label: "Compare", ActionID: ConfirmActionCompare},
+			{Label: "Cancel", ActionID: ConfirmActionCancel},
+		},
+		FocusedIndex: focusedIndex,
+		Width:        66,
 	})
 }
 
@@ -333,6 +372,18 @@ func ConfirmActionIndex(actionID string) int {
 	default:
 		return -1
 	}
+}
+
+// ConfirmButtonCount reports the number of action buttons in a confirm frame.
+func ConfirmButtonCount(cw *ComponentWidget) int {
+	if cw == nil || cw.Host() == nil {
+		return 0
+	}
+	count := 0
+	for cw.Host().Component(ConfirmButtonID(count)) != nil {
+		count++
+	}
+	return count
 }
 
 // MoveConfirmFocus shifts button focus by delta within the dialog's host,

@@ -83,7 +83,7 @@ func TestLocalDiffSavedSnapshotRefreshAndAsyncOwnership(t *testing.T) {
 	if app.Win.ActiveTab().ID != selected || view.screen.Comparison().After != "first unsaved revision\n" || view.screen.Comparison().Before != saved {
 		t.Fatal("late completion stole focus or discarded the captured immutable evidence")
 	}
-	if !strings.Contains(view.notice, "Source changed") {
+	if !strings.Contains(view.notice, "The text changed") {
 		t.Fatal("changed source snapshot is not identified as stale")
 	}
 	old := app.prepareLocalDiff(view)()
@@ -136,7 +136,7 @@ func TestLocalDiffActionsTargetExactScreenAndKeepSnapshotsAfterSourceClose(t *te
 	app.closeEditorTabForce(paths[0])
 	app.syncLocalDiffFreshness()
 	retained := first.screen.Comparison()
-	if !strings.Contains(first.notice, "Source closed") || retained.After == "" {
+	if !strings.Contains(first.notice, "The file is closed") || retained.After == "" {
 		t.Fatal("closing source lost snapshot or failed to mark source lifetime")
 	}
 	app.Win.SwitchTo(app.Win.IndexOf(second.tab))

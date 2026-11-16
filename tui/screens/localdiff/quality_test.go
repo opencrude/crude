@@ -47,7 +47,7 @@ func TestNarrowActionsRemainReadableAndKeyboardAccessible(t *testing.T) {
 func TestFindNoMatchFeedbackAndF3Focus(t *testing.T) {
 	s := New(nil)
 	s.SetPrepared(diffview.Prepare(diffview.Comparison{After: "needle\nneedle"}))
-	s.SetNotice("Read-only snapshot · Refresh to compare the latest versions")
+	s.SetNotice("Refresh compares the latest versions")
 	h := ui.NewHost(theme.DefaultDark(), s)
 	s.SetFocusHandler(h.Focus)
 	h.Resize(70, 20)

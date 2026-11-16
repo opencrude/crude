@@ -11,8 +11,8 @@ import (
 	"crude/workspace"
 )
 
-// showDirtyClosePrompt opens the unsaved-changes modal. Default focus is
-// "Cancel" (index 2) so an accidental Enter keeps the user's work safe.
+// showDirtyClosePrompt opens the one unsaved-changes modal: Save, Discard,
+// Cancel. Default focus is Cancel so an accidental Enter keeps the work safe.
 func (m *App) showDirtyClosePrompt(path string) {
 	if m.windowManager == nil {
 		return
@@ -27,22 +27,16 @@ func (m *App) showDirtyClosePrompt(path string) {
 	if m.ws.Documents() != nil {
 		m.ws.Documents().Cancel(tab.Editor.BufferID())
 	}
-	m.DirtyPromptChoice = 2
+	m.DirtyPromptChoice = ui.DirtyCloseCancel
 	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
-	if m.liveEditors[tab.Editor.Primary()] != nil {
-		frame = ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
-			Title: "Shared unsaved changes", Question: "Save to disk or close only this view?",
-			Detail:   "Closing keeps shared unsaved text for other views. Pending edits are published before closing; no shared work is discarded.",
-			Severity: ui.ConfirmPromptWarning, Width: 68, FocusedIndex: m.DirtyPromptChoice,
-			Buttons: []ui.ConfirmButtonSpec{{Label: "Save", ActionID: ui.ConfirmActionSave}, {Label: "Close view", ActionID: ui.ConfirmActionDiscard}, {Label: "Cancel", ActionID: ui.ConfirmActionCancel}},
-		})
-	}
 	if intent := m.workspaceSwitchIntent; intent != nil && intent.owner == m.ws && intent.prompt == tab.Editor {
+		// Switching keeps this workspace running, so unsaved text can stay
+		// in it: the middle choice keeps it instead of discarding it.
 		frame = ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
-			Title: "Switch workspace", Question: "Save changes before switching?",
-			Detail:   filename + " — Close view keeps shared unsaved text in this workspace. Current views stay open if switching fails.",
-			Severity: ui.ConfirmPromptWarning, Width: 68, FocusedIndex: m.DirtyPromptChoice,
-			Buttons: []ui.ConfirmButtonSpec{{Label: "Save", ActionID: ui.ConfirmActionSave}, {Label: "Close view", ActionID: ui.ConfirmActionDiscard}, {Label: "Cancel", ActionID: ui.ConfirmActionCancel}},
+			Title: "Switch workspace", Question: "Save the changes to " + filename + "?",
+			Detail:   "Keep unsaved leaves the changes in this workspace. They are there when you come back.",
+			Severity: ui.ConfirmPromptWarning, Width: 66, FocusedIndex: m.DirtyPromptChoice,
+			Buttons: []ui.ConfirmButtonSpec{{Label: "Save", ActionID: ui.ConfirmActionSave}, {Label: "Keep unsaved", ActionID: ui.ConfirmActionNo}, {Label: "Cancel", ActionID: ui.ConfirmActionCancel}},
 		})
 	}
 	w, h := frame.Measure(80, 40)
@@ -65,8 +59,8 @@ func (m *App) showDirtyClosePrompt(path string) {
 
 // dirtyPromptSave is called when the user picks "Save" in the
 // dirty-close prompt. Saves the file (if it has a path) and then
-// closes the tab. If save fails, the popup stays open so the user
-// can pick "Don't Save" or "Cancel".
+// closes the tab. If the file changed on disk, the disk conflict dialog
+// asks which version to keep.
 func (m *App) dirtyPromptSave() tea.Cmd {
 	path := m.DirtyPromptPath
 	if path == "" {
@@ -87,8 +81,9 @@ func (m *App) dirtyPromptSave() tea.Cmd {
 	return m.requestEditorSave(tab.Editor, workspace.DocumentSaveManual, true)
 }
 
-// dirtyPromptDiscard is called when the user picks "Don't Save" in
-// the dirty-close prompt. Closes the tab without saving.
+// dirtyPromptDiscard is called when the user picks "Discard" in the
+// dirty-close prompt. The document returns to the saved file, then the view
+// closes. A workspace switch keeps the unsaved text instead.
 func (m *App) dirtyPromptDiscard() {
 	if intent, ed := m.workspaceSwitchPrompt(); intent != nil {
 		intent.keepShared[ed] = switchEditorSeal(ed)
@@ -101,6 +96,11 @@ func (m *App) dirtyPromptDiscard() {
 	path := m.DirtyPromptPath
 	m.overlayHost.Close(ui.OverlayDirtyClose)
 	m.openNextAgentPrompt()
+	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
+		if m.discardLiveEditor(tab.Editor, true) {
+			return
+		}
+	}
 	if path != "" {
 		m.closeEditorTabForce(path)
 		// The user resolved this buffer's close decision, so a bulk close
@@ -200,14 +200,14 @@ func (m *App) handleDirtyPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 	switch msg.String() {
 	case "s", "S":
-		m.DirtyPromptChoice = 0
+		m.DirtyPromptChoice = ui.DirtyCloseSave
 		return m.dirtyPromptSave()
 	case "d", "D":
-		m.DirtyPromptChoice = 1
+		m.DirtyPromptChoice = ui.DirtyCloseDiscard
 		m.dirtyPromptDiscard()
 		return nil
 	case "c", "C":
-		m.DirtyPromptChoice = 2
+		m.DirtyPromptChoice = ui.DirtyCloseCancel
 		m.dirtyPromptCancel()
 		return nil
 	}

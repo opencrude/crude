@@ -28,6 +28,10 @@ type Prepared struct {
 	beforeWidth, afterWidth   int
 	beforeSyntax, afterSyntax [][]syntaxSpan
 	beforeSource, afterSource SourceLines
+	// changes are the hunks behind hunks/unifiedHunks, in order. rowChange
+	// and unifiedChange map each row to its change, or -1 for equal text.
+	changes                  []textdiff.Hunk
+	rowChange, unifiedChange []int
 }
 
 type syntaxSpan struct {
@@ -120,7 +124,22 @@ func Prepare(c Comparison) Prepared {
 	return p
 }
 
-func PrepareContext(ctx context.Context, c Comparison) (p Prepared, err error) {
+func PrepareContext(ctx context.Context, c Comparison) (Prepared, error) {
+	return prepare(ctx, c, nil)
+}
+
+// PrepareChangesContext uses the caller's changes instead of a line diff. A
+// Git conflict knows its regions exactly; each region is one change. Changes
+// must be ordered, must not overlap and must match the line counts of both
+// versions, with equal text between them.
+func PrepareChangesContext(ctx context.Context, c Comparison, changes []textdiff.Hunk) (Prepared, error) {
+	if changes == nil {
+		changes = []textdiff.Hunk{}
+	}
+	return prepare(ctx, c, changes)
+}
+
+func prepare(ctx context.Context, c Comparison, changes []textdiff.Hunk) (p Prepared, err error) {
 	release, err := AcquirePreparation(ctx)
 	if err != nil {
 		return Prepared{}, err
@@ -149,17 +168,25 @@ func PrepareContext(ctx context.Context, c Comparison) (p Prepared, err error) {
 		return Prepared{}, err
 	}
 	p.beforeWidth, p.afterWidth = p.beforeSource.Width(), p.afterSource.Width()
+	if changes == nil {
+		changes = textdiff.ReviewHunks(c.Before, c.After)
+	} else if err := validChanges(changes, len(before), len(after)); err != nil {
+		return Prepared{}, err
+	}
+	p.changes = changes
 	old, next := 0, 0
 	equal := func(end int) {
-		for old < end {
+		for old < end && next < len(after) {
 			r := Row{BeforeLine: old + 1, AfterLine: next + 1, Before: before[old], After: after[next], Kind: ui.ColorFg}
 			p.rows = append(p.rows, r)
 			p.unified = append(p.unified, r)
+			p.rowChange = append(p.rowChange, -1)
+			p.unifiedChange = append(p.unifiedChange, -1)
 			old++
 			next++
 		}
 	}
-	for _, h := range textdiff.ReviewHunks(c.Before, c.After) {
+	for index, h := range changes {
 		if err := ctx.Err(); err != nil {
 			return Prepared{}, err
 		}
@@ -177,16 +204,37 @@ func PrepareContext(ctx context.Context, c Comparison) (p Prepared, err error) {
 				r.After = h.NewLines[i]
 			}
 			p.rows = append(p.rows, r)
+			p.rowChange = append(p.rowChange, index)
 		}
 		for i, line := range h.OldLines {
 			p.unified = append(p.unified, Row{BeforeLine: old + i + 1, Before: line, Kind: ui.ColorDiffDeletion})
+			p.unifiedChange = append(p.unifiedChange, index)
 		}
 		for i, line := range h.NewLines {
 			p.unified = append(p.unified, Row{AfterLine: next + i + 1, After: line, Kind: ui.ColorDiffAddition})
+			p.unifiedChange = append(p.unifiedChange, index)
 		}
 		old += len(h.OldLines)
 		next += len(h.NewLines)
 	}
 	equal(len(before))
 	return p, ctx.Err()
+}
+
+// validChanges checks caller-supplied changes against both versions.
+func validChanges(changes []textdiff.Hunk, before, after int) error {
+	old, next := 0, 0
+	for _, h := range changes {
+		if h.OldStart < old || h.NewStart < next || h.OldStart-old != h.NewStart-next {
+			return fmt.Errorf("comparison changes are out of order")
+		}
+		old, next = h.OldStart+len(h.OldLines), h.NewStart+len(h.NewLines)
+		if old > before || next > after {
+			return fmt.Errorf("comparison changes exceed the compared text")
+		}
+	}
+	if before-old != after-next {
+		return fmt.Errorf("comparison changes do not cover both versions")
+	}
+	return nil
 }

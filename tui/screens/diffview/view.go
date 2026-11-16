@@ -36,6 +36,7 @@ type Screen struct {
 	search                 SearchProjection
 	syntaxStyle            *chroma.Style
 	syntaxInk              map[chroma.TokenType]cell.Color
+	resolve                resolution
 }
 
 func New(th *theme.Theme) *Screen { return NewWithID(th, "diffview") }
@@ -51,6 +52,7 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	s.before = s.newPane("before", true, false)
 	s.after = s.newPane("after", false, false)
 	s.unified = s.newPane("unified", false, true)
+	s.resolve.bar = newResolutionBar(id, s.tokens)
 	s.SetTokens(s.tokens)
 	return s
 }
@@ -72,6 +74,11 @@ func (s *Screen) SetPrepared(p Prepared) {
 		pane.horizontal.ScrollTo(0)
 	}
 	s.syncScroll()
+	s.resetChoices()
+	if s.resolve.enabled && s.hunkIndex >= 0 {
+		// A resolution starts at its first change.
+		s.revealChange()
+	}
 	s.SetQuery(s.query)
 }
 func (s *Screen) Comparison() Comparison                       { return s.prepared.Comparison }
@@ -108,6 +115,7 @@ func (s *Screen) SetTokens(t *ui.TokenSet) {
 	s.tokens = t
 	s.divider.SetTokens(t)
 	s.scrollbar.SetTokens(t)
+	s.resolve.bar.SetTokens(t)
 	for _, p := range []*pane{s.before, s.after, s.unified} {
 		p.bar.SetTokens(t)
 	}
@@ -137,10 +145,23 @@ func (s *Screen) rows() []Row {
 }
 func (s *Screen) syncScroll() { s.scroll.SetContent(len(s.rows())) }
 func (s *Screen) Children() []ui.Component {
+	children := []ui.Component{s.unified, s.scrollbar}
 	if s.presented == SideBySide {
-		return []ui.Component{s.before, s.after, s.divider, s.scrollbar}
+		children = []ui.Component{s.before, s.after, s.divider, s.scrollbar}
 	}
-	return []ui.Component{s.unified, s.scrollbar}
+	if s.resolve.enabled {
+		children = append(children, s.resolve.bar)
+	}
+	return children
+}
+
+// top is the first pane row: a resolving comparison shows its decision bar
+// above the panes.
+func (s *Screen) top() int {
+	if s.resolve.enabled {
+		return min(1, s.Bounds().H)
+	}
+	return 0
 }
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	previous := s.presented
@@ -155,6 +176,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.preferred == SideBySide && r.W >= 60 {
 		s.presented = SideBySide
 	}
+	top := s.top()
+	s.resolve.bar.Layout(ctx, ui.Rect{})
+	if top > 0 {
+		s.resolve.bar.Layout(ctx, ui.Rect{W: r.W, H: top})
+	}
+	r = ui.Rect{X: r.X, Y: r.Y + top, W: r.W, H: max(0, r.H-top)}
 	s.scroll.SetViewport(max(0, r.H-2))
 	s.syncScroll()
 	if previous != s.presented {
@@ -168,12 +195,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	w := max(0, r.W-1)
 	if s.presented == SideBySide {
 		a, g, b := s.split.Resolve(w)
-		s.before.Layout(ctx, ui.Rect{W: a, H: r.H})
+		s.before.Layout(ctx, ui.Rect{Y: top, W: a, H: r.H})
 		s.divider.SetCurrentFirst(a)
-		s.divider.Layout(ctx, ui.Rect{X: a, W: g, H: r.H})
-		s.after.Layout(ctx, ui.Rect{X: a + g, W: b, H: r.H})
+		s.divider.Layout(ctx, ui.Rect{X: a, Y: top, W: g, H: r.H})
+		s.after.Layout(ctx, ui.Rect{X: a + g, Y: top, W: b, H: r.H})
 	} else {
-		s.unified.Layout(ctx, ui.Rect{W: w, H: r.H})
+		s.unified.Layout(ctx, ui.Rect{Y: top, W: w, H: r.H})
 	}
 	if previous != s.presented {
 		s.rebuildMatches()
@@ -182,17 +209,23 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 			s.revealMatch()
 		}
 	}
-	s.scrollbar.Layout(ctx, ui.Rect{X: w, Y: min(1, r.H), W: min(1, r.W), H: max(0, r.H-2)})
+	s.scrollbar.Layout(ctx, ui.Rect{X: w, Y: top + min(1, r.H), W: min(1, r.W), H: max(0, r.H-2)})
 }
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	ui.FillRect(buf, ox, oy, s.Bounds(), cell.BlankCell(s.tokens.Color(ui.ColorBg)))
 }
 func (s *Screen) Semantics() ui.Semantics {
+	if s.resolve.enabled {
+		return ui.Semantics{Role: ui.RoleGroup, Label: "Comparison with choices", Value: s.prepared.Comparison.Path, Description: s.ResolutionStatus()}
+	}
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Read-only comparison", Value: s.prepared.Comparison.Path}
 }
 func (s *Screen) Handle(_ ui.EventContext, e ui.Event) ui.EventResult {
 	if !e.IsKey() {
 		return ui.EventResult{}
+	}
+	if s.resolutionKey(e.Key.String()) {
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
 	switch e.Key.String() {
 	case "alt+down":
@@ -209,6 +242,9 @@ func (s *Screen) Handle(_ ui.EventContext, e ui.Event) ui.EventResult {
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 }
 func (s *Screen) HandleAction(_ ui.EventContext, a ui.Action) ui.EventResult {
+	if s.resolve.enabled && s.resolutionAction(a.ID) {
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
 	if a.ID == ui.ActionSplitResize {
 		if resize, ok := a.Payload.(ui.SplitResize); ok && resize.ID == s.divider.ID() {
 			w := max(1, s.Bounds().W-1)
@@ -234,8 +270,20 @@ func (s *Screen) NavigateHunk(direction int) bool {
 	} else {
 		s.hunkIndex = (s.hunkIndex + direction + len(rows)) % len(rows)
 	}
-	s.scroll.ScrollTo(rows[s.hunkIndex])
+	s.revealChange()
 	return true
+}
+
+// revealChange scrolls the current change into view with one row of context.
+func (s *Screen) revealChange() {
+	rows := s.prepared.unifiedHunks
+	if s.presented == SideBySide {
+		rows = s.prepared.hunks
+	}
+	if s.hunkIndex < 0 || s.hunkIndex >= len(rows) {
+		return
+	}
+	s.scroll.ScrollTo(max(0, rows[s.hunkIndex]-1))
 }
 
 func (s *Screen) SetQuery(q string) {
@@ -358,7 +406,50 @@ func (p *pane) gutter() int {
 	if p.unified {
 		width = 2*len(fmt.Sprint(n)) + 4
 	}
-	return min(width, p.Bounds().W)
+	return min(width+p.boxWidth(), p.Bounds().W)
+}
+
+// boxWidth is the gutter space of the choice boxes: one box in each split
+// pane, the left and right boxes side by side in the unified pane.
+func (p *pane) boxWidth() int {
+	switch {
+	case !p.owner.resolve.enabled:
+		return 0
+	case p.unified:
+		return 2*boxWidth - 1 // "[x][ ] "
+	}
+	return boxWidth
+}
+
+// boxSides lists the sides of the boxes this pane shows, left first.
+func (p *pane) boxSides() []bool {
+	if p.unified {
+		return []bool{true, false}
+	}
+	return []bool{p.before}
+}
+
+// paintBoxes draws the choice boxes of a change: [x] keeps that side. Open
+// changes are in warning ink and the current change in accent ink.
+func (p *pane) paintBoxes(buf *surface.CellBuffer, x, y, change int, bg cell.Color) {
+	s := p.owner
+	t := s.tokens
+	choice := s.resolve.choices[change]
+	role, attr := ui.ColorMuted, cell.Attrs(0)
+	if choice == ChoiceNone {
+		role = ui.ColorWarning
+	}
+	if change == s.hunkIndex {
+		role, attr = ui.ColorAccent, cell.AttrBold
+	}
+	for _, left := range p.boxSides() {
+		box := "[ ]"
+		if choice != ChoiceNone && s.kept(change, left) {
+			box = "[x]"
+		}
+		buf.WriteString(x, y, box, t.Color(role), bg, attr)
+		x += boxWidth - 1
+	}
 }
 func (p *pane) source(r Row) (string, int, ui.SemanticColor) {
 	if p.unified {
@@ -423,11 +514,21 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		} else if line != 0 && role == ui.ColorDiffDeletion {
 			rowBG = t.Color(ui.ColorDiffDeletionBg)
 		}
+		textAttr := cell.Attrs(0)
+		change, boxes := s.firstChangeRow(index)
+		if change >= 0 && !s.kept(change, p.before || p.unified && row.AfterLine == 0) {
+			// A side the decision drops reads as removed text.
+			rowBG, role, textAttr = bg, ui.ColorMuted, cell.AttrStrikethrough
+		}
 		buf.FillRect(surface.Rect{X: x, Y: y + local + 1, W: r.W, H: 1}, cell.BlankCell(rowBG))
+		if s.resolve.enabled && boxes {
+			p.paintBoxes(buf, x, y+local+1, change, rowBG)
+		}
 		if line == 0 {
 			continue
 		}
-		number := fmt.Sprintf("%*d ", max(0, g-2), line)
+		box := p.boxWidth()
+		number := fmt.Sprintf("%*d ", max(0, g-box-2), line)
 		if !p.unified {
 			mark := " "
 			switch role {
@@ -453,10 +554,10 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 			if row.AfterLine > 0 {
 				next = fmt.Sprint(row.AfterLine)
 			}
-			nw := max(1, (g-4)/2)
-			number = fmt.Sprintf("%-*s%s", g-1, fmt.Sprintf("%*s %*s", nw, old, nw, next), mark)
+			nw := max(1, (g-box-4)/2)
+			number = fmt.Sprintf("%-*s%s", g-box-1, fmt.Sprintf("%*s %*s", nw, old, nw, next), mark)
 		}
-		buf.WriteString(x, y+local+1, rendering.TruncateVisual(number, g, ""), t.Color(ui.ColorMuted), rowBG, 0)
+		buf.WriteString(x+box, y+local+1, rendering.TruncateVisual(number, g-box, ""), t.Color(ui.ColorMuted), rowBG, 0)
 		syntax := s.prepared.afterSyntax
 		if p.before || p.unified && row.AfterLine == 0 {
 			syntax = s.prepared.beforeSyntax
@@ -489,10 +590,13 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 						break
 					}
 				}
+				if textAttr != 0 {
+					fg = t.Color(ui.ColorMuted)
+				}
 				if p.contains(index, unit.column, unit.column+unit.width) {
 					fg, fill = t.TextSelectionColors(sourceFG)
 				}
-				buf.WriteString(x+g+left, y+local+1, unit.display, fg, fill, 0)
+				buf.WriteString(x+g+left, y+local+1, unit.display, fg, fill, textAttr)
 			}
 		}
 	}
@@ -699,6 +803,20 @@ func (p *pane) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 	case ui.EventMouseClick:
 		if e.MouseClick.Button != tea.MouseLeft || ctx.LocalY < 1 {
 			return ui.EventResult{}
+		}
+		if s.resolve.enabled {
+			row := s.scroll.Offset() + ctx.LocalY - 1
+			if change, boxes := s.firstChangeRow(row); boxes && ctx.LocalX < p.boxWidth() {
+				left := p.before
+				if p.unified {
+					left = ctx.LocalX < boxWidth-1
+				}
+				s.toggle(change, left)
+				return result
+			}
+			if change := s.changeAt(row); change >= 0 && row < len(s.rows()) {
+				s.hunkIndex = change
+			}
 		}
 		p.start = p.pointer(ctx)
 		p.end = p.start

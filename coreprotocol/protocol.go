@@ -62,6 +62,10 @@ type Fault struct {
 
 func (f *Fault) Error() string { return f.Code + ": " + f.Message }
 
+// FaultDocumentConflict reports that a document's file changed on disk while
+// its text was unsaved. The document stays unchanged; a reload resolves it.
+const FaultDocumentConflict = "document_conflict"
+
 // Response is one command's outcome. Payload is the result value's encoding.
 type Response struct {
 	ID       string `json:"id"`

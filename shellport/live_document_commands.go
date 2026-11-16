@@ -19,5 +19,7 @@ type LiveDocumentCommands interface {
 // DocumentEncodingSaver preserves the same request/receipt contract as Save.
 type DocumentEncodingSaver interface {
 	SaveDocumentEncodingRequest(context.Context, string, uint64, textencoding.Encoding, string) (document.Snapshot, error)
-	ReloadDocumentRequest(context.Context, string, uint64, string) (document.Snapshot, error)
+	// ReloadDocumentRequest loads the saved file. A resolution keeps or replaces
+	// the text instead and makes the current file the save baseline.
+	ReloadDocumentRequest(context.Context, string, uint64, string, *document.Resolution) (document.Snapshot, error)
 }

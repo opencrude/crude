@@ -76,7 +76,7 @@ func TestCloseOthersPromptsInsteadOfDiscardingDirtyBuffer(t *testing.T) {
 		t.Fatal("Close others closed a tab before the prompt was resolved")
 	}
 
-	// "Don't Save" closes the prompted tab and resumes the remaining walk.
+	// "Discard" closes the prompted tab and resumes the remaining walk.
 	app.dirtyPromptDiscard()
 	if first.IsOpen() {
 		t.Fatal("discarded tab stayed open")
