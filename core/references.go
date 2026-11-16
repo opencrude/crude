@@ -61,6 +61,9 @@ func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Co
 		}, true
 	}
 	store := owner.RefStore
+	if request.Method == coreprotocol.ReferenceImport && input.SourceSessionID != "" && input.SourceSessionID != input.SessionID {
+		return a.prepareCrossSessionImport(request, input, store), true
+	}
 	return func(ctx context.Context) coreprotocol.Response {
 		if err := ctx.Err(); err != nil {
 			return fault(request, "cancelled", err.Error())
@@ -71,6 +74,40 @@ func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Co
 		}
 		return responseValue(request, value)
 	}, true
+}
+
+// prepareCrossSessionImport copies one exact attachment revision from another
+// open session of this workspace into the destination session's own storage.
+func (a *actor) prepareCrossSessionImport(request coreprotocol.Request, input coreprotocol.ReferenceCommand, store workspace.SessionReferences) func(context.Context) coreprotocol.Response {
+	var source workspace.SessionReferences
+	for _, candidate := range a.ws.Sessions {
+		if candidate.SessionID == input.SourceSessionID && candidate.RefStore != nil {
+			source = candidate.RefStore
+			break
+		}
+	}
+	return func(ctx context.Context) coreprotocol.Response {
+		if err := ctx.Err(); err != nil {
+			return fault(request, "cancelled", err.Error())
+		}
+		if source == nil {
+			return fault(request, "session_missing", "the session the attachment came from is not open")
+		}
+		referenceCommandMu.Lock()
+		defer referenceCommandMu.Unlock()
+		ref, ok := source.GetReference(input.ID)
+		if !ok || !ref.Active() || ref.SessionID != input.SourceSessionID {
+			return fault(request, "reference_failed", "reference is missing, inactive, or belongs to another session")
+		}
+		if input.Revision == "" || input.Revision != entityRevision(ref) {
+			return fault(request, "reference_failed", "reference changed since it was copied")
+		}
+		created, err := store.ImportReference(ref)
+		if err != nil {
+			return fault(request, "reference_failed", err.Error())
+		}
+		return responseValue(request, wire(referenceView(created)))
+	}
 }
 
 func runReferenceCommand(store workspace.SessionReferences, method string, in coreprotocol.ReferenceCommand) (coreprotocol.Value, error) {

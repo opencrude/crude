@@ -10,13 +10,13 @@ import (
 	"crude/document"
 )
 
-// documentConflict edits the document, then changes its file outside Crude,
-// which leaves unsaved text in conflict with the disk.
+// documentConflict edits the document, then changes the same line of its file
+// outside Crude, which leaves unsaved text in conflict with the disk.
 func documentConflict(t *testing.T) (*DocumentService, document.Snapshot, document.Owner) {
 	t.Helper()
 	s, snap, owner, _ := documentFixture(t, "one\ntwo\n")
 	r := documentEdit(t, s, owner, snap.ID, "mine", snap.Revision, 0, 3, "ONE")
-	if err := os.WriteFile(snap.Path, []byte("one\nTWO\n"), 0o600); err != nil {
+	if err := os.WriteFile(snap.Path, []byte("uno\nTWO\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.ReconcileDisk(context.Background(), snap.ID); err != nil {
@@ -33,7 +33,7 @@ func documentConflict(t *testing.T) (*DocumentService, document.Snapshot, docume
 func TestReloadDiscardSettlesDiskConflict(t *testing.T) {
 	s, snap, owner := documentConflict(t)
 	got, err := s.Reload(context.Background(), owner, snap.ID, "discard", snap.Revision, nil)
-	if err != nil || string(got.Text) != "one\nTWO\n" || got.Conflict || got.Dirty {
+	if err != nil || string(got.Text) != "uno\nTWO\n" || got.Conflict || got.Dirty {
 		t.Fatalf("discard: %q conflict=%v dirty=%v err=%v", got.Text, got.Conflict, got.Dirty, err)
 	}
 	if _, err := s.Undo(owner, snap.ID, "undo", got.Revision); err != nil {
@@ -62,7 +62,7 @@ func TestReloadKeepThenSaveOverwrites(t *testing.T) {
 // the user compared; a newer file is refused as a conflict.
 func TestReloadReplaceRequiresTheReviewedDiskVersion(t *testing.T) {
 	s, snap, owner := documentConflict(t)
-	reviewed := sha256.Sum256([]byte("one\nTWO\n"))
+	reviewed := sha256.Sum256([]byte("uno\nTWO\n"))
 	if err := os.WriteFile(snap.Path, []byte("newer\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

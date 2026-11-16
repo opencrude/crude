@@ -66,6 +66,10 @@ func (f *Fault) Error() string { return f.Code + ": " + f.Message }
 // its text was unsaved. The document stays unchanged; a reload resolves it.
 const FaultDocumentConflict = "document_conflict"
 
+// FaultTerminalControl reports that the caller does not hold a terminal's
+// input control lease, for example because another window holds it.
+const FaultTerminalControl = "terminal_control"
+
 // Response is one command's outcome. Payload is the result value's encoding.
 type Response struct {
 	ID       string `json:"id"`

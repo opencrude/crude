@@ -236,8 +236,10 @@ func TestScreenScrollbackScrollbarTrackAndThumbInteraction(t *testing.T) {
 	}
 }
 
-func TestScreenSelectionCopiesOnRelease(t *testing.T) {
-	s, _ := newTestScreen(t)
+// A native terminal never writes the clipboard because text was selected.
+// The selection stays visible until an explicit copy or the next input.
+func TestScreenSelectionStaysAndCopiesOnlyOnRequest(t *testing.T) {
+	s, writes := newTestScreen(t)
 	var copied []string
 	s.SetCopy(func(text string) tea.Cmd {
 		return func() tea.Msg {
@@ -255,16 +257,104 @@ func TestScreenSelectionCopiesOnRelease(t *testing.T) {
 		ui.MouseMotionEvent(tea.MouseMotionMsg{Button: tea.MouseLeft, X: 4, Y: 0}))
 	res := s.Handle(ui.EventContext{LocalX: 4, LocalY: 0},
 		ui.MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 4, Y: 0}))
-
-	if len(copied) != 0 {
-		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+	if res.Cmd != nil {
+		_ = res.Cmd()
 	}
+	if len(copied) != 0 || !s.HasSelection() {
+		t.Fatalf("selecting wrote the clipboard or lost the selection: copied=%q", copied)
+	}
+	res = s.Handle(ui.EventContext{}, keyEvent('c', tea.ModCtrl|tea.ModShift, ""))
 	if res.Cmd == nil {
-		t.Fatal("selection release returned no clipboard command")
+		t.Fatal("Ctrl+Shift+C did not copy the selection")
 	}
 	_ = res.Cmd()
-	if len(copied) != 1 || copied[0] != "hello" {
-		t.Fatalf("copied=%q want [hello]", copied)
+	if len(copied) != 1 || copied[0] != "hello" || len(*writes) != 0 {
+		t.Fatalf("copied=%q writes=%d", copied, len(*writes))
+	}
+}
+
+// Ctrl+C and Ctrl+V reach the child as ^C and ^V (interrupt, literal-next)
+// even with a selection. Windows terminals copy a selection with Ctrl+C and
+// paste with Ctrl+V; that platform convention applies there only.
+func TestScreenCtrlKeysFollowTheTerminalConvention(t *testing.T) {
+	for _, windows := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unix", true: "windows"}[windows], func(t *testing.T) {
+			defer func(previous bool) { windowsKeyConventions = previous }(windowsKeyConventions)
+			windowsKeyConventions = windows
+			s, commands := newTestScreen(t)
+			var copied []string
+			s.SetCopy(func(text string) tea.Cmd {
+				return func() tea.Msg { copied = append(copied, text); return nil }
+			})
+			fixture(s, "hello world", 11, terminalvt.Modes{})
+			s.SelectAll()
+			*commands = nil
+			res := s.Handle(ui.EventContext{}, keyEvent('c', tea.ModCtrl, ""))
+			if res.Cmd != nil {
+				_ = res.Cmd()
+			}
+			keys := 0
+			for _, c := range *commands {
+				if c.Kind == CommandKey && c.Key.Code == 'c' && c.Key.Mod == terminalvt.ModCtrl {
+					keys++
+				}
+			}
+			if windows && (len(copied) != 1 || keys != 0 || s.HasSelection()) {
+				t.Fatalf("windows Ctrl+C with a selection: copied=%q keys=%d", copied, keys)
+			}
+			if !windows && (len(copied) != 0 || keys != 1) {
+				t.Fatalf("Ctrl+C did not reach the child: copied=%q keys=%d", copied, keys)
+			}
+			if got := IsPasteChord(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}); got != windows {
+				t.Fatalf("Ctrl+V paste=%v", got)
+			}
+			for _, key := range []tea.KeyPressMsg{{Code: 'v', Mod: tea.ModCtrl | tea.ModShift}, {Code: tea.KeyInsert, Mod: tea.ModShift}, {Code: 'v', Mod: tea.ModSuper}} {
+				if !IsPasteChord(key) {
+					t.Fatalf("%s does not paste", key.String())
+				}
+			}
+			if IsPasteChord(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl | tea.ModAlt}) {
+				t.Fatal("Ctrl+Alt+V pasted instead of reaching the child")
+			}
+		})
+	}
+}
+
+// A viewer keeps typed keys and pasted text, asks once for input control and
+// sends everything in order once control arrives; a refusal drops it.
+func TestViewerInputIsHeldUntilControlArrives(t *testing.T) {
+	s, commands := newTestScreen(t)
+	fixture(s, "hello", 5, terminalvt.Modes{})
+	s.SetControlled(false)
+	*commands = nil
+	first := s.Handle(ui.EventContext{}, keyEvent('l', 0, "l"))
+	second := s.Handle(ui.EventContext{}, keyEvent('s', 0, "s"))
+	s.PasteText(" -la")
+	if first.Action == nil || first.Action.ID != ActionTakeControl || second.Action != nil || len(*commands) != 0 {
+		t.Fatal("viewer input escaped, or asked for control twice")
+	}
+	s.SetControlled(true)
+	var keys []string
+	for _, c := range append(*commands, s.TakePendingCommands()...) {
+		switch c.Kind {
+		case CommandKey:
+			keys = append(keys, c.Key.Text)
+		case CommandPaste:
+			keys = append(keys, string(c.Paste))
+		}
+	}
+	if strings.Join(keys, "") != "ls -la" {
+		t.Fatalf("held input=%q", keys)
+	}
+	s.SetControlled(false)
+	s.Handle(ui.EventContext{}, keyEvent('x', 0, "x"))
+	s.ControlRefused()
+	*commands = nil
+	s.SetControlled(true)
+	for _, c := range append(*commands, s.TakePendingCommands()...) {
+		if c.Kind == CommandKey {
+			t.Fatal("input kept for a refused control request was sent later")
+		}
 	}
 }
 

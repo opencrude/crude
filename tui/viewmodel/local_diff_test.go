@@ -3,7 +3,6 @@ package viewmodel
 import (
 	"crypto/sha256"
 	"os"
-	"strings"
 	"testing"
 
 	"crude/tui/screens/gitdiff"
@@ -83,8 +82,10 @@ func TestLocalDiffSavedSnapshotRefreshAndAsyncOwnership(t *testing.T) {
 	if app.Win.ActiveTab().ID != selected || view.screen.Comparison().After != "first unsaved revision\n" || view.screen.Comparison().Before != saved {
 		t.Fatal("late completion stole focus or discarded the captured immutable evidence")
 	}
-	if !strings.Contains(view.notice, "The text changed") {
-		t.Fatal("changed source snapshot is not identified as stale")
+	// A comparison follows its source: newer text schedules one debounced
+	// preparation instead of asking the user to refresh.
+	if !view.refreshDue {
+		t.Fatal("changed source snapshot did not schedule a refresh")
 	}
 	old := app.prepareLocalDiff(view)()
 	current := ed.BufferSnapshot()
@@ -114,7 +115,7 @@ func TestLocalDiffSavedSnapshotRefreshAndAsyncOwnership(t *testing.T) {
 	}
 }
 
-func TestLocalDiffActionsTargetExactScreenAndKeepSnapshotsAfterSourceClose(t *testing.T) {
+func TestLocalDiffActionsTargetExactScreenAndCloseWithTheirFile(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
 	paneJourneySize(app, 180, 44)
@@ -133,20 +134,24 @@ func TestLocalDiffActionsTargetExactScreenAndKeepSnapshotsAfterSourceClose(t *te
 	if app.EditorState.Editor != first.source {
 		t.Fatal("open source targeted selected diff instead of the action owner")
 	}
+	// A comparison whose file closed can change nothing: its choices would be
+	// dead controls, so it closes with the file. Another file's stays.
 	app.closeEditorTabForce(paths[0])
 	app.syncLocalDiffFreshness()
-	retained := first.screen.Comparison()
-	if !strings.Contains(first.notice, "The file is closed") || retained.After == "" {
-		t.Fatal("closing source lost snapshot or failed to mark source lifetime")
+	if app.localDiffs[first.tab] != nil || app.Win.IndexOf(first.tab) >= 0 {
+		t.Fatal("the comparison of a closed file must close with it")
+	}
+	if app.localDiffs[second.tab] != second {
+		t.Fatal("closing one file closed another file's comparison")
 	}
 	app.Win.SwitchTo(app.Win.IndexOf(second.tab))
 	app.handleTabSwitch()
 	if cmd := app.handleHostAction(&ui.Action{ID: localdiff.ActionRefresh, Payload: first.screen}); cmd != nil {
-		t.Fatal("closed editor started a new read or reused another buffer")
+		t.Fatal("a closed comparison started a new read")
 	}
 	app.handleHostAction(&ui.Action{ID: localdiff.ActionClose, Payload: first.screen})
-	if app.Win.ActiveTab().ID != second.tab || app.localDiffs[first.tab] != nil || app.localDiffs[second.tab] != second {
-		t.Fatal("close targeted the wrong comparison")
+	if app.Win.ActiveTab().ID != second.tab || app.localDiffs[second.tab] != second {
+		t.Fatal("a late action of a closed comparison touched another one")
 	}
 }
 

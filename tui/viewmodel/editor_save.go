@@ -26,6 +26,8 @@ type editorSaveState struct {
 	cancel     context.CancelFunc
 	discard    bool
 	err        error
+	// removed marks a conflict whose file was deleted on disk.
+	removed bool
 }
 
 type editorSaveResultMsg struct {
@@ -253,11 +255,11 @@ func (m *App) applyEditorDisk(msg editorDiskResultMsg) {
 	}
 	if msg.missing {
 		ed.NoteDiskMissing()
-		m.markEditorDiskConflict(ed, ed.BaseTitle()+" was deleted on disk. Your text stays open. Save it to create the file again.")
+		m.markEditorDiskConflict(ed, true)
 		return
 	}
 	if msg.err != nil {
-		m.markEditorDiskConflict(ed, "Could not read the changed file. "+msg.err.Error())
+		m.markEditorDiskConflict(ed, false)
 		return
 	}
 	if ed.MatchesDisk(msg.hash) {
@@ -266,11 +268,13 @@ func (m *App) applyEditorDisk(msg editorDiskResultMsg) {
 	if !ed.Modified() {
 		ed.ApplyDisk(msg.data, msg.encoding, msg.hash)
 	} else {
-		m.markEditorDiskConflict(ed, ed.BaseTitle()+" changed on disk. Save it to choose which version to keep.")
+		m.markEditorDiskConflict(ed, false)
 	}
 }
 
-func (m *App) markEditorDiskConflict(ed *editor.Editor, message string) {
+// markEditorDiskConflict records a conflict of an editor without a core
+// document; the disk-awareness policy presents it like a core conflict.
+func (m *App) markEditorDiskConflict(ed *editor.Editor, removed bool) {
 	if m.editorSaves == nil {
 		m.editorSaves = make(map[string]*editorSaveState)
 	}
@@ -278,10 +282,8 @@ func (m *App) markEditorDiskConflict(ed *editor.Editor, message string) {
 	if state != nil && state.err != nil {
 		return
 	}
-	m.editorSaves[ed.BufferID()] = &editorSaveState{err: workspace.ErrDocumentConflict}
-	if m.Feedback != nil {
-		m.Feedback.NotifyInfo(message)
-	}
+	m.editorSaves[ed.BufferID()] = &editorSaveState{err: workspace.ErrDocumentConflict, removed: removed}
+	m.observeDiskState(ed, false, false)
 }
 
 func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
@@ -476,8 +478,10 @@ func (m *App) handleEditorSaveResult(msg editorSaveResultMsg) tea.Cmd {
 		if errors.Is(result.Err, workspace.ErrDocumentConflict) {
 			if result.Request.Reason == workspace.DocumentSaveManual {
 				m.openDiskConflict(tab.Editor, state.closeAfter)
-			} else if m.Feedback != nil {
-				m.Feedback.NotifyInfo(tab.Editor.BaseTitle() + " changed on disk. Save it to choose which version to keep.")
+			} else {
+				// Autosave met an outside edit: the disk-awareness policy
+				// presents the conflict, like any other.
+				m.observeDiskState(tab.Editor, false, false)
 			}
 			return nil
 		}

@@ -112,7 +112,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainComparisonGeometry())
 	command = tea.Batch(command, m.drainComparisonSearch())
 	command = tea.Batch(command, m.drainCoreRestartStartup())
-	m.syncLocalDiffFreshness()
+	command = tea.Batch(command, m.syncLocalDiffFreshness())
 	m.refreshAutomaticSignaturePosition(msg)
 	m.syncSignatureHelp()
 	m.syncDiagnosticPopups()
@@ -559,6 +559,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorDiskResultMsg:
 		m.applyEditorDisk(msg)
 		return m, nil
+	case diskNoticeFlushMsg:
+		m.flushDiskNotices(msg)
+		return m, nil
 	case editor.NavigateAtMsg:
 		return m, m.navigateAt(msg)
 	case editor.InspectChangeMsg:
@@ -572,6 +575,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case localDiffPreparedMsg:
 		m.applyLocalDiffPrepared(msg)
 		return m, nil
+	case localDiffRefreshMsg:
+		return m, m.applyLocalDiffRefresh(msg)
 	case tea.BlurMsg:
 		m.cancelPointerCaptures()
 		if m.editorSettings.AutoSave == types.AutoSaveTerminalFocusLoss && m.DirtyPromptPath == "" {

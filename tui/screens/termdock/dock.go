@@ -363,6 +363,10 @@ func (s *Screen) SetTitle(id, title string) {
 	s.syncTabs()
 }
 
+// SetTooltipFunc supplies the hover text of a terminal tab by terminal ID,
+// like every other tab strip: the full name, folder and state.
+func (s *Screen) SetTooltipFunc(fn func(id string) string) { s.tabs.SetTooltipFunc(fn) }
+
 func (s *Screen) syncTabs() {
 	items := make([]ui.TabItem, 0, len(s.order))
 	for index, id := range s.order {

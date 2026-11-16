@@ -31,6 +31,11 @@ func (s *streamTestService) PredictiveKey(string, terminalvt.Key) (workspace.Ter
 	return workspace.TerminalProjection{}, false
 }
 
+// Mounting a terminal claims free input control; this fake has another
+// window holding it, so screens mounted without a lease remain viewers.
+func (s *streamTestService) Acquire(string, workspace.TerminalController) (workspace.TerminalLease, error) {
+	return workspace.TerminalLease{}, workspace.ErrTerminalControl
+}
 func (s *streamTestService) StartGrid(string)                          { s.starts++ }
 func (s *streamTestService) SetViewport(string, terminalvt.RowRequest) {}
 func (s *streamTestService) ApplyTerminalFrame(msg *shellport.TerminalFrameMsg) error {

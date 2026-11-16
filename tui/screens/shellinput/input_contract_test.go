@@ -35,11 +35,11 @@ func TestShellInputKeyboardContractTable(t *testing.T) {
 		},
 		{
 			name:            "enter_selects_slash_command",
-			input:           "/help",
+			input:           "/sessions",
 			key:             tea.KeyPressMsg{Code: tea.KeyEnter},
 			wantSlashActive: false,
 			wantEvent:       "slash",
-			wantCommand:     "/help",
+			wantCommand:     "/sessions",
 		},
 		{
 			name:            "tab_completes_slash_command",

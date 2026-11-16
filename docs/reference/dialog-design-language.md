@@ -82,7 +82,9 @@ words and button order, built by `ui.BuildDirtyCloseFrame` and
 - **File changed on disk** (Save, or Save while closing, finds a newer file):
   **Overwrite** (save your version), **Discard** (load the disk version),
   **Compare** (choose each change), **Cancel**. The one-line detail states what
-  each choice does. Cancel is focused.
+  each choice does. Cancel is focused. The same choices without Cancel are the
+  disk bar above the editor (`ui.NoticeBar`): state that lasts, not a modal;
+  the dialog closes by itself when the state ends elsewhere.
 - **Changes not applied** (edits in a view did not reach the shared document):
   **Discard**, **Compare**, **Keep**. Discard keeps a private backup first.
 

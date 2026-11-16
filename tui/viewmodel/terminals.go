@@ -107,6 +107,7 @@ func (m *App) openTerminalAsTab(id string) {
 	m.termDock.SetPanel(key, screen)
 	m.setTerminalPlacement(id, workspace.TerminalTab)
 	m.openPanelAsTab(key)
+	m.runDetachedAsyncCmd(m.claimTerminalInput(id, claimMount))
 }
 
 func (m *App) termDockHeightClamped() int {
@@ -272,6 +273,7 @@ func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
 	m.setSessionDeckFocused(false)
 	m.setTermDockFocused(true)
 	m.FocusStack.Clear()
+	m.runDetachedAsyncCmd(m.claimTerminalInput(id, claimMount))
 }
 
 func (m *App) promoteTerminal(id string) {
@@ -297,6 +299,7 @@ func (m *App) floatTerminalInfo(info workspace.TerminalInfo) {
 	m.setTerminalPlacement(id, workspace.TerminalFloating)
 	m.setTermDockFocused(false)
 	m.openTerminalWindow(id, screen)
+	m.runDetachedAsyncCmd(m.claimTerminalInput(id, claimMount))
 }
 
 func (m *App) floatingTerminalSize() (int, int) {
@@ -417,6 +420,7 @@ func (m *App) closeTerminal(id string) {
 	m.dropTermScreen(id)
 	delete(m.terminalLeases, id)
 	delete(m.terminalPlacements, id)
+	delete(m.terminalClaims, id)
 	if service := m.terminalService(); service != nil {
 		m.runDetachedAsyncCmd(func() tea.Msg { service.Close(id); return nil })
 	}
@@ -521,11 +525,33 @@ func (m *App) handleTerminalAction(action ui.Action) bool {
 		m.closeTerminal(id)
 		return true
 	case shellterm.ActionTakeControl:
+		// Keys typed into a viewer ask for free input control and are sent
+		// once it is granted; a window holding control keeps it.
 		id, _ := action.Payload.(string)
-		m.openTerminalControlMenu(id)
+		m.runDetachedAsyncCmd(m.claimTerminalInput(id, claimInput))
 		return true
 	}
 	return false
+}
+
+// adoptRetainedTerminals docks every live terminal when this shell shows none
+// yet: after reattaching, a workspace switch or another window's creation the
+// user gets all retained terminals back as tabs, not only the last one. It
+// returns the terminal to focus: the last one used here, else the newest.
+func (m *App) adoptRetainedTerminals(list []workspace.TerminalInfo) string {
+	target := list[len(list)-1].ID
+	if _, ok := m.terminalInfo(m.lastTerminalID); ok {
+		target = m.lastTerminalID
+	}
+	if len(m.terminalPlacements) > 0 || m.termDock == nil {
+		return target
+	}
+	for _, info := range list {
+		if info.ID != target {
+			m.dockTerminalInfo(info)
+		}
+	}
+	return target
 }
 
 func (m *App) toggleTerminalFocus() tea.Cmd {
@@ -549,12 +575,7 @@ func (m *App) toggleTerminalFocus() tea.Cmd {
 	if len(list) == 0 {
 		return m.openNewTerminal()
 	}
-	if _, ok := m.terminalInfo(m.lastTerminalID); ok {
-		m.focusTerminal(m.lastTerminalID)
-		return nil
-	}
-	last := list[len(list)-1]
-	m.focusTerminal(last.ID)
+	m.focusTerminal(m.adoptRetainedTerminals(list))
 	return nil
 }
 
@@ -632,6 +653,7 @@ func (m *App) discardTerminalUI() {
 	m.terminalBusy = false
 	m.terminalClipboard = nil
 	m.terminalClosed = nil
+	m.terminalClaims = nil
 	m.termDockFocused = false
 }
 

@@ -161,7 +161,7 @@ func (s *DocumentService) commitReviewedDraftSaveLocked(p *reviewedEdit) error {
 	trial.snapshot.DiskHash = disk.Hash
 	trial.snapshot.Encoding = disk.Encoding
 	trial.snapshot.SavedEncoding = disk.Encoding
-	trial.snapshot.DiskExists = true
+	trial.snapshot.DiskExists, trial.snapshot.Removed, trial.snapshot.DiskSeen = true, false, [32]byte{}
 	trial.snapshot.Dirty, trial.snapshot.Conflict = false, false
 	trial.diskIntent = nil
 	if err := s.persistDocument(trial); err != nil {

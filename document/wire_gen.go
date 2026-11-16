@@ -393,8 +393,8 @@ func (z *Resolution) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 14
-	o = append(o, 0x9e)
+	// array header, size 16
+	o = append(o, 0xdc, 0x0, 0x10)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.Path)
 	o = msgp.AppendString(o, z.Name)
@@ -425,6 +425,8 @@ func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendBool(o, z.DiskExists)
 	o = msgp.AppendBool(o, z.Dirty)
 	o = msgp.AppendBool(o, z.Conflict)
+	o = msgp.AppendBool(o, z.Removed)
+	o = msgp.AppendBytes(o, (z.DiskSeen)[:])
 	return
 }
 
@@ -440,8 +442,8 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 14 {
-		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
+	if zb0001 != 16 {
+		err = msgp.ArrayError{Wanted: 16, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -530,13 +532,23 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Conflict")
 		return
 	}
+	z.Removed, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Removed")
+		return
+	}
+	bts, err = msgp.ReadExactBytes(bts, (z.DiskSeen)[:])
+	if err != nil {
+		err = msgp.WrapError(err, "DiskSeen")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *Snapshot) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.Name) + z.Encoding.Msgsize() + z.SavedEncoding.Msgsize() + msgp.Uint64Size + msgp.StringPrefixSize + len(z.AnalysisGeneration) + msgp.StringPrefixSize + len(z.AnalysisLifetime) + msgp.BytesPrefixSize + len(z.Text) + msgp.BytesPrefixSize + len(z.Saved) + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize)) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
+	s = 3 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Path) + msgp.StringPrefixSize + len(z.Name) + z.Encoding.Msgsize() + z.SavedEncoding.Msgsize() + msgp.Uint64Size + msgp.StringPrefixSize + len(z.AnalysisGeneration) + msgp.StringPrefixSize + len(z.AnalysisLifetime) + msgp.BytesPrefixSize + len(z.Text) + msgp.BytesPrefixSize + len(z.Saved) + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize)) + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.ArrayHeaderSize + (32 * (msgp.ByteSize))
 	return
 }
 

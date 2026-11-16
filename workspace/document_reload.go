@@ -77,7 +77,7 @@ func (s *DocumentService) Reload(ctx context.Context, owner document.Owner, id, 
 		}
 		trial.snapshot.DiskHash, trial.snapshot.DiskExists = disk.Hash, disk.Exists
 	}
-	trial.snapshot.Conflict = false
+	trial.snapshot.Conflict, trial.snapshot.Removed, trial.snapshot.DiskSeen = false, false, [32]byte{}
 	trial.snapshot.Dirty = trial.snapshot.ContentDirty()
 	if err := s.persistDocument(trial); err != nil {
 		return cloneDocument(d.snapshot), err

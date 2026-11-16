@@ -2,6 +2,7 @@ package shellterm
 
 import (
 	"net/url"
+	"runtime"
 	"strings"
 	"time"
 
@@ -60,6 +61,12 @@ type Screen struct {
 	// selects and copies like a terminal but never sends input or asks for
 	// input control, and the mirror writes its own closing status line.
 	readOnly bool
+
+	// held keeps input typed into a viewer while this shell asks for input
+	// control, so the first keys after reattaching are not lost. It is sent
+	// in order once control is granted and dropped if control is refused.
+	held     []Command
+	claiming bool
 
 	focusKnown         bool
 	focused            bool
@@ -134,7 +141,27 @@ func (s *Screen) SetControlled(v bool) {
 			s.queue(Command{Kind: CommandFocus, Focused: s.focused})
 		}
 		s.requestResize()
+		held := s.held
+		s.held, s.claiming = nil, false
+		for _, c := range held {
+			s.queue(c)
+		}
 	}
+}
+
+// maxHeldInput bounds input kept while control is requested.
+const maxHeldInput = 256
+
+// Claiming reports an outstanding request for input control.
+func (s *Screen) Claiming() bool { return s.claiming }
+
+// ClaimStarted records that the host asked for input control on behalf of
+// this screen, so further typing waits for the same answer.
+func (s *Screen) ClaimStarted() { s.claiming = true }
+
+// ControlRefused drops input kept for a control request that was refused.
+func (s *Screen) ControlRefused() {
+	s.held, s.claiming = nil, false
 }
 func (s *Screen) Controlled() bool { return s.controlled }
 
@@ -260,7 +287,10 @@ func (s *Screen) requestRows() {
 	if s.view.Grid.Synchronized {
 		return
 	}
-	if _, _, ok := s.view.VisibleMissing(); ok {
+	// A screen mounted for a retained PTY has no rows and no grid height yet.
+	// It must read its live tail itself: nothing else knows it was mounted, and
+	// the PTY may be silent (a shell at its prompt), so no output will arrive.
+	if _, _, ok := s.view.VisibleMissing(); ok || !s.view.Installed() {
 		// A viewport is one bounded atomic read, not a succession of holes from
 		// competing generations. Count zero uses the engine's current grid height.
 		s.requestPage(s.view.ViewportStart(), 0)
@@ -311,13 +341,46 @@ func (s *Screen) HasSelection() bool     { return s.view.HasSelection() }
 func (s *Screen) CopySelection() tea.Cmd { return s.copySelection() }
 func (s *Screen) SelectAll()             { s.view.SelectAll(); s.requestSelectionRows() }
 func (s *Screen) PasteActive() bool      { return !s.closed && !s.exited && s.controlled && !s.readOnly }
+
+// PasteText sends clipboard text to the child. A viewer keeps it like typed
+// keys until the host gets input control (see Controlled).
 func (s *Screen) PasteText(text string) {
-	if !s.PasteActive() {
+	if s.closed || s.exited || s.readOnly {
 		return
 	}
 	s.view.ClearSelection()
 	s.view.ScrollBottom()
-	s.queue(Command{Kind: CommandPaste, Paste: []byte(text)})
+	paste := Command{Kind: CommandPaste, Paste: []byte(text)}
+	if !s.controlled {
+		s.claimResult(paste)
+		return
+	}
+	s.queue(paste)
+}
+
+// PasteAllowed reports a terminal that accepts typed input from this shell,
+// now or after it gets input control.
+func (s *Screen) PasteAllowed() bool { return !s.closed && !s.exited && !s.readOnly }
+
+// windowsKeyConventions selects the Windows terminal clipboard keys
+// (Ctrl+C copies a selection, Ctrl+V pastes). Tests may set it.
+var windowsKeyConventions = runtime.GOOS == "windows"
+
+// IsPasteChord reports a key that pastes the clipboard into a terminal:
+// Ctrl+Shift+V or Shift+Insert, Cmd+V, and Ctrl+V where Windows terminals
+// use it. Elsewhere Ctrl+V is the child's literal-next key (^V), which shells
+// and editors such as Vim use.
+func IsPasteChord(key tea.KeyPressMsg) bool {
+	v := key.Code == 'v' || key.Code == 'V'
+	switch key.Mod {
+	case tea.ModCtrl | tea.ModShift, tea.ModSuper:
+		return v
+	case tea.ModCtrl:
+		return v && windowsKeyConventions
+	case tea.ModShift:
+		return key.Code == tea.KeyInsert
+	}
+	return false
 }
 
 // SetNow overrides the multi-click clock (tests).
@@ -383,6 +446,9 @@ func (s *Screen) SetReadOnly(v bool) { s.readOnly = v }
 
 func (s *Screen) SetExited(v bool) { s.exited = v }
 
+// Exited reports a PTY whose process has ended.
+func (s *Screen) Exited() bool { return s.exited }
+
 // SetAttention records an unseen bell for presentation by the owning dock or
 // floating frame. It reports whether the state changed.
 func (s *Screen) SetAttention(v bool) bool {
@@ -405,6 +471,7 @@ func (s *Screen) SetWindowTitle(title string) {
 func (s *Screen) Close() {
 	s.closed = true
 	s.pending = nil
+	s.held, s.claiming = nil, false
 	s.readPending = false
 	s.copyPending = false
 	s.CancelPointerCapture()
@@ -507,9 +574,6 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	if evt.Kind == ui.EventCustom {
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited && !s.closed && !s.readOnly {
-			if !s.controlled {
-				return s.takeControlResult()
-			}
 			s.resetCursorBlink(time.Now())
 			s.view.ClearSelection()
 			s.view.ScrollBottom()
@@ -529,6 +593,13 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 		return ui.EventResult{Handled: true}
 	}
 	paint := s.resetCursorBlink(time.Now()) && s.view.Grid.Cursor.Visible
+	// Windows terminals copy a selection with Ctrl+C and send ^C only
+	// without one. Elsewhere Ctrl+C is always the child's interrupt.
+	if windowsKeyConventions && key.Mod == tea.ModCtrl && (key.Code == 'c' || key.Code == 'C') && s.view.HasSelection() {
+		cmd := s.copySelection()
+		s.view.ClearSelection()
+		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+	}
 	ctrlShift := key.Mod == tea.ModCtrl|tea.ModShift
 	if ctrlShift {
 		switch key.Code {
@@ -569,8 +640,8 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 	if s.readOnly {
 		return s.handleReadOnlyKey(key)
 	}
-	if !s.controlled || s.exited {
-		return s.takeControlResult()
+	if s.exited {
+		return ui.EventResult{Handled: true}
 	}
 	paint = paint || s.view.HasSelection() || !s.view.Pinned() || s.view.Offset != s.view.Bottom()
 	s.view.ClearSelection()
@@ -689,12 +760,11 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		return ui.EventResult{Handled: true}
 	case ui.EventMouseRelease:
 		if s.selecting && evt.MouseRelease.Button == tea.MouseLeft {
+			// The selection stays on screen and on nothing else: like a
+			// native terminal, only an explicit copy writes the clipboard.
 			s.selecting = false
-			var cmd tea.Cmd
-			if s.view.SelectionRelease(cellX, cellY) {
-				cmd = s.copySelection()
-			}
-			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+			s.view.SelectionRelease(cellX, cellY)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 		return ui.EventResult{Handled: true}
 	}
@@ -732,7 +802,8 @@ func (s *Screen) CancelPointerCapture() {
 }
 
 // copySelection builds the command that sends the active selection to the
-// system clipboard (copy-on-select, matching mainstream terminal behavior).
+// system clipboard. Only an explicit copy (Ctrl+Shift+C, the menu, or Ctrl+C
+// with a selection where that is the platform convention) calls it.
 func (s *Screen) copySelection() tea.Cmd {
 	if s.copy == nil {
 		return nil
@@ -767,15 +838,25 @@ func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: s.Title()}
 }
 
-func (s *Screen) takeControlResult() ui.EventResult {
-	return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionTakeControl, Payload: s.termID}}
+// claimResult keeps input typed into a viewer and asks the host, once, for
+// input control. The host acquires control only when no other window holds it.
+func (s *Screen) claimResult(c Command) ui.EventResult {
+	if len(s.held) < maxHeldInput {
+		c.ID = s.termID
+		s.held = append(s.held, c)
+	}
+	if s.claiming {
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
+	s.claiming = true
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint, Action: &ui.Action{ID: ActionTakeControl, Payload: s.termID}}
 }
 func (s *Screen) send(c Command) ui.EventResult {
 	if s.closed || s.exited || s.readOnly {
 		return ui.EventResult{Handled: true}
 	}
 	if !s.controlled {
-		return s.takeControlResult()
+		return s.claimResult(c)
 	}
 	c.ID = s.termID
 	var cmd tea.Cmd

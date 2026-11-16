@@ -38,6 +38,14 @@ type Snapshot struct {
 	Text, Saved                          []byte
 	DiskHash                             [32]byte
 	DiskExists, Dirty, Conflict          bool
+	// Removed reports that the file was deleted on disk after the document
+	// read it. The text stays in conflict until the user saves or closes it.
+	Removed bool
+	// DiskSeen is, while Conflict, the hash of the file version the core
+	// observed last, and zero otherwise. DiskHash stays the save baseline
+	// during a conflict, so this is how a shell learns that the file changed
+	// again while the decision waits.
+	DiskSeen [32]byte
 }
 
 // ContentDirty compares the canonical savepoint, including its disk format.
@@ -69,6 +77,12 @@ type Edit struct {
 	Start, End int
 	Text       string
 }
+
+// DiskRequestID is the RequestID of a change the core commits because the file
+// changed on disk: a reload of clean text, or external changes merged into
+// unsaved text. Shells use it to tell the user about changes they did not make.
+const DiskRequestID = "disk"
+
 type Change struct {
 	DocumentID, RequestID string
 	Owner                 Owner

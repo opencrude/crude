@@ -248,6 +248,41 @@ func (r *References) ImportReference(old sessiondb.Reference) (sessiondb.Referen
 	return r.adopt(result), nil
 }
 
+// ImportReferenceFrom copies an attachment of another session of this
+// workspace into this session, for a prompt copied in one session and pasted
+// in another. The same session reuses ImportReference.
+func (r *References) ImportReferenceFrom(source workspace.SessionReferences, old sessiondb.Reference) (sessiondb.Reference, error) {
+	src, ok := source.(*References)
+	if !ok || src == r {
+		return r.ImportReference(old)
+	}
+	view, session, err := r.call()
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	src.mu.RLock()
+	sameWorkspace := src.client == r.client && src.workspaceID == view.ID
+	src.mu.RUnlock()
+	if !sameWorkspace {
+		return sessiondb.Reference{}, errors.New("the attachment belongs to another workspace")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), referenceCallTimeout)
+	defer cancel()
+	current, err := src.current(ctx, old.ID)
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	_, sourceSession, err := src.call()
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	result, err := view.ImportReferenceFrom(ctx, session, sourceSession, current)
+	if err != nil {
+		return sessiondb.Reference{}, err
+	}
+	return r.adopt(result), nil
+}
+
 // RestorePrompt imports a prompt-history entry's attachments into this session.
 // The core owns prompt history, so the entry is named by its exact identity.
 func (r *References) RestorePrompt(entry history.Entry) (string, []string, error) {

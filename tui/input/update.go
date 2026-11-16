@@ -3,6 +3,7 @@ package input
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -82,9 +83,8 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 				return m, nil, nil
 			}
 			refIDs := m.ReferencedIDs()
-			if strings.HasPrefix(text, "/") {
-				// A command with arguments is sent like one picked from the list.
-				return m, nil, m.commitSlashCommand(text)
+			if event, ok := m.commitCommandLine(text); ok {
+				return m, nil, event
 			}
 			// A pending question may leave the composer available for drafting,
 			// but its answer must settle before a prompt can be sent or steered.
@@ -159,6 +159,10 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 	if content == "" {
 		return m, nil, nil
 	}
+	if fragment, ok := m.clipboard.match(content); ok {
+		// Text this shell copied from a composer: its attachments come too.
+		return m, nil, m.beginFragmentPaste(fragment)
+	}
 
 	if !m.promotePastedText(content) {
 		m.input.InsertString(content)
@@ -196,14 +200,68 @@ func (m *Model) deleteReferenceAtCursor(backspace bool) (string, bool) {
 	return "", false
 }
 
+// slashToken is a command name being typed at the caret: "/" at the start of
+// the draft or after whitespace, through the caret, with whitespace or the end
+// of the draft after it. Offsets are flat rune offsets of the draft.
+type slashToken struct {
+	start, end int
+	whole      bool
+}
+
+// slashTokenAtCursor finds the command typed at the caret. A command can be
+// started anywhere in a prompt, so the user does not have to delete a draft
+// to open settings, compact or switch a session.
+func (m *Model) slashTokenAtCursor() (slashToken, string, bool) {
+	if m.input.HasActiveSelection() {
+		return slashToken{}, "", false
+	}
+	text := []rune(m.input.Value())
+	pos := m.input.CursorFlat()
+	if pos < 0 || pos > len(text) || pos < len(text) && !unicode.IsSpace(text[pos]) {
+		return slashToken{}, "", false
+	}
+	start := pos
+	for start > 0 && !unicode.IsSpace(text[start-1]) {
+		start--
+	}
+	if start == pos || text[start] != '/' {
+		return slashToken{}, "", false
+	}
+	for _, ref := range m.RefRanges() {
+		if ref.Start < pos && ref.End > start {
+			return slashToken{}, "", false
+		}
+	}
+	token := slashToken{start: start, end: pos}
+	token.whole = start == 0 && strings.TrimSpace(string(text[pos:])) == ""
+	return token, string(text[start+1 : pos]), true
+}
+
 func (m *Model) syncSlashState() {
-	inputStr := m.input.Value()
-	if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") && !strings.Contains(inputStr, "\n") {
-		m.slashActive = true
-		m.setSlashFilter(strings.TrimPrefix(inputStr, "/"))
-	} else {
+	token, filter, ok := m.slashTokenAtCursor()
+	if !ok {
+		m.slashActive = false
+		return
+	}
+	m.slash = token
+	m.slashActive = true
+	m.setSlashFilter(filter)
+	// Inside a prompt only a command name that starts with the typed text
+	// opens the list, so a path such as /usr/bin stays plain prose.
+	if !token.whole && !m.slashNameMatches(filter) {
 		m.slashActive = false
 	}
+}
+
+// slashNameMatches reports a command whose name starts with filter.
+func (m *Model) slashNameMatches(filter string) bool {
+	filter = strings.ToLower(filter)
+	for _, c := range availableCmds {
+		if strings.HasPrefix(strings.ToLower(c.Name), filter) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) setSlashFilter(filter string) {
@@ -250,7 +308,63 @@ func (m *Model) activateSlashSelection(action *ui.Action) (SlashCommandEvent, bo
 	if !ok || !item.Selectable() || item.ID == "" {
 		return SlashCommandEvent{}, false
 	}
+	if !m.slash.whole {
+		return m.commitSlashToken(item.ID), true
+	}
 	return m.commitSlashCommand("/" + item.ID), true
+}
+
+// commitSlashToken runs a command chosen inside a prompt. Only the typed
+// command name leaves the draft; the prompt, its attachments, undo history
+// and caret stay, and the command gets none of the draft's attachments.
+func (m *Model) commitSlashToken(name string) SlashCommandEvent {
+	text := []rune(m.input.Value())
+	start, end := m.slash.start, m.slash.end
+	if start < 0 || end > len(text) || start > end {
+		m.slashActive = false
+		return SlashCommandEvent{Command: "/" + name}
+	}
+	switch {
+	case end < len(text) && text[end] == ' ':
+		end++
+	case end == len(text) && start > 0 && text[start-1] == ' ':
+		start--
+	}
+	m.input.DeleteRange(start, end)
+	m.input.SetCursorFlat(start)
+	m.applyReferenceRanges()
+	m.slashActive = false
+	return SlashCommandEvent{Command: "/" + name}
+}
+
+// commitCommandLine runs a draft whose first word names a command. A command
+// with arguments takes the rest of the draft, as if picked from the list. Any
+// other command runs alone, and the prompt after it stays in the composer. A
+// first word that names no command leaves the draft a normal prompt, so a
+// prompt that starts with a path is sent, never lost.
+func (m *Model) commitCommandLine(text string) (Event, bool) {
+	if !strings.HasPrefix(text, "/") {
+		return nil, false
+	}
+	fields := strings.Fields(text)
+	command, known := slashCommand(fields[0])
+	if !known {
+		if len(fields) == 1 && !strings.ContainsAny(strings.TrimPrefix(fields[0], "/"), "/.") {
+			// A mistyped command alone: say so and keep it for correction.
+			return UnknownCommandEvent{Name: fields[0]}, true
+		}
+		return nil, false
+	}
+	if command.Args || len(fields) == 1 {
+		return m.commitSlashCommand(text), true
+	}
+	runes := []rune(m.input.Value())
+	start := len([]rune(text)) - len([]rune(strings.TrimLeft(text, " \t\r\n")))
+	m.slash = slashToken{start: start, end: start + len([]rune(fields[0]))}
+	if m.slash.end > len(runes) {
+		return nil, false
+	}
+	return m.commitSlashToken(command.Name), true
 }
 
 func (m *Model) commitSlashCommand(command string) SlashCommandEvent {
@@ -279,7 +393,13 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyTab:
-		if item, ok := m.slashList.Selected(); ok {
+		item, ok := m.slashList.Selected()
+		if ok && !m.slash.whole {
+			// Inside a prompt there are no arguments to complete: Tab runs
+			// the chosen command like Enter.
+			return m, nil, m.commitSlashToken(item.ID)
+		}
+		if ok {
 			m.invalidatePendingPastes()
 			m.input.SetValue("/" + item.ID + " ")
 		}
@@ -287,16 +407,20 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyEnter:
+		if ui.IsNewlineChord(keyMsg) && !m.slash.whole {
+			m.slashActive = false
+			return m, m.input.Update(msg, false), nil
+		}
 		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
 		if event, ok := m.activateSlashSelection(res.Action); ok {
 			return m, res.Cmd, event
 		}
-		text := strings.TrimSpace(m.input.Value())
-		if text != "" && strings.HasPrefix(text, "/") {
-			event := m.commitSlashCommand(text)
-			return m, nil, event
-		}
 		m.slashActive = false
+		if m.slash.whole {
+			if event, ok := m.commitCommandLine(m.input.Value()); ok {
+				return m, nil, event
+			}
+		}
 		return m, nil, nil
 
 	case tea.KeyUp:
@@ -307,25 +431,13 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
 		return m, res.Cmd, nil
 
-	case tea.KeyBackspace, tea.KeyDelete:
-		cmd := m.input.Update(msg, false)
-		inputStr := m.input.Value()
-		if inputStr == "" || !strings.HasPrefix(inputStr, "/") || strings.Contains(inputStr, " ") || strings.Contains(inputStr, "\n") {
-			m.slashActive = false
-		} else {
-			m.setSlashFilter(strings.TrimPrefix(inputStr, "/"))
-		}
-		return m, cmd, nil
-
 	default:
-		cmd := m.input.Update(msg, false)
-		inputStr := m.input.Value()
-		if strings.HasPrefix(inputStr, "/") && !strings.Contains(inputStr, " ") && !strings.Contains(inputStr, "\n") {
-			m.setSlashFilter(strings.TrimPrefix(inputStr, "/"))
-		} else {
-			m.slashActive = false
-		}
-		return m, cmd, nil
+		// Every other key edits the draft through the ordinary composer
+		// path (references, history, Left/Right, Backspace, typing); the
+		// command list then follows the token at the caret.
+		m.slashActive = false
+		updated, cmd, event := m.update(msg, m.thinking, m.blocking)
+		return updated, cmd, event
 	}
 }
 
@@ -355,6 +467,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
 // fast "start over". The explicit Ctrl+Shift+C copy never clears anything.
 // It reports whether the key was consumed.
 func (m Model) applyClipboardChord(key tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	if chord := ui.ClipboardChordFor(key); chord == ui.ClipboardChordCopy || chord == ui.ClipboardChordCut {
+		m.rememberClipboardChord(chord)
+	}
 	if res, handled := m.input.HandleClipboardKey(key); handled {
 		if ui.ClipboardChordFor(key) == ui.ClipboardChordCut && m.input.Value() == "" {
 			m.invalidatePendingPastes()

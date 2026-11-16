@@ -90,7 +90,7 @@ func (s *DocumentService) SaveUntitled(ctx context.Context, owner document.Owner
 		trial.snapshot.SavedEncoding = encoding
 		trial.snapshot.Saved = bytes.Clone(d.snapshot.Text)
 		trial.snapshot.DiskHash = result.DiskHash
-		trial.snapshot.DiskExists = true
+		trial.snapshot.DiskExists, trial.snapshot.Removed, trial.snapshot.DiskSeen = true, false, [32]byte{}
 		trial.snapshot.Dirty = false
 		// A post-commit verification failure cannot authorize another write.
 		trial.snapshot.Conflict = result.Err != nil

@@ -317,7 +317,7 @@ func FuzzCoreSessionTerminalLifecycle(f *testing.F) {
 			allowed := active.Generation == 0 || active.Owner == owner
 			var got workspace.TerminalLease
 			response := call(i, ws, coreprotocol.TerminalControl, &coreprotocol.TerminalIDRequest{ID: info.ID}, &got)
-			if allowed != (response.Error == nil) || !allowed && response.Error.Code != "resource_failed" {
+			if allowed != (response.Error == nil) || !allowed && response.Error.Code != coreprotocol.FaultTerminalControl {
 				t.Fatalf("acquire allowed=%v fault=%v", allowed, response.Error)
 			}
 			if allowed {

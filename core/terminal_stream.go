@@ -313,7 +313,7 @@ func (c *Connection) serveTerminalInput(ctx context.Context, s corewire.Stream, 
 		ack := coreprotocol.TerminalInputAck{}
 		for i, input := range batch.Inputs {
 			if input.Lease.Owner != owner || input.Lease.TerminalID != open.Key {
-				ack.Fault = &coreprotocol.Fault{Code: "terminal_control", Message: workspace.ErrTerminalControl.Error()}
+				ack.Fault = &coreprotocol.Fault{Code: coreprotocol.FaultTerminalControl, Message: workspace.ErrTerminalControl.Error()}
 				break
 			}
 			seq := batch.First + uint64(i)
@@ -324,7 +324,7 @@ func (c *Connection) serveTerminalInput(ctx context.Context, s corewire.Stream, 
 				if errors.Is(err, workspace.ErrTerminalInputSequence) || errors.Is(err, workspace.ErrTerminalControl) {
 					ack.Fault = &coreprotocol.Fault{Code: "terminal_input", Message: err.Error()}
 					if errors.Is(err, workspace.ErrTerminalControl) {
-						ack.Fault.Code = "terminal_control"
+						ack.Fault.Code = coreprotocol.FaultTerminalControl
 					}
 					break
 				}

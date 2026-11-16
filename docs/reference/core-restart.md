@@ -68,6 +68,11 @@ storage, actors, sessions, documents, terminal/resource lanes and work queues.
 Peer shells/work, open resource leases and unknown inspection block it. The
 handoff never force-stops neighbors.
 
+A restart stops every terminal process, but not its text: the stopping core
+saves each interactive terminal's screen and scrollback, and the successor
+shows them again above a new shell in the same folder on the first attach
+([terminal revival](in-app-terminals.md#terminal-revival-across-a-core-stop)).
+
 Closing the shell may leave ordered resource releases finishing in their joined
 lane. The scheduled predecessor helper makes at most eight bounded-backoff
 attempts only after an explicit refused/no-effect exit. Every attempt retains

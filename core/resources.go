@@ -24,6 +24,9 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
 	ok := func(value coreprotocol.Value, err error) coreprotocol.Response {
+		if errors.Is(err, workspace.ErrTerminalControl) {
+			return fault(request, coreprotocol.FaultTerminalControl, err.Error())
+		}
 		if errors.Is(err, workspace.ErrDocumentConflict) {
 			// A typed code lets shells offer the conflict choices without
 			// matching message text.
@@ -237,7 +240,19 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 		}
 		return func(context.Context) coreprotocol.Response {
 			if request.Method == coreprotocol.TerminalControl {
-				value, err := terminals.Acquire(input.ID, controller)
+				acquire := terminals.Acquire
+				if input.TakeOver {
+					acquire = terminals.TakeOver
+				}
+				value, err := acquire(input.ID, controller)
+				// A window that closed without detaching keeps its session for
+				// the reconnect grace. Typing in another window must not wait
+				// for it; a plain claim keeps an absent controller's lease.
+				if errors.Is(err, workspace.ErrTerminalControl) && input.FromAbsent && a.runtime != nil {
+					if holder, held := terminals.Controller(input.ID); held && holder != controller && a.runtime.ownerAway(coreprotocol.Owner{ClientID: holder.ClientID, Epoch: holder.Epoch}) {
+						value, err = terminals.TakeOverFrom(input.ID, holder, controller)
+					}
+				}
 				return ok(wire(value), err)
 			}
 			if err := terminals.CheckViewer(input.ID, controller); err != nil {

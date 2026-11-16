@@ -565,6 +565,8 @@ TerminalService owns the one parser and reply state for every PTY.
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
 | `Acquire` | 2 | mutates | no: takes TerminalController interface (callback owner) | terminal.control |
+| `AcquireFromAbsent` | 1 | mutates | no: takes TerminalController interface | terminal.control (`from_absent`) |
+| `TakeOver` | 1 | mutates | no: takes TerminalController interface | terminal.control (`take_over`) |
 | `Close` | 1 | mutates | yes | terminal.close |
 | `Create` | 1 | mutates | yes | terminal.create |
 | `Detach` | 1 | mutates | no: takes TerminalController interface | terminal.release |

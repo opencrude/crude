@@ -10,7 +10,6 @@ import (
 
 	"crude/shellport"
 	"crude/terminalvt"
-	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/ui"
 	roottypes "crude/types"
@@ -31,6 +30,92 @@ type terminalProjectionMsg struct {
 	projection workspace.TerminalProjection
 	lease      workspace.TerminalLease
 	err        error
+}
+
+// terminalClaim is why this shell asks for a terminal's input control.
+type terminalClaim uint8
+
+const (
+	// claimMount takes free control when this shell shows a terminal. Its
+	// refusal is silent: another window controls it and this shell views it.
+	claimMount terminalClaim = iota + 1
+	// claimInput takes free control for keys typed into a viewer. The keys
+	// are sent after control is granted.
+	claimInput
+	// claimTakeOver is the explicit menu choice. It also replaces a controller
+	// in another window.
+	claimTakeOver
+)
+
+// claimTerminalInput asks for input control of a mounted interactive
+// terminal. A request waits for the answer to an equal or stronger one; a
+// stronger claim (typing, then the explicit takeover) is sent at once.
+func (m *App) claimTerminalInput(id string, claim terminalClaim) tea.Cmd {
+	screen := m.termScreens[id]
+	if screen == nil || screen.ReadOnly() || screen.Exited() || m.terminalClosed[id] {
+		return nil
+	}
+	if screen.Controlled() {
+		return nil
+	}
+	if pending, ok := m.terminalClaims[id]; ok && claim <= pending {
+		return nil
+	}
+	if m.terminalClaims == nil {
+		m.terminalClaims = make(map[string]terminalClaim)
+	}
+	m.terminalClaims[id] = claim
+	screen.ClaimStarted()
+	kind := map[terminalClaim]shellterm.CommandKind{
+		claimMount: shellterm.CommandTakeControl, claimInput: shellterm.CommandClaimInput, claimTakeOver: shellterm.CommandTakeOver,
+	}[claim]
+	cmd := m.terminalCommand(shellterm.Command{ID: id, Kind: kind})
+	if cmd == nil {
+		// No terminal service can answer: keep no claim and no held input.
+		delete(m.terminalClaims, id)
+		screen.ControlRefused()
+	}
+	return cmd
+}
+
+// claimCommand reports a request for input control.
+func claimCommand(kind shellterm.CommandKind) bool {
+	return kind == shellterm.CommandTakeControl || kind == shellterm.CommandClaimInput || kind == shellterm.CommandTakeOver
+}
+
+// applyTerminalClaim settles one refused input-control request. While a
+// stronger request waits, its answer decides. A refusal drops the keys kept
+// for the claim; only a claim the user caused explains the refusal.
+func (m *App) applyTerminalClaim(id string, kind shellterm.CommandKind, err error) {
+	answered := map[shellterm.CommandKind]terminalClaim{
+		shellterm.CommandTakeControl: claimMount, shellterm.CommandClaimInput: claimInput, shellterm.CommandTakeOver: claimTakeOver,
+	}[kind]
+	screen := m.termScreens[id]
+	if pending := m.terminalClaims[id]; pending > answered || screen == nil || screen.Controlled() {
+		return
+	}
+	delete(m.terminalClaims, id)
+	screen.ControlRefused()
+	if answered == claimMount {
+		return
+	}
+	if errors.Is(err, workspace.ErrTerminalControl) {
+		m.notifyTerminalControlElsewhere(id)
+		return
+	}
+	m.reportTerminalIOError("control", id, err)
+}
+
+// notifyTerminalControlElsewhere explains why typing here does nothing.
+func (m *App) notifyTerminalControlElsewhere(id string) {
+	if m.Feedback == nil {
+		return
+	}
+	name := "This terminal"
+	if info, ok := m.terminalInfo(id); ok {
+		name = info.DisplayName()
+	}
+	m.Feedback.NotifyInfo(name + " gets input from another window. To type here, right-click it: Take input control.")
 }
 
 func (m *App) terminalService() shellport.TerminalService {
@@ -79,7 +164,7 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 	}
 	if stream, ok := service.(shellport.StreamingTerminals); ok {
 		stream.StartGrid(command.ID)
-		if command.Kind != shellterm.CommandReadRows && command.Kind != shellterm.CommandTakeControl {
+		if command.Kind != shellterm.CommandReadRows && !claimCommand(command.Kind) {
 			input := workspace.TerminalInput{Lease: lease, Key: command.Key, Mouse: command.Mouse, Data: command.Paste, Focused: command.Focused, Cols: command.Cols, Rows: command.Rows}
 			switch command.Kind {
 			case shellterm.CommandKey:
@@ -131,6 +216,10 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 				result.projection, result.err = service.Rows(command.ID, terminalvt.RowRequest{Start: command.Start, Count: command.Count, ViewportStart: command.ViewportStart, HistoryEpoch: command.HistoryEpoch, HistoryBase: command.HistoryBase})
 			case shellterm.CommandTakeControl:
 				result.lease, result.err = service.Acquire(command.ID, owner)
+			case shellterm.CommandTakeOver:
+				result.lease, result.err = service.TakeOver(command.ID, owner)
+			case shellterm.CommandClaimInput:
+				result.lease, result.err = service.AcquireFromAbsent(command.ID, owner)
 			default:
 				result.err = fmt.Errorf("invalid terminal command")
 			}
@@ -229,10 +318,19 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 		nextInput = m.nextTerminalCommand()
 	}
 	id := msg.command.ID
+	claim := claimCommand(msg.command.Kind)
 	if m.terminalClosed[id] {
+		delete(m.terminalClaims, id)
 		return nextInput
 	}
-	if _, streaming := msg.service.(shellport.StreamingTerminals); streaming && msg.command.Kind == shellterm.CommandTakeControl && msg.err == nil {
+	if claim && msg.err != nil {
+		m.applyTerminalClaim(id, msg.command.Kind, msg.err)
+		return nextInput
+	}
+	if claim {
+		delete(m.terminalClaims, id)
+	}
+	if _, streaming := msg.service.(shellport.StreamingTerminals); streaming && claim && msg.err == nil {
 		if m.terminalLeases == nil {
 			m.terminalLeases = make(map[string]workspace.TerminalLease)
 		}
@@ -253,6 +351,8 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 			if errors.Is(msg.err, workspace.ErrTerminalControl) {
 				screen.SetControlled(false)
 				delete(m.terminalLeases, id)
+				m.notifyTerminalControlElsewhere(id)
+				return nextInput
 			}
 		}
 		m.reportTerminalIOError("command", id, msg.err)
@@ -325,10 +425,15 @@ func (m *App) applyTerminalFrame(msg shellport.TerminalFrameMsg) tea.Cmd {
 			}
 		}
 		if errors.Is(msg.Err, workspace.ErrTerminalControl) {
+			// Another window took input control. This shell keeps showing the
+			// terminal as a viewer and says how to type here again.
 			delete(m.terminalLeases, msg.ID)
 			if screen := m.termScreens[msg.ID]; screen != nil {
 				screen.SetControlled(false)
 			}
+			m.notifyTerminalControlElsewhere(msg.ID)
+			result = msg.Err
+			return nil
 		}
 		m.reportTerminalIOError("stream", msg.ID, msg.Err)
 		result = msg.Err
@@ -379,6 +484,43 @@ func (m *App) handleTerminalEffects(msg workspace.TerminalEffectsMsg) {
 	}
 }
 
+// currentTerminalID is the terminal the user works with: the focused window,
+// the docked terminal, a terminal tab, else the last one used in this shell.
+func (m *App) currentTerminalID() string {
+	if m.windowManager != nil {
+		if fw := m.windowManager.Focused(); fw != nil {
+			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok && m.termScreens[id] != nil {
+				return id
+			}
+		}
+	}
+	if m.termDock != nil && m.termDock.TerminalActive() {
+		if id := m.termDock.ActiveID(); id != "" {
+			return id
+		}
+	}
+	if screen := m.mainTerminalOwnsKeys(); screen != nil {
+		return screen.TermID()
+	}
+	if m.termScreens[m.lastTerminalID] != nil {
+		return m.lastTerminalID
+	}
+	return ""
+}
+
+// openCurrentTerminalMenu is the keyboard path to the terminal's right-click
+// menu (Command Palette > Terminal Actions).
+func (m *App) openCurrentTerminalMenu() {
+	id := m.currentTerminalID()
+	if id == "" {
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("No terminal is open. Open one with Alt+F12.")
+		}
+		return
+	}
+	m.openTerminalControlMenu(id)
+}
+
 func (m *App) openTerminalControlMenu(id string) {
 	// Keyboard access anchors to the terminal, never the middle of the shell.
 	mouse := tea.Mouse{}
@@ -414,7 +556,7 @@ func (m *App) terminalContextMenu(id string) *ui.ContextMenuState {
 		{Label: "Copy", Detail: "Ctrl+Shift+C", Disabled: !screen.HasSelection(), Action: guard(func() {
 			m.runDetachedAsyncCmd(tea.Batch(screen.CopySelection(), m.drainTerminalCommands()))
 		})},
-		{Label: "Paste", Detail: "Ctrl+Shift+V", Disabled: !screen.PasteActive(), Action: guard(func() {
+		{Label: "Paste", Detail: "Ctrl+Shift+V", Disabled: !screen.PasteAllowed(), Action: guard(func() {
 			m.runDetachedAsyncCmd(m.pasteTerminalClipboard(screen))
 		})},
 		{Label: "Select all", Detail: "Ctrl+Shift+A", Action: guard(func() { screen.SelectAll(); m.forceFrame(); m.runDetachedAsyncCmd(m.drainTerminalCommands()) })},
@@ -428,11 +570,11 @@ func (m *App) terminalContextMenu(id string) *ui.ContextMenuState {
 	}
 	if !screen.Controlled() {
 		items = append(items, ui.ContextMenuItem{Label: "Take input control", Action: guard(func() {
-			m.runDetachedAsyncCmd(m.terminalCommand(shellterm.Command{ID: id, Kind: shellterm.CommandTakeControl}))
+			m.runDetachedAsyncCmd(m.claimTerminalInput(id, claimTakeOver))
 		})})
 	}
 	if text := m.terminalClipboard[id]; text != "" {
-		items = append(items, ui.ContextMenuItem{Label: "Copy offered text", Action: guard(func() { m.runDetachedAsyncCmd(rendering.CopyToClipboardCmd(text)) })})
+		items = append(items, ui.ContextMenuItem{Label: "Copy offered text", Action: guard(func() { m.copyToClipboard(text) })})
 	}
 	manage := []ui.ContextMenuItem{
 		{Label: "New terminal", Action: guard(func() { m.runDetachedAsyncCmd(m.openNewTerminal()) })},
@@ -462,10 +604,14 @@ func (m *App) pasteTerminalClipboard(screen *shellterm.Screen) tea.Cmd {
 	owner, generation, lease := m.ws, m.workspaceSwitchGen.Load(), m.terminalLeases[id]
 	return m.beginNativeClipboardPaste(screen, "", func(text string) tea.Cmd {
 		if m.ws != owner || generation != m.workspaceSwitchGen.Load() || m.termScreens[id] != screen ||
-			m.terminalLeases[id] != lease || !screen.PasteActive() {
+			m.terminalLeases[id] != lease || !screen.PasteAllowed() {
 			return nil
 		}
 		screen.PasteText(text)
+		if !screen.Controlled() {
+			// A viewer keeps the paste and asks for free input control.
+			return m.claimTerminalInput(id, claimInput)
+		}
 		return m.drainTerminalCommands()
 	})
 }

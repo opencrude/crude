@@ -528,6 +528,15 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 		a.ws.TermMgr.SetShellEnvironment(input.Environment)
 	}
 	c.mu.Unlock()
+	// The first attach brings back terminals saved when an earlier core
+	// stopped, with their buffers, after the shell environment is known.
+	if terminals, logger := a.ws.Terminals, a.ws.Logger; terminals != nil {
+		terminals.StartRevive(func(err error) {
+			if logger != nil {
+				logger.Warn("TERMINAL", "revive_failed", "error", err.Error())
+			}
+		})
+	}
 	return response(request, coreprotocol.AttachResult{WorkspaceID: id, Epoch: c.Owner.Epoch, Revision: view.Revision, View: view})
 }
 
@@ -782,6 +791,13 @@ func (a *actor) serviceEvent(message any) {
 		return
 	case workspace.TerminalExitedMsg:
 		id = event.ID
+	case workspace.TerminalRevivedMsg:
+		id = event.ID
+	case workspace.TerminalRevivalFailedMsg:
+		if a.ws.Logger != nil {
+			a.ws.Logger.Warn("TERMINAL", "revival_save_failed", "error", event.Err)
+		}
+		return
 	case workspace.TerminalTitleMsg:
 		id = event.ID
 	case workspace.TerminalEffectsMsg:

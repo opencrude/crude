@@ -364,6 +364,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if cmd, handled := m.handleLocalDiffAction(*action); handled {
 		return cmd
 	}
+	if cmd, handled := m.handleEditorDiskAction(*action); handled {
+		return cmd
+	}
 	if cmd, handled := m.handleBoardAction(*action); handled {
 		return cmd
 	}

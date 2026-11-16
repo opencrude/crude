@@ -547,15 +547,39 @@ context menu and palette; the small HEAD-relative gutter inspector remains a
 separate, deliberately scoped operation.
 
 Comparisons that can change a file resolve per change with one shared
-interaction (`diffview.Screen.SetResolvable`): the decision bar above the panes
-(**Accept left** 1, **Accept right** 2, **Accept both** 3, **Previous** p,
-**Next** n; 0 reopens a change), and a `[x]`/`[ ]` box in each pane's gutter on
-the first row of every change. A dropped side reads as struck-through text.
+interaction (`diffview.Screen.SetResolvable`): one bar above the panes holds the
+state ("Change 2 of 3 · 1 to choose") in a stable column, **Keep** buttons named
+after the versions the panes show (**Keep on disk** 1, **Keep your text** 2,
+**Keep both** 3; Git: **Keep current** / **Keep incoming**), **Previous** p /
+**Next** n when there are several changes, and the owner's one finishing button
+(`SetCommit`: **Save** Ctrl+S for a local comparison, **Resolve file** Ctrl+S
+for a Git conflict) that is enabled once every change has a choice. 0 reopens a
+change; a `[x]`/`[ ]` box in each pane's gutter on the first row of every
+change toggles one side; a dropped side reads as struck-through text. Narrow
+bars drop key captions before the state, and the state before a decision.
 Compare With Disk and Compare With Saved Version start every change as the
-user's text; **Save** writes the result through `document.reload` with a
+user's text; Save writes the result through `document.reload` with a
 resolution, then saves. The Git conflict dialog uses the same reader with the
 current side on the left and the incoming side on the right; each conflict
-region is one change, and Save requires a choice for every conflict.
+region is one change.
+
+A local comparison page shows only what the tab and the editor cannot: the two
+versions and the decisions between them. It has no path row (the tab names the
+file; its tooltip gives the path, versions and open choices) and no generic
+toolbar: Find (Ctrl+F), Save (Ctrl+S) and Close (Esc, the tab ×) keep their
+editor keys, and the tab's menu holds **Find in comparison**, **Show unified /
+side by side**, **Open the file** and **Copy path**. A read-only comparison has
+one status row instead of the decision bar.
+
+A comparison that can change a file follows its sources
+(`syncLocalDiffFreshness`): newer text, a new saved version, or selecting a disk
+comparison again starts one debounced (200 ms) background preparation, and
+decisions stay with changes whose content is unchanged
+(`diffview.Screen.Decisions` / `RestoreChoices`). Save waits while it prepares.
+When nothing is left to choose (the user discarded or overwrote elsewhere, or
+the file changed back), the comparison closes and the file's tab is selected;
+when its file closes, it closes too. Its controls never act on a version the
+user does not see.
 
 `screens/diffview` is the shared reader: aligned old/new line numbers,
 full-row themed addition/deletion bands, shared editor syntax palette, draggable

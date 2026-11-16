@@ -607,6 +607,13 @@ var defaultActions = []*ActionDef{
 		HintKey: "Alt+F12",
 	},
 	{
+		ID:          "terminal.menu",
+		Label:       "Terminal Actions",
+		Description: "copy, paste, take input control or move the current terminal",
+		Icon:        "⌨",
+		Category:    "View",
+	},
+	{
 		ID:          "status.overview",
 		Label:       "Workspace Status",
 		Description: "inspect tabs and workspace health",

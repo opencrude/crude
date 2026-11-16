@@ -90,7 +90,7 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 	m.syncWorkspacePanels()
 	if panelID == termdock.PanelTerminal && m.termDock.Empty() {
 		if terminals := m.terminalInfos(); len(terminals) > 0 {
-			m.focusTerminal(terminals[len(terminals)-1].ID)
+			m.focusTerminal(m.adoptRetainedTerminals(terminals))
 		} else {
 			m.runDetachedAsyncCmd(m.openNewTerminal())
 		}

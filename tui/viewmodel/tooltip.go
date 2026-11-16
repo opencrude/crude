@@ -188,29 +188,119 @@ func (m *App) tabTooltip(id window.TabID) string {
 	if !ok {
 		return ""
 	}
+	// Every kind of tab says what it shows: the full name its label shortens
+	// and the state its marker only hints at.
 	switch {
 	case isImageTab(&tab):
 		return tab.Resource.ID
 	case m.isEditorTabTitle(tab.Title):
-		path := m.editorPathFromTabTitle(tab.Title)
-		if ed := m.editorForTab(id); ed != nil && ed.FilePath() == "" {
-			path = ed.BaseTitle()
-			if tab.State == window.TabModified {
-				return path + "\nUnsaved changes"
-			}
-			return path
-		}
-		if !filepath.IsAbs(path) && m.ws != nil && m.ws.RootPath() != "" {
-			path = filepath.Join(m.ws.RootPath(), path)
-		}
-		if tab.State == window.TabModified {
-			return path + "\nUnsaved changes"
-		}
-		return path
+		return m.editorTabTooltip(id, tab)
 	case m.isAgentTabTitle(tab.Title):
 		return m.agentTooltip(m.agentIDFromTabTitle(tab.Title))
+	case tab.Resource.Kind == window.ResourceLocalDiff:
+		return m.localDiffTooltip(m.localDiffs[id])
+	case tab.Resource.Kind == window.ResourceGitReview:
+		return m.gitReviewTooltip(tab)
+	case tab.Resource.Kind == window.ResourcePanel:
+		if terminal, ok := terminalIDFromPanel(tab.Resource.ID); ok {
+			return m.terminalTooltip(terminal)
+		}
+		if title := panelTitles[tab.Resource.ID]; title != "" {
+			return title + "\nClose the tab to return it to the bottom panel."
+		}
 	}
 	return ""
+}
+
+func (m *App) editorTabTooltip(id window.TabID, tab window.Tab) string {
+	ed := m.editorForTab(id)
+	path := m.editorPathFromTabTitle(tab.Title)
+	if ed != nil && ed.FilePath() == "" {
+		path = ed.BaseTitle()
+	} else if !filepath.IsAbs(path) && m.ws != nil && m.ws.RootPath() != "" {
+		path = filepath.Join(m.ws.RootPath(), path)
+	}
+	lines := []string{path}
+	if ed == nil {
+		return path
+	}
+	switch conflict, removed := m.editorDiskState(ed); {
+	case removed:
+		lines = append(lines, "Deleted on disk")
+	case conflict:
+		lines = append(lines, "Changed on disk. Choose the text to keep.")
+	}
+	if ed.Modified() {
+		lines = append(lines, "Unsaved changes")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// localDiffTooltip names the compared file and versions, and the decisions
+// still open.
+func (m *App) localDiffTooltip(view *localDiffView) string {
+	if view == nil {
+		return ""
+	}
+	comparison := view.screen.Comparison()
+	path := comparison.Path
+	if path == "" && view.source != nil {
+		path = view.source.FilePath()
+	}
+	lines := []string{path}
+	if comparison.BeforeLabel != "" && comparison.AfterLabel != "" {
+		lines = append(lines, "Left: "+comparison.BeforeLabel+". Right: "+comparison.AfterLabel+".")
+	}
+	if status := view.screen.ComparisonReader().ResolutionStatus(); status != "" {
+		lines = append(lines, status)
+	} else if !view.screen.Resolvable() {
+		lines = append(lines, "Read-only")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *App) gitReviewTooltip(tab window.Tab) string {
+	view := m.gitReviews[tab.ID]
+	if view == nil {
+		return ""
+	}
+	root := ""
+	if m.gitPanel != nil {
+		root = m.gitPanel.Snapshot().RepositoryRoot
+	}
+	if view.commit != "" {
+		return "Commit " + view.commit + "\nRead-only"
+	}
+	scope := strings.TrimPrefix(tab.Resource.ID, "changes:")
+	if scope == "" {
+		return "Uncommitted changes in " + root
+	}
+	if root != "" {
+		scope = filepath.Join(root, filepath.FromSlash(scope))
+	}
+	return "Uncommitted changes in " + scope
+}
+
+// terminalTooltip names a terminal, its folder and its state.
+func (m *App) terminalTooltip(id string) string {
+	info, ok := m.terminalInfo(id)
+	if !ok {
+		return ""
+	}
+	lines := []string{info.DisplayName()}
+	if screen := m.termScreens[id]; screen != nil && screen.Title() != info.DisplayName() && screen.Title() != "Terminal" {
+		lines[0] += " · " + screen.Title()
+	}
+	if info.CWD != "" {
+		lines = append(lines, info.CWD)
+	}
+	switch screen := m.termScreens[id]; {
+	case !info.Alive:
+		lines = append(lines, "The process ended")
+	case screen != nil && !screen.ReadOnly() && !screen.Controlled():
+		lines = append(lines, "Gets input from another window")
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *App) agentTooltip(agentID string) string {

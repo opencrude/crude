@@ -525,6 +525,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return m.openNewTerminal()
 	case "terminal.toggle":
 		return m.toggleTerminalFocus()
+	case "terminal.menu":
+		m.openCurrentTerminalMenu()
 
 	case "file.attach":
 		m.openFilePicker()

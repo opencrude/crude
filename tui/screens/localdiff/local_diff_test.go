@@ -36,10 +36,14 @@ func TestLocalDiffExactOwnerActionsAndSnapshotStates(t *testing.T) {
 	h.Focus(s.DocumentID())
 	buf := surface.NewCellBuffer(140, 20)
 	h.Paint(buf)
-	for _, want := range []string{"path.go", "Saved revision 1", "Buffer revision 9", "original", "changed"} {
+	for _, want := range []string{"Saved revision 1", "Buffer revision 9", "original", "changed"} {
 		if !strings.Contains(paintedText(buf), want) {
 			t.Fatal(want)
 		}
+	}
+	// The tab names the file; the page does not repeat it.
+	if strings.Contains(paintedText(buf), "path.go") {
+		t.Fatal("the page repeats the file name its tab already shows")
 	}
 	for _, action := range []string{ActionRefresh, ActionOpenSource, ActionClose} {
 		r := s.HandleAction(ui.EventContext{}, ui.Action{ID: action})
@@ -49,7 +53,7 @@ func TestLocalDiffExactOwnerActionsAndSnapshotStates(t *testing.T) {
 	}
 	s.SetLoading(true)
 	h.Paint(buf)
-	if got := paintedText(buf); !strings.Contains(got, "Preparing comparison") || !strings.Contains(got, "changed") {
+	if got := paintedText(buf); !strings.Contains(got, "Updating the comparison") || !strings.Contains(got, "changed") {
 		t.Fatal("loading erased old snapshot")
 	}
 	s.SetError(errors.New("source unavailable"))

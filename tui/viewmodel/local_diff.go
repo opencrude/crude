@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -32,6 +33,15 @@ const (
 	localDiffLimit                         = 64 << 20
 )
 
+// localDiffTitles names what a comparison tab compares the text with, in the
+// user's words; the tooltip gives both versions in full.
+var localDiffTitles = map[localDiffBaseline]string{
+	localDiffDisk:        "disk diff",
+	localDiffSaved:       "saved diff",
+	localDiffShared:      "unapplied diff",
+	localDiffReplacement: "existing file diff",
+}
+
 // A local comparison owns immutable evidence, never another live buffer. Tab
 // membership/focus stay with Window, source content/savepoint with editor.Buffer.
 type localDiffView struct {
@@ -48,14 +58,32 @@ type localDiffView struct {
 	// diskHash identifies the disk version a disk comparison shows. Saving a
 	// resolution requires that exact version, never a newer unseen one.
 	diskHash [32]byte
+	// diskSeen is the core's file observation the comparison was prepared at.
+	diskSeen [32]byte
+	// hadChanges records that the comparison showed differences: when a
+	// later preparation finds none, the decision was made elsewhere.
+	hadChanges bool
+	// refreshDue is the pending debounced refresh; wasActive notes the last
+	// sync's tab selection, so selecting the tab reads the disk again.
+	refreshDue, wasActive bool
 }
+
+// localDiffRefreshMsg runs a debounced refresh of one comparison.
+type localDiffRefreshMsg struct {
+	owner      *localDiffView
+	generation uint64
+}
+
+// localDiffRefreshDelay coalesces typing and repeated disk writes into one
+// preparation.
+const localDiffRefreshDelay = 200 * time.Millisecond
 
 type localDiffPreparedMsg struct {
 	widthGen                 uint64
 	owner                    *localDiffView
 	generation, sequence     uint64
 	revision, diskGeneration uint64
-	diskHash                 [32]byte
+	diskHash, diskSeen       [32]byte
 	prepared                 diffview.Prepared
 	err                      error
 }
@@ -95,7 +123,7 @@ func (m *App) openLocalDiff(ed *editor.Editor, baseline localDiffBaseline) tea.C
 	} else if views := m.documentViews(ed.FilePath()); len(views) > 0 {
 		returnTab = views[0].Tab
 	}
-	tab := m.Win.OpenResource(resource, fmt.Sprintf("%s · %s diff", ed.BaseTitle(), baseline), true)
+	tab := m.Win.OpenResource(resource, ed.BaseTitle()+" · "+localDiffTitles[baseline], true)
 	if m.localDiffs == nil {
 		m.localDiffs = make(map[window.TabID]*localDiffView)
 	}
@@ -113,6 +141,7 @@ func (m *App) openLocalDiff(ed *editor.Editor, baseline localDiffBaseline) tea.C
 		}
 		m.localDiffs[tab.ID] = view
 	}
+	view.wasActive = true // just opened: this preparation reads the file
 	m.FocusStack.Clear()
 	m.setTermDockFocused(false)
 	m.setSessionDeckFocused(false)
@@ -156,7 +185,7 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 		}
 		saved = buffer.SavedBytes()
 	}
-	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), widthGen: m.comparisonWidthGen, revision: snapshot.Revision, diskGeneration: view.source.DiskGeneration()}
+	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), widthGen: m.comparisonWidthGen, revision: snapshot.Revision, diskGeneration: view.source.DiskGeneration(), diskSeen: view.source.DiskSeen()}
 	files, remote := m.ws.(shellport.ClientFiles)
 	return m.comparisonCommand(cancel, func() tea.Msg {
 		defer cancel()
@@ -258,36 +287,100 @@ func (m *App) applyLocalDiffPrepared(msg localDiffPreparedMsg) {
 		view.screen.SetError(msg.err)
 		return
 	}
-	view.revision, view.diskGeneration, view.diskHash = msg.revision, msg.diskGeneration, msg.diskHash
-	previous := view.screen.ComparisonReader().SourceGeometry()
+	reader := view.screen.ComparisonReader()
+	if view.screen.Resolvable() && view.hadChanges && msg.prepared.HunkCount() == 0 {
+		// Nothing is left to choose: the text and the file agree, because the
+		// user discarded, overwrote or edited elsewhere, or the file changed
+		// back. A comparison with no decision left closes itself.
+		ed := view.source
+		m.closeLocalDiff(view.tab)
+		m.returnToEditor(ed)
+		m.Feedback.NotifyInfo("No differences remain, so the comparison closed.")
+		return
+	}
+	// Decisions belong to changes, not positions: a change that is still the
+	// same keeps its choice when the comparison is prepared again.
+	decisions := reader.Decisions()
+	view.revision, view.diskGeneration, view.diskHash, view.diskSeen = msg.revision, msg.diskGeneration, msg.diskHash, msg.diskSeen
+	previous := reader.SourceGeometry()
 	view.screen.SetPrepared(msg.prepared)
+	if len(decisions) > 0 {
+		reader.RestoreChoices(decisions)
+	}
+	view.hadChanges = view.hadChanges || msg.prepared.HunkCount() > 0
 	m.cancelOrphanedComparisonGeometry(previous)
 	if msg.widthGen != m.comparisonWidthGen {
 		m.comparisonReflow = true
 	}
-	m.syncLocalDiffFreshness()
 	m.forceFrame()
 }
 
-// Version checks are cheap owner facts. Never export or diff source text during
-// layout/paint, and never silently replace the evidence while the user reads it.
-func (m *App) syncLocalDiffFreshness() {
+// localDiffStale reports a comparison whose text, save baseline or file
+// changed after it was prepared. The file can change again while a conflict
+// waits, without a new text revision or baseline: DiskSeen tells.
+func localDiffStale(view *localDiffView) bool {
+	return view.source.Revision() != view.revision || view.source.DiskGeneration() != view.diskGeneration ||
+		view.baseline == localDiffDisk && view.source.DiskSeen() != view.diskSeen
+}
+
+// localDiffRefreshable reports a comparison that follows its sources: the
+// disk and saved-version comparisons. Shared and replacement comparisons are
+// fixed evidence.
+func localDiffRefreshable(view *localDiffView) bool {
+	return view.baseline != localDiffShared && view.baseline != localDiffReplacement
+}
+
+// syncLocalDiffFreshness keeps every comparison true to its sources, so its
+// choices always act on what the user sees. Version checks are cheap owner
+// facts; the work is one debounced asynchronous preparation. A comparison
+// whose file closed can change nothing, so it closes with it. Selecting a disk
+// comparison reads the file again: the disk can change without a new text
+// revision while a conflict waits.
+func (m *App) syncLocalDiffFreshness() tea.Cmd {
+	var cmds []tea.Cmd
+	active := m.activeLocalDiff()
 	for _, view := range m.localDiffs {
-		if view.baseline == localDiffShared || view.baseline == localDiffReplacement {
+		wasActive := view.wasActive
+		view.wasActive = view == active
+		if !localDiffRefreshable(view) {
 			continue
 		}
-		notice := "Refresh compares the latest versions"
-		switch {
-		case !m.localDiffSourceLive(view):
-			notice = "The file is closed. This comparison cannot change it."
-		case view.source.Revision() != view.revision || view.source.DiskGeneration() != view.diskGeneration:
-			notice = "The text changed. Refresh to compare again."
+		if !m.localDiffSourceLive(view) {
+			if view.screen.Resolvable() {
+				m.closeLocalDiff(view.tab)
+				continue
+			}
+			if notice := "The file is closed. This comparison cannot change it."; notice != view.notice {
+				view.notice = notice
+				view.screen.SetNotice(notice)
+			}
+			continue
 		}
-		if notice != view.notice {
-			view.notice = notice
-			view.screen.SetNotice(notice)
+		stale := localDiffStale(view)
+		reselected := view == active && !wasActive && view.baseline == localDiffDisk && view.sequence > 0
+		if (stale || reselected) && !view.refreshDue {
+			view.refreshDue = true
+			generation := m.workspaceSwitchGen.Load()
+			cmds = append(cmds, tea.Tick(localDiffRefreshDelay, func(time.Time) tea.Msg {
+				return localDiffRefreshMsg{owner: view, generation: generation}
+			}))
 		}
 	}
+	return tea.Batch(cmds...)
+}
+
+// applyLocalDiffRefresh prepares a stale comparison again. A preparation in
+// flight finishes first; the next sync sees whether it is still stale.
+func (m *App) applyLocalDiffRefresh(msg localDiffRefreshMsg) tea.Cmd {
+	view := msg.owner
+	if view == nil || msg.generation != m.workspaceSwitchGen.Load() || m.localDiffs[view.tab] != view {
+		return nil
+	}
+	view.refreshDue = false
+	if view.cancel != nil {
+		return nil
+	}
+	return m.prepareLocalDiff(view)
 }
 
 // saveLocalDiffResolution writes the chosen changes into the source document
@@ -303,9 +396,10 @@ func (m *App) saveLocalDiffResolution(view *localDiffView) tea.Cmd {
 	case !m.localDiffSourceLive(view):
 		m.Feedback.NotifyError("The file is closed. Open it and compare again.")
 		return nil
-	case view.source.Revision() != view.revision || view.source.DiskGeneration() != view.diskGeneration:
-		m.Feedback.NotifyInfo("The text changed. Refresh to compare again.")
-		return nil
+	case localDiffStale(view):
+		// Never save choices made against older text: compare again first.
+		m.Feedback.NotifyInfo("The text changed. Crude updated the comparison. Check it, then save again.")
+		return m.prepareLocalDiff(view)
 	}
 	ed := view.source
 	if m.liveEditors[ed.Primary()] != nil {

@@ -64,6 +64,7 @@ type mainPaneView struct {
 	chat                         *shellchat.Screen
 	input                        *shellinput.Screen
 	editor                       *shelleditor.Screen
+	diskBar                      *ui.NoticeBar
 	image                        *imageviewer.Screen
 	deck                         *deckMount
 	reflowContentW, reflowInnerW int
@@ -390,8 +391,14 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 			left = 0
 		}
 		g.view.editor.SetPadding(left, pad)
-		g.add(g.view.editor, body)
-		g.editor = g.body
+		editorRect := body
+		if bar := m.editorDiskBar(g.view, tab.ID, ed); bar != nil && body.H > 2 {
+			bar.SetTokens(m.rootHost.Tokens())
+			g.add(bar, ui.Rect{Y: body.Y, W: body.W, H: 1})
+			editorRect.Y, editorRect.H = body.Y+1, body.H-1
+		}
+		g.add(g.view.editor, editorRect)
+		g.editor = g.screen(editorRect)
 	case m.isAgentTabTitle(tab.Title):
 		p.configureAgent(g, tab, body)
 	case tab.Resource.Kind == window.ResourceGitReview:

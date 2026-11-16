@@ -5,6 +5,7 @@ import (
 	"crude/textencoding"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -496,6 +497,7 @@ func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd 
 		finish(failure)
 		return nil
 	}
+	diskChange := slices.ContainsFunc(u.Changes, func(c document.Change) bool { return c.RequestID == document.DiskRequestID })
 	for i, ed := range targets {
 		state := m.liveEditors[ed.Primary()]
 		wasConflict := ed.DiskConflict()
@@ -523,9 +525,8 @@ func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd 
 		if !ed.IsOpen() {
 			continue
 		}
-		if !wasConflict && ed.DiskConflict() && i == 0 {
-			// Say it once, when it happens; the choice waits for Save.
-			m.Feedback.NotifyInfo(ed.BaseTitle() + " changed on disk. Save it to choose which version to keep.")
+		if i == 0 {
+			m.observeDiskState(ed, diskChange, wasConflict)
 		}
 		if state.closeAfter && !ed.Modified() {
 			m.overlayHost.Close(ui.OverlayDirtyClose)
@@ -613,7 +614,9 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 			m.abortPendingTabClose()
 			if fault != nil && fault.Code == coreprotocol.FaultDocumentConflict {
 				if msg.kind == "save" && msg.reason != workspace.DocumentSaveManual {
-					m.Feedback.NotifyInfo(ed.BaseTitle() + " changed on disk. Save it to choose which version to keep.")
+					// An autosave met an outside edit: the document update
+					// carries the conflict, and the disk-awareness policy
+					// shows it. Nobody asked, so nothing opens.
 					return
 				}
 				m.openDiskConflict(ed, closeAfter)

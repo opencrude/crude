@@ -495,6 +495,23 @@ func (e *Editor) DiskConflict() bool {
 	return p != nil && p.snapshot.Conflict
 }
 
+// DiskSeen identifies the file version the core observed last. It changes
+// when the file changes again while the document is in conflict, when the save
+// baseline (DiskGeneration) does not.
+func (e *Editor) DiskSeen() [32]byte {
+	if p := e.Primary().documentProjection; p != nil {
+		return p.snapshot.DiskSeen
+	}
+	return [32]byte{}
+}
+
+// DiskRemoved reports a shared document whose file was deleted on disk while
+// it was open. With DiskConflict, the text waits for Save or Close.
+func (e *Editor) DiskRemoved() bool {
+	p := e.Primary().documentProjection
+	return p != nil && p.snapshot.Removed
+}
+
 func (e *Editor) MatchesDisk(hash [32]byte) bool {
 	return e.buffer != nil && e.buffer.MatchesDisk(hash)
 }

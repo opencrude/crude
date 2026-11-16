@@ -41,9 +41,12 @@ func TestDiskConflictDialogOverwriteDiscardAndCompare(t *testing.T) {
 			ed.SetCursorPosition(0, 3)
 			ed.InsertRune('!')
 			settleLive(t, app)
-			if err := os.WriteFile(path, []byte("one\ntwo\nTHREE\n"), 0o600); err != nil {
+			// The file changes the line the user edited, and another line:
+			// only the user can decide the first, so it is a conflict.
+			if err := os.WriteFile(path, []byte("ONE\ntwo\nTHREE\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			liveTestPump(t, []*App{app}, ed.DiskConflict)
 			runAppCommand(t, app, app.requestEditorSave(ed, workspace.DocumentSaveManual, false))
 			settleLive(t, app)
 			prompt := app.diskConflict
@@ -70,7 +73,7 @@ func TestDiskConflictDialogOverwriteDiscardAndCompare(t *testing.T) {
 				want = "one!\ntwo\nthree\n"
 			case "discard":
 				runAppCommand(t, app, app.resolveDiskConflict(prompt, ui.DiskConflictDiscard))
-				want = "one\ntwo\nTHREE\n"
+				want = "ONE\ntwo\nTHREE\n"
 			case "compare":
 				runAppCommand(t, app, app.resolveDiskConflict(prompt, ui.DiskConflictCompare))
 				view := app.activeLocalDiff()

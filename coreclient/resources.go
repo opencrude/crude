@@ -2,6 +2,8 @@ package coreclient
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"crude/coreprotocol"
 	"crude/document"
@@ -39,8 +41,16 @@ func (v *WorkspaceView) CreateTerminal(ctx context.Context, opts workspace.Termi
 	err := v.Client.Call(ctx, v.ID, coreprotocol.TerminalCreate, &opts, &out)
 	return out, err
 }
-func (v *WorkspaceView) ControlTerminal(ctx context.Context, id string) (workspace.TerminalLease, error) {
+
+// ControlTerminal acquires input control as claim allows; refusal unwraps to
+// workspace.ErrTerminalControl.
+func (v *WorkspaceView) ControlTerminal(ctx context.Context, id string, claim workspace.TerminalClaim) (workspace.TerminalLease, error) {
 	var out workspace.TerminalLease
-	err := v.Client.Call(ctx, v.ID, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: id}, &out)
+	request := coreprotocol.TerminalIDRequest{ID: id, TakeOver: claim == workspace.ClaimTakeOver, FromAbsent: claim == workspace.ClaimFromAbsent}
+	err := v.Client.Call(ctx, v.ID, coreprotocol.TerminalControl, request, &out)
+	var fault *coreprotocol.Fault
+	if errors.As(err, &fault) && fault.Code == coreprotocol.FaultTerminalControl {
+		err = fmt.Errorf("%w: %s", workspace.ErrTerminalControl, fault.Message)
+	}
 	return out, err
 }

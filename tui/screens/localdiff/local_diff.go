@@ -1,5 +1,12 @@
 // Package localdiff composes a comparison snapshot and exact-owner local actions.
 // The application owns snapshot preparation, freshness, source buffers and tabs.
+//
+// The page shows only what the tab and the editor cannot: the two versions and
+// the decisions between them. The tab names the file (its tooltip the full
+// path); Find, Save and Close keep their editor keys (Ctrl+F, Ctrl+S, Esc); the
+// tab's menu holds the rare choices (presentation, open the file). A comparison
+// that resolves has one bar: its state, Keep buttons, change navigation and
+// Save. A read-only comparison has one status row.
 package localdiff
 
 import (
@@ -24,9 +31,6 @@ type Screen struct {
 	ui.Base
 	tokens              *ui.TokenSet
 	viewer              *diffview.Screen
-	actions             *ui.ActionBar
-	more                *ui.List
-	moreOpen, compact   bool
 	search              *ui.FilterField
 	focus               func(ui.ComponentID) bool
 	searchOpen, loading bool
@@ -41,13 +45,7 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 		th = theme.DefaultDark()
 	}
 	t := ui.NewTokenSet(th)
-	s := &Screen{Base: ui.NewBase(id), tokens: t, viewer: diffview.NewWithID(th, ui.NewID(id, "comparison")), actions: ui.NewActionBar(ui.NewID(id, "actions"), t), search: ui.NewFilterField(ui.NewID(id, "search"), t)}
-	s.actions.SetAlignEnd(false)
-	s.actions.SetSurfaceBackground(ui.ColorBg)
-	s.more = ui.NewList(ui.NewID(id, "more"), t)
-	s.more.SetActivateAction("localdiff.more.activate")
-	s.viewer.SetOnResolutionChange(func() { s.configureActions(s.compact) })
-	s.configureActions(false)
+	s := &Screen{Base: ui.NewBase(id), tokens: t, viewer: diffview.NewWithID(th, ui.NewID(id, "comparison")), search: ui.NewFilterField(ui.NewID(id, "search"), t)}
 	s.search.SetPlaceholder("Find in comparison")
 	s.search.SetSubmitAction("localdiff.match")
 	s.search.OnChanged(s.viewer.SetQuery)
@@ -57,13 +55,14 @@ func (s *Screen) SetPrepared(p diffview.Prepared) {
 	s.viewer.SetPrepared(p)
 	s.loading = false
 	s.errText = ""
-	s.configureActions(s.compact)
+	s.syncState()
 }
 func (s *Screen) SetLoading(b bool) {
 	s.loading = b
 	if b {
 		s.errText = ""
 	}
+	s.syncState()
 }
 func (s *Screen) SetError(err error) {
 	s.loading = false
@@ -71,8 +70,10 @@ func (s *Screen) SetError(err error) {
 	if err != nil {
 		s.errText = err.Error()
 	}
+	s.syncState()
 }
-func (s *Screen) SetNotice(n string)                 { s.notice = n }
+func (s *Screen) SetNotice(n string)                 { s.notice = n; s.syncState() }
+func (s *Screen) Loading() bool                      { return s.loading }
 func (s *Screen) Comparison() diffview.Comparison    { return s.viewer.Comparison() }
 func (s *Screen) DocumentID() ui.ComponentID         { return s.viewer.DocumentID() }
 func (s *Screen) InvalidateWidthProfile()            { s.viewer.InvalidateWidthProfile() }
@@ -87,9 +88,7 @@ func (s *Screen) SetTokens(t *ui.TokenSet) {
 	}
 	s.tokens = t
 	s.viewer.SetTokens(t)
-	s.actions.SetTokens(t)
 	s.search.SetTokens(t)
-	s.more.SetTokens(t)
 }
 func (s *Screen) SetTheme(th *theme.Theme) {
 	if th != nil {
@@ -97,118 +96,83 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 	}
 }
 func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.actions, s.viewer, s.search, s.more}
-}
-
-// actionButtons lists the page actions. A resolving comparison saves the
-// chosen changes; its change actions live in the comparison's own bar.
-func (s *Screen) actionButtons() []ui.ActionBarButton {
-	buttons := []ui.ActionBarButton{
-		{Label: "Refresh", Action: ActionRefresh, Enabled: !s.refreshDisabled},
-		{Label: "Open Source", Action: ActionOpenSource, Enabled: true},
-		{Label: "Unified / Split", Action: "localdiff.presentation", Enabled: true},
-		{Label: "Find", Action: "localdiff.find", Enabled: true},
-		{Label: "Previous", Action: "localdiff.previous", Enabled: true},
-		{Label: "Next", Action: "localdiff.next", Enabled: true},
-		{Label: "Close", Action: ActionClose, Enabled: true},
-	}
-	if s.resolving {
-		buttons = []ui.ActionBarButton{
-			{Label: "Save", Shortcut: "ctrl+s", Action: ActionSave, Enabled: s.viewer.Decided(), Variant: ui.VariantPrimary},
-			{Label: "Refresh", Action: ActionRefresh, Enabled: !s.refreshDisabled},
-			{Label: "Unified / Split", Action: "localdiff.presentation", Enabled: true},
-			{Label: "Find", Action: "localdiff.find", Enabled: true},
-			{Label: "Close", Action: ActionClose, Enabled: true},
-		}
-	}
-	return buttons
-}
-func (s *Screen) configureActions(compact bool) {
-	buttons := s.actionButtons()
-	var items []ui.ListItem
-	for _, b := range buttons {
-		if b.Enabled {
-			items = append(items, ui.ListItem{ID: b.Action, Label: b.Label, Command: true})
-		}
-	}
-	s.more.SetItems(items)
-	if compact {
-		buttons = []ui.ActionBarButton{{Label: "More", Action: "localdiff.more", Enabled: true}}
-	}
-	s.actions.SetButtons(buttons...)
+	return []ui.Component{s.viewer, s.search}
 }
 
 // SetRefreshEnabled distinguishes immutable evidence from refreshable sources.
-func (s *Screen) SetRefreshEnabled(enabled bool) {
-	s.refreshDisabled = !enabled
-	s.configureActions(s.compact)
-}
+func (s *Screen) SetRefreshEnabled(enabled bool) { s.refreshDisabled = !enabled }
 
-// SetResolvable lets the user accept each change from the left or the right
-// and save the result. initial is the choice every change starts with.
+// SetResolvable lets the user keep each change from the left or the right and
+// save the result. initial is the choice every change starts with.
 func (s *Screen) SetResolvable(enabled bool, initial diffview.Choice) {
 	s.resolving = enabled
 	s.viewer.SetResolvable(enabled, initial)
-	s.configureActions(s.compact)
+	s.syncState()
 }
 
 // Resolvable reports whether the page saves chosen changes.
 func (s *Screen) Resolvable() bool { return s.resolving }
+
+// status is the page state for the one status line: an error, preparing, the
+// search result, the owner's notice, then the changes.
+func (s *Screen) status() (string, ui.SemanticColor) {
+	switch {
+	case s.errText != "":
+		return s.errText, ui.ColorError
+	case s.loading:
+		return "Updating the comparison…", ui.ColorMuted
+	case s.searchOpen && s.viewer.SearchStatus() != "":
+		return s.viewer.SearchStatus(), ui.ColorMuted
+	case s.notice != "":
+		return s.notice, ui.ColorMuted
+	}
+	return "", ui.ColorMuted
+}
+
+// syncState gives the resolution bar the page state and the Save button.
+func (s *Screen) syncState() {
+	if !s.resolving {
+		return
+	}
+	text, role := s.status()
+	s.viewer.SetMessage(text, role)
+	s.viewer.SetCommit("Save", "ctrl+s", ActionSave, !s.loading && s.errText == "")
+}
+
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	compact := r.W < 100
-	if compact != s.compact {
-		s.compact = compact
-		s.configureActions(compact)
-	}
-	s.more.Layout(ctx, ui.Rect{})
-	y := min(1, r.H)
-	h := min(1, max(0, r.H-y))
-	s.actions.Layout(ctx, ui.Rect{Y: y, W: r.W, H: h})
-	y += h
-	if s.moreOpen {
-		h = min(7, max(0, r.H-y-3))
-		s.more.Layout(ctx, ui.Rect{Y: y, W: r.W, H: h})
-		y += h
-	}
+	s.syncState()
+	y := 0
 	s.search.Layout(ctx, ui.Rect{})
 	if s.searchOpen {
-		h = min(1, max(0, r.H-y))
+		h := min(1, r.H)
 		s.search.Layout(ctx, ui.Rect{Y: y, W: r.W, H: h})
 		y += h
 	}
-	h = min(1, max(0, r.H-y))
-	y += h
+	if !s.resolving {
+		y += min(1, max(0, r.H-y)) // the status row
+	}
 	s.viewer.Layout(ctx, ui.Rect{Y: y, W: r.W, H: max(0, r.H-y)})
 }
+
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	r := s.Bounds()
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(s.tokens.Color(ui.ColorBg)))
-	if r.H == 0 {
-		return
-	}
-	buf.WriteString(ox+r.X, oy+r.Y, rendering.TruncateVisual(s.Comparison().Path, r.W, "…"), s.tokens.Color(ui.ColorFg), s.tokens.Color(ui.ColorBg), cell.AttrBold)
-	status, role := s.notice, ui.ColorMuted
-	if s.loading {
-		status = "Preparing comparison… previous snapshot remains visible"
-	}
-	if s.errText != "" {
-		status = s.errText
-		role = ui.ColorError
-	}
-	if resolution := s.viewer.ResolutionStatus(); resolution != "" && !s.loading && s.errText == "" {
-		status, role = resolution+" · choose a side for each change, then Save", ui.ColorFg
-	}
-	if search := s.viewer.SearchStatus(); search != "" && !s.loading && s.errText == "" {
-		status = search
-	}
-	if !s.loading && s.errText == "" && s.viewer.HunkCount() == 0 && s.viewer.SearchStatus() == "" {
-		status = "No textual differences · " + status
+	if s.resolving {
+		return // the comparison's own bar shows the state
 	}
 	row := s.viewer.Bounds().Y - 1
-	if row > 0 && row < r.H {
-		buf.WriteString(ox+r.X, oy+r.Y+row, rendering.TruncateVisual(status, r.W, "…"), s.tokens.Color(role), s.tokens.Color(ui.ColorBg), 0)
+	if row < 0 || row >= r.H {
+		return
 	}
+	status, role := s.status()
+	switch {
+	case status == "" && s.viewer.HunkCount() == 0:
+		status = "No differences"
+	case status == "":
+		status = "Read-only comparison · Alt+↑/↓ moves between changes"
+	}
+	buf.WriteString(ox+r.X, oy+r.Y+row, rendering.TruncateVisual(status, r.W, "…"), s.tokens.Color(role), s.tokens.Color(ui.ColorBg), 0)
 }
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Local comparison snapshot", Value: s.Comparison().Path}
@@ -219,15 +183,9 @@ func (s *Screen) Handle(_ ui.EventContext, e ui.Event) ui.EventResult {
 	}
 	switch e.Key.String() {
 	case "esc":
-		if s.moreOpen {
-			s.moreOpen = false
-			if s.focus != nil {
-				s.focus(s.actions.ID())
-			}
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-		}
 		if s.searchOpen {
 			s.searchOpen = false
+			s.syncState()
 			if s.focus != nil {
 				s.focus(s.DocumentID())
 			}
@@ -238,18 +196,21 @@ func (s *Screen) Handle(_ ui.EventContext, e ui.Event) ui.EventResult {
 		return s.action(ActionRefresh)
 	case "ctrl+s":
 		if s.resolving {
+			if !s.viewer.CommitAllowed() {
+				return ui.EventResult{Handled: true}
+			}
 			return s.action(ActionSave)
 		}
 	case "f3", "shift+f3":
 		s.viewer.NextMatch(e.Key.Mod.Contains(tea.ModShift))
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	case "ctrl+f":
-		return s.find()
+		return s.OpenFind()
 	case "tab":
-		if s.focus != nil {
-			s.focus(s.actions.ID())
+		if s.resolving && s.focus != nil {
+			s.focus(s.viewer.BarID())
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
 		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
 	case "enter":
 		if s.searchOpen {
 			s.viewer.NextMatch(e.Key.Mod.Contains(tea.ModShift))
@@ -261,56 +222,37 @@ func (s *Screen) Handle(_ ui.EventContext, e ui.Event) ui.EventResult {
 func (s *Screen) action(id string) ui.EventResult {
 	return ui.EventResult{Handled: true, Action: &ui.Action{ID: id, Payload: s}}
 }
-func (s *Screen) find() ui.EventResult {
+
+// OpenFind shows the find field and focuses it (Ctrl+F, the tab menu).
+func (s *Screen) OpenFind() ui.EventResult {
 	s.searchOpen = true
+	s.syncState()
 	if s.focus != nil {
 		s.focus(s.search.ID())
 	}
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
 }
-func (s *Screen) HandleAction(ctx ui.EventContext, a ui.Action) ui.EventResult {
+
+// TogglePresentation switches between side by side and unified (tab menu).
+func (s *Screen) TogglePresentation() {
+	p := diffview.SideBySide
+	if s.viewer.PreferredPresentation() == p {
+		p = diffview.Unified
+	}
+	s.viewer.SetPresentation(p)
+}
+
+func (s *Screen) HandleAction(_ ui.EventContext, a ui.Action) ui.EventResult {
 	result := ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	switch a.ID {
-	case "localdiff.more":
-		s.moreOpen = !s.moreOpen
-		if s.focus != nil {
-			if s.moreOpen {
-				s.focus(s.more.ID())
-			} else {
-				s.focus(s.actions.ID())
-			}
-		}
-		return result
-	case "localdiff.more.activate":
-		if item, ok := a.Payload.(ui.ListItem); ok {
-			s.moreOpen = false
-			if s.focus != nil {
-				s.focus(s.DocumentID())
-			}
-			r := s.HandleAction(ctx, ui.Action{ID: item.ID})
-			r.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
-			return r
-		}
 	case ActionRefresh, ActionOpenSource, ActionClose, ActionSave:
-		if a.ID == ActionRefresh && s.refreshDisabled || a.ID == ActionSave && !s.viewer.Decided() {
+		if a.ID == ActionRefresh && s.refreshDisabled || a.ID == ActionSave && !s.viewer.CommitAllowed() {
 			return ui.EventResult{Handled: true}
 		}
 		return s.action(a.ID)
-	case "localdiff.find":
-		return s.find()
-	case "localdiff.presentation":
-		p := diffview.SideBySide
-		if s.viewer.PreferredPresentation() == p {
-			p = diffview.Unified
-		}
-		s.viewer.SetPresentation(p)
-	case "localdiff.previous":
-		s.viewer.NavigateHunk(-1)
-	case "localdiff.next":
-		s.viewer.NavigateHunk(1)
 	case "localdiff.match":
 		s.viewer.NextMatch(false)
-	case "actionbar.exit.down", "actionbar.exit.up":
+	case "actionbar.exit.forward", "actionbar.exit.backward", "actionbar.exit.down", "actionbar.exit.up":
 		if s.focus != nil {
 			s.focus(s.DocumentID())
 		}
