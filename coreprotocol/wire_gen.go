@@ -5494,8 +5494,8 @@ func (z DocumentReadRequest) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *DocumentRevisionRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 5
+	o = append(o, 0x95)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendUint64(o, z.Revision)
 	o, err = z.Reason.MarshalMsg(o)
@@ -5509,6 +5509,15 @@ func (z *DocumentRevisionRequest) MarshalMsg(b []byte) (o []byte, err error) {
 		o, err = z.Encoding.MarshalMsg(o)
 		if err != nil {
 			err = msgp.WrapError(err, "Encoding")
+			return
+		}
+	}
+	if z.Resolve == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o, err = z.Resolve.MarshalMsg(o)
+		if err != nil {
+			err = msgp.WrapError(err, "Resolve")
 			return
 		}
 	}
@@ -5527,8 +5536,8 @@ func (z *DocumentRevisionRequest) UnmarshalMsg(bts []byte) (o []byte, err error)
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -5562,6 +5571,22 @@ func (z *DocumentRevisionRequest) UnmarshalMsg(bts []byte) (o []byte, err error)
 			return
 		}
 	}
+	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.Resolve = nil
+	} else {
+		if z.Resolve == nil {
+			z.Resolve = new(document.Resolution)
+		}
+		bts, err = z.Resolve.UnmarshalMsg(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Resolve")
+			return
+		}
+	}
 	o = bts
 	return
 }
@@ -5573,6 +5598,11 @@ func (z *DocumentRevisionRequest) Msgsize() (s int) {
 		s += msgp.NilSize
 	} else {
 		s += z.Encoding.Msgsize()
+	}
+	if z.Resolve == nil {
+		s += msgp.NilSize
+	} else {
+		s += z.Resolve.Msgsize()
 	}
 	return
 }

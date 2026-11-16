@@ -37,9 +37,34 @@ cannot prove that an unresolved private edit was applied: it enters conflict and
 observes the original receipt instead of silently replacing or replaying text.
 Close/reopen, draft resolution, workspace switch and shutdown invalidate exact
 per-open generation tokens, including publications already queued to Update.
-Switching away and back to the same port does not revive an old token. Explicit
-Use shared backs up private evidence first; it grants no permission to overwrite
-an external disk conflict. See [private shared-editor recovery](core-client-protocol.md#shared-resources-and-private-state).
+Switching away and back to the same port does not revive an old token. Discarding
+edits that did not reach the shared document backs up private evidence first; it
+grants no permission to overwrite an external disk conflict. See [private shared-editor recovery](core-client-protocol.md#shared-resources-and-private-state).
+
+## Unsaved changes, discard and disk conflicts
+
+The core document owns the decision state; the shell only asks.
+
+- Closing the last view of a changed file asks **Save / Discard / Cancel**
+  (`ui.BuildDirtyCloseFrame`). Discard sends one `document.reload`: the text
+  becomes the saved file as one author undo group, then the view closes. An
+  unnamed document becomes empty, so closing frees it. Closing one of several
+  views of the same document never asks. The editor context menu has
+  **Discard unsaved changes**, the same reload without closing.
+- When a file changes on disk while its text is unsaved, the core marks the
+  document in conflict and refuses saves with fault code `document_conflict`.
+  The shell says so once, does not autosave, and a manual Save opens
+  **File changed on disk** (`ui.BuildDiskConflictFrame`): **Overwrite**,
+  **Discard**, **Compare**, **Cancel**. A save that meets the conflict in the
+  core opens the same dialog.
+- `document.reload` with a `document.Resolution` settles the conflict: the
+  current file becomes the save baseline and the text stays (Overwrite) or
+  becomes the resolved text (Compare, then Save). A resolution made against a
+  compared file carries that file's hash; a newer file fails as a conflict, so
+  an unseen version is never accepted. A resolution also carries the editor
+  revision it was made against; later typing refuses it before any command.
+- Definitive save or reload failures are notices, never a blocked editor. Only
+  edits that did not reach the shared document open **Changes not applied**.
 
 ## Motion
 
@@ -495,12 +520,14 @@ editor source seeds either command. Re-invocation focuses/selects the query;
 mode changes preserve results and replacement text. Every exact occurrence is
 separate, with source-byte ownership through planning and multiline end ranges.
 
-Project discovery additionally uses fzf V2 (bounded V1 path for large inputs),
-requiring every query rune in order. Weak scattered matches are rejected by its
-score; a single-word query cannot assemble an abbreviation across unrelated
-prose words. Exact hits rank before discovery suggestions. Filename-only and
-fuzzy-only results are not replacement spans; regex/whole-word modes do not
-introduce fuzzy content hits. The editor Find path never uses fzf.
+Project discovery additionally uses fzf V2 (bounded V1 path for large inputs)
+with fzf's extended-search term rule: whitespace separates terms, every term
+must match, and each term must match inside one whitespace-delimited token. A
+phrase therefore never assembles a hit from letters scattered across prose.
+Weak scattered matches inside a token are rejected by the score. Exact hits
+rank before discovery suggestions, across files and inside each file group.
+Filename-only and fuzzy-only results are not replacement spans; regex/whole-word
+modes do not introduce fuzzy content hits. The editor Find path never uses fzf.
 
 Replacement plans are computed off Update from the canonical source, reject
 stale/invalid spans, and deduplicate identical hits. Planning is bounded

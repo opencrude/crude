@@ -221,6 +221,8 @@ type App struct {
 	paneFilePicker  *paneFilePickerOwner
 	untitledSave    *untitledSaveOwner
 	editorReload    *editorReloadPrompt
+	diskConflict    *diskConflictPrompt
+	liveConflict    *liveConflictPrompt
 	paneFileOpenSeq uint64
 	// paneRestoreCeiling accepts the pane opens queued by one layout
 	// restoration. A later deliberate open raises paneFileOpenSeq above it

@@ -150,9 +150,19 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if prompt := m.editorReload; prompt != nil {
-		if key, ok := msg.(tea.KeyPressMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		if prompt := m.editorReload; prompt != nil {
 			if handled, cmd := m.confirmModalInput(editorReloadOverlay, key, false, prompt.activate); handled {
+				return m, cmd
+			}
+		}
+		if prompt := m.diskConflict; prompt != nil {
+			if handled, cmd := m.confirmModalInput(diskConflictOverlay, key, false, func(index int) tea.Cmd { return m.resolveDiskConflict(prompt, index) }); handled {
+				return m, cmd
+			}
+		}
+		if prompt := m.liveConflict; prompt != nil {
+			if handled, cmd := m.confirmModalInput(liveConflictOverlay, key, false, func(index int) tea.Cmd { return m.activateLiveConflict(prompt, index) }); handled {
 				return m, cmd
 			}
 		}
@@ -541,6 +551,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case editorFormatResultMsg:
 		return m, m.handleEditorFormatResult(msg)
+	case localDiskResolvedMsg:
+		return m, m.applyLocalDiskResolved(msg)
 	case editorDiskResultMsg:
 		m.applyEditorDisk(msg)
 		return m, nil

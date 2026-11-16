@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"path/filepath"
-	"strconv"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
@@ -29,7 +28,7 @@ func (m *App) dragGhost() ui.DragGhost {
 			continue
 		}
 		ghost := ui.DragGhost{Label: item.Label, X: p.dragAt[0], Y: p.dragAt[1]}
-		ghost.Icon, ghost.IconColor = m.tabDragIcon(item.ID)
+		ghost.Icon, ghost.IconColor = item.Icon, item.IconColor
 		switch d := p.drop; {
 		case d == nil:
 			ghost.Intent, ghost.Blocked = "Drop on a pane", true
@@ -45,18 +44,18 @@ func (m *App) dragGhost() ui.DragGhost {
 	return ui.DragGhost{}
 }
 
-// tabDragIcon gives a file tab the same icon the file tree shows for it.
-func (m *App) tabDragIcon(id string) (string, cell.Color) {
-	tabID, err := strconv.ParseUint(id, 10, 64)
-	index := m.Win.IndexOf(window.TabID(tabID))
-	if err != nil || index < 0 || m.Tree == nil || m.Tree.Model == nil {
+// tabIcon gives a file tab (text or image) the icon the file tree and Find in
+// Files show for that file. Other tabs, and terminals without Nerd Font icons,
+// keep a label-only tab: the fallback glyph is the unsaved-changes dot.
+func (m *App) tabIcon(tab window.Tab) (string, cell.Color) {
+	if tab.Resource.Kind != window.ResourceDocument || tab.Resource.ID == "" || m.Tree == nil || m.Tree.Model == nil {
 		return "", cell.NoColor
 	}
-	path := m.editorPathFromTabTitle(m.Win.Tabs()[index].Title)
-	if path == "" {
+	resolver := m.Tree.Model.IconResolver()
+	if resolver == nil || !resolver.UseNerdFont {
 		return "", cell.NoColor
 	}
-	icon := m.Tree.Model.IconResolver().ResolveIcon(filepath.Base(path), false, false, false)
+	icon := resolver.ResolveIcon(filepath.Base(tab.Resource.ID), false, false, false)
 	return icon.Icon, rendering.ThemeColorToCell(icon.Color)
 }
 

@@ -351,3 +351,32 @@ func TestQueryHistoryUpOnEmptyFieldAndTypingExits(t *testing.T) {
 		t.Fatalf("typing should edit the recalled query, query=%q", got)
 	}
 }
+
+// The reported defect: in one file, fuzzy suggestions on earlier lines were
+// listed above the exact match. Exact matches lead their file; suggestions
+// follow, each kind in line order.
+func TestGroupListsExactMatchesBeforeFuzzySuggestions(t *testing.T) {
+	screen, host := searchHost(t)
+	screen.SetQuery("direction is")
+	screen.ScheduleSearch()
+	context := "// apply direction\nconst direction = isRTL\n// console.log(\"direction is\")"
+	screen.ApplySearchResults(screen.generation, []fileio.ProjectSearchMatch{
+		{Path: "/root/d.tsx", RelativePath: "d.tsx", Line: 3, Column: 16, EndColumn: 28, EndLine: 3,
+			LineText: "// console.log(\"direction is\")", TextMatches: []int{16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27},
+			Context: context, ContextStart: 1},
+		{Path: "/root/d.tsx", RelativePath: "d.tsx", Line: 2, Column: 6, EndColumn: 20, EndLine: 2, FuzzyOnly: true,
+			LineText: "const direction = isRTL", TextMatches: []int{6, 7, 8, 9, 10, 11, 12, 13, 14, 18, 19},
+			Context: context, ContextStart: 1},
+	}, nil, time.Millisecond)
+	if screen.Selected() != 0 {
+		t.Fatalf("the first selection must be the exact match, got result %d", screen.Selected())
+	}
+	host.Layout()
+	buf := surface.NewCellBuffer(80, 24)
+	host.Paint(buf)
+	painted := bufferText(buf)
+	exact, fuzzy := strings.Index(painted, "3: // console"), strings.Index(painted, "2: ≈")
+	if exact < 0 || fuzzy < 0 || exact > fuzzy {
+		t.Fatalf("exact match must be listed before the fuzzy suggestion:\n%s", painted)
+	}
+}

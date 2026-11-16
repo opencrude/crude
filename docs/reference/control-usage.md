@@ -153,9 +153,11 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
   stable when a terminal moves or another one closes. Cramped
   strips use `T 1`, `T 2`, … before shared overflow scrolling. The picker keeps
   the same numbers and names Docked/Tab/Floating placement instead of raw enum values.
-- **Icons are not painted in tab bars.** Window tab icons live in `window.Tab`
-  (disambiguation) and are deliberately not plumbed into the strip — glyph tofu
-  risk. Labels are the only tab content.
+- **File tabs show their file icon.** A tab for a text or image file paints the
+  file-type icon the file tree and Find in Files show, in its file ink, before
+  the label (`ui.TabItem.Icon`, resolved once by the App for every pane and
+  window strip). Other tabs, and terminals without Nerd Font icons, keep the
+  label only: the fallback glyph is the unsaved-changes dot.
 
 ## Splits
 

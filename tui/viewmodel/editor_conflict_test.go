@@ -19,10 +19,13 @@ import (
 func conflictPrompt(t *testing.T, m *App) *liveConflictPrompt {
 	t.Helper()
 	fw := m.overlayHost.Window(liveConflictOverlay)
-	if fw == nil {
+	if fw == nil || m.liveConflict == nil {
 		t.Fatal("no native conflict dialog")
 	}
-	return fw.Content.(*ui.WindowFrameWidget).Body().(*liveConflictPrompt)
+	if _, ok := fw.Content.(*ui.ComponentWidget); !ok {
+		t.Fatal("the conflict dialog must use the shared confirm frame")
+	}
+	return m.liveConflict
 }
 func TestLiveEditorConflictDefaultCompareAndFencedUseShared(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
@@ -51,7 +54,7 @@ func TestLiveEditorConflictDefaultCompareAndFencedUseShared(t *testing.T) {
 	liveTestSync(t, two.app)
 	runAppCommand(t, two.app, two.app.drainLiveEditorCommands())
 	p := conflictPrompt(t, two.app)
-	if !strings.Contains(two.app.View().RenderContent(), "Keep draft") {
+	if view := two.app.View().RenderContent(); !strings.Contains(view, "Keep") || !strings.Contains(view, "Discard") {
 		t.Fatal("safe default missing")
 	}
 	two.app.applyLiveConflict(liveConflictMsg{p: p, action: "keep"})
@@ -66,17 +69,16 @@ func TestLiveEditorConflictDefaultCompareAndFencedUseShared(t *testing.T) {
 	}
 	runAppCommand(t, two.app, two.app.OpenLiveEditorConflict(y))
 	p = conflictPrompt(t, two.app)
-	two.app.applyLiveConflict(liveConflictMsg{p: p, action: "use"})
+	discard := two.app.applyLiveConflict(liveConflictMsg{p: p, action: "use"})
 	x.SetCursorPosition(0, 4)
 	x.InsertRune('Z')
 	runAppCommand(t, one.app, one.app.drainLiveEditorCommands())
-	runAppCommand(t, two.app, two.app.applyLiveConflict(liveConflictMsg{p: p, action: "use"}))
-	if y.Value() != "Yabc" || !strings.Contains(p.detail.Value(), "shared text") {
-		t.Fatal("changed shared preimage not refused")
+	runAppCommand(t, two.app, discard)
+	if y.Value() != "Yabc" || !strings.Contains(p.detail, "file text changed") {
+		t.Fatalf("changed shared preimage not refused: %q", p.detail)
 	}
 	runAppCommand(t, two.app, two.app.OpenLiveEditorConflict(y))
 	p = conflictPrompt(t, two.app)
-	two.app.applyLiveConflict(liveConflictMsg{p: p, action: "use"})
 	runAppCommand(t, two.app, two.app.applyLiveConflict(liveConflictMsg{p: p, action: "use"}))
 	if y.Value() != "XabcZ" || y.DocumentState().PendingEdits != 0 || y.DocumentState().Conflict != nil || two.app.liveEditors[y].err != nil {
 		t.Fatalf("explicit resolution failed: %q %+v", y.Value(), y.DocumentState())
@@ -131,14 +133,18 @@ func TestLiveEditorRecoveredResolutionClearsExactRecordAndRetainsBackup(t *testi
 	if r.Value() != "Xbase" {
 		t.Fatal("private recovery missing")
 	}
-	p := conflictPrompt(t, restored.app)
+	conflictPrompt(t, restored.app)
 	// Enter must activate the safe default, not discard.
-	event := ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter})
-	out := p.actions.Handle(ui.EventContext{Focused: true}, event)
-	if out.Action == nil || out.Action.ID != "keep" {
-		t.Fatalf("unsafe default: %+v", out)
+	frame := restored.app.overlayHost.Window(liveConflictOverlay).Content.(*ui.ComponentWidget)
+	if focused := ui.ConfirmButtonIndexFromID(frame.Host().Focused()); focused != liveConflictKeep {
+		t.Fatalf("unsafe default focus: button %d", focused)
 	}
-	restored.app.applyLiveConflict(liveConflictMsg{p: p, action: "use"})
+	restored.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if restored.app.liveConflict != nil || r.Value() != "Xbase" {
+		t.Fatal("Enter must keep the changes and close the dialog")
+	}
+	runAppCommand(t, restored.app, restored.app.OpenLiveEditorConflict(r))
+	p := conflictPrompt(t, restored.app)
 	cmd := restored.app.applyLiveConflict(liveConflictMsg{p: p, action: "use"})
 	msg := cmd().(liveConflictMsg)
 	if msg.err != nil {

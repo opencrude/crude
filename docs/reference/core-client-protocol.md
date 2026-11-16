@@ -271,8 +271,8 @@ mutable Workspace.
   canonical revision operations/savepoints. Explicit shell reads/transfers use
   typed commands or bulk streams.
   Lost edit/save/format outcomes recover their original receipt, never replay an
-  effect. Native conflict decisions default to Keep draft; explicit Use shared
-  backs up private work and never overwrites collaborators. `document.snapshot_save`
+  effect. Native conflict decisions default to Keep; explicit Discard backs up
+  private work and never overwrites collaborators. `document.snapshot_save`
   is checked disk infrastructure, not another live-text authority. `clientstate`
   persists private composers and unresolved editor evidence with profile locks,
   epochs and CAS; old data requires backed-up manual alignment outside product
@@ -806,13 +806,13 @@ offsets in the retained optimistic source, independent of the restored tab width
 Source, command identity, author, pending transaction groups and unknown receipts
 remain unchanged. There is no automatic reader/converter for version 1; back up
 and align affected private records outside product code before using the new format.
-The native Resolve Shared Editor Changes dialog defaults to **Keep draft**;
-**Compare with shared** opens read-only immutable snapshots. **Use shared text**
-requires confirmation, a durable private backup and exact recovery tombstone.
-It discards only private pending text, never collaborators' text. Pending/unknown
-commands must settle by receipt first and are never automatically replayed.
-An external disk conflict is a different precondition: choosing shared text does
-not authorize overwriting the changed disk file.
+The native **Changes not applied** dialog defaults to **Keep**; **Compare**
+opens read-only immutable snapshots. **Discard** requires a durable private
+backup and exact recovery tombstone. It discards only private pending text,
+never collaborators' text. Pending/unknown commands must settle by receipt first
+and are never automatically replayed. An external disk conflict is a different
+precondition with its own dialog: `document.reload` with a `document.Resolution`
+settles it, and saves report it with fault code `document_conflict`.
 
 `workspace.TerminalService` installs one neutral `terminalvt` engine before first
 PTY output and owns all child query replies. Readers receive packed changed-row grid publications and explicit on-demand

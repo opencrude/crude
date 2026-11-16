@@ -134,6 +134,18 @@ func (b *Buffer) AcceptSave(revision uint64, diskHash [sha256.Size]byte, data []
 	}
 }
 
+// AcceptDiskBaseline makes the current file the save baseline and keeps the
+// text, so the next save writes it over the changed file.
+func (b *Buffer) AcceptDiskBaseline(data []byte, hash [sha256.Size]byte, exists bool) {
+	if b == nil || b.buf == nil {
+		return
+	}
+	b.diskHash, b.diskExists = hash, exists
+	b.diskGeneration++
+	b.savepoint = snapshotBytes(data)
+	b.NoteEdit()
+}
+
 // ReplaceContents swaps the entire document text and marks the buffer dirty.
 // Used by project-wide replace so an open editor stays the source of truth.
 func (b *Buffer) ReplaceContents(text string) {

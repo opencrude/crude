@@ -13,7 +13,7 @@ unsaved text/savepoints/history restore from workspace SQLite; append deltas avo
 whole-state checkpoint publication per ordinary edit. Stable IDs survive rename,
 durable batch intents preserve dirty text and protect conflicted delete. Source
 watching and file operations are core-owned. Private unresolved drafts have native
-Keep/Compare/Use shared resolution with durable backup and exact tombstone.
+Keep/Compare/Discard resolution with durable backup and exact tombstone.
 
 SSH CLI selection, fixed strict stdio bridge, typed write-only invocation selectors
 and bounded chunked response transfer are implemented. Incoming oversized mutation

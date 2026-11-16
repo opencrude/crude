@@ -57,6 +57,9 @@ type DocumentRevisionRequest struct {
 	Revision uint64                       `json:"revision"`
 	Reason   workspace.DocumentSaveReason `json:"reason,omitempty"`
 	Encoding *textencoding.Encoding       `json:"encoding,omitempty"`
+	// Resolve applies only to a reload: it keeps or replaces the text instead
+	// of loading the file text.
+	Resolve *document.Resolution `json:"resolve,omitempty"`
 }
 type DocumentSaveUntitledRequest struct {
 	ID        string                `json:"id"`

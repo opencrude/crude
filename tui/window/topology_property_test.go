@@ -113,7 +113,7 @@ func assertWindowInvariants(t *testing.T, w *Window, resources map[TabID]Tab) {
 		}
 		seen[tab.ID] = true
 		original, ok := resources[tab.ID]
-		original.Group = tab.Group
+		original.Group, original.activated = tab.Group, tab.activated
 		if !ok || original != tab {
 			t.Fatal("resource identity or presentation changed")
 		}

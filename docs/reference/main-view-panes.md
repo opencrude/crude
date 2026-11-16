@@ -218,7 +218,7 @@ editor/chat facts. Workspace status remains workspace-owned.
 
 An empty pane uses native New Session/Open File buttons. The final unsplit,
 tabless main area retains workspace home rather than introducing a second
-launcher. Editor closes retain the dirty-safe Save/Don't Save/Cancel path.
+launcher. Editor closes retain the dirty-safe Save/Discard/Cancel path.
 Closing an agent tab minimizes it, not terminates its orchestrator; explicit
 Terminate remains a separate action.
 
@@ -252,7 +252,13 @@ List's scrolling, keeping the final scope reachable in large layouts.
 File menus explicitly say **Close Other Files in Pane** and **Close Files to
 the Right**. These operate only on editor files in the clicked group, not on
 neighboring panes, agents or comparison/surface tabs. Dirty files retain the
-Save / Don't Save / Cancel sequence; Cancel aborts the remaining file closes.
+Save / Discard / Cancel sequence; Cancel aborts the remaining file closes.
+
+When the selected tab leaves a pane (moved, dragged to a split or closed), the
+pane shows its most recently selected remaining tab, like an editor stack;
+tabs that were never selected fall back to the neighbour before the removed
+tab. `window.Window` owns this order; a dragged tab is selected and focused in
+its new pane.
 
 ## Small grids and modal boundaries
 
@@ -538,7 +544,18 @@ accepted buffer savepoint against unsaved text. Both are available in the editor
 context menu and palette; the small HEAD-relative gutter inspector remains a
 separate, deliberately scoped operation.
 
-`screens/diffview` is the shared read-only reader: aligned old/new line numbers,
+Comparisons that can change a file resolve per change with one shared
+interaction (`diffview.Screen.SetResolvable`): the decision bar above the panes
+(**Accept left** 1, **Accept right** 2, **Accept both** 3, **Previous** p,
+**Next** n; 0 reopens a change), and a `[x]`/`[ ]` box in each pane's gutter on
+the first row of every change. A dropped side reads as struck-through text.
+Compare With Disk and Compare With Saved Version start every change as the
+user's text; **Save** writes the result through `document.reload` with a
+resolution, then saves. The Git conflict dialog uses the same reader with the
+current side on the left and the incoming side on the right; each conflict
+region is one change, and Save requires a choice for every conflict.
+
+`screens/diffview` is the shared reader: aligned old/new line numbers,
 full-row themed addition/deletion bands, shared editor syntax palette, draggable
 native split divider, one synchronized vertical scroll model and independent
 horizontal scrollbars. Unified presentation preserves complete context; below

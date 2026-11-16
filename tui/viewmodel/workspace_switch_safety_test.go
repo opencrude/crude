@@ -115,7 +115,7 @@ func TestConnectedWorkspaceSwitchRailDirtyDecisionsRetainCoreAndComposer(t *test
 		t.Fatalf("first dirty decision/default lost: %q/%d", app.DirtyPromptPath, app.DirtyPromptChoice)
 	}
 	paint := ansi.Strip(app.View().RenderContent())
-	if !strings.Contains(paint, "Switch workspace") || !strings.Contains(paint, "Close view") {
+	if !strings.Contains(paint, "Switch workspace") || !strings.Contains(paint, "Keep unsaved") {
 		t.Fatalf("switch decision is not user-visible: %s", paint)
 	}
 	old := app.ws
@@ -188,9 +188,13 @@ func TestConnectedWorkspaceSwitchCancelAndSaveFailureKeepEveryView(t *testing.T)
 					t.Fatal(err)
 				}
 				switchTestKey(t, app, 's')
-				if state := app.liveEditors[a]; state.err == nil {
-					t.Fatal("conflicting Save was not rejected")
+				if app.diskConflict == nil || app.overlayHost.Window(diskConflictOverlay) == nil {
+					t.Fatal("conflicting Save did not ask which version to keep")
 				}
+				if state := app.liveEditors[a]; state.err != nil {
+					t.Fatal("a disk conflict must not block the editor")
+				}
+				switchTestKey(t, app, tea.KeyEsc)
 			} else {
 				switchTestKey(t, app, tea.KeyEsc)
 			}

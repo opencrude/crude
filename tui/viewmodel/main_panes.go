@@ -99,6 +99,7 @@ func (p *mainPaneLayout) group(id window.GroupID) *mainPaneGroup {
 	tabs.SetNewButton(true)
 	tabs.SetDraggable(true)
 	tabs.SetTooltipFunc(p.app.tabTooltip)
+	tabs.SetIconFunc(p.app.tabIcon)
 	g := &mainPaneGroup{Base: ui.NewBase(base), id: id, tabs: tabs, empty: newEmptyMainPane(ui.NewID(base, "empty"), id)}
 	p.groups[id] = g
 	return g

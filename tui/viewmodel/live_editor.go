@@ -44,7 +44,12 @@ type liveEditorState struct {
 	saveEncoding                            textencoding.Encoding
 	convertEncoding                         *textencoding.Encoding
 	reload                                  bool
-	firstSavePath                           string
+	// resolve, when set, makes the next reload keep or replace the text
+	// instead of loading the file text. resolveRevision is the editor
+	// revision it was made against; zero accepts any revision.
+	resolve         *document.Resolution
+	resolveRevision uint64
+	firstSavePath   string
 }
 
 // Only the exclusive post-program flush can supply this alternative source
@@ -127,6 +132,7 @@ type liveEditorResult struct {
 	err          error
 	requestID    string
 	saveRevision uint64
+	reason       workspace.DocumentSaveReason
 	settled      bool
 }
 
@@ -279,7 +285,9 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			continue
 		}
 		reloadPrompt := m.editorReload != nil && m.editorReload.editor.Primary() == ed.Primary()
-		if !reloadPrompt && !state.reload && ed.FilePath() != "" && m.editorSettings.AutoSave == types.AutoSaveAfterDelay && !state.due.IsZero() && !time.Now().Before(state.due) && m.DirtyPromptPath != ed.FilePath() {
+		// A file that changed on disk waits for the user's choice: autosave
+		// would only fail again.
+		if !reloadPrompt && !state.reload && !ed.DiskConflict() && ed.FilePath() != "" && m.editorSettings.AutoSave == types.AutoSaveAfterDelay && !state.due.IsZero() && !time.Now().Before(state.due) && m.DirtyPromptPath != ed.FilePath() {
 			state.save, state.reason = true, workspace.DocumentSaveAfterDelay
 			state.due = time.Time{}
 		}
@@ -310,14 +318,22 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			}
 		case state.reload && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			reloader, ok := m.ws.(shellport.DocumentEncodingSaver)
-			state.reload = false
+			resolve, expected := state.resolve, state.resolveRevision
+			state.reload, state.resolve, state.resolveRevision = false, nil, 0
 			if !ok {
 				m.liveEditorFailure(state, errors.New("reloading is unavailable"))
 				continue
 			}
+			if expected != 0 && ed.Revision() != expected {
+				// The resolution was chosen for older text; never replace
+				// edits the user made after it.
+				state.save, state.closeAfter, state.closeView = false, false, false
+				m.Feedback.NotifyInfo("Your text changed after the comparison. Compare again.")
+				continue
+			}
 			msg.kind, msg.requestID = "reload", fmt.Sprintf("reload-%x", rand.Uint64())
 			operation = func(ctx context.Context) {
-				msg.snapshot, msg.err = reloader.ReloadDocumentRequest(ctx, ds.DocumentID, ds.Revision, msg.requestID)
+				msg.snapshot, msg.err = reloader.ReloadDocumentRequest(ctx, ds.DocumentID, ds.Revision, msg.requestID, resolve)
 			}
 		case state.formatOnly && !ds.InFlight && !ds.UndoPending && !ds.HistoryQueued:
 			formatter, ok := m.ws.(shellport.LiveDocumentFormatter)
@@ -359,6 +375,7 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			msg.kind = "save"
 			msg.requestID = fmt.Sprintf("save-%x", rand.Uint64())
 			reason := state.reason
+			msg.reason = reason
 			snapshotCommands, _ := msg.owner.(shellport.LiveDocumentCommands)
 			directory, name, encoding := state.saveDirectory, state.saveName, state.saveEncoding
 			state.saveDirectory, state.saveName = "", ""
@@ -481,6 +498,7 @@ func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd 
 	}
 	for i, ed := range targets {
 		state := m.liveEditors[ed.Primary()]
+		wasConflict := ed.DiskConflict()
 		if failure = ed.CommitDocumentUpdate(plans[i]); failure != nil {
 			m.liveEditorFailure(state, failure)
 			finish(failure)
@@ -505,6 +523,10 @@ func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd 
 		if !ed.IsOpen() {
 			continue
 		}
+		if !wasConflict && ed.DiskConflict() && i == 0 {
+			// Say it once, when it happens; the choice waits for Save.
+			m.Feedback.NotifyInfo(ed.BaseTitle() + " changed on disk. Save it to choose which version to keep.")
+		}
 		if state.closeAfter && !ed.Modified() {
 			m.overlayHost.Close(ui.OverlayDirtyClose)
 			m.closeEditorTabForce(editorDocumentKey(ed))
@@ -525,7 +547,7 @@ func (m *App) liveEditorFailure(state *liveEditorState, err error) {
 			return
 		}
 	}
-	m.presentOperationIssue(types.OperationIssue{Title: "Shared document needs attention", Summary: "Your local draft is retained and remains editable and copyable.", Detail: err.Error(), Guidance: "Do not overwrite shared text. Copy the local draft before resolving an overlapping change. Closing this view is deferred while edits are unresolved."})
+	m.presentOperationIssue(types.OperationIssue{Title: "Changes not applied", Summary: "Your text stays in the editor.", Detail: err.Error(), Guidance: "Copy your text if you need it. Then close the file and open it again."})
 }
 
 func (m *App) applyLiveEditorResult(msg liveEditorResult) {
@@ -583,6 +605,33 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 				return
 			}
 			msg.receipt = document.Receipt{DocumentID: ed.DocumentState().DocumentID, RequestID: msg.requestID, Error: msg.err.Error()}
+		case "save", "reload":
+			// A definitive save or reload failure leaves the document as it
+			// was: tell the user and keep editing, never block the view.
+			closeAfter := state.closeAfter
+			state.save, state.closeAfter, state.closeView = false, false, false
+			m.abortPendingTabClose()
+			if fault != nil && fault.Code == coreprotocol.FaultDocumentConflict {
+				if msg.kind == "save" && msg.reason != workspace.DocumentSaveManual {
+					m.Feedback.NotifyInfo(ed.BaseTitle() + " changed on disk. Save it to choose which version to keep.")
+					return
+				}
+				m.openDiskConflict(ed, closeAfter)
+				return
+			}
+			reason := msg.err.Error()
+			if fault != nil {
+				reason = fault.Message
+			}
+			if strings.Contains(reason, document.ErrRevision.Error()) {
+				reason = "The text changed at the same time. Try again."
+			}
+			action := "save"
+			if msg.kind == "reload" {
+				action = "load the file"
+			}
+			m.Feedback.NotifyError("Could not " + action + ". " + reason)
+			return
 		case "save-untitled":
 			message := "Could not save. Check the folder and file name."
 			if fault != nil && fault.Code == "destination_exists" {

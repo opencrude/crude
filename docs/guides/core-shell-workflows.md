@@ -173,14 +173,13 @@ commands are never replayed under a fresh ID. Accepted unsaved state, savepoints
 undo history and receipts restore from workspace SQLite after core restart.
 Private unresolved edits use clientstate recovery, not a second shared authority.
 
-Use **Resolve Shared Editor Changes** in the Command Palette. The native modal
-starts with **Keep draft** (Esc changes nothing). **Compare with shared** opens
-immutable read-only snapshots. **Use shared text** requires confirmation and a
-durable private backup before discarding only the captured local pending draft;
-an exact tombstone clears that recovery record. Backup/receipt failure preserves
-the draft. Pending unknown commands must settle first. External disk conflicts
-need separate disk comparison/reconciliation: Use shared text cannot authorize an
-external overwrite. An abrupt kill before a pending private edit is durably
+Use **Changes not applied…** in the editor context menu. The native modal
+starts with **Keep** (Esc changes nothing). **Compare** opens immutable
+read-only snapshots. **Discard** keeps a durable private backup before
+discarding only the captured local pending draft; an exact tombstone clears that
+recovery record. Backup/receipt failure preserves the draft. Pending unknown
+commands must settle first. A file that changed on disk opens **File changed on
+disk** on Save instead: Overwrite, Discard or Compare per change. An abrupt kill before a pending private edit is durably
 accepted is not proof that every keystroke has reached core storage.
 
 **Private Editor Drafts** in the palette lists retained unresolved drafts and

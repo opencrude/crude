@@ -269,3 +269,32 @@ func TestFloatingGroupClosesWithLastTab(t *testing.T) {
 		t.Fatal("close all kept window groups")
 	}
 }
+
+// Dragging the selected tab out to a split shows it alone in its new pane and
+// focuses that pane. The pane it left shows the tab the user selected before,
+// like an editor stack, not its strip neighbour. Closing follows the same rule.
+func TestTabLeavingGroupRestoresMostRecentlySelectedTab(t *testing.T) {
+	w := newTestWindow()
+	source := w.ActiveGroup()
+	a := w.OpenTab("a", "", true).ID
+	b := w.OpenTab("b", "", true).ID
+	c := w.OpenTab("c", "", true).ID
+	w.SwitchTo(w.IndexOf(a))
+	w.SwitchTo(w.IndexOf(c))
+	target := w.PlaceTab(TabPlacement{Tab: c, Group: source, Split: true, Direction: ui.Horizontal})
+	if target == 0 || target == source {
+		t.Fatal("split placement failed")
+	}
+	if w.ActiveGroup() != target || w.ActiveTab().ID != c || w.GroupTabCount(target) != 1 {
+		t.Fatal("the moved tab must be shown and focused in its own pane")
+	}
+	if got := w.GroupActiveTab(source).ID; got != a {
+		t.Fatalf("source pane shows tab %d, want the previously selected tab %d (not neighbour %d)", got, a, b)
+	}
+	w.SwitchTo(w.IndexOf(b))
+	w.SwitchTo(w.IndexOf(a))
+	w.CloseTabByID(a)
+	if got := w.GroupActiveTab(source).ID; got != b {
+		t.Fatalf("after close the pane shows %d, want the previously selected tab %d", got, b)
+	}
+}

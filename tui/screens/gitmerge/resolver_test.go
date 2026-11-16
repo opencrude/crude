@@ -1,11 +1,13 @@
 package gitmerge
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/diffview"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -25,7 +27,7 @@ func conflictFile(t *testing.T) workspace.GitConflictFile {
 	return workspace.GitConflictFile{Path: "a.go", Fingerprint: "f1", Segments: segments}
 }
 
-func newTestResolver(t *testing.T) (*Resolver, *[]Decision) {
+func newTestResolver(t *testing.T) (*Resolver, *ui.Host, *[]Decision) {
 	t.Helper()
 	var decisions []Decision
 	r := New(ui.NewTokenSet(theme.DefaultDark()), func(d Decision) tea.Cmd {
@@ -33,90 +35,84 @@ func newTestResolver(t *testing.T) (*Resolver, *[]Decision) {
 		return nil
 	})
 	r.SetConflicts(workspace.GitOperationMerge, []string{"a.go", "b.go"})
-	r.SetFile(conflictFile(t))
-	r.Layout(ui.LayoutContext{}, ui.Rect{W: 120, H: 30})
-	return r, &decisions
+	file := conflictFile(t)
+	prepared, err := Prepare(context.Background(), file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetFile(file, prepared)
+	host := ui.NewHost(theme.DefaultDark(), r)
+	host.Resize(140, 30)
+	host.Layout()
+	host.Focus(r.DocumentID())
+	return r, host, &decisions
 }
 
-func key(r *Resolver, text string) {
+func key(host *ui.Host, text string) {
 	msg := tea.KeyPressMsg{Code: rune(text[0]), Text: text}
 	if text == "ctrl+s" {
 		msg = tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
 	}
-	r.Handle(ui.EventContext{}, ui.KeyEvent(msg))
+	host.Handle(msg)
 }
 
-// Long unchanged stretches collapse; each conflict shows both sides with the
-// file's own line numbers.
-func TestResolverRowsCollapseContextAndNumberLines(t *testing.T) {
-	r, _ := newTestResolver(t)
-	var collapsed, headers int
-	for _, row := range r.rows {
-		switch row.kind {
-		case rowCollapsed:
-			collapsed++
-			if !strings.Contains(row.text, "7 unchanged lines") {
-				t.Fatalf("collapsed row = %q", row.text)
-			}
-		case rowHeader:
-			headers++
-		}
-		if row.kind == rowLine && row.side == sideIncoming && row.text == "theirs\n" && row.line != 14 {
-			t.Fatalf("incoming line number = %d, want 14", row.line)
-		}
+// Each conflict is one change of the shared comparison: current on the
+// left, incoming on the right.
+func TestResolverShowsEachConflictAsOneChange(t *testing.T) {
+	r, _, _ := newTestResolver(t)
+	if got := len(r.viewer.Choices()); got != 2 {
+		t.Fatalf("changes = %d, want one per conflict", got)
 	}
-	if collapsed != 1 || headers != 2 {
-		t.Fatalf("collapsed=%d headers=%d", collapsed, headers)
+	if c := r.viewer.Comparison(); c.BeforeLabel != "Current · HEAD" || c.AfterLabel != "Incoming · feature" {
+		t.Fatalf("labels %q / %q", c.BeforeLabel, c.AfterLabel)
 	}
 }
 
-// Keys decide the current conflict and move between conflicts; Save is
-// offered only once every conflict is decided.
+// The shared keys decide the current conflict and move between conflicts;
+// Save is offered only once every conflict is decided.
 func TestResolverKeyboardDecidesAndSaves(t *testing.T) {
-	r, decisions := newTestResolver(t)
-	key(r, "ctrl+s")
+	r, host, decisions := newTestResolver(t)
+	key(host, "ctrl+s")
 	if len(*decisions) != 0 {
 		t.Fatal("saved with undecided conflicts")
 	}
-	key(r, "1")
-	key(r, "n")
-	key(r, "3")
+	key(host, "1")
+	key(host, "n")
+	key(host, "3")
 	if got := r.Choices(); got[0] != workspace.GitChooseCurrent || got[1] != workspace.GitChooseBoth {
 		t.Fatalf("choices = %v", got)
 	}
-	key(r, "ctrl+s")
+	key(host, "ctrl+s")
 	if len(*decisions) != 1 || (*decisions)[0].Kind != DecideSave || (*decisions)[0].Fingerprint != "f1" || len((*decisions)[0].Choices) != 2 {
 		t.Fatalf("decisions = %+v", *decisions)
 	}
-	key(r, "e")
+	key(host, "e")
 	if last := (*decisions)[len(*decisions)-1]; last.Kind != DecideOpen || last.Line != 17 {
 		t.Fatalf("open decision = %+v, want line 17, the second conflict marker", last)
 	}
 }
 
-// Clicking a side's lines chooses that side.
-func TestResolverClickChoosesSide(t *testing.T) {
-	r, _ := newTestResolver(t)
-	docBounds := r.doc.Bounds()
-	for row := 0; row < docBounds.H; row++ {
-		item, ok := r.doc.ItemAtViewportRow(row)
-		if !ok {
-			continue
-		}
-		if line := r.rows[item.Payload.(int)]; line.kind == rowLine && line.side == sideIncoming && line.conflict == 0 {
-			r.Handle(ui.EventContext{LocalX: docBounds.X + 8, LocalY: docBounds.Y + row}, ui.Event{Kind: ui.EventMouseClick, MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft}})
-			break
-		}
-	}
+// Reloading the same bytes keeps the choices made so far.
+func TestResolverKeepsChoicesForTheSameFile(t *testing.T) {
+	r, host, _ := newTestResolver(t)
+	key(host, "2")
+	file := conflictFile(t)
+	prepared, _ := Prepare(context.Background(), file)
+	r.SetFile(file, prepared)
 	if got := r.Choices(); got[0] != workspace.GitChooseIncoming {
-		t.Fatalf("click chose %v", got)
+		t.Fatalf("choices lost: %v", got)
+	}
+	file.Fingerprint = "f2"
+	r.SetFile(file, prepared)
+	if got := r.viewer.Choices(); got[0] != diffview.ChoiceNone {
+		t.Fatalf("changed bytes must restart the choices: %v", got)
 	}
 }
 
 // A file no longer conflicted leaves the dialog; with nothing left, the
 // completing action is offered.
 func TestResolverFollowsResolvedFiles(t *testing.T) {
-	r, decisions := newTestResolver(t)
+	r, _, decisions := newTestResolver(t)
 	r.SetConflicts(workspace.GitOperationMerge, []string{"b.go"})
 	if _, loaded := r.File(); loaded {
 		t.Fatal("a resolved file stayed loaded")

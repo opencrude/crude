@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
+	"crude/tui/screens/diffview"
 	"crude/tui/screens/gitmerge"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/ui"
@@ -315,6 +316,7 @@ type gitConflictLoadedMsg struct {
 	dialog   *gitMergeDialog
 	sequence uint64
 	file     workspace.GitConflictFile
+	prepared diffview.Prepared
 	err      error
 }
 
@@ -358,7 +360,7 @@ func (m *App) openGitMergeDialog() tea.Cmd {
 	})
 	w, h := min(150, max(50, m.width-4)), min(46, max(14, m.height-4))
 	dialog.frame = ui.NewWindowFrameWidget(m.Theme, "git-merge/frame", ui.FrameDialog, "Resolve conflicts", dialog.resolver, nil, false, w, h)
-	dialog.frame.Host().Focus(gitmerge.ScreenID)
+	dialog.frame.Host().Focus(dialog.resolver.DocumentID())
 	fw := wm.NewFloatingWindow(string(gitMergeOverlay), "", dialog.frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithFocusable(true), wm.WithClosable(false), wm.WithClickOutside(wm.ClickOutsideIgnore))
 	wm.CenterOnScreen(fw, m.width, m.height)
 	m.overlayHost.Open(gitMergeOverlay, fw, ui.ModalDialogPolicy(), func() {
@@ -411,7 +413,11 @@ func (m *App) loadGitConflict(dialog *gitMergeDialog, path string) tea.Cmd {
 		ctx, cancel := m.sourceControlContext()
 		defer cancel()
 		file, err := service.ConflictFile(ctx, path)
-		return gitConflictLoadedMsg{dialog: dialog, sequence: sequence, file: file, err: err}
+		var prepared diffview.Prepared
+		if err == nil {
+			prepared, err = gitmerge.Prepare(ctx, file)
+		}
+		return gitConflictLoadedMsg{dialog: dialog, sequence: sequence, file: file, prepared: prepared, err: err}
 	}
 }
 
@@ -422,7 +428,8 @@ func (m *App) applyGitConflictLoaded(msg gitConflictLoadedMsg) tea.Cmd {
 	if msg.err != nil {
 		msg.dialog.resolver.SetError(msg.err)
 	} else {
-		msg.dialog.resolver.SetFile(msg.file)
+		msg.dialog.resolver.SetFile(msg.file, msg.prepared)
+		msg.dialog.frame.Host().Focus(msg.dialog.resolver.DocumentID())
 	}
 	m.markGitMergeDirty()
 	return nil
@@ -478,7 +485,7 @@ func (m *App) applyGitConflictSaved(msg gitConflictSavedMsg) tea.Cmd {
 	resolver := msg.dialog.resolver
 	if msg.err != nil {
 		if errors.Is(msg.err, workspace.ErrGitReviewStale) {
-			resolver.SetError(fmt.Errorf("%s changed since it was read; it was reloaded, decide again", msg.path))
+			resolver.SetError(fmt.Errorf("%s changed after Crude read it. Crude read it again; choose the changes again", msg.path))
 			m.markGitMergeDirty()
 			return m.loadGitConflict(msg.dialog, msg.path)
 		}

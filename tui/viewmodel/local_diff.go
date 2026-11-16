@@ -2,7 +2,10 @@ package viewmodel
 
 import (
 	"context"
+	"crude/document"
 	"crude/textencoding"
+	"crude/workspace"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +45,9 @@ type localDiffView struct {
 	cancel                   context.CancelFunc
 	notice                   string
 	returnSave               *untitledSaveOwner
+	// diskHash identifies the disk version a disk comparison shows. Saving a
+	// resolution requires that exact version, never a newer unseen one.
+	diskHash [32]byte
 }
 
 type localDiffPreparedMsg struct {
@@ -49,6 +55,7 @@ type localDiffPreparedMsg struct {
 	owner                    *localDiffView
 	generation, sequence     uint64
 	revision, diskGeneration uint64
+	diskHash                 [32]byte
 	prepared                 diffview.Prepared
 	err                      error
 }
@@ -99,6 +106,10 @@ func (m *App) openLocalDiff(ed *editor.Editor, baseline localDiffBaseline) tea.C
 		view = &localDiffView{tab: tab.ID, returnTab: returnTab, source: ed, sourceID: ed.BufferID(), baseline: baseline, screen: screen}
 		if baseline == localDiffShared || baseline == localDiffReplacement {
 			screen.SetRefreshEnabled(false)
+		} else if !ed.ReadOnly() {
+			// Every change starts as the user's text; accepting a change from
+			// the left takes the saved version of that change.
+			screen.SetResolvable(true, diffview.ChoiceRight)
 		}
 		m.localDiffs[tab.ID] = view
 	}
@@ -152,12 +163,13 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 		before, err := saved, ctx.Err()
 		label := "Saved version"
 		if err == nil && baseline == localDiffDisk {
-			label = "Disk snapshot"
+			label = "On disk"
 			if remote {
 				before, err = files.ReadExternalClientFile(ctx, snapshot.Path)
 			} else {
 				before, err = readLocalDiffDisk(ctx, snapshot.Path)
 			}
+			msg.diskHash = sha256.Sum256(before)
 			if err == nil {
 				before, _, err = textencoding.DecodeText(before)
 			}
@@ -166,7 +178,7 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 			err = errors.New("comparison exceeds the 64 MiB per-version limit")
 		}
 		if err == nil {
-			msg.prepared, err = diffview.PrepareContext(ctx, diffview.Comparison{Path: snapshot.Path, BeforeLabel: label, AfterLabel: fmt.Sprintf("Editor snapshot · revision %d", snapshot.Revision), Before: string(before), After: string(snapshot.Data)})
+			msg.prepared, err = diffview.PrepareContext(ctx, diffview.Comparison{Path: snapshot.Path, BeforeLabel: label, AfterLabel: "Your text", Before: string(before), After: string(snapshot.Data)})
 		}
 		msg.err = err
 		return msg
@@ -246,7 +258,7 @@ func (m *App) applyLocalDiffPrepared(msg localDiffPreparedMsg) {
 		view.screen.SetError(msg.err)
 		return
 	}
-	view.revision, view.diskGeneration = msg.revision, msg.diskGeneration
+	view.revision, view.diskGeneration, view.diskHash = msg.revision, msg.diskGeneration, msg.diskHash
 	previous := view.screen.ComparisonReader().SourceGeometry()
 	view.screen.SetPrepared(msg.prepared)
 	m.cancelOrphanedComparisonGeometry(previous)
@@ -264,16 +276,71 @@ func (m *App) syncLocalDiffFreshness() {
 		if view.baseline == localDiffShared || view.baseline == localDiffReplacement {
 			continue
 		}
-		notice := "Read-only snapshot · Refresh to compare the latest versions"
+		notice := "Refresh compares the latest versions"
 		switch {
 		case !m.localDiffSourceLive(view):
-			notice = "Source closed · retained read-only snapshot"
+			notice = "The file is closed. This comparison cannot change it."
 		case view.source.Revision() != view.revision || view.source.DiskGeneration() != view.diskGeneration:
-			notice = "Source changed · showing the previous snapshot; Refresh to update"
+			notice = "The text changed. Refresh to compare again."
 		}
 		if notice != view.notice {
 			view.notice = notice
 			view.screen.SetNotice(notice)
+		}
+	}
+}
+
+// saveLocalDiffResolution writes the chosen changes into the source document
+// and saves it. A disk comparison also makes the shown disk version the save
+// baseline, which settles a disk conflict.
+func (m *App) saveLocalDiffResolution(view *localDiffView) tea.Cmd {
+	reader := view.screen.ComparisonReader()
+	text, decided := reader.ResolvedText()
+	switch {
+	case !decided:
+		m.Feedback.NotifyInfo("Choose a side for each change, then save.")
+		return nil
+	case !m.localDiffSourceLive(view):
+		m.Feedback.NotifyError("The file is closed. Open it and compare again.")
+		return nil
+	case view.source.Revision() != view.revision || view.source.DiskGeneration() != view.diskGeneration:
+		m.Feedback.NotifyInfo("The text changed. Refresh to compare again.")
+		return nil
+	}
+	ed := view.source
+	if m.liveEditors[ed.Primary()] != nil {
+		resolve := &document.Resolution{Text: []byte(text), Replace: true}
+		if view.baseline == localDiffDisk {
+			resolve.DiskHash = view.diskHash
+		} else if ed.DiskConflict() {
+			m.Feedback.NotifyInfo("The file changed on disk. Compare with the disk version instead.")
+			return nil
+		}
+		m.resolveLiveDisk(ed, resolve, view.revision, false)
+	} else {
+		if view.baseline == localDiffDisk {
+			// The compared disk version becomes the save baseline, which
+			// settles a disk conflict for this text.
+			ed.AcceptDiskBaseline([]byte(reader.Comparison().Before), view.diskHash, true)
+			delete(m.editorSaves, ed.BufferID())
+		}
+		ed.ApplyFormatted(text)
+		m.closeLocalDiff(view.tab)
+		m.returnToEditor(ed)
+		return m.requestEditorSave(ed, workspace.DocumentSaveManual, false)
+	}
+	m.closeLocalDiff(view.tab)
+	m.returnToEditor(ed)
+	return nil
+}
+
+// returnToEditor selects a view of ed after a comparison closes.
+func (m *App) returnToEditor(ed *editor.Editor) {
+	if v := m.editorViewOf(ed); v != nil {
+		if index := m.Win.IndexOf(v.Tab); index >= 0 {
+			m.Win.SwitchTo(index)
+			m.handleTabSwitch()
+			m.FocusStack.Clear()
 		}
 	}
 }
@@ -323,6 +390,8 @@ func (m *App) handleLocalDiffAction(action ui.Action) (tea.Cmd, bool) {
 			return m.prepareLocalDiff(view), true
 		case localdiff.ActionClose:
 			m.closeLocalDiff(view.tab)
+		case localdiff.ActionSave:
+			return m.saveLocalDiffResolution(view), true
 		case localdiff.ActionOpenSource:
 			if view.returnSave != nil {
 				m.closeLocalDiff(view.tab)

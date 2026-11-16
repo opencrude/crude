@@ -35,8 +35,8 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 			t.Fatalf("missing tab label %q in row 0: %q", label, row0)
 		}
 	}
-	// Tab bars paint labels only: the projection carries no icon at all, so a
-	// glyph can never leak into the strip (tofu risk).
+	// Only file tabs carry an icon; the agent tab glyph never leaks into the
+	// strip.
 	if strings.ContainsAny(row0, "❯") {
 		t.Fatalf("shell tabs must not paint a prompt glyph: %q", row0)
 	}
@@ -203,4 +203,40 @@ func readRow(buf *surface.CellBuffer, y, w int) string {
 		}
 	}
 	return b.String()
+}
+
+// File tabs show their file-type icon in its own ink before the label; tabs
+// without an icon keep the plain label.
+func TestShellTabsPaintFileIconBeforeLabel(t *testing.T) {
+	th := theme.DefaultDark()
+	s := New(th)
+	ink := cell.Color{Type: cell.ColorTrueColor, R: 1, G: 2, B: 3}
+	s.SetIconFunc(func(tab window.Tab) (string, cell.Color) {
+		if tab.Resource.Kind == window.ResourceDocument {
+			return "\ue7ba", ink
+		}
+		return "", cell.NoColor
+	})
+	s.SetProjectionFromTabs([]window.Tab{
+		{ID: 1, Title: "editor:/w/app.tsx", DisplayTitle: "app.tsx", Closable: true, Resource: window.Resource{Kind: window.ResourceDocument, ID: "/w/app.tsx"}},
+		{ID: 2, Title: "agent:x", DisplayTitle: "Chat", Closable: true},
+	}, 1, false)
+	host := ui.NewHost(th, s)
+	host.Resize(60, 2)
+	host.Layout()
+	buf := surface.NewCellBuffer(60, 2)
+	host.Paint(buf)
+	row0 := readRow(buf, 0, 60)
+	if !strings.Contains(row0, "\ue7ba app.tsx") || strings.Contains(row0, "\ue7ba Chat") || !strings.Contains(row0, "Chat") {
+		t.Fatalf("file tab must lead with its icon, other tabs keep the label only: %q", row0)
+	}
+	found := false
+	for x := 0; x < 60; x++ {
+		if c := buf.Get(x, 0); c.Char == '\ue7ba' {
+			found = c.FG == ink
+		}
+	}
+	if !found {
+		t.Fatal("the icon must paint in its file-type ink")
+	}
 }

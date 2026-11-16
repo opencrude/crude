@@ -63,7 +63,29 @@ the bottom row — never a blank row between them. Full contract:
   - Discard / Deny / Delete / destructive → `VariantDanger` (error fill)
   - Cancel / No / neutral → `VariantSecondary`
   - Generic `Yes` follows dialog severity (yes on a danger dialog is danger).
-- Order: affirmative, destructive, then Cancel last (rightmost).
+- Order: affirmative, destructive, neutral alternatives (Compare), then Cancel
+  last (rightmost). Every dialog with more than two buttons uses this order.
+
+## Reference dialogs for unsaved work
+
+One dialog exists for each decision. Every entry point opens the same frame,
+words and button order, built by `ui.BuildDirtyCloseFrame` and
+`ui.BuildDiskConflictFrame`:
+
+- **Unsaved changes** (closing the last view of a changed file): **Save**,
+  **Discard**, **Cancel**. Discard returns the file to its saved text, then
+  closes the view. A workspace switch uses the same frame with **Keep unsaved**
+  instead of Discard, because the text stays in the running workspace.
+- **File changed on disk** (Save, or Save while closing, finds a newer file):
+  **Overwrite** (save your version), **Discard** (load the disk version),
+  **Compare** (choose each change), **Cancel**. The one-line detail states what
+  each choice does. Cancel is focused.
+- **Changes not applied** (edits in a view did not reach the shared document):
+  **Discard**, **Compare**, **Keep**. Discard keeps a private backup first.
+
+Dialogs never explain internal state (revisions, private drafts, shared
+documents). Give the state in one question and the result of each button in one
+short detail line.
 
 ## Control states (buttons, rows — mirrors `ButtonColors`/`ListRowColors`)
 

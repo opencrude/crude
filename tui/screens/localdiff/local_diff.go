@@ -16,6 +16,8 @@ const (
 	ActionRefresh    = "localdiff.refresh"
 	ActionOpenSource = "localdiff.open-source"
 	ActionClose      = "localdiff.close"
+	// ActionSave writes the chosen changes when the comparison resolves.
+	ActionSave = "localdiff.save"
 )
 
 type Screen struct {
@@ -29,6 +31,7 @@ type Screen struct {
 	focus               func(ui.ComponentID) bool
 	searchOpen, loading bool
 	refreshDisabled     bool
+	resolving           bool
 	notice, errText     string
 }
 
@@ -43,11 +46,7 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	s.actions.SetSurfaceBackground(ui.ColorBg)
 	s.more = ui.NewList(ui.NewID(id, "more"), t)
 	s.more.SetActivateAction("localdiff.more.activate")
-	var items []ui.ListItem
-	for _, b := range actionButtons() {
-		items = append(items, ui.ListItem{ID: b.Action, Label: b.Label, Command: true})
-	}
-	s.more.SetItems(items)
+	s.viewer.SetOnResolutionChange(func() { s.configureActions(s.compact) })
 	s.configureActions(false)
 	s.search.SetPlaceholder("Find in comparison")
 	s.search.SetSubmitAction("localdiff.match")
@@ -58,6 +57,7 @@ func (s *Screen) SetPrepared(p diffview.Prepared) {
 	s.viewer.SetPrepared(p)
 	s.loading = false
 	s.errText = ""
+	s.configureActions(s.compact)
 }
 func (s *Screen) SetLoading(b bool) {
 	s.loading = b
@@ -99,9 +99,12 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 func (s *Screen) Children() []ui.Component {
 	return []ui.Component{s.actions, s.viewer, s.search, s.more}
 }
-func actionButtons() []ui.ActionBarButton {
-	return []ui.ActionBarButton{
-		{Label: "Refresh", Action: ActionRefresh, Enabled: true},
+
+// actionButtons lists the page actions. A resolving comparison saves the
+// chosen changes; its change actions live in the comparison's own bar.
+func (s *Screen) actionButtons() []ui.ActionBarButton {
+	buttons := []ui.ActionBarButton{
+		{Label: "Refresh", Action: ActionRefresh, Enabled: !s.refreshDisabled},
 		{Label: "Open Source", Action: ActionOpenSource, Enabled: true},
 		{Label: "Unified / Split", Action: "localdiff.presentation", Enabled: true},
 		{Label: "Find", Action: "localdiff.find", Enabled: true},
@@ -109,10 +112,26 @@ func actionButtons() []ui.ActionBarButton {
 		{Label: "Next", Action: "localdiff.next", Enabled: true},
 		{Label: "Close", Action: ActionClose, Enabled: true},
 	}
+	if s.resolving {
+		buttons = []ui.ActionBarButton{
+			{Label: "Save", Shortcut: "ctrl+s", Action: ActionSave, Enabled: s.viewer.Decided(), Variant: ui.VariantPrimary},
+			{Label: "Refresh", Action: ActionRefresh, Enabled: !s.refreshDisabled},
+			{Label: "Unified / Split", Action: "localdiff.presentation", Enabled: true},
+			{Label: "Find", Action: "localdiff.find", Enabled: true},
+			{Label: "Close", Action: ActionClose, Enabled: true},
+		}
+	}
+	return buttons
 }
 func (s *Screen) configureActions(compact bool) {
-	buttons := actionButtons()
-	buttons[0].Enabled = !s.refreshDisabled
+	buttons := s.actionButtons()
+	var items []ui.ListItem
+	for _, b := range buttons {
+		if b.Enabled {
+			items = append(items, ui.ListItem{ID: b.Action, Label: b.Label, Command: true})
+		}
+	}
+	s.more.SetItems(items)
 	if compact {
 		buttons = []ui.ActionBarButton{{Label: "More", Action: "localdiff.more", Enabled: true}}
 	}
@@ -123,15 +142,18 @@ func (s *Screen) configureActions(compact bool) {
 func (s *Screen) SetRefreshEnabled(enabled bool) {
 	s.refreshDisabled = !enabled
 	s.configureActions(s.compact)
-	var items []ui.ListItem
-	for _, b := range actionButtons() {
-		if !enabled && b.Action == ActionRefresh {
-			continue
-		}
-		items = append(items, ui.ListItem{ID: b.Action, Label: b.Label, Command: true})
-	}
-	s.more.SetItems(items)
 }
+
+// SetResolvable lets the user accept each change from the left or the right
+// and save the result. initial is the choice every change starts with.
+func (s *Screen) SetResolvable(enabled bool, initial diffview.Choice) {
+	s.resolving = enabled
+	s.viewer.SetResolvable(enabled, initial)
+	s.configureActions(s.compact)
+}
+
+// Resolvable reports whether the page saves chosen changes.
+func (s *Screen) Resolvable() bool { return s.resolving }
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	compact := r.W < 100
@@ -174,6 +196,9 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		status = s.errText
 		role = ui.ColorError
 	}
+	if resolution := s.viewer.ResolutionStatus(); resolution != "" && !s.loading && s.errText == "" {
+		status, role = resolution+" · choose a side for each change, then Save", ui.ColorFg
+	}
 	if search := s.viewer.SearchStatus(); search != "" && !s.loading && s.errText == "" {
 		status = search
 	}
@@ -211,6 +236,10 @@ func (s *Screen) Handle(_ ui.EventContext, e ui.Event) ui.EventResult {
 		return s.action(ActionClose)
 	case "ctrl+r":
 		return s.action(ActionRefresh)
+	case "ctrl+s":
+		if s.resolving {
+			return s.action(ActionSave)
+		}
 	case "f3", "shift+f3":
 		s.viewer.NextMatch(e.Key.Mod.Contains(tea.ModShift))
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -262,8 +291,8 @@ func (s *Screen) HandleAction(ctx ui.EventContext, a ui.Action) ui.EventResult {
 			r.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 			return r
 		}
-	case ActionRefresh, ActionOpenSource, ActionClose:
-		if a.ID == ActionRefresh && s.refreshDisabled {
+	case ActionRefresh, ActionOpenSource, ActionClose, ActionSave:
+		if a.ID == ActionRefresh && s.refreshDisabled || a.ID == ActionSave && !s.viewer.Decided() {
 			return ui.EventResult{Handled: true}
 		}
 		return s.action(a.ID)

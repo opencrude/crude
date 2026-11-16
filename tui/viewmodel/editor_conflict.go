@@ -14,23 +14,32 @@ import (
 	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/diffview"
+	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/tui/wm"
 )
 
 const liveConflictOverlay ui.OverlayID = "live-editor-conflict"
 
+// Changes-not-applied dialog buttons, in order. Keep is the safe default.
+const (
+	liveConflictDiscard = iota
+	liveConflictCompare
+	liveConflictKeep
+)
+
+// liveConflictPrompt decides about edits in this view that did not reach the
+// shared document. It never writes shared text or disk; Discard keeps a
+// durable private backup first. A file that changed on disk uses the disk
+// conflict dialog instead.
 type liveConflictPrompt struct {
-	ui.Base
 	ed                   *editor.Editor
 	state                *liveEditorState
 	owner                shellport.Workspace
 	generation, revision uint64
 	shared               document.Snapshot
 	draft                editor.DocumentRecovery
-	detail               *ui.TextArea
-	actions              *ui.ActionBar
-	busy, confirm        bool
+	detail               string
+	busy                 bool
 }
 type liveConflictMsg struct {
 	p         *liveConflictPrompt
@@ -40,37 +49,31 @@ type liveConflictMsg struct {
 	backupKey clientstate.EditorRecoveryKey
 }
 
-func (p *liveConflictPrompt) Children() []ui.Component { return []ui.Component{p.detail, p.actions} }
-func (p *liveConflictPrompt) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	p.SetBounds(r)
-	p.detail.Layout(ctx, ui.Rect{W: r.W, H: max(0, r.H-2)})
-	p.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: min(1, r.H)})
-}
-func (p *liveConflictPrompt) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
-	if e.IsKey() {
-		return p.actions.Handle(ctx, e)
+// frame shows the current state in the shared confirm frame. Discard and
+// Compare wait for the exact shared text.
+func (p *liveConflictPrompt) frame(th *theme.Theme, focused int) *ui.ComponentWidget {
+	frame := ui.BuildConfirmFrame(th, ui.ConfirmFrameSpec{
+		Title: "Changes not applied", Question: "Some of your changes did not reach " + p.ed.BaseTitle() + ".",
+		Detail: p.detail, Severity: ui.ConfirmPromptWarning, Width: 66, FocusedIndex: focused,
+		Buttons: []ui.ConfirmButtonSpec{{Label: "Discard", ActionID: ui.ConfirmActionDiscard}, {Label: "Compare", ActionID: ui.ConfirmActionCompare}, {Label: "Keep", ActionID: ui.ConfirmActionCancel}},
+	})
+	if p.busy || p.shared.ID == "" {
+		setConfirmButtonDisabled(frame, liveConflictDiscard, true)
+		setConfirmButtonDisabled(frame, liveConflictCompare, true)
 	}
-	return ui.EventResult{}
+	return frame
 }
-func (p *liveConflictPrompt) HandleAction(_ ui.EventContext, a ui.Action) ui.EventResult {
-	if p.busy && a.ID != "keep" {
-		return ui.EventResult{Handled: true}
+
+func (p *liveConflictPrompt) action(index int) string {
+	switch index {
+	case liveConflictDiscard:
+		return "use"
+	case liveConflictCompare:
+		return "compare"
+	case liveConflictKeep:
+		return "keep"
 	}
-	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return liveConflictMsg{p: p, action: a.ID} }}
-}
-func (p *liveConflictPrompt) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleDialog, Label: "Resolve shared editor draft"}
-}
-func (p *liveConflictPrompt) buttons() {
-	label := "Use shared text"
-	if p.confirm {
-		label = "Confirm local discard"
-	}
-	p.actions.SetButtons(
-		ui.ActionBarButton{Label: "Keep draft", Action: "keep", Enabled: true, Variant: ui.VariantSecondary},
-		ui.ActionBarButton{Label: "Compare with shared", Action: "compare", Enabled: p.shared.ID != "", Variant: ui.VariantSecondary},
-		ui.ActionBarButton{Label: label, Action: "use", Enabled: p.shared.ID != "", Variant: ui.VariantDanger})
-	p.actions.FocusFirst()
+	return ""
 }
 
 // OpenLiveEditorConflict opens an explicit, non-writing private draft decision.
@@ -81,20 +84,17 @@ func (m *App) OpenLiveEditorConflict(ed *editor.Editor) tea.Cmd {
 	if !ok || ed == nil || state == nil || !ed.IsOpen() || m.overlayHost == nil {
 		return nil
 	}
-	p := &liveConflictPrompt{Base: ui.NewBase("live-conflict/body"), ed: ed, state: state, owner: m.ws, generation: m.workspaceSwitchGen.Load(), revision: ed.Revision(), busy: true}
+	p := &liveConflictPrompt{ed: ed, state: state, owner: m.ws, generation: m.workspaceSwitchGen.Load(), revision: ed.Revision(), busy: true, detail: "Reading the current text…"}
 	p.draft, _ = ed.ExportDocumentRecovery()
-	p.detail = ui.NewTextArea("live-conflict/detail", ui.NewTokenSet(m.Theme), true)
-	p.detail.SetReadOnly(true)
-	p.detail.SetValue("Loading exact shared snapshot. Your local draft remains unchanged.")
-	p.actions = ui.NewActionBar("live-conflict/actions", ui.NewTokenSet(m.Theme))
-	p.actions.SetCancelAction("keep")
-	p.buttons()
-	w, h := min(86, max(1, m.width-4)), min(15, max(1, m.height-4))
-	frame := ui.NewWindowFrameWidget(m.Theme, "live-conflict/frame", ui.FrameDialog, "Resolve shared editor draft", p, nil, false, w, h)
-	frame.Host().Focus(p.actions.ID())
-	fw := wm.NewFloatingWindow(string(liveConflictOverlay), "", frame, w, h, wm.WithDecoration(true), wm.WithMovable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithFocusable(true), wm.WithClosable(false), wm.WithClickOutside(wm.ClickOutsideIgnore))
-	wm.CenterOnScreen(fw, m.width, m.height)
-	m.overlayHost.Open(liveConflictOverlay, fw, ui.ModalDialogPolicy(), nil)
+	m.overlayHost.Close(liveConflictOverlay)
+	m.liveConflict = p
+	m.openConfirmModal(liveConflictOverlay, p.frame(m.Theme, liveConflictKeep), func(index int) tea.Cmd {
+		return m.activateLiveConflict(p, index)
+	}, func() {
+		if m.liveConflict == p {
+			m.liveConflict = nil
+		}
+	})
 	id, path := ed.DocumentState().DocumentID, ed.FilePath()
 	untitled, _ := m.ws.(shellport.UntitledDocuments)
 	return func() tea.Msg {
@@ -117,32 +117,35 @@ func (m *App) OpenLiveEditorConflict(ed *editor.Editor) tea.Cmd {
 		return liveConflictMsg{p: p, action: "loaded", snapshot: s.Snapshot, err: err}
 	}
 }
-func (m *App) liveConflictFrame(p *liveConflictPrompt) *ui.WindowFrameWidget {
-	if p == nil || p.owner != m.ws || p.generation != m.workspaceSwitchGen.Load() || m.liveEditors[p.ed.Primary()] != p.state || !p.ed.IsOpen() {
+
+// activateLiveConflict maps a pressed button to its decision.
+func (m *App) activateLiveConflict(p *liveConflictPrompt, index int) tea.Cmd {
+	action := p.action(index)
+	if action == "" || m.liveConflict != p || p.busy && action != "keep" || action != "keep" && p.shared.ID == "" {
 		return nil
 	}
-	fw := m.overlayHost.Window(liveConflictOverlay)
-	if fw == nil {
-		return nil
-	}
-	frame, ok := fw.Content.(*ui.WindowFrameWidget)
-	if !ok || frame.Body() != p {
-		return nil
-	}
-	return frame
+	return m.applyLiveConflict(liveConflictMsg{p: p, action: action})
 }
+
+func (m *App) liveConflictCurrent(p *liveConflictPrompt) bool {
+	return p != nil && m.liveConflict == p && p.owner == m.ws && p.generation == m.workspaceSwitchGen.Load() &&
+		m.liveEditors[p.ed.Primary()] == p.state && p.ed.IsOpen() && m.overlayHost.Window(liveConflictOverlay) != nil
+}
+
 func (m *App) applyLiveConflict(msg liveConflictMsg) tea.Cmd {
 	p := msg.p
-	frame := m.liveConflictFrame(p)
-	if frame == nil {
+	if !m.liveConflictCurrent(p) {
 		return nil
 	}
-	refresh := func() {
-		p.buttons()
-		frame.Host().MarkLayout()
-		frame.Host().Focus(p.actions.ID())
-		frame.MarkContentDirty()
-		m.forceFrame()
+	refresh := func(detail string) {
+		p.detail = detail
+		if window := m.overlayHost.Window(liveConflictOverlay); window != nil {
+			focused := liveConflictKeep
+			if old, ok := window.Content.(*ui.ComponentWidget); ok {
+				focused = max(0, ui.ConfirmButtonIndexFromID(old.Host().Focused()))
+			}
+			m.refreshConfirmModal(liveConflictOverlay, p.frame(m.Theme, focused))
+		}
 	}
 	if msg.action == "keep" {
 		m.overlayHost.Close(liveConflictOverlay)
@@ -150,46 +153,33 @@ func (m *App) applyLiveConflict(msg liveConflictMsg) tea.Cmd {
 	}
 	if msg.err != nil {
 		p.busy = false
-		p.detail.SetValue("Draft retained. " + msg.err.Error())
-		refresh()
+		refresh("Your changes stay in the editor. " + msg.err.Error())
 		return nil
 	}
 	switch msg.action {
 	case "loaded":
 		p.busy = false
 		p.shared = msg.snapshot
-		p.detail.SetValue(fmt.Sprintf("Shared revision %d. Keep draft and Cancel change nothing. Compare opens immutable shared and local snapshots. Use shared text discards only this private draft after a durable backup; it never overwrites collaborators. Unknown commands must settle first.", p.shared.Revision))
-		if p.shared.Conflict {
-			p.detail.SetValue(p.detail.Value() + "\n\nThe disk file changed outside this shared document. Use shared text does not resolve that disk conflict or authorize overwriting disk. Keep the draft, compare with disk using the editor comparison action, and explicitly reconcile the external file before saving.")
-		}
-		refresh()
+		refresh("Discard removes them and keeps a backup copy. Compare shows both versions. Keep leaves them in the editor.")
 	case "compare":
 		m.overlayHost.Close(liveConflictOverlay)
 		return m.compareLiveEditorSnapshot(p.ed, p.shared, p.draft.OptimisticText, p.revision)
 	case "use":
 		if p.state.busy || p.state.uncertain != nil || p.ed.DocumentState().InFlight || p.ed.DocumentState().UndoPending {
-			p.detail.SetValue("Original command outcome is still unknown. Keep this draft; settle its exact receipt before discarding.")
-			refresh()
+			refresh("Wait. The last change is not finished yet.")
 			return nil
 		}
 		if p.ed.Revision() != p.revision {
-			p.detail.SetValue("Local draft changed. Keep it and reopen this decision to review the latest versions.")
-			refresh()
-			return nil
-		}
-		if !p.confirm {
-			p.confirm = true
-			p.detail.SetValue("Confirm discarding this local projection? A durable private backup is required and retained. Shared content is never written. Keep draft is still the default.")
-			refresh()
+			refresh("Your text changed. Choose Keep, then try again.")
 			return nil
 		}
 		c := m.composerDraftClient
 		if c == nil {
-			p.detail.SetValue("Private recovery storage is unavailable. Draft retained; configure a private client profile before discarding.")
-			refresh()
+			refresh("Crude cannot keep a backup copy here, so it does not discard. Your changes stay in the editor.")
 			return nil
 		}
 		p.busy = true
+		refresh("Discarding…")
 		known := uint64(0)
 		ioState := asyncIOStateFor(m)
 		ioState.mu.Lock()
@@ -202,7 +192,7 @@ func (m *App) applyLiveConflict(msg liveConflictMsg) tea.Cmd {
 			result := liveConflictMsg{p: p, action: "resolved"}
 			current, err := live.SyncDocument(ctx, p.shared.ID, 0)
 			if err == nil && !sameLiveSnapshot(current.Snapshot, p.shared) {
-				err = errors.New("shared text or savepoint changed; reopen the decision")
+				err = errors.New("the file text changed. Choose Keep, then try again")
 			}
 			if err == nil {
 				err = p.draft.Validate()
@@ -238,13 +228,11 @@ func (m *App) applyLiveConflict(msg liveConflictMsg) tea.Cmd {
 	case "resolved":
 		p.busy = false
 		if p.state.busy || p.state.uncertain != nil || p.ed.Revision() != p.revision {
-			p.detail.SetValue("Draft or command state changed; backup retained, resolution refused.")
-			refresh()
+			refresh("Your text changed, so Crude did not discard. A backup copy is kept.")
 			return nil
 		}
 		if err := p.ed.UseSharedDocument(msg.snapshot, p.revision); err != nil {
-			p.detail.SetValue(err.Error())
-			refresh()
+			refresh("Your changes stay in the editor. " + err.Error())
 			return nil
 		}
 		p.state.err = nil
@@ -263,7 +251,7 @@ func (m *App) applyLiveConflict(msg liveConflictMsg) tea.Cmd {
 			m.Feedback.NotifyError(err.Error())
 		}
 		m.overlayHost.Close(liveConflictOverlay)
-		m.Feedback.NotifyInfo("Private draft backup retained: " + msg.backupKey.Path)
+		m.Feedback.NotifyInfo("Changes discarded. Crude kept a backup copy.")
 		return m.clearResolvedEditorRecovery(p.ed)
 	}
 	return nil
@@ -276,7 +264,6 @@ func sameLiveSnapshot(a, b document.Snapshot) bool {
 // comparison tab; it does not read disk or consume the live source draft.
 func (m *App) compareLiveEditorSnapshot(ed *editor.Editor, s document.Snapshot, draft []byte, revision uint64) tea.Cmd {
 	return m.openSnapshotComparison(ed, localDiffShared, diffview.Comparison{
-		Path: ed.FilePath(), BeforeLabel: fmt.Sprintf("Shared snapshot · revision %d", s.Revision),
-		AfterLabel: fmt.Sprintf("Private draft · revision %d", revision), Before: string(s.Text), After: string(draft),
+		Path: ed.FilePath(), BeforeLabel: "File text", AfterLabel: "Your text", Before: string(s.Text), After: string(draft),
 	}, revision)
 }
