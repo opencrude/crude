@@ -911,6 +911,11 @@ func ReadExactBytes(b []byte, into []byte) (o []byte, err error) {
 		err = ArrayError{Wanted: uint32(len(into)), Got: read}
 		return
 	}
+	if uint32(len(b)) < read {
+		// A truncated payload must not decode as a zero-filled array.
+		err = ErrShortBytes
+		return
+	}
 
 	o = b[copy(into, b):]
 	return
