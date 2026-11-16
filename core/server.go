@@ -490,7 +490,7 @@ func (c *Connection) serveTopic(ctx context.Context, s corewire.Stream, reader *
 		c.serveDocumentTopic(ctx, s, reader, open)
 	case coreprotocol.TopicInsight:
 		c.serveInsightTopic(ctx, s, reader, open)
-	case coreprotocol.TopicStatus, coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory, coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard:
+	case coreprotocol.TopicStatus, coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory, coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard, coreprotocol.TopicPresence:
 		c.serveStateTopic(ctx, s, reader, open)
 	default:
 		_ = send(s, &coreprotocol.TopicHeader{}, &coreprotocol.Fault{Code: "unknown_topic", Message: open.Topic})

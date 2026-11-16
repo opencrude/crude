@@ -704,6 +704,7 @@ var defaultActions = []*ActionDef{
 		Icon:        "◷",
 		Category:    "File",
 	},
+	{ID: "notifications.test", Label: "Test Desktop Notification", Description: "show a sample desktop notification now to check the system settings", Category: "View"},
 	{ID: "history.snapshot", Label: "Snapshot Workspace", Description: "capture the current workspace state now", Icon: "●", Category: "File"},
 	{
 		ID:          "app.toggleTheme",

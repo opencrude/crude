@@ -80,6 +80,13 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// shell. Every real interaction resets that quiet period.
 		m.LastInteractionTime = time.Now()
 	}
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg, tea.PasteMsg, tea.FocusMsg:
+		// Input and a return to the window are presence.
+		m.observeDesktopPresence(time.Now(), true)
+	case tea.BlurMsg, types.TickMsg:
+		m.observeDesktopPresence(time.Now(), false)
+	}
 	m.syncEditorGhost()
 	m.syncEditorSnippet()
 	defer m.invalidateMessageRegions(msg)
@@ -326,7 +333,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// change is the user's chance to provide it.
 			m.requestWorkspaceAeronEnsure()
 		}
-		return m, treeCmd
+		// Desktop notifications may have been turned on, off or narrowed.
+		m.reportDesktopPresence()
+		return m, tea.Batch(treeCmd, m.syncDesktopNotice())
 	case shellport.ReplicaFailureMsg:
 		if msg.Owner == m.ws {
 			if msg.Reloaded {
@@ -374,6 +383,13 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case workspace.StatusCenterHydratedMsg:
 		m.syncWorkspacePanels()
+		return m, m.observeDesktopStatus(time.Now())
+	case shellport.PresenceChangedMsg:
+		return m, m.applyDesktopElection(msg)
+	case desktopNoticeEventMsg:
+		return m, m.applyDesktopNoticeEvent(msg)
+	case desktopNoticeSettleMsg:
+		m.flushDesktopNotice(msg, time.Now())
 		return m, nil
 	case agentResultFeedbackMsg:
 		m.handleAgentResultFeedback(msg)

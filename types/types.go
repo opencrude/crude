@@ -827,6 +827,59 @@ const (
 	AttachmentOpenCrude       = "crude"
 )
 
+// DesktopNotificationSettings selects which agent news reaches the desktop
+// while the user is away from Crude, and how. A nil switch is on.
+type DesktopNotificationSettings struct {
+	Enabled *bool `json:"enabled,omitempty"`
+	// Input covers questions and approvals that wait for the user.
+	Input *bool `json:"input,omitempty"`
+	// Stopped covers runs that stop with an error, a limit or an interruption.
+	Stopped *bool `json:"stopped,omitempty"`
+	// Finished covers turns of user-started agents that finish.
+	Finished *bool `json:"finished,omitempty"`
+	Sound    *bool `json:"sound,omitempty"`
+	// AwayMinutes is how long a focused terminal may stay without input
+	// before its user counts as away.
+	AwayMinutes int `json:"away_minutes,omitempty"`
+}
+
+// Desktop notification away delay, in minutes.
+const (
+	DesktopNotificationAwayDefault = 5
+	DesktopNotificationAwayMin     = 1
+	DesktopNotificationAwayMax     = 60
+)
+
+func onUnlessOff(value *bool) bool { return value == nil || *value }
+
+// EnabledOrDefault reports whether desktop notifications are on.
+func (s DesktopNotificationSettings) EnabledOrDefault() bool { return onUnlessOff(s.Enabled) }
+
+// InputOrDefault reports whether questions and approvals notify.
+func (s DesktopNotificationSettings) InputOrDefault() bool { return onUnlessOff(s.Input) }
+
+// StoppedOrDefault reports whether stopped runs notify.
+func (s DesktopNotificationSettings) StoppedOrDefault() bool { return onUnlessOff(s.Stopped) }
+
+// FinishedOrDefault reports whether finished turns notify.
+func (s DesktopNotificationSettings) FinishedOrDefault() bool { return onUnlessOff(s.Finished) }
+
+// SoundOrDefault reports whether a new message plays the system sound.
+func (s DesktopNotificationSettings) SoundOrDefault() bool { return onUnlessOff(s.Sound) }
+
+// AwayMinutesOrDefault returns the away delay within its supported range.
+func (s DesktopNotificationSettings) AwayMinutesOrDefault() int {
+	if s.AwayMinutes == 0 {
+		return DesktopNotificationAwayDefault
+	}
+	return min(max(s.AwayMinutes, DesktopNotificationAwayMin), DesktopNotificationAwayMax)
+}
+
+// Active reports whether any agent news can reach the desktop.
+func (s DesktopNotificationSettings) Active() bool {
+	return s.EnabledOrDefault() && (s.InputOrDefault() || s.StoppedOrDefault() || s.FinishedOrDefault())
+}
+
 type UISettings struct {
 	SidebarWidth      int   `json:"sidebar_width,omitempty"`
 	ShowHiddenFiles   *bool `json:"show_hidden_files,omitempty"`
@@ -841,6 +894,9 @@ type UISettings struct {
 	ContextHelp string `json:"context_help,omitempty"`
 	// AttachmentOpen selects the destination for opening chat attachments.
 	AttachmentOpen string `json:"attachment_open,omitempty"`
+	// DesktopNotifications selects which agent news reaches the desktop
+	// while the user is away from Crude.
+	DesktopNotifications DesktopNotificationSettings `json:"desktop_notifications,omitzero"`
 }
 
 // ShowHiddenFilesOrDefault shows dotfiles unless the user explicitly hid them.

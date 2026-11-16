@@ -271,6 +271,15 @@ func WithCoreRestart(host shellport.CoreRestartHost) StartOption {
 	return func(a *viewmodel.App) error { return a.ConfigureCoreRestart(host) }
 }
 
+// WithDesktopNotifications binds the process's desktop notifier. The caller
+// closes it after Wait; closing withdraws every notification it showed.
+func WithDesktopNotifications(notifier viewmodel.DesktopNotifier) StartOption {
+	return func(a *viewmodel.App) error {
+		a.ConfigureDesktopNotifications(notifier)
+		return nil
+	}
+}
+
 // WithRemoteManager binds this client's saved connections before the first frame.
 func WithRemoteManager(manager shellport.RemoteManager, initialBackend string) StartOption {
 	return func(a *viewmodel.App) error {

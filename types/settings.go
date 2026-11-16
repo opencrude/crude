@@ -156,6 +156,7 @@ func ApplyAppDefaults(s *AppSettings) {
 		s.UI.ContextHelp = "compact"
 	}
 	s.UI.AttachmentOpen = s.UI.AttachmentOpenOrDefault()
+	s.UI.DesktopNotifications.AwayMinutes = s.UI.DesktopNotifications.AwayMinutesOrDefault()
 	if s.Accounts == nil {
 		s.Accounts = make(map[string]provider.Account)
 	}

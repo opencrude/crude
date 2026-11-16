@@ -216,6 +216,7 @@ type App struct {
 	shell           *shellRoot
 	rootHost        *ui.Host
 	terminalBlurred bool
+	desktop         desktopNotices
 	mainPanes       *mainPaneLayout
 	paneFilePicker  *paneFilePickerOwner
 	untitledSave    *untitledSaveOwner
@@ -714,7 +715,7 @@ func (m *App) Init() tea.Cmd {
 	}
 	m.requestWorkspaceAeronEnsure()
 	m.reportViewMemoryLoadError()
-	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadRemotePromptHistory(), m.onboardingCmd())
+	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadRemotePromptHistory(), m.onboardingCmd(), m.desktopNoticeEventsCmd())
 }
 
 // openSessionInfo uses the native read-only text reader for a session fact.

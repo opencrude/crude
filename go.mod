@@ -19,6 +19,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/go-git/go-git/v5 v5.19.1
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/mattn/go-shellwords v1.0.13
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/restic/chunker v0.5.0
@@ -63,7 +64,6 @@ require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/go-enry/go-oniguruma v1.2.1 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect

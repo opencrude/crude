@@ -370,6 +370,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	m.closeWorkspaceBoundOverlays()
 	m.discardTerminalUI()
 	old := m.ws.(shellport.Connection)
+	m.resetDesktopNotices()
 	m.ws = msg.next
 	m.resetWorkspaceAeron()
 	if m.remotes != nil && backendID != "" {

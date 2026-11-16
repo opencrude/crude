@@ -74,6 +74,7 @@ type Workspace struct {
 	topicClients       map[string]*coreclient.Client // UI-owned revision domains
 	topicCursors       map[string]uint64
 	topicUpdated       chan struct{}
+	presence           presenceReport
 	auxMu              sync.RWMutex
 	gitState           *coreprotocol.GitSnapshotResult
 	gitError           error
@@ -405,7 +406,7 @@ type publicationBatch struct {
 
 var replicaTopics = []string{coreprotocol.TopicWorkspace, coreprotocol.TopicStatus,
 	coreprotocol.TopicSettings, coreprotocol.TopicLSP, coreprotocol.TopicTerminalInventory,
-	coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard}
+	coreprotocol.TopicRegistry, coreprotocol.TopicGit, coreprotocol.TopicBoard, coreprotocol.TopicPresence}
 
 func (w *Workspace) startTopics(client *coreclient.Client) {
 	w.topicMu.Lock()
@@ -419,6 +420,7 @@ func (w *Workspace) startTopics(client *coreclient.Client) {
 		go w.followTopic(client, name)
 	}
 	w.startDocumentTopics(client)
+	w.sendPresence()
 }
 
 func (w *Workspace) followTopic(client *coreclient.Client, name string) {
@@ -672,7 +674,7 @@ func (w *Workspace) applyState(batch publicationBatch) (shellport.ReplicaApplied
 	var applied shellport.ReplicaApplied
 	s := batch.state
 	if s.Fault != nil {
-		if s.Registry != nil || s.Settings != nil || s.AgentDefaults != nil || s.Status != nil || s.LSP != nil || s.Terminals != nil || s.Git != nil || s.Board != nil {
+		if s.Registry != nil || s.Settings != nil || s.AgentDefaults != nil || s.Status != nil || s.LSP != nil || s.Terminals != nil || s.Git != nil || s.Board != nil || s.Presence != nil {
 			return applied, fmt.Errorf("state fault mixed with value")
 		}
 		w.auxMu.Lock()
@@ -687,7 +689,7 @@ func (w *Workspace) applyState(batch publicationBatch) (shellport.ReplicaApplied
 		return applied, nil
 	}
 	count := 0
-	for _, present := range []bool{s.Registry != nil, s.Settings != nil, s.Status != nil, s.LSP != nil, s.Terminals != nil, s.Git != nil, s.Board != nil} {
+	for _, present := range []bool{s.Registry != nil, s.Settings != nil, s.Status != nil, s.LSP != nil, s.Terminals != nil, s.Git != nil, s.Board != nil, s.Presence != nil} {
 		if present {
 			count++
 		}
@@ -741,6 +743,15 @@ func (w *Workspace) applyState(batch publicationBatch) (shellport.ReplicaApplied
 			if changed {
 				applied.Follow = append(applied.Follow, shellport.GitSnapshotChangedMsg{Owner: w, Snapshot: s.Git.Snapshot})
 			}
+			valid = true
+		}
+	case coreprotocol.TopicPresence:
+		if s.Presence != nil {
+			// The election names a connection; this shell notifies only
+			// through the connection that the core elected.
+			notifier := s.Presence.Notifier
+			notify := !s.Presence.Present && notifier.ClientID != "" && batch.client != nil && notifier == batch.client.Owner()
+			applied.Follow = append(applied.Follow, shellport.PresenceChangedMsg{Owner: w, Present: s.Presence.Present, Notify: notify})
 			valid = true
 		}
 	case coreprotocol.TopicBoard:

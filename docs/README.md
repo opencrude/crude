@@ -87,6 +87,9 @@ documents to read before changing each area.
   agent settings, LSP settings and semantic settings control.
 - [In-app terminals](reference/in-app-terminals.md) — libghostty-vt PTY engine,
   placement, focus, core lane and input backpressure.
+- [Desktop notifications](reference/desktop-notifications.md) — native
+  Windows/Linux notifications, presence election across shells, what is news
+  and when a message is shown, replaced or withdrawn.
 
 ### Reference — interface
 

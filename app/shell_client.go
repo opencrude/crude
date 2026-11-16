@@ -14,10 +14,12 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"crude/assets"
 	"crude/clientstate"
 	"crude/coreclient"
 	"crude/coreprotocol"
 	"crude/corewire"
+	"crude/desktopnotify"
 	"crude/metrics"
 	"crude/remoteconn"
 	"crude/shellport/remote"
@@ -274,8 +276,13 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 		return fmt.Errorf("remember connected workspace: %w", err)
 	}
 	metrics.Start("shell")
+	// Desktop notifications are this shell's effect on this computer's
+	// desktop. The core elects one shell per workspace to show them.
+	notifier := desktopnotify.Start(desktopnotify.Identity{AppID: "Crude", Name: "Crude", IconPNG: assets.IconPNG, Dir: filepath.Join(DataDir(home), "notifications")})
+	defer notifier.Close()
 	options := []tui.StartOption{
 		tui.WithComposerDrafts(drafts.store, drafts.attachment, ws.DraftWorkspaceID()), tui.WithRemoteManager(manager, backend),
+		tui.WithDesktopNotifications(notifier),
 	}
 	var restart *coreRestartHost
 	if flags.SSHHost == "" {
