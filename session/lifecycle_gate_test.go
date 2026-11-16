@@ -5,19 +5,22 @@ import (
 	"time"
 )
 
-func TestTurnGateRejectsSlashMutationsWithoutBlocking(t *testing.T) {
-	session := &Session{}
+// Preparing a compaction never blocks its caller (the core actor or the
+// Bubble Tea update loop), even while a turn owns the gate; only Run waits.
+func TestPrepareCompactionNeverBlocksBehindTheTurnGate(t *testing.T) {
+	session := &Session{sessionID: "gate", activeContext: compactableContext()}
 	session.turnGate.RLock()
 	defer session.turnGate.RUnlock()
 
-	compactDone := make(chan string, 1)
-	go func() { compactDone <- session.HandleCompact().Error }()
+	prepared := make(chan PreparedCompaction, 1)
+	go func() { p, _ := session.PrepareCompaction("gate"); prepared <- p }()
 	select {
-	case err := <-compactDone:
-		if err == "" {
-			t.Fatal("compact overlapped an active turn")
+	case p := <-prepared:
+		if p.Run == nil {
+			t.Fatal("a held gate refused /compact instead of admitting it")
 		}
+		session.releaseUnstartedCompaction(p.OperationID)
 	case <-time.After(time.Second):
-		t.Fatal("compact blocked behind the turn instead of rejecting it")
+		t.Fatal("PrepareCompaction blocked behind the turn gate")
 	}
 }

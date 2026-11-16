@@ -10,6 +10,37 @@ Help window and no `/model` (model choice lives in `/settings`). Plan mode,
 goals and fork follow the established Codex contracts (`/plan`, `/goal`,
 `/fork`); Crude adds runtime enforcement and an independent goal verifier.
 
+## Context compaction (`/compact`)
+
+A human `/compact` is authoritative. The owning session is the only admission
+authority; neither the core nor a shell pre-judges whether the agent looks
+busy, so a running background command, a child agent or a turn that is still
+saving its Local History snapshot never refuses it. `session.PrepareCompaction`
+decides one of these outcomes, and the session writes the words the shell
+shows:
+
+- **Idle, or a turn is finishing or stopping.** The session registers one
+  exclusive operation at once. New turns and queued input wait behind it, and
+  its boundary row appears in every shell. It then waits on the context-aware
+  turn gate (`session/turn_gate.go`, a `semaphore.Weighted` like workspace
+  storage) for the finishing turn to release the context, and compacts the
+  settled context. Stop cancels the wait or the extraction; queued input stays
+  queued.
+- **A turn is running.** The turn accepts the request and the footer says
+  "Compaction will start after the current step." The run compacts before its
+  next model request (trigger `requested`, shown as an ordinary compaction row
+  marked "requested with /compact"), also when automatic compaction is off or
+  deferred, and then continues. A repeated `/compact` reports the request
+  already accepted. If the turn ends before another step, the request becomes
+  the exclusive operation above and runs before any other turn. If the turn is
+  stopped or fails first, the request settles as a cancelled compaction row; it
+  never disappears.
+- **Nothing to compact, or already compacting.** A short footer notice says so.
+- **Real refusals** are only a closing session, a session reserved for core
+  shutdown, an agent with no open session, and child agents (they compact
+  automatically; run `/compact` in the main agent tab). Each states why and
+  that the context was not compacted.
+
 ## Fast mode (`/fast`)
 
 `/fast` toggles a session override for the main agent's next request. A short

@@ -380,7 +380,7 @@ func (w *Workspace) PrepareOpenCommandView(agentID string, ref fileio.AsyncCmdRe
 // boundary row once for every shell. The shell only awaits the result.
 func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedCompaction, types.CompactResultMsg) {
 	if w.view.AgentMgr.Get(agentID) == nil {
-		return session.PreparedCompaction{}, types.CompactResultMsg{Error: "No active session"}
+		return session.PreparedCompaction{}, types.CompactResultMsg{Error: "This agent has no open session. Context was not compacted."}
 	}
 	request := coreprotocol.AgentIDRequest{AgentID: agentID}
 	return session.PreparedCompaction{AgentID: agentID, Run: func() types.CompactResultMsg {

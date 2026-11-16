@@ -146,8 +146,12 @@ type Agent struct {
 	turn                   *logger.TurnLogger
 	Emit                   func(AgentEvent)
 	PrepareCompaction      func(CompactionSource) error
-	CommitCompaction       func(CompactionCommit) error
-	Checkpoint             func(archive, active []provider.ChatMessage) error
+	// CompactionRequest takes a human compaction request accepted while the
+	// run is active (its request ID, or ""). The run then compacts before its
+	// next model request, even when automatic compaction is off.
+	CompactionRequest func() string
+	CommitCompaction  func(CompactionCommit) error
+	Checkpoint        func(archive, active []provider.ChatMessage) error
 	// CheckpointTools stores unfinished wrapper evidence separately from immutable
 	// accepted messages. A later completed result must not rewrite that evidence
 	// as though it were an already-committed protocol message.

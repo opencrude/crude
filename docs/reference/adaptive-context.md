@@ -242,7 +242,8 @@ the active context transactionally and starts a fresh transport chain. Context
 admission and reported usage always use full inherited context, not delta bytes.
 
 `ContextCompactionPercent: 0` still disables automatic pressure and overflow
-recovery; manual `/compact` uses the same extractor. Checkpoints keep four
+recovery; manual `/compact` uses the same extractor, and a `/compact` accepted
+by a running turn compacts at its next step regardless of that setting. Checkpoints keep four
 sections whether they were extracted together or one at a time; chunk progress is additional truthful detail within a stage.
 The chat boundary and the agent activity strip report the same operation:
 while manual compaction is active, its progress replaces the paused turn's
@@ -465,8 +466,11 @@ Responses delta uploads and inline-image replay recovery are specified in
   real stage units, never fabricated completion percentages. Active, retrying,
   completed, cancelled, failed, and resumed-interrupted forms share geometry;
   generic turn cleanup must never consume these durable operation rows.
-- Manual compaction is a separate exact-ID operation after a completed/stopped
-  model turn, never permission to reactivate old output. Connected composers
+- Manual compaction is a separate exact-ID operation that owns the turn gate
+  exclusively, never permission to reactivate old output. A human `/compact` is
+  never refused for apparent busyness: during a running turn it is taken at the
+  next step (trigger `requested`), and otherwise it waits for a finishing turn
+  (see [session commands](session-commands.md#context-compaction-compact)). Connected composers
   queue input durably with replicated pending rows; dequeue, context and recovery
   commit atomically before execution. Stop preserves the queue, cold resume is
   passive, and queue-only sessions are not empty. Core capacity/receipt checks

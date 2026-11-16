@@ -76,24 +76,12 @@ func (m *App) executeSlashCommandWithRefs(cmd string, referenceIDs []string) tea
 			m.Feedback.NotifyError("No active session")
 			break
 		}
-		if m.ws.AgentTurnActive(agentID) {
-			m.Feedback.NotifyError("Stop the active turn before compacting context")
-			break
-		}
+		// The owning session decides; a shell never pre-judges busyness.
 		prepared, result := m.ws.PrepareCompactForAgent(agentID)
 		if prepared.Run == nil {
-			if result.Error != "" {
-				m.Feedback.NotifyError(result.Error)
-			} else if result.Desc != "" {
-				m.Feedback.NotifyInfo(result.Desc)
-			}
+			m.presentCompactResult(agentID, result)
 			break
 		}
-		_ = m.handleAgentEvent(ttypes.AgentEventMsg{Type: "context_compaction_started", AgentID: agentID, Data: map[string]any{
-			"request_id": prepared.OperationID, "trigger": "manual", "role": "root",
-			"provider_id": prepared.ProviderID, "model_id": prepared.ModelID,
-			"stage": 0, "completed_stages": 0, "stage_count": 4, "retry_limit": 3,
-		}})
 		return func() tea.Msg {
 			result := prepared.Run()
 			return slashBackendResultMsg{agentID: agentID, command: cmdName, compact: &result}
@@ -169,16 +157,23 @@ func parseSlashCommand(command string) (string, string) {
 
 func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 	if msg.compact != nil {
-		if msg.compact.Cancelled {
-			m.ws.Logger().Info("COMPACT", "slash_cancelled", "operation_id", msg.compact.OperationID)
-			return
-		}
-		if msg.compact.Error != "" {
-			m.ws.Logger().Error("COMPACT", "slash_failed", "error", msg.compact.Error)
-			m.Feedback.NotifyError(msg.compact.Error)
-			return
-		}
-		m.ws.Logger().Info("COMPACT", "slash_ok", "before", msg.compact.Before, "after", msg.compact.After)
+		m.presentCompactResult(msg.agentID, *msg.compact)
+	}
+}
+
+// presentCompactResult shows the session's own words for a /compact outcome.
+// The boundary row in the chat carries progress and the final result; this is
+// the immediate answer to the command.
+func (m *App) presentCompactResult(agentID string, result ttypes.CompactResultMsg) {
+	switch {
+	case result.Cancelled:
+		m.ws.Logger().Info("COMPACT", "slash_cancelled", "operation_id", result.OperationID)
+	case result.Error != "":
+		m.ws.Logger().Error("COMPACT", "slash_failed", "error", result.Error)
+		m.Feedback.NotifyError(result.Error)
+	case result.Desc != "":
+		m.ws.Logger().Info("COMPACT", "slash_ok", "operation_id", result.OperationID, "before", result.Before, "after", result.After)
+		m.Feedback.NotifyAgentTransient(agentID, result.Desc, ttypes.SeverityInfo)
 	}
 }
 

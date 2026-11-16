@@ -267,3 +267,84 @@ func pendingJourneyPrompt(app *App, id, text string) bool {
 	}
 	return false
 }
+
+// The reported failure: /compact typed while the agent works was refused with
+// a notice that was easy to miss. Now the shell shows that the request was
+// accepted, and the compaction runs as soon as the turn allows it.
+func TestRemoteAppJourneyCompactDuringActiveTurnIsAccepted(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	var normal, extraction atomic.Int32
+	held := make(chan struct{}, 4)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		text := "TURN FINISHED"
+		if request.ToolChoice == "none" {
+			extraction.Add(1)
+			text = "<<<intent>>>\nKeep the request.\n<<<work>>>\nEvidence retained.\n<<<state>>>\nClean.\n<<<continuation>>>\nNone."
+		} else {
+			normal.Add(1)
+			held <- struct{}{}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		encoded, _ := json.Marshal(text)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", encoded)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	runtime := remoteJourneyRuntime(t, server.URL)
+	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	id := remoteJourneyCreate(t, shell)
+	shells := []remoteJourneyShell{shell}
+	shell.app.Input.SetInput("Keep the complete evidence.\n" + strings.Repeat("source evidence\n", 4_000))
+	shell.app.setFocusInput()
+	_, cmd := shell.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	runAppCommand(t, shell.app, cmd)
+	select {
+	case <-held:
+	case <-time.After(8 * time.Second):
+		t.Fatal("the turn did not reach its model request")
+	}
+	remoteJourneyUntil(t, shells, func() bool { return shell.app.ws.AgentTurnActive(id) })
+
+	shell.app.Input.SetInput("/compact")
+	_, compactCmd := shell.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if compactCmd == nil {
+		t.Fatal("/compact during an active turn did not reach the session")
+	}
+	_, cmd = shell.app.Update(compactCmd())
+	runAppCommand(t, shell.app, cmd)
+	paint := ansi.Strip(shell.app.View().RenderContent())
+	if !strings.Contains(paint, "Compaction will start after the current step.") || strings.Contains(paint, "Stop the active turn") {
+		t.Fatalf("accepted /compact was not shown to the user:\n%s", paint)
+	}
+	if extraction.Load() != 0 {
+		t.Fatal("compaction overlapped the model request in flight")
+	}
+	releaseOnce.Do(func() { close(release) })
+	remoteJourneyUntil(t, shells, func() bool {
+		return extraction.Load() == 1 && shell.app.ws.AgentActivity(id).Status.Phase == types.AgentCompactionResult &&
+			strings.Contains(ansi.Strip(shell.app.View().RenderContent()), "Compacted context")
+	})
+	for _, notice := range shell.app.ws.Status().Notifications(false) {
+		if notice.Severity == types.SeverityError && strings.Contains(strings.ToLower(notice.Summary), "compact") {
+			t.Fatalf("accepted compaction reported an error: %+v", notice)
+		}
+	}
+	if normal.Load() != 1 {
+		t.Fatalf("model requests=%d; the accepted compaction must not start another turn", normal.Load())
+	}
+}

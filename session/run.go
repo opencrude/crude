@@ -906,6 +906,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.CommitCompaction = func(commit agent.CompactionCommit) error {
 		return s.commitRootCompaction(o.ID, compactionRevision, commit)
 	}
+	ag.CompactionRequest = func() string { return o.takeCompactionRequest(turnGeneration) }
 	ag.Checkpoint = func(archive, active []provider.ChatMessage) error {
 		recoveryState.snapshot(archive, active)
 		return persistRecoveryBoundary(ctx, supervisor)
@@ -1269,10 +1270,24 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		handoverRevision = s.contextRevision
 		s.msgsMu.Unlock()
 	}
+	// A compaction the turn accepted but did not reach runs now, before any
+	// other turn: it registers while this turn still owns admission. Stop or
+	// failure settles the request visibly instead of dropping it.
+	launchCompaction := func() {}
+	if requested := o.sealCompactionRequests(turnGeneration); requested != "" {
+		if cancelled || runResult.State == agent.SupervisedRunFailed {
+			s.settleDroppedCompaction(o.ID, requested)
+		} else {
+			launchCompaction = s.startTurnEndCompaction(o.ID, requested)
+		}
+	}
 	o.endTurn(turnGeneration)
 	if terminalDone != nil {
 		sendRuntimeEvent(sender, *terminalDone)
 	}
+	// Its boundary follows the turn's terminal event, so the shells settle the
+	// turn first and then show the compaction.
+	launchCompaction()
 	// A natural completion admits the next queued prompt; Stop never does.
 	if !cancelled {
 		go s.AdmitQueuedInputs(o.ID)

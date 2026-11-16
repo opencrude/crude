@@ -164,7 +164,7 @@ type Session struct {
 	retained      atomic.Bool // a workspace service owns this identity even before its first input
 	hardCancelled int32
 	activeTurns   atomic.Int32
-	turnGate      sync.RWMutex
+	turnGate      turnGate
 	compactionMu  sync.Mutex
 	// precompaction holds each root agent's background checkpoint slot.
 	capabilitySharing        capabilitySharing

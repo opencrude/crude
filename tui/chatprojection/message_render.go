@@ -781,6 +781,8 @@ func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) 
 			detail = "prepared in background"
 		case "decay":
 			detail = "older tool output trimmed"
+		case "requested":
+			detail = "requested with /compact"
 		}
 	case "compaction_cancelled":
 		title.Action, detail = "Compaction cancelled", "original context kept"
