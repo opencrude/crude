@@ -357,7 +357,52 @@ type Cell struct {
 	BG          Color
 	Width       uint8
 	Transparent bool
+	// Bidi records how bidirectional layout moved this cell. It never
+	// changes what the terminal shows; readers of painted text use it to
+	// recover logical order. It fits the struct's existing padding.
+	Bidi BidiMark
 }
+
+// BidiMark records where bidirectional layout placed a cell (see
+// crude/tui/bidi). The zero value marks a cell painted in logical order.
+type BidiMark uint8
+
+const (
+	bidiArranged BidiMark = 1 << 7 // the cell belongs to an arranged line
+	bidiStart    BidiMark = 1 << 6 // the first visual cell of that line
+	bidiGlyph    BidiMark = 1 << 5 // its glyph replaced the source character
+	bidiLevel    BidiMark = 1<<5 - 1
+)
+
+// NewBidiMark marks a cell of an arranged line. level is its resolved
+// embedding level; levels above 31 keep their parity. start marks the first
+// visual cell of the line, and glyph a cell that shows an arranged glyph (a
+// joined or mirrored form) instead of its source character.
+func NewBidiMark(level int, start, glyph bool) BidiMark {
+	if level > int(bidiLevel) {
+		level = int(bidiLevel) - 1 + level%2
+	}
+	m := bidiArranged | BidiMark(max(0, level))
+	if start {
+		m |= bidiStart
+	}
+	if glyph {
+		m |= bidiGlyph
+	}
+	return m
+}
+
+// Arranged reports whether bidirectional layout placed the cell.
+func (m BidiMark) Arranged() bool { return m&bidiArranged != 0 }
+
+// Start reports whether the cell is the first visual cell of its line.
+func (m BidiMark) Start() bool { return m&bidiStart != 0 }
+
+// Glyph reports whether the cell shows an arranged glyph.
+func (m BidiMark) Glyph() bool { return m&bidiGlyph != 0 }
+
+// Level is the cell's resolved embedding level.
+func (m BidiMark) Level() int { return int(m & bidiLevel) }
 
 // NewCell creates a normal-width cell with the given character and style.
 func NewCell(ch rune, fg, bg Color, attr Attrs) Cell {

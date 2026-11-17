@@ -180,25 +180,20 @@ func (h *Host) paintTextSelection(buf *surface.CellBuffer) {
 		for x0 > left && x0 > 0 && isContinuationCell(row[x0]) {
 			x0--
 		}
-		var line strings.Builder
+		// Arranged right-to-left text returns to logical order and to its
+		// source characters, so the copy reads like the text it shows.
+		line := ""
+		if x0 <= x1 {
+			line = surface.ReadLogical(row[x0 : x1+1])
+		}
 		for x := x0; x <= x1; x++ {
 			c := &row[x]
-			if !isContinuationCell(*c) {
-				switch {
-				case c.Content != "":
-					line.WriteString(c.Content)
-				case c.Char == 0:
-					line.WriteByte(' ')
-				default:
-					line.WriteRune(c.Char)
-				}
-			}
 			c.FG, c.BG = h.tokens.TextSelectionColors(c.FG)
 		}
 		if y > sy {
 			text.WriteByte('\n')
 		}
-		text.WriteString(strings.TrimRight(line.String(), " "))
+		text.WriteString(strings.TrimRight(line, " "))
 	}
 	d.text = text.String()
 }

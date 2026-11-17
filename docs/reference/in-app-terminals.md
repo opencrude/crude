@@ -532,6 +532,16 @@ applications such as Expo on their portable half-block QR output rather than
 selecting sextant glyphs on the false claim that this is a Ghostty window.
 It does not change the user's outer terminal or font.
 
+## Right-to-left text
+
+Crude arranges right-to-left runs of a terminal row after painting it, like a
+terminal in implicit BiDi mode: the row stays a left-to-right paragraph, so
+prompts, columns and box drawing keep their places. By default only the main
+screen is arranged; full-screen programs on the alternate screen may arrange
+their own text. Selection and forwarded mouse reports use the program's
+columns, and copy reads the grid. The setting, limits and host-terminal mode
+are in [bidi](bidi.md).
+
 ## Placement
 
 Dock/tab/floating placement and focus belong to each shell (`App.terminalPlacements`),

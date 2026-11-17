@@ -699,6 +699,11 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if res := s.handleScrollbackScrollbar(ctx, evt); res.Handled {
 		return res
 	}
+	// Mouse reports and selection address the program's own columns, not
+	// the arranged cells of a right-to-left run.
+	if cellX >= 0 && cellX < s.cols {
+		cellX = s.view.LogicalColumn(cellX, cellY)
+	}
 	if cellY >= s.rows && !s.selecting {
 		if evt.Kind == ui.EventMouseMotion {
 			return ui.EventResult{Handled: true}

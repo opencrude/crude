@@ -3,6 +3,7 @@ package surface
 import (
 	"unicode/utf8"
 
+	"crude/tui/bidi"
 	"crude/tui/cell"
 
 	"github.com/charmbracelet/x/ansi"
@@ -161,16 +162,41 @@ func (b *CellBuffer) Resize(w, h int) {
 	b.height = h
 }
 
-// WriteString writes a string of text starting at position (x, y) using the
-// given style. Handles multi-column graphemes correctly by writing one primary
-// cell followed by Width-1 continuation cells. If the grapheme would be split
+// WriteString writes one label starting at position (x, y) using the given
+// style. Handles multi-column graphemes correctly by writing one primary cell
+// followed by Width-1 continuation cells. If the grapheme would be split
 // across the buffer edge, it is truncated.
+//
+// The label is one paragraph with an automatic direction: right-to-left text
+// in it is arranged in visual order and Arabic letters are joined (see
+// crude/tui/bidi). A display line built from several runs must use
+// WriteLogical for each run and arrange the whole line with ApplyLine.
 //
 // Uses charmbracelet/x/ansi for grapheme cluster iteration and width measurement.
 // Returns the x position after the last written cell.
 func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr cell.Attrs, links ...*cell.Link) int {
+	end, arrange := b.writeText(x, y, text, fg, bg, attr, links)
+	if arrange {
+		b.arrangeLabel(x, y, end, text)
+	}
+	return end
+}
+
+// firstCluster returns the first grapheme cluster of s and its width with the
+// shared measurement. Printable ASCII before ASCII is its own cluster.
+func firstCluster(s string) (string, int) {
+	if s[0] > 0x1f && s[0] < 0x7f && (len(s) == 1 || s[1] < utf8.RuneSelf) {
+		return s[:1], 1
+	}
+	// Must match UV cellbuf. See tui/rendering/width.go.
+	return ansi.FirstGraphemeCluster(s, ansi.GraphemeWidth)
+}
+
+// writeText writes text in logical order and reports whether it contains a
+// character that can change its visual order.
+func (b *CellBuffer) writeText(x, y int, text string, fg, bg cell.Color, attr cell.Attrs, links []*cell.Link) (int, bool) {
 	if y < 0 || y >= b.height {
-		return x
+		return x, false
 	}
 	var link *cell.Link
 	if len(links) > 0 {
@@ -178,19 +204,17 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 	}
 	curX := x
 	rest := text
+	reorders := false
 	for len(rest) > 0 {
-		var cluster string
-		var w int
-		if rest[0] > 0x1f && rest[0] < 0x7f && (len(rest) == 1 || rest[1] < utf8.RuneSelf) {
-			cluster, w = rest[:1], 1
-		} else {
-			// Must match UV cellbuf. See tui/rendering/width.go.
-			cluster, w = ansi.FirstGraphemeCluster(rest, ansi.GraphemeWidth)
-		}
+		cluster, w := firstCluster(rest)
 		if len(cluster) == 0 {
 			break
 		}
 		rest = rest[len(cluster):]
+		r, _ := utf8.DecodeRuneInString(cluster)
+		if r >= 0x0590 && !reorders {
+			reorders = bidi.Triggers(r)
+		}
 		if w == 0 {
 			// Skip zero-width combining characters visually
 			continue
@@ -198,7 +222,6 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 		if curX >= b.width || curX+w > b.width {
 			break
 		}
-		r, _ := utf8.DecodeRuneInString(cluster)
 		cellBG := bg
 		if bg.IsDefault() {
 			// Default means "inherit what is under me". Inside this buffer
@@ -212,7 +235,7 @@ func (b *CellBuffer) WriteString(x, y int, text string, fg, bg cell.Color, attr 
 		b.Set(curX, y, cell.Cell{Char: r, Content: cluster, Width: uint8(w), Link: link, FG: fg, BG: cellBG, Attr: attr})
 		curX += w
 	}
-	return curX
+	return curX, reorders
 }
 
 // Clone creates a deep copy of the buffer.

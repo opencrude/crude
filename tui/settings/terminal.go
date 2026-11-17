@@ -16,6 +16,7 @@ const (
 	fieldTerminalLogin      = "terminal-login"
 	fieldTerminalEnv        = "terminal-environment"
 	fieldTerminalPlacement  = "terminal-placement"
+	fieldTerminalRTL        = "terminal-right-to-left"
 	fieldTerminalScrollback = "terminal-scrollback"
 )
 
@@ -49,6 +50,11 @@ func (m *Model) buildTerminalForm(current types.TerminalSettings) *ui.FormModel 
 		ui.SeparatorFieldState("terminal-behavior", "Behavior"),
 		ui.SegmentedFieldState(fieldTerminalPlacement, "Open new terminals", []ui.FormOption{{ID: types.TerminalPlacementDocked, Label: "Docked"}, {ID: types.TerminalPlacementFloating, Label: "Floating"}}, current.Placement, "Where a new terminal appears. Either can be moved later."),
 		scrollback,
+		ui.SegmentedFieldState(fieldTerminalRTL, "Right-to-left text", []ui.FormOption{
+			{ID: types.TerminalRightToLeftShell, Label: "Shell output"},
+			{ID: types.TerminalRightToLeftAll, Label: "All output"},
+			{ID: types.TerminalRightToLeftOff, Label: "As written"},
+		}, current.RightToLeftOrDefault(), "Where Crude puts Arabic, Persian and Hebrew text in reading order. Shell output skips full-screen programs, which can arrange this text themselves."),
 	)
 	m.syncTerminalCommand(form)
 	return form
@@ -98,6 +104,7 @@ func (m *Model) collectTerminal(cfg *types.TerminalSettings) {
 		Environment:     parseEnvironment(m.value(catTerminal, fieldTerminalEnv)),
 		ScrollbackLines: parseOpt(m.value(catTerminal, fieldTerminalScrollback), types.DefaultTerminalScrollback),
 		Placement:       m.value(catTerminal, fieldTerminalPlacement),
+		RightToLeft:     explicitChoice(m.value(catTerminal, fieldTerminalRTL), types.TerminalRightToLeftShell),
 	})
 }
 

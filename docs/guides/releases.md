@@ -58,7 +58,7 @@ an explicit version can select a prerelease.
 
 | Action | Linux | Windows |
 |---|---|---|
-| Accept the warning without a prompt | `--yes` | `-Yes` |
+| Use the defaults without questions | `--yes` | `-Yes` |
 | Add the desktop window | `--gui` | `-Gui` |
 | Do not add the desktop window | `--no-gui` | `-NoGui` |
 | Stop a running Crude without asking | `--stop` | `-Stop` |
@@ -103,10 +103,10 @@ Crude resolves this copy from its own path, so a user who installs nothing still
 gets a working shell. A Git Bash the user installed later wins, because it is
 found first.
 
-Consent is required on every installation and update. Without `--yes` an
-interactive terminal asks `Install anyway? [y/N]`. A piped or noninteractive
-invocation fails closed and states the flag that accepts the warning. The
-warning covers bugs, agent mistakes, work lost and the need for backups.
+Every installation and update shows the warning: bugs, agent mistakes, work
+lost and the need for backups. A person at an interactive terminal is asked
+`Install anyway? [y/N]`. A piped or noninteractive run has nobody to ask and
+continues; `--yes` is never required, it only skips the question.
 
 ### A running Crude
 
@@ -175,7 +175,15 @@ already installed.
   under `HKCU` that point at `%LOCALAPPDATA%\Crude\window\fonts` on Windows. A
   font that is already installed is used as it is and is never copied over,
   re-registered or removed, so the window cannot change how the rest of the
-  machine draws text.
+  machine draws text. Windows reads per-user fonts from
+  `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts`; the installer
+  also announces a new font, so a running Windows Terminal can use it.
+- Each release carries Crude RTL in `fonts/`, the right-to-left fallback font
+  ([bidi](../reference/bidi.md#fonts)). The window installs that copy on every
+  run, into `%LOCALAPPDATA%\Crude\window\rtl-fonts` (registered for the user)
+  or `~/.local/share/fonts/CrudeRTL`, and names it after JetBrains Mono in the
+  window's font list. A file that a running terminal holds open is replaced by
+  the next update.
 - A window folder that holds a terminal, a configuration or font values the
   installer does not use loses them, together with a menu entry that opens them.
   Nothing outside Crude's own folder is removed.

@@ -1,6 +1,8 @@
 package shellchat
 
 import (
+	"sort"
+
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
@@ -228,7 +230,7 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		bg = tokens.Color(ui.ColorSubPaneBg)
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
 	}
-	chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
+	chatprojection.PaintLineLogical(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
 	if s.find.querying() {
 		s.paintFindMatches(buf, lineX, y, layout.ContentMax, index, row, localRow, selStart, selEnd, tokens)
 	}
@@ -239,6 +241,10 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	col := drawn
 	padX := lineX + drawn
 	paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, pl.PaneBackground, col)
+	// The row, its padding, selection and find marks were painted at logical
+	// columns; arranging right-to-left text moves them with their characters
+	// and puts a right-to-left paragraph's padding on the left.
+	buf.ApplyLine(lineX, y, chatprojection.ArrangedLine(pl, layout.ContentMax))
 	if pl.HeaderRule {
 		// Only the margins are outside PaintLineAt's selection columns. The
 		// label, faint rule, and timestamp inside the content use native spans.
@@ -300,4 +306,51 @@ func paintNativeSpaces(buf *surface.CellBuffer, x, y, count int, tokens *ui.Toke
 		buf.WriteString(x+i, y, " ", cf, cb, 0)
 		col++
 	}
+}
+
+// logicalColumn maps a selection column on a painted row (LocalX - padLR)
+// to its column in the row's text order, so dragging over right-to-left
+// text selects the characters under the pointer.
+func (s *Screen) logicalColumn(globalLine, col int) int {
+	if s == nil || globalLine < 0 {
+		return col
+	}
+	starts := s.paintState.globalStart
+	index := sort.Search(len(starts), func(i int) bool { return starts[i] > globalLine }) - 1
+	if index < 0 || index >= len(s.rows) {
+		return col
+	}
+	row := s.rows[index]
+	line := globalLine - starts[index]
+	var pl chatprojection.PaintLine
+	switch {
+	case line < len(row.Native):
+		pl = row.Native[line]
+	case line < len(row.Lines):
+		pl = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: row.Lines[line], Role: ui.ColorFg}}}
+	default:
+		return col
+	}
+	var paneInfo chatprojection.PaneLineInfo
+	if globalLine < len(s.paintState.paneLineMap) {
+		paneInfo = s.paintState.paneLineMap[globalLine]
+	}
+	compose := s.paintState.compose
+	compose.InnerW = min(compose.InnerW, max(0, s.width-2*compose.PadLR))
+	layout := LayoutRow(compose, pl.VisibleWidth(), paneInfo)
+	ln := chatprojection.ArrangedLine(pl, layout.ContentMax)
+	if ln == nil || ln.Span() == 0 {
+		return col
+	}
+	shift := layout.PadLeft - s.layout.padLR
+	visual := col - shift
+	// Past the edge of a right-to-left row the nearest cell decides: right
+	// of the text is where the paragraph starts, as in the editor.
+	if ln.RTL() {
+		visual = min(max(0, visual), ln.Span()-1)
+	}
+	if visual >= 0 && visual < ln.Span() {
+		return ln.Logical(visual) + shift
+	}
+	return col
 }

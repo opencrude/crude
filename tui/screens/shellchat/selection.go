@@ -166,7 +166,7 @@ func (s *Screen) handleSelectionClick(ctx ui.EventContext, msg tea.MouseClickMsg
 	padLR := s.layout.padLR
 	s.selection.selecting = true
 	s.selection.selAnchorLine = lineIdx
-	s.selection.selAnchorCol = rendering.Max(0, ctx.LocalX-padLR)
+	s.selection.selAnchorCol = s.logicalColumn(lineIdx, rendering.Max(0, ctx.LocalX-padLR))
 	s.selection.selEndLine = lineIdx
 	s.selection.selEndCol = s.selection.selAnchorCol
 	s.selection.selMouseY = ctx.LocalY
@@ -187,12 +187,16 @@ func (s *Screen) handleSelectionMotion(ctx ui.EventContext, msg tea.MouseMotionM
 	padLR := s.layout.padLR
 
 	lineIdx, ok := s.mouseToGlobalLine(ctx.LocalY)
-	if !ok || lineIdx != s.selection.selAnchorLine || rendering.Max(0, ctx.LocalX-padLR) != s.selection.selAnchorCol {
+	col := rendering.Max(0, ctx.LocalX-padLR)
+	if ok {
+		col = s.logicalColumn(lineIdx, col)
+	}
+	if !ok || lineIdx != s.selection.selAnchorLine || col != s.selection.selAnchorCol {
 		s.selection.dragged = true
 	}
 	if ok {
 		s.selection.selEndLine = lineIdx
-		s.selection.selEndCol = rendering.Max(0, ctx.LocalX-padLR)
+		s.selection.selEndCol = col
 	} else if ctx.LocalY < 0 {
 		firstLine, _ := s.chatAreaContentBounds()
 		if firstLine >= 0 {
@@ -227,7 +231,7 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 	lineIdx, ok := s.mouseToGlobalLine(ctx.LocalY)
 	if ok {
 		s.selection.selEndLine = lineIdx
-		s.selection.selEndCol = rendering.Max(0, ctx.LocalX-s.layout.padLR)
+		s.selection.selEndCol = s.logicalColumn(lineIdx, rendering.Max(0, ctx.LocalX-s.layout.padLR))
 	}
 	s.selection.captureSource(s.rows)
 	// A click without drag on a disclosure row toggles the block instead of

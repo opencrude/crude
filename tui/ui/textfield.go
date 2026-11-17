@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/bidi"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -45,6 +46,14 @@ type TextField struct {
 	// clipboard. Hosts may inject their own write path; tests inject a
 	// recorder so copy payloads are asserted without touching the clipboard.
 	clipboardCopy func(string) tea.Cmd
+	// bidi caches the value's bidirectional layout per value and policy.
+	bidi textFieldBidi
+}
+
+type textFieldBidi struct {
+	value      string
+	generation uint64
+	line       textLineBidi
 }
 
 // NewTextField creates a single-line field.
@@ -368,7 +377,7 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 				cellFG, cellBG = t.tokens.TextSelectionColors(cellFG)
 			}
 		}
-		buf.WriteString(x+col, y, cluster, cellFG, cellBG, 0)
+		buf.WriteLogical(x+col, y, cluster, cellFG, cellBG, 0)
 		col += width
 		pos += clusterLen
 	}
@@ -379,6 +388,62 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 			PaintBlockCursor(buf, x+cx, y, cursorFG, bg)
 		}
 	}
+	// The window was painted in logical order with its selection and
+	// caret; arranging it moves them with their characters.
+	buf.ApplyLine(x, y, t.windowLine(runes))
+}
+
+// valueBidi returns the bidirectional layout of the value. A field is one
+// paragraph with an automatic direction; masked values are never arranged.
+func (t *TextField) valueBidi(runes []rune) textLineBidi {
+	if t.password {
+		return textLineBidi{}
+	}
+	value, generation := string(runes), bidi.Generation()
+	if t.bidi.generation != generation || t.bidi.value != value {
+		t.bidi = textFieldBidi{value: value, generation: generation, line: analyzeTextLine(runes, 0, nil, false)}
+	}
+	return t.bidi.line
+}
+
+// windowLine arranges the visible window of the value: the graphemes from
+// viewStart that fit the content width.
+func (t *TextField) windowLine(runes []rune) *bidi.Line {
+	lb := t.valueBidi(runes)
+	if lb.layout == nil || t.viewStart > len(runes) {
+		return nil
+	}
+	cw := t.contentWidth()
+	end := t.viewStart
+	for col := 0; end < len(runes); {
+		cluster, width := rendering.FirstGrapheme(string(runes[end:]))
+		if cluster == "" || col+width > cw {
+			break
+		}
+		col += width
+		end += len([]rune(cluster))
+	}
+	return lb.line(t.viewStart, end-t.viewStart, cw)
+}
+
+// stepOnScreen moves the caret one cell left or right on an arranged
+// window. It reports false when the value paints as written or the caret
+// is at the window's edge; the caller then moves in text order.
+func (t *TextField) stepOnScreen(ln *bidi.Line, right, extend bool) bool {
+	if ln == nil || !bidi.VisualCaret() {
+		return false
+	}
+	runes := t.displayRunes()
+	cur := min(t.edit.Cursor(), len(runes))
+	if cur < t.viewStart {
+		return false
+	}
+	next, ok := ln.Step(rendering.VisibleWidth(string(runes[t.viewStart:cur])), right)
+	if !ok {
+		return false
+	}
+	t.edit.SetCursor(t.viewStart+rendering.ColToRuneIdx(runes[t.viewStart:], next), extend)
+	return true
 }
 
 // Handle implements keyboard and paste editing.
@@ -595,6 +660,7 @@ func (t *TextField) indexAtContentX(x int) int {
 	if t.viewStart >= len(runes) {
 		return t.edit.Len()
 	}
+	x = t.windowLine(runes).Logical(x)
 	return min(t.edit.Len(), t.viewStart+rendering.ColToRuneIdx(runes[t.viewStart:], x))
 }
 
@@ -655,17 +721,22 @@ func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 		// handler; Esc is otherwise the host's key (popups close, forms
 		// cancel, the chat composer clears its draft).
 		return EventResult{}
-	case tea.KeyLeft:
-		if word {
-			t.edit.MoveWordLeft(extend)
-		} else {
-			t.edit.MoveLeft(extend)
-		}
-	case tea.KeyRight:
-		if word {
+	case tea.KeyLeft, tea.KeyRight:
+		// On an arranged value a plain arrow moves on screen; words, the
+		// window edge and a selection collapse follow text order, with the
+		// arrows pointing the other way in right-to-left text.
+		ln := t.windowLine(t.displayRunes())
+		forward := bidi.ArrowForward(m.Code == tea.KeyRight, ln)
+		switch {
+		case !word && (extend || !t.edit.HasSelection()) && t.stepOnScreen(ln, m.Code == tea.KeyRight, extend):
+		case word && forward:
 			t.edit.MoveWordRight(extend)
-		} else {
+		case word:
+			t.edit.MoveWordLeft(extend)
+		case forward:
 			t.edit.MoveRight(extend)
+		default:
+			t.edit.MoveLeft(extend)
 		}
 	case tea.KeyHome:
 		t.edit.MoveHome(extend)

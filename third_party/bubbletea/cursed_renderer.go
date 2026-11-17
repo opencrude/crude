@@ -17,39 +17,44 @@ import (
 )
 
 type cursedRenderer struct {
-	w              io.Writer
-	buf            bytes.Buffer // updates buffer to be flushed to [w]
-	scr            *uv.TerminalRenderer
-	cellbuf        uv.ScreenBuffer
-	directbuf      uv.ScreenBuffer // producer snapshot, guarded by viewMu
-	surfaceFrame   uint64
-	snapshotToken  uv.SnapshotToken
-	flushbuf       bytes.Buffer // renderer-owned envelope; retain actual frame capacity
-	lastView       *View
-	env            []string
-	term           string // the terminal type $TERM
-	width, height  int
-	mu             sync.Mutex
-	viewMu         sync.Mutex // guards view and pendingSize only; see flush
-	pendingSize    *[2]int
-	written        int // bytes written by the last flush
-	profile        colorprofile.Profile
-	logger         uv.Logger
-	view           View
-	onMouseView    func(MouseMsg) Cmd // last presented handler, guarded by viewMu
-	hardTabs       bool               // whether to use hard tabs to optimize cursor movements
-	backspace      bool               // whether to use backspace to optimize cursor movements
-	mapnl          bool
-	syncdUpdates   bool                      // whether to use synchronized output mode for updates
-	starting       bool                      // indicates whether the renderer is starting after being stopped
-	kittyImages    map[uint32]ImagePlacement // last successfully flushed resource set
-	kittyUncertain []ImagePlacement          // exact IDs possibly sent by a failed write
-	kittyInvalid   bool                      // clear/reset/screen switch requires reupload
-	kittyReveal    bool                      // first placement needs one extra pass
-	kittyTmux      bool
-	sixelImages    []encodedSixel
-	sixelUncertain []image.Rectangle
-	sixelInvalid   bool
+	w             io.Writer
+	buf           bytes.Buffer // updates buffer to be flushed to [w]
+	scr           *uv.TerminalRenderer
+	cellbuf       uv.ScreenBuffer
+	directbuf     uv.ScreenBuffer // producer snapshot, guarded by viewMu
+	surfaceFrame  uint64
+	snapshotToken uv.SnapshotToken
+	flushbuf      bytes.Buffer // renderer-owned envelope; retain actual frame capacity
+	lastView      *View
+	env           []string
+	term          string // the terminal type $TERM
+	width, height int
+	mu            sync.Mutex
+	viewMu        sync.Mutex // guards view and pendingSize only; see flush
+	pendingSize   *[2]int
+	written       int // bytes written by the last flush
+	profile       colorprofile.Profile
+	logger        uv.Logger
+	view          View
+	onMouseView   func(MouseMsg) Cmd // last presented handler, guarded by viewMu
+	hardTabs      bool               // whether to use hard tabs to optimize cursor movements
+	backspace     bool               // whether to use backspace to optimize cursor movements
+	mapnl         bool
+	syncdUpdates  bool // whether to use synchronized output mode for updates
+	// Host BiDi mode (host_bidi.go): what the application wants, whether
+	// explicit mode is written, and the terminal's DECRPM report.
+	bidiWanted, bidiApplied, bidiKnown bool
+	bidiHost                           ansi.ModeSetting
+	bidiPending                        bool                      // a mode change waits for the next flush
+	starting                           bool                      // indicates whether the renderer is starting after being stopped
+	kittyImages                        map[uint32]ImagePlacement // last successfully flushed resource set
+	kittyUncertain                     []ImagePlacement          // exact IDs possibly sent by a failed write
+	kittyInvalid                       bool                      // clear/reset/screen switch requires reupload
+	kittyReveal                        bool                      // first placement needs one extra pass
+	kittyTmux                          bool
+	sixelImages                        []encodedSixel
+	sixelUncertain                     []image.Rectangle
+	sixelInvalid                       bool
 }
 
 var _ renderer = &cursedRenderer{}
@@ -172,6 +177,8 @@ func (s *cursedRenderer) start() {
 	if s.cellbuf.Method == ansi.GraphemeWidth {
 		_, _ = s.scr.WriteString(ansi.SetModeUnicodeCore)
 	}
+	// Re-enter explicit BiDi mode after a suspend.
+	s.syncHostBidiLocked(false)
 }
 
 // close implements renderer.
@@ -259,6 +266,7 @@ func (s *cursedRenderer) close() (err error) {
 		// Make sure to turn off Unicode mode (2027)
 		_, _ = s.scr.WriteString(ansi.ResetModeUnicodeCore)
 	}
+	s.restoreHostBidiLocked()
 
 	if err := s.scr.Flush(); err != nil {
 		return fmt.Errorf("bubbletea: error closing screen writer: %w", err)
@@ -711,10 +719,11 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 	if s.starting && s.hardTabs {
 		_, _ = s.scr.WriteString(ansi.SetTabEvery8Columns)
 	}
-	if !resized && !s.starting && !s.kittyInvalid && !s.sixelInvalid && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
+	if !resized && !s.starting && !s.kittyInvalid && !s.sixelInvalid && !s.bidiPending && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
 		return view, true
 	}
 	s.starting = false
+	s.bidiPending = false
 	if frameArea != s.cellbuf.Bounds() {
 		s.scr.Erase()
 		s.cellbuf.Touched = nil

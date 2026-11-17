@@ -1,9 +1,13 @@
 package rendering
 
 import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"crude/tui/bidi"
 	"crude/tui/cell"
 	"crude/tui/surface"
-	"strings"
 )
 
 // RenderToSurface parses an ANSI string and writes the cells into a surface.
@@ -49,6 +53,9 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 	curBG := cell.NoColor
 	curAttr := cell.Attrs(0)
 
+	// Each ANSI line is one label: right-to-left text in it is arranged once
+	// the whole line is written, across its style changes.
+	line := ansiLine{x: originX, y: originY}
 	var state byte
 	var link *cell.Link
 	for len(ansiStr) > 0 {
@@ -65,12 +72,22 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 			if params, ok := sgrParameters(cluster); ok {
 				parseSGR(params, &curFG, &curBG, &curAttr)
 			} else if cluster == "\n" {
+				line.flush(buf)
 				curY++
 				curX = originX
+				line = ansiLine{x: curX, y: curY}
 			} else if cluster == "\r" {
+				line.flush(buf)
 				curX = originX
+				line = ansiLine{x: curX, y: curY}
 			} else if strings.HasPrefix(cluster, "\x1b[") && strings.HasSuffix(cluster, "H") {
+				line.flush(buf)
 				curX, curY = originX, originY
+				line = ansiLine{x: curX, y: curY}
+			} else if r, _ := utf8.DecodeRuneInString(cluster); !unicode.IsControl(r) {
+				// A zero-width character such as a direction mark still takes
+				// part in the line's arrangement.
+				line.add(cluster, 0, curX)
 			}
 			continue
 		}
@@ -86,7 +103,35 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 		c := cell.NewClusterCell(cluster, dw, curFG, curBG, curAttr)
 		c.Link = link
 		buf.Set(curX, curY, c)
+		line.add(cluster, dw, curX)
 		curX += dw
+	}
+	line.flush(buf)
+}
+
+// ansiLine tracks one decoded line. It records only whether the line holds
+// right-to-left text; arrangement reads the painted cells.
+type ansiLine struct {
+	x, y     int
+	width    int
+	reorders bool
+	broken   bool
+}
+
+func (l *ansiLine) add(cluster string, width, at int) {
+	if l.broken || at != l.x+l.width {
+		l.broken = true
+		return
+	}
+	if r, _ := utf8.DecodeRuneInString(cluster); r >= 0x0590 && !l.reorders {
+		l.reorders = bidi.Triggers(r)
+	}
+	l.width += width
+}
+
+func (l *ansiLine) flush(buf *surface.CellBuffer) {
+	if l.reorders && !l.broken && l.width > 0 {
+		buf.ArrangeCells(l.x, l.y, l.width, bidi.Auto)
 	}
 }
 

@@ -1,8 +1,12 @@
 package rendering
 
 import (
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+
+	"crude/tui/bidi"
 )
 
 // CopyText is immutable semantic text from the Markdown renderer before layout.
@@ -14,6 +18,45 @@ type CopyText struct {
 	Value     string
 	Language  string
 	Code      bool
+
+	directions copyDirections
+}
+
+// copyDirections lazily records which paragraphs of a source text resolve
+// right-to-left. A CopyText is shared by every row of its block, so all of
+// those rows take one direction even when a row starts with an English word.
+type copyDirections struct {
+	once  sync.Once
+	start []int // paragraph start offsets
+	rtl   []bool
+}
+
+// RTLAt reports whether the paragraph that holds byte offset is a
+// right-to-left paragraph (UAX #9 rules P2 and P3). Code is always
+// left-to-right. A paragraph ends at a line break.
+func (t *CopyText) RTLAt(offset int) bool {
+	if t == nil || t.Code {
+		return false
+	}
+	d := &t.directions
+	d.once.Do(func() {
+		for start := 0; ; {
+			end := strings.IndexByte(t.Value[start:], '\n')
+			if end < 0 {
+				end = len(t.Value)
+			} else {
+				end += start
+			}
+			d.start = append(d.start, start)
+			d.rtl = append(d.rtl, bidi.ParagraphRTL(t.Value[start:end]))
+			if end >= len(t.Value) {
+				break
+			}
+			start = end + 1
+		}
+	})
+	i := sort.Search(len(d.start), func(i int) bool { return d.start[i] > offset }) - 1
+	return i >= 0 && d.rtl[i]
 }
 
 type CopyRange struct {

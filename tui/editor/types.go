@@ -19,6 +19,7 @@ type lineGeomCache struct {
 	widths     []int
 	totalW     int
 	whitespace *whitespaceGeometry
+	bidi       editorLineBidi
 }
 
 type EditInfo struct {

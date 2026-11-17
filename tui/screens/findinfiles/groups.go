@@ -3,6 +3,7 @@ package findinfiles
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"crude/fileio"
 	"crude/tui/cell"
@@ -331,37 +332,36 @@ func trimLeadingWhitespace(text string, positions []int) (string, []int) {
 	return string(runes[n:]), shifted
 }
 
-// writeClipped writes text left-to-right, stopping before xMax. Returns the
-// next x position.
+// writeClipped writes one label, stopping before xMax. Returns the next x
+// position.
 func writeClipped(buf *surface.CellBuffer, x, xMax, y int, text string, fg, bg cell.Color, attr cell.Attrs) int {
-	for _, r := range text {
-		w := rendering.VisibleWidth(string(r))
-		if x+w > xMax {
-			return x
-		}
-		x = buf.WriteString(x, y, string(r), fg, bg, attr)
-	}
-	return x
+	return writeHighlightedClipped(buf, x, xMax, y, text, nil, fg, fg, bg, attr, attr)
 }
 
-// writeHighlightedClipped is writeClipped with per-rune match highlighting.
-// Positions are ascending rune indices into text.
+// writeHighlightedClipped is writeClipped with match highlighting. Positions
+// are ascending rune indices into text; a grapheme is highlighted when one
+// of its runes matched. The label is arranged as one paragraph, so a
+// right-to-left path or line keeps its reading order and its highlights.
 func writeHighlightedClipped(buf *surface.CellBuffer, x, xMax, y int, text string, positions []int, fg, matchFG, bg cell.Color, attr, matchAttr cell.Attrs) int {
-	pi := 0
-	for ri, r := range []rune(text) {
-		w := rendering.VisibleWidth(string(r))
-		if x+w > xMax {
-			return x
+	start, pi, ri := x, 0, 0
+	for rest := text; len(rest) > 0; {
+		cluster, w := rendering.FirstGrapheme(rest)
+		if cluster == "" || x+w > xMax {
+			break
 		}
+		runes := utf8.RuneCountInString(cluster)
 		for pi < len(positions) && positions[pi] < ri {
 			pi++
 		}
-		if pi < len(positions) && positions[pi] == ri {
-			x = buf.WriteString(x, y, string(r), matchFG, bg, attr|matchAttr)
+		if pi < len(positions) && positions[pi] < ri+runes {
+			x = buf.WriteLogical(x, y, cluster, matchFG, bg, attr|matchAttr)
 		} else {
-			x = buf.WriteString(x, y, string(r), fg, bg, attr)
+			x = buf.WriteLogical(x, y, cluster, fg, bg, attr)
 		}
+		ri += runes
+		rest = rest[len(cluster):]
 	}
+	buf.ArrangeLabel(start, y, x, text)
 	return x
 }
 

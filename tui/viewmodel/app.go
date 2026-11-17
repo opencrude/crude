@@ -65,6 +65,7 @@ const (
 type Logger = workspace.Logger
 type App struct {
 	ws                   shellport.Workspace
+	hostBidi             hostBidi // host terminal BiDi mode (text_direction.go)
 	tuiBuildID           string
 	tuiStartedAt         time.Time
 	shellControlRevision uint64
@@ -604,6 +605,7 @@ func (m *App) SwitchProject(projectDir string) error {
 	m.finishWorkspaceSwitch(state)
 	m.editorSaves = make(map[string]*editorSaveState)
 	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+	m.applyTextDirectionSettings(m.ws.LoadAppSettings())
 	return nil
 }
 

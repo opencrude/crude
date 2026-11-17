@@ -38,6 +38,7 @@ require (
 )
 
 require (
+	github.com/go-text/typesetting v0.3.5
 	github.com/gofrs/flock v0.13.1
 	github.com/junegunn/fzf v0.65.2
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3
@@ -174,3 +175,5 @@ replace modernc.org/libc => ./third_party/modernc-libc
 replace modernc.org/memory => ./third_party/modernc-memory
 
 replace charm.land/glamour/v2 => ./third_party/glamour
+
+replace github.com/go-text/typesetting => ./third_party/typesetting

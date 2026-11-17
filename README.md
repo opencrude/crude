@@ -47,14 +47,14 @@ Crude is not a security sandbox. Agent commands run with your user permissions.
 
 ```bash
 curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh
-bash install.sh --yes
+bash install.sh
 ```
 
 **Windows x64** (PowerShell 5.1 or later):
 
 ```powershell
 Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1
-.\install.ps1 -Yes
+.\install.ps1
 ```
 
 Read the installer before you run it. To update Crude, run the same command again.
@@ -76,7 +76,9 @@ Press **Ctrl+Alt+P** to see all commands and their shortcuts. Press **Alt+F12** 
 with truecolor. Install [JetBrainsMono Nerd Font](https://www.nerdfonts.com/font-downloads)
 (NF, not NFM). Then enable **Nerd font** and **Show file icons** in
 **Settings → IDE → Interface**. To skip that setup, run the installer with `--gui`
-(`-Gui`): it adds a window that already has the terminal and the font.
+(`-Gui`): it adds a window that already has the terminal and the font. For Arabic,
+Persian or Hebrew in your own terminal, add **Crude RTL** from the release's
+`fonts/` folder as the fallback after your font.
 
 <details>
 <summary><strong>More captures</strong></summary>

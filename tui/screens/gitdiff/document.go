@@ -772,8 +772,35 @@ func (document *Document) paintSource(buf *surface.CellBuffer, x, y, width int, 
 		if document.selected(rowIndex, side, unit.Column, unit.Column+unit.Width) {
 			fg, unitFill = document.tokens.TextSelectionColors(sourceFG)
 		}
-		buf.WriteString(x+left, y, unit.Display, fg, unitFill, 0)
+		buf.WriteLogical(x+left, y, unit.Display, fg, unitFill, 0)
 	}
+	// Selection and match fills were painted at source columns; arranging
+	// right-to-left runs moves them with their characters.
+	buf.ApplyLine(x, y, source.Window(number, document.hscroll, width))
+}
+
+// sourceAt returns the source shown on one side of a row and the width of
+// its text area, as paintUnifiedLine and paintSplitLine resolve them.
+func (document *Document) sourceAt(rowIndex, side int) (diffview.SourceLines, int, int) {
+	if rowIndex < 0 || rowIndex >= document.rows.Len() {
+		return diffview.SourceLines{}, 0, 0
+	}
+	r := document.rows.At(rowIndex)
+	if r.kind != rowLine {
+		return diffview.SourceLines{}, 0, 0
+	}
+	file := &document.files[r.file]
+	half := (document.body.W - 1) / 2
+	switch side {
+	case sideOld:
+		return file.beforeSource, r.old, max(0, half-document.splitGutter())
+	case sideNew:
+		return file.afterSource, r.new, max(0, half-document.splitGutter())
+	}
+	if r.lk == lineDeleted {
+		return file.beforeSource, r.old, document.textWidth
+	}
+	return file.afterSource, r.new, document.textWidth
 }
 
 func (document *Document) actionAt(rowIndex, localX int) Op {

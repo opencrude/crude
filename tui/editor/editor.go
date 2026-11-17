@@ -65,6 +65,7 @@ type Editor struct {
 
 	secondary                    *caretSet
 	multiPaint                   multiPaintCache
+	caretScratch                 []caretCell // per-frame block caret cells (bidi.go)
 	multiDispatch, multiApplying bool
 	multiDirty                   bool
 	sourceCaret                  sourceCaretCache
@@ -227,6 +228,7 @@ type Editor struct {
 	hideLineNumbers       bool
 	syntaxColors          string
 	renderWhitespace      string
+	directionByLine       bool // lines take their own direction (bidi.go)
 	indentGuides, minimap bool
 	language              *languageFacts // catalog facts for the document path
 	mini                  minimapProjection

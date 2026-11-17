@@ -163,19 +163,27 @@ func (document *Document) sideAt(localX int) int {
 	return sideNew
 }
 
-func (document *Document) columnAt(localX, side int) int {
+func (document *Document) columnAt(rowIndex, localX, side int) int {
+	var x int
 	switch side {
 	case sideOld:
-		return max(0, localX-document.splitGutter()+document.hscroll)
+		x = localX - document.splitGutter()
 	case sideNew:
-		return max(0, localX-(document.body.W-1)/2-1-document.splitGutter()+document.hscroll)
+		x = localX - (document.body.W-1)/2 - 1 - document.splitGutter()
+	default:
+		x = localX - document.unifiedGutter()
 	}
-	return max(0, localX-document.unifiedGutter()+document.hscroll)
+	// A right-to-left run is arranged on screen; the pointer addresses the
+	// source column painted under it.
+	if source, number, width := document.sourceAt(rowIndex, side); x >= 0 && x < width {
+		x = source.Window(number, document.hscroll, width).Logical(x)
+	}
+	return max(0, x+document.hscroll)
 }
 
 func (document *Document) beginDrag(ctx ui.EventContext, rowIndex int) {
 	side := document.sideAt(ctx.LocalX)
-	at := point{row: rowIndex, column: document.columnAt(ctx.LocalX, side)}
+	at := point{row: rowIndex, column: document.columnAt(rowIndex, ctx.LocalX, side)}
 	document.selection = selection{anchor: at, end: at, side: side, active: true, dragging: true}
 }
 
@@ -186,7 +194,7 @@ func (document *Document) dragTo(ctx ui.EventContext) {
 		document.scroll.ScrollBy(1)
 	}
 	rowIndex := max(0, min(document.rows.Len()-1, document.scroll.Offset()+max(0, ctx.LocalY)))
-	document.selection.end = point{row: rowIndex, column: document.columnAt(ctx.LocalX, document.selection.side)}
+	document.selection.end = point{row: rowIndex, column: document.columnAt(rowIndex, ctx.LocalX, document.selection.side)}
 }
 
 func (document *Document) clearSelection() { document.selection = selection{} }

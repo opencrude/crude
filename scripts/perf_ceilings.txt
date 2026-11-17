@@ -18,6 +18,9 @@ BenchmarkDemoGalleryPaint_120x40 2000 60
 BenchmarkDemoGalleryHandleKeyEditCycle 80 3
 BenchmarkBlit_80x24 0 0
 BenchmarkWriteString_Line 0 0
+# Every label passes the bidi check; right-to-left labels hit the arranged-line cache.
+BenchmarkWriteStringLeftToRight 0 0
+BenchmarkWriteStringRightToLeft 16 0
 BenchmarkFlattenZOrder_Nested 2300 8
 BenchmarkFullRender_80x24 12000 6
 BenchmarkGenerateANSI_80x24 9000 2
@@ -65,6 +68,13 @@ BenchmarkSearchProjectDense/rare linux 20500000 9600
 BenchmarkSearchProjectDense/suggestions linux 21300000 24100
 BenchmarkProjectSearchSelection/10 linux 71000 930
 BenchmarkProjectSearchSelection/1000 linux 65000 860
+# Native Windows measurements (2026-11-17, GOMAXPROCS=2, four samples:
+# 17.0-17.1 MB/7478-7491, 18.1 MB/21540, 58.8 kB/772, 54.5 kB/713).
+BenchmarkSearchProjectDense/absent windows 19700000 8500
+BenchmarkSearchProjectDense/rare windows 19700000 8500
+BenchmarkSearchProjectDense/suggestions windows 20900000 24100
+BenchmarkProjectSearchSelection/10 windows 67000 870
+BenchmarkProjectSearchSelection/1000 windows 62000 800
 # Scenario benches (tui/viewmodel): steady-state work budgets.
 BenchmarkIdleTick_200Msgs 15000 325
 BenchmarkTabRederive_80Msgs 14000 300

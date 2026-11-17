@@ -2,6 +2,7 @@ package editor
 
 import (
 	"crude/indentation"
+	"crude/tui/bidi"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/types"
@@ -29,6 +30,11 @@ func (e *Editor) SetPresentation(settings types.EditorSettings) {
 		view.renderWhitespace = settings.RenderWhitespace
 		view.indentGuides = settings.IndentGuides
 		view.setMinimap(settings.Minimap)
+		direction := bidi.LeftToRight
+		if settings.TextDirectionOrDefault() == types.EditorTextDirectionByLine {
+			direction = bidi.Auto
+		}
+		view.SetTextDirection(direction)
 	})
 }
 

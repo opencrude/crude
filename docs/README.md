@@ -123,6 +123,9 @@ documents to read before changing each area.
   and where it lives in the code.
 - [Terminal display width](reference/terminal-width.md) — the canonical Unicode
   column-measurement contract.
+- [Right-to-left and bidirectional text](reference/bidi.md) — UAX #9
+  arrangement, Arabic joining, caret, pointer and selection mapping, terminal
+  rows, host BiDi mode and the right-to-left settings.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
   and allocation numbers, CI-enforced ceilings and `CRUDE_PERF_LOG`.
 - [Design token bypasses](reference/design-token-bypasses.md) — the frozen

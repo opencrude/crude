@@ -7,6 +7,24 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Right-to-left arrangement (2026-11-17)
+
+Every label passes the right-to-left check; left-to-right text never builds a
+layout. `BenchmarkWriteStringLeftToRight` (mixed ASCII, symbols and CJK) and
+`BenchmarkWriteStringRightToLeft` (a Persian label hitting the arranged-line
+cache) both allocate nothing; their ceilings are 0 B/0 allocs and 16 B/0
+allocs (pooled scratch after a GC).
+
+The editor first asked for each painted row's line geometry a second time to
+decide whether the row needs arranging. `PieceTable.Line` copies the line, so
+dense editor frames gained one allocation per row (`EditorOrientation`
+83 → 123 allocs/op). The arrangement now remembers, per line text, whether the
+line can reorder, and line geometry reads a buffer view instead of a copy.
+Native Windows, GOMAXPROCS=2, before the bidi work → now: `EditorOrientation/200`
+83 → 43 allocs, `WrappedEditorWorkload/200` 36 → 12,
+`SemanticEditingDense/semanticfalse/paint` 141 → 101,
+`MultipleCaretStages/1/paint` 133 → 93 allocs/op.
+
 ## Find in Files scan and navigation (2026-11-16)
 
 The user reported slow project search. The real checkout reproduced 5.69–6.08 s
@@ -1879,6 +1897,8 @@ when measured time moves materially:
 | `DemoGalleryHandleKeyEditCycle` | 750 ns/op |
 | `Blit_80x24` | 15,000 ns/op |
 | `WriteString_Line` | 5,000 ns/op |
+| `WriteStringLeftToRight` | 6,000 ns/op |
+| `WriteStringRightToLeft` | 20,000 ns/op |
 | `FlattenZOrder_Nested` | 1,500 ns/op |
 | `FullRender_80x24` | 175,000 ns/op |
 | `GenerateANSI_80x24` | 70,000 ns/op |

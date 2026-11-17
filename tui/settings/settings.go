@@ -384,6 +384,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.SegmentedFieldState("render-whitespace", "Show whitespace", []ui.FormOption{{ID: "none", Label: "Never"}, {ID: "boundary", Label: "At edges"}, {ID: "all", Label: "Always"}}, editor.RenderWhitespace, "Draw spaces and tabs. At edges shows only leading and trailing whitespace."),
 			ui.BoolFieldState("indent-guides", "Indent guides", editor.IndentGuides, "Show lines at each indentation step."),
 			ui.BoolFieldState("minimap", "Minimap", editor.Minimap, "Show a compact source map when the pane has room."),
+			ui.SegmentedFieldState("text-direction", "Line direction", []ui.FormOption{{ID: types.EditorTextDirectionLTR, Label: "Left to right"}, {ID: types.EditorTextDirectionByLine, Label: "By line"}}, editor.TextDirectionOrDefault(), "By line shows a line that starts with Arabic, Persian or Hebrew from right to left. Use it for prose; code reads left to right."),
 			ui.SeparatorFieldState("indentation", "Indentation"),
 			ui.SegmentedFieldState("indent-style", "Indent with", []ui.FormOption{{ID: "auto", Label: "Detect"}, {ID: "space", Label: "Spaces"}, {ID: "tab", Label: "Tabs"}}, defaultString(editor.IndentStyle, "auto"), "EditorConfig and this file's choices take priority."),
 			ui.NumberFieldState("indent-size", "Indent size", editor.IndentSize, "columns", "Use 0 to detect from text, or 1 to 32 columns."),
@@ -394,7 +395,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.BoolFieldState("format-on-save", "Format on manual save", editor.FormatOnSave, "Format explicit saves only. Automatic saves always preserve the exact text you typed."),
 		)},
 		{Name: "Code Intelligence", Group: "IDE", Description: "Completions, navigation and diagnostics from language servers, and how much they may use.", Form: m.buildLSPForm(lsp)},
-		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, diagnostics, and attachment opening.", Form: formModel(
+		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, diagnostics, attachment opening, and right-to-left text.", Form: formModel(
 			ui.SeparatorFieldState("workspace-chrome", "Layout"),
 			ui.SegmentedFieldState("context-help", "Shortcut hints", []ui.FormOption{{ID: "compact", Label: "Compact"}, {ID: "expanded", Label: "Expanded"}, {ID: "off", Label: "Off"}}, defaultString(uiSettings.ContextHelp, "compact"), "Shortcuts for the focused area, shown at the top of the window. Full Help (F1) is always available."),
 			ui.NumberFieldState("sidebar-width", "Sidebar width", uiSettings.SidebarWidth, "columns", "Width of the file and workspace navigation sidebar."),
@@ -404,6 +405,16 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 				{ID: types.AttachmentOpenFileManager, Label: "File manager"},
 				{ID: types.AttachmentOpenCrude, Label: "Crude"},
 			}, uiSettings.AttachmentOpenOrDefault(), "Crude uses terminal graphics when supported; otherwise a low-resolution preview."),
+			ui.SeparatorFieldState("right-to-left-text", "Right-to-left text"),
+			ui.SegmentedFieldState("right-to-left", "Arrange", []ui.FormOption{
+				{ID: types.RightToLeftArrange, Label: "Join letters"},
+				{ID: types.RightToLeftUnjoined, Label: "Separate letters"},
+				{ID: types.RightToLeftTerminal, Label: "Terminal"},
+			}, uiSettings.RightToLeftOrDefault(), "Crude puts Arabic, Persian and Hebrew text in reading order. Use Separate letters if your font shows boxes. Use Terminal only if your terminal puts this text in order itself."),
+			ui.SegmentedFieldState("caret-movement", "Arrow keys", []ui.FormOption{
+				{ID: types.CaretMovementVisual, Label: "Move on screen"},
+				{ID: types.CaretMovementLogical, Label: "Follow text order"},
+			}, uiSettings.CaretMovementOrDefault(), "In right-to-left text, Left and Right move the caret to the next cell on that side, or to the next character in the text."),
 			ui.SeparatorFieldState("workspace-tree", "File tree"),
 			ui.BoolFieldState("show-hidden", "Hidden files", uiSettings.ShowHiddenFilesOrDefault(), "Include dotfiles in the workspace tree."),
 			ui.BoolFieldState("show-icons", "File icons", uiSettings.ShowIcons, "Show file-type icons beside names."),
@@ -2937,6 +2948,7 @@ func (m *Model) collectEditor(cfg *types.EditorSettings) {
 	cfg.Minimap = m.value(catEditor, "minimap") == "on"
 	cfg.IndentSize = parseOpt(m.value(catEditor, "indent-size"), 0)
 	cfg.NewFileEncoding = textencoding.FromKey(m.value(catEditor, "new-file-encoding"))
+	cfg.TextDirection = explicitChoice(m.value(catEditor, "text-direction"), types.EditorTextDirectionLTR)
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {
@@ -2952,7 +2964,18 @@ func (m *Model) collectUI(cfg *types.UISettings) {
 	cfg.ShowDiagnostics = m.value(catUI, "diagnostics") == "on"
 	cfg.ContextHelp = defaultString(m.value(catUI, "context-help"), "compact")
 	cfg.AttachmentOpen = m.value(catUI, "attachment-open")
+	cfg.RightToLeft = explicitChoice(m.value(catUI, "right-to-left"), types.RightToLeftArrange)
+	cfg.CaretMovement = explicitChoice(m.value(catUI, "caret-movement"), types.CaretMovementVisual)
 	m.collectDesktopNotifications(&cfg.DesktopNotifications)
+}
+
+// explicitChoice stores the default choice as absent, so it keeps
+// inheriting the default instead of pinning it.
+func explicitChoice(value, fallback string) string {
+	if value == fallback {
+		return ""
+	}
+	return value
 }
 
 func defaultString(value, fallback string) string {

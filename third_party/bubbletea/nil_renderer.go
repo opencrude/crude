@@ -47,6 +47,12 @@ func (n nilRenderer) setSyncdUpdates(bool) {}
 // setWidthMethod implements the Renderer interface.
 func (n nilRenderer) setWidthMethod(ansi.Method) {}
 
+// setHostBidi implements the Renderer interface.
+func (n nilRenderer) setHostBidi(bool) {}
+
+// hostBidiReport implements the Renderer interface.
+func (n nilRenderer) hostBidiReport(ansi.ModeSetting) {}
+
 // onMouse implements the Renderer interface.
 func (n nilRenderer) onMouse(MouseMsg) Cmd {
 	return nil

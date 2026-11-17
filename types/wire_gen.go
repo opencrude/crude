@@ -4327,8 +4327,8 @@ func (z EditorPredictionProtocol) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *EditorSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 13
-	o = append(o, 0x9d)
+	// array header, size 14
+	o = append(o, 0x9e)
 	o = msgp.AppendString(o, z.IndentStyle)
 	o = msgp.AppendInt(o, z.IndentSize)
 	o = msgp.AppendInt(o, z.TabSize)
@@ -4346,6 +4346,7 @@ func (z *EditorSettings) MarshalMsg(b []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "NewFileEncoding")
 		return
 	}
+	o = msgp.AppendString(o, z.TextDirection)
 	return
 }
 
@@ -4361,8 +4362,8 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 13 {
-		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
+	if zb0001 != 14 {
+		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
 		return
 	}
 	z.IndentStyle, bts, err = msgp.ReadStringBytes(bts)
@@ -4434,13 +4435,18 @@ func (z *EditorSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "NewFileEncoding")
 		return
 	}
+	z.TextDirection, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TextDirection")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *EditorSettings) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.IndentStyle) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize + z.NewFileEncoding.Msgsize()
+	s = 1 + msgp.StringPrefixSize + len(z.IndentStyle) + msgp.IntSize + msgp.IntSize + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.SyntaxTheme) + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(string(z.AutoSave)) + msgp.IntSize + msgp.StringPrefixSize + len(z.RenderWhitespace) + msgp.BoolSize + z.NewFileEncoding.Msgsize() + msgp.StringPrefixSize + len(z.TextDirection)
 	return
 }
 
@@ -12387,8 +12393,8 @@ func (z StatusSeverity) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *TerminalSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 7
-	o = append(o, 0x97)
+	// array header, size 8
+	o = append(o, 0x98)
 	o = msgp.AppendString(o, z.Shell)
 	o = msgp.AppendString(o, z.Command)
 	if z.Args == nil { // allownil: if nil
@@ -12411,6 +12417,7 @@ func (z *TerminalSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	}
 	o = msgp.AppendInt(o, z.ScrollbackLines)
 	o = msgp.AppendString(o, z.Placement)
+	o = msgp.AppendString(o, z.RightToLeft)
 	return
 }
 
@@ -12426,8 +12433,8 @@ func (z *TerminalSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 7 {
-		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+	if zb0001 != 8 {
+		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
 		return
 	}
 	z.Shell, bts, err = msgp.ReadStringBytes(bts)
@@ -12520,6 +12527,11 @@ func (z *TerminalSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Placement")
 		return
 	}
+	z.RightToLeft, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "RightToLeft")
+		return
+	}
 	o = bts
 	return
 }
@@ -12537,7 +12549,7 @@ func (z *TerminalSettings) Msgsize() (s int) {
 			s += msgp.StringPrefixSize + len(za0002) + msgp.StringPrefixSize + len(za0003)
 		}
 	}
-	s += msgp.IntSize + msgp.StringPrefixSize + len(z.Placement)
+	s += msgp.IntSize + msgp.StringPrefixSize + len(z.Placement) + msgp.StringPrefixSize + len(z.RightToLeft)
 	return
 }
 
@@ -12917,8 +12929,8 @@ func (z *TurnIdentity) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *UISettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 12
-	o = append(o, 0x9c)
+	// array header, size 14
+	o = append(o, 0x9e)
 	o = msgp.AppendInt(o, z.SidebarWidth)
 	if z.ShowHiddenFiles == nil {
 		o = msgp.AppendNil(o)
@@ -12939,6 +12951,8 @@ func (z *UISettings) MarshalMsg(b []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "DesktopNotifications")
 		return
 	}
+	o = msgp.AppendString(o, z.RightToLeft)
+	o = msgp.AppendString(o, z.CaretMovement)
 	return
 }
 
@@ -12954,8 +12968,8 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 12 {
-		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+	if zb0001 != 14 {
+		err = msgp.ArrayError{Wanted: 14, Got: zb0001}
 		return
 	}
 	z.SidebarWidth, bts, err = msgp.ReadIntBytes(bts)
@@ -13029,6 +13043,16 @@ func (z *UISettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "DesktopNotifications")
 		return
 	}
+	z.RightToLeft, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "RightToLeft")
+		return
+	}
+	z.CaretMovement, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CaretMovement")
+		return
+	}
 	o = bts
 	return
 }
@@ -13041,7 +13065,7 @@ func (z *UISettings) Msgsize() (s int) {
 	} else {
 		s += msgp.BoolSize
 	}
-	s += msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp) + msgp.StringPrefixSize + len(z.AttachmentOpen) + z.DesktopNotifications.Msgsize()
+	s += msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.IntSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.ContextHelp) + msgp.StringPrefixSize + len(z.AttachmentOpen) + z.DesktopNotifications.Msgsize() + msgp.StringPrefixSize + len(z.RightToLeft) + msgp.StringPrefixSize + len(z.CaretMovement)
 	return
 }
 

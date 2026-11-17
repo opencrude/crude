@@ -42,7 +42,7 @@ main() (
         cat <<'EOF'
 Usage: bash install.sh [options]
 
-  --yes                 Accept the warning and use the defaults. No prompt.
+  --yes                 Use the defaults. No questions.
   --gui, --no-gui       Add or skip the GUI version.
   --stop, --no-stop     Stop or keep a running Crude while updating.
   --version vX.Y.Z      Install one exact release. Prereleases are allowed.
@@ -112,9 +112,11 @@ EOF
     say 'Crude is in active development. It changes files and runs commands.'
     say 'Bugs and agent mistakes can lose work. Commit and back up important work.'
     say ''
-    if ((accept == 0)); then
+    # Only a person at a terminal is asked. An unattended install continues;
+    # --yes only skips the question.
+    if ((accept == 0)) && [[ -t 0 && -t 2 ]]; then
         if ! ask 'Install anyway?' n; then
-            die 'you did not accept the warning. Add --yes to accept it, or run this command in a terminal window'
+            die 'you did not accept the warning'
         fi
     fi
 
@@ -191,6 +193,9 @@ EOF
     window_lua="$window_root/wezterm.lua"
     window_launcher="$install_dir/crude-window"
     fonts_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/JetBrainsMonoNerdFont"
+    # Crude RTL draws Arabic, Persian and Hebrew in the window's cells. It
+    # ships with each release, so every install refreshes it.
+    rtl_fonts_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/CrudeRTL"
 
     # decide_window sets install, update or skip before anything is downloaded,
     # so the question never waits behind a long transfer.
@@ -302,6 +307,14 @@ EOF
         fi
     }
 
+    install_window_rtl_font() {
+        compgen -G "$stage/fonts/CrudeRTL-*.ttf" >/dev/null || return 0
+        mkdir -p -- "$rtl_fonts_dir"
+        cp -f -- "$stage"/fonts/CrudeRTL-*.ttf "$stage/fonts/LICENSE-DejaVu" "$rtl_fonts_dir"/ 2>/dev/null ||
+            { warn 'Font' 'right-to-left text may look wrong'; return 0; }
+        if command -v fc-cache >/dev/null; then fc-cache --force >/dev/null 2>&1 || true; fi
+    }
+
     write_window_files() {
         # One configuration, rewritten on every run so an update also refreshes
         # the window settings.
@@ -320,7 +333,8 @@ end)
 
 return {
     default_prog = { '$install_dir/crude' },
-    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'monospace' },
+    -- Crude RTL draws the right-to-left scripts Crude arranges itself.
+    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'Crude RTL', 'monospace' },
     font_size = 13.0,
     window_decorations = 'TITLE | RESIZE',
     -- A sane size when the window manager cannot maximise; the handler below
@@ -407,6 +421,7 @@ LAUNCH
         # The new copy is in place, so the older pins can go.
         prune_window_versions
         install_window_fonts
+        install_window_rtl_font
         write_window_files || return 1
         ok 'Window' 'Crude is in your application menu'
     }
@@ -465,7 +480,7 @@ LAUNCH
         [[ "$member" != /* && "/$member/" != *'/../'* && "$member" != *$'\r'* ]] || die 'the release archive contains an unsafe path'
         case "$member" in
             crude) binary_count=$((binary_count + 1)) ;;
-            LICENSE-MIT|LICENSE-APACHE|README.md|crude-icon.png|crude-icon.svg|crude-icon.ico|licenses|licenses/|licenses/*) ;;
+            LICENSE-MIT|LICENSE-APACHE|README.md|crude-icon.png|crude-icon.svg|crude-icon.ico|licenses|licenses/|licenses/*|fonts|fonts/|fonts/*) ;;
             *) die "the release archive holds an unexpected file: $member" ;;
         esac
     done < "$work/members"

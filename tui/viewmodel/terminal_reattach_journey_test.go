@@ -2,6 +2,8 @@ package viewmodel
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -15,14 +17,38 @@ import (
 	"crude/workspace"
 )
 
+// TestTerminalEchoChild is the program of the retained terminals below when
+// the test binary re-executes itself: it prints a marker line and copies its
+// input to its output, like `printf marker; exec cat`, on every platform.
+func TestTerminalEchoChild(t *testing.T) {
+	args := os.Args
+	if len(args) < 3 || args[len(args)-2] != "crude-echo-child" {
+		return
+	}
+	fmt.Print(args[len(args)-1] + "\r\n")
+	_, _ = io.Copy(os.Stdout, os.Stdin)
+	os.Exit(0)
+}
+
+// echoTerminal describes a terminal that runs TestTerminalEchoChild.
+func echoTerminal(t *testing.T, marker string, rows int) *workspace.TerminalCreateOpts {
+	t.Helper()
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &workspace.TerminalCreateOpts{Command: bin, Args: []string{"-test.run=^TestTerminalEchoChild$", "--", "crude-echo-child", marker}, Cols: 80, Rows: rows}
+}
+
 // retainedTerminal creates a real PTY through a core connection that is not a
-// shell, like a terminal started by an earlier window. cat echoes typed lines.
+// shell, like a terminal started by an earlier window. The child echoes typed
+// lines.
 func retainedTerminal(t *testing.T, call func(string, string, any) coreprotocol.Response, root string) string {
 	t.Helper()
 	if got := call("attach", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}); got.Error != nil {
 		t.Fatal(got.Error)
 	}
-	created := call("create", coreprotocol.TerminalCreate, &workspace.TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", "printf 'OUTPUT-BEFORE-CLOSE\\n'; exec cat"}, Cols: 80, Rows: 8})
+	created := call("create", coreprotocol.TerminalCreate, echoTerminal(t, "OUTPUT-BEFORE-CLOSE", 8))
 	var info workspace.TerminalInfo
 	if created.Error != nil || coreprotocol.Decode(created.Payload, &info) != nil || info.ID == "" {
 		t.Fatalf("create: %+v", created)
@@ -208,7 +234,7 @@ func TestConnectedReattachedShellRestoresEveryRetainedTerminal(t *testing.T) {
 	const count = 24
 	ids := make([]string, count)
 	for i := range count {
-		created := call(fmt.Sprintf("create-%d", i), coreprotocol.TerminalCreate, &workspace.TerminalCreateOpts{Command: "/bin/sh", Args: []string{"-c", fmt.Sprintf("printf 'BUFFER-%02d\\n'; exec cat", i)}, Cols: 80, Rows: 6})
+		created := call(fmt.Sprintf("create-%d", i), coreprotocol.TerminalCreate, echoTerminal(t, fmt.Sprintf("BUFFER-%02d", i), 6))
 		var info workspace.TerminalInfo
 		if created.Error != nil || coreprotocol.Decode(created.Payload, &info) != nil {
 			t.Fatalf("create %d: %+v", i, created)
