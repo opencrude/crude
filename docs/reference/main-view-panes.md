@@ -507,6 +507,38 @@ next tick finally synced.
   from the tick path.
 - Guarded by `tui/viewmodel/agent_new_session_focus_test.go`.
 
+## Ask Crude opens the chat beside the code
+
+Ask Crude (`tui/viewmodel/ask_crude.go`) puts the editor's code into an agent
+chat in a pane beside it. The chat is the ordinary agent tab; there is no
+second chat surface. Each decision reads the current layout from
+`window.Window`, so it cannot disagree with the pane owner, and nothing about
+the layout is cached between asks.
+
+- **Which chat.** A pane other than the editor's whose selected tab is a root
+  agent with a composer (never the workspace Aeron): the agent the user
+  focused last, then the nearest neighbor (right, below, left, above), then
+  the first in layout order. **Ask in a new chat**, or no visible chat, makes
+  a new session. Prepared prompts (Explain, Fix) use only an idle chat, so
+  they never steer a running turn.
+- **Where a new chat goes**, when its tab reaches this shell: a pane that
+  shows a chat; else the editor's right neighbor; else a split to the right
+  when the editor's pane has at least 109 columns; else a split below when it
+  has at least 29 rows; else any neighbor; else a tab in the editor's pane.
+  Splits use `placeTabSplit`, the same preview, minimum sizes and focus as a
+  dragged tab (`splitMainPane` reports the room problem for direct splits;
+  Ask Crude falls through silently). A floating window's pane is never split.
+- **Moving the new tab** uses `Window.MoveTabToGroup` / `PlaceTab`, which
+  restore the previous selection of the pane the tab left, so the editor keeps
+  showing the code.
+- **Lifecycle.** Session creation, reference creation and the save run off
+  Update; each result carries the workspace generation. A new chat on a
+  connected core is placed when its agent arrives (`addOrchestrator` calls
+  `finishAskChat`). Chips wait while the chat's saved draft is still loading,
+  because a draft that changes first would discard its saved text
+  (`flushAskChips` runs from `applyComposerDraft`).
+- Guarded by `tui/viewmodel/ask_crude_test.go`.
+
 ## Git and local comparisons
 
 ### Large files and Git LFS

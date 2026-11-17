@@ -1367,7 +1367,7 @@ The user has three choices and one verb.
 |---|---|---|
 | Trust (per workspace) | Restricted, Trusted | Project execution, network, acquisitions and external tools still obey their own effect, source and approval policy |
 | Strictness | Project checks, Strict, Errors only | Which producers count, and at what severity; a check is labelled by what it actually ran |
-| Aeron | Off, Light, Full | Ghost text and next-edit prediction within a token budget |
+| Aeron suggestions | Off, When I ask, As I type | Proposed in [Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md); today's Settings still say Off, Light, Full |
 
 The verb: point at a diagnostic, group, file or folder and choose an action,
 or say what you want.
@@ -1462,29 +1462,10 @@ operation with a reason rather than silently applying a partial rename.
 
 ### Aeron in the editor
 
-- Fill-in-the-middle requests go through the narrowest provider adapter:
-  DeepSeek's FIM endpoint, Codestral FIM, or an OpenAI-compatible
-  `/v1/completions` call with a suffix for local servers. Where no FIM endpoint
-  exists, Crude falls back to a chat prompt. Prompt text lives in `prompt/`.
-- Context comes from facts, not whole files: the enclosing scope, signatures of
-  referenced symbols, imports, nearby diagnostics and recent edits, capped at
-  about 2,000 tokens to start.
-- A request starts after a pause tuned to the connection's measured latency.
-  Each editor has at most one request in flight. The next keystroke cancels
-  it. Results are cached by context digest. No request starts when the local
-  popup already has an exact match.
-- Cost estimate: 2,000 input tokens × about 400 requests in an active hour ≈
-  0.8M input tokens per hour. The budget caps this, caching and typed-through
-  suggestions reduce it, and the meter shows it.
-- Next-edit prediction uses the same path, with edit history from editor
-  transactions as context.
-- **Explain** is a one-shot request. **Fix** produces a patch, shows a preview
-  and applies it as an editor transaction with a Local History snapshot. **Fix
-  all** for one rule in one scope goes to an agent that verifies its work
-  through Insight deltas.
-- Aeron can be a local server. JetBrains runs 100M-parameter per-language
-  models on the CPU for full-line completion, so a small local model is a
-  valid tool for Crude to acquire like any other.
+Moved on 2026-11-18 to [Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md),
+which owns editor AI suggestions, their context, presentation, providers and
+budget, and Ask Crude (Explain and Fix included). This plan still owns the
+language-server facts that those features consume.
 
 ### Unknown languages
 
@@ -1689,9 +1670,8 @@ apply G0–G4 from [human-workflow acceptance](ide-workflow-acceptance.md#promot
 5. **Policy and control.** Add presets, reversible rule previews, `/insight`
    and explicit configuration export. A policy change re-filters without
    running a tool; incomplete and non-comparable baselines stay labelled.
-6. **Aeron in the editor.** Add FIM adapters, ghost text, next edit, explain,
-   fix, fix all and a budget meter. No keystroke waits on Aeron; cancellation,
-   privacy/consent, exact edit preconditions and spending are tested.
+6. **Aeron in the editor.** Owned by
+   [Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md).
 7. **Remote data gathering, scale and extended insight.** Only after the
    complete required local workflow passes, stage the exact verified candidate
    on an authorized private remote core, replay medium projects, then progress

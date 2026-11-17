@@ -174,9 +174,11 @@ func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
 	}
 	if msg.err != nil {
 		m.composerDraftErr = msg.err
+		m.flushAskChips(msg.session, true)
 		return
 	}
 	owner.loading = false
+	defer m.flushAskChips(msg.session, false)
 	store := m.RefStore()
 	text := msg.text
 	if store != nil {

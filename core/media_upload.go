@@ -11,6 +11,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/history"
+	"crude/sessiondb"
 	"crude/workspace"
 )
 
@@ -152,7 +153,9 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 		}
 		switch in.Purpose {
 		case coreprotocol.ReferenceUploadCreate:
-			if in.Create == nil || len(in.Create.Data) != 0 || in.Create.ServerPath != "" || in.ID != "" || in.Revision != "" || in.OriginalDigest != "" {
+			// Only a code selection names a server file beside its uploaded text.
+			if in.Create == nil || len(in.Create.Data) != 0 || in.Create.ServerPath != "" && in.Create.Kind != sessiondb.KindCodeSelection ||
+				in.ID != "" || in.Revision != "" || in.OriginalDigest != "" {
 				return nil, errors.New("invalid upload creation metadata")
 			}
 			copy := *in.Create

@@ -124,7 +124,10 @@ func (r *References) CreateReference(req sessiondb.CreateRequest) (sessiondb.Ref
 		}
 		data = req.Data
 	}
-	if req.FilePath != "" {
+	if req.Kind == sessiondb.KindCodeSelection {
+		// The path names the file on the core; the captured lines travel as text.
+		create.ServerPath = req.FilePath
+	} else if req.FilePath != "" {
 		if data, err = os.ReadFile(req.FilePath); err != nil {
 			return sessiondb.Reference{}, err
 		}

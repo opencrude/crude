@@ -383,7 +383,10 @@ may not release a project-scoped producer: name that distinction rather than
 promising it always frees a slot. Test mixed projects, many workspaces, retained
 old generations, low quotas, crashes, restart and thread/memory hints.
 
-AI suggestions remain separate from deterministic completion. Reuse existing
+AI suggestions and Ask Crude are designed and tracked in
+[Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md); the
+rules below still apply. AI suggestions remain separate from deterministic
+completion. Reuse existing
 prediction budget, source snapshot, cancellation and ghost projection owners.
 Require the established workspace consent and positive budget before transmission;
 local models still need an explicit resource/configuration path. Label next-edit

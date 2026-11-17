@@ -130,6 +130,10 @@ func (m *App) openAttachmentIn(id, destination string) tea.Cmd {
 	if !ok || !ref.Active() || m.ActiveSession == nil || ref.SessionID != m.ActiveSession.SessionID {
 		return nil
 	}
+	// Asked code opens at its place in the source; only Reveal leaves Crude.
+	if start, _, lines := ref.CodeLines(); lines && destination != types.AttachmentOpenFileManager {
+		return m.openSourceLocation(ref.FilePath, start, 1)
+	}
 	return m.openReferenceIn(ref, false, destination)
 }
 

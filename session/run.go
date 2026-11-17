@@ -2032,6 +2032,12 @@ referencesLoop:
 			if (ref.Kind == sessiondb.KindMCPTool || ref.Kind == sessiondb.KindMCPContext) && ref.Title == "" {
 				return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected MCP reference %q has no exact source identity; restore its preview before Continue", id)
 			}
+		case sessiondb.KindCodeSelection:
+			// Captured lines may be empty for a range too large to attach; the
+			// agent text then names the lines to read.
+			if ref.FilePath == "" {
+				return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected code reference %q has no file path; reselect the code before Continue", id)
+			}
 		case sessiondb.KindPastedImage, sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile:
 			var info os.FileInfo
 			if ref.FilePath != "" && (ref.Kind == sessiondb.KindPastedImage || ref.Content == "") {

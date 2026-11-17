@@ -293,9 +293,10 @@ func TestReferenceStore_CreateReference_CustomLabelCollision(t *testing.T) {
 	if ref2.Label == "[Pasted Text1]" {
 		t.Errorf("custom colliding label should be uniquified, got %q", ref2.Label)
 	}
-	// Should have a numeric suffix
-	if ref2.Label != "[Pasted Text11]" {
-		t.Errorf("expected [Pasted Text11], got %q", ref2.Label)
+	// A separate number, as Rename uses: "[a.go:11-21 2]", never a digit
+	// glued to the label that reads as a different line ("[a.go:11-212]").
+	if ref2.Label != "[Pasted Text1 2]" {
+		t.Errorf("expected [Pasted Text1 2], got %q", ref2.Label)
 	}
 }
 

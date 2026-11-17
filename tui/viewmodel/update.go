@@ -370,6 +370,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case remoteSessionReadyMsg:
 		return m, m.applyRemoteSession(msg)
+	case askReferenceMsg:
+		return m, m.applyAskReference(msg)
 	case types.OperationIssueMsg:
 		m.presentOperationIssue(msg.Issue)
 		return m, nil

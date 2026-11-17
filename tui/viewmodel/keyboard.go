@@ -423,6 +423,8 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.requestSignatureHelpCmd()
 			case "lsp.codeActions":
 				return m, m.requestCodeActionsCmd()
+			case "ai.ask":
+				return m, tea.Batch(m.askCrude(askAttach, false, "")...)
 			case "edit.format":
 				return m, m.requestActiveEditorFormat()
 			case "edit.formatProject":

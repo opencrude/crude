@@ -683,6 +683,8 @@ var defaultActions = []*ActionDef{
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "alt+;"}}, HintKey: "Alt+;"},
 	{ID: "lsp.signature", Label: "Parameter Information", Description: "inspect the callable signature and active parameter at the editor cursor",
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "alt+i"}, {Key: "ctrl+shift+space"}}, HintKey: "Alt+I"},
+	{ID: "ai.ask", Label: "Ask Crude", Description: "ask about the code in the chat beside it",
+		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: AskCrudeChord}}, HintKey: AskCrudeChord},
 	{ID: "lsp.codeActions", Label: "Code Actions", Description: "inspect edit-only language actions for the saved editor source and selection",
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: CodeActionsChord}}, HintKey: CodeActionsChord},
 	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart enabled servers for open editor documents", Icon: "↻", Category: "App"},

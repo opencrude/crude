@@ -128,3 +128,38 @@ func TestReferenceUploadQuotaDigestDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Ask Crude sends the asked lines as uploaded text and names the source file;
+// the upload path must keep that path (a capture found it refused).
+func TestReferenceUploadCreatesCodeSelectionWithItsFile(t *testing.T) {
+	m := NewReferenceUploads(t.TempDir())
+	t.Cleanup(func() { _ = m.Close() })
+	s := workspace.NewReferenceStore("s", t.TempDir(), nil)
+	owner := coreprotocol.Owner{ClientID: "client", Epoch: 1}
+	run := func(method string, in coreprotocol.ReferenceUploadCommand) (any, error) {
+		return m.run(context.Background(), owner, "workspace", s, method, in)
+	}
+	data := []byte("func A() {}\nfunc B() {}")
+	create := &coreprotocol.ReferenceCreateRequest{Kind: sessiondb.KindCodeSelection, Label: "[a.go:3-4]", Title: "a.go:3-4", Mime: "text/plain", ServerPath: "/w/a.go"}
+	value, err := run(coreprotocol.ReferenceUploadBegin, coreprotocol.ReferenceUploadCommand{SessionID: "s", Purpose: coreprotocol.ReferenceUploadCreate, Size: int64(len(data)), Digest: contentDigest(data), Create: create})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := value.(coreprotocol.ReferenceUploadResult).UploadID
+	if _, err = run(coreprotocol.ReferenceUploadChunk, coreprotocol.ReferenceUploadCommand{SessionID: "s", UploadID: id, Data: data}); err != nil {
+		t.Fatal(err)
+	}
+	value, err = run(coreprotocol.ReferenceUploadCommit, coreprotocol.ReferenceUploadCommand{SessionID: "s", UploadID: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := value.(*coreprotocol.ReferenceView).Reference
+	if ref.Kind != sessiondb.KindCodeSelection || ref.FilePath != "/w/a.go" || ref.Content != string(data) || ref.DisplayName() != "[a.go:3-4]" {
+		t.Fatalf("code selection = %+v", ref)
+	}
+	other := *create
+	other.Kind = sessiondb.KindPastedText
+	if _, err = run(coreprotocol.ReferenceUploadBegin, coreprotocol.ReferenceUploadCommand{SessionID: "s", Purpose: coreprotocol.ReferenceUploadCreate, Size: int64(len(data)), Digest: contentDigest(data), Create: &other}); err == nil {
+		t.Fatal("pasted text may not name a server file")
+	}
+}

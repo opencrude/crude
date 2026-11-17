@@ -39,6 +39,11 @@ const (
 	ReplaceAllChord      = "chord:replace-all"
 	EditorLineBelowChord = "chord:editor-line-below"
 	EditorLineAboveChord = "chord:editor-line-above"
+	// AskCrudeChord asks Crude about the editor's code. Ctrl+I reaches the
+	// application only where keys are disambiguated (otherwise it is Tab), so
+	// Ctrl+K works everywhere and the caption names Ctrl+I only when it
+	// arrives.
+	AskCrudeChord = "chord:ask-crude"
 )
 
 // KeyboardProfile records which modified Enter chords reach the application.
@@ -47,6 +52,9 @@ type KeyboardProfile struct {
 	ModifiedEnter bool
 	// AltEnterReserved: the hosting terminal consumes Alt+Enter itself.
 	AltEnterReserved bool
+	// KeyDisambiguation: the terminal confirmed the kitty keyboard protocol,
+	// so Ctrl+I arrives apart from Tab.
+	KeyDisambiguation bool
 }
 
 // DetectKeyboardProfile derives the startup profile from the platform and
@@ -73,6 +81,7 @@ var (
 const (
 	profileModifiedEnter uint32 = 1 << iota
 	profileAltEnterReserved
+	profileKeyDisambiguation
 )
 
 func init() {
@@ -83,8 +92,9 @@ func init() {
 func CurrentKeyboardProfile() KeyboardProfile {
 	bits := keyboardProfileBits.Load()
 	return KeyboardProfile{
-		ModifiedEnter:    bits&profileModifiedEnter != 0,
-		AltEnterReserved: bits&profileAltEnterReserved != 0,
+		ModifiedEnter:     bits&profileModifiedEnter != 0,
+		AltEnterReserved:  bits&profileAltEnterReserved != 0,
+		KeyDisambiguation: bits&profileKeyDisambiguation != 0,
 	}
 }
 
@@ -97,6 +107,9 @@ func SetKeyboardProfile(profile KeyboardProfile) {
 	}
 	if profile.AltEnterReserved {
 		bits |= profileAltEnterReserved
+	}
+	if profile.KeyDisambiguation {
+		bits |= profileKeyDisambiguation
 	}
 	if keyboardProfileBits.Swap(bits) != bits {
 		keyboardProfileGen.Add(1)
@@ -111,6 +124,7 @@ func NoteKeyboardEnhancements(msg tea.KeyboardEnhancementsMsg) {
 	}
 	profile := CurrentKeyboardProfile()
 	profile.ModifiedEnter = true
+	profile.KeyDisambiguation = true
 	SetKeyboardProfile(profile)
 }
 
@@ -157,6 +171,11 @@ func IsReplaceAllChord(m tea.KeyPressMsg) bool {
 	return false
 }
 
+// IsAskCrudeChord reports whether a key asks Crude about the editor's code.
+func IsAskCrudeChord(m tea.KeyPressMsg) bool {
+	return m.Mod == tea.ModCtrl && (m.Code == 'i' || m.Code == 'k')
+}
+
 // ChordLabel returns the display caption of a semantic chord token for the
 // current keyboard profile. ok is false for an ordinary key string.
 func ChordLabel(token string) (label string, ok bool) {
@@ -195,6 +214,11 @@ func ChordLabel(token string) (label string, ok bool) {
 			return "Ctrl+Alt+Enter", true
 		}
 		return "Alt+Enter", true
+	case AskCrudeChord:
+		if profile.KeyDisambiguation {
+			return "Ctrl+I", true
+		}
+		return "Ctrl+K", true
 	}
 	return "", false
 }
@@ -237,6 +261,8 @@ func MatchesShortcut(m tea.KeyPressMsg, shortcut string) bool {
 		return IsPreviousMatchChord(m)
 	case ReplaceAllChord:
 		return IsReplaceAllChord(m)
+	case AskCrudeChord:
+		return IsAskCrudeChord(m)
 	}
 	return strings.EqualFold(m.String(), shortcut)
 }

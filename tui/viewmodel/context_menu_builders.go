@@ -42,6 +42,17 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	st := &ui.ContextMenuState{Title: "Editor"}
 	token := ed.ActionToken()
 
+	// Ask Crude comes first: it is the one section that works on any code.
+	crude := ui.ContextMenuSection{SectionLabel: "Crude", Items: []ui.ContextMenuItem{
+		{Label: "Ask Crude", Detail: ui.FormatShortcut(ui.AskCrudeChord), Action: func() { m.runAskCrude(askAttach, false, "") }},
+		{Label: "Ask in a new chat", Action: func() { m.runAskCrude(askAttach, true, "") }},
+		{Label: "Explain this code", Action: func() { m.runAskCrude(askExplain, false, "") }},
+	}}
+	if problem := askProblem(ed.DiagnosticsAt(diagnosticPosition.Line, diagnosticPosition.Col)); problem != "" {
+		crude.Items = append(crude.Items, ui.ContextMenuItem{Label: "Fix this problem", Action: func() { m.runAskCrude(askFix, false, problem) }})
+	}
+	st.Sections = append(st.Sections, crude)
+
 	// Cut/Copy/Paste (no section label: the popup title "Editor"
 	// already provides context, and the items speak for themselves)
 	st.Sections = append(st.Sections, ui.ContextMenuSection{

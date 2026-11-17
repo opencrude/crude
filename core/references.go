@@ -137,7 +137,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		if req.Label != "" && (!strings.HasPrefix(req.Label, "[") || !strings.HasSuffix(req.Label, "]") || strings.ContainsAny(req.Label, `/\\`)) {
 			return nil, errors.New("invalid reference label")
 		}
-		if req.ServerPath != "" && (req.Kind != sessiondb.KindSelectedFile || len(req.Data) != 0) {
+		if req.ServerPath != "" && req.Kind != sessiondb.KindCodeSelection && (req.Kind != sessiondb.KindSelectedFile || len(req.Data) != 0) {
 			return nil, errors.New("server path is only valid for selected-file references without uploaded bytes")
 		}
 		content := string(req.Data)
@@ -158,6 +158,12 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		case sessiondb.KindSelectedFile:
 			if req.ServerPath == "" {
 				return nil, errors.New("selected file requires a server path")
+			}
+		case sessiondb.KindCodeSelection:
+			// Data is the captured text of the lines; ServerPath names the file.
+			start, end, ok := sessiondb.Reference{Kind: req.Kind, Title: req.Title}.CodeLines()
+			if req.ServerPath == "" || !ok || end < start || !utf8.Valid(req.Data) || len(req.Data) > sessiondb.CodeSelectionMaxBytes {
+				return nil, errors.New("code selection requires a file path, a line range and at most 64 KiB of UTF-8 text")
 			}
 		default:
 			return nil, errors.New("reference kind is not supported for creation")
