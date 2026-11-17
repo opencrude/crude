@@ -1,8 +1,21 @@
-# Crude
+<p align="center">
+  <img src="assets/crude-icon.svg" width="88" height="88" alt="Crude icon: a drop of crude oil with a terminal prompt">
+</p>
 
-Crude is an open-source, terminal-native agentic development environment (ADE) for Linux and Windows. It combines AI coding agents, an LSP-powered editor, persistent terminals, Git review, and workspace memory in one workspace.
+<h1 align="center">Crude</h1>
 
-[Website](https://opencrude.github.io/) · [Install](https://opencrude.github.io/#install) · [Documentation](docs/README.md) · [Releases](https://github.com/opencrude/crude/releases) · [Report an issue](https://github.com/opencrude/crude/issues)
+<p align="center">
+  An open-source, terminal-native agentic development environment (ADE) for Linux and Windows.<br>
+  AI coding agents, an LSP-powered editor, persistent terminals, Git review, and workspace memory.
+</p>
+
+<p align="center">
+  <a href="https://opencrude.github.io/">Website</a> ·
+  <a href="#installation">Install</a> ·
+  <a href="docs/README.md">Documentation</a> ·
+  <a href="https://github.com/opencrude/crude/releases">Releases</a> ·
+  <a href="https://github.com/opencrude/crude/issues">Report an issue</a>
+</p>
 
 > **Beta software**
 >
@@ -19,9 +32,23 @@ Crude is an open-source, terminal-native agentic development environment (ADE) f
 
 ## Installation
 
-[Download the latest release](https://github.com/opencrude/crude/releases/latest) for **Linux x86-64** (glibc 2.35 or later) or **Windows x64** (PowerShell 5.1 or later).
+### Linux x86-64
 
-The [installation guide](https://opencrude.github.io/#install) provides the installer commands, an optional GUI window, and update instructions. There is no macOS release yet.
+Requires glibc 2.35 or later.
+
+```bash
+curl -fsSL https://opencrude.github.io/install.sh | bash
+```
+
+### Windows x64
+
+Requires PowerShell 5.1 or later.
+
+```powershell
+irm https://opencrude.github.io/install.ps1 | iex
+```
+
+Run the same command again to update. See the [installation guide](https://opencrude.github.io/#install) for the optional GUI window and manual installation, or [download the latest release](https://github.com/opencrude/crude/releases/latest). There is no macOS release yet.
 
 ## Quick start
 
