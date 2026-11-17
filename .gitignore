@@ -61,6 +61,9 @@ __pycache__/
 # (include, lib, share, bin and any later output) belongs to the native platform
 # that built it. Ignoring the whole level keeps the release clean-tree gate from
 # drifting when a platform installs another directory.
+# Keep the document explicit for Markdown indexers whose directory globs also
+# match files. Git already distinguishes the trailing-slash directory rule.
+!/third_party/libghostty-vt/README.md
 /third_party/libghostty-vt/*/
 /third_party/libghostty-vt/.crude-*
 

@@ -1,11 +1,31 @@
 package compositor
 
 import (
+	"crude/tui/cell"
 	"crude/tui/rendering"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
+	"strings"
 	"testing"
 )
+
+func TestFileLinksNeverReachTheOuterTerminal(t *testing.T) {
+	c := NewCompositor(32, 1)
+	c.BeginFrame()
+	c.Root().Buffer().WriteString(0, 0, "src/main.go", cell.White, cell.NoColor, cell.AttrUnderline, cell.NewLink("src/main.go:12", ""))
+	c.Composite()
+	if strings.Contains(GenerateANSI(c.back), "]8;") {
+		t.Fatal("a native file link escaped as an outer-terminal action")
+	}
+	screen := uv.NewScreenBuffer(32, 1)
+	c.PresentSurface().Draw(screen, screen.Bounds())
+	if screen.CellAt(0, 0).Link.URL != "" {
+		t.Fatal("a native file link escaped through direct output")
+	}
+	if !c.front.Get(0, 0).Link.File() {
+		t.Fatal("native metadata was removed before internal interaction")
+	}
+}
 
 func TestHyperlinkTargetsReachBothOutputPathsAndChangeWithoutNewGlyphs(t *testing.T) {
 	c := NewCompositor(12, 2)

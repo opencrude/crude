@@ -377,6 +377,11 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	switch action.ID {
+	case chatprojection.ChatFileOpenActionID:
+		if target, ok := action.Payload.(string); ok {
+			return m.openChatFile(target)
+		}
+		return nil
 	case imageviewer.CloseAction:
 		if m.activeImageView() != nil {
 			return m.handleAgentTabClose(m.Win.ActiveIndex())

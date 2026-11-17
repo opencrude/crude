@@ -255,6 +255,9 @@ func (tr *ANSIRenderer) NewElement(node ast.Node, source []byte) Element {
 	case ast.KindAutoLink:
 		n := node.(*ast.AutoLink)
 		u := string(n.URL(source))
+		if sourceReference, _ := n.AttributeString("crude-source-reference"); sourceReference == true {
+			return Element{Renderer: &LinkElement{URL: u, SkipText: true, LiteralURL: true}}
+		}
 		isFooterLinks := !ctx.options.InlineTableLinks && isInsideTable(node)
 
 		var children []ElementRenderer

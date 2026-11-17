@@ -85,6 +85,13 @@ def load(archive, name):
     return TTFont(io.BytesIO(archive.read(SOURCE_DIR + "ttf/" + name)), recalcTimestamp=False)
 
 
+def character_map(font):
+    cmap = font.getBestCmap()
+    if cmap is None:
+        raise ValueError("source font has no Unicode character map")
+    return cmap
+
+
 def fitted_glyph(source, name, cell, joining):
     """Glyph `name` of `source`, decomposed and fitted to a cell `cell` wide."""
     glyphs = source.getGlyphSet()
@@ -108,14 +115,14 @@ def build(archive, style):
     mono_name, sans_name, weight = STYLES[style]
     mono = load(archive, mono_name)
     sans = load(archive, sans_name)
-    cell = mono["hmtx"][mono.getBestCmap()[ord("M")]][0]
+    mono_cmap = character_map(mono)
+    cell = mono["hmtx"][mono_cmap[ord("M")]][0]
 
-    keep = sorted(c for c in mono.getBestCmap() if within(c, ARABIC))
+    keep = sorted(c for c in mono_cmap if within(c, ARABIC))
     options = subset.Options()
     options.layout_features = ["mark", "mkmk"]  # positioning only
     options.drop_tables += ["GSUB", "kern"]
-    options.name_IDs = ["*"]
-    options.name_languages = ["*"]
+    options.parse_opts(["--name-IDs=*", "--name-languages=*"])
     options.glyph_names = True
     options.notdef_outline = True
     options.recalc_timestamp = False
@@ -123,9 +130,9 @@ def build(archive, style):
     subsetter.populate(unicodes=keep)
     subsetter.subset(mono)
 
-    cmap = mono.getBestCmap()
+    cmap = character_map(mono)
     added = []
-    for code, name in sorted(sans.getBestCmap().items()):
+    for code, name in sorted(character_map(sans).items()):
         if code in cmap or not (within(code, HEBREW) or within(code, ARABIC)):
             continue
         glyph, advance = fitted_glyph(sans, name, cell, within(code, JOINING_FORMS))
@@ -153,9 +160,11 @@ def build(archive, style):
     }.items():
         names.setName(value, name_id, 3, 1, 0x409)
         names.setName(value, name_id, 1, 0, 0)
-    mono["OS/2"].usWeightClass = weight
-    mono["post"].isFixedPitch = 1
-    mono["OS/2"].panose.bProportion = 9  # monospaced
+    # fontTools loads these OpenType fields dynamically from table schemas.
+    os2 = mono["OS/2"]
+    setattr(os2, "usWeightClass", weight)
+    setattr(mono["post"], "isFixedPitch", 1)
+    setattr(getattr(os2, "panose"), "bProportion", 9)  # monospaced
     return mono, len(keep), len(added)
 
 

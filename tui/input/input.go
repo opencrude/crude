@@ -311,7 +311,6 @@ func (m *Model) ContextHelpSegments() []ui.HintSegment {
 		ui.ActionSeg("input.submit"),
 		ui.ActionSeg("input.newline"),
 		ui.ActionSeg("file.attach"),
-		ui.ActionSeg("input.history"),
 		ui.ActionSeg("input.cancel"),
 	}
 }
@@ -346,8 +345,6 @@ func (m *Model) resolvedContextHelp() []ui.HintSegment {
 			out = append(out, ui.ChordSeg(ui.FormatShortcut(ui.NewlineChord), "new line"))
 		case "file.attach":
 			out = append(out, ui.ChordSeg("Ctrl+O", "attach file"))
-		case "input.history":
-			out = append(out, ui.ChordSeg("↑↓", "history"))
 		case "input.cancel":
 			out = append(out, ui.ChordSeg("Esc", "exit"))
 		default:

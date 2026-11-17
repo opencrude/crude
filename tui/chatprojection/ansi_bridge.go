@@ -106,6 +106,9 @@ func bridgeAnsiRuns(runs []rendering.AnsiRun, st ansiBridgeState) PaintLine {
 
 func ansiRunToSpan(r rendering.AnsiRun, st ansiBridgeState) RowSpan {
 	span := RowSpan{Text: r.Text, Attr: r.Attr, Link: r.Link, Copy: r.Copy}
+	if r.Link.File() {
+		span.Action = &ui.Action{ID: ChatFileOpenActionID, Payload: r.Link.Target()}
+	}
 	if !r.FG.IsDefault() {
 		if role, ok := st.fgRoles[r.FG]; ok {
 			span.Role = role

@@ -51,7 +51,6 @@ This tutorial assumes you have a working knowledge of Go.
 By the way, the non-annotated source code for this program is available
 [on GitHub][tut-source].
 
-[elm]: https://guide.elm-lang.org/architecture/
 [tut-source]: https://github.com/charmbracelet/bubbletea/tree/main/tutorials/basics
 
 ### Enough! Let's get to it.

@@ -19,6 +19,11 @@ instead of being interpreted a second time. Parsed block/cell boundaries retain
 semantic separators. No parser, highlighter, table engine or wrap algorithm is
 reimplemented here.
 
+Inferred file-reference AutoLink nodes carry the private
+`crude-source-reference` attribute. They use the normal link painter with their
+literal source spelling, including inside tables, without a duplicate footer.
+Authored web links and their table footers keep the upstream behavior.
+
 Upstream golden outputs for `code_block` and issues 107, 239, 257, 48 and 79
 are calibrated to Crude's existing Chroma/Lip Gloss/xansi dependency graph.
 Before updating these imported baselines, all 54 outputs were compared byte for

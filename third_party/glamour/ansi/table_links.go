@@ -129,6 +129,9 @@ func (e *TableElement) collectLinksAndImages(ctx RenderContext) error {
 
 		switch n := node.(type) {
 		case *ast.AutoLink:
+			if sourceReference, _ := n.AttributeString("crude-source-reference"); sourceReference == true {
+				break
+			}
 			uri := string(n.URL(e.source))
 			autoLink := tableLink{
 				href:     uri,

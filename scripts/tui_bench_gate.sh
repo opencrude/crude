@@ -8,6 +8,8 @@
 # so the ceiling file supports narrow GOOS overrides while retaining one generic
 # CI baseline. Timing is intentionally NOT gated (CPU frequency variation across
 # runners makes wall-clock thresholds noise).
+# Dense off-timer restoration cases use fixed samples; other workloads keep
+# duration calibration, including the amortization of pooled scratch storage.
 #
 # Usage: scripts/tui_bench_gate.sh
 set -euo pipefail
@@ -41,7 +43,7 @@ fail=0
 run_bench() {
   # $1 = bench regex, $2.. = packages (each a separate go test arg)
   local out
-  out="$(GOMAXPROCS=2 go test -run '^$' -bench "$1" -benchmem -count=1 "${@:2}" 2>&1)" || {
+  out="$(GOMAXPROCS=2 go test -run '^$' -bench "$1" -benchtime="${BENCHTIME:-1s}" -benchmem -count=1 "${@:2}" 2>&1)" || {
     echo "FAIL: benchmark run errored: $1 ($*)"
     echo "$out" | tail -20
     fail=1
@@ -77,13 +79,17 @@ run_bench '^Benchmark(CompletionLeadingStopsDense|OccurrenceProjectionLongLine)$
 run_bench '^Benchmark(CompletionNormalization|HighlightNormalizationLongLine)$' ./workspace
 run_bench '^BenchmarkInlayReaderStableLayout$' ./tui/screens/inlay
 run_bench '^BenchmarkSemantic(DecodeDense|ParseDense)$' ./lspsemantic
-run_bench '^BenchmarkSemanticEditingDense$' ./tui/editor
+# These restore a dense source outside each measured stage. Duration calibration
+# otherwise selects excessive fixture work without collecting a better sample.
+BENCHTIME=100x run_bench '^BenchmarkSemanticEditingDense$' ./tui/editor
 run_bench '^BenchmarkWrapped(EditorWorkload|RowPreparation)$' ./tui/editor
-run_bench '^BenchmarkMultipleCaret(Workload|Stages)$' ./tui/editor
+BENCHTIME=100x run_bench '^BenchmarkMultipleCaret(Workload|Stages)$' ./tui/editor
 run_bench '^Benchmark(EditorOrientation|MinimapRebuild)$' ./tui/editor
 run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./syntax
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkChatFind' ./tui/screens/shellchat
+run_bench '^BenchmarkDenseFileLinkHit$' ./tui/screens/shellchat
+run_bench '^BenchmarkParseSourceReference$' ./internal/filelink
 run_bench '^BenchmarkFooterOverflowPaint$' ./tui/screens/shellfooter
 run_bench '^BenchmarkSearchProjectDense$' ./fileio
 run_bench '^BenchmarkProjectSearchSelection$' ./tui/screens/findinfiles

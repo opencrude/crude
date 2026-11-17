@@ -133,7 +133,12 @@ incremental. No claim of constant-time edits or keystroke latency follows from
 a parser benchmark. Native heap/RSS is separate from Go allocation accounting.
 
 The pinned replacement in `third_party/go-tree-sitter/` fixes callback lifetime
-defects in the official v0.25.0 Go binding, with the upstream C runtime unchanged.
+defects in the official v0.25.0 Go binding. Its C runtime also backports
+upstream `9ad096ef` to clear cancelled balancing on reset: the old reset freed
+the finished tree but left the next parse trying to resume it, causing a native
+assertion in the Linux editor/file-flow suite. The deterministic
+`TestSyntaxResetAfterCancelledBalancing` cancels in balancing, resets and checks
+the complete reparsed source without a timer.
 Parser progress handles are released after all encoding variants; query
 options occupy C-owned memory for the cursor lifetime; re-exec/Close releases
 their Go handle and storage. Logger replacement/close releases its old handle,

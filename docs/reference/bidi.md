@@ -120,6 +120,29 @@ DejaVu archive; the license is `assets/fonts/LICENSE-DejaVu`.
 | Linux (`install.sh --gui`) | Copied to `~/.local/share/fonts/CrudeRTL`; the WezTerm configuration lists it after JetBrains Mono |
 | Another terminal | Install the font from the release's `fonts/` folder and add it as the fallback after your font |
 
+On Linux, Alacritty and Tilix/Pango use Fontconfig for fallback. Install both
+Crude RTL faces in the user's font directory and append the family after the
+terminal's primary monospace family in a user Fontconfig rule. Keep the primary
+family first; Crude RTL intentionally has no Latin glyphs. Check regular and
+bold Arabic presentation forms and Hebrew with `fc-match <family>:charset=fee1`
+and `fc-match <family>:charset=05e9`. Kitty uses `symbol_map` for the character
+ranges actually present in the font; leave its primary and styled Latin fonts
+unchanged. Kitty's `force_ltr yes` also stops its per-run reversal from arranging
+Crude's already-arranged text a second time. Open a new terminal after changing
+fallback or text-direction options.
+
+### Native Linux review (2026-11-17)
+
+Unicode bidi conformance, editor/composer selection and cursor mapping, chat
+links and terminal lifecycle regressions pass on Linux. Native captures verify
+file-link navigation and Persian/Hebrew display in Alacritty and Tilix at
+160×40 and 80×24, with the user's installed font fallbacks. Kitty 0.49.2's
+automated click check remains blocked: it reports an earlier pointer position
+after XTEST moves. A raw terminal input probe reproduces this without Crude,
+including with paced moves and clicks. Font selection and native display were
+checked, but this is not a passing Kitty click journey. Do not compensate for
+those coordinates in Crude's hit testing.
+
 ## Settings
 
 | Setting | Values | Owner |

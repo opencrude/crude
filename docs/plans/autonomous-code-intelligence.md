@@ -101,6 +101,7 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-14 | The load sensor must not treat Crude's own work as the computer being busy and wait or give up because of it; it must still keep Crude from hanging the computer and must not cancel work wrongly. Design: rebase the load interval after each checked file, wait for a server's own work in progress as itself, and never remember a file without an answer under contention or server work (retry after one minute). | User |
 | 2026-11-14 | Background diagnostics must be aware of the computer and yield like established background indexers, with references from real projects, not memory: KDE Baloo (pause on battery), Windows Search (backoff under system activity, `DisableBackoff` override), Linux PSI with systemd's pressure threshold, LEDBAT's yield-to-foreground principle. The user keeps an Always override. | User |
 | 2026-11-17 | Check the reported Windows server-launch mismatch and fix it quickly if practical. Keep the correction as tool-independent as possible; no server- or language-named branches. | User |
+| 2026-11-17 | Review the recent work on Linux, especially bidi/RTL, and diagnose the 11 Python errors and five Markdown warnings. Work directly, without agents. | User |
 
 ### Open decisions
 
@@ -131,6 +132,34 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Linux diagnostic review (2026-11-17):** the 11 Python diagnostics came from
+the font builder with fontTools installed, not an LSP transport mismatch.
+Nullable character maps now fail clearly, wildcard name options use fontTools'
+own option parser, and dynamic OpenType fields use its dynamic table interface.
+Pyright reports no problems; both rebuilt font faces are byte-identical to the
+shipped assets. The Markdown review found a duplicate `[elm]` definition and a
+directory-only ignore glob that Marksman also applies to the native dependency's
+README. The definition is unique and the README now has an explicit inclusion,
+without exposing ignored native outputs.
+
+The Linux full-suite review also reproduced Tree-sitter's cancelled-balancing
+reset assertion (`finished_tree.ptr`). The upstream
+`9ad096ef2206a132eaac96e10abfb0dabedefba4` reset fix is backported, with a
+deterministic cancel-during-balancing/reparse regression. It failed with the
+same assertion before the fix and passes 20 times normally and with ASan.
+The syntax and nested native-binding suites also pass. The cgo input records
+the runtime delta because Go's build cache does not hash nested C includes.
+The full Linux build and repository suite, affected race paths and LSP ownership
+suite now pass. Native captures pass in Alacritty and Tilix at both sizes; the
+[Kitty automated-input limitation](../reference/bidi.md#native-linux-review-2026-11-17)
+is reproduced outside Crude. The semantic-editing and multi-caret allocation
+gates now use bounded samples: off-timer dense-source restoration made automatic
+calibration take minutes. Other benchmarks keep duration calibration. No
+workload, timed stage or allocation ceiling changes.
+The consolidated Linux lint, design/docs and benchmark gates now pass with the
+existing ceilings. Warm transcript benchmarks explicitly finish history
+materialization before measurement; cold and width-change gates are retained.
 
 **Windows launch resolution (2026-11-17): implemented and verified.** The
 inventory/launcher contradiction and installed npm server failures are fixed.

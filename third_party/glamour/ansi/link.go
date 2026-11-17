@@ -17,6 +17,8 @@ type LinkElement struct {
 	Children []ElementRenderer
 	SkipText bool
 	SkipHref bool
+	// LiteralURL preserves the source spelling of an inferred file reference.
+	LiteralURL bool
 
 	hyperlink, resetHyperlink string
 	validURL                  bool
@@ -25,7 +27,14 @@ type LinkElement struct {
 // Render renders a LinkElement.
 func (e *LinkElement) Render(w io.Writer, ctx RenderContext) error {
 	// Make OSC 8 hyperlink token.
-	e.hyperlink, e.resetHyperlink, e.validURL = makeHyperlink(e.URL)
+	if e.LiteralURL {
+		// The AST transformer already validated the source reference. A native
+		// path (notably a backslash path with a source suffix) is not a URI.
+		e.hyperlink, e.resetHyperlink = hyperlinkTokens(e.URL)
+		e.validURL = true
+	} else {
+		e.hyperlink, e.resetHyperlink, e.validURL = makeHyperlink(e.URL)
+	}
 
 	if !e.SkipText {
 		if err := e.renderTextPart(w, ctx); err != nil {
@@ -79,7 +88,11 @@ func (e *LinkElement) renderHrefPart(w io.Writer, ctx RenderContext) error {
 	}
 
 	if e.validURL {
-		token := e.hyperlink + resolveRelativeURL(e.BaseURL, e.URL) + e.resetHyperlink
+		href := e.URL
+		if !e.LiteralURL {
+			href = resolveRelativeURL(e.BaseURL, href)
+		}
+		token := e.hyperlink + href + e.resetHyperlink
 		el := &BaseElement{
 			Token:  token,
 			Prefix: prefix,
@@ -95,19 +108,17 @@ func (e *LinkElement) renderHrefPart(w io.Writer, ctx RenderContext) error {
 // makeHyperlink takes a URL and returns an OSC 8 hyperlink token.
 func makeHyperlink(link string) (string, string, bool) {
 	// Make OSC 8 hyperlink token.
-	var hyperlink, resetHyperlink string
-
 	u, err := url.Parse(link)
 	validURL := err == nil && "#"+u.Fragment != link // if the URL only consists of an anchor, ignore it
-	if validURL {
-		h := fnv.New32a()
-		if _, err := io.WriteString(h, link); err != nil {
-			return "", "", false
-		}
-		urlID := fmt.Sprintf("id=%d", h.Sum32())
-		hyperlink = ansi.SetHyperlink(link, urlID)
-		resetHyperlink = ansi.ResetHyperlink()
+	if !validURL {
+		return "", "", false
 	}
+	hyperlink, resetHyperlink := hyperlinkTokens(link)
+	return hyperlink, resetHyperlink, true
+}
 
-	return hyperlink, resetHyperlink, validURL
+func hyperlinkTokens(link string) (string, string) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(link)) // hash.Hash never returns a write error.
+	return ansi.SetHyperlink(link, fmt.Sprintf("id=%d", h.Sum32())), ansi.ResetHyperlink()
 }

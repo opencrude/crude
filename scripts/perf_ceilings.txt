@@ -61,6 +61,10 @@ BenchmarkChatStreamPaint_120x40 20000 400
 # recounts one row.
 BenchmarkChatFindCount_20000Rows 4500 3
 BenchmarkChatFindStreamFrame_20000Rows 450 6
+# A complete file-link press/release over 100 and 20,000 retained messages.
+BenchmarkDenseFileLinkHit/100 0 0
+BenchmarkDenseFileLinkHit/20000 0 0
+BenchmarkParseSourceReference 0 0
 BenchmarkFooterOverflowPaint 200 17
 # Find in Files: fresh 512-file scans and retained selection, Linux measurements.
 BenchmarkSearchProjectDense/absent linux 20500000 9600

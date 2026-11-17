@@ -1,6 +1,7 @@
 package shellchat
 
 import (
+	"sort"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -62,7 +63,7 @@ func (ts *textSelection) Range() (startLine, startCol, endLine, endCol int) {
 }
 
 func (ts *textSelection) SelectedText(rows []chatprojection.MessageRow) string {
-	if !ts.selecting {
+	if !ts.selecting || !ts.HasActive() {
 		return ""
 	}
 	if source, ok := ts.sourceRange(); ok {
@@ -174,7 +175,9 @@ func (s *Screen) handleSelectionClick(ctx ui.EventContext, msg tea.MouseClickMsg
 	s.selection.dragged = msg.Mod != 0
 	s.selection.sourceID = s.rowsSourceID
 	s.selection.pressAction = s.inlineActionAt(lineIdx, s.selection.selAnchorCol)
-	s.selection.captureSource(s.rows)
+	if s.selection.pressAction == nil {
+		s.captureSelectionSource()
+	}
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 }
 
@@ -211,7 +214,7 @@ func (s *Screen) handleSelectionMotion(ctx ui.EventContext, msg tea.MouseMotionM
 		}
 	}
 	s.selection.selMouseY = ctx.LocalY
-	s.selection.captureSource(s.rows)
+	s.captureSelectionSource()
 
 	if !s.selection.selAutoScroll && (s.selection.selMouseY <= -1 || s.selection.selMouseY >= viewportH) {
 		s.selection.selAutoScroll = true
@@ -233,7 +236,9 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 		s.selection.selEndLine = lineIdx
 		s.selection.selEndCol = s.logicalColumn(lineIdx, rendering.Max(0, ctx.LocalX-s.layout.padLR))
 	}
-	s.selection.captureSource(s.rows)
+	if s.selection.HasActive() {
+		s.captureSelectionSource()
+	}
 	// A click without drag on a disclosure row toggles the block instead of
 	// copying an empty selection. Drags (anchor != end) always select.
 	clickNoDrag := !s.selection.dragged && s.selection.sourceID == s.rowsSourceID && s.selection.selAnchorLine == s.selection.selEndLine &&
@@ -245,7 +250,9 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 		if inlineAction != s.selection.pressAction {
 			inlineAction = nil
 		}
-		toggleMsgID = s.disclosureRowAt(lineIdx)
+		if inlineAction == nil {
+			toggleMsgID = s.disclosureRowAt(lineIdx)
+		}
 	}
 	text := s.selection.SelectedText(s.rows)
 
@@ -271,23 +278,23 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 }
 
 func (s *Screen) inlineActionAt(globalLine, col int) *ui.Action {
-	for _, row := range s.rows {
-		if globalLine >= max(1, len(row.Lines)) {
-			globalLine -= max(1, len(row.Lines))
-			continue
-		}
-		if globalLine < 0 || globalLine >= len(row.Native) {
-			return nil
-		}
-		x := 0
-		for _, span := range row.Native[globalLine].Spans {
-			width := rendering.VisibleWidth(span.Text)
-			if col >= x && col < x+width {
-				return span.Action
-			}
-			x += width
-		}
+	starts := s.paintState.globalStart
+	index := sort.Search(len(starts), func(i int) bool { return starts[i] > globalLine }) - 1
+	if index < 0 || index >= len(s.rows) {
 		return nil
+	}
+	row := s.rows[index]
+	line := globalLine - starts[index]
+	if line < 0 || line >= len(row.Native) {
+		return nil
+	}
+	x := 0
+	for _, span := range row.Native[line].Spans {
+		width := rendering.VisibleWidth(span.Text)
+		if col >= x && col < x+width {
+			return span.Action
+		}
+		x += width
 	}
 	return nil
 }
@@ -361,6 +368,23 @@ func (s *textSelection) captureSource(rows []chatprojection.MessageRow) {
 	a, aok := chatprojection.AnchorAt(rows, s.selAnchorLine, s.selAnchorCol)
 	b, bok := chatprojection.AnchorAt(rows, s.selEndLine, s.selEndCol)
 	s.anchorSource, s.endSource, s.sourceAnchored = a, b, aok && bok
+}
+
+// Pointer input addresses two rows, not the whole transcript. The projection's
+// retained row starts are also used by painting and bidi hit testing.
+func (s *Screen) captureSelectionSource() {
+	anchor := func(line, col int) (chatprojection.CopyAnchor, bool) {
+		starts := s.paintState.globalStart
+		index := sort.Search(len(starts), func(i int) bool { return starts[i] > line }) - 1
+		if index < 0 || index >= len(s.rows) {
+			return chatprojection.CopyAnchor{}, false
+		}
+		return chatprojection.AnchorAt(s.rows[index:index+1], line-starts[index], col)
+	}
+	ts := &s.selection
+	a, aok := anchor(ts.selAnchorLine, ts.selAnchorCol)
+	b, bok := anchor(ts.selEndLine, ts.selEndCol)
+	ts.anchorSource, ts.endSource, ts.sourceAnchored = a, b, aok && bok
 }
 func (s *textSelection) reflow(rows []chatprojection.MessageRow) {
 	if !s.selecting || !s.sourceAnchored {
