@@ -1,101 +1,41 @@
-<p align="center">
-  <img src="assets/crude-icon.svg" width="88" height="88" alt="Crude icon: a drop of crude oil with a terminal prompt">
-</p>
+# Crude
 
-<h1 align="center">Crude</h1>
+Crude is an open-source, terminal-native agentic development environment (ADE) for Linux and Windows. It combines AI coding agents, an LSP-powered editor, persistent terminals, Git review, and workspace memory in one workspace.
 
-<p align="center">
-  <strong>Build with agents. Review everything.</strong><br>
-  A terminal-native development environment for Linux and Windows.
-</p>
+[Website](https://opencrude.github.io/) · [Install](https://opencrude.github.io/#install) · [Documentation](docs/README.md) · [Releases](https://github.com/opencrude/crude/releases) · [Report an issue](https://github.com/opencrude/crude/issues)
 
-<p align="center">
-  <a href="https://opencrude.github.io/">Website</a> ·
-  <a href="#install">Install</a> ·
-  <a href="docs/README.md">Documentation</a> ·
-  <a href="https://github.com/opencrude/crude/releases">Releases</a> ·
-  <a href="https://github.com/opencrude/crude/issues">Report a bug</a>
-</p>
+> **Beta software**
+>
+> Crude and its agents can change files and run commands with your user permissions. Crude is not a security sandbox. Commit your work, keep backups, and review agent actions.
 
-![Crude with an agent summary, the changed test file in the editor and passing tests in the embedded terminal](assets/crude-workspace.png)
+## Features
 
-<sub>Real capture. A live agent added a regression test. The editor shows the change. The terminal shows that the tests pass.</sub>
+- **AI coding agents:** Delegate tasks to parallel agents, with optional isolated Git worktrees. Use plan mode, goals, and session forks, then review reports with evidence.
+- **Editor and language servers:** Use completion, hover, rename, code actions, inlay hints, semantic highlighting, and project-wide diagnostics.
+- **Persistent workspace:** A per-user core keeps sessions, agents, and terminals running after the window closes. Reattach locally or over SSH.
+- **Workspace memory:** Retain evidence-backed decisions, conventions, and lessons across sessions. Search past sessions and edit or remove memories.
+- **Review and recovery:** Stage or discard files and hunks, approve risky commands, and restore changes from Local History.
+- **Models and tools:** Choose hosted or local models for each agent role. Extend agents with Agent Skills and MCP servers.
 
-> [!WARNING]
-> Crude is beta software. Crude and its agents can change files and run commands.
-> A bug or an agent mistake can damage or delete your work. Commit your changes,
-> keep backups and review agent actions. The installers ask for your consent.
+## Installation
 
-## What Crude does
+[Download the latest release](https://github.com/opencrude/crude/releases/latest) for **Linux x86-64** (glibc 2.35 or later) or **Windows x64** (PowerShell 5.1 or later).
 
-Crude puts your editor, terminals, Git review and AI agents in one workspace.
-A core process owns this workspace. When you close the window, the work continues.
+The [installation guide](https://opencrude.github.io/#install) provides the installer commands, an optional GUI window, and update instructions. There is no macOS release yet.
 
-| Area | What you can do |
-|---|---|
-| **Agents** | Give a task to an agent. Let it delegate parts to child agents and read their reports. Use plan mode, goals and session fork. |
-| **Workspace** | Edit code with language servers. Split panes. Use embedded terminals: PTY on Linux, ConPTY on Windows. |
-| **Review** | Stage or discard each file or hunk. Approve risky commands before they run. Restore files from Local History. |
-| **Models and tools** | Use 20 provider templates, any OpenAI-compatible API or a local model. Add Agent Skills and MCP servers. |
-| **Core** | Keep sessions, agents and terminals alive after you close the window. Attach again later, or attach over SSH. |
+## Quick start
 
-Crude is not a security sandbox. Agent commands run with your user permissions.
+1. Open a terminal in your project folder and run `crude`.
+2. Open **Tools → Settings → Accounts** and add a provider account.
+3. Open **Agents**, select a model, enter a task, and press **Enter**.
 
-## Install
-
-**Linux x86-64** (glibc 2.35 or later):
-
-```bash
-curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh
-bash install.sh
-```
-
-**Windows x64** (PowerShell 5.1 or later):
-
-```powershell
-Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1
-.\install.ps1
-```
-
-Read the installer before you run it. To update Crude, run the same command again.
-Add `--gui` (`-Gui`) for a window that opens Crude, with its own font and a menu
-entry; the same command keeps the window and Crude up to date together. You do
-not need administrator rights.
-
-## Get started
-
-1. Open a terminal in your project folder.
-2. Run `crude`.
-3. Go to **Tools → Settings → Accounts** and add a provider account.
-4. Go to **Agents** and select a model.
-5. Type a task in the composer and press **Enter**.
-
-Press **Ctrl+Alt+P** to see all commands and their shortcuts. Press **Alt+F12** to open the terminal.
-
-**Recommended setup:** Use Kitty or Alacritty on Linux, or Windows Terminal on Windows,
-with truecolor. Install [JetBrainsMono Nerd Font](https://www.nerdfonts.com/font-downloads)
-(NF, not NFM). Then enable **Nerd font** and **Show file icons** in
-**Settings → IDE → Interface**. To skip that setup, run the installer with `--gui`
-(`-Gui`): it adds a window that already has the terminal and the font. For Arabic,
-Persian or Hebrew in your own terminal, add **Crude RTL** from the release's
-`fonts/` folder as the fallback after your font.
-
-<details>
-<summary><strong>More captures</strong></summary>
-
-![A merged review report above the Board, which lists messages and reports between a parent agent and two child reviewers](assets/crude-agents.png)
-
-![The Git panel with a modified file, commit controls and a diff with stage and discard actions per hunk](assets/crude-review.png)
-
-![The Skills page in Settings with search results from Anthropic Skills and the Skills Directory](assets/crude-skills.png)
-
-All captures show Crude on its own source code with a live model.
-</details>
+Press **Ctrl+Alt+P** to open the command palette.
 
 ## Build from source
 
-You need the Go version in `go.mod`, Zig 0.16.0 and Git. On Linux, you also need
-a C compiler, libc headers and `tic` (ncurses).
+Requirements: the Go version in [`go.mod`](go.mod), Zig 0.16.0, and Git. Linux also requires a C compiler, libc headers, and `tic` from ncurses.
+
+### Linux
 
 ```bash
 make libghostty
@@ -103,29 +43,22 @@ make libghostty
 go run .
 ```
 
-On Windows, run `scripts/bootstrap_libghostty.ps1`. Then dot-source
-`scripts/libghostty_env.ps1` and run `go run .` in PowerShell.
-To make a standalone Linux binary, run `make build`.
+Run `make build` to produce a standalone binary.
 
-A source build (`go run .`, `make build`) uses its own profile in
-`~/.crude-dev`, with its own core and data. It never attaches to or changes
-the profile of an installed release in `~/.crude`. On first start it copies
-your release settings and API-key accounts; sign in again for accounts that use
-a browser sign-in. Set `CRUDE_HOME` to choose another profile.
+### Windows
 
-## Change Crude
+```powershell
+scripts/bootstrap_libghostty.ps1
+. scripts/libghostty_env.ps1
+go run .
+```
 
-Crude has no editor plugin system. To change a workflow, clone the source,
-open it in Crude and ask an agent to make the change. The repository is
-documented for agents and for people:
+Source builds use `~/.crude-dev`, separate from the installed release profile in `~/.crude`. Set `CRUDE_HOME` to use another profile.
 
-- [AGENTS.md](AGENTS.md): the rules for every change.
-- [Documentation index](docs/README.md): the architecture and the contracts.
-- [Validation](docs/guides/validation.md): the test, lint, design and performance gates.
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) before making changes. The [documentation index](docs/README.md) covers the architecture and feature contracts, and the [validation guide](docs/guides/validation.md) lists the required checks.
 
 ## License
 
-The original code of Crude is licensed under [Apache-2.0](LICENSE-APACHE).
-Third-party code keeps its own license. See [NOTICE](NOTICE),
-[Codex attribution](codexio/NOTICE) and the notices in each release.
-`LICENSE-MIT` applies to upstream material only. It is not an alternative license for Crude.
+Crude's original code is licensed under [Apache-2.0](LICENSE-APACHE). Third-party code retains its own license; see [NOTICE](NOTICE) and [Codex attribution](codexio/NOTICE). `LICENSE-MIT` applies only to included third-party material.
