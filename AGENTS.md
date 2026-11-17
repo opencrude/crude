@@ -28,6 +28,11 @@ Read its current checkpoint and integration criteria before changing unnamed
 buffers, file encoding or Save File. Keep work in the plan owned by the feature;
 autonomous code intelligence is not a catch-all IDE backlog.
 
+Ask Crude (Ctrl+I in the editor), editor AI suggestions by Aeron, prediction
+context and the workspace text index are tracked in
+[Ask Crude and Aeron suggestions](docs/plans/ask-crude-and-aeron-suggestions.md).
+Read its top sections and open decisions before that work.
+
 Language-intelligence work is tracked in
 [autonomous code intelligence](docs/plans/autonomous-code-intelligence.md).
 Before any work on language support, language servers, diagnostics, Problems,

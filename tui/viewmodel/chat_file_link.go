@@ -12,10 +12,18 @@ import (
 
 func (m *App) openChatFile(target string) tea.Cmd {
 	ref, ok := filelink.Parse(target)
-	if !ok || m.ws == nil || m.Win == nil {
+	if !ok {
 		return nil
 	}
-	path := ref.Path
+	return m.openSourceLocation(ref.Path, ref.Line, ref.Column)
+}
+
+// openSourceLocation opens a file at a one-based line and column (zero means
+// none) in the pane that asked, through the shared pane-file owner.
+func (m *App) openSourceLocation(path string, line, column int) tea.Cmd {
+	if m.ws == nil || m.Win == nil || path == "" {
+		return nil
+	}
 	if files, ok := m.ws.(shellport.ClientFiles); ok {
 		path = files.CanonicalClientPath(path)
 	} else if !filepath.IsAbs(path) {
@@ -27,8 +35,8 @@ func (m *App) openChatFile(target string) tea.Cmd {
 	}
 	return func() tea.Msg {
 		msg := command().(paneFilesOpenedMsg)
-		if ref.Line > 0 {
-			msg.filePosition = &editor.Position{Line: ref.Line - 1, Col: max(0, ref.Column-1)}
+		if line > 0 {
+			msg.filePosition = &editor.Position{Line: line - 1, Col: max(0, column-1)}
 		}
 		return msg
 	}

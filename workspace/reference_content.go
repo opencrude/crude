@@ -58,6 +58,12 @@ func (s *ReferenceStore) ReadReferenceContent(id string) (content string, readOn
 			return "", false, fmt.Errorf("reference %q contains invalid UTF-8", id)
 		}
 		return ref.Content, false, nil
+	case sessiondb.KindCodeSelection:
+		// The captured lines are the reference, not the file as it is now.
+		if !utf8.ValidString(ref.Content) {
+			return "", true, fmt.Errorf("reference %q contains invalid UTF-8", id)
+		}
+		return ref.Content, true, nil
 	case sessiondb.KindPastedTextFile:
 		data, err := history.ReadAttachment(ref.FilePath)
 		if err != nil {

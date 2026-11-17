@@ -21,6 +21,8 @@ type remoteSessionReadyMsg struct {
 	forked    bool
 	// initial is sent as the new session's first message once it is open.
 	initial provider.UserInput
+	// ask places the new session beside the code that Ask Crude asked about.
+	ask *askRequest
 	// aeron marks the workspace's Aeron. It opens minimized and never takes
 	// the user's selection; work for it waits in App.aeronOrders, not initial.
 	aeron bool
@@ -124,6 +126,15 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		return nil
 	}
 	m.AddOrchestrator(msg.result.OrchID)
+	if msg.ask != nil {
+		// The tab exists now, or appears when a connected core's agent
+		// reaches this shell; addOrchestrator then finishes the placement.
+		if m.askArrivals == nil {
+			m.askArrivals = make(map[string]*askRequest)
+		}
+		m.askArrivals[msg.result.OrchID] = msg.ask
+		return m.finishAskChat(msg.result.OrchID)
+	}
 	if msg.forked {
 		m.Feedback.NotifyInfo("Forked into a new session; the original is unchanged")
 	}

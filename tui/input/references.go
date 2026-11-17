@@ -4,6 +4,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode"
 
 	"crude/sessiondb"
 	"crude/tui/ui"
@@ -43,6 +44,23 @@ func (m *Model) InsertReference(ref sessiondb.Reference) {
 		m.promptReferenceIDs[ref.ID] = true
 	}
 	m.input.InsertString(ref.DisplayName())
+	m.applyReferenceRanges()
+	m.draftRevision++
+}
+
+// AttachReference inserts ref at the caret as its own word: a space before it
+// when it would touch earlier text, and one after it so typing continues as
+// prose.
+func (m *Model) AttachReference(ref sessiondb.Reference) {
+	if m.promptReferenceIDs != nil {
+		m.promptReferenceIDs[ref.ID] = true
+	}
+	text := ref.DisplayName() + " "
+	if before := []rune(m.input.Value()); m.input.CursorFlat() > 0 && m.input.CursorFlat() <= len(before) &&
+		!unicode.IsSpace(before[m.input.CursorFlat()-1]) {
+		text = " " + text
+	}
+	m.input.InsertString(text)
 	m.applyReferenceRanges()
 	m.draftRevision++
 }
@@ -133,7 +151,7 @@ func (m *Model) applyReferenceRanges() {
 // attachment is visible instead of silently submitting a dead reference.
 func refFileMissing(ref sessiondb.Reference) bool {
 	switch ref.Kind {
-	case sessiondb.KindPastedImage, sessiondb.KindSelectedFile, sessiondb.KindPastedTextFile:
+	case sessiondb.KindPastedImage, sessiondb.KindSelectedFile, sessiondb.KindPastedTextFile, sessiondb.KindCodeSelection:
 	default:
 		return false
 	}

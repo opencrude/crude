@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -399,32 +400,61 @@ func (m *App) lastEditorPath() string {
 
 func (m *App) splitMainPane(node uint64, dir ui.Direction, before bool, tab window.TabID) window.GroupID {
 	p := window.TabPlacement{Tab: tab, Node: node, Split: true, Direction: dir, Before: before}
-	var root *window.PaneNode
-	var target window.GroupID
-	if tab == 0 {
-		root, target = m.Win.PreviewSplitPane(node, dir, before)
-	} else {
-		root, target = m.Win.PreviewTabPlacement(p)
+	if tab != 0 {
+		target := m.placeTabSplit(p)
+		if target == 0 && m.splitFits(p) == errPaneRoom {
+			m.Feedback.NotifyInfo("There is not enough room for another pane. Make the terminal larger or merge a pane.")
+		}
+		return target
 	}
+	root, target := m.Win.PreviewSplitPane(node, dir, before)
 	if target == 0 {
 		return 0
 	}
-	w, h := paneMinimum(root)
-	bounds := m.ensureMainPanes().Bounds()
-	if w > bounds.W || h > bounds.H {
+	if !paneFits(root, m.ensureMainPanes().Bounds()) {
 		m.Feedback.NotifyInfo("There is not enough room for another pane. Make the terminal larger or merge a pane.")
 		return 0
 	}
-	if tab == 0 {
-		target = m.Win.SplitPane(node, dir, before)
-	} else {
-		target = m.Win.PlaceTab(p)
+	if target = m.Win.SplitPane(node, dir, before); target != 0 {
+		m.focusMainGroup(target)
+		m.syncPaneWindows()
 	}
+	return target
+}
+
+// errPaneRoom says that a split would make a pane smaller than its minimum.
+var errPaneRoom = errors.New("not enough room for another pane")
+
+// splitFits checks a split tab placement on a detached copy of the layout.
+func (m *App) splitFits(p window.TabPlacement) error {
+	root, target := m.Win.PreviewTabPlacement(p)
+	if target == 0 {
+		return errors.New("the tab cannot move there")
+	}
+	if !paneFits(root, m.ensureMainPanes().Bounds()) {
+		return errPaneRoom
+	}
+	return nil
+}
+
+// placeTabSplit is the one owner of moving a tab into a new split: the same
+// preview, minimum sizes and focus as a dragged tab. It reports nothing; the
+// caller decides what a refusal means.
+func (m *App) placeTabSplit(p window.TabPlacement) window.GroupID {
+	if m.splitFits(p) != nil {
+		return 0
+	}
+	target := m.Win.PlaceTab(p)
 	if target != 0 {
 		m.focusMainGroup(target)
 		m.syncPaneWindows()
 	}
 	return target
+}
+
+func paneFits(root *window.PaneNode, bounds ui.Rect) bool {
+	w, h := paneMinimum(root)
+	return w <= bounds.W && h <= bounds.H
 }
 
 func (m *App) cycleMainGroup(delta int, move bool) {

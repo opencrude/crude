@@ -2,6 +2,7 @@ package sessiondb
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -14,7 +15,53 @@ const (
 	KindSelectedFile   Kind = "selected_file"
 	KindMCPContext     Kind = "mcp_context"
 	KindMCPTool        Kind = "mcp_tool"
+	// KindCodeSelection is a line range of a source file, captured as the
+	// editor showed it. FilePath names the file; Title is CodeSelectionTitle.
+	KindCodeSelection Kind = "code_selection"
 )
+
+// CodeSelectionMaxBytes bounds the text a code selection carries. A larger
+// range keeps its location only; the agent reads the lines with its tools.
+const CodeSelectionMaxBytes = 64 << 10
+
+// CodeSelectionTitle names a 1-based line range of a file: "store.go:118-124",
+// or "store.go:118" for one line.
+func CodeSelectionTitle(name string, start, end int) string {
+	if end <= start {
+		return fmt.Sprintf("%s:%d", name, start)
+	}
+	return fmt.Sprintf("%s:%d-%d", name, start, end)
+}
+
+// CodeSelectionLabel is the chip text for a code selection. Brackets in a file
+// name would end the chip early, so they become parentheses in the label only.
+func CodeSelectionLabel(name string, start, end int) string {
+	name = strings.NewReplacer("[", "(", "]", ")").Replace(name)
+	return "[" + CodeSelectionTitle(name, start, end) + "]"
+}
+
+// CodeLines returns the 1-based line range of a code selection.
+func (r Reference) CodeLines() (start, end int, ok bool) {
+	if r.Kind != KindCodeSelection {
+		return 0, 0, false
+	}
+	colon := strings.LastIndexByte(r.Title, ':')
+	if colon < 0 {
+		return 0, 0, false
+	}
+	first, last, ranged := strings.Cut(r.Title[colon+1:], "-")
+	start, err := strconv.Atoi(first)
+	if err != nil || start < 1 {
+		return 0, 0, false
+	}
+	end = start
+	if ranged {
+		if end, err = strconv.Atoi(last); err != nil || end < start {
+			return 0, 0, false
+		}
+	}
+	return start, end, true
+}
 
 type Reference struct {
 	ID        string
@@ -77,6 +124,17 @@ func (r Reference) AgentText() string {
 		return fmt.Sprintf("Reference %s (%s): pasted image saved at %s", name, r.ID, r.FilePath)
 	case KindSelectedFile:
 		return fmt.Sprintf("Reference %s (%s): selected file at %s\n%s", name, r.ID, r.FilePath, r.Content)
+	case KindCodeSelection:
+		lines := "the selected lines"
+		if start, end, ok := r.CodeLines(); ok && end > start {
+			lines = fmt.Sprintf("lines %d-%d", start, end)
+		} else if ok {
+			lines = fmt.Sprintf("line %d", start)
+		}
+		if r.Content == "" {
+			return fmt.Sprintf("Reference %s (%s): %s of %s. The selection is too large to attach; read these lines from the file.", name, r.ID, lines, r.FilePath)
+		}
+		return fmt.Sprintf("Reference %s (%s): %s of %s, as the editor showed them when the user asked:\n%s", name, r.ID, lines, r.FilePath, r.Content)
 	default:
 		if r.FilePath != "" {
 			return fmt.Sprintf("Reference %s (%s): %s", name, r.ID, r.FilePath)

@@ -137,6 +137,21 @@ func (e *Editor) foldAt(line int) (FoldRange, bool) {
 	}
 	return FoldRange{}, false
 }
+
+// EnclosingFold returns the innermost fold range that contains a source line.
+// Ranges are properly nested and sorted by start, so the nearest preceding
+// range that still covers the line is the innermost one.
+func (e *Editor) EnclosingFold(line int) (FoldRange, bool) {
+	e.refreshFolds()
+	r := e.folds.ranges
+	for i := sort.Search(len(r), func(i int) bool { return r[i].Start > line }) - 1; i >= 0; i-- {
+		if r[i].End >= line {
+			return r[i], true
+		}
+	}
+	return FoldRange{}, false
+}
+
 func (e *Editor) hiddenFold(line int) (FoldRange, bool) {
 	r := e.folds.hidden
 	i := sort.Search(len(r), func(i int) bool { return r[i].End >= line })

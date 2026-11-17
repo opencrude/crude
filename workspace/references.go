@@ -83,9 +83,9 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 		// Custom label collides with an existing active label; uniquify
 		// by appending an incrementing numeric suffix.
 		base := label[:len(label)-1] // strip trailing ]
-		suffix := 1
+		suffix := 2
 		for {
-			candidate := fmt.Sprintf("%s%d]", base, suffix)
+			candidate := fmt.Sprintf("%s %d]", base, suffix)
 			if !s.labelExists(candidate) {
 				label = candidate
 				break
@@ -404,6 +404,8 @@ func defaultReferenceLabel(kind sessiondb.Kind, idx int) string {
 		return fmt.Sprintf("[Pasted IMG%d]", idx)
 	case sessiondb.KindSelectedFile:
 		return fmt.Sprintf("[File%d]", idx)
+	case sessiondb.KindCodeSelection:
+		return fmt.Sprintf("[Code%d]", idx)
 	default:
 		return fmt.Sprintf("[Reference%d]", idx)
 	}

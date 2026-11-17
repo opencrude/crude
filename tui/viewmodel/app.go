@@ -133,7 +133,11 @@ type App struct {
 	pendingOrchestrators map[string]bool
 	// pendingFirstInputs are first messages for new sessions whose tab is
 	// still pending; each is sent once its session reaches this shell.
-	pendingFirstInputs          map[string][]provider.UserInput
+	pendingFirstInputs map[string][]provider.UserInput
+	// askArrivals are Ask Crude requests whose new chat has not reached this
+	// shell; askChips wait for their session's draft to finish loading.
+	askArrivals                 map[string]*askRequest
+	askChips                    map[*workspace.Session][]sessiondb.Reference
 	workspaceAttachSequence     uint64
 	workspaceAttachCancel       context.CancelFunc
 	workspaceAttachPending      bool
