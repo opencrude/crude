@@ -1,7 +1,7 @@
 # Crude native binding ownership
 
 Upstream: `github.com/tree-sitter/go-tree-sitter` v0.25.0. The bundled C
-runtime behavior and upstream MIT license are unchanged. This is a pinned Go module
+runtime includes the upstream reset fix below; its MIT license is unchanged. This is a pinned Go module
 replacement, not a second parser implementation.
 
 Crude changes:
@@ -30,6 +30,12 @@ Crude changes:
   per-visit Go allocations. No parser or C runtime behavior changes.
 - Trim three upstream trailing-whitespace lines in `src/lexer.c` and
   `src/unicode/utf16.h`; no C token or license text changes.
+- Backport Tree-sitter
+  [`9ad096ef2206a132eaac96e10abfb0dabedefba4`](https://github.com/tree-sitter/tree-sitter/commit/9ad096ef2206a132eaac96e10abfb0dabedefba4):
+  clear `canceled_balancing` in `ts_parser_reset`. Reset already releases the
+  finished tree; keeping that flag makes the next parse abort while trying to
+  resume it. `syntax/TestSyntaxResetAfterCancelledBalancing` reaches this state
+  deterministically and reparses through Crude's syntax entry point.
 
 `callback_lifetime_test.go` observes actual Go-object reachability after owner
 release and forces GC between query exec and iteration. Its ten cases all

@@ -180,6 +180,7 @@ func benchmarkDenseChatSingleRowChange(b *testing.B, count int) {
 	app.appendActiveMessage(animated)
 	app.handleTabSwitch()
 	_ = app.View()
+	settleHistory(b, app)
 	renderer := app.activeMessageList()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -236,6 +237,7 @@ func BenchmarkTabRederive_80Msgs(b *testing.B) {
 	}
 	app.handleTabSwitch()
 	app.paintShellFrame()
+	settleHistory(b, app)
 
 	b.ReportAllocs()
 	b.ResetTimer()

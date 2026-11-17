@@ -239,6 +239,9 @@ func setStyle(sb *strings.Builder, targetFG, targetBG cell.Color, targetAttr cel
 }
 
 func setLink(out *strings.Builder, link *cell.Link, current *cellStyleState) {
+	if link.File() {
+		link = nil
+	}
 	if current.link.Equal(link) {
 		return
 	}

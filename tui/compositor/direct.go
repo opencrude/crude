@@ -189,7 +189,7 @@ func directStyle(c cell.Cell) uv.Style {
 }
 
 func directLink(link *cell.Link) uv.Link {
-	if link == nil {
+	if link == nil || link.File() {
 		return uv.Link{}
 	}
 	return uv.Link{URL: link.Target(), Params: link.Params()}

@@ -56,7 +56,7 @@ func TestFastCommandShowsFeedbackAndPersistentIndicators(t *testing.T) {
 		}
 	}
 	header, footer = paint()
-	if !strings.Contains(header, "test-model fast") || !strings.Contains(footer, "⚡") || !strings.Contains(footer, "Fast") || !strings.Contains(footer, "history") {
+	if !strings.Contains(header, "test-model fast") || !strings.Contains(footer, "⚡") || !strings.Contains(footer, "Fast") || !strings.Contains(footer, "attach file") {
 		t.Fatalf("fast did not remain beside the model and composer hints: %q / %q", header, footer)
 	}
 	sendFast()

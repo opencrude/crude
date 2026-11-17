@@ -624,6 +624,30 @@ The outer terminal and every multiplexer must support OSC 8. SSH transports the
 same standard terminal output; this does not launch a browser on the remote host,
 change tmux settings or guarantee support in a terminal that ignores OSC 8.
 
+### Native file links
+
+Relative file paths in prose and inline code also use the normal underlined link
+style. Authored Markdown file links retain their full destination. The existing
+Goldmark parse recognizes references; fenced and indented code stay literal.
+Paths can include `:line`, `:line:column`, `#Lline` and `#LlineCcolumn`. Coordinates
+are one-based source characters, not terminal columns or UTF-16 positions.
+Percent-encoded Markdown paths are decoded once. Rendering never reads files,
+walks the project or guesses a shortened destination.
+
+File links stay inside Crude; neither terminal output path emits them as OSC 8
+actions. A no-drag release uses the same retained spans and bidi column mapping
+as selection. Modified clicks, drags and replaced sources do not open a file.
+Hit testing uses the retained row-start index, not a transcript scan.
+The shell resolves relative paths against the selected core's workspace root,
+then uses the existing asynchronous pane/document opener. Open unsaved documents
+remain authoritative. Workspace, pane and open-request fences discard late
+results. Missing files use ordinary open-failure feedback; links never create
+files, run commands or launch a desktop app.
+
+The compact composer footer keeps the newline and attachment hints. Prompt
+history and Find in chat retain their shortcuts and searchable commands, without
+repeating those hints on every frame.
+
 ## Markdown and assignment rendering
 
 - **Markdown keeps its established hierarchy:** use Glamour's differentiated

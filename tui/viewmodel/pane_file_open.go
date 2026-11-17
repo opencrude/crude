@@ -50,6 +50,7 @@ type paneFilesOpenedMsg struct {
 	refs             *liveDocumentRefs
 	diagnosticFacts  *types.InsightDiagnostics
 	position         *editor.LSPDiagnostic // raw UTF-16 range, including point locations
+	filePosition     *editor.Position      // model-authored one-based source reference, converted to zero-based
 	restore          *navLocation          // Go Back/Forward place of a reopened file
 	navigation       *paneNavigation
 	// window = landed tab in its own window (Open in window).
@@ -368,6 +369,12 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 		m.applyNavigationLanding(msg)
 	}
 	m.applyNavRestore(msg.restore)
+	if p := msg.filePosition; p != nil && m.EditorState.Editor != nil && len(msg.files) > 0 &&
+		m.EditorState.ActiveView == msg.files[len(msg.files)-1].path {
+		ed := m.EditorState.Editor
+		ed.SetCursorPosition(p.Line, editor.RuneIndexToVisualColumn(ed.TabWidth(), ed.LineText(p.Line), p.Col))
+		ed.ScrollToCursor()
+	}
 	if p := msg.position; p != nil && m.EditorState.Editor != nil && m.EditorState.ActiveView == msg.files[len(msg.files)-1].path {
 		ed := m.EditorState.Editor
 		valid := true

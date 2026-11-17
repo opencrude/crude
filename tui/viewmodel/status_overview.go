@@ -425,7 +425,6 @@ func (m *App) footerHelpSegments() []shellfooter.Segment {
 	}
 	if len(segments) == 0 {
 		_, _, target := m.activeHeaderContext()
-		fastVisible := false
 		if strings.HasPrefix(target, "agent:") {
 			agentID := strings.TrimPrefix(target, "agent:")
 			if m.ws.PlanModeForAgent(agentID) {
@@ -434,22 +433,15 @@ func (m *App) footerHelpSegments() []shellfooter.Segment {
 			switch m.fastModeForAgent(agentID) {
 			case ttypes.FastModeOn:
 				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast", Role: ui.ColorAccent2, Priority: 0})
-				fastVisible = true
 			case ttypes.FastModeUnsupported:
 				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast unsupported", Role: ui.ColorWarning, Priority: 0})
-				fastVisible = true
 			case ttypes.FastModeUnavailable:
 				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast unavailable", Role: ui.ColorWarning, Priority: 0})
-				fastVisible = true
 			}
 		}
 		for _, hint := range m.compactContextHelpSegments() {
 			if text := m.hintSegmentText(hint); text != "" {
-				priority := 3
-				if fastVisible && hint.ActionID == "input.history" {
-					priority = 1
-				}
-				segments = append(segments, shellfooter.Segment{Text: text, Role: ui.ColorMuted, Priority: priority})
+				segments = append(segments, shellfooter.Segment{Text: text, Role: ui.ColorMuted, Priority: 3})
 			}
 		}
 	}
@@ -550,7 +542,7 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	if len(hints) > 0 && hints[0].Kind == ui.HintKindText && strings.Contains(hints[0].Label, "note") {
 		return []ui.HintSegment{ui.ChordSeg("Enter", "send note"), ui.ChordSeg("Esc", "cancel")}
 	}
-	return []ui.HintSegment{ui.ActionSeg("input.newline"), ui.ActionSeg("file.attach"), ui.ActionSeg("input.history"), ui.ActionSeg("chat.find")}
+	return []ui.HintSegment{ui.ActionSeg("input.newline"), ui.ActionSeg("file.attach")}
 }
 
 func imageViewerHelpSegments() []ui.HintSegment {

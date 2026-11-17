@@ -63,7 +63,8 @@ func newMarkdownRenderer(options ansi.Options) *MarkdownRenderer {
 		)),
 		// Same extensions and options as glamour.NewTermRenderer.
 		goldmark.WithExtensions(extension.GFM, extension.DefinitionList),
-		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
+		goldmark.WithParserOptions(parser.WithAutoHeadingID(),
+			parser.WithASTTransformers(util.Prioritized(fileReferences{}, 200))),
 	)
 	md.SetRenderer(renderer.NewRenderer(renderer.WithNodeRenderers(util.Prioritized(ansi.NewRenderer(options), 1000))))
 	return &MarkdownRenderer{md: md, options: options}

@@ -5,7 +5,29 @@
 > work-budget tests in `tui/viewmodel/perf_budget_test.go`. Timing is recorded
 > but never machine-gated.
 
+The semantic-editing and multi-caret gates sample 100 iterations per case.
+These dense fixtures restore their source outside the mutation/paint timer;
+automatic calibration spent over 12 minutes in semantic editing, then over eight
+minutes in multi-caret preparation on Linux. Fixed sampling keeps the same timed
+stages, dense sources and allocation ceilings. Other workloads retain duration
+calibration, including the amortization of pooled scratch storage.
+The warm single-row-change and tab-derivation scenarios finish history
+materialization before their timers, as the idle scenario already does. A fixed
+sample count otherwise exposes startup work that a long calibrated run merely
+amortizes; cold/width-change workloads remain separate gates.
+
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
+
+## Chat file-link interaction (2026-11-17)
+
+The existing Markdown parse recognizes source references without filesystem
+work. Links retain their action in the cached projection; clicks use the same
+row-start index and bidi hit mapping as selection, not a transcript scan.
+Linux amd64, i7-10750H, Go 1.27.4, GOMAXPROCS=2, three 200 ms samples measured
+`BenchmarkDenseFileLinkHit` (complete press/release) at 0.42–0.54 µs for both
+100 and 20,000 messages, with no allocations. Source-reference parsing measured
+0.34–0.36 µs with no allocations. The gate retains those zero-allocation
+ceilings. These are local interaction costs, not disk-open or terminal latency.
 
 ## Right-to-left arrangement (2026-11-17)
 
