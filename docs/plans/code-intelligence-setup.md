@@ -170,7 +170,13 @@ These items are not done. Do not report them as complete.
   are not supported. Crude lists them as not available.
 - **Aeron installation coverage is limited.** One real-model Linux npm install
   is verified above. Other package managers, native Windows and the whole setup
-  journey on Windows are not verified.
+  journey on Windows are not verified. The 2026-11-17 Windows launch repair
+  separately verifies already-installed npm servers: shared inventory/startup
+  resolution reads package metadata and launches Node with a script argument,
+  without CMD interpretation or tool-named branches. CSS, HTML and JSON initialize;
+  a real JSON probe reports and clears a syntax error. This is launch evidence,
+  not Windows installation or setup-screen acceptance. Core-managed npm
+  acquisition remains missing.
 - **The Linux-only headless captures did not run.** `TestNavigationVisualHeadless`
   and `TestCodeActionVisualHeadless` need Linux (`/proc`). They were not run on
   the Windows development machine, so their changed phase tables are not

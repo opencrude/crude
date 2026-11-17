@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"crude/insight/catalog"
 	"crude/lspclient"
 	model "crude/types"
 )
@@ -23,8 +24,23 @@ var _ LSPClient = (*runtimeLSPClient)(nil)
 func (defaultLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string, startAdmission func() error) LSPClient {
 	return &runtimeLSPClient{LSPIntegration: lspclient.NewLSPIntegration(
 		spec.Command, spec.Args, rootURI,
+		lspclient.WithPackageProgram(serverPackageProgram(spec)),
 		lspclient.WithServerConfiguration(spec.Environment, spec.Settings, spec.InitializationOptions),
 		lspclient.WithConfigurationScopes(spec.ConfigurationScopes),
 		lspclient.WithStartAdmission(startAdmission),
 	)}
+}
+
+func serverPackageProgram(spec model.LSPServerSpec) catalog.PackageManagerRecipe {
+	c := catalog.Current()
+	server, ok := c.Server(spec.ServerID)
+	if !ok {
+		return catalog.PackageManagerRecipe{}
+	}
+	pkg, ok := c.Package(server.Package)
+	if !ok {
+		return catalog.PackageManagerRecipe{}
+	}
+	program, _ := pkg.PackageManagerFor(spec.Command)
+	return program
 }

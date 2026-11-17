@@ -55,6 +55,11 @@ inject an ambient one. This requirement is not a claim of native Windows
 acceptance. Missing/invalid executable lookup retains the missing-command error
 classification without echoing search directories or environment values.
 
+`ProcessEnvironment.ResolveExecutable` exposes this same read-only native lookup
+to inventory consumers. It never starts a process and does not attest execution
+permission or immutable bytes. Script/package entry-point resolution belongs to
+the caller; the transport still receives a native executable and literal argv.
+
 Lookup observes a regular file and, on Unix, execute mode bits. It follows
 symlinks and does not attest immutable executable bytes, effective access,
 noexec/ACL state, authorization, containment or freedom from path races.

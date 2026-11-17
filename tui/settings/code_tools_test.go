@@ -738,6 +738,43 @@ func TestLanguageToolsSingleToolSelectionRejectsAmbiguousPackages(t *testing.T) 
 	}
 }
 
+func TestLanguageToolsUnavailableServerShowsCauseNotInstallAdvice(t *testing.T) {
+	cfg := types.DefaultLSPSettings()
+	cfg.Languages["fixture"] = types.LSPLanguageSettings{
+		Enabled: true, Command: "fixture-server", Extensions: []string{".fixture"}, LanguageID: "fixture",
+	}
+	m := New(theme.DefaultDark(), types.AppSettings{LSP: cfg}, nil)
+	m.SelectCategory(catLanguageServers)
+	s := NewSurface(theme.DefaultDark(), m)
+	reason := "The server is installed as a script. Set its interpreter as the command in Language Tools settings. Use the script path as the first argument"
+	stub := &codeToolsStub{inventory: types.CodeToolInventory{
+		Project: types.AssemblyPlan{State: types.AssemblyReady, Generation: 1, Languages: []types.AssemblyLanguage{{
+			ID: "fixture", Command: "fixture-server", Status: types.ToolUnavailable, Reason: reason,
+		}}},
+	}}
+	m.Update(s.SetCodeTools(stub)())
+	s.SetModel(m)
+	for index, row := range s.lsp.table.Rows() {
+		if row.ID != "configured/fixture-server" {
+			continue
+		}
+		if row.Cells[len(row.Cells)-1].Text != "Cannot start" {
+			t.Fatalf("launch failure mislabeled: %+v", row.Cells)
+		}
+		s.lsp.table.SelectIndex(index)
+		s.lsp.openTool()
+		detail := s.lsp.form.Field("tool-overview").FieldState().Value.String()
+		if !strings.Contains(detail, reason) || strings.Contains(detail, "Not installed") {
+			t.Fatalf("launch cause missing or contradicted: %q", detail)
+		}
+		if _, ok := s.lsp.detail.setupTarget(stub.inventory.Project); ok {
+			t.Fatal("an installed script offered server reinstallation")
+		}
+		return
+	}
+	t.Fatal("server row is missing")
+}
+
 func TestLanguageToolsRefreshIsVisibleOnNarrowPage(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
 	m.SelectCategory(catLanguageServers)

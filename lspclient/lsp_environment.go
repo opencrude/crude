@@ -3,10 +3,12 @@ package lspclient
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
@@ -16,6 +18,14 @@ const (
 	maxAnalyzerEnvironmentEntries = 256
 	maxAnalyzerAmbientEntries     = 4096
 )
+
+func prepareAnalyzerEnvironment(explicit map[string]string, rootURI string) (lsp.ProcessEnvironment, error) {
+	values, err := analyzerEnvironment(os.Environ(), explicit, rootURI)
+	if err != nil {
+		return lsp.ProcessEnvironment{}, err
+	}
+	return lsp.NewProcessEnvironment(values)
+}
 
 // analyzerEnvironment is the single ambient-inheritance policy for analyzers.
 // It does not change terminal, MCP or capability-host environment contracts.

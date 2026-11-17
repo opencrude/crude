@@ -481,6 +481,9 @@ func (c *lspCatalog) showDetail() {
 			// The subtitle states who installed the tool; Overview gives the
 			// facts. Long paths and digests keep the full row width.
 			languages := "Languages: " + mapDefault(tool.languages(), "None") + "\n"
+			if problem := tool.launchProblem(r.inventory.Project); problem != "" {
+				languages += problem + "\n"
+			}
 			for _, server := range tool.instances(m.lspHealth) {
 				line := "Server: " + mapDefault(runtimeState([]types.LSPServerHealth{server}), "Stopped")
 				if root := strings.TrimPrefix(server.RootURI, "file://"); root != "" {

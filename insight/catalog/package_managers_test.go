@@ -15,12 +15,12 @@ func TestPackageManagerRecipesPreserveCatalogIdentities(t *testing.T) {
 		want         PackageManagerRecipe
 	}{
 		{"ansible-language-server", "ansible-language-server", PackageManagerRecipe{
-			Kind: "npm", Manager: "npm", Registry: "npm registry", Runtime: "Node.js",
+			Kind: "npm", Manager: "npm", Registry: "npm registry", Runtime: "Node.js", Manifest: "package.json",
 			Name: "@ansible/ansible-language-server", Version: "26.6.0",
 			ProgramKind: "npm", Program: "ansible-language-server", Qualifiers: map[string]string{},
 		}},
 		{"perlnavigator", "perlnavigator", PackageManagerRecipe{
-			Kind: "npm", Manager: "npm", Registry: "npm registry", Runtime: "Node.js",
+			Kind: "npm", Manager: "npm", Registry: "npm registry", Runtime: "Node.js", Manifest: "package.json",
 			Name: "perlnavigator-server", Version: "0.8.20",
 			ProgramKind: "node", Program: "node_modules/perlnavigator-server/out/server.js", Qualifiers: map[string]string{},
 		}},

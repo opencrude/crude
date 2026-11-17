@@ -20,6 +20,7 @@ type packageManagerMethod struct {
 	Manager      string            `json:"manager"`
 	Registry     string            `json:"registry"`
 	Runtime      string            `json:"runtime"`
+	Manifest     string            `json:"manifest"`
 	NameForm     string            `json:"name_form"`
 	ProgramForms map[string]string `json:"program_forms"`
 	Qualifiers   map[string]string `json:"qualifiers"`
@@ -39,6 +40,7 @@ type PackageManagerRecipe struct {
 	Kind, Manager, Registry, Runtime string
 	Name, Version, Subpath           string
 	ProgramKind, Program             string
+	Manifest                         string
 	Qualifiers                       map[string]string
 }
 
@@ -115,6 +117,9 @@ func (p Package) PackageManagerFor(command string) (PackageManagerRecipe, bool) 
 	if !ok || method.Manager == "" || method.Registry == "" || method.Runtime == "" {
 		return out, false
 	}
+	if method.Manifest != "" && !safePackagePath(method.Manifest) {
+		return out, false
+	}
 	encodedName, encodedVersion, ok := strings.Cut(identity, "@")
 	if !ok {
 		return out, false
@@ -162,6 +167,6 @@ func (p Package) PackageManagerFor(command string) (PackageManagerRecipe, bool) 
 	return PackageManagerRecipe{
 		Kind: kind, Manager: method.Manager, Registry: method.Registry, Runtime: method.Runtime,
 		Name: name, Version: version, Subpath: u.Fragment, ProgramKind: programKind,
-		Program: program, Qualifiers: qualifiers,
+		Program: program, Manifest: method.Manifest, Qualifiers: qualifiers,
 	}, true
 }

@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"crude/insight/catalog"
 	"crude/toolstore"
+	model "crude/types"
 )
 
 func TestManagedToolRequiresExactCatalogIdentity(t *testing.T) {
@@ -41,7 +43,11 @@ func TestLocateToolDoesNotUseMatchingBasenameFromAnotherPackage(t *testing.T) {
 	root := t.TempDir()
 	digest := strings.Repeat("a", 64)
 	dir := filepath.Join(root, "wrong-package", "1-"+digest[:12])
-	bin := filepath.Join(dir, "files", "bin", "tool")
+	name := "tool"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(dir, "files", "bin", name)
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +57,7 @@ func TestLocateToolDoesNotUseMatchingBasenameFromAnotherPackage(t *testing.T) {
 	manifest := map[string]any{
 		"id": "wrong-package/1-" + digest[:12], "package": "wrong-package",
 		"version": "1", "sha256": digest, "digest_origin": "first-download",
-		"executable": "bin/tool", "command": "tool", "archive": "zip",
+		"executable": "bin/" + name, "command": "tool", "archive": "zip",
 		"source": "source", "url": "https://example.test/tool",
 		"installed_at": "2026-01-01T00:00:00Z", "installed_by": "user", "approval": "review",
 	}
@@ -66,12 +72,12 @@ func TestLocateToolDoesNotUseMatchingBasenameFromAnotherPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := catalog.Download{Package: "expected", Version: "1", Source: "source", URL: "https://example.test/tool", Archive: "zip", Bin: "bin/tool", Command: "tool"}
-	if path, _ := locateTool(t.Context(), "tool", t.TempDir(), store, &d); path != "" {
+	d := catalog.Download{Package: "expected", Version: "1", Source: "source", URL: "https://example.test/tool", Archive: "zip", Bin: "bin/" + name, Command: "tool"}
+	if path, _, _ := locateTool(t.Context(), model.LSPServerSpec{Command: "tool"}, t.TempDir(), store, &d); path != "" {
 		t.Fatalf("selected unrelated artifact %q", path)
 	}
 	d.Package = "wrong-package"
-	if path, source := locateTool(t.Context(), "tool", t.TempDir(), store, &d); path != bin || source != "tool-store" {
+	if path, source, err := locateTool(t.Context(), model.LSPServerSpec{Command: "tool"}, t.TempDir(), store, &d); err != nil || path != bin || source != "tool-store" {
 		t.Fatalf("matching artifact = %q, %q", path, source)
 	}
 }

@@ -155,6 +155,13 @@ func (e ProcessEnvironment) Env() []string {
 	return out
 }
 
+// ResolveExecutable observes the same native executable candidates used by
+// process construction, without starting anything. Callers may use it for
+// inventory; success is not execution permission or an immutable-file lease.
+func (e ProcessEnvironment) ResolveExecutable(command string) (string, error) {
+	return e.resolve(command)
+}
+
 // resolve performs bounded read/stat-only lookup in this table, never LookPath,
 // ambient PATH/PATHEXT, a shell, or the working directory. Explicit native
 // absolute executable paths do not require PATH. os.Stat follows symlinks:

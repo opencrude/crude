@@ -99,9 +99,9 @@ func TestAssemblyDiscoveryListingErrorsAreNotComplete(t *testing.T) {
 		t.Fatalf("intentional exclusions became failures: %v", err)
 	}
 	found := &assemblyDiscovery{err: assemblyListingError(ctx, pathwalk.Catalog{Errors: 1}, nil)}
-	plan := resolveAssembly(t.TempDir(), model.DefaultLSPSettings(), found, func(string, *catalog.Download) (string, string) {
+	plan := resolveAssembly(t.TempDir(), model.DefaultLSPSettings(), found, func(model.LSPServerSpec, *catalog.Download) (string, string, error) {
 		t.Fatal("partial observation proceeded to resolve tools")
-		return "", ""
+		return "", "", nil
 	})
 	if plan.State != model.AssemblyFailed || !strings.Contains(plan.Message, "could not list") {
 		t.Fatalf("failed traversal claimed complete assembly: %+v", plan)
@@ -117,8 +117,8 @@ func TestAssemblyDiscoveryReportsTruncatedListing(t *testing.T) {
 	if found.err != nil || !found.limited {
 		t.Fatalf("truncated scan not reported: %+v", found)
 	}
-	plan := resolveAssembly(root, model.DefaultLSPSettings(), found, func(string, *catalog.Download) (string, string) {
-		return "", ""
+	plan := resolveAssembly(root, model.DefaultLSPSettings(), found, func(model.LSPServerSpec, *catalog.Download) (string, string, error) {
+		return "", "", nil
 	})
 	if !plan.Limited || !strings.Contains(plan.Message, "only part") {
 		t.Fatalf("truncated plan not reported: %+v", plan)

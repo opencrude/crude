@@ -848,6 +848,18 @@ Tea's update goroutine (the tab-close hang).
   not a sandbox: trusted tools can still read home/configuration files and use
   native network access. Neither Trust nor a successful launch proves complete
   project context or credential isolation.
+- Inventory and startup share `lspclient` program resolution and Powernap's
+  `ProcessEnvironment.ResolveExecutable`; inventory does not have its own
+  PATHEXT rules. On Windows, an npm catalog program can resolve through the
+  installed package's `package.json` bin map or literal catalog `node:` entry.
+  The adapter uses npm's global prefix or local `node_modules/.bin` layout,
+  selects native `node.exe`, and passes the script followed by the original
+  arguments. CMD/BAT files are neither parsed nor executed. Native executable
+  candidates keep precedence; non-Node npm bins need explicit interpreter
+  settings. No package manager or project code runs during resolution.
+  A missing runtime, broken package or unsupported script reads **Cannot start**
+  with its cause, not **Not installed** or server-install advice. Script paths
+  remain distinct tool identities even when several servers share Node.
 - `LSPServerSpec.ConfigurationScopes` carries complete effective module settings
   through the workspace runtime to one immutable, root-bound transport table.
   `workspace/configuration` respects each item's `scopeUri`, selects its longest
@@ -1885,10 +1897,13 @@ intelligence from data. It runs no project code.
 2. **Resolution.** For each language, launch resolution picks the server. The
    program is looked up without starting it: an absolute path from settings,
    then the tool store, then the system path. Path folders inside the
-   workspace are skipped, so a project cannot supply its own server program.
+   workspace are skipped for ambient lookup, so a project cannot supply its own
+   server program implicitly. Explicit environment choices use the same launch
+   policy as startup. A script counts as ready only when its full hosted launch,
+   including the native interpreter, resolves.
 3. **Plan.** One `types.AssemblyPlan` per workspace: each language with its
    file count and an example file, server, program, source, status (ready, not
-   installed, off, no known server), checked scope and a plain reason. The manager
+   installed, cannot start, off, no known server), checked scope and a plain reason. The manager
    publishes it in its snapshot (`Assembly()` on the shell port) and the control API's
    diagnostics `lsp` view lists it.
 4. **Activation.** A ready server whose catalog scope is `project` becomes a

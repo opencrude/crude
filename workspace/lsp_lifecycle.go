@@ -19,6 +19,7 @@ import (
 	"crude/fileio"
 	"crude/insight/facts"
 	"crude/insight/governor"
+	"crude/lspclient"
 	ttypes "crude/types"
 )
 
@@ -761,6 +762,19 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 // executable is the common case and has one remedy, so it is not reported as
 // the transport's stack of wrapped errors.
 func lspStartError(cmd string, err error) string {
+	switch {
+	case errors.Is(err, lspclient.ErrServerScript):
+		return cmd + " is installed as a script. Set its interpreter as the command in Language Tools settings. Use the script path as the first argument."
+	case errors.Is(err, lspclient.ErrServerPackage):
+		return cmd + " has an invalid package entry point. Install the package again, then restart the server."
+	case errors.Is(err, lspclient.ErrServerRuntime):
+		name := "its runtime"
+		var missing *lspclient.RuntimeUnavailableError
+		if errors.As(err, &missing) && missing.Runtime != "" {
+			name = missing.Runtime
+		}
+		return cmd + " needs " + name + ", which is not installed or not on PATH. Install it, then restart the server."
+	}
 	if errors.Is(err, exec.ErrNotFound) {
 		return cmd + " is not installed or not on PATH. Install it, then choose Retry."
 	}

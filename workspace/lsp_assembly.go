@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -18,6 +18,7 @@ import (
 	"crude/fileio"
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
+	"crude/lspclient"
 	"crude/third_party/pathwalk"
 	"crude/toolstore"
 	ttypes "crude/types"
@@ -109,8 +110,8 @@ func (m *LSPManager) requestAssemblyLocked() {
 		if discovery == nil || discovery.root != root {
 			discovery = discoverProjectLanguages(ctx, root, settings)
 		}
-		plan := resolveAssembly(root, settings, discovery, func(command string, download *catalog.Download) (string, string) {
-			return locateTool(ctx, command, root, store, download)
+		plan := resolveAssembly(root, settings, discovery, func(spec ttypes.LSPServerSpec, download *catalog.Download) (string, string, error) {
+			return locateTool(ctx, spec, root, store, download)
 		})
 		plan.Generation = generation
 		m.publishAssembly(ctx, discovery, plan)
@@ -146,7 +147,7 @@ func (m *LSPManager) publishAssembly(ctx context.Context, discovery *assemblyDis
 			if ok {
 				producers = append(producers, ttypes.LSPProjectProducer{Root: language.Root, Spec: spec})
 			}
-		case ttypes.ToolMissing:
+		case ttypes.ToolMissing, ttypes.ToolUnavailable:
 			m.toolMissing[assemblyToolKey{language.ServerID, language.Command}] = language.Reason
 		}
 	}
@@ -296,7 +297,7 @@ func (m *assemblyIgnores) rules(dir string) []gitignore.Pattern {
 
 // resolveAssembly decides, per discovered language, which tool serves it and
 // where it comes from. locate finds a program without running it.
-func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemblyDiscovery, locate func(string, *catalog.Download) (string, string)) ttypes.AssemblyPlan {
+func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemblyDiscovery, locate func(ttypes.LSPServerSpec, *catalog.Download) (string, string, error)) ttypes.AssemblyPlan {
 	plan := ttypes.AssemblyPlan{State: ttypes.AssemblyReady, FilesSeen: discovery.seen, Limited: discovery.limited}
 	if discovery.err != nil {
 		plan.State = ttypes.AssemblyFailed
@@ -332,12 +333,18 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 					}
 				}
 			}
-			language.Executable, language.Source = locate(spec.Command, download)
+			var launchErr error
+			language.Executable, language.Source, launchErr = locate(spec, download)
 			if spec.ServerID == "" {
 				language.Source = ttypes.ToolSourceSettings
 			}
 			if language.Executable == "" {
 				language.Status = ttypes.ToolMissing
+				if launchErr != nil && !errors.Is(launchErr, exec.ErrNotFound) {
+					language.Status = ttypes.ToolUnavailable
+					language.Reason = lspStartError(spec.Command, launchErr)
+					break
+				}
 				language.Reason = fmt.Sprintf("%s needs %s, which is not installed.", found.name, filepath.Base(spec.Command))
 				if language.Installable {
 					language.Reason += " Crude can install it."
@@ -369,19 +376,23 @@ func resolveAssembly(root string, settings ttypes.LSPSettings, discovery *assemb
 }
 
 func assemblyMessage(plan ttypes.AssemblyPlan) string {
-	ready, missing := 0, 0
+	ready, missing, unavailable := 0, 0, 0
 	for _, language := range plan.Languages {
 		switch language.Status {
 		case ttypes.ToolReady:
 			ready++
 		case ttypes.ToolMissing:
 			missing++
+		case ttypes.ToolUnavailable:
+			unavailable++
 		}
 	}
 	var message string
 	switch {
 	case len(plan.Languages) == 0:
 		message = "Crude found no source files that a language server can check."
+	case unavailable > 0:
+		message = "Some language servers cannot start. Check their details in Language Tools settings."
 	case missing > 0:
 		message = fmt.Sprintf("%d of %d languages have a language server. Install the missing servers to check those files.", ready, ready+missing)
 	default:
@@ -397,15 +408,17 @@ func assemblyMessage(plan ttypes.AssemblyPlan) string {
 // path from settings, a tool in the tool store, then the system path.
 // Path entries inside the workspace are skipped, so a project cannot supply
 // its own server program.
-func locateTool(ctx context.Context, command, workspaceRoot string, store *toolstore.Store, download *catalog.Download) (string, string) {
+func locateTool(ctx context.Context, spec ttypes.LSPServerSpec, workspaceRoot string, store *toolstore.Store, download *catalog.Download) (string, string, error) {
+	command := spec.Command
 	if command == "" {
-		return "", ""
+		return "", "", nil
+	}
+	locate := func(command string) (string, error) {
+		return lspclient.LocateServerProgram(ctx, command, fileuri.FromPath(workspaceRoot), spec.Environment, serverPackageProgram(spec))
 	}
 	if filepath.IsAbs(command) {
-		if executableFile(command) {
-			return command, ttypes.ToolSourceSettings
-		}
-		return "", ""
+		path, err := locate(command)
+		return path, ttypes.ToolSourceSettings, err
 	}
 	if store != nil && download != nil {
 		if tools, _, err := store.List(ctx); err == nil {
@@ -415,23 +428,15 @@ func locateTool(ctx context.Context, command, workspaceRoot string, store *tools
 					newest = tool
 				}
 			}
-			if newest.Executable != "" && executableFile(newest.Executable) {
-				return newest.Executable, ttypes.ToolSourceStore
+			if newest.Executable != "" {
+				if path, err := locate(newest.Executable); err == nil {
+					return path, ttypes.ToolSourceStore, nil
+				}
 			}
 		}
 	}
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if !filepath.IsAbs(dir) || (workspaceRoot != "" && pathWithin(workspaceRoot, dir)) {
-			continue
-		}
-		for _, name := range executableNames(command) {
-			candidate := filepath.Join(dir, name)
-			if executableFile(candidate) {
-				return candidate, ttypes.ToolSourcePath
-			}
-		}
-	}
-	return "", ""
+	path, err := locate(command)
+	return path, ttypes.ToolSourcePath, err
 }
 
 func managedToolMatches(tool toolstore.Tool, download catalog.Download) bool {
@@ -441,32 +446,8 @@ func managedToolMatches(tool toolstore.Tool, download catalog.Download) bool {
 		tool.Command == download.Command
 }
 
-func executableNames(command string) []string {
-	if runtime.GOOS != "windows" || filepath.Ext(command) != "" {
-		return []string{command}
-	}
-	var names []string
-	for _, ext := range filepath.SplitList(os.Getenv("PATHEXT")) {
-		if ext != "" {
-			names = append(names, command+strings.ToLower(ext))
-		}
-	}
-	if len(names) == 0 {
-		names = []string{command + ".exe"}
-	}
-	return names
-}
-
-func executableFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	return runtime.GOOS == "windows" || info.Mode().Perm()&0o111 != 0
-}
-
-// assemblyStatusLocked returns the plan's reason for a file whose server is
-// not installed, so the status names the missing program.
+// assemblyStatusLocked returns the plan's reason when a file's server is
+// missing or its launch cannot resolve.
 func (m *LSPManager) assemblyStatusLocked(path string) (string, bool) {
 	spec, ok := m.settings.ResolveServer(path)
 	if !ok {
