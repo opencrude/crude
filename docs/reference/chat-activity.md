@@ -970,14 +970,18 @@ reference window, read-only for sent/history content. The composer's context men
 also exposes explicit **Preview in Crude**, **Open with default app**, and **Show
 in file manager** actions independent of the preference.
 
-Crude's optional image preview uses original-pixel Kitty graphics after an
-invisible virtual-placement probe succeeds and the output terminal reports its
-cell geometry. This is capability-based, not a `TERM`/terminal-name guess.
+Crude's optional image preview uses native pixel graphics after the output
+terminal confirms Kitty or Sixel support and reports its cell geometry.
+Kitty uses an invisible virtual-placement probe; Sixel uses DA1 feature 4
+(including Windows Terminal 1.22+). This is capability-based, not a
+`TERM`/terminal-name guess. Confirmed Kitty is preferred.
 Unicode-placeholder cells carry image identity and source coordinates through
 the ordinary compositor, so moving, resizing, clipping and overlapping windows
 use the same ownership and paint path as text. The single terminal writer uploads
-an immutable PNG once, replaces virtual geometry on resize, and deletes only its
-exact image IDs on close/reset/suspend. PNG, JPEG, GIF, WebP and BMP decoding and
+an immutable PNG once for Kitty, replaces virtual geometry on resize, and deletes
+only its exact image IDs on close/reset/suspend. For Sixel, it encodes the visible
+composited crops with an adaptive, dithered 256-colour palette and restores covered
+text on close or movement. PNG, JPEG, GIF, WebP and BMP decoding and
 PNG preparation run off Update with the existing reference owner/epoch checks.
 GIF uses its first frame. Byte limits are 64 MiB and decoded images are bounded
 to 33,554,432 pixels.
@@ -985,10 +989,13 @@ to 33,554,432 pixels.
 The earlier blockiness came from Crude's `▀` approximation (two nearest-neighbor
 source samples per character), not corrupt attachment bytes or Kitty settings.
 That preview remains the fallback for unsupported/nonresponsive terminals,
-unknown cell geometry, non-true-color output or an unrepresentable placeholder
-grid. No Sixel or iTerm renderer is added. tmux transports image commands using
-passthrough; it needs `allow-passthrough on` and an outer terminal supporting
-Kitty Unicode placeholders. Without a successful probe Crude falls back safely.
+unknown cell geometry or an unrepresentable placeholder grid. Kitty also needs
+true-colour text output. Sixel rasters above 2,097,152 visible pixels use the
+fallback to bound staging memory. Sixel preserves pixel detail but has fewer
+colours than Kitty; dithering reduces palette bands. No iTerm renderer is added.
+tmux transports image commands using passthrough; it needs
+`allow-passthrough on`, a successful capability reply and measured cell geometry.
+Without successful negotiation Crude falls back safely.
 System app remains the default and is useful for full-size viewing; images that
 were already pixelated before attaching cannot gain missing detail.
 

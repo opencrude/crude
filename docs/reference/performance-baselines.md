@@ -744,6 +744,28 @@ in a graphics frame. Frame conflation keeps image descriptors paired with the
 completed cell publication, not the newest unpainted screen state. Existing
 bench-gate ceilings are unchanged.
 
+### Windows Sixel images (2026-11-16)
+
+`TestSixelRendererWarmFramesAndUnrelatedTextReuseRaster` requires zero
+allocations and zero terminal bytes for a repeated versioned image frame. It
+also verifies that text on another row neither re-encodes nor retransmits the
+image; same-row damage restores the cached raster without reading source pixels.
+Movement reuses a raster when only its screen position changes. Resource/geometry
+handoff remains independent of a stalled terminal writer.
+
+On Windows amd64, Go 1.27.4, i7-9850H, three runs of
+`BenchmarkSixelEncodeVisibleRaster` at three iterations each measured
+142.9–147.4 ms/op and 30.1–41.3 MB/op. This measures cold 1280×640 resampling,
+adaptive palette construction and Sixel encoding of an enlarged small striped
+source, not photographic encoding, terminal presentation or Update latency.
+Conversion runs only at the asynchronous single writer; it is not a claim that
+cold conversion meets the 16 ms presentation budget. Current crops are cached,
+not re-encoded on ordinary frames. The visible-raster cap is 2,097,152 pixels,
+because the encoder stages up to 256 bitplanes as well as the output bitmap.
+Native Windows Terminal file and attachment captures check 160×40 and 80×24;
+visual evidence does not measure key-to-presented-image latency. Existing
+bench-gate ceilings are unchanged.
+
 ## Protocol v2 terminal hot paths (2026-10-23)
 
 Measured Linux amd64, i7-10750H, native libghostty-vt, Go 1.25.9. These are

@@ -3,6 +3,7 @@ package tea
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"image/color"
 	"io"
 	"runtime"
@@ -39,13 +40,16 @@ type cursedRenderer struct {
 	hardTabs       bool               // whether to use hard tabs to optimize cursor movements
 	backspace      bool               // whether to use backspace to optimize cursor movements
 	mapnl          bool
-	syncdUpdates   bool                           // whether to use synchronized output mode for updates
-	starting       bool                           // indicates whether the renderer is starting after being stopped
-	kittyImages    map[uint32]KittyImagePlacement // last successfully flushed resource set
-	kittyUncertain []KittyImagePlacement          // exact IDs possibly sent by a failed write
-	kittyInvalid   bool                           // clear/reset/screen switch requires reupload
-	kittyReveal    bool                           // first placement needs one extra pass
+	syncdUpdates   bool                      // whether to use synchronized output mode for updates
+	starting       bool                      // indicates whether the renderer is starting after being stopped
+	kittyImages    map[uint32]ImagePlacement // last successfully flushed resource set
+	kittyUncertain []ImagePlacement          // exact IDs possibly sent by a failed write
+	kittyInvalid   bool                      // clear/reset/screen switch requires reupload
+	kittyReveal    bool                      // first placement needs one extra pass
 	kittyTmux      bool
+	sixelImages    []encodedSixel
+	sixelUncertain []image.Rectangle
+	sixelInvalid   bool
 }
 
 var _ renderer = &cursedRenderer{}
@@ -175,6 +179,7 @@ func (s *cursedRenderer) close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deleteKittyImages()
+	s.clearSixels()
 
 	// Exit the altScreen and show cursor before closing. It's important that
 	// we don't change the [cursedRenderer] altScreen and cursorHidden states
@@ -270,6 +275,7 @@ func (s *cursedRenderer) close() (err error) {
 	}
 
 	s.commitKittyImages(nil)
+	s.sixelImages, s.sixelUncertain, s.sixelInvalid = nil, nil, false
 	x, y := s.scr.Position()
 
 	// We want to clear the renderer state but not the cursor position. This is
@@ -458,9 +464,17 @@ func (s *cursedRenderer) flush(closing bool) error {
 	}
 
 	s.reconcileKittyImages(view.Images, s.kittyInvalid || shouldUpdateAltScreen, oldScreenPrefix > 0)
+	s.sixelInvalid = s.sixelInvalid || shouldUpdateAltScreen
+	sixels, sixelDirty, err := s.prepareSixels(view)
+	if err != nil {
+		return fmt.Errorf("bubbletea: cannot prepare Sixel image: %w", err)
+	}
+	// Text scroll operations cannot preserve Sixel graphics on every terminal.
+	s.scr.SetScrollOptim(runtime.GOOS != "windows" && len(sixels) == 0 && len(s.sixelImages) == 0)
 
 	// Render and queue changes to the screen buffer.
 	s.scr.Render(s.cellbuf.RenderBuffer)
+	s.paintSixels(sixels, sixelDirty)
 
 	if cur := view.Cursor; cur != nil {
 		// MoveTo must come after [uv.TerminalRenderer.Render] because the
@@ -581,13 +595,18 @@ func (s *cursedRenderer) flush(closing bool) error {
 		}
 		if _, err := io.Copy(s.w, buf); err != nil {
 			s.failKittyImages(view.Images)
+			s.failSixels(sixels)
 			return fmt.Errorf("bubbletea: error flushing update to the writer: %w", err)
 		}
 	}
 
 	s.commitKittyImages(view.Images)
+	s.sixelImages, s.sixelUncertain, s.sixelInvalid = sixels, nil, false
 	s.kittyReveal = false
-	s.lastView = &view
+	if s.lastView == nil {
+		s.lastView = new(View)
+	}
+	*s.lastView = view
 	s.viewMu.Lock()
 	s.onMouseView = view.OnMouse
 	s.viewMu.Unlock()
@@ -607,6 +626,7 @@ func (s *cursedRenderer) render(v View) {
 			token = versioned.SnapshotToken()
 		}
 		if token.Owner == nil || token.Generation == 0 || token != s.snapshotToken ||
+			!imagePlacementsEqual(v.Images, s.view.Images) ||
 			s.directbuf.RenderBuffer == nil || s.directbuf.Width() != w || s.directbuf.Height() != h {
 			if s.directbuf.RenderBuffer == nil {
 				s.directbuf = uv.NewScreenBuffer(w, h)
@@ -618,7 +638,10 @@ func (s *cursedRenderer) render(v View) {
 			// Copy every new completed generation. A repeated publication reuses
 			// these detached cells, never the producer's mutable buffer.
 			v.Surface.Draw(snapshotScreen{s.directbuf.Buffer}, s.directbuf.Bounds())
+			v.sixels = snapshotSixelTiles(s.directbuf.Buffer, v.Images)
 			s.surfaceFrame++
+		} else {
+			v.sixels = s.view.sixels
 		}
 		s.snapshotToken = token
 		v.surfaceFrame = s.surfaceFrame
@@ -634,10 +657,10 @@ func (s *cursedRenderer) render(v View) {
 		v.ProgressBar = &progress
 	}
 	if len(v.Images) > 0 {
-		if kittyImagesEqual(v.Images, s.view.Images) {
+		if imagePlacementsEqual(v.Images, s.view.Images) {
 			v.Images = s.view.Images
 		} else {
-			v.Images = append([]KittyImagePlacement(nil), v.Images...)
+			v.Images = append([]ImagePlacement(nil), v.Images...)
 		}
 	}
 	s.view = v
@@ -688,7 +711,7 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 	if s.starting && s.hardTabs {
 		_, _ = s.scr.WriteString(ansi.SetTabEvery8Columns)
 	}
-	if !resized && !s.starting && !s.kittyInvalid && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
+	if !resized && !s.starting && !s.kittyInvalid && !s.sixelInvalid && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
 		return view, true
 	}
 	s.starting = false
@@ -712,10 +735,12 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 	} else {
 		s.cellbuf.Clear()
 		content.Draw(s.cellbuf, s.cellbuf.Bounds())
+		s.snapshotSixelContent(&view)
 	}
 	if frameHeight := frameArea.Dy(); frameHeight > s.height {
 		s.cellbuf.Lines = s.cellbuf.Lines[frameHeight-s.height:]
 	}
+	view.sixels = clipSixelTiles(view.sixels, s.cellbuf.Bounds())
 	return view, false
 }
 
@@ -730,6 +755,7 @@ func reset(s *cursedRenderer) {
 	s.buf.Reset()
 	s.starting = true
 	s.kittyInvalid = len(s.kittyImages) > 0 || len(s.kittyUncertain) > 0
+	s.sixelInvalid = len(s.sixelImages) > 0 || len(s.sixelUncertain) > 0
 	scr := uv.NewTerminalRenderer(&s.buf, s.env)
 	scr.SetColorProfile(s.profile)
 	scr.SetRelativeCursor(true) // Always start in inline mode
@@ -780,6 +806,7 @@ func (s *cursedRenderer) resize(w, h int) {
 // content is never trusted.
 func (s *cursedRenderer) applyResize(w, h int) {
 	s.scr.Erase()
+	s.sixelInvalid = true
 	s.width, s.height = w, h
 	s.scr.Resize(s.width, s.height)
 }
@@ -792,6 +819,7 @@ func (s *cursedRenderer) clearScreen() {
 	s.scr.MoveTo(0, 0)
 	s.scr.Erase()
 	s.kittyInvalid = len(s.kittyImages) > 0 || len(s.kittyUncertain) > 0
+	s.sixelInvalid = len(s.sixelImages) > 0 || len(s.sixelUncertain) > 0
 	s.mu.Unlock()
 }
 
@@ -971,7 +999,7 @@ func viewEquals(a, b *View) bool {
 		a.KeyboardEnhancements != b.KeyboardEnhancements {
 		return false
 	}
-	if !kittyImagesEqual(a.Images, b.Images) {
+	if !imagePlacementsEqual(a.Images, b.Images) {
 		return false
 	}
 

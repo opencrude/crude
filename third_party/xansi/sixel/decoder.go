@@ -132,13 +132,12 @@ func (d *Decoder) Decode(r io.Reader) (image.Image, error) {
 				if err != nil {
 					return img, d.readError(err)
 				}
-				// Read bytes until we hit a non-numeric and non-repeat byte.
-				if (b < '0' || b > '9') && (b < '?' || b > '~') {
-					rd.UnreadByte() //nolint:errcheck,gosec
+				data = append(data, b)
+				// A repeat has one data character after its decimal count.
+				// Leave subsequent pixel characters for the main decoder.
+				if b < '0' || b > '9' {
 					break
 				}
-
-				data = append(data, b)
 			}
 
 			// RLE operation

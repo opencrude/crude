@@ -59,7 +59,7 @@ func New(th *theme.Theme) *Screen {
 	area := ui.NewTextArea(InputID, tokens, true)
 	area.SetSubmitAction("")
 	s.input = &overlayInput{Base: ui.NewBase(InputID), area: area, owner: s}
-	s.image = &imagePreview{Base: ui.NewBase(ImageID), owner: s, tokens: tokens}
+	s.image = &imagePreview{Base: ui.NewBase(ImageID), owner: s, tokens: tokens, graphics: tea.ImageNone}
 	s.actions = ui.NewActionBar(ActionsID, tokens)
 	s.actions.SetShowRule(true)
 	s.actions.SetSurfaceBackground(ui.ColorPopupBg)
@@ -89,27 +89,31 @@ func (s *Screen) OpenImage(refID, title string, img image.Image) {
 
 // SetImageResource installs a terminal-owned immutable PNG prepared off Update.
 // Without confirmed terminal support, the same image keeps its cell preview.
-func (s *Screen) SetImageResource(resource *tea.KittyImage) { s.image.resource = resource }
+func (s *Screen) SetImageResource(resource *tea.TerminalImage) { s.image.resource = resource }
 
-func (s *Screen) SetImageGraphics(enabled bool, cellWidth, cellHeight int) bool {
-	if s.image.graphics == enabled && s.image.cellWidth == cellWidth && s.image.cellHeight == cellHeight {
+func (s *Screen) SetImageGraphics(protocol tea.ImageProtocol, cellWidth, cellHeight int) bool {
+	if s.image.graphics == protocol && s.image.cellWidth == cellWidth && s.image.cellHeight == cellHeight {
 		return false
 	}
-	s.image.graphics, s.image.cellWidth, s.image.cellHeight = enabled, cellWidth, cellHeight
+	s.image.graphics, s.image.cellWidth, s.image.cellHeight = protocol, cellWidth, cellHeight
 	return true
 }
 
 // ImagePlacement describes the virtual image paired with this body's cells.
 // Position and occlusion remain ordinary compositor responsibilities.
-func (s *Screen) ImagePlacement() tea.KittyImagePlacement {
-	if !s.IsOpen() || !s.image.graphics || s.image.resource == nil || s.image.image == nil {
-		return tea.KittyImagePlacement{}
+func (s *Screen) ImagePlacement() tea.ImagePlacement {
+	if !s.IsOpen() || s.image.graphics == tea.ImageNone || s.image.resource == nil || s.image.image == nil {
+		return tea.ImagePlacement{}
 	}
 	r := s.image.imageRect()
 	if r.Empty() {
-		return tea.KittyImagePlacement{}
+		return tea.ImagePlacement{}
 	}
-	return tea.KittyImagePlacement{Image: s.image.resource, Columns: r.W, Rows: r.H}
+	p := tea.ImagePlacement{Image: s.image.resource, Columns: r.W, Rows: r.H}
+	if s.image.graphics == tea.ImageSixel {
+		p.Protocol, p.CellWidth, p.CellHeight = tea.ImageSixel, s.image.cellWidth, s.image.cellHeight
+	}
+	return p
 }
 
 func (s *Screen) open(refID, title, content string, readOnly bool) {

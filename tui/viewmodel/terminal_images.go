@@ -19,6 +19,8 @@ type terminalImageState struct {
 	probeID               uint32
 	started               bool
 	supported             bool
+	sixel                 bool
+	sixelProbeID          uint32
 	profileKnown          bool
 	trueColor             bool
 	cellWidth, cellHeight int
@@ -37,14 +39,16 @@ func (m *App) probeTerminalImages() tea.Cmd {
 	}
 	state.started = true
 	state.supported = false
+	state.sixel = false
 	m.refreshReferenceGraphics()
 	state.probeID = rand.Uint32()
 	if state.probeID == 0 {
 		state.probeID = 1
 	}
 	id := state.probeID
+	state.sixelProbeID = id
 	query := fmt.Sprintf("\x1b_Ga=T,U=1,f=24,s=1,v=1,c=1,r=1,i=%d;AAAA\x1b\\", id)
-	return tea.Batch(tea.Raw(cleanup+terminalImageSequence(query)+terminalImageSizeQuery()), tea.Tick(time.Second, func(time.Time) tea.Msg {
+	return tea.Batch(tea.Raw(cleanup+terminalImageSequence(query)+ansi.RequestPrimaryDeviceAttributes+terminalImageSizeQuery()), tea.Tick(time.Second, func(time.Time) tea.Msg {
 		return terminalImageProbeTimeoutMsg{id: id}
 	}))
 }
@@ -62,6 +66,19 @@ func (m *App) handleTerminalImageMessage(msg tea.Msg) (tea.Cmd, bool) {
 	state := &m.terminalImages
 	refresh := false
 	switch msg := msg.(type) {
+	case uv.PrimaryDeviceAttributesEvent:
+		// DA1 feature 4 advertises Sixel. Do not infer support from WT_SESSION
+		// or TERM: SSH, multiplexers and older terminals can change the path.
+		if state.sixelProbeID != 0 && len(msg) > 0 {
+			state.sixelProbeID = 0
+			for _, attribute := range msg[1:] {
+				if attribute == 4 {
+					state.sixel = true
+				}
+			}
+			m.refreshReferenceGraphics()
+		}
+		return nil, true
 	case uv.KittyGraphicsEvent:
 		if state.probeID == 0 || uint32(msg.Options.ID) != state.probeID {
 			return nil, true // never expose a terminal response as composer input
@@ -72,6 +89,9 @@ func (m *App) handleTerminalImageMessage(msg tea.Msg) (tea.Cmd, bool) {
 		m.refreshReferenceGraphics()
 		return tea.Raw(terminalImageSequence(fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", id))), true
 	case terminalImageProbeTimeoutMsg:
+		if state.sixelProbeID == msg.id {
+			state.sixelProbeID = 0
+		}
 		if state.probeID != msg.id {
 			return nil, true
 		}
@@ -106,9 +126,22 @@ func (m *App) handleTerminalImageMessage(msg tea.Msg) (tea.Cmd, bool) {
 	return nil, true
 }
 
+func (s terminalImageState) protocol() tea.ImageProtocol {
+	if s.cellWidth <= 0 || s.cellHeight <= 0 {
+		return tea.ImageNone
+	}
+	if s.supported && (!s.profileKnown || s.trueColor) {
+		return tea.ImageKitty
+	}
+	if s.sixel {
+		return tea.ImageSixel
+	}
+	return tea.ImageNone
+}
+
 func (m *App) configureReferenceGraphics(screen *textoverlay.Screen) {
 	state := m.terminalImages
-	if screen.SetImageGraphics(state.supported && (!state.profileKnown || state.trueColor) && state.cellWidth > 0 && state.cellHeight > 0, state.cellWidth, state.cellHeight) {
+	if screen.SetImageGraphics(state.protocol(), state.cellWidth, state.cellHeight) {
 		m.markReferenceOverlay()
 	}
 }

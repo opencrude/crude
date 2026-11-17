@@ -25,7 +25,7 @@ import (
 // its own terminal resource: Kitty virtual placement geometry is per image ID.
 type paneImage struct {
 	image    image.Image
-	resource *tea.KittyImage
+	resource *tea.TerminalImage
 }
 
 func imageTabTitle(path string) string { return "image:" + path }
@@ -174,8 +174,7 @@ func (m *App) closeImageTab(id window.TabID) {
 
 func (m *App) configureImageGraphics(screen *imageviewer.Screen) bool {
 	state := m.terminalImages
-	return screen.SetImageGraphics(state.supported && (!state.profileKnown || state.trueColor) &&
-		state.cellWidth > 0 && state.cellHeight > 0, state.cellWidth, state.cellHeight)
+	return screen.SetImageGraphics(state.protocol(), state.cellWidth, state.cellHeight)
 }
 
 // Retarget only paths moved by an explicit successful tree operation. Open

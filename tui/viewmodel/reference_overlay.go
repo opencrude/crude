@@ -40,7 +40,7 @@ type referenceContentLoadedMsg struct {
 	readOnly bool
 	err      error
 	image    image.Image
-	resource *tea.KittyImage
+	resource *tea.TerminalImage
 }
 
 type referenceContentSavedMsg struct {

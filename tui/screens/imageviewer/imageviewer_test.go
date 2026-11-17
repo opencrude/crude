@@ -23,13 +23,13 @@ import (
 	"crude/tui/ui"
 )
 
-func resource(t *testing.T, img image.Image) *tea.KittyImage {
+func resource(t *testing.T, img image.Image) *tea.TerminalImage {
 	t.Helper()
 	var data bytes.Buffer
 	if err := png.Encode(&data, img); err != nil {
 		t.Fatal(err)
 	}
-	result := tea.NewKittyImage(data.Bytes())
+	result := tea.NewTerminalImage(data.Bytes(), img)
 	if result == nil {
 		t.Fatal("could not prepare image resource")
 	}
@@ -76,7 +76,7 @@ func TestGraphicsFitZoomCropAndResetThroughHost(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	res := resource(t, img)
 	s.SetImage(img, res)
-	if !s.SetImageGraphics(true, 8, 16) || s.SetImageGraphics(true, 8, 16) {
+	if !s.SetImageGraphics(tea.ImageKitty, 8, 16) || s.SetImageGraphics(tea.ImageKitty, 8, 16) {
 		t.Fatal("capability change result is not stable")
 	}
 	buf := paint(host, 40, 22)
@@ -121,7 +121,7 @@ func TestGraphicsFitZoomCropAndResetThroughHost(t *testing.T) {
 	if p := s.ImagePlacement(); p.Columns != 40 || p.Rows != 10 || s.centerX != .5 || s.zoom != 1 {
 		t.Fatalf("fit did not reset pan and zoom: %+v", p)
 	}
-	s.SetImageGraphics(true, 8, 24)
+	s.SetImageGraphics(tea.ImageKitty, 8, 24)
 	if p := s.ImagePlacement(); p.Columns != 40 || p.Rows != 7 {
 		t.Fatalf("measured cell aspect did not refit: %+v", p)
 	}
@@ -414,7 +414,11 @@ func TestWheelZoomAnchorsPointerAndIgnoresChrome(t *testing.T) {
 		img := image.NewNRGBA(image.Rect(0, 0, 640, 640))
 		res := resource(t, img)
 		s.SetImage(img, res)
-		s.SetImageGraphics(graphics, 8, 16)
+		protocol := tea.ImageNone
+		if graphics {
+			protocol = tea.ImageKitty
+		}
+		s.SetImageGraphics(protocol, 8, 16)
 		x, y := 52, 25
 		sourceX := (float64(x-s.virtual.X) + .5) / float64(s.virtual.W)
 		sourceY := (float64(y-s.virtual.Y) + .5) / float64(s.virtual.H)
@@ -494,7 +498,7 @@ func TestGraphicsCoordinateLimitUnknownMetricsAndReplacement(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 297, 4))
 	first := resource(t, img)
 	s.SetImage(img, first)
-	s.SetImageGraphics(true, 1, 2)
+	s.SetImageGraphics(tea.ImageKitty, 1, 2)
 	if p := s.ImagePlacement(); p.Columns != 297 || p.Rows != 2 {
 		t.Fatalf("coordinate limit should include 297 cells: %+v", p)
 	}
@@ -515,7 +519,7 @@ func TestGraphicsCoordinateLimitUnknownMetricsAndReplacement(t *testing.T) {
 	if s.ImagePlacement().Image != second || buf.Get(0, 1).FG != renderingIdentity(second.ID()) {
 		t.Fatal("same-sized replacement retained stale terminal identity")
 	}
-	s.SetImageGraphics(true, 0, 0)
+	s.SetImageGraphics(tea.ImageKitty, 0, 0)
 	buf = paint(host, 297, 4)
 	if s.ImagePlacement().Image != nil || strings.ContainsRune(text(buf), kitty.Placeholder) {
 		t.Fatal("unknown cell metrics did not fall back safely")
@@ -531,7 +535,7 @@ func TestGraphicsRowLimitAndResize(t *testing.T) {
 	s, host := mount(4, 299)
 	img := image.NewNRGBA(image.Rect(0, 0, 4, 594))
 	s.SetImage(img, resource(t, img))
-	s.SetImageGraphics(true, 1, 2)
+	s.SetImageGraphics(tea.ImageKitty, 1, 2)
 	if p := s.ImagePlacement(); p.Rows != 297 || p.Columns != 4 {
 		t.Fatalf("last valid row geometry: %+v", p)
 	}
@@ -598,7 +602,7 @@ func TestGraphicsSurvivesCompositorClippingAndOcclusion(t *testing.T) {
 	s, host := mount(40, 22)
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	s.SetImage(img, resource(t, img))
-	s.SetImageGraphics(true, 8, 16)
+	s.SetImageGraphics(tea.ImageKitty, 8, 16)
 	key(host, '+')
 	key(host, '+')
 	base := surface.NewSurface("image", 40, 22, cell.TransparentBlank())
@@ -638,7 +642,7 @@ func TestHighZoomKeepsOriginalSourceAndCellStepPan(t *testing.T) {
 	}
 	res := resource(t, img)
 	s.SetImage(img, res)
-	s.SetImageGraphics(true, 8, 16)
+	s.SetImageGraphics(tea.ImageKitty, 8, 16)
 	for i := 0; i < 12; i++ {
 		key(host, '+')
 	}
@@ -700,7 +704,7 @@ func TestHighZoomKeepsOriginalSourceAndCellStepPan(t *testing.T) {
 	}
 	check(.0625, .125)
 	key(host, '0')
-	if p := s.ImagePlacement(); p != (tea.KittyImagePlacement{Image: res, Columns: 40, Rows: 10}) {
+	if p := s.ImagePlacement(); p != (tea.ImagePlacement{Image: res, Columns: 40, Rows: 10}) {
 		t.Fatalf("Fit did not restore unchanged uncropped placement: %+v", p)
 	}
 }
@@ -710,7 +714,7 @@ func TestHighZoomResizeAndExactCropLimits(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	res := resource(t, img)
 	s.SetImage(img, res)
-	s.SetImageGraphics(true, 8, 16)
+	s.SetImageGraphics(tea.ImageKitty, 8, 16)
 	for i := 0; i < 6; i++ {
 		key(host, '+') // 8× fit, 320 × 80 virtual grid
 	}
@@ -764,7 +768,7 @@ func TestHighZoomCropSurvivesCompositorOcclusion(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 320, 160))
 	res := resource(t, img)
 	s.SetImage(img, res)
-	s.SetImageGraphics(true, 8, 16)
+	s.SetImageGraphics(tea.ImageKitty, 8, 16)
 	for i := 0; i < 12; i++ {
 		key(host, '+')
 	}
@@ -825,9 +829,9 @@ func TestHighZoomGraphicsDoesNotReadOrReencodePixels(t *testing.T) {
 	img := &countedImage{}
 	// The decoded resource is owned by the loader. The screen must not read its
 	// pixels to build a replacement resource, even for a very large source.
-	res := tea.NewKittyImage([]byte("loader-owned immutable PNG"))
+	res := tea.NewTerminalImage([]byte("loader-owned immutable PNG"), nil)
 	s.SetImage(img, res)
-	s.SetImageGraphics(true, 8, 16)
+	s.SetImageGraphics(tea.ImageKitty, 8, 16)
 	for i := 0; i < 12; i++ {
 		key(host, '+')
 	}

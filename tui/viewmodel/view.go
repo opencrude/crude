@@ -127,7 +127,7 @@ func (m *App) captureTerminalImages() {
 	}
 	// Map iteration order must not turn an unchanged set into a new terminal
 	// publication. Sort by immutable resource ID without exporting pane lists.
-	slices.SortFunc(m.imagePlacements, func(a, b tea.KittyImagePlacement) int {
+	slices.SortFunc(m.imagePlacements, func(a, b tea.ImagePlacement) int {
 		return cmp.Compare(a.Image.ID(), b.Image.ID())
 	})
 }

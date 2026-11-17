@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"io"
 	"strconv"
 	"strings"
@@ -31,7 +32,12 @@ const (
 )
 
 // Encoder is a Sixel encoder. It encodes an image to Sixel data format.
-type Encoder struct{}
+type Encoder struct {
+	// Dither reduces palette bands in opaque images with more than 256 colors.
+	// It uses image/draw's Floyd-Steinberg diffusion with the adaptive palette.
+	// Images with transparency retain the ordinary alpha-aware encoding.
+	Dither bool
+}
 
 // Encode will accept an Image and write sixel data to a Writer. The sixel data
 // will be everything after the 'q' that ends the DCS parameters and before the ST
@@ -50,6 +56,19 @@ func (e *Encoder) Encode(w io.Writer, img image.Image) error {
 	}
 
 	palette := newSixelPalette(img, MaxColors)
+	var dithered *image.Paletted
+	if e.Dither && len(palette.paletteIndexes) > len(palette.PaletteColors) {
+		colors := make(color.Palette, len(palette.PaletteColors))
+		opaque := true
+		for i, c := range palette.PaletteColors {
+			colors[i] = sixelRGB(int(c.Red), int(c.Green), int(c.Blue))
+			opaque = opaque && c.Alpha == 100
+		}
+		if opaque {
+			dithered = image.NewPaletted(imageBounds, colors)
+			draw.FloydSteinberg.Draw(dithered, imageBounds, img, imageBounds.Min)
+		}
+	}
 
 	for paletteIndex, color := range palette.PaletteColors {
 		e.encodePaletteColor(w, paletteIndex, color)
@@ -59,7 +78,11 @@ func (e *Encoder) Encode(w io.Writer, img image.Image) error {
 
 	for y := range imageBounds.Dy() {
 		for x := range imageBounds.Dx() {
-			scratch.SetColor(x, y, img.At(x, y))
+			if dithered != nil {
+				scratch.setPaletteIndex(x, y, int(dithered.ColorIndexAt(imageBounds.Min.X+x, imageBounds.Min.Y+y)))
+			} else {
+				scratch.SetColor(x, y, img.At(imageBounds.Min.X+x, imageBounds.Min.Y+y))
+			}
 		}
 	}
 
@@ -132,9 +155,12 @@ func (s *sixelBuilder) BandHeight() int {
 // SetColor will write a single pixel to sixelBuilder's internal bitset data to be used by
 // GeneratePixels.
 func (s *sixelBuilder) SetColor(x int, y int, color color.Color) {
-	bandY := y / 6
 	paletteIndex := s.SixelPalette.ColorIndex(sixelConvertColor(color))
+	s.setPaletteIndex(x, y, paletteIndex)
+}
 
+func (s *sixelBuilder) setPaletteIndex(x, y, paletteIndex int) {
+	bandY := y / 6
 	bit := s.BandHeight()*s.imageWidth*6*paletteIndex + bandY*s.imageWidth*6 + (x * 6) + (y % 6)
 	s.pixelBands.Set(uint(bit)) //nolint:gosec
 }

@@ -34,15 +34,15 @@ type Screen struct {
 	ui.Base
 	tokens                *ui.TokenSet
 	img                   image.Image
-	resource              *tea.KittyImage
-	graphics              bool
+	resource              *tea.TerminalImage
+	graphics              tea.ImageProtocol
 	cellWidth, cellHeight int
 	zoom                  float64 // multiplier of the current fit scale
 	centerX, centerY      float64 // normalized source point at viewport center
 	scale                 float64 // source pixels to terminal pixels
 	viewport, virtual     ui.Rect
 	visible               ui.Rect
-	placement             tea.KittyImagePlacement
+	placement             tea.ImagePlacement
 	placementGrid         ui.Rect  // parent-local cells of the full or cropped prototype
 	placeholders          []string // visible cells only, never source-sized
 	placeholderID         uint32
@@ -64,7 +64,7 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
-	s := &Screen{Base: ui.NewBase(id), tokens: ui.NewTokenSet(th), zoom: 1, centerX: .5, centerY: .5}
+	s := &Screen{Base: ui.NewBase(id), tokens: ui.NewTokenSet(th), graphics: tea.ImageNone, zoom: 1, centerX: .5, centerY: .5}
 	for i, spec := range []struct{ segment, label, shortcut, icon, fallback, action string }{
 		{"zoom-out", "Zoom out", "-", "\uf010", "−", zoomOut},
 		{"zoom-in", "Zoom in", "+", "\uf00e", "+", zoomIn},
@@ -86,7 +86,7 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 // SetImage replaces the immutable decoded image and its matching prepared PNG.
 // Passing nil clears the pane and releases its references. Replacement resets
 // zoom and pan. The caller must not mutate pixels after delivery.
-func (s *Screen) SetImage(img image.Image, resource *tea.KittyImage) {
+func (s *Screen) SetImage(img image.Image, resource *tea.TerminalImage) {
 	if img == nil || img.Bounds().Empty() {
 		resource = nil
 	}
@@ -99,12 +99,12 @@ func (s *Screen) SetImage(img image.Image, resource *tea.KittyImage) {
 // SetImageGraphics sets measured cell pixels and confirmed protocol support.
 // It reports whether inputs changed, so callers can invalidate their Host.
 // Unknown cell geometry always uses the safe cell preview.
-func (s *Screen) SetImageGraphics(enabled bool, cellWidth, cellHeight int) bool {
+func (s *Screen) SetImageGraphics(protocol tea.ImageProtocol, cellWidth, cellHeight int) bool {
 	cellWidth, cellHeight = max(0, cellWidth), max(0, cellHeight)
-	if s.graphics == enabled && s.cellWidth == cellWidth && s.cellHeight == cellHeight {
+	if s.graphics == protocol && s.cellWidth == cellWidth && s.cellHeight == cellHeight {
 		return false
 	}
-	s.graphics, s.cellWidth, s.cellHeight = enabled, cellWidth, cellHeight
+	s.graphics, s.cellWidth, s.cellHeight = protocol, cellWidth, cellHeight
 	s.CancelPointerCapture()
 	s.refresh()
 	return true
@@ -112,8 +112,9 @@ func (s *Screen) SetImageGraphics(enabled bool, cellWidth, cellHeight int) bool 
 
 // ImagePlacement describes the original resource at the current scale. Large
 // virtual images use an exact, source-aligned crop when it fits the placeholder
-// coordinate range. No pixels are re-encoded on zoom, pan or resize.
-func (s *Screen) ImagePlacement() tea.KittyImagePlacement {
+// coordinate range. The screen never resamples or encodes pixels; the terminal
+// writer prepares protocol-specific output from this immutable descriptor.
+func (s *Screen) ImagePlacement() tea.ImagePlacement {
 	return s.placement
 }
 
@@ -177,13 +178,16 @@ func (s *Screen) useGraphics() bool {
 // terminal cells. Expanding to those boundaries retains the same scale and
 // subpixel pan phase, unlike rounding the viewport's source rectangle.
 func (s *Screen) refreshPlacement() {
-	s.placement, s.placementGrid = tea.KittyImagePlacement{}, ui.Rect{}
-	if !s.graphics || s.cellWidth <= 0 || s.cellHeight <= 0 || s.resource.ID() == 0 || s.visible.Empty() {
+	s.placement, s.placementGrid = tea.ImagePlacement{}, ui.Rect{}
+	if s.graphics == tea.ImageNone || s.cellWidth <= 0 || s.cellHeight <= 0 || s.resource.ID() == 0 || s.visible.Empty() {
+		return
+	}
+	if s.graphics == tea.ImageSixel && !tea.SixelSizeSupported(s.visible.W, s.visible.H, s.cellWidth, s.cellHeight) {
 		return
 	}
 	if s.virtual.W <= 297 && s.virtual.H <= 297 {
 		s.placementGrid = s.virtual
-		s.placement = tea.KittyImagePlacement{Image: s.resource, Columns: s.virtual.W, Rows: s.virtual.H}
+		s.placement = tea.ImagePlacement{Image: s.resource, Columns: s.virtual.W, Rows: s.virtual.H}
 		return
 	}
 	if s.visible.W > 297 || s.visible.H > 297 {
@@ -212,7 +216,7 @@ func (s *Screen) refreshPlacement() {
 		return
 	}
 	s.placementGrid = ui.Rect{X: s.virtual.X + x, Y: s.virtual.Y + y, W: w, H: h}
-	s.placement = tea.KittyImagePlacement{Image: s.resource, Columns: w, Rows: h,
+	s.placement = tea.ImagePlacement{Image: s.resource, Columns: w, Rows: h,
 		SourceX: sx, SourceY: sy, SourceWidth: sw, SourceHeight: sh}
 }
 
@@ -255,6 +259,10 @@ func (s *Screen) refreshViewport() {
 func (s *Screen) refresh() {
 	s.refreshViewport()
 	s.refreshPlacement()
+	if s.placement.Image != nil && s.graphics == tea.ImageSixel {
+		s.placement.Protocol = tea.ImageSixel
+		s.placement.CellWidth, s.placement.CellHeight = s.cellWidth, s.cellHeight
+	}
 	for _, b := range s.buttons {
 		b.SetDisabled(s.img == nil || s.img.Bounds().Empty())
 	}
@@ -321,7 +329,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	ox, oy = ox+r.X, oy+r.Y
 	if !s.visible.Empty() {
 		if s.useGraphics() {
-			fg := rendering.KittyImageColor(s.resource.ID())
+			fg := rendering.ImagePlaceholderColor(s.resource.ID())
 			for y := 0; y < s.visible.H; y++ {
 				for x := 0; x < s.visible.W; x++ {
 					buf.Set(ox+s.visible.X+x, oy+s.visible.Y+y, cell.NewClusterCell(s.placeholders[y*s.visible.W+x], 1, fg, bg, 0))

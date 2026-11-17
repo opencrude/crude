@@ -41,9 +41,9 @@ func SupportedPath(path string) bool {
 
 // Decode validates dimensions before decoding PNG, JPEG, GIF, WebP or BMP bytes.
 // Animated GIFs intentionally use only their first frame. A successful decode
-// returns pixels even when the optional Kitty resource cannot be prepared.
+// returns pixels even when the optional terminal resource cannot be prepared.
 //
-// Original PNG bytes are retained verbatim in the immutable Kitty resource.
+// Original PNG bytes are retained verbatim in the immutable terminal resource.
 // Other formats are encoded to PNG once here, not during painting or resize.
 // The caller must not change data until Decode returns.
 //
@@ -51,7 +51,7 @@ func SupportedPath(path string) bool {
 // Codec CPU work between those checks cannot be forcibly interrupted. A
 // cancelled call returns no pixels or resource; callers must still fence stale
 // results with their own owner and generation.
-func Decode(ctx context.Context, data []byte) (image.Image, *tea.KittyImage, error) {
+func Decode(ctx context.Context, data []byte) (image.Image, *tea.TerminalImage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -86,14 +86,14 @@ func Decode(ctx context.Context, data []byte) (image.Image, *tea.KittyImage, err
 		return nil, nil, ctx.Err()
 	}
 	if err != nil {
-		// PNG conversion is only needed for Kitty; cell previews still work.
+		// Native resources need PNG data; cell previews still work.
 		return img, nil, nil
 	}
-	resource := tea.NewKittyImage(pngData)
+	resource := tea.NewTerminalImage(pngData, img)
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	// NewKittyImage can return nil (for example, if entropy is unavailable).
+	// NewTerminalImage can return nil (for example, if entropy is unavailable).
 	return img, resource, nil
 }
 
