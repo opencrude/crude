@@ -71,6 +71,8 @@ func (r languageToolRow) projectState(plan types.AssemblyPlan) (string, bool) {
 				if r.managed != nil || r.external != nil {
 					current = "Not resolved"
 				}
+			case types.ToolUnavailable:
+				current = "Cannot start"
 			case types.ToolOff:
 				current = "Off"
 			case types.ToolNoServer:
@@ -92,6 +94,20 @@ func (r languageToolRow) projectState(plan types.AssemblyPlan) (string, bool) {
 		return "Not checked", false
 	}
 	return "Not used", false
+}
+
+func (r languageToolRow) launchProblem(plan types.AssemblyPlan) string {
+	for _, language := range plan.Languages {
+		if language.Status != types.ToolUnavailable {
+			continue
+		}
+		for _, server := range r.servers {
+			if server.id == language.ID && server.cfg.Command == language.Command {
+				return language.Reason
+			}
+		}
+	}
+	return ""
 }
 
 // setupTarget identifies a single candidate without guessing between distinct

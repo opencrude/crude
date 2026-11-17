@@ -3,6 +3,7 @@
     "manager": "npm",
     "registry": "npm registry",
     "runtime": "Node.js",
+    "manifest": "package.json",
     "name_form": "scoped",
     "program_forms": {"npm": "name", "node": "path"}
   },

@@ -90,17 +90,23 @@ func lspResultsSuspect(server ttypes.LSPServerHealth) bool {
 // lspCommandIssues reports language servers that the user's settings name but
 // that are not installed: a typing error in a command or a tool that was
 // removed. A catalog server that is not installed is a setup choice, not a
-// problem, so it raises nothing here.
+// problem, so it raises nothing here. An installed but unlaunchable catalog
+// tool is a problem and keeps its actionable launch cause.
 func lspCommandIssues(plan ttypes.AssemblyPlan) []ttypes.IssueSnapshot {
 	var out []ttypes.IssueSnapshot
 	for _, language := range plan.Languages {
-		if language.Status != ttypes.ToolMissing || language.Source != ttypes.ToolSourceSettings {
+		if language.Status != ttypes.ToolUnavailable &&
+			(language.Status != ttypes.ToolMissing || language.Source != ttypes.ToolSourceSettings) {
 			continue
+		}
+		summary := fmt.Sprintf("%s server %s is not installed", language.Name, filepath.Base(language.Command))
+		if language.Status == ttypes.ToolUnavailable {
+			summary = fmt.Sprintf("%s server %s cannot start", language.Name, filepath.Base(language.Command))
 		}
 		out = append(out, ttypes.IssueSnapshot{
 			ID: lspCommandIssuePrefix + language.ID, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: lspCommandIssuePrefix + language.ID},
 			Severity: ttypes.SeverityWarning, Investigate: true,
-			Summary: fmt.Sprintf("%s server %s is not installed", language.Name, filepath.Base(language.Command)),
+			Summary: summary,
 			Detail:  language.Reason,
 		})
 	}

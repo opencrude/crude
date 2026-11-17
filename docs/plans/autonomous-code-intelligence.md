@@ -100,6 +100,7 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-14 | Prove the system live and under load in an intensive session on a copy of Crude's source with injected issues, in every language that this computer can run, with sudden outside changes and corrupted files; fix every defect found; commit and push so that no work is lost. | User |
 | 2026-11-14 | The load sensor must not treat Crude's own work as the computer being busy and wait or give up because of it; it must still keep Crude from hanging the computer and must not cancel work wrongly. Design: rebase the load interval after each checked file, wait for a server's own work in progress as itself, and never remember a file without an answer under contention or server work (retry after one minute). | User |
 | 2026-11-14 | Background diagnostics must be aware of the computer and yield like established background indexers, with references from real projects, not memory: KDE Baloo (pause on battery), Windows Search (backoff under system activity, `DisableBackoff` override), Linux PSI with systemd's pressure threshold, LEDBAT's yield-to-foreground principle. The user keeps an Always override. | User |
+| 2026-11-17 | Check the reported Windows server-launch mismatch and fix it quickly if practical. Keep the correction as tool-independent as possible; no server- or language-named branches. | User |
 
 ### Open decisions
 
@@ -115,7 +116,7 @@ Update a row only with evidence.
 |---|---|---|
 | Detect languages | Linguist data through go-enry | The importer uses Linguist data at build time. Product detection uses catalog names/extensions plus bounded ignore-aware evidence and example paths. Dependency/temp false positives are fixed; ambiguous extensions still need content rules. |
 | Discover the project | Bounded scan that runs no project code: roots, manifests, modules, configurations | Assembly lists at most 100,000 entries without running project code and reports a limited scan. Rich project context remains separate and explicit. |
-| Resolve | Ordered resolver; compatibility rules as data | Assembly resolves launch data from the catalog, settings, the shared tool store and the system path. Compatibility evaluation remains incomplete. |
+| Resolve | Ordered resolver; compatibility rules as data | Assembly and startup share native executable lookup and catalog-driven Windows npm entry-point resolution. Unknown-package, environment and failure-state regressions pass; installed CSS/HTML/JSON startup and a JSON diagnostic/fix probe pass on Windows. See the [launch checkpoint](#windows-launch-resolution-2026-11-17). Compatibility evaluation remains incomplete. |
 | Acquire | Project decisions in workspace capability settings, one install policy; one shared store under `CRUDE_HOME` | The setup screen tasks Aeron; a real-model npm installation is verified. **Core-managed package methods remain blocked:** the store installs only GitHub release files (57 of 121 catalog packages). The other 64 (npm 27, PyPI 12, Cargo 9, Go 5, NuGet 3, generic 3, gem 2, LuaRocks 2, opam 1) have no store-owned installer. Existing decisions, staged acquisition and removal remain connected. Full setup acceptance remains open; see [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design). |
 | Evaluate | Operational checks and independent fixtures; evidence for each feature | Acquired tools initialize in an independent inert root and join Stop before publication. Native real acquisition/activation and failed/cancelled/uncertain checks have normal/race evidence. This is protocol health, not per-feature semantic certification. |
 | Activate | Project-scoped producers, enabled feature by feature | Assembly starts project-scoped producers through the existing trust and process-admission gates. Open documents can share their server process. |
@@ -130,6 +131,10 @@ Known exception: the compilation-database and CMake importers in
 them; they are not a template for language-specific modules.
 
 ## Current checkpoint
+
+**Windows launch resolution (2026-11-17): implemented and verified.** The
+inventory/launcher contradiction and installed npm server failures are fixed.
+See the [checkpoint evidence and limits](#windows-launch-resolution-2026-11-17).
 
 **Crude asks Aeron for help; closed-file check without cycles (2026-11-14):
 implemented, live acceptance open.** Generic, no language branch:
@@ -1736,6 +1741,39 @@ four items have passed and the current references describe the result.
 
 History of finished slices, kept as evidence. [Stage status](#stage-status) is
 the authoritative summary; this text does not describe remaining work.
+
+### Windows launch resolution (2026-11-17)
+
+Reproduced on native Windows before the change: inventory resolved the installed
+CSS, HTML and JSON CMD shims as ready, while all three actual runtime starts and
+the JSON diagnostic probe failed with a missing-executable message.
+
+Inventory and startup now share the analyzer environment policy, the program
+resolver in `lspclient/lsp_program.go` and Powernap's native executable lookup.
+Existing catalog package recipes identify installed npm packages; the package
+method data names their manifest. The resolver reads the installed bin map (or
+catalog `node:` path), starts native Node with the script and original arguments,
+and never parses or executes a CMD/BAT shim. Script paths keep their own inventory
+identities instead of merging all tools under the shared Node executable.
+Unsupported scripts, broken packages and missing runtimes have a distinct
+**Cannot start** state and cause, not a server-reinstallation offer.
+
+Exit evidence: `TestWindowsInstalledNPMServers` initializes all three installed
+servers, and `TestWindowsInstalledNPMJSONProbe` reports malformed JSON and clears
+the result after a disk edit. Both failed before the fix and pass after it.
+Unknown scoped-package fixtures, string/map bins, local/global layouts, literal
+arguments, native precedence, explicit environments, project-PATH exclusion and
+missing-runtime/unsupported-script regressions pass, including focused Windows
+race checks. Full `lspclient`, `types`, catalog and Settings tests and focused
+workspace lifecycle tests pass. Nested transport/process ordinary and race checks
+pass; the `test-lsp` commands pass when run directly (`make` is absent here).
+Linux/macOS leaf cross-builds pass; these are not native acceptance.
+
+Limits: automatic hosting covers catalog npm programs with standard Node entry
+points or explicit catalog `node:` paths, not arbitrary shell shims. Other
+interpreters can use the existing command/argument settings. Installation, setup
+UI acceptance, the full repository suite, benchmarks and desktop captures were not
+part of this bounded repair. The running developer core was not restarted.
 
 ### Native Windows verification (2026-11-14)
 

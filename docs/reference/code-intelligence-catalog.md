@@ -126,6 +126,9 @@ go run ./internal/catalogimport -check     # fail when catalog.json is stale
   or unsafe forms. It does not verify a runtime, authorize an install or make
   the package installable. The setup review uses the description to name the
   package manager and runtime while that installation path remains open.
+  The same method data names the installed package manifest. Windows launch
+  resolution uses it to read npm entry points without interpreting package
+  manager shims; this does not add an installer.
 - `Names` lists every identifying string.
 
 ### Discovery and acquired tools

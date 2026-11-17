@@ -40,7 +40,8 @@ type AssemblyLanguage struct {
 	// ServerID names the catalog server; empty for a custom command.
 	ServerID string
 	Command  string
-	// Executable is the resolved program; empty when it is not installed.
+	// Executable is the resolved program entry point (the script for a hosted
+	// tool); empty when its complete launch, including an interpreter, fails.
 	Executable string
 	// Source is where the program comes from: ToolSource*.
 	Source string
@@ -61,10 +62,11 @@ type AssemblyLanguage struct {
 
 // Tool statuses of an assembled language.
 const (
-	ToolReady    = "ready"
-	ToolMissing  = "missing"
-	ToolOff      = "off"
-	ToolNoServer = "no-server"
+	ToolReady       = "ready"
+	ToolMissing     = "missing"
+	ToolUnavailable = "unavailable"
+	ToolOff         = "off"
+	ToolNoServer    = "no-server"
 )
 
 // Tool sources.

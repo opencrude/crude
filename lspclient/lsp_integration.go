@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -19,6 +18,7 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
+	"crude/insight/catalog"
 	"crude/lspedit"
 	"crude/metrics"
 	model "crude/types"
@@ -41,6 +41,7 @@ type LSPIntegration struct {
 	configErr   error
 	environment lsp.ProcessEnvironment
 	envErr      error
+	program     catalog.PackageManagerRecipe
 	// startAdmission is the runtime owner's launch-epoch check. It must be
 	// memory-only; construction and joined cancellation still belong here.
 	startAdmission func() error
@@ -190,11 +191,7 @@ func NewLSPIntegration(serverCmd string, serverArgs []string, rootURI string, op
 		l.config, l.configErr = lsp.NewConfiguration(rootURI, l.settings, scopes)
 	}
 	l.settings, l.scopes = nil, nil // only the immutable launch table remains
-	environment, err := analyzerEnvironment(os.Environ(), l.serverEnv, rootURI)
-	if err == nil {
-		l.environment, err = lsp.NewProcessEnvironment(environment)
-	}
-	l.envErr = err
+	l.environment, l.envErr = prepareAnalyzerEnvironment(l.serverEnv, rootURI)
 	l.serverEnv = nil // no caller-owned maps survive preparation
 	return l
 }
@@ -274,16 +271,21 @@ func (l *LSPIntegration) Start(ctx context.Context) error {
 		err = l.startAdmission()
 	}
 	if err == nil {
-		client, err = lsp.NewClient(lsp.ClientConfig{
-			Command: l.serverCmd, Args: l.serverArgs, RootURI: l.rootURI,
-			Environment: l.environment, Configuration: l.config, InitOptions: l.initOptions,
-			StderrSink: launch.evidence.stderr,
-			TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
-				nr, nw, mon := wrapLSPPipe(reader, writer)
-				pipe = mon
-				return nr, nw
-			},
-		})
+		var command string
+		var args []string
+		command, args, err = resolveServerProgram(initCtx, l.serverCmd, l.serverArgs, l.environment, l.program)
+		if err == nil {
+			client, err = lsp.NewClient(lsp.ClientConfig{
+				Command: command, Args: args, RootURI: l.rootURI,
+				Environment: l.environment, Configuration: l.config, InitOptions: l.initOptions,
+				StderrSink: launch.evidence.stderr,
+				TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
+					nr, nw, mon := wrapLSPPipe(reader, writer)
+					pipe = mon
+					return nr, nw
+				},
+			})
+		}
 	}
 	if err == nil {
 		l.mu.Lock()
