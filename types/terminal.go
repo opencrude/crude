@@ -37,6 +37,26 @@ type TerminalSettings struct {
 	ScrollbackLines int `json:"scrollback_lines,omitempty"`
 	// Placement is where a new terminal opens: docked or floating.
 	Placement string `json:"placement,omitempty"`
+	// RightToLeft selects the screens on which Crude arranges right-to-left
+	// text: shell output only (the default), all output, or none.
+	RightToLeft string `json:"right_to_left,omitempty"`
+}
+
+// Terminal right-to-left arrangement choices.
+const (
+	TerminalRightToLeftShell = "shell"
+	TerminalRightToLeftAll   = "all"
+	TerminalRightToLeftOff   = "off"
+)
+
+// RightToLeftOrDefault returns a supported terminal arrangement choice.
+func (s TerminalSettings) RightToLeftOrDefault() string {
+	switch s.RightToLeft {
+	case TerminalRightToLeftAll, TerminalRightToLeftOff:
+		return s.RightToLeft
+	default:
+		return TerminalRightToLeftShell
+	}
 }
 
 // TerminalShell is one shell installed on the core's machine. Detection

@@ -112,6 +112,12 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
 - The cursor preserves the grapheme under it and toggles `cell.AttrReverse`;
   at end-of-input it reverses the existing blank cell. It never inserts a
   glyph, shifts placeholder text, or consumes layout width.
+- Right-to-left text: each line of a text area and the value of a text field is
+  a paragraph with an automatic direction; a Persian paragraph is right-aligned
+  and its letters are joined. The block caret is painted at its logical cell
+  before the row is arranged, so it travels with its character; at the end of a
+  right-to-left line it sits left of the text. Pointer columns, Up/Down goals
+  and Left/Right map through the arranged row ([bidi](bidi.md)).
 - Native TextField/TextArea and editor paths share `ui.PaintBlockCursor`
   semantics. Embedded terminal applications may control blink/steady timing,
   but DECSCUSR shape requests are normalized to the same block geometry.

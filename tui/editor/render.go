@@ -86,6 +86,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	e.remapDiagnosticPaint()
 	bracketFrom, bracketTo, hasBracket := e.matchingBracket()
 	showOccurrences := e.occurrenceAtCaret()
+	// Carets are painted on each row before the row is arranged, so a block
+	// caret travels with its character in right-to-left text.
+	carets := e.caretCells(ctx, sw, sbX, bodyH)
 	if e.usesRows() {
 		previous := -1
 		for y := 0; y < bodyH; y++ {
@@ -360,6 +363,15 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				}
 			}
 		}
+		// The row was painted in logical order with its carets; arranging it
+		// moves every mark with its character. Chrome follows.
+		for _, c := range carets {
+			if c.y == bufY {
+				ui.PaintBlockCursor(buf, c.x, c.y, e.tokens.Color(ui.ColorCursor), bgColor)
+			}
+		}
+		rowLine := e.rowLine(row)
+		buf.ApplyLine(sw, bufY, rowLine)
 		if r, ok := e.foldAt(lineIdx); ok && row.index == 0 && containsFold(e.folds.collapsed, r) {
 			label := " … " + strconv.Itoa(r.End-r.Start) + " lines"
 			if r.End-r.Start == 1 {
@@ -371,30 +383,18 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		if row.continues {
 			buf.Set(sbX-1, bufY, cell.NewCell(ui.FirstRune(e.tokens.Glyphs().WrapContinuation, '↩'), infoColor, bgColor, 0))
 		}
-	}
-	if ctx.Focused && !e.readOnly && e.cursorBlink.Visible(ctx.Frame) {
-		e.prepareMultiplePaint()
-		for _, r := range e.multiPaint.ranges {
-			if _, hidden := e.hiddenFold(r.cursor.Line); hidden {
+		// A caret past the text can sit on chrome (the wrap mark, a fold
+		// label); it stays visible on top of it.
+		for _, c := range carets {
+			if c.y != bufY {
 				continue
 			}
-			y, col := e.visualPosition(r.cursor, r.before)
-			y -= e.scrollRow()
-			if !e.wrapsRows() {
-				col -= e.scrollX
+			x := sw + rowLine.Visual(c.x-sw)
+			if !buf.Get(x, bufY).Attr.Has(cell.AttrReverse) {
+				ui.PaintBlockCursor(buf, x, bufY, e.tokens.Color(ui.ColorCursor), bgColor)
 			}
-			x := sw + col
-			if x >= sw && x < sbX && y >= 0 && y < bodyH {
-				ui.PaintBlockCursor(buf, x, y, e.tokens.Color(ui.ColorCursor), bgColor)
-			}
-		}
-		cursorY, cursorCol := e.viewPosition(e.cursor)
-		cursorX := sw + cursorCol
-		if cursorX >= sw && cursorX < sbX && cursorY >= 0 && cursorY < bodyH {
-			ui.PaintBlockCursor(buf, cursorX, cursorY, e.tokens.Color(ui.ColorCursor), bgColor)
 		}
 	}
-
 	// The gutter runs the full body height, past the last line and beside
 	// the horizontal scrollbar.
 	gutterEnd := h
@@ -514,7 +514,9 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 	if lineIdx < 0 {
 		return nil, 0, nil
 	}
-	b, err := e.buf.Line(lineIdx)
+	// A view of the buffer, not a copy: every row of every frame asks for
+	// its line geometry, often more than once.
+	b, err := e.buf.lineView(lineIdx)
 	if err != nil {
 		return nil, 0, nil
 	}

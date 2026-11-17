@@ -54,6 +54,13 @@ type renderer interface {
 
 	// onMouse handles a mouse event.
 	onMouse(MouseMsg) Cmd
+
+	// setHostBidi asks the terminal for explicit BiDi mode, or gives its
+	// own BiDi behavior back (host_bidi.go).
+	setHostBidi(explicit bool)
+
+	// hostBidiReport records the terminal's reported BDSM state.
+	hostBidiReport(ansi.ModeSetting)
 }
 
 type printLineMessage struct {

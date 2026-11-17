@@ -115,9 +115,9 @@ navigation and exact discard decisions; × and Close close the whole window.
 
 ### Editor presentation
 
-The Editor page's Tab size, Word wrap, Line numbers, Syntax colors, Show
-whitespace, Indent guides and Minimap preferences reach existing, linked and newly
-opened documents. A saved choice is
+The Editor page's Tab size, Word wrap, Line direction, Line numbers, Syntax
+colors, Show whitespace, Indent guides and Minimap preferences reach existing,
+linked and newly opened documents. A saved choice is
 published to peer shells; Reset restores live inheritance. Source bytes, selected
 characters, dirty state and Undo remain unchanged by presentation changes.
 Tab size is a 1–32-column inherited display width and fallback indent for

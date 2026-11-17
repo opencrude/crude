@@ -288,6 +288,14 @@ selection, history, the savepoint or dirty state.
   A soft boundary has two visual caret locations but never adds a source byte.
   Horizontal scrolling is absent while wrapped geometry is ready.
 
+- **Line direction** is **Left to right** by default: every source line is a
+  left-to-right paragraph and right-to-left runs read right to left in place,
+  as in other code editors. **By line** gives each line the direction of its
+  first letter (Persian or Hebrew prose is right-aligned; a line without letters
+  keeps the line above). Arrangement is presentation only: carets, selections,
+  search, diagnostics, inlays and pointer hits stay in source columns and are
+  mapped through the row ([bidi](bidi.md)).
+
 **Indent with** and **Indent size** supply inherited policy. Detect and zero
 select source detection; project/file choices still take priority.
 

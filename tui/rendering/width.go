@@ -54,6 +54,9 @@ func TerminalWidthProbeCorpus() []string {
 		"1️⃣", "9️⃣", "1⃣", "2⃣",
 		"❤", "❤️", "♥", "♥️", "☺", "☺️", "☀", "☀️", "✈", "✈️",
 		"क्ष", "कि", "நி",
+		// Joined Arabic presentation forms Crude paints for right-to-left
+		// text (tui/bidi), and a letter with a mark.
+		"بِ", "\ufeb3", "\ufb58",
 		// Crude's fixed Nerd Font chrome. Dynamic file icons share the same PUA
 		// cell policy, while these representatives protect every persistent rail.
 		"\uf17b", "\uf120", "\uf418", "\uf07b", "\uf085",

@@ -50,6 +50,11 @@ selects a display to the left of the main display without changing its profile.
 The script saves `01-boot.png`, prints the exact HWND, client geometry and
 requested grid, and closes the dedicated window before returning.
 
+`-WtProfile <name or GUID>` opens the window with one Windows Terminal profile,
+for example a profile whose font list ends with `Crude RTL` for right-to-left
+acceptance. The script never edits profiles; add a test profile yourself and
+remove it afterwards.
+
 Capture tests must not call `t.Log`, `t.Error`, `t.Fatal`, `fmt.Print` or another
 raw terminal writer while the TUI runs. Keep findings in the visual model.
 Report them only after `Program.Run` returns and the UI's asynchronous work
@@ -195,6 +200,7 @@ Parameters may be passed directly or supplied through environment variables:
 | `-CrudeBin` | `CRUDE_BIN` | build a temporary binary |
 | `-CrudeCwd` | `CRUDE_CWD` | repository root |
 | `-CrudeArgs` | `CRUDE_ARGS` | empty |
+| `-WtProfile` | `WT_PROFILE` | the default profile |
 | `-KeepOpen` | `KEEP_OPEN=1` | off |
 
 Crude stderr is retained at `%TEMP%\crude-tuishot\crude.log`.

@@ -51,10 +51,9 @@ function Confirm-CrudeWarning([switch] $Accepted) {
     Write-Host 'Crude is in active development. It changes files and runs commands.'
     Write-Host 'Bugs and agent mistakes can lose work. Commit and back up important work.'
     Write-Host ''
-    if ($Accepted) { return }
-    if (-not (Test-CrudeInteractive)) {
-        throw 'This installer needs an answer. Run it in a terminal window, or add -Yes to accept the warning.'
-    }
+    # Only a person at a terminal is asked. An unattended install continues;
+    # -Yes only skips the question.
+    if ($Accepted -or -not (Test-CrudeInteractive)) { return }
     $answer = Read-Host 'Install anyway? [y/N]'
     if ($answer -notmatch '^(?i)y(es)?$') {
         throw 'You did not accept the warning. Nothing was installed.'
@@ -281,10 +280,11 @@ function Expand-CrudeArchive([string] $Archive, [string] $Destination) {
             if (-not $seen.Add($name)) { throw "Duplicate archive path '$name'." }
             $mode = ($entry.ExternalAttributes -shr 16) -band 61440
             if ($mode -notin @(0, 16384, 32768) -or ($entry.ExternalAttributes -band 1024)) { throw "Archive links or special files are not allowed: '$name'." }
-            if ($name -cnotin @('crude.exe', 'LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'crude-icon.png', 'crude-icon.svg', 'crude-icon.ico', 'licenses') -and -not $name.StartsWith('licenses/', [StringComparison]::Ordinal)) {
+            if ($name -cnotin @('crude.exe', 'LICENSE-MIT', 'LICENSE-APACHE', 'README.md', 'crude-icon.png', 'crude-icon.svg', 'crude-icon.ico', 'licenses', 'fonts') -and -not $name.StartsWith('licenses/', [StringComparison]::Ordinal) -and -not $name.StartsWith('fonts/', [StringComparison]::Ordinal)) {
                 throw "Unexpected release archive path '$name'."
             }
-            if (($isDirectory -and ($entry.Length -ne 0 -or ($name -cne 'licenses' -and -not $name.StartsWith('licenses/')))) -or (-not $isDirectory -and $name -ceq 'licenses')) {
+            $folder = $name -ceq 'licenses' -or $name.StartsWith('licenses/') -or $name -ceq 'fonts' -or $name.StartsWith('fonts/')
+            if (($isDirectory -and ($entry.Length -ne 0 -or -not $folder)) -or (-not $isDirectory -and $name -cin @('licenses', 'fonts'))) {
                 throw "Invalid release archive directory '$name'."
             }
             $totalSize += $entry.Length
@@ -736,6 +736,9 @@ function Get-CrudeWindowPaths {
         # The families the window asks for, in this order.
         FontFamilies = @('JetBrainsMono Nerd Font', 'JetBrainsMono NF')
         FontFaces = 'JetBrainsMonoNerdFont-*.ttf'
+        # Crude's right-to-left font, installed from the release itself.
+        RtlFonts = Join-Path (Join-Path $windowHome 'window') 'rtl-fonts'
+        RtlFamily = 'Crude RTL'
         Icon = Join-Path $windowHome 'crude.ico'
         Link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Crude.lnk'
     }
@@ -811,7 +814,7 @@ function Add-CrudeFontRegistration([string] $Folder) {
     # belongs to Crude. No file is copied into the user's font folder, no
     # existing value is overwritten, and the whole footprint is inside Crude's
     # own folder, so removing it removes only what this window installed.
-    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\Microsoft\Windows\CurrentVersion\Fonts')
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:CrudeFontKey)
     if (-not $key) { throw 'the per-user font list could not be opened' }
     $registered = 0
     try {
@@ -824,9 +827,32 @@ function Add-CrudeFontRegistration([string] $Folder) {
             }
             if ($null -eq $current) { $registered++ }
             $key.SetValue($name, $font.FullName, [Microsoft.Win32.RegistryValueKind]::String)
+            Publish-CrudeFont $font.FullName
         }
     } finally { $key.Dispose() }
     return $registered
+}
+
+# Windows lists per-user fonts under this key; programs that start later
+# load them from there.
+$script:CrudeFontKey = 'Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+
+function Publish-CrudeFont([string] $Path) {
+    # Programs that are already running, such as Windows Terminal, learn about
+    # a new font only from the font change message. A failure here is not an
+    # install failure: the font is there at the next sign-in.
+    try {
+        if (-not ('CrudeFontNative' -as [type])) {
+            Add-Type -Name CrudeFontNative -Namespace '' -MemberDefinition @'
+[DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern int AddFontResourceW(string file);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern System.IntPtr SendMessageTimeoutW(System.IntPtr window, uint message, System.UIntPtr wParam, System.IntPtr lParam, uint flags, uint timeout, out System.UIntPtr result);
+'@
+        }
+        [void] [CrudeFontNative]::AddFontResourceW($Path)
+        $result = [UIntPtr]::Zero
+        # HWND_BROADCAST, WM_FONTCHANGE, SMTO_ABORTIFHUNG, two seconds.
+        [void] [CrudeFontNative]::SendMessageTimeoutW([IntPtr] 0xffff, 0x001D, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 2000, [ref] $result)
+    } catch { }
 }
 
 function Get-CrudeWindowDownload([string[]] $Sources, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds) {
@@ -891,7 +917,7 @@ function Remove-CrudeFontRegistration([string] $Folder) {
     # Delete the per-user font values that point into this folder. Every other
     # value is left alone.
     if (-not $Folder) { return }
-    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Fonts', $true)
+    $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($script:CrudeFontKey, $true)
     if (-not $key) { return }
     $root = [IO.Path]::GetFullPath($Folder)
     try {
@@ -957,7 +983,37 @@ function Remove-CrudeWindowLegacy($Paths) {
     }
 }
 
-function Write-CrudeWindowProfile($Paths, [string] $InstallDir) {
+function Install-CrudeWindowRtlFont($Paths, [string] $Payload) {
+    # Crude RTL draws Arabic, Persian and Hebrew in the window's cells
+    # (docs/reference/bidi.md). It ships with each release and belongs to
+    # Crude, so every install puts the release's copy in Crude's own folder.
+    # Returns whether the window can name it.
+    $source = Join-Path $Payload 'fonts'
+    $faces = @(Get-ChildItem -LiteralPath $source -Filter 'CrudeRTL-*.ttf' -File -ErrorAction SilentlyContinue)
+    if (-not $faces.Count) { return $false }
+    $fonts = $Paths.RtlFonts
+    [void] [IO.Directory]::CreateDirectory($fonts)
+    foreach ($file in @(Get-ChildItem -LiteralPath $source -File)) {
+        $target = Join-Path $fonts $file.Name
+        if ([IO.File]::Exists($target) -and (Get-CrudeHash $target) -ceq (Get-CrudeHash $file.FullName)) { continue }
+        try {
+            Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+        } catch {
+            # A running terminal can hold the previous copy open. That copy
+            # still draws the same scripts; the next update replaces it.
+            if (-not [IO.File]::Exists($target)) { throw }
+        }
+    }
+    try {
+        [void] (Add-CrudeFontRegistration $fonts)
+    } catch {
+        Write-CrudeStep (Mark 'warn') 'Font' "right-to-left text may look wrong: $($_.Exception.Message)"
+        return $false
+    }
+    return $true
+}
+
+function Write-CrudeWindowProfile($Paths, [string] $InstallDir, [bool] $RtlFont = $false) {
     # One JSON fragment in the user's Fragments folder: Windows Terminal reads
     # it at start, so the profile appears without editing the user's settings.
     $profile = [ordered] @{
@@ -970,6 +1026,9 @@ function Write-CrudeWindowProfile($Paths, [string] $InstallDir) {
     }
     if ([IO.File]::Exists($Paths.Icon)) { $profile.icon = $Paths.Icon }
     $face = Get-CrudeWindowFont $Paths
+    # Windows Terminal draws a character the first font lacks with the next
+    # font in the list; Crude RTL carries the right-to-left scripts.
+    if ($face -and $RtlFont) { $face = "$face, $($Paths.RtlFamily)" }
     if ($face) { $profile.font = [ordered] @{ face = $face; size = 12 } }
     $fragment = [ordered] @{ profiles = @($profile) }
 
@@ -1041,7 +1100,8 @@ function Install-CrudeWindow([string] $InstallDir, [string] $Payload, [string] $
         $iconSource = Join-Path $Payload 'crude-icon.ico'
         if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $paths.Icon -Force }
         Install-CrudeWindowFonts $paths $WorkDir
-        Write-CrudeWindowProfile $paths $InstallDir
+        $rtlFont = Install-CrudeWindowRtlFont $paths $Payload
+        Write-CrudeWindowProfile $paths $InstallDir $rtlFont
         Write-CrudeWindowLink $paths $terminal $InstallDir
         Write-CrudeStep (Mark 'check') 'Window' 'Crude is in the Start menu and in Windows Terminal'
         if (Get-Process -Name 'WindowsTerminal' -ErrorAction SilentlyContinue) {
@@ -1057,9 +1117,9 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
     [switch] $NoPath, [switch] $Yes, [switch] $Gui, [switch] $NoGui, [switch] $Stop, [switch] $NoStop) {
     $ErrorActionPreference = 'Stop'
     Assert-CrudePlatform
+    Confirm-CrudeWarning -Accepted:$Yes
     if ($Repository -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$') { throw 'Repository must be a public GitHub owner/repository name.' }
     if ($Version) { Assert-CrudeVersion $Version }
-    Confirm-CrudeWarning -Accepted:$Yes
     if (-not $InstallDir) {
         if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is unavailable; specify -InstallDir explicitly.' }
         $InstallDir = Join-Path $env:LOCALAPPDATA 'Crude\bin'

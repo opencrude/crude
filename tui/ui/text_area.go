@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/bidi"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -641,6 +642,9 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 				lineTokenStart, lineTokenEnd, isCursorSeg,
 				selStart, selEnd, cursorVisible, ctx.Focused,
 				fg, cursorFG, bg, selBG)
+			// The row was painted in logical order, cursor and selection
+			// included; arranging it moves them with their characters.
+			buf.ApplyLine(textX, screenY, t.edit.rowLine(li, segStart, len(segRunes)))
 
 			visRow++
 		}
@@ -729,7 +733,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 			cellFG = cursorFG
 			attr |= cell.AttrReverse
 		}
-		buf.WriteString(x+col, y, cluster, cellFG, cellBG, attr)
+		buf.WriteLogical(x+col, y, cluster, cellFG, cellBG, attr)
 		if clusterW > 0 {
 			col += clusterW
 		}
@@ -793,7 +797,7 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 			cellFG = cursorFG
 			attr |= cell.AttrReverse
 		}
-		buf.WriteString(x+col, y, cluster, cellFG, cellBG, attr)
+		buf.WriteLogical(x+col, y, cluster, cellFG, cellBG, attr)
 		if clusterW > 0 {
 			col += clusterW
 		}
@@ -1183,6 +1187,16 @@ type textAreaEngine struct {
 	wrapCacheCount        int
 	wrapPreviousWidth     int
 	wrapPreviousCount     int
+	atomicRevision        uint64
+	bidi                  textAreaBidi
+}
+
+// textAreaBidi caches the bidirectional layout of every logical line for one
+// content revision, chip set and presentation policy.
+type textAreaBidi struct {
+	valid                        bool
+	content, atoms, presentation uint64
+	lines                        []textLineBidi
 }
 
 type textAreaSnapshot struct {
@@ -1232,9 +1246,15 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 	shift := msg.Mod.Contains(tea.ModShift)
 	primary := msg.Mod.Contains(tea.ModCtrl) || msg.Mod.Contains(tea.ModSuper)
 	word := primary || msg.Mod.Contains(tea.ModAlt)
+	// In right-to-left text the arrows point the other way in text order.
+	right := msg.Code == tea.KeyRight
+	if msg.Code == tea.KeyLeft || msg.Code == tea.KeyRight {
+		ln, _, _, _ := e.cursorRow()
+		right = bidi.ArrowForward(right, ln)
+	}
 	if !shift && !word && e.HasActiveSelection() && (msg.Code == tea.KeyLeft || msg.Code == tea.KeyRight) {
 		start, end := e.SelectionRange()
-		if msg.Code == tea.KeyLeft {
+		if !right {
 			e.setCursorFlat(start)
 		} else {
 			e.setCursorFlat(end)
@@ -1363,33 +1383,30 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 			e.selEnd = e.CursorFlat()
 		}
 		e.finishMovementIfNoShift(msg.Mod)
-	case tea.KeyLeft:
+	case tea.KeyLeft, tea.KeyRight:
+		// right is the text-order direction: on an arranged row a plain
+		// arrow first moves on screen, and only its edge continues in text
+		// order.
 		e.beginSelectionIfShift(msg.Mod)
-		if word {
+		onScreen := !word && e.stepOnScreen(msg.Code == tea.KeyRight)
+		switch {
+		case onScreen:
+		case word && right:
+			e.setCursorFlat(e.cursorNextWord())
+		case word:
 			e.setCursorFlat(e.cursorPrevWord())
-		} else if e.curCol > 0 {
+		case right && e.curCol < len(e.buf[e.curLine]):
+			e.curCol = rendering.NextGrapheme(e.buf[e.curLine], e.curCol)
+		case right && e.curLine < len(e.buf)-1:
+			e.curLine++
+			e.curCol = 0
+		case !right && e.curCol > 0:
 			e.curCol = rendering.PreviousGrapheme(e.buf[e.curLine], e.curCol)
-		} else if e.curLine > 0 {
+		case !right && e.curLine > 0:
 			e.curLine--
 			e.curCol = len(e.buf[e.curLine])
 		}
-		e.snapCursorAcrossAtomic(false)
-		e.lastVisCol = -1
-		if e.selActive {
-			e.selEnd = e.CursorFlat()
-		}
-		e.finishMovementIfNoShift(msg.Mod)
-	case tea.KeyRight:
-		e.beginSelectionIfShift(msg.Mod)
-		if word {
-			e.setCursorFlat(e.cursorNextWord())
-		} else if e.curCol < len(e.buf[e.curLine]) {
-			e.curCol = rendering.NextGrapheme(e.buf[e.curLine], e.curCol)
-		} else if e.curLine < len(e.buf)-1 {
-			e.curLine++
-			e.curCol = 0
-		}
-		e.snapCursorAcrossAtomic(true)
+		e.snapCursorAcrossAtomic(right)
 		e.lastVisCol = -1
 		if e.selActive {
 			e.selEnd = e.CursorFlat()
@@ -1896,6 +1913,7 @@ func (e *textAreaEngine) DeleteRange(start, end int)       { e.deleteRange(start
 
 func (e *textAreaEngine) SetAtomicRanges(ranges []AtomicRange) {
 	e.atomicRanges = ranges
+	e.atomicRevision++
 	for i := range e.atomicRanges {
 		if e.atomicRanges[i].Start > e.atomicRanges[i].End {
 			e.atomicRanges[i].Start, e.atomicRanges[i].End = e.atomicRanges[i].End, e.atomicRanges[i].Start
@@ -2063,6 +2081,9 @@ func (e *textAreaEngine) cursorVisualInfo() (visualLine, visualCol int) {
 		vis += len(segs)
 	}
 	segment, col := cursorSegmentInfo(e.curLine, e.curCol, lines, e.textWidth)
+	if segStart, segLen, ok := e.segmentAt(e.curLine, segment); ok {
+		col = e.rowLine(e.curLine, segStart, segLen).Visual(col)
+	}
 	return vis + segment, col
 }
 
@@ -2129,7 +2150,8 @@ func (e *textAreaEngine) setCursorFromVisualLine(targetVisLine, targetVisCol int
 					segStart = starts[si]
 				}
 				segRunes := []rune(segs[si])
-				segRuneIdx := rendering.ColToRuneIdx(segRunes, targetVisCol)
+				col := e.rowLine(li, segStart, len(segRunes)).Logical(targetVisCol)
+				segRuneIdx := rendering.ColToRuneIdx(segRunes, col)
 				e.curCol = segStart + segRuneIdx
 				if e.curCol > len(lines[li]) {
 					e.curCol = len(lines[li])
@@ -2172,11 +2194,95 @@ func (e *textAreaEngine) visualToFlat(textW, x, y int) int {
 					segStart = starts[si]
 				}
 				segRunes := []rune(segs[si])
-				segRuneIdx := rendering.ColToRuneIdx(segRunes, x)
+				col := e.rowLine(li, segStart, len(segRunes)).Logical(x)
+				segRuneIdx := rendering.ColToRuneIdx(segRunes, col)
 				return e.lineColToFlat(li, segStart+segRuneIdx)
 			}
 			vis++
 		}
 	}
 	return e.Len()
+}
+
+// bidiLines returns the bidirectional layout of every logical line. Each
+// line is a paragraph; a line without strong characters keeps the
+// direction of the line before it, so an empty line in a Persian message
+// starts at the right edge.
+func (e *textAreaEngine) bidiLines() []textLineBidi {
+	c := &e.bidi
+	generation := bidi.Generation()
+	if c.valid && c.content == e.contentRevision && c.atoms == e.atomicRevision &&
+		c.presentation == generation && len(c.lines) == len(e.buf) {
+		return c.lines
+	}
+	lines := c.lines[:0]
+	rtl, flat := false, 0
+	for _, runes := range e.buf {
+		lb := analyzeTextLine(runes, flat, e.atomicRanges, rtl)
+		// A line without a layout resolved left-to-right.
+		rtl = lb.rtl()
+		lines = append(lines, lb)
+		flat += len(runes) + 1
+	}
+	*c = textAreaBidi{valid: true, content: e.contentRevision, atoms: e.atomicRevision, presentation: generation, lines: lines}
+	return lines
+}
+
+// rowLine is the arrangement of one painted row: the runes [start,
+// start+n) of logical line li on a row as wide as the text column.
+func (e *textAreaEngine) rowLine(li, start, n int) *bidi.Line {
+	if e.textWidth < 1 {
+		return nil
+	}
+	lines := e.bidiLines()
+	if li < 0 || li >= len(lines) {
+		return nil
+	}
+	return lines[li].line(start, n, e.textWidth)
+}
+
+// segmentAt returns the rune range of row si of logical line li.
+func (e *textAreaEngine) segmentAt(li, si int) (start, n int, ok bool) {
+	if li < 0 || li >= len(e.buf) || e.textWidth < 1 {
+		return 0, 0, false
+	}
+	segs := rendering.WordWrap(string(e.buf[li]), e.textWidth)
+	if si < 0 || si >= len(segs) {
+		return 0, 0, false
+	}
+	if starts := rendering.FindSegmentStarts(e.buf[li], e.textWidth); si < len(starts) {
+		start = starts[si]
+	}
+	return start, len([]rune(segs[si])), true
+}
+
+// cursorRow returns the arranged row under the caret, the caret's logical
+// column on it, and the row's rune range.
+func (e *textAreaEngine) cursorRow() (ln *bidi.Line, col, start, n int) {
+	if e.textWidth < 1 || e.curLine < 0 || e.curLine >= len(e.buf) {
+		return nil, 0, 0, 0
+	}
+	segment, col := cursorSegmentInfo(e.curLine, e.curCol, e.buf, e.textWidth)
+	start, n, ok := e.segmentAt(e.curLine, segment)
+	if !ok {
+		return nil, 0, 0, 0
+	}
+	return e.rowLine(e.curLine, start, n), col, start, n
+}
+
+// stepOnScreen moves the caret one cell left or right on an arranged row.
+// It reports false when the row paints as written or the caret is at its
+// edge; the caller then moves in text order.
+func (e *textAreaEngine) stepOnScreen(right bool) bool {
+	ln, col, start, n := e.cursorRow()
+	if ln == nil || !bidi.VisualCaret() {
+		return false
+	}
+	next, ok := ln.Step(col, right)
+	if !ok {
+		return false
+	}
+	runes := e.buf[e.curLine][start : start+n]
+	e.curCol = start + rendering.ColToRuneIdx(runes, next)
+	return true
 }

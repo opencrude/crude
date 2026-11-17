@@ -399,6 +399,10 @@ func TestScreenExplicitCopyWithoutSelectionNeverInterrupts(t *testing.T) {
 }
 
 func TestScreenControlKeysAreNotEditingShortcuts(t *testing.T) {
+	// Windows copies a selection with Ctrl+C; TestScreenCtrlKeysFollowTheTerminalConvention
+	// covers that. Every other control key reaches the child on every platform.
+	defer func(previous bool) { windowsKeyConventions = previous }(windowsKeyConventions)
+	windowsKeyConventions = false
 	for _, code := range []rune{'c', 'd', 'z', 's', 'q', '\\', 'l', 'u', 'w', 'a', 'e', 'k', 'r'} {
 		s, writes := newTestScreen(t)
 		fixture(s, "selection", 11, terminalvt.Modes{})

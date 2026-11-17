@@ -13,10 +13,7 @@ func (e *Editor) moveUp() {
 	if e.cursor.Line <= 0 {
 		return
 	}
-	if !e.goalSet {
-		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
-		e.goalSet = true
-	}
+	e.setGoal()
 	e.cursor.Line--
 	e.applyGoalCol()
 	e.ensureCursorVisible()
@@ -34,17 +31,15 @@ func (e *Editor) moveDown() {
 	if e.cursor.Line >= maxLine {
 		return
 	}
-	if !e.goalSet {
-		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
-		e.goalSet = true
-	}
+	e.setGoal()
 	e.cursor.Line++
 	e.applyGoalCol()
 	e.ensureCursorVisible()
 }
 
+// applyGoalCol puts the caret on its line at the goal column (setGoal).
 func (e *Editor) applyGoalCol() {
-	e.cursor = e.buf.snapPosition(Position{Line: e.cursor.Line, Col: e.sourceColumn(e.cursor.Line, e.goalCol)})
+	e.cursor, _ = e.positionOnRow(e.cursor.Line, e.goalCol-e.goalOffset())
 }
 
 func (e *Editor) clearGoal() {
@@ -275,10 +270,7 @@ func (e *Editor) pageUp() {
 		e.moveVisualRows(-max(1, e.bodyHeight()-1))
 		return
 	}
-	if !e.goalSet {
-		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
-		e.goalSet = true
-	}
+	e.setGoal()
 	pageSize := e.viewH - 2
 	if pageSize < 1 {
 		pageSize = 1
@@ -296,10 +288,7 @@ func (e *Editor) pageDown() {
 		e.moveVisualRows(max(1, e.bodyHeight()-1))
 		return
 	}
-	if !e.goalSet {
-		e.goalCol = e.displayColumn(e.cursor.Line, e.cursor.Col)
-		e.goalSet = true
-	}
+	e.setGoal()
 	pageSize := e.viewH - 2
 	if pageSize < 1 {
 		pageSize = 1

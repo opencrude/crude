@@ -418,5 +418,8 @@ func (v *View) Paint(buf *surface.CellBuffer, ox, oy, w, h int, t *ui.TokenSet, 
 			}
 			buf.Set(ox+x, oy+y, out)
 		}
+		// Selection and the cursor were painted at the program's columns;
+		// arranging the row moves them with their characters.
+		buf.ApplyLine(ox, oy+y, v.rowLine(y, w))
 	}
 }

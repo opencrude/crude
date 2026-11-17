@@ -154,6 +154,11 @@ Widget ANSI string
 Cell metadata is lost when the compositor emits ANSI. Ultraviolet parses the
 bytes again, so all layers must call the same `x/ansi` grapheme path.
 
+Right-to-left text reaches this pipeline already arranged
+([bidi](bidi.md)): cells move as whole blocks and joined Arabic letters are
+presentation-form characters with the width of their letter. The calibration
+corpus measures representative letters and forms like any other cluster.
+
 For every multi-column cell, the compositor emits the grapheme once and skips
 all continuation cells. Surface composition and ultraviolet accept measured
 widths beyond two for legacy effective grids; writing literal spaces for

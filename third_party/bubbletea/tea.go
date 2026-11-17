@@ -861,7 +861,14 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 					if msg.Value == ansi.ModeReset || msg.Value == ansi.ModeSet || msg.Value == ansi.ModePermanentlySet {
 						p.queueRendererCommand(func(r renderer) { r.setWidthMethod(ansi.GraphemeWidth) })
 					}
+				case ansi.ModeBiDirectionalSupport:
+					value := msg.Value
+					p.queueRendererCommand(func(r renderer) { r.hostBidiReport(value) })
 				}
+
+			case hostBidiMsg:
+				explicit := bool(msg)
+				p.queueRendererCommand(func(r renderer) { r.setHostBidi(explicit) })
 
 			case MouseMsg:
 				switch msg.(type) {
@@ -1208,7 +1215,8 @@ func (p *Program) Run() (returnModel Model, returnErr error) {
 		// (mode 2027). If the terminal supports it, the renderer will enable
 		// it once we get the response.
 		p.execute(ansi.RequestModeSynchronizedOutput +
-			ansi.RequestModeUnicodeCore)
+			ansi.RequestModeUnicodeCore +
+			ansi.RequestModeBiDirectionalSupport)
 	}
 
 	// Initialize the program.

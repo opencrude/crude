@@ -1,6 +1,9 @@
 package chatprojection
 
 import (
+	"strings"
+
+	"crude/tui/bidi"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -78,7 +81,18 @@ func PaintLineAt(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *
 
 // PaintLineAtBackground paints with an explicit full-row background. Chat
 // context boundaries use it so text and internal spacing share one surface.
+// Right-to-left text in the row is arranged after it is painted.
 func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *ui.TokenSet, selStart, selEnd int, rowBg cell.Color) {
+	PaintLineLogical(buf, x, y, maxW, pl, tokens, selStart, selEnd, rowBg)
+	if buf != nil {
+		buf.ApplyLine(x, y, ArrangedLine(pl, maxW))
+	}
+}
+
+// PaintLineLogical paints a row in logical order without arranging it.
+// A painter that adds decorations at logical columns (find matches) paints
+// with it, adds them, and then arranges the row with ArrangedLine.
+func PaintLineLogical(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *ui.TokenSet, selStart, selEnd int, rowBg cell.Color) {
 	if buf == nil || y < 0 || y >= buf.Height() {
 		return
 	}
@@ -132,7 +146,7 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 				cellAttr &^= cell.AttrDim | cell.AttrReverse
 			}
 
-			curX = buf.WriteString(curX, y, cluster, cellFG, cellBG, cellAttr, span.Link)
+			curX = buf.WriteLogical(curX, y, cluster, cellFG, cellBG, cellAttr, span.Link)
 			col = nextCol
 		}
 	}
@@ -143,7 +157,52 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
 			cellFG, cellBG = tokens.TextSelectionColors(cellFG)
 		}
-		curX = buf.WriteString(curX, y, " ", cellFG, cellBG, 0)
+		curX = buf.WriteLogical(curX, y, " ", cellFG, cellBG, 0)
 		col++
 	}
+}
+
+// ArrangedLine returns the bidirectional arrangement of a row painted at
+// most maxW columns wide, or nil when it paints as written. A row that
+// shows source text takes the direction of that source paragraph, so every
+// row of a Persian paragraph is right-aligned, including one that starts
+// with an English word; code stays left-to-right. A row without source text
+// is left-to-right with its right-to-left runs arranged in place.
+func ArrangedLine(pl PaintLine, maxW int) *bidi.Line {
+	if maxW <= 0 || !bidi.Current().Arrange {
+		return nil
+	}
+	dir, needed := bidi.LeftToRight, false
+	var source *rendering.CopyText
+	structured := false
+	for _, span := range pl.Spans {
+		// The first source span decides; later spans share its paragraph.
+		// A row that shows several source blocks (a table row) keeps its
+		// columns left to right and arranges each run in place.
+		if span.Copy.Valid() {
+			switch {
+			case source == nil:
+				source = span.Copy.Text
+				if source.RTLAt(span.Copy.Start) {
+					dir = bidi.RightToLeft
+				}
+			case span.Copy.Text != source:
+				structured = true
+			}
+		}
+		if !needed && bidi.NeedsLayout(span.Text) {
+			needed = true
+		}
+	}
+	if structured {
+		dir = bidi.LeftToRight
+	}
+	if !needed && dir == bidi.LeftToRight {
+		return nil
+	}
+	var text strings.Builder
+	for _, span := range TruncatePaintLine(pl, maxW).Spans {
+		text.WriteString(span.Text)
+	}
+	return bidi.TextLine(text.String(), dir, maxW, maxW)
 }

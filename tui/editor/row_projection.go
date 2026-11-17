@@ -246,7 +246,18 @@ func (e *Editor) viewPosition(pos Position) (row, col int) {
 func (e *Editor) positionOnRow(row, column int) (Position, bool) {
 	row = min(max(0, row), max(0, e.visualRowCount()-1))
 	r := e.rowAt(row)
-	display := r.start + max(0, column)
+	// column is a screen column; the row's arrangement gives the logical
+	// column painted there. Past the edge of a right-to-left row the nearest
+	// cell decides: right of it is where the line starts, not where it ends.
+	if ln := e.rowLine(r); ln != nil && ln.Span() > 0 {
+		if ln.RTL() {
+			column = min(max(0, column), ln.Span()-1)
+		}
+		if column >= 0 && column < ln.Span() {
+			column = ln.Logical(column)
+		}
+	}
+	display := max(0, r.start+column)
 	if e.usesRows() {
 		display = min(display, r.end)
 	}
@@ -254,13 +265,34 @@ func (e *Editor) positionOnRow(row, column int) (Position, bool) {
 	return pos, r.continues && e.displayColumn(pos.Line, pos.Col) == r.end
 }
 func (e *Editor) moveVisualRows(delta int) {
-	row, col := e.visualPosition(e.cursor, e.wrapBefore)
-	if !e.goalSet {
-		e.goalCol = col
-		e.goalSet = true
-	}
-	e.cursor, e.wrapBefore = e.positionOnRow(row+delta, e.goalCol)
+	row, _ := e.visualPosition(e.cursor, e.wrapBefore)
+	e.setGoal()
+	e.cursor, e.wrapBefore = e.positionOnRow(row+delta, e.goalCol-e.goalOffset())
 	e.ensureCursorVisible()
+}
+
+// setGoal records the column vertical movement keeps: the caret's screen
+// column on its arranged row, so Up and Down land on the character shown
+// in that column, also inside a right-to-left run. On unwrapped lines the
+// goal counts from the line start, so horizontal scrolling between moves
+// does not shift it.
+func (e *Editor) setGoal() {
+	if e.goalSet {
+		return
+	}
+	row, col := e.visualPosition(e.cursor, e.wrapBefore)
+	r, offset := e.rowAt(row), e.goalOffset()
+	e.goalCol = e.screenColumn(r, col-offset) + offset
+	e.goalSet = true
+}
+
+// goalOffset is the line column of the first screen column: the horizontal
+// scroll on unwrapped lines, 0 on wrapped rows.
+func (e *Editor) goalOffset() int {
+	if e.wrapsRows() {
+		return 0
+	}
+	return e.scrollX
 }
 func (e *Editor) setWrapping(on bool) {
 	if e.wordWrap == on {

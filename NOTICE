@@ -17,3 +17,13 @@ The ANSI renderer and styles in third_party/glamour are pinned from
 charm.land/glamour/v2 v2.0.0. Copyright Charmbracelet, Inc. These portions retain
 the MIT license in third_party/glamour/LICENSE; local source-tracing changes are
 described in third_party/glamour/CRUDE.md.
+The Unicode Bidirectional Algorithm and Unicode data in third_party/typesetting
+are pinned from github.com/go-text/typesetting v0.3.5 (Unlicense OR BSD-3-Clause,
+third_party/typesetting/LICENSE). Its arabic package copies HarfBuzz's Arabic
+joining tables and state machine as ported by go-text (MIT,
+third_party/typesetting/arabic/LICENSE.harfbuzz). Local changes are described in
+third_party/typesetting/CRUDE.md.
+Crude RTL (assets/fonts/CrudeRTL-*.ttf) is built by scripts/build_rtl_font.py
+from DejaVu Sans Mono and DejaVu Sans 2.37. Bitstream Vera and Arev portions
+retain their license in assets/fonts/LICENSE-DejaVu; DejaVu changes are in the
+public domain. The font is renamed as that license requires.

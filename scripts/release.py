@@ -57,9 +57,10 @@ def package(stage, output, version, target):
         raise ValueError(f"refusing to overwrite existing artifact: {destination}")
     executable = "crude.exe" if target == "windows" else "crude"
     entries = [stage / executable, stage / "LICENSE-MIT", stage / "LICENSE-APACHE", stage / "README.md",
-               stage / "crude-icon.png", stage / "crude-icon.svg", stage / "crude-icon.ico", stage / "licenses"]
+               stage / "crude-icon.png", stage / "crude-icon.svg", stage / "crude-icon.ico", stage / "licenses",
+               stage / "fonts"]
     if not all(path.exists() for path in entries):
-        raise ValueError("release is missing its binary, icon or redistribution notices")
+        raise ValueError("release is missing its binary, icon, font or redistribution notices")
     if not (stage / "licenses/SYNTAX-QUERIES-NOTICE").is_file():
         raise ValueError("release is missing its embedded syntax query notice")
     if target == "linux":
@@ -123,6 +124,11 @@ def build(args):
         shutil.copyfile(ROOT / "assets/crude-icon-512.png", stage / "crude-icon.png")
         shutil.copyfile(ROOT / "assets/crude-icon.svg", stage / "crude-icon.svg")
         shutil.copyfile(ROOT / "assets/crude-icon.ico", stage / "crude-icon.ico")
+        # Crude RTL draws right-to-left scripts in the terminal window; the
+        # installers register it (scripts/build_rtl_font.py builds it).
+        (stage / "fonts").mkdir()
+        for name in ("CrudeRTL-Regular.ttf", "CrudeRTL-Bold.ttf", "LICENSE-DejaVu"):
+            shutil.copyfile(ROOT / "assets/fonts" / name, stage / "fonts" / name)
         # Dependency tool is version-pinned by CI; it fails on missing notices
         # rather than silently shipping an incomplete Go dependency bundle.
         subprocess.run(["go-licenses", "save", ".", "--ignore=crude", f"--save_path={stage / 'licenses/go'}"], cwd=ROOT, check=True)

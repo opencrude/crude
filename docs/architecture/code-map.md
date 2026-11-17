@@ -21,7 +21,7 @@ detailed contracts.
 | `coreclient/` | Client multiplexer and detached read mirrors (`WorkspaceView`). |
 | `shellport/` | The `shellport.Workspace` seam the TUI consumes; `shellport/remote` is the CLI runtime path. |
 | `desktopnotify/` | Native desktop notifications for one shell process: WinRT toasts on Windows, freedesktop D-Bus on Linux, a macOS slot. Delivery only; policy is in `tui/viewmodel/desktop_notices.go` ([desktop notifications](../reference/desktop-notifications.md)). |
-| `assets/` | Brand images; `assets.IconPNG` is the notification icon. |
+| `assets/` | Brand images; `assets.IconPNG` is the notification icon. `assets/fonts/` holds Crude RTL, the right-to-left fallback font the installers register (built by `scripts/build_rtl_font.py`, [bidi](../reference/bidi.md#fonts)). |
 | `clientstate/` | Client-private composer and unresolved-editor persistence with profile locks and epochs. |
 | `workspace/` | Per-project state machine: sessions, agent inventory, conversation, LSP manager, documents, file ops, search, terminals, Git, Local History lifecycle. Never imports `tui/`. |
 | `types/` | Neutral contracts shared by every layer (settings, reasoning, accounting, activity, capability registration). |
@@ -112,6 +112,7 @@ detailed contracts.
 | `tui/window/`, `tui/wm/` | Main-pane tab groups and split tree; floating window manager. |
 | `tui/cell/`, `tui/surface/`, `tui/compositor/` | Cells, surfaces and compositing ([compositing engine](compositing-engine.md)). |
 | `tui/rendering/` | Width profile, Markdown, syntax styles, ANSI bridging. |
+| `tui/bidi/` | Right-to-left arrangement: UAX #9 paragraphs and display lines, Arabic joined forms, column maps, caret stepping and the process-wide policy ([bidi](../reference/bidi.md)). |
 | `tui/theme/` | Themes and design tokens; the only place for hard-coded hex. |
 | `tui/termview/` | Terminal scrollback, selection and copy projection. |
 | `tui/tools/` | Tool-result presentation helpers. |
@@ -121,7 +122,9 @@ detailed contracts.
 ## Vendored replacements (`third_party/`)
 
 `bubbletea`, `xansi`, `ultraviolet` carry the shared width profile
-([terminal width](../reference/terminal-width.md)); `powernap` carries the
+([terminal width](../reference/terminal-width.md)); `bubbletea` also owns the
+host BiDi mode handshake and `typesetting` pins go-text's UAX #9 and HarfBuzz's
+Arabic joining data ([bidi](../reference/bidi.md)); `powernap` carries the
 non-blocking LSP transport hook; `jsonrpc2` retains original request/notification
 params and atomic envelope validation ([fork provenance](../../third_party/jsonrpc2/README.md));
 `pathwalk` is the internal directory walker.

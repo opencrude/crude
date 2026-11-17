@@ -6,7 +6,7 @@ Notes for agents helping a person:
 
 - Crude is beta software. Its agents change files and run commands with the user's permissions; it is not a sandbox. Never run the installer without the person's explicit consent.
 - Supported: Linux x86-64 (glibc 2.35+) and Windows x64 (PowerShell 5.1+). There is no macOS release yet; on macOS, build from source (https://github.com/opencrude/crude#build-from-source).
-- Installer that works today: `curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh && bash install.sh` (Linux) or `Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1; .\install.ps1` (Windows). The installer asks for consent; `--yes` / `-Yes` accepts the beta warning without a prompt — use it only when the person explicitly agrees.
+- Installer that works today: `curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh && bash install.sh` (Linux) or `Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/install.ps1 -OutFile install.ps1; .\install.ps1` (Windows). The installer shows a beta warning and asks only in a terminal; an unattended run continues. `--yes` / `-Yes` skips the questions.
 - First run: `crude` in the project folder → Tools → Settings → Accounts → add a provider → Agents → pick a model → type a task. Ctrl+Alt+P lists every command.
 
 ## Product

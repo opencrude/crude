@@ -300,17 +300,21 @@ func writeNameHighlighted(buf *surface.CellBuffer, x, y int, nameText string, tr
 		kept--
 	}
 	pi := 0
+	start := x
 	for ri, r := range runes {
 		for pi < len(positions) && positions[pi] < ri {
 			pi++
 		}
 		matched := ri < kept && pi < len(positions) && positions[pi] == ri
 		if matched {
-			x = buf.WriteString(x, y, string(r), matchFG, bg, attr|cell.AttrBold)
+			x = buf.WriteLogical(x, y, string(r), matchFG, bg, attr|cell.AttrBold)
 		} else {
-			x = buf.WriteString(x, y, string(r), fg, bg, attr)
+			x = buf.WriteLogical(x, y, string(r), fg, bg, attr)
 		}
 	}
+	// The name is one label: a right-to-left name keeps its reading order
+	// and its highlighted letters.
+	buf.ArrangeLabel(start, y, x, nameText)
 	return x
 }
 

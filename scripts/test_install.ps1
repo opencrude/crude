@@ -98,7 +98,10 @@ function New-Fixture([string] $Tag = 'v1.2.3', [string] $Repository = 'opencrude
         @{ Name = 'LICENSE-APACHE'; Value = "Apache license $Tag" },
         @{ Name = 'README.md'; Value = "Readme $Tag" },
         @{ Name = 'licenses/'; Value = '' },
-        @{ Name = 'licenses/third-party/NOTICE.txt'; Value = "third-party notice $Tag" }
+        @{ Name = 'licenses/third-party/NOTICE.txt'; Value = "third-party notice $Tag" },
+        @{ Name = 'fonts/'; Value = '' },
+        @{ Name = 'fonts/CrudeRTL-Regular.ttf'; Value = "rtl font $Tag" },
+        @{ Name = 'fonts/LICENSE-DejaVu'; Value = 'DejaVu license' }
     ) + $ExtraEntries
     $archive = Join-Path $directory $asset
     New-TestZip $archive $entries
@@ -309,19 +312,16 @@ try {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path (Split-Path $installer -Parent) 'install.bat'))) 'The installer is one script; no batch wrapper is shipped'
     }
 
-    Test-Case 'noninteractive installation and update require explicit beta-risk consent' {
+    Test-Case 'noninteractive installation and update never require -Yes' {
         With-Fixture (New-Fixture) {
             function Test-CrudeInteractive { return $false }
             function Read-Host { throw 'Noninteractive installation must never prompt' }
-            Assert-Fails { Install-Crude -InstallDir $install -NoPath } 'needs an answer.+-Yes'
-            Assert-True (-not [IO.Directory]::Exists($install)) 'Missing consent must not create installation state'
-            Assert-Equal $fixtureState.Attempts 0 'Missing consent must not download'
-            Install-Crude -Yes -NoGui -InstallDir $install -NoPath
+            $output = ((Install-Crude -NoGui -InstallDir $install -NoPath *>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+            Assert-True ($output -match 'active development') 'An unattended install must still show the warning'
+            Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'An unattended install must not need -Yes'
             $fixtureState.Fixture = New-Fixture -Tag v2.3.4
-            $attempts = $fixtureState.Attempts
-            Assert-Fails { Install-Crude -InstallDir $install -NoPath } 'add -Yes'
-            Assert-Equal $fixtureState.Attempts $attempts 'Update without consent must not download'
-            Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v1.2.3' 'Update without consent must preserve installed build'
+            Install-Crude -NoGui -InstallDir $install -NoPath
+            Assert-Equal ([IO.File]::ReadAllText((Join-Path $install 'crude.exe'))) 'fixture executable v2.3.4' 'An unattended update must not need -Yes'
         }
     }
 
@@ -493,6 +493,9 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
                 $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
                 [void] [IO.Directory]::CreateDirectory($payload)
                 [IO.File]::WriteAllText((Join-Path $payload 'crude-icon.ico'), 'icon')
+                [void] [IO.Directory]::CreateDirectory((Join-Path $payload 'fonts'))
+                [IO.File]::WriteAllText((Join-Path $payload 'fonts/CrudeRTL-Regular.ttf'), 'rtl font')
+                [IO.File]::WriteAllText((Join-Path $payload 'fonts/LICENSE-DejaVu'), 'DejaVu license')
                 $paths = Get-CrudeWindowPaths
                 Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
 
@@ -501,7 +504,9 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
                 Assert-Equal $profile.name 'Crude' 'The profile must be named Crude'
                 Assert-Equal $profile.commandline (Join-Path $install 'crude.exe') 'The profile must start the installed program'
                 Assert-Equal $profile.guid $paths.Guid 'The profile must keep one identity across updates'
-                Assert-Equal $profile.font.face 'JetBrainsMono NF' 'The profile must use the Nerd Font Windows can draw'
+                Assert-Equal $profile.font.face 'JetBrainsMono NF, Crude RTL' 'The profile must use the Nerd Font Windows can draw, then Crude RTL for right-to-left scripts'
+                Assert-Equal ([IO.File]::ReadAllText((Join-Path $paths.RtlFonts 'CrudeRTL-Regular.ttf'))) 'rtl font' 'Crude RTL must be installed in Crude''s own folder'
+                Assert-True ([IO.File]::Exists((Join-Path $paths.RtlFonts 'LICENSE-DejaVu'))) 'Crude RTL must keep its license beside it'
                 Assert-Equal $profile.icon (Join-Path $env:LOCALAPPDATA 'Crude/crude.ico') 'The profile must carry the Crude icon'
                 Assert-Equal $profile.startingDirectory '%USERPROFILE%' 'The profile must start in the user folder'
 
@@ -509,13 +514,39 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
                 Assert-Equal $shortcut.TargetPath $fixtureState.Terminal 'The Start menu must open Windows Terminal'
                 Assert-Equal $shortcut.Arguments ('-w -1 new-tab -p "Crude" --maximized -- "' + (Join-Path $install 'crude.exe') + '"') 'The Start menu must open one maximized Crude window, even before the profile is read'
                 Assert-Equal $shortcut.IconLocation ((Join-Path $env:LOCALAPPDATA 'Crude/crude.ico') + ',0') 'The Start menu entry must use the Crude icon'
-                Assert-Equal $fixtureState.FontRegistrations 0 'A font this machine already has must not be registered again'
+                Assert-Equal $fixtureState.FontRegistrations 1 'Only Crude RTL is registered; a Nerd Font this machine already has is not'
                 Assert-Equal $fixtureState.Attempts 0 'A window that runs in Windows Terminal downloads no terminal'
             } finally {
                 $env:LOCALAPPDATA = $savedLocalAppData
                 $env:APPDATA = $savedAppData
             }
         }
+    }
+
+    Test-Case 'a release without Crude RTL keeps the single window font' {
+        With-Fixture (New-Fixture) {
+            $savedLocalAppData = $env:LOCALAPPDATA
+            $savedAppData = $env:APPDATA
+            $env:LOCALAPPDATA = Join-Path $fixtureState.Fixture.Directory 'window profile'
+            $env:APPDATA = Join-Path $fixtureState.Fixture.Directory 'window appdata'
+            try {
+                $payload = Join-Path $fixtureState.Fixture.Directory 'payload'
+                [void] [IO.Directory]::CreateDirectory($payload)
+                $paths = Get-CrudeWindowPaths
+                Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
+                $profile = @(([IO.File]::ReadAllText($paths.Fragment) | ConvertFrom-Json).profiles)[0]
+                Assert-Equal $profile.font.face 'JetBrainsMono NF' 'A face Windows cannot draw must never be named'
+                Assert-Equal $fixtureState.FontRegistrations 0 'Nothing is registered without a font file'
+            } finally {
+                $env:LOCALAPPDATA = $savedLocalAppData
+                $env:APPDATA = $savedAppData
+            }
+        }
+    }
+
+    Test-Case 'fonts are registered where Windows reads per-user fonts' {
+        . $installer
+        Assert-Equal $script:CrudeFontKey 'Software\Microsoft\Windows NT\CurrentVersion\Fonts' 'Per-user fonts live under Windows NT\CurrentVersion\Fonts'
     }
 
     Test-Case 'a missing Windows Terminal states the next step and adds nothing' {
@@ -584,20 +615,22 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
         }
     }
 
-    Test-Case 'redirected real script without consent fails before HTTP on Windows' {
+    Test-Case 'redirected real script continues without -Yes on Windows' {
         if ($nativeWindows) {
             $shell = (Get-Process -Id $PID).Path
             $destination = Join-Path $root 'no-consent-entry'
             # Windows PowerShell turns native stderr into ErrorRecords. Capture
             # it without letting the intentional nonzero child exit abort tests.
+            # An invalid version stops the run after the warning and before HTTP.
             $savedPreference = $ErrorActionPreference
             try {
                 $ErrorActionPreference = 'Continue'
-                $output = & $shell -NoLogo -NoProfile -NonInteractive -File $installer -InstallDir $destination 2>&1 | Out-String
+                $output = & $shell -NoLogo -NoProfile -NonInteractive -File $installer -InstallDir $destination -Version 'not-a-version' 2>&1 | Out-String
             } finally { $ErrorActionPreference = $savedPreference }
-            Assert-True ($LASTEXITCODE -ne 0) 'Unattended script must exit nonzero without consent'
-            Assert-True ($output -match '\-Yes') 'Entry point must explain explicit consent option'
-            Assert-True (-not [IO.Directory]::Exists($destination)) 'Unattended entry must not create state'
+            Assert-True ($output -match 'active development') 'Unattended script must show the warning'
+            Assert-True ($output -notmatch '\-Yes') 'Unattended script must not ask for -Yes'
+            Assert-True ($output -match 'Invalid version') 'Unattended script must continue past the warning'
+            Assert-True (-not [IO.Directory]::Exists($destination)) 'A rejected version must not create state'
         } else {
             . $installer
             Assert-True (-not (Test-CrudeInteractive)) 'Redirected portable test process must not be considered interactive'

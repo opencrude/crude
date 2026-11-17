@@ -724,6 +724,24 @@ type EditorSettings struct {
 	RenderWhitespace string                `json:"render_whitespace,omitempty"`
 	FormatOnSave     bool                  `json:"format_on_save,omitempty"`
 	NewFileEncoding  textencoding.Encoding `json:"new_file_encoding"`
+	// TextDirection is EditorTextDirectionLTR (every line left-to-right, the
+	// code default) or EditorTextDirectionByLine (each line takes the
+	// direction of its first letter). Empty means left-to-right.
+	TextDirection string `json:"text_direction,omitempty"`
+}
+
+// Editor line directions.
+const (
+	EditorTextDirectionLTR    = "ltr"
+	EditorTextDirectionByLine = "by_line"
+)
+
+// TextDirectionOrDefault returns a supported editor line direction.
+func (s EditorSettings) TextDirectionOrDefault() string {
+	if s.TextDirection == EditorTextDirectionByLine {
+		return EditorTextDirectionByLine
+	}
+	return EditorTextDirectionLTR
 }
 
 // LSPLanguageSettings is the per-language overlay for one language server.
@@ -897,6 +915,40 @@ type UISettings struct {
 	// DesktopNotifications selects which agent news reaches the desktop
 	// while the user is away from Crude.
 	DesktopNotifications DesktopNotificationSettings `json:"desktop_notifications,omitzero"`
+	// RightToLeft selects who arranges right-to-left text (Arabic, Persian,
+	// Hebrew): Crude with joined letters (the default), Crude with separate
+	// letters, or the terminal. See docs/reference/bidi.md.
+	RightToLeft string `json:"right_to_left,omitempty"`
+	// CaretMovement selects whether Left and Right move the caret on screen
+	// (the default) or in text order inside right-to-left text.
+	CaretMovement string `json:"caret_movement,omitempty"`
+}
+
+// Right-to-left text arrangement and caret movement choices.
+const (
+	RightToLeftArrange   = "arrange"
+	RightToLeftUnjoined  = "unjoined"
+	RightToLeftTerminal  = "terminal"
+	CaretMovementVisual  = "visual"
+	CaretMovementLogical = "logical"
+)
+
+// RightToLeftOrDefault returns a supported arrangement choice.
+func (s UISettings) RightToLeftOrDefault() string {
+	switch s.RightToLeft {
+	case RightToLeftUnjoined, RightToLeftTerminal:
+		return s.RightToLeft
+	default:
+		return RightToLeftArrange
+	}
+}
+
+// CaretMovementOrDefault returns a supported caret movement choice.
+func (s UISettings) CaretMovementOrDefault() string {
+	if s.CaretMovement == CaretMovementLogical {
+		return CaretMovementLogical
+	}
+	return CaretMovementVisual
 }
 
 // ShowHiddenFilesOrDefault shows dotfiles unless the user explicitly hid them.

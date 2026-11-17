@@ -49,6 +49,7 @@ func (m *App) applySettingsShortcut(msg settingsShortcutResultMsg) {
 	m.ws.ApplyPreferencesSave(msg.result)
 	effective := m.ws.LoadAppSettings()
 	m.applyEditorSettings(effective.Editor)
+	m.applyTextDirectionSettings(effective)
 	m.runDetachedAsyncCmd(m.applyTreeHiddenSetting())
 	m.applyThemePreset(themePresetFromSettings(effective))
 	m.refreshAllSessionSettingsProjections()

@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import shutil
 from pathlib import Path
 import re
 import tarfile
@@ -27,6 +28,9 @@ class ReleaseTests(unittest.TestCase):
             (self.stage / name).write_text(name, encoding="utf-8")
         (self.stage / "licenses/dependency").mkdir(parents=True)
         (self.stage / "licenses/dependency/LICENSE").write_text("fixture", encoding="utf-8")
+        (self.stage / "fonts").mkdir()
+        for name in ("CrudeRTL-Regular.ttf", "CrudeRTL-Bold.ttf", "LICENSE-DejaVu"):
+            (self.stage / "fonts" / name).write_text(name, encoding="utf-8")
         release.copy_syntax_notice(self.stage)
         self.args = argparse.Namespace(directory=self.output, version="v0.1.0")
 
@@ -51,6 +55,9 @@ class ReleaseTests(unittest.TestCase):
             # The installers read these for the window icon and menu entry.
             for icon in ("crude-icon.png", "crude-icon.svg", "crude-icon.ico"):
                 self.assertIn(icon, names)
+            # The window installers register the right-to-left font.
+            for font in ("fonts/CrudeRTL-Regular.ttf", "fonts/CrudeRTL-Bold.ttf", "fonts/LICENSE-DejaVu"):
+                self.assertIn(font, names)
             notice = archive.extractfile("licenses/SYNTAX-QUERIES-NOTICE")
             assert notice is not None
             self.assertEqual(notice.read(),
@@ -60,6 +67,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("crude.exe", names)
             self.assertNotIn("crude", names)
             self.assertIn("licenses/dependency/LICENSE", names)
+            self.assertIn("fonts/CrudeRTL-Regular.ttf", names)
             self.assertEqual(archive.read("licenses/SYNTAX-QUERIES-NOTICE"),
                              (release.ROOT / "syntax/queries/NOTICE").read_bytes())
         release.combine(self.args)
@@ -93,6 +101,17 @@ class ReleaseTests(unittest.TestCase):
         for target in release.TARGETS:
             with self.subTest(target=target), self.assertRaises(ValueError):
                 release.package(self.stage, self.output, "v0.1.0", target)
+
+    def test_missing_font_fails_closed(self):
+        shutil.rmtree(self.stage / "fonts")
+        for target in release.TARGETS:
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                release.package(self.stage, self.output, "v0.1.0", target)
+
+    def test_checked_in_font_is_complete(self):
+        # The release copies these files; scripts/build_rtl_font.py writes them.
+        for name in ("CrudeRTL-Regular.ttf", "CrudeRTL-Bold.ttf", "LICENSE-DejaVu"):
+            self.assertTrue((release.ROOT / "assets/fonts" / name).is_file(), name)
 
     def test_missing_embedded_query_notice_fails_closed(self):
         (self.stage / "licenses/SYNTAX-QUERIES-NOTICE").unlink()

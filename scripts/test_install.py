@@ -63,7 +63,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.window = self.home / f".local/share/crude/window/wezterm-{WINDOW_VERSION}"
 
     # ---- Fixtures ----------------------------------------------------------
-    def archive(self, version="v0.1.0", reported=None, extra=None, icon=False):
+    def archive(self, version="v0.1.0", reported=None, extra=None, icon=False, rtl_font=False):
         name = f"crude_{version}_linux_amd64.tar.gz"
         with tarfile.open(self.fixtures / name, "w:gz") as archive:
             executable = f"#!/bin/sh\nprintf '%s\\n' 'crude {reported or version} (0123456789abcdef0123456789abcdef01234567; 2026-10-18T00:00:00Z; linux/amd64)'\n"
@@ -73,6 +73,9 @@ shutil.copyfile(source, a[a.index('--output')+1])
                 members["crude-icon.png"] = "png fixture"
                 members["crude-icon.svg"] = "svg fixture"
                 members["crude-icon.ico"] = "ico fixture"
+            if rtl_font:
+                members["fonts/CrudeRTL-Regular.ttf"] = "rtl font fixture"
+                members["fonts/LICENSE-DejaVu"] = "DejaVu license fixture"
             for path, text in members.items():
                 data = text.encode()
                 member = tarfile.TarInfo(path)
@@ -158,12 +161,14 @@ shutil.copyfile(source, a[a.index('--output')+1])
 
     # ---- Consent and reporting --------------------------------------------
     def test_consent_and_quiet_reporting(self):
-        result = subprocess.run(["bash", str(ROOT / "install.sh")], env=self.env, input="", text=True,
-                                capture_output=True, timeout=30)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Add --yes to accept it", result.stderr)
-        self.assertIn("Nothing was changed", result.stderr)
-        self.assertFalse(self.log.exists(), "a refused install must not use the network")
+        # Without a terminal there is nobody to ask: the install shows the
+        # warning and continues; --yes is never required.
+        self.archive()
+        result = subprocess.run(["bash", str(ROOT / "install.sh"), "--no-gui"], env=self.env, input="", text=True,
+                                capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("active development", result.stdout + result.stderr)
+        self.assertNotIn("--yes", result.stderr)
 
         self.archive()
         installed = self.run_installer("--no-gui")
@@ -277,7 +282,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
 
     # ---- The desktop window -----------------------------------------------
     def test_window_starts_crude_and_appears_in_the_menu(self):
-        self.archive(icon=True)
+        self.archive(icon=True, rtl_font=True)
         self.installed_window()
         self.run_installer("--gui")
         launcher = self.home / ".local/bin/crude-window"
@@ -291,6 +296,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
         config = (self.home / ".local/share/crude/window/wezterm.lua").read_text()
         for required in (f"default_prog = {{ '{self.home}/.local/bin/crude' }}",
                          "JetBrainsMono Nerd Font",
+                         "'JetBrainsMono NF', 'Crude RTL', 'monospace'",
                          "gui-startup",
                          "maximize()",
                          "initial_cols = 120",
@@ -304,6 +310,10 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertIn("StartupWMClass=crude", desktop)
         self.assertIn(f"Icon={self.home}/.local/share/crude/icons/crude.png", desktop)
         self.assertEqual((self.home / ".local/share/crude/icons/crude.png").read_text(), "png fixture")
+        rtl = self.home / ".local/share/fonts/CrudeRTL"
+        self.assertEqual((rtl / "CrudeRTL-Regular.ttf").read_text(), "rtl font fixture",
+                         "the window installs Crude RTL from the release for right-to-left scripts")
+        self.assertTrue((rtl / "LICENSE-DejaVu").exists(), "Crude RTL keeps its license beside it")
 
     def test_window_skips_without_gui_or_when_it_cannot_start(self):
         self.archive()

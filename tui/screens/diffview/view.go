@@ -476,6 +476,9 @@ func (p *pane) source(r Row) (string, int, ui.SemanticColor) {
 	return r.After, r.AfterLine, role
 }
 
+// textWidth is the width of the source text right of the gutter.
+func (p *pane) textWidth() int { return max(0, p.Bounds().W-p.gutter()) }
+
 func (p *pane) sourceLines(r Row) (SourceLines, int) {
 	if p.before || p.unified && r.AfterLine == 0 {
 		return p.owner.prepared.beforeSource, r.BeforeLine
@@ -600,9 +603,11 @@ func (p *pane) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 				if p.contains(index, unit.column, unit.column+unit.width) {
 					fg, fill = t.TextSelectionColors(sourceFG)
 				}
-				buf.WriteString(x+g+left, y+local+1, unit.display, fg, fill, textAttr)
+				buf.WriteLogical(x+g+left, y+local+1, unit.display, fg, fill, textAttr)
 			}
 		}
+		// Right-to-left runs are arranged after their marks are painted.
+		buf.ApplyLine(x+g, y+local+1, source.Window(sourceNumber, p.horizontal.Offset(), r.W-g))
 	}
 }
 func (p *pane) ordered() (point, point) {
@@ -673,8 +678,15 @@ func (p *pane) SelectedText() string {
 	return out.String()
 }
 func (p *pane) pointer(ctx ui.EventContext) point {
-	target := point{row: max(0, min(len(p.owner.rows())-1, p.owner.scroll.Offset()+max(0, ctx.LocalY-1))), column: max(0, ctx.LocalX-p.gutter()+p.horizontal.Offset())}
-	return p.snap(target)
+	row := max(0, min(len(p.owner.rows())-1, p.owner.scroll.Offset()+max(0, ctx.LocalY-1)))
+	x := ctx.LocalX - p.gutter()
+	// The pointer addresses the source column painted under it, also inside
+	// an arranged right-to-left run.
+	if rows := p.owner.rows(); row < len(rows) && x >= 0 && x < p.textWidth() {
+		source, number := p.sourceLines(rows[row])
+		x = source.Window(number, p.horizontal.Offset(), p.textWidth()).Logical(x)
+	}
+	return p.snap(point{row: row, column: max(0, x+p.horizontal.Offset())})
 }
 func (p *pane) snap(target point) point {
 	rows := p.owner.rows()

@@ -411,61 +411,40 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 		if extend && e.selecting {
 			e.selEnd = e.cursor
 		}
-	case tea.KeyLeft:
+	case tea.KeyLeft, tea.KeyRight:
+		// On a right-to-left row a plain arrow moves on screen first;
+		// words, selection collapse and the row's edge follow text order,
+		// with the arrows pointing the other way (bidi.go).
+		screenRight := key.Code == tea.KeyRight
+		forward := e.arrowForward(screenRight)
 		if !extend && !ctrl && e.HasSelection() {
-			line, col, _, _ := e.SelectionRange()
+			line, col, endLine, endCol := e.SelectionRange()
+			if forward {
+				line, col = endLine, endCol
+			}
 			e.cursor = Position{Line: line, Col: col}
 			e.ClearSelection()
 			e.clearGoal()
 			e.ensureCursorVisible()
 			break
 		}
-		if ctrl {
-			e.clearSelectionIfNotExtending(extend)
-			if extend {
-				e.startSelection()
-			}
-			e.moveWordLeft()
-			if extend && e.selecting {
-				e.selEnd = e.cursor
-			}
-		} else {
-			e.clearSelectionIfNotExtending(extend)
-			if extend {
-				e.startSelection()
-			}
-			e.moveLeft()
-			if extend && e.selecting {
-				e.selEnd = e.cursor
-			}
+		e.clearSelectionIfNotExtending(extend)
+		if extend {
+			e.startSelection()
 		}
-	case tea.KeyRight:
-		if !extend && !ctrl && e.HasSelection() {
-			_, _, line, col := e.SelectionRange()
-			e.cursor = Position{Line: line, Col: col}
-			e.ClearSelection()
-			e.clearGoal()
-			e.ensureCursorVisible()
-			break
-		}
-		if ctrl {
-			e.clearSelectionIfNotExtending(extend)
-			if extend {
-				e.startSelection()
-			}
+		switch {
+		case ctrl && forward:
 			e.moveWordRight()
-			if extend && e.selecting {
-				e.selEnd = e.cursor
-			}
-		} else {
-			e.clearSelectionIfNotExtending(extend)
-			if extend {
-				e.startSelection()
-			}
+		case ctrl:
+			e.moveWordLeft()
+		case e.stepOnScreen(screenRight):
+		case forward:
 			e.moveRight()
-			if extend && e.selecting {
-				e.selEnd = e.cursor
-			}
+		default:
+			e.moveLeft()
+		}
+		if extend && e.selecting {
+			e.selEnd = e.cursor
 		}
 	case tea.KeyHome:
 		e.clearSelectionIfNotExtending(extend)

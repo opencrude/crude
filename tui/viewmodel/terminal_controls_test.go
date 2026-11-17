@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -106,8 +107,17 @@ func TestTerminalControlsNativeSignalAndRawKeysDockAndFloat(t *testing.T) {
 				await("CONTROL_CHILD_READY")
 				// Leave a real retained terminal selection: Ctrl+C is still the
 				// child's key, not Copy; Ctrl+Shift+C is the explicit copy chord.
+				// Windows terminals copy a selection with Ctrl+C first and clear
+				// it; the next Ctrl+C reaches the child.
 				s := app.termScreens[info.ID]
 				s.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl | tea.ModShift}))
+				if runtime.GOOS == "windows" {
+					_, cmd := app.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
+					runTerminalCommand(t, app, cmd)
+					if s.HasSelection() {
+						t.Fatal("Ctrl+C with a terminal selection did not copy it on Windows")
+					}
+				}
 				var keys []rune
 				want := "NATIVE_INTERRUPT_RECEIVED"
 				if mode == "signal" {

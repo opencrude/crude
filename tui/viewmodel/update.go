@@ -334,6 +334,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellport.SettingsChangedMsg:
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+		m.applyTextDirectionSettings(m.ws.LoadAppSettings())
 		treeCmd := m.applyTreeHiddenSetting()
 		// Auto Review may have been turned on or off: waiting confirmations
 		// show or hide the choice that opens it.
@@ -542,6 +543,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.TerminalWidthProfileMsg:
 		m.applyTerminalWidthProfile(msg)
+	case tea.ModeReportMsg:
+		m.handleHostBidiReport(msg)
 	case workspace.DocumentAutosaveDueMsg:
 		return m, m.handleAutosaveDue(msg)
 	case editorSaveResultMsg:

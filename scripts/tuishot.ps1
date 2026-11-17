@@ -20,7 +20,7 @@
 #
 # Environment:
 #   COLS ROWS PAINT_WAIT STEP_WAIT CRUDE_ARGS CRUDE_CWD CRUDE_BIN
-#   KEEP_OPEN NIRCMD CRUDE_CAPTURE_EVIDENCE
+#   WT_PROFILE KEEP_OPEN NIRCMD CRUDE_CAPTURE_EVIDENCE
 
 [CmdletBinding()]
 param(
@@ -39,6 +39,7 @@ param(
     [string]$CrudeArgs = "",
     [string]$CrudeCwd = "",
     [string]$CrudeBin = "",
+    [string]$WtProfile = "",
     [switch]$KeepOpen
 )
 
@@ -73,6 +74,7 @@ Set-FromEnvironment "STEP_WAIT" { param($v) $script:StepWait = [double]$v } "Ste
 Set-FromEnvironment "CRUDE_ARGS" { param($v) $script:CrudeArgs = $v } "CrudeArgs"
 Set-FromEnvironment "CRUDE_CWD" { param($v) $script:CrudeCwd = $v } "CrudeCwd"
 Set-FromEnvironment "CRUDE_BIN" { param($v) $script:CrudeBin = $v } "CrudeBin"
+Set-FromEnvironment "WT_PROFILE" { param($v) $script:WtProfile = $v } "WtProfile"
 if (-not $ScriptBoundParameters.ContainsKey("KeepOpen") -and $env:KEEP_OPEN -eq "1") {
     $KeepOpen = $true
 }
@@ -686,7 +688,14 @@ ping -n 900 127.0.0.1 >nul
         "--pos", "$WindowX,$WindowY",
         "--size", "$Cols,$Rows",
         "--focus",
-        "new-tab",
+        "new-tab"
+    )
+    # A named Windows Terminal profile supplies its font and colors; the
+    # default profile is used otherwise.
+    if (-not [string]::IsNullOrWhiteSpace($WtProfile)) {
+        $wtArguments += @("--profile", $WtProfile)
+    }
+    $wtArguments += @(
         "--title", $WindowName,
         "--suppressApplicationTitle",
         "cmd.exe", "/d", "/q", "/c", $Launch

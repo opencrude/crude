@@ -407,6 +407,12 @@ func TestMainPaneJourneyKeyboardReorderAndMergeReleaseControls(t *testing.T) {
 func TestMainPaneJourneyTabDragReordersBeforeSplitting(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
+	// File ghosts show the file icon only with Nerd Font icons; choose them
+	// explicitly instead of depending on the test terminal's environment.
+	settings := ws.AppDefaults()
+	settings.UI.UseNerdFont = true
+	ws.SetAppDefaults(settings)
+	app.ApplyThemePreset("dark")
 	paneJourneySize(app, 160, 40)
 	paths := openEditorTabs(t, app, "first_marker.go", "second_marker.go", "third_marker.go")
 	_ = app.View()
