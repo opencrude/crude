@@ -72,6 +72,7 @@ require (
 
 require (
 	dario.cat/mergo v1.0.0 // indirect
+	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/JohannesKaufmann/dom v0.2.0 // indirect
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.3.3
 	github.com/Microsoft/go-winio v0.6.2

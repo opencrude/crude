@@ -12,6 +12,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/lucasb-eyer/go-colorful v1.4.0
 	github.com/muesli/cancelreader v0.2.2
+	golang.org/x/image v0.44.0
 	golang.org/x/sys v0.43.0
 )
 
@@ -23,6 +24,7 @@ replace github.com/charmbracelet/ultraviolet => ../ultraviolet
 
 require (
 	github.com/aymanbagabas/go-udiff v0.2.0 // indirect
+	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect

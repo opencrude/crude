@@ -13,15 +13,15 @@ import (
 )
 
 // imagePreview is the read-only image body of the existing attachment viewer.
-// Supported terminals paint original pixels through composited placeholder
+// Supported terminals paint native pixels through composited placeholder
 // cells. Other terminals retain the two-sample half-block approximation.
 type imagePreview struct {
 	ui.Base
 	owner                 *Screen
 	tokens                *ui.TokenSet
 	image                 image.Image
-	resource              *tea.KittyImage
-	graphics              bool
+	resource              *tea.TerminalImage
+	graphics              tea.ImageProtocol
 	cellWidth, cellHeight int
 	placeholderSize       ui.Size
 	placeholderID         uint32
@@ -45,7 +45,7 @@ func (p *imagePreview) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintCont
 		return
 	}
 	source := p.image.Bounds()
-	if p.graphics && p.resource != nil && !p.imageRect().Empty() {
+	if p.graphics != tea.ImageNone && p.resource != nil && !p.imageRect().Empty() {
 		p.paintGraphics(buf, ox, oy, bg)
 		return
 	}
@@ -92,6 +92,9 @@ func (p *imagePreview) imageRect() ui.Rect {
 	if w > 297 || h > 297 {
 		return ui.Rect{}
 	}
+	if p.graphics == tea.ImageSixel && !tea.SixelSizeSupported(w, h, cw, ch) {
+		return ui.Rect{}
+	}
 	return ui.Rect{X: r.X + (r.W-w)/2, Y: r.Y + (r.H-h)/2, W: w, H: h}
 }
 
@@ -111,7 +114,7 @@ func (p *imagePreview) paintGraphics(buf *surface.CellBuffer, ox, oy int, bg cel
 		}
 	}
 	id := p.resource.ID()
-	fg := rendering.KittyImageColor(id)
+	fg := rendering.ImagePlaceholderColor(id)
 	for y := 0; y < r.H; y++ {
 		for x := 0; x < r.W; x++ {
 			buf.Set(ox+r.X+x, oy+r.Y+y, cell.NewClusterCell(p.placeholders[y*r.W+x], 1, fg, bg, 0))

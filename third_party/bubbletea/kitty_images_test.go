@@ -15,10 +15,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func kittyTestView(image *KittyImage) View {
+func kittyTestView(image *TerminalImage) View {
 	v := NewView("placeholder")
 	v.AltScreen = true
-	v.Images = []KittyImagePlacement{{Image: image, Columns: 8, Rows: 4}}
+	v.Images = []ImagePlacement{{Image: image, Columns: 8, Rows: 4}}
 	return v
 }
 
@@ -30,7 +30,7 @@ func kittyFlush(t *testing.T, r *cursedRenderer, v View) {
 	}
 }
 
-func kittyDelete(image *KittyImage) string {
+func kittyDelete(image *TerminalImage) string {
 	return fmt.Sprintf("\x1b_Ga=d,d=I,i=%d,q=2\x1b\\", image.ID())
 }
 
@@ -52,9 +52,9 @@ func kittyAPCs(t *testing.T, output string) []string {
 	}
 }
 
-func TestKittyImageImmutableInputAndBounds(t *testing.T) {
+func TestTerminalImageImmutableInputAndBounds(t *testing.T) {
 	input := []byte("immutable PNG payload")
-	i := NewKittyImage(input)
+	i := NewTerminalImage(input, nil)
 	if i == nil || i.ID() == 0 {
 		t.Fatal("missing nonzero image ID")
 	}
@@ -72,16 +72,16 @@ func TestKittyImageImmutableInputAndBounds(t *testing.T) {
 	if err != nil || string(data) != want {
 		t.Fatalf("upload retained caller bytes: %q, %v", data, err)
 	}
-	if NewKittyImage(nil) != nil || NewKittyImage(make([]byte, maxKittyImageBytes+1)) != nil {
+	if NewTerminalImage(nil, nil) != nil || NewTerminalImage(make([]byte, maxTerminalImageBytes+1), nil) != nil {
 		t.Fatal("invalid byte bounds admitted")
 	}
-	if (*KittyImage)(nil).ID() != 0 || new(KittyImage).ID() != 0 {
+	if (*TerminalImage)(nil).ID() != 0 || new(TerminalImage).ID() != 0 {
 		t.Fatal("zero resource must have zero ID")
 	}
 }
 
 func TestKittyRendererRevealsFirstImageOnce(t *testing.T) {
-	i := NewKittyImage([]byte("PNG bytes"))
+	i := NewTerminalImage([]byte("PNG bytes"), nil)
 	var output bytes.Buffer
 	r := newCursedRenderer(&output, nil, 40, 10)
 	r.syncdUpdates = true
@@ -108,8 +108,8 @@ func TestKittyRendererRevealsFirstImageOnce(t *testing.T) {
 }
 
 func TestKittyRendererUploadReuseGeometryRemovalAndClose(t *testing.T) {
-	i := NewKittyImage([]byte("PNG bytes"))
-	unowned := NewKittyImage([]byte("never submitted"))
+	i := NewTerminalImage([]byte("PNG bytes"), nil)
+	unowned := NewTerminalImage([]byte("never submitted"), nil)
 	var output bytes.Buffer
 	r := newCursedRenderer(&output, nil, 40, 10)
 	v := kittyTestView(i)
@@ -161,7 +161,7 @@ func TestKittyRendererChunksBounded(t *testing.T) {
 	for _, size := range []int{1, 3072, 3073, 6144, 8000} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			data := bytes.Repeat([]byte{byte(size)}, size)
-			i := NewKittyImage(data)
+			i := NewTerminalImage(data, nil)
 			var output bytes.Buffer
 			r := newCursedRenderer(&output, nil, 40, 10)
 			kittyFlush(t, r, kittyTestView(i))
@@ -190,7 +190,7 @@ func TestKittyRendererChunksBounded(t *testing.T) {
 }
 
 func TestKittyRendererSourceCropReconcilesWithoutReupload(t *testing.T) {
-	i := NewKittyImage([]byte("original transparent PNG"))
+	i := NewTerminalImage([]byte("original transparent PNG"), nil)
 	var output bytes.Buffer
 	r := newCursedRenderer(&output, nil, 40, 10)
 	v := kittyTestView(i)
@@ -231,7 +231,7 @@ func TestKittyRendererSourceCropReconcilesWithoutReupload(t *testing.T) {
 	// Removing the crop explicitly replaces the cropped prototype with the
 	// original full-image placement, still using the same uploaded resource.
 	output.Reset()
-	v.Images[0] = KittyImagePlacement{Image: i, Columns: 8, Rows: 4}
+	v.Images[0] = ImagePlacement{Image: i, Columns: 8, Rows: 4}
 	kittyFlush(t, r, v)
 	commands = kittyAPCs(t, output.String())
 	if len(commands) != 1 || commands[0] != fmt.Sprintf("a=p,U=1,i=%d,c=8,r=4,q=2,p=1", i.ID()) {
@@ -245,7 +245,7 @@ func TestKittyRendererInvalidSourceCropsIgnored(t *testing.T) {
 		{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 2}, {0, 0, 2, 0},
 	} {
 		t.Run(fmt.Sprint(crop), func(t *testing.T) {
-			i := NewKittyImage([]byte("not uploaded"))
+			i := NewTerminalImage([]byte("not uploaded"), nil)
 			var output bytes.Buffer
 			r := newCursedRenderer(&output, nil, 40, 10)
 			v := kittyTestView(i)
@@ -262,12 +262,12 @@ func TestKittyRendererInvalidSourceCropsIgnored(t *testing.T) {
 	}
 	if strconv.IntSize == 64 {
 		tooLarge := uint64(1) << 32
-		i := NewKittyImage([]byte("not uploaded"))
+		i := NewTerminalImage([]byte("not uploaded"), nil)
 		for _, crop := range [][4]int{
 			{int(tooLarge), 0, 1, 1}, {0, int(tooLarge), 1, 1},
 			{0, 0, int(tooLarge), 1}, {0, 0, 1, int(tooLarge)},
 		} {
-			p := KittyImagePlacement{Image: i, Columns: 1, Rows: 1,
+			p := ImagePlacement{Image: i, Columns: 1, Rows: 1,
 				SourceX: crop[0], SourceY: crop[1], SourceWidth: crop[2], SourceHeight: crop[3]}
 			if p.valid() {
 				t.Fatalf("crop exceeds protocol's uint32 field: %+v", p)
@@ -277,7 +277,7 @@ func TestKittyRendererInvalidSourceCropsIgnored(t *testing.T) {
 }
 
 func TestKittyRendererCropFailureAndInvalidReplacement(t *testing.T) {
-	i := NewKittyImage([]byte("original PNG"))
+	i := NewTerminalImage([]byte("original PNG"), nil)
 	var output bytes.Buffer
 	r := newCursedRenderer(&output, nil, 40, 10)
 	v := kittyTestView(i)
@@ -303,7 +303,7 @@ func TestKittyRendererCropFailureAndInvalidReplacement(t *testing.T) {
 		t.Fatalf("retry did not recreate the requested crop: %q", commands)
 	}
 	// An invalid earlier descriptor must not hide the valid later descriptor.
-	v.Images = append([]KittyImagePlacement{{Image: i, Columns: 8, Rows: 4, SourceX: -1}}, v.Images...)
+	v.Images = append([]ImagePlacement{{Image: i, Columns: 8, Rows: 4, SourceX: -1}}, v.Images...)
 	output.Reset()
 	kittyFlush(t, r, v)
 	if commands := kittyAPCs(t, output.String()); len(commands) != 0 || r.kittyImages[i.ID()] != v.Images[1] {
@@ -319,7 +319,7 @@ func TestKittyRendererCropFailureAndInvalidReplacement(t *testing.T) {
 }
 
 func TestKittyRendererSnapshotsAndConflatesCompleteViews(t *testing.T) {
-	a, b, c := NewKittyImage([]byte("A")), NewKittyImage([]byte("B")), NewKittyImage([]byte("C"))
+	a, b, c := NewTerminalImage([]byte("A"), nil), NewTerminalImage([]byte("B"), nil), NewTerminalImage([]byte("C"), nil)
 	var output bytes.Buffer
 	r := newCursedRenderer(&output, nil, 40, 10)
 	kittyFlush(t, r, kittyTestView(a))
@@ -327,7 +327,7 @@ func TestKittyRendererSnapshotsAndConflatesCompleteViews(t *testing.T) {
 	r.render(kittyTestView(b)) // never flushed: no upload or deletion for B
 	v := kittyTestView(c)
 	r.render(v)
-	v.Images[0] = KittyImagePlacement{Image: b, Columns: 99, Rows: 99}
+	v.Images[0] = ImagePlacement{Image: b, Columns: 99, Rows: 99}
 	if err := r.flush(false); err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestKittyRendererSnapshotsAndConflatesCompleteViews(t *testing.T) {
 func TestKittyRendererLifecycleReuploadsOwnedResources(t *testing.T) {
 	for _, operation := range []string{"clear", "reset", "suspend", "alt-exit", "alt-enter"} {
 		t.Run(operation, func(t *testing.T) {
-			i := NewKittyImage([]byte("owned PNG"))
+			i := NewTerminalImage([]byte("owned PNG"), nil)
 			var output bytes.Buffer
 			r := newCursedRenderer(&output, nil, 40, 10)
 			v := kittyTestView(i)
@@ -419,9 +419,9 @@ func TestKittyRendererLifecycleReuploadsOwnedResources(t *testing.T) {
 }
 
 func TestKittyRendererInvalidPlacementsNeverDeleteUnowned(t *testing.T) {
-	i := NewKittyImage([]byte("never valid"))
+	i := NewTerminalImage([]byte("never valid"), nil)
 	v := NewView("text")
-	v.Images = []KittyImagePlacement{{}, {Image: new(KittyImage), Columns: 1, Rows: 1}, {Image: i}, {Image: i, Columns: -1, Rows: 3}}
+	v.Images = []ImagePlacement{{}, {Image: new(TerminalImage), Columns: 1, Rows: 1}, {Image: i}, {Image: i, Columns: -1, Rows: 3}}
 	var output bytes.Buffer
 	r := newCursedRenderer(&output, nil, 40, 10)
 	kittyFlush(t, r, v)
@@ -434,7 +434,7 @@ func TestKittyRendererInvalidPlacementsNeverDeleteUnowned(t *testing.T) {
 }
 
 func TestKittyRendererTmuxWrapsEveryAPC(t *testing.T) {
-	i := NewKittyImage(bytes.Repeat([]byte("x"), 8000))
+	i := NewTerminalImage(bytes.Repeat([]byte("x"), 8000), nil)
 	var plain, tmux bytes.Buffer
 	a := newCursedRenderer(&plain, nil, 40, 10)
 	b := newCursedRenderer(&tmux, []string{"TMUX=/tmp/test,1,0"}, 40, 10)
@@ -460,7 +460,7 @@ func TestKittyRendererTmuxWrapsEveryAPC(t *testing.T) {
 func TestKittyRendererHandoffWhileWriterStalled(t *testing.T) {
 	w := &gatedWriter{entered: make(chan struct{}), release: make(chan struct{})}
 	r := newCursedRenderer(w, nil, 40, 10)
-	a, b := NewKittyImage([]byte("A")), NewKittyImage([]byte("B"))
+	a, b := NewTerminalImage([]byte("A"), nil), NewTerminalImage([]byte("B"), nil)
 	r.render(kittyTestView(a))
 	w.armed.Store(true)
 	flushed := make(chan error, 1)
@@ -509,7 +509,7 @@ func (kittyFailWriter) Write(p []byte) (int, error) {
 }
 
 func TestKittyRendererFailedWriteDoesNotCommitResources(t *testing.T) {
-	a, b := NewKittyImage([]byte("A")), NewKittyImage([]byte("B"))
+	a, b := NewTerminalImage([]byte("A"), nil), NewTerminalImage([]byte("B"), nil)
 	r := newCursedRenderer(io.Discard, nil, 40, 10)
 	kittyFlush(t, r, kittyTestView(a))
 	r.w = kittyFailWriter{}
@@ -539,7 +539,7 @@ func TestKittyRendererWarmHandoffAndReconcileAllocateNothing(t *testing.T) {
 			v := NewViewFromSurface(uv.NewBuffer(40, 10))
 			v.AltScreen = true
 			if images {
-				v.Images = []KittyImagePlacement{{Image: NewKittyImage([]byte("warm")), Columns: 8, Rows: 4}}
+				v.Images = []ImagePlacement{{Image: NewTerminalImage([]byte("warm"), nil), Columns: 8, Rows: 4}}
 			}
 			kittyFlush(t, r, v)
 			allocs := testing.AllocsPerRun(100, func() {
@@ -560,7 +560,7 @@ func BenchmarkKittyRendererWarmFrame(b *testing.B) {
 			v := NewViewFromSurface(uv.NewBuffer(40, 10))
 			v.AltScreen = true
 			if images {
-				v.Images = []KittyImagePlacement{{Image: NewKittyImage([]byte("warm")), Columns: 8, Rows: 4}}
+				v.Images = []ImagePlacement{{Image: NewTerminalImage([]byte("warm"), nil), Columns: 8, Rows: 4}}
 			}
 			r.render(v)
 			if err := r.flush(false); err != nil {

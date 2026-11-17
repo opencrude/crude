@@ -122,12 +122,13 @@ type View struct {
 	Surface      uv.Surface
 	surfaceFrame uint64 // renderer-owned snapshot generation
 
-	// Images is the complete desired set of Kitty image resources and virtual
+	// Images is the complete desired set of terminal image resources and virtual
 	// placements for this frame. The renderer snapshots the descriptors before
 	// the next Update; immutable Image pointers may be shared across frames.
 	// Cells containing Unicode placeholders are supplied by Content or Surface.
 	// Removing a resource deletes only that image's owned terminal ID.
-	Images []KittyImagePlacement
+	Images []ImagePlacement
+	sixels []sixelTile // renderer-owned projection of surviving Sixel cells
 
 	// OnMouse is an optional mouse message handler that can be used to
 	// intercept mouse messages that depends on view content from last render.

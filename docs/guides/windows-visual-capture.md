@@ -231,6 +231,28 @@ pastes in the launcher, file tree, editor, popup fields or blocking decks must
 not attach an image to a hidden composer. Session changes while an image read
 is in flight must reject the stale result.
 
+## Native image acceptance
+
+Windows Terminal 1.22+ can use Sixel for Crude's file-image tabs and native
+attachment previews. Crude must receive DA1 feature 4 and measured cell pixels;
+the presence of `WT_SESSION` alone is not acceptance. Kitty stays preferred on
+terminals that confirm both protocols.
+
+Build the viewmodel test binary with the native cgo environment, then run
+`TestImageFileVisualAcceptance` with `CRUDE_VISUAL_IMAGE_FILE=1` or
+`TestSixelAttachmentVisualAcceptance` with
+`CRUDE_VISUAL_SIXEL_ATTACHMENT=1`. Set `CRUDE_VISUAL_EXPECT_GRAPHICS=1` and
+`CRUDE_VISUAL_EXPECT_SIXEL=1`. F2 enters the real file/reference open path; F9
+checks the last painted image descriptors, exits and writes `PASS image native`
+to `CRUDE_CAPTURE_EVIDENCE` only after the program returns and assertions pass.
+Use `quit:F9`. Fixtures never print test failures into a running TUI.
+
+Capture sequentially at 160×40 and 80×24. Check the synthetic image's small
+text, fine checker pattern, colour gradient, zoom/pan, window cover/uncover and
+close/reopen. Dithering reduces Sixel's colour bands; its 256-colour palette is
+not full RGB. Pixel and alpha regressions also decode the actual writer output
+through the existing VT/Sixel parsers.
+
 ## Limits
 
 - The physical desktop must be available and unlocked.

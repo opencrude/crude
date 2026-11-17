@@ -1002,9 +1002,10 @@ preference (`ui.attachment_open`). **System app** (`system`, default) opens the
 OS-associated viewer/editor, **File manager** (`file-manager`) reveals the file,
 and **Crude** (`crude`) uses the native reference window. It applies to composer
 chips, keyboard activation, posted/resumed chat links and prompt-history
-attachments. Crude uses original-pixel Kitty graphics when its invisible
-virtual-placement probe succeeds, terminal cell geometry is known, and true-color
-output is available. Unsupported terminals keep the low-resolution half-block
+attachments. Crude automatically selects native Kitty or Sixel graphics after
+capability and cell-geometry negotiation. Kitty needs true-colour identity and
+is preferred; Sixel supports Windows Terminal 1.22+ with a dithered 256-colour
+palette. No graphics-protocol setting is needed. Unsupported terminals keep the low-resolution half-block
 preview. System app remains the default. Explicit context-menu destinations remain
 available regardless of the preference. Captured attachments and remote files are opened as private
 client-local copies, never passed to a local app as a foreign-core path. See

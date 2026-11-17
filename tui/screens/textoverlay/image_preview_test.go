@@ -29,9 +29,9 @@ func TestImagePreviewGraphicsCompositesAsClippedCells(t *testing.T) {
 	}
 	screen := New(th)
 	screen.OpenImage("image", "Actual image", img)
-	resource := tea.NewKittyImage(pngData.Bytes())
+	resource := tea.NewTerminalImage(pngData.Bytes(), img)
 	screen.SetImageResource(resource)
-	screen.SetImageGraphics(true, 8, 16)
+	screen.SetImageGraphics(tea.ImageKitty, 8, 16)
 	frame := ui.NewWindowFrameWidget(th, "frame", ui.FrameWindow, screen.Title(), screen, nil, true, 42, 16)
 	surf := surface.NewSurface("window", 42, 16, cell.TransparentBlank())
 	frame.Render(surf, &wm.RenderContext{Theme: th})
@@ -103,7 +103,7 @@ func TestImagePreviewGraphicsCompositesAsClippedCells(t *testing.T) {
 		t.Fatalf("clipping and occlusion did not affect image cells: %d", visible)
 	}
 	// Resizing keeps the immutable source and uses measured font geometry.
-	screen.SetImageGraphics(true, 8, 24)
+	screen.SetImageGraphics(tea.ImageKitty, 8, 24)
 	frame.Host().Resize(22, 12)
 	frame.Host().MarkLayout()
 	frame.Host().Paint(surface.NewCellBuffer(22, 12))
@@ -120,7 +120,7 @@ func TestImagePreviewGraphicsCompositesAsClippedCells(t *testing.T) {
 func TestImagePreviewGraphicsFallsBackWithoutSupportAndRekeys(t *testing.T) {
 	screen := New(theme.DefaultDark())
 	screen.OpenImage("image", "Image", image.NewNRGBA(image.Rect(0, 0, 4, 2)))
-	first := tea.NewKittyImage([]byte("immutable prepared PNG"))
+	first := tea.NewTerminalImage([]byte("immutable prepared PNG"), nil)
 	screen.SetImageResource(first)
 	frame := ui.NewWindowFrameWidget(theme.DefaultDark(), "frame", ui.FrameWindow, screen.Title(), screen, nil, true, 22, 12)
 	buf := surface.NewCellBuffer(22, 12)
@@ -128,11 +128,11 @@ func TestImagePreviewGraphicsFallsBackWithoutSupportAndRekeys(t *testing.T) {
 	if screen.ImagePlacement().Image != nil || !strings.ContainsRune(bufferText(buf), '▀') || strings.ContainsRune(bufferText(buf), kitty.Placeholder) {
 		t.Fatal("unconfirmed terminal emitted graphics instead of the fallback")
 	}
-	screen.SetImageGraphics(true, 8, 16)
+	screen.SetImageGraphics(tea.ImageKitty, 8, 16)
 	frame.Host().MarkPaint()
 	frame.Host().Paint(buf)
 	old := append([]string(nil), screen.image.placeholders...)
-	second := tea.NewKittyImage([]byte("another prepared PNG"))
+	second := tea.NewTerminalImage([]byte("another prepared PNG"), nil)
 	screen.SetImageResource(second)
 	frame.Host().MarkPaint()
 	frame.Host().Paint(buf)

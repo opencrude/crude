@@ -12,7 +12,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/ansi/kitty"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
 
+	"crude/sessiondb"
 	"crude/tui/filetree"
 	"crude/tui/ui"
 )
@@ -416,8 +420,31 @@ func TestImageFileVisualAcceptance(t *testing.T) {
 		t.Skip("requires the repository terminal capture workflow")
 	}
 	app, ws := newRealShellApp(t)
-	path := writeImageFixture(t, ws.RootPath, "landscape.png")
-	model := &imageFileVisualModel{App: app, t: t, path: path}
+	path := writeImageDetailFixture(t, ws.RootPath)
+	model := &imageFileVisualModel{App: app, path: path}
+	runImageVisualAcceptance(t, model)
+}
+
+func TestSixelAttachmentVisualAcceptance(t *testing.T) {
+	if os.Getenv("CRUDE_VISUAL_SIXEL_ATTACHMENT") != "1" {
+		t.Skip("requires the repository terminal capture workflow")
+	}
+	app := newTranscriptAttachmentApp(t)
+	path := writeImageDetailFixture(t, t.TempDir())
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedImage, Mime: "image/png", Data: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runImageVisualAcceptance(t, &imageFileVisualModel{App: app, reference: &ref})
+}
+
+func runImageVisualAcceptance(t *testing.T, model *imageFileVisualModel) {
+	t.Helper()
+	app := model.App
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	app.SetProgram(program)
 	restore := installDetachedMessageSinkForTest(app, program.Send)
@@ -425,12 +452,57 @@ func TestImageFileVisualAcceptance(t *testing.T) {
 	if _, err := program.Run(); err != nil {
 		t.Fatal(err)
 	}
+	if len(model.errors) > 0 {
+		t.Fatal(strings.Join(model.errors, "; "))
+	}
+	if evidence := os.Getenv("CRUDE_CAPTURE_EVIDENCE"); evidence != "" {
+		if err := os.WriteFile(evidence, []byte("PASS image native\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func writeImageDetailFixture(t *testing.T, root string) string {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 960, 480))
+	for y := range 480 {
+		for x := range 960 {
+			c := color.NRGBA{R: uint8(x * 255 / 960), G: uint8(y * 255 / 480), B: 180, A: 255}
+			if y >= 260 {
+				step := 1 + x/160
+				c = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+				if (x/step+y/step)%2 == 0 {
+					c = color.NRGBA{R: 20, G: 20, B: 20, A: 255}
+				}
+			}
+			if y < 50 {
+				c = color.NRGBA{R: 245, G: 245, B: 245, A: 255}
+			}
+			img.SetNRGBA(x, y, c)
+		}
+	}
+	d := font.Drawer{Dst: img, Src: image.NewUniform(color.Black), Face: basicfont.Face7x13, Dot: fixed.P(18, 28)}
+	d.DrawString("SIXEL: native pixels | 1-6 pixel detail | smooth colour | small image text")
+	path := filepath.Join(root, "image-detail.png")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = png.Encode(f, img)
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 type imageFileVisualModel struct {
 	*App
-	t    *testing.T
-	path string
+	path      string
+	reference *sessiondb.Reference
+	errors    []string
 }
 
 func (m *imageFileVisualModel) Init() tea.Cmd {
@@ -443,17 +515,27 @@ func (m *imageFileVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
+			if m.reference != nil {
+				return m, m.beginReferencePreview(*m.reference, true)
+			}
 			_, cmd := m.App.Update(filetree.FileSelectedMsg{Path: m.path})
 			return m, cmd
 		case tea.KeyF9:
-			if !isImageTab(m.Win.ActiveTab()) || m.activeImageView() == nil {
-				m.t.Error("the file image viewer was not mounted")
+			if m.reference == nil && (!isImageTab(m.Win.ActiveTab()) || m.activeImageView() == nil) {
+				m.errors = append(m.errors, "the file image viewer was not mounted")
 			}
-			if m.focusedPopup() != nil {
-				m.t.Error("a modal still covers the image viewer")
+			if m.reference == nil && m.focusedPopup() != nil {
+				m.errors = append(m.errors, "a modal still covers the image viewer")
 			}
-			if os.Getenv("CRUDE_VISUAL_EXPECT_GRAPHICS") == "1" && len(m.View().Images) == 0 {
-				m.t.Errorf("Kitty graphics were not negotiated: %+v", m.terminalImages)
+			if m.reference != nil && (!m.overlayHost.IsOpen(ui.OverlayTextOverlay) || m.Input.Value() != "KEEP MY COMPOSER DRAFT") {
+				m.errors = append(m.errors, "the attachment did not preserve its frame or composer draft")
+			}
+			if os.Getenv("CRUDE_VISUAL_EXPECT_GRAPHICS") == "1" && len(m.imagePlacements) == 0 {
+				m.errors = append(m.errors, "native image graphics were not negotiated")
+			}
+			if os.Getenv("CRUDE_VISUAL_EXPECT_SIXEL") == "1" &&
+				(len(m.imagePlacements) == 0 || m.imagePlacements[0].Protocol != tea.ImageSixel) {
+				m.errors = append(m.errors, "Sixel graphics were not negotiated")
 			}
 			return m, tea.Quit
 		}

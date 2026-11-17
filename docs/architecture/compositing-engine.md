@@ -1049,23 +1049,25 @@ invalidation, conservative fallbacks and the full `Host.Paint` oracle.
 
 ### Terminal image resources
 
-Attachment and file-pane images use Kitty Unicode placeholders rather than a
-second spatial overlay renderer. Each screen paints one-column cells containing
+Attachment and file-pane images use one shared image-cell pipeline, with Kitty
+or Sixel selected from terminal capability replies. Each screen paints one-column cells containing
 the placeholder and explicit row/column/high-ID diacritics; the foreground RGB encodes the lower
 24 image-ID bits. Thus parent-local bounds, clipping, z-order and opaque window
 occlusion remain ordinary cell composition. Original PNG pixels and alpha are
-handled by the terminal, not sampled down to the character grid. The screen fits
+sent as pixel graphics, not sampled down to the character grid. The screen fits
 geometry using reported cell pixel dimensions; unsupported terminals retain the
-existing half-block body. Color-profile downsampling disables placeholders
-because changing their foreground color would corrupt image identity.
+existing half-block body. Color-profile downsampling disables Kitty because it
+would corrupt placeholder identity. Sixel consumes these markers before terminal
+colour conversion and does not need true-colour text output.
 
-`tea.NewKittyImage` copies bounded PNG bytes and assigns an immutable image ID on
-the off-UI image worker. Each independently zoomable pane uses its own ID.
+`tea.NewTerminalImage` copies bounded PNG bytes, retains the matching immutable
+decoded pixels and assigns an image ID on the off-UI image worker. Each
+independently zoomable pane uses its own ID.
 `tea.View.Images` is the complete desired
-resource/virtual-placement set paired with the completed cell view. Bubble Tea
+resource/protocol/placement set paired with the completed cell view. Bubble Tea
 snapshots descriptors synchronously but uploads/reconciles only at its single
-writer, against the last successfully flushed set. Dropped frames never upload
-their resources. An unchanged image emits no extra commands or allocations;
+writer, against the last successfully flushed set. For Kitty, dropped frames never
+upload their resources. An unchanged image emits no extra commands or allocations;
 geometry changes replace stable placement `p=1` without reuploading the PNG.
 At high zoom, a pane may publish a source-pixel rectangle that expands to exact
 source/cell boundaries, with placeholder coordinates relative to that crop.
@@ -1076,6 +1078,34 @@ possibly transmitted IDs; close, screen changes, clear/reset and suspend/resume
 delete or recreate only owned IDs, never terminal-wide image deletion. The
 capability probe itself is an invisible one-pixel virtual placement with a
 random reply identity, bounded timeout and exact-ID cleanup.
+
+Sixel support is DA1 feature 4, with a separate bounded probe lifetime; a rejected
+or timed-out Kitty query does not disable Sixel. Confirmed Kitty remains preferred.
+No terminal-name or environment-variable guess enables graphics. Measured cell
+geometry is required for both protocols, including Windows Terminal 1.22+.
+
+For Sixel, Bubble Tea derives rectangular runs only from surviving compositor
+markers during the existing synchronous cell snapshot, then substitutes spaces.
+It never resamples pixels on Update. The single writer resamples only the visible
+crop with `x/image/draw`, flattens alpha over the composed surface colour and
+encodes through `x/ansi/sixel`. Its adaptive 256-colour palette uses Go's standard
+Floyd–Steinberg diffusion for opaque images, reducing colour bands without a
+second quantizer or terminal parser. Pixel detail is native, but Sixel cannot
+preserve Kitty's full RGB colour range.
+
+Encoded crops are cached only for the current publication; movement reuses an
+unchanged raster. Unchanged frames send nothing. Text changes on an image's rows
+restore its cached raster after the text diff, and text scrolling optimization is
+disabled while Sixel cells are present. Removal, movement and occlusion invalidate
+only exact old graphics rectangles in UV's physical-screen history, then repaint
+the latest composed text. The compositor still owns clipping and z-order.
+Resize, reset, screen changes and suspend/resume recreate the current graphics.
+Failed writes retain exact possibly transmitted rectangles until a successful
+repaint; failed close does not forget them. Cursor save/restore brackets graphics,
+and the unused final graphics newline is omitted to avoid bottom-edge scrolling.
+Visible Sixel rasters are capped at 2,097,152 pixels to bound the encoder's
+256-bitplane staging memory; larger previews retain the cell fallback. The shared
+297-cell coordinate limit and exact-crop rules still apply.
 
 ## 10. Key Design Decisions
 

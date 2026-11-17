@@ -200,3 +200,89 @@ func TestTerminalImagePreparationNormalizesOtherFormatsOffUI(t *testing.T) {
 		t.Fatal("cancelled owner prepared terminal image data")
 	}
 }
+
+func TestSixelTerminalAttachmentUsesNativeImages(t *testing.T) {
+	app := newTranscriptAttachmentApp(t)
+	ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{
+		Kind: sessiondb.KindPastedImage, Mime: "image/png", Data: attachmentImageBytes(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runAppCommand(t, app, app.beginReferencePreview(ref, true))
+	app.probeTerminalImages()
+	app.Update(uv.PrimaryDeviceAttributesEvent{65, 4, 6, 18, 22})
+	if len(app.View().Images) != 0 {
+		t.Fatal("Sixel used invented cell geometry")
+	}
+	app.Update(uv.CellSizeEvent{Width: 9, Height: 20})
+	view := app.View()
+	if len(view.Images) != 1 || view.Images[0].Protocol != tea.ImageSixel ||
+		view.Images[0].CellWidth != 9 || view.Images[0].CellHeight != 20 || strings.ContainsRune(view.RenderContent(), '▀') {
+		t.Fatal("Sixel-capable terminal still received a block-character attachment preview")
+	}
+	// A failed Kitty probe must not disable an independently confirmed Sixel path.
+	app.Update(terminalImageProbeTimeoutMsg{id: app.terminalImages.probeID})
+	if len(app.View().Images) != 1 {
+		t.Fatal("Kitty timeout disabled Sixel images")
+	}
+	if app.Input.Value() != "KEEP MY COMPOSER DRAFT" {
+		t.Fatal("terminal capability responses changed the draft")
+	}
+}
+
+func TestSixelTerminalFileUsesNativeImages(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	path := writeImageFixture(t, ws.RootPath, "sixel.png")
+	openImageFromTree(t, app, path)
+	app.probeTerminalImages()
+	app.Update(uv.PrimaryDeviceAttributesEvent{65, 4, 6, 18, 22})
+	app.Update(uv.CellSizeEvent{Width: 9, Height: 20})
+	view := app.View()
+	if len(view.Images) != 1 || view.Images[0].Protocol != tea.ImageSixel || strings.ContainsRune(view.RenderContent(), '▀') {
+		t.Fatal("Sixel-capable terminal still received a block-character file preview")
+	}
+}
+
+func TestSixelNegotiationTimeoutRejectionAndKittyPreference(t *testing.T) {
+	app := newTranscriptAttachmentApp(t)
+	app.handleTerminalImageMessage(uv.PrimaryDeviceAttributesEvent{65, 4})
+	if app.terminalImages.sixel {
+		t.Fatal("unsolicited attributes enabled Sixel before a probe")
+	}
+	app.probeTerminalImages()
+	old := app.terminalImages.probeID
+	app.probeTerminalImages()
+	id := app.terminalImages.probeID
+	app.handleTerminalImageMessage(terminalImageProbeTimeoutMsg{id: old})
+	if app.terminalImages.sixelProbeID != id {
+		t.Fatal("old timeout retired the current Sixel probe")
+	}
+	app.handleTerminalImageMessage(uv.PrimaryDeviceAttributesEvent{65, 6, 18, 22})
+	if app.terminalImages.sixel {
+		t.Fatal("attributes without feature 4 enabled Sixel")
+	}
+	app.probeTerminalImages()
+	id = app.terminalImages.probeID
+	app.handleTerminalImageMessage(terminalImageProbeTimeoutMsg{id: id})
+	app.handleTerminalImageMessage(uv.PrimaryDeviceAttributesEvent{65, 4})
+	if app.terminalImages.sixel {
+		t.Fatal("a response after the deadline enabled Sixel")
+	}
+	app.probeTerminalImages()
+	id = app.terminalImages.probeID
+	app.handleTerminalImageMessage(uv.KittyGraphicsEvent{Options: kitty.Options{ID: int(id)}, Payload: []byte("OK")})
+	app.handleTerminalImageMessage(uv.PrimaryDeviceAttributesEvent{65, 4})
+	app.handleTerminalImageMessage(uv.CellSizeEvent{Width: 9, Height: 20})
+	if app.terminalImages.protocol() != tea.ImageKitty {
+		t.Fatal("Sixel displaced confirmed full-colour Kitty graphics")
+	}
+	app.handleTerminalImageMessage(tea.ColorProfileMsg{Profile: colorprofile.ANSI256})
+	if app.terminalImages.protocol() != tea.ImageSixel {
+		t.Fatal("palette output disabled Sixel, whose markers are consumed before terminal colour conversion")
+	}
+	app.handleTerminalImageMessage(tea.ResumeMsg{})
+	if app.terminalImages.protocol() != tea.ImageNone {
+		t.Fatal("resume reused stale terminal capabilities")
+	}
+}

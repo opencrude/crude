@@ -88,14 +88,18 @@ editor. A tab retains the image snapshot it opened. Close and open it again to
 see external changes. An explicit file-tree rename retargets the tab; deleting
 the file through the tree closes its image views.
 
-Kitty-capable terminals paint original pixels with measured cell geometry.
-Without confirmed support, true-color identity or usable geometry, the same
+Kitty- or Sixel-capable terminals paint native pixels with measured cell geometry.
+Kitty is preferred and requires true-colour placeholder identity; Sixel includes
+Windows Terminal 1.22+ and uses a dithered 256-colour palette.
+Without confirmed support or usable geometry, the same
 viewport uses an alpha-composited half-block preview. At high zoom, native
 graphics also fall back when the exact source crop or grid cannot be represented
 without changing the image geometry. Each visible tab has its own immutable
 terminal resource so simultaneous panes may use different zoom levels. Images
 and attachment previews share terminal capability negotiation and the writer's
-exact resource lifecycle.
+exact resource lifecycle. Sixel crops above 2,097,152 visible pixels also use the
+fallback to bound staging memory. The single writer restores old image cells
+after movement, close or occlusion; no raw image writes run from UI callbacks.
 
 On a Kitty terminal that can pause rendering, the frame that first shows an
 image can be composed before its graphics layers are visible. Crude then sends

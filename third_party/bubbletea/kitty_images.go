@@ -1,93 +1,11 @@
 package tea
 
 import (
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/binary"
 	"strconv"
 
 	"github.com/charmbracelet/x/ansi"
 )
-
-const maxKittyImageBytes = 64 << 20
-
-// KittyImage is an immutable PNG resource. Construct it off the Update goroutine
-// and retain it across frames; the terminal writer uploads it only when needed.
-// Its zero value is not a valid resource.
-type KittyImage struct {
-	id  uint32
-	png string
-}
-
-// NewKittyImage copies PNG data and assigns a random nonzero terminal image ID.
-// It returns nil for empty data, data larger than 64 MiB, or unavailable entropy.
-// The caller is responsible for supplying a valid, bounded-dimension PNG.
-func NewKittyImage(pngData []byte) *KittyImage {
-	if len(pngData) == 0 || len(pngData) > maxKittyImageBytes {
-		return nil
-	}
-	var b [4]byte
-	var id uint32
-	for id == 0 {
-		if _, err := rand.Read(b[:]); err != nil {
-			return nil
-		}
-		id = binary.BigEndian.Uint32(b[:])
-	}
-	return &KittyImage{id: id, png: string(pngData)}
-}
-
-// ID returns the immutable terminal image ID, or zero for a nil resource.
-func (i *KittyImage) ID() uint32 {
-	if i == nil {
-		return 0
-	}
-	return i.id
-}
-
-// KittyImagePlacement describes a Unicode-placeholder virtual placement.
-// Nonpositive geometry and nil/zero-value resources are ignored. Include each
-// resource at most once per view; the first valid descriptor wins.
-type KittyImagePlacement struct {
-	Image         *KittyImage
-	Columns, Rows int
-
-	// SourceX, SourceY, SourceWidth and SourceHeight select a rectangle in
-	// original image pixels, relative to the PNG's top-left corner. All zero
-	// selects the entire image, preserving the default placement behavior.
-	// Otherwise the origin must be nonnegative and both sizes positive. Values
-	// must fit the protocol's unsigned 32-bit fields. The terminal intersects
-	// the rectangle with the image bounds; no new image is encoded or uploaded.
-	SourceX, SourceY, SourceWidth, SourceHeight int
-}
-
-func (p KittyImagePlacement) valid() bool {
-	if p.Image == nil || p.Image.id == 0 || len(p.Image.png) == 0 || p.Columns <= 0 || p.Rows <= 0 {
-		return false
-	}
-	if !p.hasSourceRect() {
-		return true
-	}
-	return p.SourceX >= 0 && p.SourceY >= 0 && p.SourceWidth > 0 && p.SourceHeight > 0 &&
-		uint64(p.SourceX) <= 1<<32-1 && uint64(p.SourceY) <= 1<<32-1 &&
-		uint64(p.SourceWidth) <= 1<<32-1 && uint64(p.SourceHeight) <= 1<<32-1
-}
-
-func (p KittyImagePlacement) hasSourceRect() bool {
-	return p.SourceX != 0 || p.SourceY != 0 || p.SourceWidth != 0 || p.SourceHeight != 0
-}
-
-func kittyImagesEqual(a, b []KittyImagePlacement) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
 
 // All methods below run only at the single terminal writer, with mu held.
 // Reconciliation does not mutate kittyImages until the entire write succeeds.
@@ -111,7 +29,7 @@ func (s *cursedRenderer) deleteKittyImages() {
 	}
 }
 
-func (s *cursedRenderer) uploadKittyImage(image *KittyImage) {
+func (s *cursedRenderer) uploadKittyImage(image *TerminalImage) {
 	// Encode a single 3072-byte input chunk into at most 4096 base64 bytes.
 	// Never allocate a maximum-image-sized staging buffer, or encode on Update.
 	var encoded [4096]byte
@@ -135,20 +53,20 @@ func (s *cursedRenderer) uploadKittyImage(image *KittyImage) {
 
 // firstKittyPlacement avoids a transient map on warm frames. Image sets are
 // small; no-image and unchanged frames allocate no reconciliation state.
-func firstKittyPlacement(placements []KittyImagePlacement, index int) bool {
+func firstKittyPlacement(placements []ImagePlacement, index int) bool {
 	p := placements[index]
-	if !p.valid() {
+	if p.Protocol != ImageKitty || !p.valid() {
 		return false
 	}
 	for _, earlier := range placements[:index] {
-		if earlier.valid() && earlier.Image.id == p.Image.id {
+		if earlier.Protocol == ImageKitty && earlier.valid() && earlier.Image.id == p.Image.id {
 			return false
 		}
 	}
 	return true
 }
 
-func (s *cursedRenderer) reconcileKittyImages(placements []KittyImagePlacement, invalid, deleted bool) {
+func (s *cursedRenderer) reconcileKittyImages(placements []ImagePlacement, invalid, deleted bool) {
 	if invalid {
 		if !deleted {
 			s.deleteKittyImages()
@@ -157,7 +75,7 @@ func (s *cursedRenderer) reconcileKittyImages(placements []KittyImagePlacement, 
 		for id := range s.kittyImages {
 			found := false
 			for _, p := range placements {
-				if p.valid() && p.Image.id == id {
+				if p.Protocol == ImageKitty && p.valid() && p.Image.id == id {
 					found = true
 					break
 				}
@@ -193,9 +111,9 @@ func (s *cursedRenderer) reconcileKittyImages(placements []KittyImagePlacement, 
 	}
 }
 
-func (s *cursedRenderer) commitKittyImages(placements []KittyImagePlacement) {
+func (s *cursedRenderer) commitKittyImages(placements []ImagePlacement) {
 	if !s.kittyInvalid && len(s.kittyUncertain) == 0 && s.lastView != nil &&
-		(len(s.kittyImages) > 0 || len(placements) == 0) && kittyImagesEqual(placements, s.lastView.Images) {
+		(len(s.kittyImages) > 0 || len(placements) == 0) && imagePlacementsEqual(placements, s.lastView.Images) {
 		return
 	}
 	if len(placements) == 0 && len(s.kittyImages) == 0 {
@@ -204,7 +122,7 @@ func (s *cursedRenderer) commitKittyImages(placements []KittyImagePlacement) {
 		return
 	}
 	if s.kittyImages == nil {
-		s.kittyImages = make(map[uint32]KittyImagePlacement, len(placements))
+		s.kittyImages = make(map[uint32]ImagePlacement, len(placements))
 	} else {
 		clear(s.kittyImages)
 	}
@@ -217,7 +135,7 @@ func (s *cursedRenderer) commitKittyImages(placements []KittyImagePlacement) {
 	s.kittyInvalid = false
 }
 
-func (s *cursedRenderer) failKittyImages(placements []KittyImagePlacement) {
+func (s *cursedRenderer) failKittyImages(placements []ImagePlacement) {
 	// A short/failed write may have transmitted some new resources. Retain their
 	// exact IDs for deletion on retry/close, without claiming a successful flush.
 	for i, p := range placements {

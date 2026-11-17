@@ -1248,6 +1248,17 @@ func (s *TerminalRenderer) Erase() {
 	s.clear = true
 }
 
+// InvalidateArea forgets physical cells that external graphics may cover.
+// The next Render must touch these cells and supply their current text. Unlike
+// Erase, this never clears unrelated terminal content or changes geometry.
+func (s *TerminalRenderer) InvalidateArea(area Rectangle) {
+	if s.curbuf == nil {
+		return
+	}
+	// This invalid cell is old-screen evidence only; it is never emitted.
+	s.curbuf.FillArea(&Cell{Content: "\x00", Width: 1}, area.Intersect(s.curbuf.Bounds()))
+}
+
 // Resize updates the terminal screen tab stops. This is used to calculate
 // terminal tab stops for hard tab optimizations.
 func (s *TerminalRenderer) Resize(width, _ int) {
