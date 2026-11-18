@@ -16,7 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/ui"
 	"crude/types"

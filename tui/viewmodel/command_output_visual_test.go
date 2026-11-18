@@ -11,8 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/tui/filetree"
 	ctypes "crude/types"
 	"crude/workspace"

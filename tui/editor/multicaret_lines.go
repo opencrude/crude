@@ -1,8 +1,8 @@
 package editor
 
 import (
-	"crude/document"
 	"crude/tui/ui"
+	"crude/workspace/document"
 	"slices"
 	"strings"
 )

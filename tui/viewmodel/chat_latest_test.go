@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellchat"
 	"crude/tui/ui"

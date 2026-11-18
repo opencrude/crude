@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
+	"crude/agent/toolstore"
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
-	"crude/toolstore"
 	model "crude/types"
+	"crude/workspace/document"
 )
 
 // fixturePack defines two languages that no Crude Go code and no built-in

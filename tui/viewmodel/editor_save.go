@@ -10,8 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/shellport"
-	"crude/textencoding"
+	"crude/core/port"
+	"crude/text/encoding"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types"

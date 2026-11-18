@@ -1,8 +1,8 @@
 package core
 
 import (
-	"crude/coreprotocol"
-	"crude/session"
+	"crude/agent/session"
+	"crude/core/protocol"
 	"crude/workspace"
 	"errors"
 )

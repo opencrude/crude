@@ -5,10 +5,10 @@ import (
 	"errors"
 	"sync"
 
-	"crude/coreprotocol"
-	"crude/localhistory"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 )
 
 // prepareControlHistory captures real retained owners on the actor. The parent

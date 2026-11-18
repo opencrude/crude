@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 type prefixVerifier struct {

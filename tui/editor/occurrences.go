@@ -5,7 +5,7 @@ import (
 	"slices"
 	"sort"
 
-	"crude/lspedit"
+	"crude/lsp/edit"
 	"crude/types"
 )
 

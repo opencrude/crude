@@ -3,9 +3,9 @@ package viewmodel
 import (
 	"context"
 	"crude/core"
-	"crude/coreprotocol"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/internal/wiretest"
-	"crude/shellport"
 	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/ui"

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	toolargs "crude/tools"
+	toolargs "crude/agent/tools"
 	"crude/types"
 	"crude/types/toolresult"
 )

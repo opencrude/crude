@@ -1,6 +1,6 @@
 package memorybrowser
 
-import "crude/memory"
+import "crude/agent/memory"
 
 const (
 	ModeKnowledge         = "knowledge"

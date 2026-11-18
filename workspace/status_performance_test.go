@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	types "crude/types"
 )
 

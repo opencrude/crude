@@ -2,9 +2,9 @@ package core
 
 import (
 	"context"
-	"crude/capability"
-	"crude/coreprotocol"
-	"crude/provider"
+	"crude/agent/capability"
+	"crude/agent/provider"
+	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"

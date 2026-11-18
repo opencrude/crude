@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types/command"
 	"crude/types/recovery"
 )

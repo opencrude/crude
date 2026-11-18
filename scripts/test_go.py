@@ -9,7 +9,7 @@ import subprocess
 LARGE_PACKAGES = {
     "crude/app": "./app",
     "crude/core": "./core",
-    "crude/session": "./session",
+    "crude/agent/session": "./agent/session",
     "crude/tui/viewmodel": "./tui/viewmodel",
     "crude/workspace": "./workspace",
 }

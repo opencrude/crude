@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"crude/agent"
-	"crude/capability"
-	"crude/collaboration"
-	"crude/localhistory"
-	"crude/session"
+	"crude/agent/capability"
+	"crude/agent/collaboration"
+	"crude/agent/session"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/workspace/localhistory"
 )
 
 // NewSessionResult identifies the orchestrator created by a launcher action.

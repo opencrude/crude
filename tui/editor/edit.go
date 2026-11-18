@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 func (e *Editor) insertRune(r rune) {

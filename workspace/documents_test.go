@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func documentFixture(t *testing.T, text string) (*DocumentService, document.Snapshot, document.Owner, document.Owner) {

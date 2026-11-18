@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/workspace/document"
 )
 
 func (a *actor) prepareSelectionFormatting(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {

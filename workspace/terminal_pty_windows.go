@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 
 	"golang.org/x/sys/windows"
 )

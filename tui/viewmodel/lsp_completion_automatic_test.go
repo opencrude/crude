@@ -5,8 +5,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestAutomaticCompletionWaitsPastDelayForAcknowledgement(t *testing.T) {

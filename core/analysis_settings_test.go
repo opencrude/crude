@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 func TestApplicationPreferenceIngressRejectsWorkspaceAnalysisAuthority(t *testing.T) {

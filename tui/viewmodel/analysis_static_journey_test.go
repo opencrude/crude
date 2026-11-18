@@ -13,7 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"

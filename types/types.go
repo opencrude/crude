@@ -6,9 +6,9 @@ import (
 	"maps"
 	"time"
 
+	"crude/agent/provider"
 	"crude/network"
-	"crude/provider"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crude/types/attachment"
 	"crude/types/reasoning"
 	"crude/types/recovery"

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/shellport"
+	"crude/core/port"
 
 	tea "charm.land/bubbletea/v2"
 )

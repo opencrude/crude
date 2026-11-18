@@ -2,9 +2,9 @@ package workspace
 
 import (
 	"context"
-	"crude/fileio"
-	"crude/session"
-	"crude/worktree"
+	"crude/agent/session"
+	"crude/agent/worktree"
+	"crude/workspace/fileio"
 	"encoding/json"
 	"errors"
 	"fmt"

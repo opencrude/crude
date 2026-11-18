@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"crude/coreprotocol"
-	"crude/shellport/remote"
+	"crude/core/port/remote"
+	"crude/core/protocol"
 	startuptui "crude/tui/startup"
 	"crude/types"
 )

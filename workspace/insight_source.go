@@ -3,7 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"crude/document"
-	"crude/fileio"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 // An analysis lease borrows one immutable source, not an editor view. Canonical

@@ -1,0 +1,407 @@
+package session
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/user"
+	"path/filepath"
+	"slices"
+	"time"
+
+	"crude/agent"
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/sessiondb"
+	"crude/clipboard"
+	"crude/logger"
+	"crude/search"
+	"crude/text/jsonrepair"
+	"crude/text/unidiff"
+	"crude/workspace/fileio"
+)
+
+// ResumeSession loads a backend session from a database file in the
+// global sessions directory. New code should use ResumeSessionWithDir.
+func ResumeSession(dbPath string, cfg *Config, homeDir string) (*Session, error) {
+	sessionsRoot, _ := SessionsRoot()
+	return ResumeSessionWithDir(dbPath, cfg, homeDir, sessionsRoot)
+}
+
+// ResumeSessionWithDir loads a backend session from a database file and
+// places all runtime artifacts under the provided sessionDir. Used by
+// workspace/ to keep resumed sessions inside the workspace folder.
+func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string) (*Session, error) {
+	db, err := sessiondb.OpenAndMigrate(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resume: open db: %w", err)
+	}
+
+	meta, err := sessiondb.GetMeta(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: get meta: %w", err)
+	}
+	if err := sessiondb.InterruptRunningTurns(db, meta.ID); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: interrupt running turns: %w", err)
+	}
+	if err := sessiondb.InterruptActiveRecoveries(db, meta.ID); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: interrupt active recoveries: %w", err)
+	}
+	if err := sessiondb.InterruptRunningCompactions(db, meta.ID); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: interrupt running compactions: %w", err)
+	}
+
+	// One ordered read supplies messages, turns and display metadata. Dense
+	// sessions previously paid a second complete decode of every row here.
+	msgsWithMeta, err := sessiondb.LoadMessagesWithMeta(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load messages with meta: %w", err)
+	}
+	if err := sessiondb.HydrateMessageIdentities(db, meta.ID, msgsWithMeta); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load message identities: %w", err)
+	}
+
+	var msgs []provider.ChatMessage
+	var msgTurns []int
+	maxTurn := 0
+	for _, mm := range msgsWithMeta {
+		maxTurn = max(maxTurn, mm.Turn)
+	}
+
+	lg, err := logger.New(logger.Options{
+		HomeDir:        homeDir,
+		TurnLogEnabled: cfg.TurnLogsEnabled,
+		SessionID:      meta.ID,
+		SessionsDir:    sessionDir,
+	})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: logger: %w", err)
+	}
+	resourcesTransferred := false
+	var editor *fileio.Editor
+	defer func() {
+		if !resourcesTransferred {
+			_ = lg.Close()
+			_ = db.Close()
+		}
+	}()
+	exec := fileio.NewLocalExecWithLogger(lg)
+	_, previousTempErr := os.Lstat(filepath.Join(lg.SessionDir(), "tmp", "agent"))
+	createdTemp := os.IsNotExist(previousTempErr)
+	tempDir, err := prepareSessionTempDir(lg.SessionDir(), meta.ID)
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: session temp directory: %w", err)
+	}
+	keepTempDir := false
+	defer func() {
+		if !keepTempDir && createdTemp {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+	asyncMgr := fileio.NewAsyncCommandManagerWithLogger(lg)
+	if err := asyncMgr.SetTempDir(tempDir); err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: command temp directory: %w", err)
+	}
+
+	permStore := safety.NewPermissionStore()
+	permStore.SetLogger(lg)
+	safety.SetCapabilitiesLogger(lg)
+	provider.SetLogger(lg)
+	search.SetLogger(lg)
+	clipboard.SetLogger(lg)
+	jsonrepair.SetLogger(lg)
+	diff.SetLogger(lg)
+	fileio.SetSafetyLogger(lg)
+
+	editor = fileio.NewEditor(meta.ID, lg)
+
+	workspaceCfg := copyConfig(cfg)
+	overrides, err := sessiondb.LoadAgentSettingOverrides(db, meta.ID)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load session settings: %w", err)
+	}
+	cfg = configWithSessionOverrides(workspaceCfg, overrides)
+	flags, err := sessiondb.LoadSessionFlags(db, meta.ID)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load session flags: %w", err)
+	}
+	if flags.MultiAgent != nil {
+		applySessionMultiAgent(cfg, *flags.MultiAgent)
+	}
+	disabledCapabilities, err := sessiondb.LoadDisabledCapabilities(db, meta.ID)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("resume: load session capabilities: %w", err)
+	}
+	cfg.SelectedAgent = flags.MainAgent
+	if flags.MainAgent != "" {
+		pin := overrides["root/"+flags.MainAgent]
+		cfg.selectedMainOverride = &pin
+	}
+	// Metadata records historical attribution, not an extra settings owner.
+	if flags.TurnLogs != nil {
+		cfg.TurnLogsEnabled = *flags.TurnLogs
+	}
+	activeCfg := cfg.GetActiveDefaultCategory()
+	var p *provider.Provider
+	if _, accountErr := cfg.resolveAccount(activeCfg.AccountID); accountErr != nil {
+		lg.Warn("SESSION", "selected_account_unavailable", "account", activeCfg.AccountID, "error", accountErr.Error())
+	} else {
+		p, err = cfg.providerForCategory(activeCfg)
+		if err != nil {
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("resume: account connection: %w", err)
+		}
+	}
+
+	var displayMetas []sessiondb.DisplayMeta
+	var createdAts []int64
+	if len(msgsWithMeta) > 0 {
+		cleanMsgs := make([]provider.ChatMessage, 0, len(msgsWithMeta))
+		cleanTurns := make([]int, 0, len(msgsWithMeta))
+		for _, mm := range msgsWithMeta {
+			cleanMsgs = append(cleanMsgs, mm.Msg)
+			cleanTurns = append(cleanTurns, mm.Turn)
+			displayMetas = append(displayMetas, mm.Meta)
+			createdAts = append(createdAts, mm.CreatedAt)
+		}
+		msgs, msgTurns = cleanMsgs, cleanTurns
+	}
+
+	// An unnamed session receives its personal identity once, before it is
+	// exposed as a live agent. Subsequent resumes use the durable value.
+	if meta.AgentName.String == "" {
+		name, nameErr := allocateAgentName(homeDir)
+		if nameErr != nil {
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("allocate agent identity: %w", nameErr)
+		}
+		if _, err := db.Exec(`UPDATE sessions SET agent_name=? WHERE id=?`, name, meta.ID); err != nil {
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("persist agent identity: %w", err)
+		}
+		meta.AgentName.String, meta.AgentName.Valid = name, true
+	}
+	resumeTurnNumber := maxTurn
+	if meta.TurnCount > maxTurn {
+		resumeTurnNumber = meta.TurnCount
+	}
+	activeContext := append([]provider.ChatMessage(nil), msgs...)
+	contextGeneration := uint64(1)
+	contextRevision := uint64(0)
+	contextReason := "resume_full_history"
+	state, ok, contextErr := sessiondb.LoadContextState(db, meta.ID, meta.ID)
+	if contextErr != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: load active context: %w", contextErr)
+	}
+	if ok {
+		activeContext = state.Messages
+		contextRevision = state.Revision
+		contextGeneration = state.Generation
+		contextReason = state.Reason
+	}
+	sess := &Session{
+		resumed:   true,
+		agentName: meta.AgentName.String, nameHome: homeDir,
+		ID:                   meta.ID,
+		cfg:                  cfg,
+		provider:             p,
+		selectedMainAgent:    flags.MainAgent,
+		exec:                 exec,
+		editor:               editor,
+		logger:               lg,
+		permStore:            permStore,
+		asyncMgr:             asyncMgr,
+		tempDir:              tempDir,
+		sessionID:            meta.ID,
+		sessionStart:         time.Now(),
+		usageRecords:         make(map[string]sessiondb.UsageRecord),
+		tokens:               NewTokenTracker(lg),
+		db:                   db,
+		dbPath:               dbPath,
+		turnNumber:           resumeTurnNumber,
+		msgs:                 msgs,
+		msgTurns:             msgTurns,
+		displayMetas:         displayMetas,
+		createdAts:           createdAts,
+		orchestrators:        make(map[string]*Orchestrator),
+		goalWake:             make(chan struct{}, 1),
+		recoverySlots:        make(map[string]*recoverySlot),
+		pendingRecoveries:    make(map[string]sessiondb.RecoveryCheckpoint),
+		runtimeProfile:       NewRuntimeProfile(cfg),
+		workspaceCfg:         workspaceCfg,
+		sessionOverrides:     overrides,
+		multiAgentOverride:   cloneBoolPtr(flags.MultiAgent),
+		codeIntelOverride:    cloneBoolPtr(flags.CodeIntelligence),
+		maxSubAgentsOverride: cloneIntPtr(flags.MaxSubAgents),
+		turnLogsOverride:     cloneBoolPtr(flags.TurnLogs),
+		activeContext:        activeContext,
+		contextRevision:      contextRevision,
+		contextGeneration:    contextGeneration,
+		contextReason:        contextReason,
+	}
+	asyncMgr.SetShell(sess.agentShell)
+	openRecoveries, err := sessiondb.LoadOpenRecoveryCheckpoints(db, meta.ID)
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("restore recoveries: %w", err)
+	}
+	for _, checkpoint := range openRecoveries {
+		if checkpoint.ContextOwnerID == meta.ID {
+			checkpoint.Archive = reconcileInterruptedTools(checkpoint.Archive, checkpoint.InFlightTools...)
+			checkpoint.ActiveContext = reconcileInterruptedTools(checkpoint.ActiveContext, checkpoint.InFlightTools...)
+			if err := sess.restoreRecoveryTranscript(&checkpoint); err != nil {
+				_ = lg.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("restore accepted recovery transcript: %w", err)
+			}
+			sess.activeContext = append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
+		}
+		sess.pendingRecoveries[checkpoint.Status.AgentID] = checkpoint
+	}
+	if records, err := sessiondb.ListUsageRecords(db); err != nil {
+		return nil, fmt.Errorf("restore request usage: %w", err)
+	} else {
+		for _, record := range records {
+			sess.usageRecords[record.RequestID] = record
+		}
+	}
+	turns, err := sessiondb.AgentTurnGenerations(db, meta.ID)
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("restore agent turn generations: %w", err)
+	}
+	sess.recoveredTurnGenerations = turns
+	sess.disabledCapabilities.Store(&disabledCapabilities)
+	store, err := sess.planStore()
+	if err == nil {
+		err = store.RestoreActivity(context.Background())
+	}
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("restore active plan: %w", err)
+	}
+	rows, loadErr := sessiondb.ListSubAgentResults(db, meta.ID)
+	if loadErr != nil {
+		lg.Warn("SUBAGENT", "hydrate_results_failed", "error", loadErr.Error())
+	}
+	results := make([]agent.SubAgentResult, 0, len(rows))
+	for _, row := range rows {
+		result := subAgentResultFromRow(row)
+		if err := sess.restoreChildPlanActivity(string(result.AgentID), result.SessionID); err != nil {
+			return nil, fmt.Errorf("restore child %s plan: %w", result.AgentID, err)
+		}
+		if result.Status == agent.SubAgentRunning {
+			if checkpoint, pending := sess.pendingRecoveries[string(result.AgentID)]; pending &&
+				len(checkpoint.OwnerData) > 0 {
+				continue
+			}
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("resume: running child %s has no durable recovery envelope", result.AgentID)
+		}
+		results = append(results, result)
+	}
+	hasChildRecovery := false
+	for _, checkpoint := range sess.pendingRecoveries {
+		if checkpoint.ContextOwnerID == "" && len(checkpoint.OwnerData) > 0 {
+			hasChildRecovery = true
+			if _, restored := sess.childPlans.Load(checkpoint.Status.AgentID); !restored {
+				if err := sess.restoreChildPlanActivity(checkpoint.Status.AgentID, checkpoint.Status.AgentID); err != nil {
+					return nil, fmt.Errorf("restore pending child plan: %w", err)
+				}
+			}
+		}
+	}
+	if len(results) > 0 || hasChildRecovery {
+		sess.subAgentSup = NewSubAgentRunner(sess, sess.effectiveMaxSubAgents())
+		for _, result := range results {
+			sess.subAgentSup.Manager().HydrateCompleted(result)
+		}
+	}
+	if err := sess.loadPlanMode(); err != nil {
+		return nil, fmt.Errorf("resume: load plan mode: %w", err)
+	}
+	if err := sess.loadGoal(); err != nil {
+		return nil, fmt.Errorf("resume: load goal: %w", err)
+	}
+	if err := sess.loadLoops(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
+	if err := sess.loadQueuedInputs(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
+	if err := sess.loadExecutionSelection(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
+	keepTempDir = true
+	resourcesTransferred = true
+	return sess, nil
+}
+
+func subAgentResultRow(parentSessionID string, result agent.SubAgentResult) sessiondb.SubAgentResultRow {
+	return sessiondb.SubAgentResultRow{
+		ParentSessionID: parentSessionID, ChildSessionID: result.SessionID,
+		AgentID: string(result.AgentID), AgentName: result.Name, AgentCategory: result.Category,
+		Status: string(result.Status), SummaryGist: result.SummaryGist,
+		ReportID: result.ReportID, ReportRevision: result.ReportRevision,
+		SessionLogPath: result.LogPath, FilesRead: result.FilesRead, FilesWritten: result.FilesWritten,
+		Errors: result.Errors, PromptTokens: result.PromptTokens, CompletionTokens: result.CompTokens,
+		CostUSD: result.CostUSD, DurationMs: result.DurationMs, CreatedAt: time.Now().UnixNano(),
+	}
+}
+
+func subAgentResultFromRow(row sessiondb.SubAgentResultRow) agent.SubAgentResult {
+	return agent.SubAgentResult{
+		AgentID:        agent.AgentID(row.AgentID),
+		Name:           row.AgentName,
+		Category:       row.AgentCategory,
+		SessionID:      row.ChildSessionID,
+		Status:         agent.SubAgentStatus(row.Status),
+		SummaryGist:    row.SummaryGist,
+		ReportID:       row.ReportID,
+		ReportRevision: row.ReportRevision,
+		LogPath:        row.SessionLogPath,
+		FilesRead:      slices.Clone(row.FilesRead),
+		FilesWritten:   slices.Clone(row.FilesWritten),
+		Errors:         slices.Clone(row.Errors),
+		PromptTokens:   row.PromptTokens,
+		CompTokens:     row.CompletionTokens,
+		CostUSD:        row.CostUSD,
+		DurationMs:     row.DurationMs,
+	}
+}
+
+func ResolveUsername() string {
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	if name := os.Getenv("USER"); name != "" {
+		return name
+	}
+	if name := os.Getenv("LOGNAME"); name != "" {
+		return name
+	}
+	return "user"
+}

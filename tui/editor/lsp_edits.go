@@ -7,11 +7,11 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"crude/document"
-	"crude/lspcompletion"
-	"crude/lspedit"
-	"crude/snippet"
+	"crude/lsp/completion"
+	"crude/lsp/edit"
+	"crude/text/snippet"
 	model "crude/types"
+	"crude/workspace/document"
 )
 
 // LSPCursorPosition returns the visual editor cursor as a UTF-16 wire position.

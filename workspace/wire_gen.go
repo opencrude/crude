@@ -3,13 +3,13 @@
 package workspace
 
 import (
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/memory"
-	"crude/textdiff"
+	"crude/agent/memory"
+	textdiff "crude/text/diff"
 	"crude/third_party/pathwalk"
 	"crude/types"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 	"crypto/sha256"
 
 	"github.com/tinylib/msgp/msgp"

@@ -88,4 +88,4 @@ Read [AGENTS.md](AGENTS.md) before making changes. The [documentation index](doc
 
 ## License
 
-Crude's original code is licensed under [Apache-2.0](LICENSE-APACHE). Third-party code retains its own license; see [NOTICE](NOTICE) and [Codex attribution](codexio/NOTICE). `LICENSE-MIT` applies only to included third-party material.
+Crude's original code is licensed under [Apache-2.0](LICENSE-APACHE). Third-party code retains its own license; see [NOTICE](NOTICE) and [Codex attribution](agent/codexio/NOTICE). `LICENSE-MIT` applies only to included third-party material.

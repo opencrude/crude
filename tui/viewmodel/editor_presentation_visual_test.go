@@ -3,7 +3,7 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/cell"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"

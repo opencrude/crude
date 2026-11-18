@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
+	"crude/core/client"
+	"crude/core/port/remote"
 	"crude/history"
-	"crude/shellport/remote"
 	"crude/tui"
 	"crude/tui/viewmodel"
 )

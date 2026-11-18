@@ -7,7 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/textsearch"
+	"crude/text/search"
 )
 
 const searchMatchLimit = 10_000

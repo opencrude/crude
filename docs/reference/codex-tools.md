@@ -4,7 +4,7 @@
 
 ## Selection and ownership
 
-`codexio/` is first-party code copied from `fgn/applypatch` commit
+`agent/codexio/` is first-party code copied from `fgn/applypatch` commit
 `95ed66f6d36a575b00001f2e27aedc1ec7455812`, adapted against OpenAI Codex
 `aa380897f67b91e1a47d530d7286d497b6726d3f`. There is no external Go module or
 vendor directory. The package retains upstream MIT/Apache-2.0 notices, attribution,
@@ -19,11 +19,11 @@ Read-only roles do not gain filesystem writes. All write-capable roles use the
 same engine, not smaller role-specific implementations.
 
 Crude does not embed or select vendor behavioral prompt templates. The root
-`prompt/` package supplies the same canonical policy to GPT, Claude, Gemini,
+`agent/prompt/` package supplies the same canonical policy to GPT, Claude, Gemini,
 routed and local models; escaped user profile instructions are a lower-priority
 overlay. The owner map and development checklist live in
 [model prompts and project guidance](prompt-architecture.md). Do not restore
-a codexio/prompts/ tree, model-family base-prompt selection, or an `agent/` forwarding
+an agent/codexio/prompts/ tree, model-family base-prompt selection, or an `agent/` forwarding
 API to implement a native tool. Codex-specific behavior is limited to the tool
 and wire interfaces in this document. The native patch grammar and tool
 description remain authoritative when `apply_patch` is offered. Prompt caching
@@ -96,7 +96,7 @@ remain ordered, durable, and disclose child errors rather than claiming success.
 
 ## Verification and limits
 
-Run `go test ./codexio ./fileio ./provider ./agent ./session ./tools ./workspace`
+Run `go test ./agent/codexio ./workspace/fileio ./agent/provider ./agent ./agent/session ./agent/tools ./workspace`
 and the TUI projection suites. Tests cover source preservation, strict-mode
 absence, multi-file moves/overwrites, partial failure, raw tool replay, mixed
 model profiles, child ownership, permission denial/grants, durable snapshots,
@@ -108,7 +108,7 @@ can invoke `codex --codex-run-as-apply-patch "$@"`. Run:
 
 ```sh
 CODEX_APPLY_PATCH_BIN=/path/to/apply_patch PARITY_CASES=5000 PARITY_SEED=726492 \
-  go test ./codexio -run 'TestCodexParityLive|TestNormalizedModeLiveParity' -v
+  go test ./agent/codexio -run 'TestCodexParityLive|TestNormalizedModeLiveParity' -v
 ```
 
 The recorded corpus is deterministic and runs without Rust or network access.

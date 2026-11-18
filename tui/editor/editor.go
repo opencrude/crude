@@ -13,7 +13,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
 
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"crude/session"
+	"crude/agent/session"
 	"crude/types"
 )
 

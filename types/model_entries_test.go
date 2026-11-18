@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestModelEntriesRetainFullDiscoveredCard(t *testing.T) {

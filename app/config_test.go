@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/history"
-	"crude/provider"
-	"crude/session"
 	typesmodel "crude/types"
 )
 

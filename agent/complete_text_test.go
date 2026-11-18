@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 // TestCompleteTextOneShot exercises the background-job completion helper:

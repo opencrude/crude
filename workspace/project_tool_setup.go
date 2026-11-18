@@ -12,11 +12,11 @@ import (
 	"sync"
 	"time"
 
-	"crude/document"
-	"crude/fileio"
+	"crude/agent/toolstore"
 	"crude/insight/catalog"
-	"crude/toolstore"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 const projectToolPreviewLimit = 16

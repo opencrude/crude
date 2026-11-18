@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
-	"crude/shellport"
+	"crude/core/port"
 )
 
 func attachViewMemoryProfile(t *testing.T, store *clientstate.Store, shell remoteJourneyShell, profile string) clientstate.Attachment {

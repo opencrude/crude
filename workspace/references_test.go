@@ -12,7 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 )
 
 func setupRefStoreDB(t *testing.T) (*sql.DB, string) {

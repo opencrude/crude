@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"crude/agent"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 	"crude/types"
 	"crude/types/recovery"
 )

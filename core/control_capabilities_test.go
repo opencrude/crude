@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/capability"
-	"crude/coreprotocol"
+	"crude/agent/capability"
+	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
 	"crude/types/control"

@@ -9,11 +9,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/syntax"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // flashFixture is a connected Go document whose canonical syntax comes from the

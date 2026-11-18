@@ -9,14 +9,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/client"
+	"crude/core/port"
+	"crude/core/protocol"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 )
 
 const historySafetyConfirmOverlay ui.OverlayID = "history-safety-confirm"

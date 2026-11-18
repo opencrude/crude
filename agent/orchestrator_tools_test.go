@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	rootprompt "crude/prompt"
-	"crude/tools"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/tools"
 )
 
 func TestOrchestratorKeepsStandardToolsUsable(t *testing.T) {

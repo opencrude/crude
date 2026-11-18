@@ -9,9 +9,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreprotocol"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/network"
-	"crude/shellport"
 	"crude/tui/ui"
 	"crude/types"
 )

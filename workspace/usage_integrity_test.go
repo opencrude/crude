@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/types"
 )
 

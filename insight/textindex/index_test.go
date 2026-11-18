@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 func writeTree(t *testing.T, root string, files map[string]string) {

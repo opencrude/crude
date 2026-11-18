@@ -20,10 +20,10 @@ writers remain real limits.
 
 ## One supervisor, separate budgets
 
-`agent.Supervisor` owns the root/child recovery lifecycle. `session/` supplies
+`agent.Supervisor` owns the root/child recovery lifecycle. `agent/session/` supplies
 typed failure facts, exact pending input, generation-fenced wake signals and
 transactional `sessiondb` checkpoints. `types/recovery.Status` is the neutral
-projection shared by runtime, chat and hydration. `prompt/recovery.go` owns the
+projection shared by runtime, chat and hydration. `agent/prompt/recovery.go` owns the
 code-authored continuation instructions; these are runtime data/control, not a
 new human message or a replacement for permission policy.
 
@@ -182,7 +182,7 @@ must not append the final response or its continuation suffix a second time. See
   rewrite no messages.
 - Message lists (a context, a checkpoint's archive and active context) are a
   base JSON array in the owning row followed by tail rows, one encoded message
-  each (`agent_context_tail`, `agent_recovery_tail`; `sessiondb/message_lists.go`).
+  each (`agent_context_tail`, `agent_recovery_tail`; `agent/sessiondb/message_lists.go`).
   The list's encoding is byte-identical to encoding the whole list
   (`TestCheckpointAppendKeepsExactContextEncoding`). Writers keep the base
   empty and replace tail rows from the first changed message, so a tool round
@@ -495,39 +495,39 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
 
 ## Regression acceptance
 
-- `session/guidance_checkpoint_regression_test.go`: actual HTTP tool batches and
+- `agent/session/guidance_checkpoint_regression_test.go`: actual HTTP tool batches and
   SQLite publication for root/child owners, mixed deferred effects and allowed
   reads in both orders, native read wrappers, all-deferred/read-only controls,
   stable result identities and next-request guidance. A real root/file-tool
   journey covers completion, Stop, unchanged cold-resume transcript and fresh
   input without replaying a deferred effect.
-- `provider/upload_retry_network_test.go`: actual HTTP/2 TLS through a local TCP
+- `agent/provider/upload_retry_network_test.go`: actual HTTP/2 TLS through a local TCP
   blackhole; upload and header stalls automatically redial after cooldown and
   send the complete byte-identical original payload without a reset/wake. Accepted
   partial output is not replayed; cancellation/deadline during cooldown prevents
   a second attempt. Custom transports without `httptrace.GotConn` cannot provide
   this exact-connection retirement; the shared product transport is exercised.
-- `provider/http_recovery_regression_test.go`: transient HTTP classes, generic
+- `agent/provider/http_recovery_regression_test.go`: transient HTTP classes, generic
   envelopes, streaming/non-streaming retry, explicit permanent evidence/vetoes,
   and preserved invalid-parameter evidence.
-- `provider/stream_recovery_regression_test.go`: exact established Chat gateway
+- `agent/provider/stream_recovery_regression_test.go`: exact established Chat gateway
   failure before and after text/reasoning/tool fragments; actual HTTP SSE/NDJSON
   paths for every registered protocol, including Anthropic events and Ollama
   string/structured errors, permanent negatives and explicit retry vetoes.
 - `agent/stream_recovery_regression_test.go`: root/child semantic continuations
   across every registered protocol, retained accepted prefix, discarded incomplete
   calls, real countdown expiry and no manual wake or original-request replay.
-- `session/stream_recovery_regression_test.go`: actual Chat root/child runners,
+- `agent/session/stream_recovery_regression_test.go`: actual Chat root/child runners,
   durable SQLite countdown/continuation, retained exactly-once earlier file effect,
   required child report provenance and exact Stop preventing a delayed restart.
 - `agent/http_recovery_regression_test.go`: every registered protocol, root and
   child, repeated exhausted requests beyond the five-minute saturation point.
   The clock wait is simulated; real timer expiry is tested below.
-- `session/http_recovery_regression_test.go`: real local HTTP, SQLite, root and
+- `agent/session/http_recovery_regression_test.go`: real local HTTP, SQLite, root and
   actual child runner; an earlier completed file effect remains exactly once,
   persisted owner-specific countdown expires without a wake, child final report
   retains provenance, and exact Stop prevents a delayed restart.
-- `session/upload_retry_journey_test.go`: actual root and `StartAgent` child,
+- `agent/session/upload_retry_journey_test.go`: actual root and `StartAgent` child,
   HTTP/2 upload flow-control stall through a TCP blackhole, durable automatic
   supervisor cooldown and redial without manual wake. The complete original
   input and earlier exactly-once file effect survive; child reports retain their
@@ -545,7 +545,7 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
   cover queued prompts and cancelled extraction. `stop_lifecycle_visual_test.go`
   runs Stop, steering and manual-compaction cancellation through the repository
   capture workflow at desktop and constrained sizes.
-- `session/retained_session_lifecycle_test.go` optionally accepts SQLite backup
+- `agent/session/retained_session_lifecycle_test.go` optionally accepts SQLite backup
   images through `CRUDE_LIFECYCLE_SESSION_FIXTURES`; it touches only temporary
   copies and a local provider, checks exact Stop, three fresh turns, passive
   reopen and unchanged pre-existing transcript metadata/provenance.

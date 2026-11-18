@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
+	"crude/agent/collaboration"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
 )

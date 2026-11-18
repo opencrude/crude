@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func acknowledgeHistoryEdit(t *testing.T, e *Editor, request string) document.Change {

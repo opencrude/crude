@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/types/control"

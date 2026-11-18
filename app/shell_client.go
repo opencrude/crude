@@ -16,13 +16,13 @@ import (
 
 	"crude/assets"
 	"crude/clientstate"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/client"
+	"crude/core/port/remote"
+	"crude/core/protocol"
+	"crude/core/remoteconn"
+	"crude/core/wire"
 	"crude/desktopnotify"
 	"crude/metrics"
-	"crude/remoteconn"
-	"crude/shellport/remote"
 	"crude/tui"
 	startuptui "crude/tui/startup"
 )

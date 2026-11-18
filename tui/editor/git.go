@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/textdiff"
+	"crude/text/diff"
 	"crude/tui/cell"
 	"crude/tui/ui"
 )

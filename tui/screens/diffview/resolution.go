@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"crude/textdiff"
+	"crude/text/diff"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"

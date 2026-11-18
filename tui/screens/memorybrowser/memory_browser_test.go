@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/memory"
+	"crude/agent/memory"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"

@@ -3,9 +3,9 @@ package agent
 import (
 	"fmt"
 
-	"crude/codexio"
-	"crude/safety"
-	"crude/tools"
+	"crude/agent/codexio"
+	"crude/agent/safety"
+	"crude/agent/tools"
 )
 
 func (a *Agent) configureModelTools() {

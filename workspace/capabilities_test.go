@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"crude/skills"
+	"crude/agent/skills"
 	"crude/types"
 	captypes "crude/types/capability"
 )

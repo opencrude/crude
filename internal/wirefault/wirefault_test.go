@@ -7,8 +7,8 @@ import (
 	"net"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 func replyBytes(t *testing.T, reply coreprotocol.Reply) []byte {

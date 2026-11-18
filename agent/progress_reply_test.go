@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
-	"crude/provider"
-	"crude/tools"
+	"crude/agent/provider"
+	"crude/agent/tools"
 )
 
 // A provider can schedule a progress reply alongside a slow tool. Completion

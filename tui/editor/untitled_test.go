@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
 	"crude/tui/theme"
+	"crude/workspace/document"
 )
 
 func TestUntitledProjectionAcceptsPublicationAndRetainsPrivateRecovery(t *testing.T) {

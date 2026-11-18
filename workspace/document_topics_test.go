@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestDocumentTopicOrderedDeltasSavepointAndGap(t *testing.T) {

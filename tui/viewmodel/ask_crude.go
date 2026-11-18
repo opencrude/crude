@@ -8,9 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/prompt"
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"

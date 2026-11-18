@@ -10,9 +10,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/document"
-	"crude/lspedit"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // PrepareLSPRename is the one native/connected rename preparation route. The

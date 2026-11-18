@@ -9,9 +9,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // peerFirstCompletions lets another shell commit a change after the core has

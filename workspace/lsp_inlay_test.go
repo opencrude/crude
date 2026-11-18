@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // Like the navigation fixture, this client really acknowledges didOpen/change.

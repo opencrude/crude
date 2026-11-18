@@ -167,7 +167,7 @@ func cohortFiles(root string) ([]string, error) {
 }
 
 func promptTemplate(name string) bool {
-	if !strings.HasPrefix(name, "prompt/") {
+	if !strings.HasPrefix(name, "agent/prompt/") {
 		return false
 	}
 	switch path.Ext(name) {

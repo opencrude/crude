@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,9 +11,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/document"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // The capture driver supplies the double click, typing, Ctrl+S and file name.

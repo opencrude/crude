@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 func TestFileOpsFailFastWhileMutationLeaseIsOwned(t *testing.T) {

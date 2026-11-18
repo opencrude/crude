@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	"crude/internal/testterminal"
 	"crude/terminalvt"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestIdleDocumentLeaseRefusesViewsAndRestoresOpen(t *testing.T) {

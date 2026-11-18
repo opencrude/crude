@@ -3,8 +3,8 @@ package sessionsettings
 import (
 	"testing"
 
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"

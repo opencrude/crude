@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 // SourceSelection is a private UTF-8 range. Cursor determines its direction.

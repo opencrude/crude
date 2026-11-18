@@ -7,8 +7,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 // This regression enters through the real editor key router. Its canonical

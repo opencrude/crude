@@ -20,7 +20,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"

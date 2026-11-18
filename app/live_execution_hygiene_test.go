@@ -17,20 +17,20 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent"
-	"crude/collaboration"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
+	"crude/agent/worktree"
 	"crude/core"
-	"crude/coreclient"
-	"crude/coreprotocol"
+	"crude/core/client"
+	"crude/core/port/remote"
+	"crude/core/protocol"
 	"crude/history"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
-	"crude/shellport/remote"
 	"crude/tui"
 	"crude/tui/viewmodel"
 	recoverytypes "crude/types/recovery"
 	"crude/workspace"
-	"crude/worktree"
 )
 
 // Opt-in acceptance uses the user's explicitly selected configured connection in

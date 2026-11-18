@@ -230,8 +230,8 @@ of already-settled commands are not reported again. Compaction continuity record
 output length and cursor; it never reads the skipped bytes.
 
 Extraction contracts, stage wording, attributed source-fragment envelopes and
-checkpoint assembly live in `prompt/compaction.go`; `agent/` retains admission,
-chunk/retry execution and validation. `prompt/runtime.go` renders the continuity
+checkpoint assembly live in `agent/prompt/compaction.go`; `agent/` retains admission,
+chunk/retry execution and validation. `agent/prompt/runtime.go` renders the continuity
 handoff from session/file-owner facts, not model-authored estimates of live work.
 
 Across normal turns, earlier runtime handoffs remain in the accepted prefix and

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 func BuildSubAgentStatus(mgr *SubAgentManager) string {

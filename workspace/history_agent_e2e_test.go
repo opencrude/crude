@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/localhistory"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	ttypes "crude/types"
 	"crude/types/recovery"
+	"crude/workspace/localhistory"
 )
 
 type historyE2EEvent struct {

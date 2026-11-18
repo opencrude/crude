@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/fileio"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 // A transfer has a bounded lifetime even if a healthy carrier's peer stops

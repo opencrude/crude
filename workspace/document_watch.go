@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"crude/document"
-	"crude/worktree"
+	"crude/agent/worktree"
+	"crude/workspace/document"
 	"github.com/fsnotify/fsnotify"
 )
 

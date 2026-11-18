@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/retry"
 	"crude/types"
 	"crude/workspace"

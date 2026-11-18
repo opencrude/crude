@@ -2,14 +2,14 @@ package workspace
 
 import (
 	"bytes"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/sha256"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestUntitledEncodingSurvivesSaveAutosaveReconcileAndRestart(t *testing.T) {

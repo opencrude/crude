@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"crude/agent/provider"
 	"crude/logger"
-	"crude/provider"
 	"crude/types/reasoning"
 )
 

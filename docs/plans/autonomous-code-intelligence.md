@@ -191,7 +191,7 @@ implemented, live acceptance open.** Generic, no language branch:
   resolved the issue, so it never settled and Aeron never heard of it. The dispatcher (`core/attention.go`) sends the workspace Aeron one
   notice per cause after the issue stayed the same for 30 seconds, while a shell
   is attached and Aeron is idle (`lsp.ask_aeron`, Settings → Code intelligence →
-  **When a server has a problem**). Aeron's contract (`prompt/contracts.go`)
+  **When a server has a problem**). Aeron's contract (`agent/prompt/contracts.go`)
   makes it investigate with Crude first and ask once before it changes anything;
   its questions wait until the user pauses.
 - The load sensor does not count the check's own work: the load interval
@@ -593,7 +593,7 @@ machine's Budgie login script changes the command's working directory; it
 passes in a diagnostic run with `DESKTOP_SESSION` unset. That does not turn the
 original run into a pass.
 The subsequent editor-file milestone removed the unused
-`fileio/async_exec_unix.go` no-op; the Linux whole-repository lint rerun passes.
+`workspace/fileio/async_exec_unix.go` no-op; the Linux whole-repository lint rerun passes.
 
 **Immediate correction: concise editor messages (2026-11-09).**
 
@@ -857,7 +857,7 @@ it. Current capabilities and safeguards are described in
 | Severity tuning is per tool | Each tool has its own suppression syntax. Crude has one minimum-severity filter. |
 | Popups do not feel like a complete IDE | Parameter assistance, symbol documentation, selected-completion documentation and diagnostic readers now use mounted source anchoring. Inline prediction and broader semantic workflows remain open. |
 | Aeron never helps manual editing | Aeron drafts commit messages and compaction, nothing in the editor. |
-| Editor and agent coverage can differ | Agents get a session-gated `lsp` tool (`tools/code_intelligence.go`) with document probes. The editor and agent should share the same revision- and context-qualified answers. |
+| Editor and agent coverage can differ | Agents get a session-gated `lsp` tool (`agent/tools/code_intelligence.go`) with document probes. The editor and agent should share the same revision- and context-qualified answers. |
 
 On one 20,000-line Python fixture Chroma document preparation cost 60–62 ms
 and 35.5 MB of cumulative allocations, not retained memory or keystroke-to-screen
@@ -1758,7 +1758,7 @@ CSS, HTML and JSON CMD shims as ready, while all three actual runtime starts and
 the JSON diagnostic probe failed with a missing-executable message.
 
 Inventory and startup now share the analyzer environment policy, the program
-resolver in `lspclient/lsp_program.go` and Powernap's native executable lookup.
+resolver in `lsp/client/lsp_program.go` and Powernap's native executable lookup.
 Existing catalog package recipes identify installed npm packages; the package
 method data names their manifest. The resolver reads the installed bin map (or
 catalog `node:` path), starts native Node with the script and original arguments,

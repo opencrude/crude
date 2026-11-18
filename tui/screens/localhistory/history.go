@@ -7,12 +7,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/localhistory"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/workspace/localhistory"
 )
 
 const (

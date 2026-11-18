@@ -2,9 +2,9 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/types/control"
 	"crude/workspace"

@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"testing"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 )
 
 func TestOverlappingLatestScopesDoesNotGuess(t *testing.T) {

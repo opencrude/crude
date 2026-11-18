@@ -8,8 +8,8 @@ import (
 	"slices"
 	"time"
 
-	"crude/collaboration"
-	"crude/prompt"
+	"crude/agent/collaboration"
+	"crude/agent/prompt"
 	"crude/types"
 )
 

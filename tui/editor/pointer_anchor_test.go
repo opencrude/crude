@@ -5,10 +5,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 // Paint expectations are literal display spans, independent of the gesture's

@@ -12,7 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types"
 	"crude/types/reasoning"
 	"crude/types/recovery"

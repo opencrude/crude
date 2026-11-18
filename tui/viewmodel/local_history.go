@@ -12,15 +12,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/client"
+	"crude/core/port"
+	"crude/core/protocol"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 type historyLatestMsg struct {

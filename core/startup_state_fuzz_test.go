@@ -15,7 +15,7 @@ import (
 
 	"crude/app"
 	"crude/core"
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/network"
 	"crude/types"
 	"crude/workspace"

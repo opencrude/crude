@@ -3,10 +3,10 @@ package core
 import (
 	"bytes"
 	"context"
-	"crude/coreprotocol"
-	"crude/localhistory"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 	"os"
 	"path/filepath"
 	"sync"

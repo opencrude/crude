@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/localhistory"
-	"crude/provider"
+	"crude/agent/provider"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
-	"crude/worktree"
+	"crude/workspace/localhistory"
 )
 
 func TestControlHistoryLinkedDiscardInverse(t *testing.T) {

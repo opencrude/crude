@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/document"
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/lspedit"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 type reviewedFixture struct {

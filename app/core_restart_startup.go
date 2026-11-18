@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"crude/coreclient"
-	"crude/corewire"
-	"crude/shellport/remote"
+	"crude/core/client"
+	"crude/core/port/remote"
+	"crude/core/wire"
 )
 
 func validateCoreRestartInvocation(flags CLIFlags) error {

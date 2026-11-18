@@ -7,13 +7,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
-	history "crude/localhistory"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
+	history "crude/workspace/localhistory"
 )
 
 func safetyFixture() workspace.HistorySafetyDetail {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/workspace"
 )

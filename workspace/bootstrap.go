@@ -22,11 +22,11 @@ import (
 	"time"
 
 	"crude/agent"
-	"crude/collaboration"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
-	"crude/tools"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
+	"crude/agent/tools"
 	ttypes "crude/types"
 	"crude/types/attachment"
 )

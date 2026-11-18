@@ -1,0 +1,71 @@
+package session
+
+import (
+	"strings"
+	"testing"
+
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
+	"crude/types/reasoning"
+)
+
+func TestInferredReasoningKindUsesMatchingGatewayObservations(t *testing.T) {
+	s := &Session{usageRecords: map[string]sessiondb.UsageRecord{}}
+	for i, evidence := range []struct {
+		generation     uint64
+		length, billed int
+	}{
+		{1, 249, 736}, {2, 317, 1002}, {3, 390, 1309},
+	} {
+		s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", ReasoningContent: strings.Repeat("x", evidence.length)})
+		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{TurnGeneration: evidence.generation, ProviderID: "custom", AccountID: "account", ModelID: "gateway-model"})
+		s.usageRecords[string(rune('a'+i))] = sessiondb.UsageRecord{AgentID: "owner", ProviderID: "custom", AccountID: "account", ModelID: "gateway-model", RequestKind: "normal", TurnGeneration: evidence.generation, ReasoningKnown: true, ReasoningTokens: evidence.billed}
+	}
+	for _, tc := range []struct {
+		agent, provider, account, model string
+		want                            reasoning.Kind
+	}{
+		{"owner", "custom", "account", "gateway-model", reasoning.InferredSummary},
+		{"other", "custom", "account", "gateway-model", reasoning.Unknown},
+		{"owner", "other", "account", "gateway-model", reasoning.Unknown},
+		{"owner", "custom", "other", "gateway-model", reasoning.Unknown},
+		{"owner", "custom", "account", "other-model", reasoning.Unknown},
+	} {
+		if got := s.inferredReasoningKind(tc.agent, tc.provider, tc.account, tc.model); got != tc.want {
+			t.Fatalf("connection %+v: %q want %q", tc, got, tc.want)
+		}
+	}
+	s.msgs[0].ReasoningDisplay.Kind = reasoning.InferredSummary
+	if got := s.inferredReasoningKind("owner", "custom", "account", "gateway-model"); got != reasoning.InferredSummary {
+		t.Fatalf("resumed measured summary lost its source: %q", got)
+	}
+	s.msgs[0].ReasoningDisplay.Kind = reasoning.Raw
+	if got := s.inferredReasoningKind("owner", "custom", "account", "gateway-model"); got != reasoning.Unknown {
+		t.Fatal("raw wire evidence lost precedence")
+	}
+	s.msgs[0].ReasoningDisplay.Kind = reasoning.Unknown
+	s.usageRecords["a"] = sessiondb.UsageRecord{AgentID: "owner", ProviderID: "custom", AccountID: "account", ModelID: "gateway-model", RequestKind: "normal", TurnGeneration: 1, ReasoningKnown: true, ReasoningTokens: 200, Partial: true}
+	if got := s.inferredReasoningKind("owner", "custom", "account", "gateway-model"); got != reasoning.InferredSummary {
+		t.Fatal("partial record incorrectly contradicted completed evidence")
+	}
+}
+
+func TestInferredReasoningKindRestoresRawEvidenceForOwningConnection(t *testing.T) {
+	s := &Session{usageRecords: map[string]sessiondb.UsageRecord{}}
+	for i := range 2 {
+		generation := uint64(i + 1)
+		s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", ReasoningContent: strings.Repeat("visible raw text ", 40), ReasoningDisplay: reasoning.Display{Kind: reasoning.InferredRaw}})
+		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{TurnGeneration: generation, ProviderID: "gateway", AccountID: "child-account", ModelID: "model"})
+		s.usageRecords[string(rune('a'+i))] = sessiondb.UsageRecord{AgentID: "child", ProviderID: "gateway", AccountID: "child-account", ModelID: "model", RequestKind: "normal", TurnGeneration: generation, ReasoningKnown: true, ReasoningTokens: 155}
+	}
+	if got := s.inferredReasoningKind("child", "gateway", "child-account", "model"); got != reasoning.InferredRaw {
+		t.Fatalf("resumed raw connection = %q", got)
+	}
+	if got := s.inferredReasoningKind("parent", "gateway", "child-account", "model"); got != reasoning.Unknown {
+		t.Fatalf("child inference leaked to parent: %q", got)
+	}
+	s.usageRecords["b"] = sessiondb.UsageRecord{AgentID: "child", ProviderID: "gateway", AccountID: "child-account", ModelID: "model", RequestKind: "normal", TurnGeneration: 2, ReasoningKnown: true, ReasoningTokens: 1700}
+	if got := s.inferredReasoningKind("child", "gateway", "child-account", "model"); got != reasoning.Unknown {
+		t.Fatalf("contradictory evidence did not clear raw inference: %q", got)
+	}
+}

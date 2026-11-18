@@ -2,8 +2,8 @@ package workspace
 
 import (
 	"context"
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 	"errors"
 	"reflect"
 	"testing"

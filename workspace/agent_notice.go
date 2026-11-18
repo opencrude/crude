@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"crude/fileio"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 // Agent service notices change no conversation. Canonical ingress records their

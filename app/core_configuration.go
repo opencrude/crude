@@ -1,9 +1,9 @@
 package app
 
 import (
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/network"
-	"crude/provider"
-	"crude/session"
 	ttypes "crude/types"
 	"encoding/json"
 	"fmt"

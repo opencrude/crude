@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/session"
+	"crude/agent/session"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 func historyServiceHarness(t *testing.T) (*LocalHistoryService, *localhistory.Store, string) {

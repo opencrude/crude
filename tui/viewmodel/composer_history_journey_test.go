@@ -19,10 +19,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 	"crude/history"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
 	"crude/tui/input"
 	"crude/types"
 	"crude/workspace"

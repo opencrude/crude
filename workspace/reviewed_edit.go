@@ -3,7 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -20,10 +20,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/document"
-	"crude/localhistory"
-	"crude/lspedit"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 const (

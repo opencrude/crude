@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"crude/session"
+	"crude/agent/session"
 	"crude/types"
 )
 

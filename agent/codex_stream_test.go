@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"crude/provider"
-	"crude/tools"
+	"crude/agent/provider"
+	"crude/agent/tools"
 )
 
 func TestInterruptedPatchNeverExecutesEvenWithCompleteSyntax(t *testing.T) {

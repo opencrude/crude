@@ -261,7 +261,7 @@ include the fix for CVE-2025-58058.
 
 ## Tests
 
-The tests in `toolstore/` use only loopback `httptest` servers. Key tests:
+The tests in `agent/toolstore/` use only loopback `httptest` servers. Key tests:
 `TestInstallEachArchiveKind`, `TestInstallRejectsUnsafeArchives` (zip slip,
 link escape, link chain escape, devices, bombs, entry budget),
 `TestInstallKeepsContainedLinks`, `TestInstallVerifiesExpectedDigest`,

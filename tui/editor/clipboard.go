@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/rendering"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 // Clipboard commands are a port of VS Code's editor clipboard with its default

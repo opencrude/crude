@@ -43,8 +43,8 @@ Inspection on 2026-10-11 established these starting points:
 |---|---|---|
 | Core | Typed `coreprotocol` methods, revision fences, mutation receipts; settings/documents/terminals already have owners | No addressed shell-control channel or complete semantic product-control API |
 | TUI | `ui.ActionRegistry`, stable component IDs, root/floating Hosts, normal action handlers | Registry is primarily metadata; incomplete typed dispatch and no complete inspectable control tree |
-| MCP | Official Go SDK, stdio/Streamable HTTP, exact schemas/grants, OAuth and result parsing | `session/capabilities.go` flattens image content to byte descriptions rather than `ToolResult.Attachments`; non-image content needs a full typed audit |
-| Acquisition | Automatic mode, pinned artifacts/previews, application/workspace registration transactions | `capability/service.go` rejects agent stdio activation; `capability/access.go` requires human access approval; `agent/tool_exec.go` uses an unconditional capability block path |
+| MCP | Official Go SDK, stdio/Streamable HTTP, exact schemas/grants, OAuth and result parsing | `agent/session/capabilities.go` flattens image content to byte descriptions rather than `ToolResult.Attachments`; non-image content needs a full typed audit |
+| Acquisition | Automatic mode, pinned artifacts/previews, application/workspace registration transactions | `agent/capability/service.go` rejects agent stdio activation; `agent/capability/access.go` requires human access approval; `agent/tool_exec.go` uses an unconditional capability block path |
 | Autonomy | Session-owned live YOLO, Auto Review Agent, root/child ceilings | Acquisition/launch/access do not consistently use that authority; generic Always-read is correctly not an installation grant |
 | Isolation | Durable agent/run identity, file claims, exact child checkpoints and commands | `agent_start`/`SubAgentSpec` have no isolation/root field; child prompt, files and command defaults use the parent session's `WorkDir` |
 
@@ -346,7 +346,7 @@ settings truth; do not add another "autonomous MCP" toggle that disagrees with
 the selected mode. Use the existing activity/Notices system for meaningful
 install/launch/access outcomes, not a toast or modal for every tool call.
 
-Change canonical `prompt/` guidance from missing-capability-only discovery to
+Change canonical `agent/prompt/` guidance from missing-capability-only discovery to
 proactive relevant installed use and acquisition that materially improves a task.
 Teach exact identity activation, user-chosen autonomy, declared limitations,
 external attribution and bounded discovery. Tool descriptions/results must tell
@@ -447,7 +447,7 @@ validation. The parent owns policy decisions, integration and consolidated gates
 | **3. Coherent capability autonomy** | Shared policy admission, prepared acquisition/launch/access, evidence/persistence and settings UX; `agent`, `session`, `capability`, `mcpclient`, `workspace`, `app`, `tui/settings` | Stage 0 + Stage 2 result/lifetime contracts; manual/Auto Review/YOLO matrix passes end-to-end with no unconditional install/stdio/access prompt in authorized autonomous modes |
 | **4. Complete semantic control coverage** | Shared component actions/inspection and remaining product adapters; `tui/ui`, screens/viewmodel and domain owners | Stage 1 + Stage 3 authority boundaries; every cataloged actionable control has tests or a justified human-only classification; no broad dispatcher/secret/approval bypass |
 | **5. Managed worktree lifecycle** | Execution-context propagation, native Git/checkouts, baseline, integration, retention and UX; `workspace`, `session`, `agent`, `collaboration`, documents/history | Stage 0, using Stage 1 control entry points; isolated workers see faithful dirty/unsaved baseline, all tools use correct roots, independent results safely integrate and survive failure/restart |
-| **6. Guidance and final acceptance** | Canonical `prompt/`, tool descriptions, current references/guides and consolidated release evidence | Guidance changes accompany each usable stage, not future promises; finish full cross-layer journeys, performance, native-platform/SSH gates and remove this plan only after remaining obligations are resolved |
+| **6. Guidance and final acceptance** | Canonical `agent/prompt/`, tool descriptions, current references/guides and consolidated release evidence | Guidance changes accompany each usable stage, not future promises; finish full cross-layer journeys, performance, native-platform/SSH gates and remove this plan only after remaining obligations are resolved |
 
 First implementation task: Stage 0 contracts and regression fixtures. First
 user-visible milestone: Stage 1 connected control journey. Do not begin with

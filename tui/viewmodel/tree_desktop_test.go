@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
 
 	tea "charm.land/bubbletea/v2"

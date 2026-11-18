@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/workspace/fileio"
 )
 
 func TestResultNavigationKeepsListStructureAndUpdatesPreview(t *testing.T) {

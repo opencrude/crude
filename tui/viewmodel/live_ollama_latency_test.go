@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	ttypes "crude/types"
 	"crude/workspace"
 )

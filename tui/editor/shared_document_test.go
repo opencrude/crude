@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
 	"crude/tui/theme"
+	"crude/workspace/document"
 )
 
 var projectionOwner = document.Owner{ClientID: "editor-test", Epoch: 1}

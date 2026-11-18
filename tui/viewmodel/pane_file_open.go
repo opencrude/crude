@@ -10,14 +10,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
-	"crude/document"
-	"crude/fileio"
-	"crude/indentation"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/text/indent"
 	"crude/tui/editor"
 	"crude/tui/imagepreview"
 	"crude/tui/window"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 type paneFilePrepared struct {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"crude/agent/cranemcp"
 	"crude/buildinfo"
-	"crude/coreprotocol"
-	"crude/cranemcp"
+	"crude/core/protocol"
 	"crude/types/control"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

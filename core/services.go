@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
-	"crude/memory"
+	"crude/agent/collaboration"
+	"crude/agent/memory"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

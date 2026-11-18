@@ -2,9 +2,9 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/workspace"
+	"crude/workspace/document"
 	"errors"
 )
 

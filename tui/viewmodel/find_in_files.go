@@ -5,10 +5,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/workspace/fileio"
 )
 
 const findInFilesWindowID = "find-in-files"

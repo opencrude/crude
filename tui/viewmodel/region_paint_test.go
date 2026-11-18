@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/compositor"

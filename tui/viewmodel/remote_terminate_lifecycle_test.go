@@ -12,7 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 // Terminating a running agent removes it from every connected shell through

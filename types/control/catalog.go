@@ -1,7 +1,7 @@
 package control
 
 import (
-	"crude/worktree"
+	"crude/agent/worktree"
 	"encoding/json"
 	"reflect"
 	"slices"

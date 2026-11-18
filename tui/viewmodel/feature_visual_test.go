@@ -13,14 +13,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/rendering"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 )
 
 // Capture sequentially with scripts/tuishot.sh and this prebuilt test binary:

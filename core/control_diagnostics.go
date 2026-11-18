@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/metrics"
 	"crude/perfdata"
 	"crude/types"

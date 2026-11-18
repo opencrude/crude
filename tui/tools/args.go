@@ -1,7 +1,7 @@
 package tools
 
 import (
-	ccrude "crude/tools"
+	ccrude "crude/agent/tools"
 )
 
 // SummarizeToolArgs produces the compact target label a tool row shows

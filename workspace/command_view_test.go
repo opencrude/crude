@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
 	"crude/terminalvt"
+	"crude/workspace/fileio"
 )
 
 type commandViewSource struct {

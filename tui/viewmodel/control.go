@@ -12,9 +12,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/client"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/editor"
 	"crude/tui/screens/boardbrowser"
 	"crude/tui/screens/codeactions"

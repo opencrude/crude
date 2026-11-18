@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"errors"
 	"fmt"
 	"slices"
@@ -13,13 +13,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"math/rand/v2"
 
-	"crude/coreprotocol"
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // All mutable coordinator and editor state is owned by Update. Commands capture

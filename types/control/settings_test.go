@@ -1,7 +1,7 @@
 package control_test
 
 import (
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types"
 	"crude/types/control"
 	"testing"

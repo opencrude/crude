@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/textencoding"
+	"crude/text/encoding"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -13,10 +13,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/clientstate"
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestConnectedDoubleClickCreatesIndependentEditableUntitledBuffers(t *testing.T) {

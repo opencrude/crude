@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/problems"
 	"crude/tui/ui"
 	"crude/types"

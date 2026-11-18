@@ -16,11 +16,11 @@ import (
 	"sync"
 	"time"
 
-	"crude/fileio"
 	"crude/insight/facts"
 	"crude/insight/governor"
-	"crude/lspclient"
+	"crude/lsp/client"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
 )
 
 type lspClientState struct {

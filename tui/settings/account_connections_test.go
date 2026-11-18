@@ -1,7 +1,7 @@
 package settings
 
 import (
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"

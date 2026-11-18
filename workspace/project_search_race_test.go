@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // TestProjectSearchServiceConcurrentBeginExecuteAccept races replacement,

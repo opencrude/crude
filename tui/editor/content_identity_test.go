@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/textdiff"
+	"crude/text/diff"
 	"crude/tui/theme"
 )
 

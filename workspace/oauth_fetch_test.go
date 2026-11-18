@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 )
 
 // TestHandleFetchModelsAttachesOAuth verifies that fetching models for the

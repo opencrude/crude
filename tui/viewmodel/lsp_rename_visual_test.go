@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 	"github.com/charmbracelet/x/ansi"
 )
 

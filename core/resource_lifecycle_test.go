@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/terminalvt"
 	"crude/types"
 	"crude/workspace"

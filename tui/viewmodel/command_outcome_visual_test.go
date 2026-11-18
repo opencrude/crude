@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/collaboration"
+	"crude/agent/collaboration"
 	"crude/types/command"
 	"crude/workspace"
 )

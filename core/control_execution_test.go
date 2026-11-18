@@ -8,14 +8,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/document"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/types/control"
 	"crude/workspace"
-	"crude/worktree"
+	"crude/workspace/document"
 )
 
 func controlExecutionFixture(t *testing.T) *actor {

@@ -8,9 +8,9 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/coreprotocol"
-	"crude/remoteconn"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
+	"crude/core/remoteconn"
 	"crude/tui/screens/connectionpopover"
 	"crude/tui/screens/shellheader"
 	settingsui "crude/tui/settings"

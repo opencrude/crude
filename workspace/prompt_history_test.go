@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"crude/agent/sessiondb"
 	"crude/history"
-	"crude/sessiondb"
 )
 
 func TestRestorePromptRebindsCollidingLabelsAndPreservesBinary(t *testing.T) {

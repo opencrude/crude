@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
+	"crude/agent/provider"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/tui/ui/popup"

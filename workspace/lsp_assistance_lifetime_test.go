@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestCompletionReleaseBeforeAdmissionFencesEarlierSequences(t *testing.T) {

@@ -9,13 +9,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
-	"crude/shellport"
-	"crude/textencoding"
+	"crude/core/port"
+	"crude/text/encoding"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 const diskConflictOverlay ui.OverlayID = "disk-conflict"

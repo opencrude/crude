@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestEditorGhostAttachmentReplacementRevokesUnchangedSourceCandidate(t *testing.T) {

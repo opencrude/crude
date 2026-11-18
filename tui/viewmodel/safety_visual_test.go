@@ -12,9 +12,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
+	"crude/workspace/localhistory"
 )
 
 // Run sequentially through scripts/tuishot.sh: F2 target preview, F3 armed

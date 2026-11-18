@@ -30,7 +30,7 @@ shows:
 - **Idle, or a turn is finishing or stopping.** The session registers one
   exclusive operation at once. New turns and queued input wait behind it, and
   its boundary row appears in every shell. It then waits on the context-aware
-  turn gate (`session/turn_gate.go`, a `semaphore.Weighted` like workspace
+  turn gate (`agent/session/turn_gate.go`, a `semaphore.Weighted` like workspace
   storage) for the finishing turn to release the context, and compacts the
   settled context. Stop cancels the wait or the extraction; queued input stays
   queued.

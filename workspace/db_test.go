@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/types"
 )
 

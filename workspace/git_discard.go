@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"crude/fileio"
-	"crude/localhistory"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 )

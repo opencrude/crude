@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
 	"crude/tui/editor"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/uitest"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {

@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
 	"crude/syntax"
 	"crude/tui/theme"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func sharedSyntaxEditor(t *testing.T, source string) (*Editor, document.Snapshot) {

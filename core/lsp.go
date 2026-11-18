@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

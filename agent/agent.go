@@ -7,16 +7,16 @@ import (
 	"sync"
 	"time"
 
-	"crude/fileio"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/tools"
 	"crude/logger"
-	rootprompt "crude/prompt"
-	"crude/provider"
-	"crude/safety"
-	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/command"
 	"crude/types/control"
 	"crude/types/reasoning"
+	"crude/workspace/fileio"
 )
 
 // CommandPolicyFor is the command review policy for one command tool call: the

@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"crude/hostshell"
+	"crude/agent/hostshell"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/provider"
+	"crude/agent/provider"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

@@ -3,7 +3,7 @@ package workspace
 import (
 	"unicode/utf8"
 
-	"crude/tools"
+	"crude/agent/tools"
 	ttypes "crude/types"
 )
 

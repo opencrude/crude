@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/types/control"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 func TestControlGatewayReadRevisionAndBoundedMutationReceipt(t *testing.T) {

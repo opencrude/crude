@@ -13,9 +13,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/clipboard"
-	"crude/provider"
-	"crude/sessiondb"
 	"crude/tui/screens/textoverlay"
 	"crude/tui/ui"
 	"crude/types"

@@ -5,7 +5,7 @@
 
 ## Scope and ownership
 
-`collaboration/` is the presentation-neutral workspace authority for:
+`agent/collaboration/` is the presentation-neutral workspace authority for:
 
 - Stable agent identity and runtime epochs.
 - Run lifecycle and versioned terminal outcomes.
@@ -18,7 +18,7 @@
 - Same-host, same-user, same-data-directory process ownership.
 
 It has no TUI imports. `workspace/` attaches the service and exposes UI-facing
-methods. `session/` owns provider/tool execution and commits admitted events to
+methods. `agent/session/` owns provider/tool execution and commits admitted events to
 the exact agent context. The TUI renders neutral events and snapshots.
 
 Permissions, model/account selection, plans, filesystem commits, Local History,

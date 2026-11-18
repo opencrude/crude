@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	ccrude "crude/tools"
+	ccrude "crude/agent/tools"
 	"crude/tui/rendering"
 	"crude/types"
 	"crude/types/command"

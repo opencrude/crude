@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
 	"crude/insight/governor"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 // watchFixtureClient keeps the real manager and fact store in the test. It

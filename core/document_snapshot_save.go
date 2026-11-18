@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 )
 
 func documentSnapshotSaveMutation(method string) bool {

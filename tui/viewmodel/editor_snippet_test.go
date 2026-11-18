@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/snippet"
+	"crude/text/snippet"
 	"crude/tui/editor"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

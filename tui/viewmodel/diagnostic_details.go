@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/types"

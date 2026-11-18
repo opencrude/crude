@@ -5,11 +5,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
-	"crude/snippet"
+	"crude/text/snippet"
 	"crude/tui/cell"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func lowProfileEntry(id, label, sortText string) types.LSPCompletionEntry {

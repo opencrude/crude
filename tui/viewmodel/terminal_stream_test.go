@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/terminalvt"
 	"crude/tui/screens/shellterm"
 	"crude/tui/surface"

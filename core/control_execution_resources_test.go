@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"crude/agent"
-	"crude/collaboration"
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/agent/collaboration"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
-	"crude/worktree"
+	"crude/workspace/document"
 )
 
 // Integration and its inverse must publish the accepted document journal without

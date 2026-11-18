@@ -774,7 +774,7 @@ Tea's update goroutine (the tab-close hang).
 
 - `powernap` is vendored (`third_party/powernap`) with a `TransportWrap` hook in
   `ClientConfig`; `lspclient.LSPIntegration.Start` installs `lspPipeMonitor`
-  (`lspclient/lsp_pipe.go`).
+  (`lsp/client/lsp_pipe.go`).
 - `asyncPipeWriter.Write` only enqueues a copy; one dedicated writer goroutine
   performs pipe writes in FIFO order. The queue is byte-bounded
   (`lspWriteQueueCap`); a stalled server trips the cap and the jsonrpc2
@@ -831,7 +831,7 @@ Tea's update goroutine (the tab-close hang).
   `RestartServer`, which re-resolves the command on the next start, so
   installing the server and choosing Retry is enough.
 - `LSPIntegration.WithServerEnv` supplies explicit launch choices over one
-  positive OS/toolchain inheritance policy in `lspclient/lsp_environment.go`.
+  positive OS/toolchain inheritance policy in `lsp/client/lsp_environment.go`.
   Arbitrary ambient variables, including unknown provider credentials, agent
   sockets, proxy credentials, loader options and tool-execution flags, are not
   inherited. Ambient PATH keeps only absolute directories outside the lexical
@@ -1649,7 +1649,7 @@ allocation ceilings or native CPU/RSS containment.
 ### Numeric completion snippets
 
 Standard completion items may carry a bounded numeric snippet plan through the
-same retained provider and typed connected completion result. `snippet/` is a
+same retained provider and typed connected completion result. `text/snippet/` is a
 passive, language-independent parser. It expands `$1`, `${1:default}`, nested
 defaults, repeated/forward numeric mirrors and escaped literal choices. Variables,
 transforms and provider commands are refused without reading environment values

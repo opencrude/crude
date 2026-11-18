@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/snippet"
+	"crude/text/snippet"
 )
 
 func snippetStateFixture(t testing.TB, source, prefix, suffix string) (string, *snippetSession) {

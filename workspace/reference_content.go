@@ -9,9 +9,9 @@ import (
 	"os"
 	"unicode/utf8"
 
-	"crude/fileio"
+	"crude/agent/sessiondb"
 	"crude/history"
-	"crude/sessiondb"
+	"crude/workspace/fileio"
 )
 
 // ReadReferenceMedia reads original bytes only for an exact, still-owned

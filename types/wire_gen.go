@@ -3,12 +3,12 @@
 package types
 
 import (
-	"crude/document"
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types/activity"
 	"crude/types/attachment"
 	"crude/types/recovery"
 	"crude/types/syntax"
+	"crude/workspace/document"
 	_ "embed"
 
 	"github.com/tinylib/msgp/msgp"

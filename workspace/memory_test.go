@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"crude/memory"
+	"crude/agent/memory"
 )
 
 func TestWorkspaceMemoryStoreAttached(t *testing.T) {

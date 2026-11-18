@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"crude/agent/sessiondb"
 	"crude/buildinfo"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/sessiondb"
-	"crude/shellport/remote"
+	"crude/core/client"
+	"crude/core/port/remote"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/types/control"
 	"crude/types/inspect"
 )

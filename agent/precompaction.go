@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/tools"
 	"crude/retry"
-	"crude/tools"
 )
 
 // Automatic compaction prepares checkpoints in the background and adopts them

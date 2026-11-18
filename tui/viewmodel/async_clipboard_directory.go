@@ -12,15 +12,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/sessiondb"
 	"crude/clipboard"
-	"crude/fileio"
-	"crude/sessiondb"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 type clipboardAsyncOperation uint8

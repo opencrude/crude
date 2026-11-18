@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func durableDeltaFixture(t *testing.T) (*DocumentService, *WorkspaceDB, document.Snapshot, document.Owner) {

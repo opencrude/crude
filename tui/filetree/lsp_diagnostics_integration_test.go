@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/types"
 )
 

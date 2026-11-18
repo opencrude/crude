@@ -1,8 +1,8 @@
 package editor
 
 import (
-	"crude/document"
 	"crude/insight/catalog"
+	"crude/workspace/document"
 )
 
 // This file implements modern-IDE editing operations: auto-closing pairs,

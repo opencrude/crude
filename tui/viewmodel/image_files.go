@@ -12,13 +12,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreprotocol"
-	"crude/fileio"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/imagepreview"
 	"crude/tui/screens/imageviewer"
 	"crude/tui/ui"
 	"crude/tui/window"
+	"crude/workspace/fileio"
 )
 
 // A file image is a read-only snapshot, not a text document. Each tab owns

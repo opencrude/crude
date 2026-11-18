@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
-	"crude/worktree"
+	"crude/agent/worktree"
+	"crude/workspace/fileio"
 )
 
 // Re-exec the native test binary so Linux PTY and Windows ConPTY exercise the

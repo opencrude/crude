@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/fileio"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 // WorkspaceDeletion is an immutable preview of one saved workspace, not its

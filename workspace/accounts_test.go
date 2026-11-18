@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/types"
 )
 

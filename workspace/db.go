@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/memory"
-	"crude/sessiondb"
+	"crude/agent/memory"
+	"crude/agent/sessiondb"
 )
 
 // WorkspaceDB manages the workspace-level SQLite database. Unlike session

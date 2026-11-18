@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/document"
+	"crude/workspace/document"
 	"encoding/json"
 	"errors"
 	"testing"

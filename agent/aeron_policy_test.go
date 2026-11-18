@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/safety"
-	"crude/tools"
+	"crude/agent/safety"
+	"crude/agent/tools"
 )
 
 func TestAeronAddsNoToolOrCapabilityRestriction(t *testing.T) {

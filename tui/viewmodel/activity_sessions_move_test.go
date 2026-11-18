@@ -10,8 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

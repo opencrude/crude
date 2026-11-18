@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/operationissue"
 	settingsui "crude/tui/settings"

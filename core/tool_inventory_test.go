@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/toolstore"
+	"crude/agent/toolstore"
 	"crude/types"
 )
 

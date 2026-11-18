@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/collaboration"
-	"crude/skills"
+	"crude/agent/collaboration"
+	"crude/agent/skills"
 	"crude/types"
 	captypes "crude/types/capability"
 )

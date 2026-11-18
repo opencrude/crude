@@ -10,12 +10,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func newInlayTestEditor(t testing.TB, text string) *Editor {

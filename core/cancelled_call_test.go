@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 type cancelledSemanticClient struct {

@@ -176,7 +176,7 @@ capability selection, clipboard and attachment suites remain required gates.
 Windows background-command termination uses the retained Job Object for both
 pipe and ConPTY commands; normal completion cleans descendants before waiting
 for inherited output pipes. Native acceptance remains a Windows-machine check:
-`go test ./fileio -run 'TestWindows(KillRef|CompletedCommand|InteractiveCommands)|TestKillRef|TestSettledCommand' -count=1`.
+`go test ./workspace/fileio -run 'TestWindows(KillRef|CompletedCommand|InteractiveCommands)|TestKillRef|TestSettledCommand' -count=1`.
 These tests do not skip missing/broken process ownership: failures include
 `TODO(Windows)` and the exact ownership, child-cleanup, unrelated-process or
 ConPTY behavior to investigate. Linux cross-compilation is not a native pass.

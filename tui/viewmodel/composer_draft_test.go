@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/workspace"
 )
 

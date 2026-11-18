@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 )
 
 func remotePrivateTestDir(t *testing.T) string {

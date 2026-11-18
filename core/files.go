@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/coreprotocol"
-	"crude/fileio"
+	"crude/core/protocol"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 // workspaceFilePath rejects escape and every symlink component, including the

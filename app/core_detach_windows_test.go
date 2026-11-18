@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"crude/core"
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/terminalvt"
 	"crude/workspace"
 

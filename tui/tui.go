@@ -8,15 +8,15 @@ import (
 
 	"crude/agent"
 	"crude/clientstate"
+	"crude/core/port"
 	"crude/crashlog"
-	"crude/shellport"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/history"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/viewmodel"

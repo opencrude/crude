@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/collaboration"
+	"crude/agent/collaboration"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"

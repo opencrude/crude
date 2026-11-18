@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestDocumentWatchCleanAtomicReplacementDirtyConflictAndJoin(t *testing.T) {

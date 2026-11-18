@@ -4,9 +4,9 @@ import (
 	"context"
 	"reflect"
 
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/core/wire"
+	"crude/workspace/document"
 )
 
 type documentTopicCursor struct {

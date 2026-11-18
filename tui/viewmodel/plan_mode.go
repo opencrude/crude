@@ -5,9 +5,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/prompt"
-	"crude/provider"
-	"crude/shellport"
+	"crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/core/port"
 	"crude/tui/screens/decision"
 	"crude/types"
 )

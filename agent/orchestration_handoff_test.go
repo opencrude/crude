@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	rootprompt "crude/prompt"
-	"crude/tools"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/tools"
 )
 
 func TestDelegationHasBoundedHandoffAndSingleVerificationOwner(t *testing.T) {

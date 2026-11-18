@@ -10,10 +10,10 @@ automatically ingested guidance file.
 
 ## Ownership
 
-`prompt/` owns code-authored model instruction templates and their assembly.
+`agent/prompt/` owns code-authored model instruction templates and their assembly.
 It is a shared library, not another application layer or execution engine.
 Callers import it directly; do not recreate forwarding APIs in `agent/`,
-`session/`, or `memory/`.
+`agent/session/`, or `agent/memory/`.
 
 The shared engineering contract favors outcome-based regressions, one state
 authority and established primitives. Abstractions and restrictions need a
@@ -25,25 +25,25 @@ contracts rather than adding repeated checklists or provider-specific overlays.
 
 | Owner | Responsibility |
 |---|---|
-| `prompt/build.go`, `contracts.go` | Root/child policy, role contracts, runtime-capability awareness, bounded command-output/temp policy, escaped profile and identity overlays |
-| `prompt/compaction.go` | Four extraction stages, source attribution, manifests, checkpoint envelope |
-| `prompt/guidance.go`, `guidance_compile.go` | Named-file discovery, hashes, verbatim representation, compiler/verifier wording, compiled ledger envelope |
-| `prompt/memory.go` | No-tools memory extraction/consolidation policy and input envelopes |
-| `prompt/permission.go` | Fixed no-tools review policy and narrowing restrictions |
-| `prompt/editor_prediction.go` | Narrow single-line insertion-only, no-tools policy and escaped untrusted source/fact envelope; no consent, source selection or request execution |
-| `prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, interruptions and exact unavailable-attachment explanations |
-| `prompt/recovery.go` | Typed, code-authored continuations for preserved unfinished work; never new human input |
-| `prompt/plan_mode.go` | Plan mode contract and its ended notice ([session commands](session-commands.md)) |
-| `prompt/goal.go` | Goal continuation, objective-updated notice, goal verifier contract and assignment |
-| `prompt/loop.go` | Escaped, attributed context-only input for an explicit scheduled task |
-| `prompt/execution.go` | Quiet context-only inventory and post-child disposition reminders; escaped execution facts |
+| `agent/prompt/build.go`, `contracts.go` | Root/child policy, role contracts, runtime-capability awareness, bounded command-output/temp policy, escaped profile and identity overlays |
+| `agent/prompt/compaction.go` | Four extraction stages, source attribution, manifests, checkpoint envelope |
+| `agent/prompt/guidance.go`, `guidance_compile.go` | Named-file discovery, hashes, verbatim representation, compiler/verifier wording, compiled ledger envelope |
+| `agent/prompt/memory.go` | No-tools memory extraction/consolidation policy and input envelopes |
+| `agent/prompt/permission.go` | Fixed no-tools review policy and narrowing restrictions |
+| `agent/prompt/editor_prediction.go` | Narrow single-line insertion-only, no-tools policy and escaped untrusted source/fact envelope; no consent, source selection or request execution |
+| `agent/prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, interruptions and exact unavailable-attachment explanations |
+| `agent/prompt/recovery.go` | Typed, code-authored continuations for preserved unfinished work; never new human input |
+| `agent/prompt/plan_mode.go` | Plan mode contract and its ended notice ([session commands](session-commands.md)) |
+| `agent/prompt/goal.go` | Goal continuation, objective-updated notice, goal verifier contract and assignment |
+| `agent/prompt/loop.go` | Escaped, attributed context-only input for an explicit scheduled task |
+| `agent/prompt/execution.go` | Quiet context-only inventory and post-child disposition reminders; escaped execution facts |
 | `agent/` | Model requests, admission budgets, guidance compilation/verification execution, tool-batch deferral, checkpoint validation |
-| `session/`, `memory/`, `workspace/`, `fileio/` | Configuration and source selection, typed live facts, evidence validation, domain lifecycle and persistence |
-| `provider/`, `tools/`, `codexio/` | Wire encoding/replay, exact offered schemas, native execution interfaces |
-| `tui/`, `history/`, `sessiondb/` | User input/dialogs, prompt history, references and persistence; not behavioral prompt templates |
+| `agent/session/`, `agent/memory/`, `workspace/`, `workspace/fileio/` | Configuration and source selection, typed live facts, evidence validation, domain lifecycle and persistence |
+| `agent/provider/`, `agent/tools/`, `agent/codexio/` | Wire encoding/replay, exact offered schemas, native execution interfaces |
+| `tui/`, `history/`, `agent/sessiondb/` | User input/dialogs, prompt history, references and persistence; not behavioral prompt templates |
 
 Root and child callers use `prompt.BuildRoot` and `prompt.BuildChild`. Background
-jobs use their specialized `prompt/` builders; a memory curator or permission
+jobs use their specialized `agent/prompt/` builders; a memory curator or permission
 reviewer must not inherit the whole coding-agent prompt or acquire its tools.
 Domain packages may redact, bound and serialize source data before rendering;
 validation and state mutation do not move into a prompt builder.
@@ -222,9 +222,9 @@ policy; see [capability workflows](../guides/capability-workflows.md).
 
 There is no bundled vendor behavioral prompt tree and no agent/prompts.go
 compatibility facade. If a future change genuinely needs shipped instruction
-assets, their sole owner remains `prompt/`, not a second provider-local loader.
+assets, their sole owner remains `agent/prompt/`, not a second provider-local loader.
 Names such as `tui/ui/textprompt.go`, `dirty_prompt.go`, or
-`sessiondb/promptref.go` describe unrelated UI/reference concerns and remain in
+`agent/sessiondb/promptref.go` describe unrelated UI/reference concerns and remain in
 their owning packages.
 
 ## Policy And Adapters
@@ -428,7 +428,7 @@ The plan store publishes full ordered immutable activity steps in addition to it
 existing current/next projections. Presentation and resumed context consume the
 committed current snapshot, never the historical cancelled-step graveyard.
 
-Plan drift is measured, not counted by a fixed rule (`session/plan_discipline.go`).
+Plan drift is measured, not counted by a fixed rule (`agent/session/plan_discipline.go`).
 While an active plan has open steps and stands still, the session counts model
 steps since its last revision. Past a threshold (at least 8 steps, raised to
 twice the plan's own observed pace per completed step), the next request carries
@@ -437,7 +437,7 @@ notice doubles the threshold, and any plan revision resets it. Before a run
 would finish with tool work done and open steps still on the plan, the agent's
 `BeforeFinish` hook asks once per run (`RuntimePlanReconcile`) to update or close
 the plan honestly. Neither notice infers progress or edits the plan; both live
-in `prompt/runtime.go`.
+in `agent/prompt/runtime.go`.
 
 Capability discovery is proactive, but applicable project guidance takes
 precedence: a workflow, script or tool that guidance names for a job (for
@@ -446,7 +446,7 @@ searched-for capability (`RuntimeCapabilities`). When another agent of the
 session makes a capability usable, the next request carries a context-only
 `RuntimeCapabilityShared` notice (see
 [capabilities](capabilities.md#sharing-within-a-session)). Tool-failure hints
-are model instruction text too: `prompt/tool_hints.go` owns them. Producers
+are model instruction text too: `agent/prompt/tool_hints.go` owns them. Producers
 return them as `ToolResult.AgentHint`, separate from factual display evidence.
 The provider composition boundary appends the hint to ordinary text without
 changing a text-only tool result into a media message. Display snapshots carry
@@ -454,7 +454,7 @@ only facts and typed outcomes; no renderer strips instructions from prose.
 Native JSON objects keep their machine-readable fields and receive an extra
 `agent_hint` field only in model input, never JSON followed by unparseable prose.
 
-`prompt/` owns extraction wording and the checkpoint envelope; it does not own
+`agent/prompt/` owns extraction wording and the checkpoint envelope; it does not own
 turn completion, plans, child execution or command lifetime. Session/file owners
 publish typed facts for the final code-authored handoff, refreshed after
 extraction. Compaction is not a new user request.
@@ -478,7 +478,7 @@ Full admission, transaction and resume contracts live in
 [adaptive context handling](adaptive-context.md).
 
 Unnatural attempt failures use the [run recovery supervisor](run-recovery.md).
-Recovery continuation wording belongs to `prompt/recovery.go`; pending input,
+Recovery continuation wording belongs to `agent/prompt/recovery.go`; pending input,
 safe checkpoints, retry classification, lifecycle settlement and exact wake
 fences remain domain-owned. A timer never grants permission or turns uncertain
 tool effects into safe replay.
@@ -602,9 +602,9 @@ reduction and inherited model context.
 
 ## Development Checklist
 
-1. Classify the change: policy template in `prompt/`, typed facts in the domain
-   owner, tool contract in its interface, or wire adaptation in `provider/`.
-2. Use the appropriate direct `prompt/` builder. Do not add forwarding helpers,
+1. Classify the change: policy template in `agent/prompt/`, typed facts in the domain
+   owner, tool contract in its interface, or wire adaptation in `agent/provider/`.
+2. Use the appropriate direct `agent/prompt/` builder. Do not add forwarding helpers,
    provider-local prompt assets, or copies of canonical policy in callers.
 3. Keep dynamic state, source attribution, escaping and instruction priority
    explicit. Pass facts as data; do not hide new policy in an arbitrary context
@@ -624,10 +624,10 @@ reduction and inherited model context.
    never loosen admission or claim perfect recall to make a check pass.
 
 ```sh
-go test ./prompt -run TestProductionPromptTemplatesHaveOneOwner -count=1
+go test ./agent/prompt -run TestProductionPromptTemplatesHaveOneOwner -count=1
 ```
 
-`prompt/ownership_test.go` scans top-level production Go files in `agent`, `app`,
+`agent/prompt/ownership_test.go` scans top-level production Go files in `agent`, `app`,
 `session`, `workspace`, `memory`, and `codexio` for prompt/instruction constants
 and known template text. It is a regression guard, not exhaustive data-flow
 analysis. Extend its coverage for new packages/templates and manually review new
@@ -637,8 +637,8 @@ does not make a second owner acceptable.
 ## Placement rules
 
 - Provider and model differences belong to the narrowest real adapter: wire
-  encoding/replay in `provider/`, exact offered schemas in `tools/`, and native
-  interfaces such as OpenAI/Codex freeform `apply_patch` in `codexio/`. A native
+  encoding/replay in `agent/provider/`, exact offered schemas in `agent/tools/`, and native
+  interfaces such as OpenAI/Codex freeform `apply_patch` in `agent/codexio/`. A native
   tool does not justify replacing Crude's behavioral prompt.
 - Guidance snapshots must not churn: no timestamps or counters in republished
   guidance, no raw JSON tool-name rewriting, and unchanged rereads never rewrite

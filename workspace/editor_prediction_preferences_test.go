@@ -5,10 +5,10 @@ import (
 	"os"
 	"testing"
 
-	"crude/fileio"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 func predictionPreferenceFixture(t *testing.T) (*Workspace, string) {

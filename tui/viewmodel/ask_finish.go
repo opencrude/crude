@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/prompt"
+	"crude/agent/prompt"
 	"crude/types"
 )
 

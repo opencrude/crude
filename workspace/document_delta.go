@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"slices"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // The checkpoint owns structural state. Ordinary commands append only newly

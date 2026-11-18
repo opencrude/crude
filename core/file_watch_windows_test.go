@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/fileio"
+	"crude/core/protocol"
+	"crude/workspace/fileio"
 	"github.com/fsnotify/fsnotify"
 )
 

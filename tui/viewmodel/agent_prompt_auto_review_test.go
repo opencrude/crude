@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/confirmation"
 	"crude/tui/ui"
 )

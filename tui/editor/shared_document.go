@@ -9,10 +9,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 var ErrDocumentPending = errors.New("document command pending; retain edits and retry after acknowledgement")

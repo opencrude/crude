@@ -13,7 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent"
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/screens/confirmation"
 	"crude/tui/ui"
 	"crude/types"

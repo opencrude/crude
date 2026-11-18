@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // documentConflict edits the document, then changes the same line of its file

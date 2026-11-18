@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 )
 
 // Marshal encodes v; v or a pointer to it must have a generated codec.

@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"crude/document"
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/textencoding"
-	"crude/worktree"
+	"crude/agent/worktree"
+	"crude/text/encoding"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 func (s *DocumentService) executionDocumentsLocked() (map[string]worktree.Document, error) {

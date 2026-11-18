@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/remoteconn"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/remoteconn"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"

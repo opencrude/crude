@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"crude/agent"
-	"crude/plan"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/plan"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 )
 
 func TestAgentActivityUsesExactPlanOwner(t *testing.T) {

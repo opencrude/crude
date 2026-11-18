@@ -7,8 +7,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/provider"
-	"crude/shellport"
+	"crude/agent/provider"
+	"crude/core/port"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types"

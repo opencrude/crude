@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // Includes SQLite publication and growing undo/receipt metadata, rather than

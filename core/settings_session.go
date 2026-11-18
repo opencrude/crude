@@ -5,8 +5,8 @@ import (
 	"errors"
 	"sync"
 
-	"crude/coreprotocol"
-	"crude/session"
+	"crude/agent/session"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

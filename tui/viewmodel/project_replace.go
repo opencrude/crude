@@ -13,16 +13,16 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/shellport"
-	"crude/textdiff"
-	"crude/textencoding"
+	"crude/core/port"
+	"crude/text/diff"
+	"crude/text/encoding"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 const projectReplaceOverlay ui.OverlayID = "project-replace-review"

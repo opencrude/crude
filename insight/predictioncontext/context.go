@@ -15,7 +15,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types"
 )
 

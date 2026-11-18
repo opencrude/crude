@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"crude/buildinfo"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/retry"
 
 	"github.com/gofrs/flock"

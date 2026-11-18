@@ -13,7 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/attachment"

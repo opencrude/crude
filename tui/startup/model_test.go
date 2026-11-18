@@ -12,7 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/third_party/pathwalk"
 	"crude/tui/cell"
 	"crude/tui/screens/filepicker"

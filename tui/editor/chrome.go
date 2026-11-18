@@ -4,11 +4,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"bytes"
-	"crude/document"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/workspace/document"
 	"sort"
 	"strings"
 )

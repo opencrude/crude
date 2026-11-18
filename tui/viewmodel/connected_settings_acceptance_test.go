@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"crude/agent/provider"
 	"crude/core"
-	"crude/provider"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types"

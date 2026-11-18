@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"crude/buildinfo"
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/types/handover"
 

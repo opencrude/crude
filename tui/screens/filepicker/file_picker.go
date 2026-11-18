@@ -3,7 +3,7 @@ package filepicker
 
 import (
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"errors"
 	"path/filepath"
 	"sort"
@@ -13,7 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/projectpath"
+	"crude/core/projectpath"
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"

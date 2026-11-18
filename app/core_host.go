@@ -17,14 +17,14 @@ import (
 	"syscall"
 	"time"
 
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/core"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/history"
 	"crude/metrics"
-	"crude/provider"
-	"crude/session"
 	"crude/workspace"
 )
 

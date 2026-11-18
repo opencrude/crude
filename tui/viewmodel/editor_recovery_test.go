@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"crude/clientstate"
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestEditorRecoveryShutdownAndReopen(t *testing.T) {

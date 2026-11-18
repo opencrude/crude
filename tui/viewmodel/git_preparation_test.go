@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/gitdiff"
 	"crude/tui/screens/gitpanel"

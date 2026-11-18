@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestInsightAgentProbeUsesRetainedSourceWithoutDiskOrEditorViews(t *testing.T) {

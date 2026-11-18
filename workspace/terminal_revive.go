@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"crude/fileio"
 	"crude/terminalvt"
+	"crude/workspace/fileio"
 )
 
 // Terminal revival keeps the buffer of every interactive terminal when its

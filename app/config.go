@@ -10,10 +10,10 @@ import (
 
 	"github.com/gofrs/flock"
 
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/buildinfo"
 	"crude/network"
-	"crude/provider"
-	"crude/session"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
 )

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 var ErrDocumentConflict = errors.New("document changed on disk")

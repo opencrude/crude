@@ -17,12 +17,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 
-	"crude/fileio"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 // Preference/consent acceptance only: suggestions stay Off until the native

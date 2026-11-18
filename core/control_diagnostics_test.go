@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/collaboration"
-	"crude/coreclient"
-	"crude/coreprotocol"
+	"crude/agent/collaboration"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/internal/wiretest"
 	"crude/types"
 	"crude/types/control"

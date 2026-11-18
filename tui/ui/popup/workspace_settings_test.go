@@ -3,7 +3,7 @@ package popup
 import (
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/settings"
 	"crude/tui/theme"
 	"crude/tui/ui"

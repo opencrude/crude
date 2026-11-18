@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
 	"crude/types"

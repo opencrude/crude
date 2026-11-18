@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/skills"
+	"crude/agent/skills"
+	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"

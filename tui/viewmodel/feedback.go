@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"strings"
 
-	"crude/shellport"
+	"crude/core/port"
 	types "crude/types"
 )
 

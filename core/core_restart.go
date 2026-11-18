@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"crude/agent/collaboration"
 	"crude/buildinfo"
-	"crude/collaboration"
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/retry"
 	"crude/types/control"
 	"crude/types/handover"

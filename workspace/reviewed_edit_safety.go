@@ -13,8 +13,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/document"
-	"crude/localhistory"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 type HistorySafetyListRequest struct {

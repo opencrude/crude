@@ -11,11 +11,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/clientstate"
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/workspace/document"
 )
 
 const editorRecoveryBrowserOverlay ui.OverlayID = "editor-recovery-browser"

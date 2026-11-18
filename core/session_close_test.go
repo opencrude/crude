@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"crude/buildinfo"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/document"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 func TestSessionCleanCloseReleasesResourcesBeforeReturning(t *testing.T) {

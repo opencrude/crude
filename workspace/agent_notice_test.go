@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 func commandNoticeWorkspace(center *StatusCenter) *Workspace {

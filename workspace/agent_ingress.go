@@ -5,7 +5,7 @@ import (
 	"slices"
 	"time"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types"
 	"crude/types/attachment"
 	"crude/types/reasoning"

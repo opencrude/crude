@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // GitChangesLimit bounds how many files one batched comparison prepares. A

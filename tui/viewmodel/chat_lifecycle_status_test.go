@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/shellport"
+	"crude/core/port"
 	ttypes "crude/types"
 	"crude/types/activity"
 	"crude/types/reasoning"

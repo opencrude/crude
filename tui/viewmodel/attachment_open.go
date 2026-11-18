@@ -12,8 +12,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
-	"crude/shellport"
+	"crude/agent/sessiondb"
+	"crude/core/port"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"

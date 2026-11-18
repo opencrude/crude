@@ -1,9 +1,9 @@
 package viewmodel
 
 import (
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func (m *App) applyDocumentInsight(msg shellport.DocumentInsightMsg) {

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	"crude/syntax"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func insightFixture(t *testing.T, name, source string) (*DocumentService, document.Snapshot, document.Owner) {

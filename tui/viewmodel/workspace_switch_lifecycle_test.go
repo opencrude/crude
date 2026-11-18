@@ -11,7 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	findinfiles "crude/tui/screens/findinfiles"

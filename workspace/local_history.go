@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 )
 
 // WithHistoryMutation uses the actual retained document owner. Dirty/conflicted

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 func TestWorkspaceEditRefusesChangedStagingFile(t *testing.T) {

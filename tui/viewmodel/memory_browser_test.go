@@ -10,8 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	_ "modernc.org/sqlite"
 
-	"crude/memory"
-	"crude/shellport"
+	"crude/agent/memory"
+	"crude/core/port"
 	"crude/tui/cell"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"

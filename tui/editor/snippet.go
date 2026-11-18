@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"slices"
 
-	"crude/document"
-	"crude/snippet"
+	"crude/text/snippet"
 	"crude/tui/rendering"
+	"crude/workspace/document"
 )
 
 // SnippetChoices is a detached, exact interaction token, not edit authority.

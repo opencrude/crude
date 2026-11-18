@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/cell"
 	"crude/tui/ui"
 	"crude/types"

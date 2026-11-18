@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/shellport"
+	"crude/agent/provider"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
 )

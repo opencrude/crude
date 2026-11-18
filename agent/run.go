@@ -16,10 +16,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/tools"
 	"crude/retry"
-	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
 	"crude/types/toolresult"

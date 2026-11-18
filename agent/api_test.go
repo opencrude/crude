@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"crude/agent/provider"
 	"crude/logger"
-	"crude/provider"
 )
 
 func newTestAgent(t *testing.T, p *provider.Provider, model string) *Agent {

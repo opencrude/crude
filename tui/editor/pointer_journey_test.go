@@ -7,11 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 func newPointerTestEditor(t testing.TB, text string, w, h int) *Editor {

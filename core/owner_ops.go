@@ -8,7 +8,7 @@ import (
 
 	"crude/types"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 )
 
 // executeOwner serves cheap, in-memory operations on the actor goroutine, the

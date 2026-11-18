@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/textsearch"
+	"crude/text/search"
 	"crude/tui/surface"
 )
 

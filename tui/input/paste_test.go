@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/theme"
 )
 

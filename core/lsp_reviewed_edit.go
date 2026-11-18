@@ -3,8 +3,8 @@ package core
 import (
 	"context"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/workspace/document"
 )
 
 func reviewedLSPMethod(method string) bool {

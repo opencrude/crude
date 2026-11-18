@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/types"
 )
 

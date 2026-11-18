@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"crude/collaboration"
+	"crude/agent/collaboration"
 )
 
 func buildAgentInspectionResult(content string) StructuredResult {

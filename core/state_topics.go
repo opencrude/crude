@@ -3,13 +3,13 @@ package core
 import (
 	"bytes"
 	"context"
-	"crude/hostshell"
+	"crude/agent/hostshell"
 	"sync"
 	"time"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/agent/collaboration"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/types"
 	"crude/workspace"
 )

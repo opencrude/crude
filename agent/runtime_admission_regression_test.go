@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
 )
 
 func TestRuntimeNoticesCommitAsOneBoundaryBeforeCheckpoint(t *testing.T) {

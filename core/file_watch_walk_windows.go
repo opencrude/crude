@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // coreWatchWalkFS lets the standard fs.WalkDir keep its ordering, error and

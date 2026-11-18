@@ -10,10 +10,10 @@ import (
 	"sync"
 
 	"crude/agent"
-	"crude/capability"
-	"crude/collaboration"
+	"crude/agent/capability"
+	"crude/agent/collaboration"
+	"crude/agent/session"
 	"crude/logger"
-	"crude/session"
 )
 
 // SessionLifecycleOperation captures resources on the serialized workspace owner.

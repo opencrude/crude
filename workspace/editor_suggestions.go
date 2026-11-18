@@ -5,9 +5,9 @@ import (
 	"errors"
 	"path/filepath"
 
-	"crude/document"
 	"crude/insight/textindex"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // installSuggestions creates the text index and the suggestion service for a

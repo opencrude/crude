@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
-	"crude/worktree"
+	"crude/agent/worktree"
+	"crude/workspace/document"
 )
 
 func TestExecutionReviewAndCleanupPreserveUnsavedCheckoutDocuments(t *testing.T) {

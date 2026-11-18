@@ -3,7 +3,7 @@ package core
 import (
 	"context"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

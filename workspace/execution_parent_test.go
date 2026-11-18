@@ -1,8 +1,8 @@
 package workspace
 
 import (
-	"crude/document"
-	"crude/worktree"
+	"crude/agent/worktree"
+	"crude/workspace/document"
 	"testing"
 )
 

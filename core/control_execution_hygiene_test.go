@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/collaboration"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
-	"crude/worktree"
 )
 
 func TestWorkspaceJanitorReconcilesTerminalPinsAndCleansAnotherParentsWork(t *testing.T) {

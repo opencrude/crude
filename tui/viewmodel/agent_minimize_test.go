@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/workspace"
 )
 

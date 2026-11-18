@@ -1,0 +1,557 @@
+package session
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"crude/agent"
+	"crude/agent/safety"
+	"crude/agent/sessiondb"
+	"crude/agent/tools"
+	ttypes "crude/types"
+)
+
+type fakeCodeIntelligence struct {
+	mu                  sync.Mutex
+	editor              bool
+	warm                bool
+	diagnostics         map[string][]ttypes.LSPDiagnostic
+	sources             map[string]string
+	unversioned         bool
+	probes              int
+	targets             []ttypes.LSPNavigationTarget
+	answer              string
+	navigationError     error
+	kinds               []string
+	includeDeclarations []bool
+	positions           [][2]int
+}
+
+func (f *fakeCodeIntelligence) EditorEnabled() bool         { return f.editor }
+func (f *fakeCodeIntelligence) ServesWarm(path string) bool { return f.warm }
+func (f *fakeCodeIntelligence) sourceView(path string) ttypes.LSPProbeView {
+	return ttypes.LSPProbeView{Server: "gopls", BufferDiffers: true, SourceText: f.sources[filepath.Base(path)],
+		Source: ttypes.InsightSource{WorkspaceGeneration: "workspace-1", DocumentID: path, Path: path, Lifetime: "canonical-1", Revision: 41, Kind: "canonical"}}
+}
+func (f *fakeCodeIntelligence) ProbeDiagnostics(_ context.Context, path string) (ttypes.InsightDiagnostics, bool, ttypes.LSPProbeView, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.probes++
+	view := f.sourceView(path)
+	v := 7
+	batch := ttypes.InsightDiagnostics{ID: "fact-" + filepath.Base(path), Boundary: ttypes.InsightBoundary{Source: view.Source,
+		Context:  ttypes.InsightContext{ID: "module-1", Root: filepath.Dir(path), Generation: 2, UnknownInputs: []string{"Build graph unknown"}},
+		Producer: ttypes.InsightProducer{InstanceID: "producer-1", Provider: "gopls", ToolIdentity: "gopls-fixture"}},
+		Sequence: 1, WireVersion: 7, ReportedVersion: &v, Binding: "exact-version", State: ttypes.InsightProvisional, Diagnostics: slices.Clone(f.diagnostics[filepath.Base(path)])}
+	if f.unversioned {
+		batch.ReportedVersion = nil
+		batch.Binding = "unversioned"
+	}
+	return batch, true, view, nil
+}
+
+func (f *fakeCodeIntelligence) ProbeDiagnosticsBatch(ctx context.Context, paths []string) []ttypes.LSPDiagnosticsResult {
+	results := make([]ttypes.LSPDiagnosticsResult, len(paths))
+	for i, path := range paths {
+		results[i].Diagnostics, results[i].Settled, results[i].View, _ = f.ProbeDiagnostics(ctx, path)
+	}
+	return results
+}
+
+func TestPostEditDiagnosticsRespectRoleAndReadAdmission(t *testing.T) {
+	for _, exclusion := range []string{"denied-tool", "allowed-tools", "no-read"} {
+		t.Run(exclusion, func(t *testing.T) {
+			s, live, service, _ := codeIntelFixture(t, true)
+			service.warm = true
+			service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Severity: 1, Message: "must not escape exclusion"}}
+			switch exclusion {
+			case "no-read":
+				live.Policy.AllowedCapabilities[safety.CanRead] = false
+			default:
+				profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
+				category := profile.Categories[CategoryDefault]
+				if exclusion == "denied-tool" {
+					category.DeniedTools = []string{"lsp"}
+				} else {
+					category.AllowedTools = []string{"edit_file"}
+				}
+				profile.Categories[CategoryDefault] = category
+				s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
+			}
+			if defs, _ := live.PrepareStep(); slices.Contains(toolNames(defs), "lsp") {
+				t.Fatal("excluded tool was offered")
+			}
+			result, err := live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"})
+			if err != nil || result.Content != "Replaced 1 occurrence" {
+				t.Fatal("ordinary allowed edit changed", err)
+			}
+			service.mu.Lock()
+			probes := service.probes
+			service.mu.Unlock()
+			if probes != 0 {
+				t.Fatalf("post-edit diagnostics bypassed %s admission: %d probes", exclusion, probes)
+			}
+			if _, notices := live.PrepareStep(); len(notices) != 0 {
+				t.Fatal("excluded post-edit data reached agent context")
+			}
+		})
+	}
+}
+
+func TestQueuedPostEditDiagnosticsWithheldWhenAdmissionChanges(t *testing.T) {
+	for _, exclusion := range []string{"role", "session", "read"} {
+		t.Run(exclusion, func(t *testing.T) {
+			s, live, service, _ := codeIntelFixture(t, true)
+			service.warm = true
+			service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Severity: 1, Message: "queued before admission changed"}}
+			if _, err := live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"}); err != nil {
+				t.Fatal(err)
+			}
+			if service.probes != 1 {
+				t.Fatal("fixture did not queue an admitted diagnostic")
+			}
+			switch exclusion {
+			case "session":
+				off := false
+				s.codeIntelOverride = &off
+			case "read":
+				live.Policy.AllowedCapabilities[safety.CanRead] = false
+			case "role":
+				profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
+				category := profile.Categories[CategoryDefault]
+				category.DeniedTools = []string{"lsp"}
+				profile.Categories[CategoryDefault] = category
+				s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
+			}
+			if _, notices := live.PrepareStep(); len(notices) != 0 {
+				t.Fatal("revoked admission leaked queued post-edit diagnostics")
+			}
+			s.codeIntelOverride = nil
+			live.Policy = safety.DefaultPolicy()
+			profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
+			category := profile.Categories[CategoryDefault]
+			category.DeniedTools = nil
+			profile.Categories[CategoryDefault] = category
+			s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
+			if _, notices := live.PrepareStep(); len(notices) != 0 {
+				t.Fatal("re-enabled admission replayed revoked diagnostic data")
+			}
+		})
+	}
+}
+func (f *fakeCodeIntelligence) ProbeNavigation(_ context.Context, path, kind string, position ttypes.LSPSourcePosition, includeDeclaration bool) (ttypes.LSPNavigation, ttypes.LSPProbeView, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	view := f.sourceView(path)
+	line, col, err := position.Resolve(view.SourceText)
+	if err != nil {
+		return ttypes.LSPNavigation{}, ttypes.LSPProbeView{}, err
+	}
+	f.positions = append(f.positions, [2]int{line, col})
+	f.kinds = append(f.kinds, kind)
+	f.includeDeclarations = append(f.includeDeclarations, includeDeclaration)
+	if f.navigationError != nil {
+		return ttypes.LSPNavigation{}, ttypes.LSPProbeView{}, f.navigationError
+	}
+	answer := f.answer
+	if answer == "" {
+		answer = "targets"
+	}
+	return ttypes.LSPNavigation{Boundary: ttypes.InsightBoundary{Source: view.Source,
+		Context:  ttypes.InsightContext{ID: "module-1", Root: filepath.Dir(path), Generation: 2, UnknownInputs: []string{"Build graph unknown"}},
+		Producer: ttypes.InsightProducer{InstanceID: "producer-1", Provider: "gopls", ToolIdentity: "gopls-fixture"}},
+		WireVersion: 7, Kind: kind, Answer: answer, Line: line, Col: col, IncludeDeclaration: includeDeclaration, Targets: slices.Clone(f.targets)}, view, nil
+}
+func (f *fakeCodeIntelligence) ProbeHover(context.Context, string, ttypes.LSPSourcePosition) (string, ttypes.LSPProbeView, error) {
+	return "func y() int", ttypes.LSPProbeView{}, nil
+}
+func (f *fakeCodeIntelligence) ProbeSymbols(context.Context, string) ([]ttypes.LSPSymbol, ttypes.LSPProbeView, error) {
+	return nil, ttypes.LSPProbeView{}, nil
+}
+
+func codeIntelFixture(t *testing.T, editor bool) (*Session, *agent.Agent, *fakeCodeIntelligence, string) {
+	t.Helper()
+	root := t.TempDir()
+	s := &Session{cfg: testConfig()}
+	service := &fakeCodeIntelligence{editor: editor, diagnostics: map[string][]ttypes.LSPDiagnostic{}, sources: map[string]string{}}
+	s.SetCodeIntelligence(service)
+	live := &agent.Agent{AgentID: "root", WorkDir: root, Policy: safety.DefaultPolicy(), FilteredTools: []tools.ToolDef{{Function: tools.ToolFuncDef{Name: "read_file"}}},
+		ToolFn: func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+			return tools.ToolResult{Content: "Replaced 1 occurrence"}, nil
+		}}
+	s.bindCodeIntelligence(live)
+	return s, live, service, root
+}
+
+func toolNames(defs []tools.ToolDef) []string {
+	var names []string
+	for _, def := range defs {
+		names = append(names, def.Function.Name)
+	}
+	return names
+}
+
+// The session override decides; nil follows the workspace switch.
+func TestLSPToolFollowsSessionOverrideOverWorkspace(t *testing.T) {
+	s, live, _, _ := codeIntelFixture(t, false)
+	if defs, _ := live.PrepareStep(); slices.Contains(toolNames(defs), "lsp") {
+		t.Fatal("lsp offered while the workspace switch is off and the session inherits")
+	}
+	on := true
+	s.codeIntelOverride = &on
+	if defs, _ := live.PrepareStep(); !slices.Contains(toolNames(defs), "lsp") {
+		t.Fatal("session override did not offer the lsp tool")
+	}
+	off := false
+	s.codeIntelOverride = &off
+	if _, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "hover"}); err == nil || !strings.Contains(err.Error(), "code intelligence is off") {
+		t.Fatalf("disabled lsp call = %v", err)
+	}
+}
+
+// Agents name the identifier; the tool converts it to the protocol's UTF-16
+// column and reports locations back as 1-based characters.
+func TestLSPDefinitionUsesSymbolAndQuotesSource(t *testing.T) {
+	_, live, service, root := codeIntelFixture(t, true)
+	path := filepath.Join(root, "a.go")
+	service.sources["a.go"] = "package a\r\n// 😀 x := y()\r\nfunc y() int { return 1 }\r\n"
+	if err := os.WriteFile(path, []byte("DISK DECOY MUST NOT BE QUOTED"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service.targets = []ttypes.LSPNavigationTarget{{URI: "file:///a.go", Path: path,
+		Range: navRange(2, 0, 27), Selection: navRange(2, 5, 6)}}
+	result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "definition", "path": "a.go", "line": float64(2), "symbol": "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "// 😀 x := " is 10 runes but 11 UTF-16 units before y.
+	if len(service.positions) != 1 || service.positions[0] != [2]int{1, 11} {
+		t.Fatalf("protocol position = %v, want line 1 col 11", service.positions)
+	}
+	// The answer is one-based and in characters: line 3, column 6 is y.
+	if want := "definition a.go:2:11: 1 location\n  a.go:3:6  func y() int { return 1 }"; strings.TrimPrefix(result.Content, bufferNote(ttypes.LSPProbeView{BufferDiffers: true})) != want {
+		t.Fatalf("definition result = %q, want %q", result.Content, want)
+	}
+	if strings.Contains(result.Content, "DECOY") {
+		t.Fatal("independent disk read escaped source authority")
+	}
+	// An existing absolute file in another directory: only containment, not a
+	// missing file, may reject it on every platform.
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	if err := os.WriteFile(outside, []byte("package outside\nvar x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "hover", "path": outside, "line": float64(2), "symbol": "x"}); err == nil || !strings.Contains(err.Error(), "outside the workspace") {
+		t.Fatalf("outside path = %v", err)
+	}
+	if _, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "definition", "path": "a.go", "line": float64(2), "symbol": "zz"}); err == nil || !strings.Contains(err.Error(), `symbol "zz" is not on line 2`) {
+		t.Fatalf("missing symbol = %v", err)
+	}
+}
+
+func navRange(line, start, end int) ttypes.LSPNavigationRange {
+	return ttypes.LSPNavigationRange{Start: ttypes.LSPNavigationPosition{Line: line, Character: start},
+		End: ttypes.LSPNavigationPosition{Line: line, Character: end}}
+}
+
+func TestLSPNavigationKindsAndQualifiedAnswers(t *testing.T) {
+	for _, kind := range []string{"definition", "type-definition", "implementation", "references"} {
+		for _, answer := range []string{"null", "empty", "unsupported", "targets"} {
+			t.Run(kind+"/"+answer, func(t *testing.T) {
+				_, live, service, root := codeIntelFixture(t, true)
+				service.sources["a.go"] = "// 😀 x := y()\r\n"
+				service.answer = answer
+				if answer == "targets" {
+					origin := navRange(0, 11, 12)
+					service.targets = []ttypes.LSPNavigationTarget{{Path: filepath.Join(root, "unknown.go"), URI: "file:///unknown.go",
+						Range: navRange(4, 2, 9), Selection: navRange(4, 3, 5)}}
+					if kind != "references" {
+						service.targets[0].Link, service.targets[0].Origin = true, &origin
+					}
+				}
+				result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": kind, "path": "a.go", "line": 1, "symbol": "y"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(service.kinds, []string{kind}) || !slices.Equal(service.positions, [][2]int{{0, 11}}) ||
+					!slices.Equal(service.includeDeclarations, []bool{kind == "references"}) {
+					t.Fatalf("wrong navigation dispatch: kinds=%v positions=%v include=%v", service.kinds, service.positions, service.includeDeclarations)
+				}
+				words := strings.ReplaceAll(kind, "-", " ")
+				want := map[string]string{
+					"null":        words + " a.go:1:11: the language server returned no result.",
+					"empty":       words + " a.go:1:11: no locations.",
+					"unsupported": words + " a.go:1:11: the language server does not support " + words + ".",
+					"targets":     words + " a.go:1:11: 1 location\n  unknown.go:5:4\nColumns in other files count UTF-16 units.",
+				}[answer]
+				if got := strings.TrimPrefix(result.Content, bufferNote(ttypes.LSPProbeView{BufferDiffers: true})); got != want {
+					t.Fatalf("answer = %q, want %q", got, want)
+				}
+				for _, absent := range []string{"Provider", "instance", "generation", "Unknown input", "wire version", "canonical"} {
+					if strings.Contains(result.Content, absent) {
+						t.Fatalf("navigation repeats provenance %q:\n%s", absent, result.Content)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestLSPNavigationErrorsAndClosedKinds(t *testing.T) {
+	for _, kind := range []string{"definition", "type-definition", "implementation", "references"} {
+		t.Run(kind, func(t *testing.T) {
+			_, live, service, _ := codeIntelFixture(t, true)
+			service.sources["a.go"] = "😀 y y\n"
+			service.navigationError = errors.New("provider transport failed")
+			result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": kind, "path": "a.go", "line": 1, "column": 5, "symbol": "y"})
+			if !errors.Is(err, service.navigationError) || result.Content != "" {
+				t.Fatalf("failure became absence: result=%+v err=%v", result, err)
+			}
+			if !slices.Equal(service.positions, [][2]int{{0, 5}}) {
+				t.Fatalf("explicit character column not resolved against source: %v", service.positions)
+			}
+		})
+	}
+	_, live, service, _ := codeIntelFixture(t, true)
+	for _, kind := range []string{"typeDefinition", "Definition", "implementations", ""} {
+		if result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": kind, "path": "a.go"}); err == nil || result.Content != "" {
+			t.Fatalf("unknown operation %q accepted: %+v %v", kind, result, err)
+		}
+	}
+	if len(service.kinds) != 0 {
+		t.Fatal("unknown operation reached navigation service")
+	}
+	var schema struct {
+		Properties struct {
+			Operation struct{ Enum []string }
+		}
+	}
+	if err := json.Unmarshal(tools.CodeIntelligenceTool.Function.Parameters, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(schema.Properties.Operation.Enum, []string{"diagnostics", "definition", "type-definition", "implementation", "references", "hover", "symbols"}) {
+		t.Fatalf("tool operation contract = %v", schema.Properties.Operation.Enum)
+	}
+}
+
+func TestLSPNavigationListingDoesNotReadTargetsAndHasExplicitLimit(t *testing.T) {
+	_, live, service, root := codeIntelFixture(t, true)
+	service.sources["a.go"] = "var y = 1\n"
+	private := filepath.Join(t.TempDir(), "private.go")
+	if err := os.WriteFile(private, []byte("PRIVATE TARGET SENTINEL MUST NOT LEAK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	local := filepath.Join(root, "local.go")
+	if err := os.WriteFile(local, []byte("LOCAL TARGET SENTINEL MUST NOT LEAK"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.targets = []ttypes.LSPNavigationTarget{
+		{Path: private, URI: "file:///private.go", External: true, Range: navRange(20, 100, 110), Selection: navRange(20, 102, 105)},
+		{URI: "https://example.invalid/source", UnavailableReason: "only local file URIs are supported", Range: navRange(0, 1, 2), Selection: navRange(0, 1, 2)},
+		{Path: local, URI: "file:///local.go", Range: navRange(0, 1, 2), Selection: navRange(0, 1, 2)},
+	}
+	for i := 3; i < 52; i++ {
+		service.targets = append(service.targets, ttypes.LSPNavigationTarget{URI: fmt.Sprintf("file:///row-%d", i)})
+	}
+	result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "definition", "path": "a.go", "line": 1, "symbol": "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"52 locations", "private.go:21:103 (outside the workspace)", "https://example.invalid/source (cannot open: only local file URIs are supported)",
+		"local.go:1:2\n", "file:///row-49", "… 2 more not shown"} {
+		if !strings.Contains(result.Content, want) {
+			t.Fatalf("missing %q:\n%s", want, result.Content)
+		}
+	}
+	for _, absent := range []string{"SENTINEL", "row-50", "row-51"} {
+		if strings.Contains(result.Content, absent) {
+			t.Fatalf("unexpected %q:\n%s", absent, result.Content)
+		}
+	}
+}
+
+func TestLSPNavigationCannotQuoteMismatchedSource(t *testing.T) {
+	view := ttypes.LSPProbeView{Source: ttypes.InsightSource{DocumentID: "doc", Path: "/a.go", Revision: 2}, SourceText: "WRONG SOURCE SENTINEL"}
+	result := ttypes.LSPNavigation{Answer: "targets", Boundary: ttypes.InsightBoundary{Source: view.Source},
+		Targets: []ttypes.LSPNavigationTarget{{Path: "/a.go"}}}
+	result.Boundary.Source.Revision = 1
+	if got := formatNavigation("", result, view); strings.Contains(got, "SENTINEL") {
+		t.Fatal("source identity mismatch quoted source", got)
+	}
+}
+
+func TestLSPDiagnosticsReportSeverityAndCleanFiles(t *testing.T) {
+	_, live, service, root := codeIntelFixture(t, true)
+	for name, text := range map[string]string{"a.go": "package a\nvar x = y\n", "b.go": "package a\n"} {
+		service.sources[name] = text
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{
+		{Line: 1, Col: 8, Severity: 1, Message: "undefined: y", Source: "compiler", Code: "UndeclaredName"},
+		{Line: 0, Col: 0, Severity: 4, Message: "hint only"},
+	}
+	result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "diagnostics", "paths": []any{"a.go", "b.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"a.go: 1 error (gopls)", "2:9 error undefined: y [compiler UndeclaredName]", "var x = y", "b.go: no problems at the requested severity (gopls)"} {
+		if !strings.Contains(result.Content, want) {
+			t.Fatalf("diagnostics lack %q:\n%s", want, result.Content)
+		}
+	}
+	// Provenance identities belong to structured facts. They made each file
+	// cost four lines of identifiers that no agent acts on.
+	for _, absent := range []string{"Fact ", "fact-a.go", "source revision", "Partial context", "generation", "producer", "clean-project"} {
+		if strings.Contains(result.Content, absent) {
+			t.Fatalf("diagnostics repeat provenance %q:\n%s", absent, result.Content)
+		}
+	}
+	if lines := strings.Count(result.Content, "\n") + 1; lines != 4 || strings.Count(result.Content, "unsaved editor text") != 2 {
+		t.Fatalf("two files took %d lines; want a summary per file, the error and its source line:\n%s", lines, result.Content)
+	}
+	if strings.Contains(result.Content, "hint only") {
+		t.Fatal("default severity floor reported hints")
+	}
+}
+
+func TestLSPUnversionedFactsNeverQuoteDiskOrWithdrawExactPostEditReport(t *testing.T) {
+	s, live, service, root := codeIntelFixture(t, true)
+	path := filepath.Join(root, "a.go")
+	if err := os.WriteFile(path, []byte("DISK SECRET DECOY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.sources["a.go"] = "var 😀 = unresolved\n"
+	service.unversioned, service.warm = true, true
+	service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Line: 0, Col: 9, EndCol: 19, Severity: 1, Message: "unresolved"}}
+	result, err := live.ToolFn(t.Context(), "lsp", map[string]any{"operation": "diagnostics", "path": "a.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"did not confirm which file version", "1:10 (UTF-16 column)"} {
+		if !strings.Contains(result.Content, want) {
+			t.Fatalf("missing %q: %s", want, result.Content)
+		}
+	}
+	if strings.Contains(result.Content, "DECOY") || strings.Contains(result.Content, "var 😀") {
+		t.Fatal("unversioned answer quoted an unproven source")
+	}
+	if reports := s.postEditDiagnostics(t.Context(), root, []string{path}); len(reports) != 0 {
+		t.Fatalf("unversioned observation withdrew an exact report: %v", reports)
+	}
+}
+
+// After an edit, errors from a warm server reach the next request as a
+// notice; the edit result itself (a patch card body) is untouched, and a
+// later clean edit withdraws the stale report.
+func TestPostEditDiagnosticsArriveAsNotice(t *testing.T) {
+	_, live, service, root := codeIntelFixture(t, true)
+	service.warm = true
+	path := filepath.Join(root, "a.go")
+	service.sources["a.go"] = "package a\nvar x = y\n"
+	if err := os.WriteFile(path, []byte("package a\nvar x = y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Line: 1, Col: 8, Severity: 1, Message: "undefined: y"}}
+	result, err := live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"})
+	if err != nil || result.Content != "Replaced 1 occurrence" {
+		t.Fatalf("edit result changed: %q %v", result.Content, err)
+	}
+	_, notices := live.PrepareStep()
+	if len(notices) != 1 || !strings.Contains(notices[0].ContentString(), "undefined: y") {
+		t.Fatalf("notices = %+v", notices)
+	}
+	if _, again := live.PrepareStep(); len(again) != 0 {
+		t.Fatal("a delivered notice repeated")
+	}
+	_, _ = live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"})
+	service.mu.Lock()
+	service.diagnostics["a.go"] = nil
+	service.mu.Unlock()
+	_, _ = live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"})
+	if _, notices := live.PrepareStep(); len(notices) != 0 {
+		t.Fatalf("fixed file still reported: %+v", notices)
+	}
+	service.warm = false
+	service.diagnostics["a.go"] = []ttypes.LSPDiagnostic{{Severity: 1, Message: "cold"}}
+	_, _ = live.ToolFn(t.Context(), "edit_file", map[string]any{"path": "a.go"})
+	if _, notices := live.PrepareStep(); len(notices) != 0 {
+		t.Fatal("an edit cold-started a server check")
+	}
+}
+
+// Toggling delegation rewrites the flags row; it must keep the
+// code-intelligence override.
+func TestToggleMultiAgentKeepsCodeIntelligenceOverride(t *testing.T) {
+	root := t.TempDir()
+	sess, err := NewWithSessionDir("", testConfig(), root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sess.Close)
+	settings := sess.SettingsSnapshot()
+	on := true
+	settings.SessionCodeIntelligence = &on
+	if err := sess.HandleSettingsSave(settings); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sess.ToggleMultiAgent(); err != nil {
+		t.Fatal(err)
+	}
+	flags, err := sessiondb.LoadSessionFlags(sess.DB(), sess.SessionID())
+	if err != nil || flags.CodeIntelligence == nil || !*flags.CodeIntelligence {
+		t.Fatalf("flags after toggle = %+v err=%v", flags, err)
+	}
+	if got := sess.SettingsSnapshot().SessionCodeIntelligence; got == nil || !*got {
+		t.Fatalf("snapshot override = %v", got)
+	}
+}
+
+// The sub-agent limit applies to a live session at the next launch, and
+// clearing the workspace value restores the default instead of keeping it.
+func TestSubAgentLimitAppliesLiveAndAutoRestoresDefault(t *testing.T) {
+	root := t.TempDir()
+	sess, err := NewWithSessionDir("", testConfig(), root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sess.Close)
+	runner := NewSubAgentRunner(sess, sess.effectiveMaxSubAgents())
+	sess.mu.Lock()
+	sess.subAgentSup = runner
+	sess.mu.Unlock()
+	settings := sess.SettingsSnapshot()
+	one := 1
+	settings.SessionMaxSubAgents = &one
+	if err := sess.HandleSettingsSave(settings); err != nil {
+		t.Fatal(err)
+	}
+	mgr := sess.subAgentSup.Manager()
+	if err := mgr.Register(&agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.Register(&agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "b"}}); err == nil {
+		t.Fatal("the session limit of 1 did not reach the live runner")
+	}
+	flags, _ := sessiondb.LoadSessionFlags(sess.DB(), sess.SessionID())
+	if flags.MaxSubAgents == nil || *flags.MaxSubAgents != 1 {
+		t.Fatalf("persisted limit = %v", flags.MaxSubAgents)
+	}
+	mgr.MarkInterrupted("a")
+	cfg := testConfig()
+	roles := map[string]ttypes.CategorySettings{"default": {Model: "m"}}
+	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{MaxConcurrent: 9, Enabled: true, Categories: roles})
+	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{MaxConcurrent: 0, Enabled: true, Categories: roles})
+	if cfg.Agents.MaxConcurrent != DefaultAgentsConfig().MaxConcurrent {
+		t.Fatalf("Auto kept %d", cfg.Agents.MaxConcurrent)
+	}
+}

@@ -75,7 +75,7 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   `capability_activate` or `mcp_request_access` queues one
   `prompt.RuntimeCapabilityShared` notice for every other agent of the session
   (parent, children, siblings), delivered at its next request
-  (`session/capability_sharing.go`). Each operation and ID is announced once,
+  (`agent/session/capability_sharing.go`). Each operation and ID is announced once,
   undelivered notices are bounded, and the activating agent is not told about
   its own change. The notice asks the recipient to activate that exact ID rather
   than search for or install an alternative.

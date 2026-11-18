@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
-	"crude/indentation"
+	"crude/text/indent"
 	"crude/tui/editor"
 	"crude/tui/screens/activitybar"
 )

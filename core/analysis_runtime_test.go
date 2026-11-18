@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/insight/governor"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 type countedAnalysisRuntime struct {

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
+	"crude/agent/provider"
+	"crude/agent/tools"
 	"crude/retry"
-	"crude/tools"
 	recoverytypes "crude/types/recovery"
 )
 

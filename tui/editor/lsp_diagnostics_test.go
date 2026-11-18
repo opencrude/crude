@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/sha256"
 	"fmt"
 	"reflect"
@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
 	"crude/tui/cell"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestDiagnosticGutterAndOverlapShowHighestSeverity(t *testing.T) {

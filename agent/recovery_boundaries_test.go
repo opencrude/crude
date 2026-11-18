@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
-	"crude/tools"
+	"crude/agent/provider"
+	"crude/agent/tools"
 	recoverytypes "crude/types/recovery"
 )
 

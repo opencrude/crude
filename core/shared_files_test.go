@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 func TestSharedFilesProtectPeerUnsavedTextAndRetainedPaths(t *testing.T) {

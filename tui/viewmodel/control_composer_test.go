@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/shellport"
+	"crude/agent/provider"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/types/control"
 
 	tea "charm.land/bubbletea/v2"

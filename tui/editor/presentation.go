@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/indentation"
+	"crude/text/indent"
 	"crude/tui/bidi"
 	"crude/tui/rendering"
 	"crude/tui/theme"

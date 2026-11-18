@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/memory"
+	"crude/agent/memory"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 

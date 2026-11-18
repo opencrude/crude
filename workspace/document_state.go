@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // Checkpoints are current-format only. Runtime connections and language views

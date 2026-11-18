@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"crude/textdiff"
+	"crude/text/diff"
 	"crude/tui/screens/diffview"
 	"crude/workspace"
 )

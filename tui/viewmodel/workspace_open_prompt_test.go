@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/screens/activitylist"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"

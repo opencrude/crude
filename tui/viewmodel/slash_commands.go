@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
+	"crude/agent/provider"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
 )

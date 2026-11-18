@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 )
 
 func TestExecutionRetentionPreservesUndoAndCleanup(t *testing.T) {

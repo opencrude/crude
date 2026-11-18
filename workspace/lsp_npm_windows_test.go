@@ -11,7 +11,7 @@ import (
 
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
-	"crude/lspclient"
+	"crude/lsp/client"
 	model "crude/types"
 )
 

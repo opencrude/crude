@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 )
 
 type executionHistoryOwner struct {

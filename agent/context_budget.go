@@ -1,6 +1,6 @@
 package agent
 
-import "crude/provider"
+import "crude/agent/provider"
 
 func contextSafetyReserve(window int) int {
 	return min(4096, max(256, window/20))

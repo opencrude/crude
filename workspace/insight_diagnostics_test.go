@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // editorSource exercises the canonical owner, including its send-intent path.

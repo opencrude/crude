@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/network"
-	"crude/provider"
-	"crude/session"
 	"crude/types"
 )
 

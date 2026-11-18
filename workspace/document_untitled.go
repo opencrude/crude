@@ -3,14 +3,14 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // SaveUntitled creates a new file for an exact unnamed document revision.

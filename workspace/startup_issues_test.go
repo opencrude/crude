@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	"crude/collaboration"
+	"crude/agent/collaboration"
 	"crude/types"
 	"os"
 	"path/filepath"

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/collaboration"
+	"crude/agent/collaboration"
 )
 
 func buildCollaborationResult(name, content, input string) StructuredResult {

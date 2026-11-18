@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

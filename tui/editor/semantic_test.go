@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/syntax"
 	"crude/tui/theme"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func semanticFixtureSet(e *Editor) types.LSPSemanticSet {

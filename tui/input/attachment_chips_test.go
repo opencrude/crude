@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/input"
 	"crude/workspace"
 )

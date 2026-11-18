@@ -10,11 +10,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/buildinfo"
+	"crude/core/port"
 	"crude/history"
-	"crude/provider"
-	"crude/sessiondb"
-	"crude/shellport"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"

@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // completionAcknowledge commits pending local edits as the document owner

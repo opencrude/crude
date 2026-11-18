@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/provider"
-	"crude/safety"
-	"crude/tools"
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/tools"
 	ttypes "crude/types"
 	"crude/types/control"
 )

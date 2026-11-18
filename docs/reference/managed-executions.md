@@ -8,7 +8,7 @@
 under the workspace data directory, disjoint from project and Git administration.
 `workspace.ExecutionService` borrows the logical workspace's accepted document and
 Local History owners; an artifact is not another settings/workspace authority.
-`session/` captures the exact execution selection for new input and delegates via
+`agent/session/` captures the exact execution selection for new input and delegates via
 `agent_start isolation: auto|shared|worktree`. Selection changes never move a live
 run or already queued input. Relative native paths, commands, guidance, claims,
 MCP roots and Git operations use the resolved execution root. Logical settings,
@@ -179,9 +179,9 @@ asked to clean up. See [prompt architecture](prompt-architecture.md#execution-li
 
 ## Evidence and limits
 
-`worktree/service_test.go`, `parent_baseline_test.go`, `integration_test.go`,
+`agent/worktree/service_test.go`, `parent_baseline_test.go`, `integration_test.go`,
 `workspace/documents_execution_test.go`, `execution_parent_test.go`,
-`session/worktree_e2e_test.go`, `parent_execution_test.go`, the hygiene regression
+`agent/session/worktree_e2e_test.go`, `parent_execution_test.go`, the hygiene regression
 tests in worktree/session/core/workspace, and core execution journey
 suites cover focused service and product paths. Test presence is not a claim that
 all gates currently pass. Native Windows filesystem/Git behavior, SSH host locality

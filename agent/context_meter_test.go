@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestContextMeterPrefersProviderBaselineOverReplayWrappers(t *testing.T) {

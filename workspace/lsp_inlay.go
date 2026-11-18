@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/document"
-	"crude/lspedit"
-	"crude/lspinlay"
+	"crude/lsp/edit"
+	"crude/lsp/inlay"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 const (

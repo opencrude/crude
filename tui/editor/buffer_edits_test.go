@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestPieceTableBatchCommitsExactBytesOneGeometryAndSequentialObservations(t *testing.T) {

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/metrics"
-	"crude/provider"
-	"crude/session"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func requestSuggestionFollow(t *testing.T, f *suggestionFixture, caret int) types.EditorPredictionResult {

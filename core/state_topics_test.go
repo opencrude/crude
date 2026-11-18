@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 )
 
 func TestStateTopicResetWaitsForCapturedSourceGeneration(t *testing.T) {

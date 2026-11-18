@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 )
 
 func TestReviewedGitDiscardRequiresCurrentBytesAndRecoverableSafety(test *testing.T) {

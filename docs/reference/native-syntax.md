@@ -59,7 +59,7 @@ never means no compiler errors. No native tree crosses the boundary.
 `coreprotocol.TopicInsight` is independent from the acknowledged document
 journal. A slow insight subscriber cannot hold up source edits, receipts or
 other clients. Reconnect sends a complete latest derived snapshot, never a
-text mutation. `shellport/remote` shares the exact open/attachment/workspace
+text mutation. `core/port/remote` shares the exact open/attachment/workspace
 token with its document subscription. Update rejects stale tokens and caches
 only the newest pre-mount result; source may overtake syntax or vice versa.
 

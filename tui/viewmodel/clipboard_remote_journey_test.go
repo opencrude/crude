@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"crude/agent/provider"
 	"crude/clipboard"
-	"crude/provider"
 
 	tea "charm.land/bubbletea/v2"
 )

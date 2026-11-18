@@ -5,9 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"crude/codexio"
-	"crude/provider"
-	"crude/tools"
+	"crude/agent/codexio"
+	"crude/agent/provider"
+	"crude/agent/tools"
 )
 
 func getStr(params map[string]any, key string) string {

@@ -7,13 +7,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/codeactions"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 const codeActionsOverlay ui.OverlayID = "lsp-code-actions"

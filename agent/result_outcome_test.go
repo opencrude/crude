@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/prompt"
-	"crude/provider"
-	"crude/safety"
-	"crude/tools"
+	"crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/tools"
 	"crude/types/toolresult"
 )
 

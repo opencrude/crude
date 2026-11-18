@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	model "crude/types"
+	"crude/workspace/document"
 )
 
 func probeSources(t *testing.T, manager *LSPManager, root string) *DocumentService {

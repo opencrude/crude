@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestCompleteStreamOllamaNDJSON(t *testing.T) {

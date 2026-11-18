@@ -8,8 +8,8 @@ import (
 
 	"github.com/aymanbagabas/go-udiff"
 
-	"crude/prompt"
-	"crude/session"
+	"crude/agent/prompt"
+	"crude/agent/session"
 )
 
 const (

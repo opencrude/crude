@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/metrics"
 	"crude/workspace"
 )

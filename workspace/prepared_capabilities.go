@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/capability"
-	"crude/fileio"
-	"crude/mcpclient"
-	"crude/provider"
-	"crude/skills"
+	"crude/agent/capability"
+	"crude/agent/mcpclient"
+	"crude/agent/provider"
+	"crude/agent/skills"
 	"crude/types"
 	captypes "crude/types/capability"
+	"crude/workspace/fileio"
 	"sync"
 )
 

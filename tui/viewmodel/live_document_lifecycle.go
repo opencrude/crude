@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/workspace/document"
 )
 
 // Fence before clearing the UI's accepted publications: tokens held by the

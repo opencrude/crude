@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/tui/cell"
 	"crude/tui/ui"
 	ctypes "crude/types"

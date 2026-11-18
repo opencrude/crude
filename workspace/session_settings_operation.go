@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"crude/session"
+	"crude/agent/session"
 	"crude/types"
 )
 

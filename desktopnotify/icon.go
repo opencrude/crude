@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // iconFile writes the application icon under id.Dir and returns its absolute

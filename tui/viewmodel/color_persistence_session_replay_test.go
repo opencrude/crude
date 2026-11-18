@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/ui"
 	"crude/workspace"

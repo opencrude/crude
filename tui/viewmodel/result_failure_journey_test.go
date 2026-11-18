@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
 	"crude/types"
