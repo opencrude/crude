@@ -154,6 +154,9 @@ sufficient.
 - Run focused tests, affected packages, race paths, build, lint, docs and bench
   gates, and the full suite when feasible; cross-compile cross-platform code.
   See [validation](docs/guides/validation.md).
+- After production-source edits, run `go run ./internal/wiregen` in the native
+  cgo environment. Review the generated diff and run `go run ./internal/wiregen
+  -check` before handoff or release. Never edit generated output by hand.
 - Use the repository visual capture workflow for UI acceptance at desktop and
   constrained sizes: `scripts/tuishot.sh` on Linux, `scripts/tuishot.ps1` on
   Windows. It drives the real product and screenshots it; do not search for or

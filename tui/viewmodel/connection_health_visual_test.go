@@ -14,7 +14,7 @@ import (
 	"crude/tui/ui"
 )
 
-// Dedicated scripts/tuishot.sh fixture: only the transport observation is
+// Dedicated tuishot fixture: only the transport observation is
 // controlled. The production App, header, ticks, pointer/focus and overlay paths
 // remain intact; no provider, user configuration or real backend is disturbed.
 func TestConnectionHealthVisualAcceptance(t *testing.T) {
@@ -24,7 +24,10 @@ func TestConnectionHealthVisualAcceptance(t *testing.T) {
 	app, _ := newRealShellApp(t)
 	app.AddOrchestrator("connection-preview")
 	app.Input.SetInput("This draft stays yours")
-	w := &connectionHealthWorkspace{Workspace: app.ws, status: shellport.RemoteStatus{State: "connected", Carrier: "quic", RTT: 38 * time.Millisecond}}
+	w := &connectionHealthWorkspace{Workspace: app.ws, status: shellport.RemoteStatus{
+		State: "connected", Carrier: "quic", RTT: 38 * time.Millisecond,
+		CoreVersion: "v0.8.0-rc.1", CoreBuildID: "c0dec0dec0dec0de",
+	}}
 	app.ws = w
 	app.SetRemoteManager(&fakeRemoteManager{}, "development")
 	app.remotes.snapshot = remoteconn.Snapshot{Connections: []remoteconn.Connection{{ID: "development", Name: "Development", Kind: "direct", Host: "dev.example"}}}

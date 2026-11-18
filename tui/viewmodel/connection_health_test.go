@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/buildinfo"
 	"crude/remoteconn"
 	"crude/shellport"
 	"crude/tui/rendering"
@@ -161,22 +162,25 @@ func TestConnectionHealthHoverLiveDetailsAndFocus(t *testing.T) {
 func TestConnectionDetailsShowDistinctNativeBuilds(t *testing.T) {
 	app, w := newConnectionHealthApp(t)
 	app.tuiBuildID = "0123456789abcdef"
-	w.status.CoreBuildID = "fedcba9876543210"
+	w.status.CoreVersion, w.status.CoreBuildID = "v0.8.0-rc.1", "fedcba9876543210"
 	app.openConnectionHover(app.connectionWordmarkRect())
-	for _, want := range []string{"TUI build", "0123456789abcdef", "Core build", "fedcba9876543210"} {
+	for _, want := range []string{
+		"TUI build    " + buildinfo.Version + " / 0123456789abcdef",
+		"Core build   v0.8.0-rc.1 / fedcba9876543210",
+	} {
 		if text := connectionPopoverText(app); !strings.Contains(text, want) {
 			t.Fatalf("connection details lost %q:\n%s", want, text)
 		}
 	}
 	w.status.State = "reconnecting"
 	app.syncConnectionHover()
-	if text := connectionPopoverText(app); !strings.Contains(text, "last connection") {
-		t.Fatal("stale native core build was presented as a current observation", text)
+	if detail := app.connectionHealth().projection().Detail; !strings.Contains(detail, "Core build   v0.8.0-rc.1 / fedcba9876543210 · last connection") {
+		t.Fatalf("the last core build was not labelled as such:\n%s", detail)
 	}
-	w.status.CoreBuildID = ""
+	w.status.CoreVersion, w.status.CoreBuildID = "", ""
 	app.syncConnectionHover()
-	if text := connectionPopoverText(app); !strings.Contains(text, "Not observed") || strings.Contains(text, "fedcba9876543210") {
-		t.Fatal("missing core build was fabricated or kept from a different connection", text)
+	if text := connectionPopoverText(app); !strings.Contains(text, "Core build   Not observed") || strings.Contains(text, "v0.8.0-rc.1") || strings.Contains(text, "fedcba9876543210") {
+		t.Fatalf("missing core build was fabricated or kept from a different connection:\n%s", text)
 	}
 }
 
@@ -187,8 +191,16 @@ func TestConnectedConnectionDetailsUsesServerImage(t *testing.T) {
 	shell.app.paintShellFrame()
 	shell.app.openConnectionHover(shell.app.connectionWordmarkRect())
 	text := connectionPopoverText(shell.app)
-	if len(shell.app.tuiBuildID) != 16 || !strings.Contains(text, "c0dec0dec0dec0de") || !strings.Contains(text, shell.app.tuiBuildID) {
-		t.Fatal("live connected popover did not show both independent image identities", text)
+	if len(shell.app.tuiBuildID) != 16 {
+		t.Fatalf("shell did not identify its native image: %q", shell.app.tuiBuildID)
+	}
+	for _, want := range []string{
+		"TUI build    " + buildinfo.Version + " / " + shell.app.tuiBuildID,
+		"Core build   " + buildinfo.Version + " / c0dec0dec0dec0de",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("connected popover omitted %q:\n%s", want, text)
+		}
 	}
 }
 

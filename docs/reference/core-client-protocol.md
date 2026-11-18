@@ -359,12 +359,14 @@ application. Credit and bounded journals prevent unbounded backlog; a slow viewe
 is paced or reset, not disconnected merely for reading slowly.
 
 `Welcome.CoreBuildID` reports the connected core's native executable hash,
-independently of the source-cohort prefix. The SDK retains it for that session
-and refuses to resume the same owner with a different image identity. A fresh
-connection observes a replacement core. `BackendStatus` publishes that retained
-fact to connection details; the TUI's own hash is cached during construction.
-Connection loss labels the retained core hash as the last connection rather
-than inventing a current version. No image hashing or network read runs on paint.
+independently of the source-cohort prefix. `Welcome.CoreVersion` reports the
+core binary's own release tag, or `dev` for an unstamped build. The SDK retains
+both for that session and refuses to resume the same owner with a different
+image identity. The version is display metadata, not an admission or resume
+check. A fresh connection observes a replacement core. `BackendStatus` publishes
+the retained version and hash to connection details; the TUI uses its own build
+metadata and cached hash. Connection loss labels the retained core build as the
+last connection. No image hashing or network read runs on paint.
 
 Clean close sends control FIN, releases the core's topic/lease/document attachment
 authority, then returns `SessionEnd` as the cleanup receipt. The client consumes

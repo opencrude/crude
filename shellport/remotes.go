@@ -34,6 +34,7 @@ type RemoteStatus struct {
 	RTT         time.Duration
 	Notice      string
 	CoreBuildID string
+	CoreVersion string // reported by the attached core, empty when unknown
 	// CoreStartedAt is the attached core process start; zero when unknown.
 	CoreStartedAt time.Time
 }

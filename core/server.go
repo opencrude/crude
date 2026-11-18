@@ -268,6 +268,7 @@ func handshake(ctx context.Context, runtime *Runtime, conn corewire.Conn, auth A
 	}
 	runtime.remoteMu.Unlock()
 	welcome.Owner, welcome.SessionID, welcome.Secret, welcome.Resumed, welcome.Grace = c.Owner, c.id, c.secret, resumed, runtime.sessionGrace()
+	welcome.CoreVersion = buildinfo.Version
 	c.mu.Lock()
 	welcome.LocalHost = c.localHost
 	c.mu.Unlock()

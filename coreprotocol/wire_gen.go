@@ -20283,8 +20283,8 @@ func (z *UntitledComparisonReply) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Welcome) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 12
-	o = append(o, 0x9c)
+	// array header, size 13
+	o = append(o, 0x9d)
 	o = msgp.AppendString(o, z.Schema)
 	o = msgp.AppendString(o, z.Build)
 	// array header, size 2
@@ -20314,6 +20314,7 @@ func (z *Welcome) MarshalMsg(b []byte) (o []byte, err error) {
 	}
 	o = msgp.AppendBool(o, z.LocalHost)
 	o = msgp.AppendString(o, z.CoreBuildID)
+	o = msgp.AppendString(o, z.CoreVersion)
 	o = msgp.AppendTime(o, z.CoreStartedAt)
 	return
 }
@@ -20330,8 +20331,8 @@ func (z *Welcome) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 12 {
-		err = msgp.ArrayError{Wanted: 12, Got: zb0001}
+	if zb0001 != 13 {
+		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
 		return
 	}
 	z.Schema, bts, err = msgp.ReadStringBytes(bts)
@@ -20473,6 +20474,11 @@ func (z *Welcome) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "CoreBuildID")
 		return
 	}
+	z.CoreVersion, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "CoreVersion")
+		return
+	}
 	z.CoreStartedAt, bts, err = msgp.ReadTimeBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "CoreStartedAt")
@@ -20495,7 +20501,7 @@ func (z *Welcome) Msgsize() (s int) {
 	} else {
 		s += 1 + msgp.StringPrefixSize + len(z.Paired.DeviceID) + msgp.StringPrefixSize + len(z.Paired.Token) + msgp.StringPrefixSize + len(z.Paired.Fingerprint)
 	}
-	s += msgp.BoolSize + msgp.StringPrefixSize + len(z.CoreBuildID) + msgp.TimeSize
+	s += msgp.BoolSize + msgp.StringPrefixSize + len(z.CoreBuildID) + msgp.StringPrefixSize + len(z.CoreVersion) + msgp.TimeSize
 	return
 }
 
