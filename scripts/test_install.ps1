@@ -549,6 +549,35 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
         Assert-Equal $script:CrudeFontKey 'Software\Microsoft\Windows NT\CurrentVersion\Fonts' 'Per-user fonts live under Windows NT\CurrentVersion\Fonts'
     }
 
+    Test-Case 'the window font archive is unpacked by the Windows tar, which reads an absolute archive path' {
+        . $installer
+        $tar = Get-CrudeTarPath
+        Assert-True ([bool] $tar) 'A Windows install needs a tar to unpack the font archive'
+        # A Git installation puts its own GNU tar first on PATH. That tar reads
+        # "C:\..." as a host name, so the Windows copy is chosen by its path.
+        $system = Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe'
+        if ([IO.File]::Exists($system)) {
+            Assert-Equal $tar $system 'The Windows tar must be used, not another tar on PATH'
+        }
+        $work = Join-Path $root ('font archive ' + [Guid]::NewGuid().ToString('N'))
+        $source = Join-Path $work 'source'
+        [void] [IO.Directory]::CreateDirectory($source)
+        [IO.File]::WriteAllText((Join-Path $source 'JetBrainsMonoNerdFont-Regular.ttf'), 'font')
+        $archive = Join-Path $work 'fonts.tar.xz'
+        & $tar -cJf $archive -C $source .
+        Assert-True ([IO.File]::Exists($archive)) 'The fixture archive must be created'
+        $fonts = Join-Path $work 'fonts'
+        [void] [IO.Directory]::CreateDirectory($fonts)
+        Assert-True (Expand-CrudeFontArchive $tar $archive $fonts) 'An absolute archive path must unpack into the font folder'
+        Assert-True ([IO.File]::Exists((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'))) 'The faces must land in the folder Crude registers'
+        $broken = Join-Path $work 'not-a-font.tar.xz'
+        [IO.File]::WriteAllText($broken, 'not an archive')
+        $empty = Join-Path $work 'empty'
+        [void] [IO.Directory]::CreateDirectory($empty)
+        Assert-True (-not (Expand-CrudeFontArchive $tar $broken $empty)) 'A refused archive must report no face'
+        Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     Test-Case 'a missing Windows Terminal states the next step and adds nothing' {
         With-Fixture (New-Fixture) {
             $savedLocalAppData = $env:LOCALAPPDATA
