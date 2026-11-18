@@ -730,9 +730,16 @@ function Get-CrudeWindowPaths {
         # A fixed identity keeps the menu entry and the profile pointing at the
         # same thing across updates.
         Guid = '{9f2b6c53-6a1e-4c31-9f0a-2b7d5c8e4a11}'
-        FontVersion = 'v3.5.1'
-        FontSha256 = '04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
-        FontApi = 'https://api.github.com/repos/ryanoasis/nerd-fonts/releases/assets/523475208'
+        # Nerd Fonts v3.5.1: the four styles the window uses, plus their license.
+        FontSource = 'https://raw.githubusercontent.com/ryanoasis/nerd-fonts/b894ea7803af6aade63d60a4381e006098ec9c4d/patched-fonts/JetBrainsMono/Ligatures'
+        FontSHA256 = [ordered] @{
+            'OFL.txt' = '30f0c136e3c88e422d0791acd97238870f9054a9729bc34cf2ff0d4ed8cac4ad'
+            'JetBrainsMonoNerdFont-Regular.ttf' = '1c680e8cde9fcf8b88a5605ce8d1fb94dd3fb15841f7ca7bf4c55664855e5611'
+            'JetBrainsMonoNerdFont-Bold.ttf' = 'e490660ad75e0b152c93b1604c2ea1a4ea675f1b8a3fe0d005b1998568f99f1f'
+            'JetBrainsMonoNerdFont-Italic.ttf' = '71d5466cc3ab31bee38b4e2c5cc99c2b41a749c4973ed4579b814ec992b0738e'
+            'JetBrainsMonoNerdFont-BoldItalic.ttf' = '19a2e3af8ccf99954941ea07e0a29df27574500f12016d86d6c4c059b825ffe1'
+        }
+        UserFontFolder = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
         # The families the window asks for, in this order.
         FontFamilies = @('JetBrainsMono Nerd Font', 'JetBrainsMono NF')
         FontFaces = 'JetBrainsMonoNerdFont-*.ttf'
@@ -790,7 +797,7 @@ function Test-CrudeFontAvailable($Paths) {
     # question, and a face that is there is never copied over.
     $folders = @()
     if ($env:WINDIR) { $folders += Join-Path $env:WINDIR 'Fonts' }
-    if ($env:LOCALAPPDATA) { $folders += Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts' }
+    $folders += $Paths.UserFontFolder
     foreach ($folder in $folders) {
         if (@(Get-ChildItem -LiteralPath $folder -Filter $Paths.FontFaces -File -ErrorAction SilentlyContinue).Count) { return $true }
     }
@@ -867,88 +874,39 @@ function Publish-CrudeFontChange {
     } catch { }
 }
 
-function Get-CrudeWindowDownload([string[]] $Sources, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds) {
-    # One file, two GitHub paths, the same bytes behind both. The published
-    # download path can fail while the API asset path answers, so each path is
-    # tried in turn; the pinned checksum still decides what is accepted.
-    $failure = $null
-    foreach ($source in $Sources) {
-        try {
-            Get-CrudeDownload $source $Destination $MaximumBytes $TimeoutSeconds
-            return
-        } catch {
-            $failure = $_.Exception.Message
-            if ([IO.File]::Exists($Destination)) { [IO.File]::Delete($Destination) }
-        }
-    }
-    throw $failure
-}
-
-function Get-CrudeTarPath {
-    # The Windows tar (bsdtar) unpacks .xz and reads an absolute path as the
-    # archive. A GNU tar from a Git or MSYS installation can be first on PATH,
-    # and it reads "C:\..." as a remote host, so the Windows copy is chosen by
-    # its own path whenever it exists.
-    if ($env:SystemRoot) {
-        $system = Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe'
-        if ([IO.File]::Exists($system)) { return $system }
-    }
-    $command = Get-Command 'tar.exe' -ErrorAction SilentlyContinue
-    if ($command -and $command.Source) { return $command.Source }
-    return $null
-}
-
-function Expand-CrudeFontArchive([string] $Tar, [string] $Archive, [string] $Folder) {
-    # Unpacks the font archive and reports whether faces arrived. A tar that
-    # refuses the archive leaves no face, which is a warning, never an install
-    # failure.
-    try {
-        & $Tar -xJf $Archive -C $Folder
-        if ($LASTEXITCODE -ne 0) { return $false }
-    } catch { return $false }
-    return [bool] @(Get-ChildItem -LiteralPath $Folder -Filter '*.ttf' -File -ErrorAction SilentlyContinue).Count
-}
-
 function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
-    # The font is only added when the machine cannot draw the family already.
-    # That is the case this window must never change: a font the user installed
-    # stays exactly as it is, byte for byte, with its own registration.
     if (Test-CrudeFontAvailable $Paths) { return }
-    $fonts = Join-Path $Paths.Root 'fonts'
-    $stamp = Join-Path $fonts '.crude-font'
-    $present = @(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File -ErrorAction SilentlyContinue)
-    if ($present.Count -and [IO.File]::Exists($stamp) -and ([IO.File]::ReadAllText($stamp)).Trim() -ceq $Paths.FontVersion) {
-        try { [void] (Add-CrudeFontRegistration $fonts) } catch {
-            Write-CrudeStep (Mark 'warn') 'Font' "the font for the window could not be registered: $($_.Exception.Message)"
-        }
-        return
-    }
-    if (-not (Get-CrudeTarPath)) {
-        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
-        return
-    }
-    $archive = Join-Path $WorkDir 'fonts.tar.xz'
+    # Older Windows tar builds cannot read XZ. Verify the individual files
+    # before writing to the user's font folder. Never replace an existing face.
+    $stage = Join-Path $WorkDir 'window-fonts'
+    $fonts = $Paths.UserFontFolder
+    $moved = @{}
     try {
-        Get-CrudeWindowDownload @($Paths.FontApi, "https://github.com/ryanoasis/nerd-fonts/releases/download/$($Paths.FontVersion)/JetBrainsMono.tar.xz") $archive 33554432 300
+        [void] [IO.Directory]::CreateDirectory($stage)
+        foreach ($name in $Paths.FontSHA256.Keys) {
+            $file = Join-Path $stage $name
+            Get-CrudeDownload "$($Paths.FontSource)/$name" $file 4194304
+            if ((Get-CrudeHash $file) -cne $Paths.FontSHA256[$name]) { throw 'Nerd Font checksum mismatch.' }
+        }
+        [void] [IO.Directory]::CreateDirectory($fonts)
+        foreach ($name in $Paths.FontSHA256.Keys) {
+            $targetName = if ($name -ceq 'OFL.txt') { 'JetBrainsMonoNerdFont-OFL.txt' } else { $name }
+            $target = Join-Path $fonts $targetName
+            if ([IO.File]::Exists($target) -and (Get-CrudeHash $target) -ceq $Paths.FontSHA256[$name]) { continue }
+            [IO.File]::Move((Join-Path $stage $name), $target)
+            $moved[$target] = $Paths.FontSHA256[$name]
+        }
     } catch {
-        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
+        foreach ($target in $moved.Keys) {
+            try { if ((Get-CrudeHash $target) -ceq $moved[$target]) { [IO.File]::Delete($target) } } catch { }
+        }
+        Write-CrudeStep (Mark 'warn') 'Font' 'Nerd Font not installed. Run the installer again to add it.'
         return
     }
-    if ((Get-CrudeHash $archive) -cne $Paths.FontSha256) {
-        Write-CrudeStep (Mark 'warn') 'Font' 'the downloaded font does not match its pinned checksum'
-        return
+    $faces = @($Paths.FontSHA256.Keys | Where-Object { $_ -like '*.ttf' })
+    try { [void] (Add-CrudeFontRegistration $fonts $faces) } catch {
+        Write-CrudeStep (Mark 'warn') 'Font' 'Could not register the Nerd Font. Icons may look wrong.'
     }
-    [void] [IO.Directory]::CreateDirectory($fonts)
-    if (-not (Expand-CrudeFontArchive (Get-CrudeTarPath) $archive $fonts)) {
-        # A machine without a working tar keeps the terminal's own font; the
-        # installed program stays complete.
-        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
-        return
-    }
-    try { [void] (Add-CrudeFontRegistration $fonts) } catch {
-        Write-CrudeStep (Mark 'warn') 'Font' "the font for the window could not be registered: $($_.Exception.Message)"
-    }
-    [IO.File]::WriteAllText($stamp, $Paths.FontVersion)
 }
 
 function Remove-CrudeFontRegistration([string] $Folder) {
@@ -1030,7 +988,7 @@ function Install-CrudeRtlFont($Paths, [string] $Payload) {
     $source = Join-Path $Payload 'fonts'
     $faces = @(Get-ChildItem -LiteralPath $source -Filter 'CrudeRTL-*.ttf' -File -ErrorAction SilentlyContinue)
     if (-not $faces.Count) { return $false }
-    $fonts = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+    $fonts = $Paths.UserFontFolder
     [void] [IO.Directory]::CreateDirectory($fonts)
     $license = Join-Path $source 'LICENSE-DejaVu'
     if ([IO.File]::Exists($license)) {
