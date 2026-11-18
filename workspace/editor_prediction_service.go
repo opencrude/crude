@@ -228,7 +228,7 @@ func (p *editorPredictionService) Release(owner document.Owner, viewID string, s
 	if view.sequence > sequence {
 		return
 	}
-	view.sequence, view.expires, view.retired = sequence, time.Now().Add(5*time.Minute), true
+	view.sequence, view.expires, view.retired, view.chain = sequence, time.Now().Add(5*time.Minute), true, nil
 	if view.job != nil {
 		view.job.cancel()
 	}
@@ -494,6 +494,10 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 	// A chained change from the last answer needs no request.
 	if hunk, kind, ok := p.chained(owner, request, text); ok {
 		result.Kind, result.Start, result.End, result.Text, result.CacheHit = kind, hunk.start, hunk.end, hunk.text, true
+		result.Sources = []string{types.PredictionSourceChain}
+		return p.publish(jobCtx, owner, request, job, policy, result, began, true)
+	}
+	if request.Follow {
 		return p.publish(jobCtx, owner, request, job, policy, result, began, true)
 	}
 
@@ -524,7 +528,8 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 		return p.publish(jobCtx, owner, request, job, policy, result, began, false)
 	}
 	result.ContextDigest = selected.Digest
-	result.Stages.ContextMS = time.Since(contextBegan).Milliseconds()
+	result.Sources = contextSources(selected, policy.completer.Format == types.SuggestionFormatChat)
+	result.Stages.ContextUS = time.Since(contextBegan).Microseconds()
 
 	var hunks []suggestionHunk
 	p.mu.Lock()
@@ -549,12 +554,13 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 
 	checkBegan := time.Now()
 	var kept []suggestionHunk
+	now := time.Now()
 	for _, h := range orderHunks(hunks, request.Caret) {
-		if checkSuggestion(text, request.Caret, h, own) {
+		if checkSuggestion(text, request.Caret, h, own) && !agentBusy(text, h, rel, edits, now) {
 			kept = append(kept, h)
 		}
 	}
-	result.Stages.CheckMS = time.Since(checkBegan).Milliseconds()
+	result.Stages.CheckUS = time.Since(checkBegan).Microseconds()
 	if len(kept) > 0 {
 		first := kept[0]
 		result.Kind = classifySuggestion(text, request.Caret, first)
@@ -562,6 +568,29 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 		p.setChain(owner, request, text, first, kept[1:])
 	}
 	return p.publish(jobCtx, owner, request, job, policy, result, began, result.CacheHit)
+}
+
+// contextSources names the optional sources that a built context carries.
+// contextSources names the optional context that the request sends. A
+// fill-in-the-middle request sends only the code around the caret.
+func contextSources(c predictioncontext.Context, chat bool) []string {
+	if !chat {
+		return nil
+	}
+	var out []string
+	if len(c.Edits) > 0 {
+		out = append(out, types.PredictionSourceEdits)
+	}
+	if len(c.Diagnostics) > 0 {
+		out = append(out, types.PredictionSourceDiagnostics)
+	}
+	if len(c.Completions) > 0 {
+		out = append(out, types.PredictionSourceCompletions)
+	}
+	if len(c.Snippets) > 0 {
+		out = append(out, types.PredictionSourceSnippets)
+	}
+	return out
 }
 
 func allowedEdits(root string, edits []types.RecentEdit) []types.RecentEdit {
@@ -667,7 +696,7 @@ func (p *editorPredictionService) ask(ctx context.Context, owner document.Owner,
 		return nil, err
 	}
 	started = true
-	stages.AccountMS = time.Since(accountBegan).Milliseconds()
+	stages.AccountUS = time.Since(accountBegan).Microseconds()
 	p.publishMeter(meter, job.generation)
 
 	modelBegan := time.Now()
@@ -676,15 +705,15 @@ func (p *editorPredictionService) ask(ctx context.Context, owner document.Owner,
 	complete := false
 	if chat {
 		answer, usage, complete, err = streamRewrite(ctx, policy.completer, system, input, func() {
-			stages.FirstByteMS = time.Since(modelBegan).Milliseconds()
+			stages.FirstByteUS = time.Since(modelBegan).Microseconds()
 		})
 	} else {
 		var fim provider.FIMOnceResult
 		fim, err = policy.completer.CompleteFIM(ctx, selected.Prefix, selected.Suffix, types.EditorPredictionMaxBytes)
 		answer, usage, complete = fim.Text, fim.Usage, fim.UsageComplete
-		stages.FirstByteMS = time.Since(modelBegan).Milliseconds()
+		stages.FirstByteUS = time.Since(modelBegan).Microseconds()
 	}
-	stages.ModelMS = time.Since(modelBegan).Milliseconds()
+	stages.ModelUS = time.Since(modelBegan).Microseconds()
 	cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	settleErr := p.budget.Settle(cleanup, ticket, predictionObservedUsage(usage, complete))
 	if settleErr == nil {
@@ -788,19 +817,21 @@ func (p *editorPredictionService) publish(ctx context.Context, owner document.Ow
 	if err := p.fence(ctx, owner, request, job, policy); err != nil {
 		return types.EditorPredictionResult{}, err
 	}
-	result.Stages.TotalMS = time.Since(began).Milliseconds()
+	total := time.Since(began)
+	result.Stages.TotalUS = total.Microseconds()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	view := p.views[predictionViewKey{owner, request.ViewID}]
 	if p.closed || p.generation != job.generation || view == nil || view.sequence != request.Sequence || view.job != job || view.retired {
 		return types.EditorPredictionResult{}, errPredictionSequence
 	}
+	observeSuggestionStages(result.Stages, total, reused)
 	p.status.Requests++
 	if !result.Empty() {
 		p.status.Shown++
 	}
 	if !reused {
-		ms := max(int64(1), result.Stages.TotalMS)
+		ms := max(int64(1), total.Milliseconds())
 		if p.status.MeasuredLatencyMS == 0 {
 			p.status.MeasuredLatencyMS = ms
 		} else {

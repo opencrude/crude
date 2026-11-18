@@ -103,12 +103,13 @@ Rules:
 - Segments fall back to the stepper automatically when they do not fit.
 - Workspace Trust uses segments for **Ask when the folder opens**,
   **Restricted**, and **Trusted**; application scope shows **Workspace only**.
-- Workspace prediction consent uses these same segments, exact numeric input,
-  protocol dropdown and endpoint text field on Code Intelligence. Application
-  scope replaces all four with read-only **Workspace only** rows; no disabled
-  fake picker, inherited On value or synthesized spending default is shown.
-  Scope changes replace the four mounted row states and their collection
-  baselines together, preserving live sibling validation.
+- Workspace prediction consent uses these same segments and exact numeric
+  input on Code Intelligence (mode and hourly limit); the connection is on
+  **Agents → Aeron → Suggestions**. Application scope replaces both rows with
+  read-only **Workspace only** rows; no disabled fake picker, inherited On
+  value or synthesized spending default is shown. Scope changes replace both
+  mounted row states and their collection baselines together, preserving live
+  sibling validation.
 - Form focus prepared before mounting is revealed once against its first actual
   viewport. Later layouts preserve the reader's scroll; validation-driven height
   changes reveal the current input using the current field geometry.

@@ -286,7 +286,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 		mode = "Custom selection"
 	}
 	if c.roleIndex == catAeron {
-		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions) {
+		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions, c.base.AccountID) {
 			c.draft.AddField(field)
 		}
 	}
@@ -307,6 +307,9 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 	c.rebuildBar()
 	c.owner.focusID(c.form.ID())
 	c.form.FocusFirst()
+	if c.roleIndex == catAeron {
+		return tea.Batch(c.model.prefetchModels(catAgents), c.model.syncSuggestionAccount())
+	}
 	return c.model.prefetchModels(catAgents)
 }
 
@@ -733,8 +736,8 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		c.owner.focusID(c.form.ID())
 		c.form.FocusFirst()
 	case "form.changed":
-		if id, _ := action.Payload.(string); id == fieldConnection && c.draft != nil {
-			result.Cmd = c.model.prefetchModels(catAgents)
+		if id, _ := action.Payload.(string); (id == fieldConnection || id == fieldSuggestAccount) && c.draft != nil {
+			result.Cmd = tea.Batch(c.model.prefetchModels(catAgents), c.model.syncSuggestionAccount())
 		}
 	case "agents.add":
 		result.Cmd = c.begin("", false)
@@ -807,7 +810,11 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		}
 	case "form.select.open":
 		id, _ := action.Payload.(string)
-		result.Cmd = c.model.OpenSelect(id)
+		if id == fieldSuggestModel {
+			result.Cmd = c.model.syncSuggestionAccount()
+		} else {
+			result.Cmd = c.model.OpenSelect(id)
+		}
 	case "form.exit.forward":
 		c.owner.focusID(c.bar.ID())
 	case "form.exit.backward":

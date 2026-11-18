@@ -15,8 +15,14 @@ protocol-check:
 libghostty:
 	./scripts/bootstrap_libghostty.sh
 
+# Windows builds a .lib with the PowerShell bootstrap; other systems a .a.
+ifeq ($(OS),Windows_NT)
+ensure-libghostty:
+	@if [ ! -f third_party/libghostty-vt/lib/ghostty-vt-static.lib ]; then powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap_libghostty.ps1; fi
+else
 ensure-libghostty:
 	@if [ ! -f third_party/libghostty-vt/lib/libghostty-vt.a ]; then ./scripts/bootstrap_libghostty.sh; fi
+endif
 
 build: ensure-libghostty protocol-check
 	. scripts/libghostty_env.sh && go build ./... && go build -o crude .

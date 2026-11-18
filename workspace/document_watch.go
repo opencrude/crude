@@ -274,6 +274,9 @@ func (s *DocumentService) reconcileLocked(id string) error {
 		previousRevision := original.snapshot.Revision
 		*original = *d
 		if d.snapshot.Revision != previousRevision {
+			// The staged merge was refused by noteRecentEditsLocked; record
+			// its persisted operations now, as accepted commands do.
+			s.noteAcceptedCommandLocked(original, previousRevision)
 			s.observeAnalysisLocked(original)
 		}
 	}

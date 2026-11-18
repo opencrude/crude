@@ -21,7 +21,9 @@ var ErrDocumentPending = errors.New("document command pending; retain edits and 
 // Pending mutations use sequential byte coordinates; wire commands use one
 // immutable pre-change coordinate system.
 type DocumentProjection struct {
-	snapshot         document.Snapshot
+	snapshot document.Snapshot
+	// localEdits records that this shell sent an edit since it opened.
+	localEdits       bool
 	pending          []document.Edit
 	pendingGroups    []string
 	editGroup        string
@@ -329,6 +331,7 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 		}
 		p.noteEditGroup()
 		p.pending = append(p.pending, edit)
+		p.localEdits = true
 		// Recovered evidence may lack grouping for its original pending edits.
 		for len(p.pendingGroups) < len(p.pending)-1 {
 			p.pendingGroups = append(p.pendingGroups, "")

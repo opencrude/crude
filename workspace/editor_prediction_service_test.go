@@ -157,7 +157,7 @@ func TestSuggestionInsertsMultipleLinesAndReusesTheAnswer(t *testing.T) {
 	if first.Kind != types.PredictionInsert || first.Start != caret || first.End != caret || first.Text != want {
 		t.Fatalf("result = %+v", first)
 	}
-	if first.Stages.ModelMS < 0 || first.Stages.TotalMS < first.Stages.ModelMS || first.CacheHit {
+	if first.Stages.ModelUS <= 0 || first.Stages.TotalUS < first.Stages.ModelUS || first.CacheHit {
 		t.Fatalf("stages = %+v", first.Stages)
 	}
 	again, err := f.request(t, caret)

@@ -462,10 +462,20 @@ func (s *WorkspaceSettingsSurface) ShowMainAgent() tea.Cmd {
 
 // ShowAgent opens an exact existing role or named-profile editor.
 func (s *WorkspaceSettingsSurface) ShowAgent(id string) tea.Cmd {
+	return s.ShowAgentPage(id, "")
+}
+
+// ShowAgentPage opens one agent on one of its tabs, for example "suggestions".
+// An empty page keeps the first tab.
+func (s *WorkspaceSettingsSurface) ShowAgentPage(id, page string) tea.Cmd {
 	s.model.SetScope(ttypes.SettingsScopeApplication)
 	s.model.SelectCategory(catAgents)
 	s.syncModel()
-	return s.agents.begin(id, false)
+	cmd := s.agents.begin(id, false)
+	if page != "" && s.agents.draft != nil {
+		s.agents.setPage(page)
+	}
+	return cmd
 }
 
 // ShowNetworkConnection reconciles the retained form and category list together;

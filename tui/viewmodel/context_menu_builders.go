@@ -51,7 +51,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if problem := askProblem(ed.DiagnosticsAt(diagnosticPosition.Line, diagnosticPosition.Col)); problem != "" {
 		crude.Items = append(crude.Items, ui.ContextMenuItem{Label: "Fix this problem", Action: func() { m.runAskCrude(askFix, false, problem) }})
 	}
-	if ed.HasLocalEdits() {
+	if ed.Primary().HasLocalEdits() { // views of one file share its edits
 		crude.Items = append(crude.Items, ui.ContextMenuItem{Label: "Finish this change", Action: m.runFinishChange})
 	}
 	st.Sections = append(st.Sections, crude)

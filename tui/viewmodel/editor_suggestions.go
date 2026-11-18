@@ -36,11 +36,23 @@ type suggestionState struct {
 	sequence uint64
 	intent   *suggestionIntent
 	request  *suggestionRequest
+	// shown is Aeron's change on screen, from the answer to its outcome.
+	shown *suggestionShown
+	// held is an answer that waits until the completion list closes.
+	held *suggestionResultMsg
 	// jump is a change at the next place, shown after the first Tab.
 	jump *suggestionJump
-	// dismissed remembers the change the user dismissed with Esc, so the same
-	// change does not come back until the text near the caret changes.
+	// dismissed remembers the change the user dismissed with Esc, in any
+	// form, so it does not come back until the code near it changes.
 	dismissed string
+	// live reports that the core may hold a running request or follow-up
+	// changes for this shell's view; release retires them.
+	live bool
+	// consent is the open question before the first turn-on in a workspace.
+	consent *suggestionConsent
+	// statusStale asks for the core's status (readiness and meter) at the
+	// next Update, after the mode, connection or workspace changed.
+	statusStale bool
 	// pause adapts to how many automatic requests a newer key replaced.
 	pause              time.Duration
 	replaced, answered int
@@ -51,9 +63,11 @@ type suggestionIntent struct {
 	editor     *editor.Editor
 	revision   uint64
 	generation uint64
+	began      time.Time
 	due        time.Time
 	deadline   time.Time
 	automatic  bool
+	follow     bool
 	cancel     context.CancelFunc
 }
 
@@ -65,8 +79,18 @@ type suggestionRequest struct {
 	generation uint64
 	sequence   uint64
 	caret      int
+	began      time.Time
 	automatic  bool
+	follow     bool
 	cancel     context.CancelFunc
+}
+
+// suggestionShown is the change on screen and what it was made from.
+type suggestionShown struct {
+	editor  *editor.Editor
+	sources []string
+	at      time.Time
+	partial bool
 }
 
 type suggestionJump struct {
@@ -91,13 +115,28 @@ type suggestionStatusMsg struct {
 	err       error
 }
 
+// suggestionMode is the shell's suggestion mode. Anything other than When I
+// ask or As I type, including a shell that has not read its settings yet, is
+// Off.
+func (m *App) suggestionMode() types.EditorPredictionMode {
+	if m.suggest.mode == types.PredictionAsk || m.suggest.mode == types.PredictionType {
+		return m.suggest.mode
+	}
+	return types.PredictionOff
+}
+
 // applySuggestionSettings follows the effective workspace choice.
 func (m *App) applySuggestionSettings(settings types.WorkspacePredictionSettings) {
-	if m.suggest.mode != settings.Mode {
+	if settings.Mode != types.PredictionAsk && settings.Mode != types.PredictionType {
+		settings.Mode = types.PredictionOff // an unset choice is Off
+	}
+	if m.suggestionMode() != settings.Mode {
 		m.cancelSuggestion()
 		m.suggest.problem = ""
 	}
 	m.suggest.mode, m.suggest.limit = settings.Mode, settings.HourlyTokenLimit
+	// The connection or consent may have changed with the settings.
+	m.suggest.statusStale = true
 	if m.suggest.pause == 0 {
 		m.suggest.pause = suggestionStartPause
 	}
@@ -109,20 +148,37 @@ func (m *App) suggestionPort() (shellport.Suggestions, bool) {
 }
 
 // cancelSuggestion drops the intent, the running request and Aeron's shown
-// change. It never touches another producer's inline text.
+// change, and tells the core to retire this view. It never touches another
+// producer's inline text.
 func (m *App) cancelSuggestion() {
-	if intent := m.suggest.intent; intent != nil {
-		intent.cancel()
-		m.suggest.intent = nil
-	}
+	m.cancelSuggestionIntent()
 	if request := m.suggest.request; request != nil {
 		request.cancel()
 		m.suggest.request = nil
 	}
-	m.suggest.jump = nil
+	m.suggest.jump, m.suggest.held, m.suggest.shown = nil, nil, nil
 	if m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.GhostOwner() == suggestionGhostOwner {
 		m.EditorState.Editor.DismissGhostText()
 	}
+	m.runDetachedAsyncCmd(m.releaseSuggestion())
+}
+
+// releaseSuggestion retires the view's newest sequence in the core: a
+// running request stops and remaining follow-up changes are dropped.
+func (m *App) releaseSuggestion() tea.Cmd {
+	port, connected := m.suggestionPort()
+	if !m.suggest.live || !connected {
+		return nil
+	}
+	m.suggest.live = false
+	sequence := m.suggest.sequence
+	base, _ := m.lspRequestContext()
+	return m.clientIOCommand(base, func(parent context.Context) tea.Msg {
+		ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+		defer cancel()
+		_ = port.ReleaseEditorSuggestion(ctx, suggestionViewID, sequence)
+		return nil
+	})
 }
 
 // onSuggestionTyping schedules an automatic request after a short pause.
@@ -135,22 +191,54 @@ func (m *App) onSuggestionTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 		request.cancel()
 		m.suggest.request = nil
 	}
-	m.suggest.jump = nil
-	if m.suggest.mode != types.PredictionType || !editorTypingKey(key) && key.Code != tea.KeyEnter {
+	m.suggest.jump, m.suggest.held = nil, nil
+	if m.suggestionMode() != types.PredictionType || !editorTypingKey(key) && key.Code != tea.KeyEnter {
 		return
 	}
-	m.scheduleSuggestion(ed, m.suggest.pause, true)
+	m.scheduleSuggestion(ed, m.suggest.pause, true, false)
 }
 
-func (m *App) scheduleSuggestion(ed *editor.Editor, pause time.Duration, automatic bool) {
-	if intent := m.suggest.intent; intent != nil {
-		intent.cancel()
+// onSuggestionOutcome follows what the user did with Aeron's shown change.
+// After the whole change is taken, the next change of the same answer shows
+// at once when the core holds one; As I type also asks for a fresh one.
+func (m *App) onSuggestionOutcome(ed *editor.Editor, owner string, outcome editor.GhostOutcome) {
+	if owner != suggestionGhostOwner {
+		return
 	}
+	shown := m.suggest.shown
+	switch outcome {
+	case editor.GhostJumped:
+		return // the change at the next place shows there; it is the same suggestion
+	case editor.GhostAcceptedPart:
+		if shown != nil && !shown.partial {
+			shown.partial = true
+			recordSuggestionOutcome(suggestionAcceptedPart, shown)
+		}
+		return
+	case editor.GhostAccepted:
+		if shown != nil && !shown.partial {
+			recordSuggestionOutcome(suggestionAccepted, shown)
+		}
+	case editor.GhostTypedThrough:
+		if shown != nil && !shown.partial {
+			recordSuggestionOutcome(suggestionTypedThrough, shown)
+		}
+	}
+	m.suggest.shown, m.suggest.jump = nil, nil
+	if m.suggestionMode() == types.PredictionOff {
+		return
+	}
+	m.scheduleSuggestion(ed, 0, m.suggestionMode() == types.PredictionType, m.suggestionMode() != types.PredictionType)
+}
+
+func (m *App) scheduleSuggestion(ed *editor.Editor, pause time.Duration, automatic, follow bool) {
+	m.cancelSuggestionIntent()
 	base, generation := m.lspRequestContext()
 	ctx, cancel := context.WithCancel(base)
-	due := time.Now().Add(pause)
+	now := time.Now()
+	due := now.Add(pause)
 	m.suggest.intent = &suggestionIntent{editor: ed, revision: ed.Revision(), generation: generation,
-		due: due, deadline: due.Add(5 * time.Second), automatic: automatic, cancel: cancel}
+		began: now, due: due, deadline: due.Add(5 * time.Second), automatic: automatic, follow: follow, cancel: cancel}
 	m.editorCommands = append(m.editorCommands, func() tea.Msg {
 		timer := time.NewTimer(max(time.Millisecond, time.Until(due)))
 		defer timer.Stop()
@@ -187,10 +275,49 @@ func (m *App) suggestionEditorOwnsInput(ed *editor.Editor) bool {
 		!m.sessionDeckCapturesInput() && !ed.HasMultipleCarets() && !ed.HasSelection()
 }
 
-// autoSuggestionCmd drains a due intent on ordinary Update messages, so a
-// wake that arrives before the edit's acknowledgement does not lose it.
-func (m *App) autoSuggestionCmd(now time.Time) tea.Cmd {
+// syncSuggestion reconciles Aeron's request, shown change and intent with the
+// active editor on every Update. A request or change that no longer belongs
+// to the focused editor, its revision or its caret is cancelled and the core
+// view is released. A due intent starts its request here, so a wake that
+// arrives before the edit's acknowledgement does not lose it.
+func (m *App) syncSuggestion(now time.Time) tea.Cmd {
+	var cmds []tea.Cmd
+	if m.suggest.statusStale && m.suggestionMode() != types.PredictionOff {
+		if cmd := m.refreshSuggestionStatus(); cmd != nil {
+			m.suggest.statusStale = false
+			cmds = append(cmds, cmd)
+		}
+	}
+	if request := m.suggest.request; request != nil {
+		ed := request.editor
+		start, end, ok := ed.SourceByteRange()
+		if request.workspace != m.ws || !m.acceptsLSPGeneration(request.generation) {
+			request.cancel()
+			m.suggest.request, m.suggest.live = nil, false
+		} else if !m.suggestionEditorOwnsInput(ed) || ed.Revision() != request.revision || !ok || start != end || start != request.caret {
+			request.cancel()
+			m.suggest.request = nil
+			cmds = append(cmds, m.releaseSuggestion())
+		}
+	}
 	m.showPendingJump()
+	if shown := m.suggest.shown; shown != nil && m.suggest.jump == nil && shown.editor.GhostOwner() != suggestionGhostOwner {
+		// The change left the screen without Tab, typing or Esc: the caret
+		// moved, the code changed under it or the editor lost the keys.
+		m.suggest.shown = nil
+		cmds = append(cmds, m.releaseSuggestion())
+	}
+	if held := m.suggest.held; held != nil && !m.completionHoldsSuggestion(held.owner.editor, held.result) {
+		m.suggest.held = nil
+		m.showSuggestion(held.owner, held.result)
+	}
+	if cmd := m.drainSuggestionIntent(now); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *App) drainSuggestionIntent(now time.Time) tea.Cmd {
 	intent := m.suggest.intent
 	if intent == nil {
 		return nil
@@ -207,9 +334,8 @@ func (m *App) autoSuggestionCmd(now time.Time) tea.Cmd {
 	if _, current := ed.CurrentInsightSource(); !current {
 		return nil // wait for the core to acknowledge the edit
 	}
-	automatic := intent.automatic
 	m.cancelSuggestionIntent()
-	return m.startSuggestion(ed, automatic)
+	return m.startSuggestion(ed, intent.automatic, intent.follow, intent.began)
 }
 
 func (m *App) cancelSuggestionIntent() {
@@ -223,7 +349,7 @@ func (m *App) cancelSuggestionIntent() {
 func (m *App) requestSuggestionNow() tea.Cmd {
 	ed := m.EditorState.Editor
 	switch {
-	case m.suggest.mode == types.PredictionOff:
+	case m.suggestionMode() == types.PredictionOff:
 		m.Feedback.NotifyInfo("Aeron suggestions are off. Turn them on from Aeron in the footer.")
 		return nil
 	case !m.suggestionEditorOwnsInput(ed):
@@ -232,13 +358,13 @@ func (m *App) requestSuggestionNow() tea.Cmd {
 	}
 	m.suggest.dismissed = ""
 	if _, current := ed.CurrentInsightSource(); !current {
-		m.scheduleSuggestion(ed, 0, false)
+		m.scheduleSuggestion(ed, 0, false, false)
 		return nil
 	}
-	return m.startSuggestion(ed, false)
+	return m.startSuggestion(ed, false, false, time.Now())
 }
 
-func (m *App) startSuggestion(ed *editor.Editor, automatic bool) tea.Cmd {
+func (m *App) startSuggestion(ed *editor.Editor, automatic, follow bool, began time.Time) tea.Cmd {
 	port, connected := m.suggestionPort()
 	if !connected || !m.suggestionEditorOwnsInput(ed) {
 		return nil
@@ -258,10 +384,11 @@ func (m *App) startSuggestion(ed *editor.Editor, automatic bool) tea.Cmd {
 	ctx, cancel := context.WithCancel(base)
 	m.suggest.sequence++
 	request := &suggestionRequest{workspace: m.ws, editor: ed, source: source, revision: ed.Revision(),
-		generation: generation, sequence: m.suggest.sequence, caret: start, automatic: automatic, cancel: cancel}
-	m.suggest.request = request
+		generation: generation, sequence: m.suggest.sequence, caret: start, began: began,
+		automatic: automatic, follow: follow, cancel: cancel}
+	m.suggest.request, m.suggest.live = request, true
 	wire := types.EditorPredictionRequest{Source: source, ViewID: suggestionViewID, Sequence: request.sequence,
-		Caret: start, Automatic: automatic, Completions: m.visibleCompletionLabels(ed)}
+		Caret: start, Automatic: automatic, Follow: follow, Completions: m.visibleCompletionLabels(ed)}
 	return m.clientIOCommand(ctx, func(parent context.Context) tea.Msg {
 		call, stop := context.WithTimeout(parent, 70*time.Second)
 		defer stop()
@@ -322,30 +449,73 @@ func (m *App) applySuggestionResult(msg suggestionResultMsg) {
 			return
 		}
 		m.suggest.problem = suggestionProblemText(msg.err)
-		if !request.automatic {
+		if !request.automatic && !request.follow {
 			m.Feedback.NotifyInfo(m.suggest.problem)
 		}
+		m.forceFrame()
 		return
 	}
 	m.suggest.problem = ""
 	m.suggest.status = msg.result.Status
-	ed := request.editor
-	start, end, ok := ed.SourceByteRange()
-	if !m.suggestionEditorOwnsInput(ed) || ed.Revision() != request.revision || !ok || start != end ||
-		start != request.caret || !ed.MatchesInsightSource(msg.result.Source) {
+	if !m.suggestionStillAsked(request, msg.result) {
 		return
 	}
-	result := msg.result
-	if result.Empty() {
-		if !request.automatic {
+	if msg.result.Empty() {
+		if !request.automatic && !request.follow {
 			m.Feedback.NotifyInfo("Aeron has no suggestion here.")
 		}
 		return
 	}
-	key := suggestionKey(ed, result)
-	if key == m.suggest.dismissed && request.automatic {
+	if (request.automatic || request.follow) && suggestionKey(request.editor, msg.result) == m.suggest.dismissed {
 		return
 	}
+	if m.completionHoldsSuggestion(request.editor, msg.result) {
+		m.suggest.held = &msg // shown when the completion list closes
+		return
+	}
+	m.showSuggestion(request, msg.result)
+}
+
+// suggestionStillAsked reports whether the editor is still where it was when
+// it asked: the same focus, revision, single caret and canonical source.
+func (m *App) suggestionStillAsked(request *suggestionRequest, result types.EditorPredictionResult) bool {
+	ed := request.editor
+	start, end, ok := ed.SourceByteRange()
+	return m.suggestionEditorOwnsInput(ed) && ed.Revision() == request.revision && ok && start == end &&
+		start == request.caret && ed.MatchesInsightSource(result.Source)
+}
+
+// completionHoldsSuggestion reports that the completion list owns Tab: a
+// row is chosen, its own inline text shows, or the suggestion does not
+// continue the single row. The suggestion then waits for the list to close.
+func (m *App) completionHoldsSuggestion(ed *editor.Editor, result types.EditorPredictionResult) bool {
+	if owner := ed.GhostOwner(); owner != "" && owner != suggestionGhostOwner {
+		return true
+	}
+	s := m.completion
+	if s == nil || s.editor != ed || s.set == nil || !s.shown || s.stale {
+		return false
+	}
+	if s.screen != nil && s.screen.SelectedID() != "" {
+		return true
+	}
+	rows := rankCompletions(s.set.Entries, s.typed)
+	if len(rows) != 1 || result.Kind != types.PredictionInsert {
+		return true
+	}
+	label := rows[0].Insertion.Label
+	if len(label) < len(s.typed) || !strings.EqualFold(label[:len(s.typed)], s.typed) {
+		return true
+	}
+	return !strings.HasPrefix(result.Text, label[len(s.typed):])
+}
+
+// showSuggestion paints one checked answer in its editor.
+func (m *App) showSuggestion(request *suggestionRequest, result types.EditorPredictionResult) {
+	if !m.suggestionStillAsked(request, result) {
+		return
+	}
+	ed := request.editor
 	var err error
 	switch result.Kind {
 	case types.PredictionInsert, types.PredictionEdit:
@@ -353,16 +523,20 @@ func (m *App) applySuggestionResult(msg suggestionResultMsg) {
 	case types.PredictionJump:
 		line, _, _ := ed.SourceLineBounds(result.Start)
 		_, _, lineEnd := ed.SourceLineBounds(request.caret)
-		line++
 		err = ed.SetSuggestion(suggestionGhostOwner, request.revision, editor.Suggestion{Start: lineEnd, End: lineEnd,
-			Marker: fmt.Sprintf("  ⇥ line %d", line), JumpTo: result.Start})
+			Marker: fmt.Sprintf("  ⇥ line %d", line+1), JumpTo: result.Start})
 		if err == nil {
 			m.suggest.jump = &suggestionJump{editor: ed, revision: request.revision, start: result.Start, end: result.End, text: result.Text}
 		}
+	default:
+		return
 	}
 	if err != nil {
 		m.suggest.jump = nil
+		return
 	}
+	m.suggest.shown = &suggestionShown{editor: ed, sources: result.Sources, at: time.Now()}
+	recordSuggestionShown(request.began, m.suggest.shown)
 	m.forceFrame()
 }
 
@@ -390,34 +564,37 @@ func (m *App) showPendingJump() {
 	m.forceFrame()
 }
 
-// suggestionKey identifies a change for dismissal memory: the change and the
-// text of its lines, so it comes back only after the code near it changes.
+// suggestionKey identifies a change for dismissal memory by the lines it
+// would produce, whatever form shows it (inline text, a nearby change or the
+// next place). It changes when the code near the change changes.
 func suggestionKey(ed *editor.Editor, result types.EditorPredictionResult) string {
 	_, start, _ := ed.SourceLineBounds(result.Start)
 	_, _, end := ed.SourceLineBounds(result.End)
-	return string(result.Kind) + "\x00" + result.Text + "\x00" + ed.SourceSlice(start, end)
+	return ed.SourceSlice(start, result.Start) + result.Text + ed.SourceSlice(result.End, end) + "\x00" + ed.SourceSlice(start, end)
 }
 
-// noteSuggestionDismissed remembers the change the user dismissed with Esc.
+// noteSuggestionDismissed remembers the change the user dismissed with Esc
+// and releases the core's follow-up changes of that answer.
 func (m *App) noteSuggestionDismissed(ed *editor.Editor) {
 	if ed == nil || ed.GhostOwner() != suggestionGhostOwner {
 		return
 	}
-	if s, ok := ed.GhostSuggestion(); ok {
-		kind := types.PredictionInsert
-		if s.Start != s.End {
-			kind = types.PredictionEdit
-		}
-		if s.Marker != "" {
-			jump := m.suggest.jump
-			if jump != nil {
-				m.suggest.dismissed = suggestionKey(ed, types.EditorPredictionResult{Kind: types.PredictionJump, Start: jump.start, End: jump.end, Text: jump.text})
-			}
-			m.suggest.jump = nil
-			return
-		}
-		m.suggest.dismissed = suggestionKey(ed, types.EditorPredictionResult{Kind: kind, Start: s.Start, End: s.End, Text: s.Text})
+	s, ok := ed.GhostSuggestion()
+	if !ok {
+		return
 	}
+	if s.Marker != "" {
+		if jump := m.suggest.jump; jump != nil {
+			m.suggest.dismissed = suggestionKey(ed, types.EditorPredictionResult{Start: jump.start, End: jump.end, Text: jump.text})
+		}
+	} else {
+		m.suggest.dismissed = suggestionKey(ed, types.EditorPredictionResult{Start: s.Start, End: s.End, Text: s.Text})
+	}
+	if shown := m.suggest.shown; shown != nil {
+		recordSuggestionOutcome(suggestionDismissed, shown)
+	}
+	m.suggest.shown, m.suggest.jump = nil, nil
+	m.runDetachedAsyncCmd(m.releaseSuggestion())
 }
 
 func suggestionProblemText(err error) string {
@@ -463,10 +640,7 @@ func (m *App) applySuggestionStatus(msg suggestionStatusMsg) {
 
 // suggestionFooterSegment is the quiet Aeron item. It shows one state.
 func (m *App) suggestionFooterSegment() (shellfooter.Segment, bool) {
-	mode := m.suggest.mode
-	if mode != types.PredictionAsk && mode != types.PredictionType {
-		mode = types.PredictionOff
-	}
+	mode := m.suggestionMode()
 	if m.EditorState == nil || m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
 		if mode == types.PredictionOff {
 			return shellfooter.Segment{}, false
@@ -487,7 +661,7 @@ func (m *App) suggestionFooterSegment() (shellfooter.Segment, bool) {
 // openSuggestionMenu is the Aeron item's menu: the mode, Suggest now, the
 // measured speed, the hourly meter and Settings.
 func (m *App) openSuggestionMenu() tea.Cmd {
-	mode := m.suggest.mode
+	mode := m.suggestionMode()
 	choice := func(label string, value types.EditorPredictionMode, detail string) ui.ContextMenuItem {
 		mark := "  "
 		if mode == value {
@@ -516,7 +690,7 @@ func (m *App) openSuggestionMenu() tea.Cmd {
 		{Label: "Suggest now", Detail: "Alt+\\", Disabled: mode == types.PredictionOff, Action: func() {
 			m.runDetachedAsyncCmd(m.requestSuggestionNow())
 		}},
-		{Label: "Suggestion settings", Action: func() { m.runDetachedAsyncCmd(m.openApplicationAgent("role/aeron")) }},
+		{Label: "Suggestion settings", Action: func() { m.runDetachedAsyncCmd(m.openApplicationAgentPage("role/aeron", "suggestions")) }},
 	}}
 	sections := []ui.ContextMenuSection{modes}
 	if len(info) > 0 {
@@ -546,7 +720,7 @@ func groupDigits(n int64) string {
 // chooseSuggestionMode turns suggestions on after asking once, the first time
 // in a workspace, where the code goes. Off needs no question.
 func (m *App) chooseSuggestionMode(mode types.EditorPredictionMode) {
-	if mode == m.suggest.mode {
+	if mode == m.suggestionMode() {
 		return
 	}
 	edits := []types.SettingEdit{{Path: []string{"prediction", "mode"}, After: []byte(`"` + string(mode) + `"`)}}
@@ -563,19 +737,62 @@ func (m *App) chooseSuggestionMode(mode types.EditorPredictionMode) {
 	if mode == types.PredictionType {
 		label = "Aeron suggests as you type."
 	}
-	save := func() {
-		m.runDetachedAsyncCmd(tea.Batch(m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, label, nil, 0), m.refreshSuggestionStatus()))
+	save := func() tea.Cmd {
+		return tea.Batch(m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, label, nil, 0), m.refreshSuggestionStatus())
 	}
-	if m.suggest.mode != types.PredictionOff {
-		save()
+	if m.suggestionMode() != types.PredictionOff {
+		m.runDetachedAsyncCmd(save())
 		return
 	}
-	destination := m.suggestionDestination()
-	question := &ui.ContextMenuState{Title: "Turn on Aeron suggestions in this workspace?", Sections: []ui.ContextMenuSection{{Items: []ui.ContextMenuItem{
-		{Label: "Cancel"},
-		{Label: "Turn on", Detail: "Aeron sends nearby code, recent edits and related code to " + destination + ".", Action: save},
-	}}}}
-	m.openContextMenuState(tea.Mouse{X: max(0, m.width/2-30), Y: max(m.shellTopRow(), m.height/2)}, question)
+	// The first time in a workspace, ask once where the code goes.
+	consent := &suggestionConsent{owner: m.ws, generation: m.workspaceSwitchGen.Load(), save: save}
+	m.suggest.consent = consent
+	m.openConfirmModal(suggestionConsentOverlay, m.suggestionConsentFrame(), m.activateSuggestionConsent, func() {
+		if m.suggest.consent == consent {
+			m.suggest.consent = nil
+		}
+	})
+}
+
+const suggestionConsentOverlay ui.OverlayID = "suggestion-consent"
+
+// suggestionConsent is the open "Turn on suggestions" question.
+type suggestionConsent struct {
+	owner      shellport.Workspace
+	generation uint64
+	save       func() tea.Cmd
+}
+
+func (m *App) suggestionConsentFrame() *ui.ComponentWidget {
+	return ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
+		Title: "Aeron suggestions", Question: "Turn on suggestions in this workspace?",
+		Detail:   "Aeron sends nearby code, recent edits and related code to " + m.suggestionDestination() + ". Suggestions count toward the hourly token limit.",
+		Severity: ui.ConfirmPromptQuestion, Width: min(70, max(36, m.width-4)), FocusedIndex: 0, DetailMaxLines: 5,
+		Buttons: []ui.ConfirmButtonSpec{
+			{Label: "Cancel", ActionID: ui.ConfirmActionNo},
+			{Label: "Turn on", ActionID: ui.ConfirmActionYes},
+		},
+	})
+}
+
+func (m *App) activateSuggestionConsent(choice int) tea.Cmd {
+	consent := m.suggest.consent
+	if consent == nil || choice < 0 || choice > 1 {
+		return nil
+	}
+	m.overlayHost.Close(suggestionConsentOverlay)
+	if choice != 1 || consent.owner != m.ws || consent.generation != m.workspaceSwitchGen.Load() {
+		return nil
+	}
+	return consent.save()
+}
+
+// suggestionConsentInput routes keys to the open consent question.
+func (m *App) suggestionConsentInput(key tea.KeyPressMsg) (bool, tea.Cmd) {
+	if m.suggest.consent == nil {
+		return false, nil
+	}
+	return m.confirmModalInput(suggestionConsentOverlay, key, false, m.activateSuggestionConsent)
 }
 
 // suggestionDestination names the account that receives the code.

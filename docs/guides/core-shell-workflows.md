@@ -45,7 +45,10 @@ opening factories, pending/queued turns, compaction, commands, terminals that ru
 a program or document/controller leases refuse with named actionable guidance.
 An explicit stop closes a shell that waits at its prompt, as an IDE does on exit;
 a terminal started with its own command, or a shell with a foreground or
-background job, is named as running work (`Terminal 2 is running vim`). Only the automatic idle
+background job, is named as running work (`Terminal 2 is running vim`). On
+Windows a job is a child process that started after its shell: Windows reuses
+process IDs, so an older process whose dead parent had the shell's ID is not
+the shell's work. Only the automatic idle
 exit keeps the core alive for any open terminal, so shells survive closing
 Crude. An explicit stop waits up to three seconds for operations that are already
 finishing, such as a shell's detach cleanup or a session's collaboration check,

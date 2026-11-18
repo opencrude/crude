@@ -35,6 +35,7 @@ const (
 	GroupLSP     = "Language servers"
 	GroupFiles   = "Files & search"
 	GroupGit     = "Git"
+	GroupSuggest = "Aeron suggestions"
 	GroupStorage = "Storage"
 	GroupRuntime = "Go runtime"
 )

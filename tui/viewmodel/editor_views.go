@@ -122,6 +122,7 @@ func (m *App) showDocument(path string, group window.GroupID, activate bool) *Ed
 		ed = source.NewLinkedView()
 		ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed.Primary(), fp, text) })
 		ed.SetOnTyping(func(key tea.KeyPressMsg) { m.onEditorTyping(ed, key) })
+		ed.SetOnGhostOutcome(func(owner string, outcome editor.GhostOutcome) { m.onSuggestionOutcome(ed, owner, outcome) })
 	}
 	tab := m.Win.AddTab(group, window.Resource{Kind: window.ResourceDocument, ID: path}, m.editorTabTitle(path), activate)
 	if tab == nil {

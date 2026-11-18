@@ -18,6 +18,48 @@ amortizes; cold/width-change workloads remain separate gates.
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Aeron suggestions (2026-11-18)
+
+The Performance dashboard lists these **Aeron suggestions** series on
+the **Services** tab.
+The core records request stages in microseconds. Thresholds below are in
+milliseconds. When a series has no explicit stall threshold, it uses Critical.
+Reused answers, including cached answers and follow-up changes, record only
+the core total.
+
+| Owner | Series | Measures | Warn | Critical | Stall |
+|---|---|---|---:|---:|---:|
+| Core | `suggest.context` | Collect and select the request context. | 5 | 20 | 20 |
+| Core | `suggest.ledger` | Reserve tokens and start the request's charge against the hourly limit. | 5 | 50 | 50 |
+| Core | `suggest.first_byte` | Start of the provider call to the first text in chat, or the return of a fill-in-the-middle response. | 300 | 1,000 | 5,000 |
+| Core | `suggest.model` | Start of the provider call to the end of the answer. | 500 | 2,000 | 10,000 |
+| Core | `suggest.check` | Check and select changes before returning them to the shell. | 2 | 10 | 10 |
+| Core | `suggest.total` | Request to core answer, including reused answers. | 300 | 1,000 | 10,000 |
+| Core | `suggest.index` | Gauge: estimated bytes for all live workspace text indexes. | — | — | — |
+| Shell | `suggest.visible` | Key or request to the shell showing the change. Includes any wait for the completion list. | 300 | 1,000 | 10,000 |
+| Shell | `suggest.shown` | Count of shown changes. | — | — | — |
+| Shell | `suggest.accepted` | Count of changes taken in whole or in part with an acceptance key. | — | — | — |
+| Shell | `suggest.typed` | Count of changes typed in full without partial acceptance. | — | — | — |
+| Shell | `suggest.dismissed` | Count of changes dismissed with Esc. | — | — | — |
+| Shell | `suggest.outcomes` | Table: count and time from showing a change to each outcome, grouped by outcome and context source. | — | — | — |
+
+The table counts the same change under each listed source. The result's
+`Sources` lists the optional context sent with a chat request: recent edits,
+problems, completion list or related code. Fill-in-the-middle sends no optional
+context. A reused next change lists follow-up. The shell also records code at
+the caret for every change. These rows do not attribute an outcome to any one
+source.
+
+`suggest.visible` ends when the shell installs the change for the next frame.
+It does not measure terminal paint or flush. The 300 ms median time to a visible
+suggestion is a target, not a gate. It still needs repeated measurement on a
+real connection.
+
+`BenchmarkRelated` measured lookup in an index with 2,000 files and 120 lines
+per file. On Windows (i7-9850H, Go 1.27.4, `-benchtime=2s -count=3`), the three
+runs took 117,610 / 125,997 / 147,779 ns/op. This is lookup time after the
+initial build, not suggestion latency.
+
 ## Chat file-link interaction (2026-11-17)
 
 The existing Markdown parse recognizes source references without filesystem

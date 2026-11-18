@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"crude/insight/predictioncontext"
@@ -197,6 +198,27 @@ func checkSuggestion(text []byte, caret int, h suggestionHunk, own []types.Recen
 		}
 	}
 	return true
+}
+
+// suggestionAgentWindow is how long lines that an agent or the disk changed
+// stay out of suggestions: Aeron does not suggest where an agent is editing.
+const suggestionAgentWindow = 10 * time.Second
+
+// agentBusy reports whether h touches lines of rel that another author
+// changed within the window. Lines are 1-based in the text after each edit.
+func agentBusy(text []byte, h suggestionHunk, rel string, edits []types.RecentEdit, now time.Time) bool {
+	first := 1 + bytes.Count(text[:h.start], []byte{'\n'})
+	last := first + bytes.Count(text[h.start:h.end], []byte{'\n'})
+	for _, e := range edits {
+		if e.Author == types.RecentEditYou || e.Path != rel || now.Sub(time.Unix(e.Unix, 0)) > suggestionAgentWindow {
+			continue
+		}
+		end := e.Line + strings.Count(e.Inserted, "\n")
+		if first <= end+1 && last >= e.Line-1 {
+			return true
+		}
+	}
+	return false
 }
 
 // shiftHunks moves later hunks across an applied one.

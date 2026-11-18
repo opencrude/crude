@@ -875,6 +875,7 @@ func (m *App) stopAsyncIO() {
 			seen[ed] = true
 			ed.SetOnContentChanged(nil)
 			ed.SetOnTyping(nil)
+			ed.SetOnGhostOutcome(nil)
 			ed.Close()
 		}
 		for _, view := range m.EditorState.Views {

@@ -4,12 +4,15 @@ package types
 // authority. The core reads text, facts and edit history from their owners.
 // Completions lists the labels of a visible completion list at the caret,
 // the chosen row first; it steers the model and is never a source of truth.
+// Follow asks only for the next change of the last answer after the user
+// accepted one; it never sends a model request.
 type EditorPredictionRequest struct {
 	Source      InsightSource
 	ViewID      string
 	Sequence    uint64
 	Caret       int // Canonical UTF-8 byte offset.
 	Automatic   bool
+	Follow      bool
 	Completions []string
 }
 
@@ -40,22 +43,35 @@ type EditorPredictionResult struct {
 	Text             string
 	ContextDigest    string
 	CacheHit         bool
-	Stages           EditorPredictionStages
-	Status           EditorPredictionStatus
+	// Sources names the context sources the request carried (see
+	// PredictionSource*), so outcomes show whether a source helps.
+	Sources []string
+	Stages  EditorPredictionStages
+	Status  EditorPredictionStatus
 }
+
+// Context sources that a suggestion request can carry beyond the code at the
+// caret.
+const (
+	PredictionSourceEdits       = "recent edits"
+	PredictionSourceDiagnostics = "problems"
+	PredictionSourceCompletions = "completion list"
+	PredictionSourceSnippets    = "related code"
+	PredictionSourceChain       = "follow-up"
+)
 
 // Empty reports a result that has nothing to show.
 func (r EditorPredictionResult) Empty() bool { return r.Kind == "" }
 
 // EditorPredictionStages are the measured parts of one request, in
-// milliseconds. Zero means the stage did not run (for example a cache hit).
+// microseconds. Zero means the stage did not run (for example a cache hit).
 type EditorPredictionStages struct {
-	ContextMS   int64
-	AccountMS   int64
-	FirstByteMS int64
-	ModelMS     int64
-	CheckMS     int64
-	TotalMS     int64
+	ContextUS   int64
+	AccountUS   int64
+	FirstByteUS int64
+	ModelUS     int64
+	CheckUS     int64
+	TotalUS     int64
 }
 
 // EditorPredictionStatus is a constant-size projection. No reader or painter

@@ -95,6 +95,9 @@ func (e *Editor) SetSuggestion(owner string, revision uint64, s Suggestion) erro
 	if !ok || caretStart != caretEnd || s.Start < 0 || s.End < s.Start || s.End > size {
 		return errors.New("prediction anchor is not this exact source boundary")
 	}
+	if e.rangeFolded(s.Start, s.End) {
+		return errors.New("prediction is inside a folded region")
+	}
 	g := &editorGhost{buffer: e.buf, document: e.documentProjection, revision: revision, caret: e.cursor,
 		caretAt: caretStart, anchor: s.End, start: s.Start, text: s.Text, owner: owner}
 	switch {
@@ -138,6 +141,18 @@ func (e *Editor) SetSuggestion(owner string, revision uint64, s Suggestion) erro
 	e.clearGoal()
 	e.pendingReveal = e.pendingReveal || visible
 	return nil
+}
+
+// rangeFolded reports whether any line of [start, end] is hidden by a fold:
+// a change the user cannot see must not be shown or applied.
+func (e *Editor) rangeFolded(start, end int) bool {
+	first, last := e.buf.positionAtOffset(start).Line, e.buf.positionAtOffset(end).Line
+	for line := first; line <= last; line++ {
+		if _, hidden := e.hiddenFold(line); hidden {
+			return true
+		}
+	}
+	return false
 }
 
 // ghostDisplay splits text into the inline label (first line) and the rows
@@ -196,8 +211,15 @@ func (e *Editor) SourceLineBounds(offset int) (line, start, end int) {
 	return pos.Line, start, start + len(raw)
 }
 
-// HasLocalEdits reports edits made in this shell's buffer since it opened.
-func (e *Editor) HasLocalEdits() bool { return e.buf != nil && e.buf.changeIndex > 0 }
+// HasLocalEdits reports edits made in this editor since it opened: its own
+// undo history for a private buffer, or edits it sent to a shared document
+// (whose history the core owns).
+func (e *Editor) HasLocalEdits() bool {
+	if p := e.documentProjection; p != nil && p.localEdits {
+		return true
+	}
+	return e.buf != nil && e.buf.changeIndex > 0
+}
 
 // SourceSlice returns source bytes [start, end) as text.
 func (e *Editor) SourceSlice(start, end int) string {
@@ -376,8 +398,14 @@ func (e *Editor) finishGhostEdit() {
 	}
 	old := tx.offer
 	e.DismissGhostText()
-	if !tx.valid || !tx.edited || tx.consumed == len(old.text) || e.buf != old.buffer ||
+	if !tx.valid || !tx.edited || e.buf != old.buffer ||
 		e.documentProjection != old.document || e.Revision() == old.revision {
+		return
+	}
+	if tx.consumed == len(old.text) {
+		if !e.ghostAccepting {
+			e.ghostOutcome(old.owner, GhostTypedThrough)
+		}
 		return
 	}
 	start, end, ok := e.SourceByteRange()
@@ -415,6 +443,7 @@ func (e *Editor) handleGhostKey(key tea.KeyPressMsg) bool {
 		e.cursor = e.buf.positionAtOffset(g.jumpTo)
 		e.clearGoal()
 		e.ensureCursorVisible()
+		e.ghostOutcome(g.owner, GhostJumped)
 		return true
 	}
 	if all || word || line {
@@ -444,10 +473,28 @@ func (e *Editor) handleGhostKey(key tea.KeyPressMsg) bool {
 				e.cursor = e.buf.positionAtOffset(end)
 				e.clearGoal()
 				e.ensureCursorVisible()
+				e.ghostOutcome(g.owner, GhostAccepted)
 			}
 			return true
 		}
+		before := e.Revision()
+		// The insertion runs through the typing path; it is an accept, not
+		// typed-through, so only the accept below reports an outcome.
+		e.ghostAccepting = true
 		e.insertText(text) // exact insertion, not automatic pair/snippet expansion
+		e.ghostAccepting = false
+		if e.Revision() == before {
+			return true
+		}
+		if rest := g.text[len(text):]; rest != "" {
+			// A word or a line was taken: the rest stays shown at the caret.
+			if at, end, ok := e.SourceByteRange(); ok && at == end && at == g.anchor+len(text) {
+				_ = e.SetSuggestion(g.owner, e.Revision(), Suggestion{Start: at, End: at, Text: rest})
+			}
+			e.ghostOutcome(g.owner, GhostAcceptedPart)
+			return true
+		}
+		e.ghostOutcome(g.owner, GhostAccepted)
 		return true
 	}
 	if (key.Text == "" || key.Mod&(tea.ModCtrl|tea.ModAlt|tea.ModSuper) != 0) && !ui.IsCopyChord(key) {

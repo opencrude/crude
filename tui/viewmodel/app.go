@@ -136,8 +136,10 @@ type App struct {
 	pendingFirstInputs map[string][]provider.UserInput
 	// askArrivals are Ask Crude requests whose new chat has not reached this
 	// shell; askChips wait for their session's draft to finish loading.
-	askArrivals                 map[string]*askRequest
-	askChips                    map[*workspace.Session][]sessiondb.Reference
+	askArrivals map[string]*askRequest
+	askChips    map[*workspace.Session][]sessiondb.Reference
+	// askSends are prepared Ask Crude prompts waiting for their file's save.
+	askSends                    []askPendingSend
 	workspaceAttachSequence     uint64
 	workspaceAttachCancel       context.CancelFunc
 	workspaceAttachPending      bool
@@ -574,6 +576,9 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 	}
 
 	app.registerOverlayHandlers()
+	// The workspace's suggestion choice is known from the first frame, so the
+	// footer and the first turn-on question never see an unset mode.
+	app.applySuggestionSettings(ws.LoadAppSettings().Prediction)
 
 	return app
 }
@@ -901,11 +906,16 @@ func (m *App) openApplicationMainAgent() tea.Cmd {
 }
 
 func (m *App) openApplicationAgent(id string) tea.Cmd {
+	return m.openApplicationAgentPage(id, "")
+}
+
+// openApplicationAgentPage opens one agent's settings on one tab.
+func (m *App) openApplicationAgentPage(id, page string) tea.Cmd {
 	m.openSettingsTo(roottypes.SettingsScopeApplication, false)
 	if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
 			if body, ok := frame.Body().(*settingsui.WorkspaceSettingsSurface); ok {
-				cmd := body.ShowAgent(id)
+				cmd := body.ShowAgentPage(id, page)
 				frame.Host().MarkLayout()
 				return cmd
 			}

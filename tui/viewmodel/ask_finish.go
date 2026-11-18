@@ -11,7 +11,6 @@ import (
 
 	"crude/prompt"
 	"crude/types"
-	"crude/workspace"
 )
 
 // "Finish this change" sends the user's recent edits in the file to the chat
@@ -73,10 +72,7 @@ func (m *App) applyFinishChange(msg finishChangeMsg) []tea.Cmd {
 	}
 	req := &askRequest{generation: msg.generation, group: m.Win.ActiveGroup(), path: msg.path, name: msg.name,
 		kind: askFinish, text: prompt.FinishChange(rel, diff)}
-	var cmds []tea.Cmd
-	if ed.Modified() && !ed.ReadOnly() {
-		cmds = append(cmds, m.requestEditorSave(ed, workspace.DocumentSaveFocusOut, false))
-	}
+	cmds := m.askSave(ed, req)
 	if group, agentID := m.askVisibleChat(req.group, true); agentID != "" {
 		m.focusMainGroup(group)
 		m.setFocusInput()

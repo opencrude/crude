@@ -86,6 +86,7 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed, fp, text) })
 	ed.SetOnTyping(func(key tea.KeyPressMsg) { m.onEditorTyping(ed, key) })
+	ed.SetOnGhostOutcome(func(owner string, outcome editor.GhostOutcome) { m.onSuggestionOutcome(ed, owner, outcome) })
 
 	// Apply cached diagnostics immediately so the editor is never empty
 	// while waiting for the server to respond.

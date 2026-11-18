@@ -245,6 +245,9 @@ func (e *Editor) finishFoldChange(revealCaret bool) {
 		e.ClearSelection()
 		revealCaret = true
 	}
+	if g := e.ghost; g != nil && g.buffer == e.buf && e.rangeFolded(g.start, g.anchor) {
+		e.DismissGhostText() // a fold hid the suggested change
+	}
 	if r, hidden := e.hiddenFold(e.scrollY); hidden {
 		e.scrollY, e.wrapOffset = r.Start, 0
 	}

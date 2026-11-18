@@ -721,8 +721,17 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 		ws.LSPMgr.NotifyWatchedFilesChanged(ctx, path, kind)
 		index.Changed(path)
 	}
+	// A watch that lost events and recovered rebuilds the index, because
+	// the changes it missed were never queued.
+	var watched atomic.Bool
+	reliable := func(ok bool) {
+		ws.LSPMgr.SetProjectWatchReliable(ok)
+		if ok && watched.Swap(true) {
+			index.Rescan()
+		}
+	}
 	watch, err := startCoreFileWatch(ws.RootPath, func(change coreprotocol.FileChange) { a.Send(change) },
-		notify, ws.LSPMgr.SetProjectWatchReliable)
+		notify, reliable)
 	if err != nil {
 		ws.Logger.Warn("CORE", "file_watch_failed", "error", err.Error())
 	} else {

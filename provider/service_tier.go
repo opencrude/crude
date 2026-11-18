@@ -14,6 +14,21 @@ var serviceTierAliases = map[string][]string{
 // ServiceTierChoices are the role-level tiers settings and self control offer.
 func ServiceTierChoices() []string { return []string{"standard", "fast", "priority", "flex"} }
 
+// ServiceTierChoicesFor lists the role-level tiers that a protocol offering
+// the given native tiers can send, in ServiceTierChoices order.
+func ServiceTierChoicesFor(offered []string) []string {
+	var out []string
+	for _, tier := range ServiceTierChoices() {
+		for _, candidate := range serviceTierAliases[tier] {
+			if slices.Contains(offered, candidate) {
+				out = append(out, tier)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // serviceTierForRole uses the same protocol mapping for request configuration
 // and for projections that explain whether a role's choice can be sent.
 func (p *Provider) serviceTierForRole(tier string) string {

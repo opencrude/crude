@@ -161,6 +161,7 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 	ed.SetOnDocumentEdited(func() { m.onEditorContentChanged(ed, ed.FilePath(), "") })
 	ed.SetOnContentChanged(func(path, text string) { m.onEditorContentChanged(ed, path, text) })
 	ed.SetOnTyping(func(key tea.KeyPressMsg) { m.onEditorTyping(ed, key) })
+	ed.SetOnGhostOutcome(func(owner string, outcome editor.GhostOutcome) { m.onSuggestionOutcome(ed, owner, outcome) })
 	m.BufferMgr.InstallPrepared(ed.DocumentBuffer())
 	m.EditorState.Tabs[key] = NewEditorTab(key, ed)
 	if msg, ok := m.pendingInsights[s.ID]; ok {

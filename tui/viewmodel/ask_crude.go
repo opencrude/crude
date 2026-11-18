@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -53,6 +54,22 @@ type askRequest struct {
 	kind       askKind
 	newChat    bool
 	problem    string // the diagnostic for askFix
+	// saving is the editor whose save a prepared prompt waits for; want is
+	// the text the user saw and before the file's saved text at the ask.
+	// Agent tools read the saved file, so a prepared prompt is sent only
+	// after a save that started at or after the ask has landed.
+	saving       *editor.Editor
+	want, before string
+	deadline     time.Time
+}
+
+// askSaveWait bounds how long a prepared prompt waits for its file's save.
+const askSaveWait = 30 * time.Second
+
+// askPendingSend is a prepared prompt that waits for its file's save.
+type askPendingSend struct {
+	request *askRequest
+	send    func() tea.Cmd
 }
 
 // askReferenceMsg returns a created code-selection reference to Update.
@@ -82,11 +99,8 @@ func (m *App) askCrude(kind askKind, newChat bool, problem string) []tea.Cmd {
 		start: start + 1, end: end + 1, text: askText(ed, start, end),
 		kind: kind, newChat: newChat, problem: problem,
 	}
-	var cmds []tea.Cmd
 	// Agent tools read the saved file. The chip keeps the exact text either way.
-	if ed.Modified() && !ed.ReadOnly() {
-		cmds = append(cmds, m.requestEditorSave(ed, workspace.DocumentSaveFocusOut, false))
-	}
+	cmds := m.askSave(ed, req)
 	if !newChat {
 		if group, agentID := m.askVisibleChat(req.group, kind != askAttach); agentID != "" {
 			m.focusMainGroup(group)
@@ -95,6 +109,95 @@ func (m *App) askCrude(kind askKind, newChat bool, problem string) []tea.Cmd {
 		}
 	}
 	return append(cmds, m.askNewChat(req))
+}
+
+// askSave starts the save of unsaved text and records, for a prepared prompt,
+// the text the save must write before the prompt is sent.
+func (m *App) askSave(ed *editor.Editor, req *askRequest) []tea.Cmd {
+	if !ed.Modified() || ed.ReadOnly() {
+		return nil
+	}
+	if req.kind != askAttach {
+		req.saving, req.want, req.before = ed, ed.Value(), string(ed.DocumentSnapshot().Saved)
+		req.deadline = time.Now().Add(askSaveWait)
+	}
+	return []tea.Cmd{m.requestEditorSave(ed, workspace.DocumentSaveFocusOut, false)}
+}
+
+// askSendAfterSave sends a prepared prompt now, or once its file is saved.
+func (m *App) askSendAfterSave(req *askRequest, send func() tea.Cmd) tea.Cmd {
+	if req.saving == nil {
+		return send()
+	}
+	m.askSends = append(m.askSends, askPendingSend{request: req, send: send})
+	return m.syncAskSends()
+}
+
+// syncAskSends sends each waiting prepared prompt whose save finished. A
+// save that failed, met a conflict or did not finish in time sends nothing:
+// the agent would read an older file than the user asked about.
+func (m *App) syncAskSends() tea.Cmd {
+	if len(m.askSends) == 0 {
+		return nil
+	}
+	var cmds []tea.Cmd
+	kept := m.askSends[:0]
+	for _, pending := range m.askSends {
+		req, ed := pending.request, pending.request.saving
+		if req.generation != m.workspaceSwitchGen.Load() {
+			continue
+		}
+		switch m.askSaveState(ed, req) {
+		case askSaveDone:
+			cmds = append(cmds, pending.send())
+		case askSaveFailed:
+			m.Feedback.NotifyError("Crude did not send the request because " + req.name + " could not be saved. Save the file, then try again.")
+		default:
+			kept = append(kept, pending)
+		}
+	}
+	clear(m.askSends[len(kept):])
+	m.askSends = kept
+	return tea.Batch(cmds...)
+}
+
+type askSaveOutcome int
+
+const (
+	askSaveWaiting askSaveOutcome = iota
+	askSaveDone
+	askSaveFailed
+)
+
+func (m *App) askSaveState(ed *editor.Editor, req *askRequest) askSaveOutcome {
+	if !ed.IsOpen() || ed.FilePath() != req.path || ed.DiskConflict() {
+		return askSaveFailed
+	}
+	// Done when the file holds the asked text, or a newer save (the user
+	// kept typing, and that save includes the asked lines) replaced the text
+	// that was on disk at the ask. A late save still counts: the deadline
+	// only bounds the wait.
+	if saved := string(ed.DocumentSnapshot().Saved); saved == req.want || saved != req.before {
+		return askSaveDone
+	}
+	state := m.liveEditors[ed.Primary()]
+	doc := ed.DocumentState()
+	saving := doc.PendingEdits > 0 || doc.InFlight
+	if state != nil {
+		if state.err != nil {
+			return askSaveFailed
+		}
+		saving = saving || state.save || state.busy
+	} else if save := m.editorSaves[doc.DocumentID]; save != nil {
+		if save.err != nil {
+			return askSaveFailed
+		}
+		saving = saving || save.inFlight || save.pending
+	}
+	if !saving || time.Now().After(req.deadline) {
+		return askSaveFailed
+	}
+	return askSaveWaiting
 }
 
 // runAskCrude is Ask Crude from a menu action, outside Update's return path.
@@ -402,13 +505,21 @@ func (m *App) applyAskReference(msg askReferenceMsg) tea.Cmd {
 		return nil
 	}
 	label := msg.ref.DisplayName()
+	var input provider.UserInput
+	prepared := true
 	switch msg.request.kind {
 	case askFinish:
-		return m.submitFirstInput(msg.agentID, provider.InputWithRefs(msg.request.text, nil))
+		input = provider.InputWithRefs(msg.request.text, nil)
 	case askExplain:
-		return m.submitFirstInput(msg.agentID, provider.InputWithRefs(prompt.AskExplain(label), []string{msg.ref.ID}))
+		input = provider.InputWithRefs(prompt.AskExplain(label), []string{msg.ref.ID})
 	case askFix:
-		return m.submitFirstInput(msg.agentID, provider.InputWithRefs(prompt.AskFix(label, msg.request.problem), []string{msg.ref.ID}))
+		input = provider.InputWithRefs(prompt.AskFix(label, msg.request.problem), []string{msg.ref.ID})
+	default:
+		prepared = false
+	}
+	if prepared {
+		agentID := msg.agentID
+		return m.askSendAfterSave(msg.request, func() tea.Cmd { return m.submitFirstInput(agentID, input) })
 	}
 	if m.askChips == nil {
 		m.askChips = make(map[*workspace.Session][]sessiondb.Reference)

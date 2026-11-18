@@ -84,3 +84,29 @@ func TestDiagnosticsNearTheRegionAndUTF8Bounds(t *testing.T) {
 		t.Fatal("invalid UTF-8 accepted")
 	}
 }
+
+// BenchmarkBuildDense measures context assembly on the largest accepted
+// source with every context source full. The target is 5 ms at p99 (see
+// docs/reference/performance-baselines.md).
+func BenchmarkBuildDense(b *testing.B) {
+	var src strings.Builder
+	for i := 0; src.Len() < MaxSourceBytes-200; i++ {
+		src.WriteString("func handler(request Request) Response { return serve(request, " + strings.Repeat("x", i%40) + ") }\n")
+	}
+	text := []byte(src.String())
+	in := Input{Path: "pkg/dense.go", Language: "go", Text: text, Caret: len(text) / 2}
+	for i := range 64 {
+		in.RecentEdits = append(in.RecentEdits, types.RecentEdit{Path: "pkg/dense.go", Line: 100 + i, Removed: "serve(request)", Inserted: "serve(request, options)", Author: types.RecentEditYou})
+		in.Diagnostics = append(in.Diagnostics, types.LSPDiagnostic{Line: 9000 + i, Message: "undefined: options", Severity: 1})
+		in.Completions = append(in.Completions, "handlerOption"+strings.Repeat("s", i%8))
+	}
+	for i := range 4 {
+		in.Snippets = append(in.Snippets, Snippet{Path: "pkg/other.go", Line: i * 40, Text: strings.Repeat("func related(request Request) Response { return nil }\n", 40)})
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := Build(in, 4000); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
