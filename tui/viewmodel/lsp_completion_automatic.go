@@ -38,6 +38,7 @@ func (m *App) cancelCompletionIntent() {
 }
 
 func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
+	m.onSuggestionTyping(ed, key)
 	keep := m.keepCompletionWhileTyping(ed)
 	if !keep {
 		m.closeCompletionPopup()

@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"sync/atomic"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -39,12 +40,73 @@ const (
 	ReplaceAllChord      = "chord:replace-all"
 	EditorLineBelowChord = "chord:editor-line-below"
 	EditorLineAboveChord = "chord:editor-line-above"
-	// AskCrudeChord asks Crude about the editor's code. Ctrl+I reaches the
-	// application only where keys are disambiguated (otherwise it is Tab), so
-	// Ctrl+K works everywhere and the caption names Ctrl+I only when it
-	// arrives.
-	AskCrudeChord = "chord:ask-crude"
 )
+
+// AskCrudeKey asks Crude about the editor's code. Every terminal delivers
+// Ctrl+K as its own key, and no terminal or multiplexer binds it by default.
+const AskCrudeKey = "ctrl+k"
+
+// lockModifiers are keyboard states, not parts of a chord. With the kitty
+// keyboard protocol a terminal reports them on every non-text key, so with
+// Num Lock on, Ctrl+K arrives as Ctrl+Num Lock+K.
+const lockModifiers = tea.ModCapsLock | tea.ModNumLock | tea.ModScrollLock
+
+// shortcutModifiers make a key a shortcut instead of text.
+const shortcutModifiers = tea.ModCtrl | tea.ModAlt | tea.ModSuper | tea.ModMeta | tea.ModHyper
+
+// KeyboardEnhancements are the kitty keyboard protocol features every
+// program requests. Alternate keys add the US-layout key to modified keys, so
+// shortcuts keep working while a non-Latin keyboard layout is active.
+func KeyboardEnhancements() tea.KeyboardEnhancements {
+	return tea.KeyboardEnhancements{ReportAlternateKeys: true}
+}
+
+// NormalizeKeyMsg gives every matcher one key shape. Every program calls it
+// at key ingress:
+//   - lock modifiers are removed;
+//   - a shortcut typed on a non-Latin layout (Ctrl+ش on a Persian layout)
+//     becomes the US-layout key that the terminal reports (Ctrl+A);
+//   - a Latin layout key stays as typed (Ctrl+A on AZERTY stays Ctrl+A), and
+//     the US-layout position is dropped so that String agrees with Code.
+func NormalizeKeyMsg(msg tea.Msg) tea.Msg {
+	switch k := msg.(type) {
+	case tea.KeyPressMsg:
+		if key, changed := normalizeKey(tea.Key(k)); changed {
+			return tea.KeyPressMsg(key)
+		}
+	case tea.KeyReleaseMsg:
+		if key, changed := normalizeKey(tea.Key(k)); changed {
+			return tea.KeyReleaseMsg(key)
+		}
+	}
+	return msg
+}
+
+func normalizeKey(k tea.Key) (tea.Key, bool) {
+	changed := false
+	if k.Mod&lockModifiers != 0 {
+		k.Mod &^= lockModifiers
+		changed = true
+	}
+	if k.BaseCode != 0 && k.BaseCode != k.Code {
+		if k.Mod&shortcutModifiers != 0 && nonLatinText(k.Code) && latinKey(k.BaseCode) {
+			k.Code = unicode.ToLower(k.BaseCode)
+			k.ShiftedCode = 0
+		}
+		k.BaseCode = 0
+		changed = true
+	}
+	return k, changed
+}
+
+// latinKey reports a printable ASCII key.
+func latinKey(r rune) bool { return r > ' ' && r < 0x7f }
+
+// nonLatinText reports a printable key outside ASCII. Special keys (arrows,
+// function keys) are outside the Unicode range and never match.
+func nonLatinText(r rune) bool {
+	return r >= 0x80 && r <= unicode.MaxRune && unicode.IsPrint(r)
+}
 
 // KeyboardProfile records which modified Enter chords reach the application.
 type KeyboardProfile struct {
@@ -52,9 +114,6 @@ type KeyboardProfile struct {
 	ModifiedEnter bool
 	// AltEnterReserved: the hosting terminal consumes Alt+Enter itself.
 	AltEnterReserved bool
-	// KeyDisambiguation: the terminal confirmed the kitty keyboard protocol,
-	// so Ctrl+I arrives apart from Tab.
-	KeyDisambiguation bool
 }
 
 // DetectKeyboardProfile derives the startup profile from the platform and
@@ -81,7 +140,6 @@ var (
 const (
 	profileModifiedEnter uint32 = 1 << iota
 	profileAltEnterReserved
-	profileKeyDisambiguation
 )
 
 func init() {
@@ -92,9 +150,8 @@ func init() {
 func CurrentKeyboardProfile() KeyboardProfile {
 	bits := keyboardProfileBits.Load()
 	return KeyboardProfile{
-		ModifiedEnter:     bits&profileModifiedEnter != 0,
-		AltEnterReserved:  bits&profileAltEnterReserved != 0,
-		KeyDisambiguation: bits&profileKeyDisambiguation != 0,
+		ModifiedEnter:    bits&profileModifiedEnter != 0,
+		AltEnterReserved: bits&profileAltEnterReserved != 0,
 	}
 }
 
@@ -107,9 +164,6 @@ func SetKeyboardProfile(profile KeyboardProfile) {
 	}
 	if profile.AltEnterReserved {
 		bits |= profileAltEnterReserved
-	}
-	if profile.KeyDisambiguation {
-		bits |= profileKeyDisambiguation
 	}
 	if keyboardProfileBits.Swap(bits) != bits {
 		keyboardProfileGen.Add(1)
@@ -124,7 +178,6 @@ func NoteKeyboardEnhancements(msg tea.KeyboardEnhancementsMsg) {
 	}
 	profile := CurrentKeyboardProfile()
 	profile.ModifiedEnter = true
-	profile.KeyDisambiguation = true
 	SetKeyboardProfile(profile)
 }
 
@@ -171,11 +224,6 @@ func IsReplaceAllChord(m tea.KeyPressMsg) bool {
 	return false
 }
 
-// IsAskCrudeChord reports whether a key asks Crude about the editor's code.
-func IsAskCrudeChord(m tea.KeyPressMsg) bool {
-	return m.Mod == tea.ModCtrl && (m.Code == 'i' || m.Code == 'k')
-}
-
 // ChordLabel returns the display caption of a semantic chord token for the
 // current keyboard profile. ok is false for an ordinary key string.
 func ChordLabel(token string) (label string, ok bool) {
@@ -214,11 +262,6 @@ func ChordLabel(token string) (label string, ok bool) {
 			return "Ctrl+Alt+Enter", true
 		}
 		return "Alt+Enter", true
-	case AskCrudeChord:
-		if profile.KeyDisambiguation {
-			return "Ctrl+I", true
-		}
-		return "Ctrl+K", true
 	}
 	return "", false
 }
@@ -261,8 +304,6 @@ func MatchesShortcut(m tea.KeyPressMsg, shortcut string) bool {
 		return IsPreviousMatchChord(m)
 	case ReplaceAllChord:
 		return IsReplaceAllChord(m)
-	case AskCrudeChord:
-		return IsAskCrudeChord(m)
 	}
 	return strings.EqualFold(m.String(), shortcut)
 }

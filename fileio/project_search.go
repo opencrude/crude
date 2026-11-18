@@ -46,6 +46,26 @@ type ProjectSearchMatch struct {
 	Score        int
 }
 
+// ProjectFile is one file that Find in Files visits. Text holds the decoded
+// content when the caller already has it in memory; Load reads it otherwise.
+// Large, Binary or Unreadable files are matched by name only.
+type ProjectFile struct {
+	Path, Rel  string
+	Text       []byte
+	Large      bool
+	Binary     bool
+	Unreadable bool
+}
+
+// ShouldSkipProjectDir reports a directory that Find in Files and the
+// workspace text index never enter.
+func ShouldSkipProjectDir(name string, includeHidden bool) bool {
+	return shouldSkipDir(name, includeHidden)
+}
+
+// MaxProjectSearchFileSize is the largest file whose content is searched.
+const MaxProjectSearchFileSize = maxProjectSearchFileSize
+
 // SearchProject searches literal/regex content and fuzzy relative filenames.
 // Every exact source occurrence is a distinct result. The walk is
 // cancellation-aware and skips generated/dependency directories consistently
@@ -58,26 +78,10 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 	if err != nil {
 		return nil, err
 	}
-
-	var re *regexp.Regexp
-	fuzzy := textsearch.CompileFuzzy(query, opts.CaseSensitive)
-	matcher, err := textsearch.Compile(query, textsearch.Options{CaseSensitive: opts.CaseSensitive, WholeWord: opts.WholeWord, Regex: opts.Regex})
+	search, err := newProjectSearch(query, opts)
 	if err != nil {
-		return nil, fmt.Errorf("invalid query: %w", err)
+		return nil, err
 	}
-	if opts.Regex {
-		pattern := query
-		if !opts.CaseSensitive {
-			pattern = "(?i)" + pattern
-		}
-		re, err = regexp.Compile(pattern)
-		if err != nil {
-			return nil, fmt.Errorf("invalid regex: %w", err)
-		}
-	}
-
-	results := make([]ProjectSearchMatch, 0, 128)
-	suggestions := make([]ProjectSearchMatch, 0, 64)
 	err = filepath.WalkDir(absRoot, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
@@ -99,126 +103,209 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 		if !opts.IncludeHidden && strings.HasPrefix(entry.Name(), ".") {
 			return nil
 		}
-
 		rel, relErr := filepath.Rel(absRoot, path)
 		if relErr != nil {
 			return nil
 		}
-		rel = filepath.ToSlash(rel)
-		pathPositions, pathScore, nameMatched := projectSearchMatch(rel, fuzzy, re)
-
+		file := ProjectFile{Path: path, Rel: filepath.ToSlash(rel)}
 		info, statErr := entry.Info()
 		if statErr != nil || info.Size() > maxProjectSearchFileSize {
-			if nameMatched && len(suggestions) < maxProjectSearchResults {
-				suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
-			}
-			return nil
+			file.Large = true
+		} else {
+			file.Text, file.Binary, file.Unreadable = readProjectFile(path)
 		}
-		data, readErr := os.ReadFile(path)
-		var decoded []byte
-		if readErr == nil && !IsBinary(data) {
-			decoded, _, readErr = textencoding.DecodeText(data)
-		}
-		if readErr != nil || IsBinary(data) {
-			if nameMatched && len(suggestions) < maxProjectSearchResults {
-				suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
-			}
-			return nil
-		}
-
-		text := string(decoded)
-		hits := matcher.FindAll(text, maxProjectSearchResults-len(results))
-		fuzzyContent := !opts.Regex && !opts.WholeWord && !strings.ContainsAny(query, "\r\n\t") && len(suggestions) < maxProjectSearchResults
-		// Most files have no exact hit. Once discovery capacity is full, do
-		// not split or index their lines just to throw that work away.
-		if len(hits) == 0 && !fuzzyContent {
-			if nameMatched && len(suggestions) < maxProjectSearchResults {
-				suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
-			}
-			return nil
-		}
-		lines := strings.Split(text, "\n")
-		starts := make([]int, len(lines))
-		for i := 1; i < len(lines); i++ {
-			starts[i] = starts[i-1] + len(lines[i-1]) + 1
-		}
-		contentMatches := 0
-		exactLines := make(map[int]bool)
-		for _, hit := range hits {
-			if len(results) >= maxProjectSearchResults {
-				return fs.SkipAll
-			}
-			if contentMatches%128 == 0 {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-			}
-			lineIdx := max(0, sort.Search(len(starts), func(i int) bool { return starts[i] > hit.Start })-1)
-			endLine := max(0, sort.Search(len(starts), func(i int) bool { return starts[i] > hit.End })-1)
-			line := lines[lineIdx]
-			column := len([]rune(text[starts[lineIdx]:hit.Start]))
-			endColumn := len([]rune(text[starts[endLine]:hit.End]))
-			positions := make([]int, 0)
-			firstEnd := min(hit.End, starts[lineIdx]+len(line))
-			for i := column; i < column+len([]rune(text[hit.Start:firstEnd])); i++ {
-				positions = append(positions, i)
-			}
-			start, end := contextBounds(lineIdx, len(lines))
-			end = max(end, min(len(lines), endLine+2))
-			results = append(results, ProjectSearchMatch{
-				Path:         filepath.ToSlash(path),
-				RelativePath: rel,
-				Line:         lineIdx + 1,
-				EndLine:      endLine + 1,
-				Column:       column,
-				EndColumn:    endColumn,
-				LineText:     line,
-				NameMatched:  nameMatched,
-				PathMatches:  append([]int(nil), pathPositions...),
-				TextMatches:  positions,
-				ContextStart: start + 1,
-				Context:      strings.Join(lines[start:end], "\n"),
-				Score:        9000 + boolScore(nameMatched, 250),
-			})
-			contentMatches++
-			exactLines[lineIdx] = true
-		}
-		// Fuzzy content is project discovery only. Exact hits remain authoritative
-		// and every suggestion is explicitly non-replaceable.
-		if fuzzyContent {
-			for lineIdx, line := range lines {
-				if len(suggestions) >= maxProjectSearchResults {
-					break
-				}
-				if exactLines[lineIdx] {
-					continue
-				}
-				if lineIdx%128 == 0 {
-					if err := ctx.Err(); err != nil {
-						return err
-					}
-				}
-				positions, score, ok := fuzzy.Match(line)
-				if !ok || len(positions) == 0 {
-					continue
-				}
-				start, end := contextBounds(lineIdx, len(lines))
-				suggestions = append(suggestions, ProjectSearchMatch{Path: filepath.ToSlash(path), RelativePath: rel, Line: lineIdx + 1, EndLine: lineIdx + 1, Column: positions[0], EndColumn: positions[len(positions)-1] + 1, LineText: line, FuzzyOnly: true, NameMatched: nameMatched, PathMatches: append([]int(nil), pathPositions...), TextMatches: positions, ContextStart: start + 1, Context: strings.Join(lines[start:end], "\n"), Score: score})
-				contentMatches++
-			}
-		}
-		if nameMatched && contentMatches == 0 && len(suggestions) < maxProjectSearchResults {
-			suggestions = append(suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
-		}
-		return stopProjectSearchIfFull(results)
+		return search.file(ctx, file)
 	})
 	if err != nil && err != fs.SkipAll {
 		return nil, err
 	}
+	return search.finish(), nil
+}
 
-	results = append(results, suggestions...)
+// SearchProjectFiles is SearchProject over files that the caller already
+// enumerated and loaded in walk order, such as the workspace text index.
+// The results and their order are those of SearchProject on the same files.
+func SearchProjectFiles(ctx context.Context, files []ProjectFile, query string, opts ProjectSearchOptions) ([]ProjectSearchMatch, error) {
+	if query == "" {
+		return nil, nil
+	}
+	search, err := newProjectSearch(query, opts)
+	if err != nil {
+		return nil, err
+	}
+	for i := range files {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file := files[i]
+		if file.Text == nil && !file.Large && !file.Binary && !file.Unreadable {
+			file.Text, file.Binary, file.Unreadable = readProjectFile(file.Path)
+		}
+		if err := search.file(ctx, file); err != nil {
+			if err == fs.SkipAll {
+				break
+			}
+			return nil, err
+		}
+	}
+	return search.finish(), nil
+}
+
+// ReadProjectFile reads and decodes one file the way Find in Files does.
+func ReadProjectFile(path string) (text []byte, binary, unreadable bool) {
+	return readProjectFile(path)
+}
+
+func readProjectFile(path string) (text []byte, binary, unreadable bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, false, true
+	}
+	if IsBinary(data) {
+		return nil, true, false
+	}
+	decoded, _, err := textencoding.DecodeText(data)
+	if err != nil {
+		return nil, false, true
+	}
+	if decoded == nil {
+		decoded = []byte{}
+	}
+	return decoded, false, false
+}
+
+type projectSearch struct {
+	query       string
+	opts        ProjectSearchOptions
+	re          *regexp.Regexp
+	fuzzy       *textsearch.FuzzyMatcher
+	matcher     *textsearch.Matcher
+	results     []ProjectSearchMatch
+	suggestions []ProjectSearchMatch
+}
+
+func newProjectSearch(query string, opts ProjectSearchOptions) (*projectSearch, error) {
+	s := &projectSearch{query: query, opts: opts, fuzzy: textsearch.CompileFuzzy(query, opts.CaseSensitive),
+		results: make([]ProjectSearchMatch, 0, 128), suggestions: make([]ProjectSearchMatch, 0, 64)}
+	var err error
+	s.matcher, err = textsearch.Compile(query, textsearch.Options{CaseSensitive: opts.CaseSensitive, WholeWord: opts.WholeWord, Regex: opts.Regex})
+	if err != nil {
+		return nil, fmt.Errorf("invalid query: %w", err)
+	}
+	if opts.Regex {
+		pattern := query
+		if !opts.CaseSensitive {
+			pattern = "(?i)" + pattern
+		}
+		s.re, err = regexp.Compile(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid regex: %w", err)
+		}
+	}
+	return s, nil
+}
+
+// file matches one file. It returns fs.SkipAll once results are full.
+func (s *projectSearch) file(ctx context.Context, file ProjectFile) error {
+	path, rel := file.Path, file.Rel
+	pathPositions, pathScore, nameMatched := projectSearchMatch(rel, s.fuzzy, s.re)
+	if file.Large || file.Binary || file.Unreadable || file.Text == nil {
+		if nameMatched && len(s.suggestions) < maxProjectSearchResults {
+			s.suggestions = append(s.suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+		}
+		return nil
+	}
+	text := string(file.Text)
+	hits := s.matcher.FindAll(text, maxProjectSearchResults-len(s.results))
+	fuzzyContent := !s.opts.Regex && !s.opts.WholeWord && !strings.ContainsAny(s.query, "\r\n\t") && len(s.suggestions) < maxProjectSearchResults
+	// Most files have no exact hit. Once discovery capacity is full, do
+	// not split or index their lines just to throw that work away.
+	if len(hits) == 0 && !fuzzyContent {
+		if nameMatched && len(s.suggestions) < maxProjectSearchResults {
+			s.suggestions = append(s.suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+		}
+		return nil
+	}
+	lines := strings.Split(text, "\n")
+	starts := make([]int, len(lines))
+	for i := 1; i < len(lines); i++ {
+		starts[i] = starts[i-1] + len(lines[i-1]) + 1
+	}
+	contentMatches := 0
+	exactLines := make(map[int]bool)
+	for _, hit := range hits {
+		if len(s.results) >= maxProjectSearchResults {
+			return fs.SkipAll
+		}
+		if contentMatches%128 == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+		}
+		lineIdx := max(0, sort.Search(len(starts), func(i int) bool { return starts[i] > hit.Start })-1)
+		endLine := max(0, sort.Search(len(starts), func(i int) bool { return starts[i] > hit.End })-1)
+		line := lines[lineIdx]
+		column := len([]rune(text[starts[lineIdx]:hit.Start]))
+		endColumn := len([]rune(text[starts[endLine]:hit.End]))
+		positions := make([]int, 0)
+		firstEnd := min(hit.End, starts[lineIdx]+len(line))
+		for i := column; i < column+len([]rune(text[hit.Start:firstEnd])); i++ {
+			positions = append(positions, i)
+		}
+		start, end := contextBounds(lineIdx, len(lines))
+		end = max(end, min(len(lines), endLine+2))
+		s.results = append(s.results, ProjectSearchMatch{
+			Path:         filepath.ToSlash(path),
+			RelativePath: rel,
+			Line:         lineIdx + 1,
+			EndLine:      endLine + 1,
+			Column:       column,
+			EndColumn:    endColumn,
+			LineText:     line,
+			NameMatched:  nameMatched,
+			PathMatches:  append([]int(nil), pathPositions...),
+			TextMatches:  positions,
+			ContextStart: start + 1,
+			Context:      strings.Join(lines[start:end], "\n"),
+			Score:        9000 + boolScore(nameMatched, 250),
+		})
+		contentMatches++
+		exactLines[lineIdx] = true
+	}
+	// Fuzzy content is project discovery only. Exact hits remain authoritative
+	// and every suggestion is explicitly non-replaceable.
+	if fuzzyContent {
+		for lineIdx, line := range lines {
+			if len(s.suggestions) >= maxProjectSearchResults {
+				break
+			}
+			if exactLines[lineIdx] {
+				continue
+			}
+			if lineIdx%128 == 0 {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
+			positions, score, ok := s.fuzzy.Match(line)
+			if !ok || len(positions) == 0 {
+				continue
+			}
+			start, end := contextBounds(lineIdx, len(lines))
+			s.suggestions = append(s.suggestions, ProjectSearchMatch{Path: filepath.ToSlash(path), RelativePath: rel, Line: lineIdx + 1, EndLine: lineIdx + 1, Column: positions[0], EndColumn: positions[len(positions)-1] + 1, LineText: line, FuzzyOnly: true, NameMatched: nameMatched, PathMatches: append([]int(nil), pathPositions...), TextMatches: positions, ContextStart: start + 1, Context: strings.Join(lines[start:end], "\n"), Score: score})
+			contentMatches++
+		}
+	}
+	if nameMatched && contentMatches == 0 && len(s.suggestions) < maxProjectSearchResults {
+		s.suggestions = append(s.suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+	}
+	return stopProjectSearchIfFull(s.results)
+}
+
+func (s *projectSearch) finish() []ProjectSearchMatch {
+	results := append(s.results, s.suggestions...)
 	sort.SliceStable(results, func(i, j int) bool {
 		iExact, jExact := !results[i].NameOnly && !results[i].FuzzyOnly, !results[j].NameOnly && !results[j].FuzzyOnly
 		if iExact != jExact {
@@ -235,7 +322,7 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 		}
 		return results[i].Column < results[j].Column
 	})
-	return results[:min(maxProjectSearchResults, len(results))], nil
+	return results[:min(maxProjectSearchResults, len(results))]
 }
 
 func filenameProjectSearchMatch(path, rel string, positions []int, score int) ProjectSearchMatch {

@@ -5,169 +5,195 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"crude/provider"
+	ttypes "crude/types"
 )
 
-// EditorPredictionCompleter binds Aeron on-owner for off-owner requests.
-// It never rereads Config, builds prompts or grants consent/budget.
+// EditorPredictionCompleter is the bound connection for Aeron's editor
+// suggestions: the Suggestions settings over the Aeron role, with thinking
+// "none". It is built on the workspace owner and used off it. It never builds
+// prompts or grants consent or budget.
 //
-// ConnectionIdentity hashes private canonical account/credential/transport/role
-// JSON, not request/source content; label/name/help cosmetics are ignored.
-// A nil AccountManager gets a private snapshot manager, unable to observe later
-// config edits. Live revocation requires a caller-owned shared manager.
+// ConnectionIdentity names where source text goes (account, provider, URL,
+// model, format and endpoint). Credentials and cosmetic labels are not part of
+// it, so a rotated key keeps the workspace consent and a new provider does not.
 type EditorPredictionCompleter struct {
 	Model              string
 	AccountID          string
+	ProviderName       string
+	Format             string
+	EndpointPath       string
+	MaxOutputTokens    int
+	TimeoutSeconds     int
 	ConnectionIdentity string
 
 	provider *provider.Provider
+	client   *provider.Client
 	manager  *provider.AccountManager
-	role     CategoryConfig
-	identity string
+	oauth    bool
 }
 
-// AeronPredictionCompleter preserves role settings; unsupported settings cause
-// explicit adapter errors, never repairs or fallback.
-func (c *Config) AeronPredictionCompleter() (EditorPredictionCompleter, error) {
+// ErrSuggestionsUnconfigured explains a missing suggestion connection.
+var ErrSuggestionsUnconfigured = errors.New("choose a model for Aeron in Settings, Agents")
+
+// SuggestionCompleter binds the current Suggestions settings. Errors are
+// written for the user and contain no endpoint or credential.
+func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	if c == nil {
-		return EditorPredictionCompleter{}, fmt.Errorf("model configuration is unavailable")
+		return EditorPredictionCompleter{}, ErrSuggestionsUnconfigured
 	}
-	// Inheritance must not hide explicitly disabled Aeron.
+	settings := c.Agents.Suggestions.Normalized()
 	profile, _ := activeProfileCfg(c)
 	stored := profile.Categories[CategoryAeron]
-	role := c.GetCategoryConfig(CategoryAeron)
-	if (stored.Enabled != nil && !*stored.Enabled) || (role.Enabled != nil && !*role.Enabled) {
-		return EditorPredictionCompleter{}, fmt.Errorf("the Aeron agent is disabled in settings")
+	aeron := c.GetCategoryConfig(CategoryAeron)
+	if (stored.Enabled != nil && !*stored.Enabled) || (aeron.Enabled != nil && !*aeron.Enabled) {
+		return EditorPredictionCompleter{}, errors.New("the Aeron agent is turned off in Settings, Agents")
 	}
-	if strings.TrimSpace(role.Model) == "" {
-		return EditorPredictionCompleter{}, fmt.Errorf("select a model for the Aeron agent")
+	role := CategoryConfig{AccountID: aeron.AccountID, Model: aeron.Model, ServiceTier: aeron.ServiceTier,
+		ModelMaxOutput: aeron.ModelMaxOutput, ModelContextWindow: aeron.ModelContextWindow}
+	if settings.AccountID != "" {
+		role.AccountID, role.Model, role.ModelMaxOutput, role.ModelContextWindow = settings.AccountID, settings.Model, 0, 0
+	} else if settings.Model != "" {
+		role.Model = settings.Model
 	}
-	// Detach all role pointers, slices and maps.
-	raw, err := json.Marshal(role)
-	if err != nil {
-		return EditorPredictionCompleter{}, fmt.Errorf("invalid Aeron request settings")
+	if settings.ServiceTier != "" {
+		role.ServiceTier = settings.ServiceTier
 	}
-	var detached CategoryConfig
-	if err := json.Unmarshal(raw, &detached); err != nil {
-		return EditorPredictionCompleter{}, fmt.Errorf("invalid Aeron request settings")
+	// Suggestions never think: a reasoning pass costs more time than the
+	// user waits between keystrokes.
+	role.ThinkingEffort = "none"
+	if strings.TrimSpace(role.Model) == "" || role.AccountID == "" {
+		return EditorPredictionCompleter{}, ErrSuggestionsUnconfigured
 	}
-	role = detached
 	account, err := c.resolveAccount(role.AccountID)
 	if err != nil {
-		return EditorPredictionCompleter{}, err
+		return EditorPredictionCompleter{}, errors.New("the account for Aeron suggestions is not available")
 	}
-	// Adapters refuse OAuth; Current relies on this memory-only auth invariant.
-	if account.OAuth != nil || account.Connection.AuthType == provider.AuthChatGPT {
-		return EditorPredictionCompleter{}, fmt.Errorf("editor prediction does not support OAuth accounts")
+	oauth := account.OAuth != nil || account.Connection.AuthType == provider.AuthChatGPT
+	if oauth && settings.Format != ttypes.SuggestionFormatChat {
+		return EditorPredictionCompleter{}, errors.New("fill-in-the-middle formats need an API key account; choose Chat")
+	}
+	if settings.Format != ttypes.SuggestionFormatChat && settings.EndpointPath == "" {
+		return EditorPredictionCompleter{}, errors.New("enter the endpoint path for the fill-in-the-middle format")
 	}
 	accounts := map[string]provider.Account{account.ID: provider.CloneAccount(account)}
 	manager := c.AccountManager
 	if manager == nil {
 		manager = provider.NewAccountManager(accounts, nil)
 	}
-	// Avoid mixed live generations: build detached, then bind the exact manager.
+	// Build detached, then bind the exact live manager for revocation.
 	snapshot := &Config{Accounts: accounts}
 	p, err := snapshot.providerForCategory(role)
 	if err != nil {
-		return EditorPredictionCompleter{}, err
+		return EditorPredictionCompleter{}, errors.New("the connection for Aeron suggestions is not valid")
 	}
 	if err := manager.Bind(p, account.ID); err != nil {
-		return EditorPredictionCompleter{}, err
+		return EditorPredictionCompleter{}, errors.New("the account for Aeron suggestions is not available")
 	}
-	identity, err := predictionConnectionIdentity(account, role)
+	timeout := settings.TimeoutSeconds
+	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1, RequestTimeoutSeconds: timeout, ConnectTimeoutSeconds: timeout})
+	client, err := p.Client(provider.WithResponseLimit(256 << 10))
+	if err != nil {
+		return EditorPredictionCompleter{}, errors.New("the connection for Aeron suggestions is not valid")
+	}
+	identity, err := suggestionConnectionIdentity(account, role.Model, settings)
 	if err != nil {
 		return EditorPredictionCompleter{}, err
 	}
-	t := EditorPredictionCompleter{
-		Model: role.Model, AccountID: account.ID, ConnectionIdentity: identity,
-		provider: p, manager: manager, role: role, identity: identity,
+	output := settings.MaxOutputTokens
+	if role.ModelMaxOutput > 0 {
+		output = min(output, role.ModelMaxOutput)
 	}
-	if err := t.Current(); err != nil {
-		return EditorPredictionCompleter{}, err
+	name := account.Connection.Name
+	if name == "" {
+		name = account.ProviderID
 	}
-	return t, nil
+	return EditorPredictionCompleter{
+		Model: role.Model, AccountID: account.ID, ProviderName: name, Format: settings.Format,
+		EndpointPath: settings.EndpointPath, MaxOutputTokens: output, TimeoutSeconds: timeout,
+		ConnectionIdentity: identity, provider: p, client: client, manager: manager, oauth: oauth,
+	}, nil
 }
 
-func predictionConnectionIdentity(account provider.Account, role CategoryConfig) (string, error) {
-	account = provider.CloneAccount(account)
-	account.Label, account.Connection.Name, account.Connection.HelpText = "", "", ""
-	// encoding/json sorts keys; retain ALL transport settings, not only URL/auth.
+func suggestionConnectionIdentity(account provider.Account, model string, settings ttypes.SuggestionSettings) (string, error) {
+	connection := provider.CloneTemplate(account.Connection)
+	connection.Name, connection.HelpText = "", ""
 	raw, err := json.Marshal(struct {
-		AccountID  string                     `json:"account_id"`
-		ProviderID string                     `json:"provider_id"`
-		Connection provider.Template          `json:"connection"`
-		APIKey     string                     `json:"api_key"`
-		OAuth      *provider.OAuthCredentials `json:"oauth"`
-		Model      string                     `json:"model"`
-		Role       CategoryConfig             `json:"role_request_settings"`
-	}{account.ID, account.ProviderID, account.Connection, account.APIKey, account.OAuth, role.Model, role})
+		AccountID  string            `json:"account_id"`
+		ProviderID string            `json:"provider_id"`
+		URL        string            `json:"url"`
+		Standard   string            `json:"standard"`
+		Headers    map[string]string `json:"headers"`
+		Model      string            `json:"model"`
+		Format     string            `json:"format"`
+		Endpoint   string            `json:"endpoint"`
+	}{account.ID, account.ProviderID, connection.ProviderURL, connection.APIStandard, connection.Headers,
+		model, settings.Format, settings.EndpointPath})
 	if err != nil {
-		// Never expose private hash input.
-		return "", fmt.Errorf("invalid editor prediction connection settings")
+		return "", errors.New("the connection for Aeron suggestions is not valid")
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// Current checks the live account without I/O. Role edits require actor-owned
-// re-preparation and coordinator policy fingerprinting. This preflight is not
-// atomic with concurrent transport-settings saves.
+// Bound reports whether the completer holds a live connection.
+func (t EditorPredictionCompleter) Bound() bool { return t.provider != nil && t.client != nil }
+
+// Current checks without I/O that the bound account still exists with the
+// same destination. Credential refresh belongs to the request path.
 func (t EditorPredictionCompleter) Current() error {
-	if t.provider == nil || t.manager == nil || t.identity == "" ||
-		t.Model != t.role.Model || t.AccountID != t.role.AccountID || t.ConnectionIdentity != t.identity {
-		return fmt.Errorf("editor prediction binding is unavailable or changed")
+	if !t.Bound() || t.manager == nil || t.ConnectionIdentity == "" {
+		return errors.New("aeron suggestions have no connection")
 	}
 	account, ok := t.manager.Account(t.AccountID)
 	if !ok {
-		return fmt.Errorf("editor prediction account is unavailable")
+		return errors.New("the account for Aeron suggestions was removed")
 	}
-	identity, err := predictionConnectionIdentity(account, t.role)
-	if err != nil {
-		return err
-	}
-	if identity != t.identity {
-		return fmt.Errorf("editor prediction account connection changed; prepare a new binding")
-	}
-	// Detect identical remove/re-add via the original binding slot. EnsureAuth
-	// cannot do I/O: this slot was non-OAuth, and adding OAuth revokes it before
-	// auth. Never rebind this provider or allow OAuth without revisiting this.
-	return t.provider.EnsureAuth(context.Background())
-}
-
-func (t EditorPredictionCompleter) checkRequest(ctx context.Context, model string, tokens int) error {
-	if ctx == nil {
-		return fmt.Errorf("editor prediction context is nil")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if err := t.Current(); err != nil {
-		return err
-	}
-	if model != t.role.Model {
-		return fmt.Errorf("editor prediction request model does not match its binding")
-	}
-	if t.role.ModelMaxOutput > 0 && tokens > t.role.ModelMaxOutput {
-		return fmt.Errorf("editor prediction output limit exceeds the configured model limit")
+	identity, err := suggestionConnectionIdentity(account, t.Model, ttypes.SuggestionSettings{Format: t.Format, EndpointPath: t.EndpointPath})
+	if err != nil || identity != t.ConnectionIdentity {
+		return errors.New("the connection for Aeron suggestions changed")
 	}
 	return nil
 }
 
-// CompleteText preserves every adapter observation, including on error.
-func (t EditorPredictionCompleter) CompleteText(ctx context.Context, request provider.TextOnceRequest) (provider.TextOnceResult, error) {
-	if err := t.checkRequest(ctx, request.Model, request.MaxOutputTokens); err != nil {
-		return provider.TextOnceResult{}, err
+func (t EditorPredictionCompleter) check(ctx context.Context) error {
+	if ctx == nil {
+		return fmt.Errorf("suggestion context is nil")
 	}
-	return t.provider.CompleteTextOnce(ctx, request)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return t.Current()
 }
 
-// CompleteFIM requires explicit dialect/endpoint; no routing guesses or fallback.
-func (t EditorPredictionCompleter) CompleteFIM(ctx context.Context, request provider.FIMOnceRequest) (provider.FIMOnceResult, error) {
-	if err := t.checkRequest(ctx, request.Model, request.MaxOutputTokens); err != nil {
+// Stream sends one chat request with thinking "none" through the account's
+// normal provider client, so every configured protocol works.
+func (t EditorPredictionCompleter) Stream(ctx context.Context, system, input string) (*provider.ChatStream, error) {
+	if err := t.check(ctx); err != nil {
+		return nil, err
+	}
+	return t.client.Stream(ctx, &provider.ChatRequest{
+		Model:           t.Model,
+		MaxOutputTokens: t.MaxOutputTokens,
+		Messages: []provider.ChatMessage{
+			provider.NewTextMessage("system", system),
+			provider.NewTextMessage("user", input),
+		},
+	})
+}
+
+// CompleteFIM sends one fill-in-the-middle request in the configured dialect
+// and endpoint; there is no routing guess or fallback.
+func (t EditorPredictionCompleter) CompleteFIM(ctx context.Context, prefix, suffix string, maxBytes int) (provider.FIMOnceResult, error) {
+	if err := t.check(ctx); err != nil {
 		return provider.FIMOnceResult{}, err
 	}
-	return t.provider.CompleteFIMOnce(ctx, request)
+	return t.provider.CompleteFIMOnce(ctx, provider.FIMOnceRequest{
+		Dialect: provider.FIMDialect(t.Format), EndpointPath: t.EndpointPath, Model: t.Model,
+		Prefix: prefix, Suffix: suffix, MaxOutputTokens: t.MaxOutputTokens, MaxOutputBytes: maxBytes,
+	})
 }

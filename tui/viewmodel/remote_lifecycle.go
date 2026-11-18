@@ -404,6 +404,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	m.finishWorkspaceSwitch(state)
 	m.reportViewMemoryLoadError()
 	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+	m.applySuggestionSettings(m.ws.LoadAppSettings().Prediction)
 	m.applyTextDirectionSettings(m.ws.LoadAppSettings())
 	m.ws.(shellport.Replica).StartReplica()
 	for _, issue := range m.ws.TakeStartupIssues() {

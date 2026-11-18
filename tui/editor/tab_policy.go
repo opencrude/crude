@@ -105,7 +105,14 @@ func (e *Editor) reprojectInlineGeometry() {
 		}
 	}
 	if g := e.ghost; g != nil {
-		g.caret = e.buf.positionAtOffset(g.anchor)
-		g.base, g.line = nil, nil
+		// Tab width changes columns, not offsets: the caret keeps its offset.
+		g.caret = e.buf.positionAtOffset(g.caretAt)
+		g.atLine = e.buf.positionAtOffset(g.anchor).Line
+		g.label, g.rows, g.more = ghostDisplay(g.text, e.TabWidth())
+		if g.marker {
+			e.DismissGhostText()
+		} else {
+			g.base, g.line = nil, nil
+		}
 	}
 }

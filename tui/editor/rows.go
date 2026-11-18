@@ -63,7 +63,13 @@ type rowLine struct {
 	width, count int
 	stride       int // uniform narrow-unit rows need no slice
 	runs         []rowRun
+	// ghost counts display-only rows after the text rows: the faded lines of
+	// a multi-line suggestion. count includes them.
+	ghost int
 }
+
+// textRows is the number of rows that show source text.
+func (l rowLine) textRows() int { return max(0, l.count-l.ghost) }
 
 func wrapRowMetrics(m rowMetrics, width int, reuse []rowRun) rowLine {
 	width = max(1, width)
@@ -115,28 +121,33 @@ func wrapRowMetrics(m rowMetrics, width int, reuse []rowRun) rowLine {
 }
 
 func (l rowLine) start(row int) int {
-	if len(l.runs) == 0 {
-		return min(max(0, row), max(0, l.count-1)) * l.stride
+	text := l.textRows()
+	if l.ghost > 0 && row >= text {
+		return l.width
 	}
-	row = min(max(0, row), max(0, l.count-1))
+	if len(l.runs) == 0 {
+		return min(max(0, row), max(0, text-1)) * l.stride
+	}
+	row = min(max(0, row), max(0, text-1))
 	index := sort.Search(len(l.runs), func(i int) bool { return l.runs[i].row+l.runs[i].count > row })
 	run := l.runs[index]
 	return run.col + (row-run.row)*run.step
 }
 func (l rowLine) end(row int) int {
-	if row+1 >= l.count {
+	if row+1 >= l.textRows() {
 		return l.width
 	}
 	return l.start(row + 1)
 }
 func (l rowLine) atColumn(col int) int {
+	text := l.textRows()
 	if len(l.runs) == 0 {
-		return min(max(0, l.count-1), max(0, col)/max(1, l.stride))
+		return min(max(0, text-1), max(0, col)/max(1, l.stride))
 	}
 	col = min(max(0, col), max(0, l.width-1))
 	index := sort.Search(len(l.runs), func(i int) bool { return l.runs[i].col+l.runs[i].count*l.runs[i].step > col })
 	run := l.runs[min(index, len(l.runs)-1)]
-	return min(l.count-1, run.row+max(0, col-run.col)/run.step)
+	return min(text-1, run.row+max(0, col-run.col)/run.step)
 }
 
 // sourceRows is an order-statistics index over source lines. A hidden line has

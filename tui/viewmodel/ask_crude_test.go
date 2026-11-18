@@ -209,26 +209,45 @@ func TestAskCrudeWithoutSelectionAttachesTheWholeBlock(t *testing.T) {
 	}
 }
 
-func TestAskCrudeChordCaptionAndKeys(t *testing.T) {
+func TestAskCrudeCtrlKAfterKeyboardNegotiation(t *testing.T) {
 	before := ui.CurrentKeyboardProfile()
 	t.Cleanup(func() { ui.SetKeyboardProfile(before) })
-
 	ui.SetKeyboardProfile(ui.KeyboardProfile{})
-	if label := ui.FormatShortcut(ui.AskCrudeChord); label != "Ctrl+K" {
-		t.Fatalf("legacy caption = %q", label)
-	}
-	ui.SetKeyboardProfile(ui.KeyboardProfile{KeyDisambiguation: true})
-	if label := ui.FormatShortcut(ui.AskCrudeChord); label != "Ctrl+I" {
-		t.Fatalf("kitty caption = %q", label)
-	}
-	for _, key := range []tea.KeyPressMsg{{Code: 'k', Mod: tea.ModCtrl}, {Code: 'i', Mod: tea.ModCtrl}} {
-		if !ui.IsAskCrudeChord(key) {
-			t.Fatalf("%s does not ask Crude", key.String())
+
+	app := askCrudeApp(t, 160, 40, map[string]string{"keys.go": "package keys\n"})
+	_, _ = app.Update(tea.KeyboardEnhancementsMsg{Flags: 1})
+	openEditorTabs(t, app, "keys.go")
+	menu := app.buildEditorContextMenu(tea.Mouse{})
+	found := false
+	for _, section := range menu.Sections {
+		for _, item := range section.Items {
+			if item.Label == "Ask Crude" {
+				found = true
+				if item.Detail != "Ctrl+K" {
+					t.Errorf("menu shortcut = %q, want Ctrl+K after keyboard negotiation", item.Detail)
+				}
+			}
 		}
 	}
-	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyTab}, {Code: 'k', Mod: tea.ModCtrl | tea.ModShift}, {Code: 'k', Text: "k"}} {
-		if ui.IsAskCrudeChord(key) {
-			t.Fatalf("%s must not ask Crude", key.String())
-		}
+	if !found {
+		t.Fatal("editor menu has no Ask Crude action")
+	}
+
+	// Kitty-protocol terminals (Ghostty here) report Num Lock on modified
+	// keys: this is the exact key the user's Ctrl+K produced. Use the real
+	// Update path, not the registry alone, and keep the source unchanged.
+	ed := app.EditorState.Editor
+	_, cmd := app.Update(tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl | tea.ModNumLock})
+	runAppCommand(t, app, cmd)
+	_ = app.View()
+	chat := askChat(t, app)
+	if app.Win.ActiveGroup() != chat.Group || app.focusTarget() != FocusInput {
+		t.Fatal("Ctrl+K did not focus the chat composer")
+	}
+	if ref := askComposerRef(t, app); ref.Content != "package keys" {
+		t.Fatalf("Ctrl+K attached %q, want the editor's code", ref.Content)
+	}
+	if ed.LineText(0) != "package keys" || ed.Modified() {
+		t.Fatal("Ctrl+K changed the code")
 	}
 }

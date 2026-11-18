@@ -27,14 +27,14 @@ func predictionPreferenceFixture(t *testing.T) (*Workspace, string) {
 			}},
 		}},
 	}
-	if _, err := w.sessionCfg.AeronPredictionCompleter(); err != nil {
+	if _, err := w.sessionCfg.SuggestionCompleter(); err != nil {
 		t.Fatalf("fixture did not prepare its local account: %v", err)
 	}
 	return w, root
 }
 
 func predictionGrantEdit() types.SettingEdit {
-	return types.SettingEdit{Path: []string{"prediction"}, After: json.RawMessage(`{"mode":"light","hourly_token_limit":4200,"protocol":"chat","endpoint_path":""}`)}
+	return types.SettingEdit{Path: []string{"prediction"}, After: json.RawMessage(`{"mode":"ask","hourly_token_limit":4200}`)}
 }
 
 func TestPredictionPreferenceGrantBindsRootConnectionAndExactChoice(t *testing.T) {
@@ -47,13 +47,13 @@ func TestPredictionPreferenceGrantBindsRootConnectionAndExactChoice(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	connection, err := w.sessionCfg.AeronPredictionCompleter()
+	connection, err := w.sessionCfg.SuggestionCompleter()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Overrides.PredictionRootIdentity != actual ||
 		result.Overrides.PredictionConnectionIdentity != connection.ConnectionIdentity ||
-		result.Overrides.PredictionGrantID == "" || w.LoadAppSettings().Prediction.Mode != types.PredictionLight ||
+		result.Overrides.PredictionGrantID == "" || w.LoadAppSettings().Prediction.Mode != types.PredictionAsk ||
 		w.LoadAppSettings().Prediction.HourlyTokenLimit != 4200 || w.AppDefaults().Prediction.Mode != types.PredictionOff {
 		t.Fatal("explicit consent was not isolated, durably bound and projected", result.Overrides)
 	}
@@ -103,7 +103,7 @@ func TestPredictionPreferenceInvalidFinalStateCannotPartiallySave(t *testing.T) 
 func TestPredictionPreferenceOwnerRejectsSnapshotAndGeneratedMetadata(t *testing.T) {
 	w, _ := predictionPreferenceFixture(t)
 	if err := w.SaveWorkspaceSettings(types.WorkspaceOverrides{
-		Prediction:             json.RawMessage(`{"mode":"light","hourly_token_limit":4200}`),
+		Prediction:             json.RawMessage(`{"mode":"ask","hourly_token_limit":4200}`),
 		PredictionRootIdentity: "forged", PredictionConnectionIdentity: "forged", PredictionGrantID: "forged",
 	}); err == nil {
 		t.Fatal("snapshot operation manufactured source egress consent")
@@ -204,7 +204,7 @@ func TestPredictionPreferenceSamePathReplacementRequiresNewExplicitChoice(t *tes
 func TestPredictionPreferenceNeighborDoesNotRepairMalformedAuthority(t *testing.T) {
 	w, _ := predictionPreferenceFixture(t)
 	overrides := applyAnalysisPreference(t, w, predictionGrantEdit()).Overrides
-	overrides.Prediction = json.RawMessage(`{"mode":"off","mode":"light","hourly_token_limit":4200}`)
+	overrides.Prediction = json.RawMessage(`{"mode":"off","mode":"ask","hourly_token_limit":4200}`)
 	encoded, _ := json.Marshal(overrides)
 	if err := w.WorkspaceDB.SetSetting(workspaceSettingsKey, string(encoded)); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestPredictionPreferenceAuthorityResetsAreIndependent(t *testing.T) {
 			if order == "trust-first" {
 				applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"analysis"}})
 				if w.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided ||
-					w.LoadAppSettings().Prediction.Mode != types.PredictionLight ||
+					w.LoadAppSettings().Prediction.Mode != types.PredictionAsk ||
 					w.LoadWorkspaceOverrides().PredictionGrantID != before.PredictionGrantID {
 					t.Fatal("revoking project-execution Trust revoked unrelated source-egress consent")
 				}

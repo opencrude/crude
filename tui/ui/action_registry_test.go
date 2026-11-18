@@ -124,6 +124,52 @@ func TestCodeActionRegistryUsesDeliverableEditorChord(t *testing.T) {
 	}
 }
 
+func TestAskCrudeRegistryUsesCtrlKAcrossTerminals(t *testing.T) {
+	r := DefaultRegistry()
+	for _, tc := range []struct {
+		name         string
+		profile      KeyboardProfile
+		enhancements bool
+	}{
+		{name: "legacy"},
+		{name: "kitty", enhancements: true},
+		{name: "windows", profile: DetectKeyboardProfile("windows", nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withKeyboardProfile(t, tc.profile)
+			if tc.enhancements {
+				NoteKeyboardEnhancements(tea.KeyboardEnhancementsMsg{Flags: 1})
+			}
+			if label := FormatShortcut(r.HintFor("ai.ask")); label != "Ctrl+K" {
+				t.Errorf("Ask Crude shortcut = %q, want Ctrl+K", label)
+			}
+			for _, code := range []rune{'k', 'K'} {
+				key := tea.KeyPressMsg{Code: code, Mod: tea.ModCtrl}
+				if got := r.MatchContext("editor", key); got == nil || got.ID != "ai.ask" {
+					t.Errorf("%s did not match Ask Crude: %+v", key.String(), got)
+				}
+				if got := r.MatchGlobal(key); got != nil {
+					t.Errorf("Ask Crude stole a global key: %+v", got)
+				}
+				if got := r.MatchContext("chat", key); got != nil {
+					t.Errorf("Ask Crude stole a composer key: %+v", got)
+				}
+			}
+			for _, key := range []tea.KeyPressMsg{
+				{Code: tea.KeyTab},
+				{Code: 'i', Mod: tea.ModCtrl},
+				{Code: 'k', Mod: tea.ModCtrl | tea.ModShift},
+				{Code: 'k', Mod: tea.ModCtrl | tea.ModAlt},
+				{Code: 'k', Text: "k"},
+			} {
+				if got := r.MatchContext("editor", key); got != nil && got.ID == "ai.ask" {
+					t.Errorf("%s must not ask Crude", key.String())
+				}
+			}
+		})
+	}
+}
+
 func TestActionRegistry_ByCategory(t *testing.T) {
 	r := NewActionRegistry()
 	r.Register(&ActionDef{ID: "a", Category: "File"})

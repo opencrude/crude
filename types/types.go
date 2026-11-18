@@ -210,6 +210,9 @@ type AgentsSettings struct {
 	// Auto (DefaultMaxWaitMinutes). A longer request ends at the bound and
 	// the agent may wait again.
 	MaxWaitMinutes int `json:"max_wait_minutes,omitempty"`
+	// Suggestions is the connection for Aeron's editor suggestions. It is
+	// application-wide; each workspace keeps its own mode and hourly cap.
+	Suggestions SuggestionSettings `json:"suggestions,omitempty"`
 }
 
 // DefaultMaxWaitMinutes is the Auto bound on one agent wait; MaxWaitMinutesLimit

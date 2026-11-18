@@ -53,7 +53,10 @@ type documentRequest struct {
 // All methods serialize, including disk saves. Invoke I/O methods off any UI
 // thread. The supplied save/LSP services are borrowed, not closed by this owner.
 type DocumentService struct {
-	mu                sync.Mutex
+	mu sync.Mutex
+	// recentEdits is the bounded edit history across live documents, newest
+	// last. Suggestions and "Finish this change" read it.
+	recentEdits       []recentEdit
 	ownerMu           sync.Mutex
 	saveCancels       map[document.Owner]context.CancelFunc
 	stateDB           *sql.DB
@@ -429,6 +432,7 @@ func (s *DocumentService) command(kind string, c document.Change, run func(*live
 	*d = *trial
 	s.cacheDocumentRequest(d, key, request)
 	if err == nil {
+		s.noteAcceptedCommandLocked(d, r.Before)
 		s.observeAnalysisLocked(d)
 	}
 	return r, err
@@ -455,6 +459,7 @@ func (s *DocumentService) commit(d *liveDocument, c document.Change) (int, error
 	d.snapshot.Dirty = d.snapshot.ContentDirty()
 	d.journal = append(d.journal, documentOperation{revision: d.snapshot.Revision, edits: append([]document.Edit(nil), c.Edits...), inverse: inverse, owner: c.Owner, group: c.GroupID, change: cloneChange(c)})
 	d.historyBytes += weight
+	s.noteRecentEditsLocked(d, c, inverse)
 	return len(d.journal) - 1, nil
 }
 

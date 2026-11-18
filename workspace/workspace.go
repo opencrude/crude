@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/insight/textindex"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -130,7 +131,12 @@ type Workspace struct {
 	// buffers in this workspace.
 	Documents     *DocumentSaveService
 	LiveDocuments *DocumentService
-	Executions    *ExecutionService
+	// TextIndex is the in-memory text index of the project. The core starts
+	// it with the file watch; Find in Files and suggestions read it.
+	TextIndex *textindex.Index
+	// suggestions owns Aeron's editor suggestion requests.
+	suggestions *editorPredictionService
+	Executions  *ExecutionService
 
 	// TermMgr owns in-app PTY sessions (the terminal multiplexer).
 	TermMgr *TerminalManager
@@ -352,6 +358,7 @@ func NewWorkspace(
 	}
 	ws.LiveDocuments = NewDocumentService(rootPath, ws.Documents, ws.LSPMgr, workspaceSQLDB(wsDB))
 	ws.ProjectContext = NewProjectContextService(rootPath, ws.LiveDocuments.Insight.generation)
+	ws.installSuggestions(rootPath, wsDB)
 
 	ws.queuePersistenceStartupIssues()
 
@@ -472,6 +479,7 @@ func (w *Workspace) Close() {
 	if err := CloseExecutionHistory(w); err != nil {
 		w.Logger.Warn("HISTORY", "execution_history_close_failed", "error", err.Error())
 	}
+	w.closeSuggestions()
 	if w.LiveDocuments != nil {
 		w.LiveDocuments.Close()
 	}
@@ -740,6 +748,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	}
 	w.Capabilities = nil
 	w.FileOwnership = agent.NewFileOwnership()
+	w.closeSuggestions()
 	if w.LiveDocuments != nil {
 		w.LiveDocuments.Close()
 	}
@@ -816,6 +825,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.Documents.SetEventBus(w.eventBus)
 	w.LiveDocuments = NewDocumentService(abs, w.Documents, w.LSPMgr, workspaceSQLDB(wsDB))
 	w.ProjectContext = NewProjectContextService(abs, w.LiveDocuments.Insight.generation)
+	w.installSuggestions(abs, wsDB)
 	w.Executions = nil
 	w.LiveDocuments.SetEventBus(w.eventBus)
 	w.TermMgr = NewTerminalManager(abs)

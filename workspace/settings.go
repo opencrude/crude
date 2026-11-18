@@ -161,6 +161,7 @@ func (w *Workspace) applyEffectiveSettings() {
 
 func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
 	w.applyProviderSettings(effective)
+	defer w.configureSuggestions(effective)
 	if w.LSPMgr != nil {
 		w.publishAnalysisPolicy()
 		w.LSPMgr.SetSettings(effective.LSP)

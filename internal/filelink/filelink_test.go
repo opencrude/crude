@@ -38,12 +38,14 @@ func TestParseSourceReferences(t *testing.T) {
 }
 
 func TestCandidatesDoNotLinkCommandsVersionsOrGlobs(t *testing.T) {
-	for _, value := range []string{"README.md", ".gitignore", "./go.mod", "src/main.go", "src/سلام.go:2", ".github/workflows/tui.yml", "src/a b.go", "src/Makefile", "./configure", "@types/node/index.d.ts", "app/(auth)/page.tsx", "src/a[b].go"} {
+	for _, value := range []string{"x.go", "x.c", "a.py:2", "README.md", ".gitignore", "./go.mod", "src/main.go", "src/سلام.go:2", ".github/workflows/tui.yml", "src/a b.go", "src/Makefile", "./configure", "@types/node/index.d.ts", "app/(auth)/page.tsx", "src/a[b].go", "config.json", "main.go:12", "styles.css", "Dockerfile.dev", "docs/notes.txt", "docs/tools.parameters"} {
 		if !Candidate(value) {
 			t.Errorf("missed file %q", value)
 		}
 	}
-	for _, value := range []string{"word", "v1.2.3", "a@b.com", "src/*.go", "a=b/c", "https://example.test/a", "and/or", "go test ./...", "go run ./src/main.go", "./app.py --check", "Ctrl+F/Ctrl+H"} {
+	for _, value := range []string{"word", "v1.2.3", "a@b.com", "src/*.go", "a=b/c", "https://example.test/a", "and/or", "go test ./...", "go run ./src/main.go", "./app.py --check", "Ctrl+F/Ctrl+H",
+		// Dotted code and prose are not files without a directory.
+		"tools[10].parameters", "fmt.Println", "obj.method", "response.output_text", "i.e", "e.g", "self.name", "ui.FormatShortcut"} {
 		if Candidate(value) {
 			t.Errorf("non-file candidate %q", value)
 		}

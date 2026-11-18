@@ -1295,27 +1295,27 @@ thin path.
 
 ### Workspace prediction consent
 
-**Code Intelligence → AI predictions** edits a separate workspace-owned
-`prediction` category, not analysis Trust or session Code Intelligence. Its
-shared native controls are:
+**Code Intelligence → Aeron suggestions** edits the workspace-owned
+`prediction` category, independently of analysis Trust and session Code
+Intelligence:
 
-- **AI predictions**: Off / Light / Full segments. Light records an on-demand
-  choice; Full additionally records automatic-typing intent.
-- **Hourly token cap**: an exact whole-token number from 0 through 1099511627776.
-  Enabling requires an explicitly chosen positive cap; zero is not unlimited.
-  Tokens are an estimate/accounting unit, not a price.
-- **Prediction protocol**: Chat, OpenAI completions, DeepSeek FIM or Codestral
-  FIM. Selection is explicit, never guessed from a hostname or model name.
-- **Prediction endpoint**: empty for Chat; an explicit safe mount-relative path
-  for FIM. It cannot replace the Aeron account's base URL.
+- **Aeron suggestions**: Off / When I ask / As I type. Off is the default.
+- **Hourly limit**: exact whole tokens, up to 1099511627776. The form offers
+  200,000 tokens when first turning on; the offered value alone does not store
+  a choice while Off. Enabled modes require a positive limit.
 
-Application scope shows four read-only **Workspace only** rows. Switching scope
-rebases these rows from the effective workspace projection, never raw blocked
-overrides or an application-level On value. Field and combined validation retain
-an invalid draft until corrected; Save cannot normalize it into a grant.
-Code Intelligence Reset removes prediction and analysis choices independently
-while preserving the Language Servers inventory. A Trust-only edit does not
-revoke prediction consent, and a prediction-only Off/reset does not revoke Trust.
+Application scope shows two read-only **Workspace only** rows. Switching scope
+rebases from the effective workspace projection, not blocked raw overrides.
+Invalid drafts remain visible and cannot become consent through Save.
+Code Intelligence Reset removes prediction and analysis choices independently,
+while preserving the language-server inventory.
+
+The **Agents → Aeron → Suggestions** tab stores application-level account,
+model, request format, endpoint path, speed tier, timeout and output limit.
+Empty account/model uses Aeron's binding. Crude sets thinking to none.
+Chat uses the normal provider client; FIM uses the explicitly selected dialect
+and path, never a guessed endpoint. This tab and its connected journey are
+still subject to the [checkpoint handoff](../plans/ask-crude-and-aeron-suggestions.md#handoff-checkpoint-2026-11-18).
 
 The existing workspace preference transaction binds an enabled choice to a
 stable native root, exact configured Aeron connection and a newly generated grant
@@ -1328,11 +1328,12 @@ than repairing ambiguous JSON. Duplicate or case-aliased outer authority members
 fail decoding; repair of such corrupted stored rows is not an automatic upgrade.
 Off/reset remains possible without a working provider connection.
 
-**Implementation boundary:** these consent settings and internal request
-prerequisites do not yet enable a live editor prediction service. The editor
-request/transport lifecycle, complete fact context and visible budget meter still
-require integration and product acceptance. Saving a choice does not probe an
-endpoint, start a model session or send source.
+**Implementation boundary:** the checkpoint connects the request service and
+shell trigger, but complete product acceptance remains open in the plan.
+Saving a choice itself does not probe an endpoint or start a model session.
+Once enabled, an explicit suggestion request or automatic typing trigger can
+send the selected context. A consent grant is bound to its connection identity;
+changing the destination requires a new explicit choice.
 
 ### Workspace analysis Trust
 

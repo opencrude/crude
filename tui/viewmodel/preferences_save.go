@@ -53,6 +53,7 @@ func (m *App) applyPreferencesSaved(message preferencesSavedMsg) {
 	m.clearFramePreview()
 	m.applyThemePreset(themePresetFromSettings(effective))
 	m.applyEditorSettings(effective.Editor)
+	m.applySuggestionSettings(effective.Prediction)
 	m.applyTextDirectionSettings(effective)
 	m.runDetachedAsyncCmd(m.applyTreeHiddenSetting())
 	m.refreshAllSessionSettingsProjections()

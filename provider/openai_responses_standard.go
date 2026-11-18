@@ -285,6 +285,12 @@ func validateOpenAIImageURL(value string) error {
 	return nil
 }
 
+// encodeResponsesTools sets "strict": false on every function tool. Without
+// it, Responses tries to compile each schema in strict mode, and newer models
+// (gpt-6.2) reject the whole request when a schema uses a keyword the strict
+// compiler lacks ("Unimplemented keys: [uniqueItems]") instead of falling
+// back. Tool schemas (built-in and MCP) are validated by their tools, so
+// best-effort calling is the intended contract.
 func encodeResponsesTools(tools []ToolDef) []any {
 	result := make([]any, 0, len(tools))
 	for _, tool := range tools {
@@ -293,7 +299,7 @@ func encodeResponsesTools(tools []ToolDef) []any {
 			continue
 		}
 		wireName := wireFunctionName(tool.Function.Name)
-		definition := map[string]any{"type": "function", "name": wireName, "description": tool.Function.Description, "parameters": tool.Function.Parameters}
+		definition := map[string]any{"type": "function", "name": wireName, "description": tool.Function.Description, "parameters": tool.Function.Parameters, "strict": false}
 		if namespace, name, ok := strings.Cut(wireName, "."); ok {
 			definition["name"] = name
 			result = append(result, map[string]any{"type": "namespace", "name": namespace, "description": "Parallel tool execution", "tools": []any{definition}})

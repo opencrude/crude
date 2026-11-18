@@ -40,24 +40,15 @@ func TestPredictionNativeRowsAndKeyboard(t *testing.T) {
 			if mode.Type != ui.FieldCycle || mode.Style != ui.StyleSegmented || mode.ReadOnly {
 				t.Fatalf("not native segments: %+v", mode)
 			}
-			if got := []string{mode.Options[0].Label, mode.Options[1].Label, mode.Options[2].Label}; !slices.Equal(got, []string{"Off", "Light", "Full"}) {
+			if got := []string{mode.Options[0].Label, mode.Options[1].Label, mode.Options[2].Label}; !slices.Equal(got, []string{"Off", "When I ask", "As I type"}) {
 				t.Fatal("mode choices", got)
 			}
 			limit := form.Field("prediction.hourly_token_limit")
-			if limit.Type != ui.FieldText || !limit.Numeric || limit.Unit != "tokens" || limit.Value.String() != "0" {
-				t.Fatalf("cap is not an explicit native number: %+v", limit)
+			if limit.Type != ui.FieldText || !limit.Numeric || limit.Unit != "tokens" || limit.Value.String() != "200000" {
+				t.Fatalf("hourly limit does not offer its default: %+v", limit)
 			}
-			protocol := form.Field("prediction.protocol")
-			if protocol.Type != ui.FieldSelect {
-				t.Fatal("protocol is not a shared selector")
-			}
-			var protocols []string
-			for _, option := range protocol.Options {
-				protocols = append(protocols, option.ID)
-			}
-			if !slices.Equal(protocols, []string{"chat", "openai-completions", "deepseek-fim", "codestral-fim"}) ||
-				form.Field("prediction.endpoint_path").Type != ui.FieldText {
-				t.Fatal("protocol or endpoint dialect changed", protocols)
+			if len(form.Fields()) != 2 {
+				t.Fatalf("workspace rows = %d, want mode and limit only", len(form.Fields()))
 			}
 			help := ""
 			for _, field := range form.Fields() {
@@ -66,10 +57,13 @@ func TestPredictionNativeRowsAndKeyboard(t *testing.T) {
 					t.Fatalf("opening row changed its draft: %+v", field)
 				}
 			}
-			for _, text := range []string{"on demand", "while typing", "analysis Trust", "positive cap", "estimated", "not a price", "selected Aeron account", "sensitive and external files", "mount-relative", "hostname"} {
+			for _, text := range []string{"Alt+\\", "short pause", "nearby code", "not money"} {
 				if !strings.Contains(help, text) {
 					t.Fatalf("help omitted %q: %s", text, help)
 				}
+			}
+			if got := m.collectPrediction(); got != types.DefaultWorkspacePredictionSettings() {
+				t.Fatal("the offered limit became a stored choice while Off", got)
 			}
 			s := NewSurface(theme.DefaultDark(), m)
 			frame := ui.NewWindowFrameWidget(theme.DefaultDark(), "prediction-settings", ui.FrameWindow, "Settings", s, nil, true, size.W, size.H)
@@ -82,31 +76,19 @@ func TestPredictionNativeRowsAndKeyboard(t *testing.T) {
 			host.Layout()
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
-			for _, text := range []string{"AI predictions", "Off", "Hourly cap", "Prediction protocol", "Prediction endpoint"} {
+			for _, text := range []string{"Aeron suggestions", "Off", "Hourly limit"} {
 				if !strings.Contains(bufferPlain(buf), text) {
 					t.Fatalf("native frame omitted %q:\n%s", text, bufferPlain(buf))
-				}
-			}
-			if size.W == 160 {
-				for _, text := range []string{"Light", "Full", "Light: on demand"} {
-					if !strings.Contains(bufferPlain(buf), text) {
-						t.Fatalf("desktop frame omitted mode choices/help %q:\n%s", text, bufferPlain(buf))
-					}
 				}
 			}
 			if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight}); !result.Handled {
 				t.Fatal("native mode key not handled")
 			}
-			if got := m.collectPrediction(); got.Mode != types.PredictionLight || got.HourlyTokenLimit != 0 {
-				t.Fatal("mode invented a cap", got)
+			if got := m.collectPrediction(); got.Mode != types.PredictionAsk || got.HourlyTokenLimit != types.DefaultPredictionHourlyTokens {
+				t.Fatal("turning on did not take the offered limit", got)
 			}
-			form.ValidateAll()
-			if !form.AnyErrors() {
-				t.Fatal("enabled zero cap was accepted")
-			}
-			// Native text input, not a collector-only mutation, supplies the cap.
 			if !s.form.FocusField("prediction.hourly_token_limit") {
-				t.Fatal("cap cannot receive focus")
+				t.Fatal("limit cannot receive focus")
 			}
 			host.MarkLayout()
 			host.Layout()
@@ -115,21 +97,21 @@ func TestPredictionNativeRowsAndKeyboard(t *testing.T) {
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
 			form.ValidateAll()
 			if form.AnyErrors() {
-				t.Fatal("explicit cap rejected", limit.Errors, limit.Value.String())
+				t.Fatal("explicit limit rejected", limit.Errors, limit.Value.String())
 			}
-			if got := m.collectPrediction(); got != (types.WorkspacePredictionSettings{
-				Mode: types.PredictionLight, HourlyTokenLimit: 4200, Protocol: types.PredictionChat,
-			}) {
+			if got := m.collectPrediction(); got != (types.WorkspacePredictionSettings{Mode: types.PredictionAsk, HourlyTokenLimit: 4200}) {
 				t.Fatal("native edit was not collected exactly", got)
 			}
+			// Tab left the last row; give the form focus back before the key.
 			s.form.FocusField("prediction.mode")
+			s.FocusForm()
 			host.MarkLayout()
 			host.Layout()
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
 			host.Layout()
 			host.Paint(buf)
-			if m.collectPrediction().Mode != types.PredictionFull || !strings.Contains(bufferPlain(buf), "Full") {
-				t.Fatal("Full selection was not collected/painted", bufferPlain(buf))
+			if m.collectPrediction().Mode != types.PredictionType {
+				t.Fatal("As I type was not collected", bufferPlain(buf))
 			}
 		})
 	}
@@ -149,17 +131,11 @@ func TestPredictionValidationRetainsInvalidDrafts(t *testing.T) {
 		{"empty", "prediction.hourly_token_limit", ""},
 		{"null", "prediction.hourly_token_limit", "null"},
 		{"mode", "prediction.mode", "automatic"},
-		{"protocol", "prediction.protocol", "guess"},
-		{"chat path", "prediction.endpoint_path", "v1/completions"},
-		{"FIM empty", "prediction.protocol", "deepseek-fim"},
-		{"absolute URL", "prediction.endpoint_path", "https://example.invalid/completions"},
-		{"traversal", "prediction.endpoint_path", "../completions"},
-		{"query", "prediction.endpoint_path", "completions?secret=1"},
-		{"escaped traversal", "prediction.endpoint_path", "%2e%2e/completions"},
+		{"old mode", "prediction.mode", "light"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := predictionRowsModel(types.SettingsScopeWorkspace, types.WorkspacePredictionSettings{
-				Mode: types.PredictionLight, HourlyTokenLimit: 4200, Protocol: types.PredictionChat,
+				Mode: types.PredictionAsk, HourlyTokenLimit: 4200,
 			})
 			form := m.categories[catLSP].Form
 			form.SetValue(tc.field, ui.StringValue(tc.value))
@@ -179,46 +155,31 @@ func TestPredictionValidationRetainsInvalidDrafts(t *testing.T) {
 func TestPredictionSiblingsValidateTogetherWithoutNormalization(t *testing.T) {
 	m := predictionRowsModel(types.SettingsScopeWorkspace, types.DefaultWorkspacePredictionSettings())
 	form := m.categories[catLSP].Form
-	form.SetValue("prediction.mode", ui.StringValue("full"))
-	form.SetValue("prediction.hourly_token_limit", ui.StringValue("1099511627776"))
-	for _, protocol := range []string{"openai-completions", "deepseek-fim", "codestral-fim"} {
-		form.SetValue("prediction.endpoint_path", ui.StringValue(""))
-		form.SetValue("prediction.protocol", ui.StringValue(protocol))
-		form.ValidateAll()
-		if !form.AnyErrors() {
-			t.Fatal("FIM accepted without explicit path", protocol)
-		}
-		form.SetValue("prediction.endpoint_path", ui.StringValue("v1/completions"))
-		form.ValidateAll()
-		if form.AnyErrors() {
-			t.Fatal("sibling correction left a stale error", protocol, form.Field("prediction.protocol").Errors)
-		}
-		if got := m.collectPrediction(); got.Mode != types.PredictionFull || got.HourlyTokenLimit != 1<<40 ||
-			string(got.Protocol) != protocol || got.EndpointPath != "v1/completions" {
-			t.Fatal("exact maximum/path/protocol lost", got)
-		}
-	}
-	form.SetValue("prediction.protocol", ui.StringValue("chat"))
+	form.SetValue("prediction.hourly_token_limit", ui.StringValue("0"))
+	form.SetValue("prediction.mode", ui.StringValue("type"))
 	form.ValidateAll()
-	if !form.AnyErrors() || m.collectPrediction().EndpointPath != "v1/completions" {
-		t.Fatal("chat silently cleared the FIM path")
+	if !form.AnyErrors() {
+		t.Fatal("As I type accepted a zero limit")
 	}
-	form.SetValue("prediction.endpoint_path", ui.StringValue(""))
+	form.SetValue("prediction.hourly_token_limit", ui.StringValue("1099511627776"))
 	form.ValidateAll()
 	if form.AnyErrors() {
-		t.Fatal("corrected chat remains invalid")
+		t.Fatal("sibling correction left a stale error", form.Field("prediction.mode").Errors)
+	}
+	if got := m.collectPrediction(); got.Mode != types.PredictionType || got.HourlyTokenLimit != 1<<40 {
+		t.Fatal("exact maximum lost", got)
 	}
 	// Even the builder must leave an invalid enable visible for validation.
-	invalid := types.WorkspacePredictionSettings{Mode: types.PredictionFull, Protocol: types.PredictionChat}
+	invalid := types.WorkspacePredictionSettings{Mode: types.PredictionType}
 	fields := m.predictionFields(invalid)
-	if fields[0].Value.String() != "full" || len(fields[0].Validator(fields[0].Value)) == 0 {
+	if fields[0].Value.String() != "type" || len(fields[0].Validator(fields[0].Value)) == 0 {
 		t.Fatal("builder normalized an incomplete enable to Off")
 	}
 }
 
 func TestPredictionApplicationRowsAndScopeBaselines(t *testing.T) {
 	choice := types.WorkspacePredictionSettings{
-		Mode: types.PredictionFull, HourlyTokenLimit: 4200, Protocol: types.PredictionDeepSeek, EndpointPath: "fim",
+		Mode: types.PredictionType, HourlyTokenLimit: 4200,
 	}
 	m := predictionRowsModel(types.SettingsScopeWorkspace, choice)
 	// Pending workspace edits are not a new scope's authority.
@@ -273,7 +234,7 @@ func TestPredictionApplicationRowsAndScopeBaselines(t *testing.T) {
 
 func TestPredictionScopeDoesNotReviveBlockedStoredAuthority(t *testing.T) {
 	m := predictionRowsModel(types.SettingsScopeWorkspace, types.DefaultWorkspacePredictionSettings())
-	m.storedOverrides.Prediction = json.RawMessage(`{"mode":"full","hourly_token_limit":4200,"protocol":"chat"}`)
+	m.storedOverrides.Prediction = json.RawMessage(`{"mode":"type","hourly_token_limit":4200}`)
 	for _, scope := range []types.SettingsScope{types.SettingsScopeApplication, types.SettingsScopeWorkspace} {
 		m.scope = scope
 		m.syncPredictionScope()
@@ -285,7 +246,7 @@ func TestPredictionScopeDoesNotReviveBlockedStoredAuthority(t *testing.T) {
 
 func TestPredictionApplicationNativeRowsCannotGrant(t *testing.T) {
 	choice := types.WorkspacePredictionSettings{
-		Mode: types.PredictionFull, HourlyTokenLimit: 4200, Protocol: types.PredictionDeepSeek, EndpointPath: "private-fim",
+		Mode: types.PredictionType, HourlyTokenLimit: 4200,
 	}
 	for _, size := range []ui.Size{{W: 160, H: 40}, {W: 80, H: 24}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
@@ -304,8 +265,8 @@ func TestPredictionApplicationNativeRowsCannotGrant(t *testing.T) {
 			if m.collectPrediction() != types.DefaultWorkspacePredictionSettings() {
 				t.Fatal("application collection carried a workspace preference")
 			}
-			if got := strings.Count(plain, "Workspace only"); got != 4 {
-				t.Fatalf("only %d of four rows are visibly workspace-only:\n%s", got, plain)
+			if got := strings.Count(plain, "Workspace only"); got != 2 {
+				t.Fatalf("only %d of two rows are visibly workspace-only:\n%s", got, plain)
 			}
 		})
 	}
@@ -315,7 +276,7 @@ func TestPredictionCanonicalPathsAreDirectHumanAuthority(t *testing.T) {
 	// This checks the authoritative classifier using literal expected paths.
 	// Surface mapping and off-page Save admission require the parent's wiring.
 	for _, path := range []string{
-		"prediction.mode", "prediction.hourly_token_limit", "prediction.protocol", "prediction.endpoint_path",
+		"prediction.mode", "prediction.hourly_token_limit",
 		"prediction_root_identity", "prediction_connection_identity", "prediction_grant_id",
 	} {
 		if !control.SettingsAuthority(path) {
@@ -327,8 +288,7 @@ func TestPredictionCanonicalPathsAreDirectHumanAuthority(t *testing.T) {
 			t.Fatal("ordinary neighbor became authority", path)
 		}
 	}
-	if fieldPredictionMode != "prediction.mode" || fieldPredictionLimit != "prediction.hourly_token_limit" ||
-		fieldPredictionProtocol != "prediction.protocol" || fieldPredictionEndpoint != "prediction.endpoint_path" {
+	if fieldPredictionMode != "prediction.mode" || fieldPredictionLimit != "prediction.hourly_token_limit" {
 		t.Fatal("field IDs no longer name the strict authority leaves")
 	}
 }

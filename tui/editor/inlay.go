@@ -108,7 +108,7 @@ func (e *Editor) inlineLine(line int) *editorInlineLine {
 	if state := e.currentInlays(); state != nil {
 		base = state.lines[line]
 	}
-	if ghost := e.currentGhost(); ghost != nil && ghost.caret.Line == line {
+	if ghost := e.currentGhost(); ghost != nil && ghost.atLine == line && ghost.label != "" {
 		return e.ghostProjection(ghost, base)
 	}
 	return base
