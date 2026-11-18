@@ -103,6 +103,26 @@ Crude resolves this copy from its own path, so a user who installs nothing still
 gets a working shell. A Git Bash the user installed later wins, because it is
 found first.
 
+### The window font
+
+The window asks for a Nerd Font, so patched icons draw correctly, and for
+Crude's own right-to-left font. Crude RTL ships inside the package: the window
+copies it to `%LOCALAPPDATA%\Crude\window\rtl-fonts`, registers it for this user
+and names `JetBrainsMono NF, Crude RTL` in the profile
+([bidi](../reference/bidi.md#fonts)).
+
+- A machine that cannot draw the Nerd Font yet gets the pinned archive
+  unpacked into `%LOCALAPPDATA%\Crude\window\fonts`, registered for this user
+  only. No face is copied into the system font folder and no existing font is
+  replaced. A machine that already has the family keeps it untouched.
+- The archive is unpacked with the Windows tar, `%SystemRoot%\System32\tar.exe`.
+  A tar from a Git or MSYS installation comes first on PATH on many machines
+  and reads `C:\...` as a remote host, so the Windows copy is chosen by its own
+  path. The result is checked: no face after unpacking is a failure.
+- A refusal prints one short notice, `the font for the window is missing.
+  Icons may look wrong`, and the program install still completes. The next run
+  tries again because no stamp is written.
+
 Every installation and update shows the warning: bugs, agent mistakes, work
 lost and the need for backups. A person at an interactive terminal is asked
 `Install anyway? [y/N]`. A piped or noninteractive run has nobody to ask and

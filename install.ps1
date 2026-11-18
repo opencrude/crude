@@ -817,6 +817,7 @@ function Add-CrudeFontRegistration([string] $Folder) {
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($script:CrudeFontKey)
     if (-not $key) { throw 'the per-user font list could not be opened' }
     $registered = 0
+    $loaded = $false
     try {
         foreach ($font in @(Get-ChildItem -LiteralPath $Folder -Filter '*.ttf' -File)) {
             $name = $font.BaseName + ' (TrueType)'
@@ -827,9 +828,12 @@ function Add-CrudeFontRegistration([string] $Folder) {
             }
             if ($null -eq $current) { $registered++ }
             $key.SetValue($name, $font.FullName, [Microsoft.Win32.RegistryValueKind]::String)
-            Publish-CrudeFont $font.FullName
+            $loaded = (Add-CrudeFontResource $font.FullName) -or $loaded
         }
     } finally { $key.Dispose() }
+    # One message announces every face: the Nerd Font has about a hundred,
+    # and each wait can last two seconds.
+    if ($loaded) { Publish-CrudeFontChange }
     return $registered
 }
 
@@ -837,10 +841,10 @@ function Add-CrudeFontRegistration([string] $Folder) {
 # load them from there.
 $script:CrudeFontKey = 'Software\Microsoft\Windows NT\CurrentVersion\Fonts'
 
-function Publish-CrudeFont([string] $Path) {
-    # Programs that are already running, such as Windows Terminal, learn about
-    # a new font only from the font change message. A failure here is not an
-    # install failure: the font is there at the next sign-in.
+function Add-CrudeFontResource([string] $Path) {
+    # Makes the face usable for this process without restarting Windows. A
+    # failure here is not an install failure: Windows reads the per-user list
+    # at the next sign-in.
     try {
         if (-not ('CrudeFontNative' -as [type])) {
             Add-Type -Name CrudeFontNative -Namespace '' -MemberDefinition @'
@@ -848,7 +852,16 @@ function Publish-CrudeFont([string] $Path) {
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern System.IntPtr SendMessageTimeoutW(System.IntPtr window, uint message, System.UIntPtr wParam, System.IntPtr lParam, uint flags, uint timeout, out System.UIntPtr result);
 '@
         }
-        [void] [CrudeFontNative]::AddFontResourceW($Path)
+        return [CrudeFontNative]::AddFontResourceW($Path) -gt 0
+    } catch { return $false }
+}
+
+function Publish-CrudeFontChange {
+    # Programs that are already running, such as Windows Terminal, learn about
+    # new fonts only from the font change message. One message covers every
+    # face added since the last one.
+    if (-not ('CrudeFontNative' -as [type])) { return }
+    try {
         $result = [UIntPtr]::Zero
         # HWND_BROADCAST, WM_FONTCHANGE, SMTO_ABORTIFHUNG, two seconds.
         [void] [CrudeFontNative]::SendMessageTimeoutW([IntPtr] 0xffff, 0x001D, [UIntPtr]::Zero, [IntPtr]::Zero, 2, 2000, [ref] $result)
@@ -872,6 +885,31 @@ function Get-CrudeWindowDownload([string[]] $Sources, [string] $Destination, [lo
     throw $failure
 }
 
+function Get-CrudeTarPath {
+    # The Windows tar (bsdtar) unpacks .xz and reads an absolute path as the
+    # archive. A GNU tar from a Git or MSYS installation can be first on PATH,
+    # and it reads "C:\..." as a remote host, so the Windows copy is chosen by
+    # its own path whenever it exists.
+    if ($env:SystemRoot) {
+        $system = Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe'
+        if ([IO.File]::Exists($system)) { return $system }
+    }
+    $command = Get-Command 'tar.exe' -ErrorAction SilentlyContinue
+    if ($command -and $command.Source) { return $command.Source }
+    return $null
+}
+
+function Expand-CrudeFontArchive([string] $Tar, [string] $Archive, [string] $Folder) {
+    # Unpacks the font archive and reports whether faces arrived. A tar that
+    # refuses the archive leaves no face, which is a warning, never an install
+    # failure.
+    try {
+        & $Tar -xJf $Archive -C $Folder
+        if ($LASTEXITCODE -ne 0) { return $false }
+    } catch { return $false }
+    return [bool] @(Get-ChildItem -LiteralPath $Folder -Filter '*.ttf' -File -ErrorAction SilentlyContinue).Count
+}
+
 function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
     # The font is only added when the machine cannot draw the family already.
     # That is the case this window must never change: a font the user installed
@@ -886,7 +924,7 @@ function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
         }
         return
     }
-    if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
+    if (-not (Get-CrudeTarPath)) {
         Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
         return
     }
@@ -902,15 +940,16 @@ function Install-CrudeWindowFonts($Paths, [string] $WorkDir) {
         return
     }
     [void] [IO.Directory]::CreateDirectory($fonts)
-    & tar.exe -xJf $archive -C $fonts
+    if (-not (Expand-CrudeFontArchive (Get-CrudeTarPath) $archive $fonts)) {
+        # A machine without a working tar keeps the terminal's own font; the
+        # installed program stays complete.
+        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
+        return
+    }
     try { [void] (Add-CrudeFontRegistration $fonts) } catch {
         Write-CrudeStep (Mark 'warn') 'Font' "the font for the window could not be registered: $($_.Exception.Message)"
     }
-    if (@(Get-ChildItem -LiteralPath $fonts -Filter '*.ttf' -File).Count) {
-        [IO.File]::WriteAllText($stamp, $Paths.FontVersion)
-    } else {
-        Write-CrudeStep (Mark 'warn') 'Font' 'the font for the window is missing. Icons may look wrong'
-    }
+    [IO.File]::WriteAllText($stamp, $Paths.FontVersion)
 }
 
 function Remove-CrudeFontRegistration([string] $Folder) {
