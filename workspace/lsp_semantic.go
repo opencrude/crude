@@ -11,10 +11,10 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"crude/document"
-	"crude/lspedit"
-	"crude/lspsemantic"
+	"crude/lsp/edit"
+	"crude/lsp/semantic"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // ErrSemanticBusy reports a known non-admission: no view or provider state

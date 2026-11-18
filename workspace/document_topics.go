@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"sync"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // SubscribeDocument observes committed document changes directly, without an

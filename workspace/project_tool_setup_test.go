@@ -20,11 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
+	"crude/agent/toolstore"
 	"crude/insight/catalog"
 	"crude/network"
-	"crude/toolstore"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 type setupStoreFake struct {

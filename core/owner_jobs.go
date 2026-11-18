@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/workspace"
 )
 

@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crude/document"
+	"crude/workspace/document"
 	"errors"
 	"os"
 	"path/filepath"

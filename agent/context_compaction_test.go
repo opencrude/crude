@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
 )
 
 var compactionStagesForTest = rootprompt.CompactionStages()

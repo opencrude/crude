@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 
 	"golang.org/x/net/websocket"
 )

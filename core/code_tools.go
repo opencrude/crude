@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/toolstore"
+	"crude/agent/toolstore"
+	"crude/core/protocol"
 	"crude/types"
 )
 

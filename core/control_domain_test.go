@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/types/control"
 )
 

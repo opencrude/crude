@@ -2,7 +2,7 @@
 
 > Status: Current — protocol v2 carriers, retained sessions, typed commands and pushed replicas.
 
-Normal `crude` startup uses `app.ConnectCore` and `shellport/remote.Attach`.
+Normal `crude` startup uses `app.ConnectCore` and `core/port/remote.Attach`.
 The per-user core owns runtime workspaces/sessions, configuration/accounts,
 catalogs and prompt history; independently rendered shells detach without stopping
 peer execution. `--core [--server] [--core-grace d]`, `--core-status`,
@@ -26,7 +26,7 @@ The application owns profile metadata and saves through the existing settings ow
 `tui/startup/` owns the detached introduction and project-selection screen.
 The current project layout, settings, and services remain unchanged.
 
-`projectpath/` resolves the candidate on the core host before the workspace factory runs.
+`core/projectpath/` resolves the candidate on the core host before the workspace factory runs.
 OS-known home and personal folders, filesystem roots, and volume roots are navigation locations only.
 The check uses directory identity, not a folder name or project-tree scan.
 Children of these locations, empty folders, and non-Git folders remain valid projects.
@@ -106,7 +106,7 @@ the ordered effect lane; unknown methods never opt themselves into a read path.
 This does not bypass the shared 16-job admission bound or process governor.
 
 `lsp.selection_formatting` returns a detached, source-qualified edit plan through
-`coreprotocol/formatting.go`. It never writes text or disk. The requesting shell
+`core/protocol/formatting.go`. It never writes text or disk. The requesting shell
 fences its private selection and applies the plan through ordinary document edits;
 there is no second canonical formatting writer or raw caller-supplied LSP route.
 
@@ -230,14 +230,14 @@ mutable Workspace.
   references. Core actors now own semantic ingress/ticks; connected shells install
   immutable deltas on Update and present accepted effects without reducing again.
   `workspace/` must not import Bubble Tea or TUI rendering.
-- `lspclient/` owns the nonvisual LSP transport. Workspace installs its default
+- `lsp/client/` owns the nonvisual LSP transport. Workspace installs its default
   runtime without TUI construction. Shared documents own didOpen/didChange/save;
   exact per-client views release only their own LSP interest. Detach never stops a
   peer's language server or replaces canonical text with shell-provided bytes.
 - The new `core/` path owns retained workspace actors, atomic snapshot/subscription
   admission, bounded resource workers, durable mutation receipts and private framed
   client transport. `coreclient.WorkspaceView` is a detached read mirror, never a
-  fake Workspace containing runtime services. `shellport/remote` is the only CLI
+  fake Workspace containing runtime services. `core/port/remote` is the only CLI
   runtime path; `shellport.Local` remains core/test infrastructure. Read
   `docs/reference/core-client-protocol.md` before extending it. `--ssh` selects a
   strictly host-key-verified system-SSH connection to the fixed stdio bridge;
@@ -434,7 +434,7 @@ generation, never broadcast or automatically written to a system clipboard.
 
 ## Typed methods
 
-The exact request/result definitions live in `coreprotocol/*.go`; dispatch is
+The exact request/result definitions live in `core/protocol/*.go`; dispatch is
 closed and typed, not arbitrary method invocation. Current families are:
 
 | Family | Operations |

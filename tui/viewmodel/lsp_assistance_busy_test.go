@@ -11,11 +11,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/tui/editor"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 type retryCompletionPort struct {

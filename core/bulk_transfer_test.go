@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/types"
 	"crude/workspace"
 )

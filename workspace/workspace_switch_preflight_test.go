@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/collaboration"
-	"crude/fileio"
+	"crude/agent/collaboration"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
 )
 
 type switchPreflightLogger struct{}

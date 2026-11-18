@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
-	"crude/session"
+	"crude/agent/session"
+	"crude/workspace/fileio"
 )
 
 func TestAsyncCommandTerminationRequiresExactLiveOwner(t *testing.T) {

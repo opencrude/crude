@@ -5,10 +5,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/tui/screens/backgroundjobs"
 	"crude/types"
 	"crude/types/command"
+	"crude/workspace/fileio"
 )
 
 func (m *App) terminateBackgroundJob(request backgroundjobs.TerminateRequest) tea.Cmd {

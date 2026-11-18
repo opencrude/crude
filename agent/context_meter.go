@@ -1,6 +1,6 @@
 package agent
 
-import "crude/provider"
+import "crude/agent/provider"
 
 // contextMeter projects the next request from the latest accepted request.
 // Provider input/completion usage is authoritative; only messages appended

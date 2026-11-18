@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 func TestReviewedWatchRetainsOnlyExactTargetEvents(t *testing.T) {

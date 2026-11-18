@@ -7,9 +7,9 @@ import (
 	"slices"
 	"time"
 
-	"crude/document"
-	"crude/lspinlay"
+	"crude/lsp/inlay"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // InspectLSPInlayHint selects only a retained original object. Resolve is an

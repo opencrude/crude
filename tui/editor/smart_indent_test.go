@@ -2,8 +2,8 @@ package editor
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/indentation"
 	"crude/insight/catalog"
+	"crude/text/indent"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"

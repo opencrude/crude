@@ -5,7 +5,7 @@
 ## Ownership and stopping
 
 The canonical ownership, intake and development contract is
-[model prompts and project guidance](prompt-architecture.md). `prompt/` owns
+[model prompts and project guidance](prompt-architecture.md). `agent/prompt/` owns
 root/child and specialized job instructions; execution packages supply typed
 facts and own lifecycle/persistence. Callers use direct prompt APIs rather than
 forwarding wrappers or provider-specific behavioral forks. Editable profile

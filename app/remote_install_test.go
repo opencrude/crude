@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"crude/buildinfo"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 func remoteInstallFixture(t *testing.T) corewire.SSHOptions {

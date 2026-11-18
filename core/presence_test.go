@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 )
 
 func TestElectPresenceNobodyNotifiesWhileTheUserIsPresent(t *testing.T) {

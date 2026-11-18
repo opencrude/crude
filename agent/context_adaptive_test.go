@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestCompactOversizedHistoryWithSmallerExtractionModel(t *testing.T) {

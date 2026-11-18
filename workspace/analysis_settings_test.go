@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/fileio"
 	"crude/insight/governor"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 func analysisPreferenceFixture(t *testing.T) (*Workspace, string) {

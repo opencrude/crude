@@ -6,12 +6,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/tui/screens/confirmation"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/question"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 func setupSessionDeckApp(t *testing.T) (*App, *sessionProjection) {

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

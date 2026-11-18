@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"fmt"
 	"io/fs"
 	"os"

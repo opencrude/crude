@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/collaboration"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 	ttypes "crude/types"
 	recoverytypes "crude/types/recovery"
 )

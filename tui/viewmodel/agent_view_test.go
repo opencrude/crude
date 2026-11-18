@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	ttypes "crude/types"
 	"crude/workspace"
 )

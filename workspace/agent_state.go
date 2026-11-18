@@ -5,9 +5,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/collaboration"
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	ttypes "crude/types"
 	"crude/types/command"
 	"crude/types/reasoning"

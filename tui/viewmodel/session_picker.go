@@ -3,7 +3,7 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/ui"
 	"crude/tui/wm"

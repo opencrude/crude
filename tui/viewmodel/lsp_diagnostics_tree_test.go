@@ -11,7 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
-	"crude/shellport"
+	"crude/core/port"
 	model "crude/types"
 	"crude/workspace"
 )

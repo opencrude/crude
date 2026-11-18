@@ -11,8 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clientstate"
-	"crude/document"
 	"crude/tui/editor"
+	"crude/workspace/document"
 )
 
 func recoveryKeyForDocument(snapshot document.Snapshot) string {

@@ -12,8 +12,8 @@ import (
 
 	"crude/buildinfo"
 	"crude/core"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 // Re-execute the test image as the fixed remote stdio command so this journey

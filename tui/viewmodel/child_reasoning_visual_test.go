@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types"
 	"crude/types/reasoning"
 )

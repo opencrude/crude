@@ -8,13 +8,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // The first response is a known non-admission, not an uncertain operation.

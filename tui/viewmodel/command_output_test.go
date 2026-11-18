@@ -16,8 +16,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/session"
-	"crude/shellport"
+	"crude/agent/session"
+	"crude/core/port"
 	"crude/terminalvt"
 	"crude/tui/rendering"
 	"crude/tui/screens/backgroundjobs"

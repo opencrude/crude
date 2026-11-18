@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 const (

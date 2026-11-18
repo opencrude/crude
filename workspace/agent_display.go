@@ -3,7 +3,7 @@ package workspace
 import (
 	"strings"
 
-	"crude/session"
+	"crude/agent/session"
 )
 
 // AgentDisplayLabel returns a human-readable presentation label for an agent

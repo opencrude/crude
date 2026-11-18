@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/core/port"
 	"crude/metrics"
-	"crude/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"

@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"crude/insight/catalog"
-	"crude/lspclient"
+	"crude/lsp/client"
 	model "crude/types"
 )
 

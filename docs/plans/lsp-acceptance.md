@@ -33,7 +33,7 @@ required before LSP is accepted as complete.
   diagnostics notice, editor/probe document holders, progress-settled
   diagnostics, and human-owned launch settings. Real `gopls` coverage:
   `workspace/lsp_probe_gopls_test.go` (skipped when `gopls` is absent);
-  session wiring: `session/code_intelligence_test.go`.
+  session wiring: `agent/session/code_intelligence_test.go`.
 - Native Windows Settings captures on 2026-11-03 cover Code Intelligence,
   Language Servers list → Go (gopls) detail, and the shared Code intelligence
   tools inventory at 160x40 and 80x24. These captures do not accept the setup

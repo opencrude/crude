@@ -46,7 +46,7 @@ class GoGroupsTests(unittest.TestCase):
                     self.assertIn("-count=1", command)
                     self.assertIn("-timeout=300s" if race else "-timeout=180s", command)
                     self.assertNotIn("-skip", command)
-                for package in ("./app", "./core", "./session", "./tui/viewmodel", "./workspace"):
+                for package in ("./app", "./core", "./agent/session", "./tui/viewmodel", "./workspace"):
                     patterns = [command[-1] for command in commands if package in command]
                     for name in names:
                         self.assertEqual(sum(bool(re.fullmatch(pattern, name)) for pattern in patterns), 1)

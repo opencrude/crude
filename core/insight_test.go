@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestInsightTopicThreeShellsAndSlowAckDoesNotBlockText(t *testing.T) {

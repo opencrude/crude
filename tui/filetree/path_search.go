@@ -1,7 +1,7 @@
 package filetree
 
 import (
-	"crude/textsearch"
+	"crude/text/search"
 	"maps"
 	"path/filepath"
 	"sort"

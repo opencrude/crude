@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
-	"crude/document"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
-	"crude/worktree"
+	"crude/workspace/document"
 )
 
 // Exercise framed external allocation/selection/input admission and the actual

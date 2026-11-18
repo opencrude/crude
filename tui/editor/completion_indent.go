@@ -6,8 +6,8 @@ import (
 	"slices"
 	"strings"
 
-	"crude/lspcompletion"
-	"crude/snippet"
+	"crude/lsp/completion"
+	"crude/text/snippet"
 	"crude/types"
 )
 

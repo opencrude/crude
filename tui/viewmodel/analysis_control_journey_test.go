@@ -10,9 +10,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/core"
-	"crude/coreprotocol"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/internal/wiretest"
-	"crude/shellport"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types"

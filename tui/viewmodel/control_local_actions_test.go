@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"crude/agent/memory"
 	"crude/core"
-	"crude/coreprotocol"
-	"crude/memory"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

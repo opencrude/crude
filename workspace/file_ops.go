@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // ── File operation results ──

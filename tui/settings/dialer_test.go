@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"

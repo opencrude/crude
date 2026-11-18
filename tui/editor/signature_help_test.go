@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/tui/theme"
+	"crude/workspace/document"
 )
 
 func TestTypingNativeIntentFollowsFinalSourceAndCaret(t *testing.T) {

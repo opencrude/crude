@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 // TestCompleteStreamAttachesOAuth verifies a chat request to the codex backend

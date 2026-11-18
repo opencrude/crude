@@ -48,8 +48,8 @@ func cohortFixture(t *testing.T, reverse bool) string {
 		{"third_party/libghostty-vt/GHOSTTY_PIN", "GHOSTTY_COMMIT=pin\n"},
 		{"third_party/libghostty-vt/GHOSTTY_PIN.ps1", "$GHOSTTY_COMMIT = 'pin'\n"},
 		{"third_party/libghostty-vt/huge.go", "excluded native outputs"},
-		{"prompt/instructions.go", "package prompt\nconst Instructions = \"policy\"\n"},
-		{"prompt/policy.tmpl", "model instructions\n"},
+		{"agent/prompt/instructions.go", "package prompt\nconst Instructions = \"policy\"\n"},
+		{"agent/prompt/policy.tmpl", "model instructions\n"},
 		{"docs/policy.tmpl", "not runtime instructions\n"},
 		{"data/embed_windows.go", "//go:build windows\n\npackage data\nimport _ \"embed\"\n//go:embed\t\"runtime data.json\"\nvar data string\n"},
 		{"data/runtime data.json", "{\"runtime\":true}"},
@@ -92,9 +92,10 @@ func TestCohortCanonicalCorpus(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
+		"agent/prompt/instructions.go", "agent/prompt/policy.tmpl",
 		"command/custom.go", "command/run.go", "command/run_linux.go", "command/run_windows.go", "command/wire_gen.go",
 		"coreprotocol/schema_gen.go", "data/embed_windows.go", "data/runtime data.json",
-		"go.mod", "go.sum", "prompt/instructions.go", "prompt/policy.tmpl",
+		"go.mod", "go.sum",
 		"third_party/fork/fork.go", "third_party/fork/fork_windows.go", "third_party/fork/go.mod", "third_party/fork/impl.s",
 		"third_party/libghostty-vt/GHOSTTY_PIN", "third_party/libghostty-vt/GHOSTTY_PIN.ps1", "third_party/pathwalk/walk.go",
 	}
@@ -171,7 +172,7 @@ func TestCohortSourceChanges(t *testing.T) {
 	for _, name := range []string{
 		"command/run.go", "command/run_windows.go", "command/custom.go", "command/wire_gen.go", "coreprotocol/schema_gen.go",
 		"go.mod", "go.sum", "third_party/fork/fork.go", "third_party/fork/go.mod", "third_party/fork/impl.s",
-		"data/runtime data.json", "prompt/instructions.go", "prompt/policy.tmpl",
+		"data/runtime data.json", "agent/prompt/instructions.go", "agent/prompt/policy.tmpl",
 		"third_party/libghostty-vt/GHOSTTY_PIN", "third_party/libghostty-vt/GHOSTTY_PIN.ps1",
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/snippet"
+	"crude/text/snippet"
 	"crude/types"
 )
 

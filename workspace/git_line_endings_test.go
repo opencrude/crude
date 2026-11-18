@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/localhistory"
-	"crude/textdiff"
+	"crude/text/diff"
+	"crude/workspace/localhistory"
 )
 
 // lineEndingRepository commits README.md as LF under an explicit line-ending

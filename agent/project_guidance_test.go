@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
-	"crude/tools"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/tools"
 )
 
 func TestRunReadsWholeGuidanceBeforeFirstRequest(t *testing.T) {

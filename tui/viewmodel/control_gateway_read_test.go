@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/shellport"
+	"crude/agent/provider"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

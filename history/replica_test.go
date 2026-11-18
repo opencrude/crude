@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 )
 
 func TestInstallReplicaPreservesAuthoritativeEntries(t *testing.T) {

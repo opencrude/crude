@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/remoteconn"
+	"crude/core/remoteconn"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"

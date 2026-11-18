@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/lspclient"
+	"crude/lsp/client"
 	model "crude/types"
 )
 

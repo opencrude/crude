@@ -10,10 +10,10 @@ import (
 	"slices"
 	"time"
 
-	"crude/document"
-	"crude/lspcompletion"
-	"crude/lspedit"
+	"crude/lsp/completion"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 const (

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 func deletionRequest(t *testing.T, c *Connection, id, ws, method string, value any) coreprotocol.Request {

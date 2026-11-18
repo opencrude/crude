@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"crude/codexio"
-	"crude/tools"
+	"crude/agent/codexio"
+	"crude/agent/tools"
 )
 
 type CategoryToolConfig struct {

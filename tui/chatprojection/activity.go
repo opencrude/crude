@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	toolargs "crude/tools"
+	toolargs "crude/agent/tools"
 	"crude/tui/rendering"
 	"crude/tui/tools"
 	"crude/tui/ui"

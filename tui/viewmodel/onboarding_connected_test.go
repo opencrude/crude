@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/core"
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/session"
+	"crude/core/protocol"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types"

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 // gatedCarrier holds each command's final reply on the core side until the

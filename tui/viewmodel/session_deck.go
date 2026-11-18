@@ -5,14 +5,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 const (

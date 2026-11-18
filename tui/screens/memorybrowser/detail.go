@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/memory"
+	"crude/agent/memory"
 )
 
 func detailText(detail DetailData) string {

@@ -9,11 +9,11 @@ import (
 	"strings"
 
 	"crude/agent"
-	"crude/collaboration"
-	"crude/coreprotocol"
+	"crude/agent/collaboration"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
-	"crude/worktree"
 )
 
 // A checkout is resolved from immutable request identity and the artifact

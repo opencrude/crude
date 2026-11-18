@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/terminalvt"
 	"crude/workspace"
 )

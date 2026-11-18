@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"crude/fileio"
 	"crude/terminalvt"
+	"crude/workspace/fileio"
 )
 
 // CommandOutputSource observes captured output without consuming the agent's

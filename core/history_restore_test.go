@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/document"
-	"crude/fileio"
-	"crude/localhistory"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 func TestConnectedHistoryRestoreSafetyInverseAndReceipt(t *testing.T) {

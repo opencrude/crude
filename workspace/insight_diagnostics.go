@@ -10,9 +10,9 @@ import (
 	"strings"
 	"unicode/utf16"
 
-	"crude/document"
 	"crude/insight/facts"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func sameInsightBoundary(a, b types.InsightBoundary) bool {

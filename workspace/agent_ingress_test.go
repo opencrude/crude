@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types"
 	"crude/types/reasoning"
 )

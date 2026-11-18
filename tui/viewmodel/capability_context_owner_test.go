@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/ui"
 )
 

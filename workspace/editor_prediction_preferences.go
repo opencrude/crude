@@ -4,9 +4,9 @@ import (
 	"crypto/rand"
 	"errors"
 
-	"crude/fileio"
-	"crude/session"
+	"crude/agent/session"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 // The preparation owner captures this binding before starting its worker.

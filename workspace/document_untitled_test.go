@@ -2,13 +2,13 @@ package workspace
 
 import (
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestUntitledDocumentSurvivesRestartWithoutCreatingAFile(t *testing.T) {

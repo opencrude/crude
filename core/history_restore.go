@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"crude/coreprotocol"
-	"crude/localhistory"
+	"crude/core/protocol"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 )
 
 // restoreHistoryChoices is the common disk/document owner for native UI RPCs

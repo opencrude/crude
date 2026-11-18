@@ -2,8 +2,8 @@ package workspace
 
 import (
 	"context"
-	"crude/document"
-	"crude/indentation"
+	"crude/text/indent"
+	"crude/workspace/document"
 )
 
 func (s *DocumentService) EditorConfig(ctx context.Context, owner document.Owner, id string) (string, indentation.Choices, error) {

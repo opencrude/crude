@@ -1,7 +1,7 @@
 package app
 
 import (
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types"
 	"crude/workspace"
 	"reflect"

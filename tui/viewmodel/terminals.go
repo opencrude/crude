@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"

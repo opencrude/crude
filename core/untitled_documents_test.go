@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/workspace/document"
 )
 
 func TestConnectedUntitledDocumentSharesTextWithoutCreatingAFile(t *testing.T) {

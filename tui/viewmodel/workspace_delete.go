@@ -7,16 +7,16 @@ import (
 	"strings"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/fileio"
-	"crude/shellport"
+	"crude/core/client"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/rendering"
 	"crude/tui/screens/launcher"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
+	"crude/workspace/fileio"
 
 	tea "charm.land/bubbletea/v2"
 )

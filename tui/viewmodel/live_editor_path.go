@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/document"
 	"crude/tui/editor"
+	"crude/workspace/document"
 	"errors"
 	"path/filepath"
 )

@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/tui/perf"
 )
 

@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/core"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/session"
+	"crude/core/client"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

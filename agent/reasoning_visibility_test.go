@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/types/reasoning"
 )
 

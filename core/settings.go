@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"crude/hostshell"
+	"crude/agent/hostshell"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,9 +13,9 @@ import (
 	"slices"
 	"strings"
 
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
 )

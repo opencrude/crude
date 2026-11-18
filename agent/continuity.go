@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"crude/fileio"
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/workspace/fileio"
 )
 
 func (a *Agent) continuityMessage(ctx context.Context, compacted bool) (provider.ChatMessage, error) {

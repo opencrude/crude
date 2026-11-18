@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"crude/coreprotocol"
-	"crude/projectpath"
+	"crude/core/projectpath"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

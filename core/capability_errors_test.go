@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"

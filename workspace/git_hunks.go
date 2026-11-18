@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/textdiff"
-	"crude/textencoding"
+	"crude/text/diff"
+	"crude/text/encoding"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 )

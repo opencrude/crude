@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestRunRuntimePreparationFailureBlocksWeakenedRequests(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/ui"
 	"crude/types"
 )

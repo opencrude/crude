@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
-	"crude/tools"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/tools"
 )
 
 // Guidance changed during a run is delivered as hidden runtime context. An

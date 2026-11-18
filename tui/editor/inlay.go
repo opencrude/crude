@@ -3,7 +3,7 @@ package editor
 import (
 	"errors"
 
-	"crude/lspedit"
+	"crude/lsp/edit"
 	"crude/types"
 )
 

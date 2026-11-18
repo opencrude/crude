@@ -4,8 +4,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/provider"
-	"crude/tools"
+	"crude/agent/provider"
+	"crude/agent/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
 	"crude/types/recovery"

@@ -13,15 +13,15 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
-	"crude/shellport"
-	"crude/snippet"
+	"crude/core/port"
+	"crude/text/snippet"
 	"crude/tui/screens/completion"
 	"crude/tui/screens/shellchat"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/control"
+	"crude/workspace/document"
 )
 
 // Only the completion reader is fake. The mounted editor, registry routing,

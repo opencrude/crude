@@ -98,7 +98,7 @@ cooperation with the language server, not to a trust framework around setup.
 - **Few interruptions.** Aeron asks the user only for a decision it cannot make
   (for example, a tool that needs administrator rights). It uses the normal agent
   question. The prompt tells it to ask once, to keep progress in its own view and
-  to report a failure once. The prompt text lives in `prompt/`.
+  to report a failure once. The prompt text lives in `agent/prompt/`.
 - **Cleanup.** Removal of tools stays on the Settings page. Aeron removes a tool
   only when the user asks.
 
@@ -109,7 +109,7 @@ Built: the Agents sidebar fold; `InvocationSelection.MainAgent` and
 RPC); the Aeron role with no tool or capability restriction, in the agent
 filter, the role policy and the shipped role defaults
 (`types.DefaultAgentRoleCategories`, guarded by
-`session/aeron_tools_test.go`); the setup screen (the 2026-11-03
+`agent/session/aeron_tools_test.go`); the setup screen (the 2026-11-03
 list-and-details review, with every tool selectable and selected at first)
 that sends `prompt.ToolSetupMessage` to the workspace's Aeron, minimized and
 on automatic approval (`tui/viewmodel/workspace_aeron.go`), with a one-line

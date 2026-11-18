@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strings"
 
-	"crude/provider"
+	"crude/agent/provider"
 	captypes "crude/types/capability"
 	"testing"
 )

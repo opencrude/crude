@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/prompt"
+	"crude/agent/prompt"
 	"crude/tui/screens/decision"
 	"crude/types"
 	"crude/workspace"

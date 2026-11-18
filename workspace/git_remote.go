@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/textencoding"
+	"crude/text/encoding"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 
 	"github.com/go-git/go-git/v5"
 )

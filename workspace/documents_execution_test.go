@@ -11,9 +11,9 @@ import (
 	"runtime"
 	"testing"
 
-	"crude/document"
-	"crude/localhistory"
-	"crude/worktree"
+	"crude/agent/worktree"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 func executionFixture(t *testing.T) (*ExecutionService, *sql.DB, string) {

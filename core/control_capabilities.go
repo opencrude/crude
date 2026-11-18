@@ -6,7 +6,7 @@ import (
 	"slices"
 	"sort"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	captypes "crude/types/capability"
 	"crude/types/control"
 )

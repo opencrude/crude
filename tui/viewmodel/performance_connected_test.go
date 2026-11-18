@@ -9,10 +9,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/core/port"
+	"crude/core/port/remote"
 	"crude/metrics"
 	"crude/perfdata"
-	"crude/shellport"
-	"crude/shellport/remote"
 	"crude/tui/rendering"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"

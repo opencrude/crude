@@ -8,7 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/textsearch"
+	"crude/text/search"
 	"crude/tui/editor"
 	"crude/types"
 )

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/theme"
 	"crude/types"
 )

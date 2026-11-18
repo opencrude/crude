@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/tools"
 	ttypes "crude/types"
 	"crude/workspace"

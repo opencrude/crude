@@ -9,10 +9,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/codexio"
-	"crude/fileio"
-	rootprompt "crude/prompt"
-	"crude/provider"
+	"crude/agent/codexio"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/workspace/fileio"
 )
 
 const guidanceVerificationPasses = 3

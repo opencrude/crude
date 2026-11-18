@@ -3,9 +3,9 @@ package workspace
 import (
 	"fmt"
 
-	"crude/fileio"
 	"crude/insight/governor"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 // InitializeAnalysisRuntime runs on the retained factory worker, before actor

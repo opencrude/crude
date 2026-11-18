@@ -12,11 +12,11 @@ import (
 
 	"github.com/tinylib/msgp/msgp"
 
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/core"
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/provider"
-	"crude/session"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/workspace"
 )
 

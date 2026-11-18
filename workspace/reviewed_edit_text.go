@@ -7,7 +7,7 @@ import (
 	"strings"
 	"unicode"
 
-	"crude/textdiff"
+	"crude/text/diff"
 )
 
 // appendReviewedDiff uses the shared exact-byte line diff. CR and other control

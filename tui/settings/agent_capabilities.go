@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"crude/agent"
-	"crude/safety"
-	"crude/tools"
+	"crude/agent/safety"
+	"crude/agent/tools"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
 )

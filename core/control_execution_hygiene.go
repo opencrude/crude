@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/session"
-	"crude/worktree"
+	"crude/agent/session"
+	"crude/agent/worktree"
 )
 
 // Capture session handles on the actor; the worker never reads workspace maps.

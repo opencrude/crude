@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // prepareControlDomain is called on the actor AFTER the gateway has resolved

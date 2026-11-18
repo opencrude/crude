@@ -3,8 +3,8 @@ package workspace
 import (
 	"testing"
 
-	"crude/fileio"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
 )
 
 type workspaceSwitchDomainLogger struct{}

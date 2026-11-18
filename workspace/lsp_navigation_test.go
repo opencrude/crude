@@ -15,8 +15,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // This fake uses real didOpen/didChange synchronization. It deliberately lies

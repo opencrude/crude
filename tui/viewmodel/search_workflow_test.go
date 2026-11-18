@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
-	"crude/shellport"
+	"crude/core/port"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
+	"crude/workspace/fileio"
 
 	tea "charm.land/bubbletea/v2"
 )

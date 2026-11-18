@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"crude/document"
-	"crude/indentation"
+	"crude/text/indent"
+	"crude/workspace/document"
 )
 
 type source int

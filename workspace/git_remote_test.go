@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 )
 
 func gitMust(t *testing.T, dir string, args ...string) {

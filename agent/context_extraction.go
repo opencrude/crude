@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
 )
 
 const compactionReductionDepth = 8

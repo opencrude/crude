@@ -3,7 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"crude/document"
 	"crude/internal/fileuri"
-	"crude/localhistory"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 // PrepareUntitledOverwrite retains one immutable, owner-bound review. Applying

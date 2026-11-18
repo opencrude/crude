@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/theme"
+	"crude/workspace/document"
 )
 
 // Typing in one view of a file shows in every other view in the same frame,

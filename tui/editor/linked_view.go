@@ -1,8 +1,8 @@
 package editor
 
 import (
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 	"slices"
 )
 

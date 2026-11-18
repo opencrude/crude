@@ -78,7 +78,7 @@ run_bench '^BenchmarkSnippetTypingDense$/^lines20000$/^mirrors(8|64)$/^paint(fal
 run_bench '^Benchmark(CompletionLeadingStopsDense|OccurrenceProjectionLongLine)$' ./tui/editor
 run_bench '^Benchmark(CompletionNormalization|HighlightNormalizationLongLine)$' ./workspace
 run_bench '^BenchmarkInlayReaderStableLayout$' ./tui/screens/inlay
-run_bench '^BenchmarkSemantic(DecodeDense|ParseDense)$' ./lspsemantic
+run_bench '^BenchmarkSemantic(DecodeDense|ParseDense)$' ./lsp/semantic
 # These restore a dense source outside each measured stage. Duration calibration
 # otherwise selects excessive fixture work without collecting a better sample.
 BENCHTIME=100x run_bench '^BenchmarkSemanticEditingDense$' ./tui/editor
@@ -91,17 +91,17 @@ run_bench '^BenchmarkChatFind' ./tui/screens/shellchat
 run_bench '^BenchmarkDenseFileLinkHit$' ./tui/screens/shellchat
 run_bench '^BenchmarkParseSourceReference$' ./internal/filelink
 run_bench '^BenchmarkFooterOverflowPaint$' ./tui/screens/shellfooter
-run_bench '^BenchmarkSearchProjectDense$' ./fileio
+run_bench '^BenchmarkSearchProjectDense$' ./workspace/fileio
 run_bench '^BenchmarkProjectSearchSelection$' ./tui/screens/findinfiles
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
 run_bench '^BenchmarkDenseCommand(SettlementPresentedFrame|Reveal)$' ./tui/chatprojection
 run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview
 run_bench '^BenchmarkGitDiffLongLine(Paint|FarRightPaint)$' ./tui/screens/gitdiff
-run_bench '^BenchmarkOpenIndexedHistory$' ./localhistory
-run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./sessiondb
-run_bench '^Benchmark(CheckpointAppend_560Msgs|RecoveryCheckpoint_(560|2000)Msgs)$' ./sessiondb
-run_bench '^BenchmarkSessionDatabaseStartup$' ./sessiondb
-run_bench '^BenchmarkEstimateMultipartImage$' ./provider
+run_bench '^BenchmarkOpenIndexedHistory$' ./workspace/localhistory
+run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./agent/sessiondb
+run_bench '^Benchmark(CheckpointAppend_560Msgs|RecoveryCheckpoint_(560|2000)Msgs)$' ./agent/sessiondb
+run_bench '^BenchmarkSessionDatabaseStartup$' ./agent/sessiondb
+run_bench '^BenchmarkEstimateMultipartImage$' ./agent/provider
 run_bench '^Benchmark(ProjectInsightsCached10kDiagnostics|UsageSummaryCached1000Requests)$' ./workspace
 # Scenario benches: steady-state work budgets (see scripts/perf_ceilings.txt).
 run_bench 'Benchmark(IdleTick|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel

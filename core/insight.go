@@ -3,9 +3,9 @@ package core
 import (
 	"context"
 
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/core/wire"
+	"crude/workspace/document"
 )
 
 func (c *Connection) serveInsightTopic(ctx context.Context, stream corewire.Stream, reader *corewire.Reader, open coreprotocol.Open) {

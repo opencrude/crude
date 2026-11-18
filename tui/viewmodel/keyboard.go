@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/provider"
-	"crude/shellport"
+	"crude/agent/provider"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/input"
 	"crude/tui/rendering"

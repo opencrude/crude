@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 var diagnosticTestSequence atomic.Uint64

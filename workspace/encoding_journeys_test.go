@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
-	"crude/textencoding"
+	"crude/text/encoding"
+	"crude/workspace/document"
 
 	"github.com/go-git/go-git/v5"
 )

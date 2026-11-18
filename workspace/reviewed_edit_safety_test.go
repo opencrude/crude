@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
-	"crude/fileio"
-	"crude/localhistory"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 func safetyConsent(detail HistorySafetyDetail, action string) HistorySafetyChangeRequest {

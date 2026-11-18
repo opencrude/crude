@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/shellport"
+	"crude/core/port"
 	"fmt"
 	"strings"
 	"time"

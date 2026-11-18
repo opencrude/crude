@@ -30,9 +30,9 @@ import (
 	"sync"
 	"time"
 
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 	"crude/network"
-	"crude/provider"
-	"crude/sessiondb"
 	"crude/tui"
 	ttypes "crude/types"
 	captypes "crude/types/capability"

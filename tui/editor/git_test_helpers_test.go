@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/textdiff"
+	"crude/text/diff"
 	"strings"
 )
 

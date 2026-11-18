@@ -14,12 +14,12 @@ import (
 	"strings"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/remoteconn"
-	"crude/shellport"
-	"crude/shellport/remote"
+	"crude/core/client"
+	"crude/core/port"
+	"crude/core/port/remote"
+	"crude/core/protocol"
+	"crude/core/remoteconn"
+	"crude/core/wire"
 	"crude/types"
 	"crude/workspace"
 )

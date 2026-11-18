@@ -5,7 +5,7 @@ package core
 import (
 	"bytes"
 	"context"
-	"crude/toolstore"
+	"crude/agent/toolstore"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,18 +20,18 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/agent/provider"
 	"crude/buildinfo"
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/history"
 	"crude/insight/governor"
 	"crude/metrics"
-	"crude/provider"
 	"crude/types"
 	"crude/types/control"
 	"crude/types/inspect"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // Factory belongs to the application configuration owner. It is invoked once

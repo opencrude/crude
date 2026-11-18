@@ -4,7 +4,7 @@ package diffview
 
 import (
 	"context"
-	"crude/textdiff"
+	"crude/text/diff"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 	"fmt"

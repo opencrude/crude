@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 func TestWorkspaceEditRollbackPreservesEqualBytesForeignPostimageIdentity(t *testing.T) {

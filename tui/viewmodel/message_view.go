@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/provider"
+	"crude/agent/provider"
 	"crude/tui/chatprojection"
 	ttypes "crude/types"
 	"crude/types/command"

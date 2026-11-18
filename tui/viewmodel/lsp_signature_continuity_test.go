@@ -7,12 +7,12 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
-	"crude/shellport"
-	"crude/snippet"
+	"crude/core/port"
 	"crude/syntax"
+	"crude/text/snippet"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestParameterHelpFollowsArgumentTypingAndDeletion(t *testing.T) {

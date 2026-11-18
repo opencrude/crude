@@ -10,10 +10,10 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"crude/coreprotocol"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
+	"crude/core/protocol"
 	"crude/history"
-	"crude/provider"
-	"crude/sessiondb"
 	"crude/workspace"
 )
 

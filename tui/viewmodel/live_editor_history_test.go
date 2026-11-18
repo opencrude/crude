@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/workspace"
 

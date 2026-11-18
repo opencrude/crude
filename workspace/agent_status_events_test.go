@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 	ttypes "crude/types"
 	"crude/types/recovery"
 )

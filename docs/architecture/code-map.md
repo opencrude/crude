@@ -7,6 +7,27 @@ rules in the root [`AGENTS.md`](../../AGENTS.md) decide what each owner may
 import; the topic references under [`docs/reference/`](../README.md) hold the
 detailed contracts.
 
+## Repository layout
+
+Related packages live under one group directory. A group directory holds only
+its members; a package's import path is its directory path.
+
+| Group | Members |
+|---|---|
+| `app/` | IDE shell entry, config, core spawning. |
+| `core/` | `core/` itself is the retained actor; `client/`, `port/`, `port/remote/`, `projectpath/`, `protocol/`, `remoteconn/`, `wire/`. |
+| `agent/` | Turn loop (`agent/` itself) plus `capability/`, `codexio/`, `collaboration/`, `cranemcp/`, `hostshell/`, `mcpclient/`, `memory/`, `plan/`, `prompt/`, `provider/`, `safety/`, `session/`, `sessiondb/`, `skills/`, `tools/`, `toolstore/`, `webmcp/`, `worktree/`. |
+| `lsp/` | `action/`, `client/`, `completion/`, `edit/`, `inlay/`, `nav/`, `semantic/`. |
+| `text/` | `diff/`, `encoding/`, `indent/`, `jsonrepair/`, `search/`, `snippet/`, `unidiff/`. |
+| `workspace/` | Per-project state machine (`workspace/` itself) plus `document/`, `fileio/`, `localhistory/`. |
+| `tui/` | Renderer and input router. |
+| `types/` | Neutral contracts shared by every layer. |
+
+Single-purpose leaves stay at the root: `assets/`, `buildinfo/`, `clientstate/`,
+`clipboard/`, `crashlog/`, `desktopnotify/`, `docconv/`, `history/`, `insight/`,
+`internal/`, `logger/`, `metrics/`, `network/`, `perfdata/`, `retry/`, `search/`,
+`syntax/`, `sysload/`, `terminalvt/`.
+
 ## Application and runtime
 
 | Package | Owns |
@@ -15,83 +36,83 @@ detailed contracts.
 | `buildinfo/` | Build identity and `buildinfo.Home`, the single Crude data root (`CRUDE_HOME`). |
 | `crashlog/` | Process-local synchronous fatal output and recovered TUI panic reports; no event-loop or normal-log dependency. |
 | `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. `core/attention.go` sends the workspace Aeron one notice per Investigate issue; `core/presence.go` elects the shell that shows desktop notifications. |
-| `coreprotocol/` | Versioned, presentation-neutral core API types. |
-| `projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
-| `corewire/` | Bounded framed transport (local socket, SSH stdio bridge). |
-| `coreclient/` | Client multiplexer and detached read mirrors (`WorkspaceView`). |
-| `shellport/` | The `shellport.Workspace` seam the TUI consumes; `shellport/remote` is the CLI runtime path. |
+| `core/protocol/` | Versioned, presentation-neutral core API types. |
+| `core/projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
+| `core/wire/` | Bounded framed transport (local socket, SSH stdio bridge). |
+| `core/client/` | Client multiplexer and detached read mirrors (`WorkspaceView`). |
+| `core/port/` | The `shellport.Workspace` seam the TUI consumes; `core/port/remote` is the CLI runtime path. |
 | `desktopnotify/` | Native desktop notifications for one shell process: WinRT toasts on Windows, freedesktop D-Bus on Linux, a macOS slot. Delivery only; policy is in `tui/viewmodel/desktop_notices.go` ([desktop notifications](../reference/desktop-notifications.md)). |
 | `assets/` | Brand images; `assets.IconPNG` is the notification icon. `assets/fonts/` holds Crude RTL, the right-to-left fallback font the installers register (built by `scripts/build_rtl_font.py`, [bidi](../reference/bidi.md#fonts)). |
 | `clientstate/` | Client-private composer and unresolved-editor persistence with profile locks and epochs. |
 | `workspace/` | Per-project state machine: sessions, agent inventory, conversation, LSP manager, documents, file ops, search, terminals, Git, Local History lifecycle. Never imports `tui/`. |
 | `types/` | Neutral contracts shared by every layer (settings, reasoning, accounting, activity, capability registration). |
 
-## Agents and models
+## Agent and model (`agent/`)
 
 | Package | Owns |
 |---|---|
 | `agent/` | Agent turn loop, supervisor and recovery, request boundaries, guidance intake, tool dispatch. |
-| `session/` | Session runtime: tools execution, memory pipeline, children (live sub-agent limit), collaboration wiring, compaction triggers, agent code intelligence (`code_intelligence.go`) and plan discipline (`plan_discipline.go`). |
-| `sessiondb/` | Session SQLite schema: transcript, recovery checkpoints, context publication and their row-stored message lists, queue. |
-| `prompt/` | Every code-authored model instruction template ([prompt architecture](../reference/prompt-architecture.md)). |
-| `provider/` | Wire protocols, streaming, failure classification, connection accounting. |
-| `provider/text_once.go`, `provider/fim_once.go` | Bounded one-attempt no-tools text/FIM operations with original-wire usage-presence evidence; no prediction coordinator, consent authority, retry or adapter fallback. |
-| `session/editor_prediction.go` | Captured Aeron account/role binding for usage-preserving one-shot requests; live connection preflight, no consent, endpoint probing or chat-session creation. |
-| `codexio/` | Native Codex/OpenAI interfaces such as freeform `apply_patch`. |
-| `tools/` | Tool schemas, argument summaries, parallel dispatch, effects. |
-| `plan/` | Revisioned declarative plan store and activity view. |
-| `memory/` | Workspace memory records, evidence grounding, history search, audit journal. |
-| `collaboration/` | Durable agents/runs, directed delivery, reports, claims and controls. |
-| `capability/`, `skills/`, `mcpclient/`, `cranemcp/` | Capability discovery/acquisition/grants, skill loading, MCP client transport, Crude's own MCP control server. |
-| `safety/` | Command safety assessment and permission policy. |
-| `hostshell/` | Installed-shell inventory on the core's machine and the agent command shell resolver. |
+| `agent/session/` | Session runtime: tools execution, memory pipeline, children (live sub-agent limit), collaboration wiring, compaction triggers, agent code intelligence (`code_intelligence.go`) and plan discipline (`plan_discipline.go`). |
+| `agent/sessiondb/` | Session SQLite schema: transcript, recovery checkpoints, context publication and their row-stored message lists, queue. |
+| `agent/prompt/` | Every code-authored model instruction template ([prompt architecture](../reference/prompt-architecture.md)). |
+| `agent/provider/` | Wire protocols, streaming, failure classification, connection accounting. |
+| `agent/provider/text_once.go`, `agent/provider/fim_once.go` | Bounded one-attempt no-tools text/FIM operations with original-wire usage-presence evidence; no prediction coordinator, consent authority, retry or adapter fallback. |
+| `agent/session/editor_prediction.go` | Captured Aeron account/role binding for usage-preserving one-shot requests; live connection preflight, no consent, endpoint probing or chat-session creation. |
+| `agent/codexio/` | Native Codex/OpenAI interfaces such as freeform `apply_patch`. |
+| `agent/tools/` | Tool schemas, argument summaries, parallel dispatch, effects. |
+| `agent/plan/` | Revisioned declarative plan store and activity view. |
+| `agent/memory/` | Workspace memory records, evidence grounding, history search, audit journal. |
+| `agent/collaboration/` | Durable agents/runs, directed delivery, reports, claims and controls. |
+| `agent/capability/`, `agent/skills/`, `agent/mcpclient/`, `agent/cranemcp/` | Capability discovery/acquisition/grants, skill loading, MCP client transport, Crude's own MCP control server. |
+| `agent/safety/` | Command safety assessment and permission policy. |
+| `agent/hostshell/` | Installed-shell inventory on the core's machine and the agent command shell resolver. |
 | `retry/` | The single automatic-cooldown contract (five-minute ceiling). |
 | `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
 | `sysload/` | Observes the computer for background work: power source, CPU/memory/I/O pressure (Linux PSI) or idle cores, and available memory. Read off the UI goroutine by the closed-file check ([editor](../reference/editor.md#project-check-of-closed-files)). |
 | `perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection; no sampling or state owner. |
 | `types/inspect/` | Owner-bound immutable diagnostic pages with encoded-byte/range/retention bounds; no telemetry registry, authorization or background collector. |
 | `network/` | Shared outbound HTTP transport, proxy, trust and client identity. |
-| `toolstore/` | Read-only folders for acquired code-intelligence tools under `CRUDE_HOME`: bounded downloads, safe extraction, manifests, usage, history and previewed removal ([tool store](../reference/tool-store.md)). Records the caller's approval; owns no approval or language knowledge. |
+| `agent/toolstore/` | Read-only folders for acquired code-intelligence tools under `CRUDE_HOME`: bounded downloads, safe extraction, manifests, usage, history and previewed removal ([tool store](../reference/tool-store.md)). Records the caller's approval; owns no approval or language knowledge. |
 | `search/`, `docconv/` | Web/arXiv search engines and binary document conversion for read/fetch tools. |
-| `worktree/` | Managed execution worktrees and integration plans. |
+| `agent/worktree/` | Managed execution worktrees and integration plans. |
 
-## Files, documents and history
+## Files, documents and history (`workspace/`, `text/`, `lsp/`)
 
 | Package | Owns |
 |---|---|
-| `fileio/` | Bounded reads, atomic commit (`CommitAtomicFile`), mutation leases, command execution, desktop open. |
+| `workspace/fileio/` | Bounded reads, atomic commit (`CommitAtomicFile`), mutation leases, command execution, desktop open. |
 | `internal/fileuri/` | Native path, local file URI and SQLite file DSN conversion. |
-| `document/` | Presentation-neutral shared text commands. |
+| `workspace/document/` | Presentation-neutral shared text commands. |
 | `syntax/` | Bounded native syntax sessions, selected grammar/query pins, byte spans and syntax findings; not the canonical text owner or a semantic engine ([native syntax](../reference/native-syntax.md)). |
 | `insight/catalog/`, `internal/catalogimport/` | Languages, language servers and installable tools as validated data with provenance, detection through Linguist data, resource hints and release assets; generated from pinned sources by the development importer, plus editor data (comment tokens, formatters, grammar names) and runtime packs ([catalog](../reference/code-intelligence-catalog.md)). |
 | `internal/namesgate/` | Development gate: fails when product Go code names a language, tool or server that the catalog owns; reviewed exceptions in `allow.txt` ([names gate](../reference/code-intelligence-catalog.md#names-gate)). |
 | `insight/project/` | Bounded passive compilation-database artifact observations with exact byte identity and detached argv/opaque command projections; not a project model, execution authority or semantic coverage. |
 | `insight/project/cmake/` | Bounded passive CMake File API artifact observations with exact byte identity and detached configuration/target projections; native-shell fragments stay opaque, and parsing grants no read/execute authority, freshness or semantic coverage. |
 | `insight/predictionbudget/` | Sessionless durable token reservations, single-attempt tickets and conservative unknown-usage settlement; library-only, not egress consent or an enabled editor request path. |
-| `insight/predictioncontext/`, `prompt/editor_prediction.go` | Bounded exact-source diagnostic subset, source window, digest and explicit missing-input coverage; narrow escaped insertion prompt, not complete semantic/project context. |
+| `insight/predictioncontext/`, `agent/prompt/editor_prediction.go` | Bounded exact-source diagnostic subset, source window, digest and explicit missing-input coverage; narrow escaped insertion prompt, not complete semantic/project context. |
 | `types/editor_prediction*.go`, `workspace/editor_prediction_preferences.go`, `tui/settings/prediction.go` | Workspace-only human consent, strict authority decoding, one shared literal insertion contract and native preference rows; application/session inheritance and caller-generated grants are refused. |
 | `workspace/editor_prediction_service.go` | Internal bounded invocation/cancellation/cache and sessionless accounting composition; not yet constructed by the live workspace or connected to an editor RPC, source intent or visible meter. |
 | `workspace/project_context.go`, `workspace/project_artifact.go` | Retained explicit artifact-selection/observation owner, native root/file identity, coalesced worker, stale evidence and joined lifecycle ([project context](../reference/project-context.md)); not autonomous selection, provider configuration or complete semantic context. |
-| `textsearch/` | Shared exact/regex source-span matching and replacement expansion; established fzf ranking for project discovery only. |
-| `localhistory/` | Immutable snapshots, restore plans, verification, retention ([local history](../reference/local-history.md)). |
-| `textdiff/`, `diff/` | Exact line changes from immutable text; unified diff helpers. |
+| `text/search/` | Shared exact/regex source-span matching and replacement expansion; established fzf ranking for project discovery only. |
+| `workspace/localhistory/` | Immutable snapshots, restore plans, verification, retention ([local history](../reference/local-history.md)). |
+| `text/diff/`, `text/unidiff/` | Exact line changes from immutable text; unified diff helpers. |
 | `history/` | Prompt history with score-based eviction. |
-| `lspclient/` | Nonvisual LSP subprocess transport and pipe monitor ([editor](../reference/editor.md)). |
-| `lspedit/` | Passive bounded original-JSON text-edit normalization and strict bidirectional UTF-8-byte/UTF-16 source positions; preserves nullable wire versions without filesystem or execution authority ([reviewed rename](../reference/editor.md#reviewed-symbol-rename)). |
-| `lspaction/` | Passive bounded original-JSON literal-action parsing and edit-only resolve comparison; preserves opaque data and unsupported rows without provider, URI, source or mutation authority ([manual code actions](../reference/editor.md#manual-code-actions)). |
-| `lspnav/` | Passive bounded original-JSON Location/LocationLink and DocumentHighlight normalization with distinct null/empty answers; preserves ranges/order/URI data without file-read or target-freshness authority ([qualified navigation](../reference/editor.md#qualified-location-navigation), [occurrences](../reference/editor.md#occurrences-of-the-symbol-at-the-caret)). |
-| `lspinlay/` | Passive bounded original-JSON inlay parsing and tooltip-only resolve comparison; original opaque data and inert adjuncts carry no source, navigation, mutation or execution authority ([inlay hints](../reference/editor.md#read-only-inlay-hints)). |
-| `lspcompletion/` | Passive bounded original completion parsing, documentation/detail-only resolve comparison and one strict initial-primary-edit/snippet normalizer; no provider, source mutation or execution authority ([completion documentation](../reference/editor.md#completion-documentation-and-original-insertion)). |
+| `lsp/client/` | Nonvisual LSP subprocess transport and pipe monitor ([editor](../reference/editor.md)). |
+| `lsp/edit/` | Passive bounded original-JSON text-edit normalization and strict bidirectional UTF-8-byte/UTF-16 source positions; preserves nullable wire versions without filesystem or execution authority ([reviewed rename](../reference/editor.md#reviewed-symbol-rename)). |
+| `lsp/action/` | Passive bounded original-JSON literal-action parsing and edit-only resolve comparison; preserves opaque data and unsupported rows without provider, URI, source or mutation authority ([manual code actions](../reference/editor.md#manual-code-actions)). |
+| `lsp/nav/` | Passive bounded original-JSON Location/LocationLink and DocumentHighlight normalization with distinct null/empty answers; preserves ranges/order/URI data without file-read or target-freshness authority ([qualified navigation](../reference/editor.md#qualified-location-navigation), [occurrences](../reference/editor.md#occurrences-of-the-symbol-at-the-caret)). |
+| `lsp/inlay/` | Passive bounded original-JSON inlay parsing and tooltip-only resolve comparison; original opaque data and inert adjuncts carry no source, navigation, mutation or execution authority ([inlay hints](../reference/editor.md#read-only-inlay-hints)). |
+| `lsp/completion/` | Passive bounded original completion parsing, documentation/detail-only resolve comparison and one strict initial-primary-edit/snippet normalizer; no provider, source mutation or execution authority ([completion documentation](../reference/editor.md#completion-documentation-and-original-insertion)). |
 | `workspace/reviewed_edit.go`, `workspace/lsp_reviewed_edit.go` | Immutable canonical language-edit review, source/provider/context/native preconditions, non-agent safety reference and durable original mutation outcome; FileOps remains the only disk writer. |
 | `workspace/lsp_code_action.go`, `workspace/lsp_code_action_request.go` | Bounded original action-set ownership, source-byte selection, synchronized provider/context fencing and edit-only review composition; no action execution or second mutation writer. |
-| `workspace/lsp_highlight.go`, `lspclient/lsp_highlight.go`, `core/lsp_highlight.go` | Occurrences of the symbol at a caret: static-provider bridge, strict source-fitted ranges and the same semantic fence as navigation; presentation evidence only. |
-| `workspace/lsp_navigation*.go`, `lspclient/lsp_navigation.go`, `core/lsp_navigation.go` | One qualified navigation request/negative-answer family, raw synchronized-provider bridge, strict URI/range policy and explicit selected-source observation; shell-port commands never confer target-version, execution or edit authority. |
-| `workspace/lsp_inlay*.go`, `lspclient/lsp_inlay.go`, `core/lsp_inlay.go` | Canonical visible-range read evidence, exact owner/view/sequence retention and original tooltip-only observation; separate feature epoch, cancellation and bounded expiry. No hint edit, command or label-location execution. |
-| `workspace/lsp_completion*.go`, `lspclient/lsp_completion.go`, `core/lsp_completion.go` | Original completion-set authority, source/provider/context/feature fencing, passive selected-row resolve and exact initial-edit acceptance preflight; view release, bounds and expiry, never a second text writer. |
+| `workspace/lsp_highlight.go`, `lsp/client/lsp_highlight.go`, `core/lsp_highlight.go` | Occurrences of the symbol at a caret: static-provider bridge, strict source-fitted ranges and the same semantic fence as navigation; presentation evidence only. |
+| `workspace/lsp_navigation*.go`, `lsp/client/lsp_navigation.go`, `core/lsp_navigation.go` | One qualified navigation request/negative-answer family, raw synchronized-provider bridge, strict URI/range policy and explicit selected-source observation; shell-port commands never confer target-version, execution or edit authority. |
+| `workspace/lsp_inlay*.go`, `lsp/client/lsp_inlay.go`, `core/lsp_inlay.go` | Canonical visible-range read evidence, exact owner/view/sequence retention and original tooltip-only observation; separate feature epoch, cancellation and bounded expiry. No hint edit, command or label-location execution. |
+| `workspace/lsp_completion*.go`, `lsp/client/lsp_completion.go`, `core/lsp_completion.go` | Original completion-set authority, source/provider/context/feature fencing, passive selected-row resolve and exact initial-edit acceptance preflight; view release, bounds and expiry, never a second text writer. |
 | `workspace/reviewed_edit_safety.go`, `core/history_safety.go` | Original-journal and selected-preimage evidence verification for native human retention decisions; core receipts and Store-owned atomic append-only audit/pin transitions, not a second file writer. |
-| `snippet/` | Bounded passive numeric completion parser/validator; neutral expanded-primary byte plans, no editor state, environment or execution authority ([numeric snippets](../reference/editor.md#numeric-completion-snippets)). |
+| `text/snippet/` | Bounded passive numeric completion parser/validator; neutral expanded-primary byte plans, no editor state, environment or execution authority ([numeric snippets](../reference/editor.md#numeric-completion-snippets)). |
 | `terminalvt/` | libghostty-vt parsing and protocol encoding for in-app terminals. |
-| `clipboard/`, `logger/`, `jsonrepair/` | Platform clipboard, structured logging, streamed-JSON repair. |
+| `clipboard/`, `logger/`, `text/jsonrepair/` | Platform clipboard, structured logging, streamed-JSON repair. |
 
 ## Terminal UI (`tui/`)
 
@@ -204,7 +225,7 @@ Do not drop a `go.mod` replace without reading the owning reference.
 | `edit.go` | Edit operations |
 | `selection.go` | Selection state |
 
-### `prompt/`
+### `agent/prompt/`
 | File | Role |
 |---|---|
 | `build.go` | Canonical root/child prompt assembly and escaped profile/identity overlays |

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crude/types/control"
 )
 

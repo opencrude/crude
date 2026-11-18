@@ -173,10 +173,14 @@ sufficient.
 app/        IDE shell: CLI, app config, core spawning, workspace catalog.
             No session, agent or orchestrator knowledge.
 core/       Per-user core: retained workspace actors, serialized ingress,
-            receipts. Shells attach over typed RPC (coreprotocol/corewire).
+            receipts. Shells attach over typed RPC (core/protocol, core/wire).
+agent/      Agent turn loop plus its model, tool, memory, plan, safety and
+            collaboration packages.
+lsp/        Language-server transport and passive result normalization.
+text/       Text derivation: diff, search, encoding, indentation, snippets.
 workspace/  Per-project state machine: sessions, agents, documents, LSP,
             files, terminals, Git, Local History. Never imports crude/tui.
-tui/        Renderer and input router. Holds a shellport.Workspace, calls its
+tui/        Renderer and input router. Holds a core/port.Workspace, calls its
             methods, renders events. Owns no domain persistence.
 types/      Neutral contracts shared by every layer.
 ```
@@ -185,7 +189,7 @@ types/      Neutral contracts shared by every layer.
   callbacks between layers. Presentation-neutral contracts live in `types/` or
   workspace view data. Swapping Bubble Tea for a web UI must leave
   `workspace/` and `app/` unchanged.
-- Every CLI shell attaches to the user's core through `shellport/remote`;
+- Every CLI shell attaches to the user's core through `core/port/remote`;
   closing a shell detaches it and never stops sessions. Never attach two Apps to
   one mutable Workspace.
 - The shell (`App`) owns selected session, agent, focus and tab visibility; the
@@ -207,7 +211,7 @@ Package ownership is in the [code map](docs/architecture/code-map.md).
   cancel work, invalidate callbacks, then rebuild; shutdown joins what it owns.
 - **The agentic loop is sacred.** Tool-level failures are tool results the model
   handles; only run-level faults stop a run, and stopped work stays recoverable.
-- **Model instruction text lives only in `prompt/`.** Tool schemas and results
+- **Model instruction text lives only in `agent/prompt/`.** Tool schemas and results
   live with their tools; provider differences live in the narrowest adapter.
 - **Width:** `VisibleWidth` (shared grapheme profile) is the only layout width
   API; never use `uniseg`/`runewidth` directly or add platform corrections.

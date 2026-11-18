@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"slices"
 
-	"crude/document"
-	"crude/worktree"
+	"crude/agent/worktree"
+	"crude/workspace/document"
 )
 
 // mergeDiskLocked joins a changed file into a document with unsaved edits

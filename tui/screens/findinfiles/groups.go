@@ -5,11 +5,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/fileio"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
+	"crude/workspace/fileio"
 )
 
 // rowKind distinguishes per-file header rows from match rows in the results

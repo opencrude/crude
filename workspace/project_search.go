@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // ProjectSearchRequest is an immutable search operation created by

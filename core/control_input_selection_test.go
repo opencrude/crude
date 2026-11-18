@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
-	"crude/worktree"
 )
 
 func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {

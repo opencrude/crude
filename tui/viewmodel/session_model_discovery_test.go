@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/tui/screens/sessionsettings"
 	"crude/types"
 	"crude/workspace"

@@ -13,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/core/port"
 	"crude/internal/testterminal"
-	"crude/shellport"
 	"crude/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/screens/shellterm"

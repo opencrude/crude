@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	"crude/types/control"

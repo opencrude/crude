@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"crude/textencoding"
+	"crude/text/encoding"
 )
 
 // GitConflictChoice is how one conflict region is resolved.

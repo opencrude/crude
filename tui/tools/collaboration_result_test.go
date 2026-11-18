@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/collaboration"
+	"crude/agent/collaboration"
 )
 
 func TestCollaborationResultsRemainReadableAndExact(t *testing.T) {

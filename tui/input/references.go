@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/ui"
 )
 

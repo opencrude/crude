@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/provider"
-	"crude/shellport"
+	"crude/agent/provider"
+	"crude/core/port"
 )
 
 // Exercise the complete product path: composer admission binds its shell, the

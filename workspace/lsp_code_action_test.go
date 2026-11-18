@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
-	"crude/localhistory"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 // This fake uses the real manager's open/change synchronization. RPC gates

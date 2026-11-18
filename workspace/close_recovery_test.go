@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 )
 
 // TestCloseAgentLeavesListableResumableRegistryRecord covers the recovery

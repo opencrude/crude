@@ -539,7 +539,7 @@ not change table widths, wrapping, selection text, or the painted transcript.
   not-run or uncertainty facts. Status/preview mappings are shared. A word such
   as “cancelled” inside diagnostics never supplies a lifecycle state.
 - `ToolResult.Content` is display evidence; `AgentHint` is private model advice
-  owned by `prompt/`. Only `tools.ResultContentParts` composes that advice into
+  owned by `agent/prompt/`. Only `tools.ResultContentParts` composes that advice into
   provider input. Session snapshots persist display evidence and the outcome;
   rendering and copying never strip instructions by spelling or separators.
   Literal “Hint:” text from a file remains evidence. Native patcher errors

@@ -12,12 +12,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/cell"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 type blockedTreeDelete struct {

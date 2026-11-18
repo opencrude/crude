@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
-	"crude/fileio"
 	"crude/insight/governor"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 func TestAnalysisDefaultStaticBlocksHeadlessProbeAndManualEditorStart(t *testing.T) {

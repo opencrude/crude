@@ -6,8 +6,8 @@ import (
 	"slices"
 	"unicode/utf8"
 
-	"crude/document"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 // DocumentRecovery is detached evidence, never permission to replay a command.

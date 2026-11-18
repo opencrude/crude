@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 	settingsui "crude/tui/settings"
 	"crude/types"
 )

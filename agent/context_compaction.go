@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
 	"crude/retry"
 )
 

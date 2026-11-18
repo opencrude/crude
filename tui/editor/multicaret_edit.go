@@ -2,8 +2,8 @@ package editor
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/tui/ui"
+	"crude/workspace/document"
 	"fmt"
 	"slices"
 	"strings"

@@ -14,10 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/document"
-	"crude/lspaction"
-	"crude/lspedit"
+	"crude/lsp/action"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 const codeActionMaxSets = 4

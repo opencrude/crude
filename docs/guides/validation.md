@@ -76,7 +76,7 @@ Windows libghostty dependency. For example:
 ```powershell
 . .\scripts\libghostty_env.ps1
 . .\scripts\race_env.ps1
-go test -race -count=1 ./plan/ ./types/ ./terminalvt/
+go test -race -count=1 ./agent/plan/ ./types/ ./terminalvt/
 ```
 
 If the local PowerShell execution policy blocks scripts, start that session with

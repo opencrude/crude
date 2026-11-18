@@ -14,10 +14,10 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"crude/fileio"
-	"crude/localhistory"
-	"crude/session"
+	"crude/agent/session"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 type HistorySnapshotCreated struct{ Snapshot localhistory.SnapshotRecord }

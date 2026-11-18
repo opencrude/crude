@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
-	"crude/provider"
+	"crude/agent/provider"
+	"crude/core/protocol"
 	"crude/types/control"
 	"fmt"
 	"strings"

@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
+	"crude/core/protocol"
 	"crude/workspace"
 )
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/terminalvt"
 	"crude/types"
 	"crude/workspace"

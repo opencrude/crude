@@ -3,9 +3,9 @@ package viewmodel
 import (
 	"context"
 	"crude/core"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/shellport/remote"
+	"crude/core/client"
+	"crude/core/port/remote"
+	"crude/core/protocol"
 	"errors"
 	"net"
 	"os"
@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/workspace"
+	"crude/workspace/document"
 
 	tea "charm.land/bubbletea/v2"
 )

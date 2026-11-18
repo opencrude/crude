@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"crude/fileio"
 	"crude/insight/project"
 	"crude/insight/project/cmake"
+	"crude/workspace/fileio"
 )
 
 const (

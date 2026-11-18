@@ -8,7 +8,7 @@
 results. `types/control/catalog.go` is the command catalog; core owners bind exact
 runtime DTO schemas. `core/` authenticates/adopts callers, resolves actual effects,
 serializes admission and journals mutations. Domain services own effects;
-`coreclient`, `shellport/remote` and the registered TUI Host route shell intents
+`coreclient`, `core/port/remote` and the registered TUI Host route shell intents
 through Update, never Paint. `cranemcp` adapts this same API, not a second control
 engine. Native agents discover `crude_commands`, then invoke `crude_control` using
 the returned command ID and exact arguments. Discovery grants no authority.
@@ -394,8 +394,8 @@ universal credential-redaction guarantee. MCP stderr uses its owner's redaction.
 
 ## Evidence and limits
 
-`types/control`, `core/control_*_test.go`, `coreclient/control_test.go`,
-`shellport/remote/control_test.go`, `cranemcp`, `app/mcp_control_test.go` and
+`types/control`, `core/control_*_test.go`, `core/client/control_test.go`,
+`core/port/remote/control_test.go`, `cranemcp`, `app/mcp_control_test.go` and
 `tui/ui/control*_test.go` cover contracts, real transport/admission, receipts,
 component generations and native ownership. TUI journey tests cover selected
 shells/decks/forms; they are not exhaustive UI-family acceptance. A real framed

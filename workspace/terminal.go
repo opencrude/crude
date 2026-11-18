@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crude/hostshell"
+	"crude/agent/hostshell"
 	"errors"
 	"fmt"
 	"io"
@@ -18,8 +18,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/fileio"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
 )
 
 const (

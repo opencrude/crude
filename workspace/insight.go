@@ -7,10 +7,10 @@ import (
 	"slices"
 	"sync"
 
-	"crude/document"
 	"crude/insight/facts"
 	"crude/syntax"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // All workspaces in a core process share this native execution admission.

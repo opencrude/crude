@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
 	"crude/tui/screens/question"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 func TestSessionDeckIsRetainedPerSession(t *testing.T) {

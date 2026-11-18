@@ -7,10 +7,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	model "crude/localhistory"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	model "crude/workspace/localhistory"
 )
 
 func TestTimelinePreviewAndRestoreChoiceContract(t *testing.T) {

@@ -1,7 +1,7 @@
 package filepicker
 
 import (
-	"crude/textencoding"
+	"crude/text/encoding"
 	"strings"
 	"testing"
 

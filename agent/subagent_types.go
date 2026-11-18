@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/safety"
+	"crude/agent/safety"
 	ttypes "crude/types"
 	"crude/types/control"
 )

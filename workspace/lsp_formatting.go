@@ -3,9 +3,9 @@ package workspace
 import (
 	"cmp"
 	"context"
-	"crude/document"
-	"crude/lspedit"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
 	"errors"
 	"path/filepath"
 	"slices"

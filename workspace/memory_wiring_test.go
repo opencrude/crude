@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/memory"
-	"crude/provider"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/memory"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 	ttypes "crude/types"
 )
 

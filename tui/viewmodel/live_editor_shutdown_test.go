@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/workspace/document"
 )
 
 var errRepeatedShutdownSync = errors.New("shutdown reread synchronized source instead of submitting pending text")

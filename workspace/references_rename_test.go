@@ -3,7 +3,7 @@ package workspace
 import (
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 )
 
 // TestReferenceStoreRenameReference guards the attachment-rename plumbing:

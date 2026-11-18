@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // Each expectation is an explicit user-visible state, not computed by the

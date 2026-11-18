@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // heldSuggestion replaces "pr" on the first line with "print".

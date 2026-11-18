@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 // TestCompleteStreamRecordsReasoningDuration verifies that reasoning time is

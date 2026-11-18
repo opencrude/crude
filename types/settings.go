@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"slices"
 
+	"crude/agent/provider"
 	"crude/network"
-	"crude/provider"
 	captypes "crude/types/capability"
 )
 

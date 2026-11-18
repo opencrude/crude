@@ -2,15 +2,15 @@ package workspace
 
 import (
 	"bytes"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"crude/document"
-	"crude/fileio"
-	"crude/localhistory"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 func TestUntitledOverwriteRequiresExactReviewAndKeepsRecoverablePreimage(t *testing.T) {

@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 PROFILES="${CRUDE_NETEM_PROFILES:-25ms/1% 80ms/1%}"
 out="$(mktemp -d "$CRUDE_TEMP_DIR/protocol-netem-XXXXXX")"
 echo "Evidence: $out"
-go test -c -o "$out/remote.test" ./shellport/remote
+go test -c -o "$out/remote.test" ./core/port/remote
 ns_core="crude-netem-core-$$"
 ns_client="crude-netem-client-$$"
 cleanup() {

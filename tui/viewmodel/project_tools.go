@@ -11,8 +11,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/prompt"
-	"crude/shellport"
+	"crude/agent/prompt"
+	"crude/core/port"
 	"crude/tui/screens/toolsetup"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"

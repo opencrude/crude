@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/document"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // Inspect actual server frames without replacing either endpoint or its dispatch.

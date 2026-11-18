@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/memory"
+	"crude/agent/memory"
 )
 
 const memoryServiceTimeout = 5 * time.Second

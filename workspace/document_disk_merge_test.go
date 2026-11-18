@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // An external write that touches no unsaved line joins the text: the user's

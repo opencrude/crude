@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"encoding/json"
 	"fmt"
 	"net"

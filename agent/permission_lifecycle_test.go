@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/tools"
 	"crude/logger"
-	"crude/provider"
-	"crude/safety"
-	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/toolresult"
 )

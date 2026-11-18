@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types/control"

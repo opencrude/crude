@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"crude/buildinfo"
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/types"
 	"crude/workspace"
 )

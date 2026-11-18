@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 type semanticCursorService struct {

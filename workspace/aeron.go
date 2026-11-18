@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"crude/session"
+	"crude/agent/session"
 )
 
 // workspaceAeronSessionKey stores the workspace's one Aeron session identity.

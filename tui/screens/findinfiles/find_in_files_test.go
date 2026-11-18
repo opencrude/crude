@@ -8,11 +8,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/uitest"
+	"crude/workspace/fileio"
 )
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {

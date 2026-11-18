@@ -14,13 +14,13 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/document"
-	"crude/fileio"
+	"crude/core/protocol"
 	"crude/insight/governor"
-	"crude/localhistory"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/object"

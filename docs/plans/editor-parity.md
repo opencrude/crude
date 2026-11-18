@@ -228,7 +228,7 @@ offers it.
 
 ## Context-aware completion without a model
 
-**Owners:** existing LSP transport, workspace completion, `snippet/`,
+**Owners:** existing LSP transport, workspace completion, `text/snippet/`,
 `tui/viewmodel/lsp_completion.go`, and `tui/editor/lsp_edits.go`.
 
 **User clarification (2026-11-11):** HTML scaffolding, C loops and Lisp functions
@@ -267,7 +267,7 @@ pass/fail criteria for a bundled library.
 ## Completion and signature continuity
 
 **Owners:** existing completion and signature coordinator files in
-`tui/viewmodel/`, `workspace/lsp_completion.go`, `lspclient/`.
+`tui/viewmodel/`, `workspace/lsp_completion.go`, `lsp/client/`.
 
 - Keep parameter help anchored while typing arguments, changing overloads and
   moving between fields. Refresh on provider-advertised trigger/retrigger input
@@ -340,7 +340,7 @@ overlapping cursors, one-step Undo, peer edits, cancellation and render/hit agre
 ## Navigation, semantic presentation and project editing
 
 **Owners:** existing workspace LSP families, `third_party/powernap/pkg/lsp/`,
-`lspclient/`, `types/`, `shellport/`, native editor-help windows and review owner.
+`lsp/client/`, `types/`, `core/port/`, native editor-help windows and review owner.
 
 Semantic colors negotiate full/range/delta support, validate source-qualified
 legends and bounds, recover a rejected delta, and reproject the theme without a

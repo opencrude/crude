@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"crude/agent/provider"
 	"crude/core"
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types"

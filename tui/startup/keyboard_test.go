@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/tui/screens/filepicker"
 	"crude/tui/ui"
 	"crude/workspace"

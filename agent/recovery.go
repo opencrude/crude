@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	rootprompt "crude/prompt"
-	"crude/provider"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
 	"crude/retry"
 	ttypes "crude/types"
 	recoverytypes "crude/types/recovery"

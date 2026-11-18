@@ -13,7 +13,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi/kitty"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/attachment"

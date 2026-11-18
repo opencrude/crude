@@ -9,13 +9,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"crude/agent/provider"
 	"crude/clientstate"
-	"crude/coreprotocol"
-	"crude/document"
-	"crude/localhistory"
-	"crude/provider"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 // These are state/command fuzzers, not codec round trips. Every input owns a

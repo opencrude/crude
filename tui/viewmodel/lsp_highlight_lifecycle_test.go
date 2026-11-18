@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 type occurrenceCursorService struct {

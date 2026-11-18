@@ -18,10 +18,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/fileio"
-	"crude/remoteconn"
+	"crude/core/protocol"
+	"crude/core/remoteconn"
+	"crude/core/wire"
+	"crude/workspace/fileio"
 )
 
 var (

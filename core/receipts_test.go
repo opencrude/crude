@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"os"
 	"path/filepath"
 	"testing"

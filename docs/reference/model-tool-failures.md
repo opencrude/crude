@@ -28,7 +28,7 @@ before the match on the first line and after the match on the last line was
 deleted. Other model families copy whole lines more often, so they were
 affected less.
 
-**Fix.** `fileio/patcher.go`:
+**Fix.** `workspace/fileio/patcher.go`:
 
 - Phase 0: if `old_string` occurs exactly once as written, replace exactly that
   text. Line-based phases run only when the exact text is absent or ambiguous.
@@ -41,8 +41,8 @@ The failure was reproduced again while this page was written: an edit of
 collaboration runtime" entry deleted the link target after it. The running
 Crude still had the old patcher.
 
-**Tests.** `fileio/patcher_fragment_test.go`. Two older tests in
-`fileio/patcher_test.go` pinned the lost function signature as expected
+**Tests.** `workspace/fileio/patcher_fragment_test.go`. Two older tests in
+`workspace/fileio/patcher_test.go` pinned the lost function signature as expected
 output. They now expect the signature to stay.
 
 ## `agent_wait` without a target (fixed 2026-11-04)
@@ -57,10 +57,10 @@ addressed to me arrives) was valid, but the runtime rejected it.
 
 **Fix.** An untargeted wait now waits for the next event addressed to the
 caller, including a background command outcome
-(`session/collaboration_wait.go`). The tool description says so.
+(`agent/session/collaboration_wait.go`). The tool description says so.
 
 **Test.** `TestCollaborationWaitWithoutTargetWakesOnCommandOutcome` in
-`session/collaboration_wait_delivery_test.go`.
+`agent/session/collaboration_wait_delivery_test.go`.
 
 ## Fixed-length `wait` while background work runs (prompt rule; open)
 

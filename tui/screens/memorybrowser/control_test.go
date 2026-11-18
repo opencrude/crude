@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"crude/memory"
+	"crude/agent/memory"
 	"crude/tui/ui"
 	"crude/types/control"
 )

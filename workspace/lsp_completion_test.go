@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // This fixture acknowledges actual didOpen/didChange versions, but forges adapter

@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestResponsesContinuationDiagnosticsRespectRequestPolicy(t *testing.T) {

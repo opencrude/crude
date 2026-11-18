@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/history"
 	"crude/workspace"
 )

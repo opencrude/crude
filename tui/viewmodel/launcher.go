@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
-	"crude/shellport"
+	"crude/agent/sessiondb"
+	"crude/core/port"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"

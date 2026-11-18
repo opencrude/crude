@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/types/inspect"
 	"crude/workspace"
 )

@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/provider"
-	"crude/tools"
+	"crude/agent/provider"
+	"crude/agent/tools"
 )
 
 func TestResponsesRepeatedToolSnapshotsExecuteOneCallPerIdentity(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/tools"
+	"crude/agent/tools"
 	"crude/types/toolresult"
 )
 

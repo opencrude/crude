@@ -7,8 +7,8 @@ import (
 
 	"github.com/alecthomas/chroma/v2"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // These cases are ported from VS Code's tokensStore.test.ts

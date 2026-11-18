@@ -10,12 +10,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/document"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // Seed a real workspace checkpoint, close it, then remove its parent before the

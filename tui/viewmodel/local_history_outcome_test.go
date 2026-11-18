@@ -4,10 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	"crude/coreclient"
-	"crude/fileio"
-	"crude/localhistory"
+	"crude/core/client"
 	historyscreen "crude/tui/screens/localhistory"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 // An unknown restore outcome keeps its original request as the only operation;

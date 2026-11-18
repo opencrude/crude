@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // LFS delegates storage, filters, hooks and transfers to installed Git LFS.

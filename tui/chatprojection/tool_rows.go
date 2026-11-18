@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	toolargs "crude/tools"
+	toolargs "crude/agent/tools"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/theme"

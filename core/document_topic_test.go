@@ -2,16 +2,16 @@ package core
 
 import (
 	"context"
-	"crude/coreclient"
-	"crude/corewire"
+	"crude/core/client"
+	"crude/core/wire"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/workspace/document"
 )
 
 func TestDocumentTopicConnectedAckOrdersDeltasAndSavepoint(t *testing.T) {

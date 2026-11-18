@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types/control"

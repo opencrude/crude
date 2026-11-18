@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 func decisionFixture(t *testing.T) (*Workspace, types.ProjectToolReview) {

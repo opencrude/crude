@@ -9,14 +9,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/navigation"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 const navigationOverlay = ui.OverlayNavigation

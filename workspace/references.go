@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
 )
 
 type ReferenceStore struct {

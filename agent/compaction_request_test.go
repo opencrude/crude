@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 // A human request compacts before the next model request even when

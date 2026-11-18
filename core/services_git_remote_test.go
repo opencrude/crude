@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

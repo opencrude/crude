@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"crude/core"
-	"crude/coreclient"
-	"crude/coreprotocol"
+	"crude/core/client"
+	"crude/core/port/remote"
+	"crude/core/protocol"
 	"crude/internal/wirefault"
-	"crude/shellport/remote"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/skills"
+	"crude/agent/skills"
 	"crude/types"
 	captypes "crude/types/capability"
 )

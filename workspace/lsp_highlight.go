@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"slices"
 
-	"crude/document"
-	"crude/lspedit"
-	"crude/lspnav"
+	"crude/lsp/edit"
+	"crude/lsp/nav"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // LSPHighlightClient is the optional document-highlight capability of a

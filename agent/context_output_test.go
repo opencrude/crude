@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {

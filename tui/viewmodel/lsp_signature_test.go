@@ -10,8 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
@@ -19,6 +18,7 @@ import (
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 type signatureTestService struct {

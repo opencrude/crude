@@ -5,12 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/problems"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 type diagnosticFixtureService struct {

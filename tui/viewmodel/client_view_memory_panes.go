@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/indentation"
 	"crude/syntax"
+	"crude/text/indent"
 	"crude/tui/editor"
 	"fmt"
 	"hash/fnv"
@@ -12,9 +12,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/ui"
 	"crude/tui/window"
+	"crude/workspace/document"
 )
 
 // Saved pane work is deliberately bounded: a corrupt or hand-edited profile

@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/terminalvt"
 	"crude/tui/screens/shellterm"
 	"crude/tui/ui"

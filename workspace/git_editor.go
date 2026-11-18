@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/textdiff"
-	"crude/textencoding"
+	"crude/text/diff"
+	"crude/text/encoding"
 )
 
 // GitBlameLine is porcelain blame for one 1-based file line.

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crude/types"
 )
 

@@ -9,9 +9,9 @@ import (
 	"slices"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
+	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"

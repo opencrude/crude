@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
-	"crude/localhistory"
-	"crude/textencoding"
+	"crude/text/encoding"
+	"crude/workspace/document"
+	"crude/workspace/localhistory"
 )
 
 func TestFormatProjectFormatsSavedFilesAndSkipsOpenDocuments(t *testing.T) {

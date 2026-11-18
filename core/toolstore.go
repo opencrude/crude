@@ -5,9 +5,9 @@ import (
 	"log"
 	"path/filepath"
 
+	"crude/agent/toolstore"
 	"crude/buildinfo"
 	"crude/insight/catalog"
-	"crude/toolstore"
 )
 
 // openToolStore opens the core's tool store under the Crude data folder and

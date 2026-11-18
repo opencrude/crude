@@ -28,8 +28,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/fileio"
 	"crude/third_party/pathwalk"
+	"crude/workspace/fileio"
 
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 )

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 type inlayCursorService struct {

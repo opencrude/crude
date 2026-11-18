@@ -10,8 +10,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/provider"
-	"crude/remoteconn"
+	"crude/agent/provider"
+	"crude/core/remoteconn"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	ctypes "crude/types"

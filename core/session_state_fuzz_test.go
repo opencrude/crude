@@ -10,8 +10,8 @@ import (
 	"testing/synctest"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/types"
 	"crude/workspace"
 )

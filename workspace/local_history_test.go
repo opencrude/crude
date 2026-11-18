@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/localhistory"
+	"crude/workspace/localhistory"
 )
 
 func TestWorkspaceLocalHistoryCapturePreviewApply(t *testing.T) {

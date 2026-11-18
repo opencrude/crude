@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 func sharedDocumentRuntime(t *testing.T) (*Runtime, string) {

@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"crude/clientstate"
-	"crude/document"
 	"crude/tui/surface"
 	"crude/tui/ui"
+	"crude/workspace/document"
 
 	tea "charm.land/bubbletea/v2"
 )

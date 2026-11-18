@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"crude/safety"
-	"crude/tools"
+	"crude/agent/safety"
+	"crude/agent/tools"
 	captypes "crude/types/capability"
 )
 

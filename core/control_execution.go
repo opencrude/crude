@@ -9,10 +9,10 @@ import (
 	"strings"
 	"sync"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
+	"crude/agent/collaboration"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
-	"crude/worktree"
 )
 
 // Identity comes from the admitted gateway caller, never an input owner.

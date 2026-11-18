@@ -3,7 +3,7 @@ package tools
 import (
 	"fmt"
 
-	toolcontract "crude/tools"
+	toolcontract "crude/agent/tools"
 )
 
 // ResultSection preserves semantic boundaries before terminal geometry is

@@ -14,14 +14,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/tui/rendering"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T) {

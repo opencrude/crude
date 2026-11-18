@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 func remotePreference(path []string) bool {

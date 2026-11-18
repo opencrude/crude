@@ -13,16 +13,16 @@ import (
 	"sync"
 	"time"
 
-	"crude/document"
-	"crude/fileio"
+	"crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/insight/catalog"
 	"crude/insight/predictionbudget"
 	"crude/insight/predictioncontext"
 	"crude/insight/textindex"
-	"crude/prompt"
-	"crude/provider"
-	"crude/session"
 	"crude/types"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 const (

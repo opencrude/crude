@@ -9,11 +9,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 // fileOpsUndrainedProgramModel backs a Program whose unbuffered message

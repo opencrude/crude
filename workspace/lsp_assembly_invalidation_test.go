@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/fileio"
 	model "crude/types"
+	"crude/workspace/fileio"
 )
 
 func waitDiscoveryPlan(t *testing.T, m *LSPManager, after uint64, languages int) model.AssemblyPlan {

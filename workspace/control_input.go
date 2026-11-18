@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	"crude/provider"
+	"crude/agent/provider"
 	"errors"
 )
 

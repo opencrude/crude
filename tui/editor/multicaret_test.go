@@ -2,12 +2,12 @@ package editor
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 	"encoding/json"
 	"fmt"
 	"reflect"

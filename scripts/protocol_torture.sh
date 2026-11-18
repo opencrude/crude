@@ -23,7 +23,7 @@ echo "Evidence: $out"
 failed=0
 go test -o "$out/core.test" ./core -run '^TestProtocolTorture' -count=1 -timeout=180s -v > "$out/journeys.log" 2>&1 || failed=1
 cat "$out/journeys.log"
-go test -c -fuzz '^FuzzTerminalInputAdmissionOrdering$' -o "$out/coreclient.test" ./coreclient
+go test -c -fuzz '^FuzzTerminalInputAdmissionOrdering$' -o "$out/coreclient.test" ./core/client
 # Run from the evidence directory: native fuzz failure corpora belong there,
 # never as an unreviewed write into the source checkout.
 (cd "$out" && ./coreclient.test -test.run '^FuzzTerminalInputAdmissionOrdering$' -test.fuzz '^FuzzTerminalInputAdmissionOrdering$' -test.fuzzcachedir "$out/input-fuzz-cache" -test.fuzztime=35s -test.parallel=2 -test.timeout=90s) > "$out/fuzz.log" 2>&1 || failed=1

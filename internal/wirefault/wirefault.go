@@ -9,8 +9,8 @@ import (
 	"net"
 	"sync"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 // Frame types of the stream-mux carrier (corewire/mux.go).

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"crude/core"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/network"
 	"crude/workspace"
 )

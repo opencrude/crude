@@ -3,8 +3,8 @@ package workspace
 import (
 	"testing"
 
-	"crude/collaboration"
-	"crude/session"
+	"crude/agent/collaboration"
+	"crude/agent/session"
 	"crude/types"
 )
 

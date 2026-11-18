@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 // DefaultSessionGrace is how long a session outlives its last carrier. Within

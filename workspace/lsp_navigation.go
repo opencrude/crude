@@ -9,9 +9,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/document"
-	"crude/lspedit"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func (s *DocumentService) readOnlyLSPSourceLocked(owner document.Owner, source types.InsightSource) ([]byte, error) {

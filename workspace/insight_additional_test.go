@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 func TestInsightDiskProbeCannotReuseRelocatedCanonicalIdentity(t *testing.T) {

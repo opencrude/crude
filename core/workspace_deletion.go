@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"crude/coreprotocol"
-	"crude/fileio"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 type workspaceStorageGate struct {

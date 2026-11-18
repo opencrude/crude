@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/collaboration"
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
 )

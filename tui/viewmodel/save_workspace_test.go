@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	sessionsettings "crude/tui/screens/sessionsettings"
 	"crude/tui/ui"
 	"crude/types"

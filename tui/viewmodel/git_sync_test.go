@@ -11,13 +11,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/gitmerge"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 )
 
 func syncGit(t *testing.T, dir string, args ...string) {

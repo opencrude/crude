@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 // seedDevelopmentProfile gives a new development profile the release

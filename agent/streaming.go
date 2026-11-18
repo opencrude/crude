@@ -5,9 +5,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/codexio"
-	"crude/jsonrepair"
+	"crude/agent/codexio"
 	"crude/logger"
+	"crude/text/jsonrepair"
 
 	"github.com/buger/jsonparser"
 )

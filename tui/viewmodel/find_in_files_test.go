@@ -8,8 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
-	"crude/localhistory"
 	"crude/tui/cell"
 	"crude/tui/editor"
 	findinfiles "crude/tui/screens/findinfiles"
@@ -17,6 +15,8 @@ import (
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 func TestFindInFilesResultLandingBeforeFirstPaint(t *testing.T) {

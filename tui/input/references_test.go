@@ -3,7 +3,7 @@ package input
 import (
 	"testing"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 )
 
 func TestFindRefRanges_SingleLabel(t *testing.T) {

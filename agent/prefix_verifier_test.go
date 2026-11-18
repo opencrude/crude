@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"crude/provider"
+	"crude/agent/provider"
 )
 
 func TestPrefixVerifierAllowsAppendRejectsMutationAndResetsForCompaction(t *testing.T) {

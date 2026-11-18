@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/session"
-	"crude/sessiondb"
+	"crude/agent/session"
+	"crude/agent/sessiondb"
 	"crude/types"
 	captypes "crude/types/capability"
 )

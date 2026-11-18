@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/coreprotocol"
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
+	"crude/core/protocol"
 	"crude/workspace"
 )
 

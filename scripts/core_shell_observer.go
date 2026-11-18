@@ -19,9 +19,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/corewire"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/core/wire"
 )
 
 type request struct {

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"crude/buildinfo"
-	"crude/coreprotocol"
+	"crude/core/protocol"
 	"crude/types/inspect"
 )
 

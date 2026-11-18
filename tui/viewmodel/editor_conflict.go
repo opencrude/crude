@@ -10,12 +10,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/clientstate"
-	"crude/document"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/diffview"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/workspace/document"
 )
 
 const liveConflictOverlay ui.OverlayID = "live-editor-conflict"

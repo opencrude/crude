@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/imagepreview"
 	"crude/tui/screens/textoverlay"

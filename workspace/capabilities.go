@@ -9,15 +9,15 @@ import (
 	"strings"
 
 	"crude/agent"
+	"crude/agent/capability"
+	"crude/agent/collaboration"
+	"crude/agent/mcpclient"
+	"crude/agent/provider"
+	"crude/agent/skills"
 	"crude/buildinfo"
-	"crude/capability"
-	"crude/collaboration"
-	"crude/fileio"
-	"crude/mcpclient"
-	"crude/provider"
-	"crude/skills"
 	"crude/types"
 	captypes "crude/types/capability"
+	"crude/workspace/fileio"
 )
 
 func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {

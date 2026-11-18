@@ -9,8 +9,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/lspedit"
-	"crude/lspnav"
+	"crude/lsp/edit"
+	"crude/lsp/nav"
 	"crude/types"
 )
 

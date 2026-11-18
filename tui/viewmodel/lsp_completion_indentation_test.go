@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/indentation"
+	"crude/text/indent"
 )
 
 // The keystroke enters through the same connected completion path as ordinary

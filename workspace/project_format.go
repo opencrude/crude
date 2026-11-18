@@ -2,15 +2,15 @@ package workspace
 
 import (
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/rand"
 	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 
-	"crude/fileio"
-	"crude/localhistory"
+	"crude/workspace/fileio"
+	"crude/workspace/localhistory"
 )
 
 const (

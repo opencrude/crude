@@ -15,13 +15,13 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 
-	"crude/fileio"
+	"crude/agent/toolstore"
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
-	"crude/lspclient"
+	"crude/lsp/client"
 	"crude/third_party/pathwalk"
-	"crude/toolstore"
 	ttypes "crude/types"
+	"crude/workspace/fileio"
 )
 
 // The assembly service turns the catalog, the user's settings, installed

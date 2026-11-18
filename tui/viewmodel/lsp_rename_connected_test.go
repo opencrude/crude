@@ -19,7 +19,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/core"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

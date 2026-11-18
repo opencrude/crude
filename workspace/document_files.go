@@ -3,7 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"strings"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // MutateFiles fences canonical edits, opens and saves through the disk operation.

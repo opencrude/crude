@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/coreprotocol"
+	"crude/agent/worktree"
+	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
-	"crude/worktree"
 )
 
 // Both entry points must transport only the token, while the existing

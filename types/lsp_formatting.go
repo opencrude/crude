@@ -1,6 +1,6 @@
 package types
 
-import "crude/document"
+import "crude/workspace/document"
 
 // Formatting spans are UTF-8 offsets in the exact canonical source. Wire
 // positions are derived on the core, never from terminal columns.

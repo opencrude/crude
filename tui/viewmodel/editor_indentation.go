@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/indentation"
+	"crude/text/indent"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"fmt"

@@ -10,8 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreprotocol"
-	"crude/session"
+	"crude/agent/session"
+	"crude/core/protocol"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/control"

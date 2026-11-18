@@ -1,8 +1,8 @@
 package core
 
 import (
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
+	"crude/workspace/document"
 	"errors"
 	"testing"
 )

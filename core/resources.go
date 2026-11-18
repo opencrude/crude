@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"crude/coreprotocol"
-	"crude/corewire"
-	"crude/document"
-	"crude/projectpath"
+	"crude/core/projectpath"
+	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/terminalvt"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // prepareResource captures exact workspace-owned service lifetimes. A client

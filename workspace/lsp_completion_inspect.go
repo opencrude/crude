@@ -7,10 +7,10 @@ import (
 	"slices"
 	"time"
 
-	"crude/document"
-	"crude/lspcompletion"
-	"crude/lspedit"
+	"crude/lsp/completion"
+	"crude/lsp/edit"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // InspectLSPCompletion borrows only the exact retained original row. Resolve

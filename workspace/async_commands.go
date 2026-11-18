@@ -3,7 +3,7 @@ package workspace
 import (
 	"fmt"
 
-	"crude/fileio"
+	"crude/workspace/fileio"
 )
 
 func (w *Workspace) PrepareAsyncCommandTermination(agentID string, ref fileio.AsyncCmdRef) (func() error, error) {

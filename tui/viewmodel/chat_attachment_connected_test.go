@@ -19,9 +19,9 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi/kitty"
 
-	"crude/coreclient"
-	"crude/provider"
-	"crude/sessiondb"
+	"crude/agent/provider"
+	"crude/agent/sessiondb"
+	"crude/core/client"
 	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	"crude/types"

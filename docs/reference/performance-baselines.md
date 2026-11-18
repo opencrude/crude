@@ -1688,7 +1688,7 @@ BenchmarkSnapshotAfterOneSmallEdit-12  58.3 ms/op  9.28 MB/op  73,587 allocs/op
 The initial implementation allocated one 8 MiB chunk buffer plus the chunker
 reader buffer per file (about 9 GiB/op). Small files now bypass CDC as one
 content-addressed chunk and large-file CDC buffers are pooled. Wall time remains
-review-only; the benchmark is retained in `localhistory/benchmark_test.go`.
+review-only; the benchmark is retained in `workspace/localhistory/benchmark_test.go`.
 
 ## Local History message-boundary capture on Windows (2026-11-15)
 

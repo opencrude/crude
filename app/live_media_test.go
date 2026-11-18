@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/agent/provider"
 	"crude/logger"
-	"crude/provider"
 )
 
 func TestLiveCommandCodeToolResultImageSemantics(t *testing.T) {

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"crude/coreclient"
-	"crude/coreprotocol"
-	"crude/document"
-	"crude/textencoding"
+	"crude/core/client"
+	"crude/core/protocol"
+	"crude/text/encoding"
 	"crude/types/control"
+	"crude/workspace/document"
 )
 
 func TestControlDocumentReadNeedsReturnedIdentity(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestDocumentDeleteSavedFolderIgnoresMissingCheckpoints(t *testing.T) {

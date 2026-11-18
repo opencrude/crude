@@ -6,13 +6,13 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
-	"crude/snippet"
+	"crude/text/snippet"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 	"github.com/stretchr/testify/require"
 )
 

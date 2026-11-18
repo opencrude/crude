@@ -3,8 +3,8 @@ package viewmodel
 import (
 	"context"
 	"crude/clientstate"
-	"crude/indentation"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/text/indent"
 	"crude/tui/editor"
 	"crude/tui/screens/shellheader"
 	"crude/tui/theme"

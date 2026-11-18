@@ -5,12 +5,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/ui"
 	"crude/types/command"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 // Only opening/closing is command-specific. Mounted output uses the same

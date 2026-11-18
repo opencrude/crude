@@ -9,10 +9,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/document"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // Ghost text is a private display projection, never source or provider authority.

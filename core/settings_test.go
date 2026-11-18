@@ -2,16 +2,16 @@ package core
 
 import (
 	"context"
-	"crude/hostshell"
+	"crude/agent/hostshell"
 	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
-	"crude/coreprotocol"
+	"crude/agent/provider"
+	"crude/agent/session"
+	"crude/core/protocol"
 	"crude/network"
-	"crude/provider"
-	"crude/session"
 	"crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"

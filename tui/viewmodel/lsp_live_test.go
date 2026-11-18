@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
-	"crude/lspcompletion"
+	"crude/lsp/completion"
 	model "crude/types"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 // These acceptance tests never install servers or touch application settings.

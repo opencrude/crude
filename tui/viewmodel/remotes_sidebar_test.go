@@ -8,7 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/remoteconn"
+	"crude/core/remoteconn"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 )

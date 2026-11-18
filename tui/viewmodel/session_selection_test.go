@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"testing"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/types"
 	"crude/workspace"
 )

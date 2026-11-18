@@ -558,7 +558,7 @@ or read-only policy. Explicit user tool choices still apply. Its workspace
 session starts with automatic approval once, at creation; reopening it preserves
 the saved permission mode.
 
-**Instructions extend policy; they do not replace it.** `prompt/` owns the
+**Instructions extend policy; they do not replace it.** `agent/prompt/` owns the
 canonical model-neutral root/child policy and specialized background-job
 contracts. User profile text is escaped as a lower-priority overlay; changing it
 cannot remove core lifecycle/safety rules, grant tools, or select a vendor base
@@ -827,7 +827,7 @@ orchestrator startup, backend lookup and hydration name the session rather than
 reading a globally selected one. The TUI owns its selected session, model display
 alias and focus stack. Opening an already-live session reuses its runtime and
 does not replay provider work. Normal CLI startup always attaches to the user core through `ConnectCore` and
-`shellport/remote`; shell exit detaches rather than closing sessions. Remaining
+`core/port/remote`; shell exit detaches rather than closing sessions. Remaining
 release gates are in [core and shell separation](../plans/core-shell-separation.md).
 
 Agent tab selection/visibility, focus and reasoning geometry are shell-local.
@@ -1425,7 +1425,7 @@ tool may read home/configuration files, and explicitly configured values may
 deliberately expose sensitive data. MCP and terminal environment contracts are
 unchanged.
 
-The default subprocess transport is `lspclient/`, independent of the editor/TUI.
+The default subprocess transport is `lsp/client/`, independent of the editor/TUI.
 The workspace supplies it by default; merely constructing a manager launches no
 server. Test transports may override that factory. Connected LSP has typed worker requests, replicated diagnostics/health and
 per-client diagnostic consumers; rename returns `*protocol.WorkspaceEdit`. Shell
@@ -1591,8 +1591,8 @@ Layer coverage lives next to the code:
   proxy/MCP/IDE preferences, restart, scope isolation and invalid trust rejection
 - `tui/settings/explicit_layers_test.go` — one-field collectors across page
   families, quiet marker at desktop/constrained sizes and parent-relative reset
-- `tui/viewmodel/save_workspace_test.go`, `session/explicit_layers_test.go` and
-  `sessiondb/flags_test.go` — promotion with retained draft, reset/removal,
+- `tui/viewmodel/save_workspace_test.go`, `agent/session/explicit_layers_test.go` and
+  `agent/sessiondb/flags_test.go` — promotion with retained draft, reset/removal,
   live parent changes, stored-leaf tolerance and atomic session flags
 - `tui/settings/autosave_test.go` and `tui/viewmodel/editor_save_test.go` —
   autosave defaults/round-trip, stale revisions, formatting separation,
@@ -1606,20 +1606,20 @@ Layer coverage lives next to the code:
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar
 - `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
 - `tui/settings/account_connections_test.go` — unified account connection, presets, clone and protocol isolation
-- `tui/settings/dialer_test.go`, `provider/client_test.go`, and
-  `provider/stall_test.go` cover shared provider/account controls, invalid limits,
+- `tui/settings/dialer_test.go`, `agent/provider/client_test.go`, and
+  `agent/provider/stall_test.go` cover shared provider/account controls, invalid limits,
   real HTTP header/body stalls, streaming request deadlines, and timer cleanup.
-- `session/account_routing_test.go` and `app/config_test.go` cover live transport
+- `agent/session/account_routing_test.go` and `app/config_test.go` cover live transport
   edits, account override isolation, persistence, and resumed account routing.
 - `tui/settings/layered_prompt_test.go` and `accounts_regression_test.go` —
   owner-bound prompts, explicit discard/removal decisions, retained painted
   settings tables/editors at desktop and constrained terminal sizes
 - `tui/screens/sessionsettings/session_settings_test.go` — account selection and multi-agent toggle
-- `session/model_attribution_test.go`, `workspace/message_view_test.go`, and
+- `agent/session/model_attribution_test.go`, `workspace/message_view_test.go`, and
   `tui/chatprojection/model_attribution_test.go` — request-time model switching,
   durable resume attribution, and immutable per-row chat headers
-- `session/workspace_media_e2e_test.go`,
-  `session/protocol_media_matrix_test.go`, and
+- `agent/session/workspace_media_e2e_test.go`,
+  `agent/session/protocol_media_matrix_test.go`, and
   `workspace/tool_root_e2e_test.go` — same-turn multimodal tool delivery,
   protocol schemas, persistence/resume, capability and safety gates, and
   workspace-switch execution roots

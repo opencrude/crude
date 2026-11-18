@@ -2,10 +2,10 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/document"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"
+	"crude/workspace/document"
 )
 
 func documentEditorKey(s document.Snapshot) string {

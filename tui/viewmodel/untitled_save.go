@@ -2,12 +2,12 @@ package viewmodel
 
 import (
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/filepicker"
 	"crude/tui/ui"

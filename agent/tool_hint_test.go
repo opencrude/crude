@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tools"
+	"crude/agent/tools"
 )
 
 // An Opus run called "jewel_grep_files" when its tool list offered the

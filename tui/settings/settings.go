@@ -16,9 +16,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/coreprotocol"
-	"crude/provider"
-	"crude/textencoding"
+	"crude/agent/provider"
+	"crude/core/protocol"
+	"crude/text/encoding"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"

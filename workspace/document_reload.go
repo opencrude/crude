@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 // Reload makes the saved file the document's save baseline without writing

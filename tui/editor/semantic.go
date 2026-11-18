@@ -5,8 +5,8 @@ import (
 	"slices"
 	"sort"
 
-	"crude/document"
 	"crude/types"
+	"crude/workspace/document"
 	"github.com/alecthomas/chroma/v2"
 )
 

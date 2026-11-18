@@ -169,11 +169,11 @@ replacements and jumps are not supported.
 - `insight/predictionbudget/ledger.go`: an hourly token ledger. Each request
   runs Reserve and Start transactions before the network call and Settle after
   it. These SQLite writes are on the keystroke path and are not measured yet.
-- `session/editor_prediction.go`: binds the Aeron role's account and model.
-- `provider/fim_once.go` (OpenAI completions, DeepSeek and Codestral FIM) and
-  `provider/text_once.go` (OpenAI Chat and Responses only). Both stream on the
+- `agent/session/editor_prediction.go`: binds the Aeron role's account and model.
+- `agent/provider/fim_once.go` (OpenAI completions, DeepSeek and Codestral FIM) and
+  `agent/provider/text_once.go` (OpenAI Chat and Responses only). Both stream on the
   wire but return only at the end.
-- `prompt/editor_prediction.go`: a single-line insertion prompt.
+- `agent/prompt/editor_prediction.go`: a single-line insertion prompt.
 - `tui/settings/prediction.go`: Off / Light / Full, an hourly token cap, and
   a protocol and endpoint path that the user must type.
 - No core request, shell-port method or editor trigger exists. Automatic
@@ -193,7 +193,7 @@ for keystroke suggestions (D5).
   `tui/ui/chords.go` already resolves keys that depend on the terminal.
 - The editor context menu (`tui/viewmodel/context_menu_builders.go`) has Edit,
   Lines, Code, Git and View sections and nothing for agents.
-- Prompt references (`sessiondb/promptref.go`) cover pasted text, files and
+- Prompt references (`agent/sessiondb/promptref.go`) cover pasted text, files and
   MCP context, not a code range.
 - The real chat composer can be mounted more than once
   (`shellinput.NewWithID` in `tui/screens/shellinput/input.go`).
@@ -201,8 +201,8 @@ for keystroke suggestions (D5).
 - Agent file tools read the saved file. Unsaved editor text is invisible to
   agents (D3).
 
-**Search.** The fzf matcher (`textsearch/fuzzy.go`) is fast. Find in Files
-(`fileio/project_search.go`) walks the tree with one goroutine and reads every
+**Search.** The fzf matcher (`text/search/fuzzy.go`) is fast. Find in Files
+(`workspace/fileio/project_search.go`) walks the tree with one goroutine and reads every
 file again for each query, without an index and without ignore files. It
 cannot serve retrieval on the keystroke path.
 
@@ -276,7 +276,7 @@ recovery and history are used as they are.
     through the other places that need it.
 - **Command palette**: Ask Crude, Ask Crude in a New Chat.
 
-Prepared prompt text lives in `prompt/`. The user sees it as their message.
+Prepared prompt text lives in `agent/prompt/`. The user sees it as their message.
 
 ### What is attached
 

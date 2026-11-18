@@ -354,10 +354,10 @@ Saved Version keep the separate full-file reader in movable main tabs.
 
 - Full build/tests, whole-repository lint (zero issues), docs/design/benchmark
   gates and affected race suites are required, not substitutes for interaction.
-- `session/capability_task_e2e_test.go` drives the real agent loop against a
+- `agent/session/capability_task_e2e_test.go` drives the real agent loop against a
   scripted provider: installed-first search → immutable skill acquisition → MCP
   activation → real SDK tool result → passive SQLite resume.
-- `capability/access_test.go` verifies exact access approval, usable dynamic tools,
+- `agent/capability/access_test.go` verifies exact access approval, usable dynamic tools,
   real SDK calls, passive reopen, and rejection of altered scope/fingerprint or
   agent ceilings. `workspace/capability_registration_test.go` exercises normal
   settings persistence, fresh service reopen, disable/remove and stale-owner checks;
@@ -388,7 +388,7 @@ Saved Version keep the separate full-file reader in movable main tabs.
   accepted response IDs but lost inherited context; a goal-only DeepSeek v4.1
   Flash run then passed with full uploads. This does not establish that gateway
   continuation works, or that every public package, OAuth vendor or source works.
-- `mcpclient/workflow_test.go` exercises real stdio subprocesses, Streamable HTTP,
+- `agent/mcpclient/workflow_test.go` exercises real stdio subprocesses, Streamable HTTP,
   OAuth loopback/headless return, grant isolation, cancellation/retry and unknown
   mutations without replay. Board tests use real durable context admission;
   memory tests cover evidence/revision/CAS/exposure and retained browser ownership.

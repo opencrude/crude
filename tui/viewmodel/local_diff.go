@@ -2,9 +2,9 @@ package viewmodel
 
 import (
 	"context"
-	"crude/document"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crude/workspace"
+	"crude/workspace/document"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -15,7 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/editor"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/localdiff"

@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"crude/fileio"
 	"crude/insight/catalog"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 // ProjectToolDecisionResult is an audit result, not installation authority.

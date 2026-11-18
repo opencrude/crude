@@ -3,7 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"crude/document"
-	"crude/fileio"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 const documentHistoryLimit = 1024

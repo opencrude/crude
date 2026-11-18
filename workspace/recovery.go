@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/types"
 	"crude/types/recovery"
 )

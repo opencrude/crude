@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/collaboration"
-	"crude/provider"
+	"crude/agent/collaboration"
+	"crude/agent/provider"
 	ttypes "crude/types"
 )
 

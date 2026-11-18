@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"crude/coreprotocol"
-	"crude/document"
+	"crude/core/protocol"
 	"crude/workspace"
+	"crude/workspace/document"
 )
 
 func (a *actor) prepareInlay(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {

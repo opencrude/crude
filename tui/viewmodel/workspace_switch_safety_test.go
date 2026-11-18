@@ -14,7 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/clientstate"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
 	"crude/workspace"
 )

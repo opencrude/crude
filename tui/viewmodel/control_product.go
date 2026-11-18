@@ -8,11 +8,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/fileio"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/types/control"
+	"crude/workspace/fileio"
 )
 
 func productDescriptor(id string) (control.Descriptor, bool) {

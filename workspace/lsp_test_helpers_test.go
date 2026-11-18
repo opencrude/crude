@@ -3,9 +3,9 @@ package workspace
 import (
 	"testing"
 
-	"crude/fileio"
 	"crude/insight/governor"
 	"crude/types"
+	"crude/workspace/fileio"
 )
 
 // trustAnalysis is explicit test-fixture admission, never called by negative

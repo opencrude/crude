@@ -7,8 +7,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"crude/agent/prompt"
 	"crude/insight/predictioncontext"
-	"crude/prompt"
 	"crude/types"
 )
 

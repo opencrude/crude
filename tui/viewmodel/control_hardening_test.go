@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"crude/coreprotocol"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/internal/wiretest"
-	"crude/shellport"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

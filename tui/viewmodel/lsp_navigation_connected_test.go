@@ -20,8 +20,8 @@ import (
 
 	"crude/clientstate"
 	"crude/core"
-	"crude/coreprotocol"
-	"crude/shellport"
+	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/editor"
 	"crude/tui/screens/navigation"
 	"crude/tui/screens/termdock"

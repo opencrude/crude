@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/document"
-	"crude/fileio"
+	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 func TestDocumentDurableRestartAuthorHistoryAndReceipts(t *testing.T) {

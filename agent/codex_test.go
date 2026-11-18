@@ -10,11 +10,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/codexio"
-	rootprompt "crude/prompt"
-	"crude/provider"
-	"crude/safety"
-	"crude/tools"
+	"crude/agent/codexio"
+	rootprompt "crude/agent/prompt"
+	"crude/agent/provider"
+	"crude/agent/safety"
+	"crude/agent/tools"
 )
 
 func TestGPTProfilesForEveryRole(t *testing.T) {

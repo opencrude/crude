@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/localhistory"
-	"crude/provider"
-	"crude/session"
+	"crude/agent/provider"
+	"crude/agent/session"
 	ttypes "crude/types"
+	"crude/workspace/localhistory"
 )
 
 func TestCodexPatchProductionUndoRestoresMoveOverwriteAndDelete(t *testing.T) {

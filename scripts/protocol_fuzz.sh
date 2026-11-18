@@ -27,10 +27,10 @@ echo "Evidence: $out"
 # One instrumented executable per package, containing every named target in it.
 # FUZZ_TARGETS is an optional space-separated exact-name subset for local work.
 inventory=(
-  './coreprotocol:FuzzEveryWireDecoder FuzzWireTimestampMessage'
-  './corewire:FuzzMessageReader FuzzMessageFragmentation FuzzReaderLimitTransitions FuzzCompressedStream FuzzMuxFrames FuzzMuxStateMachine FuzzQUICStreamClass'
-  './coreclient:FuzzBulkReceiver FuzzTerminalInputAdmissionOrdering FuzzWorkspaceTopicReplicaState'
-  './shellport/remote:FuzzRemoteStateTopicFences=64'
+  './core/protocol:FuzzEveryWireDecoder FuzzWireTimestampMessage'
+  './core/wire:FuzzMessageReader FuzzMessageFragmentation FuzzReaderLimitTransitions FuzzCompressedStream FuzzMuxFrames FuzzMuxStateMachine FuzzQUICStreamClass'
+  './core/client:FuzzBulkReceiver FuzzTerminalInputAdmissionOrdering FuzzWorkspaceTopicReplicaState'
+  './core/port/remote:FuzzRemoteStateTopicFences=64'
   './workspace:FuzzConversationStreamReaders FuzzConversationMalformedTextOffset FuzzTerminalLeaseStateMachine=64'
   './tui/editor:FuzzDocumentUpdateAtomicBoundary'
   './terminalvt:FuzzPackedRow FuzzPackedDictionaryRow'
@@ -39,7 +39,7 @@ inventory=(
   './tui/compositor:FuzzDirectSurfaceResize'
   './third_party/bubbletea:FuzzDirectRendererResizeAndConflation FuzzDirectSurfaceTerminalOutput'
   './third_party/ultraviolet:FuzzParseSequence'
-  './remoteconn:FuzzCurrentFormatDocuments'
+  './core/remoteconn:FuzzCurrentFormatDocuments'
 )
 selected=" ${FUZZ_TARGETS:-} "
 found=' '

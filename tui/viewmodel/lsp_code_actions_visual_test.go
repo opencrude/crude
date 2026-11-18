@@ -16,11 +16,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/localhistory"
-	"crude/shellport"
+	"crude/core/port"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/localhistory"
 )
 
 // Run sequentially through scripts/tuishot.sh, never alongside another capture:

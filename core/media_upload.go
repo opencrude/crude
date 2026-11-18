@@ -9,9 +9,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"crude/coreprotocol"
+	"crude/agent/sessiondb"
+	"crude/core/protocol"
 	"crude/history"
-	"crude/sessiondb"
 	"crude/workspace"
 )
 

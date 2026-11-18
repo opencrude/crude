@@ -11,7 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellfooter"

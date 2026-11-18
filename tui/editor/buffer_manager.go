@@ -9,9 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"crude/document"
-	"crude/textencoding"
+	"crude/text/encoding"
 	"crude/types"
+	"crude/workspace/document"
 )
 
 // Buffer is the data model for a text file. It owns the PieceTable (the

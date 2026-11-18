@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 	"golang.org/x/sys/windows"
 )
 

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"crude/document"
 	syntaxdata "crude/types/syntax"
+	"crude/workspace/document"
 )
 
 const (

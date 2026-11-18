@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/document"
+	"crude/workspace/document"
 )
 
 func TestSourcePositionExactByteOffsets(t *testing.T) {

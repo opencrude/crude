@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/shellport"
-	"crude/snippet"
+	"crude/core/port"
+	"crude/text/snippet"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/control"

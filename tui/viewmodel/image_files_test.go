@@ -16,7 +16,7 @@ import (
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/math/fixed"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 	"crude/tui/filetree"
 	"crude/tui/ui"
 )

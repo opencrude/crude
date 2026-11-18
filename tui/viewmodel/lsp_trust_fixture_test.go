@@ -3,10 +3,10 @@ package viewmodel
 import (
 	"testing"
 
-	"crude/fileio"
 	"crude/insight/governor"
 	"crude/types"
 	"crude/workspace"
+	"crude/workspace/fileio"
 )
 
 // grantSemanticFixture is an explicit human-owned, durable workspace grant.

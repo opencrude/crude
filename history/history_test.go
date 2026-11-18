@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/sessiondb"
+	"crude/agent/sessiondb"
 )
 
 func at(mins int) time.Time {
