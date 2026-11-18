@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/buildinfo"
 	"crude/shellport"
 	"crude/tui/screens/connectionpopover"
 	"crude/tui/screens/shellheader"
@@ -22,12 +23,16 @@ type connectionHealth struct {
 	status     shellport.RemoteStatus
 	brand      shellheader.ConnectionState
 	tuiBuildID string
+	tuiVersion string
 	tuiStarted time.Time
 	now        time.Time
 }
 
 func (m *App) connectionHealth() connectionHealth {
-	h := connectionHealth{name: m.remoteBackendName(), status: shellport.RemoteStatus{State: "connected", Carrier: "local"}, tuiBuildID: m.tuiBuildID, tuiStarted: m.tuiStartedAt, now: time.Now()}
+	h := connectionHealth{
+		name: m.remoteBackendName(), status: shellport.RemoteStatus{State: "connected", Carrier: "local"},
+		tuiBuildID: m.tuiBuildID, tuiVersion: buildinfo.Version, tuiStarted: m.tuiStartedAt, now: time.Now(),
+	}
 	if link, ok := m.ws.(shellport.BackendLink); ok {
 		h.status = link.BackendStatus()
 	}
@@ -92,8 +97,10 @@ func (h connectionHealth) projection() connectionpopover.Projection {
 			rtt += " · last observation"
 		}
 	}
-	coreBuild := firstNonempty(h.status.CoreBuildID, "Not observed")
-	if h.status.State != "connected" && h.status.CoreBuildID != "" {
+	coreBuild := formatConnectionBuild(h.status.CoreVersion, h.status.CoreBuildID)
+	if coreBuild == "" {
+		coreBuild = "Not observed"
+	} else if h.status.State != "connected" {
 		coreBuild += " · last connection"
 	}
 	coreUptime := "Not observed"
@@ -107,11 +114,19 @@ func (h connectionHealth) projection() connectionpopover.Projection {
 	if !h.tuiStarted.IsZero() {
 		tuiUptime = formatUptime(h.now.Sub(h.tuiStarted))
 	}
-	p.Detail = fmt.Sprintf("Connection   %s\nState        %s\nTransport    %s\nRound trip   %s\nTUI build    %s\nTUI uptime   %s\nCore build   %s\nCore uptime  %s\n\n%s", h.name, state, carrier, rtt, firstNonempty(h.tuiBuildID, "Not available"), tuiUptime, coreBuild, coreUptime, guidance)
+	tuiBuild := firstNonempty(formatConnectionBuild(h.tuiVersion, h.tuiBuildID), "Not available")
+	p.Detail = fmt.Sprintf("Connection   %s\nState        %s\nTransport    %s\nRound trip   %s\nTUI build    %s\nTUI uptime   %s\nCore build   %s\nCore uptime  %s\n\n%s", h.name, state, carrier, rtt, tuiBuild, tuiUptime, coreBuild, coreUptime, guidance)
 	if h.status.Notice != "" {
 		p.Detail += "\n\n" + h.status.Notice
 	}
 	return p
+}
+
+func formatConnectionBuild(version, hash string) string {
+	if version == "" && hash == "" {
+		return ""
+	}
+	return firstNonempty(version, "Version not available") + " / " + firstNonempty(hash, "Hash not available")
 }
 
 type connectionHoverState struct {

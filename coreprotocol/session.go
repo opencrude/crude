@@ -60,6 +60,8 @@ type Welcome struct {
 	// CoreBuildID is the actual native core image, not the source cohort
 	// agreed above and not an assumption about the attaching shell image.
 	CoreBuildID string `json:"core_build_id"`
+	// CoreVersion is the core binary's own version label, for display only.
+	CoreVersion string `json:"core_version"`
 	// CoreStartedAt is when this core process started serving. Shells show
 	// it as core uptime; a resume always reaches the same process.
 	CoreStartedAt time.Time `json:"core_started_at"`
