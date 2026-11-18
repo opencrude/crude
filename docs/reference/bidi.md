@@ -116,7 +116,7 @@ DejaVu archive; the license is `assets/fonts/LICENSE-DejaVu`.
 
 | Window | How Crude RTL is used |
 |---|---|
-| Windows (`install.ps1 -Gui`) | Registered for the user from `%LOCALAPPDATA%\Crude\window\rtl-fonts`; the Crude profile names `JetBrainsMono NF, Crude RTL` (Windows Terminal font fallback) |
+| Windows (`install.ps1`) | Copied into `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and registered there for the user, with or without the GUI window; the Crude profile names `JetBrainsMono NF, Crude RTL` once Windows reports the family (Windows Terminal font fallback) |
 | Linux (`install.sh --gui`) | Copied to `~/.local/share/fonts/CrudeRTL`; the WezTerm configuration lists it after JetBrains Mono |
 | Another terminal | Install the font from the release's `fonts/` folder and add it as the fallback after your font |
 

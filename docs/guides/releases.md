@@ -107,25 +107,27 @@ Crude resolves this copy from its own path, so a user who installs nothing still
 gets a working shell. A Git Bash the user installed later wins, because it is
 found first.
 
-### The window font
+### Right-to-left text
 
-The window asks for a Nerd Font, so patched icons draw correctly, and for
-Crude's own right-to-left font. Crude RTL ships inside the package: the window
-copies it to `%LOCALAPPDATA%\Crude\window\rtl-fonts`, registers it for this user
-and names `JetBrainsMono NF, Crude RTL` in the profile
-([bidi](../reference/bidi.md#fonts)).
+Crude RTL draws Arabic, Persian and Hebrew in Crude's own cells
+([bidi](../reference/bidi.md#fonts)). It ships inside the package, and the
+installer installs it with the program, whether or not the GUI window is
+installed.
 
-- A machine that cannot draw the Nerd Font yet gets the pinned archive
-  unpacked into `%LOCALAPPDATA%\Crude\window\fonts`, registered for this user
-  only. No face is copied into the system font folder and no existing font is
-  replaced. A machine that already has the family keeps it untouched.
-- The archive is unpacked with the Windows tar, `%SystemRoot%\System32\tar.exe`.
-  A tar from a Git or MSYS installation comes first on PATH on many machines
-  and reads `C:\...` as a remote host, so the Windows copy is chosen by its own
-  path. The result is checked: no face after unpacking is a failure.
-- A refusal prints one short notice, `the font for the window is missing.
-  Icons may look wrong`, and the program install still completes. The next run
-  tries again because no stamp is written.
+- The faces are copied into the user font folder,
+  `%LOCALAPPDATA%\Microsoft\Windows\Fonts`, and registered there for this
+  user. Windows loads a per-user font only from that folder: a face kept in a
+  folder of ours is never loaded, however it is registered.
+- Only the faces Crude ships are registered. Another font of the user in that
+  folder keeps its own entries.
+- The profile names `Crude RTL` only after Windows reports the family, so a
+  terminal never asks for a face that is not there. A failure prints one short
+  notice and the program install still completes.
+
+The Nerd Font for patched icons is separate: it is added only when the machine
+cannot already draw the family, and it needs the Windows tar to unpack
+(`%SystemRoot%\System32\tar.exe`). A Git tar on PATH reads `C:\...` as a
+remote host, so the Windows copy is chosen by its own path.
 
 Every installation and update shows the warning: bugs, agent mistakes, work
 lost and the need for backups. A person at an interactive terminal is asked

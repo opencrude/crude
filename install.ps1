@@ -736,8 +736,6 @@ function Get-CrudeWindowPaths {
         # The families the window asks for, in this order.
         FontFamilies = @('JetBrainsMono Nerd Font', 'JetBrainsMono NF')
         FontFaces = 'JetBrainsMonoNerdFont-*.ttf'
-        # Crude's right-to-left font, installed from the release itself.
-        RtlFonts = Join-Path (Join-Path $windowHome 'window') 'rtl-fonts'
         RtlFamily = 'Crude RTL'
         Icon = Join-Path $windowHome 'crude.ico'
         Link = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Crude.lnk'
@@ -809,7 +807,7 @@ function Get-CrudeWindowFont($Paths) {
     return $null
 }
 
-function Add-CrudeFontRegistration([string] $Folder) {
+function Add-CrudeFontRegistration([string] $Folder, [string[]] $Names = $null) {
     # One per-user value per face, pointing at the file in the folder that
     # belongs to Crude. No file is copied into the user's font folder, no
     # existing value is overwritten, and the whole footprint is inside Crude's
@@ -820,6 +818,7 @@ function Add-CrudeFontRegistration([string] $Folder) {
     $loaded = $false
     try {
         foreach ($font in @(Get-ChildItem -LiteralPath $Folder -Filter '*.ttf' -File)) {
+            if ($Names -and $Names -notcontains $font.Name) { continue }
             $name = $font.BaseName + ' (TrueType)'
             $current = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
             if ($null -ne $current -and -not [string]::Equals([string] $current, $font.FullName, [StringComparison]::OrdinalIgnoreCase)) {
@@ -1022,34 +1021,34 @@ function Remove-CrudeWindowLegacy($Paths) {
     }
 }
 
-function Install-CrudeWindowRtlFont($Paths, [string] $Payload) {
-    # Crude RTL draws Arabic, Persian and Hebrew in the window's cells
-    # (docs/reference/bidi.md). It ships with each release and belongs to
-    # Crude, so every install puts the release's copy in Crude's own folder.
-    # Returns whether the window can name it.
+function Install-CrudeRtlFont($Paths, [string] $Payload) {
+    # Crude RTL draws Arabic, Persian and Hebrew in the cells. Windows loads a
+    # per-user font only from the user font folder, so the faces are copied
+    # there and each one is registered by its family name. A face kept inside
+    # Crude's own folder is never loaded, however it is registered.
+    # Returns whether Windows can draw the family.
     $source = Join-Path $Payload 'fonts'
     $faces = @(Get-ChildItem -LiteralPath $source -Filter 'CrudeRTL-*.ttf' -File -ErrorAction SilentlyContinue)
     if (-not $faces.Count) { return $false }
-    $fonts = $Paths.RtlFonts
+    $fonts = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
     [void] [IO.Directory]::CreateDirectory($fonts)
-    foreach ($file in @(Get-ChildItem -LiteralPath $source -File)) {
-        $target = Join-Path $fonts $file.Name
-        if ([IO.File]::Exists($target) -and (Get-CrudeHash $target) -ceq (Get-CrudeHash $file.FullName)) { continue }
-        try {
-            Copy-Item -LiteralPath $file.FullName -Destination $target -Force
-        } catch {
+    $license = Join-Path $source 'LICENSE-DejaVu'
+    if ([IO.File]::Exists($license)) {
+        try { Copy-Item -LiteralPath $license -Destination (Join-Path $fonts 'CrudeRTL-LICENSE-DejaVu.txt') -Force } catch { }
+    }
+    $installed = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($face in $faces) {
+        $target = Join-Path $fonts $face.Name
+        if (-not ([IO.File]::Exists($target) -and (Get-CrudeHash $target) -ceq (Get-CrudeHash $face.FullName))) {
             # A running terminal can hold the previous copy open. That copy
             # still draws the same scripts; the next update replaces it.
-            if (-not [IO.File]::Exists($target)) { throw }
+            try { Copy-Item -LiteralPath $face.FullName -Destination $target -Force } catch { continue }
         }
+        $installed.Add($face.Name)
     }
-    try {
-        [void] (Add-CrudeFontRegistration $fonts)
-    } catch {
-        Write-CrudeStep (Mark 'warn') 'Font' "right-to-left text may look wrong: $($_.Exception.Message)"
-        return $false
-    }
-    return $true
+    if (-not $installed.Count) { return $false }
+    try { [void] (Add-CrudeFontRegistration $fonts $installed.ToArray()) } catch { return $false }
+    return [bool] (Get-CrudeFontFamily @($Paths.RtlFamily)).Name
 }
 
 function Write-CrudeWindowProfile($Paths, [string] $InstallDir, [bool] $RtlFont = $false) {
@@ -1139,7 +1138,7 @@ function Install-CrudeWindow([string] $InstallDir, [string] $Payload, [string] $
         $iconSource = Join-Path $Payload 'crude-icon.ico'
         if ([IO.File]::Exists($iconSource)) { Copy-Item -LiteralPath $iconSource -Destination $paths.Icon -Force }
         Install-CrudeWindowFonts $paths $WorkDir
-        $rtlFont = Install-CrudeWindowRtlFont $paths $Payload
+        $rtlFont = [bool] (Get-CrudeFontFamily @($paths.RtlFamily)).Name
         Write-CrudeWindowProfile $paths $InstallDir $rtlFont
         Write-CrudeWindowLink $paths $terminal $InstallDir
         Write-CrudeStep (Mark 'check') 'Window' 'Crude is in the Start menu and in Windows Terminal'
@@ -1225,6 +1224,12 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
             Write-CrudeStep (Mark 'warn') 'Git Shell' 'not installed. Crude works best with Git Bash.'
             Write-Host '              Get Git for Windows from https://git-scm.com/download/win.'
             Write-Host '              Crude uses it the next time it starts.'
+        }
+        $windowPaths = Get-CrudeWindowPaths
+        if (Install-CrudeRtlFont $windowPaths $payload) {
+            Write-CrudeStep (Mark 'check') 'Font' 'Crude RTL is installed for right-to-left text'
+        } else {
+            Write-CrudeStep (Mark 'warn') 'Font' 'Crude RTL did not load. Right-to-left text may look wrong.'
         }
         Install-CrudeWindow -InstallDir $InstallDir -Payload $payload -WorkDir $work -Plan $windowPlan
         Write-Host ''
