@@ -28,6 +28,7 @@ type SessionLifecycleOperation struct {
 	capabilities                                 *capability.Service
 	executions                                   *ExecutionService
 	lsp                                          *LSPManager
+	documents                                    *DocumentService
 	claims                                       *agent.FileOwnership
 	sender                                       session.EventSender
 	history                                      *LocalHistoryService
@@ -145,7 +146,7 @@ func (w *Workspace) prepareSessionLifecycle(id string, cfg *session.Config, home
 	captured.AccountManager = cfg.AccountManager
 	op := &SessionLifecycleOperation{root: w.RootPath, directory: w.WorkspaceDir, home: home,
 		sessionID: id, instanceID: w.instanceID, cfg: &captured, logger: w.Logger,
-		database: w.WorkspaceDB, collaboration: w.Collaboration, capabilities: w.Capabilities, executions: w.Executions, lsp: w.LSPMgr,
+		database: w.WorkspaceDB, collaboration: w.Collaboration, capabilities: w.Capabilities, executions: w.Executions, lsp: w.LSPMgr, documents: w.LiveDocuments,
 		claims: w.FileOwnership, sender: w.sender, history: w.HistoryService,
 		historyErr: w.localHistoryErr, historyEnabled: w.EffectiveAppSettings().LocalHistory.EnabledValue(),
 		existing: w.SessionsByID[id], start: start}
@@ -273,6 +274,9 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		backend.SetCollaboration(op.collaboration, op.instanceID)
 		backend.SetCapabilities(op.capabilities, op.claims)
 		backend.SetExecutionService(op.executions)
+		if op.documents != nil {
+			backend.SetWorkingSet(op.documents.workingSetBrief)
+		}
 		if op.lsp != nil {
 			backend.SetCodeIntelligence(op.lsp)
 		}

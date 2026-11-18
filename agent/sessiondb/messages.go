@@ -21,6 +21,7 @@ type DisplayMeta struct {
 	SnapshotVersion int                          `json:"snapshot_version,omitempty"`
 	Snapshots       []ttypes.ConversationMessage `json:"snapshots,omitempty"`
 	ContextOnly     bool                         `json:"context_only,omitempty"`
+	RunID           string                       `json:"run_id,omitempty"`
 	TurnGeneration  uint64                       `json:"turn_generation,omitempty"`
 	ProviderID      string                       `json:"provider_id,omitempty"`
 	AccountID       string                       `json:"account_id,omitempty"`

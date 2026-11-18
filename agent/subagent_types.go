@@ -122,6 +122,9 @@ type SubAgentHandle struct {
 	reportRevision    int
 	reportDone        bool
 	steeringSealed    bool
+	// PriorAttemptWork is frozen from the child's checkpoint before a new run.
+	// Entry "" means an old row had no identity, so new attribution is unsafe.
+	PriorAttemptWork map[string]struct{}
 }
 
 // WithSteeringAdmission holds the same fence as terminal sealing and checks

@@ -141,3 +141,32 @@ func (s *Session) agentInspectionDB(ctx context.Context, store *collaboration.St
 	}
 	return db, func() { _ = db.Close() }, nil
 }
+
+type exactAgentRunInspection struct {
+	AgentID        string                          `json:"agent_id"`
+	SessionID      string                          `json:"session_id"`
+	Run            *collaboration.Run              `json:"run"`
+	Reports        []collaboration.ArtifactSummary `json:"reports"`
+	PublicWork     sessiondb.RunWork               `json:"public_work"`
+	ChangesCommand string                          `json:"changes_command"`
+}
+
+func (s *Session) inspectExactAgentRun(ctx context.Context, store *collaboration.Store, agentID, runID, cursor string) (exactAgentRunInspection, error) {
+	attempt, err := store.InspectAgentAttempt(ctx, agentID, runID)
+	if err != nil {
+		return exactAgentRunInspection{}, err
+	}
+	result := exactAgentRunInspection{AgentID: agentID, SessionID: attempt.Agent.SessionID, Run: attempt.SelectedRun, Reports: attempt.Reports, ChangesCommand: "history.run_changes"}
+	db, closeDB, err := s.agentInspectionDB(ctx, store, attempt.Agent)
+	if err != nil {
+		result.PublicWork = sessiondb.RunWork{RunID: runID, Activity: []sessiondb.RunWorkEntry{}, Coverage: "The session transcript is unavailable."}
+		return result, ctx.Err()
+	}
+	defer closeDB()
+	transcriptOwner := agentID
+	if attempt.Agent.ParentID == "" {
+		transcriptOwner = attempt.Agent.SessionID
+	}
+	result.PublicWork, err = sessiondb.InspectRunWork(ctx, db, runID, agentID, transcriptOwner, cursor)
+	return result, err
+}

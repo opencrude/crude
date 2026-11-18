@@ -1177,7 +1177,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	handle := &agent.SubAgentHandle{
 		Spec: spec, Agent: live, Cancel: subCancel, ResultCh: make(chan agent.SubAgentResult, 1),
 		BlockCh: blockCh, StartedAt: parentCheckpoint.Status.StartedAt,
-		SessionID: string(spec.ID), DB: subDB,
+		SessionID: string(spec.ID), DB: subDB, PriorAttemptWork: childAttemptBaseline(childCheckpoint),
 	}
 	if handle.StartedAt.IsZero() {
 		handle.StartedAt = time.Now()
@@ -1947,6 +1947,18 @@ func publishChildTerminalStop(handle *agent.SubAgentHandle, run *recoveryRunStat
 	return supervisor.Persist(supervisor.CheckpointStatus())
 }
 
+func childAttemptBaseline(checkpoint sessiondb.RecoveryCheckpoint) map[string]struct{} {
+	baseline := make(map[string]struct{})
+	for _, stored := range [][]provider.ChatMessage{checkpoint.Archive, checkpoint.InFlightTools} {
+		for _, message := range stored {
+			if message.Role == "assistant" || message.Role == "tool" {
+				baseline[message.InternalID] = struct{}{}
+			}
+		}
+	}
+	return baseline
+}
+
 func childTerminalPublication(
 	handle *agent.SubAgentHandle,
 	archive, active []provider.ChatMessage,
@@ -2013,9 +2025,10 @@ func childTerminalPublication(
 		}
 	}
 	turnIdentity := ttypes.TurnIdentity{Generation: 1}
-	agentID := ""
+	var agentID, runID string
 	if handle != nil {
 		agentID = string(handle.Spec.ID)
+		runID, _ = handle.RunIdentity()
 		turnIdentity.ProviderID = handle.Spec.Provider
 		turnIdentity.AccountID = handle.Spec.AccountID
 		turnIdentity.ModelID = handle.Spec.Model
@@ -2048,6 +2061,13 @@ func childTerminalPublication(
 			}
 		}
 		if message.Role == "assistant" || message.Role == "tool" {
+			if handle != nil {
+				_, preceding := handle.PriorAttemptWork[message.InternalID]
+				_, unqualified := handle.PriorAttemptWork[""]
+				if !preceding && !unqualified {
+					meta.RunID = runID
+				}
+			}
 			meta.TurnGeneration = turnIdentity.Generation
 			meta.ProviderID, meta.AccountID, meta.ModelID = turnIdentity.ProviderID, turnIdentity.AccountID, turnIdentity.ModelID
 		}

@@ -60,6 +60,8 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(sequence_num);
 CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_number, sequence_num);
 CREATE INDEX IF NOT EXISTS idx_messages_internal_id ON messages(internal_id);
+CREATE INDEX IF NOT EXISTS idx_messages_public_run ON messages(json_extract(display_meta,'$.run_id'),sequence_num)
+    WHERE visibility='conversation' AND json_valid(display_meta);
 
 CREATE TABLE IF NOT EXISTS usage_requests (
     request_id          TEXT PRIMARY KEY,

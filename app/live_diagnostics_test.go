@@ -291,7 +291,7 @@ func TestDiagnosticsHarnessDistinctCoreSmoke(t *testing.T) {
 	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read}, Shell: target.Shell}, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"performance.shell", "connection.inspect", "diagnostics.core", "diagnostics.workspace"} {
+	for _, command := range []string{"performance.shell", "connection.inspect", "diagnostics.core", "diagnostics.workspace", "performance.archive.core", "performance.archive.shell"} {
 		id := "smoke-" + command
 		var result control.Result
 		request := &control.Request{ID: id, CommandID: command, Target: target, Input: json.RawMessage(`{}`)}
@@ -788,4 +788,61 @@ func assertDenseDiagnosticEvidence(t *testing.T, rows []sessiondb.MessageWithMet
 	if !continued || !failed || !recovered || !strings.Contains(lastDiagnosticAnswer(rows), "DENSE_DIAGNOSTICS_END_9Q") {
 		t.Errorf("dense model continuation/recovery missing: continuation=%v error=%v recovery=%v", continued, failed, recovered)
 	}
+}
+
+func TestArchiveCoreHistoryRemainsReadableAfterCoreRestart(t *testing.T) {
+	if os.Getenv("CRUDE_DIAGNOSTICS_REMOTE") != "" {
+		t.Skip("private local profile only")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	home, project := liveDiagnosticHome(t), t.TempDir()
+	first := startLiveDiagnosticCore(t, ctx, home, false)
+	// A persisted sample window excludes the current incomplete second.
+	timer := time.NewTimer(time.Until(time.Now().Truncate(time.Second).Add(time.Second)))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	first.stop(t)
+	second := startLiveDiagnosticCore(t, ctx, home, false)
+	if second.pid == first.pid {
+		t.Fatal("test did not restart the core")
+	}
+	owner, err := diagnosticDialer(home)(ctx, "archived-evidence-reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = owner.Close() }()
+	var attach coreprotocol.AttachResult
+	if err := owner.Call(ctx, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: project}, &attach); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Call(ctx, attach.WorkspaceID, coreprotocol.ControlClientRegister, &coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	id := "archive-after-restart"
+	var result control.Result
+	request := &control.Request{ID: id, CommandID: "performance.archive.core", Target: control.Target{WorkspaceID: attach.WorkspaceID}, Input: json.RawMessage(`{"page":{"view":"hours"}}`)}
+	if _, err := owner.CallWith(ctx, attach.WorkspaceID, coreprotocol.ControlExecute, request, &result, coreclient.CallOptions{ID: id}); err != nil || result.Fault != nil {
+		t.Fatalf("archive is not readable through the gateway: %v %v", err, result.Fault)
+	}
+	var page inspect.Page
+	if err := json.Unmarshal(result.Output, &page); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range page.Records {
+		var value struct {
+			Source struct {
+				PID int `json:"pid"`
+			} `json:"source"`
+			Coverage int `json:"observed_process_seconds"`
+		}
+		if json.Unmarshal(row.Value, &value) == nil && value.Source.PID == first.pid && value.Coverage > 0 {
+			return
+		}
+	}
+	t.Fatalf("first process evidence was not retained: %s", result.Output)
 }

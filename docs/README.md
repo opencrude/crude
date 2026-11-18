@@ -52,6 +52,7 @@ documents to read before changing each area.
   durable agents/runs, directed delivery, reports, controls and recovery.
 - [Skills, MCP and capabilities](reference/capabilities.md) — registration,
   binding, acquisition approval, session gates and built-in sources.
+- [Durable evidence](reference/durable-evidence.md) — live working set, exact agent runs, retained file receipts and build comparisons.
 - [Crude semantic control](reference/control-contract.md) — shared native/MCP
   command catalog, exact-shell targeting and truthful receipts.
 - [Managed execution contexts](reference/managed-executions.md) — worktree

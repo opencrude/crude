@@ -4,7 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
+
+	"crude/types/toolresult"
 )
 
 // InspectionMessage is public evidence, not a provider message. In particular,
@@ -139,4 +144,73 @@ func InspectAgentWork(ctx context.Context, db *sql.DB, agentID, transcriptOwnerI
 		result.Messages[left], result.Messages[right] = result.Messages[right], result.Messages[left]
 	}
 	return result, nil
+}
+
+// RunWork projects accepted public rows from one recorded attempt. This never
+// reads provider request items or guesses the attempt from its time or turn.
+type RunWork struct {
+	RunID      string         `json:"run_id"`
+	Available  bool           `json:"available"`
+	Activity   []RunWorkEntry `json:"activity"`
+	WorkCursor string         `json:"work_cursor,omitempty"`
+	Coverage   string         `json:"coverage"`
+}
+
+type RunWorkEntry struct {
+	InspectionMessage
+	Outcome toolresult.Outcome `json:"outcome,omitzero"`
+}
+
+func InspectRunWork(ctx context.Context, db *sql.DB, runID, agentID, transcriptOwnerID, cursor string) (RunWork, error) {
+	result := RunWork{RunID: runID, Activity: []RunWorkEntry{}, Coverage: "Only public rows already published for this exact run. Buffered work and older rows without a run link are not shown."}
+	if runID == "" || agentID == "" || transcriptOwnerID == "" {
+		return result, errors.New("exact run and transcript owner required")
+	}
+	args := []any{runID, agentID, transcriptOwnerID}
+	before := ""
+	if cursor != "" {
+		owner, pair, qualified := strings.Cut(cursor, "/")
+		seq, part, split := strings.Cut(pair, "/")
+		sequence, seqErr := strconv.ParseInt(seq, 10, 64)
+		snapshot, partErr := strconv.ParseInt(part, 10, 64)
+		if !qualified || !split || owner != runID || seqErr != nil || partErr != nil || sequence < 0 || snapshot < 0 {
+			return result, errors.New("use the work cursor returned for this exact run")
+		}
+		before = " AND (m.sequence_num,s.key)<(?,?)"
+		args = append(args, sequence, snapshot)
+	}
+	const limit = 10
+	rows, err := db.QueryContext(ctx, `SELECT COALESCE(m.internal_id,''),json_extract(s.value,'$.role'),
+		CASE WHEN json_extract(s.value,'$.role')='assistant' THEN COALESCE(substr(json_extract(s.value,'$.content'),1,800),'') ELSE '' END,
+		COALESCE(json_extract(s.value,'$.tool_name'),''),COALESCE(json_extract(s.value,'$.tool_status'),''),m.created_at,
+		(json_extract(s.value,'$.role')='assistant' AND length(COALESCE(json_extract(s.value,'$.content'),''))>800),
+		m.sequence_num,s.key,COALESCE(json_extract(s.value,'$.tool_outcome.state'),''),
+		COALESCE(substr(json_extract(s.value,'$.tool_outcome.code'),1,128),''),
+		COALESCE(json_extract(s.value,'$.tool_outcome.call_id'),''),COALESCE(json_extract(s.value,'$.tool_outcome.id'),'')
+		FROM messages m JOIN json_each(m.display_meta,'$.snapshots') s
+		WHERE m.visibility='conversation' AND json_valid(m.display_meta) AND json_extract(m.display_meta,'$.run_id')=?
+		AND m.agent_id IN (?,?) AND COALESCE(json_extract(m.display_meta,'$.context_only'),0)=0
+		AND json_extract(s.value,'$.role') IN ('assistant','tool')`+before+`
+		ORDER BY m.sequence_num DESC,s.key DESC LIMIT ?`, append(args, limit+1)...)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	var lastSequence, lastPart int64
+	for rows.Next() {
+		if len(result.Activity) == limit {
+			result.WorkCursor = fmt.Sprintf("%s/%d/%d", runID, lastSequence, lastPart)
+			break
+		}
+		var row RunWorkEntry
+		var created int64
+		if err := rows.Scan(&row.MessageID, &row.Role, &row.Text, &row.ToolName, &row.Status, &created,
+			&row.Truncated, &lastSequence, &lastPart, &row.Outcome.State, &row.Outcome.Code, &row.Outcome.CallID, &row.Outcome.ID); err != nil {
+			return result, err
+		}
+		row.CreatedAt = time.Unix(0, created).UTC()
+		result.Activity = append(result.Activity, row)
+	}
+	result.Available = len(result.Activity) > 0 || cursor != ""
+	return result, rows.Err()
 }

@@ -107,3 +107,17 @@ func CloneInsightDiagnostics(d InsightDiagnostics) InsightDiagnostics {
 	}
 	return d
 }
+
+// WorkingSetEvidence is a small, source-only turn brief. An omitted row is
+// not a closed file. An unavailable brief does not mean the workspace is empty.
+type WorkingSetEvidence struct {
+	Available bool              `json:"available"`
+	Open      []WorkingDocument `json:"open_named_documents"`
+	Omitted   int               `json:"omitted,omitempty"`
+}
+
+type WorkingDocument struct {
+	Path     string `json:"path"`
+	Revision uint64 `json:"revision"`
+	Dirty    bool   `json:"dirty,omitempty"`
+}

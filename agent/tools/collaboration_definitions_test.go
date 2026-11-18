@@ -123,9 +123,11 @@ func TestPassiveAgentInspectionDescriptionsAndSchema(t *testing.T) {
 	}
 	_, schema := collaborationSchema(t, "agent_inspect")
 	properties := schemaProperties(t, schema)
-	agentID, ok := properties["agent_id"].(map[string]any)
-	if len(properties) != 1 || !ok || agentID["type"] != "string" {
-		t.Fatalf("inspection must accept only agent_id: %v", properties)
+	for key, want := range map[string]string{"agent_id": "string", "run_id": "string", "list_runs": "boolean", "before_run": "string", "work_cursor": "string"} {
+		property, ok := properties[key].(map[string]any)
+		if !ok || property["type"] != want {
+			t.Fatalf("inspection %s must accept %s: %v", key, want, properties)
+		}
 	}
 	required := schema["required"].([]any)
 	if len(required) != 1 || required[0] != "agent_id" {

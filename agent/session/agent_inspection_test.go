@@ -209,6 +209,10 @@ func TestAgentInspectRealHumanRunDoesNotGuessUnrecordedTrigger(t *testing.T) {
 	if len(view.RecentWork.Messages) != 1 || view.RecentWork.Messages[0].Text != "finished human task" {
 		t.Fatal("real session-owned output missing from runtime inspection", view.RecentWork)
 	}
+	exact, err := s.inspectExactAgentRun(t.Context(), store, orchestrator.ID, view.LatestRun.ID, "")
+	if err != nil || exact.Run == nil || !exact.Run.State.Terminal() || len(exact.PublicWork.Activity) != 1 || exact.PublicWork.Activity[0].Text != "finished human task" {
+		t.Fatalf("exact attempt did not retain its real output: %+v %v", exact, err)
+	}
 }
 
 func TestAgentInspectChildContinuationLabelsAssignmentHistoryHonestly(t *testing.T) {

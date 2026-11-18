@@ -256,3 +256,26 @@ func TestProblemsListsUnopenedFileFromProjectCheck(t *testing.T) {
 		t.Fatalf("diagnostic row = %+v", row)
 	}
 }
+
+func TestOpenFileInspectionQualifiesAnEmptyDiagnosticBatch(t *testing.T) {
+	app, ed, _, facts := qualifiedDiagnosticApp(t)
+	app.drainLSPDiagnostics()
+	observed := inspectOpenFile(1, ed, app.lspFacts[ed.FilePath()])
+	if !observed.SourceMatchesView || observed.Source == nil || observed.Source.Revision != 41 || observed.Errors != 1 || observed.DiagnosticEvidence != string(facts.State) {
+		t.Fatalf("the open revision lost its reported error: %+v", observed)
+	}
+	facts.Diagnostics = nil
+	clean := inspectOpenFile(1, ed, facts)
+	if clean.DiagnosticEvidence != string(facts.State) || clean.Errors != 0 || clean.DiagnosticID == "" {
+		t.Fatalf("an observed empty batch is not a missing check: %+v", clean)
+	}
+	unknown := inspectOpenFile(1, ed, types.InsightDiagnostics{})
+	if unknown.DiagnosticEvidence != "not_observed" {
+		t.Fatal(unknown)
+	}
+	ed.InsertRune('x')
+	older := inspectOpenFile(1, ed, facts)
+	if older.SourceMatchesView || older.DiagnosticEvidence != "out_of_date" {
+		t.Fatalf("old empty result certified later text: %+v", older)
+	}
+}

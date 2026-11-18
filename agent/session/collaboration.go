@@ -1104,7 +1104,23 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 		}
 		return collaborationResult(listed, nil), true, nil
 	case "agent_inspect":
-		inspection, err := s.inspectAgent(ctx, store, getStrParam(params, "agent_id"))
+		agentID, runID := getStrParam(params, "agent_id"), getStrParam(params, "run_id")
+		before, cursor := getStrParam(params, "before_run"), getStrParam(params, "work_cursor")
+		if getBoolParam(params, "list_runs") {
+			if agentID == "" || runID != "" || cursor != "" {
+				return tools.ToolResult{}, true, fmt.Errorf("give one agent ID to list runs. Read a selected run separately")
+			}
+			page, err := store.ListRuns(ctx, agentID, before, 12)
+			return collaborationResult(page, err), true, err
+		}
+		if before != "" || (cursor != "" && runID == "") {
+			return tools.ToolResult{}, true, fmt.Errorf("use before_run with list_runs, or work_cursor with an exact run_id")
+		}
+		if runID != "" {
+			inspection, err := s.inspectExactAgentRun(ctx, store, agentID, runID, cursor)
+			return collaborationResult(inspection, err), true, err
+		}
+		inspection, err := s.inspectAgent(ctx, store, agentID)
 		return collaborationResult(inspection, err), true, err
 	case "agent_send":
 		identity, err := collaborationExecutionIdentity(ctx)

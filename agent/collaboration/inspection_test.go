@@ -87,6 +87,21 @@ func TestInspectAgentDistinguishesIdleHistoryAndCurrentRunWithoutEffects(t *test
 		t.Fatal("new attempt inherited historical status or reports", view, err)
 	}
 	finish(active)
+	previous, err := store.InspectAgentAttempt(t.Context(), root.ID, old.ID)
+	if err != nil || previous.SelectedRun == nil || previous.SelectedRun.ID != old.ID || previous.LatestRun.ID != active.ID || len(previous.Reports) != 1 || previous.Reports[0].RunID != old.ID {
+		t.Fatalf("selected history replaced the latest run or its report: %+v %v", previous, err)
+	}
+	if _, err := store.InspectAgentAttempt(t.Context(), child.ID, old.ID); err == nil {
+		t.Fatal("another agent's run was returned as this agent's evidence")
+	}
+	runs, err := store.ListRuns(t.Context(), root.ID, "", 2)
+	if err != nil || len(runs.Runs) != 2 || runs.Runs[0].ID != active.ID || runs.Before != latest.ID {
+		t.Fatalf("run chronology or cursor lost: %+v %v", runs, err)
+	}
+	runs, err = store.ListRuns(t.Context(), root.ID, runs.Before, 2)
+	if err != nil || len(runs.Runs) != 1 || runs.Runs[0].ID != old.ID || runs.Before != "" {
+		t.Fatalf("run continuation skipped or repeated a run: %+v %v", runs, err)
+	}
 }
 
 func TestInspectAgentWithoutRunsDoesNotInventWork(t *testing.T) {

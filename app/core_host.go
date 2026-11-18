@@ -25,6 +25,7 @@ import (
 	"crude/core/wire"
 	"crude/history"
 	"crude/metrics"
+	"crude/perfdata"
 	"crude/workspace"
 )
 
@@ -102,6 +103,9 @@ func RunCore(opts CoreOptions) error {
 			lg.Warn("CORE", "owner_release_failed", "error", err.Error())
 		}
 	}()
+	defer perfdata.RecordArchive(perfdata.ArchivePath(opts.Home), "core", func(err error) {
+		lg.Warn("PERFORMANCE", "history_write_failed", "error", err.Error())
+	})()
 	lg.Info("CORE", "listening", "pid", os.Getpid(), "server", opts.Server, "grace", opts.Grace.String())
 
 	// Application state is resolved by the core, never by an attaching shell.

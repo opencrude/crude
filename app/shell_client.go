@@ -23,6 +23,7 @@ import (
 	"crude/core/wire"
 	"crude/desktopnotify"
 	"crude/metrics"
+	"crude/perfdata"
 	"crude/tui"
 	startuptui "crude/tui/startup"
 )
@@ -276,6 +277,9 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 		return fmt.Errorf("remember connected workspace: %w", err)
 	}
 	metrics.Start("shell")
+	defer perfdata.RecordArchive(perfdata.ArchivePath(home), "shell", func(err error) {
+		lg.Warn("PERFORMANCE", "history_write_failed", "error", err.Error())
+	})()
 	// Desktop notifications are this shell's effect on this computer's
 	// desktop. The core elects one shell per workspace to show them.
 	notifier := desktopnotify.Start(desktopnotify.Identity{AppID: "Crude", Name: "Crude", IconPNG: assets.IconPNG, Dir: filepath.Join(DataDir(home), "notifications")})

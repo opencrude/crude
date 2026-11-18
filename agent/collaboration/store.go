@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS collaboration_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_collaboration_runs_agent
 	ON collaboration_runs(agent_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collaboration_runs_workspace_order
+	ON collaboration_runs(workspace_id, started_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS collaboration_events (
 	id TEXT PRIMARY KEY,
 	workspace_id TEXT NOT NULL,

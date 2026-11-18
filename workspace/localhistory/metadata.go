@@ -147,6 +147,11 @@ CREATE TABLE IF NOT EXISTS history_agent_operations (
   FOREIGN KEY(session_id, message_id) REFERENCES history_message_scopes(session_id, message_id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_history_agent_operations_scope ON history_agent_operations(session_id, message_id, agent_id, sequence);
+CREATE TABLE IF NOT EXISTS history_agent_operation_runs (
+  run_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL UNIQUE REFERENCES history_agent_operations(operation_id) ON DELETE CASCADE,
+  PRIMARY KEY(run_id, operation_id)
+);
 CREATE TABLE IF NOT EXISTS history_agent_operation_paths (
   operation_id TEXT NOT NULL REFERENCES history_agent_operations(operation_id) ON DELETE CASCADE,
   ordinal INTEGER NOT NULL,
