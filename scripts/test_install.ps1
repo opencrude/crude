@@ -140,6 +140,7 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
         GitDownloadsFail = $false; GitTransientFailures = 0; GitExpandFails = $false; GitUnpackCalls = 0
         PrimaryDownloadsFail = $false; ApiDownloadsFail = $false
         FontPresent = $true; FontRegistrations = 0; FontDownloads = 0
+        RegisteredFolder = $null; RegisteredNames = @(); FontRtlPresent = $false
         Terminal = $null
     }
     $install = Join-Path $Fixture.Directory 'install with spaces'
@@ -224,8 +225,16 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
     }
     # A font this machine already has needs no file, no value and no download.
     function Test-CrudeFontAvailable($Paths) { return $fixtureState.FontPresent }
-    function Add-CrudeFontRegistration([string] $Folder) {
+    function Get-CrudeFontFamily([string[]] $Families) {
+        if ($fixtureState.FontRtlPresent -and $Families -contains 'Crude RTL') {
+            return [pscustomobject] @{ Known = $true; Name = 'Crude RTL' }
+        }
+        return [pscustomobject] @{ Known = $true; Name = $null }
+    }
+    function Add-CrudeFontRegistration([string] $Folder, [string[]] $Names = $null) {
         $fixtureState.FontRegistrations++
+        $fixtureState.RegisteredFolder = $Folder
+        $fixtureState.RegisteredNames = @($Names)
         return 1
     }
     function Get-CrudeUserPath { return $fixtureState.UserPath }
@@ -496,7 +505,12 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
                 [void] [IO.Directory]::CreateDirectory((Join-Path $payload 'fonts'))
                 [IO.File]::WriteAllText((Join-Path $payload 'fonts/CrudeRTL-Regular.ttf'), 'rtl font')
                 [IO.File]::WriteAllText((Join-Path $payload 'fonts/LICENSE-DejaVu'), 'DejaVu license')
+                $fixtureState.FontRtlPresent = $true
                 $paths = Get-CrudeWindowPaths
+                [void] (Install-CrudeRtlFont $paths $payload)
+                $userFonts = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+                Assert-True ([IO.File]::Exists((Join-Path $userFonts 'CrudeRTL-Regular.ttf'))) 'Crude RTL must land in the user font folder, the only place Windows loads a per-user font from'
+                Assert-Equal $fixtureState.RegisteredFolder $userFonts 'Crude RTL must be registered where Windows loads it'
                 Install-CrudeWindow -InstallDir $install -Payload $payload -WorkDir $fixtureState.Fixture.Directory -Plan 'install'
 
                 Assert-True ([IO.File]::Exists($paths.Fragment)) 'The window must add a Windows Terminal profile'
@@ -505,8 +519,6 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
                 Assert-Equal $profile.commandline (Join-Path $install 'crude.exe') 'The profile must start the installed program'
                 Assert-Equal $profile.guid $paths.Guid 'The profile must keep one identity across updates'
                 Assert-Equal $profile.font.face 'JetBrainsMono NF, Crude RTL' 'The profile must use the Nerd Font Windows can draw, then Crude RTL for right-to-left scripts'
-                Assert-Equal ([IO.File]::ReadAllText((Join-Path $paths.RtlFonts 'CrudeRTL-Regular.ttf'))) 'rtl font' 'Crude RTL must be installed in Crude''s own folder'
-                Assert-True ([IO.File]::Exists((Join-Path $paths.RtlFonts 'LICENSE-DejaVu'))) 'Crude RTL must keep its license beside it'
                 Assert-Equal $profile.icon (Join-Path $env:LOCALAPPDATA 'Crude/crude.ico') 'The profile must carry the Crude icon'
                 Assert-Equal $profile.startingDirectory '%USERPROFILE%' 'The profile must start in the user folder'
 
@@ -514,7 +526,7 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
                 Assert-Equal $shortcut.TargetPath $fixtureState.Terminal 'The Start menu must open Windows Terminal'
                 Assert-Equal $shortcut.Arguments ('-w -1 new-tab -p "Crude" --maximized -- "' + (Join-Path $install 'crude.exe') + '"') 'The Start menu must open one maximized Crude window, even before the profile is read'
                 Assert-Equal $shortcut.IconLocation ((Join-Path $env:LOCALAPPDATA 'Crude/crude.ico') + ',0') 'The Start menu entry must use the Crude icon'
-                Assert-Equal $fixtureState.FontRegistrations 1 'Only Crude RTL is registered; a Nerd Font this machine already has is not'
+                Assert-Equal $fixtureState.FontRegistrations 1 'Crude RTL is registered once, by the program install'
                 Assert-Equal $fixtureState.Attempts 0 'A window that runs in Windows Terminal downloads no terminal'
             } finally {
                 $env:LOCALAPPDATA = $savedLocalAppData
