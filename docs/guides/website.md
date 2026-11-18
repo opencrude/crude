@@ -45,6 +45,16 @@ installers from the repository root into the published directory, so those
 addresses always serve the current installers and the page never duplicates
 them.
 
+The published copies are snapshots. Changing either installer does not change
+them until someone dispatches `pages.yml`, so a fix is invisible to the
+documented install command until then. After an installer change, dispatch the
+deploy and check the served file:
+
+```bash
+gh workflow run pages.yml -R opencrude/opencrude.github.io --ref main
+curl -fsSL https://opencrude.github.io/install.ps1 | tr -d '\r' | diff <(tr -d '\r' < install.ps1) - && echo same
+```
+
 ## Local preview
 
 ```bash
