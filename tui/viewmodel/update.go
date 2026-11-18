@@ -126,7 +126,8 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncNavigationHistory()
 	command = tea.Batch(command, m.syncCompletion())
 	command = tea.Batch(command, m.autoCompletionCmd(time.Now()))
-	command = tea.Batch(command, m.autoSuggestionCmd(time.Now()))
+	command = tea.Batch(command, m.syncSuggestion(time.Now()))
+	command = tea.Batch(command, m.syncAskSends())
 	command = tea.Batch(command, m.syncInlayHints())
 	command = tea.Batch(command, m.syncSemanticTokens())
 	command = tea.Batch(command, m.syncOccurrences())
@@ -162,6 +163,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if handled, cmd := m.confirmModalInput(diskConflictOverlay, key, false, func(index int) tea.Cmd { return m.resolveDiskConflict(prompt, index) }); handled {
 				return m, cmd
 			}
+		}
+		if handled, cmd := m.suggestionConsentInput(key); handled {
+			return m, cmd
 		}
 		if prompt := m.liveConflict; prompt != nil {
 			if handled, cmd := m.confirmModalInput(liveConflictOverlay, key, false, func(index int) tea.Cmd { return m.activateLiveConflict(prompt, index) }); handled {

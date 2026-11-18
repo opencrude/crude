@@ -1,9 +1,14 @@
 package settings
 
 import (
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
+	"crude/provider"
 	"crude/tui/ui"
 	"crude/types"
 )
@@ -24,13 +29,17 @@ const (
 
 func suggestionField(id string) bool { return strings.HasPrefix(id, "suggest-") }
 
-func (m *Model) suggestionFields(s types.SuggestionSettings) []*ui.FieldState {
+func (m *Model) suggestionFields(s types.SuggestionSettings, aeronAccount string) []*ui.FieldState {
 	n := s.Normalized()
 	accounts := append([]ui.FormOption{{ID: "", Label: "Aeron's account"}}, m.connectionOptions(false)...)
-	var models []ui.FormOption
-	if account, ok := m.accounts[s.AccountID]; ok {
-		models = ui.ModelOptions(m.models[accountModelKey(account.ProviderID, s.AccountID)])
+	providerID, accountID := m.suggestionAccount(s.AccountID, aeronAccount)
+	var fetched []types.ModelEntry
+	if accountID != "" {
+		fetched = m.models[accountModelKey(providerID, accountID)]
 	}
+	models := suggestionModelOptions(fetched)
+	tier := ui.SelectFieldState(fieldSuggestTier, "Speed", s.ServiceTier, m.suggestionTierOptions(accountID, s.ServiceTier),
+		"Processing tier for Chat suggestion requests. The account's protocol decides which tiers exist.")
 	fields := []*ui.FieldState{
 		ui.SelectFieldState(fieldSuggestAccount, "Account", s.AccountID, accounts,
 			"Where suggestions go. Aeron's account is the default."),
@@ -43,25 +52,152 @@ func (m *Model) suggestionFields(s types.SuggestionSettings) []*ui.FieldState {
 			{ID: types.SuggestionFormatCodestral, Label: "Codestral FIM", Detail: "Inserts only"},
 		}, "Chat can also change nearby lines and point to the next place to edit."),
 		ui.TextFieldState(fieldSuggestEndpoint, "Endpoint path", s.EndpointPath,
-			"Fill-in-the-middle formats only, for example /v1/completions. Crude never guesses it."),
-		ui.SelectFieldState(fieldSuggestTier, "Speed", s.ServiceTier, []ui.FormOption{
-			{ID: "", Label: "Account default"}, {ID: "standard", Label: "Standard"}, {ID: "fast", Label: "Fast"},
-			{ID: "priority", Label: "Priority"}, {ID: "flex", Label: "Flex"},
-		}, "Processing tier for suggestion requests."),
+			"Fill-in-the-middle formats only. The path after the account's API address, for example completions. Crude never guesses it."),
+		tier,
 		ui.NumberFieldState(fieldSuggestTimeout, "Timeout", n.TimeoutSeconds, "seconds", "A suggestion that takes longer is dropped."),
 		ui.NumberFieldState(fieldSuggestOutput, "Output limit", n.MaxOutputTokens, "tokens", "The most text one suggestion may use."),
 	}
+	// Empty values inherit; the select shows what they inherit.
+	fields[0].Placeholder, fields[1].Placeholder, tier.Placeholder = "Aeron's account", "Aeron's model", "Account default"
 	for _, field := range fields {
 		field.Validator = func(ui.FieldValue) []string { return nil }
 	}
 	fields[3].Validator = func(value ui.FieldValue) []string {
 		path := strings.TrimSpace(value.String())
 		if path != "" && !types.ValidSuggestionEndpointPath(path) {
-			return []string{"Enter a path such as /v1/completions, without a host name."}
+			return []string{"Enter a path such as completions, without a host name."}
 		}
 		return nil
 	}
+	tier.Validator = func(value ui.FieldValue) []string {
+		if id := value.String(); id != "" && !m.suggestionTierOffered(m.suggestionAccountID(), id) {
+			return []string{"This account does not offer this speed. Choose another speed."}
+		}
+		return nil
+	}
+	fields[5].Validator = numberRange(types.SuggestionMinTimeoutSeconds, types.SuggestionMaxTimeoutSeconds)
+	fields[6].Validator = numberRange(types.SuggestionMinOutputTokens, types.SuggestionMaxOutputTokens)
 	return fields
+}
+
+// numberRange accepts a whole number from low to high, and nothing else.
+func numberRange(low, high int) func(ui.FieldValue) []string {
+	return func(value ui.FieldValue) []string {
+		n, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		if err != nil || n < low || n > high {
+			return []string{fmt.Sprintf("Enter a whole number from %d to %d.", low, high)}
+		}
+		return nil
+	}
+}
+
+// suggestionAccount resolves the account that suggestions use: the chosen
+// one, else Aeron's own account on the Model tab.
+func (m *Model) suggestionAccount(chosen, aeron string) (string, string) {
+	id := chosen
+	if id == "" {
+		id = aeron
+	}
+	if account, ok := m.accounts[id]; ok {
+		return account.ProviderID, id
+	}
+	return "", ""
+}
+
+// suggestionAccountID is the resolved account of the open Aeron draft.
+func (m *Model) suggestionAccountID() string {
+	form := m.categories[catAgents].Form
+	if form == nil || form.Field(fieldSuggestAccount) == nil {
+		return ""
+	}
+	aeron := ""
+	if field := form.Field(fieldConnection); field != nil {
+		aeron = field.Value.String()
+	}
+	_, id := m.suggestionAccount(form.Field(fieldSuggestAccount).Value.String(), aeron)
+	return id
+}
+
+// suggestionTiers lists the speeds that the account's protocol can send; an
+// account whose protocol has no tiers offers only its default.
+func (m *Model) suggestionTiers(accountID string) []string {
+	account, ok := m.accounts[accountID]
+	if !ok {
+		return nil
+	}
+	proto, ok := provider.ProtocolByID(providerStandard(account.ProviderID, account.Connection))
+	if !ok {
+		return nil
+	}
+	return provider.ServiceTierChoicesFor(proto.Info().Options.ServiceTiers)
+}
+
+func (m *Model) suggestionTierOffered(accountID, tier string) bool {
+	return slices.Contains(m.suggestionTiers(accountID), tier)
+}
+
+// suggestionTierOptions offers the account default and the protocol's own
+// tiers. A saved tier that the account does not offer stays visible, marked,
+// so the choice is never changed silently.
+func (m *Model) suggestionTierOptions(accountID, current string) []ui.FormOption {
+	options := []ui.FormOption{{ID: "", Label: "Account default"}}
+	for _, tier := range m.suggestionTiers(accountID) {
+		options = append(options, ui.FormOption{ID: tier, Label: tierLabel(tier)})
+	}
+	if current != "" && !m.suggestionTierOffered(accountID, current) {
+		options = append(options, ui.FormOption{ID: current, Label: tierLabel(current) + " (not offered)"})
+	}
+	return options
+}
+
+// syncSuggestionAccount follows a changed account on the Suggestions or
+// Model tab: the model list and speeds come from the resolved account.
+func (m *Model) syncSuggestionAccount() tea.Cmd {
+	form := m.categories[catAgents].Form
+	if form == nil || form.Field(fieldSuggestModel) == nil {
+		return nil
+	}
+	accountID := m.suggestionAccountID()
+	if tier := form.Field(fieldSuggestTier); tier != nil {
+		tier.Options = m.suggestionTierOptions(accountID, tier.Value.String())
+		tier.Validate()
+	}
+	field := form.Field(fieldSuggestModel)
+	field.Options, field.Errors, field.Loading, field.LoadMessage = suggestionModelOptions(nil), nil, false, ""
+	account, ok := m.accounts[accountID]
+	if !ok {
+		return nil
+	}
+	field.Options = suggestionModelOptions(nil)
+	if models, loaded := m.models[accountModelKey(account.ProviderID, accountID)]; loaded && len(models) > 0 {
+		field.Options = suggestionModelOptions(models)
+		return nil
+	}
+	field.Loading, field.LoadMessage = true, "Fetching models…"
+	return m.fetchModelsForAccountCmd(account.ProviderID, accountID)
+}
+
+// setSuggestionModels fills the Suggestions model list when its account's
+// models arrive, or shows the fetch error there.
+func (m *Model) setSuggestionModels(providerID, accountID string, models []types.ModelEntry, problem string) {
+	form := m.categories[catAgents].Form
+	if form == nil || form.Field(fieldSuggestModel) == nil || m.suggestionAccountID() != accountID ||
+		m.accounts[accountID].ProviderID != providerID {
+		return
+	}
+	field := form.Field(fieldSuggestModel)
+	field.Loading, field.LoadMessage = false, ""
+	if problem != "" {
+		field.Errors = []string{problem}
+		return
+	}
+	field.Options, field.Errors = suggestionModelOptions(models), nil
+}
+
+// suggestionModelOptions lists the account's models after the default, so
+// the user can always go back to Aeron's model.
+func suggestionModelOptions(models []types.ModelEntry) []ui.FormOption {
+	return append([]ui.FormOption{{ID: "", Label: "Aeron's model"}}, ui.ModelOptions(models)...)
 }
 
 // suggestionsFromForm reads the Suggestions tab of a draft.

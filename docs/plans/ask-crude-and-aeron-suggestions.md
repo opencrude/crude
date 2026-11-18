@@ -1,8 +1,8 @@
 # Ask Crude and Aeron Suggestions
 
-> Status: IN PROGRESS. Design accepted on 2026-11-18 with the corrections in
-> [Decisions](#decisions). One integrated implementation, not phases. See
-> [Implementation status](#implementation-status) for what exists.
+> Status: IMPLEMENTED 2026-11-18; one acceptance gate open (300 ms visible p50,
+> see [Implementation status](#implementation-status)). Design accepted on
+> 2026-11-18 with the corrections in [Decisions](#decisions).
 
 ## How to work on this plan
 
@@ -80,122 +80,41 @@ Updated with evidence as parts land. A part not listed here does not exist.
 
 | Part | State |
 |---|---|
-| Ask Crude | Implemented 2026-11-18: binding (`ui.AskCrudeKey`, Ctrl+K), the editor menu's **Crude** section, the `code_selection` reference through local and connected cores (upload path included), placement in [main view panes](../reference/main-view-panes.md#ask-crude-opens-the-chat-beside-the-code), save first, prepared Explain and Fix, chip reuse and click-to-open. Evidence: `tui/viewmodel/ask_crude_test.go`, `TestReferenceUploadCreatesCodeSelectionWithItsFile`, `TestCodeSelectionLabelsAndLines`; native Linux captures at 160x40 (new split, menu, reuse of the visible chat) and 80x24 (tab in the same pane). The first capture found the connected upload path refusing the file path; it is fixed and guarded. Checkpoint code now includes **Finish this change** and recent-edit history; its connected acceptance and Windows captures remain open. |
-| Aeron suggestions | Checkpoint implementation: normal-provider chat/FIM binding, core/shell transport, context/history/ledger, triggers, inline inserts/replacements/jumps, workspace modes, footer and a Suggestions tab. Default Off. **Not accepted as a complete feature.** See the handoff below. |
-| Workspace text index | Bounded-text in-memory index and related snippets implemented and tested. Find in Files still uses its established disk walk until live watcher freshness and ignore coverage are accepted. |
-| Next edit | Region rewrites produce checked hunks; the service caches remaining changes and the editor has a jump marker. Complete connected acceptance/chaining remains open. |
+| Ask Crude | Implemented: Ctrl+K, the editor menu's **Crude** section, the `code_selection` reference through local and connected cores, placement in [main view panes](../reference/main-view-panes.md#ask-crude-opens-the-chat-beside-the-code), chip reuse and click-to-open. Prepared prompts (**Explain**, **Fix**, **Finish this change**) send only after a save that started at or after the ask; a failed save, a disk conflict or a revert sends nothing and says why. **Finish this change** appears after a local edit in local and connected documents. Evidence: `ask_crude_test.go`, `ask_save_order_test.go`, Windows captures (Ctrl+K split, Crude menu). |
+| Aeron suggestions | Implemented: modes Off / When I ask / As I type with workspace consent (shared confirm frame, Cancel focused) and the hourly limit; insertion, nearby replacement and next-place marker; Tab, Ctrl+Right, Alt+End, Esc with dismissal memory; Tab-Tab follow-up from the same answer without a model call; completion-list precedence; cancel and release on caret, revision, focus or editor change; Suggestions tab (account, model with **Aeron's model**, format, endpoint, speed from the protocol, timeout and output limits). Chat binds thinking none; fill-in-the-middle binds no chat overrides. Changes on lines another author changed in the last 10 s are not shown. Evidence: `editor_suggestions_connected_test.go` (four connected journeys), `editor_prediction_followup_test.go`, `ghost_outcome_test.go`, `ghost_projection_test.go`, `agent_suggestions_test.go`; Windows captures of consent, a real multi-line suggestion and its acceptance at 140x36, Settings at 140x36 and 80x24. |
+| Measurement | Stages in microseconds (`suggest.context`, `ledger`, `first_byte`, `model`, `check`, `total`), shell `suggest.visible`, outcome counters and the `suggest.outcomes` table per context source, and `suggest.index` memory, curated on the dashboard's Services tab. Context assembly on the 2 MiB worst case: `BenchmarkBuildDense` 1.34-1.38 ms plus `BenchmarkRelated` 0.12-0.15 ms, under the 5 ms target. The 300 ms keystroke-to-visible p50 is observed, not yet a gate: it needs repeated measurements against a hosted model. |
+| Workspace text index | Implemented: git ignore precedence (root first, deeper wins, negation), ignore-file changes rebuild, a lost or overflowed watch rebuilds and the index reports itself incomplete until then, idempotent start and close, memory counted over text, chunks and postings against the 64 MiB limit. Related snippets stop while the index is incomplete. Find in Files still reads the disk. |
+| Next edit | Region rewrites produce checked hunks; remaining hunks chain after an accept; the marker jumps. |
 
-## Handoff checkpoint (2026-11-18)
+## Completion record (2026-11-18)
 
-The user explicitly stopped feature expansion and requested a working commit,
-push and handoff before leaving. Hina's original commit is `addaacfc`.
-The original scope and one-integrated-delivery acceptance above remain open.
-This is not a completion claim or a release of accepted AI suggestions.
+The checkpoint `7571c7a5` listed six resume items. All six are closed in the
+commit that follows it:
 
-### Verified fixes
+1. **Connected suggestion journey:** the shell owner reconciles request,
+   shown and held state on every update and releases the core view; four
+   connected journeys pass with real keys and a local provider.
+2. **Settings:** account-specific model fetch with a default option,
+   protocol-derived speeds, numeric bounds, consent in the shared confirm
+   frame; save, reopen and return to defaults are tested.
+3. **Context/index:** see the Workspace text index row above.
+4. **Finish this change:** save-before-send ordering, failure, conflict and
+   revert, author selection and the connected menu entry are tested.
+5. **Projection/performance:** wrap, fold, right-to-left, pointer, scroll,
+   undo, multiple carets, replacement paint and marker are tested through the
+   real paint path; dashboard stages and outcome counters exist.
+6. No legacy readers, local-model installers, speculative fallback or second
+   state authority were added.
 
-- **GPT 6.2:** Responses function tools now send `strict: false`. Responses
-  otherwise normalizes missing strictness into strict schemas and rejects the
-  existing `question` tool's `uniqueItems`. Tool schemas are not stripped or
-  rewritten; custom/namespace tools retain their proper shape. The standard
-  and Codex adapter regression covers this. Live checks through the configured
-  account passed for **gpt-6.2-sol** and **gpt-6.2-astra** with all 25 built-in
-  schemas, function-call decoding, a synthetic tool result, and a streamed
-  continuation. This tests provider/tool transport, not arbitrary task success.
-- **Ask Crude:** Ctrl+K no longer changes to Ctrl+I after keyboard negotiation.
-  Caps/Num/Scroll Lock no longer defeat exact modifier matchers.
-- **Keyboard layouts:** startup and workspace shells request alternate keys
-  and normalize non-Latin modified keys at ingress; normal text is unchanged.
-  Terminals that do not report alternate physical keys cannot supply missing
-  layout information. Native physical-layout switching remains separate from
-  the protocol-message regressions.
-- **Dotted text:** inferred file references use the existing source catalog
-  instead of treating any dotted identifier as a filename. Regressions include
-  `tools[10].parameters`, `fmt.Println`, prose abbreviations, and actual paths.
-- The suggestion core cancels on source changes, rechecks source/account/policy
-  before publication, and fences cached answers by policy generation. Missing
-  or incomplete stream usage remains conservatively charged by the ledger.
+Defects found and fixed on the way: Tab reported typed-through and accepted;
+a disk merge never reached recent edits; Delete and Backspace runs made one
+entry per character; Finish was missing for connected documents; Tab applied a
+replacement hidden in a fold; right-to-left suggested text painted reversed;
+fill-in-the-middle requests failed before the network; the Model choice could
+not return to the default; consent focused Turn on.
 
-### Resume here, without discarding the checkpoint
-
-1. **Connected suggestion journey:** inspect `tui/viewmodel/editor_suggestions.go`,
-   `workspace/editor_prediction_service.go`, `core/editor_suggestion.go`, and
-   `shellport/remote/suggestions.go`. Complete caret/tab/pane/focus/modal/close
-   cancellation and exact view release, accepted-suggestion scheduling and
-   tab-tab chaining, completion-list precedence, dismissal memory, and retained
-   status. Add connected tests using actual user input and a local provider.
-   Service tests plus editor tests are not that end-to-end evidence.
-2. **Settings:** `tui/settings/agent_suggestions.go` and `agents.go` have the tab.
-   Finish account-specific model fetch, protocol-derived speed options, strict
-   numeric validation and connected save/reopen/reset tests. Use Auto Review's
-   existing form and the shared confirmation frame for consent, not a new form
-   dialect. Verify wide/narrow native captures. No local model installation.
-3. **Context/index:** complete ignore precedence and ignore-file rebuilds,
-   watcher-gap recovery, idempotent index lifetime, metadata/postings memory
-   accounting, and dense context performance. The current 64 MiB limit counts
-   retained text, not every allocation. Related snippets stop on incomplete
-   coverage. Do not switch Find in Files to memory until fresh coverage is
-   proven through create/edit/delete/rename/ignore/root-change journeys.
-4. **Finish this change:** `tui/viewmodel/ask_finish.go` reads recent edits and
-   reuses the normal Ask Crude chat. It is in the menu after a local edit.
-   Verify acknowledgement and save-before-send ordering, failures/conflicts,
-   correct author selection, shortcut/palette, and connected lifecycle. Review
-   the same ordering in Hina's original Explain/Fix path.
-5. **Projection/performance:** multiline text, replacement paint and markers
-   are present. Broader wrapped/folded/bidi/pointer/scroll/undo/multicaret and
-   canonical-ack journeys still need acceptance. Latency stages exist in the
-   result type but are not integrated into the performance dashboard. Add
-   accepted/dismissed/typed-through outcome counters and repeated dense gates.
-6. Keep this plan open until every original acceptance criterion is met.
-   No legacy readers, local-model installers, speculative fallback or second
-   state authority should be added to finish it.
-
-### Checkpoint validation
-
-- Live GPT 6.2 Sol/Astra tool-schema and continuation checks passed as above.
-- `go run ./internal/wiregen -check`, `go build ./...`, `golangci-lint run ./...`
-  (zero issues), `make design-audit`, and `make docs-check` passed.
-- Exhaustive grouped Go coverage completed. The initial `scripts/test_go.py`
-  run stopped at the unwanted footer pill outside an editor. The owner now
-  treats an unconfigured mode as Off and keeps that pill absent there. After
-  the fix, the failed group and all remaining groups passed with the same
-  partitioner, assertions and 180-second deadlines. A current-inventory audit
-  found no missing cases: app 163, core 294, session 501, viewmodel 1,707,
-  workspace 861. Other packages passed in the initial run; final affected
-  packages were also run in full. This is repaired exhaustive coverage, not a
-  claim that the initial full command exited successfully.
-- Affected source/consent/suggestion/schema/keyboard paths passed `-race`.
-  Text index, context builder and file-link packages also passed their whole
-  race suites; project-search race regressions passed. The full repository
-  race suite was not run.
-- All six real CLI startup scenarios passed on the final binary, including
-  invalid paths, malformed config and exact core/shell crash recovery. The
-  harness now dismisses the normal trust prompt with native Esc before it
-  expects the account reminder. The first failed attempt exposed that missing
-  test action, not a missing reminder. No user core or credentials were used.
-- Sequential `scripts/tuishot.sh` captures passed all seven native preference
-  and consent stages at 160x40 and 80x24, including zero-limit refusal,
-  saved-state projection and revocation. Screenshots were inspected; both
-  capture windows closed, and startup reported no surviving owned processes.
-  These captures do not accept the separate Suggestions tab or a real model's
-  complete editor journey.
-- Provider/types cross-builds passed for Windows and macOS. A broader
-  `CGO_ENABLED=0` UI/file-link cross-build was refused by native Tree-sitter
-  dependencies; full cross-platform UI builds and native device acceptance
-  remain unverified.
-- Final `make bench-gate` passed with all existing ceilings unchanged. The
-  first run during concurrent validation reported 7,754 B/op for
-  `BenchmarkChatFindCount_20000Rows` against 4,500 B/op. Its initial row buffers
-  are amortized over duration-calibrated iterations. Three isolated one-second
-  measurements returned 3,355 / 3,355 / 3,546 B/op and one allocation, then the
-  whole gate passed. No benchmark source, workload, sample duration or ceiling
-  was changed to obtain that result. Keep the load-sensitive first result in
-  mind when investigating this unrelated chat-find benchmark.
-
-The current user core was not stopped or replaced by verification. Rebuild and
-restart are required to load changes in an already running Crude process.
-Suggestions remain Off by default. The unfinished integrated feature must not
-be called complete on the strength of this checkpoint.
+Known limits: the 300 ms visible p50 is not a gate yet; Windows native
+captures used a local stub model, not a hosted one.
 
 ## Outcome and acceptance
 

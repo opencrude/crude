@@ -63,9 +63,15 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	if settings.ServiceTier != "" {
 		role.ServiceTier = settings.ServiceTier
 	}
-	// Suggestions never think: a reasoning pass costs more time than the
-	// user waits between keystrokes.
-	role.ThinkingEffort = "none"
+	if settings.Format == ttypes.SuggestionFormatChat {
+		// Chat suggestions never think: a reasoning pass costs more time
+		// than the user waits between keystrokes.
+		role.ThinkingEffort = "none"
+	} else {
+		// A fill-in-the-middle request has no reasoning or tier controls;
+		// the adapter refuses chat overrides, so bind none.
+		role.ThinkingEffort, role.ServiceTier = "", ""
+	}
 	if strings.TrimSpace(role.Model) == "" || role.AccountID == "" {
 		return EditorPredictionCompleter{}, ErrSuggestionsUnconfigured
 	}

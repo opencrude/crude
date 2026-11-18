@@ -73,9 +73,14 @@ func (e *Editor) lineLayout(lineIdx int) *bidi.Layout {
 	}
 	dir := e.TextDirection()
 	fallback := dir == bidi.Auto && e.inheritsRightToLeft(lineIdx)
-	// Inlay hints and ghost text are inline objects; they never reorder a
-	// line on their own.
-	if c.reorders == 1 && !fallback {
+	// Inlay hints are inline objects; they never reorder a line on their
+	// own. Suggested text previews source text, so right-to-left suggested
+	// text lays out the line as the accepted text would.
+	ghostRTL := false
+	if g := e.ghost; g != nil && g.buffer == e.buf && g.atLine == lineIdx && !g.marker {
+		ghostRTL = bidi.NeedsLayout(g.label)
+	}
+	if c.reorders == 1 && !fallback && !ghostRTL {
 		return nil
 	}
 	inline := e.inlineLine(lineIdx)
@@ -86,11 +91,12 @@ func (e *Editor) lineLayout(lineIdx int) *bidi.Layout {
 	clusters, _, widths, _ := e.lineRenderInfo(lineIdx, 0)
 	units := make([]bidi.Unit, 0, len(clusters))
 	for i := 0; i < len(clusters); {
-		if inline != nil && i < len(inline.Runs) && (inline.Runs[i].HintIndex >= 0 || inline.Runs[i].Ghost) {
-			// An inlay hint or ghost text is not source text: it moves as
-			// one block and keeps its own reading order.
+		if inline != nil && i < len(inline.Runs) && inline.Runs[i].HintIndex >= 0 && !inline.Runs[i].Ghost {
+			// An inlay hint is not source text: it moves as one block and
+			// keeps its own reading order. Suggested text is laid out per
+			// cluster, as the text it inserts.
 			first, text, width := inline.Runs[i], "", 0
-			for i < len(clusters) && i < len(inline.Runs) && inline.Runs[i].HintIndex == first.HintIndex && inline.Runs[i].Ghost == first.Ghost {
+			for i < len(clusters) && i < len(inline.Runs) && inline.Runs[i].HintIndex == first.HintIndex && !inline.Runs[i].Ghost {
 				text += clusters[i]
 				width += widths[i]
 				i++

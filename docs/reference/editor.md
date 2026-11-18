@@ -1125,36 +1125,97 @@ project-context guarantees. Dynamic registration, global refresh notifications,
 hint command/edit/location execution and broader IDE workflow acceptance are
 outside this slice.
 
-### Inline prediction projection (checkpoint)
+### Ask Crude save and send
+
+**Ask Crude** attaches the code to the draft in the
+[chat beside the editor](main-view-panes.md#ask-crude-opens-the-chat-beside-the-code).
+The chip keeps the lines the user saw. Crude starts a save for a modified,
+writable file, but does not wait for it before attaching the chip.
+
+**Explain this code**, **Fix this problem** and **Finish this change** wait for
+the save before sending a prepared prompt for a modified, writable file.
+Crude checks that the saved text matches the requested buffer or differs from
+the saved text at the time of the request. **Finish this change** sends the
+user's recent edits, not edits by an agent or the disk.
+Recent edit history can group adjacent typing or deletion into one edit. A
+following insertion at the same point can turn a deletion into one replacement.
+
+If the editor closes or detects a disk conflict, Crude does not send the
+prompt. Crude also stops waiting if the save fails, no save is in progress,
+or the 30-second wait expires without a qualifying save. It shows:
+
+> Crude did not send the request because *name* could not be saved.
+> Save the file, then try again.
+
+### Inline prediction projection
+
+Suggestions are **Off** from the first frame unless the workspace has an
+enabled mode. See [workspace prediction consent](settings.md#workspace-prediction-consent).
+Press `Alt+\` with one caret and no selection in a writable editor to ask in
+either enabled mode. **As I type** also asks after a short pause in typing.
 
 The editor retains one private suggestion at an exact local revision and byte
-range. Existing completion uses `SetGhostTextFor` for single-line inserts.
-Aeron uses `SetSuggestion` for multiline inserts, nearby replacements and a
-next-place marker. The first line shares the inlay source-to-cell projection;
-extra faded rows are display-only rows. Replacements strike removed text.
-Neither projection nor marker changes source until accepted.
+range. Completion uses `SetGhostTextFor` for single-line inserts. Aeron uses
+`SetSuggestion` for multiline inserts, nearby replacements and a marker for
+the next place to edit. The first line shares the inlay source-to-cell
+projection. Extra faded rows are display only. A replacement strikes the
+text it would remove. The preview does not change the code.
 
-Tab accepts a change; Ctrl+Right accepts one word of an insertion; Alt+End
-accepts its next line. Escape dismisses. Exact typed-through insertion keeps
-its remainder. Peers, history, selections and view/source departure invalidate
-private acceptance. Without a suggestion, ordinary editor keys keep their
-normal behavior. Multiline presentation and connected next-edit acceptance
-remain in progress, not implied by the single-line completion regressions.
+- **Tab** applies a shown change. At a next-place marker, the first Tab moves
+  the caret to the change without editing. The next Tab applies the change.
+- **Ctrl+Right** accepts one word of an insertion. **Alt+End** accepts its
+  next line. The rest stays at the caret. Typing the exact insertion also
+  keeps only the remaining text. The editor reports acceptance, partial
+  acceptance, full typing and a jump through `SetOnGhostOutcome`.
+- **Esc** dismisses the shown change without closing the file. Crude remembers
+  the original and proposed lines, whether it showed an insertion, a nearby
+  replacement or a marker. It does not show that change again automatically
+  while those source lines match. An explicit `Alt+\` request clears the
+  remembered dismissal.
 
-The checkpoint installs a workspace suggestion service and core/shell RPCs.
-It binds the Suggestions account/model over Aeron, with thinking none, and
-uses the normal provider client for chat or the explicit FIM adapter. Context
-selects a cursor region, recent edits by author, exact-current diagnostics,
-visible completion candidates and related snippets. Source-change cancellation,
-sequence/policy fences, bounded caching and the durable hourly ledger protect
-requests. Local cancellation does not prove remote inference or billing stopped;
-incomplete/absent usage retains the conservative reservation.
+An Aeron answer waits while a completion row is chosen or completion shows
+its own inline text. With an unselected list, only an insertion that continues
+the sole row may show. A waiting answer can show when the list closes if
+the editor, source and caret still match. The completion key rules apply first.
 
-Suggestions default Off and require separate human-owned
-[prediction consent](settings.md#workspace-prediction-consent). The controller,
-Settings tab, status and index are checkpoint code, **not a completed feature**.
-The [handoff](../plans/ask-crude-and-aeron-suggestions.md#handoff-checkpoint-2026-11-18)
-lists connected lifecycle, performance, index freshness and UI acceptance gaps.
+After a full acceptance, a remaining change from the same answer can show once
+the core acknowledges the edit. In **When I ask**, this follow-up never calls
+the model. **As I type** can ask the model again if no follow-up is available.
+Without a suggestion, ordinary editor keys keep their normal behavior.
+
+On each update, the shell reconciles the request with its editor, revision,
+caret and input focus. Moving to another editor or opening a popup that takes
+input cancels the request, as does a source or caret change. The shell
+releases its view in the core. Dismissal or loss of the shown change without
+acceptance also releases the view and drops the remaining changes.
+
+The workspace service uses the resolved Suggestions account and model. Chat
+can use recent edits by author, current diagnostics, visible completion
+candidates and related snippets in addition to the code near the caret.
+Fill-in-the-middle sends the code before and after the caret. When checking
+model changes, the service skips lines that recent edit history attributes to
+an agent or the disk in the last 10 seconds, and lines next to them.
+
+The core checks source, sequence and policy before returning a result. It
+keeps a bounded cache and a durable hourly token ledger. Local cancellation
+does not prove remote inference or billing stopped. Missing or incomplete
+usage retains the conservative reservation. The
+[performance dashboard](performance-baselines.md#aeron-suggestions-2026-11-18)
+separates core request time from shell presentation.
+
+The workspace text index builds a new set of files in the background, then
+swaps it in at once. Nested `.gitignore` rules apply from the root down.
+Deeper rules win, including rules that start with `!`. An ignore-file change,
+a full change queue or a recovered file watch schedules a rebuild. Rebuild
+requests coalesce. Related snippets return nothing while the index reports
+incomplete coverage. Find in Files still walks the disk. Both read files with
+Windows delete sharing (`fileio.ReadFileSharedDelete`), so a save that writes
+a temporary file and renames it never fails because Crude is reading it.
+
+The index uses a 64 MiB budget for text and estimated file, chunk, term and
+posting memory. Files that do not fit keep their paths. The budget is not
+a process memory limit. `Start` and `Close` are idempotent. `Close` cancels
+and joins the worker, including a build in progress.
 
 ### Parameter information
 

@@ -3,6 +3,7 @@ package session
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"crude/sessiondb"
@@ -14,13 +15,32 @@ import (
 // session, so a reopened transcript shows what the live one showed, and sent
 // to every shell through the main agent.
 func (s *Session) recordStatusRow(phase, content string) {
-	now := time.Now()
+	now := statusRowTime()
 	row := sessiondb.StatusRow{ID: fmt.Sprintf("%s:%d", phase, now.UnixNano()), Phase: phase, Content: content, CreatedAt: now}
 	if err := sessiondb.AppendStatusRow(s.db, row); err != nil && s.logger != nil {
 		s.logger.Warn("SESSION", "status_row_save_failed", "phase", phase, "error", err.Error())
 	}
 	if o := s.liveOrchestrator(); o != nil && o.sender != nil {
 		o.sender.SendAgentEventWithID("status_row", row, o.ID)
+	}
+}
+
+// lastStatusRow is the time of the newest status row in this process.
+var lastStatusRow atomic.Int64
+
+// statusRowTime returns a time after every earlier status row. The wall
+// clock can return one value for several rows (on Windows it advances in
+// steps of about a millisecond); equal times would give two rows one ID, and
+// the second row would be lost.
+func statusRowTime() time.Time {
+	for {
+		last, now := lastStatusRow.Load(), time.Now().UnixNano()
+		if now <= last {
+			now = last + 1
+		}
+		if lastStatusRow.CompareAndSwap(last, now) {
+			return time.Unix(0, now)
+		}
 	}
 }
 

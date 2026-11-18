@@ -194,6 +194,14 @@ const (
 	SuggestionFormatCodestral = "codestral-fim"
 )
 
+// Bounds of the suggestion timeout and output limit.
+const (
+	SuggestionMinTimeoutSeconds = 1
+	SuggestionMaxTimeoutSeconds = 60
+	SuggestionMinOutputTokens   = 16
+	SuggestionMaxOutputTokens   = 2048
+)
+
 // Normalized returns safe effective values.
 func (s SuggestionSettings) Normalized() SuggestionSettings {
 	switch s.Format {
@@ -215,8 +223,8 @@ func (s SuggestionSettings) Normalized() SuggestionSettings {
 	if s.MaxOutputTokens == 0 {
 		s.MaxOutputTokens = 256
 	}
-	s.TimeoutSeconds = min(60, max(1, s.TimeoutSeconds))
-	s.MaxOutputTokens = min(2048, max(16, s.MaxOutputTokens))
+	s.TimeoutSeconds = min(SuggestionMaxTimeoutSeconds, max(SuggestionMinTimeoutSeconds, s.TimeoutSeconds))
+	s.MaxOutputTokens = min(SuggestionMaxOutputTokens, max(SuggestionMinOutputTokens, s.MaxOutputTokens))
 	return s
 }
 

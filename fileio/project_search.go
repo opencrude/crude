@@ -6,7 +6,6 @@ import (
 	"crude/textsearch"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -157,7 +156,7 @@ func ReadProjectFile(path string) (text []byte, binary, unreadable bool) {
 }
 
 func readProjectFile(path string) (text []byte, binary, unreadable bool) {
-	data, err := os.ReadFile(path)
+	data, err := ReadFileSharedDelete(path)
 	if err != nil {
 		return nil, false, true
 	}

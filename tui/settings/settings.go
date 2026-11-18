@@ -2162,6 +2162,7 @@ func (m *Model) fetchModelsForAccountCmd(providerID, accountID string) tea.Cmd {
 }
 func (m *Model) setModelsForAccount(providerID, accountID string, models []types.ModelEntry) {
 	m.models[accountModelKey(providerID, accountID)] = models
+	m.setSuggestionModels(providerID, accountID, models, "")
 	for index := range m.categories {
 		if !m.isAgentCategory(index) && index != catMemory {
 			continue
@@ -2180,6 +2181,7 @@ func (m *Model) setModelsForAccount(providerID, accountID string, models []types
 	}
 }
 func (m *Model) setModelsErrorForAccount(providerID, accountID, message string) {
+	m.setSuggestionModels(providerID, accountID, nil, message)
 	for index := range m.categories {
 		if !m.isAgentCategory(index) && index != catMemory {
 			continue

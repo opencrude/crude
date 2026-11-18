@@ -1304,18 +1304,37 @@ Intelligence:
   200,000 tokens when first turning on; the offered value alone does not store
   a choice while Off. Enabled modes require a positive limit.
 
+To turn suggestions on from the **Aeron** footer menu, choose **When I ask**
+or **As I type**. If suggestions are off, Crude opens the shared confirmation
+dialog: “Turn on suggestions in this workspace?” The dialog says where the
+code goes and that requests count toward the hourly limit. **Cancel** has
+focus. Choose **Turn on** to save the mode or **Cancel** to leave it off.
+Turning suggestions off does not ask for confirmation. When the enabled
+settings change, the shell reads readiness and the hourly meter from the core.
+
 Application scope shows two read-only **Workspace only** rows. Switching scope
 rebases from the effective workspace projection, not blocked raw overrides.
 Invalid drafts remain visible and cannot become consent through Save.
 Code Intelligence Reset removes prediction and analysis choices independently,
 while preserving the language-server inventory.
 
-The **Agents → Aeron → Suggestions** tab stores application-level account,
-model, request format, endpoint path, speed tier, timeout and output limit.
-Empty account/model uses Aeron's binding. Crude sets thinking to none.
-Chat uses the normal provider client; FIM uses the explicitly selected dialect
-and path, never a guessed endpoint. This tab and its connected journey are
-still subject to the [checkpoint handoff](../plans/ask-crude-and-aeron-suggestions.md#handoff-checkpoint-2026-11-18).
+The **Agents → Aeron → Suggestions** tab sets the application-level connection
+and limits for suggestions. Choose **Aeron's account** or **Aeron's model**
+to use that part of Aeron's binding. Crude sets thinking to none. Chat uses
+the normal provider client. Fill-in-the-middle uses the selected format and
+endpoint path.
+
+- **Model** lists models from the selected Suggestions account, or from Aeron's
+  account on the **Model** tab when no Suggestions account is selected. Crude
+  updates the list when either account changes. It fetches a list if the
+  resolved account has no models in the shell cache.
+- **Speed** offers **Account default** and the tiers supported by the resolved
+  account's protocol. A saved speed that the account does not support stays
+  visible as **(not offered)**. Choose a supported speed or **Account default**
+  before saving.
+- **Timeout** accepts whole numbers from 1 to 60 seconds. **Output limit**
+  accepts whole numbers from 16 to 2048 tokens. An invalid entry shows
+  “Enter a whole number from X to Y.” with the field's limits.
 
 The existing workspace preference transaction binds an enabled choice to a
 stable native root, exact configured Aeron connection and a newly generated grant
@@ -1328,8 +1347,6 @@ than repairing ambiguous JSON. Duplicate or case-aliased outer authority members
 fail decoding; repair of such corrupted stored rows is not an automatic upgrade.
 Off/reset remains possible without a working provider connection.
 
-**Implementation boundary:** the checkpoint connects the request service and
-shell trigger, but complete product acceptance remains open in the plan.
 Saving a choice itself does not probe an endpoint or start a model session.
 Once enabled, an explicit suggestion request or automatic typing trigger can
 send the selected context. A consent grant is bound to its connection identity;

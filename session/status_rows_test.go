@@ -122,3 +122,28 @@ func TestStatusRowsAreRecordedOnceAndSurviveReopen(t *testing.T) {
 		t.Fatalf("rows after resuming a reopened goal = %+v", after)
 	}
 }
+
+// Rows recorded within one wall-clock step (about a millisecond on Windows)
+// are all stored, in order. Equal times gave two rows one ID, and the second
+// row was lost from the transcript.
+func TestStatusRowsWithinOneClockStepAreAllKept(t *testing.T) {
+	home := t.TempDir()
+	s, err := NewWithSessionDir("", modelAttributionConfig("http://127.0.0.1:1", "rows-model"), home, filepath.Join(home, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	const n = 50
+	for i := range n {
+		s.recordStatusRow("loop", fmt.Sprintf("row %d", i))
+	}
+	rows := s.StatusRows()
+	if len(rows) != n {
+		t.Fatalf("stored %d of %d rows recorded together", len(rows), n)
+	}
+	for i, row := range rows {
+		if want := fmt.Sprintf("row %d", i); row.Content != want {
+			t.Fatalf("row %d = %q, want %q", i, row.Content, want)
+		}
+	}
+}

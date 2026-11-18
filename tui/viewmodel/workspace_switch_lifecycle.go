@@ -395,6 +395,7 @@ func (m *App) closeWorkspaceEditors() {
 		seen[ed] = struct{}{}
 		ed.SetOnContentChanged(nil)
 		ed.SetOnTyping(nil)
+		ed.SetOnGhostOutcome(nil)
 		ed.Close()
 	}
 	for _, view := range m.EditorState.Views {

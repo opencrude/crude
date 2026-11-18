@@ -91,7 +91,17 @@ func (s *DocumentService) mergeRecentEditLocked(d *liveDocument, author string, 
 	if last.document != d.snapshot.ID || last.author != author || len(last.inserted)+len(e.Text) > recentEditBytes {
 		return false
 	}
+	// Deleting with Delete or Backspace is one removal, as typing is one
+	// insertion: "-count" rather than five one-letter entries.
+	deleting := e.Text == "" && last.inserted == "" && removed != "" && !strings.Contains(removed, "\n") &&
+		len(last.removed)+len(removed) <= recentEditBytes
 	switch {
+	case deleting && start == last.start:
+		last.removed += removed
+	case deleting && start+len(removed) == last.start:
+		last.removed = removed + last.removed
+		last.start, last.end = start, start
+		last.line = 1 + bytes.Count(d.snapshot.Text[:min(start, len(d.snapshot.Text))], []byte{'\n'})
 	case removed == "" && start == last.end && !strings.Contains(e.Text, "\n"):
 		last.inserted += e.Text
 		last.end += len(e.Text)

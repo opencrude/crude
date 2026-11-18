@@ -75,7 +75,7 @@ func TestScheduledLoopRunsInSessionAndCoalescesBusyOccurrences(t *testing.T) {
 		running = running || strings.Contains(row.Content, "Loop "+loop.ID+" running.") && !strings.Contains(row.Content, loop.Prompt)
 	}
 	if !scheduled || !running {
-		t.Fatal("the transcript did not identify the task once and its iteration without duplicating the prompt")
+		t.Fatalf("the transcript did not identify the task once and its iteration without duplicating the prompt: %+v", s.StatusRows())
 	}
 	// Several missed times while the first turn is busy become one later
 	// iteration, never concurrent requests or a replay of every missed time.

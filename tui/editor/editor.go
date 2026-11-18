@@ -211,6 +211,10 @@ type Editor struct {
 	// onTyping observes an actual native typing edit after its final
 	// caret/history group is installed. It carries intent, not source authority.
 	onTyping func(tea.KeyPressMsg)
+	// onGhostOutcome observes acceptance of shown inline text by its owner.
+	onGhostOutcome func(string, GhostOutcome)
+	// ghostAccepting is set while an explicit accept inserts text.
+	ghostAccepting bool
 
 	// Git supplies an immutable HEAD baseline. The editor owns one exact live
 	// projection for paint, navigation and inspection; there are no local claims.
