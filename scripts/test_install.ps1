@@ -5,9 +5,9 @@ Offline release-installer fixtures. Run with Windows PowerShell 5.1 or pwsh.
 .EXAMPLE
 .\scripts\test_install.ps1 -ReleaseDir dist -ReleaseVersion v1.2.3
 .NOTES
-Uses real ZIP/checksum/file transactions and mocks only HTTP, user PATH storage,
-and (in portable fixtures) native version execution/platform detection. No test
-parameters or security bypasses exist in the production installer. Native Windows
+Uses real ZIP/checksum/file transactions. Fixtures isolate HTTP, user PATH and
+font state, and substitute native version execution/platform detection only
+where required. No test hooks exist in the production installer. Native Windows
 checks additionally compile and execute a small --version fixture and exercise a
 locked target; they do not need Go, Zig, administrator rights, or Pester.
 #>
@@ -139,7 +139,7 @@ function With-Fixture($Fixture, [scriptblock] $Action) {
         GitShell = 'C:\Fixture\Git\bin\bash.exe'; GitPackage = $null; GitShaMismatch = $false
         GitDownloadsFail = $false; GitTransientFailures = 0; GitExpandFails = $false; GitUnpackCalls = 0
         PrimaryDownloadsFail = $false; ApiDownloadsFail = $false
-        FontPresent = $true; FontRegistrations = 0; FontDownloads = 0
+        FontPresent = $true; FontRegistrations = 0
         RegisteredFolder = $null; RegisteredNames = @(); FontRtlPresent = $false
         Terminal = $null
     }
@@ -265,9 +265,9 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
     [IO.File]::Copy((Join-Path $directory $fixture.Asset), $fixture.Archive, $true)
     [IO.File]::Copy((Join-Path $directory 'SHA256SUMS'), (Join-Path $fixture.Directory 'SHA256SUMS'), $true)
     $install = Join-Path $fixture.Directory 'real release install'
-    # The only substituted production boundary in this smoke check is transport:
-    # actual platform detection, package checks, native EXE probe, and filesystem
-    # installation run unchanged. No user or machine environment is persisted.
+    # Keep real package and native EXE checks. Isolate font registration and do
+    # not load the temporary font files into the desktop, which can lock them.
+    function Add-CrudeFontResource([string] $Path) { return $false }
     function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds = 120) {
         $url = $Uri.AbsoluteUri
         switch -CaseSensitive ($url) {
@@ -284,11 +284,16 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
     $oldMachine = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
     $oldProcess = $env:Path
     $oldCrudeHome = $env:CRUDE_HOME
+    $oldLocalAppData = $env:LOCALAPPDATA
+    $oldFontKey = $script:CrudeFontKey
+    $fontKey = 'Software\CrudeInstallerFonts-' + [Guid]::NewGuid().ToString('N')
     $env:CRUDE_HOME = Join-Path $fixture.Directory 'isolated profile'
-    [void] [IO.Directory]::CreateDirectory((Join-Path $env:CRUDE_HOME '.crude'))
-    $marker = Join-Path $env:CRUDE_HOME '.crude/preserved.txt'
-    [IO.File]::WriteAllText($marker, 'application data must survive install/update')
+    $env:LOCALAPPDATA = Join-Path $fixture.Directory 'isolated local app data'
+    $script:CrudeFontKey = $fontKey
     try {
+        [void] [IO.Directory]::CreateDirectory((Join-Path $env:CRUDE_HOME '.crude'))
+        $marker = Join-Path $env:CRUDE_HOME '.crude/preserved.txt'
+        [IO.File]::WriteAllText($marker, 'application data must survive install/update')
         Install-Crude -Yes -NoGui -Version $Tag -InstallDir $install -NoPath
         $binary = Join-Path $install 'crude.exe'
         $version = Get-CrudeCandidateVersion $binary
@@ -307,8 +312,22 @@ function Test-RealRelease([string] $Directory, [string] $Tag) {
         Assert-Equal ([Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)) $oldMachine 'Real-release installation must not change machine PATH'
         Assert-Equal $env:Path $oldProcess 'Real-release NoPath must not change process PATH'
         Assert-Equal ([IO.File]::ReadAllText($marker)) 'application data must survive install/update' 'Real-release installation must not touch Crude application data'
+        $registered = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($fontKey)
+        Assert-True ($null -ne $registered) 'NoGui must register the packaged Crude RTL fonts'
+        try {
+            foreach ($face in @('CrudeRTL-Regular', 'CrudeRTL-Bold')) {
+                $font = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts\$face.ttf"
+                Assert-Equal ($registered.GetValue("$face (TrueType)")) $font 'Crude RTL registration must point to the user fonts folder'
+                Assert-Equal (Get-TestHash $font) (Get-TestHash (Join-Path $PSScriptRoot "../assets/fonts/$face.ttf")) 'Installed Crude RTL face must match the release source'
+            }
+        } finally { $registered.Dispose() }
         Assert-NoStaging $install
-    } finally { $env:CRUDE_HOME = $oldCrudeHome }
+    } finally {
+        $env:CRUDE_HOME = $oldCrudeHome
+        $env:LOCALAPPDATA = $oldLocalAppData
+        $script:CrudeFontKey = $oldFontKey
+        [Microsoft.Win32.Registry]::CurrentUser.DeleteSubKeyTree($fontKey, $false)
+    }
 }
 
 try {
@@ -561,33 +580,48 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
         Assert-Equal $script:CrudeFontKey 'Software\Microsoft\Windows NT\CurrentVersion\Fonts' 'Per-user fonts live under Windows NT\CurrentVersion\Fonts'
     }
 
-    Test-Case 'the window font archive is unpacked by the Windows tar, which reads an absolute archive path' {
-        . $installer
-        $tar = Get-CrudeTarPath
-        Assert-True ([bool] $tar) 'A Windows install needs a tar to unpack the font archive'
-        # A Git installation puts its own GNU tar first on PATH. That tar reads
-        # "C:\..." as a host name, so the Windows copy is chosen by its path.
-        $system = Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe'
-        if ([IO.File]::Exists($system)) {
-            Assert-Equal $tar $system 'The Windows tar must be used, not another tar on PATH'
+    Test-Case 'the window installs verified Nerd Font faces without tar or changes to existing fonts' {
+        With-Fixture (New-Fixture) {
+            $fixtureState.FontPresent = $false
+            $paths = Get-CrudeWindowPaths
+            $faces = @('JetBrainsMonoNerdFont-Regular.ttf', 'JetBrainsMonoNerdFont-Bold.ttf', 'JetBrainsMonoNerdFont-Italic.ttf', 'JetBrainsMonoNerdFont-BoldItalic.ttf')
+            $names = @('OFL.txt') + $faces
+            Assert-Equal (@($paths.FontSHA256.Keys) -join ',') ($names -join ',') 'Only the four faces the window needs and the license are downloaded'
+            $work = Join-Path $fixtureState.Fixture.Directory 'font setup'
+            $source = Join-Path $work 'source'
+            [void] [IO.Directory]::CreateDirectory($source)
+            foreach ($name in $names) {
+                $file = Join-Path $source $name
+                [IO.File]::WriteAllText($file, "verified $name")
+                $paths.FontSHA256[$name] = (Get-TestHash $file).ToLowerInvariant()
+            }
+            function Invoke-CrudeDownloadAttempt([Uri] $Uri, [string] $Destination, [long] $MaximumBytes, [int] $TimeoutSeconds) {
+                $fixtureState.Attempts++
+                $name = $Uri.Segments[-1]
+                Assert-Equal $Uri.AbsoluteUri "$($paths.FontSource)/$name" 'Each face must come from the pinned source'
+                [IO.File]::Copy((Join-Path $source $name), $Destination, $true)
+            }
+            $lastFace = Join-Path $source $faces[-1]
+            [IO.File]::WriteAllText($lastFace, 'wrong bytes')
+            Install-CrudeWindowFonts $paths $work
+            Assert-Equal $fixtureState.FontRegistrations 0 'A bad face must not register a partial family'
+            Assert-True (-not [IO.Directory]::Exists($paths.UserFontFolder)) 'No face may be published if the set fails verification'
+
+            [IO.File]::WriteAllText($lastFace, "verified $($faces[-1])")
+            Install-CrudeWindowFonts $paths $work
+            $fonts = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'
+            Assert-Equal $fixtureState.RegisteredFolder $fonts 'The faces must be registered in the Windows user fonts folder'
+            Assert-Equal ($fixtureState.RegisteredNames -join ',') ($faces -join ',') 'Only the downloaded Nerd Font faces are registered'
+            foreach ($name in $faces) {
+                Assert-Equal (Get-TestHash (Join-Path $fonts $name)) (Get-TestHash (Join-Path $source $name)) "The installed face must match '$name'"
+            }
+            Assert-True ([IO.File]::Exists((Join-Path $fonts 'JetBrainsMonoNerdFont-OFL.txt'))) 'The font license must be retained'
+
+            $fixtureState.FontPresent = $true
+            Install-CrudeWindowFonts $paths $work
+            Assert-Equal $fixtureState.Attempts (2 * $names.Count) 'An existing Nerd Font needs no new download'
+            Assert-Equal $fixtureState.FontRegistrations 1 'An existing Nerd Font is not registered again'
         }
-        $work = Join-Path $root ('font archive ' + [Guid]::NewGuid().ToString('N'))
-        $source = Join-Path $work 'source'
-        [void] [IO.Directory]::CreateDirectory($source)
-        [IO.File]::WriteAllText((Join-Path $source 'JetBrainsMonoNerdFont-Regular.ttf'), 'font')
-        $archive = Join-Path $work 'fonts.tar.xz'
-        & $tar -cJf $archive -C $source .
-        Assert-True ([IO.File]::Exists($archive)) 'The fixture archive must be created'
-        $fonts = Join-Path $work 'fonts'
-        [void] [IO.Directory]::CreateDirectory($fonts)
-        Assert-True (Expand-CrudeFontArchive $tar $archive $fonts) 'An absolute archive path must unpack into the font folder'
-        Assert-True ([IO.File]::Exists((Join-Path $fonts 'JetBrainsMonoNerdFont-Regular.ttf'))) 'The faces must land in the folder Crude registers'
-        $broken = Join-Path $work 'not-a-font.tar.xz'
-        [IO.File]::WriteAllText($broken, 'not an archive')
-        $empty = Join-Path $work 'empty'
-        [void] [IO.Directory]::CreateDirectory($empty)
-        Assert-True (-not (Expand-CrudeFontArchive $tar $broken $empty)) 'A refused archive must report no face'
-        Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     Test-Case 'a missing Windows Terminal states the next step and adds nothing' {

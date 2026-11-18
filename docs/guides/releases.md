@@ -125,9 +125,10 @@ installed.
   notice and the program install still completes.
 
 The Nerd Font for patched icons is separate: it is added only when the machine
-cannot already draw the family, and it needs the Windows tar to unpack
-(`%SystemRoot%\System32\tar.exe`). A Git tar on PATH reads `C:\...` as a
-remote host, so the Windows copy is chosen by its own path.
+cannot already draw the family. The installer verifies the four JetBrainsMono
+Nerd Font faces and their license before copying them to the per-user font
+folder. This does not depend on XZ support in Windows tar, and it does not
+replace existing faces.
 
 Every installation and update shows the warning: bugs, agent mistakes, work
 lost and the need for backups. A person at an interactive terminal is asked
