@@ -108,6 +108,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		}
 
 		row := e.rowAt(e.scrollRow() + y)
+		if row.ghostRow > 0 {
+			e.paintGhostRow(buf, bufY, sw, sbX, row, gutterBlank, blankCell, bgColor)
+			continue
+		}
 		lineIdx, startCol := row.line, row.start
 		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, startCol)
 		inline := e.inlineLine(lineIdx)
@@ -119,6 +123,8 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		}
 		guideAt := func(col int) bool { return col < guideTo && col%indentSize == 0 }
 		occurrences := e.lineOccurrences(lineIdx, showOccurrences)
+		removeFrom, removeTo, removing := e.ghostRemoval()
+		removing = removing && lineIdx >= removeFrom.Line && lineIdx <= removeTo.Line
 
 		ri := 0
 		visCol := 0
@@ -301,6 +307,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 								fg = cell.ContrastInk(hlBg)
 							}
 							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, hlBg, diagAttr, blankCell)
+						case removing && !positionBefore(Position{Line: lineIdx, Col: sourceCol}, removeFrom) &&
+							positionBefore(Position{Line: lineIdx, Col: sourceCol}, removeTo):
+							// A suggested replacement strikes the text it removes.
+							fg := e.tokens.Color(ui.ColorDiffDeletion)
+							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, e.tokens.Color(ui.ColorDiffDeletionBg), cell.AttrStrikethrough, blankCell)
 						default:
 							bg := bgColor
 							if isOccurrence {
@@ -704,4 +715,38 @@ func (e *Editor) ensureCursorVisible() {
 	}
 
 	e.syncScrollChrome(availH)
+}
+
+// paintGhostRow paints one faded row of a multi-line suggestion below its
+// line, or the muted "+N lines" marker. The gutter stays blank: the row is
+// not source.
+func (e *Editor) paintGhostRow(buf *surface.CellBuffer, y, sw, sbX int, row visibleRow, gutterBlank, blankCell cell.Cell, bg cell.Color) {
+	for x := 0; x < sw; x++ {
+		buf.Set(x, y, gutterBlank)
+	}
+	for x := sw; x < sbX; x++ {
+		buf.Set(x, y, blankCell)
+	}
+	text, marker := e.ghostRowText(row.ghostRow - 1)
+	fg, attr := e.tokens.Color(ui.ColorMuted), cell.Attrs(0)
+	if marker {
+		attr = cell.AttrItalic
+	}
+	col, x := 0, sw
+	for text != "" && x < sbX {
+		cluster, _ := rendering.FirstGrapheme(text)
+		if cluster == "" {
+			break
+		}
+		text = text[len(cluster):]
+		width := rendering.VisibleWidth(cluster)
+		if width < 1 {
+			continue
+		}
+		if col >= row.start {
+			e.paintGrapheme(buf, x, y, sbX, cluster, width, fg, bg, attr, blankCell)
+			x += width
+		}
+		col += width
+	}
 }

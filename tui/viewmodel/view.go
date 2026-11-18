@@ -137,6 +137,7 @@ func (m *App) newTerminalView(output string) tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
 	v.ReportFocus = true
+	v.KeyboardEnhancements = ui.KeyboardEnhancements()
 	v.WindowTitle = m.terminalIdentity()
 	v.IconName = v.WindowTitle
 	return v

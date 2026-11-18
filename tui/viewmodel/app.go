@@ -414,20 +414,22 @@ type App struct {
 	navigation            *navigationState
 	completion            *completionState
 	completionIntent      *completionIntent
-	completionSequence    uint64
-	inlayViews            map[*editor.Editor]*inlayViewState
-	inlayViewSequence     uint64
-	semanticViews         map[*editor.Editor]*semanticViewState
-	semanticViewSequence  uint64
-	occurrence            *occurrenceRequest
-	inlayInspector        *inlayInspectorState
-	editorSnippet         *editorSnippetState
-	editorGhost           *editorGhostView
-	lspDiagnostics        shellport.LSPDiagnosticConsumer
-	lspFacts              map[string]roottypes.InsightDiagnostics
-	lspTreeProjection     map[string]diagnosticTreeProjection
-	lspTreeVisible        bool
-	reveals               map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
+	// suggest owns Aeron's editor suggestions in this shell.
+	suggest              suggestionState
+	completionSequence   uint64
+	inlayViews           map[*editor.Editor]*inlayViewState
+	inlayViewSequence    uint64
+	semanticViews        map[*editor.Editor]*semanticViewState
+	semanticViewSequence uint64
+	occurrence           *occurrenceRequest
+	inlayInspector       *inlayInspectorState
+	editorSnippet        *editorSnippetState
+	editorGhost          *editorGhostView
+	lspDiagnostics       shellport.LSPDiagnosticConsumer
+	lspFacts             map[string]roottypes.InsightDiagnostics
+	lspTreeProjection    map[string]diagnosticTreeProjection
+	lspTreeVisible       bool
+	reveals              map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
 	OnExitMessage func()
@@ -609,6 +611,7 @@ func (m *App) SwitchProject(projectDir string) error {
 	m.finishWorkspaceSwitch(state)
 	m.editorSaves = make(map[string]*editorSaveState)
 	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+	m.applySuggestionSettings(m.ws.LoadAppSettings().Prediction)
 	m.applyTextDirectionSettings(m.ws.LoadAppSettings())
 	return nil
 }

@@ -8,24 +8,23 @@ import (
 
 func TestPredictionApplicationAuthorityNeverFlowsIntoWorkspace(t *testing.T) {
 	var application AppSettings
-	if err := json.Unmarshal([]byte(`{"prediction":{"mode":"full","hourly_token_limit":9000,"protocol":"chat","endpoint_path":""}}`), &application); err != nil {
+	if err := json.Unmarshal([]byte(`{"prediction":{"mode":"type","hourly_token_limit":9000}}`), &application); err != nil {
 		t.Fatal(err)
 	}
 	for _, raw := range []string{
-		"", `null`, `{"mode":"full"}`,
-		`{"mode":"light","hourly_token_limit":4000,"hourly_token_limit":9000}`,
-		`{"mode":"full","hourly_token_limit":9000,"unknown":true}`,
-		`{"mode":"off","hourly_token_limit":0,"protocol":"chat","endpoint_path":""}`,
+		"", `null`, `{"mode":"type"}`,
+		`{"mode":"ask","hourly_token_limit":4000,"hourly_token_limit":9000}`,
+		`{"mode":"type","hourly_token_limit":9000,"unknown":true}`,
+		`{"mode":"off","hourly_token_limit":0}`,
 	} {
 		resolved := MergeAppWorkspace(application, WorkspaceOverrides{Prediction: json.RawMessage(raw)})
 		if resolved.Prediction.Mode != PredictionOff || resolved.Prediction.HourlyTokenLimit != 0 {
 			t.Fatalf("workspace %q borrowed application prediction authority: %+v", raw, resolved.Prediction)
 		}
 	}
-	stored := WorkspaceOverrides{Prediction: json.RawMessage(`{"mode":"light","hourly_token_limit":4200}`)}
+	stored := WorkspaceOverrides{Prediction: json.RawMessage(`{"mode":"ask","hourly_token_limit":4200}`)}
 	choice := MergeAppWorkspace(application, stored)
-	if choice.Prediction.Mode != PredictionLight || choice.Prediction.HourlyTokenLimit != 4200 ||
-		choice.Prediction.Protocol != PredictionChat || choice.Prediction.EndpointPath != "" {
+	if choice.Prediction.Mode != PredictionAsk || choice.Prediction.HourlyTokenLimit != 4200 {
 		t.Fatal("workspace choice was not resolved independently", choice.Prediction)
 	}
 	application.Prediction.Mode = PredictionOff
@@ -41,11 +40,11 @@ func TestPredictionOverlayResetDropsOnlyItsOwnAuthority(t *testing.T) {
 	var application AppSettings
 	ApplyAppDefaults(&application)
 	working := CloneAppSettings(application)
-	working.Prediction = WorkspacePredictionSettings{Mode: PredictionLight, HourlyTokenLimit: 4200, Protocol: PredictionChat}
+	working.Prediction = WorkspacePredictionSettings{Mode: PredictionAsk, HourlyTokenLimit: 4200}
 	working.Editor.TabSize = 7
 	overlay := OverridesFromDiff(application, working)
 	if !overlay.CategoryOverridden("prediction") || overlay.IsEmpty() ||
-		string(overlay.Prediction) != `{"hourly_token_limit":4200,"mode":"light"}` {
+		string(overlay.Prediction) != `{"hourly_token_limit":4200,"mode":"ask"}` {
 		t.Fatal("explicit workspace prediction choice was not retained", string(overlay.Prediction))
 	}
 	overlay.PredictionRootIdentity, overlay.PredictionConnectionIdentity, overlay.PredictionGrantID = "native", "connection", "grant"

@@ -1,14 +1,17 @@
-// Package predictioncontext prepares bounded literal context from an immutable
-// caller-owned canonical snapshot. It does no I/O, parsing, acquisition or
-// authorization. Build belongs on request workers, never a presentation path.
+// Package predictioncontext selects the context of one editor suggestion from
+// an immutable, caller-owned snapshot. It does no I/O, parsing or
+// authorization, and it never waits: every input is already in memory.
+//
+// The cursor block is an editable region of whole lines around the caret.
+// The model rewrites that region, so one request can insert text at the
+// caret, change nearby lines or change a later line in the region.
 package predictioncontext
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"slices"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -17,379 +20,278 @@ import (
 )
 
 const (
-	BuilderVersion   = "editor-prediction-context-v1"
-	MaxSourceBytes   = 2 << 20
-	MaxContextBytes  = 32 << 10
-	MaxIdentityBytes = 4096
-	MaxDiagnostics   = 256
-	MaxSelectedFacts = 16
-	MaxMetadataBytes = 128 << 10
-	maxWindowBytes   = 16 << 10
-	maxMessageBytes  = 4096
-	maxUnknownInputs = 64
-	maxReasonBytes   = 512
-	maxLanguageBytes = 128
+	// BuilderVersion changes whenever the selected context changes shape.
+	BuilderVersion = "editor-suggestion-context-v2"
+	// MaxSourceBytes is the largest document that suggestions read.
+	MaxSourceBytes = 2 << 20
+
+	regionLinesBefore = 4
+	regionLinesAfter  = 6
+	regionMaxBytes    = 3 << 10
+	excerptBefore     = 6 << 10
+	excerptAfter      = 2 << 10
+	maxEdits          = 8
+	maxEditBytes      = 600
+	maxSnippets       = 4
+	maxSnippetBytes   = 1200
+	maxDiagnostics    = 6
+	maxCompletions    = 8
 )
 
 var (
-	ErrInvalid = errors.New("invalid prediction context input")
-	ErrLimit   = errors.New("prediction context input exceeds bounds")
-	ErrBudget  = errors.New("prediction context budget cannot fit metadata")
+	ErrInvalid = errors.New("invalid suggestion context input")
+	ErrBudget  = errors.New("suggestion context does not fit its budget")
 )
 
+// Snippet is related code from another place in the workspace.
+type Snippet struct {
+	Path string
+	Line int
+	Text string
+}
+
+// Input is a complete snapshot. Text and Caret come from the canonical
+// document; the other sources are already qualified by their owners.
 type Input struct {
-	Source      types.InsightSource
-	Text        []byte
-	Caret       int // Exact UTF-8 byte offset, not a visual or UTF-16 column.
+	Path        string // workspace-relative, forward slashes
 	Language    string
-	Diagnostics types.InsightDiagnostics
+	Text        []byte
+	Caret       int // UTF-8 byte offset
+	Diagnostics []types.LSPDiagnostic
+	RecentEdits []types.RecentEdit // newest last
+	Snippets    []Snippet
+	Completions []string
 }
 
-// Coverage is a partial observation, never project completeness or freshness
-// authority. SourceStart/End delimit the selected literal window in input bytes.
-type Coverage struct {
-	Partial       bool   `json:"partial"`
-	SourceStart   int    `json:"source_start"`
-	Caret         int    `json:"caret"`
-	SourceEnd     int    `json:"source_end"`
-	SourceBytes   int    `json:"source_bytes"`
-	Diagnostics   string `json:"diagnostics"`
-	ObservedFacts int    `json:"observed_facts"`
-	SelectedFacts int    `json:"selected_facts"`
-}
-
+// Context is the selected, bounded context of one request.
 type Context struct {
-	BuilderVersion string                    `json:"builder"`
-	Source         types.InsightSource       `json:"source"`
-	Language       string                    `json:"language"`
-	Prefix         string                    `json:"prefix"`
-	Suffix         string                    `json:"suffix"`
-	Facts          *types.InsightDiagnostics `json:"facts"`
-	MissingInputs  []string                  `json:"missing_inputs"`
-	Coverage       Coverage                  `json:"coverage"`
-	// FactsJSON contains qualified facts, source identity, coverage and missing
-	// inputs, without duplicating literal prefix/suffix. JSON is the complete
-	// canonical selected envelope. Both are bounded, detached encodings.
-	FactsJSON       string `json:"-"`
-	JSON            string `json:"-"`
-	Digest          string `json:"-"`
-	EstimatedTokens int    `json:"-"`
+	Path, Language string
+	// RegionStart and RegionEnd delimit the editable region in the source.
+	RegionStart, RegionEnd int
+	// Region is the region's source text; Caret is the caret offset in it.
+	Region string
+	Caret  int
+	// Before and After are file excerpts around the region.
+	Before, After string
+	// Prefix and Suffix are the fill-in-the-middle windows at the caret.
+	Prefix, Suffix string
+	Edits          []types.RecentEdit
+	Snippets       []Snippet
+	Diagnostics    []string
+	Completions    []string
+	// Digest identifies the complete selection for response reuse.
+	Digest          string
+	EstimatedTokens int
 }
 
-// Build requires an immutable snapshot for the duration of the call. The caller
-// must recheck source lifetime/revision before egress or use; the content digest
-// is not an authority token and cannot resurrect a retired source.
-//
-// EstimatedTokens covers the complete JSON encoding (including fact/coverage
-// keys) AND independently rounded Language+Prefix+Suffix+FactsJSON estimates,
-// taking the greater. Prompt escaping/framing and system text are the caller's
-// separate budget. There is no model tokenizer or wire-usage claim here.
-func Build(in Input, maxEstimatedTokens int) (Context, error) {
-	if maxEstimatedTokens <= 0 {
-		return Context{}, ErrBudget
+// Build selects context within about budgetTokens. Optional sources are
+// dropped first (snippets, then edits, then excerpts); the region stays.
+func Build(in Input, budgetTokens int) (Context, error) {
+	if len(in.Text) > MaxSourceBytes || in.Caret < 0 || in.Caret > len(in.Text) ||
+		!utf8.Valid(in.Text) || (in.Caret < len(in.Text) && !utf8.RuneStart(in.Text[in.Caret])) {
+		return Context{}, ErrInvalid
 	}
-	if err := validate(in); err != nil {
-		return Context{}, err
-	}
+	text := in.Text
+	start, end := regionBounds(text, in.Caret)
 	c := Context{
-		BuilderVersion: BuilderVersion, Source: cloneSource(in.Source),
-		Language:      strings.Clone(in.Language),
-		MissingInputs: []string{"enclosing-scope", "imports", "signatures", "recent-edits", "project-coverage"},
-		Coverage: Coverage{Partial: true, Caret: in.Caret, SourceStart: in.Caret,
-			SourceEnd: in.Caret, SourceBytes: len(in.Text), Diagnostics: diagnosticStatus(in)},
+		Path: in.Path, Language: in.Language, RegionStart: start, RegionEnd: end,
+		Region: string(text[start:end]), Caret: in.Caret - start,
+		Before: tailLines(text[:start], excerptBefore), After: headLines(text[end:], excerptAfter),
+		Prefix: string(text[max(0, in.Caret-excerptBefore):in.Caret]),
+		Suffix: string(text[in.Caret:min(len(text), in.Caret+excerptAfter)]),
 	}
-	if c.Coverage.Diagnostics == "exact-current-partial-context" {
-		if !validPositions(in.Text, in.Diagnostics.Diagnostics) {
-			return Context{}, ErrInvalid
-		}
-		d := cloneFacts(in.Diagnostics)
-		slices.Sort(d.Boundary.Context.UnknownInputs)
-		slices.SortFunc(d.Diagnostics, compareDiagnostic)
-		c.Coverage.ObservedFacts = len(d.Diagnostics)
-		d.Diagnostics = slices.Clone(d.Diagnostics[:min(len(d.Diagnostics), MaxSelectedFacts)])
-		c.Facts = &d
-	}
-	// Reserve literal context before optional facts.
-	reserve := min(256, len(in.Text))
-	for {
-		c.setWindow(in, reserve)
-		c.qualifyFacts()
-		c.encode()
-		if c.fits(maxEstimatedTokens) {
+	c.Prefix = trimToRuneStart(c.Prefix)
+	c.Suffix = trimToRuneEnd(c.Suffix)
+	regionFirst, regionLast := lineOf(text, start), lineOf(text, max(start, end-1))
+	for _, d := range in.Diagnostics {
+		if len(c.Diagnostics) >= maxDiagnostics {
 			break
 		}
-		if c.Facts != nil {
-			if len(c.Facts.Diagnostics) > 0 {
-				c.Facts.Diagnostics[len(c.Facts.Diagnostics)-1] = types.LSPDiagnostic{}
-				c.Facts.Diagnostics = c.Facts.Diagnostics[:len(c.Facts.Diagnostics)-1]
-			} else {
-				c.Facts = nil
-				c.Coverage.Diagnostics = "omitted-budget"
-			}
-			continue
-		}
-		if reserve > 0 {
-			reserve /= 2
-			continue
-		}
-		return Context{}, ErrBudget
-	}
-	// A bounded binary search maximizes a near-caret byte window. UTF-8 and
-	// CRLF cuts are moved inward; no source byte is normalized or synthesized.
-	best := c
-	low, high := reserve+1, min(len(in.Text), maxWindowBytes)
-	for low <= high {
-		mid := low + (high-low)/2
-		c.setWindow(in, mid)
-		c.encode()
-		if c.fits(maxEstimatedTokens) {
-			best = c
-			low = mid + 1
-		} else {
-			high = mid - 1
+		if d.Line >= regionFirst-2 && d.Line <= regionLast+2 {
+			c.Diagnostics = append(c.Diagnostics, fmt.Sprintf("line %d: %s", d.Line+1, clip(firstLine(d.Message), 200)))
 		}
 	}
-	sum := sha256.Sum256([]byte(best.JSON))
-	best.Digest = hex.EncodeToString(sum[:])
-	return best, nil
-}
-
-func (c *Context) qualifyFacts() {
-	c.Coverage.SelectedFacts = 0
-	if c.Facts != nil {
-		c.Coverage.SelectedFacts = len(c.Facts.Diagnostics)
-		c.Facts.Limited = c.Coverage.SelectedFacts < c.Coverage.ObservedFacts
-		if c.Facts.Limited {
-			c.Coverage.Diagnostics = "selected-subset-partial-context"
-		}
-	}
-	c.MissingInputs = c.MissingInputs[:5]
-	if c.Facts == nil || c.Facts.Limited {
-		c.MissingInputs = append(c.MissingInputs, "diagnostics")
-	}
-}
-
-func (c *Context) setWindow(in Input, n int) {
-	before := min(in.Caret, (n*2+2)/3)
-	after := min(len(in.Text)-in.Caret, n-before)
-	before = min(in.Caret, n-after)
-	start, end := in.Caret-before, in.Caret+after
-	for start < in.Caret && !utf8.RuneStart(in.Text[start]) {
-		start++
-	}
-	for end > in.Caret && end < len(in.Text) && !utf8.RuneStart(in.Text[end]) {
-		end--
-	}
-	if start > 0 && start < in.Caret && in.Text[start-1] == '\r' && in.Text[start] == '\n' {
-		start++
-	}
-	if end > in.Caret && end < len(in.Text) && in.Text[end-1] == '\r' && in.Text[end] == '\n' {
-		end--
-	}
-	c.Prefix = string(in.Text[start:in.Caret])
-	c.Suffix = string(in.Text[in.Caret:end])
-	c.Coverage.SourceStart, c.Coverage.SourceEnd = start, end
-}
-
-func (c *Context) encode() {
-	// These structs contain only JSON-supported values; validation has already
-	// bounded every string/count. Marshal cannot fail on these concrete types.
-	facts, _ := json.Marshal(struct {
-		Builder  string                    `json:"builder"`
-		Source   types.InsightSource       `json:"source"`
-		Facts    *types.InsightDiagnostics `json:"facts"`
-		Missing  []string                  `json:"missing_inputs"`
-		Coverage Coverage                  `json:"coverage"`
-	}{c.BuilderVersion, c.Source, c.Facts, c.MissingInputs, c.Coverage})
-	c.FactsJSON = string(facts)
-	full, _ := json.Marshal(c)
-	c.JSON = string(full)
-	c.EstimatedTokens = max(provider.EstimateTokens(c.JSON, ""),
-		provider.EstimateTokens(c.Language, "")+provider.EstimateTokens(c.Prefix, "")+
-			provider.EstimateTokens(c.Suffix, "")+provider.EstimateTokens(c.FactsJSON, ""))
-}
-
-func (c Context) fits(tokens int) bool {
-	return c.EstimatedTokens <= tokens && len(c.JSON) <= MaxContextBytes &&
-		len(c.FactsJSON)+len(c.Language)+len(c.Prefix)+len(c.Suffix) <= MaxContextBytes
-}
-
-func diagnosticStatus(in Input) string {
-	d := in.Diagnostics
-	switch {
-	case d.ID == "":
-		return "unavailable"
-	case d.Boundary.Source != in.Source:
-		return "foreign-source"
-	case d.Limited || d.State == types.InsightLimited:
-		return "limited"
-	case d.State != types.InsightCurrent:
-		return "not-current"
-	case !d.HasExactSource():
-		return "unverified-version"
-	case d.Sequence == 0 || d.Boundary.Context.Generation == 0 ||
-		d.Boundary.Context.ID == "" || d.Boundary.Context.Root == "" ||
-		d.Boundary.Producer.InstanceID == "" || d.Boundary.Producer.Provider == "" ||
-		d.Boundary.Producer.ToolIdentity == "":
-		return "unqualified"
-	default:
-		return "exact-current-partial-context"
-	}
-}
-
-func validate(in Input) error {
-	// Reject sizes before inspecting bytes, allocating, cloning or sorting.
-	if len(in.Text) > MaxSourceBytes || len(in.Language) > maxLanguageBytes ||
-		len(in.Diagnostics.Diagnostics) > MaxDiagnostics ||
-		len(in.Diagnostics.Boundary.Context.UnknownInputs) > maxUnknownInputs {
-		return ErrLimit
-	}
-	if in.Caret < 0 || in.Caret > len(in.Text) || in.Source.Kind != "canonical" ||
-		in.Source.Revision == 0 {
-		return ErrInvalid
-	}
-	for _, v := range []string{in.Source.WorkspaceGeneration, in.Source.DocumentID, in.Source.Path, in.Source.Lifetime} {
-		if v == "" {
-			return ErrInvalid
-		}
-	}
-	d := in.Diagnostics
-	weight := 0
-	check := func(s string, limit int) error {
-		if len(s) > limit {
-			return ErrLimit
-		}
-		weight += len(s)
-		if weight > MaxMetadataBytes {
-			return ErrLimit
-		}
-		if !utf8.ValidString(s) {
-			return ErrInvalid
-		}
-		return nil
-	}
-	for _, s := range []types.InsightSource{in.Source, d.Boundary.Source} {
-		for _, v := range []string{s.WorkspaceGeneration, s.DocumentID, s.Path, s.Lifetime, s.Kind} {
-			if err := check(v, MaxIdentityBytes); err != nil {
-				return err
-			}
-		}
-	}
-	for _, v := range []string{d.ID, d.Binding, string(d.State), d.Boundary.Context.ID,
-		d.Boundary.Context.Root, d.Boundary.Producer.InstanceID, d.Boundary.Producer.Provider,
-		d.Boundary.Producer.ToolIdentity} {
-		if err := check(v, MaxIdentityBytes); err != nil {
-			return err
-		}
-	}
-	for _, v := range d.Boundary.Context.UnknownInputs {
-		if err := check(v, maxReasonBytes); err != nil {
-			return err
-		}
-	}
-	if err := check(d.Detail, maxReasonBytes); err != nil {
-		return err
-	}
-	for _, fact := range d.Diagnostics {
-		if fact.Line < 0 || fact.Col < 0 || fact.EndLine < fact.Line ||
-			fact.EndCol < 0 || (fact.Line == fact.EndLine && fact.EndCol < fact.Col) ||
-			fact.Severity < 0 || fact.Severity > types.DiagHint {
-			return ErrInvalid
-		}
-		for _, v := range []string{fact.Message, fact.Source, fact.Code} {
-			if err := check(v, maxMessageBytes); err != nil {
-				return err
-			}
-		}
-	}
-	if !utf8.Valid(in.Text) || !utf8.ValidString(in.Language) ||
-		(in.Caret < len(in.Text) && !utf8.RuneStart(in.Text[in.Caret])) {
-		return ErrInvalid
-	}
-	return nil
-}
-
-// Validate all requested UTF-16 endpoints in one source scan, without allocating
-// a source-sized line index. CRLF is a line separator, not two columns.
-func validPositions(text []byte, diagnostics []types.LSPDiagnostic) bool {
-	points := make(map[[2]int]bool, len(diagnostics)*2)
-	for _, d := range diagnostics {
-		points[[2]int{d.Line, d.Col}] = false
-		points[[2]int{d.EndLine, d.EndCol}] = false
-	}
-	if len(points) == 0 {
-		return true
-	}
-	line, col, remaining := 0, 0, len(points)
-	for i := 0; ; {
-		key := [2]int{line, col}
-		if found, ok := points[key]; ok && !found {
-			points[key] = true
-			remaining--
-			if remaining == 0 {
-				return true
-			}
-		}
-		if i == len(text) {
+	for _, label := range in.Completions {
+		if len(c.Completions) >= maxCompletions {
 			break
 		}
-		r, n := utf8.DecodeRune(text[i:])
-		i += n
-		if r == '\r' && i < len(text) && text[i] == '\n' {
-			i++
-			line, col = line+1, 0
-		} else if r == '\n' {
-			line, col = line+1, 0
-		} else {
-			col++
-			if r > 0xffff {
-				col++
-			}
+		if label = strings.TrimSpace(firstLine(label)); label != "" {
+			c.Completions = append(c.Completions, clip(label, 80))
 		}
 	}
-	return false
+	edits := in.RecentEdits
+	if len(edits) > maxEdits {
+		edits = edits[len(edits)-maxEdits:]
+	}
+	for _, e := range edits {
+		e.Removed, e.Inserted = clip(e.Removed, maxEditBytes), clip(e.Inserted, maxEditBytes)
+		c.Edits = append(c.Edits, e)
+	}
+	for _, s := range in.Snippets {
+		if len(c.Snippets) >= maxSnippets {
+			break
+		}
+		s.Text = clip(s.Text, maxSnippetBytes)
+		c.Snippets = append(c.Snippets, s)
+	}
+	for !c.fits(budgetTokens) {
+		switch {
+		case len(c.Snippets) > 0:
+			c.Snippets = c.Snippets[:len(c.Snippets)-1]
+		case len(c.Edits) > 0:
+			c.Edits = c.Edits[1:]
+		case len(c.Before) > 512:
+			c.Before = tailLines([]byte(c.Before), len(c.Before)/2)
+			c.Prefix = c.Prefix[len(c.Prefix)-min(len(c.Prefix), len(c.Before)+c.Caret):]
+			c.Prefix = trimToRuneStart(c.Prefix)
+		case len(c.After) > 256:
+			c.After = headLines([]byte(c.After), len(c.After)/2)
+		default:
+			return Context{}, ErrBudget
+		}
+	}
+	c.digest()
+	return c, nil
 }
 
-func cloneSource(s types.InsightSource) types.InsightSource {
-	s.WorkspaceGeneration = strings.Clone(s.WorkspaceGeneration)
-	s.DocumentID, s.Path = strings.Clone(s.DocumentID), strings.Clone(s.Path)
-	s.Lifetime, s.Kind = strings.Clone(s.Lifetime), strings.Clone(s.Kind)
+// regionBounds returns whole lines around the caret, within regionMaxBytes.
+func regionBounds(text []byte, caret int) (int, int) {
+	start := lineStart(text, caret)
+	for i := 0; i < regionLinesBefore && start > 0; i++ {
+		prev := lineStart(text, start-1)
+		if caret-prev > regionMaxBytes/2 {
+			break
+		}
+		start = prev
+	}
+	end := lineEnd(text, caret)
+	for i := 0; i < regionLinesAfter && end < len(text); i++ {
+		next := lineEnd(text, end+1)
+		if next-start > regionMaxBytes {
+			break
+		}
+		end = next
+	}
+	if end < len(text) && text[end] == '\n' {
+		end++ // the region owns its last line break
+	}
+	return start, end
+}
+
+func lineStart(text []byte, at int) int {
+	for at > 0 && text[at-1] != '\n' {
+		at--
+	}
+	return at
+}
+
+func lineEnd(text []byte, at int) int {
+	for at < len(text) && text[at] != '\n' {
+		at++
+	}
+	return at
+}
+
+func lineOf(text []byte, at int) int {
+	n := 0
+	for _, b := range text[:at] {
+		if b == '\n' {
+			n++
+		}
+	}
+	return n
+}
+
+func tailLines(text []byte, limit int) string {
+	if len(text) <= limit {
+		return string(text)
+	}
+	cut := len(text) - limit
+	for cut < len(text) && text[cut-1] != '\n' {
+		cut++
+	}
+	return string(text[cut:])
+}
+
+func headLines(text []byte, limit int) string {
+	if len(text) <= limit {
+		return string(text)
+	}
+	cut := limit
+	for cut > 0 && text[cut-1] != '\n' {
+		cut--
+	}
+	return string(text[:cut])
+}
+
+func trimToRuneStart(s string) string {
+	for len(s) > 0 && !utf8.RuneStart(s[0]) {
+		s = s[1:]
+	}
 	return s
 }
 
-func cloneFacts(d types.InsightDiagnostics) types.InsightDiagnostics {
-	d = types.CloneInsightDiagnostics(d)
-	d.ID, d.Binding, d.Detail = strings.Clone(d.ID), strings.Clone(d.Binding), strings.Clone(d.Detail)
-	d.State = types.InsightState(strings.Clone(string(d.State)))
-	d.Boundary.Source = cloneSource(d.Boundary.Source)
-	b := &d.Boundary
-	b.Context.ID, b.Context.Root = strings.Clone(b.Context.ID), strings.Clone(b.Context.Root)
-	for i, v := range b.Context.UnknownInputs {
-		b.Context.UnknownInputs[i] = strings.Clone(v)
+func trimToRuneEnd(s string) string {
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
 	}
-	b.Producer.InstanceID = strings.Clone(b.Producer.InstanceID)
-	b.Producer.Provider, b.Producer.ToolIdentity = strings.Clone(b.Producer.Provider), strings.Clone(b.Producer.ToolIdentity)
-	for i := range d.Diagnostics {
-		f := &d.Diagnostics[i]
-		f.Message, f.Source, f.Code = strings.Clone(f.Message), strings.Clone(f.Source), strings.Clone(f.Code)
-	}
-	return d
+	return s
 }
 
-func compareDiagnostic(a, b types.LSPDiagnostic) int {
-	for _, pair := range [][2]int{{a.Line, b.Line}, {a.Col, b.Col}, {a.EndLine, b.EndLine},
-		{a.EndCol, b.EndCol}, {a.Severity, b.Severity}} {
-		if pair[0] < pair[1] {
-			return -1
-		}
-		if pair[0] > pair[1] {
-			return 1
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+func clip(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+func (c *Context) fits(budget int) bool {
+	return c.estimate() <= budget
+}
+
+func (c *Context) estimate() int {
+	n := provider.EstimateTokens(c.Region, "") + provider.EstimateTokens(c.Before, "") + provider.EstimateTokens(c.After, "")
+	for _, e := range c.Edits {
+		n += provider.EstimateTokens(e.Removed, "") + provider.EstimateTokens(e.Inserted, "") + 12
+	}
+	for _, s := range c.Snippets {
+		n += provider.EstimateTokens(s.Text, "") + 12
+	}
+	for _, d := range c.Diagnostics {
+		n += provider.EstimateTokens(d, "")
+	}
+	for _, l := range c.Completions {
+		n += provider.EstimateTokens(l, "")
+	}
+	c.EstimatedTokens = n
+	return n
+}
+
+func (c *Context) digest() {
+	h := sha256.New()
+	write := func(parts ...string) {
+		for _, p := range parts {
+			fmt.Fprintf(h, "%d:%s;", len(p), p)
 		}
 	}
-	for _, pair := range [][2]string{{a.Source, b.Source}, {a.Code, b.Code}, {a.Message, b.Message}} {
-		if cmp := strings.Compare(pair[0], pair[1]); cmp != 0 {
-			return cmp
-		}
+	write(BuilderVersion, c.Path, c.Language, c.Region, fmt.Sprint(c.Caret), c.Before, c.After)
+	for _, e := range c.Edits {
+		write(e.Path, fmt.Sprint(e.Line), e.Author, e.Removed, e.Inserted)
 	}
-	return 0
+	for _, s := range c.Snippets {
+		write(s.Path, fmt.Sprint(s.Line), s.Text)
+	}
+	write(strings.Join(c.Diagnostics, "\n"), strings.Join(c.Completions, "\n"))
+	c.Digest = hex.EncodeToString(h.Sum(nil))
 }

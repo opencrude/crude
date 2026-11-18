@@ -49,16 +49,15 @@ func bindPredictionPreferences(overrides *types.WorkspaceOverrides, edits []type
 		return nil
 	}
 	if binding.connectionErr != nil {
-		// Account errors may contain endpoint/credential information. This
-		// authority surface only needs an actionable, nonsecret refusal.
-		return errors.New("configure a supported Aeron connection before enabling prediction")
+		// Completer errors are written for the user and hold no secret.
+		return errors.New(sentence(binding.connectionErr.Error()))
 	}
 	if binding.completer.ConnectionIdentity == "" || binding.completer.Current() != nil {
-		return errors.New("the Aeron connection changed; reopen Workspace settings before enabling prediction")
+		return errors.New("the suggestion connection changed; try again")
 	}
 	root, err := fileio.DirectoryIdentity(binding.root)
 	if err != nil {
-		return errors.New("prediction consent requires a stable native workspace directory")
+		return errors.New("suggestions need a workspace folder that Crude can identify")
 	}
 	if analysisRoot != "" && root != analysisRoot {
 		return errors.New("workspace directory changed during preference save")

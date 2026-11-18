@@ -37,7 +37,7 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 		if w.sessionCfg == nil || w.sessionCfg.AccountManager == nil {
 			predictionConnectionErr = fmt.Errorf("configure an Aeron connection before enabling prediction")
 		} else {
-			predictionCompleter, predictionConnectionErr = w.sessionCfg.AeronPredictionCompleter()
+			predictionCompleter, predictionConnectionErr = w.sessionCfg.SuggestionCompleter()
 		}
 	}
 	validationErr := types.ValidateSettingEdits(types.AppSettings{}, edits)

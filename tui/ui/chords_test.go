@@ -175,3 +175,47 @@ func TestNoHardCodedModifiedEnterCaptions(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNormalizeKeyMsgKeepsShortcutsOnEveryLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   tea.KeyPressMsg
+		want string
+	}{
+		// Ghostty with Num Lock on reports the lock on every modified key.
+		{"num lock", tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl | tea.ModNumLock}, "ctrl+k"},
+		{"caps lock", tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl | tea.ModCapsLock}, "ctrl+f"},
+		// A Persian layout reports the Persian letter and the US key.
+		{"persian ctrl+a", tea.KeyPressMsg{Code: 'ش', BaseCode: 'a', Mod: tea.ModCtrl}, "ctrl+a"},
+		{"russian ctrl+shift+c", tea.KeyPressMsg{Code: 'с', ShiftedCode: 'С', BaseCode: 'c', Mod: tea.ModCtrl | tea.ModShift}, "ctrl+shift+c"},
+		{"persian alt+f", tea.KeyPressMsg{Code: 'ب', BaseCode: 'f', Mod: tea.ModAlt}, "alt+f"},
+		// A Latin layout keeps the key the user pressed, not its US position.
+		{"azerty ctrl+a", tea.KeyPressMsg{Code: 'a', BaseCode: 'q', Mod: tea.ModCtrl}, "ctrl+a"},
+		// Typing text on any layout is never changed.
+		{"persian text", tea.KeyPressMsg{Code: 'ش', Text: "ش", BaseCode: 'a'}, "ش"},
+		{"shifted persian text", tea.KeyPressMsg{Code: 'ش', Text: "ؤ", ShiftedCode: 'ؤ', BaseCode: 'a', Mod: tea.ModShift}, "ؤ"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := NormalizeKeyMsg(tc.in).(tea.KeyPressMsg)
+			if !ok {
+				t.Fatalf("normalized message is not a key press")
+			}
+			if got.String() != tc.want {
+				t.Fatalf("key = %q, want %q", got.String(), tc.want)
+			}
+			if got.Mod&lockModifiers != 0 || got.BaseCode != 0 {
+				t.Fatalf("key kept lock or layout state: %+v", got)
+			}
+		})
+	}
+	release, ok := NormalizeKeyMsg(tea.KeyReleaseMsg{Code: 'ز', BaseCode: 'c', Mod: tea.ModCtrl | tea.ModNumLock}).(tea.KeyReleaseMsg)
+	if !ok || release.String() != "ctrl+c" {
+		t.Fatalf("release = %+v, want ctrl+c", release)
+	}
+	if copyKey := NormalizeKeyMsg(tea.KeyPressMsg{Code: 'ز', BaseCode: 'c', Mod: tea.ModCtrl}).(tea.KeyPressMsg); !IsCopyChord(copyKey) {
+		t.Fatalf("Ctrl+C on a Persian layout is not copy: %+v", copyKey)
+	}
+	if !KeyboardEnhancements().ReportAlternateKeys {
+		t.Fatal("the terminal is not asked for US-layout keys")
+	}
+}

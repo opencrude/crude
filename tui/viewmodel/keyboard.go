@@ -425,6 +425,8 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.requestCodeActionsCmd()
 			case "ai.ask":
 				return m, tea.Batch(m.askCrude(askAttach, false, "")...)
+			case "ai.suggest":
+				return m, m.requestSuggestionNow()
 			case "edit.format":
 				return m, m.requestActiveEditorFormat()
 			case "edit.formatProject":
@@ -454,6 +456,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.EditorState.Editor.ClearSelection()
 			return m, nil
 		}
+		m.noteSuggestionDismissed(m.EditorState.Editor)
 		if m.EditorState.Editor.DismissGhostText() {
 			m.editorGhost = nil
 			return m, nil

@@ -40,6 +40,7 @@ const (
 	askAttach  askKind = iota // attach the code and give the composer the caret
 	askExplain                // send the prepared Explain prompt
 	askFix                    // send the prepared Fix prompt
+	askFinish                 // send the prepared Finish this change prompt
 )
 
 // askRequest is one Ask Crude invocation, captured from the editor that asked.
@@ -362,6 +363,10 @@ func (m *App) askSplit(tab window.TabID, source window.GroupID, dir ui.Direction
 // off Update.
 func (m *App) askAttachTo(agentID string, req *askRequest) tea.Cmd {
 	sess := m.ws.SessionsByAgent()[agentID]
+	if req.kind == askFinish {
+		// The prepared message carries the edits itself; nothing is attached.
+		return func() tea.Msg { return askReferenceMsg{request: req, session: sess, agentID: agentID} }
+	}
 	if sess == nil || sess.RefStore == nil {
 		m.Feedback.NotifyError("Crude could not attach the code: the chat is not ready.")
 		return nil
@@ -398,6 +403,8 @@ func (m *App) applyAskReference(msg askReferenceMsg) tea.Cmd {
 	}
 	label := msg.ref.DisplayName()
 	switch msg.request.kind {
+	case askFinish:
+		return m.submitFirstInput(msg.agentID, provider.InputWithRefs(msg.request.text, nil))
 	case askExplain:
 		return m.submitFirstInput(msg.agentID, provider.InputWithRefs(prompt.AskExplain(label), []string{msg.ref.ID}))
 	case askFix:

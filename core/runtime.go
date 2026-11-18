@@ -712,8 +712,17 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	go a.run()
 	// newActor runs in the workspace factory worker. Watcher setup/traversal
 	// never executes on the actor or any shell's Update goroutine.
+	// The text index builds on its own worker; the watch keeps it current.
+	index := ws.TextIndex
+	if index != nil {
+		index.Start()
+	}
+	notify := func(ctx context.Context, path string, kind int) {
+		ws.LSPMgr.NotifyWatchedFilesChanged(ctx, path, kind)
+		index.Changed(path)
+	}
 	watch, err := startCoreFileWatch(ws.RootPath, func(change coreprotocol.FileChange) { a.Send(change) },
-		ws.LSPMgr.NotifyWatchedFilesChanged, ws.LSPMgr.SetProjectWatchReliable)
+		notify, ws.LSPMgr.SetProjectWatchReliable)
 	if err != nil {
 		ws.Logger.Warn("CORE", "file_watch_failed", "error", err.Error())
 	} else {
@@ -1132,6 +1141,9 @@ func (a *actor) close() {
 			a.projectTools.Close()
 		}
 		a.fileWatch.Close()
+		if a.ws.TextIndex != nil {
+			a.ws.TextIndex.Close()
+		}
 		if a.stopGitFetch != nil {
 			a.stopGitFetch()
 		}

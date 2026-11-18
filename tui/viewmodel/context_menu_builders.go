@@ -44,12 +44,15 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 
 	// Ask Crude comes first: it is the one section that works on any code.
 	crude := ui.ContextMenuSection{SectionLabel: "Crude", Items: []ui.ContextMenuItem{
-		{Label: "Ask Crude", Detail: ui.FormatShortcut(ui.AskCrudeChord), Action: func() { m.runAskCrude(askAttach, false, "") }},
+		{Label: "Ask Crude", Detail: ui.FormatShortcut(ui.AskCrudeKey), Action: func() { m.runAskCrude(askAttach, false, "") }},
 		{Label: "Ask in a new chat", Action: func() { m.runAskCrude(askAttach, true, "") }},
 		{Label: "Explain this code", Action: func() { m.runAskCrude(askExplain, false, "") }},
 	}}
 	if problem := askProblem(ed.DiagnosticsAt(diagnosticPosition.Line, diagnosticPosition.Col)); problem != "" {
 		crude.Items = append(crude.Items, ui.ContextMenuItem{Label: "Fix this problem", Action: func() { m.runAskCrude(askFix, false, problem) }})
+	}
+	if ed.HasLocalEdits() {
+		crude.Items = append(crude.Items, ui.ContextMenuItem{Label: "Finish this change", Action: m.runFinishChange})
 	}
 	st.Sections = append(st.Sections, crude)
 

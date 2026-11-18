@@ -111,3 +111,23 @@ text merely because it contains “Hint:”.
 The opt-in capture journey checks each last-presented shell surface before the
 next transition. A fresh paint helper is not a valid oracle: it can conceal a
 missed repaint in the captured UI.
+
+## Responses strict-schema rejection on GPT 6.2 (fixed 2026-11-18)
+
+**Failure.** GPT 6.2 rejected ordinary agent turns with HTTP 400
+`invalid_json_schema`: `Unimplemented keys: ["uniqueItems"]` in the
+`question` tool parameters.
+
+**Cause.** Responses normalizes omitted function strictness into strict mode.
+Crude's ordinary function schemas use optional fields and general JSON Schema,
+not the strict subset. The tool definitions were valid for their intended
+non-strict mode; the request did not explicitly select that mode.
+
+**Fix.** `encodeResponsesTools` emits `strict: false` for function tools, including
+namespace children. It preserves the original schema and does not apply the
+field to custom grammar tools. Standard Responses and Codex share this encoder.
+
+**Evidence.** `TestResponsesFunctionToolsOptOutOfStrictSchemas` guards both
+adapters. Live configured-account checks on gpt-6.2-sol and gpt-6.2-astra passed
+with all 25 built-in schemas, a function call, a synthetic result and streamed
+continuation. These are tool-transport checks, not arbitrary-task acceptance.

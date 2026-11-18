@@ -93,3 +93,29 @@ func TestMarkdownFileReferencesKeepRouteAndPackagePathSyntax(t *testing.T) {
 		}
 	}
 }
+
+// The user's own message rendered 'tools[10].parameters' as a file link and a
+// click opened it. Dotted code and prose without a directory are not files.
+func TestMarkdownDottedCodeIsNotAFileLink(t *testing.T) {
+	md := MakeMdRenderer(120, theme.DefaultDark())
+	raw, err := md.Render("Provider rejected the request: Invalid schema for\n'tools[10].parameters': Unimplemented keys. Call `fmt.Println`, i.e. use ui.FormatShortcut; see config.json and docs/notes.txt.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, run := range ParseAnsiRuns(raw) {
+		if run.Link.File() {
+			seen[run.Link.Target()] = true
+		}
+	}
+	for _, target := range []string{"tools[10].parameters", "fmt.Println", "i.e", "ui.FormatShortcut"} {
+		if seen[target] {
+			t.Errorf("code became a file link: %q", target)
+		}
+	}
+	for _, target := range []string{"config.json", "docs/notes.txt"} {
+		if !seen[target] {
+			t.Errorf("file reference is not a link: %q (links %v)", target, seen)
+		}
+	}
+}

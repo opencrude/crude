@@ -24,7 +24,7 @@ func TestPredictionProductNativeEntryAndAuthority(t *testing.T) {
 				types.SettingsScopeWorkspace, types.AppSettings{}, types.WorkspaceOverrides{})
 			m.SelectCategory(catLSP)
 			form := m.categories[catLSP].Form
-			for _, id := range []string{"prediction.mode", "prediction.hourly_token_limit", "prediction.protocol", "prediction.endpoint_path"} {
+			for _, id := range []string{"prediction.mode", "prediction.hourly_token_limit"} {
 				if form.Field(id) == nil {
 					t.Fatal("Code Intelligence omitted the native prediction preference", id)
 				}
@@ -41,10 +41,11 @@ func TestPredictionProductNativeEntryAndAuthority(t *testing.T) {
 			host.MarkLayout()
 			host.Layout()
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
-			if got := m.AppSettings().Prediction; got.Mode != types.PredictionLight || got.HourlyTokenLimit != 0 {
-				t.Fatal("real form key did not reach the settings collector or invented a budget", got)
+			if got := m.AppSettings().Prediction; got.Mode != types.PredictionAsk || got.HourlyTokenLimit != types.DefaultPredictionHourlyTokens {
+				t.Fatal("real form key did not collect the offered hourly limit", got)
 			}
-			// Save is the real surface action, not a call to the leaf validator.
+			// A deliberately zero limit must still refuse Save through the real surface.
+			m.SetValueForTest(catLSP, "prediction.hourly_token_limit", "0")
 			if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"}); result.Cmd != nil ||
 				m.Saving() || m.SaveError() == "" {
 				t.Fatal("native Save admitted an enabled prediction with no explicit cap")
@@ -57,10 +58,10 @@ func TestPredictionProductNativeEntryAndAuthority(t *testing.T) {
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Layout()
 			host.Paint(buf)
-			if !strings.Contains(bufferPlain(buf), "AI predictions") {
+			if !strings.Contains(bufferPlain(buf), "Aeron suggestions") {
 				t.Fatal("native scrolled prediction row was not painted", bufferPlain(buf))
 			}
-			for _, id := range []string{"prediction.mode", "prediction.hourly_token_limit", "prediction.protocol", "prediction.endpoint_path"} {
+			for _, id := range []string{"prediction.mode", "prediction.hourly_token_limit"} {
 				component := ui.NewID(WorkspaceSettingsFormID, id)
 				if _, path := s.controlField(component); path != id {
 					t.Fatal("prediction row has no exact canonical control path", id, path)
@@ -74,7 +75,7 @@ func TestPredictionProductNativeEntryAndAuthority(t *testing.T) {
 			for _, edit := range m.Edits() {
 				switch strings.Join(edit.Path, ".") {
 				case "prediction.mode":
-					foundMode = string(edit.After) == `"light"`
+					foundMode = string(edit.After) == `"ask"`
 				case "prediction.hourly_token_limit":
 					foundCap = string(edit.After) == "4200"
 				}
@@ -95,8 +96,7 @@ func TestPredictionProductNativeEntryAndAuthority(t *testing.T) {
 
 func TestPredictionProductApplicationAndScopeCannotCarryConsent(t *testing.T) {
 	forged := types.AppSettings{Prediction: types.WorkspacePredictionSettings{
-		Mode: types.PredictionFull, HourlyTokenLimit: 4200,
-		Protocol: types.PredictionDeepSeek, EndpointPath: "private-fim",
+		Mode: types.PredictionType, HourlyTokenLimit: 4200,
 	}}
 	m := NewScoped(theme.DefaultDark(), forged, nil, types.SettingsScopeApplication, forged, types.WorkspaceOverrides{})
 	for _, scope := range []types.SettingsScope{types.SettingsScopeApplication, types.SettingsScopeWorkspace, types.SettingsScopeApplication} {
@@ -120,21 +120,14 @@ func TestPredictionNativeCorrectionRevalidatesRetainedSiblingFields(t *testing.T
 	m := NewScoped(theme.DefaultDark(), types.AppSettings{}, nil,
 		types.SettingsScopeWorkspace, types.AppSettings{}, types.WorkspaceOverrides{})
 	form := m.categories[catLSP].Form
-	form.SetValue(fieldPredictionMode, ui.StringValue("light"))
+	form.SetValue(fieldPredictionLimit, ui.StringValue("0"))
+	form.SetValue(fieldPredictionMode, ui.StringValue("ask"))
 	if !form.AnyErrors() {
 		t.Fatal("native incomplete enable did not retain a validation error")
 	}
 	form.SetValue(fieldPredictionLimit, ui.StringValue("4200"))
 	if form.AnyErrors() {
-		t.Fatal("native cap correction left obsolete sibling validation errors")
-	}
-	form.SetValue(fieldPredictionProtocol, ui.StringValue("deepseek-fim"))
-	if !form.AnyErrors() {
-		t.Fatal("explicit FIM without endpoint was accepted")
-	}
-	form.SetValue(fieldPredictionEndpoint, ui.StringValue("fim"))
-	if form.AnyErrors() {
-		t.Fatal("native endpoint correction left obsolete sibling validation errors")
+		t.Fatal("native limit correction left obsolete sibling validation errors")
 	}
 }
 
@@ -142,7 +135,7 @@ func TestPredictionProductResetOwnsConsentButPreservesNeighbors(t *testing.T) {
 	var app types.AppSettings
 	types.ApplyAppDefaults(&app)
 	stored := types.WorkspaceOverrides{
-		Prediction: json.RawMessage(`{"mode":"light","hourly_token_limit":4200,"protocol":"chat"}`),
+		Prediction: json.RawMessage(`{"mode":"ask","hourly_token_limit":4200}`),
 		LSP:        json.RawMessage(`{"enabled":false,"languages":{"go":{"enabled":false}}}`),
 	}
 	m := NewScoped(theme.DefaultDark(), types.MergeAppWorkspace(app, stored), nil,
@@ -170,7 +163,7 @@ func TestPredictionProductResetOwnsConsentButPreservesNeighbors(t *testing.T) {
 	if !appModel.workspaceOverridesPage(catLSP) {
 		t.Fatal("prediction workspace choices are absent from the Code Intelligence marker")
 	}
-	for _, term := range []string{"AI predictions", "prediction.mode", "Hourly cap"} {
+	for _, term := range []string{"Aeron suggestions", "prediction.mode", "Hourly limit"} {
 		m.SetSearchQuery(term)
 		found := false
 		for _, index := range m.visibleCategoryIndices() {

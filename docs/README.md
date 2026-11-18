@@ -175,9 +175,9 @@ documents to read before changing each area.
   views. Its top sections hold the rules, decisions, stage status and current
   checkpoint.
 - [Ask Crude and Aeron suggestions](plans/ask-crude-and-aeron-suggestions.md)
-  — proposed design: Ctrl+I and editor-menu asks on the real agent loop with
-  inline change review, and low-latency, context-aware Aeron suggestions with
-  a workspace text index. Waiting for the open decisions.
+  — Ctrl+K and editor-menu asks on the real agent loop beside the code;
+  integrated Aeron suggestions and workspace text index remain in progress.
+  Includes the verified checkpoint and next-work handoff.
 - [Editor file workflows](plans/editor-file-workflows.md): unnamed buffers,
   Save File, IDE-wide encoding, meaningful preferences and semantic controls,
   with terminal-sized interaction and recovery acceptance.

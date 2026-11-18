@@ -1125,66 +1125,36 @@ project-context guarantees. Dynamic registration, global refresh notifications,
 hint command/edit/location execution and broader IDE workflow acceptance are
 outside this slice.
 
-### Inline prediction projection (prerequisite)
+### Inline prediction projection (checkpoint)
 
-The editor can prepare one private, literal, insertion-only **single-line**
-candidate at an exact local buffer revision and byte caret. It uses the same
-source-to-cell projection as inlay hints, not another paint/hit/caret path.
-Inlays precede the caret; muted candidate text follows it. Candidate cells map
-back to their zero-length source anchor and never become selection, search,
-diagnostics, copy, canonical edits or savepoint bytes until explicitly accepted.
+The editor retains one private suggestion at an exact local revision and byte
+range. Existing completion uses `SetGhostTextFor` for single-line inserts.
+Aeron uses `SetSuggestion` for multiline inserts, nearby replacements and a
+next-place marker. The first line shares the inlay source-to-cell projection;
+extra faded rows are display-only rows. Replacements strike removed text.
+Neither projection nor marker changes source until accepted.
 
-**Tab** accepts the whole candidate, **Ctrl+Right** one complete-grapheme word
-segment (including its leading spaces), and **Escape** dismisses it before
-closing the source tab. With no candidate, ordinary Tab still indents. Exact
-typed-through source insertions retain only the remainder without another
-request; mismatches, auto-pair side effects, peers, history, selection and true
-caret/owner departure retire it. Terminal blur, a modal reader, another pane/tab,
-workspace switch, attachment-epoch replacement, buffer replacement and shutdown
-revoke private acceptance even when source bytes remain unchanged.
-Fresh and late automatic LSP completions cannot steal another producer's
-candidate keys; a fresh explicit completion invocation intentionally retires the
-candidate. Each candidate records its producer (`SetGhostTextFor`), and
-type-through keeps it. Completion is the first producer: it offers its obvious
-top suggestion and replaces or dismisses only its own candidate. A candidate may
-sit at the caret of an active snippet field; accepting it edits that field.
+Tab accepts a change; Ctrl+Right accepts one word of an insertion; Alt+End
+accepts its next line. Escape dismisses. Exact typed-through insertion keeps
+its remainder. Peers, history, selections and view/source departure invalidate
+private acceptance. Without a suggestion, ordinary editor keys keep their
+normal behavior. Multiline presentation and connected next-edit acceptance
+remain in progress, not implied by the single-line completion regressions.
 
-Preparation rejects empty, invalid UTF-8, multiline, control/bidi-bearing or
-over-4-KiB candidates instead of trimming, escaping or repairing source code.
-Source lines and combined projection runs retain the existing inlay bounds.
-Warm painting reuses retained source and projection geometry.
+The checkpoint installs a workspace suggestion service and core/shell RPCs.
+It binds the Suggestions account/model over Aeron, with thinking none, and
+uses the normal provider client for chat or the explicit FIM adapter. Context
+selects a cursor region, recent edits by author, exact-current diagnostics,
+visible completion candidates and related snippets. Source-change cancellation,
+sequence/policy fences, bounded caching and the durable hourly ledger protect
+requests. Local cancellation does not prove remote inference or billing stopped;
+incomplete/absent usage retains the conservative reservation.
 
-Apart from completion's own inline suggestion, this is an internal editor
-prerequisite, **not an enabled prediction service**.
-No automatic provider request, privacy opt-in, budget meter, multiline candidate
-or next-edit behavior is supplied by this projection. Those require the retained
-coordinator and human-owned consent/accounting gates in the active plan.
-
-The separate `provider.CompleteTextOnce` and `CompleteFIMOnce` libraries preserve
-literal successful output and original-wire token-count presence. They make one
-POST without retries, redirects or adapter-internal fallback; caller/account
-timeouts apply beneath a 60-second hard ceiling. Event, total-wire and output
-bounds fail closed. An accepted HTTP response does not prove remote inference
-has stopped or that billing is complete. Only `UsageComplete` after a successful
-terminal stream can justify treating both reported counters as final.
-The `insight/predictionbudget` ledger reserves before an attempt, admits each
-ticket only once and retains unknown-usage charges across restart. It does not
-grant consent, send requests or create chat sessions, and is not yet wired into
-an editor coordinator or visible meter.
-
-The source now also contains workspace-only human consent preferences and an
-internal bounded request-service composition. Consent is independent of project
-execution Trust and never inherits application/session choices; see
-[prediction consent](settings.md#workspace-prediction-consent). Its exact-root,
-connection and positive-cap requirements do not themselves send source.
-The internal service composes canonical source, the bounded partial context,
-explicit text/FIM adapters, one joined local request per view, sequence
-tombstones, policy generations, digest caching and durable accounting. Its local
-HTTP-body join does not prove remote inference or billing stopped.
-The service is not yet installed in the workspace/editor transport lifecycle;
-there is still no product request action, automatic pause scheduling or visible
-meter. Multiline candidates, next-edit, Explain/Fix and complete fact-context
-assembly remain separate work, not implied by the single-line projection.
+Suggestions default Off and require separate human-owned
+[prediction consent](settings.md#workspace-prediction-consent). The controller,
+Settings tab, status and index are checkpoint code, **not a completed feature**.
+The [handoff](../plans/ask-crude-and-aeron-suggestions.md#handoff-checkpoint-2026-11-18)
+lists connected lifecycle, performance, index freshness and UI acceptance gaps.
 
 ### Parameter information
 

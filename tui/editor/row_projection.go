@@ -21,6 +21,7 @@ type editorRows struct {
 	ghost           *editorGhost
 	ghostText       string
 	ghostLine       int
+	ghostRows       int
 	wrapped         bool
 	foldGeneration  uint64
 	measures        uint64
@@ -102,7 +103,7 @@ func (p *editorRows) prepare(e *Editor, width int) (ready bool) {
 	text := ""
 	line := -1
 	if ghost != nil {
-		text, line = ghost.text, ghost.caret.Line
+		text, line = ghost.text, ghost.atLine
 	}
 	if ghost != p.ghost || text != p.ghostText || line != p.ghostLine {
 		inlineDirty(p.ghostLine)
@@ -147,6 +148,9 @@ func (p *editorRows) prepare(e *Editor, width int) (ready bool) {
 		layout := wrapRowMetrics(m.source, width, p.lines[line].runs)
 		if _, hidden := e.hiddenFold(line); hidden {
 			layout.count = 0
+		} else if extra := e.ghostRows(line); extra > 0 {
+			layout.ghost = extra
+			layout.count += extra
 		}
 		p.set(line, layout)
 	}
@@ -156,14 +160,14 @@ func (p *editorRows) prepare(e *Editor, width int) (ready bool) {
 // scrollY remains the top source line. wrapOffset is its local visual row, so
 // peer edits and retained navigation keep using the existing source-line anchor.
 func (e *Editor) usesRows() bool {
-	if !e.open || e.rowsStopped || !e.wordWrap && len(e.folds.hidden) == 0 || e.viewW < 10 || e.viewH < 4 {
+	if !e.open || e.rowsStopped || !e.wordWrap && len(e.folds.hidden) == 0 && !e.hasGhostRows() || e.viewW < 10 || e.viewH < 4 {
 		return false
 	}
 	if !e.rows.prepare(e, max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth()-1)) {
 		e.startRows()
 		// Cold wrapping never reveals a deliberately collapsed source range.
 		// The same index keeps its fold-only identity until exact metrics arrive.
-		if len(e.folds.hidden) > 0 {
+		if len(e.folds.hidden) > 0 || e.hasGhostRows() {
 			e.rows.prepareUnwrapped(e)
 			return true
 		}
@@ -201,6 +205,8 @@ func (e *Editor) setScrollRow(row int) {
 type visibleRow struct {
 	line, start, end, index int
 	continues               bool
+	// ghostRow is 1 + the index of a suggestion's faded row, 0 for text.
+	ghostRow int
 }
 
 func (e *Editor) rowAt(row int) visibleRow {
@@ -213,10 +219,13 @@ func (e *Editor) rowAt(row int) visibleRow {
 	}
 	line, local := p.at(row)
 	r := p.lines[line]
+	if r.ghost > 0 && local >= r.textRows() {
+		return visibleRow{line: line, start: e.scrollX, end: int(^uint(0) >> 1), index: local, ghostRow: local - r.textRows() + 1}
+	}
 	if !e.wordWrap || !p.wrapped {
 		return visibleRow{line: line, start: e.scrollX, end: int(^uint(0) >> 1)}
 	}
-	return visibleRow{line, r.start(local), r.end(local), local, local+1 < r.count}
+	return visibleRow{line: line, start: r.start(local), end: r.end(local), index: local, continues: local+1 < r.textRows()}
 }
 func (e *Editor) visualPosition(pos Position, before bool) (row, col int) {
 	col = e.displayColumn(pos.Line, pos.Col)
@@ -342,16 +351,28 @@ func (p *editorRows) needsCold(e *Editor) bool {
 func (e *Editor) wrapsRows() bool { return e.wordWrap && e.usesRows() && e.rows.wrapped }
 func (p *editorRows) prepareUnwrapped(e *Editor) {
 	count := e.LineCount()
-	if p.buffer == e.buf && p.revision == e.Revision() && !p.wrapped && p.foldGeneration == e.folds.hiddenGeneration {
+	ghost := e.currentGhost()
+	ghostLine, ghostRows := -1, 0
+	if ghost != nil {
+		ghostLine, ghostRows = ghost.atLine, e.ghostRows(ghost.atLine)
+	}
+	if p.buffer == e.buf && p.revision == e.Revision() && !p.wrapped && p.foldGeneration == e.folds.hiddenGeneration &&
+		p.ghostLine == ghostLine && p.ghostRows == ghostRows {
 		return
 	}
 	p.reset(count)
 	for line := 0; line < count; line++ {
 		rows := 1
+		layout := rowLine{}
 		if _, hidden := e.hiddenFold(line); hidden {
 			rows = 0
+		} else if line == ghostLine && ghostRows > 0 {
+			layout.ghost = ghostRows
+			rows += ghostRows
 		}
-		p.set(line, rowLine{count: rows})
+		layout.count = rows
+		p.set(line, layout)
 	}
 	p.buffer, p.revision, p.wrapped, p.foldGeneration = e.buf, e.Revision(), false, e.folds.hiddenGeneration
+	p.ghostLine, p.ghostRows = ghostLine, ghostRows
 }

@@ -13,32 +13,28 @@ import (
 type EditorPredictionMode string
 
 const (
-	PredictionOff   EditorPredictionMode = "off"
-	PredictionLight EditorPredictionMode = "light"
-	PredictionFull  EditorPredictionMode = "full"
+	// PredictionOff sends nothing.
+	PredictionOff EditorPredictionMode = "off"
+	// PredictionAsk suggests only when the user asks (Alt+\).
+	PredictionAsk EditorPredictionMode = "ask"
+	// PredictionType also suggests after a short pause in typing.
+	PredictionType EditorPredictionMode = "type"
 )
 
-type EditorPredictionProtocol string
+// DefaultPredictionHourlyTokens is the hourly cap offered when the user turns
+// suggestions on without choosing one.
+const DefaultPredictionHourlyTokens = 200_000
 
-const (
-	PredictionChat      EditorPredictionProtocol = "chat"
-	PredictionOpenAI    EditorPredictionProtocol = "openai-completions"
-	PredictionDeepSeek  EditorPredictionProtocol = "deepseek-fim"
-	PredictionCodestral EditorPredictionProtocol = "codestral-fim"
-)
-
-// WorkspacePredictionSettings is a separate human-owned workspace authority.
-// It never inherits from application/session settings or analysis Trust. These
-// values alone do not bind a grant, authorize network access or start inference.
+// WorkspacePredictionSettings is the workspace's own consent: the mode and the
+// hourly token cap. It never inherits from application or session settings or
+// from analysis Trust. The connection is SuggestionSettings (application).
 type WorkspacePredictionSettings struct {
-	Mode             EditorPredictionMode     `json:"mode"`
-	HourlyTokenLimit int64                    `json:"hourly_token_limit"`
-	Protocol         EditorPredictionProtocol `json:"protocol"`
-	EndpointPath     string                   `json:"endpoint_path"`
+	Mode             EditorPredictionMode `json:"mode"`
+	HourlyTokenLimit int64                `json:"hourly_token_limit"`
 }
 
 func DefaultWorkspacePredictionSettings() WorkspacePredictionSettings {
-	return WorkspacePredictionSettings{Mode: PredictionOff, Protocol: PredictionChat}
+	return WorkspacePredictionSettings{Mode: PredictionOff}
 }
 
 // DecodeWorkspacePredictionSettings accepts a bounded sparse object, without
@@ -88,39 +84,29 @@ func NormalizeWorkspacePrediction(s WorkspacePredictionSettings) WorkspacePredic
 }
 
 // ValidatePredictionSettings validates the final merged workspace choice.
-// Off may retain a valid budget and protocol/path for later human editing.
+// Off may retain a valid cap for later human editing.
 func ValidatePredictionSettings(s WorkspacePredictionSettings) error {
-	switch s.Mode {
-	case PredictionOff, PredictionLight, PredictionFull:
-	default:
-		return errors.New("invalid workspace prediction mode")
+	if !validPredictionMode(s.Mode) {
+		return errors.New("invalid workspace suggestion mode")
 	}
 	if s.HourlyTokenLimit < 0 || s.HourlyTokenLimit > 1<<40 {
-		return errors.New("workspace prediction hourly token limit is out of range")
+		return errors.New("workspace suggestion hourly token limit is out of range")
 	}
 	if s.Mode != PredictionOff && s.HourlyTokenLimit == 0 {
-		return errors.New("enabled workspace prediction requires a positive hourly token limit")
-	}
-	switch s.Protocol {
-	case PredictionChat:
-		if s.EndpointPath != "" {
-			return errors.New("chat prediction requires an empty endpoint path")
-		}
-	case PredictionOpenAI, PredictionDeepSeek, PredictionCodestral:
-		if s.EndpointPath == "" || !predictionEndpointPath(s.EndpointPath) {
-			return errors.New("FIM prediction requires a safe explicit endpoint path")
-		}
-	default:
-		return errors.New("invalid workspace prediction protocol")
+		return errors.New("suggestions need a positive hourly token limit")
 	}
 	return nil
+}
+
+func validPredictionMode(mode EditorPredictionMode) bool {
+	return mode == PredictionOff || mode == PredictionAsk || mode == PredictionType
 }
 
 // ValidatePredictionSettingEdits checks the entire batch without applying it.
 // The persistence owner must also validate the final state after applying these
 // edits to its latest overlay, atomically with any generated grant bindings.
 // Leaf edits deliberately do not enforce cross-field constraints: a single
-// transaction may select a mode, positive cap, protocol and endpoint together.
+// transaction may select a mode and a positive cap together.
 // A nil After resets to workspace defaults, never application inheritance.
 func ValidatePredictionSettingEdits(scope SettingsScope, edits []SettingEdit) error {
 	for _, edit := range edits {
@@ -158,7 +144,7 @@ func ValidatePredictionSettingEdits(scope SettingsScope, edits []SettingEdit) er
 
 func predictionLeaf(key string) bool {
 	switch key {
-	case "mode", "hourly_token_limit", "protocol", "endpoint_path":
+	case "mode", "hourly_token_limit":
 		return true
 	default:
 		return false
@@ -167,40 +153,82 @@ func predictionLeaf(key string) bool {
 
 func decodePredictionLeaf(s *WorkspacePredictionSettings, key string, raw json.RawMessage) error {
 	if !predictionJSON(raw) || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return errors.New("invalid workspace prediction scalar")
+		return errors.New("invalid workspace suggestion value")
 	}
 	switch key {
 	case "mode":
-		if json.Unmarshal(raw, &s.Mode) != nil ||
-			(s.Mode != PredictionOff && s.Mode != PredictionLight && s.Mode != PredictionFull) {
-			return errors.New("invalid workspace prediction mode")
+		if json.Unmarshal(raw, &s.Mode) != nil || !validPredictionMode(s.Mode) {
+			return errors.New("invalid workspace suggestion mode")
 		}
 	case "hourly_token_limit":
 		if json.Unmarshal(raw, &s.HourlyTokenLimit) != nil || s.HourlyTokenLimit < 0 || s.HourlyTokenLimit > 1<<40 {
-			return errors.New("invalid workspace prediction hourly token limit")
-		}
-	case "protocol":
-		if json.Unmarshal(raw, &s.Protocol) != nil ||
-			(s.Protocol != PredictionChat && s.Protocol != PredictionOpenAI &&
-				s.Protocol != PredictionDeepSeek && s.Protocol != PredictionCodestral) {
-			return errors.New("invalid workspace prediction protocol")
-		}
-	case "endpoint_path":
-		if json.Unmarshal(raw, &s.EndpointPath) != nil ||
-			(s.EndpointPath != "" && !predictionEndpointPath(s.EndpointPath)) {
-			return errors.New("invalid workspace prediction endpoint path")
+			return errors.New("invalid workspace suggestion hourly token limit")
 		}
 	default:
-		return errors.New("unknown workspace prediction field")
+		return errors.New("unknown workspace suggestion setting")
 	}
 	return nil
 }
 
-// Match the provider FIM adapter's explicit mount-relative path restrictions
-// without depending on provider or inferring any endpoint. Additionally refuse
-// Unicode controls and bidi formatting in this human-facing authority choice.
+// SuggestionSettings is the application-wide connection for Aeron's editor
+// suggestions, on the same base as the Auto Review Agent: an explicit account,
+// model, format and timeout. Empty AccountID and Model use the Aeron role's.
+// Crude always sends thinking "none"; it is not a choice.
+type SuggestionSettings struct {
+	AccountID       string `json:"account_id,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Format          string `json:"format,omitempty"`
+	EndpointPath    string `json:"endpoint_path,omitempty"`
+	ServiceTier     string `json:"service_tier,omitempty"`
+	TimeoutSeconds  int    `json:"timeout_seconds,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+}
+
+// Suggestion request formats. Chat works with every configured protocol and
+// can suggest edits near the caret and the next place to edit; the
+// fill-in-the-middle formats only insert text and need their endpoint path.
+const (
+	SuggestionFormatChat      = "chat"
+	SuggestionFormatOpenAI    = "openai-completions"
+	SuggestionFormatDeepSeek  = "deepseek-fim"
+	SuggestionFormatCodestral = "codestral-fim"
+)
+
+// Normalized returns safe effective values.
+func (s SuggestionSettings) Normalized() SuggestionSettings {
+	switch s.Format {
+	case SuggestionFormatOpenAI, SuggestionFormatDeepSeek, SuggestionFormatCodestral:
+		if !predictionEndpointPath(s.EndpointPath) {
+			s.EndpointPath = ""
+		}
+	default:
+		s.Format, s.EndpointPath = SuggestionFormatChat, ""
+	}
+	switch s.ServiceTier {
+	case "", "standard", "fast", "priority", "flex":
+	default:
+		s.ServiceTier = ""
+	}
+	if s.TimeoutSeconds == 0 {
+		s.TimeoutSeconds = 5
+	}
+	if s.MaxOutputTokens == 0 {
+		s.MaxOutputTokens = 256
+	}
+	s.TimeoutSeconds = min(60, max(1, s.TimeoutSeconds))
+	s.MaxOutputTokens = min(2048, max(16, s.MaxOutputTokens))
+	return s
+}
+
+// ValidSuggestionEndpointPath reports a safe explicit mount-relative path for a
+// fill-in-the-middle format.
+func ValidSuggestionEndpointPath(path string) bool { return predictionEndpointPath(path) }
+
+// predictionEndpointPath matches the provider FIM adapter's explicit
+// mount-relative path rules without inferring an endpoint, and also refuses
+// Unicode controls and bidi formatting in this human-facing choice.
 func predictionEndpointPath(path string) bool {
-	if len(path) > 4096 || !utf8.ValidString(path) || strings.TrimSpace(path) != path ||
+	if path == "" || len(path) > 4096 || !utf8.ValidString(path) || strings.TrimSpace(path) != path ||
 		strings.ContainsAny(path, "\\%?#:@") || strings.HasPrefix(path, "//") {
 		return false
 	}

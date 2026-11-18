@@ -1,38 +1,72 @@
 package types
 
-// EditorPredictionRequest carries private invocation identity, never source text
-// or authority. The core obtains bytes and facts from the canonical owners.
+// EditorPredictionRequest carries invocation identity, never source text or
+// authority. The core reads text, facts and edit history from their owners.
+// Completions lists the labels of a visible completion list at the caret,
+// the chosen row first; it steers the model and is never a source of truth.
 type EditorPredictionRequest struct {
-	Source          InsightSource
-	ViewID          string
-	Sequence        uint64
-	Caret           int // Canonical UTF-8 byte offset.
-	Automatic       bool
-	LocalExactMatch bool // May suppress a request, never authorize one.
+	Source      InsightSource
+	ViewID      string
+	Sequence    uint64
+	Caret       int // Canonical UTF-8 byte offset.
+	Automatic   bool
+	Completions []string
 }
 
-// EditorPredictionResult is a literal insertion, not a patch or Apply permit.
-// The shell must still match its exact editor, source, caret and input sequence.
+// EditorPredictionKind names how the shell shows a suggestion.
+type EditorPredictionKind string
+
+const (
+	// PredictionInsert adds text at the caret (one or more lines).
+	PredictionInsert EditorPredictionKind = "insert"
+	// PredictionEdit replaces text near the caret.
+	PredictionEdit EditorPredictionKind = "edit"
+	// PredictionJump points to the next place to edit in this file. Start, End
+	// and Text describe the change there; the first Tab moves the caret.
+	PredictionJump EditorPredictionKind = "jump"
+)
+
+// EditorPredictionResult is a minimal edit of the exact source revision it
+// names, not a patch permit. The shell must still match its editor, source,
+// revision and sequence before it shows or applies the change.
 type EditorPredictionResult struct {
 	Source           InsightSource
 	ViewID           string
 	Sequence         uint64
 	PolicyGeneration uint64
 	Caret            int
+	Kind             EditorPredictionKind
+	Start, End       int // Canonical byte range that Text replaces.
 	Text             string
 	ContextDigest    string
 	CacheHit         bool
-	MissingInputs    []string
+	Stages           EditorPredictionStages
+	Status           EditorPredictionStatus
 }
 
-// EditorPredictionStatus is a constant-size, pushed workspace projection. No
-// reader or painter queries the accounting database. Tokens are not a price.
+// Empty reports a result that has nothing to show.
+func (r EditorPredictionResult) Empty() bool { return r.Kind == "" }
+
+// EditorPredictionStages are the measured parts of one request, in
+// milliseconds. Zero means the stage did not run (for example a cache hit).
+type EditorPredictionStages struct {
+	ContextMS   int64
+	AccountMS   int64
+	FirstByteMS int64
+	ModelMS     int64
+	CheckMS     int64
+	TotalMS     int64
+}
+
+// EditorPredictionStatus is a constant-size projection. No reader or painter
+// queries the accounting database. Tokens are not a price.
 type EditorPredictionStatus struct {
 	Generation        uint64
 	PolicyGeneration  uint64
 	Mode              EditorPredictionMode
 	Ready             bool
 	Reason            string
+	Model             string
 	LimitTokens       int64
 	ActiveTokens      int64
 	ChargedTokens     int64
@@ -41,5 +75,24 @@ type EditorPredictionStatus struct {
 	UnknownRecords    int64
 	InFlight          int
 	MeasuredLatencyMS int64
-	PauseMS           int64 // Zero means no connection measurement exists yet.
+	Requests          int64
+	Shown             int64
 }
+
+// RecentEdit is one change in a live document, newest last in a list. Author
+// is RecentEditYou for the requesting editor, RecentEditDisk for a change that
+// came from the file on disk (agents write files), or RecentEditOther.
+type RecentEdit struct {
+	Path     string
+	Line     int // 1-based first line of the change in the text after it.
+	Removed  string
+	Inserted string
+	Author   string
+	Unix     int64
+}
+
+const (
+	RecentEditYou   = "you"
+	RecentEditDisk  = "disk"
+	RecentEditOther = "other"
+)

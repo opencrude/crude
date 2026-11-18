@@ -77,6 +77,8 @@ type AgentsConfig struct {
 	Shell string `json:"shell,omitempty"`
 	// MaxWaitMinutes bounds one agent wait; zero is Auto.
 	MaxWaitMinutes int `json:"max_wait_minutes,omitempty"`
+	// Suggestions is the connection for Aeron's editor suggestions.
+	Suggestions ttypes.SuggestionSettings `json:"suggestions,omitempty"`
 }
 
 type AgentProfileConfig = ttypes.AgentProfileSettings
@@ -602,7 +604,7 @@ func AgentDefaultsSettings(agents AgentsConfig) ttypes.AgentsSettings {
 	EnsureAgentsDefaults(&cfg.Agents)
 	prof, name := activeProfileCfg(cfg)
 	out := ttypes.AgentsSettings{ActiveProfile: name, Enabled: cfg.IsMultiAgentEnabled(), MaxConcurrent: cfg.Agents.MaxConcurrent,
-		Categories: make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles), Shell: cfg.Agents.Shell, MaxWaitMinutes: cfg.Agents.MaxWaitMinutes}
+		Categories: make(map[string]ttypes.CategorySettings), AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles), Shell: cfg.Agents.Shell, MaxWaitMinutes: cfg.Agents.MaxWaitMinutes, Suggestions: cfg.Agents.Suggestions}
 	for role, cat := range prof.Categories {
 		out.Categories[role] = catConfigToSettings(cat)
 	}
@@ -656,6 +658,7 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		Shell:         cfg.Agents.Shell,
 		// The wait bound is one value for every agent, like the shell.
 		MaxWaitMinutes: cfg.Agents.MaxWaitMinutes,
+		Suggestions:    cfg.Agents.Suggestions,
 	}
 	for k := range activeProf.Categories {
 		agentsSettings.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))
@@ -746,6 +749,8 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	cfg.Agents.Shell = agents.Shell
 	// So is the wait bound: zero restores Auto.
 	cfg.Agents.MaxWaitMinutes = agents.MaxWaitMinutes
+	// And the suggestion connection: empty uses Aeron's account and model.
+	cfg.Agents.Suggestions = agents.Suggestions
 	if len(agents.Categories) == 0 && agents.ActiveProfile == "" &&
 		agents.MaxConcurrent == 0 {
 		return

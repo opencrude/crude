@@ -4,19 +4,21 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
-	"encoding/json"
 	"errors"
+	"io"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"crude/document"
 	"crude/fileio"
+	"crude/insight/catalog"
 	"crude/insight/predictionbudget"
 	"crude/insight/predictioncontext"
+	"crude/insight/textindex"
 	"crude/prompt"
 	"crude/provider"
 	"crude/session"
@@ -27,15 +29,15 @@ const (
 	predictionMaxViews      = 16
 	predictionMaxSequences  = 128
 	predictionCacheEntries  = 32
-	predictionOutputBytes   = types.EditorPredictionMaxBytes
-	predictionContextTokens = 2000
+	predictionContextTokens = 2400
 	predictionLifetime      = time.Minute
 )
 
 var (
-	errPredictionUnavailable = errors.New("editor prediction is unavailable; review Workspace Code Intelligence and the Aeron connection")
-	errPredictionSequence    = errors.New("editor prediction invocation was superseded or released")
-	errPredictionLimit       = errors.New("editor prediction invocation capacity exceeded")
+	errPredictionOff      = errors.New("suggestions are off in this workspace")
+	errPredictionSequence = errors.New("a newer suggestion request replaced this one")
+	errPredictionLimit    = errors.New("too many suggestion requests at once")
+	errPredictionCapped   = errors.New("suggestions reached this workspace's hourly limit")
 )
 
 type predictionViewKey struct {
@@ -54,108 +56,126 @@ type predictionSequence struct {
 	expires  time.Time
 	job      *predictionInvocation
 	retired  bool
+	// chain holds the remaining changes of the last answer. After the user
+	// accepts one change, the next one shows at once without a request.
+	chain *predictionChain
+}
+
+type predictionChain struct {
+	document string
+	expect   [32]byte // hash of the text after the shown change
+	hunks    []suggestionHunk
 }
 
 type predictionCached struct {
-	digest, text string
-	missing      []string
+	digest string
+	hunks  []suggestionHunk // relative to the region start
 }
 
-// The workspace owner supplies the exact bound choice and captured connection.
-// This is not an application/session inheritance or a consent mutation API.
+// predictionRuntimePolicy is the workspace's consent and the bound connection.
+// Consented names the connection identity that the workspace allowed.
 type predictionRuntimePolicy struct {
 	settings            types.WorkspacePredictionSettings
 	rootIdentity, grant string
+	consented           string
 	completer           session.EditorPredictionCompleter
+	completerErr        error
 }
 
-// editorPredictionService owns invocation lifetimes and a constant-size meter.
-// Canonical text/facts, account credentials and SQL remain with their existing
-// owners. Construction, Request, RefreshMeter and Close run off the actor/UI.
+// editorPredictionService owns suggestion requests: sequence fencing per
+// editor view, the response cache, the hourly ledger and a constant-size
+// status. Canonical text, facts, edit history, the text index and account
+// credentials stay with their owners. Requests run off the actor and UI.
 type editorPredictionService struct {
-	mu          sync.Mutex
-	docs        *DocumentService
-	root, owner string
-	budget      *predictionbudget.Store
-	policy      predictionRuntimePolicy
-	generation  uint64
-	closed      bool
-	views       map[predictionViewKey]*predictionSequence
-	cache       []predictionCached
-	status      types.EditorPredictionStatus
-	wakes       map[chan struct{}]bool
-	jobs        sync.WaitGroup
+	mu         sync.Mutex
+	docs       *DocumentService
+	index      *textindex.Index
+	root       string
+	owner      string
+	budget     *predictionbudget.Store
+	policy     predictionRuntimePolicy
+	generation uint64
+	closed     bool
+	views      map[predictionViewKey]*predictionSequence
+	cache      []predictionCached
+	status     types.EditorPredictionStatus
+	jobs       sync.WaitGroup
 }
 
-func newEditorPredictionService(root string, docs *DocumentService, db *sql.DB) (*editorPredictionService, error) {
-	if docs == nil {
-		return nil, errPredictionUnavailable
+func newEditorPredictionService(root string, docs *DocumentService, index *textindex.Index, db *sql.DB) (*editorPredictionService, error) {
+	if docs == nil || db == nil {
+		return nil, errors.New("suggestions need the workspace database")
 	}
 	budget, err := predictionbudget.Attach(db, time.Now)
 	if err != nil {
 		return nil, err
 	}
-	return &editorPredictionService{docs: docs, root: root, owner: "prediction-" + rand.Text(),
-		budget: budget, views: make(map[predictionViewKey]*predictionSequence),
-		wakes: make(map[chan struct{}]bool)}, nil
+	return &editorPredictionService{docs: docs, index: index, root: root, owner: "prediction-" + rand.Text(),
+		budget: budget, views: make(map[predictionViewKey]*predictionSequence)}, nil
 }
 
-// Configure is memory-only and belongs on the workspace owner. A changed grant,
-// connection or exact choice revokes every old request and cached candidate.
+// Configure runs on the workspace owner and does no I/O. A changed choice,
+// grant or connection revokes every running request and cached answer.
 func (p *editorPredictionService) Configure(next predictionRuntimePolicy) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return
 	}
-	if p.generation != 0 && p.policy.settings == next.settings &&
-		p.policy.rootIdentity == next.rootIdentity && p.policy.grant == next.grant &&
-		p.policy.completer.ConnectionIdentity == next.completer.ConnectionIdentity {
+	if p.generation != 0 && p.policy.settings == next.settings && p.policy.rootIdentity == next.rootIdentity &&
+		p.policy.grant == next.grant && p.policy.consented == next.consented &&
+		p.policy.completer.ConnectionIdentity == next.completer.ConnectionIdentity &&
+		p.policy.completer.TimeoutSeconds == next.completer.TimeoutSeconds &&
+		p.policy.completer.MaxOutputTokens == next.completer.MaxOutputTokens &&
+		errors.Is(p.policy.completerErr, next.completerErr) {
 		return
 	}
 	for _, view := range p.views {
 		if view.job != nil {
 			view.job.cancel()
 		}
+		view.chain = nil
 	}
 	p.generation++
 	p.policy, p.cache = next, nil
 	p.status.Mode, p.status.PolicyGeneration = next.settings.Mode, p.generation
 	p.status.LimitTokens = next.settings.HourlyTokenLimit
-	p.status.MeasuredLatencyMS, p.status.PauseMS = 0, 0
-	p.status.Ready = next.settings.Mode != types.PredictionOff && next.grant != "" &&
-		next.rootIdentity != "" && types.ValidatePredictionSettings(next.settings) == nil &&
-		next.completer.Current() == nil
-	p.status.Reason = ""
-	if next.settings.Mode != types.PredictionOff && !p.status.Ready {
-		p.status.Reason = errPredictionUnavailable.Error()
+	p.status.Model = next.completer.Model
+	p.status.Ready, p.status.Reason = false, ""
+	switch {
+	case next.settings.Mode == types.PredictionOff:
+	case next.completerErr != nil:
+		p.status.Reason = sentence(next.completerErr.Error())
+	case !next.completer.Bound():
+		p.status.Reason = sentence(session.ErrSuggestionsUnconfigured.Error())
+	case next.grant == "" || next.rootIdentity == "":
+		p.status.Reason = "Turn on suggestions again to allow this workspace."
+	case next.consented != next.completer.ConnectionIdentity:
+		p.status.Reason = "The suggestion connection changed. Turn on suggestions again to allow the new connection."
+	case types.ValidatePredictionSettings(next.settings) != nil:
+		p.status.Reason = "Set a positive hourly token limit for suggestions."
+	default:
+		p.status.Ready = true
 	}
-	p.publishLocked()
-}
-
-func (p *editorPredictionService) publishLocked() {
 	p.status.Generation++
-	for wake := range p.wakes {
-		select {
-		case wake <- struct{}{}:
-		default:
-		}
-	}
 }
 
+func sentence(text string) string {
+	if text == "" {
+		return ""
+	}
+	text = strings.ToUpper(text[:1]) + text[1:]
+	if !strings.HasSuffix(text, ".") {
+		text += "."
+	}
+	return text
+}
+
+// Snapshot returns the current status.
 func (p *editorPredictionService) Snapshot() types.EditorPredictionStatus {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.status
-}
-
-func (p *editorPredictionService) Subscribe() (<-chan struct{}, func()) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	wake := make(chan struct{}, 1)
-	p.wakes[wake] = true
-	var once sync.Once
-	return wake, func() { once.Do(func() { p.mu.Lock(); delete(p.wakes, wake); p.mu.Unlock() }) }
 }
 
 func (p *editorPredictionService) publishMeter(m predictionbudget.Meter, generation uint64) {
@@ -167,13 +187,13 @@ func (p *editorPredictionService) publishMeter(m predictionbudget.Meter, generat
 	p.status.ActiveTokens, p.status.ChargedTokens = m.ActiveTokens, m.ChargedTokens
 	p.status.ObservedTokens, p.status.RemainingTokens = m.ObservedTokens, min(m.RemainingTokens, p.status.LimitTokens)
 	p.status.UnknownRecords = m.UnknownRecords
-	p.publishLocked()
+	p.status.Generation++
 }
 
+// RefreshMeter reads the ledger off the actor.
 func (p *editorPredictionService) RefreshMeter(ctx context.Context) error {
 	p.mu.Lock()
-	cfg, generation := p.policy, p.generation
-	closed := p.closed
+	cfg, generation, closed := p.policy, p.generation, p.closed
 	p.mu.Unlock()
 	if closed {
 		return context.Canceled
@@ -185,6 +205,7 @@ func (p *editorPredictionService) RefreshMeter(ctx context.Context) error {
 	return err
 }
 
+// Release retires a view's sequence: the shell no longer wants an answer.
 func (p *editorPredictionService) Release(owner document.Owner, viewID string, sequence uint64) {
 	if owner.ClientID == "" || owner.Epoch == 0 || !validLSPView(viewID, sequence) {
 		return
@@ -194,17 +215,12 @@ func (p *editorPredictionService) Release(owner document.Owner, viewID string, s
 	if p.closed {
 		return
 	}
-	now := time.Now()
-	for candidate, view := range p.views {
-		if view.job == nil && now.After(view.expires) {
-			delete(p.views, candidate)
-		}
-	}
+	p.pruneLocked(time.Now())
 	key := predictionViewKey{owner, viewID}
 	view := p.views[key]
 	if view == nil {
 		if len(p.views) >= predictionMaxSequences {
-			return // A new invocation cannot enter a full sequence table either.
+			return
 		}
 		view = &predictionSequence{}
 		p.views[key] = view
@@ -212,18 +228,19 @@ func (p *editorPredictionService) Release(owner document.Owner, viewID string, s
 	if view.sequence > sequence {
 		return
 	}
-	view.sequence, view.expires, view.retired = sequence, now.Add(5*time.Minute), true
+	view.sequence, view.expires, view.retired = sequence, time.Now().Add(5*time.Minute), true
 	if view.job != nil {
 		view.job.cancel()
 	}
 }
 
+// ReleaseOwner retires every view of a detached shell.
 func (p *editorPredictionService) ReleaseOwner(owner document.Owner) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for key, view := range p.views {
 		if key.owner == owner {
-			view.retired = true
+			view.retired, view.chain = true, nil
 			if view.job != nil {
 				view.job.cancel()
 			}
@@ -231,6 +248,7 @@ func (p *editorPredictionService) ReleaseOwner(owner document.Owner) {
 	}
 }
 
+// Close cancels and joins every request, then retires this lifetime's ledger.
 func (p *editorPredictionService) Close() error {
 	p.mu.Lock()
 	p.closed = true
@@ -241,22 +259,23 @@ func (p *editorPredictionService) Close() error {
 	}
 	p.mu.Unlock()
 	p.jobs.Wait()
-	// Only this joined lifetime is retired; previous-core rows remain charged
-	// until their own exact owner has supplied retirement evidence.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return p.budget.RetireOwner(ctx, p.owner)
 }
 
+func (p *editorPredictionService) pruneLocked(now time.Time) {
+	for key, view := range p.views {
+		if view.job == nil && now.After(view.expires) {
+			delete(p.views, key)
+		}
+	}
+}
+
 func (p *editorPredictionService) begin(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest) (context.Context, *predictionInvocation, predictionRuntimePolicy, error) {
 	key := predictionViewKey{owner, request.ViewID}
 	p.mu.Lock()
-	now := time.Now()
-	for candidate, view := range p.views {
-		if view.job == nil && now.After(view.expires) {
-			delete(p.views, candidate)
-		}
-	}
+	p.pruneLocked(time.Now())
 	if p.closed {
 		p.mu.Unlock()
 		return nil, nil, predictionRuntimePolicy{}, context.Canceled
@@ -274,11 +293,10 @@ func (p *editorPredictionService) begin(ctx context.Context, owner document.Owne
 		p.mu.Unlock()
 		return nil, nil, predictionRuntimePolicy{}, errPredictionSequence
 	}
-	view.sequence, view.expires = request.Sequence, now.Add(5*time.Minute)
-	view.retired = false
-	admissionGeneration := p.generation
-	// Supersession cancels immediately but never overlaps the local provider
-	// lifetime. Only the newest waiter may begin after the old body has joined.
+	view.sequence, view.expires, view.retired = request.Sequence, time.Now().Add(5*time.Minute), false
+	admission := p.generation
+	// A newer keystroke cancels the older request at once, and the newest
+	// waiter begins only after the old request has joined.
 	if previous := view.job; previous != nil {
 		previous.cancel()
 		p.mu.Unlock()
@@ -289,13 +307,21 @@ func (p *editorPredictionService) begin(ctx context.Context, owner document.Owne
 		}
 		p.mu.Lock()
 	}
-	if p.closed || view.sequence != request.Sequence || view.retired || p.generation != admissionGeneration {
+	if p.closed || view.sequence != request.Sequence || view.retired || p.generation != admission {
 		p.mu.Unlock()
 		return nil, nil, predictionRuntimePolicy{}, errPredictionSequence
 	}
-	if !p.status.Ready || request.Automatic && (p.policy.settings.Mode != types.PredictionFull || p.status.PauseMS == 0) {
+	if !p.status.Ready {
+		reason := p.status.Reason
 		p.mu.Unlock()
-		return nil, nil, predictionRuntimePolicy{}, errPredictionUnavailable
+		if reason == "" {
+			return nil, nil, predictionRuntimePolicy{}, errPredictionOff
+		}
+		return nil, nil, predictionRuntimePolicy{}, errors.New(reason)
+	}
+	if request.Automatic && p.policy.settings.Mode != types.PredictionType {
+		p.mu.Unlock()
+		return nil, nil, predictionRuntimePolicy{}, errPredictionOff
 	}
 	if p.status.InFlight >= predictionMaxViews {
 		p.mu.Unlock()
@@ -306,7 +332,7 @@ func (p *editorPredictionService) begin(ctx context.Context, owner document.Owne
 	view.job = job
 	p.jobs.Add(1)
 	p.status.InFlight++
-	p.publishLocked()
+	p.status.Generation++
 	policy := p.policy
 	p.mu.Unlock()
 	return jobCtx, job, policy, nil
@@ -319,19 +345,14 @@ func (p *editorPredictionService) finish(owner document.Owner, request types.Edi
 		view.job = nil
 	}
 	p.status.InFlight--
+	p.status.Generation++
 	close(job.done)
-	p.publishLocked()
 	p.mu.Unlock()
 	p.jobs.Done()
 }
 
-func (p *editorPredictionService) canonical(owner document.Owner, source types.InsightSource) error {
-	p.docs.mu.Lock()
-	defer p.docs.mu.Unlock()
-	_, err := p.docs.readOnlyLSPSourceLocked(owner, source)
-	return err
-}
-
+// predictionPathAllowed keeps secrets and paths outside the workspace out of
+// every source: the edited file, recent edits and related snippets.
 func predictionPathAllowed(root, path string) bool {
 	if !documentUnder(root, path) || path == root {
 		return false
@@ -358,32 +379,41 @@ func predictionPathAllowed(root, path string) bool {
 	return !strings.HasPrefix(base, "id_rsa") && !strings.HasPrefix(base, "id_ed25519")
 }
 
+// current reports whether the invocation may still publish.
+func (p *editorPredictionService) current(owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	view := p.views[predictionViewKey{owner, request.ViewID}]
+	return !p.closed && p.generation == job.generation && view != nil &&
+		view.sequence == request.Sequence && view.job == job && !view.retired
+}
+
 func (p *editorPredictionService) fence(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	p.mu.Lock()
-	view := p.views[predictionViewKey{owner, request.ViewID}]
-	current := !p.closed && p.generation == job.generation && view != nil &&
-		view.sequence == request.Sequence && view.job == job && !view.retired
-	p.mu.Unlock()
-	if !current {
+	if !p.current(owner, request, job) {
 		return errPredictionSequence
 	}
-	if policy.completer.Current() != nil {
-		return errPredictionUnavailable
+	if err := policy.completer.Current(); err != nil {
+		return errors.New(sentence(err.Error()))
 	}
-	if err := p.canonical(owner, request.Source); err != nil {
+	p.docs.mu.Lock()
+	_, err := p.docs.readOnlyLSPSourceLocked(owner, request.Source)
+	p.docs.mu.Unlock()
+	if err != nil {
 		return err
 	}
 	identity, err := fileio.DirectoryIdentity(p.root)
 	if err != nil || identity != policy.rootIdentity || !predictionPathAllowed(p.root, request.Source.Path) ||
 		fileio.CheckDirectoryNoSymlinks(filepath.Dir(request.Source.Path)) != nil {
-		return errors.New("prediction excludes external, sensitive or replaced workspace sources")
+		return errors.New("suggestions are not sent for this file")
 	}
 	return nil
 }
 
+// watchSource cancels a request when its canonical source changes or closes.
+// It joins the watcher before returning, including on provider failure.
 func (p *editorPredictionService) watchSource(ctx context.Context, cancel context.CancelFunc, owner document.Owner, source types.InsightSource) (func(), error) {
 	wake, release, err := p.docs.SubscribeDocument(owner, source.DocumentID)
 	if err != nil {
@@ -397,7 +427,10 @@ func (p *editorPredictionService) watchSource(ctx context.Context, cancel contex
 			case <-ctx.Done():
 				return
 			case <-wake:
-				if p.canonical(owner, source) != nil {
+				p.docs.mu.Lock()
+				_, err := p.docs.readOnlyLSPSourceLocked(owner, source)
+				p.docs.mu.Unlock()
+				if err != nil {
 					cancel()
 					return
 				}
@@ -407,9 +440,11 @@ func (p *editorPredictionService) watchSource(ctx context.Context, cancel contex
 	return func() { cancel(); <-done; release() }, nil
 }
 
+// Request answers one suggestion request. An empty result means "nothing to
+// show"; errors are written for the user.
 func (p *editorPredictionService) Request(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest) (types.EditorPredictionResult, error) {
-	if ctx == nil || !validLSPView(request.ViewID, request.Sequence) ||
-		owner.ClientID == "" || owner.Epoch == 0 {
+	began := time.Now()
+	if ctx == nil || !validLSPView(request.ViewID, request.Sequence) || owner.ClientID == "" || owner.Epoch == 0 {
 		return types.EditorPredictionResult{}, document.ErrOwner
 	}
 	jobCtx, job, policy, err := p.begin(ctx, owner, request)
@@ -417,9 +452,6 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 		return types.EditorPredictionResult{}, err
 	}
 	defer p.finish(owner, request, job)
-	if request.LocalExactMatch {
-		return types.EditorPredictionResult{}, nil
-	}
 	stop, err := p.watchSource(jobCtx, job.cancel, owner, request.Source)
 	if err != nil {
 		return types.EditorPredictionResult{}, err
@@ -428,48 +460,197 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 	if err := p.fence(jobCtx, owner, request, job, policy); err != nil {
 		return types.EditorPredictionResult{}, err
 	}
+	result := types.EditorPredictionResult{Source: request.Source, ViewID: request.ViewID, Sequence: request.Sequence,
+		PolicyGeneration: job.generation, Caret: request.Caret}
+
+	// Context: everything comes from memory and nothing waits.
+	contextBegan := time.Now()
 	p.docs.mu.Lock()
 	text, err := p.docs.readOnlyLSPSourceLocked(owner, request.Source)
 	text = bytes.Clone(text)
+	var edits []types.RecentEdit
+	if err == nil {
+		edits = p.docs.recentEditsLocked(owner, 16, "")
+	}
 	p.docs.mu.Unlock()
 	if err != nil {
 		return types.EditorPredictionResult{}, err
 	}
+	if request.Caret < 0 || request.Caret > len(text) {
+		return types.EditorPredictionResult{}, errors.New("the caret is outside the document")
+	}
+	rel := filepath.ToSlash(request.Source.Path)
+	if r, err := filepath.Rel(p.root, request.Source.Path); err == nil {
+		rel = filepath.ToSlash(r)
+	}
+	edits = allowedEdits(p.root, edits)
+	var own []types.RecentEdit
+	for _, e := range edits {
+		if e.Author == types.RecentEditYou && e.Path == rel {
+			own = append(own, e)
+		}
+	}
+
+	// A chained change from the last answer needs no request.
+	if hunk, kind, ok := p.chained(owner, request, text); ok {
+		result.Kind, result.Start, result.End, result.Text, result.CacheHit = kind, hunk.start, hunk.end, hunk.text, true
+		return p.publish(jobCtx, owner, request, job, policy, result, began, true)
+	}
+
 	diagnostics, _ := p.docs.Insight.diagnostics.SnapshotPath(request.Source.Path)
-	contextInput := predictioncontext.Input{Source: request.Source, Text: text, Caret: request.Caret, Diagnostics: diagnostics}
-	factContext, system, input, err := buildPredictionRequest(contextInput)
+	var facts []types.LSPDiagnostic
+	if diagnostics.HasExactSource() && diagnostics.Boundary.Source == request.Source {
+		facts = diagnostics.Diagnostics
+	}
+	language := ""
+	if lang, ok := catalog.Current().LanguageForPath(request.Source.Path, nil); ok {
+		language = lang.Name
+	}
+	in := predictioncontext.Input{Path: rel, Language: language, Text: text, Caret: request.Caret,
+		Diagnostics: facts, RecentEdits: edits, Completions: request.Completions}
+	if p.index != nil {
+		block := string(text[max(0, request.Caret-1500):min(len(text), request.Caret+500)])
+		for _, s := range p.index.Related(block, 4, func(path string, line int) bool {
+			return path == request.Source.Path || !predictionPathAllowed(p.root, path)
+		}) {
+			in.Snippets = append(in.Snippets, predictioncontext.Snippet{Path: s.Rel, Line: s.Line, Text: s.Text})
+		}
+	}
+	selected, err := predictioncontext.Build(in, predictionContextTokens)
 	if err != nil {
 		return types.EditorPredictionResult{}, err
 	}
-	result := types.EditorPredictionResult{Source: request.Source, ViewID: request.ViewID, Sequence: request.Sequence,
-		PolicyGeneration: job.generation, Caret: request.Caret, ContextDigest: factContext.Digest, MissingInputs: slices.Clone(factContext.MissingInputs)}
+	if prompt.ContainsSuggestionMarker(selected.Region) {
+		return p.publish(jobCtx, owner, request, job, policy, result, began, false)
+	}
+	result.ContextDigest = selected.Digest
+	result.Stages.ContextMS = time.Since(contextBegan).Milliseconds()
+
+	var hunks []suggestionHunk
 	p.mu.Lock()
 	for _, cached := range p.cache {
-		if cached.digest == factContext.Digest {
-			result.Text, result.CacheHit = cached.text, true
+		if cached.digest == selected.Digest {
+			hunks = rebaseCached(cached, selected.RegionStart)
+			result.CacheHit = true
 			break
 		}
 	}
 	p.mu.Unlock()
-	if result.CacheHit {
+	if !result.CacheHit {
+		hunks, err = p.ask(jobCtx, owner, request, job, policy, selected, &result.Stages)
+		if err != nil {
+			return types.EditorPredictionResult{}, err
+		}
 		if err := p.fence(jobCtx, owner, request, job, policy); err != nil {
 			return types.EditorPredictionResult{}, err
 		}
-		return result, nil
+		p.remember(selected, hunks, job.generation)
 	}
-	outputLimit := policy.completer.OutputTokenLimit()
-	// Charge a conservative byte-based reservation plus framing, not the
-	// estimated 2,000-token context alone. Remote tokenizer/billing remains an
-	// external observation; hidden provider input is not known to this client.
-	inputReservation := int64(len(system) + len(input) + 512)
-	if policy.settings.Protocol != types.PredictionChat {
-		inputReservation = int64(len(factContext.Prefix) + len(factContext.Suffix) + 512)
+
+	checkBegan := time.Now()
+	var kept []suggestionHunk
+	for _, h := range orderHunks(hunks, request.Caret) {
+		if checkSuggestion(text, request.Caret, h, own) {
+			kept = append(kept, h)
+		}
 	}
-	ticket, meter, err := p.budget.Reserve(jobCtx, predictionbudget.Request{RequestID: "prediction-" + rand.Text(),
-		Owner: p.owner, Producer: policy.completer.ConnectionIdentity, InputUpperTokens: inputReservation, OutputLimitTokens: int64(outputLimit)}, policy.settings.HourlyTokenLimit)
+	result.Stages.CheckMS = time.Since(checkBegan).Milliseconds()
+	if len(kept) > 0 {
+		first := kept[0]
+		result.Kind = classifySuggestion(text, request.Caret, first)
+		result.Start, result.End, result.Text = first.start, first.end, first.text
+		p.setChain(owner, request, text, first, kept[1:])
+	}
+	return p.publish(jobCtx, owner, request, job, policy, result, began, result.CacheHit)
+}
+
+func allowedEdits(root string, edits []types.RecentEdit) []types.RecentEdit {
+	out := edits[:0]
+	for _, e := range edits {
+		if predictionPathAllowed(root, filepath.Join(root, filepath.FromSlash(e.Path))) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func rebaseCached(cached predictionCached, regionStart int) []suggestionHunk {
+	out := make([]suggestionHunk, len(cached.hunks))
+	for i, h := range cached.hunks {
+		out[i] = suggestionHunk{start: h.start + regionStart, end: h.end + regionStart, text: h.text}
+	}
+	return out
+}
+
+func (p *editorPredictionService) remember(selected predictioncontext.Context, hunks []suggestionHunk, generation uint64) {
+	relative := make([]suggestionHunk, len(hunks))
+	for i, h := range hunks {
+		relative[i] = suggestionHunk{start: h.start - selected.RegionStart, end: h.end - selected.RegionStart, text: h.text}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.generation != generation {
+		return
+	}
+	p.cache = append(p.cache, predictionCached{digest: selected.Digest, hunks: relative})
+	if len(p.cache) > predictionCacheEntries {
+		p.cache = append([]predictionCached(nil), p.cache[len(p.cache)-predictionCacheEntries:]...)
+	}
+}
+
+func (p *editorPredictionService) chained(owner document.Owner, request types.EditorPredictionRequest, text []byte) (suggestionHunk, types.EditorPredictionKind, bool) {
+	p.mu.Lock()
+	view := p.views[predictionViewKey{owner, request.ViewID}]
+	var chain *predictionChain
+	if view != nil {
+		chain, view.chain = view.chain, nil
+	}
+	p.mu.Unlock()
+	if chain == nil || chain.document != request.Source.DocumentID || len(chain.hunks) == 0 || sha256.Sum256(text) != chain.expect {
+		return suggestionHunk{}, "", false
+	}
+	first := chain.hunks[0]
+	if first.end > len(text) || !types.ValidEditorPredictionText(first.text) {
+		return suggestionHunk{}, "", false
+	}
+	p.setChain(owner, request, text, first, chain.hunks[1:])
+	return first, classifySuggestion(text, request.Caret, first), true
+}
+
+func (p *editorPredictionService) setChain(owner document.Owner, request types.EditorPredictionRequest, text []byte, shown suggestionHunk, rest []suggestionHunk) {
+	if len(rest) == 0 {
+		return
+	}
+	next := &predictionChain{document: request.Source.DocumentID, expect: sha256.Sum256(applyHunk(text, shown)), hunks: shiftHunks(shown, rest)}
+	p.mu.Lock()
+	if view := p.views[predictionViewKey{owner, request.ViewID}]; view != nil {
+		view.chain = next
+	}
+	p.mu.Unlock()
+}
+
+// ask sends one request through the ledger and the bound connection.
+func (p *editorPredictionService) ask(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy, selected predictioncontext.Context, stages *types.EditorPredictionStages) ([]suggestionHunk, error) {
+	system, input := "", ""
+	chat := policy.completer.Format == types.SuggestionFormatChat
+	if chat {
+		system = prompt.EditorSuggestionSystem()
+		input = prompt.EditorSuggestionInput(promptOf(selected))
+	}
+	accountBegan := time.Now()
+	reservation := int64(len(system) + len(input) + 512)
+	if !chat {
+		reservation = int64(len(selected.Prefix) + len(selected.Suffix) + 512)
+	}
+	ticket, meter, err := p.budget.Reserve(ctx, predictionbudget.Request{RequestID: "prediction-" + rand.Text(),
+		Owner: p.owner, Producer: policy.completer.ConnectionIdentity, InputUpperTokens: reservation,
+		OutputLimitTokens: int64(policy.completer.MaxOutputTokens)}, policy.settings.HourlyTokenLimit)
 	p.publishMeter(meter, job.generation)
+	if errors.Is(err, predictionbudget.ErrLimit) {
+		return nil, errPredictionCapped
+	}
 	if err != nil {
-		return types.EditorPredictionResult{}, err
+		return nil, err
 	}
 	started := false
 	defer func() {
@@ -479,58 +660,155 @@ func (p *editorPredictionService) Request(ctx context.Context, owner document.Ow
 			_ = p.budget.Abandon(cleanup, ticket)
 		}
 	}()
-	if err := p.fence(jobCtx, owner, request, job, policy); err != nil {
-		return types.EditorPredictionResult{}, err
+	if err := p.fence(ctx, owner, request, job, policy); err != nil {
+		return nil, err
 	}
-	meter, err = p.budget.Start(jobCtx, ticket, policy.settings.HourlyTokenLimit)
-	if err != nil {
-		return types.EditorPredictionResult{}, err
+	if meter, err = p.budget.Start(ctx, ticket, policy.settings.HourlyTokenLimit); err != nil {
+		return nil, err
 	}
 	started = true
+	stages.AccountMS = time.Since(accountBegan).Milliseconds()
 	p.publishMeter(meter, job.generation)
-	begin := time.Now()
-	answer, err := completeEditorPrediction(jobCtx, policy, factContext, system, input, outputLimit)
-	latency := time.Since(begin)
-	// Adapter return joins the local body, not remote inference. Unknown/incomplete
-	// usage retains the full reservation, including on cancellation and errors.
+
+	modelBegan := time.Now()
+	var answer string
+	var usage *provider.TokenUsage
+	complete := false
+	if chat {
+		answer, usage, complete, err = streamRewrite(ctx, policy.completer, system, input, func() {
+			stages.FirstByteMS = time.Since(modelBegan).Milliseconds()
+		})
+	} else {
+		var fim provider.FIMOnceResult
+		fim, err = policy.completer.CompleteFIM(ctx, selected.Prefix, selected.Suffix, types.EditorPredictionMaxBytes)
+		answer, usage, complete = fim.Text, fim.Usage, fim.UsageComplete
+		stages.FirstByteMS = time.Since(modelBegan).Milliseconds()
+	}
+	stages.ModelMS = time.Since(modelBegan).Milliseconds()
 	cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	settleErr := p.budget.Settle(cleanup, ticket, predictionObservedUsage(answer.Usage, answer.UsageComplete))
+	settleErr := p.budget.Settle(cleanup, ticket, predictionObservedUsage(usage, complete))
 	if settleErr == nil {
 		_ = p.RefreshMeter(cleanup)
 	}
 	cancel()
-	if err != nil || settleErr != nil {
-		// Provider errors can contain endpoints/headers; keep this projection
-		// nonsecret and never make a failed literal candidate usable.
-		return types.EditorPredictionResult{}, errors.New("prediction request failed or accounting could not be settled; its reservation remains protected")
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		// Provider errors can contain endpoints or headers; show none of it.
+		return nil, errors.New("the suggestion request failed; check the connection in Settings, Agents, Aeron")
 	}
-	if err := p.fence(jobCtx, owner, request, job, policy); err != nil {
+	if settleErr != nil {
+		return nil, errors.New("suggestion usage could not be recorded")
+	}
+	if !chat {
+		return fimHunks(selected, answer), nil
+	}
+	rewrite, err := parseSuggestionRewrite(answer, selected.Region)
+	if err != nil {
+		return nil, nil // an unusable answer shows nothing
+	}
+	return suggestionHunks(selected, rewrite), nil
+}
+
+func promptOf(c predictioncontext.Context) prompt.SuggestionPrompt {
+	out := prompt.SuggestionPrompt{Path: c.Path, Language: c.Language, Before: c.Before, Region: c.Region,
+		After: c.After, Caret: c.Caret, Problems: c.Diagnostics, Completions: c.Completions}
+	for _, e := range c.Edits {
+		out.Edits = append(out.Edits, prompt.SuggestionEdit{Path: e.Path, Author: e.Author, Line: e.Line, Removed: e.Removed, Inserted: e.Inserted})
+	}
+	for _, s := range c.Snippets {
+		out.Snippets = append(out.Snippets, prompt.SuggestionSnippet{Path: s.Path, Line: s.Line, Text: s.Text})
+	}
+	return out
+}
+
+// fimHunks turns a fill-in-the-middle answer into an insertion at the caret.
+func fimHunks(c predictioncontext.Context, answer string) []suggestionHunk {
+	lines := strings.SplitAfter(answer, "\n")
+	if len(lines) > types.EditorPredictionMaxLines {
+		answer = strings.Join(lines[:types.EditorPredictionMaxLines], "")
+	}
+	answer = strings.TrimRight(answer, "\n")
+	if strings.TrimSpace(answer) == "" {
+		return nil
+	}
+	at := c.RegionStart + c.Caret
+	return []suggestionHunk{{start: at, end: at, text: answer}}
+}
+
+// streamRewrite reads the chat answer. After the region's end marker the
+// model has nothing more to say; the stream is read to its end only for the
+// reported usage, and stops at once if text keeps coming.
+func streamRewrite(ctx context.Context, completer session.EditorPredictionCompleter, system, input string, firstByte func()) (string, *provider.TokenUsage, bool, error) {
+	stream, err := completer.Stream(ctx, system, input)
+	if err != nil {
+		return "", nil, false, err
+	}
+	defer stream.Close()
+	var answer strings.Builder
+	var usage *provider.TokenUsage
+	seen, closed, after := false, false, 0
+	for {
+		update, err := stream.Next()
+		if errors.Is(err, io.EOF) {
+			return answer.String(), usage, usage != nil, nil
+		}
+		if err != nil {
+			return answer.String(), usage, false, err
+		}
+		if update.Usage != nil {
+			usage = update.Usage
+		}
+		if update.ContentDelta != "" {
+			if !seen {
+				seen = true
+				firstByte()
+			}
+			if closed {
+				if after += len(update.ContentDelta); after > 256 {
+					return answer.String(), usage, false, nil
+				}
+				continue
+			}
+			answer.WriteString(update.ContentDelta)
+			if answer.Len() > types.EditorPredictionMaxBytes*4 {
+				return answer.String(), usage, false, nil
+			}
+			closed = strings.Contains(answer.String(), prompt.SuggestionRegionEnd)
+		}
+		if update.Done {
+			return answer.String(), usage, usage != nil, nil
+		}
+	}
+}
+
+// publish fences the result and updates the status.
+func (p *editorPredictionService) publish(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest, job *predictionInvocation, policy predictionRuntimePolicy, result types.EditorPredictionResult, began time.Time, reused bool) (types.EditorPredictionResult, error) {
+	if err := p.fence(ctx, owner, request, job, policy); err != nil {
 		return types.EditorPredictionResult{}, err
 	}
-	if !types.ValidEditorPredictionInsertion(answer.Text) {
-		return types.EditorPredictionResult{}, errors.New("prediction was not a safe single-line literal insertion")
-	}
-	result.Text = answer.Text
+	result.Stages.TotalMS = time.Since(began).Milliseconds()
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	view := p.views[predictionViewKey{owner, request.ViewID}]
-	if p.closed || p.generation != job.generation || jobCtx.Err() != nil || view == nil ||
-		view.sequence != request.Sequence || view.job != job || view.retired {
-		p.mu.Unlock()
+	if p.closed || p.generation != job.generation || view == nil || view.sequence != request.Sequence || view.job != job || view.retired {
 		return types.EditorPredictionResult{}, errPredictionSequence
 	}
-	p.cache = append(p.cache, predictionCached{factContext.Digest, answer.Text, slices.Clone(factContext.MissingInputs)})
-	if len(p.cache) > predictionCacheEntries {
-		p.cache = slices.Clone(p.cache[len(p.cache)-predictionCacheEntries:])
+	p.status.Requests++
+	if !result.Empty() {
+		p.status.Shown++
 	}
-	ms := max(int64(1), latency.Milliseconds())
-	if p.status.MeasuredLatencyMS == 0 {
-		p.status.MeasuredLatencyMS = ms
-	} else {
-		p.status.MeasuredLatencyMS += (ms - p.status.MeasuredLatencyMS) / 4
+	if !reused {
+		ms := max(int64(1), result.Stages.TotalMS)
+		if p.status.MeasuredLatencyMS == 0 {
+			p.status.MeasuredLatencyMS = ms
+		} else {
+			p.status.MeasuredLatencyMS += (ms - p.status.MeasuredLatencyMS) / 4
+		}
 	}
-	p.status.PauseMS = max(int64(16), min(int64(2000), p.status.MeasuredLatencyMS))
-	p.publishLocked()
-	p.mu.Unlock()
+	p.status.Generation++
+	result.Status = p.status
 	return result, nil
 }
 
@@ -543,49 +821,4 @@ func predictionObservedUsage(usage *provider.TokenUsage, complete bool) predicti
 		return predictionbudget.Usage{}
 	}
 	return predictionbudget.Usage{Reported: true, Complete: complete, Tokens: input + output}
-}
-
-func completeEditorPrediction(ctx context.Context, policy predictionRuntimePolicy, facts predictioncontext.Context, system, input string, limit int) (provider.TextOnceResult, error) {
-	if policy.settings.Protocol == types.PredictionChat {
-		return policy.completer.CompleteText(ctx, provider.TextOnceRequest{Model: policy.completer.Model,
-			System: system, Input: input, MaxOutputTokens: limit, MaxOutputBytes: predictionOutputBytes})
-	}
-	answer, err := policy.completer.CompleteFIM(ctx, provider.FIMOnceRequest{Model: policy.completer.Model,
-		Dialect: provider.FIMDialect(policy.settings.Protocol), EndpointPath: policy.settings.EndpointPath,
-		Prefix: facts.Prefix, Suffix: facts.Suffix, MaxOutputTokens: limit, MaxOutputBytes: predictionOutputBytes})
-	return provider.TextOnceResult{Text: answer.Text, Usage: answer.Usage, UsageComplete: answer.UsageComplete,
-		Accepted: answer.Accepted, FinishReason: answer.FinishReason}, err
-}
-
-func buildPredictionRequest(in predictioncontext.Input) (predictioncontext.Context, string, string, error) {
-	system := prompt.EditorPredictionSystem()
-	// The COMPLETE escaped chat request (including instructions and framing),
-	// not just the facts helper, must fit the context estimate.
-	for budget := predictionContextTokens; budget > 0; budget -= 64 {
-		facts, err := predictioncontext.Build(in, budget)
-		if err != nil {
-			return predictioncontext.Context{}, "", "", err
-		}
-		// Provider input does not need native absolute paths, canonical document
-		// IDs, account identities or producer executable locations. Those remain
-		// in the local digest/fences, not the model's fact envelope.
-		var diagnostics []types.LSPDiagnostic
-		if facts.Facts != nil {
-			diagnostics = facts.Facts.Diagnostics
-		}
-		modelFacts, err := json.Marshal(struct {
-			Builder     string                     `json:"builder"`
-			Coverage    predictioncontext.Coverage `json:"coverage"`
-			Missing     []string                   `json:"missing_inputs"`
-			Diagnostics []types.LSPDiagnostic      `json:"diagnostics"`
-		}{facts.BuilderVersion, facts.Coverage, facts.MissingInputs, diagnostics})
-		if err != nil {
-			return predictioncontext.Context{}, "", "", err
-		}
-		input := prompt.EditorPredictionRequest(facts.Language, facts.Prefix, facts.Suffix, string(modelFacts))
-		if provider.EstimateTokens(system, "")+provider.EstimateTokens(input, "") <= predictionContextTokens {
-			return facts, system, input, nil
-		}
-	}
-	return predictioncontext.Context{}, "", "", predictioncontext.ErrBudget
 }

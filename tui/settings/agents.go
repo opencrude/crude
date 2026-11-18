@@ -285,6 +285,11 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 	if len(c.base.AllowedTools) > 0 || len(c.base.DeniedTools) > 0 {
 		mode = "Custom selection"
 	}
+	if c.roleIndex == catAeron {
+		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions) {
+			c.draft.AddField(field)
+		}
+	}
 	if c.roleIndex != catAutoReviewPolicy {
 		c.draft.AddField(ui.SelectFieldState("agent-tool-mode", "Tool access", mode, []ui.FormOption{{ID: "Role defaults", Label: "Inherit role"}, {ID: "Custom selection", Label: "Custom"}}, "Choose the available tools."))
 		c.syncCapabilityFields()
@@ -340,7 +345,11 @@ func (c *agentCatalog) setPage(page string) {
 	if c.roleIndex == catAutoReviewPolicy {
 		thirdLabel = "Review"
 	}
-	c.tabs.SetItems([]ui.TabItem{{ID: "model", Label: "Model"}, {ID: "instructions", Label: "Instructions"}, {ID: "tools", Label: thirdLabel}}, page)
+	items := []ui.TabItem{{ID: "model", Label: "Model"}, {ID: "instructions", Label: "Instructions"}, {ID: "tools", Label: thirdLabel}}
+	if c.roleIndex == catAeron {
+		items = append(items, ui.TabItem{ID: "suggestions", Label: "Suggestions"})
+	}
+	c.tabs.SetItems(items, page)
 	if page == "tools" && c.roleIndex == catMemory {
 		label, detail := "Background jobs", "No tools; memory completions use the model and instructions."
 		c.form.SetForm(formModel(&ui.FieldState{ID: "agent-no-tools", Label: label, Type: ui.FieldText, Value: ui.StringValue(detail), ReadOnly: true}), "", "")
@@ -357,7 +366,9 @@ func (c *agentCatalog) setPage(page string) {
 		isPrompt := field.ID == "agent-instructions" || field.ID == "agent-description"
 		isReview := c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-")
 		isTools := isReview || strings.HasPrefix(field.ID, "agent-tool") || strings.HasPrefix(field.ID, "agent-skill") || strings.HasPrefix(field.ID, "agent-access") || field.ID == "agent-file-ownership"
-		if page == "instructions" && isPrompt || page == "tools" && isTools || page == "model" && !isPrompt && !isTools {
+		isSuggest := suggestionField(field.ID)
+		if page == "instructions" && isPrompt || page == "tools" && isTools || page == "suggestions" && isSuggest ||
+			page == "model" && !isPrompt && !isTools && !isSuggest {
 			fields = append(fields, field)
 		}
 	}
@@ -426,6 +437,8 @@ func (c *agentCatalog) apply() bool {
 				page = "instructions"
 			} else if c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-") {
 				page = "tools"
+			} else if suggestionField(field.ID) {
+				page = "suggestions"
 			}
 			c.setPage(page)
 			c.form.FocusField(field.ID)
@@ -480,6 +493,16 @@ func (c *agentCatalog) apply() bool {
 		c.closeDraft()
 		c.notice = "Auto Review Agent updated. Save settings to persist these changes."
 		return true
+	}
+	if c.roleIndex == catAeron {
+		if id, problem := validateSuggestionsForm(c.draft); id != "" {
+			c.draft.Field(id).Errors = []string{problem}
+			c.setPage("suggestions")
+			c.form.FocusField(id)
+			c.owner.focusID(c.form.ID())
+			return false
+		}
+		c.model.agents.Suggestions = suggestionsFromForm(c.draft, c.model.agents.Suggestions)
 	}
 	cfg := c.prospectiveCategory()
 	if c.roleIndex >= 0 {

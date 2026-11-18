@@ -251,6 +251,7 @@ func (m *Model) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.ReportFocus = true
+	v.KeyboardEnhancements = ui.KeyboardEnhancements()
 	// The welcome screen is the first frame a new user sees, so the window and
 	// its taskbar icon must already carry the product name.
 	v.WindowTitle = startupTitle
@@ -279,6 +280,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.closed {
 		return m, nil
 	}
+	msg = ui.NormalizeKeyMsg(msg)
 	switch v := msg.(type) {
 	case tea.BlurMsg:
 		m.host.SetFocusActive(false)

@@ -158,6 +158,14 @@ class Profile:
         until(self.name + "/" + name + ": " + label, check, timeout=30)
         return self.capture(name, label)
 
+    def dismiss_workspace_trust(self, name):
+        # A newly opened workspace asks about project tools before the account
+        # reminder. Esc is the real restricted-mode action and stores no grant.
+        # Do not accept text behind this modal as proof that editing is ready.
+        self.visible(name, "workspace-trust", "Trust this folder?", "Open in restricted mode")
+        self.keys(name, "Escape")
+        until(self.name + ": trust dismissed", lambda: "Trust this folder?" not in self.capture(name), timeout=15)
+
     def keys(self, name, *keys):
         self.tmux("send-keys", "-t", self.shells[name][0], *keys)
 
@@ -330,6 +338,7 @@ class Harness:
         p.no_project("picker-no-home-workspace")
         p.navigate(n, p.project, "direct-project-path")
         p.keys(n, "C-o")
+        p.dismiss_workspace_trust(n)
         p.visible(n, "account-reminder", "No AI account is configured.", "Do not show this again", "OK")
         p.no_sessions("reminder-no-session")
         p.keys(n, "Enter")
@@ -345,6 +354,7 @@ class Harness:
     def established(self):
         p = self.fresh_profile
         n = p.launch("established", p.project)
+        p.dismiss_workspace_trust(n)
         p.visible(n, "established-no-introduction", "No AI account is configured.", absent=("Welcome to Crude",))
         p.keys(n, "Left", "Enter")
         p.visible(n, "reminder-suppressed", "New Session", absent=("Set up AI",))
@@ -353,6 +363,7 @@ class Harness:
         p.no_sessions("suppression-no-session")
         p.stop_shell(n)
         n = p.launch("suppressed-restart", p.project)
+        p.dismiss_workspace_trust(n)
         p.visible(n, "suppression-persists", "New Session", absent=("Welcome to Crude", "Set up AI"))
         assert json.loads(p.config.read_text())["onboarding"]["ai_setup_reminder_hidden"] is True
         p.no_sessions("restart-no-session")
@@ -377,6 +388,7 @@ class Harness:
         p.no_project("typed-missing-no-parent-fallback")
         p.navigate(n, p.project, "typed-error-recovery")
         p.keys(n, "C-o")
+        p.dismiss_workspace_trust(n)
         p.visible(n, "child-project-editor", "New Session", absent=("Choose a project folder", "Set up AI"))
         status = p.no_sessions("child-project-allowed")
         assert [w["root"] for w in status["workspaces"]] == [str(p.project)], status
@@ -392,6 +404,7 @@ class Harness:
             p.visible(n, name + "-picker", "Choose a project folder")
             p.navigate(n, p.project, name + "-recovered-path")
             p.keys(n, "C-o")
+            p.dismiss_workspace_trust(n)
             p.visible(n, name + "-recovered-editor", "New Session", absent=("Choose a project folder",))
             p.no_sessions(name + "-recovered-no-session")
             p.stop_shell(n)
@@ -414,6 +427,7 @@ class Harness:
         p.keys(n, "C-o")
         p.visible(n, "attached-config-issue", "Configuration needs repair", "Edit config file", "Close")
         p.keys(n, "Escape")
+        p.dismiss_workspace_trust(n)
         p.visible(n, "config-issue-dismissed", "New Session", absent=("Edit config file", "Application Settings"))
         # Dismiss any subsequent reminder instead of accepting forced setup.
         p.keys(n, "Escape")
@@ -454,6 +468,7 @@ class Harness:
         assert p.config.read_bytes() == before and p.sample.read_bytes() == sample
         p.navigate(n, p.project, "post-crash-project")
         p.keys(n, "C-o")
+        p.dismiss_workspace_trust(n)
         p.visible(n, "post-crash-editor-shell", "New Session", absent=("Set up AI", "Welcome to Crude"))
         p.no_sessions("post-crash-no-session")
         assert p.config.read_bytes() == before
@@ -462,6 +477,7 @@ class Harness:
     def shell_crash(self):
         p = self.profile("shell-crash", {"onboarding": {"introduction_completed": True, "ai_setup_reminder_hidden": True}})
         n = p.launch("lock-owner", p.project)
+        p.dismiss_workspace_trust(n)
         p.visible(n, "locked-profile-editor", "New Session", absent=("Set up AI",))
         p.connect()
         self.open_sample(p, n)
@@ -469,6 +485,7 @@ class Harness:
         p.no_sessions("before-shell-crash")
         p.stop_shell(n)
         n = p.launch("same-profile-return", p.project)
+        p.dismiss_workspace_trust(n)
         p.visible(n, "crash-left-lock-released", "New Session", absent=("profile is already", "Set up AI", "Welcome to Crude"))
         assert p.config.read_bytes() == before
         self.open_sample(p, n)

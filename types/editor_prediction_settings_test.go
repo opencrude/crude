@@ -6,24 +6,20 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"unicode/utf8"
 )
 
 func TestPredictionSettingsDefaultsAndFailClosed(t *testing.T) {
-	want := WorkspacePredictionSettings{Mode: "off", HourlyTokenLimit: 0, Protocol: "chat", EndpointPath: ""}
+	want := WorkspacePredictionSettings{Mode: "off", HourlyTokenLimit: 0}
 	if got := DefaultWorkspacePredictionSettings(); got != want {
 		t.Fatalf("default = %+v, want %+v", got, want)
 	}
 	for _, s := range []WorkspacePredictionSettings{
 		{},
-		{Mode: "light", Protocol: "chat"},
-		{Mode: "full", HourlyTokenLimit: -1, Protocol: "chat"},
-		{Mode: "off", HourlyTokenLimit: 1099511627777, Protocol: "chat"},
-		{Mode: "LIGHT", HourlyTokenLimit: 20, Protocol: "chat"},
-		{Mode: "off", Protocol: "auto"},
-		{Mode: "off", Protocol: "chat", EndpointPath: "completions"},
-		{Mode: "off", Protocol: "deepseek-fim"},
-		{Mode: "light", HourlyTokenLimit: 20, Protocol: "codestral-fim", EndpointPath: "../fim"},
+		{Mode: "ask"},
+		{Mode: "type", HourlyTokenLimit: -1},
+		{Mode: "off", HourlyTokenLimit: 1099511627777},
+		{Mode: "ASK", HourlyTokenLimit: 20},
+		{Mode: "light", HourlyTokenLimit: 20},
 	} {
 		if err := ValidatePredictionSettings(s); err == nil {
 			t.Errorf("accepted invalid settings %+v", s)
@@ -34,9 +30,9 @@ func TestPredictionSettingsDefaultsAndFailClosed(t *testing.T) {
 	}
 	for _, s := range []WorkspacePredictionSettings{
 		want,
-		{Mode: "light", HourlyTokenLimit: 1, Protocol: "chat"},
-		{Mode: "full", HourlyTokenLimit: 1099511627776, Protocol: "deepseek-fim", EndpointPath: "beta/completions"},
-		{Mode: "off", HourlyTokenLimit: 321, Protocol: "codestral-fim", EndpointPath: "/fim/completions"},
+		{Mode: "ask", HourlyTokenLimit: 1},
+		{Mode: "type", HourlyTokenLimit: 1099511627776},
+		{Mode: "off", HourlyTokenLimit: 321},
 	} {
 		if err := ValidatePredictionSettings(s); err != nil {
 			t.Errorf("valid %+v: %v", s, err)
@@ -52,23 +48,12 @@ func TestPredictionSettingsStrictSparseDecode(t *testing.T) {
 		raw  string
 		want WorkspacePredictionSettings
 	}{
-		{`{}`, WorkspacePredictionSettings{"off", 0, "chat", ""}},
-		{`{"mode":"off"}`, WorkspacePredictionSettings{"off", 0, "chat", ""}},
-		{`{"hourly_token_limit":23}`, WorkspacePredictionSettings{"off", 23, "chat", ""}},
-		{`{"protocol":"chat","endpoint_path":""}`, WorkspacePredictionSettings{"off", 0, "chat", ""}},
-		{`{"mode":"light","hourly_token_limit":1,"protocol":"chat","endpoint_path":""}`,
-			WorkspacePredictionSettings{"light", 1, "chat", ""}},
-		{`{"mode":"full","hourly_token_limit":1099511627776}`,
-			WorkspacePredictionSettings{"full", 1099511627776, "chat", ""}},
-		{`{"mode":"light","hourly_token_limit":19,"protocol":"openai-completions","endpoint_path":"completions"}`,
-			WorkspacePredictionSettings{"light", 19, "openai-completions", "completions"}},
-		{`{"mode":"full","hourly_token_limit":20,"protocol":"deepseek-fim","endpoint_path":"/beta/completions"}`,
-			WorkspacePredictionSettings{"full", 20, "deepseek-fim", "/beta/completions"}},
-		{`{"mode":"off","hourly_token_limit":21,"protocol":"codestral-fim","endpoint_path":"fim/completions"}`,
-			WorkspacePredictionSettings{"off", 21, "codestral-fim", "fim/completions"}},
-		{`{"protocol":"codestral-fim","endpoint_path":"\ud83d\ude80/fim"}`,
-			WorkspacePredictionSettings{"off", 0, "codestral-fim", "🚀/fim"}},
-		{`{"\u006dode":"off"}`, WorkspacePredictionSettings{"off", 0, "chat", ""}},
+		{`{}`, WorkspacePredictionSettings{"off", 0}},
+		{`{"mode":"off"}`, WorkspacePredictionSettings{"off", 0}},
+		{`{"hourly_token_limit":23}`, WorkspacePredictionSettings{"off", 23}},
+		{`{"mode":"ask","hourly_token_limit":1}`, WorkspacePredictionSettings{"ask", 1}},
+		{`{"mode":"type","hourly_token_limit":1099511627776}`, WorkspacePredictionSettings{"type", 1099511627776}},
+		{`{"\u006dode":"off"}`, WorkspacePredictionSettings{"off", 0}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
@@ -86,9 +71,10 @@ func TestPredictionSettingsStrictSparseDecode(t *testing.T) {
 
 func TestPredictionSettingsRejectMalformedObjects(t *testing.T) {
 	tests := []string{
+		`{"protocol":"chat","endpoint_path":""}`, `{"mode":"light","hourly_token_limit":5}`,
 		"", " ", "null", "[]", `"off"`, "true", "1", "{}{}", "{",
 		`{"mode":"off",}`, `{"mode":"off"} trailing`,
-		`{"mode":"light"}`, `{"mode":"full","hourly_token_limit":0}`,
+		`{"mode":"ask"}`, `{"mode":"type","hourly_token_limit":0}`,
 		`{"hourly_token_limit":-1}`, `{"hourly_token_limit":1099511627777}`,
 		`{"hourly_token_limit":9223372036854775808}`,
 		`{"hourly_token_limit":1.5}`, `{"hourly_token_limit":1.0}`, `{"hourly_token_limit":1e3}`,
@@ -98,7 +84,7 @@ func TestPredictionSettingsRejectMalformedObjects(t *testing.T) {
 		`{"mode":"Light"}`, `{"mode":""}`, `{"protocol":"openai"}`, `{"protocol":"CHAT"}`,
 		`{"unknown":"secret-do-not-echo"}`, `{"Mode":"off"}`, `{"grant_id":"secret-do-not-echo"}`,
 		`{"mode":"off","mode":"off"}`, `{"mode":"off","\u006dode":"off"}`,
-		`{"mode":"off","mode":"light","hourly_token_limit":99}`,
+		`{"mode":"off","mode":"ask","hourly_token_limit":99}`,
 		`{"hourly_token_limit":1,"hourly_token_limit":2}`,
 		`{"protocol":"chat","protocol":"chat"}`, `{"endpoint_path":"","endpoint_path":""}`,
 		`{"protocol":"deepseek-fim"}`, `{"endpoint_path":"completions"}`,
@@ -120,46 +106,36 @@ func TestPredictionSettingsRejectMalformedObjects(t *testing.T) {
 	}
 }
 
-func TestPredictionSettingsEndpointSyntax(t *testing.T) {
+func TestSuggestionEndpointSyntax(t *testing.T) {
 	for _, path := range []string{
 		"", "/", "//completions", "///completions", "https://secret-do-not-echo/fim",
 		"//secret-do-not-echo/fim", "completions?key=secret-do-not-echo", "fim#fragment",
 		"api@host/fim", "api:port/fim", `api\fim`, "%2fcompletions", "api/%2E%2E/fim",
-		"api/%41/fim", ".", "..", "./fim", "../fim", "api/./fim", "api/../fim",
+		".", "..", "./fim", "../fim", "api/./fim", "api/../fim",
 		"api//fim", "api/fim/", " completions", "completions ", "api/f im",
 		"api/\tfim", "api/\nfim", "api/\x00fim", "api/\x7ffim", "api/\u0085fim",
-		"api/\u061cfim", "api/\u200efim", "api/\u200ffim", "api/\u202afim",
-		"api/\u202efim", "api/\u2066fim", "api/\u2069fim",
+		"api/\u061cfim", "api/\u200efim", "api/\u202efim", "api/\u2066fim",
 		string([]byte{0xff}), strings.Repeat("x", 4097),
 	} {
-		t.Run(path, func(t *testing.T) {
-			s := WorkspacePredictionSettings{Mode: "off", Protocol: "deepseek-fim", EndpointPath: path}
-			if err := ValidatePredictionSettings(s); err == nil {
-				t.Error("accepted unsafe or absent FIM path")
-			} else if strings.Contains(err.Error(), "secret-do-not-echo") {
-				t.Errorf("error echoed endpoint: %v", err)
-			}
-			raw, err := json.Marshal(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Marshal repairs invalid UTF-8; test those original bytes directly.
-			if path != "" && utf8.ValidString(path) {
-				edit := SettingEdit{Path: []string{"prediction", "endpoint_path"}, After: raw}
-				if err := ValidatePredictionSettingEdits(SettingsScopeWorkspace, []SettingEdit{edit}); err == nil {
-					t.Error("accepted unsafe endpoint leaf")
-				}
-			}
-		})
-	}
-	for _, path := range []string{"completions", "/completions", "v1/fim/completions", "路徑/fim", strings.Repeat("x", 4096)} {
-		if err := ValidatePredictionSettings(WorkspacePredictionSettings{Mode: "off", Protocol: "openai-completions", EndpointPath: path}); err != nil {
-			t.Errorf("safe mount-relative path rejected: %v", err)
+		if ValidSuggestionEndpointPath(path) {
+			t.Errorf("accepted unsafe or absent path %q", path)
+		}
+		if got := (SuggestionSettings{Format: SuggestionFormatDeepSeek, EndpointPath: path}).Normalized(); got.EndpointPath != "" {
+			t.Errorf("normalized kept unsafe path %q", path)
 		}
 	}
-	// A literal backslash is unsafe, not a surrogate escape.
-	if _, err := DecodeWorkspacePredictionSettings(json.RawMessage(`{"protocol":"codestral-fim","endpoint_path":"\\ud800"}`)); err == nil {
-		t.Error("accepted endpoint containing a literal backslash")
+	for _, path := range []string{"completions", "/completions", "v1/fim/completions", "路徑/fim", strings.Repeat("x", 4096)} {
+		if !ValidSuggestionEndpointPath(path) {
+			t.Errorf("safe mount-relative path rejected: %q", path)
+		}
+	}
+	chat := SuggestionSettings{Format: "unknown", EndpointPath: "/v1/completions"}.Normalized()
+	if chat.Format != SuggestionFormatChat || chat.EndpointPath != "" || chat.TimeoutSeconds != 5 || chat.MaxOutputTokens != 256 {
+		t.Fatalf("defaults = %+v", chat)
+	}
+	bounded := SuggestionSettings{TimeoutSeconds: 999, MaxOutputTokens: 1}.Normalized()
+	if bounded.TimeoutSeconds != 60 || bounded.MaxOutputTokens != 16 {
+		t.Fatalf("bounds = %+v", bounded)
 	}
 }
 
@@ -168,7 +144,7 @@ func TestPredictionSettingEditsWorkspaceOnlyAndMetadata(t *testing.T) {
 		for _, edit := range []SettingEdit{
 			{Path: []string{"prediction"}},
 			{Path: []string{"prediction"}, After: json.RawMessage(`{}`)},
-			{Path: []string{"prediction"}, After: json.RawMessage(`{"mode":"light","hourly_token_limit":10}`)},
+			{Path: []string{"prediction"}, After: json.RawMessage(`{"mode":"ask","hourly_token_limit":10}`)},
 			{Path: []string{"prediction", "mode"}},
 			{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"off"`)},
 			{Path: []string{"prediction", "hourly_token_limit"}, After: json.RawMessage(`10`)},
@@ -203,20 +179,14 @@ func TestPredictionSettingEditsScalarVersusMergedValidation(t *testing.T) {
 	valid := []SettingEdit{
 		{Path: []string{"prediction"}},
 		{Path: []string{"prediction"}, After: json.RawMessage(`{}`)},
-		{Path: []string{"prediction"}, After: json.RawMessage(`{"mode":"light","hourly_token_limit":1}`)},
-		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"light"`)},
-		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"full"`)},
+		{Path: []string{"prediction"}, After: json.RawMessage(`{"mode":"ask","hourly_token_limit":1}`)},
+		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"ask"`)},
+		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"type"`)},
 		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"off"`)},
 		{Path: []string{"prediction", "hourly_token_limit"}, After: json.RawMessage(`0`)},
 		{Path: []string{"prediction", "hourly_token_limit"}, After: json.RawMessage(`1099511627776`)},
-		{Path: []string{"prediction", "protocol"}, After: json.RawMessage(`"chat"`)},
-		{Path: []string{"prediction", "protocol"}, After: json.RawMessage(`"openai-completions"`)},
-		{Path: []string{"prediction", "protocol"}, After: json.RawMessage(`"deepseek-fim"`)},
-		{Path: []string{"prediction", "protocol"}, After: json.RawMessage(`"codestral-fim"`)},
-		{Path: []string{"prediction", "endpoint_path"}, After: json.RawMessage(`"fim/completions"`)},
-		{Path: []string{"prediction", "endpoint_path"}, After: json.RawMessage(`""`)},
 	}
-	for _, leaf := range []string{"mode", "hourly_token_limit", "protocol", "endpoint_path"} {
+	for _, leaf := range []string{"mode", "hourly_token_limit"} {
 		valid = append(valid, SettingEdit{Path: []string{"prediction", leaf}})
 	}
 	for _, edit := range valid {
@@ -224,16 +194,16 @@ func TestPredictionSettingEditsScalarVersusMergedValidation(t *testing.T) {
 			t.Errorf("valid edit %q=%s: %v", edit.Path, edit.After, err)
 		}
 	}
-	for _, raw := range []string{`{"mode":"light"}`, `{"mode":"off","mode":"off"}`, `{"mode":"off","\u006dode":"off"}`, `null`, `"off"`, `{"unknown":1}`} {
+	for _, raw := range []string{`{"mode":"ask"}`, `{"mode":"off","mode":"off"}`, `{"mode":"off","\u006dode":"off"}`, `null`, `"off"`, `{"unknown":1}`} {
 		if err := ValidatePredictionSettingEdits(SettingsScopeWorkspace, []SettingEdit{{Path: []string{"prediction"}, After: json.RawMessage(raw)}}); err == nil {
 			t.Errorf("invalid whole object accepted: %s", raw)
 		}
 	}
 	for leaf, values := range map[string][]string{
-		"mode":               {`"LIGHT"`, `""`, `null`, `0`, `{}`, `"off" "light"`, `"\ud800"`},
-		"protocol":           {`"auto"`, `null`, `false`, `[]`, `{"protocol":"chat","protocol":"chat"}`},
+		"mode":               {`"LIGHT"`, `"light"`, `"full"`, `""`, `null`, `0`, `{}`, `"off" "ask"`, `"\ud800"`},
 		"hourly_token_limit": {`-1`, `1099511627777`, `9223372036854775808`, `0.5`, `1e2`, `"1"`, `null`, `false`},
-		"endpoint_path":      {`null`, `1`, `{}`, `"https://secret-do-not-echo/fim"`, `"\udc00"`, `"api/\u202efim"`},
+		"protocol":           {`"chat"`},
+		"endpoint_path":      {`"/v1/completions"`},
 	} {
 		for _, raw := range values {
 			err := ValidatePredictionSettingEdits(SettingsScopeWorkspace, []SettingEdit{{Path: []string{"prediction", leaf}, After: json.RawMessage(raw)}})
@@ -246,13 +216,13 @@ func TestPredictionSettingEditsScalarVersusMergedValidation(t *testing.T) {
 	}
 	// The owner checks cross-field invariants after merging the batch.
 	edits := []SettingEdit{
-		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"light"`)},
+		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"ask"`)},
 		{Path: []string{"prediction", "hourly_token_limit"}, After: json.RawMessage(`25`)},
 	}
 	if err := ValidatePredictionSettingEdits(SettingsScopeWorkspace, edits); err != nil {
 		t.Fatal(err)
 	}
-	patched, err := PatchStoredSettings(json.RawMessage(`{"prediction":{"protocol":"chat"}}`), edits)
+	patched, err := PatchStoredSettings(json.RawMessage(`{"prediction":{"mode":"off"}}`), edits)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,17 +230,17 @@ func TestPredictionSettingEditsScalarVersusMergedValidation(t *testing.T) {
 	if err := json.Unmarshal(patched, &object); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := DecodeWorkspacePredictionSettings(object["prediction"]); err != nil || got != (WorkspacePredictionSettings{"light", 25, "chat", ""}) {
+	if got, err := DecodeWorkspacePredictionSettings(object["prediction"]); err != nil || got != (WorkspacePredictionSettings{"ask", 25}) {
 		t.Fatalf("merged leaves = %+v, %v", got, err)
 	}
-	if _, err := DecodeWorkspacePredictionSettings(json.RawMessage(`{"mode":"light","hourly_token_limit":0}`)); err == nil {
+	if _, err := DecodeWorkspacePredictionSettings(json.RawMessage(`{"mode":"ask","hourly_token_limit":0}`)); err == nil {
 		t.Fatal("final state incorrectly accepted zero cap")
 	}
 }
 
 func TestPredictionSettingEditsNoMutationAndRemovalIsNotExplicitOff(t *testing.T) {
 	edits := []SettingEdit{
-		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"light"`)},
+		{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"ask"`)},
 		{Path: []string{"prediction", "hourly_token_limit"}, After: json.RawMessage(`15`)},
 		{Path: []string{"prediction_grant_id"}, After: json.RawMessage(`"forged"`)},
 	}
@@ -285,7 +255,7 @@ func TestPredictionSettingEditsNoMutationAndRemovalIsNotExplicitOff(t *testing.T
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("validation mutated the input batch")
 	}
-	stored := json.RawMessage(`{"prediction":{"mode":"light","hourly_token_limit":15},"theme":"dark"}`)
+	stored := json.RawMessage(`{"prediction":{"mode":"ask","hourly_token_limit":15},"theme":"dark"}`)
 	remove := []SettingEdit{{Path: []string{"prediction", "mode"}}}
 	off := []SettingEdit{{Path: []string{"prediction", "mode"}, After: json.RawMessage(`"off"`)}}
 	for _, batch := range [][]SettingEdit{remove, off} {
@@ -316,7 +286,7 @@ func TestPredictionSettingEditsNoMutationAndRemovalIsNotExplicitOff(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, err := DecodeWorkspacePredictionSettings(prediction); err != nil || got != (WorkspacePredictionSettings{"off", 15, "chat", ""}) {
+		if got, err := DecodeWorkspacePredictionSettings(prediction); err != nil || got != (WorkspacePredictionSettings{"off", 15}) {
 			t.Fatalf("reset/Off must resolve to workspace Off retaining cap: %+v, %v", got, err)
 		}
 	}

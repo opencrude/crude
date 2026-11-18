@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"crude/insight/catalog"
 )
 
 // Reference has a path and optional one-based source coordinates.
@@ -89,7 +91,22 @@ func Candidate(value string) bool {
 			}
 			letter = letter || unicode.IsLetter(r)
 		}
-		return letter
+		if !letter {
+			return false
+		}
+		if slash >= 0 {
+			return true
+		}
+		// Without a directory, a dotted word is usually code or prose
+		// ("tools[10].parameters", "fmt.Println", "i.e."). Link it only
+		// when the language catalog knows the name or its extension.
+		// Common prose abbreviations stay text; single-letter source names
+		// such as x.go and x.c must still work.
+		if strings.EqualFold(base, "i.e") || strings.EqualFold(base, "e.g") {
+			return false
+		}
+		_, known := catalog.Current().LanguageForPath(base, nil)
+		return known
 	}
 	// Extensionless explicit paths and conventional capitalized filenames are
 	// useful, but slash-separated prose ("and/or") is not a file reference.

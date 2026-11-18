@@ -25,8 +25,8 @@ import (
 	"crude/types"
 )
 
-// Preference/consent acceptance only: the prediction source service is
-// intentionally UNWIRED. This does not accept a prediction service, provider
+// Preference/consent acceptance only: suggestions stay Off until the native
+// choice is saved. This does not accept a prediction service, provider
 // request, budget meter, automatic prediction, or distinct-host transport.
 //
 // Native capture (parent-owned, sequential 160x40 then 80x24):
@@ -38,7 +38,7 @@ import (
 // Identical scripts/tuishot.sh steps at both grids, ending in clean quit:
 //
 //	key:F4
-//	key:Right key:F4
+//	key:Tab key:ctrl+a type:0 key:F2 key:Right key:F4
 //	key:F3 key:Return key:F4
 //	key:F2 key:Tab key:ctrl+a key:BackSpace type:4200 key:F4
 //	key:F3 key:Return key:F4
@@ -72,7 +72,7 @@ func TestPredictionSettingsVisualHeadless(t *testing.T) {
 const predictionSettingsPrivateDraft = "private prediction settings visual draft"
 
 // Expectations are literal journey outcomes, not derived from a UI collector or
-// the persistence implementation. Protocol/endpoint are deliberately untouched.
+// the persistence implementation. Account/format are configured separately.
 var predictionSettingsVisualPhases = []struct {
 	name         string
 	draftMode    types.EditorPredictionMode
@@ -83,11 +83,11 @@ var predictionSettingsVisualPhases = []struct {
 	enters       int
 }{
 	{"Off paint", types.PredictionOff, 0, types.PredictionOff, 0, false, false, 0},
-	{"Light zero-cap draft", types.PredictionLight, 0, types.PredictionOff, 0, false, true, 0},
-	{"zero-cap Save refused", types.PredictionLight, 0, types.PredictionOff, 0, false, true, 1},
-	{"exact cap 4200 paint", types.PredictionLight, 4200, types.PredictionOff, 0, false, true, 1},
-	{"saved Light bound grant", types.PredictionLight, 4200, types.PredictionLight, 4200, true, false, 2},
-	{"Off draft retains committed Light", types.PredictionOff, 4200, types.PredictionLight, 4200, true, true, 2},
+	{"Light zero-cap draft", types.PredictionAsk, 0, types.PredictionOff, 0, false, true, 0},
+	{"zero-cap Save refused", types.PredictionAsk, 0, types.PredictionOff, 0, false, true, 1},
+	{"exact cap 4200 paint", types.PredictionAsk, 4200, types.PredictionOff, 0, false, true, 1},
+	{"saved Light bound grant", types.PredictionAsk, 4200, types.PredictionAsk, 4200, true, false, 2},
+	{"Off draft retains committed Light", types.PredictionOff, 4200, types.PredictionAsk, 4200, true, true, 2},
 	{"saved Off clears grant", types.PredictionOff, 4200, types.PredictionOff, 4200, false, false, 3},
 }
 
@@ -245,21 +245,23 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 	}
 	if m.enters != want.enters ||
 		draft.Prediction != (types.WorkspacePredictionSettings{
-			Mode: want.draftMode, HourlyTokenLimit: want.draftCap, Protocol: types.PredictionChat,
+			Mode: want.draftMode, HourlyTokenLimit: want.draftCap,
 		}) ||
 		saved.Prediction != (types.WorkspacePredictionSettings{
-			Mode: want.savedMode, HourlyTokenLimit: want.savedCap, Protocol: types.PredictionChat,
+			Mode: want.savedMode, HourlyTokenLimit: want.savedCap,
 		}) || (len(model.Edits()) != 0) != want.dirty {
-		return false, fmt.Errorf("ordinary keys did not retain exact draft/committed mode, cap, Chat, empty endpoint or dirty state; Enter=%d", m.enters)
+		return false, fmt.Errorf("ordinary keys did not retain exact draft/committed mode, cap, or dirty state; Enter=%d", m.enters)
 	}
 	for _, leaf := range []struct{ id, value string }{
 		{"prediction.mode", string(want.draftMode)},
 		{"prediction.hourly_token_limit", strconv.FormatInt(want.draftCap, 10)},
-		{"prediction.protocol", "chat"},
-		{"prediction.endpoint_path", ""},
 	} {
 		field := form.Field(leaf.id)
-		if field == nil || field.FieldState().Value.String() != leaf.value ||
+		wantValue := leaf.value
+		if m.phase == 0 && leaf.id == "prediction.hourly_token_limit" {
+			wantValue = "200000"
+		}
+		if field == nil || field.FieldState().Value.String() != wantValue ||
 			field.FieldState().ReadOnly || field.FieldState().Disabled {
 			return false, fmt.Errorf("mounted editable field %s lost its exact native value", leaf.id)
 		}
@@ -311,15 +313,15 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 	// The mode row is near the bottom of a long real page. Native focus, not
 	// observer scrolling, reveals it; exact cap entry reveals the next row.
 	if m.phase == 3 {
-		if !strings.Contains(paint, "Hourly cap") || !strings.Contains(paint, "4200") {
+		if !strings.Contains(paint, "Hourly limit") || !strings.Contains(paint, "4200") {
 			return false, fmt.Errorf("native cap row does not paint literal Hourly cap / 4200")
 		}
 	} else {
 		label := "Off"
-		if want.draftMode == types.PredictionLight {
-			label = "Light"
+		if want.draftMode == types.PredictionAsk {
+			label = "When I ask"
 		}
-		if !strings.Contains(paint, "AI predictions") || !strings.Contains(paint, label) {
+		if !strings.Contains(paint, "Aeron suggestions") || !strings.Contains(paint, label) {
 			return false, fmt.Errorf("native prediction row does not paint literal AI predictions / %s: form=%+v scroll=%d viewport=%d mode=%+v\n%s",
 				label, form.Bounds(), form.Scroll().Offset(), form.Scroll().Viewport(),
 				form.Field("prediction.mode").Bounds(), paint)
@@ -341,7 +343,7 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 	}
 	// At the constrained grid the error status is elided beside Save/Close.
 	// Its exact full model text was independently checked above.
-	if m.phase == 2 && (!strings.Contains(paint, "Correct") || !strings.Contains(paint, "enabled workspace")) {
+	if m.phase == 2 && (!strings.Contains(paint, "Correct") || !strings.Contains(paint, "positive hourly")) {
 		return false, fmt.Errorf("native footer does not paint its zero-cap Save refusal")
 	}
 	line := fmt.Sprintf("F4 VERIFIED phase=%d name=%q grid=%dx%d draft=%s cap=%d committed=%s committed_cap=%d root_bound=%t connection_bound=%t grant_present=%t analysis=static_only defaults=off private_composer=preserved provider_HTTP=0\n",
@@ -369,7 +371,7 @@ func runPredictionSettingsVisual(t *testing.T, headless bool, width, height int)
 	var connectionIdentity string
 	runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
 		cfg.AccountManager = provider.NewAccountManager(cfg.Accounts, nil)
-		binding, err := cfg.AeronPredictionCompleter()
+		binding, err := cfg.SuggestionCompleter()
 		if err != nil || binding.ConnectionIdentity == "" {
 			t.Fatal("fixture could not bind its memory-only Aeron connection")
 		}
@@ -429,7 +431,7 @@ func runPredictionSettingsVisual(t *testing.T, headless bool, width, height int)
 			// barrier is the shared read-only F4 observer, never a mock ACK.
 			groups := [][]tea.KeyPressMsg{
 				{},
-				{{Code: tea.KeyRight}},
+				{{Code: tea.KeyTab}, {Code: 'a', Mod: tea.ModCtrl}, {Code: '0', Text: "0"}, {Code: tea.KeyF2}, {Code: tea.KeyRight}},
 				{{Code: tea.KeyF3}, {Code: tea.KeyEnter}},
 				{
 					{Code: tea.KeyF2}, {Code: tea.KeyTab}, {Code: 'a', Mod: tea.ModCtrl},
@@ -471,8 +473,8 @@ func runPredictionSettingsVisual(t *testing.T, headless bool, width, height int)
 			runErr, closeErr, m.failure, m.phase, calls.Load())
 	}
 	report := strings.Join(m.observations, "") +
-		"PREDICTION_SETTINGS_VISUAL_SUCCESS; real core and remote App, native ordinary preference keys; source service UNWIRED; NOT prediction-service/provider-request/budget-meter acceptance\n"
-	t.Logf("prediction preferences: %d/7 phases, provider HTTP=0; source service UNWIRED", m.phase)
+		"PREDICTION_SETTINGS_VISUAL_SUCCESS; real core and remote App, native ordinary preference keys; suggestions remain Off during this preferences-only journey; NOT prediction-service/provider-request/budget-meter acceptance\n"
+	t.Logf("prediction preferences: %d/7 phases, provider HTTP=0; suggestions remain Off during this preferences-only journey", m.phase)
 	if result := os.Getenv("CRUDE_PREDICTION_SETTINGS_VISUAL_RESULT"); !headless && result != "" {
 		if err := os.WriteFile(result, []byte(report), 0600); err != nil {
 			t.Fatal(err)

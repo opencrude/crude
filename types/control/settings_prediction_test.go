@@ -20,7 +20,7 @@ func TestPredictionConsentIsHumanAuthorityAtEverySettingsBoundary(t *testing.T) 
 	}
 	before := types.AppSettings{Prediction: types.DefaultWorkspacePredictionSettings()}
 	after := types.CloneAppSettings(before)
-	after.Prediction = types.WorkspacePredictionSettings{Mode: types.PredictionLight, Protocol: types.PredictionChat, HourlyTokenLimit: 4200}
+	after.Prediction = types.WorkspacePredictionSettings{Mode: types.PredictionAsk, HourlyTokenLimit: 4200}
 	if !control.SettingsChangesAuthority(before, after, "") || !control.SettingsChangesAuthority(after, before, "") {
 		t.Fatal("container save/reset bypassed prediction's human-only boundary")
 	}

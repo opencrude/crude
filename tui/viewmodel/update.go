@@ -52,6 +52,7 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	msg = ui.NormalizeKeyMsg(msg)
 	if paste, pasted := msg.(tea.PasteMsg); pasted {
 		// One decode for every text owner: composer, fields, editor, terminals.
 		msg = tea.PasteMsg{Content: ui.PastedLineBreaks(paste.Content)}
@@ -125,6 +126,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncNavigationHistory()
 	command = tea.Batch(command, m.syncCompletion())
 	command = tea.Batch(command, m.autoCompletionCmd(time.Now()))
+	command = tea.Batch(command, m.autoSuggestionCmd(time.Now()))
 	command = tea.Batch(command, m.syncInlayHints())
 	command = tea.Batch(command, m.syncSemanticTokens())
 	command = tea.Batch(command, m.syncOccurrences())
@@ -334,6 +336,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case shellport.SettingsChangedMsg:
 		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+		m.applySuggestionSettings(m.ws.LoadAppSettings().Prediction)
 		m.applyTextDirectionSettings(m.ws.LoadAppSettings())
 		treeCmd := m.applyTreeHiddenSetting()
 		// Auto Review may have been turned on or off: waiting confirmations
@@ -490,8 +493,20 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.openWorkspacePathSwitcher()
 		}
 		return m, nil
+	case suggestionWakeMsg:
+		return m, nil
+	case finishChangeMsg:
+		return m, tea.Batch(m.applyFinishChange(msg)...)
+	case suggestionResultMsg:
+		m.applySuggestionResult(msg)
+		return m, nil
+	case suggestionStatusMsg:
+		m.applySuggestionStatus(msg)
+		return m, nil
 	case shellfooter.ActionMsg:
 		switch msg.Action {
+		case suggestionFooter:
+			return m, m.openSuggestionMenu()
 		case "workspace":
 			m.toggleWorkspacePanel(termdock.PanelWorkspace)
 		case "problems":
