@@ -56,6 +56,10 @@ run it. No compiler, source checkout or elevation is required. Run the same
 command again to update. The latest release is used unless you name a version;
 an explicit version can select a prerelease.
 
+The install commands on the website serve copies of these two files. A change
+to either installer reaches them only after a pages deploy, so dispatch it and
+check the served file ([website](website.md#install-commands)).
+
 | Action | Linux | Windows |
 |---|---|---|
 | Use the defaults without questions | `--yes` | `-Yes` |
