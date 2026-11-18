@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/buildinfo"
 	"crude/core/port"
 	"crude/core/protocol"
 	"crude/metrics"
@@ -26,7 +27,7 @@ type diagnosticControlDoneMsg struct {
 // client-I/O lifecycle. No chart visibility, focus or dashboard state is changed.
 func (m *App) handleDiagnosticControl(msg shellport.ControlRequestMsg) (tea.Cmd, bool) {
 	r := msg.Envelope.Request
-	if r.CommandID != "performance.shell" && r.CommandID != "connection.inspect" {
+	if r.CommandID != "performance.shell" && r.CommandID != "performance.archive.shell" && r.CommandID != "connection.inspect" {
 		return nil, false
 	}
 	fail := func(code control.FaultCode, text string) (tea.Cmd, bool) {
@@ -74,10 +75,17 @@ func (m *App) handleDiagnosticControl(msg shellport.ControlRequestMsg) (tea.Cmd,
 		return m.replyShellControl(msg, control.Result{State: control.Applied, Output: raw}), true
 	}
 	var in coreprotocol.PerformanceInspectRequest
-	if err := decodeShellInput(r.Input, &in); err != nil {
+	var archive perfdata.ArchiveQuery
+	pageRequest := &in.Page
+	if r.CommandID == "performance.archive.shell" {
+		if err := decodeShellInput(r.Input, &archive); err != nil {
+			return fail(control.Invalid, err.Error())
+		}
+		pageRequest = &archive.Page
+	} else if err := decodeShellInput(r.Input, &in); err != nil {
 		return fail(control.Invalid, err.Error())
 	}
-	if _, err := in.Page.Normalize(); err != nil {
+	if _, err := pageRequest.Normalize(); err != nil {
 		return fail(control.Invalid, err.Error())
 	}
 	if m.shellControlPending >= 16 {
@@ -85,7 +93,7 @@ func (m *App) handleDiagnosticControl(msg shellport.ControlRequestMsg) (tea.Cmd,
 	}
 	m.shellControlPending++
 	generation := m.workspaceSwitchGen.Load()
-	key := fmt.Sprintf("%s/%d/%s/%s/%s", current.Shell.ClientID, current.Shell.Epoch, current.WorkspaceID, r.Caller.AgentID, r.Caller.RunID)
+	key := fmt.Sprintf("%s/%d/%s/%s/%s", current.Shell.ClientID, current.Shell.Epoch, current.WorkspaceID, r.Caller.AgentID, r.Caller.RunID) + "/" + r.CommandID
 	if r.Caller.Kind == control.ExternalCaller {
 		key += "/" + r.Caller.ClientID
 	}
@@ -94,7 +102,17 @@ func (m *App) handleDiagnosticControl(msg shellport.ControlRequestMsg) (tea.Cmd,
 	cmd := m.clientIOCommand(context.Background(), func(parent context.Context) tea.Msg {
 		ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 		defer cancel()
-		page, err := metrics.InspectWith(ctx, &m.diagnosticReads, key, metrics.InspectQuery{Page: in.Page, Seconds: in.Seconds, Points: in.Points}, func(s metrics.Snapshot) []inspect.Record { return perfdata.InspectionRecords(s, "shell") })
+		var page inspect.Page
+		var err error
+		if r.CommandID == "performance.archive.shell" {
+			var home string
+			home, err = buildinfo.Home()
+			if err == nil {
+				page, err = perfdata.InspectArchive(ctx, &m.diagnosticReads, key, perfdata.ArchivePath(home), "shell", archive)
+			}
+		} else {
+			page, err = metrics.InspectWith(ctx, &m.diagnosticReads, key, metrics.InspectQuery{Page: in.Page, Seconds: in.Seconds, Points: in.Points}, func(s metrics.Snapshot) []inspect.Record { return perfdata.InspectionRecords(s, "shell") })
+		}
 		result := control.Result{State: control.Applied}
 		if err != nil {
 			result.State = control.Failed

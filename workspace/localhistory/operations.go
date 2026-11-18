@@ -88,6 +88,11 @@ func (s *Store) RecordAgentOperation(ctx context.Context, operation AgentOperati
 	if _, err := tx.ExecContext(ctx, `INSERT INTO history_agent_operations(operation_id,session_id,message_id,agent_id,source,status,created_at) VALUES(?,?,?,?,?,'prepared',?)`, operation.ID, operation.SessionID, operation.MessageID, operation.AgentID, operation.Source, time.Now().UnixNano()); err != nil {
 		return err
 	}
+	if operation.RunID != "" {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO history_agent_operation_runs(run_id,operation_id) VALUES(?,?)`, operation.RunID, operation.ID); err != nil {
+			return err
+		}
+	}
 	for index, path := range stored {
 		beforeJSON, err := marshalOptionalEntry(path.before)
 		if err != nil {

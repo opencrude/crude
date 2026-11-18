@@ -4,16 +4,18 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
 // AgentInspection separates the active attempt from retained history. Reading
 // it never attaches an agent, admits a delivery or changes lifecycle ownership.
 type AgentInspection struct {
-	Agent     Agent             `json:"agent"`
-	Run       *Run              `json:"run"`
-	LatestRun *Run              `json:"latest_run"`
-	Reports   []ArtifactSummary `json:"reports"`
+	Agent       Agent             `json:"agent"`
+	Run         *Run              `json:"run"`
+	LatestRun   *Run              `json:"latest_run"`
+	Reports     []ArtifactSummary `json:"reports"`
+	SelectedRun *Run              `json:"selected_run,omitempty"`
 }
 
 // ArtifactSummary deliberately excludes the potentially large body and metadata.
@@ -29,6 +31,17 @@ type ArtifactSummary struct {
 }
 
 func (store *Store) InspectAgent(ctx context.Context, id string) (AgentInspection, error) {
+	return store.InspectAgentAttempt(ctx, id, "")
+}
+
+// InspectAgentAttempt binds reports to the selected attempt without redefining
+// the agent's current or latest run. No historical session is opened.
+func (store *Store) InspectAgentAttempt(ctx context.Context, id, runID string) (AgentInspection, error) {
+	if runID != "" {
+		if err := validateIdentity("run_id", runID, 256); err != nil {
+			return AgentInspection{}, err
+		}
+	}
 	if err := validateIdentity("agent_id", id, 256); err != nil {
 		return AgentInspection{}, err
 	}
@@ -60,14 +73,25 @@ func (store *Store) InspectAgent(ctx context.Context, id string) (AgentInspectio
 				result.LatestRun = &run
 			}
 		}
-		if result.LatestRun == nil {
+		selected := result.LatestRun
+		if runID != "" {
+			run, err := loadRun(ctx, tx, runID)
+			if err != nil {
+				return err
+			}
+			if run.AgentID != id {
+				return fmt.Errorf("%w: run does not belong to this agent", ErrNotFound)
+			}
+			result.SelectedRun, selected = &run, &run
+		}
+		if selected == nil {
 			return nil
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT a.id,a.revision,a.author_id,a.run_id,a.kind,
 			substr(a.summary,1,800),a.created_at FROM collaboration_artifacts a
 			WHERE a.author_id=? AND a.run_id=?
 			AND a.revision=(SELECT MAX(b.revision) FROM collaboration_artifacts b WHERE b.id=a.id)
-			ORDER BY a.created_at DESC,a.id LIMIT 5`, id, result.LatestRun.ID)
+			ORDER BY a.created_at DESC,a.id LIMIT 5`, id, selected.ID)
 		if err != nil {
 			return err
 		}
@@ -110,6 +134,67 @@ func (store *Store) InspectionEvent(ctx context.Context, agentID, eventID string
 		event.CreatedAt = timeFromUnixNano(created)
 		result = &event
 		return nil
+	})
+	return result, err
+}
+
+// RunPage is a chronological page from the run journal. Before identifies the
+// last row of the next-newer page, not a floating SQL offset.
+type RunPage struct {
+	Runs   []Run  `json:"runs"`
+	Before string `json:"before_run,omitempty"`
+}
+
+func (store *Store) ListRuns(ctx context.Context, agentID, before string, limit int) (RunPage, error) {
+	if limit < 1 || limit > 128 {
+		return RunPage{}, errors.New("run history limit must be 1 to 128")
+	}
+	if agentID != "" {
+		if err := validateIdentity("agent_id", agentID, 256); err != nil {
+			return RunPage{}, err
+		}
+	}
+	if before != "" {
+		if err := validateIdentity("before_run", before, 256); err != nil {
+			return RunPage{}, err
+		}
+	}
+	result := RunPage{Runs: []Run{}}
+	err := store.readTransaction(ctx, func(tx *sql.Tx) error {
+		query := `SELECT ` + runColumns + ` FROM collaboration_runs WHERE workspace_id=?`
+		args := []any{store.workspaceID}
+		if agentID != "" {
+			query += ` AND agent_id=?`
+			args = append(args, agentID)
+		}
+		if before != "" {
+			anchor, err := loadRun(ctx, tx, before)
+			if err != nil {
+				return err
+			}
+			if agentID != "" && anchor.AgentID != agentID {
+				return fmt.Errorf("%w: run history cursor belongs to another agent", ErrNotFound)
+			}
+			query += ` AND (started_at,id)<(?,?)`
+			args = append(args, anchor.StartedAt.UnixNano(), anchor.ID)
+		}
+		rows, err := tx.QueryContext(ctx, query+` ORDER BY started_at DESC,id DESC LIMIT ?`, append(args, limit+1)...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			run, err := scanRun(rows)
+			if err != nil {
+				return err
+			}
+			if len(result.Runs) == limit {
+				result.Before = result.Runs[limit-1].ID
+				break
+			}
+			result.Runs = append(result.Runs, run)
+		}
+		return rows.Err()
 	})
 	return result, err
 }

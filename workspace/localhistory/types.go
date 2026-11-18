@@ -63,6 +63,7 @@ type RetainedFile struct {
 }
 
 type AgentOperation struct {
+	RunID     string
 	ID        string
 	SessionID string
 	MessageID string

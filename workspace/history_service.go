@@ -618,7 +618,7 @@ func (s *LocalHistoryService) RecordAgentMutation(ctx context.Context, mutation 
 	}
 	operation := localhistory.AgentOperation{
 		ID: mutation.Receipt.OperationID, SessionID: mutation.SessionID, MessageID: mutation.MessageID,
-		AgentID: mutation.AgentID, Source: mutation.Receipt.OperationName,
+		AgentID: mutation.AgentID, RunID: mutation.RunID, Source: mutation.Receipt.OperationName,
 		Paths: make([]localhistory.OperationPath, 0, len(mutation.Receipt.Paths)),
 	}
 	for index, receiptPath := range mutation.Receipt.Paths {

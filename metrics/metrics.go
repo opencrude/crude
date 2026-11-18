@@ -118,16 +118,20 @@ func (h *histogram) add(o *histogram) {
 // quantile estimates the q-quantile as its bucket's upper bound, clamped to
 // the observed maximum so a single sample reports its true value.
 func (h *histogram) quantile(q float64, count uint64, maximum int64) int64 {
+	return latencyQuantile(h[:], bucketBounds[:], q, count, maximum)
+}
+
+func latencyQuantile[N ~uint32 | ~uint64](bins []N, bounds []int64, q float64, count uint64, maximum int64) int64 {
 	if count == 0 {
 		return 0
 	}
 	target := max(uint64(q*float64(count)+0.5), 1)
 	var seen uint64
-	for i, n := range h {
+	for i, n := range bins {
 		seen += uint64(n)
 		if seen >= target {
-			if i < len(bucketBounds) {
-				return min(bucketBounds[i], maximum)
+			if i < len(bounds) {
+				return min(bounds[i], maximum)
 			}
 			return maximum
 		}

@@ -33,6 +33,16 @@ jobs:
         run: . scripts/libghostty_env.sh && golangci-lint run ./...
       - name: Design, documentation and performance gates
         run: make design-audit docs-check bench-gate
+        env:
+          BENCH_EVIDENCE: ${{ runner.temp }}/crude-benchmarks.txt
+      - name: Retain performance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: performance-${{ github.sha }}-linux-amd64
+          path: ${{ runner.temp }}/crude-benchmarks.txt
+          retention-days: 90
+          if-no-files-found: ignore
       - name: Build
         run: make build
       - name: Full test suite

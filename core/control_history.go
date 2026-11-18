@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 
+	"crude/agent/collaboration"
 	"crude/core/protocol"
 	"crude/types/control"
 	"crude/workspace"
@@ -15,7 +16,7 @@ import (
 // dispatcher must call this before generic history/discard mapping, and fence
 // new session creation until the owner-only finish hook runs after the receipt.
 func (a *actor) prepareControlHistory(in control.Request, owner coreprotocol.Owner) (run func(context.Context) control.Result, publish func(control.Result) control.Result, finish func(), handled bool) {
-	if in.CommandID != "history.timeline" && in.CommandID != "history.plan" && in.CommandID != "history.apply" && in.CommandID != "git.discard_preview" && in.CommandID != "git.discard_reviewed" {
+	if in.CommandID != "history.run_changes" && in.CommandID != "history.timeline" && in.CommandID != "history.plan" && in.CommandID != "history.apply" && in.CommandID != "git.discard_preview" && in.CommandID != "git.discard_reviewed" {
 		return nil, nil, nil, false
 	}
 	refuse := func(code control.FaultCode, text string) (func(context.Context) control.Result, func(control.Result) control.Result, func(), bool) {
@@ -34,6 +35,7 @@ func (a *actor) prepareControlHistory(in control.Request, owner coreprotocol.Own
 		return refuse(control.Denied, err.Error())
 	}
 	ws, documents, history, store := a.ws, a.ws.LiveDocuments, a.ws.HistoryService, a.ws.LocalHistory
+	journal := ws.Collaboration
 	mutating := in.CommandID == "history.apply" || in.CommandID == "git.discard_reviewed"
 	release := func() {}
 	if mutating {
@@ -69,6 +71,27 @@ func (a *actor) prepareControlHistory(in control.Request, owner coreprotocol.Own
 			return fail(errors.New("mandatory Local History is unavailable"))
 		}
 		switch in.CommandID {
+		case "history.run_changes":
+			var query localhistory.RunChangeQuery
+			if err := controlDecode(in.Input, &query); err != nil {
+				return fail(err)
+			}
+			if journal == nil {
+				return fail(errors.New("the workspace run journal is unavailable"))
+			}
+			attempt, err := journal.Run(ctx, query.RunID)
+			if err != nil {
+				if errors.Is(err, collaboration.ErrNotFound) {
+					return fail(errors.New("this run is not in the workspace journal"))
+				}
+				return fail(err)
+			}
+			out, err := store.InspectRunChanges(ctx, attempt.AgentID, query)
+			if err != nil {
+				return fail(err)
+			}
+			// This is a semantic-control value, not a separate typed RPC.
+			return coreprotocol.Response{ID: request.ID, Value: out}
 		case "history.timeline":
 			var p coreprotocol.HistoryListRequest
 			if err := decodeJSON(in.Input, &p); err != nil {

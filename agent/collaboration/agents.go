@@ -561,15 +561,19 @@ func scanAgent(row scanner) (Agent, error) {
 	return agent, nil
 }
 
+const runColumns = `id,agent_id,runtime_epoch,request_id,origin,state,version,
+	outcome,context_commit_id,started_at,updated_at,ended_at`
+
 func loadRun(ctx context.Context, tx *sql.Tx, id string) (Run, error) {
+	return scanRun(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM collaboration_runs WHERE id=?`, id))
+}
+
+func scanRun(row interface{ Scan(...any) error }) (Run, error) {
 	var run Run
 	var origin, state string
 	var startedAt, updatedAt, endedAt int64
-	err := tx.QueryRowContext(ctx, `SELECT id,agent_id,runtime_epoch,request_id,origin,state,version,
-		outcome,context_commit_id,started_at,updated_at,ended_at
-		FROM collaboration_runs WHERE id=?`, id).
-		Scan(&run.ID, &run.AgentID, &run.RuntimeEpoch, &run.RequestID, &origin, &state,
-			&run.Version, &run.Outcome, &run.ContextCommitID, &startedAt, &updatedAt, &endedAt)
+	err := row.Scan(&run.ID, &run.AgentID, &run.RuntimeEpoch, &run.RequestID, &origin, &state,
+		&run.Version, &run.Outcome, &run.ContextCommitID, &startedAt, &updatedAt, &endedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Run{}, ErrNotFound
 	}

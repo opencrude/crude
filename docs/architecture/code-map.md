@@ -69,7 +69,7 @@ Single-purpose leaves stay at the root: `assets/`, `buildinfo/`, `clientstate/`,
 | `retry/` | The single automatic-cooldown contract (five-minute ceiling). |
 | `metrics/` | Bounded per-process performance history (latency, counters, gauges, keyed tables, stall events) and, per snapshot, OS resource usage (memory, CPU, started processes, disk via a registered source) read by the Performance surface ([performance baselines](../reference/performance-baselines.md)). |
 | `sysload/` | Observes the computer for background work: power source, CPU/memory/I/O pressure (Linux PSI) or idle cores, and available memory. Read off the UI goroutine by the closed-file check ([editor](../reference/editor.md#project-check-of-closed-files)). |
-| `perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection; no sampling or state owner. |
+| `perfdata/` | Neutral canonical performance findings, headlines and host-qualified resource projection, shared by dashboard and semantic inspection. Owns the host-local durable performance archive, not the live registry. |
 | `types/inspect/` | Owner-bound immutable diagnostic pages with encoded-byte/range/retention bounds; no telemetry registry, authorization or background collector. |
 | `network/` | Shared outbound HTTP transport, proxy, trust and client identity. |
 | `agent/toolstore/` | Read-only folders for acquired code-intelligence tools under `CRUDE_HOME`: bounded downloads, safe extraction, manifests, usage, history and previewed removal ([tool store](../reference/tool-store.md)). Records the caller's approval; owns no approval or language knowledge. |

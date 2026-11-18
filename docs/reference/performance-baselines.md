@@ -900,6 +900,9 @@ are not independent verification of every pixel between them.
 
 ## Performance dashboard and dense-session freezes (2026-10-22)
 
+For readings beyond the live ring, see [Durable performance](durable-evidence.md#compare-builds).
+The archive does not change the live measurements or the benchmark ceilings.
+
 `metrics/` records bounded per-second history for one process: the shell and
 the core each own a registry, and the app-level Performance surface (bottom-bar
 **Performance**, palette "Performance", `tui/screens/perfdash/`) reads both, the

@@ -1200,7 +1200,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			return err
 		}
 		agentMsgs, activeContext = recoveryState.contexts()
-		return s.finalizeTurnLocked(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
+		return s.finalizeTurnLocked(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, collaborationRun.ID, turnIdentity, activeContext)
 	}
 	finalizeErr := finalize()
 	for finalizeErr != nil {
@@ -1530,7 +1530,7 @@ func (s *Session) finalizeTurn(
 	activeContext ...[]provider.ChatMessage,
 ) (resultErr error) {
 	s.msgsMu.Lock()
-	return s.finalizeTurnLocked(agentMsgs, contextPrefixLen, tracker, finalContent, msgID, turnIdentity, activeContext...)
+	return s.finalizeTurnLocked(agentMsgs, contextPrefixLen, tracker, finalContent, msgID, "", turnIdentity, activeContext...)
 }
 
 // finalizeTurnLocked owns release of msgsMu, including before the off-UI memory
@@ -1542,6 +1542,7 @@ func (s *Session) finalizeTurnLocked(
 	tracker *displayMetaTracker,
 	finalContent string,
 	msgID string,
+	runID string,
 	turnIdentity ttypes.TurnIdentity,
 	activeContext ...[]provider.ChatMessage,
 ) (resultErr error) {
@@ -1657,6 +1658,7 @@ func (s *Session) finalizeTurnLocked(
 			}
 		}
 		if m.Role == "assistant" || m.Role == "tool" {
+			dm.RunID = runID
 			dm.TurnGeneration = turnIdentity.Generation
 			dm.ProviderID = turnIdentity.ProviderID
 			dm.AccountID = turnIdentity.AccountID

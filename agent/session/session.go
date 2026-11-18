@@ -20,6 +20,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
+	"crude/agent/tools"
 	"crude/clipboard"
 	"crude/logger"
 	"crude/search"
@@ -234,6 +235,7 @@ type Session struct {
 	historyContinueEnd   func(context.Context, string, string) error
 	beforeTurn           func(context.Context, string) error
 	historyMutation      func(context.Context, HistoryMutation) error
+	workingSet           func(string) *ttypes.WorkingSetEvidence
 	historyWg            sync.WaitGroup
 	historyFinalizers    atomic.Int32
 }
@@ -245,6 +247,7 @@ type HistoryMutation struct {
 	SessionID string
 	MessageID string
 	AgentID   string
+	RunID     string
 	Receipt   fileio.MutationReceipt
 	Committed *bool
 }
@@ -348,7 +351,11 @@ func (s *Session) prepareHistoryMutation(ctx context.Context, receipt fileio.Mut
 	if record == nil {
 		return nil, nil
 	}
-	if err := record(ctx, HistoryMutation{SessionID: scope.sessionID, MessageID: scope.messageID, AgentID: scope.agentID, Receipt: receipt}); err != nil {
+	identity, _ := ctx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
+	if identity.AgentID != scope.agentID {
+		identity.RunID = ""
+	}
+	if err := record(ctx, HistoryMutation{SessionID: scope.sessionID, MessageID: scope.messageID, AgentID: scope.agentID, RunID: identity.RunID, Receipt: receipt}); err != nil {
 		if errors.Is(err, ErrHistoryDisabled) {
 			// Local History is off: the mutation proceeds unrecorded.
 			return nil, nil

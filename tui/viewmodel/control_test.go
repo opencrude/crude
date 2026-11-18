@@ -156,6 +156,17 @@ func TestConnectedShellControlFileMountAndDirtyDecision(t *testing.T) {
 		t.Fatal("opened content not painted")
 	}
 	one.app.EditorState.Editor.InsertRune('X')
+	seen := requestShellForTest(t, runtime, shells, one, "shell.inspect", map[string]any{"include_diagnostics": true}, nil)
+	var workingSet openFilesInspection
+	if seen.State != control.Applied || json.Unmarshal(seen.Output, &workingSet) != nil || len(workingSet.Editors) != 1 ||
+		workingSet.Editors[0].DiagnosticEvidence != "not_observed" || !strings.Contains(string(seen.Output), "control.txt") ||
+		strings.Contains(string(seen.Output), "real connected editor content") {
+		t.Fatalf("exact shell did not expose safe open-file evidence: %s", seen.Output)
+	}
+	seen = requestShellForTest(t, runtime, shells, two, "shell.inspect", map[string]any{"include_diagnostics": true}, nil)
+	if seen.State != control.Applied || strings.Contains(string(seen.Output), "control.txt") {
+		t.Fatalf("another shell exposed the original shell's editor: %s", seen.Output)
+	}
 	tab := one.app.Win.ActiveTab()
 	result = requestShellForTest(t, runtime, shells, one, "tab.close", map[string]any{"tab_id": tab.ID}, nil)
 	if result.State != control.PendingDecision || one.app.DirtyPromptPath == "" || one.app.Win.IndexOf(tab.ID) < 0 {

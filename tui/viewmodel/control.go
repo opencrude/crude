@@ -35,7 +35,7 @@ import (
 // discovery. Registration does not authorize any of these operations.
 func ShellCommandDescriptor(id string) (control.Descriptor, bool) {
 	switch id {
-	case "core.restart", "core.restart.inspect", "core.restart.cancel", "shell.inspect", "shell.controls", "shell.describe_control", "performance.shell", "connection.inspect", "tree.set_visible", "tree.set_width", "tree.reveal", "tree.filter", "pane.split", "pane.merge", "pane.focus", "pane.resize", "tab.select", "tab.close", "file.open", "editor.navigate", "editor.select", "terminal.open", "terminal.show", "terminal.hide", "terminal.resize_dock", "panel.show", "panel.hide", "settings.open":
+	case "core.restart", "core.restart.inspect", "core.restart.cancel", "shell.inspect", "shell.controls", "shell.describe_control", "performance.shell", "performance.archive.shell", "connection.inspect", "tree.set_visible", "tree.set_width", "tree.reveal", "tree.filter", "pane.split", "pane.merge", "pane.focus", "pane.resize", "tab.select", "tab.close", "file.open", "editor.navigate", "editor.select", "terminal.open", "terminal.show", "terminal.hide", "terminal.resize_dock", "panel.show", "panel.hide", "settings.open":
 		return control.Lookup(id)
 	default:
 		return productDescriptor(id)
@@ -90,6 +90,7 @@ type shellInspection struct {
 	ActiveGroup window.GroupID       `json:"active_group"`
 	Groups      []window.GroupID     `json:"groups"`
 	Tabs        []shellTabInspection `json:"tabs"`
+	TabsOmitted int                  `json:"tabs_omitted,omitempty"`
 	Width       int                  `json:"width"`
 	Height      int                  `json:"height"`
 	Revision    uint64               `json:"revision"`
@@ -119,7 +120,9 @@ func (m *App) inspectShell() shellInspection {
 	if m.Win != nil {
 		s.ActiveGroup = m.Win.ActiveGroup()
 		s.Groups = m.Win.GroupIDs()
-		for _, tab := range m.Win.Tabs() {
+		tabs := m.Win.Tabs()
+		s.TabsOmitted = max(0, len(tabs)-control.MaxPageLimit)
+		for _, tab := range tabs {
 			if len(s.Tabs) >= control.MaxPageLimit {
 				break
 			}
@@ -325,10 +328,17 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		m.forceFrame()
 		return tea.Batch(cmd, m.replyShellControl(msg, result))
 	case "shell.inspect":
-		if err := empty(); err != nil {
+		var in struct {
+			IncludeDiagnostics bool `json:"include_diagnostics"`
+		}
+		if err := decodeShellInput(r.Input, &in); err != nil {
 			return invalid(err)
 		}
-		result.Output, _ = json.Marshal(s)
+		if in.IncludeDiagnostics {
+			result.Output, _ = json.Marshal(m.inspectOpenFiles(s))
+		} else {
+			result.Output, _ = json.Marshal(s)
+		}
 		result.Revision = &s.Revision
 	case "shell.controls":
 		var in control.PageRequest

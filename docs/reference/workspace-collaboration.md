@@ -82,6 +82,10 @@ sleep merely to notice an ordinary message, report, or terminal outcome.
 
 ### Passive inspection
 
+Exact-attempt inspection and following the authoritative file receipts are described in
+[Durable evidence](durable-evidence.md#inspect-an-exact-run). A historical run
+selection does not change the current agent or resume its session.
+
 Resolve an agent's exact name with `agent_list`, then call
 `agent_inspect(agent_id)` with the returned stable ID. Presence describes runtime
 attachment, not task progress. `run` is current only and is null when none exists;

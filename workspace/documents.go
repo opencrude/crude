@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
+	"crude/types"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
@@ -931,4 +933,57 @@ func (s *DocumentService) Format(ctx context.Context, owner document.Owner, id, 
 		return snap, err
 	}
 	return s.Snapshot(id)
+}
+
+// OpenDocumentEvidence is the core's accepted named working set, not a shell's
+// open-tab list. Private buffers, authors, viewport and text are not exported.
+type OpenDocumentEvidence struct {
+	Source   types.InsightSource
+	Dirty    bool
+	Conflict bool
+}
+
+func (s *DocumentService) InspectOpenDocuments() ([]OpenDocumentEvidence, bool) {
+	// A slow save must not hide every other diagnostic for its duration.
+	if !s.mu.TryLock() {
+		return nil, false
+	}
+	defer s.mu.Unlock()
+	if s.closed || s.stateErr != nil {
+		return nil, false
+	}
+	out := make([]OpenDocumentEvidence, 0, len(s.docs))
+	for _, d := range s.docs {
+		b := d.snapshot
+		if b.Path == "" || len(d.owners) == 0 {
+			continue
+		}
+		out = append(out, OpenDocumentEvidence{Source: types.InsightSource{WorkspaceGeneration: b.AnalysisGeneration,
+			Lifetime: b.AnalysisLifetime, DocumentID: b.ID, Path: b.Path, Revision: b.Revision, Kind: types.InsightSourceCanonical}, Dirty: b.Dirty, Conflict: b.Conflict})
+	}
+	return out, true
+}
+
+func (s *DocumentService) workingSetBrief(workDir string) *types.WorkingSetEvidence {
+	// An isolated run must not treat the logical workspace's files as its
+	// own open checkout. A headless logical run can see accepted named files.
+	if workDir != s.root {
+		return nil
+	}
+	docs, available := s.InspectOpenDocuments()
+	brief := &types.WorkingSetEvidence{Available: available, Open: []types.WorkingDocument{}}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Source.Path < docs[j].Source.Path })
+	for _, doc := range docs {
+		if len(brief.Open) == 6 {
+			brief.Omitted++
+			continue
+		}
+		path, err := filepath.Rel(s.root, doc.Source.Path)
+		if err != nil || !filepath.IsLocal(path) || len(path) > 512 {
+			brief.Omitted++
+			continue
+		}
+		brief.Open = append(brief.Open, types.WorkingDocument{Path: filepath.ToSlash(path), Revision: doc.Source.Revision, Dirty: doc.Dirty})
+	}
+	return brief
 }

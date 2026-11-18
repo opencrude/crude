@@ -19,6 +19,21 @@ cd "$(dirname "$0")/.."
 CEILINGS_FILE="scripts/perf_ceilings.txt"
 BENCH_GOOS="$(go env GOOS)"
 
+# Optional, caller-owned durable evidence in Go benchmark format. The gate uses
+# the same samples and ceilings whether or not evidence is requested.
+if [[ -n "${BENCH_EVIDENCE:-}" ]]; then
+  revision="$(git rev-parse HEAD)"
+  cohort="$(sed -n 's/^const ProtocolBuild = "\([0-9a-f]*\)"$/\1/p' buildinfo/cohort_gen.go)"
+  [[ ${#cohort} -eq 64 ]]
+  tree_state=clean
+  if [[ -n "$(git status --porcelain)" ]]; then tree_state=modified; fi
+  {
+    printf 'revision: %s\nsource_cohort: %s\nworktree: %s\n' "$revision" "$cohort" "$tree_state"
+    printf 'go_version: %s\ngomaxprocs: 2\nos_release: %s\n' "$(go env GOVERSION)" "$(uname -rs)"
+    printf 'suite: crude-bench-gate\n'
+  } > "$BENCH_EVIDENCE"
+fi
+
 # name -> "bytes allocs" ceilings. A four-column "<name> <goos> <bytes>
 # <allocs>" row overrides the generic three-column row for the active GOOS.
 ceiling() {
@@ -49,6 +64,9 @@ run_bench() {
     fail=1
     return
   }
+  if [[ -n "${BENCH_EVIDENCE:-}" ]]; then
+    printf '\nbenchmark_expression: %s\nbenchmark_duration: %s\n%s\n' "$1" "${BENCHTIME:-1s}" "$out" >> "$BENCH_EVIDENCE"
+  fi
   # Parse "BenchmarkName-N  count  ns/op  B/op  allocs/op"
   # fields: 1=name 2=count 3=ns 4=ns/op 5=B 6=B/op 7=allocs 8=allocs/op
   while read -r name _ _ _ b _ alloc _; do

@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"crude/agent/session"
 	ttypes "crude/types"
 	"crude/types/recovery"
+	"crude/workspace/document"
 	"crude/workspace/localhistory"
 )
 
@@ -84,8 +86,26 @@ func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		seen := false
+		for _, msg := range request.Messages {
+			text := msg.ContentString()
+			if strings.Contains(text, `"open_named_documents":[{"path":"source.txt"`) {
+				seen = true
+			}
+			if strings.Contains(text, "tracked before prompting") {
+				t.Error("the turn brief sent the contents of an open document")
+			}
+		}
+		if !seen {
+			t.Error("the new turn did not receive the accepted open document metadata")
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
@@ -93,6 +113,9 @@ func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
 	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}})
+	if _, err := ws.LiveDocuments.Open(document.Owner{ClientID: "brief-shell", Epoch: 1}, "source.txt"); err != nil {
+		t.Fatal(err)
+	}
 	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
 	if err != nil {
 		t.Fatal(err)
@@ -182,6 +205,14 @@ func TestAgentUndoProductionPathPreservesExternalPreimage(t *testing.T) {
 		t.Fatal("turn was not admitted")
 	}
 	waitHistoryAgentDone(t, sender, orchestrator.ID)
+	journal, err := ws.Collaboration.InspectAgent(t.Context(), orchestrator.ID)
+	if err != nil || journal.LatestRun == nil {
+		t.Fatalf("no real run to inspect: %+v %v", journal, err)
+	}
+	evidence, err := ws.LocalHistory.InspectRunChanges(t.Context(), orchestrator.ID, localhistory.RunChangeQuery{RunID: journal.LatestRun.ID})
+	if err != nil || len(evidence.Changes) != 1 || evidence.Changes[0].State != "committed" || evidence.Changes[0].Path != "shared.txt" {
+		t.Fatalf("real file tool did not publish exact-run evidence: %+v %v", evidence, err)
+	}
 	scopes := waitAgentHistoryScopes(t, ws.HistoryService, frontend.SessionID, orchestrator.ID)
 	if len(scopes) != 1 {
 		t.Fatalf("agent scopes=%+v", scopes)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"crude/agent/collaboration"
 	"crude/core/protocol"
 	"crude/metrics"
 	"crude/perfdata"
@@ -118,7 +119,7 @@ func semanticInspectionOwner(owner coreprotocol.Owner, in control.Request) strin
 // escape and never handles mutations or workspace state commands.
 func diagnosticIndependent(command string) bool {
 	switch command {
-	case "performance.core", "diagnostics.core", "performance.shell", "connection.inspect":
+	case "performance.core", "diagnostics.core", "performance.shell", "connection.inspect", "performance.archive.core", "performance.archive.shell":
 		return true
 	}
 	return false
@@ -181,13 +182,20 @@ func (a *actor) executeIndependentDiagnostic(parent context.Context, in control.
 		result = a.executeShellControl(ctx, owner, in, d)
 	} else {
 		var page inspect.Page
-		if in.CommandID == "performance.core" {
+		switch in.CommandID {
+		case "performance.archive.core":
+			var query perfdata.ArchiveQuery
+			err = controlDecode(in.Input, &query)
+			if err == nil {
+				page, err = perfdata.InspectArchive(ctx, &a.runtime.inspections, semanticInspectionOwner(owner, in), a.runtime.performanceArchive, "core", query)
+			}
+		case "performance.core":
 			var query coreprotocol.PerformanceInspectRequest
 			err = controlDecode(in.Input, &query)
 			if err == nil {
 				page, err = performanceInspection(ctx, &a.runtime.inspections, semanticInspectionOwner(owner, in), query, "core")
 			}
-		} else {
+		default:
 			var query coreprotocol.DiagnosticsInspectRequest
 			err = controlDecode(in.Input, &query)
 			if err == nil {
@@ -254,6 +262,12 @@ func inspectionMatch(filter string, values ...string) bool {
 
 func workspaceInspection(ctx context.Context, id string, status *workspace.StatusCenter, lsp *workspace.LSPManager, ws *workspace.Workspace, query inspect.Request) (inspect.Observation, error) {
 	view := query.View
+	if view == "documents" && ws != nil {
+		return workspaceDocumentInspection(ctx, id, ws.LiveDocuments, lsp, query.Filter)
+	}
+	if view == "runs" && ws != nil {
+		return workspaceRunInspection(ctx, id, ws.Collaboration, query.Filter)
+	}
 	if view == "" {
 		view = "summary"
 	}
@@ -455,4 +469,65 @@ func boundedServerEvidence(lines []string) []string {
 		out = append(out, diagnosticText(line))
 	}
 	return out
+}
+
+func workspaceRunInspection(ctx context.Context, workspaceID string, store *collaboration.Store, agentID string) (inspect.Observation, error) {
+	out := inspect.Observation{Notes: []string{"Run states come from the workspace journal. Use agent_inspect for public activity and reports from an exact attempt."}}
+	if store == nil {
+		out.Source = controlJSON(map[string]any{"workspace_id": workspaceID, "available": false})
+		out.Notes = append(out.Notes, "The workspace run journal is unavailable.")
+		return out, nil
+	}
+	page, err := store.ListRuns(ctx, agentID, "", 128)
+	if err != nil {
+		return inspect.Observation{}, err
+	}
+	out.Source = controlJSON(map[string]any{"workspace_id": workspaceID, "available": true, "older_runs_exist": page.Before != ""})
+	for _, run := range page.Runs {
+		run.Outcome = diagnosticText(run.Outcome)
+		out.Records = append(out.Records, inspectionRecord("run", run.ID, run))
+	}
+	return out, nil
+}
+
+func workspaceDocumentInspection(ctx context.Context, workspaceID string, documents *workspace.DocumentService, lsp *workspace.LSPManager, filter string) (inspect.Observation, error) {
+	out := inspect.Observation{Notes: []string{"Named shared documents only. This read cannot see private edits or tell which tabs are selected in another shell.", "Diagnostic evidence must match the exact document revision. Missing or older evidence does not certify the current file."}}
+	var docs []workspace.OpenDocumentEvidence
+	var available bool
+	taken := time.Now()
+	if documents != nil {
+		docs, available = documents.InspectOpenDocuments()
+	}
+	out.Source = controlJSON(map[string]any{"workspace_id": workspaceID, "available": available, "taken": taken})
+	if !available {
+		out.Notes = append(out.Notes, "Open shared documents could not be read. Try again after the current file operation.")
+	}
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Source.Path < docs[j].Source.Path })
+	for _, doc := range docs {
+		if err := ctx.Err(); err != nil {
+			return out, err
+		}
+		source := doc.Source
+		if !inspectionMatch(filter, source.Path, source.DocumentID) {
+			continue
+		}
+		value := map[string]any{"path": source.Path, "document_id": source.DocumentID, "revision": source.Revision,
+			"lifetime": source.Lifetime, "analysis_generation": source.WorkspaceGeneration, "dirty": doc.Dirty, "conflict": doc.Conflict,
+			"diagnostic_evidence": "not_observed"}
+		if lsp != nil {
+			if batch, ok := lsp.FileDiagnostics(source.Path); ok && batch.ID != "" {
+				value["diagnostic_id"] = batch.ID
+				coverage := "out_of_date"
+				if batch.Limited {
+					coverage = "limited"
+				} else if batch.HasExactSource() && batch.Boundary.Source == source && !doc.Conflict {
+					coverage = string(batch.State)
+				}
+				value["diagnostic_evidence"] = coverage
+				value["batch"] = problemInspection(source.Path, batch)
+			}
+		}
+		out.Records = append(out.Records, inspectionRecord("open_document", source.DocumentID, value))
+	}
+	return out, nil
 }

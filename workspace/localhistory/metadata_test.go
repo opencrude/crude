@@ -834,3 +834,43 @@ func TestBudgetRetentionRemovesOldestHistoryFirst(t *testing.T) {
 		t.Fatalf("store still over budget: %d > %d", after.PhysicalBytes, stats.PhysicalBytes-1)
 	}
 }
+
+func TestRunChangesUseRetainedPreimagesNotCurrentFile(t *testing.T) {
+	store, root := newTestStore(t)
+	writeTestFile(t, root, "a.txt", []byte("original\n"), 0o644)
+	manifest, err := store.Snapshot(t.Context(), SnapshotOptions{Kind: "before_message"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginMessageScope("session", "message", manifest.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	record := func(id, run string, committed bool) {
+		t.Helper()
+		err := store.RecordAgentOperation(t.Context(), AgentOperation{ID: id, RunID: run, SessionID: "session", MessageID: "message", AgentID: "agent", Source: "write_file",
+			Paths: []OperationPath{{Path: "a.txt", Before: &OperationState{Type: EntryFile, Mode: 0o644, Data: []byte("original\n")},
+				After: &OperationState{Type: EntryFile, Mode: 0o644, Data: []byte("retained " + id + "\n")}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CompleteAgentOperation(id, committed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record("this-attempt", "run-a", true)
+	record("other-attempt", "run-b", false)
+	writeTestFile(t, root, "a.txt", []byte("later user edit\n"), 0o644)
+	list, err := store.InspectRunChanges(t.Context(), "agent", RunChangeQuery{RunID: "run-a"})
+	if err != nil || len(list.Changes) != 1 || list.Changes[0].OperationID != "this-attempt" || list.Changes[0].State != "committed" {
+		t.Fatalf("incorrect exact attempt receipts: %+v %v", list, err)
+	}
+	q := RunChangeQuery{RunID: "run-a", OperationID: list.Changes[0].OperationID, Path: list.Changes[0].Path}
+	proof, err := store.InspectRunChanges(t.Context(), "agent", q)
+	if err != nil || len(proof.Changes) != 1 || !strings.Contains(proof.Changes[0].Diff, "-original") || !strings.Contains(proof.Changes[0].Diff, "+retained this-attempt") || strings.Contains(proof.Changes[0].Diff, "later user edit") {
+		t.Fatalf("diff is not the retained operation: %+v %v", proof, err)
+	}
+	q.RunID = "run-b"
+	if _, err := store.InspectRunChanges(t.Context(), "agent", q); err == nil {
+		t.Fatal("attempt B could substitute attempt A's diff")
+	}
+}

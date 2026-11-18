@@ -313,6 +313,9 @@ already observed lifetime.
 
 ## On-demand diagnostics
 
+See [Durable evidence](durable-evidence.md) for shell and headless working-set reads,
+run receipts and build-to-build performance comparisons.
+
 Normal agent work does not sample diagnostics. The common prompt contains one
 short discovery/narrowing rule; schemas and returned pages supply query-specific
 guidance only when used. All commands below are Read effects, exposed through the

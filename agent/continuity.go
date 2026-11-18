@@ -19,6 +19,8 @@ func (a *Agent) continuityMessage(ctx context.Context, compacted bool) (provider
 	}
 	state := struct {
 		AsOfMS              int64                        `json:"as_of_unix_ms"`
+		RunID               string                       `json:"run_id,omitempty"`
+		HasOriginShell      bool                         `json:"has_origin_shell"`
 		AgentID             AgentID                      `json:"agent_id"`
 		ParentID            AgentID                      `json:"parent_id,omitempty"`
 		TurnGeneration      uint64                       `json:"turn_generation"`
@@ -28,6 +30,7 @@ func (a *Agent) continuityMessage(ctx context.Context, compacted bool) (provider
 		FinalReportRequired bool                         `json:"final_report_required"`
 	}{
 		AsOfMS: time.Now().UnixMilli(), AgentID: a.AgentID, ParentID: a.ParentID,
+		RunID: a.RunID, HasOriginShell: a.ControlTarget != nil && a.ControlTarget.Shell != nil,
 		TurnGeneration: a.TurnGeneration, WorkDir: a.WorkDir,
 		AsyncCommands: []fileio.AsyncCommandContext{}, Children: []SubAgentStatusEntry{},
 		FinalReportRequired: a.Depth > 0 && !a.reportPublished,

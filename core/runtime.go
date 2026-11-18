@@ -27,6 +27,7 @@ import (
 	"crude/history"
 	"crude/insight/governor"
 	"crude/metrics"
+	"crude/perfdata"
 	"crude/types"
 	"crude/types/control"
 	"crude/types/inspect"
@@ -74,8 +75,9 @@ type Runtime struct {
 	remoteMu sync.Mutex // serializes remote admission with live revocation
 	remote   *RemoteAccess
 	// Explicit reads retain bounded immutable evidence, never domain state.
-	inspections  inspect.Store
-	diagnosticWG sync.WaitGroup // registered under mu; joined before workspace DB close
+	performanceArchive string
+	inspections        inspect.Store
+	diagnosticWG       sync.WaitGroup // registered under mu; joined before workspace DB close
 }
 
 func New(factory Factory, receiptPath string) (*Runtime, error) {
@@ -95,7 +97,7 @@ func New(factory Factory, receiptPath string) (*Runtime, error) {
 		_ = journal.close()
 		return nil, err
 	}
-	return &Runtime{factory: factory, lifetime: lifetimePolicy{buildID: buildinfo.ExecutableID()}, receipts: journal, workspaces: make(map[string]*actor), clients: make(map[string]*Connection), epochs: make(map[string]uint64), creating: make(map[string]*workspaceCreation), sessions: make(map[string]*Connection), uploads: NewReferenceUploads(filepath.Join(filepath.Dir(receiptPath), "media-staging")), analysisGovernor: analysis}, nil
+	return &Runtime{factory: factory, lifetime: lifetimePolicy{buildID: buildinfo.ExecutableID()}, receipts: journal, performanceArchive: perfdata.ArchivePathIn(filepath.Dir(receiptPath)), workspaces: make(map[string]*actor), clients: make(map[string]*Connection), epochs: make(map[string]uint64), creating: make(map[string]*workspaceCreation), sessions: make(map[string]*Connection), uploads: NewReferenceUploads(filepath.Join(filepath.Dir(receiptPath), "media-staging")), analysisGovernor: analysis}, nil
 }
 
 // SetPromptHistory installs the one application-owned history before clients
