@@ -792,6 +792,14 @@ afterward. `scripts/tuishot.sh` rejects an over-long socket path and fails
 immediately after a product exit or screenshot error. Inspect boot evidence
 before input: a capture driver finishing is not product success.
 
+The real product quits on Ctrl+Q, so a real-product capture ends with
+`quit:ctrl+q`. A compiled fixture test binary binds its own quit key, often F9;
+use the chord that fixture defines.
+
+`scripts/tuishot.sh` removes its work directory, which holds the private logs,
+on every exit. A failed capture still prints the last log lines before it
+exits. Set `KEEP_OPEN=1` to keep the window and the logs for review.
+
 After every capture, close the dedicated Crude window. Keep `KEEP_OPEN=0` for
 normal captures; after an explicit `KEEP_OPEN=1` review, close it and verify no
 `CrudeShot`/`CrudeShot-*` window remains (`xdotool search --class CrudeShot`).

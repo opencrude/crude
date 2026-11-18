@@ -6,7 +6,9 @@
 #
 # Steps:
 #   key:<xdotool-key-spec>    key:ctrl+alt+p  key:Down  key:Escape  key:shift+Down
-#   quit:<key-spec>          expected clean product exit; must be the final step
+#   quit:<key-spec>          expected clean product exit; must be the final step.
+#                            The real product quits on ctrl+q. A compiled
+#                            fixture test binary binds its own chord, often F9.
 #   await-exit              wait for an autonomous journey's clean exit (last step)
 #   await:<literal line>    wait for this exact line in CRUDE_CAPTURE_EVIDENCE
 #   record:<seconds>        lossless native video of this exact window (FFMPEG_BIN)
@@ -55,15 +57,6 @@ fi
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CRUDE_CWD="${CRUDE_CWD:-$REPO}"
-# Evidence belongs to session scratch; only the socket-bound CRUDE_HOME needs
-# a separate real short directory on Unix. Give each capture private logs.
-WORK="$(mktemp -d "${CRUDE_TEMP_DIR:-/tmp}/crude-tuishot-XXXXXX")" || exit 1
-BIN="${CRUDE_BIN:-$WORK/crude}"
-LOG="$WORK/crude.log"
-LAUNCH="$WORK/launch.sh"
-mkdir -p "$WORK" "$OUTDIR"
-: > "$LOG"
-
 # Fail before opening a terminal when an isolated profile cannot host a core.
 # The canonical socket address is bounded by the smallest supported Unix limit.
 if [ -n "${CRUDE_HOME:-}" ]; then
@@ -77,8 +70,12 @@ if [ -n "${CRUDE_HOME:-}" ]; then
   fi
 fi
 
-IMPORT=/home/user/tools/imagemagick-7.1.2-18/bin/import
-export DISPLAY="${DISPLAY:-:0}"
+# Evidence belongs to session scratch; only the socket-bound CRUDE_HOME needs
+# a separate real short directory on Unix. Give each capture private logs.
+WORK="$(mktemp -d "${CRUDE_TEMP_DIR:-/tmp}/crude-tuishot-XXXXXX")" || exit 1
+BIN="${CRUDE_BIN:-$WORK/crude}"
+LOG="$WORK/crude.log"
+LAUNCH="$WORK/launch.sh"
 
 WIN_ID=""
 CAPTURE_PID=""
@@ -92,15 +89,29 @@ cleanup() {
     kill "$VIDEO_PID" 2>/dev/null || true
     wait "$VIDEO_PID" 2>/dev/null || true
   fi
-  [ "$KEEP_OPEN" = "1" ] && return 0
+  if [ "$KEEP_OPEN" = "1" ]; then
+    echo "KEEP_OPEN=1: capture window and logs kept; close the window and remove $WORK after review" >&2
+    return 0
+  fi
   [ -n "$WIN_ID" ] && xdotool windowkill "$WIN_ID" 2>/dev/null
   if [ -n "$CAPTURE_PID" ]; then
     kill "$CAPTURE_PID" 2>/dev/null || true
     wait "$CAPTURE_PID" 2>/dev/null || true
   fi
+  # The work directory holds the built binary and the private logs. A capture
+  # that fails still owns it, so every exit removes it unless KEEP_OPEN is set.
+  case "${WORK:-}" in
+    */crude-tuishot-*) [ -d "$WORK" ] && rm -rf "$WORK" ;;
+  esac
   return 0
 }
 trap cleanup EXIT
+
+mkdir -p "$WORK" "$OUTDIR"
+: > "$LOG"
+
+IMPORT=/home/user/tools/imagemagick-7.1.2-18/bin/import
+export DISPLAY="${DISPLAY:-:0}"
 
 if [ -n "${CRUDE_BIN:-}" ]; then
   [ -x "$BIN" ] || { echo "CRUDE_BIN is not executable"; exit 1; }
@@ -261,7 +272,12 @@ await_exit() {
     grep -q '^CRUDE-EXITED ' "$LOG" && break
     sleep 0.1
   done
-  grep -q '^CRUDE-EXITED rc=0$' "$LOG" || { echo 'ERROR: expected clean product exit was not observed' >&2; tail -30 "$LOG" >&2; exit 1; }
+  grep -q '^CRUDE-EXITED rc=0$' "$LOG" || {
+    echo 'ERROR: expected clean product exit was not observed' >&2
+    echo 'The quit key did not exit the product. The real product quits on ctrl+q; a fixture test binary uses its own chord, often F9.' >&2
+    tail -30 "$LOG" >&2
+    exit 1
+  }
   echo 'verified expected clean product exit'
 }
 
