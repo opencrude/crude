@@ -491,6 +491,7 @@ var wireTypes = []any{
 	new(p13.LanguageServiceStatus),
 	new(p13.LocalHistorySettings),
 	new(p13.Loop),
+	new(p13.MemoryRankerSettings),
 	new(p13.MemorySettings),
 	new(p13.ModelEntry),
 	new(p13.ModelUsage),

@@ -154,6 +154,8 @@ CREATE TABLE IF NOT EXISTS memory_feedback (
     FOREIGN KEY(memory_id, revision) REFERENCES memory_revisions(memory_id, revision)
 );
 
+CREATE INDEX IF NOT EXISTS memory_feedback_by_record ON memory_feedback(memory_id, id DESC);
+
 CREATE TABLE IF NOT EXISTS memory_history_turns (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id     TEXT NOT NULL,

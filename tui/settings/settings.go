@@ -215,6 +215,7 @@ type Model struct {
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
 	agents                   *types.AgentsSettings
+	memoryRanker             types.MemoryRankerSettings
 	memoryAgent              types.CategorySettings
 	autoReviewer             types.AutoPermissionSettings
 	capabilities             capability.Settings
@@ -332,6 +333,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		layerBase:           types.CloneAppSettings(current),
 		agents:              &current.Agents,
 		memoryAgent:         current.Memory.MemoryCategory,
+		memoryRanker:        current.Memory.Ranker,
 		autoReviewer:        current.Safety.AutoPermission.Normalized(),
 		capabilities:        capability.Normalize(current.Capabilities),
 		capabilityDiscovery: make(map[capability.Kind][]capability.Entry),
@@ -2420,7 +2422,7 @@ func (m *Model) workspaceOverridesPage(index int) bool {
 			return true
 		}
 		if index == catAgents {
-			return bytes.Contains(m.storedOverrides.Memory, []byte(`"memory_category"`)) || bytes.Contains(m.storedOverrides.Safety, []byte(`"auto_permission"`))
+			return bytes.Contains(m.storedOverrides.Memory, []byte(`"ranker"`)) || bytes.Contains(m.storedOverrides.Memory, []byte(`"memory_category"`)) || bytes.Contains(m.storedOverrides.Safety, []byte(`"auto_permission"`))
 		}
 		return false
 	case catLSP:
@@ -2664,6 +2666,7 @@ func (m *Model) collectMemory(cfg *types.MemorySettings) {
 		RecallLimit:        parseOpt(m.value(catMemory, "recall-limit"), types.DefaultMemoryRecallLimit),
 		ExtractEveryTurns:  parseOpt(m.value(catMemory, "extract-every"), types.DefaultMemoryExtractCadence),
 		MemoryCategory:     m.memoryAgent,
+		Ranker:             m.memoryRanker,
 	}
 }
 

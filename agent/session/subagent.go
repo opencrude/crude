@@ -640,6 +640,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.WorkDir = r.session.WorkDir()
 	a.GuidancePaths = append([]string(nil), spec.FileOwnership...)
 	r.session.bindContinuity(a, subDB, subSessionID)
+	r.session.bindMemoryRanker(a, subSessionID)
 	r.session.bindGuidanceCache(a)
 	a.MaxOutputTokens = spec.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(cfg)
@@ -1141,6 +1142,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	live.WorkDir = childExecutionRoot(spec, r.session.WorkDir())
 	live.GuidancePaths = append([]string(nil), spec.FileOwnership...)
 	r.session.bindContinuity(live, subDB, string(spec.ID))
+	r.session.bindMemoryRanker(live, string(spec.ID))
 	r.session.bindGuidanceCache(live)
 	live.MaxOutputTokens = spec.ModelMaxOutput
 	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {

@@ -309,7 +309,7 @@ func (st *Store) Episodes(ctx context.Context, sessionID string, limit int) ([]E
 }
 
 func (st *Store) Expose(ctx context.Context, refs []RevisionRef, sessionID, kind string) error {
-	if len(refs) > 50 || (kind != "automatic" && kind != "recall") {
+	if len(refs) > 50 || (kind != "automatic" && kind != "recall" && kind != "ranked") {
 		return fmt.Errorf("memory: invalid exposure batch")
 	}
 	tx, err := st.db.BeginTx(ctx, nil)
@@ -318,6 +318,15 @@ func (st *Store) Expose(ctx context.Context, refs []RevisionRef, sessionID, kind
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, ref := range refs {
+		if kind == "ranked" {
+			var active int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM workspace_memories WHERE id=? AND revision=? AND status=?`, ref.ID, ref.Revision, StatusActive).Scan(&active); err != nil {
+				return err
+			}
+			if active != 1 {
+				return ErrRevisionConflict
+			}
+		}
 		if err := revisionExistsTx(ctx, tx, ref); err != nil {
 			return err
 		}

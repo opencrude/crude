@@ -7,30 +7,14 @@ import (
 
 	toolargs "crude/agent/tools"
 	"crude/types"
-	"crude/types/toolresult"
 )
 
 // A batch is a provider envelope, not a second visual tool family. Derive
 // ordinary tool leaves at source-change time and let the same tree, disclosure,
 // diff, error and native-command renderers handle them.
 func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
-	var input struct {
-		Uses []struct {
-			Name       string          `json:"recipient_name"`
-			Parameters json.RawMessage `json:"parameters"`
-		} `json:"tool_uses"`
-	}
-	var output struct {
-		Results []*struct {
-			Name    string             `json:"recipient_name"`
-			Result  string             `json:"result"`
-			Error   bool               `json:"error"`
-			Phase   string             `json:"phase"`
-			Added   int                `json:"added"`
-			Removed int                `json:"removed"`
-			Outcome toolresult.Outcome `json:"outcome"`
-		} `json:"results"`
-	}
+	var input toolargs.ParallelInput
+	var output toolargs.ParallelOutput
 	_ = json.Unmarshal([]byte(msg.ToolInput), &input)
 	_ = json.Unmarshal([]byte(msg.Content), &output)
 	count := max(len(input.Uses), len(output.Results))

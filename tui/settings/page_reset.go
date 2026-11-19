@@ -45,7 +45,7 @@ func pageOwnershipFor(category int, scope types.SettingsScope) (pageOwnership, b
 	case catNotifications:
 		return pageOwnership{include: [][]string{{"ui", "desktop_notifications"}}}, true
 	case catMemory:
-		return pageOwnership{include: [][]string{{"memory"}}, exclude: [][]string{{"memory", "memory_category"}}}, true
+		return pageOwnership{include: [][]string{{"memory"}}, exclude: [][]string{{"memory", "memory_category"}, {"memory", "ranker"}}}, true
 	case catSafety:
 		return pageOwnership{include: [][]string{{"safety"}}, exclude: [][]string{{"safety", "auto_permission"}}}, true
 	case catAutoReviewPolicy:
@@ -63,7 +63,7 @@ func pageOwnershipFor(category int, scope types.SettingsScope) (pageOwnership, b
 		if scope != types.SettingsScopeWorkspace {
 			return pageOwnership{}, false
 		}
-		include := append([][]string{{"agents"}, {"memory", "memory_category"}}, autoReviewIdentity...)
+		include := append([][]string{{"agents"}, {"memory", "memory_category"}, {"memory", "ranker"}}, autoReviewIdentity...)
 		return pageOwnership{include: include}, true
 	}
 	return pageOwnership{}, false
