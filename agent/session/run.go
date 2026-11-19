@@ -1280,6 +1280,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		} else {
 			launchCompaction = s.startTurnEndCompaction(o.ID, requested)
 		}
+	} else if !cancelled && runResult.State == agent.SupervisedRunCompleted && s.isAeronSession() {
+		// The workspace Aeron's loop ended: the model gave its answer with no
+		// further tool calls. Compact now so the permanent agent stays small.
+		launchCompaction = s.startLoopEndCompaction(o.ID)
 	}
 	o.endTurn(turnGeneration)
 	if terminalDone != nil {

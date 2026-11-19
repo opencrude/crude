@@ -19,7 +19,11 @@ import (
 
 // Ranking is a bounded optional read, on the owning run's goroutine. No worker
 // outlives cancellation, and failed or slow inference cannot stop the agent.
-const rankingDeadline = 2 * time.Second
+// A decision model answers in one step; a chat model generates text.
+const (
+	rankingDeadline     = 2 * time.Second
+	chatRankingDeadline = 8 * time.Second
+)
 
 type actionMemoryState struct {
 	Task       string            `json:"task"`
@@ -72,11 +76,8 @@ func (s *Session) rankActionMemories(parent context.Context, owner, root string,
 	if store == nil {
 		return nil, nil
 	}
-	deadline := rankingDeadline
-	if r.Endpoint == types.MemoryRankerChat {
-		deadline = 8 * time.Second
-	}
-	ctx, cancel := context.WithTimeout(parent, deadline)
+	// Candidate lookup is local; the remote deadline starts at the request.
+	ctx, cancel := context.WithTimeout(parent, chatRankingDeadline)
 	defer cancel()
 	state, paths := actionRankingState(active, batch, root)
 	if len(state.Actions) == 0 {
@@ -138,11 +139,17 @@ func (s *Session) rankActionMemories(parent context.Context, owner, root string,
 	if err != nil || conn == nil {
 		return nil, err
 	}
+	kind, err := conn.ResolveModelType(ctx, r.ModelType)
+	if err != nil {
+		return nil, err
+	}
 	var scores []float64
-	if r.Endpoint == types.MemoryRankerChat {
-		scores, err = conn.ScoreChatRelevance(ctx, prompt.MemoryChatRankingSystem(), string(wire), len(pool))
+	if kind == types.ModelTypeDecision {
+		decideCtx, done := context.WithTimeout(ctx, rankingDeadline)
+		scores, err = conn.DecideRelevance(decideCtx, string(wire), questions)
+		done()
 	} else {
-		scores, err = conn.DecideRelevance(ctx, r.Endpoint, string(wire), questions)
+		scores, err = conn.ScoreChatRelevance(ctx, prompt.MemoryChatRankingSystem(), string(wire), len(pool))
 	}
 	if err != nil {
 		return nil, err

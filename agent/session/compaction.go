@@ -82,7 +82,7 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 	if !s.hasActiveContext() {
 		return PreparedCompaction{}, ttypes.CompactResultMsg{Desc: compactionNothingText}
 	}
-	prepared, registered := s.registerCompaction(agentID, operationID)
+	prepared, registered := s.registerCompaction(agentID, operationID, agent.CompactionTriggerManual)
 	if !registered {
 		return PreparedCompaction{}, ttypes.CompactResultMsg{Desc: compactionRunningText}
 	}
@@ -118,7 +118,7 @@ func requestedCompactionResult(id, requested string) ttypes.CompactResultMsg {
 
 // registerCompaction reserves the session's one exclusive compaction. From
 // here on new turns and queued input wait for it, and Stop or Close cancels it.
-func (s *Session) registerCompaction(agentID, operationID string) (PreparedCompaction, bool) {
+func (s *Session) registerCompaction(agentID, operationID, trigger string) (PreparedCompaction, bool) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.compactionMu.Lock()
 	if atomic.LoadInt32(&s.closing) != 0 || s.compactionCancel != nil {
@@ -135,12 +135,12 @@ func (s *Session) registerCompaction(agentID, operationID string) (PreparedCompa
 
 	prepared := PreparedCompaction{OperationID: operationID, AgentID: agentID, Cancel: cancel}
 	prepared.ProviderID, prepared.AccountID, prepared.ModelID = s.compactionIdentity(agentID)
-	prepared.Started = compactionLifecycleData(operationID, "manual", "root", 0, 0, 0, 0)
+	prepared.Started = compactionLifecycleData(operationID, trigger, "root", 0, 0, 0, 0)
 	prepared.Started["provider_id"] = prepared.ProviderID
 	prepared.Started["model_id"] = prepared.ModelID
 	started := prepared.Started
 	prepared.Run = func() ttypes.CompactResultMsg {
-		return s.runExclusiveCompaction(ctx, cancel, operationID, agentID, started)
+		return s.runExclusiveCompaction(ctx, cancel, operationID, agentID, trigger, started)
 	}
 	return prepared, true
 }
@@ -178,7 +178,7 @@ func (s *Session) releaseUnstartedCompaction(operationID string) bool {
 func (s *Session) runExclusiveCompaction(
 	ctx context.Context,
 	cancel context.CancelFunc,
-	operationID, agentID string,
+	operationID, agentID, trigger string,
 	started map[string]any,
 ) ttypes.CompactResultMsg {
 	s.compactionMu.Lock()
@@ -225,7 +225,7 @@ func (s *Session) runExclusiveCompaction(
 	if s.db != nil {
 		state, found, err := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)
 		if err != nil {
-			return s.finishManualCompactionError(ctx, emit, operationID, agent.CompactResult{}, fmt.Errorf("load current context: %w", err))
+			return s.finishManualCompactionError(ctx, emit, operationID, trigger, agent.CompactResult{}, fmt.Errorf("load current context: %w", err))
 		}
 		if found {
 			revision, generation = state.Revision, state.Generation
@@ -240,14 +240,14 @@ func (s *Session) runExclusiveCompaction(
 		emit(agent.AgentEvent{Type: "context_compaction_cancelled", Data: started})
 		return ttypes.CompactResultMsg{OperationID: operationID, Desc: compactionNothingText}
 	}
-	return s.runPreparedCompaction(ctx, operationID, agentID, active, revision, generation, len(active))
+	return s.runPreparedCompaction(ctx, operationID, agentID, trigger, active, revision, generation, len(active))
 }
 
 // startTurnEndCompaction runs a request the turn accepted but ended before
 // taking. The caller still owns the turn, so no other turn can start between
 // the turn's end and this registration.
 func (s *Session) startTurnEndCompaction(agentID, operationID string) func() {
-	prepared, registered := s.registerCompaction(agentID, operationID)
+	prepared, registered := s.registerCompaction(agentID, operationID, agent.CompactionTriggerManual)
 	if !registered {
 		s.settleDroppedCompaction(agentID, operationID)
 		return func() {}
@@ -256,6 +256,57 @@ func (s *Session) startTurnEndCompaction(agentID, operationID string) func() {
 		go func() {
 			if result := prepared.Run(); result.Error != "" {
 				s.logger.Warn("COMPACT", "turn_end_failed", "operation_id", operationID, "error", result.Error)
+			}
+		}()
+	}
+}
+
+// isAeronSession reports whether this is the workspace's permanent Aeron.
+func (s *Session) isAeronSession() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.selectedMainAgent == CategoryAeron
+}
+
+// loopEndCompactionMinimumTokens is the least conversation (excluding the
+// fixed system prompt and tools) worth a loop-end checkpoint. A smaller
+// context is already about the size of a checkpoint plus its runtime
+// continuity, so compacting it would not make Aeron smaller.
+const loopEndCompactionMinimumTokens = 8192
+
+func (s *Session) loopEndCompactionWorthwhile(agentID string) bool {
+	model := ""
+	if _, _, id := s.compactionIdentity(agentID); id != "" {
+		model = id
+	}
+	s.msgsMu.Lock()
+	defer s.msgsMu.Unlock()
+	total := 0
+	for _, m := range s.activeContext {
+		if total += provider.EstimateMessageTokens(m, model); total >= loopEndCompactionMinimumTokens {
+			return true
+		}
+	}
+	return false
+}
+
+// startLoopEndCompaction compacts the workspace Aeron after its agentic loop
+// ends naturally. Aeron is permanent, so each finished loop leaves a small
+// checkpoint instead of a growing transcript. Like a requested compaction it
+// registers while the finishing turn still owns admission. A compaction that
+// is already registered (a human /compact) makes this one unnecessary.
+func (s *Session) startLoopEndCompaction(agentID string) func() {
+	if !s.loopEndCompactionWorthwhile(agentID) {
+		return func() {}
+	}
+	prepared, registered := s.registerCompaction(agentID, newCompactionOperationID(), agent.CompactionTriggerLoopEnd)
+	if !registered {
+		return func() {}
+	}
+	return func() {
+		go func() {
+			if result := prepared.Run(); result.Error != "" {
+				s.logger.Warn("COMPACT", "loop_end_failed", "operation_id", prepared.OperationID, "error", result.Error)
 			}
 		}()
 	}
@@ -309,7 +360,7 @@ func (s *Session) stopCompactionForClose() {
 
 func (s *Session) runPreparedCompaction(
 	ctx context.Context,
-	operationID, agentID string,
+	operationID, agentID, trigger string,
 	active []provider.ChatMessage,
 	revision uint64,
 	generation uint64,
@@ -320,7 +371,7 @@ func (s *Session) runPreparedCompaction(
 	emit := s.compactionEmitter(agentID, &usageModel)
 
 	if s.cfg == nil {
-		return s.finishManualCompactionError(ctx, emit, operationID, agent.CompactResult{}, errors.New("session configuration is unavailable"))
+		return s.finishManualCompactionError(ctx, emit, operationID, trigger, agent.CompactResult{}, errors.New("session configuration is unavailable"))
 	}
 	effectiveCfg := s.cfg
 	if s.runtimeProfile != nil {
@@ -331,7 +382,7 @@ func (s *Session) runPreparedCompaction(
 	usageModel = compactionCfg.Model
 	turnProvider, err := effectiveCfg.providerForCategory(compactionCfg)
 	if err != nil {
-		return s.finishManualCompactionError(ctx, emit, operationID, agent.CompactResult{}, fmt.Errorf("configure compaction provider: %w", err))
+		return s.finishManualCompactionError(ctx, emit, operationID, trigger, agent.CompactResult{}, fmt.Errorf("configure compaction provider: %w", err))
 	}
 	compactAgent := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	compactAgent.AgentID = agent.AgentID(agentID)
@@ -348,12 +399,12 @@ func (s *Session) runPreparedCompaction(
 		revision, err = s.beginRootCompaction(agentID, source)
 		return err
 	}
-	result, err := compactAgent.CompactWithRequestID(ctx, active, s.systemPromptForModel(effectiveCfg.IsMultiAgentEnabled(), activeCfg.Model), operationID, emit)
+	result, err := compactAgent.CompactWithRequestID(ctx, active, s.systemPromptForModel(effectiveCfg.IsMultiAgentEnabled(), activeCfg.Model), operationID, trigger, emit)
 	if err != nil {
-		return s.finishManualCompactionError(ctx, emit, operationID, result, err)
+		return s.finishManualCompactionError(ctx, emit, operationID, trigger, result, err)
 	}
 
-	commitData := compactionLifecycleData(operationID, "manual", "root", compactionStageCount, compactionStageCount, result.BeforeTokens, result.AfterTokens)
+	commitData := compactionLifecycleData(operationID, trigger, "root", compactionStageCount, compactionStageCount, result.BeforeTokens, result.AfterTokens)
 	commitData["context_window"] = result.ContextWindow
 	commitData["provider_id"] = result.ProviderID
 	commitData["account_id"] = result.AccountID
@@ -367,18 +418,18 @@ func (s *Session) runPreparedCompaction(
 	contextUnchanged := s.contextGeneration == generation || s.contextGeneration == 0
 	s.msgsMu.Unlock()
 	if !contextUnchanged {
-		return s.finishManualCompactionError(ctx, emit, operationID, result, errors.New("active context changed before commit"))
+		return s.finishManualCompactionError(ctx, emit, operationID, trigger, result, errors.New("active context changed before commit"))
 	}
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionCompleted, commitData)
 	s.msgsMu.Lock()
 	_, err = s.publishRootContext(sessiondb.ContextPublication{
 		SessionID: s.sessionID, AgentID: s.sessionID, RuntimeAgentID: agentID, ExpectedRevision: revision,
-		Mutation:   sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: nextGeneration, Reason: "manual_compaction", Messages: canonicalContextMessages(recoveryArchiveMessages(result.Messages))}},
+		Mutation:   sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: nextGeneration, Reason: trigger + "_compaction", Messages: canonicalContextMessages(recoveryArchiveMessages(result.Messages))}},
 		Compaction: &record, ArchivePrevious: true,
 	})
 	s.msgsMu.Unlock()
 	if err != nil {
-		return s.finishManualCompactionError(ctx, emit, operationID, result, fmt.Errorf("persist compacted context: %w", err))
+		return s.finishManualCompactionError(ctx, emit, operationID, trigger, result, fmt.Errorf("persist compacted context: %w", err))
 	}
 
 	emit(agent.AgentEvent{Type: "context_compacted", Data: commitData})
@@ -392,11 +443,11 @@ func (s *Session) runPreparedCompaction(
 func (s *Session) finishManualCompactionError(
 	ctx context.Context,
 	emit func(agent.AgentEvent),
-	operationID string,
+	operationID, trigger string,
 	result agent.CompactResult,
 	err error,
 ) ttypes.CompactResultMsg {
-	data := compactionLifecycleData(operationID, "manual", "root", result.StageIndex, result.Completed, result.BeforeTokens, 0)
+	data := compactionLifecycleData(operationID, trigger, "root", result.StageIndex, result.Completed, result.BeforeTokens, 0)
 	data["stage_label"] = result.StageName
 	data["retry"] = result.RetryAttempt
 	data["provider_id"] = result.ProviderID

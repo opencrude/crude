@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const anthropicAPIVersion = "2023-06-01"
+// anthropicAPIVersion is the Messages API version every request sends. Since
+// 2026-10-21 the API rejects the sampling parameters (temperature, top_p,
+// top_k), documents in assistant messages and citations in user messages.
+const anthropicAPIVersion = "2026-10-21"
 
 // AnthropicStandard implements the native Anthropic Messages API.
 type AnthropicStandard struct{}
@@ -25,7 +28,8 @@ func (s *AnthropicStandard) Info() ProtocolInfo {
 		ChatPath:    "messages",
 		ModelsPath:  "models",
 		Streaming:   FramingSSE,
-		Options:     ProtocolOptions{ServiceTiers: []string{"auto", "standard_only"}},
+		// "fast" is fast mode (the speed parameter), not a service tier.
+		Options: ProtocolOptions{ServiceTiers: []string{"auto", "standard_only", "fast"}},
 	}
 }
 
@@ -81,11 +85,8 @@ func (s *AnthropicStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 	if req.ToolChoice != nil {
 		wire["tool_choice"] = encodeAnthropicToolChoice(req.ToolChoice)
 	}
-	// Temperature is accepted on current Claude models; only send it when
-	// the user explicitly chose a value.
-	if req.Temperature != nil {
-		wire["temperature"] = *req.Temperature
-	}
+	// API version 2026-10-21 has no sampling parameters: a request that sends
+	// temperature or top_p fails, so a role's sampling choice is not sent.
 	return json.Marshal(wire)
 }
 
@@ -232,7 +233,9 @@ func retainLastAnthropicCacheControl(blocks []any) {
 	}
 }
 
-func anthropicTextAndImageBlocks(msg ChatMessage, allowImages bool) ([]any, error) {
+// anthropicTextAndImageBlocks encodes a message's parts. Media (images and
+// documents) is allowed only in user content and tool results.
+func anthropicTextAndImageBlocks(msg ChatMessage, allowMedia bool) ([]any, error) {
 	parts := msg.Content.Parts()
 	blocks := make([]any, 0, len(parts))
 	for _, part := range parts {
@@ -242,7 +245,7 @@ func anthropicTextAndImageBlocks(msg ChatMessage, allowImages bool) ([]any, erro
 				blocks = append(blocks, map[string]any{"type": "text", "text": part.Text})
 			}
 		case "image_url":
-			if !allowImages {
+			if !allowMedia {
 				continue
 			}
 			if len(part.Data) > 0 {
@@ -266,7 +269,7 @@ func anthropicTextAndImageBlocks(msg ChatMessage, allowImages bool) ([]any, erro
 			}
 			blocks = append(blocks, map[string]any{"type": "image", "source": source})
 		case "document":
-			if len(part.Data) == 0 {
+			if !allowMedia || len(part.Data) == 0 {
 				continue
 			}
 			blocks = append(blocks, map[string]any{
@@ -436,52 +439,113 @@ func (s *AnthropicStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 }
 
 // RequestExtras implements RequestExtras. Anthropic has no store, ZDR, or
-// truncation request switches (retention is organization-level), so only
-// thinking configuration applies.
-func (s *AnthropicStandard) RequestExtras(modelID, thinkingEffort string, _ ProtocolSettings) map[string]any {
-	if thinkingEffort == "" {
+// truncation request switches (retention is organization-level). It sends the
+// thinking configuration, the service tier, and fast mode as speed "fast".
+func (s *AnthropicStandard) RequestExtras(modelID, thinkingEffort string, settings ProtocolSettings) map[string]any {
+	extras := anthropicThinking(modelID, thinkingEffort)
+	switch settings.ServiceTier {
+	case "":
+	case "fast":
+		extras = withExtra(extras, "speed", "fast")
+	default:
+		extras = withExtra(extras, "service_tier", settings.ServiceTier)
+	}
+	return extras
+}
+
+func withExtra(extras map[string]any, key string, value any) map[string]any {
+	if extras == nil {
+		extras = map[string]any{}
+	}
+	extras[key] = value
+	return extras
+}
+
+// summarizedAdaptive asks for visible thinking summaries: newer models omit
+// the thinking text unless display is "summarized".
+func summarizedAdaptive() map[string]any {
+	return map[string]any{"type": "adaptive", "display": "summarized"}
+}
+
+func anthropicThinking(modelID, thinkingEffort string) map[string]any {
+	adaptive := supportsAnthropicAdaptiveThinking(modelID)
+	switch thinkingEffort {
+	case "":
 		// New default-on families omit visible summaries unless requested.
-		// Preserve the older opt-in default on 4.6 and earlier models.
+		// Preserve the older opt-in default on 4.6 models.
 		normalized := strings.ReplaceAll(strings.ToLower(modelID), ".", "-")
-		if supportsAnthropicAdaptiveThinking(modelID) && !strings.Contains(normalized, "-4-6") {
-			return map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}}
+		if adaptive && !strings.Contains(normalized, "-4-6") {
+			return map[string]any{"thinking": summarizedAdaptive()}
+		}
+		return nil
+	case "none":
+		switch anthropicThinkingOff(modelID) {
+		case "between_tools":
+			return map[string]any{"thinking": map[string]any{"type": "between_tools"}}
+		case "disabled":
+			return map[string]any{"thinking": map[string]any{"type": "disabled"}}
+		case "lowest":
+			// Thinking cannot be turned off on this model; the lowest
+			// effort is the nearest valid request.
+			return map[string]any{"thinking": summarizedAdaptive(), "output_config": map[string]any{"effort": "low"}}
 		}
 		return nil
 	}
-	if thinkingEffort == "none" {
-		if !supportsAnthropicThinking(modelID) {
-			return nil
-		}
-		return map[string]any{"thinking": map[string]any{"type": "disabled"}}
-	}
-	if !supportsAnthropicAdaptiveThinking(modelID) {
+	if !adaptive {
 		// Older Claude models reject adaptive thinking. Their manual thinking
 		// budgets depend on max_tokens, which is not available at this layer,
 		// so omission is safer than sending an invalid request.
 		return nil
 	}
-	return map[string]any{
-		"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
-		"output_config": map[string]any{"effort": thinkingEffort},
-	}
+	return map[string]any{"thinking": summarizedAdaptive(), "output_config": map[string]any{"effort": thinkingEffort}}
 }
 
-func supportsAnthropicAdaptiveThinking(modelID string) bool {
-	modelID = strings.ToLower(modelID)
-	modelID = strings.ReplaceAll(modelID, ".", "-")
-	for _, family := range []string{"opus", "sonnet", "fable", "mythos"} {
-		_, version, found := strings.Cut(modelID, "claude-"+family+"-")
+// anthropicThinkingOff is how a request turns thinking off for a model:
+// Claude Opus 5.5 and later, and Fable and Mythos, always think ("lowest");
+// Claude Sonnet 5.5 and later turn off up-front thinking with "between_tools";
+// other thinking models accept "disabled". Models without thinking need
+// nothing ("").
+func anthropicThinkingOff(modelID string) string {
+	family, major, minor := anthropicModelVersion(modelID)
+	atLeast55 := major > 5 || major == 5 && minor >= 5
+	switch {
+	case family == "fable" || family == "mythos" || family == "opus" && atLeast55:
+		return "lowest"
+	case family == "sonnet" && atLeast55:
+		return "between_tools"
+	case supportsAnthropicThinking(modelID):
+		return "disabled"
+	}
+	return ""
+}
+
+// anthropicModelVersion reads the family and version from a Claude model ID
+// such as claude-opus-5-5 or claude-haiku-4-5-20251001.
+func anthropicModelVersion(modelID string) (family string, major, minor int) {
+	modelID = strings.ReplaceAll(strings.ToLower(modelID), ".", "-")
+	for _, candidate := range []string{"opus", "sonnet", "haiku", "fable", "mythos"} {
+		_, version, found := strings.Cut(modelID, "claude-"+candidate+"-")
 		if !found {
 			continue
 		}
-		if family == "mythos" && strings.HasPrefix(version, "preview") {
-			return true
+		if candidate == "mythos" && strings.HasPrefix(version, "preview") {
+			return candidate, 5, 0
 		}
-		var major, minor int
 		_, _ = fmt.Sscanf(version, "%d-%d", &major, &minor)
-		return major >= 5 || major == 4 && minor >= 6
+		// A date suffix (claude-haiku-4-20250101) is not a minor version.
+		if minor > 99 {
+			minor = 0
+		}
+		return candidate, major, minor
 	}
-	return false
+	return "", 0, 0
+}
+
+// supportsAnthropicAdaptiveThinking reports Claude 4.6 and later, which take
+// adaptive thinking with the effort parameter.
+func supportsAnthropicAdaptiveThinking(modelID string) bool {
+	family, major, minor := anthropicModelVersion(modelID)
+	return family != "" && (major >= 5 || major == 4 && minor >= 6)
 }
 
 func supportsAnthropicThinking(modelID string) bool {
@@ -518,6 +582,19 @@ type anthropicUsage struct {
 	CacheReadInputTokens     int  `json:"cache_read_input_tokens"`
 	CacheReadKnown           bool `json:"-"`
 	CacheWriteKnown          bool `json:"-"`
+	// ServiceTier and Speed report how the request was served; fast mode
+	// bills above the standard rate.
+	ServiceTier string `json:"service_tier"`
+	Speed       string `json:"speed"`
+}
+
+// servedTier is the processing tier for pricing: fast mode, or the service
+// tier the API reports.
+func (u anthropicUsage) servedTier() string {
+	if u.Speed == "fast" {
+		return "fast"
+	}
+	return u.ServiceTier
 }
 
 func (u *anthropicUsage) UnmarshalJSON(data []byte) error {
@@ -600,9 +677,10 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 
 	promptTokens := r.Usage.InputTokens + r.Usage.CacheCreationInputTokens + r.Usage.CacheReadInputTokens
 	resp := &ChatResponse{
-		ID:      r.ID,
-		Model:   r.Model,
-		Choices: []ChatChoice{{Message: msg, FinishReason: r.StopReason}},
+		ID:          r.ID,
+		Model:       r.Model,
+		ServiceTier: r.Usage.servedTier(),
+		Choices:     []ChatChoice{{Message: msg, FinishReason: r.StopReason}},
 		Usage: &ChatUsage{
 			PromptTokens:     promptTokens,
 			CompletionTokens: r.Usage.OutputTokens,
@@ -688,6 +766,9 @@ func (d *anthropicStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error)
 	case "content_block_stop":
 		return d.stopBlock(envelope.Index)
 	case "message_delta":
+		if tier := envelope.Usage.servedTier(); tier != "" {
+			d.usage.ServiceTier = tier
+		}
 		if envelope.Usage.OutputTokens > 0 {
 			d.usage.CompletionTokens = envelope.Usage.OutputTokens
 		}
@@ -717,6 +798,9 @@ func (d *anthropicStreamDecoder) setInputUsage(usage anthropicUsage) {
 	d.usage.PromptTokensWritten = usage.CacheCreationInputTokens
 	d.usage.CacheReadKnown = usage.CacheReadKnown
 	d.usage.CacheWriteKnown = usage.CacheWriteKnown
+	if tier := usage.servedTier(); tier != "" {
+		d.usage.ServiceTier = tier
+	}
 }
 
 func (d *anthropicStreamDecoder) startBlock(index int, raw json.RawMessage) (StreamUpdate, error) {

@@ -183,14 +183,14 @@ func TestCollaborationEventMarksRareRunningAgentBroadcast(t *testing.T) {
 // that Aeron exists and how to reach it. Nothing else changes.
 func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
 	plain := BuildRoot(RootOptions{WorkDir: "/workspace"})
-	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true})
+	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
 	if strings.Contains(plain, "<workspace_agent>") {
 		t.Fatal("an ordinary root prompt carries the workspace-agent contract")
 	}
 	if strings.Contains(aeron, "<workspace_agent_peer>") {
 		t.Fatal("Aeron's root prompt carries the peer note instead of its own contract")
 	}
-	if !strings.Contains(aeron, WorkspaceAgentContract) || !strings.Contains(aeron, "question tool") {
+	if !strings.Contains(aeron, WorkspaceAgentFor("1.4.0")) || !strings.Contains(aeron, "question tool") {
 		t.Fatal("Aeron's root prompt does not name the question tool as its channel")
 	}
 	if !strings.Contains(plain, WorkspaceAgentPeer) || !strings.Contains(plain, "agent_list") {
@@ -198,7 +198,21 @@ func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
 	}
 	// The slot is the only difference: swapping each role's section yields the
 	// same remaining prompt.
-	if strings.Replace(aeron, WorkspaceAgentContract, "", 1) != strings.Replace(plain, WorkspaceAgentPeer, "", 1) {
+	if strings.Replace(aeron, WorkspaceAgentFor("1.4.0"), "", 1) != strings.Replace(plain, WorkspaceAgentPeer, "", 1) {
 		t.Fatal("the workspace-agent flag changed more than its own section")
+	}
+}
+
+// Aeron knows where Crude lives and which build it runs, so it can point the
+// user to the project and mention a newer release without running an update.
+func TestAeronKnowsCrudeProjectAndBuild(t *testing.T) {
+	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
+	for _, want := range []string{"https://github.com/opencrude/crude", "https://opencrude.github.io", "releases/latest", `<build version="1.4.0"/>`, "Do not run the update yourself"} {
+		if !strings.Contains(aeron, want) {
+			t.Errorf("Aeron's prompt lacks %q", want)
+		}
+	}
+	if plain := BuildRoot(RootOptions{WorkDir: "/workspace", CrudeVersion: "1.4.0"}); strings.Contains(plain, "<crude_project>") {
+		t.Fatal("an ordinary root carries Aeron's Crude project rules")
 	}
 }

@@ -973,7 +973,7 @@ var defaultActions = []*ActionDef{
 	{ID: "pane.split-left", Label: "Split Left", Description: "show this file again in a new pane on the left; other tabs get an empty pane", Category: "View", Contextual: true},
 	{ID: "pane.split-up", Label: "Split Up", Description: "show this file again in a new pane above; other tabs get an empty pane", Category: "View", Contextual: true},
 	{ID: "pane.split-layout", Label: "Split Containing Layout…", Description: "choose this pane, a containing layout, or the entire layout, then an edge", Category: "View", Contextual: true},
-	{ID: "pane.arrange", Label: "Arrange Tab…", Description: "move this tab beside any pane or layout subtree, on any of four edges", Category: "Tabs", Contextual: true},
+	{ID: "pane.arrange", Label: "Move Tab Beside a Pane…", Description: "move this tab beside any pane or layout subtree, on any of four edges", Category: "Tabs", Contextual: true},
 	{ID: "pane.split-right", Label: "Split Right", Description: "show this file again in a new pane on the right; other tabs get an empty pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+l"}, {Key: "ctrl+alt+right"}, {Key: "ctrl+\\"}}, HintKey: "Ctrl+Alt+L", Contextual: true},
 	{ID: "pane.split-down", Label: "Split Down", Description: "show this file again in a new pane below; other tabs get an empty pane", Category: "View", Bindings: []KeyBinding{{Key: "ctrl+alt+d"}, {Key: "ctrl+alt+down"}}, HintKey: "Ctrl+Alt+D", Contextual: true},
 	{ID: "pane.split-agent-right", Label: "Split Right with Agent", Description: "open the last agent beside this tab, or start a session there", Category: "View", Contextual: true},

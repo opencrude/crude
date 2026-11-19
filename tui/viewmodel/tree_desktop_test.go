@@ -388,3 +388,37 @@ func TestConnectedCoreTreeRevealUsesHostAuthority(t *testing.T) {
 // Keep these import-time contracts explicit when fixtures are changed.
 var _ shellport.ClientFiles = (*desktopFilesPort)(nil)
 var _ shellport.LocalHostAuthority = (*desktopFilesPort)(nil)
+
+// New file and New folder go beside a file and inside a folder, so the menu
+// never needs a second "(sibling)" pair.
+func TestFileTreeCreateItemsTargetFileParentOrFolder(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := newEditorPaintApp(t, root)
+	app.setActivity(activityFiles, true)
+	for name, wantDir := range map[string]string{"notes.txt": root, "pkg": filepath.Join(root, "pkg")} {
+		x, y := editorTreePoint(t, app, name)
+		menu := app.buildSidebarContextMenu(tea.Mouse{X: x, Y: y})
+		var labels []string
+		for _, section := range menu.Sections {
+			if section.SectionLabel == "Create" {
+				for _, item := range section.Items {
+					labels = append(labels, item.Label)
+				}
+			}
+		}
+		if strings.Join(labels, ",") != "New file,New folder" {
+			t.Fatalf("%s: Create items = %v", name, labels)
+		}
+		activateMenuItem(t, menu, "New file")
+		if app.TextPrompt == nil || app.TextPrompt.Prompt != "in "+wantDir {
+			t.Fatalf("%s: New file did not target %s", name, wantDir)
+		}
+		app.closeTextPrompt()
+	}
+}

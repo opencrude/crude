@@ -95,8 +95,8 @@
     "template": {
       "name": "Ollama Local",
       "help_text": "Local models. No API key needed.",
-      "provider_url": "http://localhost:11434/v1",
-      "api_standard": "openai",
+      "provider_url": "http://localhost:11434/api",
+      "api_standard": "ollama",
       "auth_type": "none"
     }
   },

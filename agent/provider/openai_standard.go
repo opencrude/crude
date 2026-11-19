@@ -24,7 +24,9 @@ func (s *OpenAIStandard) Info() ProtocolInfo {
 		Root:        "/v1",
 		ChatPath:    "chat/completions",
 		ModelsPath:  "models",
-		Streaming:   FramingSSE,
+		// OpenAI's typed decisions; compatible gateways mount it beside chat.
+		DecisionPath: "decisions",
+		Streaming:    FramingSSE,
 		Options: ProtocolOptions{
 			Store:        true,
 			ServiceTiers: []string{"auto", "default", "flex", "priority", "fast"},

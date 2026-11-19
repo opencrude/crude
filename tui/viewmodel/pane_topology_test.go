@@ -168,7 +168,7 @@ func TestPaneContextResourceJourney(t *testing.T) {
 			app.focusMainGroup(left)
 			_ = app.View()
 			paneOpenTabMenu(t, app, tab)
-			for _, label := range []string{"Split left", "Split right", "Split up", "Split down", "Arrange tab", "Split layout"} {
+			for _, label := range []string{"Split left", "Split right", "Split up", "Split down", "Move beside a pane…", "Split containing layout…"} {
 				menuItem(t, app.LastContextMenu, label)
 			}
 			paneChooseMenu(t, app, "Split left", false)
@@ -189,7 +189,7 @@ func TestPaneContextResourceJourney(t *testing.T) {
 				t.Fatal("empty split close moved resource")
 			}
 			paneOpenTabMenu(t, app, tab)
-			paneChooseMenu(t, app, "Arrange tab", true)
+			paneChooseMenu(t, app, "Move beside a pane…", true)
 			if app.LastContextMenu == nil || !strings.Contains(paneMenuText(t, app), "Entire layout") {
 				t.Fatal("pointer activation destroyed scope follow-up")
 			}
@@ -259,7 +259,7 @@ func TestPaneContextStaleOwnerNeverFallsThrough(t *testing.T) {
 			app.Win.SwitchTo(app.Win.IndexOf(other))
 			app.handleTabSwitch()
 			beforeTabs, tree := app.Win.Tabs(), paneTopology(app.Win.PaneRoot())
-			paneChooseMenu(t, app, "Move to new split right", false)
+			paneChooseMenu(t, app, "Move to new pane to the right", false)
 			if !reflect.DeepEqual(beforeTabs, app.Win.Tabs()) || !slices.Equal(tree, paneTopology(app.Win.PaneRoot())) {
 				t.Fatal("stale clicked menu acted on current resource/layout")
 			}
@@ -286,7 +286,7 @@ func TestPaneContextOwnerSurvivesReorderButNotStaleScope(t *testing.T) {
 	app.focusMainGroup(original)
 	_ = app.View()
 	paneOpenTabMenu(t, app, clicked)
-	paneChooseMenu(t, app, "Arrange tab", false)
+	paneChooseMenu(t, app, "Move beside a pane…", false)
 	paneChooseMenu(t, app, "Entire layout · 2 panes", false)
 	app.Win.RemoveEmptyGroup(right)
 	before := app.Win.Tabs()
@@ -298,7 +298,7 @@ func TestPaneContextOwnerSurvivesReorderButNotStaleScope(t *testing.T) {
 }
 
 func TestPaneContextGroupFileCloseSafety(t *testing.T) {
-	for _, label := range []string{"Close other files in pane", "Close files to the right"} {
+	for _, label := range []string{"Close other files", "Close files to the right"} {
 		t.Run(label, func(t *testing.T) {
 			app, ws := newRealShellApp(t)
 			defer ws.Close()
@@ -337,6 +337,51 @@ func TestPaneContextGroupFileCloseSafety(t *testing.T) {
 	}
 }
 
+// The file tab menu closes exactly the files its label names, relative to the
+// clicked tab, and leaves agents and other panes alone.
+func TestPaneContextCloseLeftSavedAndAll(t *testing.T) {
+	type want struct{ earlier, clicked, dirty, later bool }
+	for _, tc := range []struct {
+		label  string
+		open   want
+		prompt bool
+	}{
+		{"Close files to the left", want{false, true, true, true}, false},
+		{"Close saved files", want{false, false, true, false}, false},
+		{"Close all files", want{false, false, true, true}, true},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			app, ws := newRealShellApp(t)
+			defer ws.Close()
+			paneJourneySize(app, 180, 50)
+			app.AddOrchestrator("keep-agent")
+			agent := app.Win.ActiveTab().ID
+			paths := openEditorTabs(t, app, "earlier.go", "clicked.go", "dirty.go", "later.go", "neighbor.go")
+			clicked := app.Win.TabByTitle(app.editorTabTitle(paths[1])).ID
+			dirty := app.EditorState.Tabs[paths[2]].Editor
+			dirty.SetCursorPosition(0, 0)
+			dirty.InsertRune('x')
+			group := app.Win.ActiveGroup()
+			neighbor := app.Win.SplitGroup(group, ui.Horizontal, false)
+			app.Win.MoveTabToGroup(app.Win.TabByTitle(app.editorTabTitle(paths[4])).ID, neighbor, 0)
+			app.focusMainGroup(group)
+			_ = app.View()
+			paneOpenTabMenu(t, app, clicked)
+			paneChooseMenu(t, app, tc.label, true)
+			if got := app.DirtyPromptPath == paths[2]; got != tc.prompt {
+				t.Fatalf("dirty prompt = %v, want %v", got, tc.prompt)
+			}
+			got := want{app.EditorState.Tabs[paths[0]] != nil, app.EditorState.Tabs[paths[1]] != nil, app.EditorState.Tabs[paths[2]] != nil, app.EditorState.Tabs[paths[3]] != nil}
+			if got != tc.open {
+				t.Fatalf("open files = %+v, want %+v", got, tc.open)
+			}
+			if !dirty.Modified() || app.EditorState.Tabs[paths[4]] == nil || app.Win.GroupOf(agent) != group || ws.AgentMgr.Get("keep-agent") == nil {
+				t.Fatal("bulk close changed a dirty buffer, another pane or an agent")
+			}
+		})
+	}
+}
+
 func TestPaneContextLargeScopeMenuScrollAndCompactRestore(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
@@ -355,7 +400,7 @@ func TestPaneContextLargeScopeMenuScrollAndCompactRestore(t *testing.T) {
 		t.Fatal("large topology did not compact")
 	}
 	paneOpenTabMenu(t, app, source)
-	paneChooseMenu(t, app, "Arrange tab", false)
+	paneChooseMenu(t, app, "Move beside a pane…", false)
 	paneRequireMenuBounds(t, app)
 	st := app.LastContextMenu
 	last := st.Sections[len(st.Sections)-1].Items[len(st.Sections[len(st.Sections)-1].Items)-1].Label
@@ -528,7 +573,7 @@ func TestPaneArrangeMixedScopeAllEdges(t *testing.T) {
 				ed.InsertRune('x')
 				bytes := ed.Value()
 				paneOpenTabMenu(t, app, ids[3])
-				paneChooseMenu(t, app, "Arrange tab", false)
+				paneChooseMenu(t, app, "Move beside a pane…", false)
 				label := "Entire layout · 4 panes"
 				switch scope {
 				case "ancestor":
@@ -678,7 +723,7 @@ func TestPaneContainingSplitAndMoveIntoFollowups(t *testing.T) {
 	app.focusMainGroup(left)
 	_ = app.View()
 	paneOpenTabMenu(t, app, tab)
-	paneChooseMenu(t, app, "Split layout", true)
+	paneChooseMenu(t, app, "Split containing layout…", true)
 	paneChooseMenu(t, app, "Entire layout · 2 panes", false)
 	paneChooseMenu(t, app, "Split up", true)
 	root := app.Win.PaneRoot()
@@ -690,7 +735,7 @@ func TestPaneContainingSplitAndMoveIntoFollowups(t *testing.T) {
 	app.focusMainGroup(right)
 	_ = app.View()
 	paneOpenTabMenu(t, app, tab)
-	paneChooseMenu(t, app, "Arrange tab", false)
+	paneChooseMenu(t, app, "Move beside a pane…", false)
 	paneChooseMenu(t, app, "Pane 1 · left.go", true)
 	paneChooseMenu(t, app, "Move into this pane", true)
 	if app.Win.HasGroup(right) || app.Win.GroupOf(tab) != left || app.Win.TabCount() != 2 || app.Win.ActiveTab().ID != tab || app.Win.PaneRoot().Split != nil {

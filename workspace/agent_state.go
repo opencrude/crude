@@ -5,6 +5,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
@@ -272,7 +273,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	case "context_compacted":
 		status := parseCompactionStatus("compaction_completed", evt.Data)
 		target.UpdateTurnStatus(status)
-		if status.Trigger == "manual" {
+		if isSessionCompactionTrigger(status.Trigger) {
 			a.Running = false
 			a.Thinking = false
 			a.Streaming = false
@@ -306,7 +307,7 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 				break
 			}
 		}
-		if status.Trigger == "manual" {
+		if isSessionCompactionTrigger(status.Trigger) {
 			a.Running = false
 			a.Thinking = false
 			a.Streaming = false
@@ -520,9 +521,16 @@ func isManualCompactionEvent(evt AgentEvent) bool {
 	switch evt.Type {
 	case "context_compaction_started", "context_compaction_stage", "context_compaction_retrying", "context_compaction_committing",
 		"context_compacted", "context_compaction_cancelled", "context_compaction_failed":
-		return agentEventString(evt.Data, "trigger") == "manual" && agentEventString(evt.Data, "request_id") != ""
+		return isSessionCompactionTrigger(agentEventString(evt.Data, "trigger")) && agentEventString(evt.Data, "request_id") != ""
 	}
 	return false
+}
+
+// isSessionCompactionTrigger reports a compaction that is its own session
+// operation after a turn ended: a human /compact, or the workspace Aeron's
+// compaction when its agentic loop ends. Other triggers run inside a turn.
+func isSessionCompactionTrigger(trigger string) bool {
+	return trigger == agent.CompactionTriggerManual || trigger == agent.CompactionTriggerLoopEnd
 }
 
 // Session operations have their own identity; they must neither inherit the

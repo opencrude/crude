@@ -10,9 +10,21 @@ import (
 )
 
 const (
-	fieldRankerAccount = "ranker-account_id"
-	fieldRankerModel   = "ranker-model"
+	fieldRankerAccount   = "ranker-account_id"
+	fieldRankerModel     = "ranker-model"
+	fieldRankerModelType = "ranker-model_type"
+	fieldReviewModelType = "agent-model_type"
 )
+
+// modelTypeField is the one Model type control shared by Memory ranking and
+// Auto Review. Automatic follows the account's model list.
+func modelTypeField(id, value string) *ui.FieldState {
+	return ui.SegmentedFieldState(id, "Model type", []ui.FormOption{
+		{ID: types.ModelTypeAutomatic, Label: "Automatic"},
+		{ID: types.ModelTypeChat, Label: "Chat"},
+		{ID: types.ModelTypeDecision, Label: "Decision"},
+	}, value, "Automatic reads the account's model list. Other models reply in chat.")
+}
 
 func (m *Model) rankerFields() []*ui.FieldState {
 	r := m.memoryRanker.WithDefaults()
@@ -22,9 +34,9 @@ func (m *Model) rankerFields() []*ui.FieldState {
 	k.Validator = numberRange(1, types.MaxRankedMemories)
 	return []*ui.FieldState{ui.SeparatorFieldState("ranking", "Ranking"),
 		ui.BoolFieldState("ranker-enabled", "Rank after actions", r.Enabled == "on", "Send task, action and memory excerpts to the selected account."),
-		ui.SelectFieldState(fieldRankerAccount, "Decision account", r.AccountID, m.connectionOptions(false), "Use this account only for ranking. No other account is used."),
-		ui.ModelFieldState(fieldRankerModel, "Decision model", r.Model, nil, "Choose a model from the decision account or enter its exact ID."),
-		ui.SegmentedFieldState("ranker-endpoint", "Decision endpoint", []ui.FormOption{{ID: "systemone", Label: "System One"}, {ID: "decisions", Label: "Decisions"}, {ID: types.MemoryRankerChat, Label: "Chat"}}, r.Endpoint, "Choose Chat for a text model or a typed endpoint for a decision model."), cadence, k}
+		ui.SelectFieldState(fieldRankerAccount, "Account", r.AccountID, m.connectionOptions(false), "Use this account only for ranking. No other account is used."),
+		ui.ModelFieldState(fieldRankerModel, "Model", r.Model, nil, "Choose a decision model or a chat model, or enter its exact ID."),
+		modelTypeField(fieldRankerModelType, r.ModelType), cadence, k}
 }
 
 // Preserve unset or inherited values when the user edits a sibling field.
@@ -42,8 +54,8 @@ func (c *agentCatalog) rankerSettings() types.MemoryRankerSettings {
 			r.AccountID = v
 		case fieldRankerModel:
 			r.Model = v
-		case "ranker-endpoint":
-			r.Endpoint = v
+		case fieldRankerModelType:
+			r.ModelType = v
 		case "ranker-every_actions":
 			r.EveryActions, _ = strconv.Atoi(v)
 		case "ranker-top_k":

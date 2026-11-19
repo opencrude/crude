@@ -30,7 +30,7 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 			// The last durable boundary is the authority until another turn starts.
 			// A completed manual /compact is an operation result, not plan progress.
 			if last := node.State.Messages.lastNonPending(); last != nil &&
-				last.Role == MessageRoleStatus && last.LifecycleTrigger == "manual" &&
+				last.Role == MessageRoleStatus && isSessionCompactionTrigger(last.LifecycleTrigger) &&
 				last.LifecycleOperationID != "" {
 				switch last.LifecyclePhase {
 				case "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted":

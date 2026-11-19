@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -27,7 +28,11 @@ func (s *OllamaStandard) Info() ProtocolInfo {
 		Root:        "/api",
 		ChatPath:    "chat",
 		ModelsPath:  "tags",
-		Streaming:   FramingNDJSON,
+		// System One is served under /v1 beside the native /api root, for
+		// both a local daemon and Ollama's cloud.
+		DecisionPath:        "../v1/systemone",
+		ListsDecisionModels: true,
+		Streaming:           FramingNDJSON,
 	}
 }
 
@@ -417,9 +422,10 @@ func (s *OllamaStandard) ModelsURL(base *url.URL, cursor string) *url.URL {
 func (s *OllamaStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 	var result struct {
 		Models []struct {
-			Name    string `json:"name"`
-			Model   string `json:"model"`
-			Details struct {
+			Name         string   `json:"name"`
+			Model        string   `json:"model"`
+			Capabilities []string `json:"capabilities"`
+			Details      struct {
 				ParameterSize     string `json:"parameter_size"`
 				QuantizationLevel string `json:"quantization_level"`
 				Family            string `json:"family"`
@@ -438,7 +444,7 @@ func (s *OllamaStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 		if id == "" {
 			continue
 		}
-		models = append(models, ModelInfo{ID: id, Name: id})
+		models = append(models, ModelInfo{ID: id, Name: id, Decision: slices.Contains(m.Capabilities, "decision")})
 	}
 	return ModelPage{Models: models}, nil
 }

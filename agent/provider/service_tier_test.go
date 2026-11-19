@@ -1,6 +1,9 @@
 package provider
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // The tier a provider reports having served must reach accounting: Fast mode
 // bills above the standard rate and can be silently downgraded to "default".
@@ -57,7 +60,7 @@ func TestRoleServiceTierMapsToOfferedProtocolTiers(t *testing.T) {
 	}
 	anthropic := FromPreset("anthropic", "key", "")
 	before := anthropic.ProtocolSettings()
-	anthropic.SetServiceTier("fast")
+	anthropic.SetServiceTier("flex")
 	if after := anthropic.ProtocolSettings(); (before == nil) != (after == nil) || after != nil && after.ServiceTier != before.ServiceTier {
 		t.Fatalf("unsupported tier changed the account setting: %+v -> %+v", before, after)
 	}
@@ -68,5 +71,22 @@ func TestRoleServiceTierMapsToOfferedProtocolTiers(t *testing.T) {
 	anthropic.SetServiceTier("bogus")
 	if anthropic.ProtocolSettings().ServiceTier != "standard_only" {
 		t.Fatal("unknown tier changed the setting")
+	}
+}
+
+// Anthropic reports fast mode as usage.speed; it must reach pricing so a fast
+// request is never billed at the standard rate.
+func TestAnthropicReportsServedSpeed(t *testing.T) {
+	decoder := &anthropicStreamDecoder{blocks: map[int]*anthropicStreamBlock{}}
+	update, err := decoder.Decode(StreamEvent{Data: []byte(`{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":5,"output_tokens":1,"service_tier":"standard","speed":"fast"}}}`)})
+	if err != nil || update.Usage == nil || update.Usage.ServiceTier != "fast" {
+		t.Fatalf("served speed lost: %+v %v", update.Usage, err)
+	}
+	var response anthropicResponse
+	if err := json.Unmarshal([]byte(`{"id":"m","type":"message","role":"assistant","model":"claude-opus-5-5","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1,"service_tier":"standard","speed":"standard"}}`), &response); err != nil {
+		t.Fatal(err)
+	}
+	if chat, err := response.toChatResponse(); err != nil || chat.ServiceTier != "standard" {
+		t.Fatalf("served tier = %+v %v", chat, err)
 	}
 }

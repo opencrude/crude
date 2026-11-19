@@ -46,6 +46,13 @@ type ProtocolInfo struct {
 	// ModelsPath means the protocol has no listing endpoint; such
 	// protocols also do not implement ModelLister.
 	ModelsPath string
+	// DecisionPath is where the API serves typed decision questions, resolved
+	// against the account's API base with RFC 3986 rules (so "../v1/x"
+	// leaves the protocol's own root). Empty means no decision endpoint.
+	DecisionPath string
+	// ListsDecisionModels is true when the model listing marks decision
+	// models. Only then can an Automatic model type find one.
+	ListsDecisionModels bool
 	// Streaming reports the wire format of the streaming response body,
 	// which determines how the client frames it.
 	Streaming StreamFraming
@@ -245,6 +252,8 @@ type ModelInfo struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	ContextWindow int    `json:"context_window"`
+	// Decision is true when the listing marks a typed decision model.
+	Decision bool `json:"decision,omitempty"`
 }
 
 // ErrModelsUnsupported is returned by Client.ListModels when the provider

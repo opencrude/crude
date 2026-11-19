@@ -107,6 +107,74 @@ func TestAnthropicHeadersAndThinkingConfig(t *testing.T) {
 	}
 }
 
+// Current Claude models: Haiku 5.5 takes adaptive thinking with visible
+// summaries, "none" uses the off switch each model accepts (Opus 5.5 and Fable
+// cannot turn thinking off), and the Speed choice maps to fast mode or the
+// service tier.
+func TestAnthropicCurrentModelRequestExtras(t *testing.T) {
+	std := &AnthropicStandard{}
+	thinking := func(extras map[string]any) string {
+		value, _ := extras["thinking"].(map[string]any)
+		kind, _ := value["type"].(string)
+		if display, _ := value["display"].(string); display != "" {
+			kind += "/" + display
+		}
+		if config, _ := extras["output_config"].(map[string]any); config != nil {
+			kind += "@" + config["effort"].(string)
+		}
+		return kind
+	}
+	for _, tc := range []struct{ model, effort, want string }{
+		{"claude-haiku-5-5", "", "adaptive/summarized"},
+		{"claude-haiku-5-5", "medium", "adaptive/summarized@medium"},
+		{"claude-haiku-4-5-20251001", "high", ""},
+		{"claude-opus-5-5", "xhigh", "adaptive/summarized@xhigh"},
+		{"claude-opus-5-5", "none", "adaptive/summarized@low"},
+		{"claude-fable-5-2", "none", "adaptive/summarized@low"},
+		{"claude-sonnet-5-5", "none", "between_tools"},
+		{"claude-sonnet-5", "none", "disabled"},
+		{"claude-haiku-5-5", "none", "disabled"},
+		{"claude-sonnet-4-6", "", ""},
+	} {
+		if got := thinking(std.RequestExtras(tc.model, tc.effort, ProtocolSettings{})); got != tc.want {
+			t.Errorf("%s effort %q = %q, want %q", tc.model, tc.effort, got, tc.want)
+		}
+	}
+	fast := std.RequestExtras("claude-opus-5-5", "", ProtocolSettings{ServiceTier: "fast"})
+	if fast["speed"] != "fast" || fast["service_tier"] != nil {
+		t.Fatalf("fast mode extras = %v", fast)
+	}
+	standard := std.RequestExtras("claude-opus-5-5", "", ProtocolSettings{ServiceTier: "standard_only"})
+	if standard["service_tier"] != "standard_only" || standard["speed"] != nil {
+		t.Fatalf("standard tier extras = %v", standard)
+	}
+	p := FromPreset("anthropic", "key", "https://api.anthropic.com/v1")
+	if p.serviceTierForRole("fast") != "fast" || p.serviceTierForRole("standard") != "standard_only" || p.serviceTierForRole("flex") != "" {
+		t.Fatal("role speed choices do not map to Anthropic fast mode and standard tier")
+	}
+}
+
+// Since 2026-10-21 a document directly in an assistant message is an error;
+// documents stay valid in user messages.
+func TestAnthropicSendsDocumentsOnlyInUserContent(t *testing.T) {
+	doc := PartsContent([]ContentPart{{Type: "text", Text: "see"}, {Type: "document", MimeType: "application/pdf", Data: []byte("%PDF")}})
+	wire := encodeToMap(t, &AnthropicStandard{}, &ChatRequest{Model: "claude-opus-5-5", Messages: []ChatMessage{
+		{Role: "user", Content: doc}, {Role: "assistant", Content: doc},
+	}})
+	messages := wire["messages"].([]any)
+	count := func(index int) (documents int) {
+		for _, block := range messages[index].(map[string]any)["content"].([]any) {
+			if block.(map[string]any)["type"] == "document" {
+				documents++
+			}
+		}
+		return documents
+	}
+	if count(0) != 1 || count(1) != 0 {
+		t.Fatalf("documents: user %d, assistant %d", count(0), count(1))
+	}
+}
+
 func TestAnthropicEncodesMultipartToolResults(t *testing.T) {
 	body, err := (&AnthropicStandard{}).EncodeRequest(&ChatRequest{
 		Model: "claude-test",

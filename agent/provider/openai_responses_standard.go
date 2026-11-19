@@ -19,13 +19,14 @@ type OpenAIResponsesStandard struct {
 
 func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
 	return ProtocolInfo{
-		ID:          "openai-responses",
-		Name:        "OpenAI Responses",
-		Description: "Native Responses API with reasoning-item continuity.",
-		Root:        "/v1",
-		ChatPath:    "responses",
-		ModelsPath:  "models",
-		Streaming:   FramingSSE,
+		ID:           "openai-responses",
+		Name:         "OpenAI Responses",
+		Description:  "Native Responses API with reasoning-item continuity.",
+		Root:         "/v1",
+		ChatPath:     "responses",
+		ModelsPath:   "models",
+		DecisionPath: "decisions",
+		Streaming:    FramingSSE,
 		Options: ProtocolOptions{
 			Store:               true,
 			StoreDefault:        true,
@@ -33,7 +34,7 @@ func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
 			ZeroDataRetention:   true,
 			ReasoningSummaries:  true,
 			Truncation:          true,
-			ServiceTiers:        []string{"auto", "default", "flex", "priority", "fast"},
+			ServiceTiers:        []string{"auto", "default", "flex", "priority", "fast", "ultrafast"},
 		},
 	}
 }

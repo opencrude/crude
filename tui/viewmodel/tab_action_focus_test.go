@@ -147,7 +147,7 @@ func TestKeyboardTabCloseReleasesStripFocus(t *testing.T) {
 }
 
 func TestTabContextCloseReleasesStripFocus(t *testing.T) {
-	for _, action := range []string{"Close tab", "Close other files in pane", "Close files to the right", "Minimize", "Terminate agent"} {
+	for _, action := range []string{"Close tab", "Close other files", "Close files to the right", "Minimize", "Terminate agent"} {
 		t.Run(action, func(t *testing.T) {
 			app, ws := newRealShellApp(t)
 			defer ws.Close()

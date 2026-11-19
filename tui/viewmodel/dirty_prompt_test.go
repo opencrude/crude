@@ -126,7 +126,7 @@ func TestCloseTabsToTheRightPromptsForDirtyBuffer(t *testing.T) {
 	if anchorTab == nil {
 		t.Fatal("anchor tab missing from the strip")
 	}
-	app.closePaneEditorTabs(app.paneOwner(anchorTab.ID, anchorTab.Group), true)
+	app.closePaneEditorTabs(app.paneOwner(anchorTab.ID, anchorTab.Group), paneCloseRight)
 	if !dirty.IsOpen() {
 		t.Fatal("Close to the right destroyed a dirty buffer")
 	}
@@ -233,7 +233,7 @@ func TestBulkCloseResumesAfterDeferredDiscard(t *testing.T) {
 // keep's view.
 func closeOtherFilesInPane(app *App, keep *editor.Editor) {
 	v := app.documentViews(keep.FilePath())[0]
-	app.closePaneEditorTabs(app.paneOwner(v.Tab, app.Win.GroupOf(v.Tab)), false)
+	app.closePaneEditorTabs(app.paneOwner(v.Tab, app.Win.GroupOf(v.Tab)), paneCloseOthers)
 }
 
 // Closing a dirty tab must prompt in every mode: a full-screen overlay or a

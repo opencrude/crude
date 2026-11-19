@@ -1342,7 +1342,7 @@ func serviceTierSegments(current string) *ui.FieldState {
 		options = append(options, ui.FormOption{ID: tier, Label: strings.ToUpper(tier[:1]) + tier[1:]})
 	}
 	return ui.SegmentedFieldState(fieldServiceTier, "Speed", options, current,
-		"Fast and Priority cost more where offered; Flex is slower and cheaper.")
+		"Fast, Priority and Ultrafast cost more. Flex is slower and cheaper.")
 }
 
 func thinkingSegments(current string) *ui.FieldState {
@@ -1398,10 +1398,10 @@ func (m *Model) samplingFields(cfg types.CategorySettings) []*ui.FieldState {
 		topP = strconv.FormatFloat(*cfg.ModelTopP, 'f', -1, 64)
 	}
 	temperatureField := ui.TextFieldState(fieldTemperature, "Temperature", temperature,
-		"0-2; blank = provider default.")
+		"0-2. Blank is the provider default. Anthropic ignores it.")
 	temperatureField.Validator = floatRangeValidator(0, 2)
 	topPField := ui.TextFieldState(fieldTopP, "Top P", topP,
-		"0-1; blank = provider default.")
+		"0-1. Blank is the provider default. Anthropic ignores it.")
 	topPField.Validator = floatRangeValidator(0, 1)
 	for _, field := range []*ui.FieldState{temperatureField, topPField} {
 		field.Numeric, field.Placeholder = true, "default"
@@ -1564,7 +1564,8 @@ func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 	fields := []*ui.FieldState{
 		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, m.connectionOptions(false), "Explicit reviewer account; never inherits Main Agent."),
 		ui.ModelFieldState(fieldModel, "Model", auto.Model, ui.ModelOptions(m.models[accountModelKey(auto.Provider, auto.AccountID)]),
-			"Explicit reviewer model; never inherits Main Agent."),
+			"A decision model or a chat model. Never inherits Main Agent."),
+		modelTypeField(fieldReviewModelType, auto.ModelType),
 		serviceTierSegments(auto.ServiceTier),
 		purpose, instructions,
 	}
@@ -1646,6 +1647,7 @@ func autoPermissionFromForm(current types.AutoPermissionSettings, form *ui.FormM
 	auto.ThinkingEffort = value(fieldAutoPermThinking, auto.ThinkingEffort)
 	auto.ServiceTier = value(fieldServiceTier, auto.ServiceTier)
 	auto.ResponseFormat = value(fieldAutoPermFormat, auto.ResponseFormat)
+	auto.ModelType = value(fieldReviewModelType, auto.ModelType)
 	auto.TimeoutSeconds = parseOpt(value(fieldAutoPermTimeout, strconv.Itoa(auto.TimeoutSeconds)), auto.TimeoutSeconds)
 	auto.MaxOutputTokens = parseOpt(value(fieldAutoPermOutputTokens, strconv.Itoa(auto.MaxOutputTokens)), auto.MaxOutputTokens)
 	auto.MaxAttempts = parseOpt(value(fieldAutoPermRetries, strconv.Itoa(auto.MaxAttempts-1)), auto.MaxAttempts-1) + 1

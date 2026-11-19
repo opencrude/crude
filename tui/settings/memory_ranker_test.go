@@ -52,12 +52,12 @@ func TestMemoryRankingSettingsJourney(t *testing.T) {
 		}
 		c.draft.SetValue("ranker-every_actions", ui.StringValue("1"))
 		c.draft.SetValue("ranker-top_k", ui.StringValue("3"))
-		c.draft.SetValue("ranker-endpoint", ui.StringValue(types.MemoryRankerChat))
+		c.draft.SetValue("ranker-model_type", ui.StringValue(types.ModelTypeChat))
 		if !c.apply() {
 			t.Fatal("valid ranking settings rejected")
 		}
 		saved := m.AppSettings()
-		if saved.Memory.Ranker.AccountID != "chosen" || saved.Memory.Ranker.EveryActions != 1 || saved.Memory.Ranker.TopK != 3 || saved.Memory.Ranker.Endpoint != types.MemoryRankerChat || saved.Memory.MemoryCategory.Model != "" || saved.Memory.Ranker.Model != "my-decider" {
+		if saved.Memory.Ranker.AccountID != "chosen" || saved.Memory.Ranker.EveryActions != 1 || saved.Memory.Ranker.TopK != 3 || saved.Memory.Ranker.ModelType != types.ModelTypeChat || saved.Memory.MemoryCategory.Model != "" || saved.Memory.Ranker.Model != "my-decider" {
 			t.Fatalf("wrong owner: %+v", saved.Memory)
 		}
 		if !control.SettingsChangesAuthority(before.Memory.Ranker, saved.Memory.Ranker, "memory.ranker") {
@@ -124,5 +124,24 @@ func TestMemoryRankingAccountCatalogAndManualEntry(t *testing.T) {
 	s.ShowAgent("role/researcher")
 	if c.form.Field("ranker-model") != nil {
 		t.Fatal("ranking leaked to another agent")
+	}
+}
+
+// Memory ranking and Auto Review offer the same Model type control, so both
+// accept a decision model or an ordinary chat model.
+func TestAutoReviewAndRankingShareModelType(t *testing.T) {
+	m := &Model{autoReviewer: types.AutoPermissionSettings{ModelType: types.ModelTypeDecision}}
+	form := m.buildAutoReviewerForm()
+	field := form.Field(fieldReviewModelType)
+	if field == nil || field.Value.String() != types.ModelTypeDecision || len(field.Options) != 3 {
+		t.Fatal("Auto Review has no model type control")
+	}
+	form.SetValue(fieldReviewModelType, ui.StringValue(types.ModelTypeChat))
+	if got := autoPermissionFromForm(m.autoReviewer, form); got.ModelType != types.ModelTypeChat {
+		t.Fatalf("model type not saved: %q", got.ModelType)
+	}
+	ranking := modelTypeField(fieldRankerModelType, "")
+	if ranking.Label != field.Label || len(ranking.Options) != len(field.Options) || ranking.Value.String() != types.ModelTypeAutomatic {
+		t.Fatal("ranking and Auto Review use different model type controls")
 	}
 }

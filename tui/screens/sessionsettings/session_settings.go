@@ -704,7 +704,7 @@ func (s *Screen) openRole(role string) {
 		options = append(options, ui.FormOption{ID: tier, Label: strings.ToUpper(tier[:1]) + tier[1:]})
 	}
 	speed := ui.SegmentedFieldState(fieldServiceTier, "Speed", options, s.overrides[key].ServiceTier,
-		"Fast and Priority may cost more; unsupported connections ignore the choice.")
+		"Fast, Priority and Ultrafast may cost more. Other connections ignore the choice.")
 	if speed.Value.String() == "" {
 		speed.Inherited = true
 		speed.InheritedFrom = "workspace"

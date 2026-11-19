@@ -131,7 +131,7 @@ func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 		{"New session", "pane.new-session"}, {"Open file", "pane.open-file"},
 		{"Split right", "pane.split-right"}, {"Split down", "pane.split-down"},
 		{"Split left", "pane.split-left"}, {"Split up", "pane.split-up"},
-		{"Split layout", "pane.split-layout"},
+		{"Split containing layout…", "pane.split-layout"},
 		{"Close empty pane", "pane.close"}, {"Merge all panes", "pane.merge-all"},
 	} {
 		id := action.id
@@ -211,19 +211,50 @@ func (m *App) paneTabAt(x, y int) int {
 	return -1
 }
 
-func (m *App) closePaneEditorTabs(owner paneMenuOwner, rightOnly bool) {
+// paneCloseScope names which file tabs of a pane a bulk close covers. Bulk
+// closes never touch agent, panel or comparison tabs: closing those has its own
+// lifecycle (an agent tab minimizes).
+type paneCloseScope int
+
+const (
+	paneCloseOthers paneCloseScope = iota
+	paneCloseLeft
+	paneCloseRight
+	paneCloseSaved
+	paneCloseAll
+)
+
+// closePaneEditorTabs closes file tabs of the clicked tab's pane, relative to
+// that tab. Dirty files keep the Save/Discard/Cancel decision.
+func (m *App) closePaneEditorTabs(owner paneMenuOwner, scope paneCloseScope) {
 	if !owner.valid(m) {
 		return
 	}
-	tabs := m.Win.GroupTabs(owner.group)
 	var ids []window.TabID
-	seen := !rightOnly
-	for _, tab := range tabs {
-		if tab.ID == owner.tab {
-			seen = true
+	before := true
+	for _, tab := range m.Win.GroupTabs(owner.group) {
+		clicked := tab.ID == owner.tab
+		if clicked {
+			before = false
+		}
+		view := m.editorView(tab.ID)
+		if view == nil && !isImageTab(&tab) {
 			continue
 		}
-		if seen && (m.editorView(tab.ID) != nil || isImageTab(&tab)) {
+		include := false
+		switch scope {
+		case paneCloseOthers:
+			include = !clicked
+		case paneCloseLeft:
+			include = before
+		case paneCloseRight:
+			include = !before && !clicked
+		case paneCloseSaved:
+			include = view == nil || !view.Editor.Modified()
+		case paneCloseAll:
+			include = true
+		}
+		if include {
 			ids = append(ids, tab.ID)
 		}
 	}
@@ -1018,13 +1049,13 @@ func (m *App) paneMenuSections(tab window.TabID) []ui.ContextMenuSection {
 	} else {
 		split = append(split, row("Split right with file", "pane.split-file-right"))
 	}
-	split = append(split, row("Split layout", "pane.split-layout"))
+	split = append(split, row("Split containing layout…", "pane.split-layout"))
 	move := []ui.ContextMenuItem{}
 	panes := false
 	for _, side := range sides {
 		dir, before := paneEdge(side.edge)
 		if m.Win.Neighbor(group, dir, before) == 0 {
-			move = append(move, row("Move to new split "+side.edge, "pane.move-"+side.edge))
+			move = append(move, row("Move to new pane "+side.phrase, "pane.move-"+side.edge))
 			continue
 		}
 		panes = true
@@ -1036,7 +1067,7 @@ func (m *App) paneMenuSections(tab window.TabID) []ui.ContextMenuSection {
 	if panes {
 		move = append(move, row("Move to next pane", "pane.move-next"), row("Move to previous pane", "pane.move-previous"))
 	}
-	move = append(move, row("Arrange tab", "pane.arrange"))
+	move = append(move, row("Move beside a pane…", "pane.arrange"))
 	windowItems := []ui.ContextMenuItem{{Label: "Open in window", Detail: m.menuShortcut("tab.window"), Action: owner.action(m, func() {
 		m.openTabInWindow(tab)
 	})}}

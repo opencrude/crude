@@ -21,6 +21,7 @@ import (
 	"crude/agent/safety"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/buildinfo"
 	"crude/clipboard"
 	"crude/logger"
 	"crude/search"
@@ -810,7 +811,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	// switch even when execution itself is correctly re-rooted.
 	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{
 		MultiAgent: multiAgent, PlanMode: planMode, WorkDir: root, TempDir: s.TempDir(), Model: model,
-		WorkspaceAgent: workspaceAgent, Shell: shell,
+		WorkspaceAgent: workspaceAgent, Shell: shell, CrudeVersion: buildinfo.Version,
 	})
 	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
 	s.systemPrompts[key] = prompt

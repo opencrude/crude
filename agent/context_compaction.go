@@ -669,14 +669,23 @@ func (a *Agent) Compact(
 	systemPrompt string,
 	emit func(AgentEvent),
 ) (CompactResult, error) {
-	return a.CompactWithRequestID(ctx, active, systemPrompt, "", emit)
+	return a.CompactWithRequestID(ctx, active, systemPrompt, "", CompactionTriggerManual, emit)
 }
+
+// Session-operation compaction triggers. Both run outside a model turn:
+// manual is a human /compact; loop end is Crude compacting the workspace
+// Aeron after its agentic loop ends.
+const (
+	CompactionTriggerManual  = "manual"
+	CompactionTriggerLoopEnd = "loop_end"
+)
 
 func (a *Agent) CompactWithRequestID(
 	ctx context.Context,
 	active []provider.ChatMessage,
 	systemPrompt string,
 	requestID string,
+	trigger string,
 	emit func(AgentEvent),
 ) (CompactResult, error) {
 	if a == nil || a.Provider == nil {
@@ -707,11 +716,11 @@ func (a *Agent) CompactWithRequestID(
 		targetModel = a.Model
 	}
 	before := estimateCanonicalRequest(msgs, tools, targetModel)
-	outcome, err := a.compactWithModel(ctx, msgs, tools, requestID, before, "manual", emit)
+	outcome, err := a.compactWithModel(ctx, msgs, tools, requestID, before, trigger, emit)
 	if err != nil {
 		return CompactResult{
 			BeforeTokens: before, ContextWindow: outcome.ContextWindow, Usage: outcome.Usage,
-			RequestID: outcome.RequestID, Trigger: "manual", Role: checkpointRole(a.Depth),
+			RequestID: outcome.RequestID, Trigger: trigger, Role: checkpointRole(a.Depth),
 			StageName: outcome.StageName, StageIndex: outcome.StageIndex, Completed: outcome.Completed, RetryAttempt: outcome.RetryAttempt,
 			AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 		}, err
