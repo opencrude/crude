@@ -739,12 +739,18 @@ and `Return` activates the highlighted Application Settings entry. The broader
 `settings` query also matches command descriptions, so an extra `Down` can
 select a different action.
 
-`TERMINAL=alacritty` (default), `TERMINAL=kitty`, `TERMINAL=tilix` and
-`TERMINAL=wezterm` select the
+`TERMINAL=alacritty` (default), `kitty`, `tilix`, `wezterm`, `ghostty`,
+`konsole` and `kwi` (the KDE Flatpak `org.kde.kwi`) select the
 actual native emulator through this same workflow, not a changed `TERM` label.
 `WEZTERM_BIN` can name a portable `wezterm-gui` binary; `WEZTERM_CONFIG` can
-name the installer-generated Crude window configuration. The default capture
-loads no user configuration. For GUI keyboard acceptance, use the generated
+name the installer-generated Crude window configuration; `GHOSTTY_CONFIG` can
+name a Ghostty configuration file. The default capture
+loads no user configuration (Konsole and Kwi use their default profile). Crude
+starts only after the window is placed, and the driver takes pointer cells from
+the grid the terminal reports (`stty size`), not from `COLS`/`ROWS`: Ghostty,
+Konsole and Kwi can open with another grid and print a `note:`. Every
+`CRUDE_*` variable is written into the launch script, because Kwi's Flatpak
+starts the command on the host with a fresh environment. For GUI keyboard acceptance, use the generated
 configuration: the pinned terminal's optional Kitty mode changes Delete's
 encoding, so testing only its default settings does not test the installed GUI.
 Each launch is an independent borderless capture process; Tilix uses
@@ -862,7 +868,9 @@ F3 prepares a disposable CRLF document with wide/combining characters. Use
 Ctrl+Home, three Alt+N keys, type `X`, Undo, Ctrl+D, Undo, Escape, Ctrl+Home,
 then Alt-drag the published `MULTIPLE_RECT` cells. Type `Z`, Undo and Escape.
 F4 observes each boundary; wait for `MULTIPLE_READY phase=N` before continuing.
-F9 quits. Require eleven verified phases, joined cleanup, unchanged disk source
+Then Alt-drag from `(fromX+10,fromY+4)` to `(fromX+14,fromY+5)` across the
+mixed Latin/Hebrew arguments, Delete and Undo. Observe with F4 after each
+action. F9 quits. Require fourteen verified phases, joined cleanup, unchanged disk source
 and inspected screenshots at 160×40 and 80×24. The capture script's optional
 `drag:c1,r1,c2,r2,alt` modifier is released even if capture fails. Do not substitute
 Shift+Alt dragging: Alacritty treats it as terminal text selection.

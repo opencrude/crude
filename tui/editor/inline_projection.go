@@ -223,11 +223,15 @@ func buildInlineProjectionWithGhost(tabW int, raw string, insertions []InlineIns
 	return p, nil
 }
 
+func (p *inlineProjection) runAt(displayCell int) int {
+	return sort.Search(len(p.Runs), func(i int) bool { return p.Runs[i].DisplayStart+p.Runs[i].Width > displayCell })
+}
+
 func (p *inlineProjection) insertionAt(displayCell int) bool {
 	if displayCell < 0 || displayCell >= p.DisplayWidth {
 		return false
 	}
-	i := sort.Search(len(p.Runs), func(i int) bool { return p.Runs[i].DisplayStart+p.Runs[i].Width > displayCell })
+	i := p.runAt(displayCell)
 	return p.Runs[i].HintIndex >= 0 || p.Runs[i].Ghost
 }
 
@@ -251,7 +255,7 @@ func (p *inlineProjection) displayHit(displayCell int) inlineHit {
 	if displayCell >= p.DisplayWidth {
 		return inlineHit{SourceByte: p.sourceBytes, SourceCol: p.SourceWidth, HintIndex: -1}
 	}
-	i := sort.Search(len(p.Runs), func(i int) bool { return p.Runs[i].DisplayStart+p.Runs[i].Width > displayCell })
+	i := p.runAt(displayCell)
 	run := p.Runs[i]
 	return inlineHit{SourceByte: run.SourceByte, SourceCol: run.AnchorCol, HintIndex: run.HintIndex, Padding: run.Padding}
 }

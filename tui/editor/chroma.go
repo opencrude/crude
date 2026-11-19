@@ -36,6 +36,9 @@ type syntaxDocument struct {
 type syntaxLine struct {
 	text    string
 	colours []string
+	// roles holds the source code ordering role of each column
+	// (bidi_syntax.go).
+	roles []byte
 }
 
 type syntaxJob struct {
@@ -188,6 +191,11 @@ func mapSyntaxLine(tabW int, line syntaxLine, edit bufferLineChange) syntaxLine 
 	}
 	raw := line.text[:start] + edit.text + line.text[end:]
 	colours := make([]string, LineVisualWidth(raw, tabW))
+	var roles []byte
+	if line.roles != nil {
+		roles = make([]byte, len(colours))
+	}
+	previousStyle := -1
 	oldOffset, oldCol, offset, col := 0, 0, 0, 0
 	for rest := raw; rest != ""; {
 		size, width := firstSourceUnit(tabW, rest, col)
@@ -216,9 +224,18 @@ func mapSyntaxLine(tabW int, line syntaxLine, edit bufferLineChange) syntaxLine 
 				colours[x] = line.colours[styleCol]
 			}
 		}
+		if roles != nil && styleCol < len(line.roles) && col < len(roles) {
+			// Inserted text continues the token it was typed into.
+			role := line.roles[styleCol]
+			if styleCol == previousStyle {
+				role &^= roleTokenStart
+			}
+			roles[col] = role
+			previousStyle = styleCol
+		}
 		offset, col, rest = offset+size, col+width, rest[size:]
 	}
-	return syntaxLine{text: raw, colours: colours}
+	return syntaxLine{text: raw, colours: colours, roles: roles}
 }
 
 func (e *Editor) startSyntax() {
@@ -493,18 +510,21 @@ func (e *Editor) projectSyntaxLine(raw string, start int, tokenAt func(int) chro
 	}
 	index := sort.Search(len(tokens), func(i int) bool { return tokens[i].end > start })
 	colours := make([]string, LineVisualWidth(raw, e.TabWidth()))
+	roles := e.roleSlab.take(len(colours))
+	previous := chroma.TokenType(-1)
 	col, offset := 0, start
 	for rest := raw; rest != ""; {
 		for index < len(tokens) && tokens[index].end <= offset {
 			index++
 		}
-		var kind chroma.TokenType
+		// A semantic overlay can change the ink, not the lexical bidi
+		// boundaries or the position of an already visible character.
+		lexical := tokenAt(offset)
+		ink := lexical
 		if index < len(tokens) && tokens[index].start <= offset {
-			kind = tokens[index].kind
-		} else {
-			kind = tokenAt(offset)
+			ink = tokens[index].kind
 		}
-		colour := e.chromaTokenColor(kind)
+		colour := e.chromaTokenColor(ink)
 		size, width := firstSourceUnit(e.TabWidth(), rest, col)
 		if size == 0 {
 			break
@@ -512,9 +532,16 @@ func (e *Editor) projectSyntaxLine(raw string, start int, tokenAt func(int) chro
 		for x := col; x < col+width; x++ {
 			colours[x] = colour
 		}
+		if col < len(roles) {
+			roles[col] = syntaxRole(lexical)
+			if lexical != previous {
+				roles[col] |= roleTokenStart
+			}
+		}
+		previous = lexical
 		col, offset, rest = col+width, offset+size, rest[size:]
 	}
-	return syntaxLine{text: raw, colours: colours}
+	return syntaxLine{text: raw, colours: colours, roles: roles}
 }
 
 func (e *Editor) lineColorMap(lineIdx int) []string {

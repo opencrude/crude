@@ -1,6 +1,7 @@
 package chatprojection
 
 import (
+	"strconv"
 	"strings"
 
 	"crude/tui/bidi"
@@ -201,8 +202,58 @@ func ArrangedLine(pl PaintLine, maxW int) *bidi.Line {
 		return nil
 	}
 	var text strings.Builder
+	// Inline code is isolated left to right (UTS #55 section 4.1.4), so
+	// `./run.sh --all` keeps its order inside a Persian sentence. code
+	// holds the byte range of each code span in the row text.
+	var code [][2]int
+	var codeText *rendering.CopyText
+	codeIndex := -1
 	for _, span := range TruncatePaintLine(pl, maxW).Spans {
+		start := text.Len()
 		text.WriteString(span.Text)
+		index := -1
+		if span.Copy.Valid() && span.Text != "" {
+			index = span.Copy.Text.InlineCode(span.Copy.Start)
+		}
+		switch {
+		case index < 0:
+		case len(code) > 0 && codeText == span.Copy.Text && codeIndex == index && code[len(code)-1][1] == start:
+			code[len(code)-1][1] = text.Len()
+		default:
+			code = append(code, [2]int{start, text.Len()})
+		}
+		codeText, codeIndex = span.Copy.Text, index
 	}
-	return bidi.TextLine(text.String(), dir, maxW, maxW)
+	if len(code) == 0 {
+		return bidi.TextLine(text.String(), dir, maxW, maxW)
+	}
+	row := text.String()
+	var key strings.Builder
+	key.WriteString(row)
+	for _, r := range code {
+		key.WriteString("\x00")
+		key.WriteString(strconv.Itoa(r[0]))
+		key.WriteByte(':')
+		key.WriteString(strconv.Itoa(r[1]))
+	}
+	return bidi.CachedLine(key.String(), dir, maxW, maxW, func(dst []bidi.Unit) []bidi.Unit {
+		units := bidi.Clusters(row, dst)
+		offset, next := 0, 0
+		for i := range units {
+			end := offset + len(units[i].Text)
+			for next < len(code) && code[next][1] <= offset {
+				next++
+			}
+			if next < len(code) && offset >= code[next][0] && end <= code[next][1] {
+				if offset == code[next][0] {
+					units[i].Before = bidi.LRI
+				}
+				if end == code[next][1] {
+					units[i].After = bidi.PDI
+				}
+			}
+			offset = end
+		}
+		return units
+	})
 }

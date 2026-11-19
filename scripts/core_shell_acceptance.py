@@ -242,8 +242,10 @@ class Harness:
         pid = int(self.tmux("display-message", "-p", "-t", target, "#{pane_pid}"))
         self.windows[name] = (target, pid)
         self.processes[name] = process_identity(pid)
-        until(name + " rendered", lambda: "fixture-model" in self.capture(name) if resume else
-              "New Session" in self.capture(name) or "fixture-model" in self.capture(name))
+        until(name + " rendered", lambda: self.launch_ready(self.capture(name), resume))
+
+    def launch_ready(self, frame, resume):
+        return "fixture-model" in frame or (not resume and "New Session" in frame)
 
     def capture(self, name):
         text = self.tmux("capture-pane", "-p", "-t", self.windows[name][0])

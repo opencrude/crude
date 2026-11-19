@@ -48,19 +48,47 @@ func (b *CellBuffer) ApplyLine(x, y int, ln *bidi.Line) bool {
 			continue
 		}
 		copy(row[bl.Visual:bl.Visual+bl.Width], tmp[bl.Logical:bl.Logical+bl.Width])
-		glyph := false
-		if bl.Display != "" && shows(row[bl.Visual], bl.Source) {
-			row[bl.Visual].Content = bl.Display
-			row[bl.Visual].Char, _ = utf8.DecodeRuneInString(bl.Display)
-			glyph = true
-		}
-		for k := 0; k < bl.Width; k++ {
-			row[bl.Visual+k].Bidi = cell.NewBidiMark(int(bl.Level), bl.Visual+k == 0, glyph && k == 0)
-		}
+		presentBlock(row[bl.Visual:bl.Visual+bl.Width], bl, 0, bl.Visual == 0)
 	}
 	*scratch = tmp[:0]
 	lineScratch.Put(scratch)
 	return true
+}
+
+// PresentVisualLine applies glyph substitutions and bidi marks to cells a
+// painter has already placed in visual order. The viewport is a crop, not
+// a line boundary: clipped glyphs are not reshaped or measured again.
+func (b *CellBuffer) PresentVisualLine(x, y, width, offset int, ln *bidi.Line) {
+	if ln.Identity() || width <= 0 {
+		return
+	}
+	row := b.Row(y)
+	if x < 0 || x+width > len(row) {
+		return
+	}
+	row = row[x : x+width]
+	for _, bl := range ln.BlocksFrom(offset) {
+		start := bl.Visual - offset
+		if start >= width {
+			break
+		}
+		lo, hi := max(0, start), min(width, start+bl.Width)
+		presentBlock(row[lo:hi], &bl, lo-start, lo == 0)
+	}
+}
+
+func presentBlock(cells []cell.Cell, bl *bidi.Block, skip int, first bool) {
+	if len(cells) == 0 {
+		return
+	}
+	glyph := skip == 0 && bl.Display != "" && shows(cells[0], bl.Source)
+	if glyph {
+		cells[0].Content = bl.Display
+		cells[0].Char, _ = utf8.DecodeRuneInString(bl.Display)
+	}
+	for k := range cells {
+		cells[k].Bidi = cell.NewBidiMark(int(bl.Level), first && k == 0, glyph && k == 0)
+	}
 }
 
 var lineScratch = sync.Pool{New: func() any { s := make([]cell.Cell, 0, 256); return &s }}

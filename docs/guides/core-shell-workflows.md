@@ -243,8 +243,12 @@ and samples twenty retained workspaces. The SSH harness uses genuine loopback
 sshd and verifies unknown/replaced host-key rejection and two-shell stream
 survival. Loopback shares a filesystem; it does not prove distinct-host source
 or desktop handling. The editor harness enters via real tree/palette/keyboard,
-not direct RPC. Origin death follows peer rendering of accepted text; it is not
-an injected in-flight lost-response crash.
+not direct RPC. It chooses restricted mode in a disposable project, accepts a
+restored editor without requiring the launcher, cancels dirty close, and
+checks that both shell processes detach before restarting their private core.
+The external edit must overlap the local edit; an automatic disjoint merge
+is not a conflict. Origin death follows peer rendering of accepted text; it
+is not an injected in-flight lost-response crash.
 
 For visual review use repository `scripts/tuishot.sh` sequentially at 160×40 and
 80×24. Never run concurrent captures or leave dedicated capture windows alive.

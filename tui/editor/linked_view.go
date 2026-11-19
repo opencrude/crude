@@ -37,6 +37,7 @@ func (e *Editor) NewLinkedView() *Editor {
 	v.open = e.open
 	v.cursor, v.scrollX, v.scrollY = e.cursor, e.scrollX, e.scrollY
 	v.wordWrap, v.wrapOffset, v.wrapBefore = e.wordWrap, e.wrapOffset, e.wrapBefore
+	v.directionByLine = e.directionByLine
 	v.goalCol, v.goalSet = e.goalCol, e.goalSet
 	v.canonicalInsight = e.canonicalInsight
 	v.folds = e.copyFolds()

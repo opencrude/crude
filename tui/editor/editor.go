@@ -169,6 +169,7 @@ type Editor struct {
 	// Document-owned syntax is prepared off-UI; only visible cell maps are cached.
 	chromaLineCache                  map[int]syntaxLine
 	chromaLineScratch                map[int]syntaxLine
+	roleSlab                         roleSlab
 	syntaxDocument                   *syntaxDocument
 	syntaxBuffer                     *PieceTable
 	syntaxRevision, syntaxGeneration uint64
@@ -291,6 +292,9 @@ func New(th *theme.Theme) *Editor {
 		diagnostics: make([]LSPDiagnostic, 0),
 		diagByLine:  make(map[int][]diagSpan),
 		search:      NewSearchState(),
+		// Lines take the direction of their prose by default, as the
+		// editor.text_direction setting does (bidi.go).
+		directionByLine: true,
 	}
 	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	e.hScrollModel = ui.NewScrollModel()

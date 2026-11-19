@@ -579,6 +579,9 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 	// The workspace's suggestion choice is known from the first frame, so the
 	// footer and the first turn-on question never see an unset mode.
 	app.applySuggestionSettings(ws.LoadAppSettings().Prediction)
+	// Saved right-to-left choices hold from the first frame. The host
+	// terminal learns its mode when the program starts (Init).
+	app.applyTextDirectionSettings(ws.LoadAppSettings())
 
 	return app
 }
@@ -740,7 +743,7 @@ func (m *App) Init() tea.Cmd {
 	}
 	m.requestWorkspaceAeronEnsure()
 	m.reportViewMemoryLoadError()
-	return tea.Batch(m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadRemotePromptHistory(), m.onboardingCmd(), m.desktopNoticeEventsCmd())
+	return tea.Batch(m.hostBidiStartCmd(), m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadRemotePromptHistory(), m.onboardingCmd(), m.desktopNoticeEventsCmd())
 }
 
 // openSessionInfo uses the native read-only text reader for a session fact.

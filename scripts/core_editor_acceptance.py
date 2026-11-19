@@ -8,10 +8,11 @@ Default cleanup stops only this harness's private tmux/core; state is retained.
 import argparse
 import json
 import os
+import signal
 import subprocess
 import traceback
 
-from core_shell_acceptance import Harness, Observer, until
+from core_shell_acceptance import Harness, Observer, process_alive, until
 
 
 class EditorHarness(Harness):
@@ -40,12 +41,31 @@ class EditorHarness(Harness):
         until("palette action " + action, lambda: action.lower() in self.capture(name).lower())
         self.keys(name, "Enter")
 
+    def launch_ready(self, frame, resume):
+        # A second editor can restore the document directly, without ever
+        # painting the launcher or configuring an inference account.
+        return self.path.name in frame
+
     def open_file(self, name):
-        # Contextual pane/focus actions deliberately do not appear in the global
-        # palette. Open the actual painted tree entry; opening owns editor focus.
-        self.visible([name], "sample.txt")
-        self.click_text(name, "sample.txt")
+        if not self.result.get("restricted"):
+            self.visible([name], "Open in restricted mode")
+            self.click_text(name, "Open in restricted mode")
+            until("restricted choice accepted", lambda: "Trust this folder?" not in self.capture(name))
+            self.result["restricted"] = True
+        if "EDITOR BASELINE" not in self.capture(name):
+            self.click_text(name, self.path.name)
         self.visible([name], "EDITOR BASELINE")
+        self.click_text(name, "EDITOR BASELINE")  # focus source even on restore
+
+    def detach_editor(self, name):
+        # OS window close, not Discard: Bubble Tea handles SIGTERM as orderly
+        # teardown. Wait for the exact shell and verify the SDK close below.
+        identity = self.processes[name]
+        assert process_alive(identity), (name, identity)
+        os.kill(identity[0], signal.SIGTERM)
+        until(name + " detached", lambda: not process_alive(identity))
+        self.tmux("kill-window", "-t", self.windows[name][0], check=False)
+        del self.windows[name]
 
     def dirty(self, names):
         def check():
@@ -103,7 +123,9 @@ class EditorHarness(Harness):
         self.project = self.home / "project"
         self.project.mkdir()
         self.path = self.project / "sample.txt"
-        baseline = "EDITOR BASELINE\nSECOND LINE\n"
+        baseline = ("EDITOR BASELINE\nSECOND LINE\n"
+                    '    #figure(caption: [پژوهش Active SLAM می\u200cشود.])\n'
+                    '    table.header([#strong[שלום]], [世界 e\u0301])\n')
         self.path.write_text(baseline)
         self.start_core()
         for name in ("editor-a", "editor-b"):
@@ -127,7 +149,7 @@ class EditorHarness(Harness):
         until("A own undo leaves B intact", lambda: all("AUTHOR_A" not in self.capture(n) and "AUTHOR_B SECOND LINE" in self.capture(n) for n in self.windows))
         self.assert_disk(baseline)
         self.keys("editor-b", "C-s")
-        saved = "EDITOR BASELINE\nAUTHOR_B SECOND LINE\n"
+        saved = baseline.replace("SECOND LINE", "AUTHOR_B SECOND LINE", 1)
         until("explicit Ctrl+S commits exact shared bytes", lambda: self.path.read_text() == saved)
         self.stage("author-undo-and-save")
         self.result["checks"].append("A undo preserves B disjoint edit; B Ctrl+S commits exact shared bytes")
@@ -149,10 +171,12 @@ class EditorHarness(Harness):
         self.visible(["editor-a"], "RETAINED_ORIGIN EDITOR BASELINE")
         for name in ("editor-a", "editor-b"):
             self.keys(name, "C-w")
-            self.visible([name], "Shared unsaved changes")
-            self.click_text(name, "Close view")  # preserve canonical text, no disk write
-            until(name + " shared view closed", lambda: "Shared unsaved changes" not in self.capture(name))
-            self.quit(name)
+            self.visible([name], "Unsaved changes")
+            self.keys(name, "Escape")  # keep the document, never choose Discard
+            until(name + " close cancelled", lambda: "Unsaved changes" not in self.capture(name))
+            self.visible([name], "RETAINED_ORIGIN EDITOR BASELINE")
+            self.assert_disk(saved)
+            self.detach_editor(name)
         until("zero retained shell clients after graceful quit", lambda: self.status()["clients"] == 0)
         self.stop_core()
         self.start_core()
@@ -165,20 +189,20 @@ class EditorHarness(Harness):
         self.stage("restart-restored")
         self.result["checks"].append("zero-client core restart and same-profile actual reopen restore unsaved canonical bytes")
 
-        external = "EXTERNAL DISK OWNER\n"
+        # Compete for the same insertion point as the unsaved prefix. A
+        # mostly disjoint replacement can legitimately auto-merge and save.
+        external = "Ω " + saved
         self.path.write_text(external)
+        self.visible(["editor-b"], "Changed on disk. Conflicts")
         self.keys("editor-b", "C-s")
-        try:
-            until("external dirty conflict visible", lambda: any(word in self.capture("editor-b").lower() for word in ("conflict", "changed on disk", "external")))
-        finally:
-            self.result["external_conflict_observation"] = {
-                "disk_preserved": self.path.read_text() == external,
-                "local_text_visible": "RETAINED_ORIGIN EDITOR BASELINE" in self.capture("editor-b")}
-        self.visible(["editor-b"], "RETAINED_ORIGIN EDITOR BASELINE")
+        self.visible(["editor-b"], "File changed on disk")
         self.assert_disk(external)
         self.stage("external-conflict")
         self.keys("editor-b", "Escape")
+        until("conflict dialog cancelled", lambda: "File changed on disk" not in self.capture("editor-b"))
+        self.visible(["editor-b"], "RETAINED_ORIGIN EDITOR BASELINE")
         self.assert_disk(external)
+        self.result["external_conflict_observation"] = {"disk_preserved": True, "local_text_visible": True}
         self.result["checks"].append("external dirty change + Ctrl+S shows conflict, preserves local text and external disk; Esc does not write")
         self.result["passed"] = True
 

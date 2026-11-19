@@ -373,3 +373,112 @@ func TestLogicalUndoesGlyphs(t *testing.T) {
 		t.Fatal("Logical did not restore the source character")
 	}
 }
+
+// visualText arranges units on one display line and returns the visual text
+// with presentation forms kept as painted.
+func visualText(t *testing.T, units []Unit, dir Direction) string {
+	t.Helper()
+	layout := Analyze(units, dir, false)
+	if layout == nil {
+		t.Fatal("no layout")
+	}
+	ln := layout.Line(0, layout.Width(), layout.Width())
+	out := ""
+	for _, b := range ln.Blocks() {
+		if b.Unit < 0 {
+			out += " "
+			continue
+		}
+		if b.Display != "" {
+			out += b.Display
+		} else {
+			out += b.Source
+		}
+	}
+	return out
+}
+
+// unitsOf returns the clusters of text, enclosed in one isolate when open
+// is an isolate initiator.
+func unitsOf(text, open string) []Unit {
+	units := Clusters(text, nil)
+	if open != "" && len(units) > 0 {
+		units[0].Before = open
+		units[len(units)-1].After = PDI
+	}
+	return units
+}
+
+// Code inside a right-to-left sentence keeps its own left-to-right order:
+// "#cite(<x>)" must not read ")<x>(cite#" or lose its "#" to the far side.
+func TestIsolatedCodeKeepsItsOrderInsideRightToLeftText(t *testing.T) {
+	defer SetPresentation(Current())
+	SetPresentation(Presentation{Arrange: true})
+	units := append(unitsOf("\u05d0\u05d1 ", ""), unitsOf("#cite(<x>)", LRI)...)
+	units = append(units, unitsOf(".", "")...)
+	if got, want := visualText(t, units, RightToLeft), ".#cite(<x>) \u05d1\u05d0"; got != want {
+		t.Fatalf("visual %q, want %q", got, want)
+	}
+	// Without the isolate UAX #9 moves the "#" and mirrors the brackets.
+	plain := Clusters("\u05d0\u05d1 #cite(<x>).", nil)
+	if got := visualText(t, plain, RightToLeft); got == ".#cite(<x>) \u05d1\u05d0" {
+		t.Fatalf("plain paragraph unexpectedly kept code order: %q", got)
+	}
+}
+
+// Two right-to-left strings in left-to-right code stay in their places: the
+// neutral `", "` between them would otherwise join them into one run and
+// swap them.
+func TestIsolatedStringsDoNotSwapInLeftToRightCode(t *testing.T) {
+	defer SetPresentation(Current())
+	SetPresentation(Presentation{Arrange: true})
+	var units []Unit
+	units = append(units, unitsOf("f(\"", "")...)
+	units = append(units, unitsOf("\u05d0\u05d1", FSI)...)
+	units = append(units, unitsOf("\", \"", "")...)
+	units = append(units, unitsOf("\u05d2\u05d3", FSI)...)
+	units = append(units, unitsOf("\")", "")...)
+	if got, want := visualText(t, units, LeftToRight), "f(\"\u05d1\u05d0\", \"\u05d3\u05d2\")"; got != want {
+		t.Fatalf("visual %q, want %q", got, want)
+	}
+	plain := Clusters("f(\"\u05d0\u05d1\", \"\u05d2\u05d3\")", nil)
+	if got := visualText(t, plain, LeftToRight); got == "f(\"\u05d1\u05d0\", \"\u05d3\u05d2\")" {
+		t.Fatalf("plain paragraph unexpectedly kept the strings apart: %q", got)
+	}
+}
+
+// Under Auto the paragraph takes the direction of its first strong
+// character outside isolates (rule P2): code isolated in a Persian line of
+// markup does not make the line left to right.
+func TestAutoDirectionSkipsIsolatedText(t *testing.T) {
+	defer SetPresentation(Current())
+	SetPresentation(Presentation{Arrange: true})
+	units := append(unitsOf("#strong[", LRI), unitsOf("\u05d0\u05d1", "")...)
+	layout := Analyze(units, Auto, false)
+	if layout == nil || !layout.RTL() {
+		t.Fatal("line with isolated code first is not right to left")
+	}
+	if got, want := visualText(t, units, Auto), "\u05d1\u05d0#strong["; got != want {
+		t.Fatalf("visual %q, want %q", got, want)
+	}
+}
+
+// An isolate right before right-to-left text keeps its own side: the
+// isolate controls separate it from the run (rule L2 must not reverse the
+// two together although the controls are not painted).
+func TestIsolateBeforeRightToLeftTextStaysInPlace(t *testing.T) {
+	defer SetPresentation(Current())
+	SetPresentation(Presentation{Arrange: true})
+	var units []Unit
+	units = append(units, Clusters("  ", nil)...)
+	units = append(units, unitsOf("caption", LRI)...)
+	units = append(units, unitsOf(":", LRI)...)
+	units = append(units, Clusters(" ", nil)...)
+	units = append(units, unitsOf("[", LRI)...)
+	units[2].Before = LRI + LRI
+	units[len(units)-1].After = PDI + PDI
+	units = append(units, Clusters("\u05d0\u05d1 \u05d2, x", nil)...)
+	if got, want := visualText(t, units, LeftToRight), "  caption: [\u05d2 \u05d1\u05d0, x"; got != want {
+		t.Fatalf("visual %q, want %q", got, want)
+	}
+}

@@ -386,7 +386,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.SegmentedFieldState("render-whitespace", "Show whitespace", []ui.FormOption{{ID: "none", Label: "Never"}, {ID: "boundary", Label: "At edges"}, {ID: "all", Label: "Always"}}, editor.RenderWhitespace, "Draw spaces and tabs. At edges shows only leading and trailing whitespace."),
 			ui.BoolFieldState("indent-guides", "Indent guides", editor.IndentGuides, "Show lines at each indentation step."),
 			ui.BoolFieldState("minimap", "Minimap", editor.Minimap, "Show a compact source map when the pane has room."),
-			ui.SegmentedFieldState("text-direction", "Line direction", []ui.FormOption{{ID: types.EditorTextDirectionLTR, Label: "Left to right"}, {ID: types.EditorTextDirectionByLine, Label: "By line"}}, editor.TextDirectionOrDefault(), "By line shows a line that starts with Arabic, Persian or Hebrew from right to left. Use it for prose; code reads left to right."),
+			ui.SegmentedFieldState("text-direction", "Line direction", []ui.FormOption{{ID: types.EditorTextDirectionByLine, Label: "By line"}, {ID: types.EditorTextDirectionLTR, Label: "Left to right"}}, editor.TextDirectionOrDefault(), "Keep all lines at the left margin. By line follows the reading direction of the text inside code."),
 			ui.SeparatorFieldState("indentation", "Indentation"),
 			ui.SegmentedFieldState("indent-style", "Indent with", []ui.FormOption{{ID: "auto", Label: "Detect"}, {ID: "space", Label: "Spaces"}, {ID: "tab", Label: "Tabs"}}, defaultString(editor.IndentStyle, "auto"), "EditorConfig and this file's choices take priority."),
 			ui.NumberFieldState("indent-size", "Indent size", editor.IndentSize, "columns", "Use 0 to detect from text, or 1 to 32 columns."),
@@ -409,10 +409,11 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			}, uiSettings.AttachmentOpenOrDefault(), "Crude uses terminal graphics when supported; otherwise a low-resolution preview."),
 			ui.SeparatorFieldState("right-to-left-text", "Right-to-left text"),
 			ui.SegmentedFieldState("right-to-left", "Arrange", []ui.FormOption{
+				{ID: types.RightToLeftAuto, Label: "Automatic"},
 				{ID: types.RightToLeftArrange, Label: "Join letters"},
 				{ID: types.RightToLeftUnjoined, Label: "Separate letters"},
 				{ID: types.RightToLeftTerminal, Label: "Terminal"},
-			}, uiSettings.RightToLeftOrDefault(), "Crude puts Arabic, Persian and Hebrew text in reading order. Use Separate letters if your font shows boxes. Use Terminal only if your terminal puts this text in order itself."),
+			}, uiSettings.RightToLeftOrDefault(), "Crude puts Arabic, Persian and Hebrew text in reading order. Automatic lets Konsole do this itself. Use Separate letters if your font shows boxes. Use Terminal only if your terminal puts this text in order itself."),
 			ui.SegmentedFieldState("caret-movement", "Arrow keys", []ui.FormOption{
 				{ID: types.CaretMovementVisual, Label: "Move on screen"},
 				{ID: types.CaretMovementLogical, Label: "Follow text order"},
@@ -2954,7 +2955,7 @@ func (m *Model) collectEditor(cfg *types.EditorSettings) {
 	cfg.Minimap = m.value(catEditor, "minimap") == "on"
 	cfg.IndentSize = parseOpt(m.value(catEditor, "indent-size"), 0)
 	cfg.NewFileEncoding = textencoding.FromKey(m.value(catEditor, "new-file-encoding"))
-	cfg.TextDirection = explicitChoice(m.value(catEditor, "text-direction"), types.EditorTextDirectionLTR)
+	cfg.TextDirection = explicitChoice(m.value(catEditor, "text-direction"), types.EditorTextDirectionByLine)
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {
@@ -2970,7 +2971,7 @@ func (m *Model) collectUI(cfg *types.UISettings) {
 	cfg.ShowDiagnostics = m.value(catUI, "diagnostics") == "on"
 	cfg.ContextHelp = defaultString(m.value(catUI, "context-help"), "compact")
 	cfg.AttachmentOpen = m.value(catUI, "attachment-open")
-	cfg.RightToLeft = explicitChoice(m.value(catUI, "right-to-left"), types.RightToLeftArrange)
+	cfg.RightToLeft = explicitChoice(m.value(catUI, "right-to-left"), types.RightToLeftAuto)
 	cfg.CaretMovement = explicitChoice(m.value(catUI, "caret-movement"), types.CaretMovementVisual)
 	m.collectDesktopNotifications(&cfg.DesktopNotifications)
 }

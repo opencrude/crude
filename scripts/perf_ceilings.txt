@@ -44,6 +44,8 @@ BenchmarkSyntaxDocumentPreparation/Python_200 445000 7060
 BenchmarkSyntaxDocumentPreparation/Python_20000 42700000 672400
 # Wrapped source rows: warm paint, worker cold metrics, width-only reflow and
 # actual typing+grid paint. Three Go 1.27.4 runs; no existing gate is relaxed.
+BenchmarkEditorMixedDirectionPan/64 240 15
+BenchmarkEditorMixedDirectionPan/2048 240 15
 BenchmarkWrappedEditorWorkload/200 2900 72
 BenchmarkWrappedEditorWorkload/20000 3000 101
 BenchmarkWrappedRowPreparation/cold 12640000 48040

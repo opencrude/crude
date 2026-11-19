@@ -16,7 +16,10 @@ import (
 	"testing"
 )
 
-const multiVisualSource = "word a 界é\r\nword b 界é\r\nword c 界é\r\n"
+const multiVisualSource = "word a 界é\r\nword b 界é\r\nword c 界é\r\n" +
+	"if (ready) {\r\n" +
+	"        draw(\"ab אבג end\", \"می\u200cشود\", \"世界 é\")\r\n" +
+	"        draw(\"ab אבג end\", \"Active SLAM\", \"👩‍💻\")\r\n}\r\n"
 
 func TestEditorMultipleVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_MULTIPLE") != "1" {
@@ -157,6 +160,22 @@ func runMultipleVisual(t *testing.T, headless bool, width, height int) {
 				return
 			}
 			key(tea.KeyEsc, 0)
+			if !observe(tea.KeyF4) {
+				return
+			}
+			// The second rectangle straddles a Latin/Hebrew run boundary.
+			x, y := m.x+10, m.y+4
+			program.Send(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft, Mod: tea.ModAlt})
+			program.Send(tea.MouseMotionMsg{X: x + 4, Y: y + 1, Button: tea.MouseLeft, Mod: tea.ModAlt})
+			program.Send(tea.MouseReleaseMsg{X: x + 4, Y: y + 1, Button: tea.MouseLeft, Mod: tea.ModAlt})
+			if !observe(tea.KeyF4) {
+				return
+			}
+			key(tea.KeyDelete, 0)
+			if !observe(tea.KeyF4) {
+				return
+			}
+			key('z', tea.ModCtrl)
 			if observe(tea.KeyF4) {
 				key(tea.KeyF9, 0)
 			}
@@ -168,7 +187,7 @@ func runMultipleVisual(t *testing.T, headless bool, width, height int) {
 	if m.failure != nil {
 		t.Fatal(m.failure)
 	}
-	if m.phase != 11 || m.rootHost.HasPointerCapture() {
+	if m.phase != 14 || m.rootHost.HasPointerCapture() {
 		t.Fatal("native multi-selection journey incomplete", m.phase)
 	}
 }
@@ -205,7 +224,7 @@ func (m *multipleVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if v.Code == tea.KeyF3 || v.Code == tea.KeyF4 {
-			if m.busy || m.phase >= 11 || v.Code == tea.KeyF3 && m.phase != 0 || v.Code == tea.KeyF4 && m.phase == 0 {
+			if m.busy || m.phase >= 14 || v.Code == tea.KeyF3 && m.phase != 0 || v.Code == tea.KeyF4 && m.phase == 0 {
 				return m, nil
 			}
 			m.busy = true
@@ -246,6 +265,8 @@ func (m *multipleVisualModel) observeMultiple(phase int) error {
 			want = strings.ReplaceAll(want, "word", "X")
 		case 4:
 			want = strings.ReplaceAll(want, "word", "wordword")
+		case 12:
+			want = strings.ReplaceAll(want, "ab אבג end", "aא end")
 		case 8:
 			for _, letter := range []string{"a", "b", "c"} {
 				want = strings.Replace(want, "word "+letter, "word Z", 1)
@@ -258,6 +279,9 @@ func (m *multipleVisualModel) observeMultiple(phase int) error {
 		if phase == 0 || phase == 6 || phase == 10 {
 			count = 1
 		}
+		if phase >= 11 {
+			count = 4
+		}
 		selection := ""
 		switch phase {
 		case 1, 3, 4, 5:
@@ -268,12 +292,14 @@ func (m *multipleVisualModel) observeMultiple(phase int) error {
 			selection = "a\r\nb\r\nc"
 		case 10:
 			selection = "c"
+		case 11, 13:
+			selection = "b \r\nבג\r\nb \r\nבג"
 		}
 		if ed.CaretCount() != count || ed.SelectedText() != selection {
 			return fmt.Errorf("native caret/selection: count=%d selected=%q want %d %q %s", ed.CaretCount(), ed.SelectedText(), count, selection, m.lastInput)
 		}
 		frame = ansi.Strip(v.View().RenderContent())
-		if count > 1 && !strings.Contains(frame, "3 carets") {
+		if count > 1 && !strings.Contains(frame, fmt.Sprintf("%d carets", count)) {
 			return fmt.Errorf("header does not identify multiple carets")
 		}
 		r := v.editorRect

@@ -15,7 +15,7 @@ func (e *CodeSpanElement) Render(w io.Writer, ctx RenderContext) error {
 		return nil
 	}
 	_, _ = renderText(w, e.Style, e.Style.Prefix)
-	_, _ = renderSourceText(w, e.Style, e.Text, ctx.options.Source)
+	_, _ = renderSourceText(w, e.Style, e.Text, ctx.options.Source, true)
 	_, _ = renderText(w, e.Style, e.Style.Suffix)
 	return nil
 }

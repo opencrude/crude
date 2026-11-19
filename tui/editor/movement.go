@@ -39,7 +39,7 @@ func (e *Editor) moveDown() {
 
 // applyGoalCol puts the caret on its line at the goal column (setGoal).
 func (e *Editor) applyGoalCol() {
-	e.cursor, _ = e.positionOnRow(e.cursor.Line, e.goalCol-e.goalOffset())
+	e.cursor, _ = e.positionOnRow(e.cursor.Line, e.goalCol-e.scrollX)
 }
 
 func (e *Editor) clearGoal() {
@@ -50,7 +50,7 @@ func (e *Editor) clearGoal() {
 func (e *Editor) moveLeft() {
 	e.clearGoal()
 	if e.wrapsRows() && !e.wrapBefore {
-		row, col := e.visualPosition(e.cursor, false)
+		row, col := e.logicalRowPosition(e.cursor, false)
 		if col == 0 && e.rowAt(row).index > 0 {
 			e.wrapBefore = true
 			e.ensureCursorVisible()

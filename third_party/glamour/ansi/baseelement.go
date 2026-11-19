@@ -39,9 +39,9 @@ func formatToken(format string, token string) (string, error) {
 }
 
 func renderText(w io.Writer, rules StylePrimitive, s string) (int, error) {
-	return renderSourceText(w, rules, s, nil)
+	return renderSourceText(w, rules, s, nil, false)
 }
-func renderSourceText(w io.Writer, rules StylePrimitive, s string, source SourceTrace) (int, error) { //nolint:unparam
+func renderSourceText(w io.Writer, rules StylePrimitive, s string, source SourceTrace, code bool) (int, error) { //nolint:unparam
 	if len(s) == 0 {
 		return 0, nil
 	}
@@ -85,7 +85,10 @@ func renderSourceText(w io.Writer, rules StylePrimitive, s string, source Source
 	}
 
 	styled := style.Styled(s)
-	if source != nil {
+	switch {
+	case source != nil && code:
+		styled = source.MarkCode(styled, s)
+	case source != nil:
 		styled = source.Mark(styled, s)
 	}
 	n, err := io.WriteString(w, styled)
@@ -145,7 +148,7 @@ func (e *BaseElement) doRender(w io.Writer, st1, st2 StylePrimitive, source Sour
 	if !e.Presented {
 		s = escapeReplacer.Replace(s)
 	}
-	_, _ = renderSourceText(w, st2, s, source)
+	_, _ = renderSourceText(w, st2, s, source, false)
 	return nil
 }
 

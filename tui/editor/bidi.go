@@ -1,35 +1,28 @@
 package editor
 
 import (
+	"strings"
+
 	"crude/tui/bidi"
 	"crude/tui/ui"
 )
 
 // Bidirectional text in the editor (see docs/reference/bidi.md).
 //
-// The buffer, carets, selections and every column the editor stores stay in
-// logical order. Each source line is one paragraph: left-to-right by default,
-// as code editors lay out code, or with the direction of its own first strong
-// character when the user chose "By line". Render paints a row in logical
-// order, decorations and carets included, and then arranges it, so every mark
-// moves with its character. Pointer columns and the Up/Down goal column pass
-// through the same row arrangement.
-
-// editorLineBidi caches the resolved paragraph of one source line.
+// The outer row is a left-aligned code grid. Prose inside it can have a
+// different reading direction. Scrolling never supplies a line boundary.
 type editorLineBidi struct {
 	valid      bool
 	inline     *editorInlineLine
 	generation uint64
 	dir        bidi.Direction
-	fallback   bool
+	roles      *byte
 	layout     *bidi.Layout
-	// strong is the direction of the line's first strong character:
-	// 0 unknown, 1 none, 2 left-to-right, 3 right-to-left.
-	strong uint8
-	// reorders records whether the line holds a character that can change
-	// its visual order: 0 unknown, 1 no, 2 yes. Lines without one never
-	// build a layout, so left-to-right code costs one scan per line text.
-	reorders uint8
+	reorders   uint8
+	// For wrapped lines only the current wrap width owns these ranges.
+	full      *bidi.Line
+	wrapWidth int
+	wrapped   map[[2]int]*bidi.Line
 }
 
 // TextDirection reports the editor's paragraph direction policy.
@@ -40,8 +33,8 @@ func (e *Editor) TextDirection() bidi.Direction {
 	return bidi.LeftToRight
 }
 
-// SetTextDirection selects left-to-right lines (bidi.LeftToRight, the code
-// editor default) or lines that take their own direction (bidi.Auto).
+// SetTextDirection selects lines that take their own direction (bidi.Auto,
+// the default) or left-to-right lines (bidi.LeftToRight).
 func (e *Editor) SetTextDirection(dir bidi.Direction) {
 	byLine := dir == bidi.Auto
 	if e.directionByLine == byLine {
@@ -72,7 +65,6 @@ func (e *Editor) lineLayout(lineIdx int) *bidi.Layout {
 		}
 	}
 	dir := e.TextDirection()
-	fallback := dir == bidi.Auto && e.inheritsRightToLeft(lineIdx)
 	// Inlay hints are inline objects; they never reorder a line on their
 	// own. Suggested text previews source text, so right-to-left suggested
 	// text lays out the line as the accepted text would.
@@ -80,16 +72,32 @@ func (e *Editor) lineLayout(lineIdx int) *bidi.Layout {
 	if g := e.ghost; g != nil && g.buffer == e.buf && g.atLine == lineIdx && !g.marker {
 		ghostRTL = bidi.NeedsLayout(g.label)
 	}
-	if c.reorders == 1 && !fallback && !ghostRTL {
+	if c.reorders == 1 && !ghostRTL {
 		return nil
 	}
 	inline := e.inlineLine(lineIdx)
 	generation := bidi.Generation()
-	if c.valid && c.inline == inline && c.generation == generation && c.dir == dir && c.fallback == fallback {
+	roles := e.lineRoles(lineIdx)
+	var rolesID *byte
+	if len(roles) > 0 {
+		rolesID = &roles[0]
+	}
+	if c.valid && c.inline == inline && c.generation == generation && c.dir == dir && c.roles == rolesID {
 		return c.layout
 	}
-	clusters, _, widths, _ := e.lineRenderInfo(lineIdx, 0)
+	clusters, _, widths, _ := e.lineRenderInfo(lineIdx)
 	units := make([]bidi.Unit, 0, len(clusters))
+	// cols holds the source column of each unit; -1 for inlay hints and
+	// suggested text, which have no syntax role.
+	var tabs [][2]int
+	if strings.ContainsRune(cached.raw, '\t') {
+		tabs = cached.spaceGeometry(e.TabWidth(), true).tabs
+	}
+	var cols []int
+	if rolesID != nil || len(tabs) > 0 {
+		cols = make([]int, 0, len(clusters))
+	}
+	sourceCol := 0
 	for i := 0; i < len(clusters); {
 		if inline != nil && i < len(inline.Runs) && inline.Runs[i].HintIndex >= 0 && !inline.Runs[i].Ghost {
 			// An inlay hint is not source text: it moves as one block and
@@ -102,138 +110,167 @@ func (e *Editor) lineLayout(lineIdx int) *bidi.Layout {
 				i++
 			}
 			units = append(units, bidi.Unit{Text: text, Width: width, Object: true})
+			if cols != nil {
+				cols = append(cols, -1)
+			}
 			continue
 		}
 		units = append(units, bidi.Unit{Text: clusters[i], Width: widths[i]})
+		if cols != nil {
+			switch {
+			case inline == nil:
+				cols = append(cols, sourceCol)
+				sourceCol += widths[i]
+			case i < len(inline.Runs) && !inline.Runs[i].Ghost:
+				cols = append(cols, inline.Runs[i].SourceCol)
+			default:
+				cols = append(cols, -1)
+			}
+		}
 		i++
 	}
-	*c = editorLineBidi{
-		valid: true, inline: inline, generation: generation, dir: dir, fallback: fallback,
-		layout: bidi.Analyze(units, dir, fallback), strong: c.strong, reorders: c.reorders,
+	role := func(i int) (byte, bool) {
+		if cols != nil {
+			if col := cols[i]; col >= 0 && col < len(roles) {
+				return roles[col] & roleMask, roles[col]&roleTokenStart != 0
+			}
+		}
+		return roleNone, false
 	}
-	return c.layout
-}
-
-// inheritsRightToLeft reports whether a line without strong characters
-// keeps a right-to-left direction from the nearest line above it that has
-// one (UAX #9 HL1). The look-back is bounded; past it the default applies.
-func (e *Editor) inheritsRightToLeft(lineIdx int) bool {
-	const lookBack = 64
-	if e.lineStrong(lineIdx) != 1 {
-		return false
-	}
-	for line := lineIdx - 1; line >= 0 && line >= lineIdx-lookBack; line-- {
-		switch e.lineStrong(line) {
-		case 2:
-			return false
-		case 3:
-			return true
+	// IntelliJ resolves runs on either side of each tab independently.
+	// An expanded tab occupies source grid cells, never part of an RTL run.
+	start := 0
+	isolateField := func(end int) {
+		if end > start {
+			isolateSource(units[start:end], func(i int) (byte, bool) { return role(start + i) }, dir == bidi.Auto)
 		}
 	}
-	return false
-}
-
-func (e *Editor) lineStrong(lineIdx int) uint8 {
-	e.lineGeomInfo(lineIdx)
-	cached := e.lineGeomCache[lineIdx]
-	if cached == nil {
-		return 1
-	}
-	if cached.bidi.strong == 0 {
-		cached.bidi.strong = 1
-		if rtl, found := bidi.StrongDirection(cached.raw); found {
-			cached.bidi.strong = 2
-			if rtl {
-				cached.bidi.strong = 3
+	if len(tabs) > 0 {
+		t := 0
+		for i, col := range cols {
+			for t < len(tabs) && col >= tabs[t][1] {
+				t++
+			}
+			if t == len(tabs) {
+				break
+			}
+			if col >= tabs[t][0] {
+				isolateField(i)
+				start = i + 1
 			}
 		}
 	}
-	return cached.bidi.strong
+	isolateField(len(units))
+	*c = editorLineBidi{valid: true, inline: inline, generation: generation, dir: dir, roles: rolesID, reorders: c.reorders, layout: bidi.Analyze(units, bidi.LeftToRight, false)}
+	return c.layout
 }
 
-// textColumns is the width of the text area between gutter and scrollbar.
-func (e *Editor) textColumns() int {
-	return max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
-}
+func (e *Editor) textColumns() int { return max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth()) }
 
-// rowSpan is the display line width of a row. Wrapped rows keep the last
-// column for the continuation mark, so a right-to-left paragraph aligns to
-// the wrap width on every row.
-func (e *Editor) rowSpan() int {
-	if e.wrapsRows() {
-		return max(1, e.textColumns()-1)
-	}
-	return e.textColumns()
-}
-
-// rowLine arranges one visible row: the window of its source line that the
-// row shows, on a line as wide as the text area. A wrapped row and the
-// horizontally scrolled window of an unwrapped line are both display lines
-// of the same paragraph.
+// rowLine resolves a complete display row. Only a real soft wrap splits a
+// logical line. The extra cell is the editor's block caret at end of text;
+// viewport padding is not part of the bidi paragraph.
 func (e *Editor) rowLine(r visibleRow) *bidi.Line {
 	layout := e.lineLayout(r.line)
 	if layout == nil {
 		return nil
 	}
-	span := e.rowSpan()
-	end := r.end
-	if end > r.start+span || end < r.start {
-		end = r.start + span
+	c := &e.lineGeomCache[r.line].bidi
+	end := min(r.end, layout.Width())
+	if r.start == 0 && end == layout.Width() {
+		if c.full == nil {
+			c.full = layout.Line(0, end, end+1)
+		}
+		return c.full
 	}
-	return layout.Line(r.start, end, span)
+	key := [2]int{r.start, end}
+	if c.wrapWidth != e.rows.width || c.wrapped == nil {
+		c.wrapped = make(map[[2]int]*bidi.Line)
+		c.wrapWidth = e.rows.width
+	}
+	if ln := c.wrapped[key]; ln != nil {
+		return ln
+	}
+	ln := layout.Line(r.start, end, end-r.start+1)
+	c.wrapped[key] = ln
+	return ln
 }
 
-// screenColumn maps a row's logical column (relative to the row start) to
-// the screen column that shows it.
-func (e *Editor) screenColumn(r visibleRow, col int) int {
-	return e.rowLine(r).Visual(col)
-}
-
-// stepOnScreen moves the primary caret one cell left or right on its row.
-// It reports false when the row paints as written, the caret is not on the
-// row, or the caret is at the row's edge; the caller then moves in text
-// order.
-func (e *Editor) stepOnScreen(screenRight bool) bool {
+// Walk the same row the user sees, including when the neighboring cell
+// lies outside the viewport. Inlay cells and expanded tabs may map to the
+// same source caret, so skip them rather than getting stuck there.
+func (e *Editor) stepOnScreen(right bool) bool {
 	if !bidi.VisualCaret() {
 		return false
 	}
-	rowIdx, col := e.visualPosition(e.cursor, e.wrapBefore)
-	r := e.rowAt(rowIdx)
+	idx, col := e.logicalRowPosition(e.cursor, e.wrapBefore)
+	r := e.rowAt(idx)
 	ln := e.rowLine(r)
-	if ln == nil {
+	if ln != nil {
+		for {
+			next, ok := ln.Step(col, right)
+			if !ok {
+				break
+			}
+			col = next
+			pos := e.buf.snapPosition(Position{Line: r.line, Col: e.sourceColumn(r.line, r.start+col)})
+			before := r.continues && col == ln.TextWidth()
+			if pos != e.cursor || before != e.wrapBefore {
+				e.setVisualCaret(pos, before)
+				return true
+			}
+		}
+	} else if right && col < min(e.displayColumn(r.line, e.lineVisualWidth(r.line))-r.start, r.end-r.start) || !right && col > 0 {
 		return false
 	}
-	if !e.wrapsRows() {
-		col -= r.start
+	// The physical edge connects to the opposite edge of the neighboring
+	// display row, not an arbitrary logical neighbor inside the current row.
+	adjacent := idx - 1
+	if right {
+		adjacent = idx + 1
 	}
-	if col < 0 || col > ln.TextWidth() {
+	if adjacent < 0 || adjacent >= e.visualRowCount() {
+		return ln != nil
+	}
+	target := e.rowAt(adjacent)
+	if target.ghostRow != 0 {
 		return false
 	}
-	next, ok := ln.Step(col, screenRight)
-	if !ok {
+	other := e.rowLine(target)
+	if ln == nil && other == nil {
 		return false
 	}
-	e.cursor = e.buf.snapPosition(Position{Line: r.line, Col: e.sourceColumn(r.line, r.start+next)})
-	e.wrapBefore = false
-	e.clearGoal()
-	e.ensureCursorVisible()
+	x := 0
+	if !right {
+		x = min(target.end, e.displayColumn(target.line, e.lineVisualWidth(target.line))) - target.start
+	}
+	pos, before := e.positionOnRow(adjacent, x-e.scrollX)
+	e.setVisualCaret(pos, before)
 	return true
 }
+func (e *Editor) setVisualCaret(pos Position, before bool) {
+	e.cursor, e.wrapBefore = pos, before
+	e.clearGoal()
+	e.ensureCursorVisible()
+}
 
-// arrowForward resolves an arrow key to a text-order direction: on a
-// right-to-left caret row the arrows point the other way.
-func (e *Editor) arrowForward(screenRight bool) bool {
+// Word motion uses the direction of the run at the caret, not the grid.
+func (e *Editor) arrowForward(right bool) bool {
 	if !bidi.VisualCaret() {
-		return screenRight
+		return right
 	}
-	rowIdx, _ := e.visualPosition(e.cursor, e.wrapBefore)
-	return bidi.ArrowForward(screenRight, e.rowLine(e.rowAt(rowIdx)))
+	row, col := e.logicalRowPosition(e.cursor, e.wrapBefore)
+	ln := e.rowLine(e.rowAt(row))
+	if bs := ln.BlocksFrom(ln.Visual(col)); len(bs) > 0 && bs[0].Level%2 != 0 {
+		return !right
+	}
+	return right
 }
 
 type caretCell struct{ x, y int }
 
-// caretCells lists the block carets of the visible rows at their logical
-// cells. Render paints them on each row before arranging that row.
+// caretCells lists the block carets of the visible rows at their
+// screen cells after direction and viewport transforms.
 func (e *Editor) caretCells(ctx ui.PaintContext, sw, sbX, bodyH int) []caretCell {
 	if !ctx.Focused || e.readOnly || !e.cursorBlink.Visible(ctx.Frame) {
 		return nil
@@ -247,9 +284,7 @@ func (e *Editor) caretCells(ctx ui.PaintContext, sw, sbX, bodyH int) []caretCell
 		}
 		y, col := e.visualPosition(r.cursor, r.before)
 		y -= e.scrollRow()
-		if !e.wrapsRows() {
-			col -= e.scrollX
-		}
+		col -= e.scrollX
 		if x := sw + col; x >= sw && x < sbX && y >= 0 && y < bodyH {
 			cells = append(cells, caretCell{x, y})
 		}

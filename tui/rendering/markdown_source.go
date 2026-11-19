@@ -20,6 +20,22 @@ type CopyText struct {
 	Code      bool
 
 	directions copyDirections
+	// inlineCode holds the byte ranges of the paragraph's inline code
+	// spans, in order. Painters isolate them in right-to-left text.
+	inlineCode [][2]int
+}
+
+// InlineCode returns the index of the inline code span of the text that
+// holds byte offset, or -1.
+func (t *CopyText) InlineCode(offset int) int {
+	if t == nil {
+		return -1
+	}
+	i := sort.Search(len(t.inlineCode), func(i int) bool { return t.inlineCode[i][1] > offset })
+	if i < len(t.inlineCode) && t.inlineCode[i][0] <= offset {
+		return i
+	}
+	return -1
 }
 
 // copyDirections lazily records which paragraphs of a source text resolve
@@ -101,6 +117,17 @@ func (t *markdownTrace) block() *copyBuild {
 func (t *markdownTrace) atom(value copyAtom) string {
 	t.atoms = append(t.atoms, value)
 	return copyMarker(len(t.atoms))
+}
+
+// MarkCode traces the text of an inline code span and records its range.
+func (t *markdownTrace) MarkCode(styled, text string) string {
+	block := t.block()
+	start := block.value.Len()
+	out := t.Mark(styled, text)
+	if end := block.value.Len(); end > start {
+		block.text.inlineCode = append(block.text.inlineCode, [2]int{start, end})
+	}
+	return out
 }
 
 func (t *markdownTrace) Mark(styled, text string) string {
