@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clipboard"
+	"crude/tui/bidi"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 )
@@ -312,12 +313,13 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 		return
 	}
 	if mouse.Mod == tea.ModAlt {
+		row, col := min(e.visualRowCount()-1, max(0, e.scrollRow()+mouse.Y)), e.scrollX+max(0, mouse.X-sw)
 		e.CancelSnippet()
 		e.DismissGhostText()
 		e.toggleCaretAt(pos)
 		// Shift bypasses mouse reporting in common terminals. One delivered
 		// Alt gesture adds/removes a caret on click and forms a rectangle on drag.
-		e.drag = pointerSelection{kind: pointerRectangle, start: pos, end: pos, x: mouse.X, y: mouse.Y, pressX: mouse.X, pressY: mouse.Y}
+		e.drag = pointerSelection{kind: pointerRectangle, rectangleRow: row, rectangleCol: col, start: pos, end: pos, x: mouse.X, y: mouse.Y, pressX: mouse.X, pressY: mouse.Y}
 		e.dragEpoch++
 		e.clickCount = 0
 		return
@@ -412,14 +414,18 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.selEnd = e.cursor
 		}
 	case tea.KeyLeft, tea.KeyRight:
-		// On a right-to-left row a plain arrow moves on screen first;
-		// words, selection collapse and the row's edge follow text order,
-		// with the arrows pointing the other way (bidi.go).
 		screenRight := key.Code == tea.KeyRight
-		forward := e.arrowForward(screenRight)
 		if !extend && !ctrl && e.HasSelection() {
 			line, col, endLine, endCol := e.SelectionRange()
-			if forward {
+			takeEnd := screenRight
+			if bidi.VisualCaret() && line == endLine {
+				startRow, startX := e.visualPosition(Position{line, col}, false)
+				endRow, endX := e.visualPosition(Position{endLine, endCol}, false)
+				if startRow == endRow && startX > endX {
+					takeEnd = !takeEnd
+				}
+			}
+			if takeEnd {
 				line, col = endLine, endCol
 			}
 			e.cursor = Position{Line: line, Col: col}
@@ -433,12 +439,12 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 			e.startSelection()
 		}
 		switch {
-		case ctrl && forward:
+		case ctrl && e.arrowForward(screenRight):
 			e.moveWordRight()
 		case ctrl:
 			e.moveWordLeft()
 		case e.stepOnScreen(screenRight):
-		case forward:
+		case screenRight:
 			e.moveRight()
 		default:
 			e.moveLeft()

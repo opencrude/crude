@@ -18,6 +18,15 @@ amortizes; cold/width-change workloads remain separate gates.
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Mixed-direction editor pan
+
+`BenchmarkEditorMixedDirectionPan` alternates horizontal wheel events and
+paints a 90-column editor over the middle of an already resolved line. Both
+64 and 2,048 repetitions of the same mixed-script fragment measured 194 B
+and 13 allocations per wheel plus paint in three 200-iteration Linux samples.
+Both use the same 240 B / 15 allocation ceiling. This is a warm pan, not
+cold paragraph analysis or native frame latency.
+
 ## Aeron suggestions (2026-11-18)
 
 The Performance dashboard lists these **Aeron suggestions** series on

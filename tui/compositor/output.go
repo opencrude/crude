@@ -86,13 +86,7 @@ func GenerateANSI(buf *surface.CellBuffer) string {
 			// Emitting only the first rune of a cluster made ultraviolet
 			// re-parse a truncated glyph and compute a different width,
 			// shifting every subsequent column → right-edge ghost artifacts.
-			if c.Content != "" {
-				sb.WriteString(c.Content)
-			} else if c.Char == 0 {
-				sb.WriteByte(' ')
-			} else {
-				sb.WriteRune(c.Char)
-			}
+			sb.WriteString(terminalText(&c))
 
 			// For wide chars, the continuation cell position is implicitly
 			// filled by the terminal (the wide char occupies 2 columns).

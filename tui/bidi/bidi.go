@@ -16,6 +16,8 @@
 package bidi
 
 import (
+	"slices"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"unicode/utf8"
@@ -89,7 +91,23 @@ type Unit struct {
 	Text   string
 	Width  int
 	Object bool
+	// Before and After enclose the unit and its neighbours in directional
+	// isolates (UAX #9 rules X5a to X5c), as protocol HL3 allows: Before
+	// holds isolate initiators (LRI, RLI, FSI) that open before the unit,
+	// After the PDIs that close after it. An isolated group is laid out on
+	// its own and moves as one block without changing the order of the text
+	// around it. The editor isolates code, strings and comments this way
+	// (UTS #55). The controls belong to no unit and are never painted.
+	Before, After string
 }
+
+// Isolate controls for Unit.Before and Unit.After.
+const (
+	LRI = "\u2066" // left-to-right isolate
+	RLI = "\u2067" // right-to-left isolate
+	FSI = "\u2068" // first-strong isolate
+	PDI = "\u2069" // pop directional isolate
+)
 
 // objectReplacement stands in for inline objects, as UAX #9 section 3.2
 // specifies (bidi class ON).
@@ -103,7 +121,16 @@ type Layout struct {
 	col     []int32 // logical start column of each unit, plus the total width
 	source  []string
 	display []string // arranged glyphs of each unit; "" when unchanged
+	// gap holds, for each unit, the lowest level of the isolate controls
+	// between it and the unit before it (noGap when there are none). The
+	// controls are not units, but rule L2 must not reverse across a control
+	// whose level is below the run: an isolate next to right-to-left text
+	// stays on its own side.
+	gap []gt.Level
 }
+
+// noGap marks a unit with no isolate control before it.
+const noGap gt.Level = 127
 
 // RTL reports the paragraph's resolved base direction.
 func (l *Layout) RTL() bool { return l != nil && l.rtl }
@@ -187,14 +214,22 @@ func Clusters(s string, dst []Unit) []Unit {
 func (a *analyzer) analyze(units []Unit, dir Direction, fallbackRTL, join bool) *Layout {
 	a.runes, a.owner = a.runes[:0], a.owner[:0]
 	for i := range units {
+		for _, r := range units[i].Before {
+			a.runes = append(a.runes, r)
+			a.owner = append(a.owner, -1)
+		}
 		if units[i].Object || units[i].Text == "" {
 			a.runes = append(a.runes, objectReplacement)
 			a.owner = append(a.owner, int32(i))
-			continue
+		} else {
+			for _, r := range units[i].Text {
+				a.runes = append(a.runes, r)
+				a.owner = append(a.owner, int32(i))
+			}
 		}
-		for _, r := range units[i].Text {
+		for _, r := range units[i].After {
 			a.runes = append(a.runes, r)
-			a.owner = append(a.owner, int32(i))
+			a.owner = append(a.owner, -1)
 		}
 	}
 	var runs gt.Runs
@@ -230,8 +265,23 @@ func (a *analyzer) analyze(units []Unit, dir Direction, fallbackRTL, join bool) 
 		l.class[i] = gt.ON
 	}
 	l.col[n] = col
+	pending := noGap
 	for i, r := range a.runes {
 		u := a.owner[i]
+		if u < 0 {
+			pending = min(pending, a.level[i])
+			continue
+		}
+		if pending != noGap {
+			if l.gap == nil {
+				l.gap = make([]gt.Level, n)
+				for k := range l.gap {
+					l.gap[k] = noGap
+				}
+			}
+			l.gap[u] = min(l.gap[u], pending)
+			pending = noGap
+		}
 		if i == 0 || a.owner[i-1] != u {
 			l.level[u] = a.level[i]
 			if units[u].Object || units[u].Text == "" {
@@ -268,6 +318,10 @@ func (a *analyzer) analyze(units []Unit, dir Direction, fallbackRTL, join bool) 
 		end := i + 1
 		for end < len(a.runes) && a.owner[end] == u {
 			end++
+		}
+		if u < 0 {
+			i = end
+			continue
 		}
 		if l.level[u]%2 == 1 {
 			trivial = false
@@ -338,8 +392,8 @@ type Line struct {
 // Line arranges the units that cover logical columns [colStart, colEnd) on a
 // display line `span` columns wide. Columns past colEnd-colStart are padding:
 // they take the paragraph direction, which right-aligns a right-to-left
-// paragraph. A wrapped row and a horizontally scrolled window are both just
-// display lines of the same paragraph.
+// paragraph. A soft wrap is a display-line boundary. A horizontal viewport
+// is not: crop the resulting visual blocks, not the input range.
 func (l *Layout) Line(colStart, colEnd, span int) *Line {
 	if l == nil {
 		return nil
@@ -358,11 +412,26 @@ func (l *Layout) Line(colStart, colEnd, span int) *Line {
 		class gt.Class
 	}
 	items := make([]item, 0, span)
-	for u := range l.level {
+	// separator stands for the isolate controls between two units (see
+	// Layout.gap); it takes part in rules L1 and L2 and is then dropped.
+	const separator = -2
+	gap := noGap
+	firstUnit := 0
+	if colStart > 0 {
+		firstUnit = sort.Search(len(l.level), func(u int) bool { return int(l.col[u+1]) > colStart })
+	}
+	for u := firstUnit; u < len(l.level) && int(l.col[u]) < colEnd; u++ {
+		if l.gap != nil {
+			gap = min(gap, l.gap[u])
+		}
 		from, to := int(l.col[u]), int(l.col[u+1])
 		if to <= colStart || from >= colEnd || from == to {
 			continue
 		}
+		if gap != noGap && len(items) > 0 {
+			items = append(items, item{Block: Block{Unit: separator, Level: gap}, class: gt.PDI})
+		}
+		gap = noGap
 		lo, hi := max(from, colStart), min(to, colEnd)
 		items = append(items, item{Block: Block{
 			Unit: u, Logical: lo - colStart, Start: from - colStart, Width: hi - lo,
@@ -418,6 +487,15 @@ func (l *Layout) Line(colStart, colEnd, span int) *Line {
 		}
 	}
 
+	if l.gap != nil {
+		kept := items[:0]
+		for _, it := range items {
+			if it.Unit != separator {
+				kept = append(kept, it)
+			}
+		}
+		items = kept
+	}
 	ln.blocks = make([]Block, len(items))
 	ln.toVis = make([]int32, span)
 	ln.toLog = make([]int32, span)
@@ -455,6 +533,70 @@ func (ln *Line) Blocks() []Block {
 		return nil
 	}
 	return ln.blocks
+}
+
+// BlocksFrom returns visual blocks intersecting or following column. It
+// seeks directly into a retained row for horizontal viewport painting.
+func (ln *Line) BlocksFrom(column int) []Block {
+	if ln != nil {
+		if i := ln.blockAt(column); i >= 0 {
+			return ln.blocks[i:]
+		}
+	}
+	return nil
+}
+
+// ColumnRange is a half-open range of logical display columns on one row.
+type ColumnRange struct{ Start, End int }
+
+// LogicalRanges maps the whole visual interval, not just its endpoints.
+// As in TextLayout.getLogicalRangesForVisualSelection (OpenJDK), one
+// rectangle can cover several disjoint ranges in logical order. Use the
+// existing visual blocks so a wide grapheme stays whole and a pan does not
+// rescan the logical paragraph. dst is caller scratch.
+func (ln *Line) LogicalRanges(left, right int, dst []ColumnRange) []ColumnRange {
+	out := dst[:0]
+	if right <= left {
+		return out
+	}
+	if ln == nil {
+		return append(out, ColumnRange{left, right})
+	}
+	for _, b := range ln.BlocksFrom(left) {
+		if b.Visual >= right {
+			break
+		}
+		if b.Unit < 0 {
+			continue
+		}
+		part := ColumnRange{b.Logical, b.Logical + b.Width}
+		if n := len(out); n > 0 {
+			last := &out[n-1]
+			switch {
+			case last.End == part.Start:
+				last.End = part.End
+				continue
+			case last.Start == part.End:
+				last.Start = part.Start
+				continue
+			}
+		}
+		out = append(out, part)
+	}
+	if len(out) < 2 {
+		return out
+	}
+	slices.SortFunc(out, func(a, b ColumnRange) int { return a.Start - b.Start })
+	merged := out[:1]
+	for _, part := range out[1:] {
+		last := &merged[len(merged)-1]
+		if last.End == part.Start {
+			last.End = part.End
+		} else {
+			merged = append(merged, part)
+		}
+	}
+	return merged
 }
 
 // Span is the line's width in columns.
@@ -534,11 +676,9 @@ func (ln *Line) Step(logical int, right bool) (int, bool) {
 }
 
 func (ln *Line) blockAt(visual int) int {
-	for i := range ln.blocks {
-		b := &ln.blocks[i]
-		if visual >= b.Visual && visual < b.Visual+b.Width {
-			return i
-		}
+	i := sort.Search(len(ln.blocks), func(i int) bool { return ln.blocks[i].Visual+ln.blocks[i].Width > visual })
+	if i < len(ln.blocks) && ln.blocks[i].Visual <= visual {
+		return i
 	}
 	return -1
 }

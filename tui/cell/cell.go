@@ -419,7 +419,10 @@ func NewWideCell(ch rune, fg, bg Color, attr Attrs) Cell {
 // cluster (e.g. ♻️ = ♻ + FE0F, 👨‍👩‍👧‍👦, 🇯🇵). Storing the cluster text in
 // Content keeps the ANSI lossy step lossless: GenerateANSI emits every
 // rune, so ultraviolet re-parses the same cluster and computes the same
-// width. width is the measured terminal advance for the whole cluster.
+// width. The one exception is an arranged right-to-left cell, which reaches
+// the terminal without the zero-width joining and direction controls Crude
+// already applied (bidi.TerminalText). width is the measured terminal
+// advance for the whole cluster.
 func NewClusterCell(cluster string, width int, fg, bg Color, attr Attrs) Cell {
 	r := firstRune(cluster)
 	return Cell{Char: r, Content: cluster, Width: uint8(width), FG: fg, BG: bg, Attr: attr}

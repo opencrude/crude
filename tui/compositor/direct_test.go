@@ -2,6 +2,7 @@ package compositor
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"crude/tui/cell"
@@ -223,5 +224,41 @@ func BenchmarkDirectCellPresentation(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+// A Persian half-space (ZWNJ) belongs to the cell of the letter before it.
+// Once Crude has joined and arranged the line, the terminal must receive only
+// the glyph: Ghostty drew "ـه‌" as a replacement character and WezTerm drew
+// the letter twice. Copying the painted text still returns the half-space.
+func TestArrangedCellsReachTheTerminalWithoutAppliedControls(t *testing.T) {
+	const label = "\u0645\u06cc\u200c\u0634\u0648\u062f \u200fok"
+	c := NewCompositor(20, 1)
+	c.BeginFrame()
+	root := c.Root().Buffer()
+	root.WriteString(0, 0, label, cell.White, cell.NoColor, 0)
+	c.Composite()
+	text := GenerateANSI(c.back)
+	copied := surface.ReadLogical(c.back.Row(0))
+	direct := uv.NewScreenBuffer(20, 1)
+	direct.Method = ansi.GraphemeWidth
+	c.PresentSurface().Draw(direct, direct.Bounds())
+	sent := ""
+	for x := 0; x < 20; x++ {
+		if cl := direct.CellAt(x, 0); cl != nil {
+			sent += cl.Content
+		}
+	}
+	for _, r := range sent {
+		if r == '\u200c' || r == '\u200f' {
+			t.Fatalf("terminal receives control %U in %+q", r, sent)
+		}
+	}
+	reference := uv.NewScreenBuffer(20, 1)
+	reference.Method = ansi.GraphemeWidth
+	uv.NewStyledString(text).Draw(reference, reference.Bounds())
+	assertCellGrids(t, direct, reference)
+	if !strings.Contains(copied, "\u0645\u06cc\u200c\u0634\u0648\u062f") {
+		t.Fatalf("copy lost the half-space: %+q", copied)
 	}
 }

@@ -67,20 +67,26 @@ func (e *Editor) whitespaceInfo(line int) *whitespaceGeometry {
 	if cached == nil {
 		return nil
 	}
+	return cached.spaceGeometry(e.TabWidth(), markers)
+}
+
+// spaceGeometry supplies source tab ranges to both whitespace painting and
+// bidi segmentation, independent of whether markers are visible.
+func (cached *lineGeomCache) spaceGeometry(tabW int, markers bool) *whitespaceGeometry {
 	if cached.whitespace != nil && (cached.whitespace.complete || !markers) {
 		return cached.whitespace
 	}
 	raw := cached.raw
 	leading := len(raw) - len(strings.TrimLeft(raw, " \t"))
-	info := &whitespaceGeometry{leading: ByteOffsetToVisualCol(raw, leading, e.TabWidth()), complete: markers}
+	info := &whitespaceGeometry{leading: ByteOffsetToVisualCol(raw, leading, tabW), complete: markers}
 	if !markers {
 		cached.whitespace = info
 		return info
 	}
 	trailing := len(strings.TrimRight(raw, " \t"))
-	info.trailing = ByteOffsetToVisualCol(raw, trailing, e.TabWidth())
+	info.trailing = ByteOffsetToVisualCol(raw, trailing, tabW)
 	for offset, col := 0, 0; offset < len(raw); {
-		n, w := firstSourceUnit(e.TabWidth(), raw[offset:], col)
+		n, w := firstSourceUnit(tabW, raw[offset:], col)
 		if n == 0 {
 			break
 		}

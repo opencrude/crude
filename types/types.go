@@ -728,9 +728,10 @@ type EditorSettings struct {
 	RenderWhitespace string                `json:"render_whitespace,omitempty"`
 	FormatOnSave     bool                  `json:"format_on_save,omitempty"`
 	NewFileEncoding  textencoding.Encoding `json:"new_file_encoding"`
-	// TextDirection is EditorTextDirectionLTR (every line left-to-right, the
-	// code default) or EditorTextDirectionByLine (each line takes the
-	// direction of its first letter). Empty means left-to-right.
+	// TextDirection is EditorTextDirectionByLine (the default: each line
+	// takes the direction of its prose; code stays left to right) or
+	// EditorTextDirectionLTR (every line is a left-to-right paragraph).
+	// Empty means by line. See docs/reference/bidi.md.
 	TextDirection string `json:"text_direction,omitempty"`
 }
 
@@ -740,12 +741,13 @@ const (
 	EditorTextDirectionByLine = "by_line"
 )
 
-// TextDirectionOrDefault returns a supported editor line direction.
+// TextDirectionOrDefault returns a supported editor line direction. An
+// absent choice is EditorTextDirectionByLine.
 func (s EditorSettings) TextDirectionOrDefault() string {
-	if s.TextDirection == EditorTextDirectionByLine {
-		return EditorTextDirectionByLine
+	if s.TextDirection == EditorTextDirectionLTR {
+		return EditorTextDirectionLTR
 	}
-	return EditorTextDirectionLTR
+	return EditorTextDirectionByLine
 }
 
 // LSPLanguageSettings is the per-language overlay for one language server.
@@ -920,7 +922,8 @@ type UISettings struct {
 	// while the user is away from Crude.
 	DesktopNotifications DesktopNotificationSettings `json:"desktop_notifications,omitzero"`
 	// RightToLeft selects who arranges right-to-left text (Arabic, Persian,
-	// Hebrew): Crude with joined letters (the default), Crude with separate
+	// Hebrew): automatic (the default: Crude with joined letters, unless the
+	// terminal always reorders text itself), Crude with joined or separate
 	// letters, or the terminal. See docs/reference/bidi.md.
 	RightToLeft string `json:"right_to_left,omitempty"`
 	// CaretMovement selects whether Left and Right move the caret on screen
@@ -930,6 +933,7 @@ type UISettings struct {
 
 // Right-to-left text arrangement and caret movement choices.
 const (
+	RightToLeftAuto      = "auto"
 	RightToLeftArrange   = "arrange"
 	RightToLeftUnjoined  = "unjoined"
 	RightToLeftTerminal  = "terminal"
@@ -937,13 +941,14 @@ const (
 	CaretMovementLogical = "logical"
 )
 
-// RightToLeftOrDefault returns a supported arrangement choice.
+// RightToLeftOrDefault returns a supported arrangement choice. An absent
+// choice is RightToLeftAuto.
 func (s UISettings) RightToLeftOrDefault() string {
 	switch s.RightToLeft {
-	case RightToLeftUnjoined, RightToLeftTerminal:
+	case RightToLeftArrange, RightToLeftUnjoined, RightToLeftTerminal:
 		return s.RightToLeft
 	default:
-		return RightToLeftArrange
+		return RightToLeftAuto
 	}
 }
 

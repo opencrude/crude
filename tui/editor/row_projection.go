@@ -211,7 +211,7 @@ type visibleRow struct {
 
 func (e *Editor) rowAt(row int) visibleRow {
 	if !e.usesRows() {
-		return visibleRow{line: row, start: e.scrollX, end: int(^uint(0) >> 1)}
+		return visibleRow{line: row, end: int(^uint(0) >> 1)}
 	}
 	p := e.prepareRows()
 	if row >= p.total() {
@@ -220,14 +220,14 @@ func (e *Editor) rowAt(row int) visibleRow {
 	line, local := p.at(row)
 	r := p.lines[line]
 	if r.ghost > 0 && local >= r.textRows() {
-		return visibleRow{line: line, start: e.scrollX, end: int(^uint(0) >> 1), index: local, ghostRow: local - r.textRows() + 1}
+		return visibleRow{line: line, end: int(^uint(0) >> 1), index: local, ghostRow: local - r.textRows() + 1}
 	}
 	if !e.wordWrap || !p.wrapped {
-		return visibleRow{line: line, start: e.scrollX, end: int(^uint(0) >> 1)}
+		return visibleRow{line: line, end: int(^uint(0) >> 1)}
 	}
 	return visibleRow{line: line, start: r.start(local), end: r.end(local), index: local, continues: local+1 < r.textRows()}
 }
-func (e *Editor) visualPosition(pos Position, before bool) (row, col int) {
+func (e *Editor) logicalRowPosition(pos Position, before bool) (row, col int) {
 	col = e.displayColumn(pos.Line, pos.Col)
 	if !e.usesRows() {
 		return pos.Line, col
@@ -244,39 +244,32 @@ func (e *Editor) visualPosition(pos Position, before bool) (row, col int) {
 	}
 	return p.before(line) + local, col - layout.start(local)
 }
+
+// visualPosition uses document-space visual columns, independent of scroll.
+func (e *Editor) visualPosition(pos Position, before bool) (row, col int) {
+	row, col = e.logicalRowPosition(pos, before)
+	return row, e.rowLine(e.rowAt(row)).Visual(col)
+}
 func (e *Editor) viewPosition(pos Position) (row, col int) {
 	row, col = e.visualPosition(pos, pos == e.cursor && e.wrapBefore)
-	row -= e.scrollRow()
-	if !e.wrapsRows() {
-		col -= e.scrollX
-	}
-	return row, col
+	return row - e.scrollRow(), col - e.scrollX
+}
+
+// rowDisplayColumn inverts that transform for pointer and inlay hit testing.
+func (e *Editor) rowDisplayColumn(r visibleRow, screen int) int {
+	return min(r.end, r.start+e.rowLine(r).Logical(max(0, screen+e.scrollX)))
 }
 func (e *Editor) positionOnRow(row, column int) (Position, bool) {
 	row = min(max(0, row), max(0, e.visualRowCount()-1))
 	r := e.rowAt(row)
-	// column is a screen column; the row's arrangement gives the logical
-	// column painted there. Past the edge of a right-to-left row the nearest
-	// cell decides: right of it is where the line starts, not where it ends.
-	if ln := e.rowLine(r); ln != nil && ln.Span() > 0 {
-		if ln.RTL() {
-			column = min(max(0, column), ln.Span()-1)
-		}
-		if column >= 0 && column < ln.Span() {
-			column = ln.Logical(column)
-		}
-	}
-	display := max(0, r.start+column)
-	if e.usesRows() {
-		display = min(display, r.end)
-	}
+	display := e.rowDisplayColumn(r, column)
 	pos := e.buf.snapPosition(Position{Line: r.line, Col: e.sourceColumn(r.line, display)})
 	return pos, r.continues && e.displayColumn(pos.Line, pos.Col) == r.end
 }
 func (e *Editor) moveVisualRows(delta int) {
 	row, _ := e.visualPosition(e.cursor, e.wrapBefore)
 	e.setGoal()
-	e.cursor, e.wrapBefore = e.positionOnRow(row+delta, e.goalCol-e.goalOffset())
+	e.cursor, e.wrapBefore = e.positionOnRow(row+delta, e.goalCol-e.scrollX)
 	e.ensureCursorVisible()
 }
 
@@ -289,20 +282,10 @@ func (e *Editor) setGoal() {
 	if e.goalSet {
 		return
 	}
-	row, col := e.visualPosition(e.cursor, e.wrapBefore)
-	r, offset := e.rowAt(row), e.goalOffset()
-	e.goalCol = e.screenColumn(r, col-offset) + offset
+	_, e.goalCol = e.visualPosition(e.cursor, e.wrapBefore)
 	e.goalSet = true
 }
 
-// goalOffset is the line column of the first screen column: the horizontal
-// scroll on unwrapped lines, 0 on wrapped rows.
-func (e *Editor) goalOffset() int {
-	if e.wrapsRows() {
-		return 0
-	}
-	return e.scrollX
-}
 func (e *Editor) setWrapping(on bool) {
 	if e.wordWrap == on {
 		return

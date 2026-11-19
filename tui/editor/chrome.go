@@ -52,6 +52,11 @@ func (e *Editor) syncHorizontalScrollChrome(textW, bodyH int) bool {
 		return false
 	}
 	maxWidth := e.documentVisualWidth()
+	// A block caret on the longest line needs one cell past its final glyph.
+	// Do not add an empty scroll column when the caret is elsewhere.
+	if maxWidth >= textW {
+		maxWidth = max(maxWidth, e.displayColumn(e.cursor.Line, e.cursor.Col)+1)
+	}
 	if e.hScrollModel == nil {
 		e.hScrollModel = ui.NewScrollModel()
 	}

@@ -86,7 +86,9 @@ func (m *App) openFindReplace(replaceMode bool) {
 			return
 		}
 		count := ed.ReplaceAll()
-		m.Feedback.NotifyInfo(fmt.Sprintf("Replaced %d occurrences", count))
+		if count > 0 {
+			m.Feedback.NotifyInfo(fmt.Sprintf("Replaced %d %s.", count, plural(count, "occurrence")))
+		}
 		fr.MatchCount = len(ed.Search().Matches)
 		fr.CurrentIdx = ed.Search().CurrentIdx
 		m.refreshFindReplacePopup()

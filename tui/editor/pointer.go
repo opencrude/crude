@@ -22,12 +22,13 @@ const (
 // most one tick. A caret-anchored Shift gesture has identical start/end bounds.
 // Selection projection is identical for motion, wheel, repeat and final release.
 type pointerSelection struct {
-	kind           pointerUnit
-	start, end     Position
-	x, y           int
-	pressX, pressY int
-	moved          bool
-	tickPending    bool
+	kind                       pointerUnit
+	start, end                 Position
+	x, y                       int
+	pressX, pressY             int
+	rectangleRow, rectangleCol int // document-space visual origin, including virtual space
+	moved                      bool
+	tickPending                bool
 }
 
 // PointerScrollMsg is delivered only to the currently captured mounted control.

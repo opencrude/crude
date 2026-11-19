@@ -81,3 +81,26 @@ func TestFindReplace_FullUserJourney(t *testing.T) {
 		t.Fatal("esc did not close the popup")
 	}
 }
+
+func TestReplaceAllReportsOneMatch(t *testing.T) {
+	app := newTestAppForPopupMouse(t)
+	app.EditorState.ActiveView = "/tmp/test.typ"
+	app.EditorState.Editor.ReplaceDocument("پژوهش Active SLAM\n")
+	press := func(code rune, mod tea.KeyMod) { app.dispatchKeyPress(tea.KeyPressMsg{Code: code, Mod: mod}) }
+	press('h', tea.ModCtrl)
+	for _, r := range "SLAM" {
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	press(tea.KeyTab, 0)
+	app.dispatchKeyPress(tea.KeyPressMsg{Code: 'X', Text: "X"})
+	press(tea.KeyEnter, tea.ModAlt)
+	if got := app.EditorState.Editor.Value(); got != "پژوهش Active X\n" {
+		t.Fatalf("unexpected replacement: %q", got)
+	}
+	for _, n := range app.ws.Status().Notifications(false) {
+		if n.Summary == "Replaced 1 occurrence." {
+			return
+		}
+	}
+	t.Fatal("missing singular replacement notice")
+}

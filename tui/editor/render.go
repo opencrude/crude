@@ -86,9 +86,6 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	e.remapDiagnosticPaint()
 	bracketFrom, bracketTo, hasBracket := e.matchingBracket()
 	showOccurrences := e.occurrenceAtCaret()
-	// Carets are painted on each row before the row is arranged, so a block
-	// caret travels with its character in right-to-left text.
-	carets := e.caretCells(ctx, sw, sbX, bodyH)
 	if e.usesRows() {
 		previous := -1
 		for y := 0; y < bodyH; y++ {
@@ -101,6 +98,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	} else {
 		e.ensureChromaColors(e.scrollY, e.scrollY+bodyH)
 	}
+	carets := e.caretCells(ctx, sw, sbX, bodyH)
 	for y := 0; y < bodyH; y++ {
 		bufY := y
 		if bufY >= h {
@@ -112,8 +110,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			e.paintGhostRow(buf, bufY, sw, sbX, row, gutterBlank, blankCell, bgColor)
 			continue
 		}
-		lineIdx, startCol := row.line, row.start
-		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx, startCol)
+		lineIdx, startCol := row.line, row.start+e.scrollX
+		rowLine := e.rowLine(row)
+		blocks := rowLine.BlocksFrom(e.scrollX)
+		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx)
 		inline := e.inlineLine(lineIdx)
 		diags := e.lineDiagnostics(lineIdx)
 		spaces := e.whitespaceInfo(lineIdx)
@@ -128,7 +128,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 
 		ri := 0
 		visCol := 0
-		for ri < len(clusters) && visCol+widths[ri] <= startCol {
+		for rowLine == nil && ri < len(clusters) && visCol+widths[ri] <= startCol {
 			visCol += widths[ri]
 			ri++
 		}
@@ -216,13 +216,29 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			} else {
 				cx := x
 				vCol := startCol + (cx - sw)
+				if rowLine != nil {
+					visual := e.scrollX + cx - sw
+					for len(blocks) > 0 && visual >= blocks[0].Visual+blocks[0].Width {
+						blocks = blocks[1:]
+					}
+					ri = len(clusters)
+					if len(blocks) > 0 && blocks[0].Unit >= 0 {
+						block := &blocks[0]
+						vCol = row.start + block.Logical + visual - block.Visual
+						ri, visCol = block.Unit, row.start+block.Start
+						if inline != nil {
+							ri = inline.runAt(vCol)
+							visCol = inline.Runs[ri].DisplayStart
+						}
+					}
+				} else {
+					for ri < len(clusters) && vCol >= visCol+widths[ri] {
+						visCol += widths[ri]
+						ri++
+					}
+				}
 				if row.continues && vCol >= row.end {
 					continue
-				}
-
-				for ri < len(clusters) && vCol >= visCol+widths[ri] {
-					visCol += widths[ri]
-					ri++
 				}
 
 				sourceCol := vCol
@@ -335,7 +351,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							}
 							e.paintGrapheme(buf, cx, bufY, sbX, cluster, widths[ri], fg, bg, diagAttr, blankCell)
 						}
-					} else if visCol < startCol {
+					} else if cx-(vCol-visCol) < sw {
 						switch {
 						case e.isSelected(lineIdx, sourceCol):
 							buf.Set(cx, bufY, cell.NewCell(' ', selFgColor, selBgColor, 0))
@@ -374,15 +390,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				}
 			}
 		}
-		// The row was painted in logical order with its carets; arranging it
-		// moves every mark with its character. Chrome follows.
-		for _, c := range carets {
-			if c.y == bufY {
-				ui.PaintBlockCursor(buf, c.x, c.y, e.tokens.Color(ui.ColorCursor), bgColor)
-			}
-		}
-		rowLine := e.rowLine(row)
-		buf.ApplyLine(sw, bufY, rowLine)
+		buf.PresentVisualLine(sw, bufY, textW, e.scrollX, rowLine)
 		if r, ok := e.foldAt(lineIdx); ok && row.index == 0 && containsFold(e.folds.collapsed, r) {
 			label := " … " + strconv.Itoa(r.End-r.Start) + " lines"
 			if r.End-r.Start == 1 {
@@ -400,10 +408,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			if c.y != bufY {
 				continue
 			}
-			x := sw + rowLine.Visual(c.x-sw)
-			if !buf.Get(x, bufY).Attr.Has(cell.AttrReverse) {
-				ui.PaintBlockCursor(buf, x, bufY, e.tokens.Color(ui.ColorCursor), bgColor)
-			}
+			ui.PaintBlockCursor(buf, c.x, bufY, e.tokens.Color(ui.ColorCursor), bgColor)
 		}
 	}
 	// The gutter runs the full body height, past the last line and beside
@@ -557,7 +562,7 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 	return runes, totalW, widths
 }
 
-func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]string, int, []int, []string) {
+func (e *Editor) lineRenderInfo(lineIdx int) ([]string, int, []int, []string) {
 	if inline := e.inlineLine(lineIdx); inline != nil {
 		return inline.clusters, inline.DisplayWidth, inline.widths, e.lineColorMap(lineIdx)
 	}
@@ -567,7 +572,6 @@ func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]string, int, []int,
 			return nil, -1, nil, nil
 		}
 	}
-	_ = scrollX // geometry is scroll-independent; kept for call-site compat
 	colorMap := e.lineColorMap(lineIdx)
 	// The grapheme clusters are already stored per line in lineGeomCache (the
 	// caller treats the returned slice as read-only), so the per-frame steady
@@ -680,7 +684,7 @@ func (e *Editor) ensureCursorVisible() {
 		margin = 1
 	}
 
-	row, _ := e.visualPosition(e.cursor, e.wrapBefore)
+	row, col := e.visualPosition(e.cursor, e.wrapBefore)
 	top := e.scrollRow()
 	if row < top+margin {
 		top = row - margin
@@ -703,7 +707,6 @@ func (e *Editor) ensureCursorVisible() {
 		hMargin = 1
 	}
 
-	col := e.displayColumn(e.cursor.Line, e.cursor.Col)
 	if col < e.scrollX+hMargin {
 		e.scrollX = col - hMargin
 	}
@@ -732,7 +735,7 @@ func (e *Editor) paintGhostRow(buf *surface.CellBuffer, y, sw, sbX int, row visi
 	if marker {
 		attr = cell.AttrItalic
 	}
-	col, x := 0, sw
+	col, x := 0, sw-e.scrollX
 	for text != "" && x < sbX {
 		cluster, _ := rendering.FirstGrapheme(text)
 		if cluster == "" {
@@ -743,10 +746,10 @@ func (e *Editor) paintGhostRow(buf *surface.CellBuffer, y, sw, sbX int, row visi
 		if width < 1 {
 			continue
 		}
-		if col >= row.start {
+		if col >= e.scrollX {
 			e.paintGrapheme(buf, x, y, sbX, cluster, width, fg, bg, attr, blankCell)
-			x += width
 		}
+		x += width
 		col += width
 	}
 }

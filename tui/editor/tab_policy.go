@@ -27,7 +27,8 @@ func (e *Editor) setTabWidth(width int) {
 			state.landing = [2]int{v.buf.positionToOffset(v.landing.Start), v.buf.positionToOffset(v.landing.End)}
 			state.hasLanding = true
 		}
-		state.state.ScrollX = reprojectColumn(v.LineText(v.cursor.Line), v.scrollX, old, width)
+		// ScrollX is a visual viewport origin, not a column in the source.
+		// Keep it; pendingReveal keeps the reprojected caret visible.
 		views = append(views, state)
 	})
 	e.buf.tabSize = width

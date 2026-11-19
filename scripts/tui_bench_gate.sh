@@ -100,6 +100,7 @@ run_bench '^BenchmarkSemantic(DecodeDense|ParseDense)$' ./lsp/semantic
 # These restore a dense source outside each measured stage. Duration calibration
 # otherwise selects excessive fixture work without collecting a better sample.
 BENCHTIME=100x run_bench '^BenchmarkSemanticEditingDense$' ./tui/editor
+run_bench '^BenchmarkEditorMixedDirectionPan$' ./tui/editor
 run_bench '^BenchmarkWrapped(EditorWorkload|RowPreparation)$' ./tui/editor
 BENCHTIME=100x run_bench '^BenchmarkMultipleCaret(Workload|Stages)$' ./tui/editor
 run_bench '^Benchmark(EditorOrientation|MinimapRebuild)$' ./tui/editor

@@ -14,12 +14,14 @@ import (
 )
 
 // SourceTrace observes semantic text before layout adds margins or wraps it.
-// Mark returns an annotated styled string; Begin separates logical blocks.
+// Mark returns an annotated styled string; MarkCode does the same for the
+// text of an inline code span (Crude). Begin separates logical blocks.
 // Decoration brackets generated padding. Code returns a traced code block and
 // its optional trailing action. It does not parse Markdown or change layout.
 type SourceTrace interface {
 	Begin(separator string)
 	Mark(styled, text string) string
+	MarkCode(styled, text string) string
 	Code(styled, text, language string) string
 	Pause() string
 	Resume() string

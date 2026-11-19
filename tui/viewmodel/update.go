@@ -566,6 +566,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyTerminalWidthProfile(msg)
 	case tea.ModeReportMsg:
 		m.handleHostBidiReport(msg)
+	case tea.TerminalVersionMsg:
+		m.handleTerminalVersion(msg)
 	case workspace.DocumentAutosaveDueMsg:
 		return m, m.handleAutosaveDue(msg)
 	case editorSaveResultMsg:

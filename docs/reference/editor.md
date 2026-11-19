@@ -288,13 +288,12 @@ selection, history, the savepoint or dirty state.
   A soft boundary has two visual caret locations but never adds a source byte.
   Horizontal scrolling is absent while wrapped geometry is ready.
 
-- **Line direction** is **Left to right** by default: every source line is a
-  left-to-right paragraph and right-to-left runs read right to left in place,
-  as in other code editors. **By line** gives each line the direction of its
-  first letter (Persian or Hebrew prose is right-aligned; a line without letters
-  keeps the line above). Arrangement is presentation only: carets, selections,
-  search, diagnostics, inlays and pointer hits stay in source columns and are
-  mapped through the row ([bidi](bidi.md)).
+- **Line direction** changes reading order, not alignment. Every source row
+  starts at the left margin. **By line** (default) follows the direction of
+  prose inside the code. Indentation, code delimiters and blank lines stay on
+  the source grid. Horizontal scroll moves a window over the arranged row;
+  it cannot change glyph order or which source character a visible cell hits.
+  Only soft wraps change row boundaries. See [bidi](bidi.md).
 
 **Indent with** and **Indent size** supply inherited policy. Detect and zero
 select source detection; project/file choices still take priority.
@@ -459,6 +458,10 @@ closing the file. A normal click or explicit source navigation ends the extra
 carets. Captured rectangle drags reuse the ordinary Host, scroll repeat, final
 release and cancellation path. Empty rectangles retain insertion carets. Wrapped
 rows, tab stops, inlays and complete grapheme boundaries use the same projection.
+A rectangle that crosses a bidi run boundary can select disjoint source pieces
+on one row. Each piece becomes an ordinary selection; Delete touches only the
+highlighted text and one Undo restores the set. Add caret above/below follows
+the visual column, not the byte or source column of the original caret.
 
 Each view holds immutable UTF-8 selection ranges with independent motion goals
 and wrap affinity. Overlapping ranges and duplicate carets merge deterministically;

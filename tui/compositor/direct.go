@@ -3,6 +3,7 @@ package compositor
 import (
 	"unicode/utf8"
 
+	"crude/tui/bidi"
 	"crude/tui/cell"
 	"crude/tui/surface"
 
@@ -72,11 +73,7 @@ func (s cellSurface) Draw(dst uv.Screen, area uv.Rectangle) {
 					style = directStyle(c)
 					previous, haveStyle = c, true
 				}
-				text := c.Content
-				if text == "" {
-					text = runeText(c.Char)
-				}
-				s.row[x] = uv.Cell{Content: text, Width: int(c.Width), Style: style, Link: directLink(c.Link)}
+				s.row[x] = uv.Cell{Content: terminalText(&c), Width: int(c.Width), Style: style, Link: directLink(c.Link)}
 				if c.Width == 1 {
 					// Filled backgrounds often occupy most of a row. Convert the
 					// run once, then bulk-copy UV values rather than reconstructing
@@ -108,11 +105,7 @@ func (s cellSurface) Draw(dst uv.Screen, area uv.Rectangle) {
 				style = directStyle(c)
 				previous, haveStyle = c, true
 			}
-			text := c.Content
-			if text == "" {
-				text = runeText(c.Char)
-			}
-			out = uv.Cell{Content: text, Width: int(c.Width), Style: style, Link: directLink(c.Link)}
+			out = uv.Cell{Content: terminalText(&c), Width: int(c.Width), Style: style, Link: directLink(c.Link)}
 			dst.SetCell(x, y, &out)
 		}
 	}
@@ -132,6 +125,20 @@ func completeCellRow(row []cell.Cell) bool {
 		}
 	}
 	return true
+}
+
+// terminalText is the text the terminal receives for a cell. A cell of an
+// arranged right-to-left line already shows its joined glyph in visual
+// order; its joining and direction controls stay in the cell for copying but
+// never reach the terminal (bidi.TerminalText).
+func terminalText(c *cell.Cell) string {
+	if c.Content == "" {
+		return runeText(c.Char)
+	}
+	if c.Bidi.Arranged() {
+		return bidi.TerminalText(c.Content)
+	}
+	return c.Content
 }
 
 // Static ASCII strings avoid allocating on rune-only border/space cells.

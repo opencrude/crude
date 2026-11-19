@@ -26,9 +26,11 @@
 #   shot[:label]              extra screenshot
 #
 # Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS CRUDE_CWD KEEP_OPEN
-# TERMINAL=alacritty|kitty|tilix|wezterm selects the emulator (default alacritty).
+# TERMINAL=alacritty|kitty|tilix|wezterm|ghostty|konsole|kwi selects the
+# emulator (default alacritty). kwi is the KDE Flatpak (org.kde.kwi).
 # WEZTERM_BIN may select a portable wezterm-gui binary.
 # WEZTERM_CONFIG may select the installed Crude GUI configuration for acceptance.
+# GHOSTTY_CONFIG may select a Ghostty configuration file (default: none loaded).
 # CRUDE_BIN may select a prebuilt, deterministic visual acceptance test binary.
 # An isolated CRUDE_HOME must be a real short directory, not a symlink to a
 # long path: the core canonicalizes it before creating its Unix socket.
@@ -50,9 +52,9 @@ if [ -n "${CRUDE_CAPTURE_EVIDENCE:-}" ] && [ -s "$CRUDE_CAPTURE_EVIDENCE" ]; the
   exit 1
 fi
 TERMINAL="${TERMINAL:-alacritty}"
-case "$TERMINAL" in alacritty|kitty|tilix|wezterm) ;; *) echo "ERROR: unsupported capture terminal: $TERMINAL" >&2; exit 1 ;; esac
+case "$TERMINAL" in alacritty|kitty|tilix|wezterm|ghostty|konsole|kwi) ;; *) echo "ERROR: unsupported capture terminal: $TERMINAL" >&2; exit 1 ;; esac
 if [ -z "${TERM_NAME:-}" ]; then
-  case "$TERMINAL" in alacritty) TERM_NAME=alacritty ;; kitty) TERM_NAME=xterm-kitty ;; tilix|wezterm) TERM_NAME=xterm-256color ;; esac
+  case "$TERMINAL" in alacritty) TERM_NAME=alacritty ;; kitty) TERM_NAME=xterm-kitty ;; ghostty) TERM_NAME=xterm-ghostty ;; tilix|wezterm|konsole|kwi) TERM_NAME=xterm-256color ;; esac
 fi
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -126,12 +128,24 @@ fi
 # NO_COLOR is inherited from some parent shells (e.g. Cursor's, which also sets
 # TERM=dumb). Bubble Tea's colorprofile maps NO_COLOR to Ascii and strips every
 # colour, which silently invalidates screenshots as colour evidence. Clear it.
+# Crude starts only after the driver placed and sized the window, and records
+# the grid it really got: pointer cells come from that grid, not the request.
+GO="$WORK/go"
+GRID="$WORK/grid"
+# Some emulators start the command in a fresh environment (Kwi's Flatpak runs
+# it on the host through a portal). Carry every CRUDE_* variable explicitly so
+# a capture can never attach to the developer's own profile and core.
+CRUDE_ENV="$(for name in $(compgen -e | grep '^CRUDE_'); do printf 'export %s=%q\n' "$name" "${!name}"; done)"
 cat > "$LAUNCH" <<EOF
-#!/bin/sh
+#!/usr/bin/env bash
+$CRUDE_ENV
 unset NO_COLOR CLICOLOR NO_COLOUR
 export COLORTERM=truecolor
 export TERM=${TERM_NAME:-alacritty}
 cd "$CRUDE_CWD" || exit 1
+i=0
+while [ ! -e "$GO" ] && [ \$i -lt 300 ]; do sleep 0.05; i=\$((i + 1)); done
+stty size > "$GRID.tmp" && mv "$GRID.tmp" "$GRID"
 "$BIN" $CRUDE_ARGS 2>>"$LOG"
 echo "CRUDE-EXITED rc=\$?" >>"$LOG"
 sleep 900
@@ -191,6 +205,36 @@ fi
   start --always-new-process --no-auto-connect --class CrudeShot --position 0,0 \
   -- "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
 ;;
+ghostty)
+# A separate GTK instance never joins a user's running Ghostty. The default
+# capture loads no user configuration; GHOSTTY_CONFIG names one explicitly.
+GHOSTTY_CONFIG_ARGS=(--config-default-files=false)
+if [ -n "${GHOSTTY_CONFIG:-}" ]; then
+  GHOSTTY_CONFIG_ARGS+=(--config-file="$GHOSTTY_CONFIG")
+fi
+ghostty "${GHOSTTY_CONFIG_ARGS[@]}" --gtk-single-instance=false \
+  --class=dev.crude.CrudeShot --x11-instance-name=CrudeShot \
+  --window-decoration=none --window-padding-x=0 --window-padding-y=0 \
+  --window-width="$COLS" --window-height="$ROWS" --font-size="$FONT_SIZE" \
+  --background-opacity=1 --cursor-style-blink=false --resize-overlay=never \
+  --confirm-close-surface=false --quit-after-last-window-closed=true \
+  -e "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
+;;
+kwi)
+# The Flatpak runs the command on the host. Its window belongs to a sandboxed
+# PID, so the driver resolves the one new kwi window instead (below).
+KWI_BEFORE="$(xdotool search --onlyvisible --class '^kwi$' 2>/dev/null | sort -u | tr '\n' ' ')"
+flatpak run org.kde.kwi -e "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
+;;
+konsole)
+# --separate never joins a user's running Konsole. Profile properties keep the
+# user's default profile, including its own BiDi rendering choice.
+konsole --separate --hide-menubar --hide-tabbar --name CrudeShot \
+  -p "TerminalColumns=$COLS" -p "TerminalRows=$ROWS" \
+  -p "Font=JetBrainsMono Nerd Font,$FONT_SIZE,-1,5,400,0,0,0,0,0,0,0,0,0,0,1" \
+  -p "TerminalMargin=0" -p "BlinkingCursorEnabled=false" \
+  -e "$LAUNCH" >>"$WORK/terminal.log" 2>&1 &
+;;
 esac
 CAPTURE_PID=$!
 
@@ -201,13 +245,22 @@ GEOMETRY=""
 for _ in $(seq 1 100); do
   while read -r candidate; do
     [ -n "$candidate" ] || continue
-    owner=$(xdotool getwindowpid "$candidate" 2>/dev/null || true)
-    [ "$owner" = "$CAPTURE_PID" ] || continue
+    if [ "$TERMINAL" = kwi ]; then
+      case " $KWI_BEFORE " in *" $candidate "*) continue ;; esac
+    else
+      owner=$(xdotool getwindowpid "$candidate" 2>/dev/null || true)
+      [ "$owner" = "$CAPTURE_PID" ] || continue
+    fi
     geometry=$(xdotool getwindowgeometry --shell "$candidate" 2>/dev/null) || continue
     [ -n "$geometry" ] || continue
     WIN_ID="$candidate"
     GEOMETRY="$geometry"
-  done < <(xdotool search --onlyvisible --class "CrudeShot" 2>/dev/null || true)
+  done < <(
+    if [ "$TERMINAL" = kwi ]; then
+      xdotool search --onlyvisible --class '^kwi$' 2>/dev/null
+    else
+      { xdotool search --onlyvisible --class "CrudeShot"; xdotool search --onlyvisible --classname "CrudeShot"; } 2>/dev/null
+    fi | sort -u || true)
   [ -n "$WIN_ID" ] && break
   kill -0 "$CAPTURE_PID" 2>/dev/null || { echo 'ERROR: dedicated capture terminal exited during startup'; tail -20 "$WORK/terminal.log"; exit 1; }
   sleep 0.15
@@ -221,8 +274,23 @@ xdotool windowraise "$WIN_ID" 2>/dev/null
 xdotool windowactivate --sync "$WIN_ID" 2>/dev/null
 sleep 0.3
 
+if [ "$TERMINAL" = kwi ]; then
+  # Kwi has no grid option: size the window, then read the grid it produced.
+  xdotool windowsize --sync "$WIN_ID" $((COLS * 8)) $((ROWS * 18)) 2>/dev/null
+  sleep 0.5
+fi
 GEOMETRY=$(xdotool getwindowgeometry --shell "$WIN_ID" 2>/dev/null) || { echo 'ERROR: dedicated capture window disappeared before geometry'; exit 1; }
 eval "$GEOMETRY"
+: > "$GO"
+for _ in $(seq 1 200); do [ -s "$GRID" ] && break; sleep 0.05; done
+if read -r GRID_ROWS GRID_COLS < "$GRID" 2>/dev/null && [ "${GRID_COLS:-0}" -gt 0 ] && [ "${GRID_ROWS:-0}" -gt 0 ]; then
+  [ "$GRID_COLS" = "$COLS" ] && [ "$GRID_ROWS" = "$ROWS" ] || echo "note: terminal grid is ${GRID_COLS}x${GRID_ROWS}, requested ${COLS}x${ROWS}"
+  COLS=$GRID_COLS
+  ROWS=$GRID_ROWS
+else
+  echo 'ERROR: the capture terminal did not report its grid' >&2
+  exit 1
+fi
 CW=$((WIDTH / COLS))
 CH=$((HEIGHT / ROWS))
 echo "win=$WIN_ID geom=${WIDTH}x${HEIGHT}+${X}+${Y} cell=${CW}x${CH} grid=${COLS}x${ROWS}"

@@ -177,7 +177,9 @@ reach compositor ANSI or UV; this is the floating-window-over-emoji artifact.
    truncation, padding, and hit-testing.
 2. Do not use `uniseg`, `runewidth`, or bare `lipgloss.Width` for layout.
 3. Preserve the full grapheme text in a surface cell's `Content`; emitting only
-   its first rune lets UV remeasure a different string.
+   its first rune lets UV remeasure a different string. Arranged right-to-left
+   cells are sent without the zero-width joining and direction controls Crude
+   already applied ([bidi](bidi.md)); their width does not change.
 4. Never add platform or widget-specific width exceptions. Add a calibration
    representative or a shared x/ansi class rule so layout and UV change
    together.

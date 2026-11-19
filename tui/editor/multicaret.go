@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/tui/bidi"
 	"crude/tui/ui"
 	"crude/workspace/document"
 )
@@ -329,13 +330,19 @@ func (e *Editor) selectionAction(id ui.ActionID) (bool, error) {
 		if line < 0 || line >= e.LineCount() {
 			return true, nil
 		}
+		origin, x := e.visualPosition(pos, e.wrapBefore)
+		offset := e.rowAt(origin).index
 		e.unfoldSource(line, true)
-		pos = e.buf.snapPosition(Position{Line: line, Col: pos.Col})
+		target, _ := e.logicalRowPosition(Position{Line: line}, false)
+		if e.wrapsRows() {
+			target += min(offset, e.prepareRows().lines[line].textRows()-1)
+		}
+		pos, before := e.positionOnRow(target, x-e.scrollX)
 		off := e.buf.positionToOffset(pos)
 		for i := range spans {
 			spans[i].primary = false
 		}
-		return true, e.setSelections(append(spans, selectionSpan{SourceSelection: SourceSelection{off, off}, primary: true}))
+		return true, e.setSelections(append(spans, selectionSpan{SourceSelection: SourceSelection{off, off}, primary: true, goal: caretGoal{before: before}}))
 	}
 	return false, nil
 }
@@ -439,24 +446,48 @@ func (e *Editor) toggleCaretAt(pos Position) {
 	e.ensureCursorVisible()
 }
 func (e *Editor) projectRectangle(pos Position) {
-	first, originCol := e.visualPosition(e.drag.start, false)
-	last, _ := e.visualPosition(pos, e.wrapBefore)
-	if max(last-first, first-last) >= MaxCarets {
-		last = first + min(MaxCarets-1, max(1-MaxCarets, last-first))
-	}
-	left := originCol
-	right := max(0, e.drag.x-e.gutterWidth())
+	first := e.drag.rectangleRow
+	last, _ := e.logicalRowPosition(pos, e.wrapBefore)
+	last = first + min(MaxCarets-1, max(1-MaxCarets, last-first))
+	origin, head := e.drag.rectangleCol, e.scrollX+max(0, e.drag.x-e.gutterWidth())
+	left, right := min(origin, head), max(origin, head)
 	var ranges []selectionSpan
+	var scratch [4]bidi.ColumnRange
 	for row := min(first, last); row <= max(first, last); row++ {
-		a, _ := e.positionOnRow(row, left)
-		b, _ := e.positionOnRow(row, right)
-		if !e.wrapsRows() {
-			line := e.rowAt(row).line
-			a = e.buf.snapPosition(Position{Line: line, Col: e.sourceColumn(line, left)})
-			b = e.buf.snapPosition(Position{Line: line, Col: e.sourceColumn(line, e.scrollX+right)})
+		r := e.rowAt(row)
+		ln := e.rowLine(r)
+		count := len(ranges)
+		for _, part := range ln.LogicalRanges(left, right, scratch[:0]) {
+			lo, hi := e.sourceColumn(r.line, min(r.end, r.start+part.Start)), e.sourceColumn(r.line, min(r.end, r.start+part.End))
+			a := e.buf.positionToOffset(Position{r.line, lo})
+			end := e.buf.snapPosition(Position{r.line, hi})
+			if end.Col < hi && end.Col < e.lineVisualWidth(r.line) {
+				end = e.buf.nextPosition(end)
+			}
+			b := e.buf.positionToOffset(end)
+			if a == b {
+				continue
+			} // virtual space or only an inlay
+			if (head > origin) != (ln.Visual(part.Start) <= ln.Visual(part.End-1)) {
+				a, b = b, a
+			}
+			edge := left
+			if head > origin {
+				edge = right - 1
+			}
+			target := ln.Logical(edge)
+			ranges = append(ranges, selectionSpan{SourceSelection: SourceSelection{a, b}, primary: row == last && part.Start <= target && target < part.End})
 		}
-		ranges = append(ranges, selectionSpan{SourceSelection: SourceSelection{e.buf.positionToOffset(a), e.buf.positionToOffset(b)}, primary: row == last})
+		if count == len(ranges) {
+			p, _ := e.positionOnRow(row, head-e.scrollX)
+			off := e.buf.positionToOffset(p)
+			ranges = append(ranges, selectionSpan{SourceSelection: SourceSelection{off, off}, primary: row == last})
+		}
+		if len(ranges) > MaxCarets {
+			return
+		} // never publish half of a proposed rectangle
 	}
+
 	_ = e.setSelections(ranges)
 	e.cursorBlink.MarkActivity()
 }
