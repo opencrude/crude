@@ -158,7 +158,9 @@ type RunWork struct {
 
 type RunWorkEntry struct {
 	InspectionMessage
-	Outcome toolresult.Outcome `json:"outcome,omitzero"`
+	Provider string             `json:"provider_id,omitempty"`
+	Model    string             `json:"model_id,omitempty"`
+	Outcome  toolresult.Outcome `json:"outcome,omitzero"`
 }
 
 func InspectRunWork(ctx context.Context, db *sql.DB, runID, agentID, transcriptOwnerID, cursor string) (RunWork, error) {
@@ -186,7 +188,8 @@ func InspectRunWork(ctx context.Context, db *sql.DB, runID, agentID, transcriptO
 		(json_extract(s.value,'$.role')='assistant' AND length(COALESCE(json_extract(s.value,'$.content'),''))>800),
 		m.sequence_num,s.key,COALESCE(json_extract(s.value,'$.tool_outcome.state'),''),
 		COALESCE(substr(json_extract(s.value,'$.tool_outcome.code'),1,128),''),
-		COALESCE(json_extract(s.value,'$.tool_outcome.call_id'),''),COALESCE(json_extract(s.value,'$.tool_outcome.id'),'')
+		COALESCE(json_extract(s.value,'$.tool_outcome.call_id'),''),COALESCE(json_extract(s.value,'$.tool_outcome.id'),''),
+		COALESCE(json_extract(s.value,'$.provider_id'),''),COALESCE(json_extract(s.value,'$.model_id'),'')
 		FROM messages m JOIN json_each(m.display_meta,'$.snapshots') s
 		WHERE m.visibility='conversation' AND json_valid(m.display_meta) AND json_extract(m.display_meta,'$.run_id')=?
 		AND m.agent_id IN (?,?) AND COALESCE(json_extract(m.display_meta,'$.context_only'),0)=0
@@ -205,7 +208,7 @@ func InspectRunWork(ctx context.Context, db *sql.DB, runID, agentID, transcriptO
 		var row RunWorkEntry
 		var created int64
 		if err := rows.Scan(&row.MessageID, &row.Role, &row.Text, &row.ToolName, &row.Status, &created,
-			&row.Truncated, &lastSequence, &lastPart, &row.Outcome.State, &row.Outcome.Code, &row.Outcome.CallID, &row.Outcome.ID); err != nil {
+			&row.Truncated, &lastSequence, &lastPart, &row.Outcome.State, &row.Outcome.Code, &row.Outcome.CallID, &row.Outcome.ID, &row.Provider, &row.Model); err != nil {
 			return result, err
 		}
 		row.CreatedAt = time.Unix(0, created).UTC()

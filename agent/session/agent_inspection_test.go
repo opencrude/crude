@@ -166,7 +166,7 @@ func TestAgentInspectRealHumanRunDoesNotGuessUnrecordedTrigger(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"finished human task\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"finished human task\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":15,\"completion_tokens\":4}}\n\ndata: [DONE]\n\n")
 	}))
 	defer server.Close()
 	defer close(release)
@@ -210,8 +210,13 @@ func TestAgentInspectRealHumanRunDoesNotGuessUnrecordedTrigger(t *testing.T) {
 		t.Fatal("real session-owned output missing from runtime inspection", view.RecentWork)
 	}
 	exact, err := s.inspectExactAgentRun(t.Context(), store, orchestrator.ID, view.LatestRun.ID, "")
-	if err != nil || exact.Run == nil || !exact.Run.State.Terminal() || len(exact.PublicWork.Activity) != 1 || exact.PublicWork.Activity[0].Text != "finished human task" {
+	if err != nil || exact.Run == nil || !exact.Run.State.Terminal() || len(exact.PublicWork.Activity) != 1 || exact.PublicWork.Activity[0].Text != "finished human task" || exact.PublicWork.Activity[0].Model != "inspection-model" ||
+		!exact.Trigger.Available || exact.Trigger.InputID != input.InternalID || exact.Trigger.Preview != input.Text {
 		t.Fatalf("exact attempt did not retain its real output: %+v %v", exact, err)
+	}
+	promptEvidence, err := sessiondb.InspectHistoricalPrompt(t.Context(), s.db, s.sessionID, orchestrator.ID, s.sessionID, sessiondb.HistoricalPromptQuery{Model: "INSPECTION-MODEL", FirstForModel: true, MaxBytes: 1024})
+	if err != nil || promptEvidence == nil || promptEvidence.Text != input.Text || len(promptEvidence.Models) != 1 || promptEvidence.Models[0].ID != "inspection-model" {
+		t.Fatalf("real model usage not linked to the original human input: %+v %v", promptEvidence, err)
 	}
 }
 

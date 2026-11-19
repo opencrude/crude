@@ -267,7 +267,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		userMsg.InternalID = currentMsgID
 		userMsg.DisplayContent = userInput.DisplayContent()
 		createdAt := time.Now()
-		meta := sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userMsg.DisplayContent}
+		meta := sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userMsg.DisplayContent, TurnGeneration: turnGeneration}
 		if userMsg.EffectiveVisibility() != provider.VisibilityConversation {
 			// Runtime-started turns (goal continuations) are provider input,
 			// never a human message in the transcript.

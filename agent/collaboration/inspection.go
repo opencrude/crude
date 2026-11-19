@@ -198,3 +198,46 @@ func (store *Store) ListRuns(ctx context.Context, agentID, before string, limit 
 	})
 	return result, err
 }
+
+// HistoryParticipants pages the durable workspace registry by stable identity.
+// Presence and state changes cannot reorder an already visited participant.
+func (store *Store) HistoryParticipants(ctx context.Context, after, category string, limit int) ([]Agent, error) {
+	if len(after) > 256 || len(category) > 128 || limit < 1 || limit > 64 {
+		return nil, ErrInvalid
+	}
+	var agents []Agent
+	err := store.readTransaction(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT `+agentColumns+` FROM collaboration_agents
+			WHERE workspace_id=? AND id>? AND (?='' OR category=?) ORDER BY id LIMIT ?`, store.workspaceID, after, category, category, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			a, err := scanAgent(rows)
+			if err != nil {
+				return err
+			}
+			agents = append(agents, a)
+		}
+		return rows.Err()
+	})
+	return agents, err
+}
+
+// InputRun returns a run link only when the journal has one unambiguous owner
+// for this exact input. Retries can legitimately share an original input.
+func (store *Store) InputRun(ctx context.Context, agentID, inputID string) (string, error) {
+	var runID string
+	err := store.readTransaction(ctx, func(tx *sql.Tx) error {
+		var count int
+		err := tx.QueryRowContext(ctx, `SELECT COALESCE(MIN(id),''),COUNT(*) FROM (
+			SELECT id FROM collaboration_runs WHERE agent_id=? AND context_commit_id=? AND context_commit_id!='' LIMIT 2
+		)`, agentID, inputID).Scan(&runID, &count)
+		if count != 1 {
+			runID = ""
+		}
+		return err
+	})
+	return runID, err
+}

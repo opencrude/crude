@@ -27,12 +27,41 @@ The underlying stores are not agent interfaces.
   whether it has an originating shell. It includes a small accepted working set
   for the logical checkout when available. Detailed reads are on demand.
 
+## Find a past prompt by model
+
+Discover `history.prompts` with `crude_commands`. Then call `crude_control`:
+
+```json
+{"command":"history.prompts","arguments":{"model":"opus","category":"default"}}
+```
+
+This returns each matching agent's first human-led turn with a recorded,
+successful normal request for that model. Omit `category` to include all
+roles. Use `mode: "first"` to require that model on the agent's very first
+human prompt. Use `agent_id` alone to read that agent's first human prompt
+regardless of model. A prompt may list more than one model when requests in
+its turn used different models. Current settings, failed and background
+requests, peer assignments, and model names mentioned in chat do not match.
+Human steering text is readable, but Crude does not infer which model saw it.
+
+Read full saved text with the returned `agent_id` and `prompt_id`. For a long
+prompt, echo `next_text_offset` as `text_offset`. The offsets are bytes and
+never split a UTF-8 character. This returns the public text, not expanded
+references, raw provider input or attachment bytes. It does not open a session.
+
+Echo `next` as `page` to finish an immutable result page stream. Then follow
+`source.next_scan` as new arguments to search the next batch of agents, even
+if the current batch has no match. An unavailable transcript or a prompt
+without a recorded turn-model link is a gap, not proof a model was never
+used. The scan covers registered participants in this workspace.
+
 ## Inspect an exact run
 
 1. Find an agent with `agent_list`. Use `agent_inspect` with `list_runs: true`
    and that agent's exact ID. To read older runs, echo its `before_run` value.
 2. Use `agent_inspect` with the same agent ID and a `run_id`. Follow `work_cursor`
-   to read older public activity in that attempt. Reports link to exact
+   to read older public activity in that attempt. The trigger links to the
+   recorded human input or Board event when available. Reports link to exact
    `artifact_read` revisions. A report is a claim; the run state and typed tool
    outcome are separate facts. No private reasoning, raw tool output or provider
    requests are returned. Output buffered in the active runner and older archive
