@@ -100,7 +100,7 @@ func controlFieldSchema(t reflect.Type, path string) map[string]any {
 	if leaf == "service_tier" && (strings.HasPrefix(path, "agents.") ||
 		strings.HasPrefix(path, "overrides.") || strings.HasPrefix(path, "value.Agents.") ||
 		path == "memory.memory_category.service_tier" || path == "safety.auto_permission.service_tier") {
-		schema["enum"] = []string{"", "standard", "fast", "priority", "flex"}
+		schema["enum"] = []string{"", "standard", "fast", "priority", "flex", "ultrafast"}
 	}
 	if strings.HasPrefix(path, "memory.") || strings.HasPrefix(path, "local_history.") {
 		switch leaf {

@@ -5,14 +5,17 @@ import "slices"
 // Service tiers a user can choose for a role. Each maps to the protocol's own
 // tier names, in preference order.
 var serviceTierAliases = map[string][]string{
-	"standard": {"default", "standard_only"},
-	"fast":     {"fast", "priority"},
-	"priority": {"priority"},
-	"flex":     {"flex"},
+	"standard":  {"default", "standard_only"},
+	"fast":      {"fast", "priority"},
+	"priority":  {"priority"},
+	"flex":      {"flex"},
+	"ultrafast": {"ultrafast"},
 }
 
 // ServiceTierChoices are the role-level tiers settings and self control offer.
-func ServiceTierChoices() []string { return []string{"standard", "fast", "priority", "flex"} }
+func ServiceTierChoices() []string {
+	return []string{"standard", "fast", "priority", "flex", "ultrafast"}
+}
 
 // ServiceTierChoicesFor lists the role-level tiers that a protocol offering
 // the given native tiers can send, in ServiceTierChoices order.

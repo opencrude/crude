@@ -541,40 +541,19 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		},
 	})
 
-	createSection := ui.ContextMenuSection{SectionLabel: "Create"}
-	if isDir {
-		createSection.Items = append(createSection.Items,
-			ui.ContextMenuItem{Label: "New file", Action: func() {
-				m.startNewFileInTree(path)
-			}},
-			ui.ContextMenuItem{Label: "New folder", Action: func() {
-				m.startNewFolderInTree(path)
-			}},
-		)
+	// New items go inside a folder, or beside a file, as in established IDEs.
+	createDir := m.ws.RootPath()
+	switch {
+	case isDir:
+		createDir = path
+	case path != "":
+		createDir = m.Tree.Model.ParentDir(path)
 	}
-	if path == "" {
-		createSection.Items = append(createSection.Items,
-			ui.ContextMenuItem{Label: "New file", Action: func() {
-				m.startNewFileInTree(m.ws.RootPath())
-			}},
-			ui.ContextMenuItem{Label: "New folder", Action: func() {
-				m.startNewFolderInTree(m.ws.RootPath())
-			}},
-		)
-	}
-	if path != "" {
-		createSection.Items = append(createSection.Items,
-			ui.ContextMenuItem{Label: "New file (sibling)", Action: func() {
-				m.startNewFileInTree(m.Tree.Model.ParentDir(path))
-			}},
-			ui.ContextMenuItem{Label: "New folder (sibling)", Action: func() {
-				m.startNewFolderInTree(m.Tree.Model.ParentDir(path))
-			}},
-		)
-	}
-	if len(createSection.Items) > 0 {
-		st.Sections = append(st.Sections, createSection)
-	}
+	createSection := ui.ContextMenuSection{SectionLabel: "Create", Items: []ui.ContextMenuItem{
+		{Label: "New file", Action: func() { m.startNewFileInTree(createDir) }},
+		{Label: "New folder", Action: func() { m.startNewFolderInTree(createDir) }},
+	}}
+	st.Sections = append(st.Sections, createSection)
 
 	// Each item runs the same tree action as its key, so menu, keyboard and
 	// drag and drop share one path.
@@ -679,12 +658,15 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				{Label: "Close tab", Detail: m.menuShortcut("file.close", "editor.close"), Action: func() {
 					m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
 				}},
-				{Label: "Close other files in pane", Action: func() {
-					m.closePaneEditorTabs(owner, false)
-				}},
-				{Label: "Close files to the right", Action: func() {
-					m.closePaneEditorTabs(owner, true)
-				}},
+				{Label: "Close other files", Action: func() { m.closePaneEditorTabs(owner, paneCloseOthers) }},
+				{Label: "Close files to the left", Action: func() { m.closePaneEditorTabs(owner, paneCloseLeft) }},
+				{Label: "Close files to the right", Action: func() { m.closePaneEditorTabs(owner, paneCloseRight) }},
+				{Label: "Close saved files", Action: func() { m.closePaneEditorTabs(owner, paneCloseSaved) }},
+				{Label: "Close all files", Action: func() { m.closePaneEditorTabs(owner, paneCloseAll) }},
+			},
+		}, ui.ContextMenuSection{
+			SectionLabel: "File",
+			Items: []ui.ContextMenuItem{
 				{Label: "Copy path", Action: func() {
 					m.copyToClipboard(path)
 				}},

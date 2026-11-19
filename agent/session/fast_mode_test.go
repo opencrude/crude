@@ -21,7 +21,7 @@ func TestFastModeSnapshotFollowsEffectiveConnection(t *testing.T) {
 		{"account fast", "openai-responses", "fast", "", types.FastModeOn, "fast"},
 		{"role overrides account", "openai", "fast", "standard", types.FastModeOff, "default"},
 		{"priority is not fast", "openai", "priority", "", types.FastModeOff, "priority"},
-		{"anthropic unsupported", "anthropic", "", "fast", types.FastModeUnsupported, ""},
+		{"anthropic fast mode", "anthropic", "", "fast", types.FastModeOn, "fast"},
 		{"codex unsupported", "codex", "", "fast", types.FastModeUnsupported, ""},
 	}
 	for _, test := range tests {

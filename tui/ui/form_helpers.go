@@ -210,6 +210,9 @@ func ModelOptions(models []types.ModelEntry) []FormOption {
 			label = model.ID
 		}
 		var details []string
+		if model.Decision {
+			details = append(details, "decision model")
+		}
 		if model.ContextWindow > 0 {
 			details = append(details, rendering.FormatTokens(model.ContextWindow)+" ctx")
 		}

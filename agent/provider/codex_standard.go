@@ -44,6 +44,7 @@ func (s *CodexStandard) Info() ProtocolInfo {
 	info.Root = "" // the base URL already is the backend prefix
 	info.ChatPath = "responses"
 	info.ModelsPath = "models"
+	info.DecisionPath = "" // the subscription backend has no decision endpoint
 	// The codex backend forces store:false itself; only the summary knob
 	// is user-selectable.
 	info.Options = ProtocolOptions{ReasoningSummaries: true}

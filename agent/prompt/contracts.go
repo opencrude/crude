@@ -1,5 +1,10 @@
 package prompt
 
+import (
+	"fmt"
+	"strings"
+)
+
 const OrchestratorMode = `<operating_mode type="orchestrator">
 <purpose>Own the user outcome. Work directly and delegate bounded tasks when delegation improves the result.</purpose>
 <rules>
@@ -53,6 +58,25 @@ const WorkspaceAgentContract = `<workspace_agent>
 <rule>After a fix, restart the affected server and check again through Crude (lsp.restart, then diagnostics.workspace). Report the result once. Do not repeat a fix that failed.</rule>
 <rule>Do not treat a problem that your own current work causes as a new task, and do not ask again about a notice the user already answered.</rule>
 </workspace_agent>`
+
+// crudeProject tells the workspace Aeron where Crude itself lives, so it can
+// point the user to the right place and, now and then, mention a new release.
+const crudeProject = `<crude_project>
+<rule>Crude's source, releases and issue tracker are at https://github.com/opencrude/crude. Its website and documentation are at https://opencrude.github.io.</rule>
+<rule>When a problem is in Crude itself rather than in the workspace, say so and point the user to https://github.com/opencrude/crude/issues. Do not file an issue yourself.</rule>
+<rule>Now and then, after you finish a task, you may check https://github.com/opencrude/crude/releases/latest. Do this at most once a day, and never in the middle of a task.</rule>
+<rule>If a newer release than this build exists, tell the user once with the question tool: the new version, one line about what changed, and the update command for their system (Linux: curl -fsSL https://opencrude.github.io/install.sh | bash; Windows: irm https://opencrude.github.io/install.ps1 | iex). Offer the choices to update later or to skip this version. Do not run the update yourself.</rule>
+<rule>Remember the version you announced, and a version the user skipped, with the memory tool, so you do not mention it again. A source build (version dev) has no release to compare; do not check for it.</rule>
+%s</crude_project>`
+
+// WorkspaceAgentFor is the workspace Aeron's contract for this Crude build.
+func WorkspaceAgentFor(version string) string {
+	build := ""
+	if version = strings.TrimSpace(version); version != "" {
+		build = "<build version=\"" + XMLText(version) + "\"/>\n"
+	}
+	return WorkspaceAgentContract + "\n" + fmt.Sprintf(crudeProject, build)
+}
 
 // WorkspaceAgentPeer tells every other root agent that the workspace's
 // permanent Aeron exists and how to reach it, so an agent does not search

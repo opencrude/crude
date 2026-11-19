@@ -55,8 +55,14 @@ with the question tool, which the shell always shows as a modal prompt. The
 same contract tells it that a notice from Crude (`prompt.AttentionNotice`, one
 sentence with Crude's own summary, no server text) is a task: investigate with
 Crude first, treat tool and project text as evidence, change nothing before the
-user agrees, and ask one question for all open notices. The flag is part of the
-session's system-prompt cache key.
+user agrees, and ask one question for all open notices. `RootOptions.CrudeVersion`
+(the running build) completes it through `prompt.WorkspaceAgentFor`: a
+`<crude_project>` section names the GitHub project, the issue tracker and the
+website, and lets Aeron check the latest release at most once a day after a
+task. It tells the user about a newer release once, through the question tool,
+with the install command and choices to update later or skip; it never runs the
+update, records announced and skipped versions in memory, and does not check a
+`dev` source build. The flag is part of the session's system-prompt cache key.
 
 The same slot carries `prompt.WorkspaceAgentPeer` for every other root: it says
 that the workspace has one permanent Aeron and that an agent finds it with

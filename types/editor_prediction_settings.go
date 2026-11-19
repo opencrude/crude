@@ -213,7 +213,7 @@ func (s SuggestionSettings) Normalized() SuggestionSettings {
 		s.Format, s.EndpointPath = SuggestionFormatChat, ""
 	}
 	switch s.ServiceTier {
-	case "", "standard", "fast", "priority", "flex":
+	case "", "standard", "fast", "priority", "flex", "ultrafast":
 	default:
 		s.ServiceTier = ""
 	}

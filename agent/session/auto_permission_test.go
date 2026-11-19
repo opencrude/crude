@@ -343,3 +343,63 @@ func TestAutoReviewSettingsChangeWakesWaitingRequests(t *testing.T) {
 		t.Fatal("a closed policy generation was reused")
 	}
 }
+
+// Auto Review accepts a decision model as well as a chat model. With the
+// Automatic model type, the Ollama account's model list selects System One;
+// only a confident allow approves, and the reviewer never falls back to chat.
+func TestPermissionReviewerUsesDecisionModelFromOllamaList(t *testing.T) {
+	for _, tc := range []struct {
+		name, reply, want string
+	}{
+		{"confident allow", `{"answers":{"decision":{"type":"choice","choice":"allow","probabilities":{"allow":0.97,"deny":0.01,"ask":0.02}}}}`, "allow"},
+		{"unsure allow asks", `{"answers":{"decision":{"type":"choice","choice":"allow","probabilities":{"allow":0.6,"deny":0.1,"ask":0.3}}}}`, "ask"},
+		{"deny is a recommendation", `{"answers":{"decision":{"type":"choice","choice":"deny","probabilities":{"allow":0.01,"deny":0.98,"ask":0.01}}}}`, "ask"},
+		{"service failure asks", "", "ask"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var chats atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/tags":
+					_, _ = fmt.Fprint(w, `{"models":[{"name":"judge","capabilities":["decision"]}]}`)
+				case "/v1/systemone":
+					var request struct {
+						Model, State string
+						Questions    map[string]provider.DecisionQuestion
+					}
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Model != "judge" || !strings.Contains(request.State, `"edit_file"`) || request.Questions["decision"].Type != "choice" {
+						t.Errorf("wrong decision request: %+v %v", request, err)
+					}
+					if tc.reply == "" {
+						http.Error(w, "unavailable", http.StatusServiceUnavailable)
+						return
+					}
+					_, _ = fmt.Fprint(w, tc.reply)
+				default:
+					chats.Add(1)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			s, a := newReviewerTestSession(t, server.URL)
+			acc := s.cfg.Accounts[s.cfg.Safety.AutoPermission.AccountID]
+			acc.ID = "ollama-" + strings.ReplaceAll(tc.name, " ", "-")
+			acc.ProviderID = "ollama-cloud"
+			acc.Connection.APIStandard = "ollama"
+			acc.Connection.ProviderURL = server.URL + "/api"
+			s.cfg.Accounts[acc.ID] = acc
+			s.cfg.Safety.AutoPermission.AccountID = acc.ID
+			s.cfg.Safety.AutoPermission.Model = "judge"
+			s.cfg.Safety.AutoPermission.MaxAttempts = 1
+			s.cfg.Safety.AutoPermission.DenyMode = "ask"
+			got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}},
+				map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+			if got.Decision != tc.want || got.Reason == "" {
+				t.Fatalf("review=%+v, want %s", got, tc.want)
+			}
+			if chats.Load() != 0 {
+				t.Fatal("decision review fell back to chat")
+			}
+		})
+	}
+}

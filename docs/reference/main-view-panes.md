@@ -206,7 +206,7 @@ editor/chat facts. Workspace status remains workspace-owned.
 | Arrow aliases for right / down split | Ctrl+Alt+Right / Ctrl+Alt+Down; the OS may intercept these, so letter chords are the displayed defaults |
 | Split with an agent / with a file | **Split right with agent** (the last agent, or a new session in the new pane), **Split right with file** (the last file, or the file picker); palette also offers Down |
 | Open a file in the pane on a side | **Open in pane to the right** (and left / above / below) in the tab menu and palette: the pane's view of the file is selected or added; a new split is made when there is no pane on that side |
-| Move a tab into the pane on a side | **Move to pane to the right** (and left / above / below); when no pane is there, **Move to new split …**. A file already shown there keeps that view |
+| Move a tab into the pane on a side | **Move to pane to the right** (and left / above / below); when no pane is there, **Move to new pane to the right** (and the other sides). A file already shown there keeps that view |
 | Go Back / Go Forward | Alt+Left / Alt+Right, the mouse back/forward buttons, and the ← → arrows after the header wordmark (muted when there is no place, so their place stays visible). A focused diff keeps Alt+Left/Right for its previous/next file |
 | Previous / next group | Alt+[ / Alt+] |
 | Previous / next tab in focused group | Ctrl+[ / Ctrl+] |
@@ -216,9 +216,10 @@ editor/chat facts. Workspace status remains workspace-owned.
 | Empty pane New Session / Open File | N / O; Tab or Shift+Tab chooses, Enter/Space activates |
 | Close an empty group | Ctrl+W, or palette Close Empty Pane; never closes a populated group through this operation |
 | Split an empty pane or move a tab to a new left/right/upper/lower split | Command palette and tab context menu; moving is one preview-validated placement including sole-tab source collapse |
-| Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu / palette **Arrange tab** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
-| Split a containing subtree, initially empty | **Split layout** → this pane / containing layout / entire layout → edge |
+| Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu **Move beside a pane…** / palette **Move Tab Beside a Pane…** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
+| Split a containing subtree, initially empty | **Split containing layout…** → this pane / containing layout / entire layout → edge |
 | Move active tab to next/previous pane; Merge all panes | Command palette and tab context menu |
+| Close file tabs of the clicked tab's pane | File tab menu **Close other files**, **Close files to the left**, **Close files to the right**, **Close saved files**, **Close all files**. They close only files and images; agent, panel and comparison tabs stay. Each dirty file asks Save / Discard / Cancel, and Cancel stops the rest |
 | Reorder selected tab inside its group | Palette Move Tab Left/Right in Group |
 | Open File in Pane and all pane operations above | Ctrl+Alt+P Command Palette, registry-backed labels |
 

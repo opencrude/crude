@@ -191,12 +191,12 @@ func TestSamplingOverridesWireShapes(t *testing.T) {
 		t.Fatalf("responses sampling = %v %v", responsesWire["temperature"], responsesWire["top_p"])
 	}
 
+	// Anthropic API version 2026-10-21 rejects every sampling parameter.
 	anthropicWire := encodeToMap(t, &AnthropicStandard{}, req)
-	if got := anthropicWire["temperature"]; got != 0.3 {
-		t.Fatalf("anthropic temperature = %v", got)
-	}
-	if _, ok := anthropicWire["top_p"]; ok {
-		t.Fatalf("anthropic top_p sent (unsupported sampling knob): %v", anthropicWire["top_p"])
+	for _, key := range []string{"temperature", "top_p", "top_k"} {
+		if _, ok := anthropicWire[key]; ok {
+			t.Fatalf("anthropic %s sent: %v", key, anthropicWire[key])
+		}
 	}
 
 	ollamaWire := encodeToMap(t, &OllamaStandard{}, req)

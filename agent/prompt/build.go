@@ -17,6 +17,9 @@ type RootOptions struct {
 	Model    string
 	// WorkspaceAgent adds the contract of the workspace's permanent Aeron.
 	WorkspaceAgent bool
+	// CrudeVersion is the running Crude build, which Aeron compares with the
+	// latest release.
+	CrudeVersion string
 	// Shell is the resolved agent command shell the environment describes.
 	Shell command.Shell
 }
@@ -32,7 +35,7 @@ func BuildRoot(options RootOptions) string {
 	}
 	workspaceAgent := WorkspaceAgentPeer
 	if options.WorkspaceAgent {
-		workspaceAgent = WorkspaceAgentContract
+		workspaceAgent = WorkspaceAgentFor(options.CrudeVersion)
 	}
 	return strings.Join(slices.DeleteFunc([]string{
 		`<crude_agent version="3">`,

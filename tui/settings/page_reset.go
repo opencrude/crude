@@ -23,6 +23,7 @@ var autoReviewIdentity = [][]string{
 	{"safety", "auto_permission", "enabled"}, {"safety", "auto_permission", "account_id"},
 	{"safety", "auto_permission", "model"}, {"safety", "auto_permission", "provider"},
 	{"safety", "auto_permission", "instructions"}, {"safety", "auto_permission", "service_tier"},
+	{"safety", "auto_permission", "model_type"},
 }
 
 // pageOwnershipFor reports the paths a preference page owns. Collections

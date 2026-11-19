@@ -43,7 +43,7 @@ func TestAeronSuggestionSpeedUsesResolvedAccountAndMarksUnavailableChoice(t *tes
 		name, account, saved string
 		options              []ui.FormOption
 	}{
-		{"inherit Aeron's protocol", "", "", []ui.FormOption{{ID: "standard", Label: "Standard"}}},
+		{"inherit Aeron's protocol", "", "", []ui.FormOption{{ID: "standard", Label: "Standard"}, {ID: "fast", Label: "Fast"}}},
 		{"explicit protocol without tiers", "separate", "", nil},
 		{"saved tier is not offered", "separate", "fast", []ui.FormOption{{ID: "fast", Label: "Fast (not offered)"}}},
 	} {

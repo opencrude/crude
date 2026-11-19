@@ -89,8 +89,20 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 		if len(settings.Instructions) > 1024 {
 			return unresolved("Auto Review did not check this request: its restrictions are longer than 1024 characters. Shorten them in Settings.")
 		}
-		prompt := rootprompt.PermissionReviewSystem(settings.Instructions)
-		review, ok := runPermissionReviewAttempts(ctx, cfg, settings, prompt, payload, a, emit)
+		kind, kindErr := resolvePermissionModelType(ctx, cfg, settings)
+		if kindErr != nil {
+			if ctx.Err() != nil {
+				return ask
+			}
+			return unresolved("Auto Review did not check this request: " + kindErr.Error())
+		}
+		var review agent.PermissionReview
+		var ok bool
+		if kind == types.ModelTypeDecision {
+			review, ok = runPermissionDecisionAttempts(ctx, cfg, settings, payload)
+		} else {
+			review, ok = runPermissionReviewAttempts(ctx, cfg, settings, rootprompt.PermissionReviewSystem(settings.Instructions), payload, a, emit)
+		}
 		if !ok {
 			if ctx.Err() != nil {
 				return ask
@@ -187,6 +199,66 @@ func runPermissionReviewAttempts(ctx context.Context, cfg *Config, settings type
 		}
 	}
 	return agent.PermissionReview{}, false
+}
+
+// resolvePermissionModelType uses the explicit model type, or the account's
+// model list when the type is Automatic.
+func resolvePermissionModelType(ctx context.Context, cfg *Config, settings types.AutoPermissionSettings) (string, error) {
+	p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model})
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(settings.TimeoutSeconds)*time.Second)
+	defer cancel()
+	return p.ResolveModelType(ctx, settings.ModelType)
+}
+
+// permissionAllowConfidence is the least probability of allow that lets a
+// decision model approve an operation; a less certain allow asks the user.
+const permissionAllowConfidence = 0.9
+
+// runPermissionDecisionAttempts asks a typed decision model one choice
+// question. It shares the attempt and timeout limits of the chat review and
+// never falls back to chat.
+func runPermissionDecisionAttempts(ctx context.Context, cfg *Config, settings types.AutoPermissionSettings, payload []byte) (agent.PermissionReview, bool) {
+	instructions, criteria := rootprompt.PermissionDecisionQuestion(settings.Instructions)
+	question := map[string]provider.DecisionQuestion{"decision": {Type: "choice", Instructions: instructions, Criteria: criteria}}
+	for attempt := 0; attempt < settings.MaxAttempts; attempt++ {
+		if ctx.Err() != nil {
+			return agent.PermissionReview{}, false
+		}
+		p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model})
+		if err != nil {
+			return agent.PermissionReview{}, false
+		}
+		p.SetExtraBody(nil)
+		p.SetDialSettings(provider.DialSettings{MaxAttempts: 1, RequestTimeoutSeconds: settings.TimeoutSeconds, ConnectTimeoutSeconds: settings.TimeoutSeconds})
+		attemptCtx, cancel := context.WithTimeout(ctx, time.Duration(settings.TimeoutSeconds)*time.Second)
+		answers, err := p.Decide(attemptCtx, string(payload), question)
+		attemptErr := attemptCtx.Err()
+		cancel()
+		if err == nil {
+			return permissionDecisionReview(answers["decision"]), true
+		}
+		if ctx.Err() != nil || (attemptErr != nil && !errors.Is(attemptErr, context.DeadlineExceeded)) {
+			return agent.PermissionReview{}, false
+		}
+	}
+	return agent.PermissionReview{}, false
+}
+
+func permissionDecisionReview(answer provider.DecisionAnswer) agent.PermissionReview {
+	percent := func(label string) int { return int(answer.Probabilities[label]*100 + 0.5) }
+	switch {
+	case answer.Refused:
+		return agent.PermissionReview{Decision: "ask", Reason: "The decision model did not answer."}
+	case answer.Choice == "allow" && answer.Probabilities["allow"] >= permissionAllowConfidence:
+		return agent.PermissionReview{Decision: "allow", Reason: fmt.Sprintf("The decision model is %d%% sure that this is safe.", percent("allow"))}
+	case answer.Choice == "deny":
+		return agent.PermissionReview{Decision: "deny", Reason: fmt.Sprintf("The decision model is %d%% sure that this is unsafe.", percent("deny"))}
+	default:
+		return agent.PermissionReview{Decision: "ask", Reason: fmt.Sprintf("The decision model is only %d%% sure that this is safe.", percent("allow"))}
+	}
 }
 
 func permissionReviewExtraBody(p *provider.Provider, format string) (map[string]any, bool) {

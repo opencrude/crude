@@ -33,19 +33,19 @@ func testRankingJourney(t *testing.T, unavailable bool) {
 			t.Errorf("incorrect decision route or credential")
 		}
 		var body struct {
-			Model, State string
-			Questions    map[string]json.RawMessage
+			Model, Input string
+			Questions    []struct{ Type, Name string }
 		}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 			t.Error(err)
 			return
 		}
 		var state actionMemoryState
-		if err := json.Unmarshal([]byte(body.State), &state); err != nil {
+		if err := json.Unmarshal([]byte(body.Input), &state); err != nil {
 			t.Error(err)
 			return
 		}
-		if body.Model != "ranker" || !strings.Contains(strings.Join(state.Actions, " "), "spindle") || strings.Contains(body.State, "private-pass") || chats.Load() != 2 {
+		if body.Model != "ranker" || !strings.Contains(strings.Join(state.Actions, " "), "spindle") || strings.Contains(body.Input, "private-pass") || chats.Load() != 2 {
 			t.Errorf("unexpected decision input or cadence: %+v round %d", state, chats.Load())
 		}
 		ranks.Add(1)
@@ -53,13 +53,13 @@ func testRankingJourney(t *testing.T, unavailable bool) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		answers := map[string]any{}
+		var answers []any
 		for key, v := range state.Candidates {
 			p := 0.7
 			if strings.Contains(v, keep) {
 				p = 0.98
 			}
-			answers[key] = map[string]any{"type": "noul", "noul": p}
+			answers = append(answers, map[string]any{"type": "predicate", "name": key, "probability": p})
 		}
 		if len(answers) != 2 {
 			t.Errorf("wanted both candidates, got %d", len(answers))
@@ -110,7 +110,7 @@ func testRankingJourney(t *testing.T, unavailable bool) {
 	acc.APIKey = "rank-only"
 	acc.Connection.ProviderURL = decision.URL
 	cfg.Accounts[acc.ID] = acc
-	cfg.Memory = types.MemorySettings{AutoExtract: "off", Consolidation: "off", Ranker: types.MemoryRankerSettings{Enabled: "on", AccountID: acc.ID, Model: "ranker", Endpoint: "decisions", EveryActions: 2, TopK: 1}}
+	cfg.Memory = types.MemorySettings{AutoExtract: "off", Consolidation: "off", Ranker: types.MemoryRankerSettings{Enabled: "on", AccountID: acc.ID, Model: "ranker", ModelType: types.ModelTypeDecision, EveryActions: 2, TopK: 1}}
 	home, dir, root := t.TempDir(), t.TempDir(), t.TempDir()
 	for _, name := range []string{"ordinary.txt", "spindle.txt"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte("password=private-pass"), 0600); err != nil {
@@ -191,17 +191,17 @@ func TestRankedMemoryAbstentionDisableAndRevisionFence(t *testing.T) {
 					score = 0.5
 				}
 				if tc == "feedback" {
-					var b struct{ State string }
+					var b struct{ Input string }
 					_ = json.NewDecoder(r.Body).Decode(&b)
-					if !strings.Contains(b.State, "contradicted") || !strings.Contains(b.State, "Inspection found wear") {
+					if !strings.Contains(b.Input, "contradicted") || !strings.Contains(b.Input, "Inspection found wear") {
 						t.Error("revision feedback absent")
 					}
 				}
-				fmt.Fprintf(w, `{"answers":{"m0":{"type":"noul","noul":%g}}}`, score)
+				fmt.Fprintf(w, `{"answers":[{"type":"predicate","name":"m0","probability":%g}]}`, score)
 			}))
 			defer srv.Close()
 			cfg := modelAttributionConfig(srv.URL, "rank")
-			cfg.Memory.Ranker = types.MemoryRankerSettings{Enabled: "on", AccountID: "account", Model: "rank", EveryActions: 1}
+			cfg.Memory.Ranker = types.MemoryRankerSettings{Enabled: "on", AccountID: "account", Model: "rank", ModelType: types.ModelTypeDecision, EveryActions: 1}
 			s := &Session{cfg: cfg, memoryStore: store}
 			active := []provider.ChatMessage{provider.NewTextMessage("user", "spindle")}
 			batch := []provider.ChatMessage{{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "1", Function: provider.FunctionCall{Name: "read_file", Arguments: `{"path":"spindle"}`}}}}, {Role: "tool", ToolCallID: "1", Content: "spindle"}}

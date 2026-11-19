@@ -572,9 +572,9 @@ recall/extraction cadence remains on the Memory page. Disabling Memory Agent
 stops its automatic jobs and recall without deleting stored memories.
 
 **Agents › Memory Agent › Model** has a **Ranking** section for an optional,
-separate decision account and model. Choose a model from that account’s list,
-or enter its exact ID if it is not listed. Choose **System One** or **Decisions** for a typed decision model.
-For a text model, choose **Chat** to score candidates using the account’s chat protocol. The path is relative to its API base. Crude does not fall back to
+separate account and model. Choose a model from that account’s list,
+or enter its exact ID if it is not listed. The model can be a decision model
+or an ordinary chat model; see **Model type** below. Crude does not fall back to
 chat or another account. Use an API key or a local unauthenticated service. Explicit no-storage policies that the decision endpoint
 cannot enforce stop the request. Turning this on permits sending
 short task, action, result and memory excerpts to that account. It is off by
@@ -583,8 +583,25 @@ and **Add up to** to 1–8 memories (default 2). Settings apply to root and chil
 runs, independent of delegation. The existing recall switch and turn limits
 still apply. A failed check leaves the agent running and posts a notice.
 
+**Model type** is one control shared by Memory ranking and the Auto Review
+Agent: **Automatic** (default), **Chat** or **Decision**. A decision model
+answers typed questions with probabilities; a chat model replies in text.
+Automatic uses the account's model list when its API marks decision models
+(Ollama's `decision` capability), so an account made from the Ollama Cloud or
+Ollama Local template needs no other setup. Every other model, and every API
+whose list cannot mark one (OpenAI-compatible lists), uses chat with no extra
+request; choose **Decision** for such a decision model. The model list marks
+decision models with *decision model*. The protocol owns the decision path and
+wire format (`provider.DecisionCodec`): Ollama serves System One at
+`/v1/systemone` beside its native `/api` root (questions and answers keyed by
+slot, `noul` probabilities), and OpenAI-compatible APIs use the OpenAI
+Decisions API at `decisions` under their API base (shared `input`, named
+`predicate` and `choice` questions, an `answers` array; OpenAI serves it with
+`gpt-6-luna`). Protocols with no decision endpoint refuse Decision. Neither job falls back from one type to
+the other when a request fails.
+
 Auto Review Agent is also a no-tools built-in. Its explicit account, model,
-enable switch, additional restrictions, and complete runtime policy live on its
+model type, enable switch, additional restrictions, and complete runtime policy live on its
 Model / Instructions / Review tabs in Agents. It cannot inherit the Main
 Agent's connection or change its fixed safety prompt; restrictions can only
 narrow approvals and are limited to 1,024 bytes. Enabling it requires an
@@ -759,6 +776,12 @@ example the user turns it on from the `Auto Review…` choice—each waiting
 request is reviewed again; a request it decides closes without an answer from
 the user, and an answer the user gives first always wins. Other settings
 changes do not trigger a review.
+
+A decision model gets one choice question (allow, deny or ask) with the same
+fixed policy and restrictions. It approves only when it chooses allow with at
+least 90% probability; a less certain allow asks the user, and its reason shows
+the probability. Thinking effort, response format and token budgets apply only
+to chat models; timeout and retries apply to both.
 
 A strict `allow` response grants only this call. A model `deny` asks the human by
 default; users may choose automatic denial instead. **Unresolved review**
@@ -1078,7 +1101,10 @@ Zero disables automatic compaction and overflow recovery; `/compact` uses the
 same transaction.
 
 Each agent's **Speed**, beside Account, Model and Thinking, chooses its processing
-tier: the inherited connection/role, Standard, Fast, Priority or Flex (`service_tier`).
+tier: the inherited connection/role, Standard, Fast, Priority, Flex or Ultrafast
+(`service_tier`). OpenAI sends the tier as `service_tier` (Ultrafast only on the
+Responses API); Anthropic sends Standard as `service_tier: standard_only` and Fast
+as fast mode (`speed: "fast"`), and reports the served speed for pricing.
 Application and workspace named profiles inherit their built-in role's tier until
 explicitly set. Session agent rows inherit their workspace definition until edited;
 named-agent session edits affect that profile in the current session, both when
@@ -1104,6 +1130,15 @@ Labels and values use `ColorFg`; inherited/meta use `ColorMuted`.
 Up/Down cycle fields and the left-aligned Save/Cancel/Reset
 row of the session deck; Esc closes or goes back. Agent rows keep a trailing `▸`
 (`TreeCollapsed`). Never paint `❯`.
+
+**Thinking** maps to each protocol's own control. Anthropic (API version
+`2026-10-21`) sends adaptive thinking with `display: "summarized"` and
+`output_config.effort` on Claude 4.6 and later, including Haiku 5.5; **None**
+sends `disabled`, `between_tools` on Sonnet 5.5 and later, and the lowest effort
+on models that always think (Opus 5.5 and later, Fable, Mythos). The sampling
+fields (Temperature, Top P) are not sent to Anthropic, which rejects them.
+Thinking blocks are replayed only while their exact prefix (system, tools and
+earlier messages) is unchanged, which matches Anthropic's prefix check.
 
 Visual contracts for this window:
 

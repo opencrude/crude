@@ -192,7 +192,7 @@ type CategorySettings struct {
 	// compaction. nil sizes it adaptively.
 	ContextRetentionTokens *int `json:"context_retention_tokens,omitempty"`
 	// ServiceTier selects this role's processing tier ("standard", "fast",
-	// "priority", "flex"); empty uses the account's setting. A tier the
+	// "priority", "flex", "ultrafast"); empty uses the account's setting. A tier the
 	// connection's protocol does not offer is ignored.
 	ServiceTier string `json:"service_tier,omitempty"`
 }
@@ -419,6 +419,7 @@ type AutoPermissionSettings struct {
 	AccountID            string `json:"account_id,omitempty"`
 	Provider             string `json:"provider,omitempty"`
 	Model                string `json:"model,omitempty"`
+	ModelType            string `json:"model_type,omitempty"`
 	DenyMode             string `json:"deny_mode,omitempty"`
 	UnresolvedMode       string `json:"unresolved_mode,omitempty"`
 	Instructions         string `json:"instructions,omitempty"`
@@ -464,9 +465,12 @@ func (s AutoPermissionSettings) Normalized() AutoPermissionSettings {
 		s.ThinkingEffort = "low"
 	}
 	switch s.ServiceTier {
-	case "", "standard", "fast", "priority", "flex":
+	case "", "standard", "fast", "priority", "flex", "ultrafast":
 	default:
 		s.ServiceTier = ""
+	}
+	if !ValidModelType(s.ModelType) {
+		s.ModelType = ModelTypeAutomatic
 	}
 	switch s.ResponseFormat {
 	case AutoPermissionFormatAuto, AutoPermissionFormatJSONSchema, AutoPermissionFormatJSONObject, AutoPermissionFormatPrompt:
@@ -989,6 +993,9 @@ type ModelEntry struct {
 	ModalitySupport       map[string]bool
 	CapabilitySources     []string
 	ConflictingModalities []string
+	// Decision is true when the account's model list marks a typed decision
+	// model (for example Ollama's "decision" capability).
+	Decision bool
 }
 
 // ModelCatalogUpdatedMsg is silent metadata invalidation, not a notification.
@@ -1001,7 +1008,7 @@ func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
 	entries := make([]ModelEntry, 0, len(models))
 	for _, model := range models {
 		entry := ModelEntry{
-			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow,
+			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow, Decision: model.Decision,
 		}
 		if meta, ok := provider.ModelCard(model.ID); ok {
 			if entry.ContextWindow == 0 {

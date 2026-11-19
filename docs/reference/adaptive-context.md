@@ -413,6 +413,17 @@ Responses delta uploads and inline-image replay recovery are specified in
 
 ## Compaction operations
 
+- **Aeron compacts when its agentic loop ends.** The workspace Aeron is
+  permanent, so when one of its runs completes naturally (the model answers
+  without another tool call), the session registers a compaction with trigger
+  `loop_end` before the turn releases admission, like a `/compact` the turn
+  accepted. It is a session operation, not part of the turn: queued input waits
+  for it, Stop cancels it, and the transcript shows an automatic row "after the
+  work finished". Stopped, failed or parked runs, other roots and children never
+  do this. A loop whose context is under 8,192 estimated tokens is already
+  about checkpoint size and is left alone. A human `/compact` already registered
+  makes it unnecessary. The replaced context records reason `loop_end_compaction`.
+
 - Automatic and manual compaction use the resolved Aeron category model for
   a combined no-tools extraction of four sections (intent, work, state,
   continuation) over one immutable durable source, falling back to one request
@@ -524,16 +535,18 @@ When action ranking is enabled, initial human recall reserves about half the
 turn's memory count and estimated token budget. At a configured tool-round
 boundary, the run uses its own task, tool results and paths to find candidates.
 It sends up to eight unseen revisions, with applicable recorded feedback, to
-the explicit decision account in one bounded request. Each candidate gets an
-independent score: a yes/no probability on a typed endpoint, or an explicit
-0–1 estimate in Chat mode. The model can reject all candidates.
+the explicit ranking account in one bounded request. Each candidate gets an
+independent score: a yes/no probability from a decision model, or an explicit
+0–1 estimate from a chat model. The shared **Model type** setting (Automatic,
+Chat or Decision; see [settings](settings.md)) selects the request. The model can reject all candidates.
 Only scores above 0.5 qualify. Ties keep the original retrieval order.
 Selected revisions are rechecked against the active store and added via the
 ordinary hidden context checkpoint before the next request. Recall does not
 create positive feedback. Cancellation, new steering, a changed configuration,
 stale revisions or a failed decision never require retrying the agent action.
-Typed checks have a two-second deadline. Chat allows eight seconds for text
-generation. Neither mode falls back to another model or endpoint.
+Decision checks have a two-second deadline. Chat allows eight seconds for text
+generation, which also bounds an Automatic model-list lookup (cached per
+account). Neither mode falls back to another model or endpoint.
 
 - Memory extraction and maintenance are session-owned cancellable jobs. Closing
   cancels and joins them before the workspace DB closes, without launching new

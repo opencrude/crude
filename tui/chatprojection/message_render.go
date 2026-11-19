@@ -783,6 +783,8 @@ func renderAutomaticCompactionMessage(msg types.ChatMessage, ctx renderContext) 
 			detail = "older tool output trimmed"
 		case "requested":
 			detail = "requested with /compact"
+		case "loop_end":
+			detail = "after the work finished"
 		}
 	case "compaction_cancelled":
 		title.Action, detail = "Compaction cancelled", "original context kept"

@@ -81,7 +81,7 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 			override.ContextRetentionTokens = nil
 		}
 		switch override.ServiceTier {
-		case "", "standard", "fast", "priority", "flex":
+		case "", "standard", "fast", "priority", "flex", "ultrafast":
 		default:
 			override.ServiceTier = ""
 		}
