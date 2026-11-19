@@ -248,10 +248,13 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 			c.profile.Category = "crafter"
 		}
 	}
-	if c.roleIndex == catAutoReviewPolicy {
+	switch c.roleIndex {
+	case catAutoReviewPolicy:
 		c.model.autoReviewer = autoPermissionFromForm(c.model.autoReviewer, c.model.categories[catAutoReviewPolicy].Form)
 		c.draft = c.model.buildAutoReviewerForm()
-	} else {
+	case catMemory:
+		c.draft = c.model.buildAgentForm(c.base, false, c.model.rankerFields()...)
+	default:
 		c.draft = c.model.buildAgentForm(c.base, c.roleIndex == catMain)
 	}
 	if c.roleIndex < 0 {
@@ -285,11 +288,6 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 	if len(c.base.AllowedTools) > 0 || len(c.base.DeniedTools) > 0 {
 		mode = "Custom selection"
 	}
-	if c.roleIndex == catMemory {
-		for _, field := range c.model.rankerFields() {
-			c.draft.AddField(field)
-		}
-	}
 	if c.roleIndex == catAeron {
 		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions, c.base.AccountID) {
 			c.draft.AddField(field)
@@ -312,13 +310,16 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 	c.rebuildBar()
 	c.owner.focusID(c.form.ID())
 	c.form.FocusFirst()
-	if c.roleIndex == catAeron {
-		return tea.Batch(c.model.prefetchModels(catAgents), c.model.syncSuggestionAccount())
+	if c.roleIndex == catAeron || c.roleIndex == catMemory {
+		return tea.Batch(c.model.prefetchModels(catAgents), c.model.syncSecondaryAccount())
 	}
 	return c.model.prefetchModels(catAgents)
 }
 
 func (c *agentCatalog) fieldChanged(id string) {
+	if id == fieldRankerAccount {
+		c.draft.SetValue(fieldRankerModel, ui.StringValue(""))
+	}
 	if strings.HasPrefix(id, fieldModalityPrefix) {
 		c.draft.SetValue("agent-inherit-modalities", ui.StringValue("off"))
 	}
@@ -348,7 +349,6 @@ func (c *agentCatalog) refreshToolLimits() {
 }
 
 func (c *agentCatalog) setPage(page string) {
-	c.page = page
 	thirdLabel := "Tool Access"
 	if c.roleIndex == catAutoReviewPolicy {
 		thirdLabel = "Review"
@@ -357,10 +357,9 @@ func (c *agentCatalog) setPage(page string) {
 	if c.roleIndex == catAeron {
 		items = append(items, ui.TabItem{ID: "suggestions", Label: "Suggestions"})
 	}
-	if c.roleIndex == catMemory {
-		items = append(items, ui.TabItem{ID: "ranking", Label: "Ranking"})
-	}
 	c.tabs.SetItems(items, page)
+	page = c.tabs.ActiveID()
+	c.page = page
 	if page == "tools" && c.roleIndex == catMemory {
 		label, detail := "Background jobs", "No tools; memory completions use the model and instructions."
 		c.form.SetForm(formModel(&ui.FieldState{ID: "agent-no-tools", Label: label, Type: ui.FieldText, Value: ui.StringValue(detail), ReadOnly: true}), "", "")
@@ -378,12 +377,6 @@ func (c *agentCatalog) setPage(page string) {
 		isReview := c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-")
 		isTools := isReview || strings.HasPrefix(field.ID, "agent-tool") || strings.HasPrefix(field.ID, "agent-skill") || strings.HasPrefix(field.ID, "agent-access") || field.ID == "agent-file-ownership"
 		isSuggest := suggestionField(field.ID)
-		if strings.HasPrefix(field.ID, "ranker-") {
-			if page == "ranking" {
-				fields = append(fields, field)
-			}
-			continue
-		}
 		if page == "instructions" && isPrompt || page == "tools" && isTools || page == "suggestions" && isSuggest ||
 			page == "model" && !isPrompt && !isTools && !isSuggest {
 			fields = append(fields, field)
@@ -454,8 +447,6 @@ func (c *agentCatalog) apply() bool {
 				page = "instructions"
 			} else if c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-") {
 				page = "tools"
-			} else if strings.HasPrefix(field.ID, "ranker-") {
-				page = "ranking"
 			} else if suggestionField(field.ID) {
 				page = "suggestions"
 			}
@@ -529,8 +520,13 @@ func (c *agentCatalog) apply() bool {
 			ranker := c.rankerSettings()
 			if err := ranker.Validate(); err != nil {
 				c.notice = err.Error()
-				c.setPage("ranking")
-				c.form.FocusFirst()
+				id := fieldRankerAccount
+				if ranker.AccountID != "" {
+					id = fieldRankerModel
+				}
+				c.draft.Field(id).Errors = []string{err.Error()}
+				c.setPage("model")
+				c.form.FocusField(id)
 				c.owner.focusID(c.form.ID())
 				return false
 			}
@@ -761,8 +757,16 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		c.owner.focusID(c.form.ID())
 		c.form.FocusFirst()
 	case "form.changed":
-		if id, _ := action.Payload.(string); (id == fieldConnection || id == fieldSuggestAccount) && c.draft != nil {
-			result.Cmd = tea.Batch(c.model.prefetchModels(catAgents), c.model.syncSuggestionAccount())
+		if c.draft != nil {
+			switch action.Payload {
+			case fieldConnection:
+				result.Cmd = c.model.prefetchModels(catAgents)
+				if c.roleIndex == catAeron {
+					result.Cmd = tea.Batch(result.Cmd, c.model.syncSecondaryAccount())
+				}
+			case fieldSuggestAccount, fieldRankerAccount:
+				result.Cmd = c.model.syncSecondaryAccount()
+			}
 		}
 	case "agents.add":
 		result.Cmd = c.begin("", false)
@@ -835,8 +839,10 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		}
 	case "form.select.open":
 		id, _ := action.Payload.(string)
-		if id == fieldSuggestModel {
-			result.Cmd = c.model.syncSuggestionAccount()
+		if id == fieldSuggestModel || id == fieldRankerModel {
+			if f := c.draft.Field(id); f != nil && !f.Loading {
+				result.Cmd = c.model.syncSecondaryAccount()
+			}
 		} else {
 			result.Cmd = c.model.OpenSelect(id)
 		}

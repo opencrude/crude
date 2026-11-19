@@ -1289,7 +1289,7 @@ func (m *Model) rebuildAccountsForm() {
 // carries the Multi-Agent enable/disable toggle so the main settings surface
 // mirrors the /settings deck. Communication protocol is deliberately not an
 // agent property; it is resolved from the provider at use time.
-func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.FormModel {
+func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool, modelSection ...*ui.FieldState) *ui.FormModel {
 	providerID := m.accounts[cfg.AccountID].ProviderID
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("agent", "Agent behavior"),
@@ -1298,6 +1298,7 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		thinkingSegments(cfg.ThinkingEffort),
 		serviceTierSegments(cfg.ServiceTier),
 	}
+	fields = append(fields, modelSection...)
 	fields = append(fields, m.capabilityFields(cfg)...)
 	compactionField := optionalNumberField(fieldContextCompaction, "Compact context at", cfg.ContextCompactionPercent, "% full",
 		"Blank is Auto (cost and capacity aware). A percent compacts there; 0 is off.",
@@ -2164,7 +2165,7 @@ func (m *Model) fetchModelsForAccountCmd(providerID, accountID string) tea.Cmd {
 }
 func (m *Model) setModelsForAccount(providerID, accountID string, models []types.ModelEntry) {
 	m.models[accountModelKey(providerID, accountID)] = models
-	m.setSuggestionModels(providerID, accountID, models, "")
+	m.setSecondaryModels(providerID, accountID, models, "")
 	for index := range m.categories {
 		if !m.isAgentCategory(index) && index != catMemory {
 			continue
@@ -2183,7 +2184,7 @@ func (m *Model) setModelsForAccount(providerID, accountID string, models []types
 	}
 }
 func (m *Model) setModelsErrorForAccount(providerID, accountID, message string) {
-	m.setSuggestionModels(providerID, accountID, nil, message)
+	m.setSecondaryModels(providerID, accountID, nil, message)
 	for index := range m.categories {
 		if !m.isAgentCategory(index) && index != catMemory {
 			continue

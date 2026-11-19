@@ -165,6 +165,7 @@ type FieldState struct {
 	Required             bool
 	Inherited            bool
 	InheritedFrom        string
+	AllowCustomValue     bool // FieldSelect: offer the typed filter as a value even when it is not listed.
 	Options              []FormOption
 	Columns              []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment); for FieldKeyValues, the two column captions
 	Validator            func(value FieldValue) []string

@@ -122,7 +122,7 @@ func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
 	settings.Agents.Suggestions = types.SuggestionSettings{AccountID: "separate", Model: "quick"}
 	m, s, open := openAeronSuggestions(settings)
 	field := s.agents.form.Field(fieldSuggestModel).FieldState()
-	request := aeronModelsRequest(t, open, "separate")
+	request := accountModelsRequest(t, open, "separate")
 	if request.ProviderID != "openai" || request.StandardID != "ollama" || request.BaseURL != "https://suggestions.example.invalid" ||
 		!field.Loading || field.LoadMessage != "Fetching models…" {
 		t.Fatalf("Aeron prefetch = account %q, protocol %q, URL %q; loading=%t %q", request.AccountID, request.StandardID, request.BaseURL, field.Loading, field.LoadMessage)
@@ -133,7 +133,7 @@ func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
 		t.Fatalf("Suggestions Model did not show fetch failure: loading=%t, errors=%v", field.Loading, field.Errors)
 	}
 	openAgain := s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "form.select.open", Payload: fieldSuggestModel})
-	retry := aeronModelsRequest(t, openAgain.Cmd, "separate")
+	retry := accountModelsRequest(t, openAgain.Cmd, "separate")
 	m.Update(ModelsMsg{ProviderID: retry.ProviderID, AccountID: retry.AccountID, Generation: retry.Generation,
 		Models: []types.ModelEntry{{ID: "quick", Name: "Quick model"}}})
 	if field.Loading || len(field.Errors) != 0 || !slices.Contains(field.Options, ui.FormOption{ID: "quick", Label: "Quick model"}) ||
@@ -144,7 +144,7 @@ func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
 	if cmd := s.agents.begin("role/aeron", false); cmd != nil {
 		// The Model tab may still fetch Aeron's separate account. The
 		// Suggestions model list already arrived and must not fetch again.
-		if _, found := findAeronModelsRequest(cmd, "separate"); found {
+		if _, found := findAccountModelsRequest(cmd, "separate"); found {
 			t.Fatal("reopening Aeron fetched the cached Suggestions account again")
 		}
 	}
@@ -154,11 +154,11 @@ func TestAeronSuggestionChoicesSaveReopenAndReturnToDefaults(t *testing.T) {
 	stored := newAeronSuggestionSettings()
 	m, s, _ := openAeronSuggestions(stored)
 	change := chooseAeronSuggestion(t, s.agents, fieldSuggestAccount, "separate")
-	request := aeronModelsRequest(t, change, "separate")
+	request := accountModelsRequest(t, change, "separate")
 	m.Update(ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation,
 		Models: []types.ModelEntry{{ID: "quick", Name: "Quick model"}}})
 	chooseAeronSuggestion(t, s.agents, fieldSuggestModel, "quick")
-	saveAeronSuggestionSettings(t, s, &stored)
+	saveAgentCatalogSettings(t, s, &stored)
 	if got := stored.Agents.Suggestions; got != (types.SuggestionSettings{AccountID: "separate", Model: "quick"}) {
 		t.Fatalf("saved Suggestion choices = %+v", got)
 	}
@@ -168,14 +168,14 @@ func TestAeronSuggestionChoicesSaveReopenAndReturnToDefaults(t *testing.T) {
 		t.Fatalf("reopened suggests account=%q model=%q, want separate/quick", account, model)
 	}
 	change = chooseAeronSuggestion(t, c, fieldSuggestAccount, "")
-	if request, ok := findAeronModelsRequest(change, "role-account"); ok {
+	if request, ok := findAccountModelsRequest(change, "role-account"); ok {
 		m.Update(ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation,
 			Models: []types.ModelEntry{{ID: "role-model", Name: "Role model"}}})
 	}
 	if c.draft.Field(fieldSuggestModel).Value.String() != "" {
 		chooseAeronSuggestion(t, c, fieldSuggestModel, "")
 	}
-	saveAeronSuggestionSettings(t, s, &stored)
+	saveAgentCatalogSettings(t, s, &stored)
 	if got := stored.Agents.Suggestions; got != (types.SuggestionSettings{}) {
 		t.Fatalf("returned to defaults but stored Suggestion overrides remain: %+v", got)
 	}
@@ -200,11 +200,11 @@ func chooseAeronSuggestion(t *testing.T, c *agentCatalog, id, value string) tea.
 	return c.HandleAction(ui.EventContext{}, ui.Action{ID: "form.changed", Payload: id}).Cmd
 }
 
-func saveAeronSuggestionSettings(t *testing.T, s *WorkspaceSettingsSurface, stored *types.AppSettings) {
+func saveAgentCatalogSettings(t *testing.T, s *WorkspaceSettingsSurface, stored *types.AppSettings) {
 	t.Helper()
 	applied := s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.save"})
 	if applied.Action == nil || applied.Action.ID != "settings.save" {
-		t.Fatal("valid Aeron Suggestions did not pass validation and reach Save")
+		t.Fatal("valid agent draft did not pass validation and reach Save")
 	}
 	result := s.HandleAction(ui.EventContext{}, *applied.Action)
 	if result.Cmd == nil {
@@ -212,30 +212,30 @@ func saveAeronSuggestionSettings(t *testing.T, s *WorkspaceSettingsSurface, stor
 	}
 	msg, ok := result.Cmd().(SaveMsg)
 	if !ok || msg.Scope != types.SettingsScopeApplication {
-		t.Fatalf("Aeron Suggestions Save = %+v, want an application Save", msg)
+		t.Fatalf("Agent Save = %+v, want an application Save", msg)
 	}
 	if err := types.ApplySettingsEdits(stored, msg.Edits); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func aeronModelsRequest(t *testing.T, cmd tea.Cmd, account string) FetchModelsMsg {
+func accountModelsRequest(t *testing.T, cmd tea.Cmd, account string) FetchModelsMsg {
 	t.Helper()
-	msg, ok := findAeronModelsRequest(cmd, account)
+	msg, ok := findAccountModelsRequest(cmd, account)
 	if !ok || msg.Generation == 0 {
 		t.Fatalf("no model fetch was scheduled for %q", account)
 	}
 	return msg
 }
 
-func findAeronModelsRequest(cmd tea.Cmd, account string) (FetchModelsMsg, bool) {
+func findAccountModelsRequest(cmd tea.Cmd, account string) (FetchModelsMsg, bool) {
 	if cmd != nil {
 		switch msg := cmd().(type) {
 		case FetchModelsMsg:
 			return msg, msg.AccountID == account
 		case tea.BatchMsg:
 			for _, child := range msg {
-				if request, ok := findAeronModelsRequest(child, account); ok {
+				if request, ok := findAccountModelsRequest(child, account); ok {
 					return request, true
 				}
 			}

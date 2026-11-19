@@ -571,9 +571,9 @@ its model, account, instructions, and availability live in Agents; automatic
 recall/extraction cadence remains on the Memory page. Disabling Memory Agent
 stops its automatic jobs and recall without deleting stored memories.
 
-**Agents › Memory Agent › Ranking** selects an optional, separate decision
-account and model. Enter its exact model ID: a provider's chat catalog may omit
-decision models. Choose **System One** or **Decisions** for a typed decision model.
+**Agents › Memory Agent › Model** has a **Ranking** section for an optional,
+separate decision account and model. Choose a model from that account’s list,
+or enter its exact ID if it is not listed. Choose **System One** or **Decisions** for a typed decision model.
 For a text model, choose **Chat** to score candidates using the account’s chat protocol. The path is relative to its API base. Crude does not fall back to
 chat or another account. Use an API key or a local unauthenticated service. Explicit no-storage policies that the decision endpoint
 cannot enforce stop the request. Turning this on permits sending

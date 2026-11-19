@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/agent/provider"
 	"crude/tui/ui"
 	"crude/types"
@@ -148,50 +146,6 @@ func (m *Model) suggestionTierOptions(accountID, current string) []ui.FormOption
 		options = append(options, ui.FormOption{ID: current, Label: tierLabel(current) + " (not offered)"})
 	}
 	return options
-}
-
-// syncSuggestionAccount follows a changed account on the Suggestions or
-// Model tab: the model list and speeds come from the resolved account.
-func (m *Model) syncSuggestionAccount() tea.Cmd {
-	form := m.categories[catAgents].Form
-	if form == nil || form.Field(fieldSuggestModel) == nil {
-		return nil
-	}
-	accountID := m.suggestionAccountID()
-	if tier := form.Field(fieldSuggestTier); tier != nil {
-		tier.Options = m.suggestionTierOptions(accountID, tier.Value.String())
-		tier.Validate()
-	}
-	field := form.Field(fieldSuggestModel)
-	field.Options, field.Errors, field.Loading, field.LoadMessage = suggestionModelOptions(nil), nil, false, ""
-	account, ok := m.accounts[accountID]
-	if !ok {
-		return nil
-	}
-	field.Options = suggestionModelOptions(nil)
-	if models, loaded := m.models[accountModelKey(account.ProviderID, accountID)]; loaded && len(models) > 0 {
-		field.Options = suggestionModelOptions(models)
-		return nil
-	}
-	field.Loading, field.LoadMessage = true, "Fetching models…"
-	return m.fetchModelsForAccountCmd(account.ProviderID, accountID)
-}
-
-// setSuggestionModels fills the Suggestions model list when its account's
-// models arrive, or shows the fetch error there.
-func (m *Model) setSuggestionModels(providerID, accountID string, models []types.ModelEntry, problem string) {
-	form := m.categories[catAgents].Form
-	if form == nil || form.Field(fieldSuggestModel) == nil || m.suggestionAccountID() != accountID ||
-		m.accounts[accountID].ProviderID != providerID {
-		return
-	}
-	field := form.Field(fieldSuggestModel)
-	field.Loading, field.LoadMessage = false, ""
-	if problem != "" {
-		field.Errors = []string{problem}
-		return
-	}
-	field.Options, field.Errors = suggestionModelOptions(models), nil
 }
 
 // suggestionModelOptions lists the account's models after the default, so
