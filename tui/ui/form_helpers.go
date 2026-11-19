@@ -175,11 +175,11 @@ func SpacerFieldState(id string) *FieldState {
 	return &FieldState{ID: id, Type: FieldSpacer}
 }
 
-// ModelFieldState builds a model select field with the standard "fetch on
-// open" placeholder used when the provider's model list is not loaded yet.
+// ModelFieldState offers catalog choices and exact, unlisted model IDs.
 func ModelFieldState(id, label, value string, options []FormOption, description string) *FieldState {
 	f := SelectFieldState(id, label, value, options, description)
-	f.Placeholder = "Press Enter to fetch models"
+	f.AllowCustomValue = true
+	f.Placeholder = "Choose or enter a model ID"
 	return f
 }
 

@@ -97,7 +97,11 @@ func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *
 		ff.selectFilter = NewFilterField(NewID(id, "filter"), tokens)
 		ff.selectFilter.SetPrompt(SearchGlyphEnd(tokens))
 		ff.selectFilter.SetPromptPlacement(PromptEnd)
-		ff.selectFilter.SetPlaceholder("Filter…")
+		if f.AllowCustomValue {
+			ff.selectFilter.SetPlaceholder("Filter or enter an ID…")
+		} else {
+			ff.selectFilter.SetPlaceholder("Filter…")
+		}
 		ff.selectFilter.SetSubmitAction("form.select.commit")
 		ff.selectFilter.OnChanged(func(q string) { ff.applySelectFilter(q) })
 		ff.syncSelectItems(false)
@@ -1039,7 +1043,7 @@ func (ff *FormField) PaintOverlay(buf *surface.CellBuffer, originX, originY int,
 		ff.selectFilter.SetBackgroundColor(filterBG)
 		ff.selectFilter.Paint(buf, originX+r.X, originY+r.Y, filterCtx)
 	}
-	if len(ff.field.Options) == 0 {
+	if len(ff.field.Options) == 0 && len(ff.selectList.Items()) == 0 {
 		message := "No options available"
 		if ff.field.Loading {
 			message = ff.field.LoadMessage
@@ -1748,7 +1752,7 @@ func (ff *FormField) handleSelect(ctx EventContext, evt Event) EventResult {
 			}
 		}
 	}
-	if len(ff.field.Options) == 0 {
+	if len(ff.field.Options) == 0 && !ff.field.AllowCustomValue {
 		if evt.IsKey() && (evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace) && !ff.field.Loading {
 			ff.selectOpen = false
 			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
@@ -1768,7 +1772,8 @@ func (ff *FormField) handleSelect(ctx EventContext, evt Event) EventResult {
 	}
 	// Keys go to the filter first; typing narrows the list. Arrow keys,
 	// Enter, and Esc-with-empty-filter fall through to the list.
-	if evt.IsKey() && ff.selectFilter != nil {
+	_, paste := evt.Custom.(tea.PasteMsg)
+	if (evt.IsKey() || paste) && ff.selectFilter != nil {
 		filterCtx := ctx
 		filterCtx.Focused = true
 		before := ff.selectFilter.Value()
@@ -2008,17 +2013,25 @@ func (ff *FormField) syncSelectItems(preserveCursor bool) {
 // option's ID, Label, and Detail so models can be found by API ID, vendor
 // name, or context-window hint.
 func (ff *FormField) filteredOptions() []FormOption {
-	q := strings.ToLower(strings.TrimSpace(ff.selectQuery))
+	typed := strings.TrimSpace(ff.selectQuery)
+	q := strings.ToLower(typed)
 	if q == "" {
 		return ff.field.Options
 	}
 	out := make([]FormOption, 0, len(ff.field.Options))
+	offerTyped := ff.field.AllowCustomValue && !strings.ContainsAny(typed, "\r\n")
 	for _, o := range ff.field.Options {
+		if o.ID == typed {
+			offerTyped = false
+		}
 		if strings.Contains(strings.ToLower(o.ID), q) ||
 			strings.Contains(strings.ToLower(o.Label), q) ||
 			strings.Contains(strings.ToLower(o.Detail), q) {
 			out = append(out, o)
 		}
+	}
+	if offerTyped {
+		out = append(out, FormOption{ID: typed, Label: "Use " + typed})
 	}
 	return out
 }

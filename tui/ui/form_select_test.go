@@ -392,3 +392,25 @@ func bufferHasRunes(buf *surface.CellBuffer, want string) bool {
 	}
 	return false
 }
+
+func TestModelDropdownAcceptsUnlistedIDWithoutCatalog(t *testing.T) {
+	for _, loading := range []bool{false, true} {
+		m := NewFormModel()
+		f := ModelFieldState("model", "Model", "saved", nil, "")
+		f.Loading = loading
+		m.AddField(f)
+		form := NewForm("form", m, "", "", NewTokenSet(theme.DefaultDark()))
+		form.Layout(LayoutContext{}, Rect{W: 60, H: 12})
+		field := form.Field("model")
+		enter := KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter})
+		field.Handle(EventContext{}, enter)
+		field.Handle(EventContext{}, CustomEvent(tea.PasteMsg{Content: "Vendor/Exact:27b"}))
+		if f.Value.String() != "saved" {
+			t.Fatal("typing committed before Enter")
+		}
+		field.Handle(EventContext{}, enter)
+		if f.Value.String() != "Vendor/Exact:27b" || field.SelectOpen() {
+			t.Fatalf("manual ID not committed; loading=%t got %q", loading, f.Value.String())
+		}
+	}
+}

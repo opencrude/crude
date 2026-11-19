@@ -84,12 +84,12 @@ func TestSeparatorFieldStateIsNotFocusable(t *testing.T) {
 	}
 }
 
-func TestModelFieldStateUsesFetchPlaceholder(t *testing.T) {
+func TestModelFieldStateOffersListedAndManualIDs(t *testing.T) {
 	f := ModelFieldState("model", "Model", "", nil, "Default model.")
 	if f.Type != FieldSelect {
 		t.Fatalf("type=%v want FieldSelect", f.Type)
 	}
-	if f.Placeholder != "Press Enter to fetch models" {
+	if !f.AllowCustomValue || f.Placeholder != "Choose or enter a model ID" {
 		t.Fatalf("placeholder=%q", f.Placeholder)
 	}
 }

@@ -240,6 +240,12 @@ func (ff *FormField) HandleControl(ctx EventContext, op ControlOperation) (Event
 				return res, err
 			}
 		}
+		if f.AllowCustomValue && op.Verb == "set_value" {
+			if strings.ContainsAny(id, "\r\n") {
+				return EventResult{}, controlError(control.Invalid, "single line value required")
+			}
+			id = strings.TrimSpace(id)
+		}
 		found := false
 		for _, option := range f.Options {
 			if option.ID == id {
@@ -252,13 +258,17 @@ func (ff *FormField) HandleControl(ctx EventContext, op ControlOperation) (Event
 				found = true
 			}
 		}
-		if !found {
+		custom := op.Verb == "set_value" && f.AllowCustomValue && id != ""
+		if !found && !custom {
 			return EventResult{}, controlError(control.Unavailable, "option unavailable")
 		}
 		if f.Type == FieldSelect || f.Type == FieldMultiSelect {
 			// Exact choice uses the same dropdown commit as human activation. Filtering
 			// must not make a known option unreachable to semantic selection.
 			ff.selectQuery = ""
+			if !found {
+				ff.selectQuery = id
+			}
 			ff.syncSelectItems(false)
 			for i, item := range ff.selectList.items {
 				if payload, ok := item.Payload.(string); ok && payload == id {
