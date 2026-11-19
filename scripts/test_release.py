@@ -31,7 +31,7 @@ class ReleaseTests(unittest.TestCase):
         (self.stage / "fonts").mkdir()
         for name in ("CrudeRTL-Regular.ttf", "CrudeRTL-Bold.ttf", "LICENSE-DejaVu"):
             (self.stage / "fonts" / name).write_text(name, encoding="utf-8")
-        release.copy_syntax_notice(self.stage)
+        release.copy_embedded_notices(self.stage)
         self.args = argparse.Namespace(directory=self.output, version="v0.1.0")
 
     def test_safe_versions(self):
@@ -62,6 +62,9 @@ class ReleaseTests(unittest.TestCase):
             assert notice is not None
             self.assertEqual(notice.read(),
                              (release.ROOT / "syntax/queries/NOTICE").read_bytes())
+            codex = archive.extractfile("licenses/CODEX-NOTICE")
+            assert codex is not None
+            self.assertEqual(codex.read(), (release.ROOT / "agent/codexio/NOTICE").read_bytes())
         with zipfile.ZipFile(windows) as archive:
             names = archive.namelist()
             self.assertIn("crude.exe", names)
@@ -70,6 +73,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("fonts/CrudeRTL-Regular.ttf", names)
             self.assertEqual(archive.read("licenses/SYNTAX-QUERIES-NOTICE"),
                              (release.ROOT / "syntax/queries/NOTICE").read_bytes())
+            self.assertEqual(archive.read("licenses/CODEX-NOTICE"),
+                             (release.ROOT / "agent/codexio/NOTICE").read_bytes())
         release.combine(self.args)
         lines = (self.output / "SHA256SUMS").read_text().splitlines()
         self.assertEqual(len(lines), 2)
@@ -113,11 +118,13 @@ class ReleaseTests(unittest.TestCase):
         for name in ("CrudeRTL-Regular.ttf", "CrudeRTL-Bold.ttf", "LICENSE-DejaVu"):
             self.assertTrue((release.ROOT / "assets/fonts" / name).is_file(), name)
 
-    def test_missing_embedded_query_notice_fails_closed(self):
-        (self.stage / "licenses/SYNTAX-QUERIES-NOTICE").unlink()
-        for target in release.TARGETS:
-            with self.subTest(target=target), self.assertRaises(ValueError):
-                release.package(self.stage, self.output, "v0.1.0", target)
+    def test_missing_embedded_notices_fail_closed(self):
+        for name in ("SYNTAX-QUERIES-NOTICE", "CODEX-NOTICE"):
+            (self.stage / "licenses" / name).unlink()
+            for target in release.TARGETS:
+                with self.subTest(name=name, target=target), self.assertRaisesRegex(ValueError, name):
+                    release.package(self.stage, self.output, "v0.1.0", target)
+            release.copy_embedded_notices(self.stage)
 
     def test_native_dependency_layout(self):
         prefix = release.ROOT / "third_party/libghostty-vt"

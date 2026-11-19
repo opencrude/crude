@@ -19,6 +19,10 @@ import zipfile
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?")
 TARGETS = {"linux": "tar.gz", "windows": "zip"}
+EMBEDDED_NOTICES = {
+    "SYNTAX-QUERIES-NOTICE": "syntax/queries/NOTICE",
+    "CODEX-NOTICE": "agent/codexio/NOTICE",
+}
 
 
 def run(*args):
@@ -42,11 +46,12 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def copy_syntax_notice(stage):
-    """Embedded query data is original-module content ignored by go-licenses."""
-    destination = stage / "licenses/SYNTAX-QUERIES-NOTICE"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / "syntax/queries/NOTICE", destination)
+def copy_embedded_notices(stage):
+    """Collect notices for original-module content that go-licenses skips."""
+    destination = stage / "licenses"
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, source in EMBEDDED_NOTICES.items():
+        shutil.copyfile(ROOT / source, destination / name)
 
 
 def package(stage, output, version, target):
@@ -61,8 +66,9 @@ def package(stage, output, version, target):
                stage / "fonts"]
     if not all(path.exists() for path in entries):
         raise ValueError("release is missing its binary, icon, font or redistribution notices")
-    if not (stage / "licenses/SYNTAX-QUERIES-NOTICE").is_file():
-        raise ValueError("release is missing its embedded syntax query notice")
+    for notice in EMBEDDED_NOTICES:
+        if not (stage / "licenses" / notice).is_file():
+            raise ValueError(f"release is missing licenses/{notice}")
     if target == "linux":
         with tarfile.open(destination, "w:gz") as archive:
             for path in entries:
@@ -132,12 +138,11 @@ def build(args):
         # Dependency tool is version-pinned by CI; it fails on missing notices
         # rather than silently shipping an incomplete Go dependency bundle.
         subprocess.run(["go-licenses", "save", ".", "--ignore=crude", f"--save_path={stage / 'licenses/go'}"], cwd=ROOT, check=True)
-        copy_syntax_notice(stage)
+        copy_embedded_notices(stage)
         (stage / "licenses/ghostty").mkdir(parents=True)
         shutil.copyfile(ROOT / "third_party/libghostty-vt/GHOSTTY-LICENSE", stage / "licenses/ghostty/LICENSE")
         shutil.copyfile(ROOT / "third_party/libghostty-vt/NATIVE-NOTICES", stage / "licenses/NATIVE-NOTICES")
         shutil.copyfile(ROOT / "NOTICE", stage / "licenses/CRUDE-NOTICE")
-        shutil.copyfile(ROOT / "codexio/NOTICE", stage / "licenses/CODEX-NOTICE")
         shutil.copyfile(ROOT / "third_party/pathwalk/LICENSE", stage / "licenses/PATHWALK-LICENSE")
         shutil.copyfile(ROOT / "third_party/pathwalk/GO-LICENSE", stage / "licenses/PATHWALK-GO-LICENSE")
         shutil.copyfile(Path(run("go", "env", "GOROOT")) / "LICENSE", stage / "licenses/GO-LICENSE")
