@@ -743,16 +743,21 @@ select a different action.
 `konsole` and `kwi` (the KDE Flatpak `org.kde.kwi`) select the
 actual native emulator through this same workflow, not a changed `TERM` label.
 `WEZTERM_BIN` can name a portable `wezterm-gui` binary; `WEZTERM_CONFIG` can
-name the installer-generated Crude window configuration; `GHOSTTY_CONFIG` can
-name a Ghostty configuration file. The default capture
+name an old WezTerm configuration. Use `GHOSTTY_BIN` for the installed
+portable `bin/ghostty` and `GHOSTTY_CONFIG` for the installer-generated profile.
+For constrained captures, remove the profile's `maximize`, `window-width`,
+`window-height`, and `font-size` lines from a temporary copy. The default capture
 loads no user configuration (Konsole and Kwi use their default profile). Crude
 starts only after the window is placed, and the driver takes pointer cells from
 the grid the terminal reports (`stty size`), not from `COLS`/`ROWS`: Ghostty,
 Konsole and Kwi can open with another grid and print a `note:`. Every
 `CRUDE_*` variable is written into the launch script, because Kwi's Flatpak
-starts the command on the host with a fresh environment. For GUI keyboard acceptance, use the generated
-configuration: the pinned terminal's optional Kitty mode changes Delete's
-encoding, so testing only its default settings does not test the installed GUI.
+starts the command on the host with a fresh environment. For GUI acceptance,
+use the generated profile: Ghostty's default key bindings and horizontal tab
+gestures can consume input before it reaches Crude.
+Use `wheelburst:70,8,60,8` to send 60 wheel ticks at 8 ms intervals without
+capture I/O between ticks. Verify where the viewport lands, then reverse the
+burst and compare the same text pixels.
 Each launch is an independent borderless capture process; Tilix uses
 `--new-process`, never an existing user terminal. The window is selected by the
 exact capture process and visible geometry, not the latest global class match.

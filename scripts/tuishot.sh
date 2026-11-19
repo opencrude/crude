@@ -21,6 +21,7 @@
 #   drag:<c1>,<r1>,<c2>,<r2>[,alt]  press, move, shot mid-drag, release, shot
 #   dragburst:<c1>,<r1>,<c2>,<r2>,<steps> flood motion without sleeps
 #   wheel:<col>,<row>,<n>     n wheel-down clicks (negative = up) at cell
+#   wheelburst:<col>,<row>,<n>,<delay-ms>   send a paced burst without screenshots between clicks
 #   hwheel:<col>,<row>,<n>    n wheel-right clicks (negative = left) at cell
 #   sleep:<seconds>
 #   shot[:label]              extra screenshot
@@ -30,7 +31,7 @@
 # emulator (default alacritty). kwi is the KDE Flatpak (org.kde.kwi).
 # WEZTERM_BIN may select a portable wezterm-gui binary.
 # WEZTERM_CONFIG may select the installed Crude GUI configuration for acceptance.
-# GHOSTTY_CONFIG may select a Ghostty configuration file (default: none loaded).
+# GHOSTTY_BIN and GHOSTTY_CONFIG may select the portable Ghostty and its profile.
 # CRUDE_BIN may select a prebuilt, deterministic visual acceptance test binary.
 # An isolated CRUDE_HOME must be a real short directory, not a symlink to a
 # long path: the core canonicalizes it before creating its Unix socket.
@@ -212,7 +213,7 @@ GHOSTTY_CONFIG_ARGS=(--config-default-files=false)
 if [ -n "${GHOSTTY_CONFIG:-}" ]; then
   GHOSTTY_CONFIG_ARGS+=(--config-file="$GHOSTTY_CONFIG")
 fi
-ghostty "${GHOSTTY_CONFIG_ARGS[@]}" --gtk-single-instance=false \
+"${GHOSTTY_BIN:-ghostty}" "${GHOSTTY_CONFIG_ARGS[@]}" --gtk-single-instance=false \
   --class=dev.crude.CrudeShot --x11-instance-name=CrudeShot \
   --window-decoration=none --window-padding-x=0 --window-padding-y=0 \
   --window-width="$COLS" --window-height="$ROWS" --font-size="$FONT_SIZE" \
@@ -440,6 +441,12 @@ for step in "$@"; do
       xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
       for _ in $(seq 1 "${n:-1}"); do xdotool click --clearmodifiers "$btn"; sleep 0.05; done
       sleep "$STEP_WAIT"; shot "wheel-${c}_${r}_${btn}" ;;
+    wheelburst:*)
+      IFS=',' read -r c r n delay <<<"${step#wheelburst:}"
+      btn=5; [ "$n" -lt 0 ] && { btn=4; n=$(( -n )); }
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" || exit 1
+      xdotool click --clearmodifiers --repeat "$n" --delay "$delay" "$btn" || exit 1
+      sleep "$STEP_WAIT"; shot "wheelburst-${c}_${r}_${btn}" ;;
     hwheel:*)
       IFS=',' read -r c r n <<<"${step#hwheel:}"
       btn=7; [ "${n:-1}" -lt 0 ] && { btn=6; n=$(( -n )); }

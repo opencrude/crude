@@ -56,9 +56,9 @@ run it. No compiler, source checkout or elevation is required. Run the same
 command again to update. The latest release is used unless you name a version;
 an explicit version can select a prerelease.
 
-The install commands on the website serve copies of these two files. A change
-to either installer reaches them only after a pages deploy, so dispatch it and
-check the served file ([website](website.md#install-commands)).
+The website install commands fetch these two files from the latest published
+release. Pages also serves copies for older install commands; refresh those
+with a Pages deploy ([website](website.md#install-commands)).
 
 | Action | Linux | Windows |
 |---|---|---|
@@ -140,7 +140,7 @@ continues; `--yes` is never required, it only skips the question.
 Crude keeps working in a detached core after a window closes, and that core
 runs the installed program. The installer finds only the processes that run
 this exact installation: the program itself, which an open window also runs, and
-a terminal program that a window folder holds.
+a terminal program that a window folder holds on Windows.
 
 - The question comes before the download, so a refusal costs nothing. Without
   an answer it stops and changes nothing: close Crude and run the installer
@@ -185,18 +185,25 @@ already installed.
   unchanged: Ctrl+C and Ctrl+V behave as in any terminal, and the terminal
   reports modified keys precisely, so Shift+Enter and Ctrl+Enter reach Crude.
   Ctrl+Shift+C stays the terminal's own copy.
-- Linux installs one pinned WezTerm build for this user, after a checksum check:
-  `wezterm-20240203-110809-5046fc22.Ubuntu22.04.tar.xz` under
-  `~/.local/share/crude/window`. No system package and no elevation. It writes
-  one configuration that opens the installed `crude` program and fills the
-  desktop area. It also adds `crude-window` next to the program, with an
-  application-menu entry and `StartupWMClass=crude`. The terminal does not act on
-  Ctrl+Shift+C, Ctrl+Shift+N, Ctrl+Shift+T or Ctrl+Shift+W, because Crude owns
-  those keys. The pinned build's Kitty keyboard mode is disabled: it encodes
-  plain Delete as Ctrl+H. Crude requests xterm `modifyOtherKeys` instead, so
-  Delete, Backspace, Shift+Enter, Ctrl+Enter and modified editing keys remain
-  distinct. Every GUI update rewrites this Crude-owned configuration; the
-  user's own terminal configuration is not changed.
+- Linux installs Ghostty 1.4.0 from the pinned
+  [pkgforge-dev portable build](https://github.com/pkgforge-dev/ghostty-appimage/releases/tag/v1.4.0).
+  It verifies the checksum and extracts the image once under
+  `$XDG_DATA_HOME/crude/window` (default `~/.local/share/crude/window`).
+  It does not mount an AppImage, use a system package manager, or need elevation.
+  The desktop still needs working OpenGL and X11 or Wayland.
+  `crude-window` and the **Crude** application-menu entry run a separate
+  Ghostty instance with a Crude-only profile. The profile asks the desktop to
+  draw the frame. If the desktop cannot do this, Ghostty draws the frame using
+  the system light/dark preference. The profile gives keyboard and mouse
+  commands to Crude and disables Ghostty's horizontal tab-scroll gesture.
+  The user's own Ghostty
+  configuration stays unchanged. Running `crude` in any other terminal
+  still works as before.
+- An update of an existing Linux window replaces its private WezTerm launcher
+  without a question. Only after the new window is installed does the installer
+  remove its old menu entry and private WezTerm files. It does not remove
+  files from a live old window; the next update after it closes removes them.
+  System and user-installed WezTerm copies and settings stay unchanged.
 - It adds JetBrainsMono Nerd Font only when the machine cannot draw that family
   already: `~/.local/share/fonts/JetBrainsMonoNerdFont` on Linux, per-user values
   under `HKCU` that point at `%LOCALAPPDATA%\Crude\window\fonts` on Windows. A
