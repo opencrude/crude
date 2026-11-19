@@ -104,6 +104,10 @@ func OrdinaryAgentLeaf(name string) bool {
 // SettingsAuthority classifies canonical JSON field paths, never labels. Exact
 // effect owners must also check container writes and the actual changed leaves.
 func SettingsAuthority(path string) bool {
+	// This opt-in sends workspace data to another model account.
+	if path == "memory.ranker" || strings.HasPrefix(path, "memory.ranker.") {
+		return true
+	}
 	parts := strings.Split(path, ".")
 	for _, part := range parts {
 		switch strings.ToLower(part) {

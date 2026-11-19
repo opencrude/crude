@@ -43,6 +43,7 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 	a.CommandShell = s.agentShell
 	a.WorkDir = s.WorkDir()
 	s.bindContinuity(a, s.db, s.sessionID)
+	s.bindMemoryRanker(a, s.sessionID)
 	s.bindGuidanceCache(a)
 
 	a.FilteredTools = configuredOrchestratorTools(s.cfg, multiAgent, p.Model)

@@ -10485,10 +10485,85 @@ func (z *Loop) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z *MemoryRankerSettings) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 6
+	o = append(o, 0x96)
+	o = msgp.AppendString(o, z.Enabled)
+	o = msgp.AppendString(o, z.AccountID)
+	o = msgp.AppendString(o, z.Model)
+	o = msgp.AppendString(o, z.Endpoint)
+	o = msgp.AppendInt(o, z.EveryActions)
+	o = msgp.AppendInt(o, z.TopK)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *MemoryRankerSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+		return
+	}
+	z.Enabled, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Enabled")
+		return
+	}
+	z.AccountID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AccountID")
+		return
+	}
+	z.Model, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Model")
+		return
+	}
+	z.Endpoint, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Endpoint")
+		return
+	}
+	z.EveryActions, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "EveryActions")
+		return
+	}
+	z.TopK, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "TopK")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *MemoryRankerSettings) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Enabled) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.Model) + msgp.StringPrefixSize + len(z.Endpoint) + msgp.IntSize + msgp.IntSize
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z *MemorySettings) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 7
-	o = append(o, 0x97)
+	// array header, size 8
+	o = append(o, 0x98)
+	o, err = z.Ranker.MarshalMsg(o)
+	if err != nil {
+		err = msgp.WrapError(err, "Ranker")
+		return
+	}
 	o = msgp.AppendString(o, z.AutoRecall)
 	o = msgp.AppendString(o, z.AutoExtract)
 	o = msgp.AppendString(o, z.Consolidation)
@@ -10515,8 +10590,13 @@ func (z *MemorySettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 7 {
-		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+	if zb0001 != 8 {
+		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
+		return
+	}
+	bts, err = z.Ranker.UnmarshalMsg(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Ranker")
 		return
 	}
 	z.AutoRecall, bts, err = msgp.ReadStringBytes(bts)
@@ -10560,7 +10640,7 @@ func (z *MemorySettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *MemorySettings) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.AutoRecall) + msgp.StringPrefixSize + len(z.AutoExtract) + msgp.StringPrefixSize + len(z.Consolidation) + msgp.IntSize + msgp.IntSize + msgp.IntSize + z.MemoryCategory.Msgsize()
+	s = 1 + z.Ranker.Msgsize() + msgp.StringPrefixSize + len(z.AutoRecall) + msgp.StringPrefixSize + len(z.AutoExtract) + msgp.StringPrefixSize + len(z.Consolidation) + msgp.IntSize + msgp.IntSize + msgp.IntSize + z.MemoryCategory.Msgsize()
 	return
 }
 

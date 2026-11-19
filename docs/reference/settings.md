@@ -570,6 +570,19 @@ Memory Agent uses no tools:
 its model, account, instructions, and availability live in Agents; automatic
 recall/extraction cadence remains on the Memory page. Disabling Memory Agent
 stops its automatic jobs and recall without deleting stored memories.
+
+**Agents › Memory Agent › Ranking** selects an optional, separate decision
+account and model. Enter its exact model ID: a provider's chat catalog may omit
+decision models. Choose **System One** or **Decisions** for a typed decision model.
+For a text model, choose **Chat** to score candidates using the account’s chat protocol. The path is relative to its API base. Crude does not fall back to
+chat or another account. Use an API key or a local unauthenticated service. Explicit no-storage policies that the decision endpoint
+cannot enforce stop the request. Turning this on permits sending
+short task, action, result and memory excerpts to that account. It is off by
+default. Set **Check every** to one or more completed tool rounds (default 3)
+and **Add up to** to 1–8 memories (default 2). Settings apply to root and child
+runs, independent of delegation. The existing recall switch and turn limits
+still apply. A failed check leaves the agent running and posts a notice.
+
 Auto Review Agent is also a no-tools built-in. Its explicit account, model,
 enable switch, additional restrictions, and complete runtime policy live on its
 Model / Instructions / Review tabs in Agents. It cannot inherit the Main

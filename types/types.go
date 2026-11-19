@@ -559,6 +559,7 @@ const (
 // ("on"/"off"/"" = inherit-or-default) follow the TurnLogsEnabled style so
 // the sparse workspace-override diffing works unchanged.
 type MemorySettings struct {
+	Ranker MemoryRankerSettings `json:"ranker,omitzero"`
 	// AutoRecall injects relevant memories into the system prompt each
 	// turn. Default on.
 	AutoRecall string `json:"auto_recall,omitempty"`

@@ -142,10 +142,13 @@ type Agent struct {
 	ToolFn                 func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
 	ToolMetadata           func(string) (tools.ToolMetadata, bool)
 	ToolResultAccepted     func(string, string, []provider.ChatMessage)
-	logger                 *logger.Logger
-	turn                   *logger.TurnLogger
-	Emit                   func(AgentEvent)
-	PrepareCompaction      func(CompactionSource) error
+	// RankActionMemories prepares optional context after a completed tool round.
+	// The session revalidates the selection only if steering did not supersede it.
+	RankActionMemories func(context.Context, int, []provider.ChatMessage, []provider.ChatMessage) (func() (string, error), error)
+	logger             *logger.Logger
+	turn               *logger.TurnLogger
+	Emit               func(AgentEvent)
+	PrepareCompaction  func(CompactionSource) error
 	// CompactionRequest takes a human compaction request accepted while the
 	// run is active (its request ID, or ""). The run then compacts before its
 	// next model request, even when automatic compaction is off.

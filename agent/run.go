@@ -231,6 +231,9 @@ func (a *Agent) Run(
 		appendWire(continuity)
 	}
 
+	var completedRounds int
+	var lastRound []provider.ChatMessage
+	var warnedRanker bool
 	var steps []StepRecord
 	var totalPromptTokens, totalCompletionTokens int
 	var lastPromptTokens int
@@ -378,10 +381,36 @@ steps:
 				}
 			}
 		}
-		if _, err := drainRuntime(); err != nil {
+		consumed, err := drainRuntime()
+		if err != nil {
 			a.emitError(emit, err)
 			return returnMessages()
 		}
+		if len(lastRound) > 0 && consumed == 0 && a.RankActionMemories != nil {
+			admit, rankErr := a.RankActionMemories(ctx, completedRounds, msgs[1:], lastRound)
+			if admit != nil && rankErr == nil && ctx.Err() == nil {
+				consumed, err = drainRuntime()
+				if err != nil {
+					a.emitError(emit, err)
+					return returnMessages()
+				}
+				if consumed == 0 {
+					var block string
+					block, rankErr = admit()
+					if rankErr == nil && block != "" {
+						notice := provider.NewTextMessage("user", block)
+						notice.Origin, notice.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
+						appendWire(notice)
+					}
+				}
+			}
+			if rankErr != nil && ctx.Err() == nil && !warnedRanker {
+				warnedRanker = true
+				l.Warn("MEMORY", "action_recall_skipped", "error", rankErr.Error())
+				emit(AgentEvent{Type: "memory_ranking_unavailable", Data: map[string]any{"reason": "Check the account, endpoint and model ID in Memory Agent settings."}})
+			}
+		}
+		lastRound = nil
 		var runtimeNoticeIDs []string
 		var runtimeNotices []provider.ChatMessage
 		if a.PrepareRuntimeNotices != nil {
@@ -1426,6 +1455,10 @@ steps:
 		// Collection already checkpointed finished siblings. Publish the complete
 		// round together instead of temporarily regressing to its first result.
 		appendWire(resultMessages...)
+		if a.RankActionMemories != nil {
+			completedRounds++
+			lastRound = append([]provider.ChatMessage{assistantMsg}, resultMessages...)
+		}
 		for _, r := range results {
 			toolError := r.toolError
 			if a.ToolResultAccepted != nil && !toolError {

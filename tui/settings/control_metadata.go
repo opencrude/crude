@@ -54,6 +54,9 @@ func (s *WorkspaceSettingsSurface) controlField(id ui.ComponentID) (*ui.FieldSta
 			if id != ui.NewID(AgentSettingsFormID, field.ID) {
 				continue
 			}
+			if s.agents.roleIndex == catMemory && strings.HasPrefix(field.ID, "ranker-") {
+				return field, "memory.ranker." + strings.TrimPrefix(field.ID, "ranker-")
+			}
 			if s.agents.roleIndex == catAutoReviewPolicy {
 				return field, "safety.auto_permission"
 			}
@@ -131,6 +134,7 @@ func (s *WorkspaceSettingsSurface) agentDraftAuthority() bool {
 	cfg := c.prospectiveCategory()
 	if c.roleIndex == catMemory {
 		after.Memory.MemoryCategory = cfg
+		after.Memory.Ranker = c.rankerSettings()
 	} else if c.roleIndex >= 0 {
 		after.Agents.Categories[c.id] = cfg
 		if c.roleIndex == catMain {

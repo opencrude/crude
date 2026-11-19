@@ -79,6 +79,10 @@ func (s *Session) MemoryStore() *memory.Store {
 func (s *Session) memorySettings() ttypes.MemorySettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.memorySettingsLocked()
+}
+
+func (s *Session) memorySettingsLocked() ttypes.MemorySettings {
 	if s.cfg == nil {
 		return ttypes.MemorySettings{}
 	}
@@ -146,15 +150,22 @@ func (s *Session) recallMemoryContext(
 	if store == nil {
 		return "", nil
 	}
-	if !s.memorySettings().AutoRecallEnabled() {
+	settings := s.memorySettings()
+	if !settings.AutoRecallEnabled() {
 		return "", nil
+	}
+	limit, budget := settings.RecallLimitOrDefault(defaultRecallLimit), settings.RecallBudgetOrDefault(defaultRecallBudgetTokens)
+	// Leave room for changes of direction within this turn when ranking is on.
+	if settings.Ranker.Enabled == "on" {
+		limit = max(1, (limit+1)/2)
+		budget = max(1, budget/2)
 	}
 	records, err := store.Recall(ctx, memory.RecallQuery{
 		Text:         query,
 		ActivePaths:  activePaths,
 		TouchedPaths: s.touchedFilesSnapshot(),
-		Limit:        s.memorySettings().RecallLimitOrDefault(defaultRecallLimit),
-		BudgetTokens: s.memorySettings().RecallBudgetOrDefault(defaultRecallBudgetTokens),
+		Limit:        limit,
+		BudgetTokens: budget,
 	})
 	if err != nil {
 		return "", fmt.Errorf("recall workspace memory: %w", err)
@@ -162,18 +173,28 @@ func (s *Session) recallMemoryContext(
 	if len(records) == 0 {
 		return "", nil
 	}
+	return projectRecall(ctx, store, records, s.sessionID, "automatic")
+}
+
+func projectRecall(ctx context.Context, store *memory.Store, records []memory.ScoredRecord, sessionID, kind string) (string, error) {
 	refs := make([]memory.RevisionRef, 0, len(records))
-	projection := make([]rootprompt.WorkspaceMemoryRecord, 0, len(records))
 	for _, record := range records {
 		refs = append(refs, memory.RevisionRef{ID: record.ID, Revision: record.Revision})
+	}
+	if err := store.Expose(ctx, refs, sessionID, kind); err != nil {
+		return "", fmt.Errorf("record workspace memory exposure: %w", err)
+	}
+	return recallBlock(records), nil
+}
+
+func recallBlock(records []memory.ScoredRecord) string {
+	projection := make([]rootprompt.WorkspaceMemoryRecord, 0, len(records))
+	for _, record := range records {
 		projection = append(projection, rootprompt.WorkspaceMemoryRecord{ID: record.ID, Revision: record.Revision, Kind: record.Kind,
 			Title: record.Title, Source: record.Source, EvidenceCount: len(record.Evidence), AppliesWhen: record.AppliesWhen,
 			Content: record.Content, Pinned: record.Pinned})
 	}
-	if err := store.Expose(ctx, refs, s.sessionID, "automatic"); err != nil {
-		return "", fmt.Errorf("record workspace memory exposure: %w", err)
-	}
-	return rootprompt.WorkspaceMemory(projection), nil
+	return rootprompt.WorkspaceMemory(projection)
 }
 
 // previousSessionContext builds the continuity block injected on the first

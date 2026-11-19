@@ -285,6 +285,11 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 	if len(c.base.AllowedTools) > 0 || len(c.base.DeniedTools) > 0 {
 		mode = "Custom selection"
 	}
+	if c.roleIndex == catMemory {
+		for _, field := range c.model.rankerFields() {
+			c.draft.AddField(field)
+		}
+	}
 	if c.roleIndex == catAeron {
 		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions, c.base.AccountID) {
 			c.draft.AddField(field)
@@ -352,6 +357,9 @@ func (c *agentCatalog) setPage(page string) {
 	if c.roleIndex == catAeron {
 		items = append(items, ui.TabItem{ID: "suggestions", Label: "Suggestions"})
 	}
+	if c.roleIndex == catMemory {
+		items = append(items, ui.TabItem{ID: "ranking", Label: "Ranking"})
+	}
 	c.tabs.SetItems(items, page)
 	if page == "tools" && c.roleIndex == catMemory {
 		label, detail := "Background jobs", "No tools; memory completions use the model and instructions."
@@ -370,6 +378,12 @@ func (c *agentCatalog) setPage(page string) {
 		isReview := c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-")
 		isTools := isReview || strings.HasPrefix(field.ID, "agent-tool") || strings.HasPrefix(field.ID, "agent-skill") || strings.HasPrefix(field.ID, "agent-access") || field.ID == "agent-file-ownership"
 		isSuggest := suggestionField(field.ID)
+		if strings.HasPrefix(field.ID, "ranker-") {
+			if page == "ranking" {
+				fields = append(fields, field)
+			}
+			continue
+		}
 		if page == "instructions" && isPrompt || page == "tools" && isTools || page == "suggestions" && isSuggest ||
 			page == "model" && !isPrompt && !isTools && !isSuggest {
 			fields = append(fields, field)
@@ -440,6 +454,8 @@ func (c *agentCatalog) apply() bool {
 				page = "instructions"
 			} else if c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-") {
 				page = "tools"
+			} else if strings.HasPrefix(field.ID, "ranker-") {
+				page = "ranking"
 			} else if suggestionField(field.ID) {
 				page = "suggestions"
 			}
@@ -510,6 +526,15 @@ func (c *agentCatalog) apply() bool {
 	cfg := c.prospectiveCategory()
 	if c.roleIndex >= 0 {
 		if c.roleIndex == catMemory {
+			ranker := c.rankerSettings()
+			if err := ranker.Validate(); err != nil {
+				c.notice = err.Error()
+				c.setPage("ranking")
+				c.form.FocusFirst()
+				c.owner.focusID(c.form.ID())
+				return false
+			}
+			c.model.memoryRanker = ranker
 			c.model.memoryAgent = cfg
 			c.closeDraft()
 			c.notice = "Memory agent updated. Save settings to persist these changes."

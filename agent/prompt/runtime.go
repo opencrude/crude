@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"encoding/xml"
 	"fmt"
 	"strings"
 )
@@ -216,6 +217,35 @@ func WorkspaceMemory(records []WorkspaceMemoryRecord) string {
 	}
 	text.WriteString("</workspace_memory>")
 	return text.String()
+}
+
+// ReadWorkspaceMemory reads only the recall envelope emitted by WorkspaceMemory,
+// including when nested in a prepared turn with unrelated non-XML content.
+func ReadWorkspaceMemory(text string) (string, []WorkspaceMemoryRecord) {
+	const start, end = "<workspace_memory>", "</workspace_memory>"
+	_, tail, ok := strings.Cut(text, start)
+	if !ok {
+		return "", nil
+	}
+	inside, _, ok := strings.Cut(tail, end)
+	if !ok {
+		return "", nil
+	}
+	block := start + inside + end
+	var parsed struct {
+		Records []struct {
+			ID       string `xml:"id,attr"`
+			Revision int64  `xml:"revision,attr"`
+		} `xml:"memory"`
+	}
+	if xml.Unmarshal([]byte(block), &parsed) != nil {
+		return "", nil
+	}
+	refs := make([]WorkspaceMemoryRecord, 0, len(parsed.Records))
+	for _, r := range parsed.Records {
+		refs = append(refs, WorkspaceMemoryRecord{ID: r.ID, Revision: r.Revision})
+	}
+	return block, refs
 }
 
 type PreviousSession struct {

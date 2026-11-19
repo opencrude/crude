@@ -226,6 +226,7 @@ func TestAgentServiceNoticeExactEventsPreserveUserState(t *testing.T) {
 		summary   string
 		transient bool
 	}{
+		{NoticeMemoryRankingUnavailable, map[string]any{"reason": "Check the decision account"}, "Memory ranking skipped.", false},
 		{NoticeAttachmentExcluded, map[string]any{"reason": "Attachment could not be read"}, "Attachment could not be read", false},
 		{NoticeMemorySaved, map[string]any{"count": 2, "titles": []string{"Saved fact"}}, `Memory: saved "Saved fact" +1 more`, true},
 		{NoticeResponseContinuationUnavailable, map[string]any{"reason": "response_not_stored"},
