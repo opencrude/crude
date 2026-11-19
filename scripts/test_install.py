@@ -7,6 +7,7 @@ import io
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -17,8 +18,11 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE_DIR = None
 RELEASE_VERSION = None
+WINDOW_ASSET = None
 
-WINDOW_VERSION = "20240203-110809-5046fc22"
+WINDOW_VERSION = "1.4.0"
+WINDOW_ID = "io.github.opencrude.Crude"
+WINDOW_IMAGE = f"Ghostty-{WINDOW_VERSION}-x86_64.AppImage"
 
 
 class InstallerTests(unittest.TestCase):
@@ -60,7 +64,10 @@ shutil.copyfile(source, a[a.index('--output')+1])
         for name in ("CRUDE_INSTALL_DIR", "ZDOTDIR", "XDG_DATA_HOME"):
             self.env.pop(name, None)
         self.dest = self.home / ".local/bin/crude"
-        self.window = self.home / f".local/share/crude/window/wezterm-{WINDOW_VERSION}"
+        self.window_root = self.home / ".local/share/crude/window"
+        self.window = self.window_root / f"ghostty-{WINDOW_VERSION}"
+        self.window_config = self.window_root / "ghostty.conf"
+        self.desktop = self.home / f".local/share/applications/{WINDOW_ID}.desktop"
 
     # ---- Fixtures ----------------------------------------------------------
     def archive(self, version="v0.1.0", reported=None, extra=None, icon=False, rtl_font=False):
@@ -90,19 +97,32 @@ shutil.copyfile(source, a[a.index('--output')+1])
         (self.fixtures / "SHA256SUMS").write_text(f"{digest}  {name}\n")
         return name
 
-    def installed_window(self, runs=True):
+    def installed_window(self, config_valid=True):
         """A window install that is already present, so no download is needed."""
-        gui = self.window / "usr/bin/wezterm"
+        gui = self.window / "bin/ghostty"
         gui.parent.mkdir(parents=True)
-        if runs:
-            gui.write_text("#!/bin/sh\nprintf 'wezterm %s\\n' '" + WINDOW_VERSION + "'\n")
-        else:
-            gui.write_text("#!/bin/sh\nexit 1\n")
+        gui.write_text("#!/bin/sh\n"
+                       f'if [ "$1" = +validate-config ]; then exit {0 if config_valid else 1}; fi\n'
+                       'printf "%s\\n" "$@"\n')
         gui.chmod(0o755)
         fonts = self.home / ".local/share/fonts/JetBrainsMonoNerdFont"
         fonts.mkdir(parents=True)
         (fonts / "JetBrainsMonoNerdFont-Regular.ttf").write_bytes(b"font")
         (fonts / ".crude-font").write_text("v3.5.1\n")
+
+    def legacy_window(self):
+        """The private installation that the Linux updater must retire."""
+        legacy = self.window_root / "wezterm-20240203-110809-5046fc22"
+        legacy.mkdir(parents=True)
+        (self.window_root / "wezterm.lua").write_text("Previous Crude configuration")
+        launcher = self.dest.with_name("crude-window")
+        launcher.parent.mkdir(parents=True, exist_ok=True)
+        launcher.write_text("#!/bin/sh\nprintf 'old launcher\\n'\n")
+        launcher.chmod(0o755)
+        desktop = self.desktop.with_name("crude.desktop")
+        desktop.parent.mkdir(parents=True)
+        desktop.write_text(f'[Desktop Entry]\nName=Crude\nStartupWMClass=crude\nExec="{launcher}"\n')
+        return legacy, desktop, launcher
 
     def run_installer(self, *args, success=True, yes=True):
         command = ["bash", str(ROOT / "install.sh")]
@@ -115,6 +135,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(list(self.dest.parent.glob(".crude-install*")))
         self.assertFalse(list(self.root.glob("crude-install.*")))
+        self.assertFalse(list(self.window_root.glob(".install.*")))
         return result
 
     def run_in_pty(self, answers, *args):
@@ -157,7 +178,7 @@ shutil.copyfile(source, a[a.index('--output')+1])
 
     def assert_no_window(self):
         self.assertFalse((self.home / ".local/bin/crude-window").exists())
-        self.assertFalse((self.home / ".local/share/applications/crude.desktop").exists())
+        self.assertFalse(self.desktop.exists())
 
     # ---- Consent and reporting --------------------------------------------
     def test_consent_and_quiet_reporting(self):
@@ -286,28 +307,18 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.installed_window()
         self.run_installer("--gui")
         launcher = self.home / ".local/bin/crude-window"
-        self.assertTrue(launcher.exists())
-        self.assertTrue(os.access(launcher, os.X_OK))
-        text = launcher.read_text()
-        self.assertIn(f"{self.window}/usr/bin/wezterm", text)
-        self.assertIn("--config-file", text)
-        self.assertIn("start --always-new-process --class crude", text)
-        self.assertNotIn('"$@"', text, "the launcher has one job and forwards no arguments")
-        config = (self.home / ".local/share/crude/window/wezterm.lua").read_text()
-        for required in (f"default_prog = {{ '{self.home}/.local/bin/crude' }}",
-                         "JetBrainsMono Nerd Font",
-                         "'JetBrainsMono NF', 'Crude RTL', 'monospace'",
-                         "gui-startup",
-                         "maximize()",
-                         "initial_cols = 120",
-                         "enable_kitty_keyboard = false",
-                         "check_for_updates = false"):
+        argv = subprocess.check_output([str(launcher), "--ignore-me"], env=self.env, text=True)
+        self.assertEqual(argv.splitlines(), ["--config-default-files=false", f"--config-file={self.window_config}",
+                                             "--gtk-single-instance=false", f"--class={WINDOW_ID}", "-e", str(self.dest)])
+        config = self.window_config.read_text()
+        for required in ("font-family = JetBrainsMono NF", "font-family = Crude RTL",
+                         "U+FE70-U+FEFC=Crude RTL", "font-feature = -rlig",
+                         "window-theme = system", "window-decoration = server", "maximize = true", "keybind = clear",
+                         "mouse-shift-capture = always", "gtk-horizontal-tab-scroll = false"):
             self.assertIn(required, config, f"the window configuration needs '{required}'")
-        for owned in ("'c', mods = 'CTRL|SHIFT'", "'n', mods = 'CTRL|SHIFT'", "'t', mods = 'CTRL|SHIFT'", "'w', mods = 'CTRL|SHIFT'"):
-            self.assertIn(owned, config, "the terminal must not act on a key Crude owns")
-        desktop = (self.home / ".local/share/applications/crude.desktop").read_text()
+        desktop = self.desktop.read_text()
         self.assertIn(f'Exec="{launcher}"', desktop)
-        self.assertIn("StartupWMClass=crude", desktop)
+        self.assertIn(f"StartupWMClass={WINDOW_ID}", desktop)
         self.assertIn(f"Icon={self.home}/.local/share/crude/icons/crude.png", desktop)
         self.assertEqual((self.home / ".local/share/crude/icons/crude.png").read_text(), "png fixture")
         rtl = self.home / ".local/share/fonts/CrudeRTL"
@@ -319,9 +330,9 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.archive()
         self.run_installer("--no-gui")
         self.assert_no_window()
-        self.installed_window(runs=False)
+        self.installed_window(config_valid=False)
         broken = self.run_installer("--gui")
-        self.assertIn("cannot start", broken.stderr)
+        self.assertIn("cannot load the window configuration", broken.stderr)
         self.assert_no_window()
 
     def test_the_window_is_one_short_question(self):
@@ -347,46 +358,58 @@ shutil.copyfile(source, a[a.index('--output')+1])
     def test_an_installed_window_is_updated_without_asking(self):
         self.archive()
         self.installed_window()
-        self.run_installer("--gui")
-        lua = self.home / ".local/share/crude/window/wezterm.lua"
-        lua.write_text("stale configuration\n")
-        old = self.home / f".local/share/crude/window/wezterm-20200101-000000-old"
-        old.mkdir(parents=True)
+        old, old_menu, launcher = self.legacy_window()
+        user_wezterm = self.home / ".wezterm.lua"
+        user_wezterm.write_text("Do not change my terminal")
+        self.window_config.write_text("stale configuration\n")
         self.env["DISPLAY"] = ":0"
         code, output = self.run_in_pty(["y"], "--no-path")
         self.assertEqual(code, 0, output)
-        self.assertNotIn("Do you want the GUI version", output, "an installed window must not ask again")
-        self.assertIn("default_prog", lua.read_text(), "an update must rewrite the configuration")
-        self.assertIn("enable_kitty_keyboard = false", lua.read_text(),
-                      "an update must replace the pinned terminal's broken Delete encoding")
-        self.assertFalse(old.exists(), "an update must remove an older pinned copy")
-        self.assertTrue(self.window.exists(), "an update must keep the current pinned copy")
-        leftovers = [item.name for item in (self.home / ".local/share/crude/window").iterdir()
-                     if item.name.startswith((".previous", ".unpack", ".staged"))]
-        self.assertEqual(leftovers, [], "a finished install must leave no working folders")
+        self.assertNotIn("Do you want the GUI version", output)
+        self.assertNotIn("wezterm", output.lower())
+        self.assertIn("gtk-horizontal-tab-scroll = false", self.window_config.read_text())
+        for path in (old, old_menu, self.window_root / "wezterm.lua"):
+            self.assertFalse(path.exists(), f"the update must remove {path}")
+        self.assertTrue(self.desktop.exists())
+        self.assertTrue(self.window.is_dir())
+        self.assertIn("--gtk-single-instance=false", launcher.read_text())
+        self.assertEqual(user_wezterm.read_text(), "Do not change my terminal")
+        self.run_installer()
+        self.assertNotIn(WINDOW_IMAGE, self.log.read_text(), "reuse the installed pin")
+
+    def test_failed_migration_keeps_the_old_window(self):
+        self.archive()
+        old, old_menu, launcher = self.legacy_window()
+        result = self.run_installer()
+        self.assertIn("cannot download the window", result.stderr)
+        self.assertTrue(old.is_dir())
+        self.assertTrue(old_menu.is_file())
+        self.assertTrue((self.window_root / "wezterm.lua").is_file())
+        self.assertEqual(subprocess.check_output([str(launcher)], text=True), "old launcher\n")
+        self.assertFalse(self.desktop.exists())
+        self.assertTrue(self.dest.exists())
 
     def test_a_window_kept_by_no_gui_is_not_left_silently_stale(self):
         self.archive()
         self.installed_window()
         self.run_installer("--gui")
-        lua = self.home / ".local/share/crude/window/wezterm.lua"
-        lua.write_text("stale configuration\n")
+        self.window_config.write_text("stale configuration\n")
         result = self.run_installer("--no-gui")
         self.assertIn("not updated", result.stderr)
-        self.assertEqual(lua.read_text(), "stale configuration\n")
+        self.assertEqual(self.window_config.read_text(), "stale configuration\n")
         self.assertTrue((self.home / ".local/bin/crude-window").exists())
 
     def test_a_window_that_cannot_write_its_configuration_reports_it(self):
         self.archive()
         self.installed_window()
         self.run_installer("--gui")
-        config = self.home / ".local/share/crude/window/wezterm.lua"
+        config = self.window_config
         config.write_text("previous configuration\n")
         # Fail only the rename of the configuration, so the rest of the install
         # is a real success and the window step is the one that fails.
         mv = self.bin / "mv"
         mv.write_text("#!/bin/sh\nfor last; do :; done\n"
-                      'case "$last" in *wezterm.lua) echo "read-only file system" >&2; exit 1 ;; esac\n'
+                      f'case "$last" in {shlex.quote(str(config))}) echo "read-only file system" >&2; exit 1 ;; esac\n'
                       'exec /bin/mv "$@"\n')
         mv.chmod(0o755)
         result = self.run_installer("--gui")
@@ -401,19 +424,43 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.archive()
         self.installed_window()
         self.run_installer("--gui")
-        desktop = (self.home / ".local/share/applications/crude.desktop").read_text()
+        desktop = self.desktop.read_text()
         self.assertNotIn("Icon=", desktop)
         self.assertIn('Exec="' + str(self.home / ".local/bin/crude-window") + '"', desktop)
 
     def test_a_window_download_that_fails_a_checksum_installs_no_window(self):
         self.archive()
-        window = self.fixtures / f"wezterm-{WINDOW_VERSION}.Ubuntu22.04.tar.xz"
+        window = self.fixtures / WINDOW_IMAGE
         window.write_bytes(b"not the pinned window")
         result = self.run_installer("--gui")
-        self.assertIn("does not match its pinned checksum", result.stderr)
+        self.assertIn("does not match its checksum", result.stderr)
         self.assert_no_window()
         self.assertFalse(self.window.exists(), "a failed window download must leave no partial folder")
         self.assertTrue(self.dest.exists(), "the program install must survive a failed window download")
+
+    def test_actual_portable_bundle_installs_without_fuse_and_reuses_the_pin(self):
+        if WINDOW_ASSET is None:
+            self.skipTest("real portable bundle supplied with --window-image")
+        self.archive()
+        shutil.copyfile(WINDOW_ASSET, self.fixtures / WINDOW_IMAGE)
+        old, old_menu, launcher = self.legacy_window()
+        fonts = self.home / ".local/share/fonts/JetBrainsMonoNerdFont"
+        fonts.mkdir(parents=True)
+        (fonts / "JetBrainsMonoNerdFont-Regular.ttf").write_bytes(b"font")
+        (fonts / ".crude-font").write_text("v3.5.1\n")
+        self.run_installer("--no-path")
+        self.assertTrue(launcher.is_file())
+        self.assertTrue(self.desktop.is_file())
+        self.assertFalse(old.exists())
+        self.assertFalse(old_menu.exists())
+        self.assertFalse(self.window.is_symlink(), "retain the extracted tree, not the extraction link")
+        gui = self.window / "bin/ghostty"
+        version = subprocess.check_output([gui, "--version"], env=self.env, text=True, timeout=10)
+        self.assertIn(f"Ghostty {WINDOW_VERSION}", version)
+        subprocess.run([gui, "+validate-config", f"--config-file={self.window_config}"],
+                       env=self.env, check=True, timeout=10)
+        self.run_installer("--no-path")
+        self.assertEqual(self.log.read_text().count(WINDOW_IMAGE), 1)
 
     def test_another_platform_is_refused_with_a_next_step(self):
         uname = self.bin / "uname"
@@ -516,7 +563,6 @@ shutil.copyfile(source, a[a.index('--output')+1])
         if RELEASE_DIR is None or RELEASE_VERSION is None:
             self.skipTest("real archive supplied only in release smoke")
         version = RELEASE_VERSION
-        import shutil
         name = f"crude_{version}_linux_amd64.tar.gz"
         shutil.copyfile(RELEASE_DIR / name, self.fixtures / name)
         shutil.copyfile(RELEASE_DIR / "SHA256SUMS", self.fixtures / "SHA256SUMS")
@@ -529,16 +575,18 @@ shutil.copyfile(source, a[a.index('--output')+1])
 
 
 def main():
-    global RELEASE_DIR, RELEASE_VERSION
+    global RELEASE_DIR, RELEASE_VERSION, WINDOW_ASSET
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--release-dir", help="also install a combined release artifact set")
     parser.add_argument("--version", "--release-version", dest="version", help="version of that artifact set")
+    parser.add_argument("--window-image", type=Path, help="also exercise the exact pinned Ghostty AppImage")
     parser.add_argument("-v", "--verbose", action="store_true", help="list each test")
     args = parser.parse_args()
     if (args.release_dir is None) != (args.version is None):
         parser.error("--release-dir and --version must be given together")
     RELEASE_DIR = Path(args.release_dir) if args.release_dir else None
     RELEASE_VERSION = args.version
+    WINDOW_ASSET = args.window_image
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(InstallerTests)
     return 0 if unittest.TextTestRunner(verbosity=2 if args.verbose else 1).run(suite).wasSuccessful() else 1
 

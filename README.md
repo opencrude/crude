@@ -37,7 +37,7 @@
 Requires glibc 2.35 or later.
 
 ```bash
-curl -fsSL https://opencrude.github.io/install.sh | bash
+curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh && bash install.sh
 ```
 
 ### Windows x64
@@ -45,7 +45,7 @@ curl -fsSL https://opencrude.github.io/install.sh | bash
 Requires PowerShell 5.1 or later.
 
 ```powershell
-irm https://opencrude.github.io/install.ps1 | iex
+irm https://github.com/opencrude/crude/releases/latest/download/install.ps1 | iex
 ```
 
 Run the same command again to update. See the [installation guide](https://opencrude.github.io/#install) for the optional GUI window and manual installation, or [download the latest release](https://github.com/opencrude/crude/releases/latest). There is no macOS release yet.

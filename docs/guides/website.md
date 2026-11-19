@@ -39,16 +39,16 @@ Rules that keep the page self-contained and honest:
 
 ## Install commands
 
-The page offers `https://opencrude.github.io/install.sh` and
-`https://opencrude.github.io/install.ps1`. The deploy workflow copies the two
-installers from the repository root into the published directory, so those
-addresses always serve the current installers and the page never duplicates
-them.
+The page links to the Linux and Windows installer assets under
+`https://github.com/opencrude/crude/releases/latest/download/`. Each new
+published release updates these links without a Pages deploy. The Linux
+command downloads the script before running it, so the installer can ask
+whether to add the optional window when a terminal is available.
 
-The published copies are snapshots. Changing either installer does not change
-them until someone dispatches `pages.yml`, so a fix is invisible to the
-documented install command until then. After an installer change, dispatch the
-deploy and check the served file:
+The deploy workflow still copies both installers to the site root for old
+commands that use `https://opencrude.github.io/install.sh` or `install.ps1`.
+These copies refresh only on a Pages deploy. After updating them, check that
+the served script matches the source:
 
 ```bash
 gh workflow run pages.yml -R opencrude/opencrude.github.io --ref main

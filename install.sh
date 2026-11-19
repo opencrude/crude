@@ -183,19 +183,22 @@ EOF
     # ---- Optional window ----------------------------------------------------
     # One pinned terminal with one configuration, for this user only. It is the
     # same Crude; the window only makes it open like an application.
-    wezterm_version='20240203-110809-5046fc22'
-    wezterm_sha256='142cb46de648200b852cc4b1d932e6b8f2a9d3c55f6dc5af44b6d4eeb9385f5c'
+    ghostty_version='1.4.0'
+    ghostty_sha256='50ad4f8b54a01e7d41426e7d12ffae9c88aa1c516ac140755e2bca596e1d2ae6'
     font_version='v3.5.1'
     font_sha256='04d5e8f903693f9dd13e16f867e994834e681eb3c72c0d337a770dcda09010cf'
-    data="${XDG_DATA_HOME:-$HOME/.local/share}/crude"
+    user_data="${XDG_DATA_HOME:-$HOME/.local/share}"
+    data="$user_data/crude"
     window_root="$data/window"
-    window_prefix="$window_root/wezterm-$wezterm_version"
-    window_lua="$window_root/wezterm.lua"
+    window_prefix="$window_root/ghostty-$ghostty_version"
+    window_config="$window_root/ghostty.conf"
     window_launcher="$install_dir/crude-window"
-    fonts_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/JetBrainsMonoNerdFont"
+    window_id='io.github.opencrude.Crude'
+    window_work=''
+    fonts_dir="$user_data/fonts/JetBrainsMonoNerdFont"
     # Crude RTL draws Arabic, Persian and Hebrew in the window's cells. It
     # ships with each release, so every install refreshes it.
-    rtl_fonts_dir="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/CrudeRTL"
+    rtl_fonts_dir="$user_data/fonts/CrudeRTL"
 
     # decide_window sets install, update or skip before anything is downloaded,
     # so the question never waits behind a long transfer.
@@ -204,7 +207,8 @@ EOF
         if [[ "$gui" == 0 ]]; then
             return 0
         fi
-        if [[ "$gui" == 1 ]] || [[ -x "$window_launcher" ]]; then
+        if [[ "$gui" == 1 || -x "$window_launcher" || -f "$user_data/applications/$window_id.desktop" ]] ||
+           [[ -f "$window_root/wezterm.lua" && -f "$HOME/.local/share/applications/crude.desktop" ]]; then
             window_state=install
             return 0
         fi
@@ -217,77 +221,59 @@ EOF
     }
 
     install_window_terminal() {
-        [[ -x "$window_prefix/usr/bin/wezterm" ]] && return 0
-        mkdir -p -- "$window_root"
-        local archive="$window_root/wezterm-$wezterm_version.Ubuntu22.04.tar.xz"
-        download --output "$archive" "https://github.com/wezterm/wezterm/releases/download/$wezterm_version/wezterm-$wezterm_version.Ubuntu22.04.tar.xz" || {
+        local image="Ghostty-$ghostty_version-x86_64.AppImage" archive sum
+        if [[ -x "$window_prefix/bin/ghostty" ]] &&
+           timeout 10 "$window_prefix/bin/ghostty" --version >/dev/null 2>&1; then return 0; fi
+        archive="$window_work/$image"
+        # The portable GTK build lets us use the same terminal on old and new
+        # distributions. Extract once instead of mounting it with FUSE on launch.
+        download --output "$archive" "https://github.com/pkgforge-dev/ghostty-appimage/releases/download/v$ghostty_version/$image" || {
             warn 'Window' 'cannot download the window. Check your network connection'
             return 1
         }
-        local sum
-        sum=$(sha256sum "$archive")
-        if [[ "${sum%% *}" != "$wezterm_sha256" ]]; then
-            warn 'Window' 'the downloaded window does not match its pinned checksum'
+        sum=$(sha256sum < "$archive") || return 1
+        if [[ "${sum%% *}" != "$ghostty_sha256" ]]; then
+            warn 'Window' 'the download does not match its checksum'
             return 1
         fi
-        tar -tvJf "$archive" > "$window_root/details" 2>/dev/null || {
-            warn 'Window' 'the downloaded window archive is damaged'
-            return 1
-        }
-        if grep -qEv '^[-d]' "$window_root/details"; then
-            warn 'Window' 'the downloaded window archive holds links or special files'
+        if ! (cd -- "$window_work" && chmod 755 -- "$archive" &&
+              timeout -k 5 120 "$archive" --appimage-extract >/dev/null 2>&1); then
+            warn 'Window' 'cannot unpack the download'
             return 1
         fi
-        local member
-        while IFS= read -r member; do
-            if [[ "$member" == /* || "/$member/" == *'/../'* ]]; then
-                warn 'Window' 'the downloaded window archive holds an unsafe path'
-                return 1
-            fi
-        done < <(tar -tJf "$archive")
-        local unpack staged
-        unpack=$(mktemp -d "$window_root/.unpack.XXXXXXXX")
-        staged="$window_root/.staged.$$"
-        tar -xJf "$archive" --no-same-owner --no-same-permissions -C "$unpack" || {
-            rm -rf -- "$unpack"
-            warn 'Window' 'the downloaded window archive could not be unpacked'
+        # The runtime can expose its extraction directory via a relative link.
+        local unpack staged_root
+        staged_root=$(readlink -f -- "$window_work") || return 1
+        unpack=$(readlink -f -- "$window_work/squashfs-root") || return 1
+        [[ "$unpack" == "$staged_root/"* ]] || return 1
+        if ! timeout 10 "$unpack/bin/ghostty" --version >/dev/null 2>&1; then
+            warn 'Window' 'the window cannot start on this system'
             return 1
-        }
-        # The archive holds one program tree in a folder named wezterm.
-        if [[ -d "$unpack/wezterm" ]]; then
-            rm -rf -- "$staged"
-            mv -T -- "$unpack/wezterm" "$staged" && rm -rf -- "$unpack"
-        else
-            mkdir -p -- "${staged%/*}" && rm -rf -- "$staged"
-            mv -T -- "$unpack" "$staged"
         fi
-        rm -f -- "$archive" "$window_root/details"
-        # Replace the old copy in one step, and put it back if the new one
-        # cannot take its place.
-        local previous="$window_root/.previous.$$"
-        rm -rf -- "$previous"
-        [[ ! -d "$window_prefix" ]] || mv -T -- "$window_prefix" "$previous"
-        if mv -T -- "$staged" "$window_prefix"; then
-            rm -rf -- "$previous"
-        else
-            [[ ! -d "$previous" ]] || mv -T -- "$previous" "$window_prefix"
-            rm -rf -- "$staged"
-            warn 'Window' 'the downloaded window could not be put in place'
+        if [[ -e "$window_prefix" || -L "$window_prefix" ]]; then
+            mv -T -- "$window_prefix" "$window_work/previous" || return 1
+        fi
+        if ! mv -T -- "$unpack" "$window_prefix"; then
+            [[ ! -e "$window_work/previous" ]] || mv -T -- "$window_work/previous" "$window_prefix"
             return 1
         fi
     }
 
     install_window_fonts() {
         local stamp="$fonts_dir/.crude-font"
-        if compgen -G "$fonts_dir/*.ttf" >/dev/null && [[ -f "$stamp" ]] && [[ "$(cat "$stamp")" == "$font_version" ]]; then
+        if [[ -f "$fonts_dir/JetBrainsMonoNerdFont-Regular.ttf" && -f "$stamp" ]] &&
+           [[ "$(cat "$stamp")" == "$font_version" ]]; then
             return 0
         fi
-        local archive="$window_root/JetBrainsMono-$font_version.tar.xz" sum
+        if command -v fc-list >/dev/null && fc-list -q ':family=JetBrainsMono NF:style=Regular'; then
+            return 0
+        fi
+        local archive="$window_work/JetBrainsMono-$font_version.tar.xz" sum
         if ! download --output "$archive" "https://github.com/ryanoasis/nerd-fonts/releases/download/$font_version/JetBrainsMono.tar.xz"; then
             [[ -n $(compgen -G "$fonts_dir/*.ttf") ]] || warn 'Font' 'the font for the window is missing. Icons may look wrong'
             return 0
         fi
-        sum=$(sha256sum "$archive")
+        sum=$(sha256sum < "$archive") || return 1
         if [[ "${sum%% *}" != "$font_sha256" ]]; then
             rm -f -- "$archive"
             warn 'Font' 'the downloaded font does not match its pinned checksum'
@@ -316,113 +302,108 @@ EOF
     }
 
     write_window_files() {
-        # One configuration, rewritten on every run so an update also refreshes
-        # the window settings.
-        # Write beside the file and rename, so a half-written configuration is
-        # never read.
-        cat > "$window_lua.new" <<LUA
--- Written by the Crude installer. This window opens Crude only.
-local wezterm = require 'wezterm'
-
--- Open as an application window: use the desktop area, not a small terminal.
-wezterm.on('gui-startup', function(cmd)
-    local _, _, window = wezterm.mux.spawn_window(cmd or {})
-    local gui = window:gui_window()
-    if gui then gui:maximize() end
-end)
-
-return {
-    default_prog = { '$install_dir/crude' },
-    -- Crude RTL draws the right-to-left scripts Crude arranges itself.
-    font = wezterm.font_with_fallback { 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'Crude RTL', 'monospace' },
-    font_size = 13.0,
-    window_decorations = 'TITLE | RESIZE',
-    -- A sane size when the window manager cannot maximise; the handler below
-    -- asks for the full desktop area.
-    initial_cols = 120,
-    initial_rows = 36,
-    hide_tab_bar_if_only_one_tab = true,
-    -- This pinned build encodes plain Delete as Ctrl+H in Kitty mode.
-    -- Crude requests xterm modifyOtherKeys, which keeps modified keys distinct.
-    enable_kitty_keyboard = false,
-    window_close_confirmation = 'NeverPrompt',
-    -- If Crude exits because of an error, keep the message on screen.
-    exit_behavior = 'CloseOnCleanExit',
-    check_for_updates = false,
-    audible_bell = 'Disabled',
-    -- Crude owns these keys, so the terminal must not act on them here. That
-    -- includes copy: the terminal's own copy would copy a selection Crude never
-    -- leaves in the terminal, so the key must reach Crude instead.
-    keys = {
-        { key = 'c', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-        { key = 'n', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-        { key = 't', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-        { key = 'w', mods = 'CTRL|SHIFT', action = wezterm.action.DisableDefaultAssignment },
-    },
-}
-LUA
-        mv -f -- "$window_lua.new" "$window_lua" ||
-            { warn 'Window' 'cannot write the window configuration'; return 1; }
-        cat > "$window_launcher.new" <<LAUNCH
-#!/bin/sh
-# Open Crude in its own window.
-exec "$window_prefix/usr/bin/wezterm" --config-file "$window_lua" start --always-new-process --class crude
-LAUNCH
-        chmod 755 "$window_launcher.new"
-        mv -f -- "$window_launcher.new" "$window_launcher" ||
-            { warn 'Window' 'cannot write the window launcher'; return 1; }
+        local config="$window_work/ghostty.conf"
+        cat > "$config" <<'GHOSTTY' || return 1
+# Written by the Crude installer. Use the desktop theme for the window frame.
+window-theme = system
+window-decoration = server
+font-family = JetBrainsMono NF
+font-family = Crude RTL
+font-codepoint-map = U+0590-U+06FF,U+0750-U+077F,U+0870-U+08FF,U+FB1D-U+FDFF,U+FE70-U+FEFC=Crude RTL
+# Crude sends separate, already joined cells. Do not combine Lam and Alef again.
+font-feature = -rlig
+font-size = 13
+window-width = 120
+window-height = 36
+maximize = true
+window-save-state = never
+confirm-close-surface = false
+resize-overlay = never
+bell-features = no-audio, no-system, no-title, no-border
+shell-integration = none
+# Let Crude handle its keyboard and pointer commands, including Shift+click.
+keybind = clear
+mouse-shift-capture = always
+mouse-scroll-multiplier = discrete:1,precision:1
+# Otherwise the GTK tab bar takes horizontal gestures even for a single tab.
+gtk-horizontal-tab-scroll = false
+GHOSTTY
+        if ! timeout 10 "$window_prefix/bin/ghostty" +validate-config --config-file="$config" >/dev/null 2>&1; then
+            warn 'Window' 'cannot load the window configuration'
+            return 1
+        fi
+        # Quote paths as literal Bash arguments; -e runs Crude directly.
+        {
+            printf '#!/usr/bin/env bash\n# Open Crude in its own window.\n'
+            # Use the private resources even when launched from another Ghostty.
+            printf 'export GHOSTTY_RESOURCES_DIR=%q\n' "$window_prefix/share/ghostty"
+            # The bundled loader starts directly. AppRun also writes a shared
+            # /tmp link, which two installs could point at different trees.
+            printf 'exec %q --config-default-files=false --config-file=%q --gtk-single-instance=false --class=%q -e %q\n' \
+                "$window_prefix/bin/ghostty" "$window_config" "$window_id" "$install_dir/crude"
+        } > "$stage/crude-window" || return 1
+        chmod 755 -- "$stage/crude-window" || return 1
 
         local icon="$data/icons/crude.png"
         if [[ -f "$stage/crude-icon.png" ]]; then
-            mkdir -p -- "$data/icons"
-            cp -- "$stage/crude-icon.png" "$icon"
-            [[ ! -f "$stage/crude-icon.svg" ]] || cp -- "$stage/crude-icon.svg" "$data/icons/crude.svg"
+            mkdir -p -- "$data/icons" && cp -- "$stage/crude-icon.png" "$icon" || return 1
+            [[ ! -f "$stage/crude-icon.svg" ]] || cp -- "$stage/crude-icon.svg" "$data/icons/crude.svg" || return 1
         fi
-        if [[ -f "$icon" ]]; then
-            local themed="$HOME/.local/share/icons/hicolor/512x512/apps"
-            mkdir -p -- "$themed"
-            cp -- "$icon" "$themed/crude.png"
-        fi
-        local desktop="$HOME/.local/share/applications" icon_line=''
-        mkdir -p -- "$desktop"
-        # An Icon line must name a file that exists, or the menu shows a warning.
-        [[ ! -f "$icon" ]] || icon_line="Icon=$icon"
+        local desktop="$user_data/applications" exec_path="$window_launcher"
+        mkdir -p -- "$desktop" || return 1
+        # Exec has two layers of escaping: desktop string values and command
+        # quoting. Percent signs are field codes even inside a quoted argument.
+        exec_path=${exec_path//\\/\\\\\\\\}
+        exec_path=${exec_path//\"/'\\"'}
+        exec_path=${exec_path//\$/'\\$'}
+        exec_path=${exec_path//\`/'\\`'}
+        exec_path=${exec_path//%/%%}
+        local desktop_file="$window_work/$window_id.desktop"
         {
-            printf '%s\n' \
-                '[Desktop Entry]' \
-                'Type=Application' \
-                'Name=Crude' \
+            printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Crude' \
                 'Comment=Editor, terminals and AI agents in one window' \
-                "Exec=\"$install_dir/crude-window\""
-            [[ -z "$icon_line" ]] || printf '%s\n' "$icon_line"
-            printf '%s\n' 'Terminal=false' 'Categories=Development;IDE;' 'StartupWMClass=crude'
-        } > "$desktop/crude.desktop"
-        chmod 644 "$desktop/crude.desktop"
-        if command -v update-desktop-database >/dev/null; then update-desktop-database "$desktop" >/dev/null 2>&1 || true; fi
+                "Exec=\"$exec_path\""
+            if [[ -f "$icon" ]]; then printf 'Icon=%s\n' "${icon//\\/\\\\}"; fi
+            printf '%s\n' 'Terminal=false' 'Categories=Development;IDE;' "StartupWMClass=$window_id"
+        } > "$desktop_file" || return 1
+        mv -fT -- "$config" "$window_config" ||
+            { warn 'Window' 'cannot write the window configuration'; return 1; }
+        mv -fT -- "$stage/crude-window" "$window_launcher" &&
+            mv -fT -- "$desktop_file" "$desktop/$window_id.desktop" || return 1
     }
 
-    prune_window_versions() {
-        local old
-        for old in "$window_root"/wezterm-*; do
-            [[ -d "$old" && "$old" != "$window_prefix" ]] || continue
-            rm -rf -- "$old"
+    retire_wezterm() {
+        local legacy_menu="$HOME/.local/share/applications/crude.desktop" old live=0
+        # Only touch the entries and files written by the old Crude installer.
+        if [[ -f "$legacy_menu" ]] && grep -Fqx 'Name=Crude' "$legacy_menu" &&
+           grep -Fqx 'StartupWMClass=crude' "$legacy_menu"; then
+            rm -f -- "$legacy_menu" || return 1
+        fi
+        for old in "$window_root"/wezterm-[0-9]*; do
+            if [[ -d "$old" && ! -L "$old" ]]; then
+                if [[ -n $(running_pids "$old/usr/bin/wezterm-gui") || -n $(running_pids "$old/usr/bin/wezterm") ]]; then
+                    live=1
+                    continue
+                fi
+                rm -rf -- "$old" || return 1
+            elif [[ "$old" == *.Ubuntu22.04.tar.xz && -f "$old" ]]; then
+                rm -f -- "$old" || return 1
+            fi
         done
-        return 0
+        if ((live == 0)); then rm -f -- "$window_root/wezterm.lua" "$window_root/wezterm.lua.new"; fi
     }
 
     install_window() {
+        mkdir -p -- "$window_root" || return 1
+        window_work=$(mktemp -d "$window_root/.install.XXXXXXXX") || return 1
         install_window_terminal || return 1
-        if ! "$window_prefix/usr/bin/wezterm" --version >/dev/null 2>&1; then
-            warn 'Window' 'the window cannot start on this system'
-            say '  Install these packages, then run this installer again:'
-            say '    libxkbcommon0 libfontconfig1 libwayland-client0 libx11-6'
-            return 1
-        fi
-        # The new copy is in place, so the older pins can go.
-        prune_window_versions
         install_window_fonts
         install_window_rtl_font
         write_window_files || return 1
+        retire_wezterm || warn 'Window' 'cannot remove the old window files. Run this installer again'
+        if command -v update-desktop-database >/dev/null; then
+            update-desktop-database "$user_data/applications" >/dev/null 2>&1 || true
+        fi
         ok 'Window' 'Crude is in your application menu'
     }
 
@@ -452,6 +433,7 @@ LAUNCH
     # Invoked by the EXIT trap inside this installation subshell.
     # shellcheck disable=SC2317
     cleanup() {
+        [[ -z "$window_work" ]] || rm -rf -- "$window_work"
         [[ -z "$stage" ]] || rm -rf -- "$stage"
         [[ -z "$work" ]] || rm -rf -- "$work"
         ((locked == 0)) || rm -rf -- "$lock"

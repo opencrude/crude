@@ -303,6 +303,46 @@ func TestEditorPanCropsOneVisualLine(t *testing.T) {
 	}
 }
 
+func TestWheelBurstKeepsLongMixedLineStable(t *testing.T) {
+	const leading = "    before "
+	const words = "ABCDEFGHIJKLMNOPQRSTUVWXYZ "
+	long := strings.Repeat(words, 350)
+	ed := loadEditorText(t, "prose.txt", strings.Repeat("above\n", 180)+
+		leading+"אבגד "+long+"שלום\n"+strings.Repeat("below\n", 240))
+	ed.indentGuides = false
+	w := ed.GutterWidth() + 45
+	paintEditor(ed, w, 12)
+	wheel := func(button tea.MouseButton, count int) {
+		t.Helper()
+		for range count {
+			ed.HandleEvent(tea.MouseWheelMsg{Button: button, X: ed.GutterWidth() + 4, Y: 0})
+		}
+	}
+	wheel(tea.MouseWheelDown, 60)
+	if row := ed.scrollRow(); row != 180 {
+		t.Fatalf("60 wheel ticks landed on row %d, want 180", row)
+	}
+	// This row has an LTR base and a bounded RTL run. The independent
+	// visual reference must remain valid even far into the 9,000-column row.
+	expected := []rune(leading + "דגבא " + long + "םולש")
+	for _, offset := range []int{0, 9, 3000, 7200, 9, 0} {
+		button, delta := tea.MouseWheelRight, offset-ed.scrollX
+		if delta < 0 {
+			button, delta = tea.MouseWheelLeft, -delta
+		}
+		wheel(button, delta/3)
+		buf := paintEditor(ed, w, 12)
+		want := string(expected[offset : offset+ed.textColumns()])
+		if row, got := ed.scrollX, textRow(ed, buf, 0); row != offset || got != want {
+			t.Fatalf("want crop at %d: %q; got %d: %q", offset, want, row, got)
+		}
+	}
+	wheel(tea.MouseWheelUp, 60)
+	if row := ed.scrollRow(); row != 0 {
+		t.Fatalf("reverse burst landed on row %d, want 0", row)
+	}
+}
+
 func TestEditorBidiBlockCaretTraversesViewportAndRowEdges(t *testing.T) {
 	// Unique runes make both directions of the source map independently checkable.
 	const src = "אבגד ABCDEFGHIJKLMNOPQRST הוזח"

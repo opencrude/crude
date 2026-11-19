@@ -215,8 +215,14 @@ DejaVu archive; the license is `assets/fonts/LICENSE-DejaVu`.
 | Window | How Crude RTL is used |
 |---|---|
 | Windows (`install.ps1`) | Copied into `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and registered there for the user, with or without the GUI window; the Crude profile names `JetBrainsMono NF, Crude RTL` once Windows reports the family (Windows Terminal font fallback) |
-| Linux (`install.sh --gui`) | Copied to `~/.local/share/fonts/CrudeRTL`; the WezTerm configuration lists it after JetBrains Mono |
+| Linux (`install.sh --gui`) | Copied to `~/.local/share/fonts/CrudeRTL`; the private Ghostty profile maps Arabic and Hebrew code points to it before the normal fallback |
 | Another terminal | Install the font from the release's `fonts/` folder and add it as the fallback after your font |
+
+Ghostty's Crude profile also disables `rlig`, its required-ligature font feature.
+Without this, Ghostty can combine two already joined presentation forms into a
+single Lam-Alef glyph even though Crude gave each letter its own cell. This
+leaves a wide gap before the next letter in words such as `سلام`. This setting
+is private to the Crude window; it does not change another Ghostty profile.
 
 On Linux, Alacritty and Tilix/Pango use Fontconfig for fallback. Install both
 Crude RTL faces in the user's font directory and append the family after the
