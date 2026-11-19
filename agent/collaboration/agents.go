@@ -179,9 +179,7 @@ func (store *Store) ListAgents(ctx context.Context, query AgentQuery) ([]Agent, 
 	}
 	var result []Agent
 	err := store.readTransaction(ctx, func(tx *sql.Tx) error {
-		statement := `SELECT id,name,session_id,parent_id,category,state,presence,runtime_epoch,
-			owner_instance,current_run_id,current_request_id,created_at,updated_at,heartbeat_at
-			FROM collaboration_agents WHERE workspace_id=?`
+		statement := `SELECT ` + agentColumns + ` FROM collaboration_agents WHERE workspace_id=?`
 		arguments := []any{store.workspaceID}
 		if !query.IncludeClosed {
 			statement += ` AND state != 'closed'`
@@ -529,10 +527,11 @@ func (store *Store) updateRun(ctx context.Context, request FinishRunRequest) (Ru
 	return result, err
 }
 
+const agentColumns = `id,name,session_id,parent_id,category,state,presence,runtime_epoch,
+	owner_instance,current_run_id,current_request_id,created_at,updated_at,heartbeat_at`
+
 func loadAgent(ctx context.Context, tx *sql.Tx, id string) (Agent, error) {
-	row := tx.QueryRowContext(ctx, `SELECT id,name,session_id,parent_id,category,state,presence,runtime_epoch,
-		owner_instance,current_run_id,current_request_id,created_at,updated_at,heartbeat_at
-		FROM collaboration_agents WHERE id=?`, id)
+	row := tx.QueryRowContext(ctx, `SELECT `+agentColumns+` FROM collaboration_agents WHERE id=?`, id)
 	return scanAgent(row)
 }
 

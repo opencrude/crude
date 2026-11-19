@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS collaboration_agents (
 	updated_at INTEGER NOT NULL,
 	heartbeat_at INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_collaboration_agents_workspace_id ON collaboration_agents(workspace_id,id);
 CREATE INDEX IF NOT EXISTS idx_collaboration_agents_session
 	ON collaboration_agents(session_id, state, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collaboration_agents_parent
@@ -87,6 +88,7 @@ CREATE TABLE IF NOT EXISTS collaboration_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_collaboration_runs_agent
 	ON collaboration_runs(agent_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collaboration_runs_input ON collaboration_runs(agent_id,context_commit_id) WHERE context_commit_id!='';
 CREATE INDEX IF NOT EXISTS idx_collaboration_runs_workspace_order
 	ON collaboration_runs(workspace_id, started_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS collaboration_events (

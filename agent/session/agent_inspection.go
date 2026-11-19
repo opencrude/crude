@@ -97,12 +97,16 @@ func (s *Session) inspectAgent(ctx context.Context, store *collaboration.Store, 
 		return result, err
 	}
 	if event != nil {
-		result.Trigger = agentInspectionTrigger{Available: true, InputID: event.ID, EventID: event.ID,
-			Origin: string(event.Origin), Kind: string(event.Kind), SenderID: event.SenderID, SenderName: event.SenderName, ThreadID: event.ThreadID, Preview: event.Body}
+		result.Trigger = inspectionEventTrigger(event)
 	} else if input != nil && input.MessageID == latest.ContextCommitID {
 		result.Trigger = agentInspectionTrigger{Available: true, InputID: input.MessageID, Origin: input.Origin, Preview: input.Preview}
 	}
 	return result, nil
+}
+
+func inspectionEventTrigger(event *collaboration.Event) agentInspectionTrigger {
+	return agentInspectionTrigger{Available: true, InputID: event.ID, EventID: event.ID, Origin: string(event.Origin), Kind: string(event.Kind),
+		SenderID: event.SenderID, SenderName: event.SenderName, ThreadID: event.ThreadID, Preview: event.Body}
 }
 
 // Cross-session inspection opens existing storage in SQLite read-only mode,
@@ -111,19 +115,32 @@ func (s *Session) agentInspectionDB(ctx context.Context, store *collaboration.St
 	if participant.SessionID == s.sessionID && s.db != nil {
 		return s.db, func() {}, nil
 	}
-	if s.dbPath == "" || filepath.Base(participant.SessionID) != participant.SessionID || participant.SessionID == "." || participant.SessionID == ".." {
+	if s.dbPath == "" {
 		return nil, nil, fmt.Errorf("session storage is not available")
 	}
-	directory := filepath.Dir(s.dbPath)
+	return OpenAgentTranscript(ctx, store, filepath.Dir(s.dbPath), participant)
+}
+
+// OpenAgentTranscript borrows the workspace registry's exact participant and
+// opens only its existing transcript. It never resumes the agent or migrates data.
+func OpenAgentTranscript(ctx context.Context, store *collaboration.Store, directory string, participant collaboration.Agent) (*sql.DB, func(), error) {
+	if directory == "" || !singlePathComponent(participant.SessionID) {
+		return nil, nil, fmt.Errorf("session storage is not available")
+	}
 	if participant.ParentID != "" {
 		parent, err := store.Agent(ctx, participant.ParentID)
 		if err != nil {
 			return nil, nil, err
 		}
-		if parent.ParentID != "" || filepath.Base(parent.SessionID) != parent.SessionID {
+		if parent.ParentID != "" || !singlePathComponent(parent.SessionID) {
 			return nil, nil, fmt.Errorf("child session owner is unavailable")
 		}
-		directory = filepath.Join(directory, parent.SessionID, "subagents")
+		for _, segment := range []string{parent.SessionID, "subagents"} {
+			directory = filepath.Join(directory, segment)
+			if info, err := os.Lstat(directory); err != nil || !info.IsDir() {
+				return nil, nil, fmt.Errorf("child transcript directory is unavailable")
+			}
+		}
 	}
 	path := filepath.Join(directory, participant.SessionID+".db")
 	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
@@ -142,11 +159,16 @@ func (s *Session) agentInspectionDB(ctx context.Context, store *collaboration.St
 	return db, func() { _ = db.Close() }, nil
 }
 
+func singlePathComponent(path string) bool {
+	return path != "" && path != "." && filepath.IsLocal(path) && filepath.Base(path) == path
+}
+
 type exactAgentRunInspection struct {
 	AgentID        string                          `json:"agent_id"`
 	SessionID      string                          `json:"session_id"`
 	Run            *collaboration.Run              `json:"run"`
 	Reports        []collaboration.ArtifactSummary `json:"reports"`
+	Trigger        agentInspectionTrigger          `json:"trigger"`
 	PublicWork     sessiondb.RunWork               `json:"public_work"`
 	ChangesCommand string                          `json:"changes_command"`
 }
@@ -157,6 +179,14 @@ func (s *Session) inspectExactAgentRun(ctx context.Context, store *collaboration
 		return exactAgentRunInspection{}, err
 	}
 	result := exactAgentRunInspection{AgentID: agentID, SessionID: attempt.Agent.SessionID, Run: attempt.SelectedRun, Reports: attempt.Reports, ChangesCommand: "history.run_changes"}
+	result.Trigger = agentInspectionTrigger{Origin: string(attempt.SelectedRun.Origin), InputID: attempt.SelectedRun.ContextCommitID, Note: "No recorded public input link for this attempt."}
+	event, err := store.InspectionEvent(ctx, agentID, result.Trigger.InputID)
+	if err != nil {
+		return result, err
+	}
+	if event != nil {
+		result.Trigger = inspectionEventTrigger(event)
+	}
 	db, closeDB, err := s.agentInspectionDB(ctx, store, attempt.Agent)
 	if err != nil {
 		result.PublicWork = sessiondb.RunWork{RunID: runID, Activity: []sessiondb.RunWorkEntry{}, Coverage: "The session transcript is unavailable."}
@@ -166,6 +196,15 @@ func (s *Session) inspectExactAgentRun(ctx context.Context, store *collaboration
 	transcriptOwner := agentID
 	if attempt.Agent.ParentID == "" {
 		transcriptOwner = attempt.Agent.SessionID
+	}
+	if !result.Trigger.Available && result.Trigger.InputID != "" && attempt.SelectedRun.Origin == collaboration.OriginHuman {
+		input, readErr := sessiondb.InspectHistoricalPrompt(ctx, db, attempt.Agent.SessionID, agentID, transcriptOwner, sessiondb.HistoricalPromptQuery{PromptID: result.Trigger.InputID, MaxBytes: 1024})
+		if readErr != nil {
+			result.Trigger.Note = "The linked human input could not be read."
+		} else if input != nil {
+			result.Trigger = agentInspectionTrigger{Available: input.TextAvailable, InputID: input.ID, Origin: input.Origin, Preview: input.Text,
+				Note: "Use history.prompts with this agent_id and prompt_id for exact text and recorded models."}
+		}
 	}
 	result.PublicWork, err = sessiondb.InspectRunWork(ctx, db, runID, agentID, transcriptOwner, cursor)
 	return result, err

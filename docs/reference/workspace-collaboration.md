@@ -84,7 +84,9 @@ sleep merely to notice an ordinary message, report, or terminal outcome.
 
 Exact-attempt inspection and following the authoritative file receipts are described in
 [Durable evidence](durable-evidence.md#inspect-an-exact-run). A historical run
-selection does not change the current agent or resume its session.
+selection does not change the current agent or resume its session. Use
+[`history.prompts`](durable-evidence.md#find-a-past-prompt-by-model) for the first
+human prompt, recorded model evidence and full text.
 
 Resolve an agent's exact name with `agent_list`, then call
 `agent_inspect(agent_id)` with the returned stable ID. Presence describes runtime
