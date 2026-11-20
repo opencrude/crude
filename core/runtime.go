@@ -245,7 +245,7 @@ func (c *Connection) closeCarrier(expected corewire.Conn) {
 		// Cleanup precedes the receipt. The peer consumes SessionEnd and
 		// closes its carrier, proving the queued message reached it. A lost
 		// or hostile peer cannot hold runtime shutdown indefinitely.
-		timer := time.AfterFunc(time.Second, func() { _ = carrier.Close() })
+		timer := time.AfterFunc(coreprotocol.SessionDrainTimeout(carrier.RTT()), func() { _ = carrier.Close() })
 		defer timer.Stop()
 		if control != nil && send(control, &coreprotocol.SessionEnd{Reason: "session ended by the core"}) == nil {
 			_ = control.CloseWrite()

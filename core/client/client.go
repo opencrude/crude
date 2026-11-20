@@ -441,7 +441,10 @@ func (c *Client) fail(err error) {
 		// alive until its reader consumes the core's cleanup receipt. CloseWrite
 		// only queues FIN on both mux and QUIC; it is not a delivery guarantee.
 		timeout := make(chan struct{})
-		timer := time.AfterFunc(time.Second, func() { close(timeout); _ = carrier.Close() })
+		timer := time.AfterFunc(coreprotocol.SessionDrainTimeout(carrier.RTT()), func() {
+			close(timeout)
+			_ = carrier.Close()
+		})
 		defer timer.Stop()
 		defer func() {
 			select {
@@ -462,8 +465,7 @@ func (c *Client) fail(err error) {
 				}
 				select {
 				case <-c.controlEnded:
-				case <-carrier.Done():
-					c.closeErr = errors.New("core session close was not acknowledged before the carrier ended")
+				case <-timeout:
 					return
 				}
 			}
@@ -477,7 +479,8 @@ func (c *Client) fail(err error) {
 // and attachments are released after the core acknowledges cleanup. If the
 // carrier was already lost, Close only stops local workers: core resources
 // remain retained until its session grace expires. A live peer that fails to
-// acknowledge returns an error; exceeding one second wraps context.DeadlineExceeded.
+// acknowledge returns an error; exceeding the bounded drain time wraps
+// context.DeadlineExceeded.
 func (c *Client) Close() error {
 	c.fail(ErrClosed)
 	<-c.stopped
@@ -523,7 +526,7 @@ func (c *Client) watchControl(control corewire.Stream) {
 	ending := c.err != nil
 	if current {
 		c.controlRead = control
-		if err != nil && !errors.Is(err, io.EOF) {
+		if err != nil {
 			c.controlErr = fmt.Errorf("core session close was not acknowledged: %w", err)
 		} else {
 			c.controlErr = nil

@@ -162,7 +162,7 @@ LEVELS = {s.name: s for s in [
                events=((3, "drop", "both"), (6, "type", TYPED), (9, "watch_loss", None), (48, "restore", None)), recovery=70),
     Scenario("L15", "cold SSH attach at 750 ms RTT, jitter, 3.5% loss, 1 Mbit/s", GEO, GEO,
              stream=(30, 500), recovery=90),
-    Scenario("L16", "cold SSH at 1200 ms RTT: startup cleanup ACK exceeds its deadline",
+    Scenario("L16", "cold SSH at 1200 ms RTT: exceeds the former one-second close deadline",
              "delay 600ms rate 10mbit", "delay 600ms rate 10mbit", stream=(30, 500), recovery=90),
 ]}
 COLD_SLOW = {"L15", "L16"}
@@ -1115,7 +1115,7 @@ def run_scenario(docker, image, volume, run, scenario, carrier, root, grace, see
             if geo:
                 assert 670 <= (result["ping"]["avg_ms"] or 0) <= 850, ("GEO RTT not observed", result["ping"])
             if scenario.name == "L16":
-                assert (result["ping"]["avg_ms"] or 0) > 1000, ("Path does not exceed the cleanup deadline", result["ping"])
+                assert (result["ping"]["avg_ms"] or 0) > 1000, ("Path does not exceed one second", result["ping"])
 
         if cold_slow:
             measure_link()
@@ -1390,6 +1390,8 @@ def main():
         parser.error("The startup lane measures SSH; use --carriers ssh")
     if args.lane != "stream" and set(levels) - set(steady):
         parser.error("Choose steady levels for this lane: " + ",".join(steady))
+    if args.lane == "startup" and any(LEVELS[level].warm_shape for level in levels):
+        parser.error("Choose a profile applied before startup. Use L15 for a GEO-like startup.")
     if not 1 <= args.seed < 2**32 - 2 - 100 * args.repeat or not 180 <= args.grace <= 3600:
         parser.error("Use a seed between 1 and 4294967294 minus 100 for each repeat, and grace between 180 and 3600 seconds")
     specialized = {"L13": "quic", **dict.fromkeys(COLD_SLOW, "ssh")}

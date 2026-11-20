@@ -384,8 +384,10 @@ last connection. No image hashing or network read runs on paint.
 Clean close sends control FIN, releases the core's topic/lease/document attachment
 authority, then returns `SessionEnd` as the cleanup receipt. The client consumes
 that receipt before closing its carrier; a queued FIN or successful write alone
-does not prove cleanup. Live close drains for at most one second and reports a
-missing receipt or deadline explicitly. Closing an already-lost carrier only
+does not prove cleanup. The live drain budget is one second plus two measured
+round trips, capped at five seconds. The client waits for the control reader
+to consume the receipt, even if the carrier has already ended. An empty stream
+or an expired deadline does not confirm cleanup. Closing an already-lost carrier only
 joins local workers; the core retains that session through its grace period.
 The server joins its control reader and drains different clients concurrently,
 so a hostile peer cannot multiply the shutdown timeout by client count.
