@@ -209,6 +209,24 @@ func TestRegisteredProtocolsTypeMissingTerminalAfterAcceptedSemanticOutput(t *te
 				}
 			},
 		},
+		"gemini": {
+			contentType: "text/event-stream",
+			body:        "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}\n\n",
+			assert: func(t *testing.T, update StreamUpdate) {
+				if update.ContentDelta != "partial" {
+					t.Fatalf("content update=%+v", update)
+				}
+			},
+		},
+		"gemini-interactions": {
+			contentType: "text/event-stream",
+			body:        "event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\"},\"event_type\":\"step.start\"}\n\nevent: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"partial\"},\"event_type\":\"step.delta\"}\n\n",
+			assert: func(t *testing.T, update StreamUpdate) {
+				if update.ContentDelta != "partial" {
+					t.Fatalf("content update=%+v", update)
+				}
+			},
+		},
 		"ollama": {
 			contentType: "application/x-ndjson",
 			body:        "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"partial\"}}\n",

@@ -54,8 +54,22 @@ func Jitter(attempt int, base, ceiling time.Duration) time.Duration {
 // Invalid/nonfinite hints fall back to the already-bounded local policy.
 func ServerDelay(resp *http.Response, fallback time.Duration, now time.Time) time.Duration {
 	fallback = Clamp(fallback)
+	if advised, ok := AdvisedDelay(resp, now); ok {
+		return max(fallback, Clamp(advised))
+	}
+	return fallback
+}
+
+// maxAdvisedDelay bounds a parsed hint so duration arithmetic cannot overflow.
+const maxAdvisedDelay = 30 * 24 * time.Hour
+
+// AdvisedDelay is the server's own Retry-After or retry-after-ms hint before
+// the cooldown ceiling applies, so callers can tell a short wait from a window
+// (a daily quota) that no automatic retry can outlast. ok is false without a
+// valid hint.
+func AdvisedDelay(resp *http.Response, now time.Time) (time.Duration, bool) {
 	if resp == nil {
-		return Clamp(fallback)
+		return 0, false
 	}
 	for _, hint := range []struct {
 		header string
@@ -69,18 +83,18 @@ func ServerDelay(resp *http.Response, fallback time.Duration, now time.Time) tim
 			continue
 		}
 		if count, err := strconv.ParseFloat(value, 64); err == nil && count >= 0 && !math.IsNaN(count) && !math.IsInf(count, 0) {
-			if count >= float64(MaxCooldown)/float64(hint.unit) {
-				return MaxCooldown
+			if count >= float64(maxAdvisedDelay)/float64(hint.unit) {
+				return maxAdvisedDelay, true
 			}
-			return max(fallback, Clamp(time.Duration(count*float64(hint.unit))))
+			return time.Duration(count * float64(hint.unit)), true
 		}
 		if hint.header == "Retry-After" {
 			if when, err := http.ParseTime(value); err == nil {
-				return max(fallback, Clamp(when.Sub(now)))
+				return max(0, min(when.Sub(now), maxAdvisedDelay)), true
 			}
 		}
 	}
-	return Clamp(fallback)
+	return 0, false
 }
 
 // Wait is cancellation-aware and applies the ceiling again at the timer boundary.

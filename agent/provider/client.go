@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -292,8 +294,9 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 	defer cancel()
 
 	var lastErr error
+	reencodes := 0
 	for attempt := 1; attempt <= c.dial.MaxAttempts; attempt++ {
-		resp, err := c.do(ctx, http.MethodPost, c.chatURL(), body)
+		resp, err := c.do(ctx, http.MethodPost, c.chatURL(req), body)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
@@ -312,6 +315,13 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			statusErr := readStatusError(resp, c.dial.MaxResponseBytes)
+			if reencodes < maxLearnedReencodes {
+				if next, learned := c.learnRejection(req, body, statusErr); learned {
+					body, reencodes = next, reencodes+1
+					attempt--
+					continue
+				}
+			}
 			full, replacement, recovered, recoveryErr := c.rebaseContinuation(req, statusErr)
 			if recoveryErr != nil {
 				return nil, recoveryErr
@@ -401,6 +411,7 @@ type ChatStream struct {
 	reader               streamEventReader
 	decoder              StreamDecoder
 	attempt              int
+	reencodes            int
 	yielded              bool
 	sawDone              bool
 	closed               bool
@@ -446,6 +457,9 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 			retryVeto := s.resp != nil && strings.EqualFold(strings.TrimSpace(s.resp.Header.Get("x-should-retry")), "false")
 			s.closeResp()
 			if errors.Is(err, io.EOF) {
+				if terminal, ok := s.decoder.(eofTerminalDecoder); ok && terminal.CompleteAtEOF() {
+					s.sawDone = true
+				}
 				if !s.sawDone {
 					// The connection closed before a terminal event. If
 					// nothing was yielded, this is retryable transport
@@ -595,7 +609,7 @@ func (s *ChatStream) establish() error {
 		if err := s.ctx.Err(); err != nil {
 			return err
 		}
-		resp, err := c.do(s.ctx, http.MethodPost, c.chatURL(), s.body)
+		resp, err := c.do(s.ctx, http.MethodPost, c.chatURL(s.request), s.body)
 		if err != nil {
 			if ctxErr := s.ctx.Err(); ctxErr != nil {
 				return ctxErr
@@ -613,6 +627,13 @@ func (s *ChatStream) establish() error {
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			statusErr := readStatusError(resp, c.dial.MaxResponseBytes)
+			if s.reencodes < maxLearnedReencodes {
+				if next, learned := c.learnRejection(s.request, s.body, statusErr); learned {
+					s.body, s.reencodes = next, s.reencodes+1
+					s.attempt--
+					continue
+				}
+			}
 			full, body, recovered, recoveryErr := c.rebaseContinuation(s.request, statusErr)
 			if recoveryErr != nil {
 				return recoveryErr
@@ -738,8 +759,12 @@ func (c *Client) withTimeout(ctx context.Context) (context.Context, context.Canc
 	return context.WithCancel(ctx)
 }
 
-// chatURL resolves the chat endpoint.
-func (c *Client) chatURL() *url.URL {
+// chatURL resolves the chat endpoint for one request. Protocols that name
+// the model or the streaming method in the path build it themselves.
+func (c *Client) chatURL(req *ChatRequest) *url.URL {
+	if endpoint, ok := c.proto.(ChatEndpoint); ok && req != nil {
+		return endpoint.ChatURL(c.base, req.Model, req.Stream)
+	}
 	return joinPath(c.base, c.proto.Info().ChatPath)
 }
 
@@ -753,9 +778,19 @@ func (c *Client) encodeChatRequest(req *ChatRequest) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
-	body, err = mergeJSONExtras(body, c.requestExtras)
-	if err != nil {
-		return nil, err
+	learner, learns := c.proto.(ModelLimitLearner)
+	if len(c.requestExtras) > 0 || learns {
+		merged, err := decodeJSONObject(body)
+		if err != nil {
+			return nil, fmt.Errorf("merge request extras: %w", err)
+		}
+		mergeExtras(merged, c.requestExtras, nestedExtraKeys(c.proto))
+		if learns {
+			learner.FinalizeRequest(c.base.String(), req, merged)
+		}
+		if body, err = json.Marshal(merged); err != nil {
+			return nil, fmt.Errorf("marshal request extras: %w", err)
+		}
 	}
 	if c.onRequestEncoded != nil {
 		c.onRequestEncoded(body)
@@ -832,23 +867,66 @@ func (c *Client) rebaseContinuation(req *ChatRequest, cause error) (*ChatRequest
 	return &full, body, true, nil
 }
 
-// mergeJSONExtras shallow-merges extra fields into an encoded JSON body.
-func mergeJSONExtras(body []byte, extra map[string]any) ([]byte, error) {
-	if len(extra) == 0 {
-		return body, nil
+// decodeJSONObject decodes an encoded request body for merging. Numbers stay
+// json.Number, so large integers in tool arguments keep their exact digits.
+func decodeJSONObject(body []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var object map[string]any
+	if err := decoder.Decode(&object); err != nil {
+		return nil, err
 	}
-	var merged map[string]any
-	if err := json.Unmarshal(body, &merged); err != nil {
-		return nil, fmt.Errorf("merge request extras: %w", err)
+	if object == nil {
+		return nil, fmt.Errorf("request body is not a JSON object")
 	}
-	for key, value := range extra {
-		merged[key] = value
+	return object, nil
+}
+
+// learnRejection asks the protocol whether a rejected request proves a model
+// limitation that a new encoding avoids. It returns the new body on success.
+// The caller bounds how often one request may be re-encoded.
+func (c *Client) learnRejection(req *ChatRequest, body []byte, cause *StatusError) ([]byte, bool) {
+	learner, ok := c.proto.(ModelLimitLearner)
+	if !ok || req == nil || cause == nil || !learner.LearnRejection(c.base.String(), req, body, cause) {
+		return nil, false
 	}
-	result, err := json.Marshal(merged)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request extras: %w", err)
+	next, err := c.encodeChatRequest(req)
+	if err != nil || bytes.Equal(next, body) {
+		return nil, false
 	}
-	return result, nil
+	if c.onRetry != nil {
+		c.onRetry(1, 0, cause)
+	}
+	return next, true
+}
+
+// maxLearnedReencodes bounds the re-encodes one request may make while it
+// learns limits (one per thinking level at most).
+const maxLearnedReencodes = 5
+
+// mergeExtras writes src into dst. A nested key whose values are objects on
+// both sides merges field by field; src wins for every field it sets.
+func mergeExtras(dst, src map[string]any, nested []string) {
+	for key, value := range src {
+		next, objectValue := value.(map[string]any)
+		current, objectCurrent := dst[key].(map[string]any)
+		if objectValue && objectCurrent && slices.Contains(nested, key) {
+			combined := cloneAnyMap(current)
+			for field, item := range next {
+				combined[field] = cloneAnyValue(item)
+			}
+			dst[key] = combined
+			continue
+		}
+		dst[key] = cloneAnyValue(value)
+	}
+}
+
+func nestedExtraKeys(proto Protocol) []string {
+	if nested, ok := proto.(NestedRequestExtras); ok {
+		return nested.NestedExtraKeys()
+	}
+	return nil
 }
 
 func withStreamFlag(req *ChatRequest, stream bool) *ChatRequest {
@@ -936,6 +1014,12 @@ func (c *Client) backoff(ctx context.Context, attempt int, resp *http.Response, 
 		return err
 	}
 	delay := serverHintedDelay(resp, attempt, c.dial)
+	// Some APIs advise the delay in the error body (google.rpc.RetryInfo),
+	// which readStatusError already consumed into the typed error.
+	var status *StatusError
+	if errors.As(cause, &status) && status.RetryAfter > delay {
+		delay = retry.Clamp(status.RetryAfter)
+	}
 	logIf(func(lg *logger.Logger) {
 		lg.Warn("RETRY", "attempt", "protocol", c.proto.Info().ID, "attempt", attempt,
 			"backoff_ms", delay.Milliseconds(), "error", cause.Error())
@@ -995,6 +1079,9 @@ func (e *StatusError) Retryable() bool {
 func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 	defer resp.Body.Close()
 	body, readErr := readBounded(resp.Body, min64(maxBody, 1<<20))
+	// Some streaming endpoints frame an error response as SSE even when the
+	// status is not 2xx (the Gemini Interactions API).
+	body = sseErrorPayload(body)
 	message := strings.TrimSpace(string(body))
 	if readErr != nil {
 		message = readErr.Error()
@@ -1006,20 +1093,29 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 			Type    string `json:"type"`
 			Code    any    `json:"code"`
 			Message string `json:"message"`
+			// Status and Details are the google.rpc.Status fields every Google
+			// API (Gemini included) returns.
+			Status  string            `json:"status"`
+			Details []json.RawMessage `json:"details"`
 		} `json:"error"`
 		Message string `json:"message"`
 	}
+	var google googleErrorFacts
 	if json.Unmarshal(body, &envelope) == nil {
 		if envelope.Error != nil && envelope.Error.Message != "" {
 			message = envelope.Error.Message
-			if envelope.Error.Type != "" {
-				message = envelope.Error.Type + ": " + message
+			if label := firstNonEmptyString(envelope.Error.Type, envelope.Error.Status); label != "" {
+				message = label + ": " + message
 			}
-			if envelope.Error.Code != nil && fmt.Sprint(envelope.Error.Code) != "" {
+			// A numeric code that repeats the HTTP status adds nothing.
+			if code := fmt.Sprint(envelope.Error.Code); envelope.Error.Code != nil && code != "" && code != strconv.Itoa(resp.StatusCode) {
 				message = fmt.Sprintf("%v: %s", envelope.Error.Code, message)
 			}
 		} else if envelope.Message != "" {
 			message = envelope.Message
+		}
+		if envelope.Error != nil {
+			google = parseGoogleErrorDetails(envelope.Error.Details)
 		}
 	}
 	if message == "" {
@@ -1030,10 +1126,28 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 	apiType := ""
 	apiCode := ""
 	if envelope.Error != nil {
-		code = envelope.Error.Type + " " + fmt.Sprint(envelope.Error.Code)
-		param = envelope.Error.Param
 		apiType = envelope.Error.Type
+		if apiType == "" && envelope.Error.Status != "" {
+			apiType = strings.ToLower(envelope.Error.Status)
+		}
+		code = apiType + " " + fmt.Sprint(envelope.Error.Code)
+		if len(google.Markers) > 0 {
+			code += " " + strings.Join(google.Markers, " ")
+		}
+		param = envelope.Error.Param
 		apiCode = fmt.Sprint(envelope.Error.Code)
+	}
+	now := time.Now()
+	retryAfter := retry.ServerDelay(resp, 0, now)
+	if google.RetryDelay > retryAfter {
+		retryAfter = retry.Clamp(google.RetryDelay)
+	}
+	// A server that asks for a wait longer than quotaWindow is reporting a
+	// quota window (a daily request limit), not momentary throttling: no
+	// automatic retry within the cooldown ceiling can succeed.
+	advised, _ := retry.AdvisedDelay(resp, now)
+	if resp.StatusCode == http.StatusTooManyRequests && max(advised, google.RetryDelay) > quotaWindow && !strings.Contains(code, "insufficient_quota") {
+		code = strings.TrimSpace(code + " insufficient_quota")
 	}
 	return &StatusError{
 		Param:      param,
@@ -1044,8 +1158,26 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 		RequestID:  firstNonEmptyString(resp.Header.Get("request-id"), resp.Header.Get("x-request-id")),
 		Code:       code,
 		RetryHint:  strings.ToLower(strings.TrimSpace(resp.Header.Get("x-should-retry"))),
-		RetryAfter: retry.ServerDelay(resp, 0, time.Now()),
+		RetryAfter: retryAfter,
 	}
+}
+
+// quotaWindow is the server-advised wait beyond which a 429 is a quota limit.
+const quotaWindow = time.Hour
+
+// sseErrorPayload returns the data of the first SSE event in body, or body
+// unchanged when it is not SSE-framed.
+func sseErrorPayload(body []byte) []byte {
+	trimmed := bytes.TrimSpace(body)
+	if !bytes.HasPrefix(trimmed, []byte("event:")) && !bytes.HasPrefix(trimmed, []byte("data:")) {
+		return body
+	}
+	for _, line := range bytes.Split(trimmed, []byte("\n")) {
+		if data, ok := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:")); ok {
+			return bytes.TrimSpace(data)
+		}
+	}
+	return body
 }
 
 func readBounded(reader io.Reader, limit int64) ([]byte, error) {

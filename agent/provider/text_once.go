@@ -92,15 +92,16 @@ func (p *Provider) CompleteTextOnce(ctx context.Context, r TextOnceRequest) (res
 	}
 	messages = append(messages, NewTextMessage("user", r.Input))
 	sampling := p.Sampling()
-	body, err := c.encodeChatRequest(&ChatRequest{
+	request := &ChatRequest{
 		Model: r.Model, Messages: messages, ToolChoice: "none", Stream: true,
 		StreamOptions: &StreamOptions{IncludeUsage: true}, MaxOutputTokens: r.MaxOutputTokens,
 		Temperature: sampling.Temperature, TopP: sampling.TopP,
-	})
+	}
+	body, err := c.encodeChatRequest(request)
 	if err != nil {
 		return result, err
 	}
-	resp, err := c.do(ctx, http.MethodPost, c.chatURL(), body)
+	resp, err := c.do(ctx, http.MethodPost, c.chatURL(request), body)
 	if err != nil {
 		return result, err
 	}

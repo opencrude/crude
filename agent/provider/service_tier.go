@@ -5,7 +5,7 @@ import "slices"
 // Service tiers a user can choose for a role. Each maps to the protocol's own
 // tier names, in preference order.
 var serviceTierAliases = map[string][]string{
-	"standard":  {"default", "standard_only"},
+	"standard":  {"default", "standard_only", "standard"},
 	"fast":      {"fast", "priority"},
 	"priority":  {"priority"},
 	"flex":      {"flex"},

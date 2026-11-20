@@ -110,10 +110,11 @@ func IsMediaPath(path string) bool {
 // ProtocolSupportsModality is the transport contract independent of model
 // capability. OpenAI-compatible Chat Completions supports OpenRouter's four
 // documented multipart shapes; Responses/Codex support image and input_file;
-// Anthropic supports image and PDF document blocks; Ollama supports images.
+// Anthropic supports image and PDF document blocks; both Gemini protocols take
+// inline image, PDF, audio and video; Ollama supports images.
 func ProtocolSupportsModality(protocolID, modality string) bool {
 	switch protocolID {
-	case "openai":
+	case "openai", "gemini", "gemini-interactions":
 		return modality == ModalityImage || modality == ModalityPDF ||
 			modality == ModalityAudio || modality == ModalityVideo
 	case "openai-responses", "codex", "anthropic":
@@ -132,17 +133,26 @@ func ProtocolSupportsMedia(protocolID, modality, mime string) bool {
 	if !ProtocolSupportsModality(protocolID, modality) {
 		return false
 	}
+	gemini := protocolID == "gemini" || protocolID == "gemini-interactions"
 	switch modality {
 	case ModalityImage:
 		switch mime {
 		case "image/jpeg", "image/png", "image/gif", "image/webp":
 			return true
+		case "image/heic", "image/heif", "image/avif":
+			return gemini
 		}
 		return protocolID == "ollama"
 	case ModalityPDF:
 		return mime == "application/pdf"
 	case ModalityAudio:
-		return mime == "audio/wav" || mime == "audio/mpeg"
+		switch mime {
+		case "audio/wav", "audio/mpeg":
+			return true
+		case "audio/aac", "audio/ogg", "audio/flac", "audio/mp4", "audio/x-m4a":
+			return gemini
+		}
+		return false
 	case ModalityVideo:
 		switch mime {
 		case "video/mp4", "video/quicktime", "video/webm":

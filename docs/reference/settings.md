@@ -468,6 +468,43 @@ still operate during full uploads and is not the Store switch. See
 [Responses delta uploads](prompt-architecture.md#responses-delta-uploads) for
 expiry recovery, durable resume and safety boundaries.
 
+### Gemini accounts
+
+The **Google Gemini** template connects to the Gemini API
+(`https://generativelanguage.googleapis.com/v1beta`) with an AI Studio key, sent
+only in the `x-goog-api-key` header. Two native protocols share the key, model
+list, typed decisions and error handling:
+
+- **Gemini** (`gemini`, the template default) streams
+  `models/{model}:streamGenerateContent?alt=sse`. Each model turn is stored as
+  the exact ordered parts Gemini returned, so thought signatures replay at their
+  original positions; only consecutive unsigned text chunks of one part merge.
+  Parallel tool results go back as one user turn of `functionResponse` parts in
+  call order, answering each call with the ID Gemini gave it (none when Gemini
+  sent none); failed tools answer under `error`, media under `parts`.
+  Gemini has no terminal event: the chunk with the finish reason closes the
+  turn, and Crude reads any late usage frame until the body ends; a body that
+  ends before a finish reason is an interrupted stream.
+- **Gemini Interactions** (`gemini-interactions`) uses `POST /interactions`
+  (pinned with `Api-Revision: 2026-05-20`) with `store: false` and the full step
+  history on every request, so Google keeps no interaction state; no extra
+  request field can turn storage on or point at a stored interaction. Thought
+  (with its signature), output and function-call steps replay in the input
+  shape; a thought without a signature is not replayed. Tool arguments stream
+  as they are generated.
+
+A model turn that cannot be replayed exactly (another protocol produced it, or
+its prefix changed through compaction or a model switch) is rebuilt from the
+transcript, and its first function call carries Gemini's documented
+`skip_thought_signature_validator` signature. Function schemas go out as native
+JSON Schema (`parametersJsonSchema`); only `const` (sent as a one-value `enum`),
+`$schema` and `required` names the schema does not declare change.
+
+The model list shows models that generate content or answer typed decisions,
+with their published input and output token limits. Usage counts cached prompt
+tokens (Gemini reports a cache read whenever implicit caching applies) and bills
+thought tokens as output.
+
 ### Network
 
 Application Settings has a dedicated **Network** group ordered last in the rail
@@ -594,8 +631,11 @@ request; choose **Decision** for such a decision model. The model list marks
 decision models with *decision model*. The protocol owns the decision path and
 wire format (`provider.DecisionCodec`): Ollama serves System One at
 `/v1/systemone` beside its native `/api` root (questions and answers keyed by
-slot, `noul` probabilities), and OpenAI-compatible APIs use the OpenAI
-Decisions API at `decisions` under their API base (shared `input`, named
+slot, `noul` probabilities), the Gemini API serves the Gemini Decisions API at
+`decisions` under `/v1beta` (the same slot-keyed questions and answers, with a
+shared `input` part list; list entries that support `createDecision`, such as
+`gemini-decision-1`, are marked decision models), and OpenAI-compatible APIs use
+the OpenAI Decisions API at `decisions` under their API base (shared `input`, named
 `predicate` and `choice` questions, an `answers` array; OpenAI serves it with
 `gpt-6-luna`). Protocols with no decision endpoint refuse Decision. Neither job falls back from one type to
 the other when a request fails.
@@ -689,7 +729,9 @@ When a supported binary is read, its bytes are attached to that tool result in
 the same agent turn; success never means "queued for a later prompt." The wire
 encoder maps the neutral attachment to the resolved protocol: OpenAI-compatible
 `image_url`, `file`, `input_audio`, or `video_url`; Responses/Codex
-`input_image` or `input_file`; Anthropic `image` or `document`; and Ollama
+`input_image` or `input_file`; Anthropic `image` or `document`; Gemini
+`inlineData` parts (inside `functionResponse.parts` for tool results);
+Gemini Interactions `image`, `audio`, `video` or `document` content; and Ollama
 `images`. Unsupported model, protocol, MIME, symlink, and size combinations fail
 before a provider request with an explicit reason. Binary edit/write operations
 remain forbidden regardless of read capability.
@@ -1104,7 +1146,9 @@ Each agent's **Speed**, beside Account, Model and Thinking, chooses its processi
 tier: the inherited connection/role, Standard, Fast, Priority, Flex or Ultrafast
 (`service_tier`). OpenAI sends the tier as `service_tier` (Ultrafast only on the
 Responses API); Anthropic sends Standard as `service_tier: standard_only` and Fast
-as fast mode (`speed: "fast"`), and reports the served speed for pricing.
+as fast mode (`speed: "fast"`), and reports the served speed for pricing. Both
+Gemini protocols send `standard`, `flex` or `priority` (Fast is `priority`) and
+report the tier that served the request.
 Application and workspace named profiles inherit their built-in role's tier until
 explicitly set. Session agent rows inherit their workspace definition until edited;
 named-agent session edits affect that profile in the current session, both when
@@ -1139,6 +1183,17 @@ on models that always think (Opus 5.5 and later, Fable, Mythos). The sampling
 fields (Temperature, Top P) are not sent to Anthropic, which rejects them.
 Thinking blocks are replayed only while their exact prefix (system, tools and
 earlier messages) is unchanged, which matches Anthropic's prefix check.
+
+Gemini sends a thinking level: **None** is `MINIMAL` (Gemini 3 and later cannot
+turn thinking off), Low, Medium and High map to their levels, and XHigh and Max
+are `XHIGH`. Thought summaries are requested unless the account turns
+**Reasoning summaries** off. Models accept different level subsets (Flash has no
+`XHIGH`; newer Flash models have no `MINIMAL`; Gemma takes `MINIMAL` and `HIGH`)
+and the model list does not publish them, so Crude learns from the API's own
+rejection: when Gemini rejects a level, or reports that a model does not think,
+the same request is re-encoded before any output with the nearest accepted level
+(the lower one on a tie) or without thinking, and later requests to that
+endpoint and model use what was learned for the life of the process.
 
 Visual contracts for this window:
 

@@ -52,7 +52,7 @@ func TestOllamaCloudChatURLIsNotDoubled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Client: %v", err)
 	}
-	if got := client.chatURL().Path; got != "/api/chat" {
+	if got := client.chatURL(nil).Path; got != "/api/chat" {
 		t.Fatalf("chat path = %q, want /api/chat", got)
 	}
 	lister, ok := client.Protocol().(ModelLister)

@@ -97,6 +97,12 @@ func TestGatewayStreamDisconnectActualProtocolWires(t *testing.T) {
 		"openai-responses": {"text/event-stream", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"accepted\"}\n\n", "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"finished\"}]}]}}\n\n"},
 	}
 	fixtures["codex"] = fixtures["openai-responses"]
+	fixtures["gemini"] = struct{ contentType, partial, complete string }{"text/event-stream",
+		"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"accepted\"}]}}]}\n\n",
+		"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"finished\"}]},\"finishReason\":\"STOP\"}]}\n\n"}
+	fixtures["gemini-interactions"] = struct{ contentType, partial, complete string }{"text/event-stream",
+		"event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":\"accepted\"}]},\"event_type\":\"step.start\"}\n\n",
+		"event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":\"finished\"}]},\"event_type\":\"step.start\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"completed\"},\"event_type\":\"interaction.completed\"}\n\n"}
 	for _, protocol := range ProtocolList() {
 		id := protocol.Info().ID
 		fixture, found := fixtures[id]

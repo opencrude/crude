@@ -17,6 +17,8 @@ func init() {
 	RegisterProtocol(&OpenAIStandard{})
 	RegisterProtocol(&OpenAIResponsesStandard{})
 	RegisterProtocol(&AnthropicStandard{})
+	RegisterProtocol(&GeminiStandard{})
+	RegisterProtocol(&GeminiInteractionsStandard{})
 	RegisterProtocol(&OllamaStandard{})
 	RegisterProtocol(&CodexStandard{})
 }
@@ -259,9 +261,7 @@ func (p *Provider) requestExtras() map[string]any {
 			merged[key] = value
 		}
 	}
-	for key, value := range p.extraBody {
-		merged[key] = cloneAnyValue(value)
-	}
+	mergeExtras(merged, p.extraBody, nestedExtraKeys(proto))
 	// Generic extras cannot silently re-enable an explicit Off or ZDR choice.
 	if settings := p.protocolSettings; settings != nil && proto != nil && proto.Info().Options.Store && (settings.Store != nil || settings.ZeroDataRetention) {
 		merged["store"] = settings.ResolveStore(proto.Info().Options.StoreDefault)

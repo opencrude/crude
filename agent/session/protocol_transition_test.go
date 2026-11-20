@@ -157,14 +157,17 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				if len(bodies) != 10 {
 					t.Fatalf("agentic loop did not complete all turns: requests=%d", len(bodies))
 				}
-				for _, key := range []string{"tools", "system", "instructions"} {
+				for _, key := range []string{"tools", "system", "instructions", "systemInstruction", "system_instruction"} {
 					if !reflect.DeepEqual(bodies[2][key], bodies[4][key]) {
 						t.Errorf("stable %s changed after the transition", key)
 					}
 				}
 				key := "messages"
-				if target.Info().ID == "openai-responses" || target.Info().ID == "codex" {
+				switch target.Info().ID {
+				case "openai-responses", "codex", "gemini-interactions":
 					key = "input"
+				case "gemini":
+					key = "contents"
 				}
 				first := bodies[2][key].([]any)
 				steady := bodies[4][key].([]any)
@@ -174,7 +177,7 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				if !reflect.DeepEqual(withoutTransitionCacheControls(first), withoutTransitionCacheControls(steady[:len(first)])) {
 					t.Fatal("steady request rewrote the reusable wire prefix")
 				}
-				for _, field := range []string{"tools", "system", "instructions", "model"} {
+				for _, field := range []string{"tools", "system", "instructions", "systemInstruction", "system_instruction", "model"} {
 					if !reflect.DeepEqual(bodies[6][field], bodies[8][field]) {
 						t.Errorf("compound configuration did not stabilize %s", field)
 					}
@@ -228,6 +231,29 @@ func writeTransitionResponse(w http.ResponseWriter, protocol string, index int) 
 			message["tool_calls"] = []any{map[string]any{"id": callID, "function": map[string]any{"name": "read_file", "arguments": map[string]any{"path": "a.go"}}}}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"model": "gpt-protocol-transition-test", "done": true, "message": message, "done_reason": "stop"})
+	case "gemini":
+		parts := []any{map[string]any{"text": "private trace", "thought": true}, map[string]any{"text": text, "thoughtSignature": "c2lnLXRleHQ="}}
+		if tool {
+			parts = []any{map[string]any{"text": "tool commentary"}, map[string]any{"functionCall": map[string]any{"id": callID, "name": "read_file", "args": map[string]any{"path": "a.go"}}, "thoughtSignature": "c2lnLWNhbGw="}}
+		}
+		chunk, _ := json.Marshal(map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"role": "model", "parts": parts}, "finishReason": "STOP"}},
+			"usageMetadata": map[string]any{"promptTokenCount": 10, "candidatesTokenCount": 5}})
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", chunk)
+	case "gemini-interactions":
+		steps := []any{map[string]any{"type": "thought", "signature": "c2lnLXRob3VnaHQ="}, map[string]any{"type": "model_output", "content": []any{map[string]any{"type": "text", "text": text}}}}
+		status := "completed"
+		if tool {
+			steps = []any{map[string]any{"type": "model_output", "content": []any{map[string]any{"type": "text", "text": "tool commentary"}}},
+				map[string]any{"type": "function_call", "id": callID, "name": "read_file", "arguments": map[string]any{"path": "a.go"}, "signature": "c2lnLWNhbGw="}}
+			status = "requires_action"
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for index, step := range steps {
+			encoded, _ := json.Marshal(map[string]any{"event_type": "step.start", "index": index, "step": step})
+			_, _ = fmt.Fprintf(w, "event: step.start\ndata: %s\n\nevent: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":%d}\n\n", encoded, index)
+		}
+		_, _ = fmt.Fprintf(w, "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"status\":%q,\"usage\":{\"total_input_tokens\":10,\"total_output_tokens\":5}}}\n\n", status)
 	}
 }
 
@@ -256,6 +282,27 @@ func validateSessionTransitionWire(t *testing.T, protocol string, wire map[strin
 			continue
 		}
 		var schema any
+		if protocol == "gemini" {
+			for _, rawDeclaration := range tool["functionDeclarations"].([]any) {
+				declaration := rawDeclaration.(map[string]any)
+				if strings.Contains(declaration["name"].(string), ".") {
+					t.Error("illegal dotted Gemini function name")
+				}
+				if object, ok := declaration["parametersJsonSchema"].(map[string]any); !ok || object["type"] != "object" {
+					t.Error("tool lacks object input schema")
+				}
+			}
+			continue
+		}
+		if protocol == "gemini-interactions" {
+			if tool["type"] != "function" {
+				t.Error("unsupported Interactions tool definition")
+			}
+			if object, ok := tool["parameters"].(map[string]any); !ok || object["type"] != "object" {
+				t.Error("tool lacks object input schema")
+			}
+			continue
+		}
 		if protocol == "anthropic" {
 			schema = tool["input_schema"]
 			if strings.Contains(tool["name"].(string), ".") {

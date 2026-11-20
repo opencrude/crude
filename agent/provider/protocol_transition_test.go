@@ -10,10 +10,12 @@ import (
 
 func TestEveryWireProtocolReprojectsCanonicalHistoryWithoutMutation(t *testing.T) {
 	fixtures := map[string]string{
-		"openai":           `{"choices":[{"message":{"role":"assistant","content":"historical commentary","tool_calls":[{"id":"read-1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.go\"}"}}]},"finish_reason":"tool_calls"}]}`,
-		"openai-responses": `{"id":"resp-1","status":"completed","store":true,"output":[{"type":"reasoning","id":"reason-1","summary":[],"encrypted_content":"opaque-source-only"},{"type":"message","id":"message-1","role":"assistant","status":"completed","phase":"commentary","content":[{"type":"output_text","text":"historical commentary","annotations":[]}]},{"type":"function_call","call_id":"read-1","name":"read_file","arguments":"{\"path\":\"a.go\"}","status":"completed"}]}`,
-		"anthropic":        `{"type":"message","id":"msg-1","role":"assistant","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"private trace","signature":"opaque-source-only"},{"type":"text","text":"historical commentary"},{"type":"tool_use","id":"read-1","name":"read_file","input":{"path":"a.go"}}]}`,
-		"ollama":           `{"model":"test-model","done":true,"done_reason":"stop","message":{"role":"assistant","content":"historical commentary","tool_calls":[{"id":"read-1","function":{"name":"read_file","arguments":{"path":"a.go"}}}]}}`,
+		"openai":              `{"choices":[{"message":{"role":"assistant","content":"historical commentary","tool_calls":[{"id":"read-1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"a.go\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		"openai-responses":    `{"id":"resp-1","status":"completed","store":true,"output":[{"type":"reasoning","id":"reason-1","summary":[],"encrypted_content":"opaque-source-only"},{"type":"message","id":"message-1","role":"assistant","status":"completed","phase":"commentary","content":[{"type":"output_text","text":"historical commentary","annotations":[]}]},{"type":"function_call","call_id":"read-1","name":"read_file","arguments":"{\"path\":\"a.go\"}","status":"completed"}]}`,
+		"anthropic":           `{"type":"message","id":"msg-1","role":"assistant","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"private trace","signature":"opaque-source-only"},{"type":"text","text":"historical commentary"},{"type":"tool_use","id":"read-1","name":"read_file","input":{"path":"a.go"}}]}`,
+		"ollama":              `{"model":"test-model","done":true,"done_reason":"stop","message":{"role":"assistant","content":"historical commentary","tool_calls":[{"id":"read-1","function":{"name":"read_file","arguments":{"path":"a.go"}}}]}}`,
+		"gemini":              `{"candidates":[{"content":{"role":"model","parts":[{"text":"private trace","thought":true},{"text":"historical commentary"},{"functionCall":{"id":"read-1","name":"read_file","args":{"path":"a.go"}},"thoughtSignature":"opaque-source-only"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5}}`,
+		"gemini-interactions": `{"id":"v1_1","status":"requires_action","steps":[{"type":"thought","signature":"opaque-source-only","summary":[{"type":"text","text":"private trace"}]},{"type":"model_output","content":[{"type":"text","text":"historical commentary"}]},{"type":"function_call","id":"read-1","name":"read_file","arguments":{"path":"a.go"}}],"usage":{"total_input_tokens":10,"total_output_tokens":5}}`,
 	}
 	fixtures["codex"] = fixtures["openai-responses"]
 	tools := []ToolDef{
@@ -94,10 +96,30 @@ func validateTransitionWire(t *testing.T, protocol string, body []byte) {
 		}
 		var name string
 		var schema any
-		if protocol == "anthropic" {
+		switch protocol {
+		case "gemini":
+			declarations := tool["functionDeclarations"].([]any)
+			for _, raw := range declarations {
+				declaration := raw.(map[string]any)
+				name, _ := declaration["name"].(string)
+				if !validName.MatchString(name) {
+					t.Errorf("illegal function name %q", name)
+				}
+				if object, ok := declaration["parametersJsonSchema"].(map[string]any); !ok || object["type"] != "object" {
+					t.Errorf("function %q lacks an object input schema", name)
+				}
+			}
+			continue
+		case "gemini-interactions":
+			name, _ = tool["name"].(string)
+			schema = tool["parameters"]
+			if tool["type"] != "function" {
+				t.Errorf("unsupported tool kind: %v", tool["type"])
+			}
+		case "anthropic":
 			name, _ = tool["name"].(string)
 			schema = tool["input_schema"]
-		} else {
+		default:
 			if tool["type"] != "function" {
 				t.Errorf("unsupported tool kind: %v", tool["type"])
 			}
@@ -127,6 +149,39 @@ func validateTransitionWire(t *testing.T, protocol string, body []byte) {
 				if kind != "output_text" && kind != "refusal" {
 					t.Errorf("assistant content uses invalid Responses kind %v", kind)
 				}
+			}
+		}
+	}
+	if protocol == "gemini" {
+		calls := map[string]bool{}
+		for _, raw := range wire["contents"].([]any) {
+			content := raw.(map[string]any)
+			role := content["role"]
+			if role != "user" && role != "model" {
+				t.Errorf("unsupported Gemini role %v", role)
+			}
+			firstCall := true
+			for _, rawPart := range content["parts"].([]any) {
+				part := rawPart.(map[string]any)
+				if call, ok := part["functionCall"].(map[string]any); ok {
+					calls[call["name"].(string)] = true
+					if firstCall && part["thoughtSignature"] == nil {
+						t.Errorf("first function call of a model turn has no signature: %v", part)
+					}
+					firstCall = false
+				}
+				if response, ok := part["functionResponse"].(map[string]any); ok && !calls[response["name"].(string)] {
+					t.Errorf("function response %v answers no earlier call", response["name"])
+				}
+			}
+		}
+	}
+	if protocol == "gemini-interactions" {
+		for _, raw := range wire["input"].([]any) {
+			switch kind := raw.(map[string]any)["type"]; kind {
+			case "user_input", "model_output", "thought", "function_call", "function_result":
+			default:
+				t.Errorf("unsupported Interactions step %v", kind)
 			}
 		}
 	}

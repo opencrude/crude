@@ -196,6 +196,10 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 			t.Error(err)
 			return
 		}
+		// Gemini generateContent names the model in the path, not the body.
+		if _, name, ok := strings.Cut(r.URL.Path, "/models/"); ok && request.Model == "" {
+			request.Model, _, _ = strings.Cut(name, ":")
+		}
 		w.Header().Set("Content-Type", fixture.contentType)
 		if owner == "child" && request.Model == parentModel {
 			parentRequests.Add(1)
@@ -772,6 +776,22 @@ func sessionSupervisedProtocolFixtures() map[string]sessionSupervisedProtocolFix
 				return fmt.Sprintf("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":%q,\"name\":\"publish_report\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":%q}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n", id, args)
 			}
 			return fmt.Sprintf("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n", text)
+		}},
+		"gemini": {"text/event-stream", func(text, id string) string {
+			return fmt.Sprintf("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":%q}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":%q,\"name\":\"write_file\",\"args\":{\"path\":\"guard.txt\"}},\"thoughtSignature\":\"c2ln\"}]}}]}\n\n", text, id)
+		}, func(text, id, args string) string {
+			if id != "" {
+				return fmt.Sprintf("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":%q,\"name\":\"publish_report\",\"args\":%s},\"thoughtSignature\":\"c2ln\"}]},\"finishReason\":\"STOP\"}]}\n\n", id, args)
+			}
+			return fmt.Sprintf("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":%q}]},\"finishReason\":\"STOP\"}]}\n\n", text)
+		}},
+		"gemini-interactions": {"text/event-stream", func(text, id string) string {
+			return fmt.Sprintf("event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":%q}]},\"event_type\":\"step.start\"}\n\nevent: step.start\ndata: {\"index\":1,\"step\":{\"type\":\"function_call\",\"id\":%q,\"name\":\"write_file\",\"arguments\":{}},\"event_type\":\"step.start\"}\n\nevent: step.delta\ndata: {\"index\":1,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"},\"event_type\":\"step.delta\"}\n\n", text, id)
+		}, func(text, id, args string) string {
+			if id != "" {
+				return fmt.Sprintf("event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":%q,\"name\":\"publish_report\",\"arguments\":%s},\"event_type\":\"step.start\"}\n\nevent: step.stop\ndata: {\"index\":0,\"event_type\":\"step.stop\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"requires_action\"},\"event_type\":\"interaction.completed\"}\n\n", id, args)
+			}
+			return fmt.Sprintf("event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":%q}]},\"event_type\":\"step.start\"}\n\nevent: step.stop\ndata: {\"index\":0,\"event_type\":\"step.stop\"}\n\nevent: interaction.completed\ndata: {\"interaction\":{\"status\":\"completed\"},\"event_type\":\"interaction.completed\"}\n\n", text)
 		}},
 		"ollama": {"application/x-ndjson", func(text, id string) string {
 			return fmt.Sprintf("{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":%q}}\n{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":%q,\"function\":{\"name\":\"write_file\",\"arguments\":\"{\\\"path\\\":\\\"guard.txt\\\",\\\"content\\\":\"}}]}}\n", text, id)
