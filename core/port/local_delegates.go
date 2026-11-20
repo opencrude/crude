@@ -168,6 +168,22 @@ func (l *local) SetPlanModeForAgent(agentID string, enabled bool) error {
 	return l.ws.SetPlanModeForAgent(agentID, enabled)
 }
 
+func (l *local) PlanReviewForAgent(agentID string) (types.PlanReview, bool) {
+	return l.ws.PlanReviewForAgent(agentID)
+}
+
+func (l *local) OpenPlanRevision(agentID string, revision int) (string, error) {
+	return l.ws.OpenPlanRevision(agentID, revision)
+}
+
+func (l *local) EditPlanComment(agentID string, edit types.PlanCommentEdit) error {
+	return l.ws.EditPlanComment(agentID, edit)
+}
+
+func (l *local) SettlePlanReview(agentID string, settle types.PlanReviewSettle) (types.PlanReviewSettlement, error) {
+	return l.ws.SettlePlanReview(agentID, settle)
+}
+
 func (l *local) GoalForAgent(agentID string) (types.Goal, bool) {
 	return l.ws.GoalForAgent(agentID)
 }

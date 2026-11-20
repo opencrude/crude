@@ -1,6 +1,9 @@
 package editor
 
-import "slices"
+import (
+	"math"
+	"slices"
+)
 
 type cachedRowMetrics struct {
 	source  rowMetrics
@@ -22,6 +25,7 @@ type editorRows struct {
 	ghostText       string
 	ghostLine       int
 	ghostRows       int
+	review          *reviewLayout
 	wrapped         bool
 	foldGeneration  uint64
 	measures        uint64
@@ -29,10 +33,10 @@ type editorRows struct {
 	breakArena      []int
 }
 
-func (p *editorRows) prepare(e *Editor, width int) (ready bool) {
+func (p *editorRows) prepare(e *Editor, width int, review *reviewLayout) (ready bool) {
 	e.remapFolds()
 	if !e.wordWrap {
-		p.prepareUnwrapped(e)
+		p.prepareUnwrapped(e, review)
 		return true
 	}
 
@@ -61,6 +65,9 @@ func (p *editorRows) prepare(e *Editor, width int) (ready bool) {
 			if change.delta == 0 {
 				clear(p.metrics[a:b])
 			} else {
+				// Card placements are keyed by source line. Remove only
+				// those overlays before the journal relocates source rows.
+				p.setReviewRows(nil)
 				p.metrics = slices.Replace(p.metrics, a, b, make([]cachedRowMetrics, replacement)...)
 				p.lines = slices.Replace(p.lines, a, b, make([]rowLine, replacement)...)
 				p.prefix = make([]int, len(p.lines)+1)
@@ -148,27 +155,73 @@ func (p *editorRows) prepare(e *Editor, width int) (ready bool) {
 		layout := wrapRowMetrics(m.source, width, p.lines[line].runs)
 		if _, hidden := e.hiddenFold(line); hidden {
 			layout.count = 0
-		} else if extra := e.ghostRows(line); extra > 0 {
-			layout.ghost = extra
-			layout.count += extra
+		} else {
+			if extra := e.ghostRows(line); extra > 0 {
+				layout.ghost = int32(extra)
+				layout.count += extra
+			}
+			if p.review != nil {
+				addReviewRowCount(&layout, len(p.review.lineRows(line)))
+			}
 		}
 		p.set(line, layout)
 	}
+	p.setReviewRows(review)
 	return true
+}
+
+func addReviewRowCount(layout *rowLine, count int) {
+	layout.count += count - int(layout.review)
+	layout.review = int32(count)
+}
+
+func (p *editorRows) setReviewRows(next *reviewLayout) {
+	if next == p.review {
+		return
+	}
+	update := func(line, count int) {
+		layout := p.lines[line]
+		if layout.count > 0 && int(layout.review) != count {
+			addReviewRowCount(&layout, count)
+			p.set(line, layout)
+		}
+	}
+	if p.review != nil {
+		for line := range p.review.lines {
+			update(line, len(next.lineRows(line)))
+		}
+	}
+	if next != nil {
+		for line, rows := range next.lines {
+			update(line, len(rows))
+		}
+	}
+	p.review = next
 }
 
 // scrollY remains the top source line. wrapOffset is its local visual row, so
 // peer edits and retained navigation keep using the existing source-line anchor.
 func (e *Editor) usesRows() bool {
-	if !e.open || e.rowsStopped || !e.wordWrap && len(e.folds.hidden) == 0 && !e.hasGhostRows() || e.viewW < 10 || e.viewH < 4 {
+	if !e.open || e.rowsStopped || e.viewW < 10 || e.viewH < 4 {
 		return false
 	}
-	if !e.rows.prepare(e, max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth()-1)) {
+	var review *reviewLayout
+	if len(e.review.comments) != 0 {
+		review = e.currentReviewRows()
+	}
+	if !e.wordWrap && len(e.folds.hidden) == 0 && !e.hasGhostRows() && review == nil {
+		if e.rows.review != nil {
+			e.rows.setReviewRows(nil)
+			e.wrapOffset = 0
+		}
+		return false
+	}
+	if !e.rows.prepare(e, max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth()-1), review) {
 		e.startRows()
 		// Cold wrapping never reveals a deliberately collapsed source range.
 		// The same index keeps its fold-only identity until exact metrics arrive.
-		if len(e.folds.hidden) > 0 || e.hasGhostRows() {
-			e.rows.prepareUnwrapped(e)
+		if len(e.folds.hidden) > 0 || e.hasGhostRows() || review != nil {
+			e.rows.prepareUnwrapped(e, review)
 			return true
 		}
 		return false
@@ -205,13 +258,14 @@ func (e *Editor) setScrollRow(row int) {
 type visibleRow struct {
 	line, start, end, index int
 	continues               bool
-	// ghostRow is 1 + the index of a suggestion's faded row, 0 for text.
-	ghostRow int
+	// Display-only row indexes are one-based; both are 0 for source text.
+	ghostRow  int
+	reviewRow int
 }
 
 func (e *Editor) rowAt(row int) visibleRow {
 	if !e.usesRows() {
-		return visibleRow{line: row, end: int(^uint(0) >> 1)}
+		return visibleRow{line: row, end: math.MaxInt}
 	}
 	p := e.prepareRows()
 	if row >= p.total() {
@@ -219,11 +273,14 @@ func (e *Editor) rowAt(row int) visibleRow {
 	}
 	line, local := p.at(row)
 	r := p.lines[line]
-	if r.ghost > 0 && local >= r.textRows() {
-		return visibleRow{line: line, end: int(^uint(0) >> 1), index: local, ghostRow: local - r.textRows() + 1}
+	if extra := local - r.textRows(); extra >= 0 {
+		if extra < int(r.ghost) {
+			return visibleRow{line: line, end: math.MaxInt, index: local, ghostRow: extra + 1}
+		}
+		return visibleRow{line: line, end: math.MaxInt, index: local, reviewRow: extra - int(r.ghost) + 1}
 	}
 	if !e.wordWrap || !p.wrapped {
-		return visibleRow{line: line, end: int(^uint(0) >> 1)}
+		return visibleRow{line: line, end: math.MaxInt}
 	}
 	return visibleRow{line: line, start: r.start(local), end: r.end(local), index: local, continues: local+1 < r.textRows()}
 }
@@ -268,9 +325,36 @@ func (e *Editor) positionOnRow(row, column int) (Position, bool) {
 }
 func (e *Editor) moveVisualRows(delta int) {
 	row, _ := e.visualPosition(e.cursor, e.wrapBefore)
+	target := row + delta
+	if e.rows.review != nil {
+		last := e.visualRowCount() - 1
+		target = e.reviewCaretRow(min(last, max(0, target)), delta)
+		if target > last {
+			target = e.reviewCaretRow(last, -1)
+		}
+		if target == row {
+			return
+		}
+	}
 	e.setGoal()
-	e.cursor, e.wrapBefore = e.positionOnRow(row+delta, e.goalCol-e.scrollX)
+	e.cursor, e.wrapBefore = e.positionOnRow(target, e.goalCol-e.scrollX)
 	e.ensureCursorVisible()
+}
+
+// reviewCaretRow skips display-only review rows without searching source text.
+func (e *Editor) reviewCaretRow(row, direction int) int {
+	if e.rows.review == nil || row < 0 {
+		return row
+	}
+	r := e.rowAt(row)
+	if r.reviewRow == 0 {
+		return row
+	}
+	p := e.prepareRows()
+	if direction < 0 {
+		return p.before(r.line) + p.lines[r.line].textRows() - 1
+	}
+	return p.before(r.line + 1)
 }
 
 // setGoal records the column vertical movement keeps: the caret's screen
@@ -332,25 +416,28 @@ func (p *editorRows) needsCold(e *Editor) bool {
 }
 
 func (e *Editor) wrapsRows() bool { return e.wordWrap && e.usesRows() && e.rows.wrapped }
-func (p *editorRows) prepareUnwrapped(e *Editor) {
+func (p *editorRows) prepareUnwrapped(e *Editor, review *reviewLayout) {
 	count := e.LineCount()
 	ghost := e.currentGhost()
 	ghostLine, ghostRows := -1, 0
 	if ghost != nil {
 		ghostLine, ghostRows = ghost.atLine, e.ghostRows(ghost.atLine)
 	}
-	if p.buffer == e.buf && p.revision == e.Revision() && !p.wrapped && p.foldGeneration == e.folds.hiddenGeneration &&
+	if p.buffer == e.buf && len(p.lines) == count && !p.wrapped && p.foldGeneration == e.folds.hiddenGeneration &&
 		p.ghostLine == ghostLine && p.ghostRows == ghostRows {
+		p.revision = e.Revision()
+		p.setReviewRows(review)
 		return
 	}
 	p.reset(count)
+	p.review = nil
 	for line := 0; line < count; line++ {
 		rows := 1
 		layout := rowLine{}
 		if _, hidden := e.hiddenFold(line); hidden {
 			rows = 0
 		} else if line == ghostLine && ghostRows > 0 {
-			layout.ghost = ghostRows
+			layout.ghost = int32(ghostRows)
 			rows += ghostRows
 		}
 		layout.count = rows
@@ -358,4 +445,5 @@ func (p *editorRows) prepareUnwrapped(e *Editor) {
 	}
 	p.buffer, p.revision, p.wrapped, p.foldGeneration = e.buf, e.Revision(), false, e.folds.hiddenGeneration
 	p.ghostLine, p.ghostRows = ghostLine, ghostRows
+	p.setReviewRows(review)
 }

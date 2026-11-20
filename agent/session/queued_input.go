@@ -13,9 +13,8 @@ import (
 	"crude/agent/sessiondb"
 )
 
-// InputAdmissionQueued means the input was durably queued because its owner
-// was compacting (or earlier input is still queued). It runs, in order, when
-// compaction finishes or the preceding turn completes naturally.
+// InputAdmissionQueued means the input is retained in the durable queue. It
+// runs in order when its owner is ready.
 const InputAdmissionQueued InputAdmissionStatus = "queued"
 
 const queuedInputsStateKey = "queued_inputs"
@@ -104,12 +103,16 @@ func (s *Session) shouldQueueInput(agentID string) bool {
 }
 
 // queueInput durably appends one input. Nothing is acknowledged before the
-// queue is persisted, so a crash can never lose an acknowledged prompt.
-func (s *Session) queueInput(agentID string, input provider.UserInput, draftRevision uint64) (InputAdmissionReceipt, error) {
+// queue is persisted, so a crash can never lose an acknowledged prompt. A
+// commit can publish related runtime state with the same queue record.
+func (s *Session) queueInput(agentID string, input provider.UserInput, draftRevision uint64, commit func([]QueuedInput) error) (InputAdmissionReceipt, error) {
+	if commit == nil {
+		commit = s.persistQueuedInputsLocked
+	}
 	s.queueMu.Lock()
 	item := QueuedInput{Input: cloneUserInput(input), DraftRevision: draftRevision, QueuedAt: time.Now()}
 	next := append(append([]QueuedInput(nil), s.queued...), item)
-	if err := s.persistQueuedInputsLocked(next); err != nil {
+	if err := commit(next); err != nil {
 		s.queueMu.Unlock()
 		return InputAdmissionReceipt{}, err
 	}

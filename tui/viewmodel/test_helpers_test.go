@@ -233,6 +233,7 @@ func newTestApp(t testing.TB) *App {
 	app.AgentView = NewAgentViewState(app.ws.AgentMgr())
 
 	app.Feedback = newFeedbackSink(app)
+	app.bindClipboardOwners()
 	app.initWorkspacePanels()
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)

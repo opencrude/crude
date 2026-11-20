@@ -41,6 +41,26 @@ func SaveRuntimeState(ctx context.Context, db *sql.DB, key string, value []byte)
 	return nil
 }
 
+// CommitRuntimeState changes related runtime records in one transaction.
+func CommitRuntimeState(ctx context.Context, db *sql.DB, updates []RuntimeStateUpdate, clearKeys ...string) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, update := range updates {
+		if err := saveRuntimeStateTx(tx, update); err != nil {
+			return err
+		}
+	}
+	for _, key := range clearKeys {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM session_runtime_state WHERE key = ?`, key); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func LoadRuntimeState(ctx context.Context, db *sql.DB, key string) ([]byte, error) {
 	if db == nil {
 		return nil, nil

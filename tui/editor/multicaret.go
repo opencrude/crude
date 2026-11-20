@@ -84,6 +84,15 @@ func (e *Editor) SourceSelections() []SourceSelection {
 	return out
 }
 
+// SelectionOffsets returns the primary selection as ordered byte offsets
+// into Value. With no selection both offsets identify the primary caret.
+func (e *Editor) SelectionOffsets() (start, end int) {
+	if e.buf == nil {
+		return 0, 0
+	}
+	return e.primaryRange().bounds()
+}
+
 // Display goals belong to geometry, not retained source selections.
 func (e *Editor) resetSecondaryGoals() {
 	if e.secondary == nil || len(e.secondary.goals) == 0 {
@@ -455,6 +464,9 @@ func (e *Editor) projectRectangle(pos Position) {
 	var scratch [4]bidi.ColumnRange
 	for row := min(first, last); row <= max(first, last); row++ {
 		r := e.rowAt(row)
+		if r.reviewRow > 0 {
+			continue
+		}
 		ln := e.rowLine(r)
 		count := len(ranges)
 		for _, part := range ln.LogicalRanges(left, right, scratch[:0]) {

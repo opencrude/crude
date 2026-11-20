@@ -127,6 +127,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.autoCompletionCmd(time.Now()))
 	command = tea.Batch(command, m.syncSuggestion(time.Now()))
 	command = tea.Batch(command, m.syncAskSends())
+	m.syncPlanDecision()
 	command = tea.Batch(command, m.syncInlayHints())
 	command = tea.Batch(command, m.syncSemanticTokens())
 	command = tea.Batch(command, m.syncOccurrences())
@@ -378,6 +379,14 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyRemoteWorkspace(msg)
 	case planModeResultMsg:
 		return m, m.applyPlanModeResult(msg)
+	case planRevisionOpenedMsg:
+		return m, m.applyPlanRevisionOpened(msg)
+	case planCommentEditedMsg:
+		return m, m.applyPlanCommentEdited(msg)
+	case planSettledMsg:
+		return m, m.applyPlanSettled(msg)
+	case editor.ReviewCommentActivatedMsg:
+		return m, m.editPlanComment(msg.Editor, msg.ID)
 	case loopActionResultMsg:
 		m.applyLoopActionResult(msg)
 		return m, nil

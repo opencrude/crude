@@ -179,6 +179,7 @@ func (m *App) closeLinkedView(v *EditorView) {
 	}
 	delete(m.inlayViews, closing)
 	delete(m.EditorState.Views, v.Tab)
+	m.forgetPlanEditor(v.Editor)
 	if m.Win.IndexOf(v.Tab) >= 0 {
 		m.Win.CloseTabByID(v.Tab)
 	}

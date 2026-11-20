@@ -1507,7 +1507,7 @@ func (a *actor) bindInputExecution(input *provider.UserInput, agentID string) {
 func (a *actor) startJob(command actorCommand) bool {
 	request := *command.request
 	historyRestore := request.Method == coreprotocol.HistoryApply
-	if a.historyBusy && (request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession || request.Method == coreprotocol.EnsureSession || request.Method == coreprotocol.SubmitInput || request.Method == coreprotocol.SteerInput || request.Method == coreprotocol.AgentRecover || request.Method == coreprotocol.AgentCompact) {
+	if a.historyBusy && (request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession || request.Method == coreprotocol.EnsureSession || request.Method == coreprotocol.SubmitInput || request.Method == coreprotocol.SteerInput || request.Method == coreprotocol.AgentRecover || request.Method == coreprotocol.AgentCompact || request.Method == coreprotocol.AgentPlanSettle) {
 		command.result <- fault(request, "restore_busy", "history restore owns admission; input and work are retained")
 		return true
 	}

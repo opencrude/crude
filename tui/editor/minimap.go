@@ -16,6 +16,7 @@ type minimapKey struct {
 	inlays                              *editorInlayProjection
 	ghost                               *editorGhost
 	ghostText                           string
+	review                              *reviewLayout
 }
 type minimapProjection struct {
 	key     minimapKey
@@ -55,7 +56,7 @@ func (e *Editor) prepareMinimap(height int) *ui.ScrollbarOverview {
 	}
 	rows := e.visualRowCount()
 	wrapped := e.wrapsRows()
-	key := minimapKey{buffer: e.buf, revision: e.Revision(), fold: e.folds.hiddenGeneration, tab: e.TabWidth(), width: width, height: height, rows: rows, wrapped: wrapped, wrapWidth: e.rows.width, inlays: e.currentInlays(), ghost: e.currentGhost()}
+	key := minimapKey{buffer: e.buf, revision: e.Revision(), fold: e.folds.hiddenGeneration, tab: e.TabWidth(), width: width, height: height, rows: rows, wrapped: wrapped, wrapWidth: e.rows.width, inlays: e.currentInlays(), ghost: e.currentGhost(), review: e.rows.review}
 	if key.ghost != nil {
 		key.ghostText = key.ghost.text
 	}

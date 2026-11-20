@@ -57,6 +57,55 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			}
 			return response(request, coreprotocol.BoolResult{OK: true})
 		}, true
+	case coreprotocol.AgentPlanReviewOpen:
+		var in coreprotocol.AgentPlanReviewOpenRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad(err)
+		}
+		run, err := ws.PrepareOpenPlanRevision(in.AgentID, in.Revision)
+		if err != nil {
+			return done(wire(coreprotocol.AgentPlanReviewOpenResult{Error: err.Error()}))
+		}
+		return func(context.Context) coreprotocol.Response {
+			path, err := run()
+			if err != nil {
+				return response(request, coreprotocol.AgentPlanReviewOpenResult{Error: err.Error()})
+			}
+			return response(request, coreprotocol.AgentPlanReviewOpenResult{Path: path})
+		}, true
+	case coreprotocol.AgentPlanComment:
+		var in coreprotocol.AgentPlanCommentRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad(err)
+		}
+		run, err := ws.PrepareEditPlanComment(in.AgentID, in.Edit)
+		if err != nil {
+			return done(coreprotocol.BoolResult{Error: err.Error()})
+		}
+		return func(context.Context) coreprotocol.Response {
+			if err := run(); err != nil {
+				return response(request, coreprotocol.BoolResult{Error: err.Error()})
+			}
+			return response(request, coreprotocol.BoolResult{OK: true})
+		}, true
+	case coreprotocol.AgentPlanSettle:
+		var in coreprotocol.AgentPlanSettleRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad(err)
+		}
+		input := humanInput(request, coreprotocol.InputRequest{AgentID: in.AgentID})
+		a.bindInputExecution(&input, in.AgentID)
+		run, err := ws.PrepareSettlePlanReview(in.AgentID, in.Settle, input)
+		if err != nil {
+			return done(wire(coreprotocol.AgentPlanSettleResult{Error: err.Error()}))
+		}
+		return func(ctx context.Context) coreprotocol.Response {
+			settlement, err := run(ctx)
+			if err != nil {
+				return response(request, coreprotocol.AgentPlanSettleResult{Error: err.Error()})
+			}
+			return response(request, coreprotocol.AgentPlanSettleResult{Settlement: settlement})
+		}, true
 	case coreprotocol.AgentGoal:
 		var in coreprotocol.AgentGoalRequest
 		if err := decodeRequest(request, &in); err != nil {
@@ -226,6 +275,7 @@ func ownerMutation(method string) bool {
 	}
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
+		coreprotocol.AgentPlanReviewOpen, coreprotocol.AgentPlanComment, coreprotocol.AgentPlanSettle,
 		coreprotocol.WorkspaceOverridesSet,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
 		return true
@@ -239,6 +289,7 @@ func ownerOperation(method string) bool {
 	}
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
+		coreprotocol.AgentPlanReviewOpen, coreprotocol.AgentPlanComment, coreprotocol.AgentPlanSettle,
 		coreprotocol.HistoryUndoScopes, coreprotocol.CommandViewOpen,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true

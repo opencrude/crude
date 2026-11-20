@@ -54,6 +54,9 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if ed.Primary().HasLocalEdits() { // views of one file share its edits
 		crude.Items = append(crude.Items, ui.ContextMenuItem{Label: "Finish this change", Action: m.runFinishChange})
 	}
+	if doc, ok := m.planDocumentOf(ed); ok {
+		st.Sections = append(st.Sections, m.planReviewMenuSection(ed, doc))
+	}
 	st.Sections = append(st.Sections, crude)
 
 	// Cut/Copy/Paste (no section label: the popup title "Editor"

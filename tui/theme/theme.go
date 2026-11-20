@@ -33,6 +33,8 @@ type Colors struct {
 	Gutter color.Color
 	// TextSelection is the distinct high-visibility fill for text ranges, not list rows.
 	TextSelection, TextSelectionFg color.Color
+	// ReviewCommentRange marks a range with an attached review comment.
+	ReviewCommentRange color.Color
 	// Hover is the background color for interactive elements (file tree
 	// rows, tabs, command palette items, settings rows, etc.) when the
 	// mouse cursor is over them but they aren't selected. Slightly dimmer
@@ -163,23 +165,24 @@ type Styles struct {
 
 func DefaultDark() *Theme {
 	c := Colors{
-		Bg:              lipgloss.Color("#0d1117"),
-		Fg:              lipgloss.Color("#e6edf3"),
-		Muted:           lipgloss.Color("#8b949e"),
-		Accent:          lipgloss.Color("#f0883e"),
-		Accent2:         lipgloss.Color("#a5d6ff"),
-		Success:         lipgloss.Color("#7ee787"),
-		Error:           lipgloss.Color("#ff7b72"),
-		Warning:         lipgloss.Color("#d29922"),
-		Border:          lipgloss.Color("#30363d"),
-		Selection:       lipgloss.Color("#1e2a3a"),
-		TextSelection:   lipgloss.Color("#424242"),
-		TextSelectionFg: lipgloss.Color("#ffffff"),
-		Hover:           lipgloss.Color("#21262d"),
-		Shadow:          lipgloss.Color("#010409"),
-		SubPaneBg:       lipgloss.Color("#1c2333"),
-		Gutter:          lipgloss.Color("#11161d"),
-		IncompleteBg:    lipgloss.Color("#3a1a1a"),
+		Bg:                 lipgloss.Color("#0d1117"),
+		Fg:                 lipgloss.Color("#e6edf3"),
+		Muted:              lipgloss.Color("#8b949e"),
+		Accent:             lipgloss.Color("#f0883e"),
+		Accent2:            lipgloss.Color("#a5d6ff"),
+		Success:            lipgloss.Color("#7ee787"),
+		Error:              lipgloss.Color("#ff7b72"),
+		Warning:            lipgloss.Color("#d29922"),
+		Border:             lipgloss.Color("#30363d"),
+		Selection:          lipgloss.Color("#1e2a3a"),
+		TextSelection:      lipgloss.Color("#424242"),
+		TextSelectionFg:    lipgloss.Color("#ffffff"),
+		ReviewCommentRange: lipgloss.Color("#33251f"),
+		Hover:              lipgloss.Color("#21262d"),
+		Shadow:             lipgloss.Color("#010409"),
+		SubPaneBg:          lipgloss.Color("#1c2333"),
+		Gutter:             lipgloss.Color("#11161d"),
+		IncompleteBg:       lipgloss.Color("#3a1a1a"),
 		// Popup chrome: unified design across all popups.
 		// Code.Bg provides the "card on editor" feel used by the
 		// diagnostic hover popup. PopupBorder is intentionally

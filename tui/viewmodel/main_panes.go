@@ -65,6 +65,7 @@ type mainPaneView struct {
 	input                        *shellinput.Screen
 	editor                       *shelleditor.Screen
 	diskBar                      *ui.NoticeBar
+	planBar                      *ui.NoticeBar
 	image                        *imageviewer.Screen
 	deck                         *deckMount
 	reflowContentW, reflowInnerW int
@@ -396,6 +397,11 @@ func (p *mainPaneLayout) configureGroup(g *mainPaneGroup, r ui.Rect, x, y int) {
 			bar.SetTokens(m.rootHost.Tokens())
 			g.add(bar, ui.Rect{Y: body.Y, W: body.W, H: 1})
 			editorRect.Y, editorRect.H = body.Y+1, body.H-1
+		}
+		if bar := m.planReviewChrome(g.view, tab.ID, ed, body.W); bar != nil && editorRect.H > 2 {
+			bar.SetTokens(m.rootHost.Tokens())
+			g.add(bar, ui.Rect{Y: editorRect.Y, W: body.W, H: 1})
+			editorRect.Y, editorRect.H = editorRect.Y+1, editorRect.H-1
 		}
 		g.add(g.view.editor, editorRect)
 		g.editor = g.screen(editorRect)

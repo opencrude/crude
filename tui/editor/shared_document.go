@@ -303,6 +303,9 @@ func (e *Editor) InstallDocument(s document.Snapshot) error {
 	if len(s.Text) > document.MaxBytes || len(s.Saved) > document.MaxBytes || !utf8.Valid(s.Text) || !utf8.Valid(s.Saved) {
 		return document.ErrLimit
 	}
+	if e.documentProjection == nil || e.documentProjection.snapshot.ID != s.ID {
+		e.SetReviewComments(nil)
+	}
 	e.cancelRows()
 	e.folds = foldState{}
 	e.rowsStopped = false

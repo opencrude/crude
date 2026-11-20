@@ -12,6 +12,8 @@ const (
 	TextPromptGeneric
 	// TextPromptGoToLine asks for a line in the focused editor.
 	TextPromptGoToLine
+	// TextPromptComment edits a review comment on the focused editor's text.
+	TextPromptComment
 )
 
 // TextPromptState holds the data for a single text-input popup. The
@@ -125,6 +127,8 @@ func kindIcon(k TextPromptKind) string {
 		return "↪"
 	case TextPromptGoToLine:
 		return "↦"
+	case TextPromptComment:
+		return "▎"
 	default:
 		return "•"
 	}

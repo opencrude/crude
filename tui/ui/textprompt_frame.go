@@ -58,6 +58,8 @@ func TextPromptBody(th *theme.Theme, st *TextPromptState) Component {
 		placeholder = "new name"
 	case TextPromptGoToLine:
 		placeholder = "42"
+	case TextPromptComment:
+		placeholder = "comment"
 	}
 
 	field := NewTextField(ComponentID(TextPromptFieldID), tokens)
@@ -79,6 +81,8 @@ func TextPromptBody(th *theme.Theme, st *TextPromptState) Component {
 		hintText = "enter rename · esc cancel"
 	case TextPromptGoToLine:
 		hintText = "enter jump · esc cancel"
+	case TextPromptComment:
+		hintText = "enter save · esc cancel"
 	}
 	hint := NewLabel(NewID(RootID, "text-prompt/hint"), hintText, th)
 	hint.SetStyle(tokens.Color(ColorMuted), tokens.Color(ColorPopupBg), cell.AttrItalic)

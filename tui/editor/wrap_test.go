@@ -171,9 +171,9 @@ func TestWrapCacheReflowsOnlyChangedSourceAndRetainsPeers(t *testing.T) {
 		t.Fatal("typing reflowed offscreen source", e.rows.measures-before)
 	}
 	for _, width := range []int{15, 40, 60, 13, 50} {
-		e.rows.prepare(e, width)
+		e.rows.prepare(e, width, nil)
 		reference := coldRowsForTest(t, e)
-		reference.prepare(e, width)
+		reference.prepare(e, width, nil)
 		for i := range reference.lines {
 			if e.rows.lines[i].count != reference.lines[i].count {
 				t.Fatal("resize aliased neighbouring row geometry", i, width)
@@ -195,7 +195,7 @@ func TestWrapCacheReflowsOnlyChangedSourceAndRetainsPeers(t *testing.T) {
 	}
 	paintWrapped(t, e, 50, 12)
 	fresh := coldRowsForTest(t, e)
-	fresh.prepare(e, e.rows.width)
+	fresh.prepare(e, e.rows.width, nil)
 	if e.rows.total() != fresh.total() {
 		t.Fatal("batched line shifts retained stale row counts", e.rows.total(), fresh.total())
 	}
@@ -259,9 +259,9 @@ func BenchmarkWrappedRowPreparation(b *testing.B) {
 				switch stage {
 				case "cold":
 					p := coldRowsForTest(b, e)
-					p.prepare(e, 70)
+					p.prepare(e, 70, nil)
 				case "resize":
-					e.rows.prepare(e, 70+i%2)
+					e.rows.prepare(e, 70+i%2, nil)
 				case "typing_and_paint":
 					key := tea.KeyPressMsg{Code: tea.KeyBackspace}
 					if i%2 == 0 {

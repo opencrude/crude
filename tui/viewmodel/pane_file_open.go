@@ -293,6 +293,7 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 			// The file opens where it was requested. A view elsewhere stays
 			// where it is; this pane gets its own view of the same document.
 			if view := m.showDocument(file.path, msg.group, foreground); view != nil {
+				m.placeOpenedPlan(msg.seq, view, msg.group)
 				if msg.restoring {
 					view.Editor.RestoreFolds(msg.folds[file.path])
 					view.Editor.RestoreIndentationChoices(msg.indentation[file.path])

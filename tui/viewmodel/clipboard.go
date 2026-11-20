@@ -31,6 +31,18 @@ func (m *App) FilterTerminalClipboard(_ tea.Model, msg tea.Msg) tea.Msg {
 	return tea.SetClipboard(write.text)()
 }
 
+// bindClipboardOwners routes the composer, the editor and every component of
+// the root host through the shell's ordered clipboard worker, never a separate
+// writer. The composer and the editor keep their own paste metadata; a copy
+// from any other surface clears both.
+func (m *App) bindClipboardOwners() {
+	m.Input.SetClipboardCopy(m.composerCopyCommand)
+	if m.EditorState.Editor != nil {
+		m.bindEditorClipboard(m.EditorState.Editor)
+	}
+	m.rootHost.SetClipboardCopy(m.clipboardCopyCommand)
+}
+
 func (m *App) bindEditorClipboard(ed *editor.Editor) {
 	ed.SetClipboard(&m.editorClipboard, func(text string) tea.Cmd {
 		m.Input.PromptClipboard().Clear()

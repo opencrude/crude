@@ -166,9 +166,9 @@ func TestAlternateAnswerIsExplicitAndDistinct(t *testing.T) {
 	open := func() (*Screen, *ui.Host) {
 		screen := New(th)
 		screen.Show(Spec{Purpose: "implement_plan", Title: "Implement this plan?",
-			Confirm:   Answer{Label: "Implement plan", Shortcut: "y"},
-			Alternate: &Answer{Label: "Implement in new session", Shortcut: "c"},
-			Cancel:    Answer{Label: "Keep planning", Shortcut: "n"}})
+			Confirm:    Answer{Label: "Implement plan", Shortcut: "y"},
+			Alternates: []Answer{{ID: "new_session", Label: "Implement in new session", Shortcut: "c"}, {ID: "review", Label: "Review", Shortcut: "r", Stay: true}},
+			Cancel:     Answer{Label: "Keep planning", Shortcut: "n"}})
 		deck := ui.NewPanelDeck("deck", ui.NewTokenSet(th))
 		deck.Open(ui.PanelEntry{ID: "plan", Title: "Plan", Content: screen, Policy: ui.PanelBlocking})
 		host := ui.NewHost(th, deck)
@@ -180,10 +180,12 @@ func TestAlternateAnswerIsExplicitAndDistinct(t *testing.T) {
 		return screen, host
 	}
 	for _, test := range []struct {
-		key                  tea.KeyPressMsg
-		confirmed, alternate bool
+		key       tea.KeyPressMsg
+		confirmed bool
+		choice    string
 	}{
-		{key: tea.KeyPressMsg{Code: 'c', Text: "c"}, confirmed: true, alternate: true},
+		{key: tea.KeyPressMsg{Code: 'c', Text: "c"}, confirmed: true, choice: "new_session"},
+		{key: tea.KeyPressMsg{Code: 'r', Text: "r"}, confirmed: true, choice: "review"},
 		{key: tea.KeyPressMsg{Code: 'y', Text: "y"}, confirmed: true},
 		{key: tea.KeyPressMsg{Code: tea.KeyEnter}},
 		{key: tea.KeyPressMsg{Code: tea.KeyEsc}},
@@ -193,7 +195,7 @@ func TestAlternateAnswerIsExplicitAndDistinct(t *testing.T) {
 		if result.Cmd == nil {
 			t.Fatalf("key %q emitted nothing", test.key.String())
 		}
-		if message := result.Cmd().(ResultMsg); message.Confirmed != test.confirmed || message.Alternate != test.alternate {
+		if message := result.Cmd().(ResultMsg); message.Confirmed != test.confirmed || message.Choice != test.choice {
 			t.Fatalf("key %q result=%#v", test.key.String(), message)
 		}
 	}
@@ -205,7 +207,21 @@ func TestAlternateAnswerIsExplicitAndDistinct(t *testing.T) {
 		t.Fatalf("alternate answer not painted:\n%s", text(buf))
 	}
 	result := host.Handle(tea.MouseClickMsg{X: click.x, Y: click.y, Button: tea.MouseLeft})
-	if result.Cmd == nil || !result.Cmd().(ResultMsg).Alternate {
+	if result.Cmd == nil || result.Cmd().(ResultMsg).Choice != "new_session" {
 		t.Fatalf("click on the alternate answer = %#v", result)
+	}
+	_, host = open()
+	buf = surface.NewCellBuffer(100, 10)
+	host.Paint(buf)
+	click = findPainted(buf, "[ Review")
+	if click.x < 0 {
+		t.Fatalf("second alternate answer not painted:\n%s", text(buf))
+	}
+	result = host.Handle(tea.MouseClickMsg{X: click.x, Y: click.y, Button: tea.MouseLeft})
+	if result.Cmd == nil || result.Cmd().(ResultMsg).Choice != "review" || !result.Cmd().(ResultMsg).Stay {
+		t.Fatalf("click on the second alternate answer = %#v", result)
+	}
+	if result.Action != nil && result.Action.ID == "panel.close" {
+		t.Fatal("an answer that stays closed the decision")
 	}
 }

@@ -19,6 +19,7 @@ func DefaultMidnight() *Theme {
 		Selection:          lipgloss.Color("#1e3a5f"),
 		TextSelection:      lipgloss.Color("#35415c"),
 		TextSelectionFg:    lipgloss.Color("#ffffff"),
+		ReviewCommentRange: lipgloss.Color("#122f44"),
 		Hover:              lipgloss.Color("#152238"),
 		Shadow:             lipgloss.Color("#030712"),
 		SubPaneBg:          lipgloss.Color("#111827"),

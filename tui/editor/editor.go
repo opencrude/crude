@@ -82,6 +82,7 @@ type Editor struct {
 	rowJob                       *rowJob
 	rowGeneration                uint64
 	rowsStopped                  bool
+	review                       editorReview
 
 	goalCol int
 	goalSet bool
@@ -354,6 +355,7 @@ func (e *Editor) Open(path string) error {
 // instead of Open() when using the BufferManager.
 func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.mini = minimapProjection{}
+	e.SetReviewComments(nil)
 	e.cancelRows()
 	e.folds = foldState{}
 	e.rowsStopped = false
@@ -434,6 +436,8 @@ func (e *Editor) ApplyFormatted(text string) {
 
 func (e *Editor) Close() {
 	e.mini = minimapProjection{}
+	e.SetReviewComments(nil)
+	e.rows.setReviewRows(nil)
 	e.StopRows()
 	e.DismissGhostText()
 	e.ClearInlayHints()
@@ -566,6 +570,10 @@ func (e *Editor) InvalidateWidthProfile() {
 	e.mini = minimapProjection{}
 	e.cancelRows()
 	e.rows = editorRows{}
+	e.review.layout = nil
+	if e.review.resolved != nil {
+		e.review.resolved.tabWidth = 0
+	}
 	e.DismissGhostText()
 	e.ClearInlayHints()
 	e.lineRunesCacheValid = false

@@ -1164,6 +1164,35 @@ or the 30-second wait expires without a qualifying save. It shows:
 > Crude did not send the request because *name* could not be saved.
 > Save the file, then try again.
 
+### Review comment cards
+
+A plan file shows the session's review comments (see
+[plan review](session-commands.md#plan-review)). The shell passes them with
+`Editor.SetReviewComments`; the editor owns their resolution and rows.
+
+- **Resolution.** Each anchor resolves with `crude/text/anchor` against the
+  current text, once per buffer revision and comment set, never per frame.
+  Documents over 1 MiB show no cards. A quote that changed or vanished keeps
+  its card at the clamped position hint, with **The commented text changed.**
+  after the caller's status (for example **Sent**).
+- **Rows.** A card is display-only rows below the last text row of the source
+  line holding the range's last character, after wrapped rows and multi-line
+  prediction rows. Cards on one line stack in anchor order; a folded line
+  hides its cards. Card rows keep a blank gutter, fill the text area with the
+  sub-pane background, start with a `▎` accent rail (muted for sent or closed
+  comments), wrap the body by the shared width profile, stop at eight rows
+  with `…`, and show the status muted on the last row when it fits. Source
+  row metrics stay cached apart from the sparse card rows, so a card change
+  marks only the lines it leaves and enters.
+- **Range.** Every found range has a subtle tint below search and selection.
+- **Input.** Card rows are never caret positions: Up, Down and paging skip
+  them, and a drag over them maps to source text. A left press on a card
+  returns `ReviewCommentActivatedMsg` without moving the caret.
+  `NextReviewComment` wraps, reveals a folded target and scrolls its card into
+  view; `ReviewCommentAtCaret` finds the comment whose range holds the caret;
+  `SelectionOffsets` gives the primary selection as byte offsets of `Value()`,
+  which new anchors capture.
+
 ### Inline prediction projection
 
 Suggestions are **Off** from the first frame unless the workspace has an

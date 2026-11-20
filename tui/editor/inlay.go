@@ -135,6 +135,9 @@ func (e *Editor) InlayHintAt(x, y int) (int, bool) {
 		return 0, false
 	}
 	r := e.rowAt(e.scrollRow() + y)
+	if r.reviewRow > 0 {
+		return 0, false
+	}
 	if p := e.inlineLine(r.line); p != nil {
 		hit := p.displayHit(e.rowDisplayColumn(r, x-e.gutterWidth()))
 		return hit.HintIndex, hit.HintIndex >= 0
@@ -147,6 +150,9 @@ func (e *Editor) inlineInsertionAt(x, y int) bool {
 		return false
 	}
 	r := e.rowAt(e.scrollRow() + y)
+	if r.reviewRow > 0 {
+		return false
+	}
 	if p := e.inlineLine(r.line); p != nil {
 		return p.insertionAt(e.rowDisplayColumn(r, x-e.gutterWidth()))
 	}

@@ -25,6 +25,19 @@ type SettingsSnapshotSet struct {
 
 // beginSettingsOperation returns with the lifetime fence held on success.
 func (s *Session) beginSettingsOperation() error {
+	if err := s.beginSessionControlOperation(); err != nil {
+		return err
+	}
+	if err := s.invalidateGoalHandover("Session settings or inherited controls changed."); err != nil {
+		s.endSettingsOperation()
+		return err
+	}
+	return nil
+}
+
+// beginSessionControlOperation owns the settings lock and session lifetime,
+// without invalidating goal handover before a caller can validate its action.
+func (s *Session) beginSessionControlOperation() error {
 	if s == nil || atomic.LoadInt32(&s.closing) != 0 {
 		return ErrSettingsSessionClosing
 	}
@@ -41,10 +54,6 @@ func (s *Session) beginSettingsOperation() error {
 	}
 	s.idle.active++
 	s.idle.mu.Unlock()
-	if err := s.invalidateGoalHandover("Session settings or inherited controls changed."); err != nil {
-		s.endSettingsOperation()
-		return err
-	}
 	return nil
 }
 

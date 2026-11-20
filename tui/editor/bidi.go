@@ -229,6 +229,7 @@ func (e *Editor) stepOnScreen(right bool) bool {
 	if right {
 		adjacent = idx + 1
 	}
+	adjacent = e.reviewCaretRow(adjacent, adjacent-idx)
 	if adjacent < 0 || adjacent >= e.visualRowCount() {
 		return ln != nil
 	}

@@ -382,6 +382,17 @@ func (v *WorkspaceView) YoloForAgent(id string) bool { return v.agents[id].Yolo 
 
 func (v *WorkspaceView) PlanModeForAgent(id string) bool { return v.agents[id].PlanMode }
 
+func (v *WorkspaceView) PlanReviewForAgent(id string) (types.PlanReview, bool) {
+	if review := v.agents[id].PlanReview; review != nil {
+		out := types.PlanReview{Revisions: slices.Clone(review.Revisions)}
+		for i := range out.Revisions {
+			out.Revisions[i].Comments = slices.Clone(out.Revisions[i].Comments)
+		}
+		return out, true
+	}
+	return types.PlanReview{}, false
+}
+
 func (v *WorkspaceView) GoalForAgent(id string) (types.Goal, bool) {
 	if goal := v.agents[id].Goal; goal != nil {
 		return *goal, true
