@@ -196,6 +196,7 @@ type App struct {
 
 	// Display state (owned by viewmodel; tracks what's visible/active)
 	EditorState       *EditorState
+	editorClipboard   editor.LineClipboard
 	OverlayState      *OverlayState
 	LSPPopup          *LSPPopupState
 	editorSettings    roottypes.EditorSettings
@@ -510,7 +511,6 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 	overlay.SetFocusHost(rootHost)
 	subPaneProjections := newSubPaneProjectionRegistry(th)
 	subPaneProjections.SetProjectRoot(ws.RootPath())
-	sessionProjections := newSessionProjectionRegistry(th)
 
 	mainSurf := surface.NewSurface("main-shell", 80, 24, cell.TransparentBlank())
 	comp.Root().AddChild(mainSurf)
@@ -563,12 +563,14 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 		actionRegistry:      registry,
 		overlayHost:         overlay,
 		subPaneProjections:  subPaneProjections,
-		sessionProjections:  sessionProjections,
 	}
 	app.Feedback = newFeedbackSink(app)
 	// Composer copies use the shell's ordered clipboard worker like every
 	// other reading surface, never a separate writer.
-	app.Input.SetClipboardCopy(app.clipboardCopyCommand)
+	app.Input.SetClipboardCopy(app.composerCopyCommand)
+	app.bindEditorClipboard(edState.Editor)
+	app.sessionProjections = newSessionProjectionRegistry(th, app.clipboardCopyCommand)
+	rootHost.SetClipboardCopy(app.clipboardCopyCommand)
 	if _, connected := ws.(shellport.ClientFiles); connected {
 		app.Tree.Model = newClientFileTree(app)
 		app.sidebarScreen.SetModel(app.Tree.Model)
@@ -1229,6 +1231,9 @@ func (m *App) registerOverlayHandlers() {
 	// error inspection must not wait for an expanding empty frame.
 	// The reveal is a no-op for windows without a WindowFrame body.
 	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
+		if content, ok := fw.Content.(interface{ Host() *ui.Host }); ok && content.Host() != nil {
+			content.Host().SetClipboardCopy(m.clipboardCopyCommand)
+		}
 		switch id {
 		case ui.OverlayCompletion, ui.OverlayNavigation, ui.OverlayInlayHints, ui.OverlayOutline,
 			ui.OverlaySnippetChoices, ui.OverlaySignatureHelp, ui.OverlaySymbolHover,

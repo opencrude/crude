@@ -211,7 +211,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		s.selection = textSelection{}
 		result := ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		if text != "" {
-			result.Cmd = rendering.CopyToClipboardCmd(text)
+			result.Cmd = ctx.CopyText(text)
 		}
 		return result
 	case ui.EventMouseWheel:
@@ -227,7 +227,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			for _, line := range chatprojection.PlanActivityRows(s.plan, 10000) {
 				lines = append(lines, line.PlainText())
 			}
-			return ui.EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(strings.Join(lines, "\n"))}
+			return ui.EventResult{Handled: true, Cmd: ctx.CopyText(strings.Join(lines, "\n"))}
 		}
 		switch evt.Key.Code {
 		case tea.KeyUp:

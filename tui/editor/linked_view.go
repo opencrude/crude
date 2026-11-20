@@ -28,6 +28,7 @@ import (
 // it paints complete content in its first frame.
 func (e *Editor) NewLinkedView() *Editor {
 	v := New(e.th)
+	v.SetClipboard(e.clipboardLines(), e.clipboardCopy)
 	v.buf, v.buffer, v.documentProjection = e.buf, e.buffer, e.documentProjection
 	v.filePath, v.title = e.filePath, e.title
 	v.readOnly, v.hideLineNumbers, v.lineNumberOffset = e.readOnly, e.hideLineNumbers, e.lineNumberOffset

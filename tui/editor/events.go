@@ -5,11 +5,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/clipboard"
 	"crude/tui/bidi"
-	"crude/tui/rendering"
 	"crude/tui/ui"
 )
+
+// ClipboardPasteMsg asks the shell to read for this exact editor.
+type ClipboardPasteMsg struct{ Editor *Editor }
 
 type EditorCloseMsg struct {
 	FilePath string
@@ -65,7 +66,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 				return nil
 			}
 			if ui.IsCopyChord(msg) {
-				return e.copyCmd()
+				return e.CopyCommand()
 			}
 			if msg.Mod.Contains(tea.ModAlt) {
 				return nil // Alt+Up/Down are mutating line moves in an editable document.
@@ -214,7 +215,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			} else if e.readOnly {
 				text := e.SelectedText()
 				e.ClearSelection()
-				return rendering.CopyToClipboardCmd(text)
+				return e.writeClipboard(text, false)
 			}
 		}
 	}
@@ -545,20 +546,10 @@ func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {
 		return e.closeCmd()
 	default:
 		if ui.IsPasteChord(key) {
-			// Paste: read from the system clipboard and insert. Bubble Tea's
-			// bracketed-paste mode fires a tea.PasteMsg that gets routed here
-			// via HandleEvent; terminals that deliver the shortcut as a key
-			// press use this owner-preserving fallback.
-			return func() tea.Msg {
-				data := clipboard.Read(clipboard.FmtText)
-				if len(data) == 0 {
-					return rendering.ClipboardErrorMsg(ui.ClipboardReadUnavailable())
-				}
-				return tea.PasteMsg{Content: string(data)}
-			}
+			return func() tea.Msg { return ClipboardPasteMsg{Editor: e} }
 		}
 		if ui.IsCopyChord(key) {
-			return e.copyCmd()
+			return e.CopyCommand()
 		}
 		if ui.ClipboardChordFor(key) == ui.ClipboardChordCut {
 			return e.cutCmd()

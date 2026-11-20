@@ -850,7 +850,7 @@ func (l *list) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	y := ctx.LocalY - l.top
 	switch evt.Kind {
 	case ui.EventKey:
-		return l.handleKey(evt)
+		return l.handleKey(ctx, evt)
 	case ui.EventMouseMotion:
 		index := l.scroll.Offset() + y
 		if l.pressing {
@@ -939,7 +939,7 @@ func (l *list) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 // CancelPointerCapture ends a drag that lost the pointer; the range stays.
 func (l *list) CancelPointerCapture() { l.pressing = false }
 
-func (l *list) handleKey(evt ui.Event) ui.EventResult {
+func (l *list) handleKey(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	key := evt.Key
 	shift := key.Mod.Contains(tea.ModShift)
 	if key.Mod.Contains(tea.ModCtrl) {
@@ -949,7 +949,7 @@ func (l *list) handleKey(evt ui.Event) ui.EventResult {
 			if text == "" {
 				return ui.EventResult{Handled: true}
 			}
-			return ui.EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(text)}
+			return ui.EventResult{Handled: true, Cmd: ctx.CopyText(text)}
 		case 'a':
 			if len(l.owner.rows) > 0 {
 				l.anchor, l.cursor = 0, len(l.owner.rows)-1

@@ -5,36 +5,18 @@ import (
 	"runtime"
 
 	tea "charm.land/bubbletea/v2"
-
-	"crude/clipboard"
 )
 
-// ClipboardCopiedMsg is sent after a clipboard write. Terminal reports that
-// the text went out as an OSC 52 terminal clipboard write.
-type ClipboardCopiedMsg struct {
-	Terminal bool
-}
+// ClipboardWriteMsg asks the shell to publish text through its clipboard owner.
+type ClipboardWriteMsg string
 
-// ClipboardErrorMsg carries a clipboard-related error.
-type ClipboardErrorMsg string
-
-// CopyToClipboardCmd returns a tea.Cmd that writes the given text to the
-// clipboard. The system clipboard is written first. When it is unreachable
-// (no wl-copy/xclip/pbcopy, a headless tmux) or the session is remote (SSH,
-// where the system clipboard belongs to the server), the text also goes out
-// as an OSC 52 terminal clipboard write, which local terminals and tmux
-// (set-clipboard) deliver to the user's clipboard.
+// CopyToClipboardCmd emits a copy intent. Controls with a shell copy callback
+// use it to admit the intent before Bubble Tea schedules any command.
 func CopyToClipboardCmd(text string) tea.Cmd {
-	return func() tea.Msg {
-		err := clipboard.WriteText(text)
-		if err == nil && !RemoteTerminalSession() {
-			return ClipboardCopiedMsg{}
-		}
-		return tea.BatchMsg{
-			tea.SetClipboard(text),
-			func() tea.Msg { return ClipboardCopiedMsg{Terminal: err != nil} },
-		}
+	if text == "" {
+		return nil
 	}
+	return func() tea.Msg { return ClipboardWriteMsg(text) }
 }
 
 // RemoteTerminalSession reports a Unix session reached over SSH, whose

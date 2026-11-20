@@ -614,15 +614,19 @@ func (m *App) terminalContextMenu(id string) *ui.ContextMenuState {
 	return &ui.ContextMenuState{Title: screen.Title(), Sections: []ui.ContextMenuSection{{Items: items}, {Items: manage}}}
 }
 
+type terminalClipboardTarget struct{ *shellterm.Screen }
+
+func (t terminalClipboardTarget) PasteActive() bool { return t.PasteAllowed() }
+
 func (m *App) pasteTerminalClipboard(screen *shellterm.Screen) tea.Cmd {
 	id := screen.TermID()
 	owner, generation, lease := m.ws, m.workspaceSwitchGen.Load(), m.terminalLeases[id]
-	return m.beginNativeClipboardPaste(screen, "", func(text string) tea.Cmd {
+	return m.beginNativeClipboardPaste(terminalClipboardTarget{screen}, nil, func(text string) tea.Cmd {
 		if m.ws != owner || generation != m.workspaceSwitchGen.Load() || m.termScreens[id] != screen ||
 			m.terminalLeases[id] != lease || !screen.PasteAllowed() {
 			return nil
 		}
-		screen.PasteText(text)
+		screen.PasteText(ui.PastedLineBreaks(text))
 		if !screen.Controlled() {
 			// A viewer keeps the paste and asks for free input control.
 			return m.claimTerminalInput(id, claimInput)

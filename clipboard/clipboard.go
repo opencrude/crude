@@ -42,6 +42,8 @@ var (
 	initError error
 )
 
+// Read returns nil when the format cannot be read, and an empty slice when
+// the clipboard is readable but contains empty data.
 func Read(t Format) []byte {
 	lock.Lock()
 	defer lock.Unlock()
@@ -53,6 +55,9 @@ func Read(t Format) []byte {
 		return nil
 	}
 	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "read_ok", "bytes", len(buf)) })
+	if buf == nil {
+		return []byte{}
+	}
 	return buf
 }
 

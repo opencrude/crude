@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/terminalvt"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/problems"
 	"crude/tui/screens/question"
@@ -269,6 +270,13 @@ func TestQuestionDockJourneyTerminalKeysAndInitialPromptFocus(t *testing.T) {
 	send(tea.PasteMsg{Content: "terminal paste"})
 	if !app.terminalDockOwnsKeys() || len(sent) != 2 || sent[0].Kind != shellterm.CommandKey || sent[0].Key.Code != 'c' || sent[1].Kind != shellterm.CommandPaste || string(sent[1].Paste) != "terminal paste" {
 		t.Fatalf("deliberate terminal input was captured by the question: %+v", sent)
+	}
+	send(tea.KeyPressMsg{Code: tea.KeyEsc, Mod: tea.ModCtrl | tea.ModShift})
+	send(tea.KeyPressMsg{Code: '$', BaseCode: ']', Mod: tea.ModCtrl})
+	if len(sent) != 4 ||
+		sent[2].Kind != shellterm.CommandKey || sent[2].Key.Code != terminalvt.KeyEscape || sent[2].Key.Mod != terminalvt.ModCtrl|terminalvt.ModShift ||
+		sent[3].Kind != shellterm.CommandKey || sent[3].Key.Code != '$' || sent[3].Key.Mod != terminalvt.ModCtrl {
+		t.Fatalf("the terminal did not get the original chords: %+v", sent)
 	}
 	questionDockAssertRetained(t, app, prompt, "answer before terminal", draft)
 	r, ok = prompt.projection.deckHost.ScreenRect(question.InputID)

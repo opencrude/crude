@@ -23,7 +23,7 @@ func read(t Format) ([]byte, error) {
 	defer cancel()
 
 	tools := [][]string{
-		{"wl-paste", "--no-newline"},
+		{"wl-paste", "--no-newline", "--type", "text"},
 		{"pbpaste"},
 		{"xclip", "-selection", "clipboard", "-o"},
 		{"termux-clipboard-get"},
@@ -34,6 +34,7 @@ func read(t Format) ([]byte, error) {
 			continue
 		}
 		cmd := exec.CommandContext(ctx, tool[0], tool[1:]...)
+		cmd.WaitDelay = 100 * time.Millisecond
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		if cmd.Run() == nil {
@@ -58,6 +59,7 @@ func readImage() ([]byte, error) {
 	}
 	for _, tool := range tools {
 		cmd := exec.CommandContext(ctx, tool[0], tool[1:]...)
+		cmd.WaitDelay = 100 * time.Millisecond
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		if cmd.Run() == nil && out.Len() > 0 {
@@ -79,7 +81,7 @@ func write(t Format, buf []byte) (bool, error) {
 	defer cancel()
 
 	tools := [][]string{
-		{"wl-copy"},
+		{"wl-copy", "--type", "text/plain;charset=utf-8"},
 		{"pbcopy"},
 		{"xclip", "-selection", "clipboard"},
 		{"termux-clipboard-set"},
@@ -90,6 +92,7 @@ func write(t Format, buf []byte) (bool, error) {
 			continue
 		}
 		cmd := exec.CommandContext(ctx, tool[0], tool[1:]...)
+		cmd.WaitDelay = 100 * time.Millisecond
 		cmd.Stdin = bytes.NewReader(buf)
 		if cmd.Run() == nil {
 			logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "write_tool_ok", "tool", tool[0]) })

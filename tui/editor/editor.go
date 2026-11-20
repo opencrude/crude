@@ -49,11 +49,13 @@ type editorViewState struct {
 }
 
 type Editor struct {
-	th           *theme.Theme
-	buf          *PieceTable
-	filePath     string
-	title        string
-	editLanguage editLanguage
+	th            *theme.Theme
+	buf           *PieceTable
+	filePath      string
+	title         string
+	editLanguage  editLanguage
+	lineClipboard *LineClipboard
+	clipboardCopy func(string) tea.Cmd
 
 	// buffer is the shared Buffer from BufferManager. When set, the Editor
 	// delegates all text access (Value, LineCount, LineText, Save, etc.)

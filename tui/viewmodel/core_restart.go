@@ -132,7 +132,7 @@ func (m *App) coreRestartBlocked() string {
 	}
 	if state := m.asyncIO.Load(); state != nil {
 		state.mu.Lock()
-		busy := len(state.clientIOJobs) > 0 || len(state.latestClipboard) > 0
+		busy := len(state.clientIOJobs) > 0 || state.lastClipboard != state.nextClipboard
 		state.mu.Unlock()
 		if busy {
 			return "owned asynchronous I/O is still in progress"

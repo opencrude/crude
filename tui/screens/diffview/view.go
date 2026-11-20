@@ -753,7 +753,7 @@ func (p *pane) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 			if !p.selected {
 				return ui.EventResult{}
 			}
-			result.Cmd = rendering.CopyToClipboardCmd(p.SelectedText())
+			result.Cmd = ctx.CopyText(p.SelectedText())
 			return result
 		}
 		switch e.Key.String() {
@@ -858,7 +858,7 @@ func (p *pane) Handle(ctx ui.EventContext, e ui.Event) ui.EventResult {
 		text := p.SelectedText()
 		p.selected = false
 		if text != "" {
-			result.Cmd = rendering.CopyToClipboardCmd(text)
+			result.Cmd = ctx.CopyText(text)
 		}
 	default:
 		return ui.EventResult{}

@@ -19,6 +19,7 @@ import (
 	"crude/tui/rendering"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
+	"crude/tui/wm"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -49,23 +50,18 @@ type clipboardAsyncRequestMsg struct {
 	// requested it (owner-keyed; it performs its own liveness checks), so
 	// composite controls observe Ctrl+V exactly like a bracketed paste.
 	nativeDeliver func(string) tea.Cmd
-	overlayID     string
+	overlay       *wm.FloatingWindow
 }
 
 type clipboardAsyncResultMsg struct {
 	request      clipboardAsyncRequestMsg
 	content      string
+	readable     bool
 	image        bool
 	imageMIME    string
 	imageBytes   int
 	imageData    []byte
 	operationErr error
-}
-
-type clipboardAsyncKey struct {
-	lane    clipboardAsyncOperation
-	editor  *editor.Editor
-	session *workspace.Session
 }
 
 type clipboardAsyncBackend struct {
@@ -106,9 +102,11 @@ type appAsyncIOState struct {
 	mu sync.Mutex
 
 	nextClipboard           uint64
-	latestClipboard         map[clipboardAsyncKey]uint64
+	lastClipboard           uint64
+	lastClipboardWrite      uint64
 	clipboardBackend        clipboardAsyncBackend
 	clipboardJobs           []clipboardAsyncJob
+	clipboardReady          []clipboardAsyncResultMsg
 	clipboardCond           *sync.Cond
 	clipboardClosed         bool
 	clipboardWorkerDone     chan struct{}
@@ -145,10 +143,19 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 		return state
 	}
 	state := &appAsyncIOState{
-		latestClipboard: make(map[clipboardAsyncKey]uint64),
 		clipboardBackend: clipboardAsyncBackend{
-			read:      clipboard.Read,
-			writeText: clipboard.WriteText,
+			read: func(format clipboard.Format) []byte {
+				if rendering.RemoteTerminalSession() {
+					return nil // The SSH host does not own the user's clipboard.
+				}
+				return clipboard.Read(format)
+			},
+			writeText: func(text string) error {
+				if rendering.RemoteTerminalSession() {
+					return errors.New("desktop clipboard is not local")
+				}
+				return clipboard.WriteText(text)
+			},
 		},
 		latestDirectory:     make(map[*filepickerscreen.Screen]uint64),
 		directoryCancel:     make(map[*filepickerscreen.Screen]chan struct{}),
@@ -183,25 +190,12 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 	return m.asyncIO.Load()
 }
 
-func (r clipboardAsyncRequestMsg) key() clipboardAsyncKey {
-	switch r.operation {
-	case clipboardAsyncPasteEditor:
-		return clipboardAsyncKey{lane: clipboardAsyncPasteEditor, editor: r.editor}
-	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteInputImage:
-		return clipboardAsyncKey{lane: clipboardAsyncPasteInputText, session: r.session}
-	case clipboardAsyncPasteNative:
-		return clipboardAsyncKey{lane: clipboardAsyncPasteNative}
-	default:
-		return clipboardAsyncKey{lane: clipboardAsyncWriteText}
-	}
-}
-
 func (m *App) prepareClipboardAsyncRequest(request clipboardAsyncRequestMsg) clipboardAsyncRequestMsg {
 	request.workspaceGeneration = m.workspaceSwitchGen.Load()
 	if request.session != nil {
 		request.inputEpoch = m.Input.DraftEpoch()
 	}
-	if request.overlayID == string(ui.OverlayTextOverlay) {
+	if request.overlay != nil && request.overlay.ID == string(ui.OverlayTextOverlay) {
 		if screen := m.sessionTextOverlay(); screen != nil {
 			request.overlayEpoch = screen.OpenEpoch()
 		}
@@ -209,10 +203,16 @@ func (m *App) prepareClipboardAsyncRequest(request clipboardAsyncRequestMsg) cli
 	state := asyncIOStateFor(m)
 	result := make(chan clipboardAsyncResultMsg, 1)
 	state.mu.Lock()
+	if state.clipboardClosed || m.asyncIOStopped.Load() {
+		state.mu.Unlock()
+		return clipboardAsyncRequestMsg{}
+	}
 	state.nextClipboard++
 	request.generation = state.nextClipboard
 	request.result = result
-	state.latestClipboard[request.key()] = request.generation
+	if request.operation == clipboardAsyncWriteText {
+		state.lastClipboardWrite = request.generation
+	}
 	state.clipboardJobs = append(state.clipboardJobs, clipboardAsyncJob{
 		request: request,
 		backend: state.clipboardBackend,
@@ -224,8 +224,8 @@ func (m *App) prepareClipboardAsyncRequest(request clipboardAsyncRequestMsg) cli
 }
 
 // enqueueClipboardAsyncRequest is the bridge for callbacks whose signature
-// cannot return tea.Cmd. It only sends the request from a detached goroutine;
-// the clipboard operation itself starts when Update returns the request's Cmd.
+// cannot return tea.Cmd. Admission happens now; the detached message only
+// transfers the worker's completion command back to Update.
 func (m *App) enqueueClipboardAsyncRequest(request clipboardAsyncRequestMsg) {
 	request = m.prepareClipboardAsyncRequest(request)
 	m.runDetachedAsyncCmd(func() tea.Msg { return request })
@@ -242,6 +242,7 @@ func (m *App) clipboardAsyncCommand(request clipboardAsyncRequestMsg) tea.Cmd {
 
 func (s *appAsyncIOState) runClipboardWorker() {
 	defer close(s.clipboardWorkerDone)
+	var terminalCopy string
 	for {
 		s.mu.Lock()
 		for len(s.clipboardJobs) == 0 && !s.clipboardClosed {
@@ -254,17 +255,30 @@ func (s *appAsyncIOState) runClipboardWorker() {
 		job := s.clipboardJobs[0]
 		s.clipboardJobs[0] = clipboardAsyncJob{}
 		s.clipboardJobs = s.clipboardJobs[1:]
-		latest := s.latestClipboard[job.request.key()]
 		s.mu.Unlock()
 
-		result := clipboardAsyncResultMsg{request: job.request}
-		if job.request.generation == latest {
-			result = executeClipboardAsyncRequest(job.backend, job.request)
+		result := executeClipboardAsyncRequest(job.backend, job.request)
+		if job.request.operation == clipboardAsyncWriteText {
+			terminalCopy = ""
+			if result.operationErr != nil {
+				// OSC 52 writes have no read-back guarantee. A shell without
+				// desktop clipboard access can still paste its own explicit copy.
+				terminalCopy = job.request.text
+			}
+		} else if result.readable || result.image {
+			terminalCopy = "" // A readable system clipboard is authoritative.
+		} else if terminalCopy != "" && result.operationErr == errClipboardRead {
+			result.content, result.operationErr = terminalCopy, nil
 		}
+		s.mu.Lock()
+		s.clipboardReady = append(s.clipboardReady, result)
+		s.mu.Unlock()
 		job.result <- result
 		close(job.result)
 	}
 }
+
+var errClipboardRead = errors.New("clipboard text is unavailable")
 
 func executeClipboardAsyncRequest(
 	backend clipboardAsyncBackend,
@@ -275,31 +289,24 @@ func executeClipboardAsyncRequest(
 	case clipboardAsyncWriteText:
 		result.operationErr = backend.writeText(request.text)
 	case clipboardAsyncPasteEditor, clipboardAsyncPasteInputText, clipboardAsyncPasteNative:
-		data := backend.read(clipboard.FmtText)
-		if len(data) == 0 {
-			result.operationErr = errors.New(ui.ClipboardReadUnavailable())
-		} else {
-			result.content = string(data)
-		}
+		readClipboardText(backend, &result)
 	case clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteInputImage:
 		data := backend.read(clipboard.FmtImage)
-		if len(data) == 0 {
+		mime := http.DetectContentType(data)
+		// Some X11 selection owners return their text for any requested
+		// target, including image/png. Only actual image bytes win over text.
+		if !strings.HasPrefix(mime, "image/") {
 			// An empty terminal paste is evidence of an image-only gesture,
 			// not permission to insert unrelated system-clipboard text.
 			if request.operation == clipboardAsyncPasteInputImage {
 				break
 			}
-			data = backend.read(clipboard.FmtText)
-			if len(data) == 0 {
-				result.operationErr = errors.New(ui.ClipboardReadUnavailable())
-			} else {
-				result.content = string(data)
-			}
+			readClipboardText(backend, &result)
 			break
 		}
 		result.image = true
 		result.imageBytes = len(data)
-		result.imageMIME = strings.SplitN(http.DetectContentType(data), ";", 2)[0]
+		result.imageMIME = mime
 		switch result.imageMIME {
 		case "image/png", "image/jpeg", "image/gif", "image/webp":
 			result.imageData = data
@@ -310,24 +317,64 @@ func executeClipboardAsyncRequest(
 	return result
 }
 
+func readClipboardText(backend clipboardAsyncBackend, result *clipboardAsyncResultMsg) {
+	data := backend.read(clipboard.FmtText)
+	if data == nil {
+		result.operationErr = errClipboardRead
+		return
+	}
+	result.content, result.readable = string(data), true
+}
+
 func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd {
-	request := result.request
-	if !m.consumeClipboardAsyncRequest(request) {
+	state := m.asyncIO.Load()
+	if state == nil || result.request.generation == 0 {
 		return nil
 	}
+	// Tea runs commands concurrently. A later wake may arrive first, but the
+	// worker has already staged every preceding result in gesture order.
+	state.mu.Lock()
+	var ready []clipboardAsyncResultMsg
+	for len(state.clipboardReady) != 0 && state.clipboardReady[0].request.generation <= result.request.generation {
+		item := state.clipboardReady[0]
+		state.clipboardReady[0] = clipboardAsyncResultMsg{}
+		state.clipboardReady = state.clipboardReady[1:]
+		ready = append(ready, item)
+		state.lastClipboard = item.request.generation
+	}
+	state.mu.Unlock()
+	var cmds []tea.Cmd
+	for _, item := range ready {
+		if cmd := m.deliverClipboardResult(item); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
+}
 
+func (m *App) deliverClipboardResult(result clipboardAsyncResultMsg) tea.Cmd {
+	request := result.request
+	if request.operation != clipboardAsyncWriteText && request.workspaceGeneration != m.workspaceSwitchGen.Load() {
+		return nil
+	}
+	if result.readable && result.content == "" {
+		return nil
+	}
+	if result.operationErr == errClipboardRead {
+		result.operationErr = errors.New(ui.ClipboardReadUnavailable())
+	}
 	switch request.operation {
 	case clipboardAsyncWriteText:
-		// An unreachable or remote (SSH) system clipboard falls back to the
-		// OSC 52 terminal clipboard, as rendering.CopyToClipboardCmd does.
-		if result.operationErr != nil || rendering.RemoteTerminalSession() {
+		if result.operationErr != nil {
 			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("Copied " + strconv.Itoa(len(request.text)) + " chars via the terminal clipboard")
+				m.Feedback.NotifyInfo("Copied in Crude")
 			}
-			return tea.SetClipboard(request.text)
+			return func() tea.Msg {
+				return clipboardTerminalWrite{generation: request.generation, text: request.text}
+			}
 		}
 		if m.Feedback != nil {
-			m.Feedback.NotifyInfo("Copied " + strconv.Itoa(len(request.text)) + " chars")
+			m.Feedback.NotifyInfo("Copied to clipboard")
 		}
 	case clipboardAsyncPasteEditor:
 		if !m.ownsClipboardTargetEditor(request.editor) {
@@ -337,18 +384,18 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 			m.setClipboardAsyncError(result.operationErr.Error())
 			return nil
 		}
-		request.editor.HandleEvent(tea.PasteMsg{Content: result.content})
 		if m.Feedback != nil {
 			m.Feedback.NotifyInfo("Pasted " + strconv.Itoa(len(result.content)) + " chars")
 		}
+		return request.editor.HandleEvent(tea.PasteMsg{Content: result.content})
 	case clipboardAsyncPasteNative:
 		if request.nativePaste == nil || !request.nativePaste.PasteActive() {
 			return nil
 		}
-		if request.overlayID != "" && m.windowManager.Window(request.overlayID) == nil {
+		if request.overlay != nil && m.windowManager.Window(request.overlay.ID) != request.overlay {
 			return nil
 		}
-		if request.overlayID == string(ui.OverlayTextOverlay) {
+		if request.overlay != nil && request.overlay.ID == string(ui.OverlayTextOverlay) {
 			if screen := m.sessionTextOverlay(); screen == nil || screen.OpenEpoch() != request.overlayEpoch {
 				return nil
 			}
@@ -427,7 +474,7 @@ func (m *App) beginEditorClipboardPaste(target *editor.Editor) tea.Cmd {
 // beginNativeClipboardPaste starts the Ctrl+V system-clipboard read for a
 // text control. deliver, when set, re-enters the text through the control's
 // owner (see nativePasteDelivery); otherwise the text goes to target itself.
-func (m *App) beginNativeClipboardPaste(target ui.ClipboardPasteTarget, overlayID string, deliver func(string) tea.Cmd) tea.Cmd {
+func (m *App) beginNativeClipboardPaste(target ui.ClipboardPasteTarget, overlay *wm.FloatingWindow, deliver func(string) tea.Cmd) tea.Cmd {
 	if target == nil || !target.PasteActive() {
 		return nil
 	}
@@ -435,7 +482,7 @@ func (m *App) beginNativeClipboardPaste(target ui.ClipboardPasteTarget, overlayI
 		operation:     clipboardAsyncPasteNative,
 		nativePaste:   target,
 		nativeDeliver: deliver,
-		overlayID:     overlayID,
+		overlay:       overlay,
 	})
 	return m.clipboardAsyncCommand(request)
 }
@@ -479,18 +526,6 @@ func pasteTargetOf(component ui.Component, target ui.ClipboardPasteTarget) bool 
 	}
 	editor := ui.TextClipboardTargetIn(component)
 	return editor != nil && any(editor) == any(target)
-}
-
-func (m *App) consumeClipboardAsyncRequest(request clipboardAsyncRequestMsg) bool {
-	state := asyncIOStateFor(m)
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	key := request.key()
-	if request.generation == 0 || state.latestClipboard[key] != request.generation {
-		return false
-	}
-	delete(state.latestClipboard, key)
-	return true
 }
 
 func (m *App) persistClipboardAsyncImageCmd(

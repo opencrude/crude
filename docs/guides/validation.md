@@ -765,6 +765,15 @@ gestures can consume input before it reaches Crude.
 Use `wheelburst:70,8,60,8` to send 60 wheel ticks at 8 ms intervals without
 capture I/O between ticks. Verify where the viewport lands, then reverse the
 burst and compare the same text pixels.
+
+For clipboard acceptance, use a disposable profile and desktop clipboard.
+Open two files with distinct text, retain a selection in each, and return to
+the first selection after a copy from the second. Repeat pastes between the
+editor, composer and embedded terminal. Check the actual pasted text in the
+captures and compare saved file bytes; a copy notice alone does not prove
+clipboard delivery. Exercise both a readable desktop clipboard and the
+terminal-only route.
+
 Each launch is an independent borderless capture process; Tilix uses
 `--new-process`, never an existing user terminal. The window is selected by the
 exact capture process and visible geometry, not the latest global class match.
@@ -894,6 +903,24 @@ recovery, per-caret vertical goals, wrapping, rectangle paint, snippet retiremen
 limit failures and each line command visiting source once. The dense workload
 benchmark measures key-to-grid-paint and grouped Undo; it does not measure physical
 terminal display latency.
+
+## Native keyboard layouts
+
+Use `scripts/tuishot.sh` with Ghostty or Kitty and an isolated display. Change
+the real XKB layout and send physical keys. Do not use `xdotool type` to test a
+shortcut: it can install a temporary key mapping. Open two files. With Persian
+or Russian selected, type a letter and check that it remains in that language.
+Use Ctrl+C, Ctrl+V, Ctrl+Z and Ctrl+Alt+P without switching layouts. With French
+AZERTY selected, press Ctrl on the US `]` position and check that the next tab
+opens. Check that Ctrl+Shift+Esc leaves both tabs open and Esc alone closes the
+active tab. Alacritty is a negative control for non-Latin shortcuts: its encoder
+does not supply the alternate key.
+
+On Windows, use the native capture workflow with a disposable running turn.
+Ctrl+Shift+Esc may open Task Manager, but must not stop the turn. Return to
+Crude and check that Esc alone stops it. The portable test decodes the Win32
+and Kitty sequences with the production decoder; it does not replace the
+native Task Manager check.
 
 ## Native selection formatting
 

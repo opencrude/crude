@@ -457,7 +457,7 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 	case EventKey:
 		t.CancelPointerCapture()
 		t.lastClickTime = time.Time{}
-		result := t.handleKey(evt.Key)
+		result := t.handleKey(ctx, evt.Key)
 		if result.Handled {
 			t.cursor.MarkActivity()
 		}
@@ -549,7 +549,7 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		return EventResult{
 			Handled:    true,
-			Cmd:        t.EndMouseSelection(),
+			Cmd:        t.endMouseSelection(ctx),
 			Invalidate: InvalidatePaint,
 		}
 	}
@@ -617,6 +617,10 @@ func (t *TextField) DeleteTextSelection() bool {
 // real drag copies the selection to the clipboard and drops it
 // (copy-on-release). A press that never moved only stops the drag.
 func (t *TextField) EndMouseSelection() tea.Cmd {
+	return t.endMouseSelection(EventContext{})
+}
+
+func (t *TextField) endMouseSelection(ctx EventContext) tea.Cmd {
 	if !t.IsSelecting() {
 		return nil
 	}
@@ -633,23 +637,20 @@ func (t *TextField) EndMouseSelection() tea.Cmd {
 	if t.TextSecret() {
 		return nil
 	}
-	return t.clipboardCopyFn()(selected)
+	return t.clipboardCopyFn(ctx)(selected)
 }
 
 // SetClipboardCopy overrides how copy commands are built (tests inject a
 // recorder; hosts may route copies through their own write path). Passing nil
-// restores the system-clipboard writer.
+// restores the host clipboard writer.
 func (t *TextField) SetClipboardCopy(fn func(string) tea.Cmd) {
-	if fn == nil {
-		fn = rendering.CopyToClipboardCmd
-	}
 	t.clipboardCopy = fn
 }
 
 // clipboardCopyFn returns the active clipboard writer.
-func (t *TextField) clipboardCopyFn() func(string) tea.Cmd {
+func (t *TextField) clipboardCopyFn(ctx EventContext) func(string) tea.Cmd {
 	if t.clipboardCopy == nil {
-		return rendering.CopyToClipboardCmd
+		return ctx.CopyText
 	}
 	return t.clipboardCopy
 }
@@ -664,12 +665,12 @@ func (t *TextField) indexAtContentX(x int) int {
 	return min(t.edit.Len(), t.viewStart+rendering.ColToRuneIdx(runes[t.viewStart:], x))
 }
 
-func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
+func (t *TextField) handleKey(ctx EventContext, m tea.KeyPressMsg) EventResult {
 	extend := m.Mod.Contains(tea.ModShift)
 	primary := m.Mod.Contains(tea.ModCtrl) || m.Mod.Contains(tea.ModSuper)
 	word := primary || m.Mod.Contains(tea.ModAlt)
 
-	if res, handled := textClipboardChord(t, t.clipboardCopyFn(), m); handled {
+	if res, handled := textClipboardChord(t, t.clipboardCopyFn(ctx), m); handled {
 		t.cursor.MarkActivity()
 		return res
 	}

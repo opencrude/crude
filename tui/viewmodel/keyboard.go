@@ -179,52 +179,25 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// A retained selection in another pane must never turn Ctrl+C into copy or
 	// eat EOF, suspend, flow control, or ordinary application key bindings.
 	if m.terminalOwnsKeys() {
-		if shellterm.IsPasteChord(msg) {
-			screen := m.mainTerminalOwnsKeys()
-			if m.terminalDockOwnsKeys() {
-				screen = m.termDock.Active()
-			}
-			if popup := m.focusedPopup(); popup != nil {
-				if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(popup.ID)); ok {
-					screen = m.termScreens[id]
-				}
-			}
-			if screen != nil {
-				return m, m.pasteTerminalClipboard(screen)
-			}
-		}
-		if screen := m.mainTerminalOwnsKeys(); screen != nil {
-			host := m.hostFor(screen.ID())
-			host.Focus(screen.ID())
-			result := host.Handle(msg)
-			return m, tea.Batch(result.Cmd, m.handleHostAction(result.Action))
-		}
-		if m.terminalDockOwnsKeys() {
-			return m.dispatchTermDockKey(msg)
-		}
-		return m.dispatchFloatingWindowKey(msg)
+		return m.dispatchTerminalKey(msg)
 	}
 
-	// A chat-message selection owns copy before keyboard activity tears down
-	// pointer capture. CancelPointerCapture clears the selection, so reading it
-	// afterward would silently turn copy into a no-op.
-	if ui.IsCopyChord(msg) && m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
-		selected := m.chatScreen.SelectedText()
-		if m.rootHost != nil && m.rootHost.HasPointerCapture() {
-			m.rootHost.CancelPointerCapture()
+	// Read an active chat drag before revoking its capture. A retained or
+	// hidden chat selection cannot consume a key meant for another pane.
+	if m.chatScreen != nil && m.chatScreen.HasActiveSelection() && m.chatOwnsPointerSelection() &&
+		(ui.IsCopyChord(msg) || msg.Code == tea.KeyEsc) {
+		var selected string
+		if ui.IsCopyChord(msg) {
+			selected = m.chatScreen.SelectedText()
 		}
-		m.chatScreen.ClearSelection()
-		if selected != "" {
-			return m, m.clipboardCopyCommand(selected)
-		}
-		return m, nil
+		m.hostFor(m.chatScreen.ID()).CancelPointerCapture()
+		return m, m.clipboardCopyCommand(selected)
 	}
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 		m.rootHost.CancelPointerCapture()
 	}
 	if m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
 		m.chatScreen.ClearSelection()
-		return m, nil
 	}
 	if m.sessionDeckCapturesInput() && m.focusedPopup() == nil {
 		return m, m.handleSessionDeckEvent(msg)
@@ -297,6 +270,68 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// keyWithSymbolFallback keeps the logical shortcut when it is bound. Only a
+// registered shell or editor action can claim the alternate symbol; it never
+// changes the input to a popup, text control, or terminal application.
+func (m *App) keyWithSymbolFallback(key tea.KeyPressMsg, symbol rune) tea.KeyPressMsg {
+	registry := m.actionRegistry
+	if symbol == 0 || registry == nil || m.focusedPopup() != nil || m.terminalOwnsKeys() {
+		return key
+	}
+	editorFocused := m.focusTarget() == FocusEditor
+	bound := func(key tea.KeyPressMsg) bool {
+		return registry.MatchGlobal(key) != nil || editorFocused && registry.MatchContext("editor", key) != nil
+	}
+	if !bound(key) {
+		alternate := key
+		alternate.Code = symbol
+		alternate.ShiftedCode = 0
+		if bound(alternate) {
+			return alternate
+		}
+	}
+	return key
+}
+
+func (m *App) dispatchTerminalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if shellterm.IsPasteChord(msg) {
+		screen := m.mainTerminalOwnsKeys()
+		if m.terminalDockOwnsKeys() {
+			screen = m.termDock.Active()
+		}
+		if popup := m.focusedPopup(); popup != nil {
+			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(popup.ID)); ok {
+				screen = m.termScreens[id]
+			}
+		}
+		if screen != nil {
+			return m, m.pasteTerminalClipboard(screen)
+		}
+	}
+	if screen := m.mainTerminalOwnsKeys(); screen != nil {
+		host := m.hostFor(screen.ID())
+		host.Focus(screen.ID())
+		result := host.Handle(msg)
+		return m, tea.Batch(result.Cmd, m.handleHostAction(result.Action))
+	}
+	if m.terminalDockOwnsKeys() {
+		return m.dispatchTermDockKey(msg)
+	}
+	return m.dispatchFloatingWindowKey(msg)
+}
+
+func (m *App) chatOwnsPointerSelection() bool {
+	if m.focusedPopup() != nil || m.sessionDeckCapturesInput() || m.termDockOwnsKeys() || m.focusTarget() != FocusInput {
+		return false
+	}
+	host := m.hostFor(m.chatScreen.ID())
+	if host == nil {
+		return false
+	}
+	owner, _, captured := host.CapturedPointer()
+	return captured && owner == m.chatScreen.ID()
+}
+
 func (m *App) dispatchLauncherKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if !m.focusLauncherHostControl() {
 		return m, nil
@@ -366,15 +401,9 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if ui.IsCopyChord(msg) {
 		// With no selection the editor copies the caret line, as VS Code does.
-		if text := m.EditorState.Editor.CopyText(); text != "" {
-			return m, rendering.CopyToClipboardCmd(text)
-		}
-		return m, nil
+		return m, m.EditorState.Editor.CopyCommand()
 	}
 	if ui.IsPasteChord(msg) {
-		// Editor.HandleEvent's standalone Ctrl+V support intentionally returns
-		// a generic PasteMsg. At the viewmodel boundary capture the initiating
-		// editor instead, so a delayed clipboard read cannot follow focus.
 		return m, m.beginEditorClipboardPaste(m.EditorState.Editor)
 	}
 	// Editor context actions from the registry (file.save, edit.undo,
@@ -650,7 +679,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m.handleTextOverlayKey(msg, &cmds)
 
 		default:
-			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok && msg.Code == tea.KeyEsc {
+			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(fw.ID)); ok && msg.Code == tea.KeyEsc && !ui.IsModifiedEscape(msg) {
 				if screen := m.termScreens[id]; screen != nil && screen.ReadOnly() && !screen.HasSelection() {
 					return m, m.closePopupWindowByID(fw.ID)
 				}
@@ -725,7 +754,7 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 		return m, nil
 	}
 	if ui.IsCopyChord(msg) && overlay.HasActiveSelection() {
-		return m, rendering.CopyToClipboardCmd(overlay.SelectedText())
+		return m, m.clipboardCopyCommand(overlay.SelectedText())
 	}
 	if fw := m.windowManager.Focused(); fw != nil {
 		if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {

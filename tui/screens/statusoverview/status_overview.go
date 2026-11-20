@@ -920,7 +920,7 @@ func (l *listControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCon
 
 // handleDockedCopy copies the selected row text. Docked panels (Notices,
 // Workspace) have no action bar, so Ctrl+C is their copy path.
-func (l *listControl) handleDockedCopy(_ ui.EventContext, evt ui.Event) (ui.EventResult, bool) {
+func (l *listControl) handleDockedCopy(ctx ui.EventContext, evt ui.Event) (ui.EventResult, bool) {
 	owner := l.owner
 	if !owner.docked || !evt.IsKey() {
 		return ui.EventResult{}, false
@@ -932,7 +932,7 @@ func (l *listControl) handleDockedCopy(_ ui.EventContext, evt ui.Event) (ui.Even
 	if text == "" {
 		return ui.EventResult{Handled: true}, true
 	}
-	return ui.EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(text)}, true
+	return ui.EventResult{Handled: true, Cmd: ctx.CopyText(text)}, true
 }
 
 func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/rendering"
 )
 
 // Cases ported from VS Code's cursor.test.ts with its default
@@ -12,22 +14,24 @@ import (
 // paste(text, pasteOnNewLine) are driven here by the real keys; pasteOnNewLine
 // comes from a preceding whole-line copy, as in the product.
 
-// clipboardText returns the text a copy or cut key placed on the clipboard.
-// The command itself writes the system clipboard and is not run in tests.
+// clipboardText checks the copy or cut key's write intent without touching the
+// desktop clipboard.
 func clipboardText(t *testing.T, cmd tea.Cmd) string {
 	t.Helper()
 	if cmd == nil {
 		t.Fatal("no clipboard command")
 	}
-	clipboardLineCopy.Lock()
-	defer clipboardLineCopy.Unlock()
-	return clipboardLineCopy.text
+	text, ok := cmd().(rendering.ClipboardWriteMsg)
+	if !ok {
+		t.Fatal("copy did not return a clipboard write")
+	}
+	return string(text)
 }
 
 // vsPaste is VS Code's viewModel.paste(text, pasteOnNewLine): the in-memory
 // metadata says whether the text came from an empty-selection copy.
 func vsPaste(e *Editor, text string, pasteOnNewLine bool) {
-	rememberClipboardCopy(text, pasteOnNewLine)
+	e.clipboardLines().remember(text, pasteOnNewLine)
 	e.HandleEvent(tea.PasteMsg{Content: text})
 }
 

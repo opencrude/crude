@@ -154,7 +154,7 @@ func TestClipboardCopyThenPasteExecutesInRequestOrder(t *testing.T) {
 	}
 }
 
-func TestAsyncClipboardPasteKeepsOwnerAndDropsOlderResult(t *testing.T) {
+func TestAsyncClipboardKeepsBothPastesInOrderAfterFocusMoves(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
@@ -238,8 +238,8 @@ func TestAsyncClipboardPasteKeepsOwnerAndDropsOlderResult(t *testing.T) {
 	}
 	restoreFast()
 	_, _ = app.Update(newResult)
-	if got := first.Value(); got != "new" {
-		t.Fatalf("intended editor value = %q, want new", got)
+	if got := first.Value(); got != "oldnew" {
+		t.Fatalf("intended editor value = %q, want both pastes in request order", got)
 	}
 	if got := second.Value(); got != "" {
 		t.Fatalf("newly focused editor was corrupted: %q", got)
@@ -252,8 +252,8 @@ func TestAsyncClipboardPasteKeepsOwnerAndDropsOlderResult(t *testing.T) {
 		t.Fatal("old paste did not complete")
 	}
 	_, _ = app.Update(oldResult)
-	if got := first.Value(); got != "new" {
-		t.Fatalf("stale paste applied after newer result: %q", got)
+	if got := first.Value(); got != "oldnew" {
+		t.Fatalf("completion applied a paste twice: %q", got)
 	}
 }
 

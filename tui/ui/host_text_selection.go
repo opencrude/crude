@@ -47,7 +47,7 @@ func (h *Host) SetPointerTextSelection(enabled bool) {
 	h.pointerText = enabled
 }
 
-// SetClipboardCopy overrides how painted-text copies are built (tests inject a
+// SetClipboardCopy overrides how mounted text copies are built (tests inject a
 // recorder). Passing nil restores the system-clipboard writer.
 func (h *Host) SetClipboardCopy(fn func(string) tea.Cmd) { h.copyText = fn }
 

@@ -52,7 +52,6 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	msg = ui.NormalizeKeyMsg(msg)
 	if paste, pasted := msg.(tea.PasteMsg); pasted {
 		// One decode for every text owner: composer, fields, editor, terminals.
 		msg = tea.PasteMsg{Content: ui.PastedLineBreaks(paste.Content)}
@@ -153,7 +152,17 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	rawKey, _ := msg.(tea.KeyPressMsg)
+	msg = ui.NormalizeKeyMsg(msg)
 	if key, ok := msg.(tea.KeyPressMsg); ok {
+		// Modified Escape is not Back, Cancel, or Stop. Keep it out of
+		// every shell control's Escape ladder, but preserve it for a PTY.
+		if ui.IsModifiedEscape(key) {
+			if m.terminalOwnsKeys() {
+				return m.dispatchTerminalKey(key)
+			}
+			return m, nil
+		}
 		if prompt := m.editorReload; prompt != nil {
 			if handled, cmd := m.confirmModalInput(editorReloadOverlay, key, false, prompt.activate); handled {
 				return m, cmd
@@ -634,7 +643,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		return m.dispatchKeyPress(msg)
+		return m.dispatchKeyPress(m.keyWithSymbolFallback(msg, ui.SymbolShortcutFallback(rawKey)))
 
 	case tea.PasteMsg:
 		return m.dispatchPasteMsg(msg)
@@ -1230,16 +1239,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.openSessionSettings()
 	case selectedSessionSettingsResult:
 		m.applySelectedSessionSettings(msg)
-	case rendering.ClipboardCopiedMsg:
-		m.ws.Logger().Debug("CLIPBOARD", "copied", "terminal", msg.Terminal)
-		if msg.Terminal {
-			m.Feedback.NotifyInfo("copied via the terminal clipboard")
-		} else {
-			m.Feedback.NotifyInfo("copied to clipboard")
+	case rendering.ClipboardWriteMsg:
+		cmds = append(cmds, m.clipboardCopyCommand(string(msg)))
+	case editor.ClipboardPasteMsg:
+		if m.ownsClipboardTargetEditor(msg.Editor) {
+			cmds = append(cmds, m.beginEditorClipboardPaste(msg.Editor))
 		}
-	case rendering.ClipboardErrorMsg:
-		m.ws.Logger().Error("CLIPBOARD", "error", "error", string(msg))
-		m.Feedback.NotifyError(string(msg))
 	case types.HistoryMessagesMsg:
 		m.hydrateActiveMessages(msg)
 	case pickerPathSearchResultMsg:
@@ -1857,7 +1862,7 @@ func (m *App) forwardNativeWindowContent(fw *wm.FloatingWindow, w *ui.WindowFram
 			fw.MarkContentDirty()
 			return tea.Batch(pasted.Cmd, m.handleHostAction(windowScreenAction(fw, pasted.Action)))
 		}, w.Host())
-		return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw.ID, deliver)), result.Handled
+		return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw, deliver)), result.Handled
 	}
 	result.Action = windowScreenAction(fw, result.Action)
 	cmd := m.handleHostAction(result.Action)

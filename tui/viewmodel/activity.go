@@ -482,7 +482,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		deliver := nativePasteDelivery(target, func(result ui.EventResult) tea.Cmd {
 			return tea.Batch(result.Cmd, m.handleHostAction(result.Action))
 		}, m.rootHost, m.mainHost())
-		return m.beginNativeClipboardPaste(target, "", deliver)
+		return m.beginNativeClipboardPaste(target, nil, deliver)
 	case termdock.ActionNew:
 		return m.openNewTerminal()
 	case activitybar.ActionSelect:

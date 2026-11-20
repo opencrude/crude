@@ -691,7 +691,7 @@ func (s *Screen) handleReadOnlyKey(key tea.KeyPressMsg) ui.EventResult {
 			return ui.EventResult{}
 		}
 		return ui.EventResult{Handled: true, Cmd: s.copySelection(), Invalidate: ui.InvalidatePaint}
-	case key.Code == tea.KeyEsc && s.view.HasSelection():
+	case key.Code == tea.KeyEsc && !ui.IsModifiedEscape(key) && s.view.HasSelection():
 		s.view.ClearSelection()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	case key.Mod != 0:

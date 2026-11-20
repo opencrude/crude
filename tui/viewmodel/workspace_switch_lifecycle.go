@@ -167,7 +167,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	if m.subPaneProjections != nil {
 		m.subPaneProjections.projections = nil
 	}
-	m.sessionProjections = newSessionProjectionRegistry(m.Theme)
+	m.sessionProjections = newSessionProjectionRegistry(m.Theme, m.clipboardCopyCommand)
 	m.subPaneProjections = newSubPaneProjectionRegistry(m.Theme)
 	m.subPaneProjections.SetProjectRoot(m.ws.RootPath())
 
@@ -188,6 +188,8 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.BufferMgr = editor.NewBufferManager()
 	m.EditorState = NewEditorState()
 	m.EditorState.Editor = editor.New(m.Theme)
+	m.bindEditorClipboard(m.EditorState.Editor)
+	m.Input.PromptClipboard().Clear()
 	if m.editorScreen != nil {
 		m.editorScreen.Bind(m.EditorState.Editor)
 	}

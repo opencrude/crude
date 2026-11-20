@@ -864,7 +864,7 @@ func (document *Document) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResu
 	}
 	paint := ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	if evt.IsKey() {
-		return document.handleKey(evt.Key)
+		return document.handleKey(ctx, evt.Key)
 	}
 	switch evt.Kind {
 	case ui.EventMouseMotion:
@@ -950,7 +950,7 @@ func (document *Document) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResu
 		text := document.SelectedText()
 		document.clearSelection()
 		if text != "" {
-			paint.Cmd = rendering.CopyToClipboardCmd(text)
+			paint.Cmd = ctx.CopyText(text)
 		}
 		return paint
 	}
@@ -961,14 +961,14 @@ func (document *Document) scrollHorizontal(delta int) {
 	document.hscroll = max(0, min(document.hscroll+delta, document.maxWidth-document.textWidth))
 }
 
-func (document *Document) handleKey(key tea.KeyPressMsg) ui.EventResult {
+func (document *Document) handleKey(ctx ui.EventContext, key tea.KeyPressMsg) ui.EventResult {
 	paint := ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	current := document.currentFileIndex()
 	if ui.IsCopyChord(key) {
 		if !document.selection.active {
 			return ui.EventResult{}
 		}
-		paint.Cmd = rendering.CopyToClipboardCmd(document.SelectedText())
+		paint.Cmd = ctx.CopyText(document.SelectedText())
 		return paint
 	}
 	switch key.String() {

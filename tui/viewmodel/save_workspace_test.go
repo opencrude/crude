@@ -45,7 +45,7 @@ func TestSaveAsWorkspacePromotesAgentSettings(t *testing.T) {
 		}},
 	}, types.Settings{}, map[string]types.CategorySettings{"default": {Model: "gpt-5.6", ThinkingEffort: "high"}})
 	owner := &workspace.Session{SessionID: "promotion-owner"}
-	app.sessionProjections = newSessionProjectionRegistry(app.Theme)
+	app.sessionProjections = newSessionProjectionRegistry(app.Theme, app.clipboardCopyCommand)
 	app.sessionProjections.items[owner] = &sessionProjection{settings: screen}
 
 	_, cmd := app.Update(sessionsettings.SaveAsWorkspaceMsg{

@@ -63,14 +63,20 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "File encoding", Disabled: ed.ReadOnly(), Action: func() {
 				m.runDetachedAsyncCmd(m.openEncodingMenu(ed))
 			}},
-			{Label: "Copy", Detail: "Ctrl+C", Disabled: !m.EditorState.Editor.HasSelection(), Action: func() {
-				m.copyEditorSelection()
+			{Label: "Copy", Detail: "Ctrl+C", Disabled: !ed.HasSelection(), Action: func() {
+				if m.ownsClipboardTargetEditor(ed) && ed.IsOpen() {
+					m.runDetachedAsyncCmd(ed.CopyCommand())
+				}
 			}},
-			{Label: "Cut", Detail: "Ctrl+X", Disabled: !m.EditorState.Editor.HasSelection(), Action: func() {
-				m.cutEditorSelection()
+			{Label: "Cut", Detail: "Ctrl+X", Disabled: !ed.HasSelection() || ed.ReadOnly(), Action: func() {
+				if m.ownsClipboardTargetEditor(ed) && ed.IsOpen() {
+					m.runDetachedAsyncCmd(ed.HandleEvent(tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}))
+				}
 			}},
-			{Label: "Paste", Detail: "Ctrl+V", Action: func() {
-				m.pasteIntoEditor()
+			{Label: "Paste", Detail: "Ctrl+V", Disabled: ed.ReadOnly(), Action: func() {
+				if m.ownsClipboardTargetEditor(ed) && ed.IsOpen() {
+					m.runDetachedAsyncCmd(m.beginEditorClipboardPaste(ed))
+				}
 			}},
 		},
 	})
@@ -789,11 +795,11 @@ func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			// Both keep the draft's attachments for a later paste.
 			{Label: "Copy", Detail: "Ctrl+C", Disabled: m.Input.Value() == "", Action: func() {
 				m.Input.RememberFragment(0, len([]rune(m.Input.Value())))
-				m.copyToClipboard(m.Input.Value())
+				m.runDetachedAsyncCmd(m.composerCopyCommand(m.Input.Value()))
 			}},
 			{Label: "Cut", Detail: "Ctrl+X", Disabled: m.Input.Value() == "", Action: func() {
 				m.Input.RememberFragment(0, len([]rune(m.Input.Value())))
-				m.copyToClipboard(m.Input.Value())
+				m.runDetachedAsyncCmd(m.composerCopyCommand(m.Input.Value()))
 				m.Input.ClearDraft()
 			}},
 			{Label: "Clear input", Action: func() {

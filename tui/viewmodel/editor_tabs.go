@@ -80,6 +80,7 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 	// search) lives inside the Editor. Switching to another tab and back
 	// gives back the same Editor instance with all state intact.
 	ed := editor.New(m.Theme)
+	m.bindEditorClipboard(ed)
 	ed.OpenBuffer(buf)
 	ed.SetPresentation(m.editorSettings)
 

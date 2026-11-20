@@ -147,10 +147,20 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   points use the same idempotent decoder because clipboard delivery can target
   a retained control without re-entering App.Update. The editor then applies
   the document's own terminator. Never strip a pasted CR before decoding it.
-- Copies write the system clipboard; when it is unreachable or the session is
-  SSH they also emit an OSC 52 terminal clipboard write
-  (`rendering.CopyToClipboardCmd`, the async write lane). A failed read names
-  the terminal's own paste shortcut (`ui.ClipboardReadUnavailable`).
+- **One clipboard owner per shell.** Editors, composer, terminal and mounted
+  controls submit exact text to the same ordered worker before scheduling I/O.
+  Explicit clipboard reads and writes run in request order. Each result returns
+  to its initiating control, even after a focus move; a closed or replaced owner
+  cannot receive a late paste. Repeating Paste does not cancel an earlier paste.
+- The local system clipboard is authoritative when readable. If a local write
+  fails, or Crude runs inside SSH with no local desktop, Crude sends the copy to
+  the host terminal with OSC 52 and can paste that explicit copy within the same
+  shell. An external text paste over SSH still uses the host terminal's paste
+  shortcut. An empty but readable clipboard never replays an older copy.
+- Composer Ctrl+V checks for actual image bytes before it attaches an image.
+  Some X11 clipboard owners send plain text in response to an image request;
+  in that case the composer reads the text format. An empty bracketed paste
+  remains image-only and never reads unrelated text.
 - **Text areas splice pastes in one linear pass.** `TextArea` insertions never
   loop rune by rune, and wrap segment offsets come from one
   `rendering.FindSegmentStarts` walk per line, not one per visual row. Only the
@@ -243,7 +253,7 @@ and [VS Code cursor movement](https://github.com/microsoft/vscode/blob/main/src/
   actions and other file types. History previews import session-owned copies;
   they never edit history assets.
 - Composer copy and cut keep what they put on the clipboard: Ctrl+C/Ctrl+X on
-  a selection, Cut without one, and menu Copy/Cut record the text with the
+  a selection, Ctrl+Shift+C, Cut without one, and menu Copy/Cut record the text with the
   exact attachment spans it shows (`input.PromptFragment`) in one per-window
   `PromptClipboard` shared by every composer and session draft. Other
   applications get the text with labels. A paste whose normalized text equals

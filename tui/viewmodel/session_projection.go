@@ -1,6 +1,8 @@
 package viewmodel
 
 import (
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/screens/composer"
 	"crude/tui/screens/decision"
@@ -32,14 +34,16 @@ type sessionProjection struct {
 }
 
 type sessionProjectionRegistry struct {
-	theme *theme.Theme
-	items map[*workspace.Session]*sessionProjection
+	theme    *theme.Theme
+	copyText func(string) tea.Cmd
+	items    map[*workspace.Session]*sessionProjection
 }
 
-func newSessionProjectionRegistry(th *theme.Theme) *sessionProjectionRegistry {
+func newSessionProjectionRegistry(th *theme.Theme, copyText func(string) tea.Cmd) *sessionProjectionRegistry {
 	return &sessionProjectionRegistry{
-		theme: th,
-		items: make(map[*workspace.Session]*sessionProjection),
+		theme:    th,
+		copyText: copyText,
+		items:    make(map[*workspace.Session]*sessionProjection),
 	}
 }
 
@@ -71,6 +75,7 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 		deckHost:       ui.NewHost(r.theme, deck),
 	}
 	projection.deckHost.SetPointerTextSelection(true)
+	projection.deckHost.SetClipboardCopy(r.copyText)
 	r.items[session] = projection
 	return projection
 }
@@ -88,7 +93,7 @@ func (m *App) sessionProjectionForAgent(agentID string) (*workspace.Session, *se
 		return nil, nil
 	}
 	if m.sessionProjections == nil {
-		m.sessionProjections = newSessionProjectionRegistry(m.Theme)
+		m.sessionProjections = newSessionProjectionRegistry(m.Theme, m.clipboardCopyCommand)
 	}
 	return session, m.sessionProjections.Get(session)
 }
@@ -98,7 +103,7 @@ func (m *App) activeSessionProjection() *sessionProjection {
 		return nil
 	}
 	if m.sessionProjections == nil {
-		m.sessionProjections = newSessionProjectionRegistry(m.Theme)
+		m.sessionProjections = newSessionProjectionRegistry(m.Theme, m.clipboardCopyCommand)
 	}
 	return m.sessionProjections.Get(m.ActiveSession)
 }
@@ -203,7 +208,7 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 	projection := m.activeSessionProjection()
 	if projection == nil || m.ActiveSession != session {
 		if m.sessionProjections == nil {
-			m.sessionProjections = newSessionProjectionRegistry(m.Theme)
+			m.sessionProjections = newSessionProjectionRegistry(m.Theme, m.clipboardCopyCommand)
 		}
 		projection = m.sessionProjections.Get(session)
 	}

@@ -825,12 +825,13 @@ func (h *Host) dispatchTo(id ComponentID, sx, sy int, msg tea.Msg) EventResult {
 	}
 	r := h.screen[id]
 	ectx := EventContext{
-		Theme:   h.theme,
-		Focused: h.focused == id,
-		LocalX:  sx - r.X,
-		LocalY:  sy - r.Y,
-		ScreenX: sx,
-		ScreenY: sy,
+		clipboardCopy: h.copyText,
+		Theme:         h.theme,
+		Focused:       h.focused == id,
+		LocalX:        sx - r.X,
+		LocalY:        sy - r.Y,
+		ScreenX:       sx,
+		ScreenY:       sy,
 	}
 	evt := NormalizeEvent(msg)
 	res := c.Handle(ectx, evt)
@@ -901,12 +902,13 @@ func (h *Host) bubbleUnhandledKey(source ComponentID, sx, sy int, evt Event, res
 		}
 		r := h.screen[parentID]
 		ectx := EventContext{
-			Theme:   h.theme,
-			Focused: h.focused == parentID,
-			LocalX:  sx - r.X,
-			LocalY:  sy - r.Y,
-			ScreenX: sx,
-			ScreenY: sy,
+			clipboardCopy: h.copyText,
+			Theme:         h.theme,
+			Focused:       h.focused == parentID,
+			LocalX:        sx - r.X,
+			LocalY:        sy - r.Y,
+			ScreenX:       sx,
+			ScreenY:       sy,
 		}
 		childRes := parent.Handle(ectx, evt)
 		if childRes.Invalidate != 0 {
@@ -938,7 +940,8 @@ func (h *Host) bubbleAction(source ComponentID, sx, sy int, result EventResult) 
 		}
 		r := h.screen[parentID]
 		response := handler.HandleAction(EventContext{
-			Theme: h.theme, Focused: h.focused == parentID,
+			clipboardCopy: h.copyText,
+			Theme:         h.theme, Focused: h.focused == parentID,
 			LocalX: sx - r.X, LocalY: sy - r.Y, ScreenX: sx, ScreenY: sy,
 		}, *action)
 		if !response.Handled {

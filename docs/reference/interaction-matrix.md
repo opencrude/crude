@@ -5,6 +5,21 @@
 Phase 0 baseline of keyboard/mouse contracts that the component system must
 preserve or intentionally improve.
 
+### Keyboard layouts
+
+Crude asks the terminal for alternate key codes. If a shortcut has a
+non-ASCII key and no text, Crude uses the reported US-layout key. An ASCII
+letter stays logical: Ctrl+A on AZERTY still uses the A key. For registered
+shell and editor shortcuts, an alternate symbol is a fallback only when the
+logical symbol has no matching action. This does not change typed text or
+rewrite an ASCII symbol sent to a focused terminal.
+
+Crude Window (Ghostty) and Kitty report the alternate key. Alacritty does
+not report the US-layout key for non-Latin shortcuts. Use Crude Window or
+Kitty if you need those shortcuts without switching layouts. A terminal
+that consumes a shortcut or omits its key information cannot pass it on to
+Crude.
+
 ## Global
 
 | Action | Binding (current) | Notes |
@@ -26,7 +41,7 @@ preserve or intentionally improve.
 | Modified Enter | Semantic chords, captions resolved per terminal | Ctrl+Enter / Shift+Enter exist only where the terminal disambiguates them (Windows console, kitty keyboard protocol); tmux and legacy terminals send plain Enter, and Windows Terminal takes Alt+Enter for fullscreen. Every caption comes from `ui.FormatShortcut` of a chord token and every matcher from the same token: **commit** (`CommitChord`) and editor **code actions** (`CodeActionsChord`) accept Ctrl+Enter and Alt+Enter; **new line** (`NewlineChord`) accepts Shift+Enter, Alt+Enter and Ctrl+J (LF, delivered everywhere); **previous match** accepts Shift+Enter and Shift+F3; **replace all** accepts Ctrl+Alt+Enter and Alt+Enter. A caption always names a key this terminal delivers; `TestNoHardCodedModifiedEnterCaptions` rejects hard-coded ones. |
 | Quit application | Ctrl+Q | |
 | Close active editor tab / empty pane | Ctrl+W | Editor uses the dirty-close Save / Discard / Cancel prompt; an empty focused group alone is removed without closing neighboring resources; terminal focus keeps the key as PTY input |
-| Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. In a text control Esc first drops the selection; the chat composer's ladder is selection → draft → cancel the turn. Cancelling requires live work (turn, pending prompt, compaction) or a recovery parked for retry: Esc with nothing to stop does nothing, a stopping turn is never re-entered, and palette Cancel Agent on an idle agent says "Nothing to stop". |
+| Cancel/back | Plain Esc | When the terminal reports a modifier, Esc does not run Back or Stop. This includes Windows Ctrl+Shift+Esc. A focused PTY can receive the modified key. Never Ctrl+C for Back. In the editor, Back closes the tab after it dismisses transient controls. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` explicitly rejects it. In the composer, Esc drops the selection, then clears the draft, then stops active work or a run parked for retry. Esc with nothing to stop does nothing. It never stops a turn twice. **Cancel Agent** on an idle agent says "Nothing to stop". |
 | Previous / next tab | Ctrl+[ / Ctrl+] | Within the focused main group, outside terminal key ownership, including editor focus |
 | Main tab actions and focus | Click tab / ×; tab context menu; close shortcut | Pointer selection and close return keys to the selected editor/chat, or workspace home when the last tab closes. Hover and overflow browsing never pin keyboard focus to the strip. Deliberate Ctrl+T + arrow/Home/End navigation retains strip focus until Enter/Down/Tab/Esc commits or leaves it; closing ends that navigation. Dirty-close Save / Discard / Cancel keeps its safe modal and never restores stale strip focus. Background tab updates preserve the current focus. |
 | New unnamed buffer | Double-click empty main tab-rail space | Opens in that pane. Save opens the Save File window. Automatic save does not affect it before the first explicit save. |
@@ -41,7 +56,7 @@ preserve or intentionally improve.
 | Whole-text Copy/Cut | right-click on a text control | Context menu Copy/Cut act on the entire value; the composer menu (Paste / Copy / Cut / Clear input) acts on the draft. Cut runs through the owning control so composite models stay in sync. |
 | Copy a prompt with attachments | Ctrl+C / Ctrl+X on a composer selection, or menu Copy / Cut; then paste | The clipboard gets the text with attachment labels. Pasting exactly that text into a composer of the same window brings the attachments back: the same attachment in the same session, an own copy in another session, with the new labels. The paste lands at the caret, holds Send until it completes, and never reuses an older copy for other text. |
 | Paste | Bracketed paste primary (the terminal's own paste: Ctrl+V on Windows Terminal, Ctrl+Shift+V on Linux terminals, Cmd+V on macOS); Ctrl+V / Ctrl+Shift+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input. Overlay text fields (find/replace, palette, tree prompt) take it through the same owner path as their keys. A Ctrl+V clipboard read re-enters through the exact control that asked (its composite sees it like a bracketed paste: searches run, forms track it) and is dropped if that owner is gone. Where the system clipboard is unreadable (SSH, headless tmux) the error names the terminal paste shortcut. Windows Terminal image-only clipboard pastes arrive as empty bracketed pastes: only the chat composer asynchronously reads and attaches the clipboard image. Non-empty text remains exact; an empty paste without an image is a silent no-op, never a read of unrelated clipboard text. |
-| Copy target | System clipboard; OSC 52 fallback | When the system clipboard is unreachable (no wl-copy/xclip/pbcopy) or the session is SSH, copies also go out as an OSC 52 terminal clipboard write, which local terminals and tmux (`set-clipboard`) deliver to the user's clipboard. |
+| Copy target | System clipboard; OSC 52 when unavailable | Copies from files, chat, fields and terminals use one ordered shell worker. When a desktop write is unavailable, Crude can still paste its last explicit copy inside the shell and sends that copy to the terminal with OSC 52. Use the terminal's own paste command for external text when Crude cannot read the system clipboard. |
 | Large text paste | Substantial overflow, not a line count alone | Attach at 4 KiB; also at eight logical lines with at least 512 bytes of trimmed payload, or ten wrapped rows with at least 1 KiB of trimmed payload. Wrapped evaluation uses the real text column with a 40-column floor. Short prose/small lists stay literal even on a tiny grid. Terminal and image-first clipboard routes share the policy; the full Pasted text attachment loads off Update. Pending storage preserves paste order and blocks Send; owner/draft changes invalidate late insertion and failures never dump the payload. |
 
 Clipboard images use binary `CreateRequest.Data` through local and connected
