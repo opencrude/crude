@@ -9,11 +9,11 @@ import (
 )
 
 // LiveDocumentCommands preserves save/format request identities across lost
-// responses. Receipt observation never executes an earlier command again.
+// responses. A request sent again with its identity returns the outcome the
+// core recorded; the core never executes one identity twice.
 type LiveDocumentCommands interface {
 	SaveDocumentRequest(context.Context, string, uint64, workspace.DocumentSaveReason, string) (document.Snapshot, error)
 	FormatDocumentRequest(context.Context, string, uint64, string) (document.Snapshot, error)
-	DocumentSnapshotReceipt(context.Context, string) (document.Snapshot, bool, error)
 }
 
 // DocumentEncodingSaver preserves the same request/receipt contract as Save.

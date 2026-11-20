@@ -80,9 +80,11 @@ type PanelEntry struct {
 }
 
 // PreferredHeightComponent allows panel content to report dynamic intrinsic
-// height without coupling PanelDeck to a feature screen.
+// height without coupling PanelDeck to a feature screen. width is the column
+// the content is laid out in, so content that wraps measures its final height
+// before the first frame instead of correcting it one frame later.
 type PreferredHeightComponent interface {
-	PreferredHeight(maxHeight int) int
+	PreferredHeight(width, maxHeight int) int
 }
 
 // PanelDeck is a native docked panel region. It is session-agnostic; product
@@ -244,7 +246,8 @@ func (d *PanelDeck) Panels() []PanelEntry {
 	return out
 }
 
-func (d *PanelDeck) PreferredHeight(maxHeight int) int {
+// PreferredHeight reports the deck's height at the given deck width.
+func (d *PanelDeck) PreferredHeight(width, maxHeight int) int {
 	panel := d.Active()
 	if panel == nil || maxHeight <= 0 {
 		return 0
@@ -255,7 +258,7 @@ func (d *PanelDeck) PreferredHeight(maxHeight int) int {
 	}
 	contentH := panel.PreferredHeight
 	if provider, ok := panel.Content.(PreferredHeightComponent); ok {
-		contentH = provider.PreferredHeight(max(0, maxHeight-chrome))
+		contentH = provider.PreferredHeight(d.contentWidth(width), max(0, maxHeight-chrome))
 	}
 	if contentH < 4 {
 		contentH = 4
@@ -275,7 +278,7 @@ func (d *PanelDeck) Children() []Component {
 }
 
 func (d *PanelDeck) Measure(_ LayoutContext, cs Constraints) Size {
-	return cs.ClampSize(Size{W: cs.MaxW, H: d.PreferredHeight(cs.MaxH)})
+	return cs.ClampSize(Size{W: cs.MaxW, H: d.PreferredHeight(cs.MaxW, cs.MaxH)})
 }
 
 // contentPad derives the deck's horizontal content padding from the theme
@@ -290,10 +293,24 @@ func (d *PanelDeck) contentPad(width int) int {
 	return min(max(0, d.tokens.PadLR()), width/2)
 }
 
+// contentWidth is the active panel's column for a deck of the given width;
+// measurement and layout use the same column.
+func (d *PanelDeck) contentWidth(width int) int {
+	innerW := max(0, width-2*d.contentPad(width))
+	if panel := d.Active(); panel != nil {
+		switch panel.Width {
+		case PanelReadableWidth:
+			return min(innerW, ReadableWidth(innerW))
+		case PanelWideReadable:
+			return min(innerW, WideReadableWidth(innerW))
+		}
+	}
+	return innerW
+}
+
 func (d *PanelDeck) Layout(ctx LayoutContext, r Rect) {
 	d.SetBounds(r)
 	padX := d.contentPad(r.W)
-	innerW := max(0, r.W-2*padX)
 	contentY := 1
 	if len(d.panels) > 1 {
 		// The strip spans the deck row: labels sit flush on the deck's left
@@ -302,15 +319,7 @@ func (d *PanelDeck) Layout(ctx LayoutContext, r Rect) {
 		d.tabs.Layout(ctx, Rect{X: 0, Y: 1, W: r.W, H: StripHeight})
 		contentY = 1 + StripHeight
 	}
-	contentW := innerW
-	if panel := d.Active(); panel != nil {
-		switch panel.Width {
-		case PanelReadableWidth:
-			contentW = min(innerW, ReadableWidth(innerW))
-		case PanelWideReadable:
-			contentW = min(innerW, WideReadableWidth(innerW))
-		}
-	}
+	contentW := d.contentWidth(r.W)
 	// Publish the deck row geometry for configurable full-bleed separator
 	// rules BEFORE laying content out, so rule owners (forms, action bars,
 	// picker dividers) already know the row when they size separator fields.

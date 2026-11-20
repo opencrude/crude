@@ -93,20 +93,37 @@ func observeTopicSent(ctx context.Context, seq uint64, resetReason string) {
 		if value.Sent != seq || value.PendingSince.IsZero() {
 			value.PendingSince = now
 		}
-		value.Sent, value.SentAt = seq, now
-		if resetReason != "" {
-			value.Resets++
-			value.ResetReason = resetReason
-		}
+		value.noteSent(seq, resetReason, now)
 	})
 }
 
-func observeTopicAck(ctx context.Context, seq uint64, display int64) {
+func observeTopicFlightSent(ctx context.Context, seq uint64, resetReason string, sentAt, oldest time.Time) {
 	updateTopicObservation(ctx, func(value *topicObservation) {
-		if value.Sent != seq {
+		value.PendingSince = oldest
+		value.noteSent(seq, resetReason, sentAt)
+	})
+}
+
+func (value *topicObservation) noteSent(seq uint64, resetReason string, now time.Time) {
+	value.Sent, value.SentAt = seq, now
+	if resetReason != "" {
+		value.Resets++
+		value.ResetReason = resetReason
+	}
+}
+
+func observeTopicAck(ctx context.Context, seq uint64, display int64) {
+	observeTopicFlightAck(ctx, seq, display, time.Time{})
+}
+
+// A pipelined sender supplies the oldest still-pending send time after
+// validating the exact ACK. A zero time means the newest send must be acked.
+func observeTopicFlightAck(ctx context.Context, seq uint64, display int64, oldest time.Time) {
+	updateTopicObservation(ctx, func(value *topicObservation) {
+		if oldest.IsZero() && value.Sent != seq {
 			return
 		}
-		value.Ack, value.AckAt, value.PendingSince = seq, time.Now(), time.Time{}
+		value.Ack, value.AckAt, value.PendingSince = seq, time.Now(), oldest
 		if display != 0 {
 			value.DisplayIntervalNS = int64(clampDisplay(display))
 		}

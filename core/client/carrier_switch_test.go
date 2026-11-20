@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestCarrierSwitchRetainsOwnerAndDoesNotReplayCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SwitchCarrier(t.Context(), f.dialer()); err != nil {
+	if err := c.SwitchCarrier(t.Context(), f.dialer(), f.dialer()); err != nil {
 		t.Fatal(err)
 	}
 	if c.Owner() != owner {
@@ -55,7 +56,7 @@ func TestCarrierSwitchFailureAndCancelledOwnershipPreserveUsableCarrier(t *testi
 		t.Fatal(err)
 	}
 	dialFailure := errors.New("reviewed endpoint unavailable")
-	if err := c.SwitchCarrier(t.Context(), func(context.Context) (corewire.Conn, error) { return nil, dialFailure }); !errors.Is(err, dialFailure) {
+	if err := c.SwitchCarrier(t.Context(), func(context.Context) (corewire.Conn, error) { return nil, dialFailure }, f.dialer()); !errors.Is(err, dialFailure) {
 		t.Fatal(err)
 	}
 	if err := c.acquireCarrierChange(t.Context()); err != nil {
@@ -64,7 +65,7 @@ func TestCarrierSwitchFailureAndCancelledOwnershipPreserveUsableCarrier(t *testi
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	called := false
-	err = c.SwitchCarrier(ctx, func(context.Context) (corewire.Conn, error) { called = true; return nil, dialFailure })
+	err = c.SwitchCarrier(ctx, func(context.Context) (corewire.Conn, error) { called = true; return nil, dialFailure }, f.dialer())
 	c.releaseCarrierChange()
 	if !errors.Is(err, context.Canceled) || called {
 		t.Fatal("cancelled ownership wait dialed a new endpoint", err)
@@ -75,6 +76,119 @@ func TestCarrierSwitchFailureAndCancelledOwnershipPreserveUsableCarrier(t *testi
 	}
 	var out coreprotocol.BoolResult
 	if err := c.Call(t.Context(), "workspace", "still-usable", &coreprotocol.Empty{}, &out); err != nil || !out.OK {
+		t.Fatal(err, out)
+	}
+}
+
+// The upgrade attempt and the later reconnect policy are separate: an SSH
+// session must not re-dial SSH just to try a direct carrier, and only a
+// successful switch installs the policy that later carrier loss uses.
+func TestCarrierSwitchInstallsReconnectPolicyOnlyOnSuccess(t *testing.T) {
+	f := &fakeCore{t: t, handle: func(_ coreprotocol.Open, _ []byte, s corewire.Stream) { reply(s, &coreprotocol.BoolResult{OK: true}) }}
+	c := dial(t, f)
+	var reconnects atomic.Int32
+	reconnect := func(ctx context.Context) (corewire.Conn, error) { reconnects.Add(1); return f.dialer()(ctx) }
+	failed := func(context.Context) (corewire.Conn, error) { return nil, errors.New("direct carrier unreachable") }
+	if err := c.SwitchCarrier(t.Context(), failed, reconnect); err == nil {
+		t.Fatal("unreachable upgrade reported success")
+	}
+	if reconnects.Load() != 0 {
+		t.Fatal("a failed upgrade dialed the reconnect policy")
+	}
+	call := func() {
+		t.Helper()
+		var out coreprotocol.BoolResult
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		if err := c.Call(ctx, "workspace", "still-usable", &coreprotocol.Empty{}, &out); err != nil || !out.OK {
+			t.Fatal(err, out)
+		}
+	}
+	f.dropCarriers()
+	call()
+	if reconnects.Load() != 0 {
+		t.Fatal("a failed upgrade replaced the session's reconnect policy")
+	}
+	if err := c.SwitchCarrier(t.Context(), f.dialer(), reconnect); err != nil {
+		t.Fatal(err)
+	}
+	if reconnects.Load() != 0 {
+		t.Fatal("the upgrade attempt dialed the reconnect policy")
+	}
+	f.dropCarriers()
+	call()
+	if reconnects.Load() == 0 {
+		t.Fatal("carrier loss after an upgrade did not use the installed reconnect policy")
+	}
+}
+
+// A background upgrade never delays the session: calls run on the current
+// carrier while the attempt is still dialing, and Close cancels and joins it.
+func TestUpgradeInBackgroundDoesNotBlockSessionAndCloseJoinsIt(t *testing.T) {
+	f := &fakeCore{t: t, handle: func(_ coreprotocol.Open, _ []byte, s corewire.Stream) { reply(s, &coreprotocol.BoolResult{OK: true}) }}
+	c := dial(t, f)
+	before, err := c.current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialing, ended := make(chan struct{}), make(chan struct{})
+	stalled := func(ctx context.Context) (corewire.Conn, error) {
+		close(dialing)
+		<-ctx.Done() // an unreachable endpoint that never answers
+		close(ended)
+		return nil, ctx.Err()
+	}
+	c.UpgradeInBackground(func(context.Context) (Dialer, Dialer, error) { return stalled, f.dialer(), nil })
+	select {
+	case <-dialing:
+	case <-time.After(time.Second):
+		t.Fatal("background upgrade did not start")
+	}
+	var out coreprotocol.BoolResult
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := c.Call(ctx, "workspace", "still-usable", &coreprotocol.Empty{}, &out); err != nil || !out.OK {
+		t.Fatal("a pending upgrade blocked the session", err, out)
+	}
+	if now, err := c.current(t.Context()); err != nil || now != before {
+		t.Fatal("a pending upgrade replaced the carrier", err)
+	}
+	closed := make(chan struct{})
+	go func() { _ = c.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close waited for the upgrade attempt timeout")
+	}
+	select {
+	case <-ended:
+	default:
+		t.Fatal("Close returned before joining the upgrade attempt")
+	}
+}
+
+// A successful background upgrade resumes the same session on the new carrier.
+func TestUpgradeInBackgroundSwitchesCarrier(t *testing.T) {
+	f := &fakeCore{t: t, handle: func(_ coreprotocol.Open, _ []byte, s corewire.Stream) { reply(s, &coreprotocol.BoolResult{OK: true}) }}
+	c := dial(t, f)
+	owner := c.Owner()
+	before, err := c.current(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.UpgradeInBackground(func(context.Context) (Dialer, Dialer, error) { return f.dialer(), f.dialer(), nil })
+	select {
+	case <-before.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("background upgrade did not replace the carrier")
+	}
+	if c.Owner() != owner {
+		t.Fatal("background upgrade replaced the session owner")
+	}
+	var out coreprotocol.BoolResult
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := c.Call(ctx, "workspace", "still-usable", &coreprotocol.Empty{}, &out); err != nil || !out.OK {
 		t.Fatal(err, out)
 	}
 }
@@ -91,7 +205,7 @@ func TestCloseCancelsInFlightCarrierHandshake(t *testing.T) {
 			server = corewire.NewMux(b, corewire.CarrierLocal, false)
 			go func() { _, _ = server.AcceptStream(t.Context()); close(started) }()
 			return corewire.NewMux(a, corewire.CarrierLocal, true), nil
-		})
+		}, f.dialer())
 	}()
 	select {
 	case <-started:

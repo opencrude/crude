@@ -469,31 +469,48 @@ func (s *DocumentService) Apply(c document.Change) (document.Receipt, error) {
 	s.mu.Lock()
 	defer func() { s.mu.Unlock(); s.changed(c.DocumentID) }()
 	// Bound untrusted command serialization before request hashing.
-	if len(c.Edits) > document.MaxEdits {
-		return document.Receipt{}, document.ErrLimit
-	}
-	weight := 0
-	for _, e := range c.Edits {
-		weight += len(e.Text)
-		if weight > document.MaxBytes {
+	count, weight := 0, 0
+	for step := range c.Steps {
+		count += len(step.Edits)
+		if len(step.Edits) == 0 || count > document.MaxEdits || len(step.GroupID) > 256 {
 			return document.Receipt{}, document.ErrLimit
+		}
+		for _, e := range step.Edits {
+			weight += len(e.Text)
+			if weight > document.MaxBytes {
+				return document.Receipt{}, document.ErrLimit
+			}
 		}
 	}
 	return s.command("edit", c, func(d *liveDocument) (uint64, error) {
-		index, err := s.commit(d, c)
-		if err != nil {
-			return d.snapshot.Revision, err
+		work := 0
+		for step := range c.Steps {
+			work += len(d.snapshot.Text)
+			if work > document.MaxBytes {
+				return d.snapshot.Revision, document.ErrLimit
+			}
+			if err := s.commitEditGroup(d, step); err != nil {
+				return d.snapshot.Revision, err
+			}
 		}
-		stack := d.undo[author(c.Owner)]
-		if c.GroupID != "" && len(stack) > 0 && len(d.redo[author(c.Owner)]) == 0 && d.journal[stack[len(stack)-1][len(stack[len(stack)-1])-1]].inverseOf == 0 && d.journal[stack[len(stack)-1][len(stack[len(stack)-1])-1]].group == c.GroupID {
-			stack[len(stack)-1] = append(stack[len(stack)-1], index)
-		} else {
-			stack = append(stack, documentUndoUnit{index})
-		}
-		d.undo[author(c.Owner)] = stack
-		delete(d.redo, author(c.Owner))
 		return d.snapshot.Revision, nil
 	})
+}
+
+func (s *DocumentService) commitEditGroup(d *liveDocument, c document.Change) error {
+	index, err := s.commit(d, c)
+	if err != nil {
+		return err
+	}
+	stack := d.undo[author(c.Owner)]
+	if c.GroupID != "" && len(stack) > 0 && len(d.redo[author(c.Owner)]) == 0 && d.journal[stack[len(stack)-1][len(stack[len(stack)-1])-1]].inverseOf == 0 && d.journal[stack[len(stack)-1][len(stack[len(stack)-1])-1]].group == c.GroupID {
+		stack[len(stack)-1] = append(stack[len(stack)-1], index)
+	} else {
+		stack = append(stack, documentUndoUnit{index})
+	}
+	d.undo[author(c.Owner)] = stack
+	delete(d.redo, author(c.Owner))
+	return nil
 }
 
 func (s *DocumentService) Undo(owner document.Owner, id, requestID string, expected uint64) (document.Receipt, error) {

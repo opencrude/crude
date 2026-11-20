@@ -63,6 +63,7 @@ type StreamingTerminals interface {
 // TerminalFrameMsg is installed on the shell's Update thread, never by the
 // subscription worker. Service identity fences workspace switches.
 type TerminalFrameMsg struct {
+	Prediction *workspace.TerminalProjection // optional local ink, never acknowledged as PTY output
 	Service    TerminalService
 	ID         string
 	Projection workspace.TerminalProjection

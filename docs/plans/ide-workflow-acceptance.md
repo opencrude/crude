@@ -31,6 +31,10 @@ not the first test and is not itself an acceptance result.
   documents and retained-client lifecycle. The editor harness currently uses
   a small text fixture with LSP and Local History disabled; it is not semantic
   or refactoring acceptance.
+- Reuse the [remote network lab](../guides/remote-network-lab.md) for routed
+  SSH, QUIC and TLS fixtures, its fault schedules and scoped cleanup. Its
+  sampled transcript is transport/workflow evidence, not a native frame trace
+  or a substitute for the D0–D8 device gates.
 - Follow [core/shell workflows](../guides/core-shell-workflows.md),
   [editor authority](../reference/editor.md),
   [control](../reference/control-contract.md) and
@@ -182,6 +186,68 @@ paste, reading documentation, failed builds and recovery. Use recorded or
 explicitly synthetic seeded pacing. Do not insert delays to improve latency
 statistics, reward minimum action count, or claim a trace reproduces human
 behavior merely because it is slow.
+
+### Combined workflow and network acceptance
+
+**2026-11-19 decision:** The network and IDE workflows are one acceptance
+matrix. After the transport foundation, extend the deterministic and
+exploratory lanes from single operations to complete, overlapping workflows. The
+[surface catalog](../reference/surface-catalog.md),
+[interaction matrix](../reference/interaction-matrix.md) and
+[editor parity plan](editor-parity.md) seed the case inventory. Give every
+supported user-facing workflow a case or an explicit coverage gap. Cover
+cold/warm, empty/dense, narrow/wide and local/remote states, including cancel,
+failure, retry and recovery. Select high-risk combinations deliberately rather
+than multiplying every dimension into an unmaintainable matrix.
+
+Run each supported workflow locally, on a clean connected LAN, and under the
+applicable [network fault classes](../guides/remote-network-lab.md#scenario-ladder).
+Record separate verdicts and do not infer one from another.
+
+| Link class | Required comparison |
+|---|---|
+| Local IPC and clean LAN | Native UI and local authority baseline; clean connected session on real remote hosts with no added fault. |
+| Stable and impaired WAN | Clean routed reference, shaped mobile/intercontinental RTT, then high RTT and jitter, loss, and limited throughput. Preserve separate local-response and remote-result budgets. |
+| Disrupted connections | Mid-operation stalls and directional/full blackholes, flaps, resume, NAT change, suspend and carrier fallback where applicable. Keep the action schedule and accepted/uncertain outcome evidence. |
+
+Remote-capable actions must retain the same correctness and usable UI
+behavior across these classes. Where a feature is local-only or an operation
+is intentionally forbidden remotely, test its in-product behavior and
+explicit denial instead of widening authority or counting it as exercised
+remotely. Record why a fault is inapplicable. A network profile that passed
+only a chat or ping check is not a workflow pass.
+
+Drive the real UI programmatically at realistic pacing. Include concurrent
+agent runs and streams, approvals and handoffs; LSP navigation, completion,
+diagnostics and reviewed edits; dirty/shared editor buffers, undo, save and
+reopen; plus focus changes, resize, resume and session/workspace switches
+while that work is active. Use the existing authorized owners and fixture
+paths. An unavailable capability stays blocked or unsupported; the runner
+does not bypass setup or trust to make it pass.
+
+**Coverage status (2026-11-20).** The lab's
+[workflow lane](../guides/remote-network-lab.md#workflow-lane) drives, on each
+steady link class plus its own outage: composer typing and a turn, editor
+open/type/save while an agent streams, an edit and save during an outage, an
+agent question answered in the deck, and a remote terminal command. It times
+each key's echo inside the client container and fails on lost keys, typed text
+that disappears, sampling gaps or clicked controls that move. The peer lane adds independent shells, an installed Marksman server, diagnostics,
+qualified navigation, cancellation and approval of a two-file rename, its Local
+History safety snapshot, host-only settings denial and per-client link failure.
+The optional native driver resizes the actual shell and captures both sizes.
+This does not claim setup/acquisition acceptance or full D0–D8 coverage.
+
+For each scored journey record paced input, observed terminal frame IDs or
+native presentation timestamps, expected transitions and independent
+outcomes. Keep mutation-to-model, model-to-presentation and total
+input-to-visible latency separate. Retain short stall traces, the longest gap with
+expected visible change, latency percentiles and any dropped observation
+intervals. A correct final frame does not excuse a lost input, transient
+wrong pane or momentary freeze. Do not infer a stall from unchanged pixels
+while idle, or call an incomplete capture smooth. Reuse the native capture
+workflow and [performance evidence](../reference/performance-baselines.md);
+calibrate and freeze budgets on repeated comparable workloads before judging
+improvements. Report text-only, native and separate-device results distinctly.
 
 ## Auditable checkpoints
 
@@ -516,7 +582,7 @@ only for measured dimensions, not a blanket “JetBrains killer” score.
 | G0 - Build locally | Implement the generic assembly path, required IDE surfaces, safe edits/history, runner/observer and VM provision/capture integration | Unit/race/native gates and tiny fixtures, D0-D2 bring-up; every required control is reachable and observed. Debug/profile features claimed for the campaign actually work. |
 | G1 - Local medium | Complete C0-C9, D0-D6 and D8 on admitted local projects, held-out assembly cases and required capability matrix; fix defects at their owner | At least three recorded passing local campaigns with varied tasks and cold/warm state, no unresolved known reproduction, exact-byte safety and independent two/three-guest editing. Plain host PTYs cannot satisfy the device rows. Human calibration remains separately required. |
 | G2 - Remote preflight | After G1, refresh the authorized host inventory, provision an owned remote benchmark endpoint and stage the exact native artifact | Key-only auth/host identity, profile locality, compatibility, capacity, approved paths/effects and tested rollback/cleanup. Early explicit credential bootstrap/read-only inventory is allowed but is not a workload or G2 pass. No production core replacement. |
-| G3 - Remote equivalence | Replay the admitted medium tasks using the independent guests and real remote core, D7, SSH and authorized direct/mixed transports | Distinct-host source/tool locality, rendering, edit/undo/save, recovery, security and measured network behavior. Record mixed-OS VM and physical-client calibration separately; neither loopback nor three local processes satisfies those rows. |
+| G3 - Remote equivalence | Replay the admitted medium tasks using the independent guests and real remote core, D7, SSH and authorized direct/mixed transports, across the combined workflow and network matrix | Distinct-host source/tool locality, rendering, edit/undo/save, recovery, security and measured temporal behavior on clean and impaired paths. Record mixed-OS VM and physical-client calibration separately; neither loopback nor three local processes satisfies those rows. |
 | G4 - Scale and discovery | VS Code, then LLVM, then Chromium; each promoted only after scoped baselines and capacity admission | Full-tree discovery/index-pressure plus real component tasks. Record exact configured units; a subset build/sparse checkout is not whole-project acceptance. Expanded server storage still needs measured workload/headroom admission. |
 
 “Implement all required functionality first” means before G2, not postponing

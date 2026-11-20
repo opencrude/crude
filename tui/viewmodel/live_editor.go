@@ -134,7 +134,10 @@ type liveEditorResult struct {
 	requestID    string
 	saveRevision uint64
 	reason       workspace.DocumentSaveReason
-	settled      bool
+	// resend re-attaches this exact request by its identity. The core returns
+	// the outcome it recorded, or admits the request once if it never arrived.
+	// It is never sent under a new identity.
+	resend func(context.Context) liveEditorResult
 }
 
 func (m *App) installLiveEditor(s document.Snapshot) error {
@@ -215,33 +218,26 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			continue
 		}
 		if previous := state.uncertain; previous != nil {
-			lookup, ok := m.ws.(shellport.LiveDocumentReceipts)
-			if previous.kind == "save" || previous.kind == "save-untitled" || previous.kind == "format" || previous.kind == "reload" {
-				_, ok = m.ws.(shellport.LiveDocumentCommands)
-			}
-			if !ok || time.Now().Before(state.recoverDue) {
+			// A request whose outcome this shell does not know blocks later
+			// edits of the document until the core answers for its identity.
+			if previous.resend == nil || time.Now().Before(state.recoverDue) {
 				continue
 			}
 			state.busy = true
 			state.done = make(chan liveEditorResult, 1)
 			done := state.done
 			state.recoverDue = time.Now().Add(time.Second)
-			captured := *previous
-			snapshotCommands, _ := m.ws.(shellport.LiveDocumentCommands)
+			resend := previous.resend
 			var once sync.Once
+			var outcome liveEditorResult
 			state.start = func() tea.Msg {
 				once.Do(func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
-					if captured.kind == "save" || captured.kind == "save-untitled" || captured.kind == "format" || captured.kind == "reload" {
-						captured.snapshot, captured.settled, captured.err = snapshotCommands.DocumentSnapshotReceipt(ctx, captured.requestID)
-					} else {
-						captured.receipt, captured.settled, captured.err = lookup.DocumentReceipt(ctx, captured.requestID)
-					}
-					captured.kind = "receipt/" + previous.kind
-					done <- captured
+					outcome = resend(ctx)
+					done <- outcome
 				})
-				return captured
+				return outcome
 			}
 			commands = append(commands, state.start)
 			continue
@@ -420,6 +416,10 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 			continue
 		}
 		if operation != nil {
+			msg.resend = func(ctx context.Context) liveEditorResult {
+				operation(ctx)
+				return msg
+			}
 			state.busy = true
 			state.done = make(chan liveEditorResult, 1)
 			done := state.done
@@ -539,6 +539,22 @@ func (m *App) applyDocumentTopic(msg shellport.LiveDocumentsChangedMsg) tea.Cmd 
 	return nil
 }
 
+// keepUncertain retains a request whose outcome this shell does not know, such
+// as a call that outlived its deadline while the link reconnected. The text
+// stays in the editor and the request is re-attached by its identity on a
+// later pass, without a question: only an outcome that the core itself lost
+// (it stopped while it ran the request) needs the user's decision.
+func (m *App) keepUncertain(state *liveEditorState, msg liveEditorResult) {
+	retained := msg
+	state.uncertain = &retained
+	state.recoverDue = time.Now().Add(time.Second)
+	var fault *coreprotocol.Fault
+	if errors.As(msg.err, &fault) && fault.Code == "outcome_uncertain" {
+		retained.resend = nil // only the user may resolve a core-declared unknown outcome
+		m.liveEditorFailure(state, msg.err)
+	}
+}
+
 func (m *App) liveEditorFailure(state *liveEditorState, err error) {
 	state.err = err
 	for ed, candidate := range m.liveEditors {
@@ -560,16 +576,8 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 	state.busy = false
 	state.done = nil
 	state.start = nil
-	if strings.HasPrefix(msg.kind, "receipt/") {
-		if !msg.settled {
-			return
-		}
-		msg.kind = strings.TrimPrefix(msg.kind, "receipt/")
-		// Fault receipts carry no domain payload; reconstruct the exact context
-		// from the retained request, never from today's editor state.
-		if msg.receipt.DocumentID == "" {
-			msg.receipt.DocumentID = ed.DocumentState().DocumentID
-		}
+	if state.uncertain != nil && state.uncertain.requestID == msg.requestID {
+		// The core answered for the retained identity.
 		state.uncertain, state.err = nil, nil
 	}
 	if msg.err != nil {
@@ -579,31 +587,20 @@ func (m *App) applyLiveEditorResult(msg liveEditorResult) {
 		}
 		// An edit/undo may have committed even though its response was lost.
 		// Keep the exact outstanding projection; never replay under a fresh ID.
+		// A pending or unknown core outcome is not a refusal.
 		var fault *coreprotocol.Fault
-		definitive := (errors.As(msg.err, &fault) && fault.Code != "outcome_uncertain") || errors.Is(msg.err, document.ErrOwner) || errors.Is(msg.err, document.ErrRequest)
-		if msg.kind == "save-untitled" && msg.settled && !definitive {
-			state.err = msg.err
-			m.uncertainUntitledSave(ed)
-			return
-		}
-		if !definitive && (msg.kind == "save" || msg.kind == "save-untitled" || msg.kind == "format" || msg.kind == "reload") && !msg.settled {
-			retained := msg
-			state.uncertain = &retained
-			state.recoverDue = time.Now().Add(time.Second)
+		definitive := (errors.As(msg.err, &fault) && fault.Code != "outcome_uncertain" && fault.Code != "outcome_pending") || errors.Is(msg.err, document.ErrOwner) || errors.Is(msg.err, document.ErrRequest)
+		if !definitive && (msg.kind == "save" || msg.kind == "save-untitled" || msg.kind == "format" || msg.kind == "reload") {
+			m.keepUncertain(state, msg)
 			if msg.kind == "save-untitled" {
 				m.pendingUntitledSave(ed)
-				return
 			}
-			m.liveEditorFailure(state, msg.err)
 			return
 		}
 		switch msg.kind {
 		case "edit", "undo":
 			if !definitive {
-				retained := msg
-				state.uncertain = &retained
-				state.recoverDue = time.Now().Add(time.Second)
-				m.liveEditorFailure(state, msg.err)
+				m.keepUncertain(state, msg)
 				return
 			}
 			msg.receipt = document.Receipt{DocumentID: ed.DocumentState().DocumentID, RequestID: msg.requestID, Error: msg.err.Error()}

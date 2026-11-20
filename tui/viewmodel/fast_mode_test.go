@@ -161,7 +161,7 @@ func TestFastCommandConnectedShellsAndRequests(t *testing.T) {
 func TestFastCommandUnsupportedConnectionIsNotPresentedAsFast(t *testing.T) {
 	runtime := remoteJourneyRuntimeConfig(t, "https://example.invalid/v1", func(cfg *session.Config) {
 		account := cfg.Accounts["test"]
-		account.Connection.APIStandard = "anthropic"
+		account.Connection.APIStandard = "codex"
 		cfg.Accounts["test"] = account
 	})
 	one := newRemoteJourneyShell(t, runtime, t.TempDir())

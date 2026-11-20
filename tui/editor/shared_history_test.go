@@ -13,7 +13,7 @@ func acknowledgeHistoryEdit(t *testing.T, e *Editor, request string) document.Ch
 	if err != nil || c.DocumentID == "" {
 		t.Fatalf("capture: %+v %v", c, err)
 	}
-	if err := e.AcceptDocumentReceipt(document.Receipt{DocumentID: c.DocumentID, RequestID: c.RequestID, Before: c.BaseRevision, Revision: c.BaseRevision + 1, Accepted: true}); err != nil {
+	if err := e.AcceptDocumentReceipt(document.Receipt{DocumentID: c.DocumentID, RequestID: c.RequestID, Before: c.BaseRevision, Revision: c.BaseRevision + 1 + uint64(len(c.Following)), Accepted: true}); err != nil {
 		t.Fatal(err)
 	}
 	return c
@@ -27,11 +27,11 @@ func TestSharedHistoryCapturesLogicalGroupsNotDrainBatches(t *testing.T) {
 	e.endUndoGroup()
 	e.InsertRune('z')
 	first := acknowledgeHistoryEdit(t, e, "first")
-	if first.GroupID == "fallback-first" || len(first.Edits) != 1 || first.Edits[0].Text != "xy" || e.DocumentState().PendingEdits != 1 {
+	if first.GroupID == "fallback-first" || len(first.Edits) != 1 || first.Edits[0].Text != "xy" || len(first.Following) != 1 {
 		t.Fatalf("first logical transaction: %+v %+v", first, e.DocumentState())
 	}
-	second := acknowledgeHistoryEdit(t, e, "second")
-	if second.GroupID == first.GroupID || second.Edits[0].Text != "z" || second.Edits[0].Start != 2 || e.DocumentSnapshot().Revision != 3 || string(e.DocumentSnapshot().Text) != "xyzbase" {
+	second := first.Following[0]
+	if second.ID == first.GroupID || second.Edits[0].Text != "z" || second.Edits[0].Start != 2 || e.DocumentSnapshot().Revision != 3 || string(e.DocumentSnapshot().Text) != "xyzbase" {
 		t.Fatalf("second logical transaction: %+v", second)
 	}
 }
@@ -49,11 +49,11 @@ func TestSharedHistoryRejectedReceiptRetainsGroupBoundaries(t *testing.T) {
 	}
 	e.ReconcileDocumentRevision()
 	retry := acknowledgeHistoryEdit(t, e, "retry")
-	if retry.GroupID != first.GroupID || retry.Edits[0].Text != "x" || e.DocumentState().PendingEdits != 1 {
+	if retry.GroupID != first.GroupID || retry.Edits[0].Text != "x" || len(retry.Following) != 1 {
 		t.Fatalf("retry crossed transaction: %+v", retry)
 	}
-	second := acknowledgeHistoryEdit(t, e, "second")
-	if second.GroupID == retry.GroupID || second.Edits[0].Text != "y" {
+	second := retry.Following[0]
+	if second.ID == retry.GroupID || second.Edits[0].Text != "y" {
 		t.Fatalf("second group lost %+v", second)
 	}
 }

@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -105,7 +106,6 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 		msg.refs = m.liveOpenRefs
 	}
 	loadRecovery := m.prepareEditorRecovery()
-	configPort, _ := m.ws.(shellport.EditorConfiguration)
 	command := m.clientIOCommand(ctx, func(owner context.Context) tea.Msg {
 		ctx, cancel := context.WithTimeout(owner, 2*time.Minute)
 		defer cancel()
@@ -137,9 +137,12 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 			if connected {
 				s, err := msg.refs.open(ctx, path)
 				file := paneFilePrepared{path: documentEditorKey(s), requested: path, err: err, snapshot: &s}
-				if err == nil && configPort != nil {
-					file.configRead = true
-					file.configPath, file.config, file.configErr = configPort.ReadEditorConfig(ctx, s.ID)
+				if config := s.OpenConfig; config != nil {
+					file.configRead, file.configPath, file.config = true, config.Path, config.Choices
+					if config.Error != "" {
+						file.configErr = errors.New(config.Error)
+					}
+					s.OpenConfig = nil
 				}
 				if err == nil {
 					file.recovery, file.recoveryErr = loadRecovery(recoveryKeyForDocument(s))

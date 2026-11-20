@@ -64,6 +64,10 @@ that every replica update is applied. Carrier heartbeat/resume remains the only
 transport-health owner; the UI adds no probe or retry loop. The Workspace adapter
 continues to report reconnecting while its fresh-attachment owner retries after
 SDK resume expires, and closed attachments cannot report live telemetry.
+The SSH and TLS byte-stream mux samples its latest heartbeat probe only after
+the peer responds. Setup time and superseded echoes do not become measured RTT.
+A fresh sample replaces the previous observation after a stall. QUIC uses its
+own transport RTT estimate.
 
 Hover is passive, keeps the draft and active pane, and stays open while the pointer
 enters the adjacent popover. Read-only text remains complete and scrollable on
@@ -268,8 +272,29 @@ listener identity and set future direct-access intent. Disabling after an enable
 host retains its healthy endpoints (including a prior nonloopback listener) while
 revoking paired admission; it is not a listener-closure isolation promise.
 Accept failure or shutdown withdraws matching actual endpoints without rewriting
-configuration. Loopback-only bootstrap may be unreachable from a distinct host;
-the pinned direct attempt then retains the verified SSH fallback.
+configuration. An SSH shell starts using its verified SSH session as soon as
+Hello/Welcome completes. It probes pinned direct carriers in the background
+under that same session owner. If no direct carrier answers, the session keeps
+its existing SSH connection; it does not open another SSH connection just to
+try the upgrade. Only a successful resume installs the direct-first reconnect
+policy with SSH fallback. Closing the session cancels and joins the upgrade.
+Loopback-only bootstrap can be unreachable from another host. It must not add
+a failed direct dial to the shell's startup path.
+
+A new SDK connection follows its caller's establishment deadline, including SSH
+authentication and remote core startup before Hello/Welcome. Startup negotiates the
+proposed root’s profile identity once. Selecting that root transfers the live
+session to the workspace, including any carrier upgrade already in progress.
+Selecting another root negotiates its own identity. A resumed connection gets the
+same establishment budget (at least the default), capped by the remaining
+negotiated grace. A slow SSH handshake must not be cut short on every retry. With no caller
+deadline it keeps the default ten-second bound. After a workspace is attached,
+the shell requests its independent initial snapshots in parallel and publishes
+them together. They share the attachment deadline and cannot publish after a
+failed attachment. Once a workspace is ready, an unconfirmed close of the
+detached startup-navigation session is a notice, not an attachment failure.
+The SDK still bounds that close and does not claim it was acknowledged. The
+[remote network lab](../guides/remote-network-lab.md) exercises these boundaries.
 
 QUIC retirement stops only its immutable accept generation, retaining the one
 transport/socket for established carriers. Returning A→B→A prepares a new accept

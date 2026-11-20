@@ -216,8 +216,8 @@ editor/chat facts. Workspace status remains workspace-owned.
 | Empty pane New Session / Open File | N / O; Tab or Shift+Tab chooses, Enter/Space activates |
 | Close an empty group | Ctrl+W, or palette Close Empty Pane; never closes a populated group through this operation |
 | Split an empty pane or move a tab to a new left/right/upper/lower split | Command palette and tab context menu; moving is one preview-validated placement including sole-tab source collapse |
-| Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu **Move beside a pane…** / palette **Move Tab Beside a Pane…** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
-| Split a containing subtree, initially empty | **Split containing layout…** → this pane / containing layout / entire layout → edge |
+| Arrange tab beside any exact pane or mixed-axis subtree | Tab context menu **Move beside a pane** / palette **Move Tab Beside a Pane…** → layout scope → Left / Right / Above / Below; leaf scopes also offer **Move into this pane** |
+| Split a containing subtree, initially empty | **Split containing layout** → this pane / containing layout / entire layout → edge |
 | Move active tab to next/previous pane; Merge all panes | Command palette and tab context menu |
 | Close file tabs of the clicked tab's pane | File tab menu **Close other files**, **Close files to the left**, **Close files to the right**, **Close saved files**, **Close all files**. They close only files and images; agent, panel and comparison tabs stay. Each dirty file asks Save / Discard / Cancel, and Cancel stops the rest |
 | Reorder selected tab inside its group | Palette Move Tab Left/Right in Group |
@@ -381,7 +381,13 @@ ownership are all retained. A stray click must never destroy work in flight.
   on its own so every path back works.
 - The workspace Aeron is permanent. Each attachment ensures exactly one after
   startup settles and a quiet period without user work; it arrives minimized
-  and never takes the user's tab by itself. It is not an ordinary Agents row
+  and never takes the user's tab by itself. That automatic open is background
+  work and never refuses or loses a user action: a New Session, open, fork or
+  Ask Crude chat request made while its reply is outstanding is kept (the
+  latest request wins) and starts when the reply arrives, and a workspace
+  switch waits for the reply instead of failing. On a slow link that reply can
+  take seconds (`tui/viewmodel/remote_lifecycle.go` `sessionLifecycleBusy`).
+  It is not an ordinary Agents row
   and does not count toward that sidebar badge or the Workspace panel's agent
   list. **Open workspace Aeron** in the **Workspace panel header**, beside its
   search, opens its existing normal agent tab with the normal chat, composer

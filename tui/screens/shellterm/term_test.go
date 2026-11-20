@@ -650,3 +650,30 @@ func TestTypedKeyPasteAndMouseStayUnencoded(t *testing.T) {
 		t.Fatalf("commands=%+v", commands)
 	}
 }
+
+func TestDelayedGridDoesNotRepeatOrLoseResize(t *testing.T) {
+	s, _ := newTestScreen(t)
+	fixture(s, "base", 11, terminalvt.Modes{})
+	s.SetControlled(true)
+	s.TakePendingCommands()
+	resize := func(w int) []int {
+		s.Layout(ui.LayoutContext{}, ui.Rect{W: w, H: 11})
+		var got []int
+		for _, cmd := range s.TakePendingCommands() {
+			if cmd.Kind == CommandResize {
+				got = append(got, cmd.Cols)
+			}
+		}
+		return got
+	}
+	if v := resize(80); len(v) != 1 || v[0] != 80 {
+		t.Fatal(v)
+	}
+	fixture(s, "old frame", 11, terminalvt.Modes{})
+	if v := resize(80); len(v) != 0 {
+		t.Fatalf("an old frame resubmitted the resize: %v", v)
+	}
+	if v := resize(40); len(v) != 1 || v[0] != 40 {
+		t.Fatalf("the return to the original size did not follow 80: %v", v)
+	}
+}

@@ -20,6 +20,8 @@ import (
 	"crude/core/protocol"
 	"crude/terminalvt"
 	"crude/workspace"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // callTimeout bounds one ordinary core request.
@@ -118,22 +120,33 @@ var _ shellport.Replica = (*Workspace)(nil)
 // Attach connects a shell to the core workspace rooted at opts.Root. The
 // returned replica already reflects the attach snapshot.
 func Attach(ctx context.Context, opts Options) (*Workspace, error) {
+	return attachWithClient(ctx, opts, nil)
+}
+
+func (opts Options) attachmentID() string {
+	if opts.ClientID == "" {
+		return randomID()
+	}
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(opts.ClientID+"\x00"+opts.Root)))
+}
+
+// attachWithClient takes ownership of an already negotiated startup session,
+// or dials the selected root. Reconnect always uses the ordinary dialer.
+func attachWithClient(ctx context.Context, opts Options, client *coreclient.Client) (*Workspace, error) {
 	if opts.Dial == nil || opts.Root == "" {
 		return nil, errors.New("remote attach needs a dialer and a project root")
 	}
 	if opts.Logger == nil {
 		opts.Logger = nopLogger{}
 	}
-	clientID := opts.ClientID
-	if clientID == "" {
-		clientID = randomID()
-	} else {
-		clientID = fmt.Sprintf("%x", sha256.Sum256([]byte(clientID+"\x00"+opts.Root)))
+	var err error
+	if client == nil {
+		client, err = opts.Dial(ctx, opts.attachmentID())
+		if err != nil {
+			return nil, err
+		}
 	}
-	client, err := opts.Dial(ctx, clientID)
-	if err != nil {
-		return nil, err
-	}
+	clientID := client.Owner().ClientID
 	attached, err := attach(ctx, client, opts.Root)
 	if err != nil {
 		_ = client.Close()
@@ -160,31 +173,10 @@ func Attach(ctx context.Context, opts Options) (*Workspace, error) {
 	w.settings = &settingsReplica{w: w}
 	w.lsp = newLSPReplica(w)
 	w.documents = newDocumentService(w)
-	if err := w.call(ctx, coreprotocol.ListSessions, &coreprotocol.Empty{}, (*coreprotocol.SessionRegistry)(&w.registry)); err != nil {
+	if err := w.loadInitialState(ctx); err != nil {
 		lifeCancel()
 		_ = client.Close()
-		return nil, fmt.Errorf("load session registry: %w", err)
-	}
-	settings, err := w.settings.load(ctx)
-	if err != nil {
-		lifeCancel()
-		_ = client.Close()
-		return nil, fmt.Errorf("load workspace settings: %w", err)
-	}
-	w.settings.install(settings)
-	if err := w.call(ctx, coreprotocol.WorkspaceStartup, &coreprotocol.Empty{}, &w.startup); err != nil {
-		lifeCancel()
-		_ = client.Close()
-		return nil, fmt.Errorf("load startup diagnostics: %w", err)
-	}
-	if snapshot, err := w.status.fetch(); err == nil {
-		w.status.install(snapshot)
-	}
-	if infos, err := w.terminals.fetch(ctx); err == nil {
-		w.terminals.install(infos)
-	}
-	if snapshot, err := w.lsp.fetch(ctx); err == nil {
-		w.lsp.install(snapshot)
+		return nil, err
 	}
 	w.admissions = make(map[*workspace.InputAdmissionIntent]provider.UserInput)
 	w.commands.init()
@@ -195,6 +187,61 @@ func Attach(ctx context.Context, opts Options) (*Workspace, error) {
 	go w.runCommands(&w.commands)
 	go w.runCommands(&w.services)
 	return w, nil
+}
+
+func (w *Workspace) loadInitialState(ctx context.Context) error {
+	// The initial reads are independent snapshots. Issue them together: on a
+	// remote link each sequential request costs a full round trip before the
+	// shell can paint. No replica is published before this batch succeeds.
+	reads, readCtx := errgroup.WithContext(ctx)
+	var (
+		settings                        settingsSnapshot
+		status                          statusSnapshot
+		terminals                       []workspace.TerminalInfo
+		lsp                             coreprotocol.LSPSnapshot
+		statusErr, terminalsErr, lspErr error
+	)
+	reads.Go(func() error {
+		if err := w.call(readCtx, coreprotocol.ListSessions, &coreprotocol.Empty{}, (*coreprotocol.SessionRegistry)(&w.registry)); err != nil {
+			return fmt.Errorf("load session registry: %w", err)
+		}
+		return nil
+	})
+	reads.Go(func() error {
+		var err error
+		if settings, err = w.settings.load(readCtx); err != nil {
+			return fmt.Errorf("load workspace settings: %w", err)
+		}
+		return nil
+	})
+	reads.Go(func() error {
+		if err := w.call(readCtx, coreprotocol.WorkspaceStartup, &coreprotocol.Empty{}, &w.startup); err != nil {
+			return fmt.Errorf("load startup diagnostics: %w", err)
+		}
+		return nil
+	})
+	// The live topics also supply these optional initial snapshots. A failed
+	// fetch is not an attachment failure, but it must obey the attach deadline.
+	reads.Go(func() error { status, statusErr = w.status.fetch(readCtx); return nil })
+	reads.Go(func() error { terminals, terminalsErr = w.terminals.fetch(readCtx); return nil })
+	reads.Go(func() error { lsp, lspErr = w.lsp.fetch(readCtx); return nil })
+	if err := reads.Wait(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.settings.install(settings)
+	if statusErr == nil {
+		w.status.install(status)
+	}
+	if terminalsErr == nil {
+		w.terminals.install(terminals)
+	}
+	if lspErr == nil {
+		w.lsp.install(lsp)
+	}
+	return nil
 }
 
 func attach(ctx context.Context, client *coreclient.Client, root string) (coreprotocol.AttachResult, error) {

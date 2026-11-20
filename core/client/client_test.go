@@ -27,6 +27,7 @@ type fakeCore struct {
 	carrier []*corewire.Mux
 	buildID string
 	version string
+	grace   time.Duration
 	// released lists identities the client released as no longer awaited.
 	released []coreprotocol.CommandIdentity
 	release  func([]coreprotocol.CommandIdentity, corewire.Stream)
@@ -56,7 +57,11 @@ func (f *fakeCore) serve(conn net.Conn) {
 		gone := f.gone
 		buildID, version := f.buildID, f.version
 		f.mu.Unlock()
-		welcome := coreprotocol.Welcome{Owner: coreprotocol.Owner{ClientID: hello.ClientID, Epoch: 7}, SessionID: "session", Secret: "secret", Schema: coreprotocol.Schema, Build: hello.Build, Grace: 5 * time.Second, Resumed: hello.Resume != nil, CoreBuildID: buildID, CoreVersion: version}
+		grace := f.grace
+		if grace == 0 {
+			grace = 5 * time.Second
+		}
+		welcome := coreprotocol.Welcome{Owner: coreprotocol.Owner{ClientID: hello.ClientID, Epoch: 7}, SessionID: "session", Secret: "secret", Schema: coreprotocol.Schema, Build: hello.Build, Grace: grace, Resumed: hello.Resume != nil, CoreBuildID: buildID, CoreVersion: version}
 		if gone && hello.Resume != nil {
 			welcome = coreprotocol.Welcome{Fault: &coreprotocol.Fault{Code: "session_gone", Message: "expired"}}
 		}

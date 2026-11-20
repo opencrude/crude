@@ -17,8 +17,13 @@ func TestScreenTinyLayoutRequestsSizeWithoutPreclaim(t *testing.T) {
 		t.Fatal("desired geometry preclaimed service success")
 	}
 	s.Layout(ui.LayoutContext{}, ui.Rect{W: 2, H: 1})
+	if len(s.TakePendingCommands()) != 0 {
+		t.Fatal("pending size repeated before its outcome")
+	}
+	s.ResizeFailed()
+	s.Layout(ui.LayoutContext{}, ui.Rect{W: 2, H: 1})
 	if len(s.TakePendingCommands()) != 1 {
-		t.Fatal("unacknowledged size not retried")
+		t.Fatal("failed size not retried")
 	}
 	p := s.projection
 	p.Grid.Cols = 8

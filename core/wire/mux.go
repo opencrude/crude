@@ -76,8 +76,15 @@ type Mux struct {
 	accept   chan *muxStream
 	done     chan struct{}
 	lastRecv atomic.Int64
+	heard    atomic.Bool
 	rtt      atomic.Int64
 	workers  sync.WaitGroup
+
+	// Only the most recent live probe measures the current path. A TCP relay
+	// can deliver several outstanding probes together after a stall.
+	pingSeq   uint64 // guarded by mu
+	probeSeq  uint64 // zero until a probe is sent, or after its pong is consumed
+	probeSent int64
 }
 
 type muxStream struct {
@@ -413,10 +420,16 @@ func (m *Mux) heartbeat() {
 }
 
 func (m *Mux) ping() {
-	var token [8]byte
-	binary.BigEndian.PutUint64(token[:], uint64(m.now()))
 	m.mu.Lock()
 	if !m.closed && !m.closing {
+		m.pingSeq++
+		// SSH stdio can accept writes before its remote end exists. The
+		// first ping elicits traffic but must not sample carrier setup.
+		if m.heard.Load() {
+			m.probeSeq, m.probeSent = m.pingSeq, m.now()
+		}
+		var token [8]byte
+		binary.BigEndian.PutUint64(token[:], m.pingSeq)
 		m.queueControl(0, framePing, token[:])
 	}
 	m.mu.Unlock()
@@ -482,7 +495,13 @@ func (m *Mux) readFrame(r *bufio.Reader, scratch []byte) error {
 	if _, err := io.ReadFull(r, body); err != nil {
 		return err
 	}
-	m.lastRecv.Store(m.now())
+	now := m.now()
+	m.lastRecv.Store(now)
+	if !m.heard.Load() {
+		m.heard.Store(true) // readLoop is the only writer
+		// The peer is now known to be live; measure the established path.
+		m.ping()
+	}
 	switch kind {
 	case framePing:
 		if len(body) != 8 {
@@ -498,15 +517,15 @@ func (m *Mux) readFrame(r *bufio.Reader, scratch []byte) error {
 		if len(body) != 8 {
 			return fmt.Errorf("%w: short pong", ErrProtocol)
 		}
-		sample := m.now() - int64(binary.BigEndian.Uint64(body))
-		if sample < 0 {
-			return nil
+		m.mu.Lock()
+		if m.probeSeq != 0 && m.probeSeq == binary.BigEndian.Uint64(body) {
+			// The mux samples once per heartbeat interval, not once per TCP
+			// ACK. Keep the latest observation for display and input rather
+			// than averaging a stale stall into many healthy observations.
+			m.rtt.Store(max(1, now-m.probeSent))
+			m.probeSeq = 0
 		}
-		if old := m.rtt.Load(); old == 0 {
-			m.rtt.Store(sample)
-		} else {
-			m.rtt.Store(old - old/8 + sample/8)
-		}
+		m.mu.Unlock()
 		return nil
 	case frameClose:
 		return fmt.Errorf("%w: peer closed: %s", ErrClosed, printable(body))

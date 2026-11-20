@@ -37,9 +37,10 @@ type terminalReplica struct {
 // frame waiting for an Update that may never run after detach.
 type terminalGrid struct {
 	*coreclient.TerminalSubscription
-	ctx    context.Context
-	cancel context.CancelFunc
-	client *coreclient.Client
+	ctx           context.Context
+	cancel        context.CancelFunc
+	client        *coreclient.Client
+	echoConfirmed bool // exact cursor run; never assume a new prompt echoes input
 }
 
 type terminalInputFailure struct {
@@ -310,14 +311,29 @@ func (t *terminalReplica) ApplyTerminalFrame(msg *shellport.TerminalFrameMsg) er
 	default:
 	}
 	if inputFailure {
+		grid.echoConfirmed = false
 		if _, pending := t.predicted[msg.ID]; pending {
 			msg.Projection = t.projections[msg.ID]
 			delete(t.predicted, msg.ID)
 		}
 	} else if msg.Err == nil {
-		t.modes[msg.ID] = msg.Projection.Grid.Modes
-		t.projections[msg.ID] = msg.Projection
+		next, old := msg.Projection, t.projections[msg.ID]
+		prediction, active := t.predicted[msg.ID]
 		delete(t.predicted, msg.ID)
+		if active {
+			remaining, matched, compatible := reconcileEcho(old, prediction, next)
+			grid.echoConfirmed = compatible && (matched || grid.echoConfirmed)
+			if compatible && remaining.Grid.Cells != nil {
+				t.predicted[msg.ID] = remaining
+				if grid.echoConfirmed {
+					msg.Prediction = &remaining
+				}
+			}
+		} else if old.Generation != next.Generation || old.Grid.Cursor != next.Grid.Cursor || old.Grid.HistoryEpoch != next.Grid.HistoryEpoch {
+			grid.echoConfirmed = false
+		}
+		t.modes[msg.ID] = next.Grid.Modes
+		t.projections[msg.ID] = next
 	}
 	return nil
 }
@@ -337,6 +353,9 @@ func (t *terminalReplica) SendInput(input workspace.TerminalInput) error {
 	if stream != nil && t.inputLeases[id] != input.Lease {
 		stream.Cancel()
 		delete(t.predicted, id)
+		if grid := t.grids[id]; grid != nil {
+			grid.echoConfirmed = false
+		}
 		stream = nil
 	}
 	if stream == nil {
@@ -350,6 +369,12 @@ func (t *terminalReplica) SendInput(input workspace.TerminalInput) error {
 		t.inputLeases[id] = input.Lease
 		if t.display > 0 {
 			stream.SetDisplayInterval(t.display)
+		}
+	}
+	if input.Kind != "key" && input.Kind != "focus" && input.Kind != "resize" || input.Kind == "key" && predictionText(input.Key) == "" || (input.Kind == "focus" && !input.Focused) {
+		delete(t.predicted, id)
+		if grid := t.grids[id]; grid != nil {
+			grid.echoConfirmed = false
 		}
 	}
 	return stream.Submit(input)
@@ -374,7 +399,7 @@ func (t *terminalReplica) PredictiveKey(id string, key terminalvt.Key) (workspac
 	if ok {
 		t.predicted[id] = p
 	}
-	return p, ok
+	return p, ok && t.grids[id] != nil && t.grids[id].echoConfirmed
 }
 
 // terminalPredictionPolicy is mosh's adaptive display (terminaloverlay.cc) on
@@ -403,7 +428,8 @@ func (p *terminalPredictionPolicy) update(carrier corewire.Carrier, rtt time.Dur
 
 func terminalPrediction(p workspace.TerminalProjection, key terminalvt.Key, flag bool) (workspace.TerminalProjection, bool) {
 	g := p.Grid
-	if key.Mod != 0 || len(key.Text) != 1 || key.Text[0] < ' ' || key.Text[0] > '~' || g.Synchronized || g.Modes.AltScreen || g.Modes.MouseTracking || !g.Cursor.Visible || g.Start != g.Total-g.GridRows {
+	text := predictionText(key)
+	if text == "" || g.Synchronized || g.Modes.AltScreen || g.Modes.MouseTracking || !g.Cursor.Visible || g.Start != g.Total-g.GridRows {
 		return p, false
 	}
 	x, y := g.Cursor.X, g.Cursor.Y
@@ -412,11 +438,61 @@ func terminalPrediction(p workspace.TerminalProjection, key terminalvt.Key, flag
 	}
 	g.Cells = append([][]terminalvt.Cell(nil), g.Cells...)
 	g.Cells[y] = append([]terminalvt.Cell(nil), g.Cells[y]...)
-	g.Cells[y][x].Text = key.Text
+	g.Cells[y][x].Text = text
 	g.Cells[y][x].Style.Underline = flag
 	g.Cursor.X++
 	p.Grid = g
 	return p, true
+}
+
+// Shift can produce an ordinary printable character. Other modifiers describe
+// commands, not echo. Space sometimes arrives as a named key without text.
+func predictionText(key terminalvt.Key) string {
+	if key.Mod&^terminalvt.ModShift != 0 {
+		return ""
+	}
+	if key.Code == terminalvt.KeySpace && key.Text == "" {
+		return " "
+	}
+	if len(key.Text) != 1 || key.Text[0] < ' ' || key.Text[0] > '~' {
+		return ""
+	}
+	return key.Text
+}
+
+// Keep only the unmatched suffix when the PTY confirms a prefix at the same
+// cursor. Unrelated output, reflow or different text wins immediately. Never
+// install this row in the canonical grid used for selection and copy.
+func reconcileEcho(old, predicted, next workspace.TerminalProjection) (remaining workspace.TerminalProjection, matched, compatible bool) {
+	a, b, p := old.Grid, next.Grid, predicted.Grid
+	y, start, end := a.Cursor.Y, a.Cursor.X, p.Cursor.X
+	x := b.Cursor.X
+	if b.Modes != a.Modes || b.Synchronized || !b.Cursor.Visible || b.Modes.AltScreen || b.Modes.MouseTracking || b.Start != b.Total-b.GridRows || b.Cursor.Y != y || y < 0 || y >= len(b.Cells) || y >= len(a.Cells) || y >= len(p.Cells) || start < 0 || x < start || x > end || end > len(b.Cells[y]) || end > len(p.Cells[y]) || end > len(a.Cells[y]) {
+		return
+	}
+	// A resize can repaint the same prompt at the same cursor before an echo
+	// arrives. Compare the actual prompt and target span, not frame generations.
+	for i := 0; i < end; i++ {
+		c := b.Cells[y][i]
+		if i >= start && i < x {
+			if c.Text != p.Cells[y][i].Text || c.Width != 1 {
+				return
+			}
+			continue
+		}
+		if c != a.Cells[y][i] {
+			return
+		}
+	}
+	if x == end {
+		return remaining, true, true
+	}
+	b.Cells = slices.Clone(b.Cells)
+	b.Cells[y] = slices.Clone(b.Cells[y])
+	copy(b.Cells[y][x:end], p.Cells[y][x:end])
+	b.Cursor.X = end
+	next.Grid = b
+	return next, x > start, true
 }
 
 func (t *terminalReplica) SetViewport(id string, request terminalvt.RowRequest) {

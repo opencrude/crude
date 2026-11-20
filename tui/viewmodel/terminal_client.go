@@ -184,6 +184,9 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 			}
 			for i := 0; i < max(1, command.Repeat); i++ {
 				if err := stream.SendInput(input); err != nil {
+					if screen := m.termScreens[command.ID]; screen != nil && command.Kind == shellterm.CommandResize {
+						screen.ResizeFailed()
+					}
 					m.reportTerminalIOError("input", command.ID, err)
 					break
 				}
@@ -239,6 +242,9 @@ func (m *App) terminalCommand(command shellterm.Command) tea.Cmd {
 	// Admission happens on Update, not when Bubble Tea happens to execute a
 	// command goroutine. One bounded FIFO preserves keystroke/paste/resize order.
 	if len(m.terminalQueue) >= 256 {
+		if screen := m.termScreens[command.ID]; screen != nil && command.Kind == shellterm.CommandResize {
+			screen.ResizeFailed()
+		}
 		m.reportTerminalIOError("input", command.ID, workspace.ErrTerminalBackpressure)
 		return nil
 	}
@@ -345,6 +351,9 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 	}
 	if msg.err != nil {
 		if screen := m.termScreens[id]; screen != nil {
+			if msg.command.Kind == shellterm.CommandResize {
+				screen.ResizeFailed()
+			}
 			if msg.command.Sequence != 0 {
 				screen.RowsFailed(msg.command.Sequence)
 			}
@@ -414,6 +423,9 @@ func (m *App) applyTerminalFrame(msg shellport.TerminalFrameMsg) tea.Cmd {
 		}
 	}
 	if msg.Err != nil {
+		if screen := m.termScreens[msg.ID]; screen != nil {
+			screen.ResizeFailed()
+		}
 		// An input failure rolls provisional ink back to the latest authority,
 		// resolved on Update rather than captured by a racing transport worker.
 		if msg.Projection.Info.ID != "" {
@@ -443,6 +455,9 @@ func (m *App) applyTerminalFrame(msg shellport.TerminalFrameMsg) tea.Cmd {
 	// SDK stream publications (including authoritative prediction rollbacks)
 	// retain immutable rows for their lifetime; do not clone the full grid again.
 	screen.SetImmutableProjection(msg.Projection)
+	if msg.Prediction != nil {
+		screen.SetPrediction(*msg.Prediction)
+	}
 	m.applyTerminalTitle(msg.ID, msg.Projection.Info.DisplayName())
 	if fw := m.overlayHost.Window(ui.TerminalOverlayID(msg.ID)); fw != nil {
 		fw.MarkContentDirty()

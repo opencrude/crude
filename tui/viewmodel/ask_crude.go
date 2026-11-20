@@ -339,8 +339,10 @@ func (m *App) askVisibleChat(source window.GroupID, idle bool) (window.GroupID, 
 // askNewChat creates a session off Update. applyRemoteSession records the
 // request before the agent's tab appears, and finishAskChat places it.
 func (m *App) askNewChat(req *askRequest) tea.Cmd {
-	if m.sessionLifecyclePending || m.workspaceAttachPending {
-		m.Feedback.NotifyInfo("A chat is still opening. Try again when it is ready.")
+	if busy, kept := m.sessionLifecycleBusy(func() tea.Cmd { return m.askNewChat(req) }); busy {
+		if !kept {
+			m.Feedback.NotifyInfo("A chat is still opening. Try again when it is ready.")
+		}
 		return nil
 	}
 	m.sessionLifecycleSequence++

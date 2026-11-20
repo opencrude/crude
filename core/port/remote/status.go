@@ -33,8 +33,8 @@ var _ shellport.StatusService = (*statusReplica)(nil)
 
 func newStatusReplica(w *Workspace) *statusReplica { return &statusReplica{w: w} }
 
-func (s *statusReplica) fetch() (statusSnapshot, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+func (s *statusReplica) fetch(ctx context.Context) (statusSnapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 	var snapshot statusSnapshot
 	err := s.w.call(ctx, coreprotocol.StatusSnapshotMethod, &coreprotocol.Empty{}, &snapshot)

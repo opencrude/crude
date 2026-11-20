@@ -42,8 +42,8 @@ func TestPanelDeckRetainsPanelsAndRoutesTabs(t *testing.T) {
 	host := NewHost(theme.DefaultDark(), deck)
 	host.Resize(60, 8)
 	host.Layout()
-	if deck.Count() != 2 || deck.Active().ID != "second" || deck.PreferredHeight(20) != 8 {
-		t.Fatalf("deck state count=%d active=%#v height=%d", deck.Count(), deck.Active(), deck.PreferredHeight(20))
+	if deck.Count() != 2 || deck.Active().ID != "second" || deck.PreferredHeight(60, 20) != 8 {
+		t.Fatalf("deck state count=%d active=%#v height=%d", deck.Count(), deck.Active(), deck.PreferredHeight(60, 20))
 	}
 
 	host.Focus(deck.tabs.ID())
@@ -84,7 +84,7 @@ func TestPanelDeckStripOwnsBaselineAndKeepsChromeRows(t *testing.T) {
 	if got := deck.content.Y; got != 1+StripHeight {
 		t.Fatalf("deck content y=%d want %d", got, 1+StripHeight)
 	}
-	if got := deck.PreferredHeight(20); got != 8 {
+	if got := deck.PreferredHeight(60, 20); got != 8 {
 		t.Fatalf("deck preferred height=%d want 8 (content 5 + 3 chrome rows)", got)
 	}
 	if labels := stripRow(buf, 1, 60); !strings.Contains(labels, "First") || !strings.Contains(labels, "Second") {

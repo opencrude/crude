@@ -261,13 +261,16 @@ func TestLiveEditorRealAppsShareUndoSaveAndClose(t *testing.T) {
 }
 
 // The delegate still uses the real core connection. This seam loses only the
-// acknowledgement, not the mutation, and verifies the App looks up its receipt.
+// acknowledgement, not the mutation; the App must re-attach the request by its
+// identity and receive the recorded outcome. With unsent, the first edit
+// instead never reaches the core: its call ends at the caller's deadline, as
+// during a long reconnect, and no receipt exists.
 type lostLiveResponse struct {
 	shellport.Workspace
-	live            shellport.LiveDocuments
-	lookup          shellport.LiveDocumentReceipts
-	lost            bool
-	edits, receipts int
+	live         shellport.LiveDocuments
+	lost, unsent bool
+	edits        int
+	ids          []string
 }
 
 func (p *lostLiveResponse) DocumentOwner() document.Owner { return p.live.DocumentOwner() }
@@ -279,6 +282,11 @@ func (p *lostLiveResponse) SyncDocument(c context.Context, id string, r uint64) 
 }
 func (p *lostLiveResponse) EditDocument(c context.Context, change document.Change) (document.Receipt, error) {
 	p.edits++
+	p.ids = append(p.ids, change.RequestID)
+	if p.unsent {
+		p.unsent = false
+		return document.Receipt{}, context.DeadlineExceeded
+	}
 	r, err := p.live.EditDocument(c, change)
 	if err == nil && !p.lost {
 		p.lost = true
@@ -295,10 +303,6 @@ func (p *lostLiveResponse) SaveDocument(c context.Context, id string, r uint64, 
 func (p *lostLiveResponse) CloseDocument(c context.Context, id string) error {
 	return p.live.CloseDocument(c, id)
 }
-func (p *lostLiveResponse) DocumentReceipt(c context.Context, id string) (document.Receipt, bool, error) {
-	p.receipts++
-	return p.lookup.DocumentReceipt(c, id)
-}
 
 func TestLiveEditorLostReceiptRetainsNewerTypingWithoutReplay(t *testing.T) {
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
@@ -309,7 +313,7 @@ func TestLiveEditorLostReceiptRetainsNewerTypingWithoutReplay(t *testing.T) {
 	}
 	shell := newRemoteJourneyShell(t, runtime, root)
 	original := shell.app.ws
-	port := &lostLiveResponse{Workspace: original, live: original.(shellport.LiveDocuments), lookup: original.(shellport.LiveDocumentReceipts)}
+	port := &lostLiveResponse{Workspace: original, live: original.(shellport.LiveDocuments)}
 	shell.app.ws = port
 	t.Cleanup(func() { shell.app.ws = original })
 	ed := liveTestOpen(t, shell.app, path)
@@ -321,12 +325,50 @@ func TestLiveEditorLostReceiptRetainsNewerTypingWithoutReplay(t *testing.T) {
 		t.Fatal("uncertain edit lost draft")
 	}
 	liveTestSync(t, shell.app)
-	if port.edits != 2 || port.receipts != 1 || ed.Value() != "XYabc" || ed.DocumentState().InFlight {
-		t.Fatalf("receipt replayed or stalled: edits=%d lookups=%d state=%+v text=%q", port.edits, port.receipts, ed.DocumentState(), ed.Value())
+	// X, X again by its identity (the recorded outcome), then Y.
+	if len(port.ids) != 3 || port.ids[0] != port.ids[1] || port.ids[2] == port.ids[0] || ed.Value() != "XYabc" || ed.DocumentState().InFlight {
+		t.Fatalf("lost edit replayed under a new identity or stalled: ids=%v state=%+v text=%q", port.ids, ed.DocumentState(), ed.Value())
 	}
 	s, err := port.live.SyncDocument(t.Context(), path, 0)
 	if err != nil || string(s.Snapshot.Text) != "XYabc" {
 		t.Fatalf("wrong committed text %+v %v", s, err)
+	}
+}
+
+// An edit lost before it reached the core has no receipt and an unknown
+// outcome only for the shell. Found by the network lab: after an outage on a
+// 750 ms link the reconnect outlasted the call, a "Changes not applied"
+// dialog took the keyboard, and the save never ran. The editor re-attaches the
+// request by its own identity when the core is reachable, asks nothing, and
+// the save the user made meanwhile completes with the exact text.
+func TestLiveEditorUnsentEditReattachesAndSaves(t *testing.T) {
+	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
+	root := t.TempDir()
+	path := filepath.Join(root, "unsent.txt")
+	if err := os.WriteFile(path, []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	shell := newRemoteJourneyShell(t, runtime, root)
+	original := shell.app.ws
+	port := &lostLiveResponse{Workspace: original, live: original.(shellport.LiveDocuments), lost: true, unsent: true}
+	shell.app.ws = port
+	t.Cleanup(func() { shell.app.ws = original })
+	ed := liveTestOpen(t, shell.app, path)
+	ed.InsertRune('X')
+	runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
+	if shell.app.overlayHost.Window(liveConflictOverlay) != nil {
+		t.Fatal("a request without a known outcome opened a decision dialog")
+	}
+	runAppCommand(t, shell.app, shell.app.requestEditorSave(ed, workspace.DocumentSaveManual, false))
+	liveTestPump(t, []*App{shell.app}, func() bool {
+		data, err := os.ReadFile(path)
+		return err == nil && string(data) == "Xabc" && !ed.Modified()
+	})
+	if shell.app.overlayHost.Window(liveConflictOverlay) != nil || ed.Value() != "Xabc" {
+		t.Fatalf("recovery left a dialog or changed the text: %q", ed.Value())
+	}
+	if len(port.ids) != 2 || port.ids[0] != port.ids[1] {
+		t.Fatalf("the lost edit was not re-attached by its identity: %v", port.ids)
 	}
 }
 
@@ -456,39 +498,37 @@ func TestLiveEditorFormatOnSaveIsAuthorOwnedCoreGroup(t *testing.T) {
 	}
 }
 
-// Lose the snapshot response after the real command commits; lookup observes
-// exactly that ID through the real retained core receipt store.
+// Lose the first snapshot response after the real command commits. The App
+// must send that exact identity again and receive the outcome the core's
+// receipt store recorded, never a second execution under a new identity.
 type lostSnapshotResponse struct {
 	*lostLiveResponse
-	commands       shellport.LiveDocumentCommands
-	kind           string
-	calls, lookups int
+	commands shellport.LiveDocumentCommands
+	kind     string
+	dropped  bool
+	requests []string // method:identity in call order
 }
 
-func (p *lostSnapshotResponse) SaveDocumentRequest(ctx context.Context, id string, rev uint64, reason workspace.DocumentSaveReason, request string) (document.Snapshot, error) {
-	p.calls++
-	s, err := p.commands.SaveDocumentRequest(ctx, id, rev, reason, request)
-	if p.kind == "save" && err == nil {
-		return document.Snapshot{}, errors.New("lost save response")
+func (p *lostSnapshotResponse) answer(method, request string, s document.Snapshot, err error) (document.Snapshot, error) {
+	p.requests = append(p.requests, method+":"+request)
+	if p.kind == method && err == nil && !p.dropped {
+		p.dropped = true
+		return document.Snapshot{}, errors.New("lost " + method + " response")
 	}
 	return s, err
 }
+func (p *lostSnapshotResponse) SaveDocumentRequest(ctx context.Context, id string, rev uint64, reason workspace.DocumentSaveReason, request string) (document.Snapshot, error) {
+	s, err := p.commands.SaveDocumentRequest(ctx, id, rev, reason, request)
+	return p.answer("save", request, s, err)
+}
 func (p *lostSnapshotResponse) FormatDocumentRequest(ctx context.Context, id string, rev uint64, request string) (document.Snapshot, error) {
-	p.calls++
 	s, err := p.commands.FormatDocumentRequest(ctx, id, rev, request)
-	if p.kind == "format" && err == nil {
-		return document.Snapshot{}, errors.New("lost format response")
-	}
-	return s, err
+	return p.answer("format", request, s, err)
 }
 func (p *lostSnapshotResponse) FormatDocument(ctx context.Context, id string, rev uint64) (document.Snapshot, error) {
 	return p.live.(shellport.LiveDocumentFormatter).FormatDocument(ctx, id, rev)
 }
-func (p *lostSnapshotResponse) DocumentSnapshotReceipt(ctx context.Context, id string) (document.Snapshot, bool, error) {
-	p.lookups++
-	return p.commands.DocumentSnapshotReceipt(ctx, id)
-}
-func TestLiveEditorLostSnapshotResponsesObserveWithoutReplay(t *testing.T) {
+func TestLiveEditorLostSnapshotResponsesReattachWithoutReplay(t *testing.T) {
 	for _, kind := range []string{"save", "format"} {
 		t.Run(kind, func(t *testing.T) {
 			runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
@@ -499,28 +539,34 @@ func TestLiveEditorLostSnapshotResponsesObserveWithoutReplay(t *testing.T) {
 			}
 			shell := newRemoteJourneyShell(t, runtime, root)
 			port := shell.app.ws
-			seam := &lostSnapshotResponse{lostLiveResponse: &lostLiveResponse{Workspace: port, live: port.(shellport.LiveDocuments), lookup: port.(shellport.LiveDocumentReceipts), lost: true}, commands: port.(shellport.LiveDocumentCommands), kind: kind}
+			seam := &lostSnapshotResponse{lostLiveResponse: &lostLiveResponse{Workspace: port, live: port.(shellport.LiveDocuments), lost: true}, commands: port.(shellport.LiveDocumentCommands), kind: kind}
 			shell.app.ws = seam
 			ed := liveTestOpen(t, shell.app, path)
 			shell.app.editorSettings.FormatOnSave = true
 			shell.app.requestEditorSaveWithFormat(ed, workspace.DocumentSaveManual, false, kind == "format")
 			runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
 			state := shell.app.liveEditors[ed]
-			if state.uncertain == nil {
-				t.Fatal("lost snapshot not retained")
+			if state.uncertain == nil || shell.app.overlayHost.Window(liveConflictOverlay) != nil {
+				t.Fatal("a lost snapshot was not retained quietly")
 			}
 			state.recoverDue = time.Time{}
 			runAppCommand(t, shell.app, shell.app.drainLiveEditorCommands())
-			if state.uncertain != nil || seam.lookups != 1 {
-				t.Fatalf("receipt not settled: %+v %d", state, seam.lookups)
+			if state.uncertain != nil {
+				t.Fatalf("the re-attached request did not settle: %+v", state)
 			}
 			liveTestSync(t, shell.app)
-			expected := 1
+			first := seam.requests[0]
+			want := []string{first, first}
 			if kind == "format" {
-				expected = 2
+				want = append(want, "save:")
 			}
-			if seam.calls != expected {
-				t.Fatalf("command replayed: %d expected %d", seam.calls, expected)
+			if len(seam.requests) != len(want) || seam.requests[1] != first ||
+				(kind == "format" && (!strings.HasPrefix(seam.requests[2], "save:") || seam.requests[2] == "save:"+strings.TrimPrefix(first, "format:"))) {
+				t.Fatalf("lost %s replayed or not re-attached by its identity: %v", kind, seam.requests)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != ed.Value() || ed.Modified() {
+				t.Fatalf("saved bytes differ from the editor: %q %v modified=%v", data, err, ed.Modified())
 			}
 		})
 	}

@@ -266,7 +266,7 @@ func TestLiveDiagnosticsRemoteCarriers(t *testing.T) {
 		}},
 		{corewire.CarrierSSH, ssh},
 	} {
-		if err := c.SwitchCarrier(ctx, next.dial); err != nil {
+		if err := c.SwitchCarrier(ctx, next.dial, next.dial); err != nil {
 			t.Fatal("real carrier switch", next.carrier, err)
 		}
 		carrier, _ := c.Carrier()

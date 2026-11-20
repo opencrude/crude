@@ -29,7 +29,7 @@ func (w *Workspace) DocumentOwner() document.Owner {
 }
 func (w *Workspace) OpenDocument(ctx context.Context, path string) (document.Snapshot, error) {
 	var out document.Snapshot
-	err := w.call(ctx, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path}, &out)
+	err := w.call(ctx, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path, WithEditorConfig: true}, &out)
 	if err == nil {
 		w.registerDocumentTopic(out.ID, path)
 	}
@@ -100,7 +100,7 @@ func (w *Workspace) EditDocument(ctx context.Context, c document.Change) (docume
 	if c.Owner != w.DocumentOwner() {
 		return out, document.ErrOwner
 	}
-	err := w.documentCall(ctx, c.RequestID, coreprotocol.DocumentEdit, &coreprotocol.DocumentEditRequest{ID: c.DocumentID, Revision: c.BaseRevision, Group: c.GroupID, Edits: c.Edits}, &out)
+	err := w.documentCall(ctx, c.RequestID, coreprotocol.DocumentEdit, &coreprotocol.DocumentEditRequest{ID: c.DocumentID, Revision: c.BaseRevision, Group: c.GroupID, Edits: c.Edits, Following: c.Following}, &out)
 	var failure *coreprotocol.Fault
 	if errors.As(err, &failure) && failure.Code == "resource_failed" {
 		if out.DocumentID == c.DocumentID && out.RequestID == c.RequestID {
@@ -295,51 +295,6 @@ func (w *Workspace) ReloadDocumentRequest(ctx context.Context, id string, revisi
 	err := w.documentCall(ctx, requestID, coreprotocol.DocumentReload, &coreprotocol.DocumentRevisionRequest{ID: id, Revision: revision, Resolve: resolve}, &out)
 	return out, err
 }
-func (w *Workspace) DocumentSnapshotReceipt(ctx context.Context, requestID string) (document.Snapshot, bool, error) {
-	var receipt coreprotocol.Receipt
-	if err := w.call(ctx, coreprotocol.GetReceipt, coreprotocol.ReceiptRequest{RequestID: requestID}, &receipt); err != nil {
-		return document.Snapshot{}, false, err
-	}
-	if receipt.State != "completed" {
-		return document.Snapshot{}, false, nil
-	}
-	if receipt.WorkspaceID != w.id || receipt.RequestID != requestID || (receipt.Method != coreprotocol.DocumentSave && receipt.Method != coreprotocol.DocumentSaveUntitled && receipt.Method != coreprotocol.DocumentFormat && receipt.Method != coreprotocol.DocumentReload) {
-		return document.Snapshot{}, true, document.ErrRequest
-	}
-	if receipt.Response.Error != nil {
-		return document.Snapshot{}, true, receipt.Response.Error
-	}
-	var out document.Snapshot
-	err := coreprotocol.Decode(receipt.Response.Payload, &out)
-	return out, true, err
-}
-func (w *Workspace) DocumentReceipt(ctx context.Context, requestID string) (document.Receipt, bool, error) {
-	var receipt coreprotocol.Receipt
-	err := w.call(ctx, coreprotocol.GetReceipt, coreprotocol.ReceiptRequest{RequestID: requestID}, &receipt)
-	if err != nil {
-		return document.Receipt{}, false, err
-	}
-	if receipt.State != "completed" {
-		return document.Receipt{}, false, nil
-	}
-	if receipt.RequestID != requestID || receipt.WorkspaceID != w.id || (receipt.Method != coreprotocol.DocumentEdit && receipt.Method != coreprotocol.DocumentUndo && receipt.Method != coreprotocol.DocumentRedo) {
-		return document.Receipt{}, true, document.ErrRequest
-	}
-	if receipt.Response.Error != nil {
-		var out document.Receipt
-		if len(receipt.Response.Payload) != 0 && coreprotocol.Decode(receipt.Response.Payload, &out) == nil && out.RequestID == requestID {
-			return out, true, nil
-		}
-		return document.Receipt{RequestID: requestID, Error: receipt.Response.Error.Message}, true, nil
-	}
-	if receipt.Method != coreprotocol.DocumentEdit && receipt.Method != coreprotocol.DocumentUndo && receipt.Method != coreprotocol.DocumentRedo {
-		return document.Receipt{}, true, errors.New("receipt is not a document edit")
-	}
-	var out document.Receipt
-	err = coreprotocol.Decode(receipt.Response.Payload, &out)
-	return out, true, err
-}
-
 func (w *Workspace) FenceDocumentTopics() {
 	w.liveDocumentMu.Lock()
 	defer w.liveDocumentMu.Unlock()

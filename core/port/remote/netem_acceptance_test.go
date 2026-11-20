@@ -258,7 +258,17 @@ func TestNetemClientRole(t *testing.T) {
 	// authoritative echo applied by the shell's Update loop.
 	measure := func(label string, keys int) (echo, predicted []time.Duration, predictedMisses int) {
 		info, lease := openEcho(label)
-		typed := "READY"
+		// Never display the first speculative key at a fresh (possibly hidden)
+		// prompt. Confirm its echo before timing the original 100-key workload.
+		probe := terminalvt.Key{Code: 'z', Text: "z"}
+		if err := port.terminals.Key(lease, probe); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := port.terminals.PredictiveKey(info.ID, probe); ok {
+			t.Fatal("unconfirmed terminal echoed input locally")
+		}
+		typed := "READYz"
+		shell.wait(t, info.ID, 10*time.Second, func(s string) bool { return strings.Contains(s, typed) })
 		for i := range keys {
 			r := rune('a' + i%26)
 			key := terminalvt.Key{Code: r, Text: string(r)}

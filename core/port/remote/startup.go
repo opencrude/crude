@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"crude/core/client"
@@ -17,6 +18,7 @@ type StartupClient struct {
 	Client   *coreclient.Client
 	Dial     Dialer
 	ClientID string
+	options  Options
 	mu       sync.Mutex
 }
 
@@ -44,6 +46,33 @@ func (s *StartupClient) call(ctx context.Context, method string, in coreprotocol
 	// An uncertain Save is never replayed here. The next explicit action reads
 	// committed state or makes the same idempotent preference choice.
 	return client.Call(ctx, "", method, in, out)
+}
+
+// ConnectStartup negotiates the stable identity of the proposed attachment.
+// Navigation itself opens no workspace. A different picker destination gets
+// its own root-scoped identity; the caller still owns closing navigation.
+func ConnectStartup(ctx context.Context, opts Options) (*StartupClient, error) {
+	if opts.Dial == nil || opts.Root == "" {
+		return nil, errors.New("startup needs a dialer and a project root")
+	}
+	id := opts.attachmentID()
+	c, err := opts.Dial(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &StartupClient{Client: c, ClientID: id, Dial: opts.Dial, options: opts}, nil
+}
+
+func (s *StartupClient) AttachWorkspace(ctx context.Context, root string) (*Workspace, error) {
+	opts := s.options
+	opts.Root = root
+	s.mu.Lock()
+	var c *coreclient.Client
+	if s.Client != nil && s.Client.Err() == nil && root == s.options.Root {
+		c, s.Client = s.Client, nil
+	}
+	s.mu.Unlock()
+	return attachWithClient(ctx, opts, c)
 }
 
 func (s *StartupClient) Close() error {

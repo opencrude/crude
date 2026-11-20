@@ -50,7 +50,7 @@ func TestStopAsyncIOReleasesShellWatchersAndRejectsLateStarts(t *testing.T) {
 
 func TestStopAsyncIOJoinsInFlightTreeStartup(t *testing.T) {
 	app, _ := newRealShellApp(t)
-	root := t.TempDir()
+	root := app.ws.RootPath()
 	for i := range 30 {
 		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("dir-%02d", i)), 0700); err != nil {
 			t.Fatal(err)
@@ -58,7 +58,12 @@ func TestStopAsyncIOJoinsInFlightTreeStartup(t *testing.T) {
 	}
 	model := filetree.NewFileTreeModel(root)
 	t.Cleanup(model.StopWatcher)
-	app.wireAndStartWorkspaceTreeWatcherAsync(model, app.workspaceSwitchGen.Load())
+	// Exercise the real handoff: a completed start belongs to the installed
+	// tree; a start still in progress belongs to the joined startup worker.
+	app.applyWorkspaceTreeReady(workspaceTreeReadyMsg{model: model, rootPath: root, generation: app.workspaceSwitchGen.Load()})
+	if app.Tree.Model != model {
+		t.Fatal("tree not installed before shutdown")
+	}
 	app.StopAsyncIO()
 	if model.Watcher() != nil {
 		t.Fatal("tree startup outlived UI shutdown")

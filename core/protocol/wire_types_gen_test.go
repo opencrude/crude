@@ -666,6 +666,8 @@ var wireTypes = []any{
 	new(p25.WorkspaceInfo),
 	new(p26.Change),
 	new(p26.Edit),
+	new(p26.EditGroup),
+	new(p26.OpenConfiguration),
 	new(p26.Owner),
 	new(p26.Receipt),
 	new(p26.Resolution),

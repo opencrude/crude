@@ -28,11 +28,29 @@ type remoteSessionReadyMsg struct {
 	aeron bool
 }
 
+// sessionLifecycleBusy reports whether a user's session request must wait for
+// the one lifecycle slot. The automatic open of the workspace Aeron is
+// background work and yields: the user's latest request is kept and starts
+// when that open settles. On a slow link the open takes seconds, and a click
+// in that time must not be lost. Any other holder keeps the slot (kept=false).
+func (m *App) sessionLifecycleBusy(start func() tea.Cmd) (busy, kept bool) {
+	if !m.sessionLifecyclePending && !m.workspaceAttachPending {
+		return false, false
+	}
+	if m.aeronEnsureInFlight && !m.workspaceAttachPending {
+		m.sessionLifecycleAfterAeron = start
+		return true, true
+	}
+	return true, false
+}
+
 // newSessionWithInput opens a new session in its own tab and sends input as
 // its first message.
 func (m *App) newSessionWithInput(input provider.UserInput) tea.Cmd {
-	if m.sessionLifecyclePending || m.workspaceAttachPending {
-		m.Feedback.NotifyInfo("A session is still opening; try again when it is ready")
+	if busy, kept := m.sessionLifecycleBusy(func() tea.Cmd { return m.newSessionWithInput(input) }); busy {
+		if !kept {
+			m.Feedback.NotifyInfo("A session is still opening; try again when it is ready")
+		}
 		return nil
 	}
 	m.sessionLifecycleSequence++
@@ -44,7 +62,7 @@ func (m *App) newSessionWithInput(input provider.UserInput) tea.Cmd {
 }
 
 func (m *App) remoteSessionCommand(sessionID string) tea.Cmd {
-	if m.sessionLifecyclePending || m.workspaceAttachPending {
+	if busy, _ := m.sessionLifecycleBusy(func() tea.Cmd { return m.remoteSessionCommand(sessionID) }); busy {
 		return nil
 	}
 	m.sessionLifecycleSequence++
@@ -80,12 +98,20 @@ func (m *App) forkSessionCommand() tea.Cmd {
 		m.Feedback.NotifyError("No session is selected")
 		return nil
 	}
-	if m.sessionLifecyclePending || m.workspaceAttachPending {
-		m.Feedback.NotifyInfo("A session is still opening; fork again when it is ready")
+	return m.forkSession(source.SessionID)
+}
+
+// forkSession forks exactly the session the user chose, also when the request
+// waits for the automatic Aeron open and the selection changes meanwhile.
+func (m *App) forkSession(id string) tea.Cmd {
+	if busy, kept := m.sessionLifecycleBusy(func() tea.Cmd { return m.forkSession(id) }); busy {
+		if !kept {
+			m.Feedback.NotifyInfo("A session is still opening; fork again when it is ready")
+		}
 		return nil
 	}
 	m.sessionLifecycleSequence++
-	sequence, owner, id := m.sessionLifecycleSequence, m.ws, source.SessionID
+	sequence, owner := m.sessionLifecycleSequence, m.ws
 	m.sessionLifecyclePending = true
 	return func() tea.Msg {
 		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: owner.ForkAgentSession(id), sessionID: id, forked: true}
@@ -98,7 +124,12 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	}
 	m.sessionLifecyclePending = false
 	if msg.aeron {
-		return m.applyAeronEnsure(msg.result)
+		cmd := m.applyAeronEnsure(msg.result)
+		if start := m.sessionLifecycleAfterAeron; start != nil {
+			m.sessionLifecycleAfterAeron = nil
+			cmd = tea.Batch(cmd, start())
+		}
+		return cmd
 	}
 	if msg.result == nil || msg.result.Error != "" {
 		m.workspaceResumeID = ""

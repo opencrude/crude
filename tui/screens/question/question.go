@@ -324,40 +324,48 @@ func (s *Screen) inputNaturalH(w, maxH int) int {
 	return max(1, h)
 }
 
-// preferredInputH sizes the write-in for deck-height math. Before the first
-// layout there is no real width to wrap against, so it claims one row and
-// converges on the next pass once paneW is known.
-func (s *Screen) preferredInputH(maxHeight int) int {
-	if s.paneW <= 0 || maxHeight <= 0 {
-		return 1
+// paneGeometry splits a deck width into the question rail and the reading
+// pane. Measurement and layout share it, so the deck's first frame already
+// has the height that its layout uses.
+func (s *Screen) paneGeometry(width int) (railW, paneX, paneW int) {
+	railW = s.railWidth(width)
+	if railW > 0 {
+		paneX = railW + 2
 	}
-	return s.inputNaturalH(max(1, s.paneW), maxHeight)
+	return railW, paneX, max(0, width-paneX)
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: cs.MaxW, H: s.PreferredHeight(cs.MaxH)})
+	return cs.ClampSize(ui.Size{W: cs.MaxW, H: s.PreferredHeight(cs.MaxW, cs.MaxH)})
 }
 
-func (s *Screen) PreferredHeight(maxHeight int) int {
+var _ ui.PreferredHeightComponent = (*Screen)(nil)
+
+// PreferredHeight wraps the choices and write-in at the pane width they are
+// laid out in. A deck that changed height one frame after it appeared would
+// move its choices under the pointer.
+func (s *Screen) PreferredHeight(width, maxHeight int) int {
 	if s.Count() == 0 {
 		return 0
+	}
+	if width <= 0 {
+		// No column yet: report without recording a one-column wrap as the
+		// tallest height of this request.
+		return min(maxHeight, max(8, s.tallest))
 	}
 	chrome := 2
 	if s.actions != nil {
 		chrome = s.actions.PreferredHeight()
 	}
-	body := s.options.ContentHeight() + 1
+	_, _, paneW := s.paneGeometry(width)
+	body := s.options.rowsAt(paneW) + 1
 	if !s.reviewing {
-		body += min(6, s.preferredInputH(maxHeight))
+		body += min(6, s.inputNaturalH(paneW, maxHeight))
 	}
 	// A request is a bounded dock, not the entire transcript. Both very long
 	// questions and review answers scroll inside this budget.
-	height := min(20, max(8, body+chrome))
-	if s.options.measured() {
-		s.tallest = max(s.tallest, height)
-		height = s.tallest
-	}
-	return min(maxHeight, height)
+	s.tallest = max(s.tallest, min(20, max(8, body+chrome)))
+	return min(maxHeight, s.tallest)
 }
 
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -368,7 +376,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	chrome = min(chrome, max(0, r.H))
 	bodyH := max(0, r.H-chrome)
-	railW := s.railWidth(r.W)
+	railW, paneX, paneW := s.paneGeometry(r.W)
 	s.railVisible = railW > 0
 	scroll := s.railScroll != nil && s.railScroll.NeededForViewport(bodyH)
 	railContentW := railW
@@ -382,11 +390,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.railScroll.Layout(ctx, ui.Rect{})
 	}
 
-	s.paneX = 0
-	if s.railVisible {
-		s.paneX = railW + 2
-	}
-	s.paneW = max(0, r.W-s.paneX)
+	s.paneX, s.paneW = paneX, paneW
 	// With choices the write-in reads as the last choice: it shows the same
 	// mark, and typing chooses it. A pane too narrow for the mark omits it.
 	prompt := ""

@@ -226,6 +226,11 @@ key → applied echo idle and under a terminal flood, a bulk download and both,
 plus mosh-policy prediction. Namespaces share one kernel and CPU; this is not a
 physically separate-host result.
 
+For the full shell and real OpenSSH/core journey, run the
+[remote network lab](remote-network-lab.md). It checks recovery and user-visible
+state over a separate routed container link. It complements the focused QUIC
+echo gate above; it does not replace its latency or terminal-input checks.
+
 ### Startup process acceptance
 
 Build a current binary before this Linux check:

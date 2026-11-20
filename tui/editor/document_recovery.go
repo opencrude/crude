@@ -69,8 +69,7 @@ func (e *Editor) ExportDocumentRecovery() (DocumentRecovery, bool) {
 		r.HistoryQueue = append(r.HistoryQueue, intent)
 	}
 	if p.inflight != nil {
-		c := *p.inflight
-		c.Edits = append([]document.Edit(nil), c.Edits...)
+		c := p.inflight.Clone()
 		r.InFlight = &c
 	}
 	if p.conflict != nil {
@@ -117,7 +116,7 @@ func (r DocumentRecovery) Validate() error {
 		if c.DocumentID != r.Canonical.ID || c.BaseRevision != r.Canonical.Revision || c.Owner != r.Owner || c.RequestID == "" {
 			return document.ErrRequest
 		}
-		text, _, err = document.Apply(text, c.Edits)
+		text, err = c.ApplyTo(text)
 		if err != nil {
 			return err
 		}
@@ -214,8 +213,7 @@ func (e *Editor) RestoreDocumentRecovery(r DocumentRecovery) error {
 	}
 	p.owner, p.undoPending = r.Owner, r.UndoPending
 	if r.InFlight != nil {
-		c := *r.InFlight
-		c.Edits = append([]document.Edit(nil), c.Edits...)
+		c := r.InFlight.Clone()
 		p.inflight = &c
 	}
 	p.conflict = ErrRecoveredDocument

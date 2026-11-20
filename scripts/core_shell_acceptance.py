@@ -29,6 +29,18 @@ def until(description, check, timeout=45):
     raise AssertionError("timeout: " + description)
 
 
+def painted_click(frame, text, row=None):
+    """Encode one SGR click on a unique, visible control in a tmux frame.
+
+    row restricts the search to lines that contain that anchor text, such as
+    the tab bar, when the same label is also painted elsewhere."""
+    matches = [(line.index(text) + max(1, len(text) // 2) + 1, y + 1)
+               for y, line in enumerate(frame.splitlines()) if text in line and (row is None or row in line)]
+    assert len(matches) == 1, (text, row, matches)
+    x, y = matches[0]
+    return f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m"
+
+
 class FixtureServer(http.server.ThreadingHTTPServer):
     """Loopback provider fixture; carries the state that its handler reads."""
 
@@ -120,11 +132,17 @@ class Observer:
             cls._binary = binary
         return cls._binary
 
-    def __init__(self, home, binary=None):
-        env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "LD_LIBRARY_PATH") if k in os.environ}
-        env.update(HOME=str(home), CRUDE_HOME=str(home))
+    def __init__(self, home, binary=None, argv=None):
+        """argv runs a prebuilt observer elsewhere (for example through docker
+        exec); that launcher inherits this process environment and owns the
+        observer's own CRUDE_HOME."""
+        env = None
+        if argv is None:
+            env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL", "LD_LIBRARY_PATH") if k in os.environ}
+            env.update(HOME=str(home), CRUDE_HOME=str(home))
+            argv = [str(binary or self.build())]
         self.stderr = tempfile.TemporaryFile(mode="w+t")
-        process = subprocess.Popen([str(binary or self.build())], env=env, stdin=subprocess.PIPE,
+        process = subprocess.Popen(argv, env=env, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=self.stderr, text=True)
         assert process.stdin is not None and process.stdout is not None, "PIPE did not open both pipes"
         self.process = process
@@ -261,12 +279,7 @@ class Harness:
 
     def click_text(self, name, text):
         """Click a unique painted native control via the pane's SGR mouse input."""
-        rows = self.capture(name).splitlines()
-        matches = [(row.index(text) + max(1, len(text) // 2) + 1, y + 1)
-                   for y, row in enumerate(rows) if text in row]
-        assert len(matches) == 1, (text, matches)
-        x, y = matches[0]
-        self.tmux("send-keys", "-t", self.windows[name][0], "-l", f"\x1b[<0;{x};{y}M\x1b[<0;{x};{y}m")
+        self.tmux("send-keys", "-t", self.windows[name][0], "-l", painted_click(self.capture(name), text))
 
     def kill(self, name):
         identity = self.processes[name]
@@ -345,7 +358,12 @@ class Harness:
         until("isolated core socket", lambda: (data / "corewire/core.sock").exists())
         self.observer = Observer(self.home)
         self.launch("shell-0", project)
-        self.keys("shell-0", "C-M-n")
+        # Trust is a modal on a fresh project. Answer it on purpose; otherwise
+        # the first chat submission's Enter can answer it instead.
+        self.visible(["shell-0"], "Trust this folder?")
+        self.keys("shell-0", "Enter")
+        until("launcher ready after trust", lambda: "Trust this folder?" not in self.capture("shell-0"))
+        self.keys("shell-0", "Enter")  # Selected New Session action.
         self.visible(["shell-0"], "fixture-model")
         attached = self.observe("workspace.attach", {"root": str(project)})
         workspace = attached["workspace_id"]

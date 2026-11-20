@@ -31,31 +31,33 @@ const (
 // Screen paints one PTY session and routes keys into it.
 type Screen struct {
 	ui.Base
-	th                   *theme.Theme
-	tokens               *ui.TokenSet
-	termID               string
-	title                string
-	number               int
-	view                 termview.View
-	projection           workspace.TerminalProjection
-	controlled           bool
-	closed               bool
-	command              func(Command) tea.Cmd
-	pending              []Command
-	readSequence         uint64
-	readStart, readCount int
-	readPending          bool
-	readViewport         uint64
-	copyPending          bool
-	blinkOn              bool
-	floating             bool
-	exited               bool
-	copy                 func(string) tea.Cmd
-	now                  func() uint64
-	cols                 int
-	rows                 int
-	scroll               *ui.ScrollModel
-	scrollbar            *ui.ScrollbarControl
+	th                     *theme.Theme
+	tokens                 *ui.TokenSet
+	termID                 string
+	title                  string
+	number                 int
+	view                   termview.View
+	projection             workspace.TerminalProjection
+	prediction             *terminalvt.Projection
+	controlled             bool
+	closed                 bool
+	command                func(Command) tea.Cmd
+	pending                []Command
+	readSequence           uint64
+	readStart, readCount   int
+	readPending            bool
+	readViewport           uint64
+	copyPending            bool
+	blinkOn                bool
+	floating               bool
+	exited                 bool
+	copy                   func(string) tea.Cmd
+	now                    func() uint64
+	cols                   int
+	rows                   int
+	resizeCols, resizeRows int // last requested size, independent of delayed PTY frames
+	scroll                 *ui.ScrollModel
+	scrollbar              *ui.ScrollbarControl
 
 	// readOnly presents a mirror (a background command's output): it scrolls,
 	// selects and copies like a terminal but never sends input or asks for
@@ -128,6 +130,8 @@ func (s *Screen) SetControlled(v bool) {
 	}
 	s.controlled = v
 	if !v {
+		s.prediction = nil
+		s.ResizeFailed()
 		kept := s.pending[:0]
 		for _, c := range s.pending {
 			if c.Kind == CommandReadRows {
@@ -168,6 +172,14 @@ func (s *Screen) Controlled() bool { return s.controlled }
 // ReadOnly identifies a passive output viewer, not an interactive PTY.
 func (s *Screen) ReadOnly() bool { return s.readOnly }
 
+// SetPrediction changes only what is painted. It never installs a history page.
+func (s *Screen) SetPrediction(p workspace.TerminalProjection) {
+	s.prediction = nil
+	if !s.closed && p.Info.ID == s.termID && p.Generation >= s.view.Generation && p.Grid.ReadSequence >= s.view.Grid.ReadSequence {
+		s.prediction = &p.Grid
+	}
+}
+
 // SetProjection detaches a snapshot, rejecting older generations.
 func (s *Screen) SetProjection(p workspace.TerminalProjection) {
 	s.setProjection(p, s.view.Install)
@@ -193,6 +205,7 @@ func (s *Screen) setProjection(p workspace.TerminalProjection, install func(term
 	}
 	// A refresh does not cancel an independent scroll/copy intent. Its result
 	// may still supply the requested page, even after another ingress generation.
+	s.prediction = nil
 	p.Grid = s.view.Grid
 	s.projection = p
 	s.cols, s.rows = p.Grid.Cols, p.Grid.GridRows
@@ -252,14 +265,22 @@ func (s *Screen) RowsFailed(sequence uint64) {
 // executes them asynchronously, never from Paint or Layout.
 func (s *Screen) TakePendingCommands() []Command { out := s.pending; s.pending = nil; return out }
 func (s *Screen) queue(c Command)                { c.ID = s.termID; s.pending = append(s.pending, c) }
+
+// ResizeFailed allows the current layout to request its geometry again.
+func (s *Screen) ResizeFailed() { s.resizeCols, s.resizeRows = 0, 0 }
 func (s *Screen) requestResize() {
+	if !s.controlled || (s.exited && !s.readOnly) || s.Bounds().Empty() {
+		return
+	}
 	c, r := workspace.NormalizeTerminalSize(s.Bounds().W, s.Bounds().H)
-	if s.controlled && (!s.exited || s.readOnly) && !s.Bounds().Empty() && (c != s.cols || r != s.rows) {
-		for _, p := range s.pending {
-			if p.Kind == CommandResize && p.Cols == c && p.Rows == r {
-				return
-			}
-		}
+	// Compare against the last intent, even when a delayed frame still has the
+	// desired size: A -> B -> A must send the final A after B.
+	if c == s.resizeCols && r == s.resizeRows {
+		return
+	}
+	previous := s.resizeCols
+	s.resizeCols, s.resizeRows = c, r
+	if previous != 0 || c != s.cols || r != s.rows {
 		s.queue(Command{Kind: CommandResize, Cols: c, Rows: r})
 	}
 }
@@ -533,7 +554,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	} else {
 		s.TickCursor(time.Now())
 	}
-	s.view.Paint(buf, ox+r.X, oy+r.Y, r.W, r.H, s.tokens, s.focused && !s.readOnly, s.blinkOn)
+	s.view.PaintPrediction(s.prediction, buf, ox+r.X, oy+r.Y, r.W, r.H, s.tokens, s.focused && !s.readOnly, s.blinkOn)
 	s.paintScrollbackScrollbar(buf, ox+r.X, oy+r.Y)
 	if s.exited && s.tokens != nil && !s.readOnly {
 		msg := " [process exited] "

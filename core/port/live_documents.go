@@ -48,12 +48,6 @@ type LiveDocumentFormatter interface {
 	FormatDocument(context.Context, string, uint64) (document.Snapshot, error)
 }
 
-// LiveDocumentReceipts observes an earlier edit/undo outcome without replay.
-// settled is false for pending/uncertain receipts; callers retain their draft.
-type LiveDocumentReceipts interface {
-	DocumentReceipt(context.Context, string) (receipt document.Receipt, settled bool, err error)
-}
-
 // LiveDocumentsChangedMsg advertises committed text or savepoint changes. It is
 // not permission to replace an editor's optimistic pending edits.
 type LiveDocumentsChangedMsg struct {

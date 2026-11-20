@@ -438,7 +438,7 @@ func (p *mainPaneLayout) configureAgent(g *mainPaneGroup, tab *window.Tab, body 
 	// Session decks have one exact owner even when root and child are both
 	// visible. Prefer the focused family member, otherwise its first pane.
 	if proj != nil && proj.deck.IsOpen() && p.ownsSessionChrome(g.id, sess) {
-		deckH = proj.deck.PreferredHeight(max(0, body.H-inputH-1))
+		deckH = proj.deck.PreferredHeight(body.W, max(0, body.H-inputH-1))
 	}
 	chatH := max(0, body.H-inputH-deckH)
 	chatRect := ui.Rect{Y: body.Y, W: body.W, H: chatH}
