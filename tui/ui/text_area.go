@@ -383,7 +383,7 @@ func (t *TextArea) DeleteTextSelection() bool {
 // unhandled Ctrl+C) inspect the handled flag.
 func (t *TextArea) HandleClipboardKey(m tea.KeyPressMsg) (EventResult, bool) {
 	t.StopSelecting()
-	res, handled := textClipboardChord(t, t.clipboardCopyFn(), m)
+	res, handled := textClipboardChord(t, t.clipboardCopyFn(EventContext{}), m)
 	if handled {
 		t.cursor.MarkActivity()
 		t.EnsureCursorVisible()
@@ -398,6 +398,10 @@ func (t *TextArea) HandleClipboardKey(m tea.KeyPressMsg) (EventResult, bool) {
 // (copy-on-release). A press that never moved only stops the drag. Both the
 // component tree and the composer pointer path share this implementation.
 func (t *TextArea) EndMouseSelection() tea.Cmd {
+	return t.endMouseSelection(EventContext{})
+}
+
+func (t *TextArea) endMouseSelection(ctx EventContext) tea.Cmd {
 	if !t.IsSelecting() {
 		return nil
 	}
@@ -414,23 +418,20 @@ func (t *TextArea) EndMouseSelection() tea.Cmd {
 	if t.TextSecret() {
 		return nil
 	}
-	return t.clipboardCopyFn()(selected)
+	return t.clipboardCopyFn(ctx)(selected)
 }
 
 // SetClipboardCopy overrides how copy commands are built (tests inject a
 // recorder; hosts may route copies through their own write path). Passing nil
-// restores the system-clipboard writer.
+// restores the host clipboard writer.
 func (t *TextArea) SetClipboardCopy(fn func(string) tea.Cmd) {
-	if fn == nil {
-		fn = rendering.CopyToClipboardCmd
-	}
 	t.clipboardCopy = fn
 }
 
 // clipboardCopyFn returns the active clipboard writer.
-func (t *TextArea) clipboardCopyFn() func(string) tea.Cmd {
+func (t *TextArea) clipboardCopyFn(ctx EventContext) func(string) tea.Cmd {
 	if t.clipboardCopy == nil {
-		return rendering.CopyToClipboardCmd
+		return ctx.CopyText
 	}
 	return t.clipboardCopy
 }
@@ -816,7 +817,7 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 	case EventKey:
 		t.StopSelecting()
 		t.lastClickTime = time.Time{}
-		return t.handleKey(evt.Key)
+		return t.handleKey(ctx, evt.Key)
 	case EventCustom:
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
 			t.StopSelecting()
@@ -905,7 +906,7 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		return EventResult{
 			Handled:    true,
-			Cmd:        t.EndMouseSelection(),
+			Cmd:        t.endMouseSelection(ctx),
 			Invalidate: InvalidatePaint,
 		}
 	case EventMouseWheel:
@@ -947,8 +948,8 @@ func (t *TextArea) projectPointer(pos int) {
 	t.pointer.moved = true
 }
 
-func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
-	if res, handled := textClipboardChord(t, t.clipboardCopyFn(), m); handled {
+func (t *TextArea) handleKey(ctx EventContext, m tea.KeyPressMsg) EventResult {
+	if res, handled := textClipboardChord(t, t.clipboardCopyFn(ctx), m); handled {
 		t.cursor.MarkActivity()
 		return res
 	}

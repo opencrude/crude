@@ -460,6 +460,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.result = v.snapshot.Root
 		return m, m.quit()
 	case tea.KeyPressMsg:
+		if ui.IsModifiedEscape(v) {
+			return m, nil
+		}
 		if v.String() == "ctrl+q" {
 			return m, m.quit()
 		}

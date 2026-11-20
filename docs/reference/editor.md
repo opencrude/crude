@@ -169,7 +169,9 @@ or menu cannot edit a different view or a newer source/selection.
   `editor.emptySelectionClipboard` (`tui/editor/clipboard.go`, ported from
   `getPlainTextToCopy`, `DeleteOperations.cut` and `_simplePaste`). Pasting that
   line inserts it above the caret's line and keeps the caret on its text. Several
-  carets on one line copy the line once. Shift+Delete cuts, Ctrl+Insert copies and
+  carets on one line copy the line once. Whole-line metadata belongs to the
+  shell, not the process, and a copy from another surface clears it.
+  Shift+Delete cuts, Ctrl+Insert copies and
   Shift+Insert pastes in the editor, as in JetBrains IDEs and VS Code on Windows;
   so Shift+Delete with no selection removes the line. Text fields and the chat
   composer keep their own Shift+Delete meaning.

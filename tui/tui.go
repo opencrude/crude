@@ -321,6 +321,7 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 		tea.WithWidthMethod(ansi.GraphemeWidth),
 		tea.WithWidthProbe(rendering.TerminalWidthProbeCorpus()...),
 		tea.WithObserver(observer),
+		tea.WithFilter(a.FilterTerminalClipboard),
 		tea.WithPanicHandler(crashlog.Recovered),
 	)
 	t.app = a

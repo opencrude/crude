@@ -147,6 +147,7 @@ func (m *App) installLiveEditor(s document.Snapshot) error {
 	}
 	live := m.ws.(shellport.LiveDocuments)
 	ed := editor.New(m.Theme)
+	m.bindEditorClipboard(ed)
 	if err := ed.InstallDocument(s); err != nil {
 		return err
 	}

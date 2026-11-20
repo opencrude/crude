@@ -14,6 +14,7 @@ package ui
 import (
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 )
@@ -206,12 +207,21 @@ type PaintContext struct {
 
 // EventContext is passed to Handle.
 type EventContext struct {
-	Theme   *theme.Theme
-	Focused bool
-	LocalX  int
-	LocalY  int
-	ScreenX int
-	ScreenY int
+	clipboardCopy func(string) tea.Cmd
+	Theme         *theme.Theme
+	Focused       bool
+	LocalX        int
+	LocalY        int
+	ScreenX       int
+	ScreenY       int
+}
+
+// CopyText admits the copy to the mounted host before another input event.
+func (ctx EventContext) CopyText(text string) tea.Cmd {
+	if ctx.clipboardCopy != nil {
+		return ctx.clipboardCopy(text)
+	}
+	return rendering.CopyToClipboardCmd(text)
 }
 
 // ChildEventContext converts a parent's local pointer coordinates to one of

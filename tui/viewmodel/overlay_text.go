@@ -37,7 +37,7 @@ func (m *App) routeOverlayText(fw *wm.FloatingWindow, field *ui.TextField, msg t
 	cmd := res.Cmd
 	if res.Action != nil && res.Action.ID == ui.ActionTextPaste {
 		target, _ := res.Action.Payload.(ui.ClipboardPasteTarget)
-		cmd = tea.Batch(cmd, m.beginNativeClipboardPaste(target, fw.ID, deliver))
+		cmd = tea.Batch(cmd, m.beginNativeClipboardPaste(target, fw, deliver))
 	}
 	return field.Value() != before, cmd
 }

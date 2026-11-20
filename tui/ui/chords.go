@@ -64,10 +64,10 @@ func KeyboardEnhancements() tea.KeyboardEnhancements {
 // NormalizeKeyMsg gives every matcher one key shape. Every program calls it
 // at key ingress:
 //   - lock modifiers are removed;
-//   - a shortcut typed on a non-Latin layout (Ctrl+ش on a Persian layout)
-//     becomes the US-layout key that the terminal reports (Ctrl+A);
-//   - a Latin layout key stays as typed (Ctrl+A on AZERTY stays Ctrl+A), and
-//     the US-layout position is dropped so that String agrees with Code.
+//   - a shortcut without text and with a non-ASCII printable key (Ctrl+ش
+//     on a Persian layout) uses the reported US-layout key (Ctrl+A);
+//   - an ASCII layout key stays as typed (Ctrl+A on AZERTY stays Ctrl+A),
+//     and the alternate code is dropped so that String agrees with Code.
 func NormalizeKeyMsg(msg tea.Msg) tea.Msg {
 	switch k := msg.(type) {
 	case tea.KeyPressMsg:
@@ -89,7 +89,7 @@ func normalizeKey(k tea.Key) (tea.Key, bool) {
 		changed = true
 	}
 	if k.BaseCode != 0 && k.BaseCode != k.Code {
-		if k.Mod&shortcutModifiers != 0 && nonLatinText(k.Code) && latinKey(k.BaseCode) {
+		if k.Text == "" && k.Mod&shortcutModifiers != 0 && nonASCIIPrintable(k.Code) && asciiKey(k.BaseCode) {
 			k.Code = unicode.ToLower(k.BaseCode)
 			k.ShiftedCode = 0
 		}
@@ -99,13 +99,33 @@ func normalizeKey(k tea.Key) (tea.Key, bool) {
 	return k, changed
 }
 
-// latinKey reports a printable ASCII key.
-func latinKey(r rune) bool { return r > ' ' && r < 0x7f }
+// SymbolShortcutFallback gives the shell a second candidate for an ASCII
+// symbol chord, e.g. French Ctrl+$ on the PC-101 ] key. Try the logical chord
+// first: in particular, Alt+; must still work where ; moved to another key.
+// Letters stay mnemonic, and events that carry literal text are not shortcuts.
+func SymbolShortcutFallback(k tea.KeyPressMsg) rune {
+	if k.Text == "" && k.Mod&shortcutModifiers != 0 &&
+		k.Code != k.BaseCode && asciiSymbol(k.Code) && asciiSymbol(k.BaseCode) {
+		return k.BaseCode
+	}
+	return 0
+}
 
-// nonLatinText reports a printable key outside ASCII. Special keys (arrows,
+func asciiKey(r rune) bool { return r > ' ' && r < 0x7f }
+func asciiSymbol(r rune) bool {
+	return asciiKey(r) && !unicode.IsLetter(r) && !unicode.IsDigit(r)
+}
+
+// nonASCIIPrintable reports a printable key outside ASCII. Special keys (arrows,
 // function keys) are outside the Unicode range and never match.
-func nonLatinText(r rune) bool {
+func nonASCIIPrintable(r rune) bool {
 	return r >= 0x80 && r <= unicode.MaxRune && unicode.IsPrint(r)
+}
+
+// IsModifiedEscape distinguishes a chord (such as Windows Ctrl+Shift+Esc)
+// from the shell's unmodified Back/Stop key. Lock state never counts.
+func IsModifiedEscape(k tea.KeyPressMsg) bool {
+	return k.Code == tea.KeyEsc && k.Mod&^lockModifiers != 0
 }
 
 // KeyboardProfile records which modified Enter chords reach the application.

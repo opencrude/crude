@@ -467,9 +467,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
 // fast "start over". The explicit Ctrl+Shift+C copy never clears anything.
 // It reports whether the key was consumed.
 func (m Model) applyClipboardChord(key tea.KeyPressMsg) (Model, tea.Cmd, bool) {
-	if chord := ui.ClipboardChordFor(key); chord == ui.ClipboardChordCopy || chord == ui.ClipboardChordCut {
-		m.rememberClipboardChord(chord)
-	}
+	m.rememberClipboardChord(ui.ClipboardChordFor(key))
 	if res, handled := m.input.HandleClipboardKey(key); handled {
 		if ui.ClipboardChordFor(key) == ui.ClipboardChordCut && m.input.Value() == "" {
 			m.invalidatePendingPastes()

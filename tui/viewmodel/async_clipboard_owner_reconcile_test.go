@@ -148,7 +148,7 @@ func TestFindReplaceAsyncPasteDropsClosedPopupResult(t *testing.T) {
 	}
 	state := asyncIOStateFor(app)
 	state.mu.Lock()
-	pending := len(state.latestClipboard)
+	pending := state.nextClipboard - state.lastClipboard
 	state.mu.Unlock()
 	if pending != 0 {
 		t.Fatalf("closed popup retained %d clipboard generations", pending)

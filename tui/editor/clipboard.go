@@ -3,7 +3,6 @@ package editor
 import (
 	"slices"
 	"strings"
-	"sync"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -19,30 +18,39 @@ import (
 // _simplePaste): with no selection, Copy and Cut take the caret's whole line,
 // and pasting that line inserts it above the caret's line.
 
-// clipboardLineCopy is VS Code's InMemoryClipboardMetadataManager: the text of
-// the last copy that came from an empty selection. One instance is shared by
-// every editor, as VS Code shares one across editors.
-var clipboardLineCopy struct {
-	sync.Mutex
-	text string
-	ok   bool
+// LineClipboard is VS Code's in-memory clipboard metadata. The shell shares
+// one across its editors and clears it when another control copies text.
+type LineClipboard struct {
+	line string
 }
 
-func rememberClipboardCopy(text string, fromEmptySelection bool) {
-	clipboardLineCopy.Lock()
-	clipboardLineCopy.text, clipboardLineCopy.ok = text, fromEmptySelection
-	clipboardLineCopy.Unlock()
+func (c *LineClipboard) Clear() { c.line = "" }
+
+func (c *LineClipboard) remember(text string, linewise bool) {
+	c.Clear()
+	if linewise {
+		c.line = ui.PastedLineBreaks(text)
+	}
 }
 
-// pastedFromEmptySelection is InMemoryClipboardMetadataManager.get.
-func pastedFromEmptySelection(text string) bool {
-	clipboardLineCopy.Lock()
-	defer clipboardLineCopy.Unlock()
-	if clipboardLineCopy.ok && clipboardLineCopy.text == text {
+func (c *LineClipboard) matches(text string) bool {
+	if c.line != "" && c.line == ui.PastedLineBreaks(text) {
 		return true
 	}
-	clipboardLineCopy.ok = false
+	c.Clear()
 	return false
+}
+
+// SetClipboard binds this editor to its shell's clipboard owner.
+func (e *Editor) SetClipboard(lines *LineClipboard, copy func(string) tea.Cmd) {
+	e.lineClipboard, e.clipboardCopy = lines, copy
+}
+
+func (e *Editor) clipboardLines() *LineClipboard {
+	if e.lineClipboard == nil {
+		e.lineClipboard = &LineClipboard{}
+	}
+	return e.lineClipboard
 }
 
 // copySpans returns the sorted carets and selections the clipboard reads.
@@ -58,18 +66,17 @@ func (e *Editor) copySpans() []selectionSpan {
 	return spans
 }
 
-// CopyText is getPlainTextToCopy and getDataToCopy: selected text, or the
-// whole caret line with its terminator when a caret has no selection. It also
-// records the copy for pasteOnNewLine. It never changes the source.
-func (e *Editor) CopyText() string {
+// copyText is getPlainTextToCopy and getDataToCopy: selected text, or the
+// whole caret line with its terminator when a caret has no selection.
+func (e *Editor) copyText() (string, bool) {
 	if e == nil || e.buf == nil {
-		return ""
+		return "", false
 	}
 	spans := e.copySpans()
-	empty, nonEmpty := false, false
+	empty := false
 	for _, s := range spans {
 		a, b := s.bounds()
-		empty, nonEmpty = empty || a == b, nonEmpty || a != b
+		empty = empty || a == b
 	}
 	var parts []string
 	if empty {
@@ -93,23 +100,23 @@ func (e *Editor) CopyText() string {
 		}
 	}
 	// getDataToCopy joins multicursor text with the document's line break.
-	text := strings.Join(parts, e.lineEnding())
-	rememberClipboardCopy(text, empty && len(spans) == 1)
-	return text
+	return strings.Join(parts, e.lineEnding()), empty && len(spans) == 1
 }
 
-// copyCmd copies through the shared clipboard owner.
-func (e *Editor) copyCmd() tea.Cmd {
-	text := e.CopyText()
-	if text == "" {
-		return nil
+func (e *Editor) writeClipboard(text string, linewise bool) tea.Cmd {
+	e.clipboardLines().remember(text, linewise)
+	if e.clipboardCopy != nil {
+		return e.clipboardCopy(text)
 	}
 	return rendering.CopyToClipboardCmd(text)
 }
 
+// CopyCommand copies the selection, or the caret line with its terminator.
+func (e *Editor) CopyCommand() tea.Cmd { return e.writeClipboard(e.copyText()) }
+
 // cutCmd is VS Code's cut: CopyText, then DeleteOperations.cut as one undo step.
 func (e *Editor) cutCmd() tea.Cmd {
-	text := e.CopyText()
+	text, linewise := e.copyText()
 	if text == "" || e.readOnly {
 		return nil
 	}
@@ -154,7 +161,7 @@ func (e *Editor) cutCmd() tea.Cmd {
 		merged = append(merged, edit)
 	}
 	if len(merged) == 0 {
-		return rendering.CopyToClipboardCmd(text)
+		return e.writeClipboard(text, linewise)
 	}
 	e.CancelSnippet()
 	e.DismissGhostText()
@@ -176,13 +183,13 @@ func (e *Editor) cutCmd() tea.Cmd {
 	if err != nil {
 		return selectionNotice(err)
 	}
-	return rendering.CopyToClipboardCmd(text)
+	return e.writeClipboard(text, linewise)
 }
 
 // pasteOnNewLine is _simplePaste's whole-line case: the text came from an
 // empty-selection copy, the caret has no selection and the text is one line.
 func (e *Editor) pasteOnNewLine(text string) bool {
-	if e.HasMultipleCarets() || e.HasSelection() || !pastedFromEmptySelection(text) {
+	if !e.clipboardLines().matches(text) || e.HasMultipleCarets() || e.HasSelection() {
 		return false
 	}
 	text = ui.PastedLineBreaks(text)

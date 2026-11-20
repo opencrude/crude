@@ -209,7 +209,7 @@ func newTestApp(t testing.TB) *App {
 		windowManager:      wmgr,
 		overlayHost:        ui.NewOverlayHost(wmgr),
 		subPaneProjections: newSubPaneProjectionRegistry(th),
-		sessionProjections: newSessionProjectionRegistry(th),
+		sessionProjections: newSessionProjectionRegistry(th, nil),
 		headerScreen:       headerScreen,
 		footerScreen:       footerScreen,
 		tabScreen:          tabScreen,

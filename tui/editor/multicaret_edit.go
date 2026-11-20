@@ -119,7 +119,7 @@ func (e *Editor) multipleKey(key tea.KeyPressMsg) (tea.Cmd, bool) {
 		return nil, false
 	}
 	if ui.IsCopyChord(key) {
-		return e.copyCmd(), true
+		return e.CopyCommand(), true
 	}
 	if ui.ClipboardChordFor(key) == ui.ClipboardChordCut {
 		if e.readOnly {

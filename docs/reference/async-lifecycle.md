@@ -38,8 +38,10 @@ subprocess rather than a process-name search.
   success explicitly reloads the affected parent through the core browse port,
   including dot-folders; it never relies on watcher delivery or client disk.
 - **Clipboard and picker I/O never run in `Update`.** Clipboard requests use
-  the App-owned FIFO worker and carry an editor/session/find-replace owner plus
-  generation; image reference persistence is a separate command.
+  the App-owned FIFO worker and carry the initiating control and workspace
+  generation. Bubble Tea can deliver command notifications out of order; the
+  worker stages results so Update applies them in admission order. Image
+  reference persistence is a separate command.
   Directory reads are cancelable/bounded at the UI boundary and require the
   picker pointer, open epoch, intent sequence, and request generation; a stale
   result cannot mutate a reopened picker. Keep test-only backend seams in

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 
 	"crude/tui/chatprojection"
 	"crude/tui/editor"
@@ -122,6 +123,22 @@ func TestInputContractsGlobalTabSwitchWorksFromEditor(t *testing.T) {
 	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: ']', Mod: tea.ModCtrl})
 	if got := app.EditorState.ActiveView; got != paths[1] {
 		t.Fatalf("Ctrl+] active=%q want %q", got, paths[1])
+	}
+}
+
+func TestInternationalSymbolShortcutPrefersLogicalBinding(t *testing.T) {
+	app, paths := newInputContractEditorApp(t, "first.go", "second.go", "third.go")
+	// Ghostty on French AZERTY reports $ as the logical key at the ]
+	// position. With no Ctrl+$ action, the physical ] selects the next tab.
+	_, _ = app.Update(decodeShortcutPress(t, &uv.EventDecoder{}, "\x1b[36::93;5u"))
+	if got := app.EditorState.ActiveView; got != paths[0] {
+		t.Fatalf("French Ctrl+] left tab %q active, want %q", got, paths[0])
+	}
+	// When both candidates are bound, the logical binding must win even
+	// though the terminal also reports an alternate physical symbol.
+	_, _ = app.Update(tea.KeyPressMsg{Code: ']', BaseCode: '[', Mod: tea.ModCtrl})
+	if got := app.EditorState.ActiveView; got != paths[1] {
+		t.Fatalf("logical Ctrl+] selected %q; want %q", got, paths[1])
 	}
 }
 

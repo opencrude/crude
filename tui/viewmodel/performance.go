@@ -8,7 +8,6 @@ import (
 
 	"crude/core/port"
 	"crude/metrics"
-	"crude/tui/rendering"
 	"crude/tui/screens/perfdash"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
@@ -115,7 +114,7 @@ func (m *App) handlePerfAction(action ui.Action) (tea.Cmd, bool) {
 		if m.Feedback != nil {
 			m.Feedback.NotifyInfo("Performance report copied")
 		}
-		return rendering.CopyToClipboardCmd(text), true
+		return m.clipboardCopyCommand(text), true
 	}
 	return nil, false
 }

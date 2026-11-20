@@ -219,3 +219,11 @@ func TestNormalizeKeyMsgKeepsShortcutsOnEveryLayout(t *testing.T) {
 		t.Fatal("the terminal is not asked for US-layout keys")
 	}
 }
+
+func TestNormalizeKeyMsgDoesNotTurnAltGrTextIntoAnEditorShortcut(t *testing.T) {
+	key := tea.KeyPressMsg{Code: 'ø', BaseCode: 'o', Text: "ø", Mod: tea.ModCtrl | tea.ModAlt}
+	got := NormalizeKeyMsg(key).(tea.KeyPressMsg)
+	if got.Text != "ø" || got.Code != 'ø' || MatchesShortcut(got, EditorLineBelowChord) {
+		t.Fatalf("AltGr input became a shortcut: %+v", tea.Key(got))
+	}
+}

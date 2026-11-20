@@ -10,7 +10,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/core/port"
-	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
@@ -184,7 +183,7 @@ func (m *App) ensureTermScreen(id, title string) *shellterm.Screen {
 		s.SetNumber(info.Number)
 	}
 	s.SetCommand(m.terminalCommand)
-	s.SetCopy(rendering.CopyToClipboardCmd)
+	s.SetCopy(m.clipboardCopyCommand)
 	m.termScreens[id] = s
 	return s
 }

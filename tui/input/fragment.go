@@ -29,6 +29,13 @@ type PromptClipboard struct{ last *PromptFragment }
 // NewPromptClipboard creates the shared memory for one shell.
 func NewPromptClipboard() *PromptClipboard { return &PromptClipboard{} }
 
+// Clear forgets attachment metadata when another surface replaces the clipboard.
+func (c *PromptClipboard) Clear() {
+	if c != nil {
+		c.last = nil
+	}
+}
+
 func (c *PromptClipboard) remember(fragment PromptFragment) {
 	if c == nil {
 		return
@@ -111,7 +118,7 @@ func (m Model) RememberFragment(start, end int) {
 func (m Model) rememberClipboardChord(chord ui.ClipboardChord) {
 	start, end := m.input.SelectionRange()
 	switch {
-	case start != end && (chord == ui.ClipboardChordCopy || chord == ui.ClipboardChordCut):
+	case start != end && (chord == ui.ClipboardChordCopy || chord == ui.ClipboardChordCopyExplicit || chord == ui.ClipboardChordCut):
 		m.RememberFragment(start, end)
 	case chord == ui.ClipboardChordCut && m.input.Value() != "":
 		m.RememberFragment(0, len([]rune(m.input.Value())))

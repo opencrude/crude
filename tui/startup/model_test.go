@@ -425,11 +425,15 @@ func TestCloseCancelsAndJoinsStartedReads(t *testing.T) {
 		t.Fatal("queued command ran after shutdown")
 	}
 }
-func TestEscIntroductionQuitsAndCtrlCDoesNot(t *testing.T) {
+func TestPlainEscapeAloneQuitsIntroduction(t *testing.T) {
 	m := fixture(t, &fakeStartup{}, true)
 	send(t, m, ctrl('c'))
 	if m.closed {
 		t.Fatal("Ctrl+C used as quit")
+	}
+	send(t, m, tea.KeyPressMsg{Code: tea.KeyEsc, Mod: tea.ModCtrl | tea.ModShift})
+	if m.closed {
+		t.Fatal("Ctrl+Shift+Esc used as quit")
 	}
 	send(t, m, key(tea.KeyEsc))
 	if !m.closed || m.Result() != "" {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 )
 
 func cancelNotices(app *App) []string {
@@ -66,4 +67,40 @@ func TestCancelRunningTurnOnceThenQuiet(t *testing.T) {
 	if notices := cancelNotices(app); len(notices) != 0 {
 		t.Fatalf("repeated Esc while stopping reported %q", notices)
 	}
+}
+
+func TestOnlyPlainEscapeStopsRunningAgent(t *testing.T) {
+	app := setupChatInputApp(t, 80, 24, false)
+	node := app.ws.AgentMgr().Get("agent")
+	node.State.Running = true
+	decoder := uv.EventDecoder{}
+	press := func(sequence string) {
+		t.Helper()
+		_, _ = app.Update(decodeShortcutPress(t, &decoder, sequence))
+	}
+	for _, sequence := range []string{
+		"\x1b[27;5u",           // Ctrl+Esc, Kitty
+		"\x1b[27;6u",           // Ctrl+Shift+Esc, Kitty
+		"\x1b[27;1;27;1;8;1_",  // Ctrl+Esc, Win32
+		"\x1b[27;1;27;1;24;1_", // Ctrl+Shift+Esc, Win32
+	} {
+		press(sequence)
+		if node.State.Cancelling {
+			t.Fatalf("modified Escape stopped the running agent: %q", sequence)
+		}
+	}
+	press("\x1b[27;129u") // Escape with Num Lock on is still plain Escape.
+	if !node.State.Cancelling {
+		t.Fatal("plain Escape did not stop the running agent")
+	}
+}
+
+func decodeShortcutPress(t *testing.T, decoder *uv.EventDecoder, sequence string) tea.KeyPressMsg {
+	t.Helper()
+	n, event := decoder.Decode([]byte(sequence))
+	key, ok := event.(uv.KeyPressEvent)
+	if n != len(sequence) || !ok {
+		t.Fatalf("did not decode keypress %q: %v", sequence, event)
+	}
+	return tea.KeyPressMsg(key)
 }
