@@ -1003,12 +1003,14 @@ type ModelCatalogUpdatedMsg struct{ Generation uint64 }
 
 // ModelEntriesFromInfos converts provider model infos into UI model entries,
 // enriching each with the cached public-source metadata (pricing, context
-// window, capabilities). Context window from the wire wins over the catalog.
+// window, capabilities). Context window and output limit from the wire win
+// over the catalog.
 func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
 	entries := make([]ModelEntry, 0, len(models))
 	for _, model := range models {
 		entry := ModelEntry{
-			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow, Decision: model.Decision,
+			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow, MaxOutput: model.MaxOutput,
+			Decision: model.Decision,
 		}
 		if meta, ok := provider.ModelCard(model.ID); ok {
 			if entry.ContextWindow == 0 {
@@ -1019,7 +1021,9 @@ func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
 			entry.CacheReadPrice = meta.CacheReadPrice
 			entry.Modalities = meta.Modalities
 			entry.SupportsTools = meta.SupportsTools
-			entry.MaxOutput = meta.MaxOutput
+			if entry.MaxOutput == 0 {
+				entry.MaxOutput = meta.MaxOutput
+			}
 			entry.ModalitySupport = meta.ModalitySupport
 			entry.CapabilitySources = meta.Sources
 			entry.ConflictingModalities = meta.ConflictingModalities

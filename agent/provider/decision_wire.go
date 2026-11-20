@@ -21,6 +21,13 @@ func (s *OllamaStandard) EncodeDecision(model, state string, questions map[strin
 }
 
 func (s *OllamaStandard) DecodeDecision(reply map[string]any, questions map[string]DecisionQuestion) (map[string]DecisionAnswer, error) {
+	return decodeKeyedDecision(reply, questions)
+}
+
+// decodeKeyedDecision reads answers keyed by slot (Ollama System One and the
+// Gemini Decisions API): "noul" is the probability that the statement is true
+// and "choice" names one label with a probability per label.
+func decodeKeyedDecision(reply map[string]any, questions map[string]DecisionQuestion) (map[string]DecisionAnswer, error) {
 	answers, ok := reply["answers"].(map[string]any)
 	if !ok || len(answers) != len(questions) {
 		return nil, fmt.Errorf("incomplete decision answers")

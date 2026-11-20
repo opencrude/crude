@@ -9,8 +9,9 @@ import (
 )
 
 // The provider package speaks several wire protocols (OpenAI Chat
-// Completions, OpenAI Responses, Anthropic Messages, Ollama native, ChatGPT
-// Codex). The architecture splits the concern three ways:
+// Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent,
+// Gemini Interactions, Ollama native, ChatGPT Codex). The architecture splits
+// the concern three ways:
 //
 //   - Protocol implementations know the wire format: how to encode a request,
 //     decode a response, and decode a stream. They never touch HTTP.
@@ -145,6 +146,32 @@ type Protocol interface {
 	NewStreamDecoder() StreamDecoder
 }
 
+// ChatEndpoint is implemented by protocols whose chat URL depends on the
+// request: Gemini names the model and the streaming method in the path
+// (models/{model}:streamGenerateContent). Other protocols use ChatPath.
+type ChatEndpoint interface {
+	ChatURL(base *url.URL, model string, stream bool) *url.URL
+}
+
+// NestedRequestExtras is implemented by protocols whose request extras
+// include objects that combine with encoded fields instead of replacing them.
+// Gemini keeps maxOutputTokens and thinkingConfig in one generationConfig
+// object, so an extra generationConfig merges one level deep.
+type NestedRequestExtras interface {
+	NestedExtraKeys() []string
+}
+
+// ModelLimitLearner is implemented by protocols whose models accept different
+// subsets of a request option that no listing publishes (Gemini thinking
+// levels). LearnRejection records the limitation a rejection of body proves
+// and reports whether a new encoding avoids it; FinalizeRequest applies what
+// was learned to a merged request body. Scope is the API base, so one gateway
+// does not teach another.
+type ModelLimitLearner interface {
+	FinalizeRequest(scope string, req *ChatRequest, body map[string]any)
+	LearnRejection(scope string, req *ChatRequest, body []byte, err *StatusError) bool
+}
+
 // ProtocolHeaders is implemented by protocols that require static request
 // headers on every call (e.g. anthropic-version).
 type ProtocolHeaders interface {
@@ -252,6 +279,8 @@ type ModelInfo struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	ContextWindow int    `json:"context_window"`
+	// MaxOutput is the listing's output token limit, or 0 when unpublished.
+	MaxOutput int `json:"max_output,omitempty"`
 	// Decision is true when the listing marks a typed decision model.
 	Decision bool `json:"decision,omitempty"`
 }

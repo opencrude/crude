@@ -49,6 +49,19 @@ func (d *streamErrorDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 	return update, err
 }
 
+// eofTerminalDecoder is implemented by decoders of protocols whose stream has
+// no terminal event (Gemini generateContent). CompleteAtEOF reports that the
+// decoded stream reached its end, so a following end of body is complete.
+type eofTerminalDecoder interface {
+	CompleteAtEOF() bool
+}
+
+// CompleteAtEOF forwards to the wrapped decoder.
+func (d *streamErrorDecoder) CompleteAtEOF() bool {
+	terminal, ok := d.inner.(eofTerminalDecoder)
+	return ok && terminal.CompleteAtEOF()
+}
+
 func classifyStreamError(protocol, event string, api *APIError) error {
 	// Ollama documents these exact string-only model-execution failures. They
 	// carry no HTTP status after streaming starts. Do not generalize arbitrary

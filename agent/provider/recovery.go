@@ -228,8 +228,12 @@ func ErrorSummary(err error) string {
 	}
 	var status *StatusError
 	if errors.As(err, &status) {
-		if quotaAPIError(status.Code+" "+status.APIType+" "+status.APICode) && status.StatusCode == 429 {
+		codes := status.Code + " " + status.APIType + " " + status.APICode
+		if quotaAPIError(codes) && (status.StatusCode == 429 || status.StatusCode == 403) {
 			return "Provider quota or billing limit reached"
+		}
+		if strings.Contains(strings.ToLower(codes), "api_key_invalid") || strings.Contains(strings.ToLower(codes), "unauthenticated") {
+			return "Provider authentication failed"
 		}
 		switch status.StatusCode {
 		case 401:

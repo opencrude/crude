@@ -32,8 +32,8 @@ remains workspace-scoped and is cleared when the workspace changes.
 ## Patch contract
 
 On Responses and Codex endpoints, `apply_patch` is a custom/freeform tool with
-the upstream name, description, and Lark grammar. Chat Completions, Anthropic and
-Ollama endpoints, including third-party gateways, receive an ordinary `apply_patch`
+the upstream name, description, and Lark grammar. Chat Completions, Anthropic,
+Gemini and Ollama endpoints, including third-party gateways, receive an ordinary `apply_patch`
 function with a required string `input` parameter; these endpoints reject
 `tools[n].custom`. The Chat adapter wraps patch text in JSON on the wire and
 unwraps it on receipt. Execution and persisted history still use raw patch text,

@@ -43,10 +43,10 @@
   {
     "id": "google",
     "template": {
-      "name": "Google AI",
+      "name": "Google Gemini",
       "help_text": "API keys: aistudio.google.com/apikey",
-      "provider_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-      "api_standard": "openai",
+      "provider_url": "https://generativelanguage.googleapis.com/v1beta",
+      "api_standard": "gemini",
       "auth_type": "protocol"
     }
   },

@@ -63,7 +63,7 @@ func TestGetPreset_Found(t *testing.T) {
 		{"openrouter", "OpenRouter"},
 		{"openai", "OpenAI"},
 		{"anthropic", "Anthropic"},
-		{"google", "Google AI"},
+		{"google", "Google Gemini"},
 		{"groq", "Groq"},
 		{"custom", "Custom"},
 	}
