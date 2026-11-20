@@ -12,9 +12,10 @@ import (
 )
 
 type workspaceTrustState struct {
-	askedOwner shellport.Workspace
-	askedGen   uint64
-	prompt     *workspaceTrustPrompt
+	askedOwner        shellport.Workspace
+	askedGen          uint64
+	prompt            *workspaceTrustPrompt
+	awaitingFirstSize bool
 }
 
 type workspaceTrustPrompt struct {
@@ -30,20 +31,52 @@ type workspaceTrustSavedMsg struct {
 	result workspace.PreferencesSaveResult
 }
 
+func (m *App) canOpenWorkspaceTrustPrompt() bool {
+	return m.ws != nil && m.width > 0 && m.height > 0 && m.overlayHost != nil && len(m.overlayHost.All()) == 0 &&
+		!m.workspaceAttachPending && !m.sessionLifecyclePending
+}
+
 func (m *App) openWorkspaceTrustPrompt() tea.Cmd {
-	if m.ws == nil || m.width <= 0 || m.height <= 0 || m.overlayHost == nil || len(m.overlayHost.All()) != 0 ||
-		m.workspaceAttachPending || m.sessionLifecyclePending {
+	if !m.canOpenWorkspaceTrustPrompt() {
 		return nil
 	}
+	m.showWorkspaceTrustPrompt(m.ws.LoadAppSettings().Analysis.DecisionNeeded())
+	return nil
+}
+
+func (m *App) showWorkspaceTrustPrompt(undecided bool) {
 	state := &m.onboarding.trust
-	prompt := &workspaceTrustPrompt{owner: m.ws, generation: m.workspaceSwitchGen.Load(), undecided: m.ws.LoadAppSettings().Analysis.DecisionNeeded()}
+	prompt := &workspaceTrustPrompt{owner: m.ws, generation: m.workspaceSwitchGen.Load(), undecided: undecided}
 	state.prompt, state.askedOwner, state.askedGen = prompt, prompt.owner, prompt.generation
 	m.openConfirmModal(ui.OverlayWorkspaceTrust, m.workspaceTrustFrame(prompt), m.activateWorkspaceTrust, func() {
 		if state.prompt == prompt {
 			state.prompt = nil
 		}
 	})
-	return nil
+}
+
+func (m *App) maybeOpenWorkspaceTrustPrompt() {
+	state := &m.onboarding.trust
+	if m.canOpenWorkspaceTrustPrompt() && len(m.pendingOperationIssues) == 0 &&
+		(state.askedOwner != m.ws || state.askedGen != m.workspaceSwitchGen.Load()) &&
+		m.ws.LoadAppSettings().Analysis.DecisionNeeded() {
+		m.showWorkspaceTrustPrompt(true)
+	}
+}
+
+// Only an initialized shell starts onboarding. Assigning a viewport alone
+// (for a render or embedded model) is not a workspace-opening event.
+func (m *App) checkInitialWorkspaceTrust() {
+	state := &m.onboarding.trust
+	if !state.awaitingFirstSize || m.width <= 0 || m.height <= 0 {
+		return
+	}
+	state.awaitingFirstSize = false
+	// Preserve the existing priority of other dialogs and AI setup.
+	defaults := m.ws.AppDefaults()
+	if defaults.Onboarding.AISetupReminderHidden || len(defaults.Accounts) != 0 {
+		m.maybeOpenWorkspaceTrustPrompt()
+	}
 }
 
 func (m *App) workspaceTrustFrame(prompt *workspaceTrustPrompt) *ui.ComponentWidget {
@@ -104,11 +137,7 @@ func (m *App) handleWorkspaceTrustMessage(msg tea.Msg) (bool, tea.Cmd) {
 		if p := state.prompt; p != nil && p.undecided && !p.busy && p.owner == m.ws && p.generation == m.workspaceSwitchGen.Load() && !m.ws.LoadAppSettings().Analysis.DecisionNeeded() {
 			m.overlayHost.Close(ui.OverlayWorkspaceTrust)
 		}
-		if m.ws != nil && m.width > 0 && m.height > 0 && m.overlayHost != nil && len(m.overlayHost.All()) == 0 &&
-			!m.workspaceAttachPending && !m.sessionLifecyclePending && len(m.pendingOperationIssues) == 0 &&
-			(state.askedOwner != m.ws || state.askedGen != m.workspaceSwitchGen.Load()) && m.ws.LoadAppSettings().Analysis.DecisionNeeded() {
-			m.openWorkspaceTrustPrompt()
-		}
+		m.maybeOpenWorkspaceTrustPrompt()
 	case tea.KeyPressMsg:
 		if state.prompt != nil {
 			if state.prompt.busy {

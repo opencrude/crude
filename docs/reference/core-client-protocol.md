@@ -13,8 +13,11 @@ not in a wire-version compatibility promise.
 
 Same-build startup publishes one immutable staged executable under the data
 directory using atomic no-replace hard-link publication. Concurrent losers never
-replace the inode another shell is executing. Unsupported hard-link filesystems
-and invalid existing image type/size/mode or digest return explicit staging failures.
+replace the inode another shell is executing. Verify a closed candidate against
+the selected full digest before publishing it. Verify an existing winner against
+that same digest before reuse. Staging and the owner record use the process's
+native image digest; the build ID is only its filename prefix. Unsupported
+hard-link filesystems and invalid image type, mode or bytes fail explicitly.
 All staged images are currently retained: Unix unlink success cannot prove that a
 core, helper or concurrent starter no longer needs an image. Disk use can therefore
 grow across builds; there is no automatic liveness-based pruning.

@@ -248,7 +248,9 @@ It checks first use, reminder suppression, path errors, malformed configuration,
 It retains evidence and stops its owned processes, including after failure.
 It sends no inference request and uses no external credentials.
 Its text captures do not replace sequential native visual captures.
-Native Windows and distinct-host SSH checks remain separate.
+Use the [network lab startup lane](remote-network-lab.md#startup-lane) for
+the cold SSH, warm reopen, core restart and native trust-prompt checks.
+Native Windows and distinct-host SSH measurements remain separate.
 
 Never regenerate goldens, raise allocation ceilings or loosen a gate to land a
 regression. Update golden output only for an intentional, visually verified

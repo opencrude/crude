@@ -99,7 +99,7 @@ func newRestartFixture(t *testing.T) *restartFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldImage, err := stageCoreImage(home, oldSource, oldDigest[:16])
+	oldImage, err := stageCoreImage(home, oldSource, oldDigest)
 	if err != nil {
 		t.Fatal(err)
 	}

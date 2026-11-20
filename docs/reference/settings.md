@@ -1414,6 +1414,9 @@ folder opens without a decision, Crude asks whether to trust its authors.
 storing it. A stored Restricted decision does not prompt on the next open.
 The prompt waits for attachment and other dialogs to finish. Each shell asks once
 per workspace opening; a decision saved in another shell closes its open prompt.
+If AI setup is configured or its reminder has been hidden, a newly started
+shell can ask on its first sized workspace frame. Resize alone does not
+start this check.
 Saving runs off the UI thread and disables both choices while it is in progress.
 On failure, the prompt retains its error and enables the choices for retry.
 Source editing and local syntax remain usable in restricted mode, but no external language server is constructed or started by editor

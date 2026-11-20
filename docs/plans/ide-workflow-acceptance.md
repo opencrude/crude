@@ -235,6 +235,10 @@ that disappears, sampling gaps or clicked controls that move. The peer lane adds
 qualified navigation, cancellation and approval of a two-file rename, its Local
 History safety snapshot, host-only settings denial and per-client link failure.
 The optional native driver resizes the actual shell and captures both sizes.
+The [startup lane](../guides/remote-network-lab.md#startup-lane) separately
+measures first use, reopening on a running core, and reopening after a core
+restart. The measured milestone is the file tree and launcher, with an actual
+file open checked next. The trust prompt is recorded separately.
 This does not claim setup/acquisition acceptance or full D0–D8 coverage.
 
 For each scored journey record paced input, observed terminal frame IDs or

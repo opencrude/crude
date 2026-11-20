@@ -19,7 +19,7 @@ func installRestartRefusalHelper(t *testing.T, fixture *restartFixture, behavior
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, err := stageCoreImage(fixture.host.home, path, digest[:16])
+	image, err := stageCoreImage(fixture.host.home, path, digest)
 	if err != nil {
 		t.Fatal(err)
 	}

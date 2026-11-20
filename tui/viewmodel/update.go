@@ -555,6 +555,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.presentOperationIssue(issue)
 			}
 		}
+		m.checkInitialWorkspaceTrust()
 		// The shell surface is resized on the next View() frame by
 		// renderShellToSurface (single full-screen surface).
 		if !m.terminalImages.started {

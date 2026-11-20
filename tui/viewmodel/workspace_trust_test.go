@@ -53,6 +53,38 @@ func TestWorkspaceTrustPromptPaintAndEscGeneration(t *testing.T) {
 	}
 }
 
+func TestWorkspaceTrustPaintsOnFirstSizedFrameWithoutSetupReminder(t *testing.T) {
+	for _, size := range [][2]int{{160, 48}, {84, 26}} {
+		m := newFullTestApp(t)
+		wsOf(m).Logger = stubLogger{}
+		m.width, m.height = 0, 0
+		wsOf(m).SetAppDefaults(types.AppSettings{Onboarding: types.OnboardingSettings{AISetupReminderHidden: true}})
+		m.Init()
+
+		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		paint := m.View().RenderContent()
+		if !strings.Contains(paint, "Trust this folder?") || !strings.Contains(paint, "Open in restricted mode") {
+			t.Fatalf("the first sized frame at %v did not present the trust choice", size)
+		}
+		m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+		m.Update(tea.WindowSizeMsg{Width: size[0] - 1, Height: size[1]})
+		if strings.Contains(m.View().RenderContent(), "Trust this folder?") || !m.ws.LoadAppSettings().Analysis.DecisionNeeded() {
+			t.Fatal("resizing after Esc reopened the prompt or saved a decision")
+		}
+	}
+}
+
+func TestWorkspaceTrustDoesNotStartOnLayoutAlone(t *testing.T) {
+	m := newFullTestApp(t)
+	wsOf(m).Logger = stubLogger{}
+	m.width, m.height = 0, 0
+	wsOf(m).SetAppDefaults(types.AppSettings{Onboarding: types.OnboardingSettings{AISetupReminderHidden: true}})
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if strings.Contains(m.View().RenderContent(), "Trust this folder?") {
+		t.Fatal("layout without shell startup opened a modal")
+	}
+}
+
 func TestWorkspaceTrustSaveBusyAndFailureRetry(t *testing.T) {
 	m := onboardingTestApp(t)
 	m.Update(types.TickMsg{})
