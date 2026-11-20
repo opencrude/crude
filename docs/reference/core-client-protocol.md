@@ -21,7 +21,10 @@ grow across builds; there is no automatic liveness-based pruning.
 
 ## Startup before workspace attachment
 
-The connected core can serve startup without a workspace attachment.
+The connected core can serve startup without a workspace attachment. Opening the
+proposed project transfers this session to the workspace. Closing the chooser
+cannot close the transferred session. A different folder keeps its own root-scoped
+client identity and does not borrow the proposed folder's attachment.
 The application owns profile metadata and saves through the existing settings owner.
 `tui/startup/` owns the detached introduction and project-selection screen.
 The current project layout, settings, and services remain unchanged.
@@ -270,8 +273,9 @@ mutable Workspace.
   Stable document IDs survive durable file/directory relocation. Core file watchers publish ordered file facts; per-open document topics push
   canonical revision operations/savepoints. Explicit shell reads/transfers use
   typed commands or bulk streams.
-  Lost edit/save/format outcomes recover their original receipt, never replay an
-  effect. Native conflict decisions default to Keep; explicit Discard backs up
+  Lost edit/save/format outcomes are recovered by sending the same request
+  identity again; the core returns its recorded receipt or admits a request
+  that never arrived once, so no effect runs twice. Native conflict decisions default to Keep; explicit Discard backs up
   private work and never overwrites collaborators. `document.snapshot_save`
   is checked disk infrastructure, not another live-text authority. `clientstate`
   persists private composers and unresolved editor evidence with profile locks,
@@ -281,6 +285,12 @@ mutable Workspace.
   write-only ephemeral and `--system` extends the canonical profile overlay.
 
 ## Wire format and bounded delivery
+
+A stream that has consumed the peer’s FIN and sent its own has completed both
+directions. Releasing its handle must not replace data or a FIN still in flight
+with a reset. In particular, the SDK waits for EOF to confirm release of a
+cancellable read’s result. An unfinished stream can still be cancelled to
+interrupt a blocked reader or writer.
 
 Protocol v2 uses generated MessagePack tuple codecs from the Go types, not JSON
 frame envelopes or a second handwritten schema. A uvarint byte length bounds each
@@ -390,6 +400,15 @@ at `max(display interval, min(RTT / 2, 250 ms))`, after the prior applied ACK; a
 change after quiet is sent at once (terminal grids wait mosh's 8 ms
 `SEND_MINDELAY`) and idle topics arm no timer. Conflation affects observation
 only, never canonical mutation.
+
+The ordered workspace log sends up to 64 journal entries on the same stream
+before it needs another applied ACK. This covers about one second at the
+16 ms publication cadence without making each text delta pay a round trip.
+The sender retains bounded flight metadata, not another queue of encoded
+publications. Carrier byte credit still limits writes. ACKs advance only the
+exact sent prefix, and resume starts at the shell's applied cursor. An
+evicted gap drains the sent entries before reset; the initial and gap
+snapshots each require their own applied ACK before any deltas follow.
 
 Workspace transcript publications compare semantic agent metadata independently
 of conversation/token and Status Center observation clocks. Token suffixes carry
@@ -683,8 +702,14 @@ provides Open/Edit/Close/Save and optional Format/receipt/topic interfaces; Sync
 is explicit recovery/shutdown infrastructure, not a normal post-command poll.
 `DocumentOwner` includes the attachment epoch. The Update coordinator installs
 immutable snapshots/deltas, retains optimistic edits and orders off-UI commands.
-Edits, undo, formatting and saves fence exact revisions; a lost response is
-observed through its original receipt, not resent as a new mutation. Each open
+Edits, undo, formatting and saves fence exact revisions. A response lost to a
+carrier drop or to a call deadline during a long reconnect is recovered by
+sending the request again with its original identity: the core's receipt store
+returns the recorded outcome, or admits the request once if it never arrived. It
+is never resent under a new identity. Until the core answers, the text stays in
+the editor without a dialog and later publications of that document wait; only
+an outcome that the core itself lost (it stopped while running the request)
+asks the user to Keep, Compare or Discard. Each open
 subscribes to a document topic: a snapshot boundary, then ordered revision
 operations and savepoint metadata. The shell prepares a complete rebase of
 canonical and optimistic private state before committing it atomically; receipt,

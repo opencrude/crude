@@ -68,3 +68,29 @@ func TestTerminalPredictionImmutableAndUnsafeModes(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalEchoKeepsOnlyMatchingUnconfirmedSuffix(t *testing.T) {
+	row := make([]terminalvt.Cell, 12)
+	for i := range row {
+		row[i] = terminalvt.Cell{Text: " ", Width: 1}
+	}
+	row[0].Text = "$"
+	base := workspace.TerminalProjection{Grid: terminalvt.Projection{Cols: 12, GridRows: 1, Total: 1, Cells: [][]terminalvt.Cell{row}, Cursor: terminalvt.Cursor{X: 1, Visible: true}}}
+	predicted := base
+	for _, key := range []terminalvt.Key{{Text: "a"}, {Text: "B", Mod: terminalvt.ModShift}, {Code: terminalvt.KeySpace}, {Text: "c"}} {
+		var ok bool
+		predicted, ok = terminalPrediction(predicted, key, true)
+		if !ok {
+			t.Fatal(key)
+		}
+	}
+	next, _ := terminalPrediction(base, terminalvt.Key{Text: "a"}, false)
+	suffix, matched, ok := reconcileEcho(base, predicted, next)
+	if !ok || !matched || suffix.Grid.Cells[0][2].Text != "B" || suffix.Grid.Cursor.X != 5 || next.Grid.Cells[0][2].Text != " " {
+		t.Fatal("older frame erased the suffix or speculation overwrote the authority")
+	}
+	mismatch, _ := terminalPrediction(base, terminalvt.Key{Text: "*"}, false)
+	if _, _, ok := reconcileEcho(base, predicted, mismatch); ok {
+		t.Fatal("masked remote input accepted as echo")
+	}
+}

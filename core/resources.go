@@ -104,8 +104,16 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 		if err := decodeRequest(request, &input); err != nil {
 			return bad(err)
 		}
-		return func(context.Context) coreprotocol.Response {
+		return func(ctx context.Context) coreprotocol.Response {
 			value, err := docs.Open(owner, input.Path)
+			if err == nil && input.WithEditorConfig {
+				path, choices, readErr := docs.EditorConfig(ctx, owner, value.ID)
+				config := &document.OpenConfiguration{Path: path, Choices: choices}
+				if readErr != nil {
+					config.Error = readErr.Error()
+				}
+				value.OpenConfig = config
+			}
 			return ok(wire(value), err)
 		}, true
 	case coreprotocol.DocumentEditorConfig:
@@ -153,7 +161,7 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			return bad(err)
 		}
 		return func(context.Context) coreprotocol.Response {
-			value, err := docs.Apply(document.Change{DocumentID: input.ID, RequestID: request.ID, Owner: owner, BaseRevision: input.Revision, GroupID: input.Group, Edits: input.Edits})
+			value, err := docs.Apply(document.Change{DocumentID: input.ID, RequestID: request.ID, Owner: owner, BaseRevision: input.Revision, GroupID: input.Group, Edits: input.Edits, Following: input.Following})
 			result := responseValue(request, wire(value))
 			if err != nil {
 				result.Error = &coreprotocol.Fault{Code: "resource_failed", Message: err.Error()}

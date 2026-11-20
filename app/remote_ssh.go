@@ -17,9 +17,13 @@ import (
 	"crude/core/wire"
 )
 
-// remoteSSHDialer always authenticates a new session with system SSH. Bootstrap
-// only learns authenticated endpoint/pin facts; the upgrade resumes that session
-// with its resume secret, never creates a second owner with the one-use bearer.
+// remoteSSHDialer always authenticates a new session with system SSH and
+// returns it as soon as SSH carries it. The direct-carrier upgrade then runs in
+// the background: bootstrap only learns authenticated
+// endpoint/pin facts, and the upgrade resumes that session with its resume
+// secret, never creating a second owner with the one-use bearer. An endpoint
+// that does not answer, such as a loopback-only listener on a distinct host,
+// does not add another handshake to the launch path.
 func remoteSSHDialer(_ string, options corewire.SSHOptions) remote.Dialer {
 	ssh := func(ctx context.Context) (corewire.Conn, error) {
 		if err := ctx.Err(); err != nil {
@@ -42,19 +46,19 @@ func remoteSSHDialer(_ string, options corewire.SSHOptions) remote.Dialer {
 			}
 			return nil, fmt.Errorf("SSH core session failed: %w", err)
 		}
-		bootstrap, err := client.BootstrapRemoteSSH(ctx, "SSH shell")
-		if err == nil {
-			dial, valid := sshUpgradeDialer(options.Host, bootstrap, ssh)
-			if valid == nil {
-				// Upgrade failure is not session failure: SSH remains fully usable.
-				// SwitchCarrier preserves the original owner/subscriptions/leases.
-				_ = client.SwitchCarrier(ctx, dial)
+		// Upgrade failure is not session failure: SSH remains fully usable.
+		// SwitchCarrier preserves the original owner/subscriptions/leases.
+		client.UpgradeInBackground(func(ctx context.Context) (coreclient.Dialer, coreclient.Dialer, error) {
+			bootstrap, err := client.BootstrapRemoteSSH(ctx, "SSH shell")
+			if err != nil {
+				return nil, nil, err
 			}
-		}
-		if err := ctx.Err(); err != nil {
-			_ = client.Close()
-			return nil, err
-		}
+			direct, err := sshDirectDialer(options.Host, bootstrap)
+			if err != nil {
+				return nil, nil, err
+			}
+			return direct, sshUpgradeDialer(direct, ssh), nil
+		})
 		return client, nil
 	}
 }
@@ -80,7 +84,26 @@ func sshDirectAddress(address, sshHost string) (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
-func sshUpgradeDialer(host string, bootstrap coreprotocol.RemoteSSHBootstrapResult, fallback coreclient.Dialer) (coreclient.Dialer, error) {
+// sshUpgradeDialer is the reconnect policy of an upgraded SSH session: the
+// pinned direct carriers, then the verified SSH path. The upgrade attempt
+// itself dials only the direct carriers: SSH already carries the session, and
+// a second SSH handshake only costs the user time.
+func sshUpgradeDialer(direct, fallback coreclient.Dialer) coreclient.Dialer {
+	return func(ctx context.Context) (corewire.Conn, error) {
+		conn, err := direct(ctx)
+		if err == nil {
+			return conn, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return fallback(ctx)
+	}
+}
+
+// sshDirectDialer dials the bootstrap's pinned QUIC endpoint, then its pinned
+// TLS endpoint, each with an independent bounded attempt.
+func sshDirectDialer(host string, bootstrap coreprotocol.RemoteSSHBootstrapResult) (coreclient.Dialer, error) {
 	pin := bootstrap.Credential.Fingerprint
 	if !remoteconn.ValidFingerprint(pin) {
 		return nil, errors.New("SSH bootstrap returned an invalid certificate pin")
@@ -93,9 +116,13 @@ func sshUpgradeDialer(host string, bootstrap coreprotocol.RemoteSSHBootstrapResu
 	if err != nil {
 		return nil, err
 	}
+	if quic == "" && tls == "" {
+		return nil, errors.New("SSH bootstrap returned no direct endpoint")
+	}
 	return func(ctx context.Context) (corewire.Conn, error) {
 		// Independent bounded attempts leave time for TCP and SSH when UDP is
 		// blackholed. Both direct carriers enforce the same authenticated pin.
+		var failure error
 		for _, endpoint := range []struct {
 			address string
 			dial    func(context.Context, string, string) (corewire.Conn, error)
@@ -112,7 +139,8 @@ func sshUpgradeDialer(host string, bootstrap coreprotocol.RemoteSSHBootstrapResu
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
+			failure = err
 		}
-		return fallback(ctx)
+		return nil, failure
 	}, nil
 }

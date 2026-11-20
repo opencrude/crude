@@ -301,6 +301,11 @@ func (m *App) continueRemoteWorkspaceSwitch() tea.Cmd {
 		m.failRemoteWorkspaceSwitch("The editor awaiting a decision changed.")
 		return nil
 	}
+	if len(m.pendingInputAdmissions) == 0 && m.sessionLifecyclePending && m.aeronEnsureInFlight {
+		// The automatic Aeron open is background work: the switch continues
+		// on the Update that applies its reply instead of failing.
+		return nil
+	}
 	if len(m.pendingInputAdmissions) != 0 || m.sessionLifecyclePending {
 		m.failRemoteWorkspaceSwitch("Wait for the pending session or input acknowledgement before switching.")
 		return nil

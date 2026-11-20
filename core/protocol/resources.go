@@ -37,7 +37,8 @@ const (
 )
 
 type DocumentOpenRequest struct {
-	Path string `json:"path"`
+	WithEditorConfig bool   `json:"with_editor_config,omitempty"`
+	Path             string `json:"path"`
 }
 type DocumentReadRequest struct {
 	ID string `json:"id"`
@@ -47,10 +48,11 @@ type DocumentSyncRequest struct {
 	After uint64 `json:"after"`
 }
 type DocumentEditRequest struct {
-	ID       string          `json:"id"`
-	Revision uint64          `json:"revision"`
-	Group    string          `json:"group,omitempty"`
-	Edits    []document.Edit `json:"edits"`
+	Following []document.EditGroup `json:"following,omitempty"`
+	ID        string               `json:"id"`
+	Revision  uint64               `json:"revision"`
+	Group     string               `json:"group,omitempty"`
+	Edits     []document.Edit      `json:"edits"`
 }
 type DocumentRevisionRequest struct {
 	ID       string                       `json:"id"`

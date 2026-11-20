@@ -89,15 +89,6 @@ func (a *answerList) SelectIndex(index int) bool {
 	return a.VirtualList.SelectIndex(index)
 }
 
-func (a *answerList) ContentHeight() int {
-	if a.dirty {
-		// Before first layout claim enough room to read, then converge using
-		// actual parent geometry. Never invent a wrap-width floor.
-		return 16
-	}
-	return a.Scroll().Content()
-}
-
 func (a *answerList) ResetViewport() { a.reset = true }
 
 func (a *answerList) reflow(width int) {
@@ -244,9 +235,6 @@ func (a *answerList) selectLast() {
 		a.revealSelectionStart()
 	}
 }
-
-// measured reports whether row heights come from real geometry.
-func (a *answerList) measured() bool { return !a.dirty }
 
 // rowsAt returns the wrapped height of every row at the pane width the
 // list will have (one column is its scrollbar gutter).

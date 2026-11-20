@@ -5320,8 +5320,20 @@ func (z DiscardGitReviewedResult) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *DocumentEditRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 5
+	o = append(o, 0x95)
+	if z.Following == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Following)))
+		for za0001 := range z.Following {
+			o, err = z.Following[za0001].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Following", za0001)
+				return
+			}
+		}
+	}
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendUint64(o, z.Revision)
 	o = msgp.AppendString(o, z.Group)
@@ -5329,10 +5341,10 @@ func (z *DocumentEditRequest) MarshalMsg(b []byte) (o []byte, err error) {
 		o = msgp.AppendNil(o)
 	} else {
 		o = msgp.AppendArrayHeader(o, uint32(len(z.Edits)))
-		for za0001 := range z.Edits {
-			o, err = z.Edits[za0001].MarshalMsg(o)
+		for za0002 := range z.Edits {
+			o, err = z.Edits[za0002].MarshalMsg(o)
 			if err != nil {
-				err = msgp.WrapError(err, "Edits", za0001)
+				err = msgp.WrapError(err, "Edits", za0002)
 				return
 			}
 		}
@@ -5352,9 +5364,36 @@ func (z *DocumentEditRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
 		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Following = nil
+	} else {
+		var zb0002 uint32
+		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Following")
+			return
+		}
+		if uint64(zb0002)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Following != nil && cap(z.Following) >= int(zb0002) {
+			z.Following = (z.Following)[:zb0002]
+		} else {
+			z.Following = make([]document.EditGroup, zb0002)
+		}
+		for za0001 := range z.Following {
+			bts, err = z.Following[za0001].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Following", za0001)
+				return
+			}
+		}
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
@@ -5375,25 +5414,25 @@ func (z *DocumentEditRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		bts = bts[1:]
 		z.Edits = nil
 	} else {
-		var zb0002 uint32
-		zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		var zb0003 uint32
+		zb0003, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
 			err = msgp.WrapError(err, "Edits")
 			return
 		}
-		if uint64(zb0002)*1 > uint64(len(bts)) {
+		if uint64(zb0003)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.Edits != nil && cap(z.Edits) >= int(zb0002) {
-			z.Edits = (z.Edits)[:zb0002]
+		if z.Edits != nil && cap(z.Edits) >= int(zb0003) {
+			z.Edits = (z.Edits)[:zb0003]
 		} else {
-			z.Edits = make([]document.Edit, zb0002)
+			z.Edits = make([]document.Edit, zb0003)
 		}
-		for za0001 := range z.Edits {
-			bts, err = z.Edits[za0001].UnmarshalMsg(bts)
+		for za0002 := range z.Edits {
+			bts, err = z.Edits[za0002].UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "Edits", za0001)
+				err = msgp.WrapError(err, "Edits", za0002)
 				return
 			}
 		}
@@ -5404,9 +5443,13 @@ func (z *DocumentEditRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *DocumentEditRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.Uint64Size + msgp.StringPrefixSize + len(z.Group) + msgp.ArrayHeaderSize
-	for za0001 := range z.Edits {
-		s += z.Edits[za0001].Msgsize()
+	s = 1 + msgp.ArrayHeaderSize
+	for za0001 := range z.Following {
+		s += z.Following[za0001].Msgsize()
+	}
+	s += msgp.StringPrefixSize + len(z.ID) + msgp.Uint64Size + msgp.StringPrefixSize + len(z.Group) + msgp.ArrayHeaderSize
+	for za0002 := range z.Edits {
+		s += z.Edits[za0002].Msgsize()
 	}
 	return
 }
@@ -5414,8 +5457,9 @@ func (z *DocumentEditRequest) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z DocumentOpenRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 1
-	o = append(o, 0x91)
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendBool(o, z.WithEditorConfig)
 	o = msgp.AppendString(o, z.Path)
 	return
 }
@@ -5432,8 +5476,13 @@ func (z *DocumentOpenRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 1 {
-		err = msgp.ArrayError{Wanted: 1, Got: zb0001}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.WithEditorConfig, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "WithEditorConfig")
 		return
 	}
 	z.Path, bts, err = msgp.ReadStringBytes(bts)
@@ -5447,7 +5496,7 @@ func (z *DocumentOpenRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z DocumentOpenRequest) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.Path)
+	s = 1 + msgp.BoolSize + msgp.StringPrefixSize + len(z.Path)
 	return
 }
 

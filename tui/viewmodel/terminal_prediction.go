@@ -20,7 +20,7 @@ func (m *App) predictTerminalKey(id string, key terminalvt.Key) {
 		return
 	}
 	if screen := m.termScreens[id]; screen != nil {
-		screen.SetProjection(p)
+		screen.SetPrediction(p)
 		m.rootHost.MarkComponentPaint(screen.ID())
 	}
 	if fw := m.overlayHost.Window(ui.TerminalOverlayID(id)); fw != nil {

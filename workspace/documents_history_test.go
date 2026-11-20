@@ -286,3 +286,31 @@ func TestDocumentHistorySyncPreservesLogicalGroupAcrossUndoRedo(t *testing.T) {
 		}
 	}
 }
+
+// A backlog from a slow link has one delivery identity, not one undo step.
+func TestDocumentQueuedGroupsAreAtomicReplayableAndUndoable(t *testing.T) {
+	j, a, b := newDocumentHistoryJourney(t, "base")
+	change := document.Change{Owner: a, DocumentID: j.id, RequestID: j.next(), BaseRevision: j.revision, GroupID: "word", Edits: []document.Edit{{Text: "hello"}}, Following: []document.EditGroup{{ID: "punctuation", Edits: []document.Edit{{Start: 5, End: 5, Text: "!"}}}}}
+	bad := change.Clone()
+	bad.Following[0].Edits[0].End = 100
+	refused, err := j.s.Apply(bad)
+	if err == nil || refused.Accepted || refused.Revision != j.revision {
+		t.Fatalf("partial receipt: %+v %v", refused, err)
+	}
+	documentText(t, j.s, j.id, "base")
+	change.RequestID = j.next()
+	receipt, err := j.s.Apply(change)
+	j.check(receipt, err, "hello!base")
+	repeated, err := j.s.Apply(change)
+	if repeated != receipt || err != nil {
+		t.Fatalf("same identity applied twice: %+v %v", repeated, err)
+	}
+	changes, err := j.s.Sync(b, j.id, change.BaseRevision)
+	if err != nil || len(changes.Changes) != 2 || changes.Changes[0].GroupID != "word" || changes.Changes[1].GroupID != "punctuation" || changes.Changes[1].BaseRevision != change.BaseRevision+1 {
+		t.Fatalf("peer history: %+v %v", changes, err)
+	}
+	j.history(a, false, "hellobase")
+	j.history(a, false, "base")
+	j.history(a, true, "hellobase")
+	j.history(a, true, "hello!base")
+}

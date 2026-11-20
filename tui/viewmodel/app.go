@@ -148,30 +148,34 @@ type App struct {
 	workspaceSwitchPreparations map[*remoteWorkspacePreparation]struct{}
 	sessionLifecycleSequence    uint64
 	sessionLifecyclePending     bool
-	composerDraftErr            error
-	composerDraftOwners         map[*workspace.Session]*composerDraftOwner
-	composerDraftWrites         sync.WaitGroup
-	composerDraftStopping       atomic.Bool
-	pendingInputAdmissions      map[*workspace.InputAdmissionIntent]struct{}
-	referenceOverlay            *referenceOverlayState
-	attachmentOpen              *attachmentOpenState
-	terminalImages              terminalImageState
-	imagePlacements             []tea.ImagePlacement
-	pastedTextRequests          []pastedTextStoredMsg
-	DirtyPromptPath             string
-	DirtyPromptChoice           int
-	operationIssue              *operationIssueOwner
-	pendingOperationIssues      []roottypes.OperationIssue
-	settingsPrompt              *settingsPromptState
-	capabilityOperations        map[uint64]capabilityOperation
-	capabilityPicker            *capabilityPickerOwner
-	capabilitySnapshotCancel    context.CancelFunc
-	capabilitySnapshotSequence  uint64
-	launcherCapabilityCancel    context.CancelFunc
-	launcherCapabilitySequence  uint64
-	launcherCapabilityAt        time.Time
-	agentPrompt                 *agentPromptState
-	agentPrompts                []*agentPromptState
+	// sessionLifecycleAfterAeron is the user's latest session request made
+	// while the automatic Aeron open held the slot; it starts when that open
+	// settles. A new attachment discards it with the Aeron state.
+	sessionLifecycleAfterAeron func() tea.Cmd
+	composerDraftErr           error
+	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
+	composerDraftWrites        sync.WaitGroup
+	composerDraftStopping      atomic.Bool
+	pendingInputAdmissions     map[*workspace.InputAdmissionIntent]struct{}
+	referenceOverlay           *referenceOverlayState
+	attachmentOpen             *attachmentOpenState
+	terminalImages             terminalImageState
+	imagePlacements            []tea.ImagePlacement
+	pastedTextRequests         []pastedTextStoredMsg
+	DirtyPromptPath            string
+	DirtyPromptChoice          int
+	operationIssue             *operationIssueOwner
+	pendingOperationIssues     []roottypes.OperationIssue
+	settingsPrompt             *settingsPromptState
+	capabilityOperations       map[uint64]capabilityOperation
+	capabilityPicker           *capabilityPickerOwner
+	capabilitySnapshotCancel   context.CancelFunc
+	capabilitySnapshotSequence uint64
+	launcherCapabilityCancel   context.CancelFunc
+	launcherCapabilitySequence uint64
+	launcherCapabilityAt       time.Time
+	agentPrompt                *agentPromptState
+	agentPrompts               []*agentPromptState
 	// pendingTabClose holds the tabs still to close after a bulk close
 	// ("Close others" / "Close to the right") stopped at a dirty buffer and
 	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close

@@ -214,6 +214,7 @@ func (m *App) deliverAeronOrders(id string) tea.Cmd {
 func (m *App) resetWorkspaceAeron() {
 	m.aeronPrepared = nil
 	m.aeronEnsureInFlight = false
+	m.sessionLifecycleAfterAeron = nil
 	m.aeronOrders = nil
 	m.aeronEnsureError = ""
 	m.aeronOpenRequested = false

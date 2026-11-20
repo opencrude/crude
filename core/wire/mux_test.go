@@ -10,6 +10,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -237,6 +238,84 @@ func TestMuxMeasuresRTT(t *testing.T) {
 	defer server.Close()
 	// A local pipe can measure zero on clocks with coarse monotonic ticks.
 	waitFor(t, func() bool { return client.RTT() >= 2*latency-16*time.Millisecond })
+}
+
+// SSH stdio accepts the first ping before the remote end exists; that sample
+// measures the SSH handshake, not the path. Over a fast link the estimate must
+// not keep the connection marked slow for seconds after it is established.
+func TestMuxRTTIgnoresCarrierEstablishment(t *testing.T) {
+	const establish, latency = 400 * time.Millisecond, 5 * time.Millisecond
+	a, b := net.Pipe()
+	client := NewMux(slowConn{a, latency}, CarrierSSH, true)
+	defer client.Close()
+	time.Sleep(establish) // the remote end starts reading only now
+	server := NewMux(slowConn{b, latency}, CarrierSSH, false)
+	defer server.Close()
+	waitFor(t, func() bool { return client.RTT() != 0 })
+	if rtt := client.RTT(); rtt > establish/4 {
+		t.Fatalf("RTT %v includes the %v establishment; path round trip is about %v", rtt, establish, 2*latency)
+	}
+}
+
+func TestMuxRTTRecoversAfterQueuedPongs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		a, peer := net.Pipe()
+		client := NewMux(a, CarrierSSH, true)
+		defer client.Close()
+		defer peer.Close()
+		ping := appendFrameHeader(nil, 0, framePing, 8)
+		probes := make(chan [8]byte, 4)
+		go func() {
+			defer close(probes)
+			buf := make([]byte, len(ping)+8)
+			for {
+				if _, err := io.ReadFull(peer, buf); err != nil {
+					return
+				}
+				if !bytes.Equal(buf[:len(ping)], ping) {
+					t.Error("expected an idle carrier's heartbeat")
+					return
+				}
+				probes <- [8]byte(buf[len(ping):])
+			}
+		}()
+		next := func() [8]byte {
+			t.Helper()
+			token, ok := <-probes
+			if !ok {
+				t.Fatal("no heartbeat on the established carrier")
+			}
+			return token
+		}
+		pong := func(token [8]byte) {
+			t.Helper()
+			if _, err := peer.Write(append(appendFrameHeader(nil, 0, framePong, 8), token[:]...)); err != nil {
+				t.Fatal(err)
+			}
+			synctest.Wait()
+		}
+		pong(next()) // the peer is now known to exist
+		live := next()
+		time.Sleep(750 * time.Millisecond)
+		pong(live)
+		if got := client.RTT(); got != 750*time.Millisecond {
+			t.Fatalf("slow path was not measured: %v", got)
+		}
+
+		// An outage shorter than the liveness limit queues two old echoes.
+		// Their arrivals prove the carrier is live, not that it is still slow.
+		old1, old2, newest := next(), next(), next()
+		pong(old1)
+		pong(old2)
+		if got := client.RTT(); got != 750*time.Millisecond {
+			t.Fatalf("queued echoes replaced the last live measurement: %v", got)
+		}
+		time.Sleep(30 * time.Millisecond)
+		pong(newest)
+		if got := client.RTT(); got != 30*time.Millisecond {
+			t.Fatalf("fresh probe did not show the restored path: %v", got)
+		}
+	})
 }
 
 func TestMuxRejectsCreditOverrun(t *testing.T) {

@@ -210,10 +210,12 @@ func (s *Screen) Children() []ui.Component {
 }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: cs.MaxW, H: s.PreferredHeight(cs.MaxH)})
+	return cs.ClampSize(ui.Size{W: cs.MaxW, H: s.PreferredHeight(cs.MaxW, cs.MaxH)})
 }
 
-func (s *Screen) PreferredHeight(maxHeight int) int {
+var _ ui.PreferredHeightComponent = (*Screen)(nil)
+
+func (s *Screen) PreferredHeight(_, maxHeight int) int {
 	chrome := s.actionChrome()
 	if s.pickerPage() {
 		return min(maxHeight, 2+1+8+chrome)

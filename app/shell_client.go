@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -26,6 +25,7 @@ import (
 	"crude/perfdata"
 	"crude/tui"
 	startuptui "crude/tui/startup"
+	"crude/types"
 )
 
 // ErrClientProfileBusy is a safe refusal, never permission to displace a shell.
@@ -217,18 +217,11 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 	namespace := draftNamespace(flags, "")
 	dial := shellDialer(home, flags)
 	connectCtx, connectCancel := context.WithTimeout(ctx, 30*time.Second)
-	var startupID [16]byte
-	if _, err := rand.Read(startupID[:]); err != nil {
-		connectCancel()
-		return err
-	}
-	clientID := fmt.Sprintf("startup-%x", startupID)
-	client, err := dial(connectCtx, clientID)
+	navigation, err := remote.ConnectStartup(connectCtx, remote.Options{Root: root, Logger: lg, Dial: dial, Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
 	connectCancel()
 	if err != nil {
 		return fmt.Errorf("connect core: %w", err)
 	}
-	navigation := &remote.StartupClient{Client: client, Dial: dial, ClientID: clientID}
 	defer func() { result = errors.Join(result, navigation.Close()) }()
 	inspectCtx, inspectCancel := context.WithTimeout(ctx, 15*time.Second)
 	selection, err := navigation.Inspect(inspectCtx, root)
@@ -246,8 +239,7 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 		}, func(ctx context.Context, root string) (*remote.Workspace, error) {
 			attachCtx, attachCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer attachCancel()
-			return remote.Attach(attachCtx, remote.Options{Root: root, Logger: lg, Dial: dial,
-				Namespace: namespace, ClientID: shellClientID(drafts.attachment.ClientID, namespace)})
+			return navigation.AttachWorkspace(attachCtx, root)
 		})
 	if err != nil {
 		return err
@@ -258,7 +250,13 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 	root = selectedRoot
 	defer func() { result = errors.Join(result, ws.Close()) }()
 	if err := navigation.Close(); err != nil {
-		return err
+		// The detached navigation session owns no workspace resources. Its
+		// close receipt can be lost even when the new attachment is ready.
+		// Keep that attachment and report the unconfirmed cleanup separately.
+		startupIssues = append(startupIssues, types.OperationIssue{
+			Title:  "The core did not confirm that the startup connection closed.",
+			Detail: "Your workspace is open. The core will release the old connection when it expires.",
+		})
 	}
 	ws.AddStartupIssues(startupIssues)
 	ws.ConfigureInvocation(invocationSelection(flags))

@@ -131,7 +131,7 @@ func (m *App) emptyPaneMenu() *ui.ContextMenuState {
 		{"New session", "pane.new-session"}, {"Open file", "pane.open-file"},
 		{"Split right", "pane.split-right"}, {"Split down", "pane.split-down"},
 		{"Split left", "pane.split-left"}, {"Split up", "pane.split-up"},
-		{"Split containing layout…", "pane.split-layout"},
+		{"Split containing layout", "pane.split-layout"},
 		{"Close empty pane", "pane.close"}, {"Merge all panes", "pane.merge-all"},
 	} {
 		id := action.id
@@ -1049,7 +1049,7 @@ func (m *App) paneMenuSections(tab window.TabID) []ui.ContextMenuSection {
 	} else {
 		split = append(split, row("Split right with file", "pane.split-file-right"))
 	}
-	split = append(split, row("Split containing layout…", "pane.split-layout"))
+	split = append(split, row("Split containing layout", "pane.split-layout"))
 	move := []ui.ContextMenuItem{}
 	panes := false
 	for _, side := range sides {
@@ -1067,7 +1067,7 @@ func (m *App) paneMenuSections(tab window.TabID) []ui.ContextMenuSection {
 	if panes {
 		move = append(move, row("Move to next pane", "pane.move-next"), row("Move to previous pane", "pane.move-previous"))
 	}
-	move = append(move, row("Move beside a pane…", "pane.arrange"))
+	move = append(move, row("Move beside a pane", "pane.arrange"))
 	windowItems := []ui.ContextMenuItem{{Label: "Open in window", Detail: m.menuShortcut("tab.window"), Action: owner.action(m, func() {
 		m.openTabInWindow(tab)
 	})}}

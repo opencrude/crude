@@ -356,6 +356,12 @@ Gates were specified against the original failing code and are intended to join
 `make bench-gate` or the real-process journey suite. Ceilings come from repeated
 measurements and are never raised to land work.
 
+The [remote network lab](../guides/remote-network-lab.md) supplies reproducible
+routed link and recovery profiles. Use those profiles in the
+[combined IDE workflow and network matrix](ide-workflow-acceptance.md#combined-workflow-and-network-acceptance)
+for clean local/remote comparisons and real impaired-link workflows. Keep
+transport, native presentation and device-isolation verdicts separate.
+
 | Gate | Target (unchanged) | Measured evidence and remaining scope |
 |---|---|---|
 | `q` in htop after 300 pointer motions over the pane | under 100 ms (today 9.3 s) | **Focused pass:** actual htop q→native exit 1.077293 ms after 300 motions; isolated core/SDK/PTY journey, not the separate key→PTY gate. |

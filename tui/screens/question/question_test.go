@@ -519,19 +519,39 @@ func TestScreenDeckHeightIsStableAcrossQuestions(t *testing.T) {
 	host := newTestHost(t, screen)
 	host.Resize(80, 30)
 	host.Layout()
-	first := screen.PreferredHeight(30)
+	first := screen.PreferredHeight(80, 30)
 	host.Focus(OptionsID)
 	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	host.MarkLayout()
 	host.Layout()
-	if screen.Current() != 1 || screen.PreferredHeight(30) != first {
-		t.Fatalf("deck height changed from %d to %d between questions", first, screen.PreferredHeight(30))
+	if screen.Current() != 1 || screen.PreferredHeight(80, 30) != first {
+		t.Fatalf("deck height changed from %d to %d between questions", first, screen.PreferredHeight(80, 30))
 	}
 	screen.Reset(`[{"question":"Short","options":["yes"]}]`)
 	host.MarkLayout()
 	host.Layout()
-	if screen.PreferredHeight(30) >= first {
+	if screen.PreferredHeight(80, 30) >= first {
 		t.Fatal("a new request kept the height of the previous one")
+	}
+}
+
+// The first measure is the laid-out height. The network lab saw a two-choice
+// deck paint 22 rows tall, then shrink a quarter second later under the
+// pointer, because measurement guessed before the pane width was known.
+func TestScreenFirstMeasureIsTheLaidOutHeight(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.Reset(`[{"header":"Choice","question":"Pick the lab answer","options":["Alpha","Bravo"]}]`)
+	deck := ui.NewPanelDeck("deck", screen.tokens)
+	deck.Open(ui.PanelEntry{ID: "question", Title: "Questions", Content: screen, Policy: ui.PanelBlocking})
+	first := deck.PreferredHeight(100, 30)
+	host := ui.NewHost(theme.DefaultDark(), deck)
+	host.Resize(100, first)
+	host.Layout()
+	if again := deck.PreferredHeight(100, 30); again != first {
+		t.Fatalf("deck height changed from %d to %d after its first layout", first, again)
+	}
+	if first > 11 {
+		t.Fatalf("a two-choice question claims %d rows", first)
 	}
 }
 

@@ -4,7 +4,9 @@ package document
 import (
 	"bytes"
 	"crude/text/encoding"
+	"crude/text/indent"
 	"errors"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -25,8 +27,18 @@ type Owner struct {
 	ClientID string
 	Epoch    uint64
 }
+
+// OpenConfiguration is an optional observation returned to an editor on open.
+// It is not retained in shared text, savepoints or topic state.
+type OpenConfiguration struct {
+	Path    string
+	Choices indentation.Choices
+	Error   string
+}
+
 type Snapshot struct {
-	ID, Path string
+	OpenConfig *OpenConfiguration `json:",omitempty"`
+	ID, Path   string
 	// Name is the display name of a document without a disk path.
 	Name          string
 	Encoding      textencoding.Encoding
@@ -83,12 +95,57 @@ type Edit struct {
 // unsaved text. Shells use it to tell the user about changes they did not make.
 const DiskRequestID = "disk"
 
+type EditGroup struct {
+	ID    string
+	Edits []Edit
+}
+
+// A command can carry the next undo groups against consecutive revisions.
+// Topic publications and journal entries always describe one group each.
 type Change struct {
+	Following             []EditGroup `json:",omitempty"`
 	DocumentID, RequestID string
 	Owner                 Owner
 	BaseRevision          uint64
 	GroupID               string
 	Edits                 []Edit
+}
+
+// Steps visits each undo group at its own revision, without retaining batch data
+// in history. Even a multi-group command has one receipt and one precondition.
+func (c Change) Steps(yield func(Change) bool) {
+	following := c.Following
+	c.Following = nil
+	if !yield(c) {
+		return
+	}
+	for _, g := range following {
+		c.BaseRevision++
+		c.GroupID, c.Edits = g.ID, g.Edits
+		if !yield(c) {
+			return
+		}
+	}
+}
+
+func (c Change) Clone() Change {
+	c.Edits = slices.Clone(c.Edits)
+	c.Following = slices.Clone(c.Following)
+	for i := range c.Following {
+		c.Following[i].Edits = slices.Clone(c.Following[i].Edits)
+	}
+	return c
+}
+
+func (c Change) ApplyTo(text []byte) ([]byte, error) {
+	for step := range c.Steps {
+		var err error
+		text, _, err = Apply(text, step.Edits)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return text, nil
 }
 
 // Resolution settles a document whose file changed on disk while its text was

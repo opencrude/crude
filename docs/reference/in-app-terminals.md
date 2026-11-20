@@ -280,11 +280,15 @@ a private echo at the live primary-screen cursor. The policy is mosh's adaptive
 display on its send interval `ceil(SRTT / 2)` clamped to 20–250 ms: predictions
 show once SRTT exceeds 60 ms and stop at 40 ms or less with none outstanding;
 they are underlined above 160 ms until it falls to 100 ms.
-Local IPC, modifiers, paste/control keys, alternate-screen/mouse-reporting mode,
+Local IPC, command modifiers, paste/control keys, alternate-screen/mouse-reporting mode,
 synchronized updates, hidden cursor and unsafe edge/width conditions do not
 predict. This is a disposable presentation overlay, not canonical VT state or
-proof of remote echo; any authoritative frame replaces it and failures roll it
-back. Selection/copy and the core parser never treat speculative ink as source.
+proof of remote echo. Before showing provisional ink the shell must see the PTY
+echo a key at the expected cursor. A printable shifted key can then echo locally.
+A matching frame confirms its prefix without erasing the remaining keys. A
+mismatch, loss of input control or command boundary invalidates the prediction.
+The overlay paints only: selection and copy read confirmed rows. Layout requests
+a resize when the desired size changes, not once per frame while a resize is in flight.
 
 `terminal.rows` remains an explicit bounded on-demand scrollback/selection read.
 Viewport intent changes the grid subscription's history anchor; no hidden full

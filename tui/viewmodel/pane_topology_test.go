@@ -168,7 +168,7 @@ func TestPaneContextResourceJourney(t *testing.T) {
 			app.focusMainGroup(left)
 			_ = app.View()
 			paneOpenTabMenu(t, app, tab)
-			for _, label := range []string{"Split left", "Split right", "Split up", "Split down", "Move beside a pane…", "Split containing layout…"} {
+			for _, label := range []string{"Split left", "Split right", "Split up", "Split down", "Move beside a pane", "Split containing layout"} {
 				menuItem(t, app.LastContextMenu, label)
 			}
 			paneChooseMenu(t, app, "Split left", false)
@@ -189,7 +189,7 @@ func TestPaneContextResourceJourney(t *testing.T) {
 				t.Fatal("empty split close moved resource")
 			}
 			paneOpenTabMenu(t, app, tab)
-			paneChooseMenu(t, app, "Move beside a pane…", true)
+			paneChooseMenu(t, app, "Move beside a pane", true)
 			if app.LastContextMenu == nil || !strings.Contains(paneMenuText(t, app), "Entire layout") {
 				t.Fatal("pointer activation destroyed scope follow-up")
 			}
@@ -286,7 +286,7 @@ func TestPaneContextOwnerSurvivesReorderButNotStaleScope(t *testing.T) {
 	app.focusMainGroup(original)
 	_ = app.View()
 	paneOpenTabMenu(t, app, clicked)
-	paneChooseMenu(t, app, "Move beside a pane…", false)
+	paneChooseMenu(t, app, "Move beside a pane", false)
 	paneChooseMenu(t, app, "Entire layout · 2 panes", false)
 	app.Win.RemoveEmptyGroup(right)
 	before := app.Win.Tabs()
@@ -400,7 +400,7 @@ func TestPaneContextLargeScopeMenuScrollAndCompactRestore(t *testing.T) {
 		t.Fatal("large topology did not compact")
 	}
 	paneOpenTabMenu(t, app, source)
-	paneChooseMenu(t, app, "Move beside a pane…", false)
+	paneChooseMenu(t, app, "Move beside a pane", false)
 	paneRequireMenuBounds(t, app)
 	st := app.LastContextMenu
 	last := st.Sections[len(st.Sections)-1].Items[len(st.Sections[len(st.Sections)-1].Items)-1].Label
@@ -573,7 +573,7 @@ func TestPaneArrangeMixedScopeAllEdges(t *testing.T) {
 				ed.InsertRune('x')
 				bytes := ed.Value()
 				paneOpenTabMenu(t, app, ids[3])
-				paneChooseMenu(t, app, "Move beside a pane…", false)
+				paneChooseMenu(t, app, "Move beside a pane", false)
 				label := "Entire layout · 4 panes"
 				switch scope {
 				case "ancestor":
@@ -723,7 +723,7 @@ func TestPaneContainingSplitAndMoveIntoFollowups(t *testing.T) {
 	app.focusMainGroup(left)
 	_ = app.View()
 	paneOpenTabMenu(t, app, tab)
-	paneChooseMenu(t, app, "Split containing layout…", true)
+	paneChooseMenu(t, app, "Split containing layout", true)
 	paneChooseMenu(t, app, "Entire layout · 2 panes", false)
 	paneChooseMenu(t, app, "Split up", true)
 	root := app.Win.PaneRoot()
@@ -735,7 +735,7 @@ func TestPaneContainingSplitAndMoveIntoFollowups(t *testing.T) {
 	app.focusMainGroup(right)
 	_ = app.View()
 	paneOpenTabMenu(t, app, tab)
-	paneChooseMenu(t, app, "Move beside a pane…", false)
+	paneChooseMenu(t, app, "Move beside a pane", false)
 	paneChooseMenu(t, app, "Pane 1 · left.go", true)
 	paneChooseMenu(t, app, "Move into this pane", true)
 	if app.Win.HasGroup(right) || app.Win.GroupOf(tab) != left || app.Win.TabCount() != 2 || app.Win.ActiveTab().ID != tab || app.Win.PaneRoot().Split != nil {

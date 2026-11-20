@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -401,16 +402,20 @@ func readStreamClass(r io.Reader) (Class, error) {
 }
 
 type quicStream struct {
-	s           *quic.Stream
-	class       Class
-	writeMu     sync.Mutex
-	writeClosed bool
+	s                *quic.Stream
+	class            Class
+	writeMu          sync.Mutex
+	writeClosed      bool
+	readFIN, sentFIN atomic.Bool
 }
 
 func (s *quicStream) Class() Class { return s.class }
 
 func (s *quicStream) Read(p []byte) (int, error) {
 	n, err := s.s.Read(p)
+	if errors.Is(err, io.EOF) {
+		s.readFIN.Store(true)
+	}
 	return n, quicError(err)
 }
 
@@ -431,10 +436,20 @@ func (s *quicStream) CloseWrite() error {
 		return nil
 	}
 	s.writeClosed = true
-	return quicError(s.s.Close())
+	err := s.s.Close()
+	if err == nil {
+		s.sentFIN.Store(true)
+	}
+	return quicError(err)
 }
 
 func (s *quicStream) Close() error {
+	// Both application directions finished. QUIC may still be transmitting or
+	// retransmitting our last data/FIN: CancelWrite here can replace it with a
+	// RESET_STREAM before the peer sees EOF. quic-go retires finished streams.
+	if s.readFIN.Load() && s.sentFIN.Load() {
+		return nil
+	}
 	s.s.CancelWrite(0)
 	s.s.CancelRead(0)
 	return nil

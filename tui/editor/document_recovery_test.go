@@ -106,7 +106,7 @@ func TestDocumentRecoveryPreservesLogicalPendingGroups(t *testing.T) {
 	r.PendingGroups[0] = "mutated"
 	next.ReconcileDocumentRevision()
 	first := acknowledgeHistoryEdit(t, next, "recovered-first")
-	if first.GroupID == "mutated" || first.Edits[0].Text != "x" || next.DocumentState().PendingEdits != 1 {
+	if first.GroupID == "mutated" || first.Edits[0].Text != "x" || len(first.Following) != 1 || first.Following[0].ID != r.PendingGroups[1] || first.Following[0].Edits[0].Text != "y" {
 		t.Fatalf("restored grouping aliases or crosses commands: %+v", first)
 	}
 	r.PendingGroups = append(r.PendingGroups, "extra")
@@ -159,8 +159,10 @@ func TestDocumentRecoveryRetainsDeferredUIIntentOrder(t *testing.T) {
 	if next.Value() != "x界base" || len(intents) != 0 {
 		t.Fatalf("UI replay order lost: %q %+v", next.Value(), intents)
 	}
-	acknowledgeHistoryEdit(t, next, "key")
-	acknowledgeHistoryEdit(t, next, "paste")
+	batch := acknowledgeHistoryEdit(t, next, "key-and-paste")
+	if len(batch.Following) != 1 || batch.Following[0].Edits[0].Text != "界" {
+		t.Fatalf("deferred paste lost: %+v", batch)
+	}
 	next.DrainDocumentUndo()
 	if len(intents) != 1 || !intents[0].Redo {
 		t.Fatal("redo crossed deferred typing")

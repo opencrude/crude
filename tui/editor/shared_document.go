@@ -547,32 +547,47 @@ func (e *Editor) CaptureDocumentEdits(owner document.Owner, requestID, groupID s
 	for len(p.pendingGroups) < len(p.pending) {
 		p.pendingGroups = append(p.pendingGroups, "")
 	}
-	n := len(p.pending)
-	if n > 0 {
-		logicalGroup := p.pendingGroups[0]
-		for i := 1; i < n; i++ {
-			if p.pendingGroups[i] != logicalGroup {
-				n = i
-				break
+	c := document.Change{DocumentID: p.snapshot.ID, Owner: owner, RequestID: requestID, BaseRevision: p.snapshot.Revision}
+	size, work, count, weight, used := len(p.snapshot.Text), 0, 0, 0, 0
+	for used < len(p.pending) {
+		end := used + 1
+		group := p.pendingGroups[used]
+		for end < len(p.pending) && p.pendingGroups[end] == group {
+			end++
+		}
+		edits := composeDocumentEdits(size, p.pending[used:end])
+		if len(edits) == 0 {
+			used = end
+			continue
+		}
+		n := 0
+		delta := 0
+		for _, e := range edits {
+			n += len(e.Text)
+			delta += len(e.Text) - (e.End - e.Start)
+		}
+		if work+size > document.MaxBytes || count+len(edits) > document.MaxEdits || weight+n > document.MaxBytes {
+			if count == 0 {
+				return document.Change{}, document.ErrLimit
 			}
+			break
 		}
-		if logicalGroup != "" {
-			groupID = logicalGroup
+		if group == "" {
+			group = groupID
 		}
+		if count == 0 {
+			c.GroupID, c.Edits = group, edits
+		} else {
+			c.Following = append(c.Following, document.EditGroup{ID: group, Edits: edits})
+		}
+		used, work, size, count, weight = end, work+size, size+delta, count+len(edits), weight+n
 	}
-	edits := composeDocumentEdits(len(p.snapshot.Text), p.pending[:n])
-	if len(edits) == 0 {
-		p.pending, p.pendingGroups = p.pending[n:], p.pendingGroups[n:]
+	p.pending, p.pendingGroups = p.pending[used:], p.pendingGroups[used:]
+	if count == 0 {
 		return document.Change{}, nil
 	}
-	if len(edits) > document.MaxEdits {
-		return document.Change{}, document.ErrLimit
-	}
-	c := document.Change{DocumentID: p.snapshot.ID, Owner: owner, RequestID: requestID, BaseRevision: p.snapshot.Revision, GroupID: groupID, Edits: edits}
 	p.owner = owner
-	p.pending, p.pendingGroups = p.pending[n:], p.pendingGroups[n:]
-	stored := c
-	stored.Edits = append([]document.Edit(nil), edits...)
+	stored := c.Clone()
 	p.inflight = &stored
 	return c, nil
 }
@@ -595,28 +610,29 @@ func (e *Editor) AcceptDocumentReceipt(r document.Receipt) error {
 		return fmt.Errorf("%w: %s", ErrHeldEditRefused, r.Error)
 	}
 	if !r.Accepted {
-		groups := make([]string, len(c.Edits))
-		for i := range groups {
-			groups[i] = c.GroupID
+		var pending []document.Edit
+		var groups []string
+		for step := range c.Steps {
+			delta := 0
+			for _, e := range step.Edits {
+				e.Start += delta
+				e.End += delta
+				pending = append(pending, e)
+				groups = append(groups, step.GroupID)
+				delta += len(e.Text) - (e.End - e.Start)
+			}
 		}
+		p.pending = append(pending, p.pending...)
 		p.pendingGroups = append(groups, p.pendingGroups...)
-		p.pending = append(append([]document.Edit(nil), c.Edits...), p.pending...)
-		// Captured edits have simultaneous coordinates; restore as sequential.
-		delta := 0
-		for i := range c.Edits {
-			p.pending[i].Start += delta
-			p.pending[i].End += delta
-			delta += len(c.Edits[i].Text) - (c.Edits[i].End - c.Edits[i].Start)
-		}
 		p.inflight = nil
 		p.conflict = errors.New(r.Error)
 		e.CancelSnippet()
 		return p.conflict
 	}
-	if r.Before != c.BaseRevision || r.Revision != r.Before+1 {
+	if r.Before != c.BaseRevision || r.Revision != r.Before+1+uint64(len(c.Following)) {
 		return document.ErrRevision
 	}
-	text, _, err := document.Apply(p.snapshot.Text, c.Edits)
+	text, err := c.ApplyTo(p.snapshot.Text)
 	if err != nil {
 		return err
 	}

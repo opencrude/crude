@@ -72,6 +72,7 @@ type Client struct {
 	owner         coreprotocol.Owner
 	resume        coreprotocol.SessionResume
 	grace         time.Duration
+	resumeAttempt time.Duration // full establishment budget, not the startup context
 	localHost     bool
 	coreBuildID   string
 	coreVersion   string
@@ -245,7 +246,8 @@ func (c *Client) sendReleases(chunk []coreprotocol.CommandIdentity) error {
 }
 
 // Dial starts a session over a carrier from dial. ctx bounds only the
-// handshake; the session lives until Close or until it cannot be resumed.
+// establishment; the session lives until Close or until it cannot be resumed.
+// Without a caller deadline, establishment has the default attempt bound.
 func Dial(ctx context.Context, dial Dialer, clientID string) (*Client, error) {
 	return DialWithOptions(ctx, dial, clientID, DialOptions{})
 }
@@ -256,9 +258,22 @@ type DialOptions struct {
 	Credential string
 }
 
+const carrierAttemptTimeout = 10 * time.Second
+
 func DialWithOptions(ctx context.Context, dial Dialer, clientID string, options DialOptions) (*Client, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
+	// A caller with an establishment deadline owns the whole dial. In
+	// particular, OpenSSH authenticates and may start a remote core before
+	// the first protocol frame arrives. Do not silently cut its budget short.
+	attempt := carrierAttemptTimeout
+	if deadline, bounded := ctx.Deadline(); bounded {
+		// Resuming through SSH includes authentication and launching the bridge
+		// again. Do not cut that same operation short on each retry.
+		attempt = max(attempt, time.Until(deadline))
+	} else {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, attempt)
+		defer cancel()
+	}
 	conn, err := dial(ctx)
 	if err != nil {
 		return nil, err
@@ -269,7 +284,7 @@ func DialWithOptions(ctx context.Context, dial Dialer, clientID string, options 
 		return nil, err
 	}
 	lifetime, lifetimeCancel := context.WithCancel(context.Background())
-	c := &Client{dial: dial, lifetime: lifetime, cancel: lifetimeCancel, clientID: clientID, carrierChange: make(chan struct{}, 1), owner: welcome.Owner, resume: coreprotocol.SessionResume{SessionID: welcome.SessionID, Secret: welcome.Secret}, grace: welcome.Grace, localHost: welcome.LocalHost,
+	c := &Client{dial: dial, lifetime: lifetime, cancel: lifetimeCancel, clientID: clientID, carrierChange: make(chan struct{}, 1), owner: welcome.Owner, resume: coreprotocol.SessionResume{SessionID: welcome.SessionID, Secret: welcome.Secret}, grace: welcome.Grace, resumeAttempt: attempt, localHost: welcome.LocalHost,
 		coreBuildID: welcome.CoreBuildID, coreVersion: welcome.CoreVersion, coreStarted: welcome.CoreStartedAt,
 		carrier: conn, control: control, ready: make(chan struct{}), done: make(chan struct{}), stopped: make(chan struct{}), controlEnded: make(chan struct{}, 1),
 		privateEffects: make(chan PrivateEffect), privateWake: make(chan struct{}, 1), controls: make(chan coreprotocol.ControlEnvelope, coreprotocol.ControlMaxOutstanding),
@@ -285,14 +300,18 @@ func DialWithOptions(ctx context.Context, dial Dialer, clientID string, options 
 	return c, nil
 }
 
-func handshake(ctx context.Context, conn corewire.Conn, hello coreprotocol.Hello) (coreprotocol.Welcome, corewire.Stream, error) {
-	var welcome coreprotocol.Welcome
+func handshake(ctx context.Context, conn corewire.Conn, hello coreprotocol.Hello) (welcome coreprotocol.Welcome, stream corewire.Stream, err error) {
 	control, err := conn.OpenStream(ctx, corewire.ClassControl)
 	if err != nil {
 		return welcome, nil, err
 	}
-	stop := context.AfterFunc(ctx, func() { _ = control.Close() })
-	defer stop()
+	stop := joinedAfterFunc(ctx, func() { _ = control.Close() })
+	defer func() {
+		stop()
+		if cause := ctx.Err(); cause != nil {
+			stream, err = nil, errors.Join(err, cause)
+		}
+	}()
 	if err := sendValues(control, &hello); err != nil {
 		return welcome, nil, err
 	}
@@ -584,7 +603,7 @@ func (c *Client) reconnect() (corewire.Conn, corewire.Stream, error) {
 			return nil, nil, c.Err()
 		default:
 		}
-		ctx, cancel := context.WithTimeout(c.lifetime, 10*time.Second)
+		ctx, cancel := context.WithTimeout(c.lifetime, min(c.resumeAttempt, time.Until(deadline)))
 		c.mu.Lock()
 		dial := c.dial
 		c.mu.Unlock()
@@ -599,7 +618,7 @@ func (c *Client) reconnect() (corewire.Conn, corewire.Stream, error) {
 			var control corewire.Stream
 			welcome, control, err = handshake(ctx, conn, coreprotocol.Hello{Schema: coreprotocol.Schema, Build: buildinfo.ProtocolBuild, ClientID: c.clientID, Resume: &resume})
 			cancel()
-			if err == nil && welcome.Resumed && welcome.Owner == c.owner && welcome.LocalHost == c.localHost && welcome.CoreBuildID == c.coreBuildID {
+			if err == nil && c.sameSession(welcome) {
 				return conn, control, nil
 			}
 			_ = conn.Close()
@@ -619,6 +638,10 @@ func (c *Client) reconnect() (corewire.Conn, corewire.Stream, error) {
 		case <-time.After(delay):
 		}
 	}
+}
+
+func (c *Client) sameSession(welcome coreprotocol.Welcome) bool {
+	return welcome.Resumed && welcome.Owner == c.owner && welcome.LocalHost == c.localHost && welcome.CoreBuildID == c.coreBuildID
 }
 
 // CoreBuildID is the image identity observed at this session's handshake.

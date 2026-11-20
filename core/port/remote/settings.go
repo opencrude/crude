@@ -13,6 +13,8 @@ import (
 	"crude/core/protocol"
 	"crude/types"
 	"crude/workspace"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // StoredSecret stands in for a credential the core holds but never sends.
@@ -37,11 +39,16 @@ type settingsReplica struct {
 
 func (s *settingsReplica) load(ctx context.Context) (settingsSnapshot, error) {
 	var out settingsSnapshot
-	if err := s.w.call(ctx, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &out.fetch); err != nil {
-		return out, err
-	}
 	var overrides coreprotocol.OverridesResult
-	if err := s.w.call(ctx, coreprotocol.WorkspaceOverrides, &coreprotocol.Empty{}, &overrides); err != nil {
+	// Independent reads: one round trip, not two.
+	reads, readCtx := errgroup.WithContext(ctx)
+	reads.Go(func() error {
+		return s.w.call(readCtx, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &out.fetch)
+	})
+	reads.Go(func() error {
+		return s.w.call(readCtx, coreprotocol.WorkspaceOverrides, &coreprotocol.Empty{}, &overrides)
+	})
+	if err := reads.Wait(); err != nil {
 		return out, err
 	}
 	out.defaults = overrides.AgentDefaults

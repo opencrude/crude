@@ -375,6 +375,20 @@ func attrs(s terminalvt.Style) cell.Attrs {
 	}
 	return a
 }
+
+// PaintPrediction overlays immutable visible rows only for this paint. Selection,
+// scrollback, cursor hit-testing and copies still read the installed PTY rows.
+func (v *View) PaintPrediction(g *terminalvt.Projection, buf *surface.CellBuffer, ox, oy, w, h int, t *ui.TokenSet, focused, blink bool) {
+	if g != nil && !v.HasSelection() && v.Pinned() && v.Offset == v.presentedBottom {
+		overlay := *v
+		overlay.presented = g.Cells
+		overlay.presentedCursor = g.Cursor
+		overlay.Paint(buf, ox, oy, w, h, t, focused, blink)
+		return
+	}
+	v.Paint(buf, ox, oy, w, h, t, focused, blink)
+}
+
 func (v *View) Paint(buf *surface.CellBuffer, ox, oy, w, h int, t *ui.TokenSet, focused, blink bool) {
 	fg, bg := t.Color(ui.ColorFg), t.Color(ui.ColorBg)
 	a, b := v.Range()

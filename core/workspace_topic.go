@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"slices"
+	"sync"
 	"time"
 
 	"crude/core/protocol"
@@ -196,6 +197,11 @@ func (c *Connection) workspaceTopicSnapshot(ctx context.Context, a *actor) (core
 	return out, seq, nil
 }
 
+// At the actor's 16 ms publication cadence, 64 entries cover about one second
+// of ACK latency (including the nominal 750 ms GEO link). Only metadata is kept
+// in flight here. Each sequential write uses the carrier's existing byte credit.
+const workspaceTopicFlightLimit = 64
+
 func (c *Connection) serveWorkspaceTopic(ctx context.Context, s corewire.Stream, reader *corewire.Reader, open coreprotocol.Open) {
 	c.mu.Lock()
 	a := c.attached[open.WorkspaceID]
@@ -203,66 +209,148 @@ func (c *Connection) serveWorkspaceTopic(ctx context.Context, s corewire.Stream,
 	if a == nil {
 		return
 	}
-	ctx, release := c.claimTopic(ctx, open.WorkspaceID+"/workspace", func() { _ = s.Close() })
+	var closeOnce sync.Once
+	closeStream := func() { closeOnce.Do(func() { _ = s.Close() }) }
+	ctx, release := c.claimTopic(ctx, open.WorkspaceID+"/workspace", closeStream)
 	defer release()
-	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
-	defer stop()
-	since := open.Since
-	reset := since == 0
-	resetReason := "initial_snapshot"
-	for {
-		entry, wake, covered := a.topic.hub.next(since)
-		if !covered {
-			reset = true
-			resetReason = "journal_gap"
-		}
-		if reset {
-			u, seq, err := c.workspaceTopicSnapshot(ctx, a)
-			if err != nil {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(ctx, closeStream)
+	offers := make(chan uint64, workspaceTopicFlightLimit)
+	acks := make(chan coreprotocol.TopicAck, workspaceTopicFlightLimit)
+	readerDone := make(chan struct{})
+	defer func() {
+		cancel()
+		stop()
+		closeStream()
+		<-readerDone // join the reader before releasing the stream's claim
+	}()
+	reader.SetLimit(256)
+	go func() {
+		defer close(readerDone)
+		defer cancel() // interrupt a blocked writer on EOF or invalid ACK
+		for {
+			body, err := reader.Next()
+			var ack coreprotocol.TopicAck
+			if err != nil || coreprotocol.Decode(body, &ack) != nil {
 				return
 			}
-			if send(s, &coreprotocol.TopicHeader{Seq: seq, Reset: true}, &u) != nil {
-				return
-			}
-			since = seq
-			observeTopicSent(ctx, seq, resetReason)
-			reset = false
-		} else if entry.body != nil {
-			m := corewire.NewMessage()
-			m.B, _ = (&coreprotocol.TopicHeader{Seq: entry.seq}).MarshalMsg(m.B)
-			m.B = append(m.B, entry.body...)
-			err := m.Send(s)
-			m.Release()
-			if err != nil {
-				return
-			}
-			since = entry.seq
-			observeTopicSent(ctx, entry.seq, "")
-		} else {
 			select {
-			case <-wake:
-				continue
-			case <-ctx.Done():
-				return
-			case <-c.done:
-				return
-			case <-a.stop:
-				return
+			case seq := <-offers:
+				if ack.Seq != seq {
+					return
+				}
+			default:
+				return // no publication offered for this ACK
 			}
+			// Each validated ACK consumes one of the bounded offers. The
+			// reader stays able to detect closure while a write lacks credit.
+			acks <- ack
 		}
-		body, err := reader.Next()
-		if err != nil {
+	}()
+
+	since := open.Since
+	resetReason := ""
+	if since == 0 {
+		resetReason = "initial_snapshot"
+	}
+	resetPending := false
+	var sendTimes [workspaceTopicFlightLimit]time.Time
+	first, outstanding := 0, 0
+	write := func(seq uint64, reason string, body []byte, snapshot *coreprotocol.WorkspaceUpdate) bool {
+		m := corewire.NewMessage()
+		defer m.Release()
+		m.B, _ = (&coreprotocol.TopicHeader{Seq: seq, Reset: reason != ""}).MarshalMsg(m.B)
+		if snapshot != nil {
+			var err error
+			m.B, err = snapshot.MarshalMsg(m.B)
+			if err != nil {
+				return false
+			}
+		} else {
+			m.B = append(m.B, body...)
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		// The peer can receive the last byte and ACK before Write returns.
+		// Register the exact sequence first, but commit its credit and accept
+		// its ACK only after the whole write succeeds.
+		offers <- seq
+		if m.Send(s) != nil {
+			return false
+		}
+		now := time.Now()
+		sendTimes[(first+outstanding)%workspaceTopicFlightLimit] = now
+		outstanding++
+		since = seq
+		observeTopicFlightSent(ctx, seq, reason, now, sendTimes[first])
+		return true
+	}
+	applyAck := func(ack coreprotocol.TopicAck) {
+		sendTimes[first] = time.Time{}
+		first = (first + 1) % workspaceTopicFlightLimit
+		outstanding--
+		resetPending = false
+		observeTopicFlightAck(ctx, ack.Seq, ack.DisplayIntervalNS, sendTimes[first])
+	}
+	for {
+		select {
+		case <-ctx.Done():
 			return
-		}
-		var ack coreprotocol.TopicAck
-		if coreprotocol.Decode(body, &ack) != nil || ack.Seq != since {
+		case <-c.done:
 			return
+		case <-a.stop:
+			return
+		default:
 		}
-		observeTopicAck(ctx, ack.Seq, ack.DisplayIntervalNS)
 		c.mu.Lock()
 		attached := c.attached[open.WorkspaceID] == a
 		c.mu.Unlock()
 		if !attached {
+			return
+		}
+		select {
+		case ack := <-acks:
+			applyAck(ack)
+			continue
+		default:
+		}
+
+		var wake <-chan struct{}
+		if !resetPending && outstanding < workspaceTopicFlightLimit {
+			if resetReason == "" {
+				entry, ready, covered := a.topic.hub.next(since)
+				if !covered {
+					resetReason = "journal_gap"
+				} else if entry.body != nil {
+					if !write(entry.seq, "", entry.body, nil) {
+						return
+					}
+					continue
+				} else {
+					wake = ready
+				}
+			}
+			// An evicted successor ends this flight. Drain sent entries
+			// before capturing the snapshot, then await its exact ACK.
+			if resetReason != "" && outstanding == 0 {
+				u, seq, err := c.workspaceTopicSnapshot(ctx, a)
+				if err != nil || !write(seq, resetReason, nil, &u) {
+					return
+				}
+				resetReason, resetPending = "", true
+				continue
+			}
+		}
+		select {
+		case ack := <-acks:
+			applyAck(ack)
+		case <-wake:
+		case <-ctx.Done():
+			return
+		case <-c.done:
+			return
+		case <-a.stop:
 			return
 		}
 	}

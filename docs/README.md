@@ -147,6 +147,8 @@ documents to read before changing each area.
   with the native `tui/ui` component system.
 - [Core and shell workflows](guides/core-shell-workflows.md) — local/SSH
   commands, shared-editor recovery and review acceptance limits.
+- [Remote network lab](guides/remote-network-lab.md) — container replay of
+  measured link conditions against a real shell and remote core.
 - [Capability workflows](guides/capability-workflows.md) — manual Skills/MCP,
   composer selection, Board, workspace Memory and Git review.
 - [Windows visual capture](guides/windows-visual-capture.md) — native Windows

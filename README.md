@@ -58,6 +58,16 @@ Run the same command again to update. See the [installation guide](https://openc
 
 Press **Ctrl+Alt+P** to open the command palette.
 
+### Open a remote project
+
+Use the same Crude build on both computers. Set up key-based SSH and verify the server’s host key first. Then run this **on your computer**, using the project path on the server:
+
+```sh
+crude --ssh build-host --workspace /srv/projects/example
+```
+
+Crude keeps the editor window on your computer. The core runs agents, language servers and terminals on the server. SSH alone is enough; you do not need to expose another port. Use **Connection Details** in the command palette to see the active connection. See [remote sessions and recovery](docs/guides/core-shell-workflows.md#ssh-and-invocation-selection).
+
 ## Build from source
 
 Requirements: the Go version in [`go.mod`](go.mod), Zig 0.16.0, and Git. Linux also requires a C compiler, libc headers, and `tic` from ncurses.

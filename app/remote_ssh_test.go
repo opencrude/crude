@@ -82,9 +82,18 @@ func TestRemoteSSHDialerUpgradeAndResumeFallback(t *testing.T) {
 	}
 	defer client.Close()
 	owner := client.Owner()
-	carrier, _ := client.Carrier()
-	if carrier != corewire.CarrierQUIC {
-		t.Fatalf("SSH did not upgrade: %s", carrier)
+	// The session is usable on SSH at once; the direct upgrade follows in the
+	// background and resumes the same owner.
+	remoteHostStatus(t, client)
+	for carrier, _ := client.Carrier(); carrier != corewire.CarrierQUIC; carrier, _ = client.Carrier() {
+		select {
+		case <-dialCtx.Done():
+			t.Fatalf("SSH did not upgrade: %s", carrier)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if client.Owner() != owner {
+		t.Fatal("background upgrade replaced the session owner")
 	}
 	remoteHostStatus(t, client)
 	var status coreprotocol.CoreStatus
@@ -95,8 +104,7 @@ func TestRemoteSSHDialerUpgradeAndResumeFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	remoteHostStatus(t, client)
-	carrier, _ = client.Carrier()
-	if carrier != corewire.CarrierSSH || client.Owner() != owner {
+	if carrier, _ := client.Carrier(); carrier != corewire.CarrierSSH || client.Owner() != owner {
 		t.Fatalf("resume lost owner or fallback: carrier=%s owner=%+v want=%+v", carrier, client.Owner(), owner)
 	}
 	if _, err := os.Stat(filepath.Join(DataDir(home), "remote-bin")); !errors.Is(err, os.ErrNotExist) {
@@ -197,7 +205,7 @@ func TestSSHUpgradeAddressesAndTrust(t *testing.T) {
 			t.Fatal("invalid address accepted", address)
 		}
 	}
-	if _, err := sshUpgradeDialer("alias", coreprotocol.RemoteSSHBootstrapResult{}, nil); err == nil {
+	if _, err := sshDirectDialer("alias", coreprotocol.RemoteSSHBootstrapResult{}); err == nil {
 		t.Fatal("missing trusted pin accepted")
 	}
 }
@@ -218,10 +226,11 @@ func TestSSHUpgradeBlockedUDPUsesPinnedTLSAndSSHOnLoss(t *testing.T) {
 		return nil, errors.New("verified SSH fallback")
 	}
 	bootstrap := coreprotocol.RemoteSSHBootstrapResult{Credential: coreprotocol.RemoteCredential{Fingerprint: identity.Fingerprint}, QUICAddress: "127.0.0.1:1", TLSAddress: l.Addr().String()}
-	dial, err := sshUpgradeDialer("alias", bootstrap, fallback)
+	direct, err := sshDirectDialer("alias", bootstrap)
 	if err != nil {
 		t.Fatal(err)
 	}
+	dial := sshUpgradeDialer(direct, fallback)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	conn, err := dial(ctx)
@@ -249,10 +258,11 @@ func TestSSHUpgradePinMismatchNeverAdmitsDirect(t *testing.T) {
 	}
 	defer l.Close()
 	calls := 0
-	dial, err := sshUpgradeDialer("alias", coreprotocol.RemoteSSHBootstrapResult{Credential: coreprotocol.RemoteCredential{Fingerprint: strings.Repeat("a", 64)}, TLSAddress: l.Addr().String()}, func(context.Context) (corewire.Conn, error) { calls++; return nil, errors.New("SSH") })
+	direct, err := sshDirectDialer("alias", coreprotocol.RemoteSSHBootstrapResult{Credential: coreprotocol.RemoteCredential{Fingerprint: strings.Repeat("a", 64)}, TLSAddress: l.Addr().String()})
 	if err != nil {
 		t.Fatal(err)
 	}
+	dial := sshUpgradeDialer(direct, func(context.Context) (corewire.Conn, error) { calls++; return nil, errors.New("SSH") })
 	if conn, err := dial(t.Context()); err == nil || conn != nil || calls != 1 {
 		t.Fatal("pin mismatch admitted", err)
 	}

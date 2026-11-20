@@ -9,6 +9,16 @@ engine and its invariants.
 
 ## Shared document publication
 
+A named editor open requests the project indentation settings with the initial
+text. The core reads them for that view and reports a configuration error
+separately from an open failure. Reload still uses the same settings reader.
+
+Edits queued while an earlier edit crosses the link travel together. The core
+checks the base revision once and commits the ordered groups and their receipt
+in one transaction. A bad later group commits nothing. Each original group
+keeps its own revision, undo history and peer publication. No delay is added
+to collect keys; the first ready edit still goes immediately.
+
 Every connected open registers one document topic. The first publication is a
 snapshot boundary; subsequent publications carry ordered revision operations and
 savepoint/path state, not another complete text fetch after each command. The
@@ -33,8 +43,10 @@ Update admission, save the file implicitly or replay an uncertain command. A
 refused read leaves pending private text available for the recovery barrier.
 
 A warm retained-session resume continues the applied topic cursor. A cold reset
-cannot prove that an unresolved private edit was applied: it enters conflict and
-observes the original receipt instead of silently replacing or replaying text.
+cannot prove that an unresolved private edit was applied: it enters conflict
+instead of silently replacing text or replaying it under a new identity. A
+request still in flight is sent again with its original identity; the core
+returns the recorded outcome, and only an outcome it lost asks the user.
 Close/reopen, draft resolution, workspace switch and shutdown invalidate exact
 per-open generation tokens, including publications already queued to Update.
 Switching away and back to the same port does not revive an old token. Discarding

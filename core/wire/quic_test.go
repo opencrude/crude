@@ -440,3 +440,41 @@ func TestQUICIdentityRefusesExistingTemporaryFile(t *testing.T) {
 		t.Fatalf("temporary file changed: %q, %v", got, err)
 	}
 }
+
+// A command's server consumes the client's acknowledgement and FIN, sends its
+// own FIN, then releases the stream. That release must not recall queued bytes.
+func TestQUICCompletedExchangeDeliversFinalBytesAndEOF(t *testing.T) {
+	client, server := quicPair(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	stream, err := client.OpenStream(ctx, ClassInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if _, err = stream.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+	if err = stream.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	peer, err := server.AcceptStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, e := io.ReadAll(peer); e != nil || string(b) != "request" {
+		t.Fatal(string(b), e)
+	}
+	if _, err = peer.Write([]byte("final")); err != nil {
+		t.Fatal(err)
+	}
+	if err = peer.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	if err = peer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if b, e := io.ReadAll(stream); e != nil || string(b) != "final" {
+		t.Fatalf("completed reply was reset: %q %v", b, e)
+	}
+}

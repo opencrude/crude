@@ -62,7 +62,8 @@ type Stream interface {
 	// CloseWrite ends this side's data; the peer reads io.EOF after it.
 	CloseWrite() error
 	// Close abandons both directions. A peer still reading or writing the
-	// stream observes ErrReset.
+	// stream observes ErrReset. After both FINs, Close only releases the local
+	// handle; it must not reset data or FIN still in transit.
 	Close() error
 	Class() Class
 }
