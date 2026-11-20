@@ -493,6 +493,14 @@ class Lab:
         return (f"-s {self.nets[client].host(ENDPOINT_HOST)} -d {self.nets['srv'].host(ENDPOINT_HOST)} "
                 f"-o {self.ifaces[client]['server']}")
 
+    def shape_before_attach(self, client):
+        level = self.scenario
+        self.shape(client, *((B, B) if level.warm_shape else (level.up, level.down)))
+
+    def shape_after_attach(self, client):
+        level = self.scenario
+        return self.act("shape", (level.up, level.down), client) if level.warm_shape else None
+
     def shape(self, client, up, down, evidence=False):
         i = self.ifaces[client]
         def command(dev, spec, seed):
@@ -897,12 +905,17 @@ def peer_lane(lab, shell, result, submit, stream_event, native):
     """Two client namespaces and independent leases. Only A loses its link."""
     peer = lab.shells["b"] = Shell(lab, "b")
     level = lab.scenario
-    lab.shape("b", level.up, level.down)
-    result["peer_ping"] = lab.ping("b", 5)
+    lab.shape_before_attach("b")
     peer.launch(["crude", "--ssh", "server", "--workspace", PROJECT, "--client-profile", "lab-b"])
     peer.wait("second workspace", lambda s: "Guide.md" in s, 75)
     with peer.connection():
-        peer.wait("second carrier", lambda s: (connection_fields(s) or {}).get("Transport") == TRANSPORT[lab.carrier], 30)
+        _, fields = peer.wait("second carrier", lambda s: (f := connection_fields(s)) and
+                              f["State"] == "connected" and f["Transport"] == TRANSPORT[lab.carrier] and f, 30)
+        result["connections"].append({"label": "peer_connected", "client": "b", "mono": time.monotonic(), **fields})
+    result["peer_warm_shape"] = lab.shape_after_attach("b")
+    result["peer_ping"] = lab.ping("b", 10)
+    if level.warm_shape:
+        assert 670 <= (result["peer_ping"]["avg_ms"] or 0) <= 850, ("Peer GEO RTT not observed", result["peer_ping"])
     submit("P2", level.stream)
     stream_event("P2", "first", 40)
     peer.settled_click("peer project file", "Guide.md")
@@ -1005,7 +1018,7 @@ def run_scenario(docker, image, volume, run, scenario, carrier, root, grace, see
             result["netem_seed_reason"] = lab.seed_probe
         result["anchors"] = {"mono": time.monotonic(), "unix": time.time()}
         result["path"] = lab.prove_path()
-        lab.shape("a", *((B, B) if scenario.warm_shape else (scenario.up, scenario.down)))
+        lab.shape_before_attach("a")
         result["before_launch"] = {"tc": lab.link_stats(), "udp_drop": lab.counters("LAB_UDP")}
         geo = scenario.name in {"L7", "L15"}
         cold_slow = scenario.name in COLD_SLOW
@@ -1077,7 +1090,7 @@ def run_scenario(docker, image, volume, run, scenario, carrier, root, grace, see
         if carrier == "tls":
             assert lab.counters("LAB_UDP").get("up", {}).get("packets", 0) > 0, "No QUIC attempt hit the pre-attach UDP block"
         if scenario.warm_shape:
-            result["warm_shape"] = lab.act("shape", (scenario.up, scenario.down))
+            result["warm_shape"] = lab.shape_after_attach("a")
         if not cold_slow:
             measure_link()
 

@@ -253,14 +253,16 @@ could also arrive between the prompt and its first echo. The shell now separates
 its requested size from the published PTY size, and reconciles matching echo
 without installing speculative ink in the selection/copy source.
 
-Development host, one L7 workflow per carrier (750 ms nominal, 3.5% loss per
-direction, 1 Mbit/s; not a guaranteed upper bound):
+Final Linux measurements for production commit `ab9f33b9`. Each cell below
+is the range across the two Docker hosts, one L7 workflow per carrier per
+host (750 ms nominal RTT, 3.5% loss per direction, 1 Mbit/s). These are
+observations, not guaranteed upper bounds.
 
 | Carrier | Open to painted file | Ctrl+S to exact disk bytes | Confirmed-line echo p95 |
 |---|---:|---:|---:|
-| SSH | 2.50 s | 3.14 s | 75 ms |
-| QUIC | 1.87 s | 3.37 s | 72 ms |
-| TCP/TLS | 2.65 s | 2.87 s | 71 ms |
+| SSH | 1.60–2.10 s | 3.37–3.66 s | 74.7–79.1 ms |
+| QUIC | 1.78–2.65 s | 2.48–2.54 s | 75.7–82.8 ms |
+| TCP/TLS | 1.80–2.06 s | 3.59–4.63 s | 74.8–77.7 ms |
 
 Two additional L15 runs started with exactly one SSH authentication and reached
 the trust prompt in 22.2 and 26.5 seconds. During each run a 30-second two-way
@@ -282,7 +284,9 @@ binary in the private volume, records its digest, and exposes it on the core
 host's PATH. The exercised version is `2026-02-08`; the ASCII Markdown fixture
 uses .NET's invariant globalization mode. This tests an installed server, not
 a language-specific installer. The test accepts trust for its isolated project
-through the real dialog.
+through the real dialog. In L7 both shells establish the requested carrier
+before their routers switch to the measured GEO profile. A cold SSH fallback
+is not evidence about an established TLS or QUIC connection.
 One shell follows a definition while an agent runs. Only that shell loses its
 link; the other edits and saves. The first catches up, edits again and the
 second sees the unsaved change before saving it. Every check compares the
@@ -294,3 +298,16 @@ Remote access settings must explain why the shell cannot change the host policy.
 On a desktop lab host add `--native --parallel 1` to present the live client
 through `scripts/tuishot.sh` at 160×48 and 84×26. Screenshots are distinct from
 the timed tmux samples. Each capture closes before the next one starts.
+
+### Verification record
+
+The same product binary passed **91 cases on each of two Linux Docker hosts**:
+45 stream and recovery cases, 23 editor/agent/terminal cases, and 23 two-shell
+language-server cases. Each verdict uses a fresh project and checks the actual
+carrier. An earlier second-client L7 check accidentally performed a cold dial
+on an already impaired link: SSH correctly remained connected, but that run did
+not test established TLS. Both peers now use the scenario's warm/cold schedule;
+the corrected peer lane passed all 23 cases on both hosts. The physical SSH save,
+two native window sizes, and local IPC restart/conflict journey are separate
+checks, not additional cells in that count. Windows and macOS were not exercised
+by this Linux campaign.
