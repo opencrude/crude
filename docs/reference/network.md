@@ -293,7 +293,8 @@ the shell requests its independent initial snapshots in parallel and publishes
 them together. They share the attachment deadline and cannot publish after a
 failed attachment. Once a workspace is ready, an unconfirmed close of the
 detached startup-navigation session is a notice, not an attachment failure.
-The SDK still bounds that close and does not claim it was acknowledged. The
+The SDK gives live close one second plus two measured round trips, up to five
+seconds. It does not claim cleanup without the core's receipt. The
 [remote network lab](../guides/remote-network-lab.md) exercises these boundaries.
 
 QUIC retirement stops only its immutable accept generation, retaining the one

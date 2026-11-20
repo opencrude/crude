@@ -149,6 +149,8 @@ recorded in `layout_shifts` and fail the case.
 
 Use one scenario at a time to measure startup. The lane defaults to the clean
 routed SSH link (`L0`), and runs a plain `ssh … true` as a route reference.
+For GEO-like startup, use `L15`. `L7` applies its impairment after connection,
+so it cannot measure cold startup on that link.
 
 ```sh
 python3 -B scripts/netlab/netlab.py --image crude-netlab:local \
@@ -372,3 +374,9 @@ cold slow SSH, established GEO links, a mid-stream outage, NAT rebinding
 and UDP fallback. After limiting the early trust check to shell startup,
 clean and slow SSH workflows and the GEO QUIC peer journey passed again.
 These regressions supplement the startup measurements and native captures.
+
+The GEO startup lane also reproduced an exit error: the shell did not
+receive confirmation before the fixed one-second deadline. The shell and core
+now budget the close exchange from the measured carrier RTT. The SDK still
+requires the typed receipt; EOF alone does not confirm cleanup. Two runs
+each at L0, L15 and L16 passed all three launch and exit phases after the fix.

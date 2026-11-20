@@ -73,6 +73,13 @@ type SessionEnd struct {
 	Reason string `json:"reason"`
 }
 
+// SessionDrainTimeout preserves the one-second local budget and allows two
+// measured round trips for the close exchange and transport recovery. Cap
+// the extra time: a missing receipt must not hold shutdown indefinitely.
+func SessionDrainTimeout(rtt time.Duration) time.Duration {
+	return time.Second + 2*min(max(rtt, 0), 2*time.Second)
+}
+
 // ReleaseCommands tells the core that this session no longer awaits the named
 // commands' results. The core forgets a completed result at once and an
 // in-flight one when it completes; the work itself is not cancelled. The core

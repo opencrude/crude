@@ -140,6 +140,41 @@ func TestCloseBoundsMissingCleanupReceipt(t *testing.T) {
 	}
 }
 
+func TestCloseRejectsEOFWithoutCleanupReceipt(t *testing.T) {
+	f := &fakeCore{t: t, ending: func(s corewire.Stream) { _ = s.CloseWrite() }}
+	c := dial(t, f)
+	if err := c.Close(); !errors.Is(err, io.EOF) {
+		t.Fatalf("graceful close accepted an empty control stream: %v", err)
+	}
+}
+
+type measuredCloseCarrier struct {
+	corewire.Conn
+}
+
+func (measuredCloseCarrier) RTT() time.Duration { return 750 * time.Millisecond }
+
+func TestCloseWaitsForCleanupReceiptOnSlowLink(t *testing.T) {
+	f := &fakeCore{t: t, ending: func(s corewire.Stream) {
+		// The receipt is valid but arrives after the old fixed deadline:
+		// one GEO round trip plus a delay for retransmission.
+		time.Sleep(1250 * time.Millisecond)
+		_ = sendValues(s, &coreprotocol.SessionEnd{Reason: "client closed"})
+		_ = s.CloseWrite()
+	}}
+	dial := f.dialer()
+	c, err := Dial(t.Context(), func(ctx context.Context) (corewire.Conn, error) {
+		conn, err := dial(ctx)
+		return measuredCloseCarrier{conn}, err
+	}, "slow-close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("graceful close gave up on the slow live carrier: %v", err)
+	}
+}
+
 // reply answers a command with value.
 func reply(s corewire.Stream, value coreprotocol.Value) {
 	_ = sendValues(s, &coreprotocol.Reply{Final: true}, value)
