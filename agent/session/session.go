@@ -123,8 +123,12 @@ type Session struct {
 	planMode     atomic.Bool
 	// lastTurnPlanMode is the mode the latest turn ran in.
 	lastTurnPlanMode atomic.Bool
-	goalMu           sync.Mutex
-	goal             goalRuntime
+	// planReviewMu serializes file and database changes. Snapshots read the
+	// last committed immutable record without waiting for I/O.
+	planReviewMu sync.Mutex
+	planReview   atomic.Pointer[planReviewRecord]
+	goalMu       sync.Mutex
+	goal         goalRuntime
 	// goalMu owns the private handover sidecar and its one-runtime admission
 	// permit. A cold load never reconstructs the permit from a consumed record.
 	goalHandover         sessiondb.GoalHandoverRecord
@@ -618,8 +622,12 @@ func (s *Session) Close() {
 	// Join memory workers before their workspace DB is closed. Optional
 	// provider work resumes from durable watermarks on the next open.
 	s.finishMemoryJobs()
+	// No new review operation is admitted once closing is set.
+	s.planReviewMu.Lock()
+	hasReview := s.planReview.Load() != nil
+	s.planReviewMu.Unlock()
 
-	hasMsgs := s.retained.Load() || s.HasMessages() || len(s.QueuedInputs()) != 0 || len(s.Loops()) != 0
+	hasMsgs := hasReview || s.retained.Load() || s.HasMessages() || len(s.QueuedInputs()) != 0 || len(s.Loops()) != 0
 	// A preflight-blocked turn may own an exact pending input without a
 	// transcript yet. Never prune its recovery DB as an empty session.
 	if s.db != nil && !hasMsgs {

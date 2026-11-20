@@ -139,6 +139,8 @@ Agents is the agent inventory, turn control and blocking-prompt surface.
 | `AgentTurnActive` | 5 | reads | yes | replica: coreclient.WorkspaceView.AgentTurnActive |
 | `PlanModeForAgent`, `GoalForAgent`, `LoopsForAgent` | session modes | reads | yes | agent snapshot replica |
 | `SetPlanModeForAgent`, `GoalAction`, `LoopAction` | session modes | mutates | yes | `agent.plan_mode`, `agent.goal`, `agent.loop` |
+| `PlanReviewForAgent` | plan review | reads | yes | agent snapshot replica (`AgentSnapshot.PlanReview`); returns a copy |
+| `OpenPlanRevision`, `EditPlanComment`, `SettlePlanReview` | plan review | mutates | yes | `agent.plan_review_open`, `agent.plan_comment`, `agent.plan_review_settle` (owner worker jobs, receipt-journaled). Settle queues the feedback or approval message durably with the record; the shell does not send it |
 | `UsageSummary` | 4 | reads | yes | replica: coreclient.WorkspaceView.UsageSummary |
 | `YoloForAgent` | 6 | reads | yes | replica: coreclient.WorkspaceView.YoloForAgent |
 | `SetYoloForAgent` | 1 | mutates | yes | agent.yolo |

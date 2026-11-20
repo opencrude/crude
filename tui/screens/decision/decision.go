@@ -3,12 +3,17 @@
 package decision
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
+
+// alternateAction prefixes the action of each alternate answer's button.
+const alternateAction = "decision.alternate:"
 
 const (
 	ScreenID  ui.ComponentID = "session-decision"
@@ -17,15 +22,15 @@ const (
 )
 
 // Spec is one decision: what is asked, the facts that inform it and its
-// answers. Confirm, and the optional Alternate way to confirm, run only on an
-// explicit choice; Enter on the default focus, Esc and the cancel shortcut all
-// decline.
+// answers. Confirm, and the optional Alternates (other ways to accept), run
+// only on an explicit choice; Enter on the default focus, Esc and the cancel
+// shortcut all decline.
 type Spec struct {
 	Purpose        string
 	Title, Hint    string
 	Facts          []Fact
 	Confirm        Answer
-	Alternate      *Answer
+	Alternates     []Answer
 	Cancel         Answer
 	ConfirmDanger  bool
 	SemanticsLabel string
@@ -33,15 +38,23 @@ type Spec struct {
 
 type Fact struct{ Label, Value string }
 
-type Answer struct{ Label, Shortcut string }
+// Answer is one button. ID names an alternate answer in ResultMsg.Choice. An
+// alternate that Stays acts without settling the decision, which stays open
+// (for example, Review opens the plan and the question remains).
+type Answer struct {
+	ID, Label, Shortcut string
+	Stay                bool
+}
 
-// ResultMsg is the answer. Alternate is set with Confirmed when the user chose
-// the alternate way to confirm.
+// ResultMsg is the answer. Choice is the ID of the alternate answer the user
+// chose, with Confirmed set; it is empty for Confirm and Cancel. Stay reports
+// that the decision is still open.
 type ResultMsg struct {
 	Target    *Screen
 	Purpose   string
 	Confirmed bool
-	Alternate bool
+	Choice    string
+	Stay      bool
 }
 
 type Screen struct {
@@ -75,8 +88,8 @@ func (s *Screen) Show(spec Spec) {
 		variant = ui.VariantDanger
 	}
 	buttons := []ui.ActionBarButton{{ID: ui.NewID(ActionsID, "confirm"), Label: spec.Confirm.Label, Action: "decision.confirm", Shortcut: spec.Confirm.Shortcut, Variant: variant, Enabled: true}}
-	if spec.Alternate != nil {
-		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "alternate"), Label: spec.Alternate.Label, Action: "decision.alternate", Shortcut: spec.Alternate.Shortcut, Variant: ui.VariantSecondary, Enabled: true})
+	for _, alternate := range spec.Alternates {
+		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "alternate-"+alternate.ID), Label: alternate.Label, Action: alternateAction + alternate.ID, Shortcut: alternate.Shortcut, Variant: ui.VariantSecondary, Enabled: true})
 	}
 	buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: spec.Cancel.Label, Action: "decision.cancel", Shortcut: spec.Cancel.Shortcut, Variant: ui.VariantSecondary, Enabled: true})
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
@@ -125,8 +138,8 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		return s.result(false)
 	case key.String() == s.spec.Confirm.Shortcut:
 		return s.result(true)
-	case s.spec.Alternate != nil && key.String() == s.spec.Alternate.Shortcut:
-		return s.resultAlternate()
+	case s.alternate(key.String()) != "":
+		return s.resultAlternate(s.alternate(key.String()))
 	case key.Code == tea.KeyEnter:
 		return s.result(false)
 	case key.Code == tea.KeyLeft || key.Code == tea.KeyRight || key.Code == tea.KeyTab:
@@ -135,11 +148,15 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	return ui.EventResult{}
 }
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	if id, ok := strings.CutPrefix(string(action.ID), alternateAction); ok {
+		if s.hasAlternate(id) {
+			return s.resultAlternate(id)
+		}
+		return ui.EventResult{Handled: true}
+	}
 	switch action.ID {
 	case "decision.confirm":
 		return s.result(true)
-	case "decision.alternate":
-		return s.resultAlternate()
 	case "decision.cancel", "form.cancel":
 		return s.result(false)
 	case "form.exit.forward", "form.exit.backward":
@@ -159,8 +176,34 @@ func (s *Screen) result(confirmed bool) ui.EventResult {
 	return s.answer(ResultMsg{Target: s, Purpose: s.spec.Purpose, Confirmed: confirmed})
 }
 
-func (s *Screen) resultAlternate() ui.EventResult {
-	return s.answer(ResultMsg{Target: s, Purpose: s.spec.Purpose, Confirmed: true, Alternate: true})
+func (s *Screen) resultAlternate(id string) ui.EventResult {
+	msg := ResultMsg{Target: s, Purpose: s.spec.Purpose, Confirmed: true, Choice: id}
+	for _, alternate := range s.spec.Alternates {
+		if alternate.ID == id && alternate.Stay {
+			msg.Stay = true
+			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return msg }, Invalidate: ui.InvalidatePaint}
+		}
+	}
+	return s.answer(msg)
+}
+
+// alternate returns the ID of the alternate answer whose shortcut is key.
+func (s *Screen) alternate(key string) string {
+	for _, alternate := range s.spec.Alternates {
+		if alternate.Shortcut != "" && alternate.Shortcut == key {
+			return alternate.ID
+		}
+	}
+	return ""
+}
+
+func (s *Screen) hasAlternate(id string) bool {
+	for _, alternate := range s.spec.Alternates {
+		if alternate.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Screen) answer(msg ResultMsg) ui.EventResult {

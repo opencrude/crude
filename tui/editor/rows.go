@@ -63,13 +63,13 @@ type rowLine struct {
 	width, count int
 	stride       int // uniform narrow-unit rows need no slice
 	runs         []rowRun
-	// ghost counts display-only rows after the text rows: the faded lines of
-	// a multi-line suggestion. count includes them.
-	ghost int
+	// A source line may have faded prediction rows and then review card rows.
+	// count includes both display-only projections.
+	ghost, review int32
 }
 
 // textRows is the number of rows that show source text.
-func (l rowLine) textRows() int { return max(0, l.count-l.ghost) }
+func (l rowLine) textRows() int { return max(0, l.count-int(l.ghost)-int(l.review)) }
 
 func wrapRowMetrics(m rowMetrics, width int, reuse []rowRun) rowLine {
 	width = max(1, width)
@@ -122,7 +122,7 @@ func wrapRowMetrics(m rowMetrics, width int, reuse []rowRun) rowLine {
 
 func (l rowLine) start(row int) int {
 	text := l.textRows()
-	if l.ghost > 0 && row >= text {
+	if row >= text && (l.ghost != 0 || l.review != 0) {
 		return l.width
 	}
 	if len(l.runs) == 0 {

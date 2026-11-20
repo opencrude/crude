@@ -393,7 +393,9 @@ type AgentSnapshot struct {
 	Yolo                                                bool
 	PlanMode                                            bool
 	// Goal is the main agent's session goal; children have none.
-	Goal                 *types.Goal
+	Goal *types.Goal
+	// PlanReview is present only on a main agent with proposals.
+	PlanReview           *types.PlanReview
 	Loops                []types.Loop
 	ActiveCompaction     TurnStatus
 	LastTokenTime        time.Time
@@ -456,6 +458,9 @@ func (w *Workspace) snapshotAgent(node *AgentNode, includeMessages bool) AgentSn
 		Activity: w.AgentActivity(node.ID), Yolo: w.YoloForAgent(node.ID), PlanMode: w.PlanModeForAgent(node.ID), ActiveCompaction: state.ActiveCompaction}
 	if goal, ok := w.GoalForAgent(node.ID); ok {
 		snapshot.Goal = &goal
+	}
+	if review, ok := w.PlanReviewForAgent(node.ID); ok {
+		snapshot.PlanReview = &review
 	}
 	snapshot.Loops = w.LoopsForAgent(node.ID)
 	if includeMessages {

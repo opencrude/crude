@@ -285,6 +285,13 @@ func (m *App) resolveSessionDecision(msg decision.ResultMsg) tea.Cmd {
 		return nil
 	}
 	agentID, data := projection.decisionAgentID, projection.decisionData
+	if msg.Stay {
+		// An answer such as Review acts and leaves the question open.
+		if msg.Purpose == "implement_plan" {
+			return m.resolvePlanDecision(agentID, data, msg)
+		}
+		return nil
+	}
 	projection.decisionAgentID, projection.decisionData = "", ""
 	m.closeProjectionPanel(projection, sessionDecisionPanelID)
 	if !msg.Confirmed {
@@ -294,10 +301,7 @@ func (m *App) resolveSessionDecision(msg decision.ResultMsg) tea.Cmd {
 	case "yolo":
 		m.setAgentYolo(agentID, true)
 	case "implement_plan":
-		if msg.Alternate {
-			return m.implementPlanInNewSession(data)
-		}
-		return m.implementProposedPlan(agentID)
+		return m.resolvePlanDecision(agentID, data, msg)
 	case "goal_replace":
 		return m.goalAction(agentID, workspace.GoalReplace, data)
 	case "goal_resume":

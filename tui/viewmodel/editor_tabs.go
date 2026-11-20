@@ -326,6 +326,7 @@ func (m *App) closeEditorTabForce(path string) {
 	for _, v := range m.documentViews(path) {
 		m.Win.CloseTabByID(v.Tab)
 		delete(m.EditorState.Views, v.Tab)
+		m.forgetPlanEditor(v.Editor)
 		delete(m.inlayViews, v.Editor)
 		if tab := m.EditorState.Tabs[path]; tab == nil || v.Editor != tab.Editor {
 			v.Editor.Close()

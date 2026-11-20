@@ -1,5 +1,11 @@
 package prompt
 
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
 // PlanModeContract is the root contract while the user has Plan mode on. It
 // follows the established Plan mode collaboration contract: explore without
 // mutating, settle intent and implementation decisions with the user, then
@@ -33,4 +39,69 @@ const PlanImplementationRequest = "Implement the plan."
 // that implements a proposed plan without the planning conversation.
 func PlanImplementationFreshContext(plan string) string {
 	return "A previous agent produced the plan below to accomplish the user's task. Implement the plan in a fresh context. Treat the plan as the source of user intent, re-read files as needed, and carry the work through implementation and verification.\n\n" + plan
+}
+
+// PlanFeedbackComment is one review comment on a proposed plan, located by
+// one-based lines of the plan the user sends with it.
+type PlanFeedbackComment struct {
+	FirstLine, LastLine int
+	Quote, Note         string
+	// Changed: the commented text was edited or removed after the comment,
+	// so Quote is what the user commented on, not the current text.
+	Changed bool
+}
+
+// PlanReviewFeedback is the user's message that returns their review of a
+// proposed plan: comments on its text, their own edits as a unified diff, and
+// the plan as they see it now. It is the user's own request, not policy; Plan
+// mode stays on, so the reply is a revised proposed_plan.
+func PlanReviewFeedback(revision int, plan, edits string, comments []PlanFeedbackComment) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "I reviewed your proposed plan (revision %d) and want changes before I approve it.", revision)
+	switch {
+	case len(comments) > 0 && edits != "":
+		b.WriteString(" Address every comment, keep my edits unless a comment says otherwise, and propose the complete revised plan.")
+	case len(comments) > 0:
+		b.WriteString(" Address every comment and propose the complete revised plan.")
+	default:
+		b.WriteString(" I edited the plan. Keep my edits, make the rest of the plan agree with them, and propose the complete revised plan.")
+	}
+	fmt.Fprintf(&b, "\n\n<plan_review revision=\"%d\">\n", revision)
+	if len(comments) > 0 {
+		b.WriteString("<comments>\n")
+		for _, comment := range comments {
+			lines := strconv.Itoa(comment.FirstLine)
+			if comment.LastLine > comment.FirstLine {
+				lines += "-" + strconv.Itoa(comment.LastLine)
+			}
+			fmt.Fprintf(&b, "<comment lines=\"%s\"", lines)
+			if comment.Changed {
+				b.WriteString(" text_changed=\"true\"")
+			}
+			b.WriteString(">\n")
+			if comment.Quote != "" {
+				fmt.Fprintf(&b, "<quoted_text>%s</quoted_text>\n", XMLText(comment.Quote))
+			}
+			fmt.Fprintf(&b, "<note>%s</note>\n</comment>\n", XMLText(comment.Note))
+		}
+		b.WriteString("</comments>\n")
+	}
+	if edits != "" {
+		fmt.Fprintf(&b, "<my_edits>\n%s\n</my_edits>\n", XMLText(strings.TrimRight(edits, "\n")))
+	}
+	fmt.Fprintf(&b, "<plan>\n%s\n</plan>\n</plan_review>", XMLText(strings.TrimRight(plan, "\n")))
+	return b.String()
+}
+
+// PlanImplementationEdited is the user message that implements a proposed
+// plan the user edited before approving it, in the conversation that
+// produced it.
+func PlanImplementationEdited(plan, edits string) string {
+	var b strings.Builder
+	b.WriteString("Implement the plan. I edited your proposal before approving it: the plan below is the approved text, and my edits show what I changed.\n\n")
+	fmt.Fprintf(&b, "<approved_plan>\n%s\n</approved_plan>", XMLText(strings.TrimRight(plan, "\n")))
+	if edits != "" {
+		fmt.Fprintf(&b, "\n<my_edits>\n%s\n</my_edits>", XMLText(strings.TrimRight(edits, "\n")))
+	}
+	return b.String()
 }

@@ -12,6 +12,9 @@ import (
 const (
 	AgentYolo           = "agent.yolo"
 	AgentPlanMode       = "agent.plan_mode"
+	AgentPlanReviewOpen = "agent.plan_review_open"
+	AgentPlanComment    = "agent.plan_comment"
+	AgentPlanSettle     = "agent.plan_review_settle"
 	AgentGoal           = "agent.goal"
 	AgentLoop           = "agent.loop"
 	AgentAppendMessages = "agent.append_messages"
@@ -47,6 +50,31 @@ type AgentYoloRequest struct {
 type AgentPlanModeRequest struct {
 	AgentID string `json:"agent_id"`
 	Enabled bool   `json:"enabled"`
+}
+
+type AgentPlanReviewOpenRequest struct {
+	AgentID  string
+	Revision int
+}
+
+type AgentPlanReviewOpenResult struct {
+	Path  string
+	Error string
+}
+
+type AgentPlanCommentRequest struct {
+	AgentID string
+	Edit    types.PlanCommentEdit
+}
+
+type AgentPlanSettleRequest struct {
+	AgentID string
+	Settle  types.PlanReviewSettle
+}
+
+type AgentPlanSettleResult struct {
+	Settlement types.PlanReviewSettlement
+	Error      string
 }
 
 // AgentGoalRequest applies one user action (workspace.GoalSet, …) to the

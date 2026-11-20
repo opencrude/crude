@@ -20,6 +20,7 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 		return nil
 	}
 	applied := replica.ApplyReplicaChanges(msg)
+	m.planReviewChanged()
 	var commands []tea.Cmd
 	focus := ""
 	if applied.Initial {

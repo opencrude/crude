@@ -139,7 +139,16 @@ type App struct {
 	askArrivals map[string]*askRequest
 	askChips    map[*workspace.Session][]sessiondb.Reference
 	// askSends are prepared Ask Crude prompts waiting for their file's save.
-	askSends                    []askPendingSend
+	askSends []askPendingSend
+	// planCommentPrints is the plan comment record each editor shows;
+	// planSplit moves a plan that is opening beside its chat.
+	planCommentPrints map[*editor.Editor]uint64
+	planSplit         *planSplitRequest
+	// planDocs caches each plan file's revision for one planReviewEpoch.
+	planDocs        map[string]planDocCache
+	planReviewEpoch uint64
+	// planDecisionEpoch is the epoch the open plan decision last followed.
+	planDecisionEpoch           uint64
 	workspaceAttachSequence     uint64
 	workspaceAttachCancel       context.CancelFunc
 	workspaceAttachPending      bool
@@ -565,12 +574,8 @@ func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 		subPaneProjections:  subPaneProjections,
 	}
 	app.Feedback = newFeedbackSink(app)
-	// Composer copies use the shell's ordered clipboard worker like every
-	// other reading surface, never a separate writer.
-	app.Input.SetClipboardCopy(app.composerCopyCommand)
-	app.bindEditorClipboard(edState.Editor)
+	app.bindClipboardOwners()
 	app.sessionProjections = newSessionProjectionRegistry(th, app.clipboardCopyCommand)
-	rootHost.SetClipboardCopy(app.clipboardCopyCommand)
 	if _, connected := ws.(shellport.ClientFiles); connected {
 		app.Tree.Model = newClientFileTree(app)
 		app.sidebarScreen.SetModel(app.Tree.Model)

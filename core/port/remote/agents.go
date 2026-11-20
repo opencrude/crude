@@ -58,6 +58,49 @@ func (w *Workspace) SetPlanModeForAgent(agentID string, enabled bool) error {
 	return nil
 }
 
+func (w *Workspace) PlanReviewForAgent(agentID string) (types.PlanReview, bool) {
+	return w.view.PlanReviewForAgent(agentID)
+}
+
+func (w *Workspace) OpenPlanRevision(agentID string, revision int) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	var out coreprotocol.AgentPlanReviewOpenResult
+	if err := w.call(ctx, coreprotocol.AgentPlanReviewOpen, coreprotocol.AgentPlanReviewOpenRequest{AgentID: agentID, Revision: revision}, &out); err != nil {
+		return "", err
+	}
+	if out.Error != "" {
+		return "", errors.New(out.Error)
+	}
+	return out.Path, nil
+}
+
+func (w *Workspace) EditPlanComment(agentID string, edit types.PlanCommentEdit) error {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	var out coreprotocol.BoolResult
+	if err := w.call(ctx, coreprotocol.AgentPlanComment, &coreprotocol.AgentPlanCommentRequest{AgentID: agentID, Edit: edit}, &out); err != nil {
+		return err
+	}
+	if out.Error != "" {
+		return errors.New(out.Error)
+	}
+	return nil
+}
+
+func (w *Workspace) SettlePlanReview(agentID string, settle types.PlanReviewSettle) (types.PlanReviewSettlement, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	var out coreprotocol.AgentPlanSettleResult
+	if err := w.call(ctx, coreprotocol.AgentPlanSettle, &coreprotocol.AgentPlanSettleRequest{AgentID: agentID, Settle: settle}, &out); err != nil {
+		return types.PlanReviewSettlement{}, err
+	}
+	if out.Error != "" {
+		return types.PlanReviewSettlement{}, errors.New(out.Error)
+	}
+	return out.Settlement, nil
+}
+
 func (w *Workspace) GoalForAgent(agentID string) (types.Goal, bool) {
 	return w.view.GoalForAgent(agentID)
 }

@@ -462,6 +462,21 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleComposer()
 		return nil
 
+	case "plan.review":
+		return m.reviewLatestPlan()
+	case "plan.send":
+		return m.settleActivePlan(types.PlanReviewFeedback)
+	case "plan.implement":
+		return m.settleActivePlan(types.PlanReviewImplement)
+	case "plan.addComment":
+		return m.editPlanCommentAtCaret()
+	case "plan.nextComment":
+		m.stepPlanComment(true)
+		return nil
+	case "plan.previousComment":
+		m.stepPlanComment(false)
+		return nil
+
 	case "remote.connect", "remote.switch":
 		return m.OpenRemotes()
 	case "remote.health":

@@ -343,6 +343,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if err := sess.loadPlanMode(); err != nil {
 		return nil, fmt.Errorf("resume: load plan mode: %w", err)
 	}
+	if err := sess.loadPlanReview(); err != nil {
+		return nil, fmt.Errorf("resume: load plan review: %w", err)
+	}
 	if err := sess.loadGoal(); err != nil {
 		return nil, fmt.Errorf("resume: load goal: %w", err)
 	}

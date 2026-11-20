@@ -89,21 +89,91 @@ of guessing its capabilities.
 - The first turn after Plan mode is turned off receives a context-only notice
   that the mode ended.
 - `<proposed_plan>` renders as a titled **Proposed plan** section; live and
-  hydrated rows share `renderMarkdown`. After a completed Plan mode turn whose
-  final reply contains a proposed plan (tags alone on their lines), the
-  selected session asks **Implement this plan?** with Codex's three answers:
-  **Implement** turns Plan mode off and sends
-  `prompt.PlanImplementationRequest`; **New session** opens a new
-  session (outside Plan mode, in its own tab) whose first message is
-  `prompt.PlanImplementationFreshContext` with the plan's Markdown and nothing
-  of the planning conversation, leaving the planning session as it was;
-  **Keep planning** leaves the mode on. A connected shell holds that first
-  message until the new session reaches it (`pendingFirstInputs`). The offer
-  is bound to the completed turn generation; a stale proposal or delayed
-  completion cannot be offered as a later turn's result.
+  hydrated rows share `renderMarkdown`.
+- **Plan review.** Each proposal is a revision of the session's plan review
+  (see [Plan review](#plan-review)). After a completed Plan mode turn whose
+  final reply proposed a plan, the selected session asks **Implement this
+  plan?** with **Implement**, **New session**, **Review** and **Keep
+  planning**. The offer is bound to the revision that turn recorded (its turn
+  generation); a stale proposal or delayed completion cannot be offered as a
+  later turn's result.
 - The header shows **Plan mode** for the selected session. The footer confirms
   both toggles and retains **Plan · next turn** while enabled; an already
   running turn keeps the policy it started with.
+
+## Plan review
+
+Every plan a root session proposes in Plan mode is kept, edited and commented
+on as a real file, like a pull request for the plan. This goes beyond the
+current harnesses: Claude Code and Cursor let the user edit a plan but not
+comment on it; Copilot (VS Code) and Kiro add comments but keep one draft;
+Antigravity loses queued comments. Crude keeps every revision, anchors each
+comment to its text so it follows the user's edits, keeps unsent comments
+across restarts and shells, and sends the agent the exact quotes, line ranges,
+the user's edits as a diff, and the plan as the user sees it.
+
+- **Record.** The session owns it (`agent/session/plan_review.go`,
+  `session_runtime_state` key `plan_review`, `types.PlanReview`). When a root
+  turn that *started* in Plan mode finishes and its final reply contains a
+  `<proposed_plan>` block (`types.ProposedPlan`), the session records revision
+  N+1 before the turn's completion reaches any shell: title
+  (`types.PlanTitle`), turn generation, the original proposal, and the file
+  `<session dir>/plans/<slug>-v<N>.md`. Earlier open revisions become
+  *replaced*. At most `types.PlanRevisionMaxCount` revisions are kept. The
+  path is stored relative to the session directory; opening a revision
+  recreates a missing file from the proposal, so a fork (which copies only the
+  database) can open its plans. Children never record plans.
+- **Editing.** **Review** (in the plan decision, the palette's **Review
+  Plan**, or the bar's **Open revision N**) opens the file through the normal
+  shared-document path, beside the session's chat: the pane to its right, a
+  new split when there is room, else the chat's pane. Every editor feature
+  works on it. The review bar above the editor states the revision and its
+  state and offers **Implement**, **New session** (in a pane of 72 columns or
+  more), **Revise** (send the edits; the agent revises the plan) and
+  **Comment**, or **Send comments** and **Comment** while comments are
+  waiting. A replaced or implemented revision says so and stays readable.
+- **Comments.** **Ctrl+Alt+C** (editor menu **Add comment**) comments on the
+  selection, or on the caret's line, in the shared editor text prompt; the
+  same key on a commented range edits that comment, and an empty text deletes
+  it. **Alt+F9** / **Shift+Alt+F9** go to the next and previous comment
+  (VS Code's keys); clicking a card edits it. Anchors follow the W3C Web
+  Annotation model (`types.TextAnchor`: quote with prefix and suffix context,
+  byte position as a hint) and resolve with `crude/text/anchor`: exact quote
+  occurrences scored by context and distance (Hypothesis), then a bounded
+  diff-match-patch Bitap match near the hint, rejected beyond
+  `PatchDeleteThreshold`. The editor shows each comment as a display-only card
+  below the commented text and tints the range (see the editor reference). A
+  comment whose text changed or was removed keeps its card near its old place
+  and says **The commented text changed.** Comments are stored in the core at
+  once (`agent.plan_comment`, idempotent by a shell-made ID), so they survive
+  Esc, restarts and other shells. Sent comments are read-only and muted.
+- **Settling** (`agent.plan_review_settle`) acts only on the latest open
+  revision, with the plan text the user sees (the open editor's text, else the
+  core's live document, else the file); a changed plan is saved first.
+  **Revise** / **Send comments** sends `prompt.PlanReviewFeedback`
+  (every unsent comment with its quote, current line range and a
+  `text_changed` flag, the user's edits as a unified diff, and the plan); Plan
+  mode stays on and the reply is the next revision. It needs a comment or an
+  edit. **Implement** needs no unsent comments; it turns Plan mode off and
+  sends `prompt.PlanImplementationRequest`, or `prompt.PlanImplementationEdited`
+  with the approved text and diff when the user edited the plan. Approval
+  binds that exact revision; a later proposal or comment changes the decision
+  first. **New session** opens a new session (outside Plan mode, in its own
+  tab) whose first message is `prompt.PlanImplementationFreshContext` with the
+  plan as the user sees it, leaving the planning session as it was. The
+  transcript shows a short summary of feedback, not the full prompt.
+- **Delivery.** Feedback and approval enter the session's durable input
+  queue in the same SQLite transaction as the settled record (and, for
+  approval, Plan mode off), and Plan mode is published before the queue
+  dispatches; the shell sends nothing itself. They are admitted only while
+  the main agent is ready: no active turn or compaction, no older queued
+  message, and no stopped run waiting for recovery (**The agent has work in
+  progress. Wait for it to finish, then try again.**). A refused or failed
+  admission leaves the record, its comments and Plan mode unchanged.
+- **Decision.** While comments wait, the chat's decision becomes **Send your
+  comments?** with **Send comments**, **Review** and **Keep planning**. Review
+  is an answer that stays: it opens the plan and keeps the question open
+  (`decision.Answer.Stay`).
 
 ## Goals (`/goal`)
 

@@ -87,6 +87,12 @@ type InputAdmissionIntent struct {
 // for a compacting owner, or behind already queued input, is marked for the
 // durable queue instead; Commit persists it.
 func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.UserInput, draftRevision uint64) (*InputAdmissionIntent, error) {
+	return s.prepareInputAdmission(orchestratorID, input, draftRevision, false)
+}
+
+// A settlement uses the durable queue even when idle so its input and review
+// state can commit together before a turn can capture its mode.
+func (s *Session) prepareInputAdmission(orchestratorID string, input provider.UserInput, draftRevision uint64, forceQueue bool) (*InputAdmissionIntent, error) {
 	if s == nil {
 		return nil, errors.New("session is unavailable")
 	}
@@ -99,11 +105,14 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 		return nil, err
 	}
 	input = s.bindInputExecution(input)
-	if input.EffectiveOrigin() == provider.OriginHuman && !s.shouldQueueInput(orchestratorID) {
+	if input.EffectiveOrigin() == provider.OriginHuman && (forceQueue || !s.shouldQueueInput(orchestratorID)) {
 		// A new message is the user's answer to a parked failure: it continues
 		// the conversation. Commit settles that exact incident, then reserves
 		// the turn; Prepare stays free of I/O.
 		if status, parkedInput, parked := s.parkedRecoveryForHuman(orchestratorID); parked {
+			if forceQueue {
+				return nil, PlanReviewError("The agent has unfinished work. Continue or stop it first.")
+			}
 			s.orchMu.Lock()
 			orchestrator := s.orchestrators[orchestratorID]
 			s.orchMu.Unlock()
@@ -121,12 +130,15 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 			return intent, nil
 		}
 	}
-	if s.shouldQueueInput(orchestratorID) {
+	if forceQueue || s.shouldQueueInput(orchestratorID) {
 		s.orchMu.Lock()
 		orchestrator := s.orchestrators[orchestratorID]
 		s.orchMu.Unlock()
 		if orchestrator == nil || orchestrator.closing.Load() || atomic.LoadInt32(&s.closing) != 0 {
 			return nil, errQueueOwnerUnavailable
+		}
+		if forceQueue && (orchestrator.TurnActive() || s.shouldQueueInput(orchestratorID)) {
+			return nil, PlanReviewError("The agent has work in progress. Wait for it to finish, then try again.")
 		}
 		input = cloneUserInput(input)
 		if input.InternalID == "" {
@@ -226,7 +238,7 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		if err := s.invalidateGoalHandover("New queued human input was accepted."); err != nil {
 			return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionStorageFailure, Err: err}
 		}
-		receipt, err := s.queueInput(intent.AgentID, intent.request.input, intent.DraftRevision)
+		receipt, err := s.queueInput(intent.AgentID, intent.request.input, intent.DraftRevision, nil)
 		intent.committed = true
 		if err != nil {
 			intent.result = InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionStorageFailure, Err: err}

@@ -15,6 +15,7 @@ type NoticeBar struct {
 	Base
 	tokens  *TokenSet
 	message string
+	mark    string
 	role    SemanticColor
 	payload any
 	actions *ActionBar
@@ -22,7 +23,7 @@ type NoticeBar struct {
 }
 
 func NewNoticeBar(id ComponentID, tokens *TokenSet) *NoticeBar {
-	b := &NoticeBar{Base: NewBase(id), tokens: tokens, role: ColorWarning, actions: NewActionBar(NewID(id, "actions"), tokens)}
+	b := &NoticeBar{Base: NewBase(id), tokens: tokens, mark: "!", role: ColorWarning, actions: NewActionBar(NewID(id, "actions"), tokens)}
 	b.actions.SetAlignEnd(false)
 	b.actions.SetSurfaceBackground(ColorPopupBg)
 	return b
@@ -35,6 +36,14 @@ func (b *NoticeBar) Set(message string, role SemanticColor, payload any, buttons
 }
 
 func (b *NoticeBar) Message() string { return b.message }
+
+// SetMark replaces the leading "!" with a one-cell mark for a bar that states
+// a mode rather than a problem.
+func (b *NoticeBar) SetMark(mark string) {
+	if rendering.VisibleWidth(mark) == 1 {
+		b.mark = mark
+	}
+}
 
 func (b *NoticeBar) SetTokens(t *TokenSet) {
 	if t == nil {
@@ -54,7 +63,7 @@ func (b *NoticeBar) Measure(_ LayoutContext, cs Constraints) Size {
 // text. The message takes what is left and is cut with an ellipsis.
 func (b *NoticeBar) Layout(ctx LayoutContext, r Rect) {
 	b.SetBounds(r)
-	lead := 2 // "! "
+	lead := 2 // mark and space
 	buttons := b.actions.Measure(ctx, Constraints{MaxW: max(0, r.W-lead), MaxH: 1}).W
 	text := rendering.VisibleWidth(b.message)
 	b.textW = max(0, min(text, r.W-lead-buttons-2))
@@ -73,7 +82,7 @@ func (b *NoticeBar) Paint(buf *surface.CellBuffer, ox, oy int, _ PaintContext) {
 	bg := b.tokens.Color(ColorPopupBg)
 	x, y := ox+r.X, oy+r.Y
 	FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	buf.WriteString(x, y, "!", b.tokens.Color(b.role), bg, cell.AttrBold)
+	buf.WriteString(x, y, b.mark, b.tokens.Color(b.role), bg, cell.AttrBold)
 	if b.textW > 0 {
 		buf.WriteString(x+2, y, rendering.TruncateVisual(b.message, b.textW, "…"), b.tokens.Color(ColorFg), bg, 0)
 	}

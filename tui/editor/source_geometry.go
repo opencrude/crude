@@ -26,11 +26,16 @@ func firstSourceUnit(tabW int, text string, col int) (size, width int) {
 func (pt *PieceTable) positionAtOffset(offset int) Position {
 	pt.ensureCache()
 	offset = min(len(pt.cachedBytes), max(0, offset))
-	line := sort.Search(len(pt.lineOffsets), func(i int) bool {
-		return pt.lineOffsets[i] > offset
-	}) - 1
+	line := pt.lineAtOffset(offset)
 	content, _ := pt.lineView(line)
 	return Position{Line: line, Col: ByteOffsetToVisualCol(content, offset-pt.lineOffsets[line], pt.tabSize)}
+}
+
+// lineAtOffset uses the current line index and a clamped source byte offset.
+func (pt *PieceTable) lineAtOffset(offset int) int {
+	return sort.Search(len(pt.lineOffsets), func(i int) bool {
+		return pt.lineOffsets[i] > offset
+	}) - 1
 }
 
 // snapPosition clamps to document content and floors columns inside a tab or

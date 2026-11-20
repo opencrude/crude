@@ -39,6 +39,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	case PointerScrollMsg:
 		return e.handlePointerScroll(msg)
 	case tea.KeyPressMsg:
+		e.review.pending = false
 		msg = ui.EditorClipboardKey(msg)
 		if e.handleGhostKey(msg) {
 			return nil
@@ -121,12 +122,14 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 		e.replacingSelection(func() { e.insertText(text) })
 	case tea.MouseWheelMsg:
+		e.review.pending = false
 		e.cursorBlink.MarkActivity()
 		e.handleMouseWheel(msg)
 		if e.IsMouseDragging() {
 			return e.movePointerSelection(msg.X, msg.Y)
 		}
 	case tea.MouseClickMsg:
+		e.review.pending = false
 		defer e.DismissGhostText()
 		e.BreakUndoGroup()
 		e.landing = nil
@@ -134,6 +137,23 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 			e.stopPointerSelection()
 			e.sbCtrl.CancelPointerCapture()
 			e.hSbCtrl.CancelPointerCapture()
+		}
+		if msg.Button == tea.MouseLeft && len(e.review.comments) != 0 && msg.Y >= 0 && msg.Y < e.bodyHeight() {
+			row := e.rowAt(e.scrollRow() + msg.Y)
+			if row.reviewRow > 0 {
+				right := e.gutterWidth() + e.textColumns()
+				if msg.X >= right && e.verticalScrollbarHit(msg.X, msg.Y, right) {
+					e.handleScrollbarEvent(msg, msg.Y)
+					return nil
+				}
+				e.ClearHover()
+				e.link = nil
+				if msg.X >= e.gutterWidth() && msg.X < right {
+					id := e.rows.review.lineRows(row.line)[row.reviewRow-1].id
+					return func() tea.Msg { return ReviewCommentActivatedMsg{Editor: e, ID: id} }
+				}
+				return nil // The blank card gutter has no source controls.
+			}
 		}
 		if cmd, ok := e.handleCodeLinkClick(msg); ok {
 			e.cursorBlink.MarkActivity()
@@ -278,7 +298,11 @@ func (e *Editor) mouseToPosition(mouseX, mouseY int) (Position, bool) {
 	if e.verticalScrollbarHit(mouseX, mouseY, sbX) {
 		return Position{}, false
 	}
-	pos, _ := e.positionOnRow(e.scrollRow()+mouseY, max(0, mouseX-sw))
+	row := e.scrollRow() + mouseY
+	if e.rows.review != nil && e.rowAt(row).reviewRow > 0 {
+		return Position{}, false
+	}
+	pos, _ := e.positionOnRow(row, max(0, mouseX-sw))
 	return pos, true
 }
 

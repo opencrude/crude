@@ -866,9 +866,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		ModelID:    turnProvider.Model,
 	}
 	eventSource := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
-	sendRuntimeEvent(sender, eventSource.bind(agent.AgentEvent{Type: "turn_started", Data: turnIdentity}))
 	// Plan mode is fixed for the whole turn; a toggle applies from the next one.
 	planMode := s.PlanMode()
+	sendRuntimeEvent(sender, eventSource.bind(agent.AgentEvent{Type: "turn_started", Data: turnIdentity}))
 	planModeEnded := s.notePlanModeTurn(planMode)
 	s.syncGoalPlanAccounting(&planMode)
 	goalProgress = s.goalTurnBegin(userInput, planMode)
@@ -1226,6 +1226,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	cancelled := false
 	if terminalDone != nil {
 		cancelled = terminalReasonFromEvent(*terminalDone) == "cancelled"
+	}
+	// Transcript finalization has released msgsMu. Commit the review before
+	// publishing terminal success so the completion and its agent snapshot
+	// cannot reach a shell without the new revision.
+	if planMode && runResult.State == agent.SupervisedRunCompleted && terminalDone != nil && terminalDone.AgentID == o.ID {
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			return s.recordProposedPlan(turnGeneration, finalContent)
+		}) {
+			return
+		}
 	}
 	// Do not discard the recovery envelope or acknowledge success while the
 	// durable turn/collaboration lifecycle still says running.

@@ -459,7 +459,7 @@ func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
 	}
 	m.Feedback.NotifyAgentTransient(msg.agentID, message, severity)
 	if msg.reason == "completed" {
-		m.offerPlanImplementation(msg.agentID, msg.generation)
+		m.offerPlanReview(msg.agentID, msg.generation)
 	}
 	m.forceFrame()
 }

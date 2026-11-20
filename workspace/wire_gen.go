@@ -763,8 +763,8 @@ func (z *AgentReduction) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AgentSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 27
-	o = append(o, 0xdc, 0x0, 0x1b)
+	// array header, size 28
+	o = append(o, 0xdc, 0x0, 0x1c)
 	o = msgp.AppendString(o, z.ID)
 	o = msgp.AppendString(o, z.ParentID)
 	o = msgp.AppendString(o, z.SessionID)
@@ -805,6 +805,15 @@ func (z *AgentSnapshot) MarshalMsg(b []byte) (o []byte, err error) {
 		o, err = z.Goal.MarshalMsg(o)
 		if err != nil {
 			err = msgp.WrapError(err, "Goal")
+			return
+		}
+	}
+	if z.PlanReview == nil {
+		o = msgp.AppendNil(o)
+	} else {
+		o, err = z.PlanReview.MarshalMsg(o)
+		if err != nil {
+			err = msgp.WrapError(err, "PlanReview")
 			return
 		}
 	}
@@ -873,8 +882,8 @@ func (z *AgentSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 27 {
-		err = msgp.ArrayError{Wanted: 27, Got: zb0001}
+	if zb0001 != 28 {
+		err = msgp.ArrayError{Wanted: 28, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -984,6 +993,22 @@ func (z *AgentSnapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		}
 	}
 	if msgp.IsNil(bts) {
+		bts, err = msgp.ReadNilBytes(bts)
+		if err != nil {
+			return
+		}
+		z.PlanReview = nil
+	} else {
+		if z.PlanReview == nil {
+			z.PlanReview = new(types.PlanReview)
+		}
+		bts, err = z.PlanReview.UnmarshalMsg(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "PlanReview")
+			return
+		}
+	}
+	if msgp.IsNil(bts) {
 		bts = bts[1:]
 		z.Loops = nil
 	} else {
@@ -1089,6 +1114,11 @@ func (z *AgentSnapshot) Msgsize() (s int) {
 		s += msgp.NilSize
 	} else {
 		s += z.Goal.Msgsize()
+	}
+	if z.PlanReview == nil {
+		s += msgp.NilSize
+	} else {
+		s += z.PlanReview.Msgsize()
 	}
 	s += msgp.ArrayHeaderSize
 	for za0001 := range z.Loops {

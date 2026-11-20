@@ -1,0 +1,245 @@
+package viewmodel
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+
+	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/screens/decision"
+	"crude/tui/ui"
+	"crude/types"
+)
+
+// planReviewServer answers each model request with the next scripted reply
+// and keeps the user messages of every request.
+type planReviewServer struct {
+	mu       sync.Mutex
+	replies  []string
+	requests []string
+}
+
+func (s *planReviewServer) handler(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	var request struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content any    `json:"content"`
+		} `json:"messages"`
+	}
+	_ = json.Unmarshal(body, &request)
+	// Every user message of the request: runtime context also travels as
+	// user messages, before and after the one the user wrote.
+	var users []string
+	for _, message := range request.Messages {
+		if message.Role == "user" {
+			users = append(users, fmt.Sprint(message.Content))
+		}
+	}
+	last := strings.Join(users, "\n")
+	s.mu.Lock()
+	s.requests = append(s.requests, last)
+	reply := "Done."
+	if len(s.replies) > 0 {
+		reply, s.replies = s.replies[0], s.replies[1:]
+	}
+	s.mu.Unlock()
+	content, _ := json.Marshal(reply)
+	w.Header().Set("Content-Type", "text/event-stream")
+	_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", content)
+}
+
+func (s *planReviewServer) request(i int) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if i >= len(s.requests) {
+		return "", false
+	}
+	return s.requests[i], true
+}
+
+// The whole review: a Plan mode turn proposes a plan, Review opens it as a
+// file beside the chat, the user edits it and comments on its text, sends
+// the comments, the agent revises, and the user implements the revision.
+func TestPlanReviewConnectedJourney(t *testing.T) {
+	server := &planReviewServer{replies: []string{
+		"Explored.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement and test addition\n- Update the README\n</proposed_plan>",
+		"Revised.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement addition with overflow checks\n- Add table tests\n</proposed_plan>",
+		"Implemented.",
+	}}
+	httpServer := httptest.NewServer(http.HandlerFunc(server.handler))
+	t.Cleanup(httpServer.Close)
+	runtime := remoteJourneyRuntime(t, httpServer.URL)
+	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+	app := shell.app
+	id := remoteJourneyCreate(t, shell)
+	until := func(condition func() bool) { t.Helper(); remoteJourneyUntil(t, []remoteJourneyShell{shell}, condition) }
+
+	app.Input.SetInput("/plan Propose a plan to add addition.")
+	app.setFocusInput()
+	_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	runAppCommand(t, app, cmd)
+	until(func() bool {
+		projection := app.activeSessionProjection()
+		return projection != nil && projection.decision != nil && projection.decision.Purpose() == "implement_plan"
+	})
+	first, ok := app.latestPlanRevision(id)
+	if !ok || first.Number != 1 || first.Title != "Add addition" {
+		t.Fatalf("first revision = %+v", first)
+	}
+	if data, err := os.ReadFile(first.Path); err != nil || !strings.Contains(string(data), "Implement and test addition") {
+		t.Fatalf("plan file %s: %q %v", first.Path, data, err)
+	}
+	app.paintShellFrame()
+	if frame := frameText(app); !strings.Contains(frame, "Review") || !strings.Contains(frame, "Implement this plan?") {
+		t.Fatalf("plan decision does not offer Review:\n%s", frame)
+	}
+
+	// Review keeps the question open and opens the plan beside the chat.
+	projection := app.activeSessionProjection()
+	runAppCommand(t, app, app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "implement_plan", Confirmed: true, Choice: planChoiceReview, Stay: true}))
+	until(func() bool { return app.EditorState.Editor != nil && app.EditorState.Editor.FilePath() == first.Path })
+	if projection.decision == nil || projection.decisionAgentID != id {
+		t.Fatal("Review closed the plan decision")
+	}
+	ed := app.EditorState.Editor
+	app.setFocusEditor()
+	app.paintShellFrame()
+	if frame := frameText(app); !strings.Contains(frame, "✎ Revision 1  [ Implement ]") || !strings.Contains(frame, "Implement and test addition") {
+		t.Fatalf("plan editor lacks its review bar:\n%s", frame)
+	}
+
+	// Edit: add a line at the end of the steps.
+	lines := strings.Split(ed.Value(), "\n")
+	readme := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Update the README") {
+			readme = i
+		}
+	}
+	ed.SetCursorPosition(readme, len(lines[readme]))
+	pressKeys(t, app, tea.KeyPressMsg{Code: tea.KeyEnter})
+	for _, r := range "- Add a changelog entry" {
+		pressKeys(t, app, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+
+	// Comment on a selected passage with Ctrl+Alt+C.
+	target := -1
+	for i, line := range strings.Split(ed.Value(), "\n") {
+		if strings.Contains(line, "Implement and test addition") {
+			target = i
+		}
+	}
+	ed.SetSelection(target, 2, target, len("- Implement and test addition"))
+	pressKeys(t, app, tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl | tea.ModAlt})
+	if app.TextPrompt == nil {
+		t.Fatal("Ctrl+Alt+C did not ask for a comment")
+	}
+	for _, r := range "Handle integer overflow." {
+		pressKeys(t, app, tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	pressKeys(t, app, tea.KeyPressMsg{Code: tea.KeyEnter})
+	until(func() bool {
+		revision, _ := app.latestPlanRevision(id)
+		return len(revision.Comments) == 1
+	})
+	revision, _ := app.latestPlanRevision(id)
+	if comment := revision.Comments[0]; comment.Anchor.Exact != "Implement and test addition" || comment.Body != "Handle integer overflow." || comment.Sent {
+		t.Fatalf("comment = %+v", comment)
+	}
+	until(func() bool {
+		app.paintShellFrame()
+		frame := frameText(app)
+		return strings.Contains(frame, "Handle integer overflow.") && strings.Contains(frame, "Revision 1 · 1 comment  [ Send comments ]")
+	})
+	app.paintShellFrame()
+	if frame := frameText(app); !strings.Contains(frame, "Send your comments?") {
+		t.Fatalf("plan decision did not follow the pending comment:\n%s", frame)
+	}
+
+	// Send the comments from the review bar.
+	send, handled := app.handlePlanReviewAction(ui.Action{ID: actionPlanSend, Payload: ed})
+	if !handled {
+		t.Fatal("the review bar did not handle Send comments")
+	}
+	runAppCommand(t, app, send)
+	until(func() bool { _, ok := server.request(1); return ok })
+	feedback, _ := server.request(1)
+	for _, want := range []string{"<plan_review revision=\"1\">", "<quoted_text>Implement and test addition</quoted_text>",
+		"<note>Handle integer overflow.</note>", "<my_edits>", "+- Add a changelog entry", "<comment lines=\"4\"", "<plan>\n# Add addition\n\n## Steps\n"} {
+		if !strings.Contains(feedback, want) {
+			t.Fatalf("feedback lacks %q:\n%s", want, feedback)
+		}
+	}
+	if data, err := os.ReadFile(first.Path); err != nil || !strings.Contains(string(data), "Add a changelog entry") {
+		t.Fatalf("sending did not save the edited plan: %q %v", data, err)
+	}
+	until(func() bool {
+		latest, ok := app.latestPlanRevision(id)
+		return ok && latest.Number == 2
+	})
+	review, _ := app.ws.PlanReviewForAgent(id)
+	if old, _ := review.Revision(1); old.Outcome != types.PlanOutcomeReplaced || !old.Comments[0].Sent {
+		t.Fatalf("revision 1 after the revision = %+v", old)
+	}
+	if !app.ws.PlanModeForAgent(id) {
+		t.Fatal("sending comments turned off Plan mode")
+	}
+	app.paintShellFrame()
+	if frame := frameText(app); !strings.Contains(frame, "Revision 2 replaced it.") {
+		t.Fatalf("old plan editor does not say it was replaced:\n%s", frame)
+	}
+
+	// Implement revision 2 from the decision in the chat.
+	until(func() bool {
+		projection := app.activeSessionProjection()
+		return projection != nil && projection.decision != nil && strings.HasPrefix(projection.decisionData, "2:implement")
+	})
+	projection = app.activeSessionProjection()
+	runAppCommand(t, app, app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "implement_plan", Confirmed: true}))
+	until(func() bool { _, ok := server.request(2); return ok && !app.ws.PlanModeForAgent(id) })
+	if implement, _ := server.request(2); !strings.Contains(implement, "Implement the plan") {
+		t.Fatalf("implementation request = %q", implement)
+	}
+	until(func() bool {
+		latest, _ := app.latestPlanRevision(id)
+		return latest.Outcome == types.PlanOutcomeImplemented
+	})
+}
+
+func TestPlanFilePathAcceptsOnlySessionPlanFiles(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/home/u/.crude/sessions/s1/plans/add-v1.md":    true,
+		`C:\Users\u\.crude\sessions\s1\plans\add-v1.md`: true,
+		"/repo/docs/plans/editor-parity.md":             true, // checked against the record next
+		"/repo/plans.md":                                false,
+		"add-v1.md":                                     false,
+	} {
+		if got := planFilePath(path); got != want {
+			t.Errorf("planFilePath(%q) = %v", path, got)
+		}
+	}
+	if allocs := testing.AllocsPerRun(100, func() { planFilePath("/home/u/.crude/sessions/s1/plans/add-v1.md") }); allocs != 0 {
+		t.Fatalf("planFilePath allocates %.0f times", allocs)
+	}
+}
+
+func TestPlanDecisionAsksToSendPendingComments(t *testing.T) {
+	revision := types.PlanRevision{Number: 3, Title: "Cache", Comments: []types.PlanComment{{ID: "a"}, {ID: "b", Sent: true}}}
+	spec, data := planDecisionSpec(revision)
+	if data != "3:send:1" || spec.Confirm.Label != "Send comments" || len(spec.Alternates) != 1 || spec.Alternates[0].ID != planChoiceReview || !spec.Alternates[0].Stay {
+		t.Fatalf("pending comments decision = %+v %q", spec, data)
+	}
+	revision.Comments = revision.Comments[1:]
+	spec, data = planDecisionSpec(revision)
+	if data != "3:implement:0" || spec.Confirm.Label != "Implement" || len(spec.Alternates) != 2 {
+		t.Fatalf("approval decision = %+v %q", spec, data)
+	}
+}

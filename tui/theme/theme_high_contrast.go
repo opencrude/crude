@@ -21,6 +21,7 @@ func DefaultHighContrast() *Theme {
 		Selection:          lipgloss.Color("#0000aa"),
 		TextSelection:      lipgloss.Color("#006588"),
 		TextSelectionFg:    lipgloss.Color("#ffffff"),
+		ReviewCommentRange: lipgloss.Color("#333000"),
 		Hover:              lipgloss.Color("#222222"),
 		Shadow:             lipgloss.Color("#000000"),
 		SubPaneBg:          lipgloss.Color("#0a0a0a"),

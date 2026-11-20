@@ -462,6 +462,14 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.requestProjectFormat()
 			case "lsp.inlayInspect":
 				return m, m.openInlayInspectorCmd()
+			case "plan.addComment":
+				return m, m.editPlanCommentAtCaret()
+			case "plan.nextComment":
+				m.stepPlanComment(true)
+				return m, nil
+			case "plan.previousComment":
+				m.stepPlanComment(false)
+				return m, nil
 			}
 		}
 	}
@@ -1143,7 +1151,7 @@ func (m *App) startRenameCmd() tea.Cmd {
 			return nil
 		}
 	}
-	m.openEditorTextPrompt("Rename symbol", "Enter a new name to preview the changes.", "", func(value string) error {
+	m.openEditorTextPrompt(ui.TextPromptRename, "Rename symbol", "Enter a new name to preview the changes.", "", func(value string) error {
 		if value == "" {
 			return fmt.Errorf("name cannot be empty")
 		}

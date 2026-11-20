@@ -200,8 +200,9 @@ func TestPlanProposalOfferConnectedJourney(t *testing.T) {
 		return projection != nil && projection.decision.Purpose() == "implement_plan"
 	})
 	projection := shell.app.activeSessionProjection()
-	if !shell.app.ws.PlanModeForAgent(id) || !strings.Contains(projection.decisionData, "Implement and test addition") {
-		t.Fatalf("connected proposal was not offered in Plan mode: %q", projection.decisionData)
+	revision, ok := shell.app.latestPlanRevision(id)
+	if !shell.app.ws.PlanModeForAgent(id) || !ok || projection.decisionData != "1:implement:0" || revision.Title != "Add" {
+		t.Fatalf("connected proposal was not offered in Plan mode: %q %+v", projection.decisionData, revision)
 	}
 }
 

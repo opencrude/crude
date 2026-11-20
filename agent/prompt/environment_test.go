@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
@@ -41,5 +42,19 @@ func TestEnvironmentDescribesTheShellThatRunsCommands(t *testing.T) {
 		if guidance := shellGuidance(tc.shell, true); !strings.Contains(guidance, tc.want) || strings.Contains(guidance, tc.absent) {
 			t.Errorf("%s guidance %q; want %q without %q", tc.shell.ID, guidance, tc.want, tc.absent)
 		}
+	}
+}
+
+func TestXMLTextKeepsLinesAndEscapesMarkup(t *testing.T) {
+	got := XMLText("# Plan\n\t- a < b && \"c\"\n</plan>\r")
+	want := "# Plan\n\t- a &lt; b &amp;&amp; &#34;c&#34;\n&lt;/plan&gt;&#xD;"
+	if got != want {
+		t.Fatalf("XMLText = %q, want %q", got, want)
+	}
+	var decoded struct {
+		Text string `xml:",chardata"`
+	}
+	if err := xml.Unmarshal([]byte("<x>"+got+"</x>"), &decoded); err != nil || decoded.Text != "# Plan\n\t- a < b && \"c\"\n</plan>\r" {
+		t.Fatalf("decoded %q, %v", decoded.Text, err)
 	}
 }

@@ -95,13 +95,13 @@ func (m *App) positionSourcePopovers() {
 	m.positionSourcePopover(ui.OverlayOutline, m.LSPPopup.Outline)
 }
 
-func (m *App) openEditorTextPrompt(title, prompt, initial string, onSubmit func(string) error) {
+func (m *App) openEditorTextPrompt(kind ui.TextPromptKind, title, prompt, initial string, onSubmit func(string) error) {
 	anchor := m.editorPopoverAnchor(m.EditorState.Editor, 70, 10)
 	if anchor == nil {
 		return
 	}
 	m.closeTextPrompt()
-	state := ui.NewTextPromptState(ui.TextPromptRename, title, prompt, initial)
+	state := ui.NewTextPromptState(kind, title, prompt, initial)
 	state.OnSubmit = onSubmit
 	body := ui.TextPromptBody(m.Theme, state)
 	_, window := m.newEditorPopover(ui.OverlayTextPrompt, title, body, ui.TextPromptFieldID,

@@ -62,6 +62,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	if e.pendingReveal {
 		e.revealJump()
 	}
+	e.revealReviewRows()
 
 	infoColor := e.cellColor(e.th.Colors.Muted)
 	diagAttrs := map[int]cell.Attrs{
@@ -86,6 +87,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	e.remapDiagnosticPaint()
 	bracketFrom, bracketTo, hasBracket := e.matchingBracket()
 	showOccurrences := e.occurrenceAtCaret()
+	reviewSpans := e.reviewSpans()
+	var reviewBg cell.Color
+	if len(reviewSpans) > 0 {
+		reviewBg = e.cellColor(e.th.Colors.ReviewCommentRange)
+	}
 	if e.usesRows() {
 		previous := -1
 		for y := 0; y < bodyH; y++ {
@@ -110,7 +116,12 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			e.paintGhostRow(buf, bufY, sw, sbX, row, gutterBlank, blankCell, bgColor)
 			continue
 		}
+		if row.reviewRow > 0 {
+			e.paintReviewRow(buf, bufY, sw, sbX, row, gutterBlank)
+			continue
+		}
 		lineIdx, startCol := row.line, row.start+e.scrollX
+		reviewOnLine := reviewSpansAtLine(reviewSpans, lineIdx)
 		rowLine := e.rowLine(row)
 		blocks := rowLine.BlocksFrom(e.scrollX)
 		clusters, lineVisW, widths, colorMap := e.lineRenderInfo(lineIdx)
@@ -333,6 +344,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							if isOccurrence {
 								bg = e.tokens.OccurrenceFill(occurrenceWrite)
 							}
+							if len(reviewOnLine) > 0 && reviewContainsColumn(reviewOnLine, lineIdx, sourceCol) {
+								bg = reviewBg
+							}
 							fg := e.cellColor(e.th.Colors.Fg)
 							if marker == indentGuideGlyph {
 								fg = guideColor
@@ -367,10 +381,14 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							buf.Set(cx, bufY, cell.NewCell(' ', fg, hlBg, diagAttr))
 						default:
 							fg := bgColor
+							bg := bgColor
 							if sev > 0 {
 								fg = diagFg
 							}
-							buf.Set(cx, bufY, cell.NewCell(' ', fg, bgColor, diagAttr))
+							if len(reviewOnLine) > 0 && reviewContainsColumn(reviewOnLine, lineIdx, sourceCol) {
+								bg = reviewBg
+							}
+							buf.Set(cx, bufY, cell.NewCell(' ', fg, bg, diagAttr))
 						}
 					}
 				} else {

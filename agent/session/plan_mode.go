@@ -41,9 +41,19 @@ func (s *Session) SetPlanMode(enabled bool) error {
 	if err != nil {
 		return err
 	}
-	if s.planMode.Swap(enabled) == enabled {
-		return nil
+	s.publishPlanMode(enabled)
+	return nil
+}
+
+// publishPlanMode updates the live mode and records its row after a durable
+// commit, whether the user toggled the mode or approved a plan.
+func (s *Session) publishPlanMode(enabled bool) {
+	if s.planMode.Swap(enabled) != enabled {
+		s.recordPlanModeChange(enabled)
 	}
+}
+
+func (s *Session) recordPlanModeChange(enabled bool) {
 	if !s.IsTurnActive() {
 		s.syncGoalPlanAccounting(nil)
 	}
@@ -51,7 +61,6 @@ func (s *Session) SetPlanMode(enabled bool) error {
 		s.logger.Info("SESSION", "plan_mode", "enabled", enabled)
 	}
 	s.recordStatusRow(planModeRow(enabled))
-	return nil
 }
 
 func (s *Session) loadPlanMode() error {

@@ -47,10 +47,25 @@ func stableEnvironment(workDir, tempDir string, shell command.Shell) string {
 		XMLText(hostname), XMLText(home), XMLText(workDir), XMLText(tempDir), XMLText(shellGuidance(shell, runtime.GOOS == "windows")))
 }
 
+// XMLText escapes value for an element or a quoted attribute of a prompt
+// block, as xml.EscapeText does, but keeps line feeds and tabs: multi-line
+// data such as a plan, a diff or a guidance file stays readable to the model
+// and costs no extra tokens. An XML parser reads both forms the same way.
 func XMLText(value string) string {
 	var escaped bytes.Buffer
-	if err := xml.EscapeText(&escaped, []byte(value)); err != nil {
-		return ""
+	for len(value) > 0 {
+		cut := strings.IndexAny(value, "\n\t")
+		if cut < 0 {
+			cut = len(value)
+		}
+		if err := xml.EscapeText(&escaped, []byte(value[:cut])); err != nil {
+			return ""
+		}
+		if cut == len(value) {
+			break
+		}
+		escaped.WriteByte(value[cut])
+		value = value[cut+1:]
 	}
 	return escaped.String()
 }

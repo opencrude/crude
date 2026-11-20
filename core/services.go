@@ -388,11 +388,21 @@ func (a *actor) applyService(request coreprotocol.Request, result coreprotocol.R
 			a.queueState(coreprotocol.TopicGit)
 		}
 	}
-	// Session modes are state every shell paints.
-	if result.Error == nil && (request.Method == coreprotocol.AgentPlanMode || request.Method == coreprotocol.AgentGoal || request.Method == coreprotocol.AgentLoop) {
+	// Session controls are state every shell paints.
+	if result.Error == nil {
 		switch request.Method {
 		case coreprotocol.AgentPlanMode:
 			var in coreprotocol.AgentPlanModeRequest
+			if decodeRequest(request, &in) == nil {
+				a.changed([]string{in.AgentID})
+			}
+		case coreprotocol.AgentPlanComment:
+			var in coreprotocol.AgentPlanCommentRequest
+			if decodeRequest(request, &in) == nil {
+				a.changed([]string{in.AgentID})
+			}
+		case coreprotocol.AgentPlanSettle:
+			var in coreprotocol.AgentPlanSettleRequest
 			if decodeRequest(request, &in) == nil {
 				a.changed([]string{in.AgentID})
 			}

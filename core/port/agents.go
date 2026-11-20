@@ -42,6 +42,13 @@ type Agents interface {
 	// SetPlanModeForAgent persists Plan mode for the owning session; it does
 	// I/O, so shells call it from a command, never on their UI thread.
 	SetPlanModeForAgent(agentID string, enabled bool) error
+	// PlanReviewForAgent reads the main agent's detached review without I/O.
+	PlanReviewForAgent(agentID string) (types.PlanReview, bool)
+	// OpenPlanRevision, EditPlanComment and SettlePlanReview do I/O. Call
+	// them from commands, never on the UI thread.
+	OpenPlanRevision(agentID string, revision int) (string, error)
+	EditPlanComment(agentID string, edit types.PlanCommentEdit) error
+	SettlePlanReview(agentID string, settle types.PlanReviewSettle) (types.PlanReviewSettlement, error)
 	// GoalForAgent is the goal of the session whose main agent is agentID.
 	GoalForAgent(agentID string) (types.Goal, bool)
 	// GoalAction applies a workspace.Goal* action; it does I/O, so shells call
