@@ -3,7 +3,9 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"crude/buildinfo"
 )
 
 // Two callers can both observe a missing image before either finishes copying.
@@ -22,7 +26,7 @@ func TestCopyCoreImageDoesNotReplacePublishedImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err := stageCoreImage(home, exe, "immutable")
+	target, err := stageRunningCoreImage(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +39,7 @@ func TestCopyCoreImageDoesNotReplacePublishedImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = source.Close() }()
-	if err := copyCoreImage(source, CoreImageDir(home), target); err != nil {
+	if err := copyCoreImage(source, CoreImageDir(home), target, buildinfo.ExecutableDigest()); err != nil {
 		t.Fatal(err)
 	}
 	current, err := os.Stat(target)
@@ -74,8 +78,8 @@ func TestCopyCoreImageAcrossProcesses(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = source.Close() }()
-		target := filepath.Join(CoreImageDir(home), coreImagePrefix+"processes"+filepath.Ext(exe))
-		if err := copyCoreImage(source, CoreImageDir(home), target); err != nil {
+		target := filepath.Join(CoreImageDir(home), coreImagePrefix+BuildID()+filepath.Ext(exe))
+		if err := copyCoreImage(source, CoreImageDir(home), target, buildinfo.ExecutableDigest()); err != nil {
 			t.Fatal(err)
 		}
 		return
@@ -85,7 +89,7 @@ func TestCopyCoreImageAcrossProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err := stageCoreImage(home, exe, "processes")
+	target, err := stageRunningCoreImage(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +145,8 @@ func TestCoreImageRejectsInvalidPublishedWinner(t *testing.T) {
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			target := filepath.Join(dir, "crude-core-invalid.exe")
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte("complete build")))
+			target := filepath.Join(dir, coreImagePrefix+digest[:16]+".exe")
 			var err error
 			switch kind {
 			case "truncated":
@@ -163,7 +168,7 @@ func TestCoreImageRejectsInvalidPublishedWinner(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := stageCoreImage(home, source, "invalid"); err == nil {
+			if _, err := stageCoreImage(home, source, digest); err == nil {
 				t.Fatal("staging accepted or replaced an invalid published image")
 			}
 			in, err := os.Open(source)
@@ -171,7 +176,7 @@ func TestCoreImageRejectsInvalidPublishedWinner(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = in.Close() }()
-			if err := copyCoreImage(in, dir, target); err == nil {
+			if err := copyCoreImage(in, dir, target, digest); err == nil {
 				t.Fatal("a losing copy accepted or replaced an invalid winner")
 			}
 			after, err := os.Lstat(target)
@@ -187,14 +192,15 @@ func TestStageCoreImageRejectsSameSizeChangedBytes(t *testing.T) {
 	if err := os.WriteFile(source, []byte("first build"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	target, err := stageCoreImage(home, source, "immutable")
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("first build")))
+	target, err := stageCoreImage(home, source, digest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(target, []byte("other build"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := stageCoreImage(home, source, "immutable"); err == nil {
+	if _, err := stageCoreImage(home, source, digest); err == nil {
 		t.Fatal("staging trusted size instead of exact executable bytes")
 	}
 	if raw, err := os.ReadFile(target); err != nil || string(raw) != "other build" {
@@ -207,24 +213,26 @@ func TestStageCoreImageIsContentAddressedAndRetainsOtherBuilds(t *testing.T) {
 	if err := os.WriteFile(source, []byte("first build"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	first, err := stageCoreImage(home, source, "aaaa")
+	firstDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("first build")))
+	first, err := stageCoreImage(home, source, firstDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Dir(first) != CoreImageDir(home) || filepath.Base(first) != "crude-core-aaaa.exe" {
+	if filepath.Dir(first) != CoreImageDir(home) || filepath.Base(first) != coreImagePrefix+firstDigest[:16]+".exe" {
 		t.Fatalf("staged image %s is not content-addressed under %s", first, CoreImageDir(home))
 	}
 	if raw, _ := os.ReadFile(first); !bytes.Equal(raw, []byte("first build")) {
 		t.Fatalf("staged bytes = %q", raw)
 	}
-	again, err := stageCoreImage(home, source, "aaaa")
+	again, err := stageCoreImage(home, source, firstDigest)
 	if err != nil || again != first {
 		t.Fatalf("restaging the same build = %s, %v", again, err)
 	}
 	if err := os.WriteFile(source, []byte("second build"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	second, err := stageCoreImage(home, source, "bbbb")
+	secondDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("second build")))
+	second, err := stageCoreImage(home, source, secondDigest)
 	if err != nil {
 		t.Fatal(err)
 	}

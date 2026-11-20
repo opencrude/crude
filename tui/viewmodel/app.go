@@ -716,6 +716,7 @@ func (m *App) SetProgram(p *tea.Program) {
 }
 
 func (m *App) Init() tea.Cmd {
+	m.onboarding.trust.awaitingFirstSize = true
 	draftCmd := m.hydrateComposerDraftCmd()
 	// Wire diagnostics before starting workspace LSP so fast servers cannot
 	// populate LSPManager's cache without notifying the tree/status update path.

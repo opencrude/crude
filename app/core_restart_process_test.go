@@ -64,7 +64,7 @@ func TestCoreRestartExactOwnerHelperNeverSelectsReplacement(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			image, err := stageCoreImage(f.host.home, helper, digest[:16])
+			image, err := stageCoreImage(f.host.home, helper, digest)
 			if err != nil {
 				t.Fatal(err)
 			}

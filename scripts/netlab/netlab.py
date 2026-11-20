@@ -650,7 +650,11 @@ class Lab:
         return [json.loads(line) for line in out.splitlines() if line.strip()]
 
     def ssh_authentications(self):
-        return self.docker.sh(self.cname("server"), "cat /var/log/sshd.log").count("Accepted publickey for crude ")
+        return len(self.ssh_authentication_times())
+
+    def ssh_authentication_times(self):
+        log = self.docker.sh(self.cname("server"), "cat /var/log/sshd.log")
+        return [float(ts) for ts in re.findall(r"(?m)^(\d+\.\d+) Accepted publickey for crude ", log)]
 
     def file_text(self, path):
         return self.docker.sh(self.cname("server"), f"cat {shlex.quote(path)}", user="crude", timeout=10)
@@ -882,7 +886,7 @@ def workflow_lane(lab, shell, result, wait, submit, stream_event, scenario, geo)
     return plans
 
 
-def native_views(lab, shell):
+def native_views(lab, shell, scene="shared-editor"):
     """Present the actual client's tmux session in the repository capture driver."""
     wrapper = lab.out / "view-client"
     wrapper.write_text("#!/bin/sh\nexec " + shlex.join(lab.docker.base + ["exec", "-it", "-u", "crude", shell.container,
@@ -893,12 +897,90 @@ def native_views(lab, shell):
             out = lab.out / f"native-{cols}x{rows}"
             env = dict(os.environ, CRUDE_BIN=str(wrapper), CRUDE_ARGS="", COLS=str(cols), ROWS=str(rows), KEEP_OPEN="0")
             with (lab.out / f"capture-{cols}.log").open("w") as log:
-                subprocess.run([HERE.parent / "tuishot.sh", out, "shot:shared-editor"], env=env, check=True,
+                subprocess.run([HERE.parent / "tuishot.sh", out, f"shot:{scene}"], env=env, check=True,
                                stdout=log, stderr=subprocess.STDOUT, timeout=90)
             assert list(out.glob("*.png")), "Native capture produced no images"
     finally:
         wrapper.unlink()
         shell.tmux("resize-window", "-t", "lab", "-x", str(VIEWPORT[0]), "-y", str(VIEWPORT[1]))
+
+
+def startup_workspace_ready(frame):
+    return "Trust this folder?" not in frame and "New Session" in frame and "startup-proof.txt" in frame
+
+
+def startup_lane(lab, result, native):
+    """Measure actual startup on three lifetimes, not an attach response or a spinner."""
+    server, client = lab.cname("server"), lab.cname("client-a")
+    lab.write("server", PROJECT + "/startup-proof.txt", "Startup proof.\n", owner="crude")
+    result["ping"] = lab.ping(count=6)
+    metrics = result["metrics"]
+    started = time.monotonic()
+    lab.docker.sh(client, "ssh -T -o BatchMode=yes -o StrictHostKeyChecking=yes "
+                  "-o ControlMaster=no -o ControlPath=none server true", user="crude", timeout=30)
+    metrics["plain_ssh_s"] = round(time.monotonic() - started, 3)
+    auths = lab.ssh_authentications()
+    assert auths == 1, "The reference SSH command did not authenticate exactly once"
+    identities = []
+    for phase in ("cold", "warm", "restart"):
+        result["startup_phase"] = phase
+        if phase == "restart":
+            lab.docker.sh(server, "CRUDE_HOME=/home/crude crude --core-stop", user="crude", timeout=30)
+        shell = lab.shells["a"] = Shell(lab, "a")
+        launched = time.monotonic()
+        wall_offset = time.time() - time.monotonic()
+        shell.launch(["crude", "--ssh", "server", "--workspace", PROJECT, "--client-profile", "lab-a"],
+                     capture_startup=lab.scenario.name in COLD_SLOW)
+        trust_times = None
+        if phase == "cold":
+            trust, _ = shell.wait("first trust prompt", lambda s: "Trust this folder?" in s, 60)
+            prompted = time.monotonic()
+            (lab.out / "cold-trust.txt").write_text(trust)
+            if native:
+                native_views(lab, shell, "workspace-trust")
+            trust_times = (prompted, time.monotonic())
+            shell.keys("Enter")  # The safe default persists Restricted, not Trusted.
+        screen, _ = shell.wait(f"{phase} file tree and launcher", startup_workspace_ready, 60)
+        opened = time.monotonic()
+        (lab.out / f"{phase}-workspace.txt").write_text(screen)
+        times = lab.ssh_authentication_times()
+        assert len(times) == auths + 1, (f"{phase} requires exactly one authenticated SSH connection", len(times) - auths)
+        auths = len(times)
+        authenticated = times[-1] - wall_offset
+        assert launched <= authenticated <= opened, "Startup observations are out of order"
+        metrics[f"{phase}_auth_s"] = round(authenticated - launched, 3)
+        metrics[f"{phase}_auth_to_workspace_s"] = round(opened - authenticated, 3)
+        if trust_times is not None:
+            prompted, accepted = trust_times
+            metrics["cold_auth_to_trust_prompt_s"] = round(prompted - authenticated, 3)
+            metrics["cold_trust_choice_wait_s"] = round(accepted - prompted, 3)
+            metrics["cold_trust_choice_to_workspace_s"] = round(opened - accepted, 3)
+        with shell.lock:
+            if phase != "cold":
+                assert all("Trust this folder?" not in frame for _, frame in shell.frames), f"{phase} asked again"
+        shell.settled_click("Open the startup proof from the file tree", "startup-proof.txt")
+        shell.wait("startup proof in the editor", lambda s: "Startup proof." in s, 30)
+        shell.keys("C-w")
+        shell.wait("workspace after closing the editor", startup_workspace_ready, 15)
+        identity = lab.observe("core.status")
+        assert not identity.get("partial"), "Core identity is incomplete"
+        identities.append((identity["pid"], identity["started_at"]))
+        if lab.observer:
+            lab.observer.close()
+            lab.observer = None
+        shell.keys("C-q")
+        until(f"{phase} shell exit", lambda: shell.dead is not None, 15)
+        assert shell.dead in {"0", "unknown"}, f"{phase} shell did not close cleanly: {shell.dead}"
+        shell.close()
+        shell.tmux("kill-session", "-t", "lab")
+    assert identities[0] == identities[1] != identities[2], "Warm reopen or core restart used the wrong owner"
+    result["startup_identities"] = identities
+    result["checks"] += [
+        "Cold start showed the trust choice, then loaded the actual file tree",
+        "Warm reopen reused the core and did not ask for trust again",
+        "Restart used a new core without losing the saved trust choice",
+        "The file opened from the tree and showed the remote bytes in every phase",
+    ]
 
 
 def peer_lane(lab, shell, result, submit, stream_event, native):
@@ -1020,6 +1102,11 @@ def run_scenario(docker, image, volume, run, scenario, carrier, root, grace, see
         result["path"] = lab.prove_path()
         lab.shape_before_attach("a")
         result["before_launch"] = {"tc": lab.link_stats(), "udp_drop": lab.counters("LAB_UDP")}
+        if lane == "startup":
+            phase = "startup"
+            startup_lane(lab, result, native)
+            result["passed"] = True
+            return result
         geo = scenario.name in {"L7", "L15"}
         cold_slow = scenario.name in COLD_SLOW
 
@@ -1274,31 +1361,35 @@ def main():
     parser.add_argument("--observer", required=True, help="prebuilt typed observer from the same source build")
     parser.add_argument("--image", default=default_image(), help="existing local lab image; never pulled")
     parser.add_argument("--levels", default="all", help="comma-separated levels, for example L0,L8")
-    parser.add_argument("--carriers", default="ssh,quic,tls", help="comma-separated carriers; L13 requires QUIC, L15/L16 require SSH")
+    parser.add_argument("--carriers", help="comma-separated carriers (default: ssh,quic,tls; startup: ssh)")
     parser.add_argument("--parallel", type=int, default=1, choices=range(1, 13), metavar="1..12", help="concurrent scenarios")
     parser.add_argument("--grace", type=int, default=900, help="core session grace seconds")
     parser.add_argument("--seed", type=int, default=68170, help="netem RNG seed when the router supports it")
     parser.add_argument("--keep", action="store_true", help="keep this run's isolated containers, networks and volume")
-    parser.add_argument("--lane", choices=("stream", "workflow", "peer"), default="stream",
-                        help="stream: agent streams through each fault schedule; workflow: overlapping IDE work through the UI")
+    parser.add_argument("--lane", choices=("stream", "workflow", "peer", "startup"), default="stream",
+                        help="stream: agent delivery; workflow: overlapping IDE work; peer: shared editing and LSP; startup: SSH launch")
     parser.add_argument("--repeat", type=int, default=1, choices=range(1, 51), metavar="1..50",
                         help="run each case this many times; a passing retry never hides an earlier failure")
     parser.add_argument("--marksman", type=Path, help="Marksman linux-x64 executable for the peer/LSP lane")
-    parser.add_argument("--native", action="store_true", help="Capture the peer journey using scripts/tuishot.sh (one serial case)")
+    parser.add_argument("--native", action="store_true", help="Capture the peer or startup journey using scripts/tuishot.sh")
     args = parser.parse_args()
     if (args.lane == "peer") != bool(args.marksman):
         parser.error("The peer lane requires --marksman; other lanes do not use a language server")
-    if args.native and (args.lane != "peer" or args.parallel != 1):
-        parser.error("Native capture needs one serial peer lane")
+    if args.native and (args.lane not in {"peer", "startup"} or args.parallel != 1):
+        parser.error("Native capture needs a serial peer or startup run")
     binary = Path(args.binary).resolve(strict=True)
     observer = Path(args.observer).resolve(strict=True)
     steady = [name for name, level in LEVELS.items() if not level.events]
-    levels = (steady if args.lane != "stream" else list(LEVELS)) if args.levels == "all" else list(dict.fromkeys(args.levels.split(",")))
-    carriers = list(dict.fromkeys(args.carriers.split(",")))
+    default_levels = ["L0"] if args.lane == "startup" else (steady if args.lane != "stream" else list(LEVELS))
+    levels = default_levels if args.levels == "all" else list(dict.fromkeys(args.levels.split(",")))
+    default_carriers = "ssh" if args.lane == "startup" else "ssh,quic,tls"
+    carriers = list(dict.fromkeys((args.carriers or default_carriers).split(",")))
     if set(levels) - LEVELS.keys() or set(carriers) - TRANSPORT.keys():
         parser.error("Use known levels and carriers: " + ", ".join(TRANSPORT))
+    if args.lane == "startup" and carriers != ["ssh"]:
+        parser.error("The startup lane measures SSH; use --carriers ssh")
     if args.lane != "stream" and set(levels) - set(steady):
-        parser.error("The workflow lane runs its own outage; choose steady levels: " + ",".join(steady))
+        parser.error("Choose steady levels for this lane: " + ",".join(steady))
     if not 1 <= args.seed < 2**32 - 2 - 100 * args.repeat or not 180 <= args.grace <= 3600:
         parser.error("Use a seed between 1 and 4294967294 minus 100 for each repeat, and grace between 180 and 3600 seconds")
     specialized = {"L13": "quic", **dict.fromkeys(COLD_SLOW, "ssh")}

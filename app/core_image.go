@@ -8,7 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
+
+	"crude/buildinfo"
 )
 
 const coreImagePrefix = "crude-core-"
@@ -16,14 +17,22 @@ const coreImagePrefix = "crude-core-"
 // CoreImageDir holds the content-addressed executables detached cores run from.
 func CoreImageDir(home string) string { return filepath.Join(DataDir(home), "bin") }
 
-// stageCoreImage returns a private copy of exe named by its build ID. A core
+func stageRunningCoreImage(home string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return stageCoreImage(home, exe, buildinfo.ExecutableDigest())
+}
+
+// stageCoreImage returns a private image with the exact expected digest. A core
 // outlives the shell that started it; running it from the shell's own image
 // would pin that file, so `go run` could not delete its temporary build and a
 // rebuild could not replace crude.exe on Windows. Other images are retained:
 // Unix permits unlinking a running executable, and staging cannot prove that
 // an image is unused by a core, a helper, or a concurrent starter.
-func stageCoreImage(home, exe, buildID string) (string, error) {
-	if buildID == "" || buildID == "unknown" || strings.ContainsAny(buildID, `/\.`) {
+func stageCoreImage(home, exe, digest string) (string, error) {
+	if !digestToken(digest) {
 		return "", fmt.Errorf("cannot identify the executable %s", exe)
 	}
 	dir := CoreImageDir(home)
@@ -33,31 +42,18 @@ func stageCoreImage(home, exe, buildID string) (string, error) {
 	if err := secureOwnerPath(dir, true); err != nil {
 		return "", err
 	}
-	target := filepath.Join(dir, coreImagePrefix+buildID+filepath.Ext(exe))
+	target := filepath.Join(dir, coreImagePrefix+digest[:16]+filepath.Ext(exe))
+	if err := verifyCoreImage(target, digest); err == nil {
+		return target, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
 	source, err := os.Open(exe)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = source.Close() }()
-	info, err := source.Stat()
-	if err != nil {
-		return "", err
-	}
-	digest, err := coreImageDigest(source)
-	if err != nil {
-		return "", err
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return "", err
-	}
-	if err := validateCoreImage(target, info.Size()); errors.Is(err, os.ErrNotExist) {
-		if err := copyCoreImage(source, dir, target); err != nil {
-			return "", err
-		}
-	} else if err != nil {
-		return "", err
-	}
-	if err := verifyCoreImage(target, digest); err != nil {
+	if err := copyCoreImage(source, dir, target, digest); err != nil {
 		return "", err
 	}
 	return target, nil
@@ -70,10 +66,14 @@ func validateCoreImage(target string, size int64) error {
 	if err != nil {
 		return err
 	}
-	if !staged.Mode().IsRegular() || staged.Size() != size || (runtime.GOOS != "windows" && staged.Mode().Perm()&0o100 == 0) {
+	if !executableFile(staged) || staged.Size() != size {
 		return fmt.Errorf("invalid staged core executable %s: expected a regular executable of %d bytes", target, size)
 	}
 	return nil
+}
+
+func executableFile(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && (runtime.GOOS == "windows" || info.Mode().Perm()&0o100 != 0)
 }
 
 // copyCoreImage closes its complete candidate before atomically publishing it
@@ -82,7 +82,7 @@ func validateCoreImage(target string, size int64) error {
 // this process closes it. Replacing the ready winner with that inode can then
 // make another start fail with ETXTBSY. A hard link elects one immutable winner
 // across processes (including Windows) and never changes the inode being run.
-func copyCoreImage(source *os.File, dir, target string) error {
+func copyCoreImage(source *os.File, dir, target, digest string) error {
 	info, err := source.Stat()
 	if err != nil {
 		return err
@@ -105,9 +105,14 @@ func copyCoreImage(source *os.File, dir, target string) error {
 	if err := secureOwnerPath(temp.Name(), false); err != nil {
 		return err
 	}
+	// Verify the closed candidate before linking it. A replaced or modified
+	// source must not poison the name for the reviewed image, even briefly.
+	if err := verifyCoreImage(temp.Name(), digest); err != nil {
+		return err
+	}
 	if err := os.Link(temp.Name(), target); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return validateCoreImage(target, info.Size())
+			return verifyCoreImage(target, digest)
 		}
 		return err
 	}
@@ -127,8 +132,8 @@ func verifyCoreImage(path, digest string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateCoreImage(path, info.Size()); err != nil {
-		return err
+	if !executableFile(info) {
+		return fmt.Errorf("invalid staged core executable %s: expected a regular executable", path)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -145,6 +150,11 @@ func verifyCoreImage(path, digest string) error {
 	}
 	if actual != digest {
 		return fmt.Errorf("core executable digest mismatch: %s", path)
+	}
+	after, err := os.Lstat(path)
+	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() ||
+		!info.ModTime().Equal(after.ModTime()) || !executableFile(after) {
+		return fmt.Errorf("core image changed while verifying %s", path)
 	}
 	return nil
 }

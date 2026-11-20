@@ -145,6 +145,61 @@ showing any of them. A click waits until its painted target holds
 still for 300 ms, as a person would. Earlier moves of that control are
 recorded in `layout_shifts` and fail the case.
 
+## Startup lane
+
+Use one scenario at a time to measure startup. The lane defaults to the clean
+routed SSH link (`L0`), and runs a plain `ssh … true` as a route reference.
+
+```sh
+python3 -B scripts/netlab/netlab.py --image crude-netlab:local \
+  --binary "$lab/crude" --observer "$lab/observer" --out "$lab/startup" \
+  --lane startup --repeat 4
+```
+
+Each case records one fresh core and profile, one reopen of the same workspace
+on the running core, and one reopen after a graceful core stop. The fixture
+configures its test model, so this does not time the introduction or AI setup.
+The runner checks for exactly one authentication for each launch, a trust prompt only
+on first use, the expected core identity, and a real file open from the tree.
+It records time from authentication to the trust prompt and to the file tree
+with the launcher available. It also separates the wait before the trust
+choice from the time to paint after that choice. A prompt or a spinner alone
+does not count as an open workspace.
+
+The server's SSH log and the viewport sampler share the same host clock.
+The text sampler runs at approximately 5 Hz, so the measurements include
+observation delay. Compare repeated runs on the same host, not a single sample
+against a machine-independent time limit. Run `--lane startup --native` separately
+to capture the trust prompt at 160×48 and 84×26. The time spent taking the
+screenshots is recorded as time before the trust choice, not as a product delay.
+
+### Startup measurements (2026-11-20)
+
+The clean-link trace attributed 1.50 s to staging the 82 MiB executable and
+registering the core owner. Opening the model catalog took 7 ms and constructing
+the workspace took 68 ms in the same trace. Staging now verifies the selected
+digest before publishing and carries it forward to the owner record. The trust
+prompt also no longer waits for an idle tick when no AI setup reminder applies.
+
+These ranges are three launches per build and route, timed **after**
+authentication. Cold workspace measurements include an immediate choice to open
+in restricted mode. Native captures and automated text measurements ran
+separately.
+
+| Visible milestone | Clean routed lab, before → after | Two physical hosts over SSH proxy, before → after |
+|---|---:|---:|
+| Cold trust prompt | 3.28–4.82 s → 1.32–1.57 s | 6.05–8.27 s → 5.38–5.75 s |
+| Cold file tree and launcher | 3.56–5.09 s → 1.59–1.84 s | 6.98–10.09 s → 6.78–7.01 s |
+| Warm file tree and launcher | 0.22–0.39 s → 0.25–0.31 s | 2.97–4.01 s → 3.18–4.08 s |
+| File tree and launcher after core restart | 2.76–2.88 s → 1.30–1.56 s | 5.37–5.48 s → 4.61–5.86 s |
+
+Plain SSH command time was 0.28–0.38 s in the lab and 2.37–2.83 s over
+the proxy. The hosts were not reserved for benchmarking, and route and host
+latencies vary. The warm reopen met the one-second aim on the clean link, not
+on the proxied route. Do not combine authentication, trust and workspace paint
+into a single startup number or attribute all post-authentication time to the
+link.
+
 ## Read the result and iterate
 
 Start at `summary.json`, then open the failing case's `result.json` and
@@ -311,3 +366,9 @@ the corrected peer lane passed all 23 cases on both hosts. The physical SSH save
 two native window sizes, and local IPC restart/conflict journey are separate
 checks, not additional cells in that count. Windows and macOS were not exercised
 by this Linux campaign.
+
+The startup optimization reran 24 workflow, peer and stream cases, including
+cold slow SSH, established GEO links, a mid-stream outage, NAT rebinding
+and UDP fallback. After limiting the early trust check to shell startup,
+clean and slow SSH workflows and the GEO QUIC peer journey passed again.
+These regressions supplement the startup measurements and native captures.

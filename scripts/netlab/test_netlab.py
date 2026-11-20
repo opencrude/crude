@@ -3,11 +3,16 @@ import threading
 import time
 import unittest
 
-from netlab import Shell, complete, connection_fields, draft_visible, stream_visibility, validate_provider
+from netlab import Shell, complete, connection_fields, draft_visible, startup_workspace_ready, stream_visibility, validate_provider
 from typeprobe import analyse, observe_frame
 
 
 class AcceptancePredicates(unittest.TestCase):
+    def test_startup_requires_file_tree_and_no_trust_modal(self):
+        self.assertFalse(startup_workspace_ready("New Session\nLoading files"))
+        self.assertFalse(startup_workspace_ready("New Session\nstartup-proof.txt\nTrust this folder?"))
+        self.assertTrue(startup_workspace_ready("New Session\nstartup-proof.txt"))
+
     def test_numbered_stream_does_not_accept_missing_duplicate_or_reordered_tokens(self):
         words = [f"P2n{n:02d}" for n in range(1, 161)]
         text = " ".join(words + ["P2end"])

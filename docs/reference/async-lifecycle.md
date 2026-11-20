@@ -249,10 +249,11 @@ not keep writing caller-owned result memory after the caller has returned.
 - **Detached cores run from a staged image.** `spawnCore` executes
   `~/.crude/bin/crude-core-<build-id>`, never the starting executable, so
   `go run`/rebuilds can delete or replace it on Windows while the core lives.
-  Publish one closed candidate by no-replace hard link; concurrent losers reuse
-  the immutable winner, never rename another writable inode over it (ETXTBSY).
-  Existing images also require exact digest validation. Invalid type/size/mode,
-  digest mismatch or unsupported hard-link filesystems fail explicitly. All staged
+  Verify the closed candidate against the selected full digest, then publish by
+  no-replace hard link. Concurrent losers verify the immutable winner, never
+  rename a writable inode over it (ETXTBSY). The core stores that full digest in
+  its owner record without hashing the same file a second time. Invalid type,
+  mode or bytes, or unsupported hard-link filesystems fail explicitly. All staged
   images remain retained; Unix unlink is not liveness proof and disk use can grow.
   `BuildID` names a native image, not the source cohort negotiated by Hello.
 - **Core handover has lifetime ownership.** The private owner record binds a

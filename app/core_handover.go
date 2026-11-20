@@ -139,33 +139,17 @@ func (e *CoreHandoverError) Unwrap() error { return e.Cause }
 
 func installCoreOwner(home string) (coreOwner, error) {
 	var owner coreOwner
-	exe, err := os.Executable()
-	if err != nil {
-		return owner, err
-	}
 	// Direct --core invocations also retain an immutable helper, independent of
 	// the original installation being rebuilt or removed.
-	image, err := stageCoreImage(home, exe, BuildID())
+	image, err := stageRunningCoreImage(home)
 	if err != nil {
 		return owner, err
-	}
-	f, err := os.Open(image)
-	if err != nil {
-		return owner, err
-	}
-	digest, err := coreImageDigest(f)
-	_ = f.Close()
-	if err != nil {
-		return owner, err
-	}
-	if !strings.HasPrefix(digest, BuildID()) {
-		return owner, errors.New("running executable changed before owner image publication")
 	}
 	var nonce [32]byte
 	if _, err = rand.Read(nonce[:]); err != nil {
 		return owner, err
 	}
-	owner = coreOwner{Generation: hex.EncodeToString(nonce[:]), Executable: image, Digest: digest, Cohort: buildinfo.ProtocolBuild, Schema: coreprotocol.Schema}
+	owner = coreOwner{Generation: hex.EncodeToString(nonce[:]), Executable: image, Digest: buildinfo.ExecutableDigest(), Cohort: buildinfo.ProtocolBuild, Schema: coreprotocol.Schema}
 	path := coreOwnerPath(home)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return owner, err

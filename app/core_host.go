@@ -393,10 +393,6 @@ func localCarrier(dataDir string) coreclient.Dialer {
 // spawnCore starts `crude --core` detached from the invoking terminal so it
 // outlives the shell that started it. A losing concurrent start exits on its own.
 func spawnCore(home string) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
 	if err := os.MkdirAll(DataDir(home), 0o700); err != nil {
 		return err
 	}
@@ -405,7 +401,7 @@ func spawnCore(home string) error {
 		return err
 	}
 	defer func() { _ = logFile.Close() }()
-	image, err := stageCoreImage(home, exe, BuildID())
+	image, err := stageRunningCoreImage(home)
 	if err != nil {
 		return fmt.Errorf("stage core executable: %w", err)
 	}

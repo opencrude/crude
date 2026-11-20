@@ -65,7 +65,7 @@ func makeRestartStartupManifest(t *testing.T, home string, old coreOwner) (strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, err := stageCoreImage(home, exe, identity.BuildID)
+	image, err := stageCoreImage(home, exe, identity.SHA256)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -50,7 +50,7 @@ func CoreRestartIdentityForCurrent() (CoreRestartIdentity, error) {
 	if err != nil {
 		return CoreRestartIdentity{}, errors.New("cannot verify running handover image")
 	}
-	return CoreRestartIdentity{BuildID: BuildID(), Cohort: buildinfo.ProtocolBuild,
+	return CoreRestartIdentity{BuildID: digest[:16], Cohort: buildinfo.ProtocolBuild,
 		Schema: coreprotocol.Schema, SHA256: digest, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH}, nil
 }
 
@@ -294,15 +294,12 @@ func (h *coreRestartHost) Schedule(ctx context.Context, req control.Request) (st
 		if err != nil || actual != input.SHA256 {
 			return errors.New("restart candidate digest or file validation failed")
 		}
-		image, err := stageCoreImage(h.home, input.Executable, input.SHA256[:16])
+		image, err := stageCoreImage(h.home, input.Executable, actual)
 		if err != nil {
 			return errors.New("restart candidate staging failed")
 		}
 		if err := validateCoreImage(image, size); err != nil {
 			return errors.New("restart staged image size or mode mismatch")
-		}
-		if err := verifyCoreImage(image, actual); err != nil {
-			return errors.New("restart staged image digest mismatch")
 		}
 		identity, err := h.identity(ctx, image)
 		if err != nil || !restartValidIdentity(identity, actual) {
