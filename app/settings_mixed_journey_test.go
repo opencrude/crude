@@ -233,13 +233,21 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 
 // Use the real framed application settings owner and disk config. Neither Save
 // nor re-opening Settings should start a provider request.
-func TestWebSearchFallbackPersistsByApplicationOnly(t *testing.T) {
+func TestWebSearchRoutesPersistByApplicationOnly(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	ordinary := captypes.ConnectionConfig{ID: "other", Name: "Other MCP", Transport: "http", URL: "http://127.0.0.1:1/mcp", Scope: captypes.ScopeApplication, Disabled: true}
 	fc := FileConfig{
-		Accounts: map[string]provider.Account{"search": {ID: "search", Label: "Search account", APIKey: "fixture-key", ProviderID: "openai", Connection: provider.Template{
-			APIStandard: "openai-responses", ProviderURL: "https://api.openai.com/v1", AuthType: provider.AuthBearer,
-		}}},
+		Accounts: map[string]provider.Account{
+			"search": {ID: "search", Label: "Search account", APIKey: "fixture-key", ProviderID: "openai", Connection: provider.Template{
+				APIStandard: "openai-responses", ProviderURL: "https://gateway.example/v1", AuthType: provider.AuthBearer,
+			}},
+			"ollama": {ID: "ollama", Label: "Ollama account", APIKey: "fixture-key", ProviderID: "ollama-cloud", Connection: provider.Template{
+				APIStandard: "ollama", ProviderURL: "https://ollama.example/api",
+			}},
+			"chat": {ID: "chat", Label: "Chat account", APIKey: "fixture-key", ProviderID: "custom", Connection: provider.Template{
+				APIStandard: "openai", ProviderURL: "https://chat.example/v1",
+			}},
+		},
 		Capabilities: &captypes.Settings{Connections: map[string]captypes.ConnectionConfig{ordinary.ID: ordinary}},
 	}
 	if err := SaveFileConfig(fc); err != nil {
@@ -256,7 +264,7 @@ func TestWebSearchFallbackPersistsByApplicationOnly(t *testing.T) {
 	defer runtime.Close()
 	peer, transport := net.Pipe()
 	go func() { _ = core.ServeConnection(t.Context(), runtime, peer) }()
-	client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(transport), "fallback-settings")
+	client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(transport), "search-method-settings")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,29 +273,57 @@ func TestWebSearchFallbackPersistsByApplicationOnly(t *testing.T) {
 	if err := client.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: t.TempDir()}, &attached); err != nil {
 		t.Fatal(err)
 	}
-	save := func(scope captypes.Scope, choice captypes.WebSearchFallback) error {
+	act := func(operation string, scope captypes.Scope, route captypes.WebSearchRoute) error {
 		return client.Call(t.Context(), attached.WorkspaceID, coreprotocol.CapabilityAction,
-			&coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: captypes.SetWebSearchFallback,
-				Scope: scope, ID: captypes.WebConnectionID, Kind: captypes.KindMCP, WebSearchFallback: choice}}, &coreprotocol.CapabilityResult{})
+			&coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: operation,
+				Scope: scope, ID: captypes.WebConnectionID, Kind: captypes.KindMCP, WebSearchRoute: &route}}, &coreprotocol.CapabilityResult{})
 	}
-	selected := captypes.WebSearchFallback{"search", "chosen-model"}
-	if err := save(captypes.ScopeWorkspace, selected); err == nil {
-		t.Fatal("workspace could redirect Web MCP's model fallback")
+	responses := captypes.WebSearchRoute{ID: "r1", Account: "search", Model: "chosen-model"}
+	if err := act(captypes.SaveWebSearchRoute, captypes.ScopeWorkspace, responses); err == nil {
+		t.Fatal("workspace could add a Web MCP search method")
 	}
-	for _, choice := range []captypes.WebSearchFallback{selected, nil} {
-		if err := save(captypes.ScopeApplication, choice); err != nil {
-			t.Fatal(err)
-		}
+	// Support comes from each account's protocol declaration, not its host.
+	if err := act(captypes.SaveWebSearchRoute, captypes.ScopeApplication, captypes.WebSearchRoute{ID: "r9", Account: "chat", Model: "m"}); err == nil {
+		t.Fatal("a protocol without native search became a search method")
+	}
+	if err := act(captypes.SaveWebSearchRoute, captypes.ScopeApplication, captypes.WebSearchRoute{ID: "r8", Account: "search"}); err == nil {
+		t.Fatal("a model search method saved without a model")
+	}
+	check := func(want []captypes.WebSearchRoute) {
+		t.Helper()
 		after := FileConfigToAppSettings(LoadFileConfig()).Capabilities
-		if !slices.Equal(after.WebSearchFallback, choice) || after.Connections[ordinary.ID].URL != ordinary.URL || !after.Connections[ordinary.ID].Disabled {
-			t.Fatal("disk did not retain the exact choice and neighboring connection")
+		if !slices.Equal(after.WebSearchRoutes, want) || after.Connections[ordinary.ID].URL != ordinary.URL || !after.Connections[ordinary.ID].Disabled {
+			t.Fatalf("disk did not retain the exact methods and neighboring connection: %+v", after.WebSearchRoutes)
 		}
 		var fetched coreprotocol.SettingsFetchResult
 		if err := client.Call(t.Context(), attached.WorkspaceID, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &fetched); err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(fetched.Effective.Capabilities.WebSearchFallback, choice) || strings.Contains(string(fetched.Overrides.Capabilities), "web_search_fallback") {
-			t.Fatal("workspace did not inherit the committed Web MCP choice passively")
+		if !slices.Equal(fetched.Effective.Capabilities.WebSearchRoutes, want) || strings.Contains(string(fetched.Overrides.Capabilities), "web_search_routes") {
+			t.Fatal("workspace did not inherit the committed search methods passively")
 		}
 	}
+	if err := act(captypes.SaveWebSearchRoute, captypes.ScopeApplication, responses); err != nil {
+		t.Fatal(err)
+	}
+	// An endpoint protocol never stores a model, even when a client sends one.
+	if err := act(captypes.SaveWebSearchRoute, captypes.ScopeApplication, captypes.WebSearchRoute{ID: "r2", Account: "ollama", Model: "ignored"}); err != nil {
+		t.Fatal(err)
+	}
+	ollama := captypes.WebSearchRoute{ID: "r2", Account: "ollama"}
+	check([]captypes.WebSearchRoute{responses, ollama})
+	if err := act(captypes.SaveWebSearchRoute, captypes.ScopeApplication, captypes.WebSearchRoute{ID: "r3", Account: "ollama"}); err == nil {
+		t.Fatal("the same account and model became two search methods")
+	}
+	responses.Disabled = true
+	if err := act(captypes.SaveWebSearchRoute, captypes.ScopeApplication, responses); err != nil {
+		t.Fatal(err)
+	}
+	check([]captypes.WebSearchRoute{responses, ollama})
+	for _, route := range []captypes.WebSearchRoute{responses, ollama} {
+		if err := act(captypes.RemoveWebSearchRoute, captypes.ScopeApplication, captypes.WebSearchRoute{ID: route.ID, Account: route.Account}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check(nil)
 }

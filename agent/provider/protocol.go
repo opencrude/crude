@@ -51,6 +51,11 @@ type ProtocolInfo struct {
 	// against the account's API base with RFC 3986 rules (so "../v1/x"
 	// leaves the protocol's own root). Empty means no decision endpoint.
 	DecisionPath string
+	// WebSearch declares where the protocol serves native web search.
+	WebSearch WebSearchKind
+	// WebSearchPath is used only for WebSearchEndpoint. It is resolved against
+	// the account's API base with the same RFC 3986 rules as DecisionPath.
+	WebSearchPath string
 	// ListsDecisionModels is true when the model listing marks decision
 	// models. Only then can an Automatic model type find one.
 	ListsDecisionModels bool
@@ -151,6 +156,24 @@ type Protocol interface {
 // (models/{model}:streamGenerateContent). Other protocols use ChatPath.
 type ChatEndpoint interface {
 	ChatURL(base *url.URL, model string, stream bool) *url.URL
+}
+
+// WebSearchKind describes how the protocol serves a native search.
+type WebSearchKind int
+
+const (
+	WebSearchNone WebSearchKind = iota
+	// WebSearchEndpoint searches the account's WebSearchPath without a model.
+	WebSearchEndpoint
+	// WebSearchTool calls a hosted search tool on a model's chat endpoint.
+	WebSearchTool
+)
+
+// WebSearchCodec encodes a fixed native search request and decodes its source
+// evidence. Errors must not repeat any response body content.
+type WebSearchCodec interface {
+	EncodeWebSearch(model, query string, limit int) map[string]any
+	DecodeWebSearch(body []byte, limit int) ([]WebSearchSource, error)
 }
 
 // NestedRequestExtras is implemented by protocols whose request extras

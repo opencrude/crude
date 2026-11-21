@@ -31,9 +31,33 @@ func (s *OllamaStandard) Info() ProtocolInfo {
 		// System One is served under /v1 beside the native /api root, for
 		// both a local daemon and Ollama's cloud.
 		DecisionPath:        "../v1/systemone",
+		WebSearch:           WebSearchEndpoint,
+		WebSearchPath:       "web_search",
 		ListsDecisionModels: true,
 		Streaming:           FramingNDJSON,
 	}
+}
+
+func (s *OllamaStandard) EncodeWebSearch(_, query string, limit int) map[string]any {
+	return map[string]any{"query": query, "max_results": limit}
+}
+
+func (s *OllamaStandard) DecodeWebSearch(body []byte, limit int) ([]WebSearchSource, error) {
+	var response struct {
+		Results []struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			Content string `json:"content"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil || response.Results == nil {
+		return nil, errWebSearchRead
+	}
+	sources := make([]WebSearchSource, 0, len(response.Results))
+	for _, row := range response.Results {
+		sources = append(sources, WebSearchSource{URL: row.URL, Title: row.Title, Snippet: row.Content})
+	}
+	return checkedWebSearchSources(sources, limit)
 }
 
 func (s *OllamaStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {

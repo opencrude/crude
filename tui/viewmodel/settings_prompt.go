@@ -85,6 +85,11 @@ func (m *App) showSettingsPrompt(msg settingsui.PromptMsg) {
 		spec.Detail = "Authored files, other workspaces and completed effects are not deleted. " + msg.Label
 		spec.Severity = ui.ConfirmPromptDanger
 		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Remove", ActionID: ui.ConfirmActionYes}, {Label: "Keep", ActionID: ui.ConfirmActionCancel}}
+	case settingsui.PromptRemoveSearchMethod:
+		spec.Title, spec.Question = "Remove search method", "Remove this search method?"
+		spec.Detail = fmt.Sprintf("Crude stops sending web searches to %s. The account does not change.", msg.Label)
+		spec.Severity = ui.ConfirmPromptDanger
+		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Remove method", ActionID: ui.ConfirmActionYes}, {Label: "Keep method", ActionID: ui.ConfirmActionCancel}}
 	case settingsui.PromptRevokeRemoteDevice:
 		spec.Title, spec.Question = "Revoke remote device", "Revoke this device's access?"
 		spec.Detail = fmt.Sprintf("Device %q will be disconnected and cannot reconnect without pairing again.", msg.Label)
@@ -152,6 +157,10 @@ func (m *App) activateSettingsPrompt(choice int) tea.Cmd {
 	case settingsui.PromptRemoveCapability:
 		if state.request.CapabilityAction != nil {
 			result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.capability.confirm-remove", Payload: *state.request.CapabilityAction})
+		}
+	case settingsui.PromptRemoveSearchMethod:
+		if state.request.CapabilityAction != nil {
+			result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.capability.confirm-remove-route", Payload: *state.request.CapabilityAction})
 		}
 	case settingsui.PromptRevokeRemoteDevice:
 		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.remote.confirm-revoke", Payload: state.request.ID})

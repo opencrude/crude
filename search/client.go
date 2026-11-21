@@ -31,10 +31,8 @@ const operationTimeout = 24 * time.Second
 // URL. An empty result means the provider is not configured.
 type Lookup func(name string) string
 
-// Client runs web search and fetch through the providers its lookup configures.
-// Keyed providers are tried in quality order and the keyless engines are the
-// fallback, so search keeps working when a key is missing, revoked or rate
-// limited.
+// Client runs web search and fetch. Search races configured providers with
+// free engines and any other methods supplied for the query.
 type Client struct {
 	// resultBudget bounds one returned result after JSON encoding; 0 is
 	// unbounded.
@@ -42,7 +40,7 @@ type Client struct {
 	lookup       Lookup
 	pages        *pageCache
 	endpoints    endpoints
-	keyless      func(context.Context, string, int) ([]SearchResult, []string, map[string]string)
+	keyless      []Method
 	fetchMu      sync.Mutex
 	fetching     map[string]*pageFlight
 }
@@ -64,44 +62,43 @@ func New(lookup Lookup) *Client {
 	if lookup == nil {
 		lookup = func(string) string { return "" }
 	}
-	return &Client{lookup: lookup, pages: newPageCache(pageCacheBytes), endpoints: defaultEndpoints, keyless: keylessSearch}
+	return &Client{lookup: lookup, pages: newPageCache(pageCacheBytes), endpoints: defaultEndpoints, keyless: keylessMethods()}
 }
 
-type keyedEngine struct {
-	name   string
-	search func(context.Context, string, int) ([]SearchResult, error)
+// Method is one independent search route raced with the others.
+type Method struct {
+	Name string
+	// Configured methods (provider keys and account routes) are awaited until
+	// they finish or the shared deadline passes. Free engines contribute only
+	// what arrives in time.
+	Configured bool
+	Search     func(ctx context.Context, query string, limit int) ([]SearchResult, error)
 }
-
-// ModelFallback is one explicitly selected, independent search route. It
-// returns provider-attributed search evidence, not a model's generated answer.
-type ModelFallback func(ctx context.Context, query string, limit int) (results []SearchResult, source string, err error)
 
 // ProvidersFailed distinguishes an outage from a search that completed empty.
 type ProvidersFailed struct{ detail string }
 
 func (err *ProvidersFailed) Error() string { return err.detail }
 
-// keyedEngines returns the configured paid/self-hosted providers in quality
-// order. Each costs money or quota per query, so they are tried one at a time.
-func (client *Client) keyedEngines() []keyedEngine {
-	var engines []keyedEngine
+func (client *Client) keyedEngines() []Method {
+	var engines []Method
 	if key := client.lookup("EXA_API_KEY"); key != "" {
-		engines = append(engines, keyedEngine{"exa", func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+		engines = append(engines, Method{Name: "exa", Configured: true, Search: func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 			return exaSearch(ctx, client.endpoints.exa, key, query, limit)
 		}})
 	}
 	if key := client.lookup("BRAVE_SEARCH_API_KEY"); key != "" {
-		engines = append(engines, keyedEngine{"brave-api", func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+		engines = append(engines, Method{Name: "brave-api", Configured: true, Search: func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 			return braveAPISearch(ctx, client.endpoints.brave, key, query, limit)
 		}})
 	}
 	if key := client.lookup("TAVILY_API_KEY"); key != "" {
-		engines = append(engines, keyedEngine{"tavily", func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+		engines = append(engines, Method{Name: "tavily", Configured: true, Search: func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 			return tavilySearch(ctx, client.endpoints.tavily, key, query, limit)
 		}})
 	}
 	if base := client.lookup("SEARXNG_URL"); base != "" {
-		engines = append(engines, keyedEngine{"searxng", func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+		engines = append(engines, Method{Name: "searxng", Configured: true, Search: func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 			return searxngSearch(ctx, base, query, limit)
 		}})
 	}
@@ -110,14 +107,12 @@ func (client *Client) keyedEngines() []keyedEngine {
 
 // Search returns formatted results for query.
 func (client *Client) Search(ctx context.Context, query string, limit int) (string, error) {
-	return client.SearchWithModelFallback(ctx, query, limit, nil)
+	return client.SearchWith(ctx, query, limit, nil)
 }
 
-// SearchWithModelFallback shares one deadline across primary and model search.
-// A model may run only if no ordinary provider completed the search.
-func (client *Client) SearchWithModelFallback(parent context.Context, query string, limit int, model ModelFallback) (string, error) {
-	ctx, cancel := context.WithTimeout(parent, operationTimeout)
-	defer cancel()
+// SearchWith races all search methods under one deadline and ranks results by
+// agreement across independent methods.
+func (client *Client) SearchWith(ctx context.Context, query string, limit int, extra []Method) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -130,104 +125,30 @@ func (client *Client) SearchWithModelFallback(parent context.Context, query stri
 	}
 	limit = min(limit, 10)
 	start := time.Now()
-	failed := make(map[string]string)
-	var completed []string
-	engines := client.keyedEngines()
-	deadline, _ := ctx.Deadline()
-	providerDeadline := deadline
-	if model != nil {
-		providerDeadline = deadline.Add(-min(8*time.Second, max(0, time.Until(deadline)/2)))
-	}
-	// Preserve a keyless fallback even when every configured key is unusable.
-	keyedDeadline := providerDeadline.Add(-min(8*time.Second, max(0, time.Until(providerDeadline)/2)))
-	for index, engine := range engines {
-		budget := time.Until(keyedDeadline) / time.Duration(len(engines)-index)
-		if budget <= 0 {
-			break
-		}
-		attempt, stop := context.WithTimeout(ctx, min(8*time.Second, budget))
-		results, err := engine.search(attempt, query, limit)
-		stop()
-		if err := parent.Err(); err != nil {
-			return "", err
-		}
-		if err != nil {
-			failed[engine.name] = err.Error()
-			logIf(func(lg *logger.Logger) {
-				lg.Warn("SEARCH", "engine_failed", "engine", engine.name, "error", err.Error())
-			})
-			continue
-		}
-		if results = deduplicateResults(results, limit); len(results) > 0 {
-			logIf(func(lg *logger.Logger) {
-				lg.Info("SEARCH", "search_ok", "engine", engine.name, "results", len(results), "latency_ms", time.Since(start).Milliseconds())
-			})
-			return formatResults(query, results, []string{engine.name}, failed), nil
-		}
-		completed = append(completed, engine.name)
-	}
-	fallback, stop := context.WithDeadline(ctx, time.Now().Add(min(8*time.Second, time.Until(providerDeadline))))
-	results, succeeded, keylessFailed := client.keyless(fallback, query, limit)
-	stop()
-	if err := parent.Err(); err != nil {
+	methods := append(client.keyedEngines(), extra...)
+	methods = append(methods, client.keyless...)
+	results, succeeded, failed := runSearch(ctx, methods, query, limit)
+	if err := ctx.Err(); err != nil {
 		return "", err
-	}
-	for name, reason := range keylessFailed {
-		failed[name] = reason
-	}
-	succeeded = append(completed, succeeded...)
-	for _, name := range succeeded {
-		delete(failed, name)
 	}
 	logIf(func(lg *logger.Logger) {
 		lg.Info("SEARCH", "search_done", "results", len(results), "engines", len(succeeded), "latency_ms", time.Since(start).Milliseconds())
 	})
+	sort.SliceStable(failed, func(i, j int) bool { return failed[i].name < failed[j].name })
 	if len(results) == 0 {
-		if len(succeeded) > 0 {
-			return noResults(query, succeeded, failed), nil
-		}
-		if len(failed) == 0 {
-			failed["search"] = "provider requests did not complete before the search deadline"
-		}
 		detail := noResults(query, succeeded, failed)
-		if model != nil && ctx.Err() == nil {
-			modelResults, source, err := model(ctx, query, limit)
-			if parent.Err() != nil {
-				return "", parent.Err()
-			}
-			if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
-				detail += "\nModel fallback timed out."
-			} else if errors.Is(err, context.Canceled) {
-				return "", err
-			} else if err != nil {
-				detail += "\nModel fallback failed: " + err.Error()
-			} else if verified := deduplicateResults(modelResults, limit); len(verified) > 0 {
-				return formatResults(query, verified, []string{source}, failed), nil
-			} else if len(modelResults) == 0 {
-				return noResults(query, []string{source}, failed), nil
-			} else {
-				detail += "\nModel fallback returned no usable sources."
-			}
+		if len(succeeded) == 0 {
+			return "", &ProvidersFailed{detail: detail}
 		}
-		return "", &ProvidersFailed{detail: detail}
+		return detail, nil
 	}
 	return formatResults(query, results, succeeded, failed), nil
 }
 
-func formatResults(query string, results []SearchResult, succeeded []string, failed map[string]string) string {
+func formatResults(query string, results []SearchResult, succeeded []string, failed []methodFailure) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Web search results for: %s\n", query)
-	if len(succeeded) > 0 {
-		fmt.Fprintf(&sb, "(Sources: %s)\n", strings.Join(succeeded, ", "))
-	}
-	if len(failed) > 0 {
-		names := make([]string, 0, len(failed))
-		for name := range failed {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		fmt.Fprintf(&sb, "(Unavailable: %s)\n", strings.Join(names, ", "))
-	}
+	writeSearchMethods(&sb, succeeded, failed)
 	sb.WriteString("\n")
 	for i, r := range results {
 		fmt.Fprintf(&sb, "%d. %s\n   %s\n", i+1, r.Title, r.URL)
@@ -243,24 +164,33 @@ func formatResults(query string, results []SearchResult, succeeded []string, fai
 	return strings.TrimRight(sb.String(), "\n")
 }
 
-func noResults(query string, succeeded []string, failed map[string]string) string {
+func noResults(query string, succeeded []string, failed []methodFailure) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "No results found for: %s\n\n", query)
+	fmt.Fprintf(&sb, "No results found for: %s\n", query)
 	if len(succeeded) == 0 && len(failed) > 0 {
-		names := make([]string, 0, len(failed))
-		for name := range failed {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		sb.WriteString("Every search provider failed:\n")
-		for _, name := range names {
-			fmt.Fprintf(&sb, "  - %s: %s\n", name, failed[name])
+		sb.WriteString("\nEvery search provider failed:\n")
+		for _, failure := range failed {
+			fmt.Fprintf(&sb, "  - %s: %s\n", failure.name, failure.reason)
 		}
 		sb.WriteString("\nRetry in a moment, try a simpler query, or use web_fetch on a URL you already know.")
 		return sb.String()
 	}
-	sb.WriteString("Try different or more specific keywords, remove quotes or operators, or search a related topic.")
+	writeSearchMethods(&sb, succeeded, failed)
+	sb.WriteString("\nTry different or more specific keywords, remove quotes or operators, or search a related topic.")
 	return sb.String()
+}
+
+func writeSearchMethods(sb *strings.Builder, succeeded []string, failed []methodFailure) {
+	if len(succeeded) > 0 {
+		fmt.Fprintf(sb, "(Sources: %s)\n", strings.Join(succeeded, ", "))
+	}
+	if len(failed) > 0 {
+		names := make([]string, 0, len(failed))
+		for _, failure := range failed {
+			names = append(names, failure.name)
+		}
+		fmt.Fprintf(sb, "(Unavailable: %s)\n", strings.Join(names, ", "))
+	}
 }
 
 // postJSON sends one provider request and decodes a bounded JSON response.

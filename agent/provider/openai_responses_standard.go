@@ -26,6 +26,7 @@ func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
 		ChatPath:     "responses",
 		ModelsPath:   "models",
 		DecisionPath: "decisions",
+		WebSearch:    WebSearchTool,
 		Streaming:    FramingSSE,
 		Options: ProtocolOptions{
 			Store:               true,
@@ -37,6 +38,87 @@ func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
 			ServiceTiers:        []string{"auto", "default", "flex", "priority", "fast", "ultrafast"},
 		},
 	}
+}
+
+func (s *OpenAIResponsesStandard) EncodeWebSearch(model, query string, _ int) map[string]any {
+	return map[string]any{
+		"model": model, "input": query, "store": false,
+		"tools":             []map[string]string{{"type": "web_search", "search_context_size": "low"}},
+		"tool_choice":       map[string]string{"type": "web_search"},
+		"include":           []string{"web_search_call.action.sources"},
+		"max_tool_calls":    1,
+		"max_output_tokens": 1024,
+	}
+}
+
+func (s *OpenAIResponsesStandard) DecodeWebSearch(body []byte, limit int) ([]WebSearchSource, error) {
+	var response struct {
+		Status            string                  `json:"status"`
+		Error             *struct{}               `json:"error"`
+		IncompleteDetails openAIIncompleteDetails `json:"incomplete_details"`
+		Output            []struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+			Action struct {
+				Type    string `json:"type"`
+				Sources []struct {
+					Type string `json:"type"`
+					URL  string `json:"url"`
+				} `json:"sources"`
+			} `json:"action"`
+			Content []struct {
+				Type        string `json:"type"`
+				Annotations []struct {
+					Type  string `json:"type"`
+					URL   string `json:"url"`
+					Title string `json:"title"`
+				} `json:"annotations"`
+			} `json:"content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, errWebSearchRead
+	}
+	// A capped generated answer does not invalidate already completed search
+	// evidence. Other incomplete, failed or unknown responses do.
+	if response.Error != nil || (response.Status != "completed" &&
+		(response.Status != "incomplete" || response.IncompleteDetails.Reason != "max_output_tokens")) {
+		return nil, errWebSearchNoSources
+	}
+	titles := make(map[string]string)
+	for _, output := range response.Output {
+		if output.Type != "message" {
+			continue
+		}
+		for _, part := range output.Content {
+			if part.Type != "output_text" {
+				continue
+			}
+			for _, annotation := range part.Annotations {
+				if annotation.Type == "url_citation" {
+					titles[annotation.URL] = annotation.Title
+				}
+			}
+		}
+	}
+	var sources []WebSearchSource
+	observed, hadEntries := false, false
+	for _, output := range response.Output {
+		if output.Type != "web_search_call" || output.Status != "completed" ||
+			output.Action.Type != "search" || output.Action.Sources == nil {
+			continue
+		}
+		observed, hadEntries = true, hadEntries || len(output.Action.Sources) != 0
+		for _, source := range output.Action.Sources {
+			if source.Type == "url" {
+				sources = append(sources, WebSearchSource{URL: source.URL, Title: titles[source.URL]})
+			}
+		}
+	}
+	if !observed || (hadEntries && len(sources) == 0) {
+		return nil, errWebSearchNoSources
+	}
+	return checkedWebSearchSources(sources, limit)
 }
 
 func (s *OpenAIResponsesStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {

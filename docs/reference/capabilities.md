@@ -106,34 +106,52 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   be turned off per session (`/mcps`), disabled in Settings, or replaced by any
   other MCP server. Per-tool switches use the connection's grants
   (`Disabled`). Built-ins can be disabled but not removed.
-- Search tries configured providers one at a time in quality order (Exa,
-  Brave Search API, Tavily, SearXNG), then the keyless engines in parallel, so
-  a missing, revoked or rate-limited key never stops search. Provider attempts
-  share a 24-second operation budget inside the ordinary MCP call, reserving
-  fallback time. Keyless search returns once enough unique destinations arrive
-  (or 150 ms after its first partial answer), cancelling and joining remaining
-  requests; a stalled provider cannot hold useful results hostage. Exa's public
-  endpoint uses the shared MCP SDK rather than a second JSON/SSE parser.
-  Total provider failure is an error, distinct from a completed empty search.
-  A completed empty result from any ordinary engine never starts a model.
-  Generic MCP failure projection retains the actual transport/error cause for
-  every connection, not a web-only exception.
-- **Application Settings → MCP → Web search and fetch → Model fallback** is
-  **Off** by default. The user can choose an existing API-key account on the
-  official OpenAI Responses API and one exact model that supports native
-  web search. Chat Completions, Codex/ChatGPT, compatible gateways, and other
-  providers are not supported. The choice stores only the account and model
-  IDs. It does not change the running agent's account or model, and it
-  does not add fields to external MCP connections.
-- When all ordinary engines fail, an already admitted `web_search` can send
-  its query to that pair once. It sends no transcript, files, other tool
-  arguments or custom request body. The call requests `store: false` and one
-  native search within the same 24-second budget. Results use only concrete
-  HTTP(S) URLs from the completed search's typed source records, not links
-  parsed from the generated answer. Charges can apply. Saves and observation
-  never start or replay inference. Built-in and session/tool disable still
-  apply. Only a genuine built-in search outage can offer a row link to
-  **Model fallback**; empty, cancelled, denied and disabled calls do not.
+- Every search method starts at the same time under one 24-second operation
+  deadline inside the ordinary MCP call: configured provider keys (Exa, Brave
+  Search API, Tavily, SearXNG), the user's account search methods and the
+  keyless engines (Brave, DuckDuckGo, Startpage, Exa's public MCP). Crude waits
+  for each configured method (keys and account methods) until it answers or
+  the deadline passes, keeping free-engine results that arrive meanwhile. When
+  every configured method has finished, still-running free engines get at most
+  150 ms more if a usable result exists. Without configured methods, the
+  keyless rule applies: return once enough unique destinations arrive, or
+  150 ms after the first partial answer. Every request is cancelled and joined
+  before the result returns; a stalled engine cannot hold useful results.
+  Exa's public endpoint uses the shared MCP SDK rather than a second JSON/SSE
+  parser.
+- Results merge by agreement with reciprocal rank fusion (k = 60) over each
+  method's deduplicated list (HTTP(S) only, host case and fragment ignored), so
+  a page that more methods found ranks above a single top hit. `(Sources: …)`
+  names the methods that answered, in completion order; `(Unavailable: …)`
+  names failed or late ones with their reasons. Total failure of every method
+  is an error with the `web_search_outage` result code; a completed empty
+  search is a normal "No results" answer. Generic MCP failure projection
+  retains the actual cause for every connection, not a web-only exception.
+- **Application Settings → MCP → Web search and fetch → Search methods** lists
+  account search methods (`capabilities.web_search_routes`, at most 8). Each
+  method stores a generated ID, an account ID, a model ID when the protocol
+  needs one, and an Off flag; never a secret. Support is read only from the
+  account's protocol declaration (`ProtocolInfo.WebSearch`), never from a host
+  or vendor list: Ollama declares an account endpoint (`WebSearchPath`
+  `web_search`, resolved against the account base like `DecisionPath`, no
+  model); OpenAI Responses, Anthropic Messages and Gemini declare a hosted
+  search tool on the chat endpoint and need a model. Codex, Chat Completions
+  and OAuth accounts cannot search. A workspace cannot add, change or redirect
+  search methods; Workspace Settings shows them read-only.
+- An account method sends only the query and result limit in one stateless
+  POST (no retry, redirect, replay header, extras, transcript or files;
+  `store: false` where the protocol has it). Results come only from typed
+  search records (Ollama `results`, Responses `web_search_call.action.sources`,
+  Anthropic `web_search_tool_result`, Gemini `groundingMetadata`), never from
+  links in generated prose; a reply without search records is a failure, not
+  an empty success, because some gateways accept a search tool and do not
+  search. Charges can apply. **Test** runs one search with a fixed query and
+  saves nothing. The latest outcome of each method (working, sources, latency
+  or a short reason) is kept in memory per account and model and shown in the
+  list; caller cancellation records nothing. Saves and observation never start
+  a search. Built-in and session/tool disable still apply. Only a total outage
+  offers a row link to **Search methods**; empty, cancelled, denied and
+  disabled calls do not.
 - `web_fetch` pages
   results (32,768 characters by default, the `read_async_output` page) with an
   offset to continue, serves later pages from a bounded per-connection cache,

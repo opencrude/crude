@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"crude/agent/capability"
+	"crude/agent/provider"
 	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
@@ -101,5 +102,56 @@ func TestControlCapabilitiesManageSecretsAndConnectionsWithoutRevealingValues(t 
 	got = ws.AppDefaults().Capabilities.Connections["docs"]
 	if renamed.State != control.Committed || got.Name != "Team docs" || got.URL != "https://mcp.example.com/mcp" || got.SecretRefs["Authorization"] != "secret:DOCS_TOKEN" {
 		t.Fatalf("partial edit lost stored fields: %+v %+v", renamed, got)
+	}
+}
+
+func TestControlCapabilitiesManageSearchMethods(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	defer ws.Close()
+	app := types.AppSettings{Accounts: map[string]provider.Account{
+		"oc":   {ID: "oc", Label: "OC", APIKey: "fixture-key", ProviderID: "ollama-cloud", Connection: provider.Template{APIStandard: "ollama", ProviderURL: "https://ollama.example/api"}},
+		"chat": {ID: "chat", Label: "Chat", APIKey: "fixture-key", ProviderID: "custom", Connection: provider.Template{APIStandard: "openai", ProviderURL: "https://chat.example/v1"}},
+	}}
+	app.Capabilities = captypes.WithDefaults(app.Capabilities)
+	ws.SetAppDefaults(app)
+	service, err := capability.New(ws.RootPath, filepath.Join(t.TempDir(), "artifacts"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.Capabilities = service
+	if err := service.Configure(context.Background(), ws.LoadAppSettings().Capabilities); err != nil {
+		t.Fatal(err)
+	}
+	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+		next := ws.AppDefaults()
+		err := types.ApplySettingsEdits(&next, edits)
+		return next, err
+	}
+	a := &actor{ws: ws}
+	if refused := runCapabilityControl(t, a, "chat", "capabilities.save_search_method", map[string]any{"account": "chat", "model": "m"}); refused.Fault == nil ||
+		!strings.Contains(refused.Fault.Message, "cannot search the web") {
+		t.Fatalf("a protocol without native search became a method: %+v", refused)
+	}
+	added := runCapabilityControl(t, a, "add", "capabilities.save_search_method", map[string]any{"account": "oc", "model": "ignored"})
+	routes := ws.AppDefaults().Capabilities.WebSearchRoutes
+	if added.State != control.Committed || len(routes) != 1 || routes[0].Account != "oc" || routes[0].Model != "" || routes[0].Disabled || routes[0].ID == "" {
+		t.Fatalf("add=%+v routes=%+v", added, routes)
+	}
+	off := runCapabilityControl(t, a, "off", "capabilities.save_search_method", map[string]any{"id": routes[0].ID, "enabled": false})
+	if off.State != control.Committed || !ws.AppDefaults().Capabilities.WebSearchRoutes[0].Disabled || ws.AppDefaults().Capabilities.WebSearchRoutes[0].Account != "oc" {
+		t.Fatalf("partial edit lost the account or did not turn the method off: %+v %+v", off, ws.AppDefaults().Capabilities.WebSearchRoutes)
+	}
+	var view CapabilityControlView
+	inspect := runCapabilityControl(t, a, "inspect", "capabilities.inspect", map[string]any{})
+	if err := json.Unmarshal(inspect.Output, &view); err != nil || len(view.SearchMethods) != 1 || view.SearchMethods[0].Enabled ||
+		view.SearchMethods[0].LastResult != "not checked yet" {
+		t.Fatalf("inspect does not list the method: %+v %v", view.SearchMethods, err)
+	}
+	if missing := runCapabilityControl(t, a, "missing", "capabilities.remove_search_method", map[string]any{"id": "nope"}); missing.Fault == nil {
+		t.Fatal("removing an unknown method succeeded")
+	}
+	removed := runCapabilityControl(t, a, "remove", "capabilities.remove_search_method", map[string]any{"id": routes[0].ID})
+	if removed.State != control.Committed || len(ws.AppDefaults().Capabilities.WebSearchRoutes) != 0 {
+		t.Fatalf("remove=%+v routes=%+v", removed, ws.AppDefaults().Capabilities.WebSearchRoutes)
 	}
 }

@@ -43,7 +43,11 @@ MCP connections and their secrets are agent-manageable for the user through
 `capabilities.remove_secret` (delete), `capabilities.set_enabled` and
 `capabilities.set_tool_enabled` (write), `capabilities.save_connection`
 (execute, since it can define a local launch) and
-`capabilities.remove_connection` (delete). They run through the same owner as
+`capabilities.remove_connection` (delete). The built-in web search's account
+search methods use `capabilities.save_search_method` (write),
+`capabilities.remove_search_method` (delete) and
+`capabilities.test_search_method` (execute, since it sends one query to the
+account); `capabilities.inspect` lists them with their last result. They run through the same owner as
 Settings, follow the session's Manual/Auto Review/YOLO policy, never return
 secret values, and mask secret, authorization, header and environment values
 in approval prompts. Enabling an external server's tool for the first time

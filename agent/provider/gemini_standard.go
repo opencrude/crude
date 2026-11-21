@@ -28,6 +28,7 @@ func (s *GeminiStandard) Info() ProtocolInfo {
 		ChatPath:            "models",
 		ModelsPath:          "models",
 		DecisionPath:        "decisions",
+		WebSearch:           WebSearchTool,
 		ListsDecisionModels: true,
 		Streaming:           FramingSSE,
 		Options: ProtocolOptions{
@@ -35,6 +36,46 @@ func (s *GeminiStandard) Info() ProtocolInfo {
 			ServiceTiers:       []string{"standard", "flex", "priority"},
 		},
 	}
+}
+
+func (s *GeminiStandard) EncodeWebSearch(_ string, query string, _ int) map[string]any {
+	return map[string]any{
+		"contents":         []geminiContent{{Role: "user", Parts: []any{map[string]string{"text": query}}}},
+		"tools":            []map[string]any{{"google_search": map[string]any{}}},
+		"generationConfig": map[string]int{"maxOutputTokens": 1024},
+	}
+}
+
+func (s *GeminiStandard) DecodeWebSearch(body []byte, limit int) ([]WebSearchSource, error) {
+	var response struct {
+		Candidates []struct {
+			Grounding struct {
+				Chunks []struct {
+					Web *struct {
+						URI   string `json:"uri"`
+						Title string `json:"title"`
+					} `json:"web"`
+				} `json:"groundingChunks"`
+			} `json:"groundingMetadata"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, errWebSearchRead
+	}
+	var sources []WebSearchSource
+	for _, candidate := range response.Candidates {
+		for _, chunk := range candidate.Grounding.Chunks {
+			if chunk.Web != nil {
+				// Keep the URI as given, including a redirect URL. A search
+				// issues only one request and does not fetch its results.
+				sources = append(sources, WebSearchSource{URL: chunk.Web.URI, Title: chunk.Web.Title})
+			}
+		}
+	}
+	if len(sources) == 0 {
+		return nil, errWebSearchNoSources
+	}
+	return checkedWebSearchSources(sources, limit)
 }
 
 // ChatURL implements ChatEndpoint: models/{model}:streamGenerateContent?alt=sse

@@ -180,21 +180,34 @@ are text-only. Sampling, elicitation, task extensions, rich MCP apps and optiona
 remote UI channels are unsupported and not advertised. Resume starts no connection,
 download, update or tool replay.
 
-### Model fallback for web search
+### Search methods for web search
 
-Open **Application Settings → MCP → Web search and fetch → Manage → Model
-fallback**. Leave it **Off** to use only the usual search providers. To allow a
-backup search, choose an existing OpenAI Responses account and a model that
-supports [OpenAI's native web search](https://developers.openai.com/api/docs/guides/tools-web-search).
-Use an API key for `https://api.openai.com/v1`. Choose a model in the list or
-enter its exact ID. Choose **Save fallback**. You can return here to choose
-**Off**. Workspace Settings shows the application choice without changing it.
+Open **Application Settings → MCP → Web search and fetch → Search methods**.
+Crude always searches with free engines and with the provider keys you add in
+**Edit provider keys**. Add a method to also search with an account you already
+use. Choose **Add method**, then:
 
-If all usual providers fail, Crude can send the query to this account once.
-Charges can apply. Crude does not send the conversation or change the agent's
-model. A provider that completed with no matches does not trigger fallback.
-A failed search can show a **Set up a search fallback** link on its row. Opening
-the link or saving a choice does not repeat the search.
+- **Use this method**: On or Off. A method that is Off stays in the list but
+  does not search.
+- **Account**: only accounts whose protocol can search the web are listed.
+  Accounts that use the Ollama protocol search with the account alone, so
+  **Model** shows **Not used**. OpenAI Responses, Anthropic and Gemini accounts
+  search through a model.
+- **Model**: choose a model from the account's list or enter its exact ID.
+  Choose a model that can search the web.
+
+Choose **Test** to run one search and see the result, then **Save method**.
+Add more methods to improve results: every method that is on runs with each
+search, and pages that more methods find rank first. Charges can apply. Each
+row shows the last result, for example **On · Working · 1.4 s** or
+**On · Failed**; select a row to read the reason. Use **Edit**, **Test** and
+**Remove** on the selected row. Workspace Settings shows the methods without
+changing them.
+
+Crude sends only the query to each account. It does not send the conversation
+or change the agent's model. A failed search can show a **Set up search
+methods** link on its row. Opening the link or saving a method does not repeat
+the search.
 
 ## Host locality and external computer-use
 

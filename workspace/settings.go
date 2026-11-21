@@ -26,16 +26,13 @@ func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
 	ttypes.ApplyAppDefaults(&s)
 	s.Analysis = ttypes.DefaultWorkspaceAnalysisSettings()
 	s.Prediction = ttypes.DefaultWorkspacePredictionSettings()
-	fallbackChanged := !slices.Equal(w.appDefaults.Capabilities.WebSearchFallback, s.Capabilities.WebSearchFallback)
+	routesChanged := !slices.Equal(w.appDefaults.Capabilities.WebSearchRoutes, s.Capabilities.WebSearchRoutes)
 	w.appDefaults = ttypes.CloneAppSettings(s)
-	if fallbackChanged {
-		// The application publishes this opt-in to every retained workspace.
-		// Updating it must not reconfigure transports or inspect skill files.
-		w.capabilityMu.RLock()
-		if w.Capabilities != nil {
-			w.Capabilities.SetPublishedWebSearchFallback(s.Capabilities.WebSearchFallback)
-		}
-		w.capabilityMu.RUnlock()
+	if routesChanged {
+		// The application publishes its search methods to every retained
+		// workspace. Updating them must not reconfigure transports or inspect
+		// skill files.
+		w.publishWebSearchRoutes(s.Capabilities.WebSearchRoutes)
 	}
 	w.applyEffectiveSettings()
 }

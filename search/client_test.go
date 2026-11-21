@@ -3,29 +3,49 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 func lookupOf(values map[string]string) Lookup {
 	return func(name string) string { return values[name] }
 }
 
-func TestSearchPrefersKeyedProviderAndFallsBackInOrder(t *testing.T) {
+func TestSearchRacesKeyedAndFreeProviders(t *testing.T) {
 	var exaCalls, braveCalls atomic.Int32
+	exaStarted, braveStarted, freeStarted := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/exa/search"):
 			exaCalls.Add(1)
+			close(exaStarted)
 			if r.Header.Get("x-api-key") != "exa-key" {
 				t.Errorf("exa key header=%q", r.Header.Get("x-api-key"))
+			}
+			for _, started := range []chan struct{}{braveStarted, freeStarted} {
+				select {
+				case <-started:
+				case <-r.Context().Done():
+					t.Error("another provider did not start while Exa was running")
+					return
+				}
 			}
 			w.WriteHeader(http.StatusTooManyRequests)
 		case strings.HasPrefix(r.URL.Path, "/brave/res/v1/web/search"):
 			braveCalls.Add(1)
+			close(braveStarted)
+			select {
+			case <-exaStarted:
+			case <-r.Context().Done():
+				t.Error("Exa did not start while Brave was running")
+				return
+			}
 			if r.Header.Get("X-Subscription-Token") != "brave-key" || r.URL.Query().Get("q") != "go generics" {
 				t.Errorf("brave request=%v %v", r.Header, r.URL)
 			}
@@ -39,18 +59,20 @@ func TestSearchPrefersKeyedProviderAndFallsBackInOrder(t *testing.T) {
 	defer server.Close()
 	client := New(lookupOf(map[string]string{"EXA_API_KEY": "exa-key", "BRAVE_SEARCH_API_KEY": "brave-key"}))
 	client.endpoints = endpoints{exa: server.URL + "/exa", brave: server.URL + "/brave"}
-	client.keyless = func(context.Context, string, int) ([]SearchResult, []string, map[string]string) {
-		t.Error("keyless engines must not run when a keyed provider answered")
-		return nil, nil, nil
-	}
-	text, err := client.Search(t.Context(), "go generics", 5)
+	client.keyless = []Method{{Name: "free", Search: func(context.Context, string, int) ([]SearchResult, error) {
+		close(freeStarted)
+		return []SearchResult{{Title: "Language specification", URL: "https://go.dev/ref/spec"}}, nil
+	}}}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	text, err := client.Search(ctx, "go generics", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if exaCalls.Load() != 1 || braveCalls.Load() != 1 {
 		t.Fatalf("calls exa=%d brave=%d", exaCalls.Load(), braveCalls.Load())
 	}
-	for _, want := range []string{"Sources: brave-api", "Unavailable: exa", "https://go.dev/doc/tutorial/generics", "Tutorial"} {
+	for _, want := range []string{"(Sources: ", "free", "brave-api", "(Unavailable: exa)", "https://go.dev/doc/tutorial/generics", "Tutorial", "https://go.dev/ref/spec"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("result lacks %q:\n%s", want, text)
 		}
@@ -60,22 +82,110 @@ func TestSearchPrefersKeyedProviderAndFallsBackInOrder(t *testing.T) {
 	}
 }
 
-func TestSearchWithoutKeysUsesKeylessEnginesAndExplainsTotalFailure(t *testing.T) {
+func TestSearchExplainsEachFailure(t *testing.T) {
 	client := New(nil)
-	client.keyless = func(context.Context, string, int) ([]SearchResult, []string, map[string]string) {
-		return nil, nil, map[string]string{"duckduckgo": "HTTP 503"}
+	client.keyless = []Method{searchReply("duckduckgo", false, 0, nil, errors.New("HTTP 503"))}
+	extra := []Method{searchReply("Account Web", true, 0, nil, errors.New("quota reached"))}
+	text, err := client.SearchWith(t.Context(), "anything", 3, extra)
+	outage, ok := errors.AsType[*ProvidersFailed](err)
+	if text != "" || !ok {
+		t.Fatalf("provider outage must be a typed failure, got %q, %v", text, err)
 	}
-	_, err := client.Search(t.Context(), "anything", 3)
-	if err == nil {
-		t.Fatal("provider outage must be a tool failure, not a successful empty search")
-	}
-	text := err.Error()
-	if !strings.Contains(text, "Every search provider failed") || !strings.Contains(text, "duckduckgo: HTTP 503") {
-		t.Fatalf("failure text=%s", text)
+	for _, want := range []string{"Every search provider failed", "Account Web: quota reached", "duckduckgo: HTTP 503"} {
+		if !strings.Contains(outage.Error(), want) {
+			t.Fatalf("failure lacks %q: %v", want, outage)
+		}
 	}
 	if _, err := client.Search(t.Context(), "  ", 3); err == nil || !strings.Contains(err.Error(), "query is empty") {
 		t.Fatalf("empty query err=%v", err)
 	}
+}
+
+func TestSearchCompletedEmptyIsNotAnOutage(t *testing.T) {
+	client := New(nil)
+	client.keyless = []Method{searchReply("Free Engine", false, 0, nil, errors.New("HTTP 503"))}
+	extra := []Method{searchReply("Account Web", true, 0, []SearchResult{
+		{Title: "Invalid scheme", URL: "ftp://example.test/bad"},
+		{Title: "   ", URL: "https://example.test/no-title"},
+		{Title: "Credentials", URL: "https://user:password@example.test/bad"},
+	}, nil)}
+	text, err := client.SearchWith(t.Context(), "go", 5, extra)
+	if err != nil || !strings.Contains(text, "No results found for: go") ||
+		!strings.Contains(text, "(Sources: Account Web)") || !strings.Contains(text, "(Unavailable: Free Engine)") ||
+		strings.Contains(text, "Every search provider failed") || strings.Contains(text, "example.test") {
+		t.Fatalf("completed empty search = %q, %v", text, err)
+	}
+}
+
+func TestSearchAwaitsConfiguredMethodsAndFusesAgreement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		client := New(nil)
+		client.keyless = []Method{searchReply("Free Engine", false, 0, []SearchResult{
+			{Title: "Free rank one", URL: "https://example.test/solo"},
+			{Title: "Free name", URL: "https://EXAMPLE.test/shared#free", Description: "Useful description from the free engine."},
+		}, nil)}
+		extra := []Method{
+			searchReply("Account Two", true, 325*time.Millisecond, []SearchResult{
+				{Title: "Best shared title", URL: "https://example.test/shared#account", Description: " "},
+			}, nil),
+			searchReply("Account One", true, 300*time.Millisecond, []SearchResult{
+				{Title: "Account rank one", URL: "https://example.test/account"},
+			}, nil),
+		}
+		text, err := client.SearchWith(t.Context(), "go", 2, extra)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"(Sources: Free Engine, Account One, Account Two)",
+			"1. Best shared title\n   https://example.test/shared#account\n   Useful description from the free engine.",
+			"2. Free rank one",
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("result lacks %q:\n%s", want, text)
+			}
+		}
+		if strings.Contains(text, "Account rank one") || strings.Contains(text, "Free name") {
+			t.Fatalf("limit or deduplication failed:\n%s", text)
+		}
+	})
+}
+
+func TestSearchFusionUsesWholeDeduplicatedList(t *testing.T) {
+	client := New(nil)
+	client.keyless = nil
+	text, err := client.SearchWith(t.Context(), "go", 2, []Method{
+		searchReply("Page List A", true, 0, []SearchResult{
+			{Title: "A", URL: "https://example.test/A"},
+			{Title: "Duplicate A", URL: "https://EXAMPLE.test/A#duplicate"},
+			{Title: "Different case", URL: "https://example.test/a"},
+			{Title: "Shared", URL: "https://example.test/z"},
+		}, nil),
+		searchReply("Page List B", true, 0, []SearchResult{
+			{Title: "Case-sensitive resource", URL: "https://EXAMPLE.test/a#b"},
+			{Title: "B", URL: "https://example.test/B"},
+			{Title: "Shared", URL: "https://EXAMPLE.test/z#b"},
+		}, nil),
+	})
+	if err != nil || !strings.Contains(text, "1. Case-sensitive resource") || !strings.Contains(text, "2. Shared") ||
+		strings.Contains(text, "\n3.") {
+		t.Fatalf("fusion lost agreement past the per-method limit, counted a duplicate vote, or folded path case: %q, %v", text, err)
+	}
+}
+
+func searchReply(name string, configured bool, after time.Duration, results []SearchResult, err error) Method {
+	return Method{Name: name, Configured: configured, Search: func(ctx context.Context, _ string, _ int) ([]SearchResult, error) {
+		if after > 0 {
+			timer := time.NewTimer(after)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		return results, err
+	}}
 }
 
 func TestFetchPaginatesFromCacheAndFallsBackToReader(t *testing.T) {
