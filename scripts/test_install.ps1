@@ -340,6 +340,70 @@ try {
         Assert-True (-not (Test-Path -LiteralPath (Join-Path (Split-Path $installer -Parent) 'install.bat'))) 'The installer is one script; no batch wrapper is shipped'
     }
 
+    # The website command, irm https://opencrude.github.io/windows.ps1 | iex,
+    # runs site/windows.ps1. Only its HTTP client is replaced here.
+    $siteCommand = Join-Path (Split-Path $PSScriptRoot -Parent) 'site/windows.ps1'
+    $latestInstaller = 'https://github.com/opencrude/crude/releases/latest/download/install.ps1'
+
+    Test-Case 'the site command runs the complete latest installer with its options' {
+        $stub = [IO.File]::ReadAllText($siteCommand)
+        Assert-True ($stub -cnotmatch '[^\x00-\x7F]') 'Windows PowerShell 5.1 decodes the served command as Latin-1, so it must stay ASCII'
+        $mark = [string] [char] 0x00B7
+        $text = 'param([switch] $Yes, [string] $Version) "ran Yes=$Yes Version=$Version mark=' + $mark + '"'
+        $served = [byte[]] ([Text.Encoding]::UTF8.GetPreamble() + [Text.Encoding]::UTF8.GetBytes($text))
+        $script:siteRequests = New-Object 'System.Collections.Generic.List[string]'
+        function Invoke-WebRequest {
+            [CmdletBinding()]
+            param([string] $Uri, [switch] $UseBasicParsing, [int] $TimeoutSec)
+            $script:siteRequests.Add($Uri)
+            return [pscustomobject] @{ RawContentStream = New-Object IO.MemoryStream (, $served) }
+        }
+        Assert-Equal (Invoke-Expression $stub) "ran Yes=False Version= mark=$mark" 'irm | iex must run the latest installer, decoded as UTF-8'
+        Assert-Equal (& ([scriptblock]::Create($stub)) -Yes -Version v1.2.3) "ran Yes=True Version=v1.2.3 mark=$mark" 'Options must reach the installer'
+        Assert-Equal ($script:siteRequests -join ' ') "$latestInstaller $latestInstaller" 'Each run must download the installer of the latest release once'
+    }
+
+    Test-Case 'the site command tries a failed download three times, then states the next step' {
+        $stub = [IO.File]::ReadAllText($siteCommand)
+        $script:siteAttempts = 0
+        function Invoke-WebRequest {
+            [CmdletBinding()]
+            param([string] $Uri, [switch] $UseBasicParsing, [int] $TimeoutSec)
+            $script:siteAttempts++
+            throw 'The network is down.'
+        }
+        function Start-Sleep { param($Seconds) }
+        Assert-Fails { Invoke-Expression $stub } ('cannot download ' + [Regex]::Escape($latestInstaller) + '\. Check your network connection, then try again\. Nothing was changed\.')
+        Assert-Equal $script:siteAttempts 3 'A failed download must be tried three times'
+    }
+
+    Test-Case 'a failed piped installation keeps the PowerShell window open' {
+        $shell = (Get-Process -Id $PID).Path
+        $destination = Join-Path $root 'piped-failure'
+        # The child runs the site command as typed text, like irm ... | iex at
+        # a prompt: exit there would end the whole PowerShell process.
+        $probe = @"
+function Invoke-WebRequest {
+    [CmdletBinding()]
+    param([string] `$Uri, [switch] `$UseBasicParsing, [int] `$TimeoutSec)
+    [pscustomobject] @{ RawContentStream = New-Object IO.MemoryStream (, [IO.File]::ReadAllBytes('$installer')) }
+}
+try {
+    & ([scriptblock]::Create([IO.File]::ReadAllText('$siteCommand'))) -InstallDir '$destination' -Version 'not-a-version'
+} catch { 'stopped: ' + `$_.Exception.Message }
+'window still open'
+"@
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
+        $savedPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = & $shell -NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded 2>&1 | Out-String
+        } finally { $ErrorActionPreference = $savedPreference }
+        Assert-True ($output -match 'stopped: Crude installation failed: ') "A failed piped installation must report its error: $output"
+        Assert-True ($output -match 'window still open') "A failed piped installation must not close the PowerShell window: $output"
+        Assert-True (-not [IO.Directory]::Exists($destination)) 'A rejected version must not create state'
+    }
+
     Test-Case 'noninteractive installation and update never require -Yes' {
         With-Fixture (New-Fixture) {
             function Test-CrudeInteractive { return $false }
@@ -705,6 +769,7 @@ Test-Case 'a flaky Git Bash download retries quietly and a bad package is refuse
             Assert-True ($output -match 'active development') 'Unattended script must show the warning'
             Assert-True ($output -notmatch '\-Yes') 'Unattended script must not ask for -Yes'
             Assert-True ($output -match 'Invalid version') 'Unattended script must continue past the warning'
+            Assert-True ($LASTEXITCODE -ne 0) 'A failed script file must report failure with its exit code'
             Assert-True (-not [IO.Directory]::Exists($destination)) 'A rejected version must not create state'
         } else {
             . $installer

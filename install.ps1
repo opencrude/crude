@@ -1144,7 +1144,7 @@ function Install-Crude([string] $Version, [string] $Repository = 'opencrude/crud
         # State the version first, then ask the two questions, so a question
         # never waits behind a large download.
         $release = Get-CrudeRelease $Repository $Version $work
-        Write-Host "Version $($release.Tag) · windows/amd64"
+        Write-Host "Version $($release.Tag) $(Mark 'dot') windows/amd64"
         # Stop this program, and any terminal program a window in Crude's folder
         # runs, before the update replaces them.
         $programs = @((Join-Path $InstallDir 'crude.exe')) + @(Get-CrudeWindowLegacyPrograms (Get-CrudeWindowPaths))
@@ -1225,7 +1225,12 @@ if ($MyInvocation.InvocationName -ne '.') {
     try {
         Install-Crude -Version $Version -Repository $Repository -InstallDir $InstallDir -NoPath:$NoPath -Yes:$Yes -Gui:$Gui -NoGui:$NoGui -Stop:$Stop -NoStop:$NoStop
     } catch {
-        Write-Error "Crude installation failed: $($_.Exception.Message)" -ErrorAction Continue
+        $failure = "Crude installation failed: $($_.Exception.Message)"
+        # A piped run (irm ... | iex) has no script file of its own. There,
+        # exit would close the PowerShell window before the message is read,
+        # so the run stops with the error and the window stays open.
+        if (-not $PSCommandPath) { throw $failure }
+        Write-Error $failure -ErrorAction Continue
         exit 1
     }
 }

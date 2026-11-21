@@ -10,11 +10,11 @@ Crude is free and open source (Apache-2.0 OR MIT) for Linux x86-64 and Windows x
 
 | System | Command |
 |---|---|
-| Linux x86-64 (glibc 2.35+) | `curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh && bash install.sh` |
-| Windows x64 (PowerShell 5.1+) | `irm https://github.com/opencrude/crude/releases/latest/download/install.ps1 \| iex` |
+| Linux x86-64 (glibc 2.35+) | `curl -fsSL https://opencrude.github.io/linux.sh \| sh` |
+| Windows x64 (PowerShell 5.1+) | `irm https://opencrude.github.io/windows.ps1 \| iex` |
 | macOS | No release yet. [Build from source](https://github.com/opencrude/crude#build-from-source). |
 
-Prefer to read the script first:
+Both commands run the installer of the latest release. To read the installer first, download it from the release and run it:
 
 ```bash
 curl -fsSL https://github.com/opencrude/crude/releases/latest/download/install.sh -o install.sh
@@ -26,7 +26,7 @@ Invoke-WebRequest https://github.com/opencrude/crude/releases/latest/download/in
 .\install.ps1
 ```
 
-Run the same command again to update. Add `--gui` (Linux) or `-Gui` (Windows) for an optional window with its own terminal and font. No administrator rights are needed.
+Run the same command again to update. In a desktop session, the installer asks whether to add an optional window with its own terminal and font; `--gui` (Linux) or `-Gui` (Windows) adds it without the question. No administrator rights are needed.
 
 ### First run
 
