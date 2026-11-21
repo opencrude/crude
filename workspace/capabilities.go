@@ -66,17 +66,10 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 	if cfg := workspace.sessionCfg; cfg != nil && cfg.AccountManager != nil {
 		// Capture the application credential owner, not a session profile,
 		// workspace defaults map, or a copy of live credentials.
-		accounts := &session.Config{AccountManager: cfg.AccountManager}
-		service.SetWebSearchFallbackRunner(func(ctx context.Context, accountID, model, query string, limit int) ([]provider.WebSearchSource, error) {
-			connection, err := accounts.ConnectionProvider(accountID)
-			if err != nil {
-				return nil, errors.New("the fallback account is unavailable. Choose an account in Settings")
-			}
-			return connection.SearchWebOnce(ctx, model, query, limit)
-		})
+		service.SetWebSearchRunner(accountSearchRunner{accounts: &session.Config{AccountManager: cfg.AccountManager}})
 	}
 	settings := workspace.LoadAppSettings().Capabilities
-	service.SetPublishedWebSearchFallback(workspace.AppDefaults().Capabilities.WebSearchFallback)
+	service.SetPublishedWebSearchRoutes(workspace.AppDefaults().Capabilities.WebSearchRoutes)
 	if err := service.Configure(ctx, settings); err != nil {
 		service.Close()
 		return err
@@ -198,22 +191,28 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 		}
 	case "set-secrets":
 		err = service.SetSecrets(ctx, action.Arguments)
-	case captypes.SetWebSearchFallback:
-		if err = applyWebSearchFallback(&working, action); err == nil {
-			// Commit only this exact route. The persisted settings owner keeps
-			// any concurrent edits to neighboring keys and registrations.
-			edit := types.SettingEdit{Path: []string{"capabilities", "web_search_fallback"}}
-			if len(working.Capabilities.WebSearchFallback) != 0 {
-				edit.After, _ = json.Marshal(working.Capabilities.WebSearchFallback)
+	case captypes.SaveWebSearchRoute, captypes.RemoveWebSearchRoute:
+		if err = applyWebSearchRoute(&working, action); err == nil {
+			// Commit only the search method list. The persisted settings owner
+			// keeps concurrent edits to neighboring keys and registrations.
+			edit := types.SettingEdit{Path: []string{"capabilities", "web_search_routes"}}
+			if len(working.Capabilities.WebSearchRoutes) != 0 {
+				edit.After, _ = json.Marshal(working.Capabilities.WebSearchRoutes)
 			}
 			if err = ctx.Err(); err == nil {
 				result := workspace.PreparePreferencesSave(types.SettingsScopeApplication, []types.SettingEdit{edit})()
 				err = result.Err
 				if err == nil {
 					workspace.ApplyPreferencesSave(result)
-					service.SetPublishedWebSearchFallback(result.AppSettings.Capabilities.WebSearchFallback)
+					service.SetPublishedWebSearchRoutes(result.AppSettings.Capabilities.WebSearchRoutes)
 				}
 			}
+		}
+	case captypes.TestWebSearchRoute:
+		if action.WebSearchRoute == nil {
+			err = errors.New("choose a search method to test")
+		} else {
+			content, err = service.TestWebSearchRoute(ctx, *action.WebSearchRoute)
 		}
 	case "save-source":
 		if action.Source == nil || action.Source.ID == "" || action.Source.Location == "" {
@@ -489,32 +488,4 @@ func builtinIdentity(settings captypes.Settings, value captypes.ConnectionConfig
 		value.URL, value.Args, value.Directory, value.Source = "", nil, "", ""
 	}
 	return value
-}
-
-// applyWebSearchFallback is shared by the connected and in-process Settings
-// owners. It validates and stages the exact application-only route without
-// probing or requesting inference. The provider rechecks it at each attempt.
-func applyWebSearchFallback(working *types.AppSettings, action captypes.Action) error {
-	if action.Scope != captypes.ScopeApplication {
-		return errors.New("change Model fallback in Application Settings")
-	}
-	if action.Kind != captypes.KindMCP || action.ID != captypes.WebConnectionID ||
-		!working.Capabilities.Connections[captypes.WebConnectionID].IsBuiltinWeb() {
-		return errors.New("only Crude's built-in Web search and fetch supports model fallback")
-	}
-	next := action.WebSearchFallback
-	if len(next) == 0 {
-		working.Capabilities.WebSearchFallback = nil
-		return nil
-	}
-	accountID, _, ok := next.Selection()
-	if !ok {
-		return errors.New("choose an account and a valid model for model fallback")
-	}
-	account, ok := working.Accounts[accountID]
-	if !ok || account.APIKey == "" || account.OAuth != nil || !provider.SupportsWebSearchFallback(account.Connection) {
-		return errors.New("choose an OpenAI Responses account with an API key")
-	}
-	working.Capabilities.WebSearchFallback = append(captypes.WebSearchFallback(nil), next...)
-	return nil
 }

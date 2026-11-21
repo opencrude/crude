@@ -593,6 +593,9 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 		if s.capCatalog.id != "" && (s.capCatalog.detail || s.capCatalog.edit != "") {
 			parts = append(parts, mapDefault(s.capCatalog.entry().Name, s.capCatalog.id))
 		}
+		if s.capCatalog.edit == webRouteEditor {
+			parts = append(parts, "Search method")
+		}
 		return parts
 	}
 	if s.lspServersOpen() {
@@ -712,8 +715,8 @@ func (s *WorkspaceSettingsSurface) pageSubtitle() string {
 
 	case s.capabilitiesOpen() && s.capCatalog.choosing != "":
 		return "Choose " + strings.TrimPrefix(s.capCatalog.choosing, "filter-") + " · Enter applies · Esc returns"
-	case s.capabilitiesOpen() && s.capCatalog.edit == webFallbackEditor:
-		return "Save changes to use them in new searches."
+	case s.capabilitiesOpen() && s.capCatalog.edit == webRouteEditor:
+		return "Save the method to use it in new searches."
 	case s.capabilitiesOpen() && s.capCatalog.edit != "":
 		noun := map[captypes.Kind]string{captypes.KindSkill: "skill", captypes.KindMCP: "connection"}[s.capCatalog.kind]
 		return "Changes apply when you save this " + mapDefault(noun, "source") + "."
@@ -1904,6 +1907,10 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 		return s.hasUnsavedDrafts() && reflect.DeepEqual(s.model.preferenceBytes(), msg.preferences) && s.closeDraftsRelevant(msg)
 	case PromptRemoveCapability:
 		return s.capabilitiesOpen() && msg.capabilityEditor == s.capCatalog && msg.ID == s.capCatalog.id && msg.CapabilityAction != nil && reflect.DeepEqual(msg.capabilityDraft, s.capCatalog.entityBytes()) && s.model.capabilityPending == nil
+	case PromptRemoveSearchMethod:
+		_, saved := s.capCatalog.savedWebSearchRoute(msg.ID)
+		return s.capabilitiesOpen() && msg.capabilityEditor == s.capCatalog && s.capCatalog.builtinWebOpen() && saved && msg.CapabilityAction != nil &&
+			reflect.DeepEqual(msg.capabilityDraft, s.capCatalog.entityBytes()) && s.model.capabilityPending == nil
 	}
 	return false
 }

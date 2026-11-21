@@ -335,12 +335,13 @@ func (z *Action) MarshalMsg(b []byte) (o []byte, err error) {
 			return
 		}
 	}
-	if z.WebSearchFallback == nil { // allownil: if nil
+	if z.WebSearchRoute == nil {
 		o = msgp.AppendNil(o)
 	} else {
-		o = msgp.AppendArrayHeader(o, uint32(len(z.WebSearchFallback)))
-		for za0003 := range z.WebSearchFallback {
-			o = msgp.AppendString(o, z.WebSearchFallback[za0003])
+		o, err = z.WebSearchRoute.MarshalMsg(o)
+		if err != nil {
+			err = msgp.WrapError(err, "WebSearchRoute")
+			return
 		}
 	}
 	return
@@ -503,30 +504,19 @@ func (z *Action) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		}
 	}
 	if msgp.IsNil(bts) {
-		bts = bts[1:]
-		z.WebSearchFallback = nil
-	} else {
-		var zb0005 uint32
-		zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		bts, err = msgp.ReadNilBytes(bts)
 		if err != nil {
-			err = msgp.WrapError(err, "WebSearchFallback")
 			return
 		}
-		if uint64(zb0005)*1 > uint64(len(bts)) {
-			err = msgp.ErrShortBytes
+		z.WebSearchRoute = nil
+	} else {
+		if z.WebSearchRoute == nil {
+			z.WebSearchRoute = new(WebSearchRoute)
+		}
+		bts, err = z.WebSearchRoute.UnmarshalMsg(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "WebSearchRoute")
 			return
-		}
-		if z.WebSearchFallback != nil && cap(z.WebSearchFallback) >= int(zb0005) {
-			z.WebSearchFallback = (z.WebSearchFallback)[:zb0005]
-		} else {
-			z.WebSearchFallback = make(WebSearchFallback, zb0005)
-		}
-		for za0003 := range z.WebSearchFallback {
-			z.WebSearchFallback[za0003], bts, err = msgp.ReadStringBytes(bts)
-			if err != nil {
-				err = msgp.WrapError(err, "WebSearchFallback", za0003)
-				return
-			}
 		}
 	}
 	o = bts
@@ -563,9 +553,10 @@ func (z *Action) Msgsize() (s int) {
 	} else {
 		s += z.Preview.Msgsize()
 	}
-	s += msgp.ArrayHeaderSize
-	for za0003 := range z.WebSearchFallback {
-		s += msgp.StringPrefixSize + len(z.WebSearchFallback[za0003])
+	if z.WebSearchRoute == nil {
+		s += msgp.NilSize
+	} else {
+		s += z.WebSearchRoute.Msgsize()
 	}
 	return
 }
@@ -2712,12 +2703,16 @@ func (z *Settings) MarshalMsg(b []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Acquisition")
 		return
 	}
-	if z.WebSearchFallback == nil { // allownil: if nil
+	if z.WebSearchRoutes == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
-		o = msgp.AppendArrayHeader(o, uint32(len(z.WebSearchFallback)))
-		for za0007 := range z.WebSearchFallback {
-			o = msgp.AppendString(o, z.WebSearchFallback[za0007])
+		o = msgp.AppendArrayHeader(o, uint32(len(z.WebSearchRoutes)))
+		for za0007 := range z.WebSearchRoutes {
+			o, err = z.WebSearchRoutes[za0007].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "WebSearchRoutes", za0007)
+				return
+			}
 		}
 	}
 	if z.ProjectToolDecisions == nil { // allownil: if nil
@@ -2861,27 +2856,27 @@ func (z *Settings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 	}
 	if msgp.IsNil(bts) {
 		bts = bts[1:]
-		z.WebSearchFallback = nil
+		z.WebSearchRoutes = nil
 	} else {
 		var zb0005 uint32
 		zb0005, bts, err = msgp.ReadArrayHeaderBytes(bts)
 		if err != nil {
-			err = msgp.WrapError(err, "WebSearchFallback")
+			err = msgp.WrapError(err, "WebSearchRoutes")
 			return
 		}
 		if uint64(zb0005)*1 > uint64(len(bts)) {
 			err = msgp.ErrShortBytes
 			return
 		}
-		if z.WebSearchFallback != nil && cap(z.WebSearchFallback) >= int(zb0005) {
-			z.WebSearchFallback = (z.WebSearchFallback)[:zb0005]
+		if z.WebSearchRoutes != nil && cap(z.WebSearchRoutes) >= int(zb0005) {
+			z.WebSearchRoutes = (z.WebSearchRoutes)[:zb0005]
 		} else {
-			z.WebSearchFallback = make(WebSearchFallback, zb0005)
+			z.WebSearchRoutes = make([]WebSearchRoute, zb0005)
 		}
-		for za0007 := range z.WebSearchFallback {
-			z.WebSearchFallback[za0007], bts, err = msgp.ReadStringBytes(bts)
+		for za0007 := range z.WebSearchRoutes {
+			bts, err = z.WebSearchRoutes[za0007].UnmarshalMsg(bts)
 			if err != nil {
-				err = msgp.WrapError(err, "WebSearchFallback", za0007)
+				err = msgp.WrapError(err, "WebSearchRoutes", za0007)
 				return
 			}
 		}
@@ -2931,8 +2926,8 @@ func (z *Settings) Msgsize() (s int) {
 		}
 	}
 	s += z.Acquisition.Msgsize() + msgp.ArrayHeaderSize
-	for za0007 := range z.WebSearchFallback {
-		s += msgp.StringPrefixSize + len(z.WebSearchFallback[za0007])
+	for za0007 := range z.WebSearchRoutes {
+		s += z.WebSearchRoutes[za0007].Msgsize()
 	}
 	s += msgp.BytesPrefixSize + len(rawJSONToBytes(z.ProjectToolDecisions))
 	return
@@ -3039,8 +3034,8 @@ func (z *SkillConfig) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 7
-	o = append(o, 0x97)
+	// array header, size 8
+	o = append(o, 0x98)
 	o = msgp.AppendUint64(o, z.Generation)
 	if z.Entries == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
@@ -3092,6 +3087,19 @@ func (z *Snapshot) MarshalMsg(b []byte) (o []byte, err error) {
 			o = msgp.AppendString(o, z.StoredSecrets[za0004])
 		}
 	}
+	if z.WebSearch == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendMapHeader(o, uint32(len(z.WebSearch)))
+		for za0005, za0006 := range z.WebSearch {
+			o = msgp.AppendString(o, za0005)
+			o, err = za0006.MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "WebSearch", za0005)
+				return
+			}
+		}
+	}
 	return
 }
 
@@ -3107,8 +3115,8 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 7 {
-		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+	if zb0001 != 8 {
+		err = msgp.ArrayError{Wanted: 8, Got: zb0001}
 		return
 	}
 	z.Generation, bts, err = msgp.ReadUint64Bytes(bts)
@@ -3234,6 +3242,44 @@ func (z *Snapshot) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.WebSearch = nil
+	} else {
+		var zb0006 uint32
+		zb0006, bts, err = msgp.ReadMapHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "WebSearch")
+			return
+		}
+		if uint64(zb0006)*2 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.WebSearch == nil {
+			z.WebSearch = make(map[string]WebSearchObservation, zb0006)
+		} else if len(z.WebSearch) > 0 {
+			clear(z.WebSearch)
+		}
+		var field []byte
+		_ = field
+		for zb0006 > 0 {
+			var za0006 WebSearchObservation
+			zb0006--
+			var za0005 string
+			za0005, bts, err = msgp.ReadStringBytes(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "WebSearch")
+				return
+			}
+			bts, err = za0006.UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "WebSearch", za0005)
+				return
+			}
+			z.WebSearch[za0005] = za0006
+		}
+	}
 	o = bts
 	return
 }
@@ -3255,6 +3301,13 @@ func (z *Snapshot) Msgsize() (s int) {
 	s += msgp.ArrayHeaderSize
 	for za0004 := range z.StoredSecrets {
 		s += msgp.StringPrefixSize + len(z.StoredSecrets[za0004])
+	}
+	s += msgp.MapHeaderSize
+	if z.WebSearch != nil {
+		for za0005, za0006 := range z.WebSearch {
+			_ = za0006
+			s += msgp.StringPrefixSize + len(za0005) + za0006.Msgsize()
+		}
 	}
 	return
 }
@@ -3556,48 +3609,123 @@ func (z *ToolGrant) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
-func (z WebSearchFallback) MarshalMsg(b []byte) (o []byte, err error) {
+func (z *WebSearchObservation) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	o = msgp.AppendArrayHeader(o, uint32(len(z)))
-	for za0001 := range z {
-		o = msgp.AppendString(o, z[za0001])
-	}
+	// array header, size 5
+	o = append(o, 0x95)
+	o = msgp.AppendBool(o, z.Working)
+	o = msgp.AppendString(o, z.Detail)
+	o = msgp.AppendInt(o, z.Results)
+	o = msgp.AppendInt64(o, z.LatencyMS)
+	o = msgp.AppendInt64(o, z.At)
 	return
 }
 
 // UnmarshalMsg implements msgp.Unmarshaler
-func (z *WebSearchFallback) UnmarshalMsg(bts []byte) (o []byte, err error) {
-	var zb0002 uint32
-	zb0002, bts, err = msgp.ReadArrayHeaderBytes(bts)
+func (z *WebSearchObservation) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err)
 		return
 	}
-	if uint64(zb0002)*1 > uint64(len(bts)) {
+	if uint64(zb0001)*1 > uint64(len(bts)) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if cap((*z)) >= int(zb0002) {
-		(*z) = (*z)[:zb0002]
-	} else {
-		(*z) = make(WebSearchFallback, zb0002)
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+		return
 	}
-	for zb0001 := range *z {
-		(*z)[zb0001], bts, err = msgp.ReadStringBytes(bts)
-		if err != nil {
-			err = msgp.WrapError(err, zb0001)
-			return
-		}
+	z.Working, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Working")
+		return
+	}
+	z.Detail, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Detail")
+		return
+	}
+	z.Results, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Results")
+		return
+	}
+	z.LatencyMS, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "LatencyMS")
+		return
+	}
+	z.At, bts, err = msgp.ReadInt64Bytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "At")
+		return
 	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z WebSearchFallback) Msgsize() (s int) {
-	s = msgp.ArrayHeaderSize
-	for zb0003 := range z {
-		s += msgp.StringPrefixSize + len(z[zb0003])
+func (z *WebSearchObservation) Msgsize() (s int) {
+	s = 1 + msgp.BoolSize + msgp.StringPrefixSize + len(z.Detail) + msgp.IntSize + msgp.Int64Size + msgp.Int64Size
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z *WebSearchRoute) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 4
+	o = append(o, 0x94)
+	o = msgp.AppendString(o, z.ID)
+	o = msgp.AppendString(o, z.Account)
+	o = msgp.AppendString(o, z.Model)
+	o = msgp.AppendBool(o, z.Disabled)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *WebSearchRoute) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
 	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+		return
+	}
+	z.ID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ID")
+		return
+	}
+	z.Account, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Account")
+		return
+	}
+	z.Model, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Model")
+		return
+	}
+	z.Disabled, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Disabled")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z *WebSearchRoute) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.ID) + msgp.StringPrefixSize + len(z.Account) + msgp.StringPrefixSize + len(z.Model) + msgp.BoolSize
 	return
 }

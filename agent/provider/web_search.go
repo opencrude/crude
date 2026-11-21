@@ -8,242 +8,310 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
 const (
-	webSearchBodyLimit  = 1 << 20
-	webSearchQueryLimit = 4 << 10
+	webSearchBodyLimit        = 1 << 20
+	webSearchQueryLimit       = 4 << 10
+	webSearchObservationLimit = 512
 )
 
-// WebSearchSource is evidence from a completed, hosted search call. The title
-// can be empty; no answer prose is parsed into results.
-type WebSearchSource struct {
-	URL   string
-	Title string
+// webSearchError is a complete user-facing message, also shown in the
+// latest outcome. It never includes provider-supplied diagnostics.
+type webSearchError string
+
+func (e webSearchError) Error() string { return string(e) }
+
+const (
+	errWebSearchUnsupported = webSearchError("This account cannot search the web. Choose another account.")
+	errWebSearchConnection  = webSearchError("Could not open the search connection. Check the account and Network settings.")
+	errWebSearchAuth        = webSearchError("Could not use the account key. Check the account in Settings.")
+	errWebSearchReplay      = webSearchError("A request header permits repeat searches. Remove the idempotency header in Settings.")
+	errWebSearchRead        = webSearchError("Could not read the search response. Try again.")
+	errWebSearchNoSources   = webSearchError("The account did not return search sources. Choose a model that can search the web.")
+)
+
+type webSearchTimeoutError struct{}
+
+func (webSearchTimeoutError) Error() string { return "The search did not finish in time." }
+func (webSearchTimeoutError) Unwrap() error { return context.DeadlineExceeded }
+
+// WebSearchSource is source evidence from native search, not generated prose.
+// Snippet is empty when the protocol does not report an excerpt.
+type WebSearchSource struct{ URL, Title, Snippet string }
+
+// WebSearchSupport reads only the connection's protocol declaration. Support
+// does not prove that the account or a selected model can complete a search.
+func WebSearchSupport(connection Template) (supported, needsModel bool) {
+	id, _ := canonicalProtocolID(connection.APIStandard)
+	if protocol, ok := ProtocolByID(id); ok {
+		switch protocol.Info().WebSearch {
+		case WebSearchEndpoint:
+			return true, false
+		case WebSearchTool:
+			return true, true
+		}
+	}
+	return false, false
 }
 
-// SupportsWebSearchFallback qualifies the connection, not a model name. Only
-// the official Responses endpoint and API-key authentication are supported.
-// The selected model still has to complete the provider's native search tool.
-func SupportsWebSearchFallback(connection Template) bool {
-	protocol, _ := canonicalProtocolID(connection.APIStandard)
-	return protocol == "openai-responses" && officialWebSearchEndpoint(connection.ProviderURL, connection.AuthType)
+// WebSearchObservation describes the latest search outcome for an account and,
+// for hosted tools, the specific model. It contains no query or result content.
+type WebSearchObservation struct {
+	Working bool
+	Detail  string
+	Results int
+	Latency time.Duration
+	At      time.Time
 }
 
-func officialWebSearchEndpoint(base, auth string) bool {
-	endpoint, err := url.Parse(base)
-	return err == nil && auth != AuthChatGPT &&
-		(auth == "" || auth == AuthProtocol || auth == AuthBearer) &&
-		endpoint.Scheme == "https" && strings.EqualFold(endpoint.Host, "api.openai.com") &&
-		endpoint.User == nil && (endpoint.Path == "/v1" || endpoint.Path == "/v1/") &&
-		endpoint.RawPath == "" && endpoint.RawQuery == "" && !endpoint.ForceQuery &&
-		endpoint.Fragment == "" && !strings.Contains(base, "#")
+type webSearchObservationKey struct{ scope, account, model string }
+
+var webSearchObservations = struct {
+	sync.Mutex
+	entries map[webSearchObservationKey]WebSearchObservation
+}{entries: make(map[webSearchObservationKey]WebSearchObservation)}
+
+func (p *Provider) webSearchObservationKey(model string) webSearchObservationKey {
+	if protocol := p.Protocol(); protocol == nil || protocol.Info().WebSearch != WebSearchTool {
+		model = ""
+	}
+	p.authMu.RLock()
+	account := p.AccountID
+	p.authMu.RUnlock()
+	return webSearchObservationKey{scope: p.ReplayScope(), account: account, model: model}
 }
 
-// SearchWebOnce posts only the selected model, literal search query, and
-// bounded native-tool options. It does not inherit a chat request, custom
-// body, continuation, redirects, or retry policy.
-func (p *Provider) SearchWebOnce(ctx context.Context, model, query string, limit int) ([]WebSearchSource, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+// WebSearchObservation returns the last outcome in this process. Endpoint
+// searches are scoped to the account and do not distinguish models.
+func (p *Provider) WebSearchObservation(model string) (WebSearchObservation, bool) {
+	if p == nil {
+		return WebSearchObservation{}, false
 	}
-	if p == nil || p.ProtocolID() != "openai-responses" || !officialWebSearchEndpoint(p.BaseURL, p.authType) {
-		return nil, errors.New("choose an OpenAI Responses account for model fallback")
-	}
-	if err := onceAuth(p); err != nil {
-		return nil, errors.New("choose an OpenAI API key account for model fallback")
-	}
-	client, err := p.Client(WithMaxAttempts(1), WithResponseLimit(webSearchBodyLimit))
+	key := p.webSearchObservationKey(model)
+	webSearchObservations.Lock()
+	defer webSearchObservations.Unlock()
+	observation, ok := webSearchObservations.entries[key]
+	return observation, ok
+}
+
+func recordWebSearch(key webSearchObservationKey, started time.Time, count int, err error) {
+	webSearchObservations.Lock()
+	defer webSearchObservations.Unlock()
+	at := time.Now()
+	entry := WebSearchObservation{Working: err == nil, Results: count, Latency: at.Sub(started), At: at}
 	if err != nil {
-		return nil, errors.New("could not open the model fallback connection. Check Accounts and Network settings")
+		entry.Detail = err.Error()
 	}
-	defer client.hc.CloseIdleConnections()
-	// Preserve the bound account's auth, including revocation checks. Only
-	// pass headers this operation needs. In particular, do not permit an
-	// idempotency key to make an inference POST replayable by the transport.
-	headerSource := client.headerSource
-	client.headerSource = func(ctx context.Context) (http.Header, error) {
-		if err := onceAuth(p); err != nil {
-			return nil, err
-		}
-		headers, err := headerSource(ctx)
-		if err != nil {
-			return nil, err
-		}
-		filtered := make(http.Header)
-		for _, key := range []string{"Authorization", "OpenAI-Organization", "OpenAI-Project"} {
-			for _, value := range headers.Values(key) {
-				filtered.Add(key, value)
+	entries := webSearchObservations.entries
+	if _, exists := entries[key]; !exists && len(entries) >= webSearchObservationLimit {
+		var oldest webSearchObservationKey
+		var oldestAt time.Time
+		for k, v := range entries {
+			if oldestAt.IsZero() || v.At.Before(oldestAt) {
+				oldest, oldestAt = k, v.At
 			}
 		}
-		if !strings.HasPrefix(filtered.Get("Authorization"), "Bearer ") {
-			return nil, errors.New("API key is missing")
-		}
-		return filtered, nil
+		delete(entries, oldest)
 	}
-	return client.searchWebOnce(ctx, model, query, limit)
+	entries[key] = entry
 }
 
-func (c *Client) searchWebOnce(ctx context.Context, model, query string, limit int) ([]WebSearchSource, error) {
-	if len(model) > 1024 || strings.TrimSpace(model) != model || model == "" ||
+// SearchWeb sends one fixed, stateless request through the account's native
+// search. The model is required for hosted search tools and ignored for an
+// account search endpoint. It does not inherit chat context or request extras.
+func (p *Provider) SearchWeb(ctx context.Context, model, query string, limit int) (sources []WebSearchSource, err error) {
+	started := time.Now()
+	searchCtx, cancel := context.WithTimeout(ctx, 24*time.Second)
+	defer cancel()
+	var key webSearchObservationKey
+	if p != nil {
+		key = p.webSearchObservationKey(model)
+	}
+	defer func() {
+		if ctx.Err() == context.Canceled {
+			sources, err = nil, context.Canceled
+			return
+		}
+		if searchCtx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
+			sources, err = nil, webSearchTimeoutError{}
+		}
+		if p != nil {
+			recordWebSearch(key, started, len(sources), err)
+		}
+	}()
+	if err := searchCtx.Err(); err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, errWebSearchUnsupported
+	}
+	proto := p.Protocol()
+	if proto == nil {
+		return nil, errWebSearchUnsupported
+	}
+	info := proto.Info()
+	codec, ok := proto.(WebSearchCodec)
+	if !ok || (info.WebSearch != WebSearchEndpoint && info.WebSearch != WebSearchTool) ||
+		(info.WebSearch == WebSearchEndpoint && info.WebSearchPath == "") {
+		return nil, errWebSearchUnsupported
+	}
+	if info.WebSearch == WebSearchEndpoint {
+		model = ""
+	} else if len(model) > 1024 || strings.TrimSpace(model) != model || model == "" ||
 		!utf8.ValidString(model) || strings.ContainsFunc(model, unicode.IsControl) {
-		return nil, errors.New("choose a valid model for web search")
+		return nil, webSearchError("The search model is not valid. Choose a model that can search the web.")
 	}
 	if len(query) > webSearchQueryLimit || strings.TrimSpace(query) == "" ||
 		!utf8.ValidString(query) || strings.ContainsRune(query, 0) {
-		return nil, errors.New("use a shorter, non-empty search query")
+		return nil, webSearchError("Use a non-empty search query of at most 4 KiB of text.")
 	}
 	if limit < 1 || limit > 10 {
-		return nil, errors.New("model fallback accepts 1 to 10 results")
+		return nil, webSearchError("Request 1 to 10 search results.")
 	}
-	// Use a fixed, stateless provider tool request. Do not use ChatRequest:
-	// it can bring agent settings, arbitrary tools, or conversation state.
-	body, err := json.Marshal(map[string]any{
-		"model": model, "input": query, "store": false,
-		"tools":             []map[string]string{{"type": "web_search", "search_context_size": "low"}},
-		"tool_choice":       map[string]string{"type": "web_search"},
-		"include":           []string{"web_search_call.action.sources"},
-		"max_tool_calls":    1,
-		"max_output_tokens": 1024,
-	})
-	if err != nil {
-		return nil, err
+	if err := onceAuth(p); err != nil {
+		return nil, errWebSearchAuth
 	}
-	// Bound standalone use too; the tool's caller already imposes a shared
-	// deadline over all primary providers plus this one attempt.
-	ctx, cancel := context.WithTimeout(ctx, 24*time.Second)
-	defer cancel()
-	ctx, cancelRequest := c.withTimeout(ctx)
-	defer cancelRequest()
-	client := *c
-	httpClient := *c.hc
-	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	client.hc = &httpClient
-	resp, err := client.do(ctx, http.MethodPost, client.chatURL(nil), body)
+	if onceReplayHeader(p.authHeader) {
+		return nil, errWebSearchReplay
+	}
+	if err := p.Validate(); err != nil {
+		return nil, errWebSearchConnection
+	}
+	c, err := p.Client(WithMaxAttempts(1), WithResponseLimit(webSearchBodyLimit))
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		return nil, errWebSearchConnection
+	}
+	defer c.hc.CloseIdleConnections()
+	hc := *c.hc
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	c.hc = &hc
+	source := c.headerSource
+	c.headerSource = func(ctx context.Context) (http.Header, error) {
+		if err := onceAuth(p); err != nil {
+			return nil, errWebSearchAuth
 		}
-		return nil, errors.New("could not reach OpenAI for model fallback. Check Accounts and Network settings")
+		headers, err := source(ctx)
+		if err != nil {
+			return nil, errWebSearchAuth
+		}
+		// These headers can make an inference POST replayable by the transport.
+		for key := range headers {
+			if onceReplayHeader(key) {
+				return nil, errWebSearchReplay
+			}
+		}
+		return headers, nil
+	}
+	var endpoint *url.URL
+	if info.WebSearch == WebSearchEndpoint {
+		endpoint = decisionURL(c.base, info.WebSearchPath)
+	} else {
+		endpoint = c.chatURL(&ChatRequest{Model: model, Stream: false})
+	}
+	body, err := json.Marshal(codec.EncodeWebSearch(model, query, limit))
+	if err != nil {
+		return nil, webSearchError("Could not prepare the search request. Check the account in Settings.")
+	}
+	requestCtx, cancelRequest := c.withTimeout(searchCtx)
+	defer cancelRequest()
+	defer func() {
+		if requestCtx.Err() != nil {
+			sources, err = nil, requestCtx.Err()
+		}
+	}()
+	resp, err := c.do(requestCtx, http.MethodPost, endpoint, body)
+	if err != nil {
+		if errors.Is(err, errWebSearchAuth) {
+			return nil, errWebSearchAuth
+		}
+		if errors.Is(err, errWebSearchReplay) {
+			return nil, errWebSearchReplay
+		}
+		return nil, errWebSearchConnection
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
-		// Provider bodies can echo the query or account secrets. Only retain
-		// the status and a useful, local explanation.
-		switch resp.StatusCode {
-		case http.StatusBadRequest, http.StatusNotFound:
-			return nil, fmt.Errorf("OpenAI rejected the web search request (HTTP %d). Choose a model that supports web search", resp.StatusCode)
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return nil, fmt.Errorf("OpenAI refused the account (HTTP %d). Check the account in Settings", resp.StatusCode)
-		case http.StatusTooManyRequests:
-			return nil, errors.New("OpenAI rate limit or quota reached (HTTP 429)")
-		default:
-			return nil, fmt.Errorf("OpenAI web search returned HTTP %d", resp.StatusCode)
-		}
+		// Error bodies can echo the query or account secrets. Do not read them.
+		return nil, webSearchStatusError(resp.StatusCode, info.WebSearch == WebSearchTool)
 	}
-	reply, err := readBounded(resp.Body, min64(c.dial.MaxResponseBytes, webSearchBodyLimit))
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
+	reply, err := readBounded(resp.Body, c.dial.MaxResponseBytes)
 	if err != nil {
-		return nil, errors.New("could not read the OpenAI web search response")
+		return nil, errWebSearchRead
 	}
-	return decodeWebSearchSources(reply, limit)
+	sources, err = codec.DecodeWebSearch(reply, limit)
+	if info.WebSearch == WebSearchEndpoint && errors.Is(err, errWebSearchNoSources) {
+		err = webSearchError("The account did not return usable search sources. Try a different account.")
+	}
+	return sources, err
 }
 
-func decodeWebSearchSources(reply []byte, limit int) ([]WebSearchSource, error) {
-	var response struct {
-		Status            string    `json:"status"`
-		Error             *struct{} `json:"error"`
-		IncompleteDetails struct {
-			Reason string `json:"reason"`
-		} `json:"incomplete_details"`
-		Output []struct {
-			Type   string `json:"type"`
-			Status string `json:"status"`
-			Action struct {
-				Type    string `json:"type"`
-				Sources []struct {
-					Type string `json:"type"`
-					URL  string `json:"url"`
-				} `json:"sources"`
-			} `json:"action"`
-			Content []struct {
-				Type        string `json:"type"`
-				Annotations []struct {
-					Type  string `json:"type"`
-					URL   string `json:"url"`
-					Title string `json:"title"`
-				} `json:"annotations"`
-			} `json:"content"`
-		} `json:"output"`
-	}
-	if err := json.Unmarshal(reply, &response); err != nil {
-		return nil, errors.New("OpenAI returned an unreadable web search response")
-	}
-	// A capped generated answer does not invalidate already completed actual
-	// search evidence. Other incomplete, failed or unknown responses do.
-	if response.Error != nil || (response.Status != "completed" &&
-		(response.Status != "incomplete" || response.IncompleteDetails.Reason != "max_output_tokens")) {
-		return nil, errors.New("OpenAI did not complete web search")
-	}
-	titles := make(map[string]string)
-	for _, output := range response.Output {
-		if output.Type != "message" {
-			continue
+func webSearchStatusError(status int, needsModel bool) error {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusUnprocessableEntity:
+		if needsModel {
+			return webSearchError(fmt.Sprintf("The account rejected the search request (HTTP %d). Choose a model that can search the web.", status))
 		}
-		for _, part := range output.Content {
-			if part.Type != "output_text" {
-				continue
-			}
-			for _, annotation := range part.Annotations {
-				if annotation.Type == "url_citation" {
-					titles[annotation.URL] = strings.Join(strings.Fields(annotation.Title), " ")
-				}
-			}
-		}
+		return webSearchError(fmt.Sprintf("The account rejected the search request (HTTP %d). Check the account in Settings.", status))
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return webSearchError(fmt.Sprintf("The account refused the key (HTTP %d). Check the account in Settings.", status))
+	case http.StatusTooManyRequests:
+		return webSearchError("Rate limit or quota reached (HTTP 429).")
+	default:
+		return webSearchError(fmt.Sprintf("The search failed (HTTP %d). Try again later.", status))
 	}
-	var sources []WebSearchSource
-	observed, hadEntries := false, false
+}
+
+// checkedWebSearchSources applies the same source safety and size limits to
+// every wire format. An actual empty search is distinct from an unsafe reply.
+func checkedWebSearchSources(sources []WebSearchSource, limit int) ([]WebSearchSource, error) {
+	if len(sources) == 0 || limit <= 0 {
+		return nil, nil
+	}
+	var results []WebSearchSource
 	seen := make(map[string]bool)
-	for _, output := range response.Output {
-		if output.Type != "web_search_call" || output.Status != "completed" ||
-			output.Action.Type != "search" || output.Action.Sources == nil {
+	for _, source := range sources {
+		if len(source.URL) > 8<<10 || !utf8.ValidString(source.URL) || strings.ContainsFunc(source.URL, unicode.IsControl) {
 			continue
 		}
-		observed, hadEntries = true, hadEntries || len(output.Action.Sources) != 0
-		for _, source := range output.Action.Sources {
-			urlText := source.URL
-			if source.Type != "url" || len(urlText) > 8<<10 || strings.ContainsFunc(urlText, unicode.IsControl) {
-				continue
-			}
-			destination, err := url.Parse(urlText)
-			if err != nil || destination.User != nil || destination.Hostname() == "" ||
-				(destination.Scheme != "http" && destination.Scheme != "https") {
-				continue
-			}
-			destination.Fragment, destination.RawFragment = "", ""
-			destination.Host = strings.ToLower(destination.Host)
-			key := destination.String()
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			title := titles[urlText]
-			if title == "" || len(title) > 512 || strings.ContainsFunc(title, unicode.IsControl) {
-				title = destination.Hostname()
-			}
-			sources = append(sources, WebSearchSource{URL: urlText, Title: title})
-			if len(sources) == limit {
-				return sources, nil
-			}
+		destination, err := url.Parse(source.URL)
+		if err != nil || destination.User != nil || destination.Hostname() == "" ||
+			(destination.Scheme != "http" && destination.Scheme != "https") {
+			continue
+		}
+		destination.Fragment, destination.RawFragment = "", ""
+		destination.Host = strings.ToLower(destination.Host)
+		key := destination.String()
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		source.Title = strings.Join(strings.Fields(source.Title), " ")
+		if source.Title == "" || len(source.Title) > 512 || strings.ContainsFunc(source.Title, unicode.IsControl) {
+			source.Title = clipSearchText(destination.Hostname(), 512)
+		}
+		source.Snippet = clipSearchText(strings.Join(strings.Fields(source.Snippet), " "), 600)
+		results = append(results, source)
+		if len(results) == limit {
+			break
 		}
 	}
-	if !observed || (hadEntries && len(sources) == 0) {
-		return nil, errors.New("OpenAI did not return verified search sources. Choose a model that supports web search")
+	if len(results) == 0 {
+		return nil, errWebSearchNoSources
 	}
-	return sources, nil
+	return results, nil
+}
+
+func clipSearchText(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	for !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit]
 }

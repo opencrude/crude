@@ -18,25 +18,48 @@ const TransportSSE = "sse"
 const WebConnectionID = "web"
 
 const (
-	// WebSearchFallbackAvailable is a local result code, not MCP server text.
-	// It allows the failed built-in search row to link to its settings.
-	WebSearchFallbackAvailable = "web_search_fallback_available"
-	SetWebSearchFallback       = "save-web-search-fallback"
+	// WebSearchOutage is a local result code, not MCP server text. Every
+	// search method failed, so the failed built-in search row links to
+	// Search methods.
+	WebSearchOutage = "web_search_outage"
+	// Search method operations act on one route of the built-in web
+	// connection. Save and Remove change Application settings; Test runs one
+	// search and changes nothing.
+	SaveWebSearchRoute   = "save-web-search-route"
+	RemoveWebSearchRoute = "remove-web-search-route"
+	TestWebSearchRoute   = "test-web-search-route"
+	// MaxWebSearchRoutes bounds the account methods one search starts.
+	MaxWebSearchRoutes = 8
 )
 
-// WebSearchFallback holds [account ID, model ID]; an absent pair means Off.
-// It is one atomic settings value so concurrent saves cannot mix the account
-// from one selection with the model from another. It never contains secrets.
-type WebSearchFallback []string
-
-func (fallback WebSearchFallback) Selection() (account, model string, ok bool) {
-	if len(fallback) != 2 || !validSearchSelection(fallback[0], 256) || !validSearchSelection(fallback[1], 1024) {
-		return "", "", false
-	}
-	return fallback[0], fallback[1], true
+// WebSearchRoute is one account search method. The built-in web_search races
+// every route that is on with its other engines. It stores identities only,
+// never secrets. Model is empty when the account's protocol searches without
+// a model.
+type WebSearchRoute struct {
+	ID       string `json:"id"`
+	Account  string `json:"account"`
+	Model    string `json:"model,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
 }
 
-func validSearchSelection(value string, maxBytes int) bool {
+// Valid checks the stored identities. It does not check the account.
+func (route WebSearchRoute) Valid() bool {
+	return validSearchIdentity(route.ID, 64) && validSearchIdentity(route.Account, 256) &&
+		(route.Model == "" || validSearchIdentity(route.Model, 1024))
+}
+
+// WebSearchObservation is the latest outcome Crude saw for one route, from a
+// Test or from a live search. Detail is a short reason when Working is false.
+type WebSearchObservation struct {
+	Working   bool   `json:"working"`
+	Detail    string `json:"detail,omitempty"`
+	Results   int    `json:"results"`
+	LatencyMS int64  `json:"latency_ms"`
+	At        int64  `json:"at"`
+}
+
+func validSearchIdentity(value string, maxBytes int) bool {
 	return len(value) > 0 && len(value) <= maxBytes && strings.TrimSpace(value) == value &&
 		utf8.ValidString(value) && !strings.ContainsFunc(value, unicode.IsControl)
 }

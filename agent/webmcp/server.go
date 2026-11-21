@@ -24,7 +24,7 @@ type tool struct {
 
 type webClient struct {
 	*search.Client
-	modelFallback func() search.ModelFallback
+	methods func() []search.Method
 }
 
 // defaultFetchPage is the paging granularity Crude uses for bounded reads
@@ -42,11 +42,11 @@ var serverTools = []tool{
 			`"max_results":{"type":"integer","description":"Results to return (1-10; default 6)"}` +
 			`},"required":["query"]}`,
 		run: func(ctx context.Context, client webClient, args map[string]any) (string, error) {
-			var fallback search.ModelFallback
-			if client.modelFallback != nil {
-				fallback = client.modelFallback()
+			var methods []search.Method
+			if client.methods != nil {
+				methods = client.methods()
 			}
-			return client.SearchWithModelFallback(ctx, stringArg(args, "query"), boundedArg(args, "max_results", 6, 10), fallback)
+			return client.SearchWith(ctx, stringArg(args, "query"), boundedArg(args, "max_results", 6, 10), methods)
 		},
 	},
 	{
@@ -84,13 +84,14 @@ var serverTools = []tool{
 // maxResultBytes is the client's bound on one encoded result; fetched pages
 // are cut to fit it with a continuation offset.
 func New(lookup func(string) string, maxResultBytes int) (*mcp.Server, map[string]captypes.Effect) {
-	return NewWithModelFallback(lookup, maxResultBytes, nil)
+	return NewWithSearchMethods(lookup, maxResultBytes, nil)
 }
 
-// NewWithModelFallback snapshots the server-owned route as the search starts.
-// The snapshot is not accessible through tool arguments or to other tools.
-func NewWithModelFallback(lookup func(string) string, maxResultBytes int, fallback func() search.ModelFallback) (*mcp.Server, map[string]captypes.Effect) {
-	client := webClient{Client: search.New(lookup), modelFallback: fallback}
+// NewWithSearchMethods adds the server owner's account search methods. Each
+// search snapshots them as it starts; tool arguments cannot reach or change
+// them.
+func NewWithSearchMethods(lookup func(string) string, maxResultBytes int, methods func() []search.Method) (*mcp.Server, map[string]captypes.Effect) {
+	client := webClient{Client: search.New(lookup), methods: methods}
 	// Reserve the enclosing MCP and neutral result fields, not just the JSON
 	// string. The ordinary MCP projection applies to built-ins too.
 	client.SetResultBudget(max(1, maxResultBytes-4096))
@@ -122,7 +123,7 @@ func NewWithModelFallback(lookup func(string) string, maxResultBytes int, fallba
 				}
 				result := errorResult(err.Error())
 				if _, failed := errors.AsType[*search.ProvidersFailed](err); failed {
-					result.Meta = mcp.Meta{captypes.WebSearchFallbackAvailable: true}
+					result.Meta = mcp.Meta{captypes.WebSearchOutage: true}
 				}
 				return result, nil
 			}

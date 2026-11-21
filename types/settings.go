@@ -359,8 +359,8 @@ func capabilityDiff(base, working captypes.Settings) json.RawMessage {
 	if raw := sparseDiff(base, working); len(raw) > 0 {
 		_ = json.Unmarshal(raw, &delta)
 	}
-	// Only Application can change where the Web MCP sends fallback queries.
-	delete(delta, "web_search_fallback")
+	// Only Application can choose the accounts the Web MCP sends queries to.
+	delete(delta, "web_search_routes")
 	baseMap, _ := jsonObject(base)
 	workingMap, _ := jsonObject(working)
 	for _, collection := range []string{"skills", "connections", "sources"} {
@@ -401,9 +401,9 @@ func mergeCapabilities(base captypes.Settings, overlay json.RawMessage) captypes
 	if json.Unmarshal(overlay, &changes) != nil {
 		return base
 	}
-	// A stored workspace override cannot redirect model requests.
+	// A stored workspace override cannot add or redirect search methods.
 	for key := range changes {
-		if strings.EqualFold(key, "web_search_fallback") {
+		if strings.EqualFold(key, "web_search_routes") {
 			delete(changes, key)
 		}
 	}

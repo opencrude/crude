@@ -466,13 +466,18 @@ func TestAccountConnectionsCannotBeWorkspaceOverrides(t *testing.T) {
 	}
 }
 
-func TestWebSearchFallbackRemainsApplicationOwned(t *testing.T) {
-	selection := captypes.WebSearchFallback{"allowed-account", "known-model"}
-	base := AppSettings{Capabilities: captypes.Settings{WebSearchFallback: selection}}
-	for _, key := range []string{"web_search_fallback", "WEB_SEARCH_FALLBACK"} {
-		workspace := WorkspaceOverrides{Capabilities: json.RawMessage(`{"` + key + `":["other-account","other-model"]}`)}
-		if got := MergeAppWorkspace(base, workspace).Capabilities.WebSearchFallback; !reflect.DeepEqual(got, selection) {
-			t.Fatalf("stored workspace field %s changed the fallback: %v", key, got)
+func TestWebSearchRoutesRemainApplicationOwned(t *testing.T) {
+	routes := []captypes.WebSearchRoute{{ID: "r1", Account: "allowed-account", Model: "known-model"}}
+	base := AppSettings{Capabilities: captypes.Settings{WebSearchRoutes: routes}}
+	for _, key := range []string{"web_search_routes", "WEB_SEARCH_ROUTES"} {
+		workspace := WorkspaceOverrides{Capabilities: json.RawMessage(`{"` + key + `":[{"id":"r2","account":"other-account","model":"other-model"}]}`)}
+		if got := MergeAppWorkspace(base, workspace).Capabilities.WebSearchRoutes; !reflect.DeepEqual(got, routes) {
+			t.Fatalf("stored workspace field %s changed the search methods: %v", key, got)
 		}
+	}
+	working := base
+	working.Capabilities.WebSearchRoutes = []captypes.WebSearchRoute{{ID: "r3", Account: "workspace-account"}}
+	if delta := capabilityDiff(base.Capabilities, working.Capabilities); strings.Contains(string(delta), "web_search_routes") {
+		t.Fatalf("a workspace diff stored search methods: %s", delta)
 	}
 }

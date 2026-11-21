@@ -927,8 +927,8 @@ func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments 
 	projection := newContentProjection(manager, config)
 	projection.result.IsError = result.IsError
 	if ctx.Err() == nil && config.IsBuiltinWeb() && tool.OriginalName == "web_search" && result.IsError &&
-		result.Meta[captypes.WebSearchFallbackAvailable] == true {
-		projection.result.Code = captypes.WebSearchFallbackAvailable
+		result.Meta[captypes.WebSearchOutage] == true {
+		projection.result.Code = captypes.WebSearchOutage
 	}
 	var evidenceError error
 	for _, item := range result.Content {

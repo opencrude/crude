@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,114 +46,238 @@ type SearchResult struct {
 	Description string
 }
 
-// keylessSearch races independent providers. A stalled provider cannot hold
-// usable results hostage until the enclosing MCP call times out.
-func keylessSearch(ctx context.Context, query string, limit int) ([]SearchResult, []string, map[string]string) {
-	engines := []keyedEngine{
-		{"brave", searchBrave},
-		{"duckduckgo", searchDuckDuckGo},
-		{"startpage", searchStartpage},
-		{"exa", func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+func keylessMethods() []Method {
+	return []Method{
+		{Name: "brave", Search: searchBrave},
+		{Name: "duckduckgo", Search: searchDuckDuckGo},
+		{Name: "startpage", Search: searchStartpage},
+		{Name: "exa-mcp", Search: func(ctx context.Context, query string, limit int) ([]SearchResult, error) {
 			return searchExaMCP(ctx, "https://mcp.exa.ai/mcp", query, limit)
 		}},
 	}
-	return runKeylessSearch(ctx, engines, query, limit)
 }
 
-func runKeylessSearch(ctx context.Context, engines []keyedEngine, query string, limit int) ([]SearchResult, []string, map[string]string) {
-	ctx, cancel := context.WithCancel(ctx)
-	type engineResult struct {
-		index   int
-		results []SearchResult
-		err     error
-	}
-	ch := make(chan engineResult, len(engines))
+const searchGrace = 150 * time.Millisecond
+
+type methodAnswer struct {
+	index    int
+	finished time.Time
+	results  []SearchResult
+	err      error
+}
+
+type methodFailure struct {
+	name, reason string
+}
+
+func runSearch(parent context.Context, methods []Method, query string, limit int) ([]SearchResult, []string, []methodFailure) {
+	ctx, cancel := context.WithTimeout(parent, operationTimeout)
+	deadline, _ := ctx.Deadline()
+	cutoff := deadline
+	ch := make(chan methodAnswer, len(methods))
 	var workers sync.WaitGroup
-	defer func() { cancel(); workers.Wait() }()
-	for index, engine := range engines {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			start := time.Now()
-			results, err := engine.search(ctx, query, limit)
-			logIf(func(lg *logger.Logger) {
-				if err != nil {
-					lg.Debug("SEARCH", "engine_failed", "engine", engine.name, "latency_ms", time.Since(start).Milliseconds(), "error", redactRequestURL(err).Error())
-				} else {
-					lg.Debug("SEARCH", "engine_ok", "engine", engine.name, "results", len(results), "latency_ms", time.Since(start).Milliseconds())
-				}
-			})
-			ch <- engineResult{index: index, results: results, err: err}
-		}()
+	configured := 0
+	for index, method := range methods {
+		if method.Configured {
+			configured++
+		}
+		workers.Go(func() {
+			results, err := method.Search(ctx, query, limit)
+			ch <- methodAnswer{index: index, finished: time.Now(), results: results, err: err}
+		})
 	}
-	answers := make([][]SearchResult, len(engines))
-	var succeeded []string
-	failed := make(map[string]string)
+
+	type completion struct {
+		methodAnswer
+		hits []searchHit
+	}
+	var answers []completion
+	answered := make([]bool, len(methods))
+	unique := make(map[string]bool)
+	record := func(answer methodAnswer) {
+		answered[answer.index] = true
+		if methods[answer.index].Configured {
+			configured--
+		}
+		done := completion{methodAnswer: answer}
+		if answer.err == nil {
+			done.hits = uniqueSearchHits(answer.results)
+			for _, hit := range done.hits {
+				unique[hit.key] = true
+			}
+		}
+		answers = append(answers, done)
+	}
+
 	var grace <-chan time.Time
 	var timer *time.Timer
-	defer func() {
-		if timer != nil {
-			timer.Stop()
+	timeCutoff := false
+	fillLimit := true
+race:
+	for range methods {
+		if ctx.Err() != nil {
+			timeCutoff = true
+			break
 		}
-	}()
-	collect := func() []SearchResult {
-		var all []SearchResult
-		for _, answer := range answers {
-			all = append(all, answer...)
-		}
-		return deduplicateResults(all, limit)
-	}
-	for range engines {
 		select {
 		case <-ctx.Done():
-			return collect(), succeeded, failed
+			timeCutoff = true
+			break race
 		case <-grace:
-			return collect(), succeeded, failed
-		case r := <-ch:
-			name := engines[r.index].name
-			if r.err != nil {
-				failed[name] = redactRequestURL(r.err).Error()
+			timeCutoff = true
+			break race
+		case answer := <-ch:
+			if !answer.finished.Before(cutoff) {
+				timeCutoff = true
+				break race
+			}
+			wasWaiting := configured > 0
+			record(answer)
+			if configured > 0 || len(unique) == 0 {
 				continue
 			}
-			succeeded = append(succeeded, name)
-			answers[r.index] = r.results
-			if results := collect(); len(results) >= limit {
-				return results, succeeded, failed
-			} else if len(results) > 0 && timer == nil {
-				// Briefly collect other ready results, never wait a full provider
-				// deadline just to fill the requested maximum.
-				timer = time.NewTimer(150 * time.Millisecond)
-				grace = timer.C
+			if wasWaiting {
+				// At least one usable result existed when the last configured
+				// method finished. Give free engines grace even at the limit.
+				fillLimit = false
+			}
+			if fillLimit && len(unique) >= limit {
+				break race
+			}
+			if timer == nil {
+				if end := time.Now().Add(searchGrace); end.Before(deadline) {
+					cutoff = end
+					timer = time.NewTimer(time.Until(end))
+					grace = timer.C
+				}
 			}
 		}
 	}
-	return collect(), succeeded, failed
+	if timer != nil {
+		timer.Stop()
+	}
+	cancel()
+	workers.Wait()
+	if parent.Err() != nil {
+		return nil, nil, nil
+	}
+	if timeCutoff {
+		// A timer and an answer can be ready at the same time. Keep replies that
+		// finished before the cutoff, not replies produced by cancellation.
+		close(ch)
+		for answer := range ch {
+			if answer.finished.Before(cutoff) {
+				record(answer)
+			}
+		}
+	}
+
+	sort.SliceStable(answers, func(i, j int) bool { return answers[i].finished.Before(answers[j].finished) })
+	var succeeded []string
+	var failed []methodFailure
+	var rankedLists [][]searchHit
+	for _, answer := range answers {
+		name := methods[answer.index].Name
+		if answer.err != nil {
+			reason := redactRequestURL(answer.err).Error()
+			failed = append(failed, methodFailure{name, reason})
+			logIf(func(lg *logger.Logger) {
+				lg.Debug("SEARCH", "engine_failed", "engine", name, "error", reason)
+			})
+			continue
+		}
+		succeeded = append(succeeded, name)
+		rankedLists = append(rankedLists, answer.hits)
+	}
+	if timeCutoff && cutoff.Equal(deadline) {
+		for index, method := range methods {
+			if !answered[index] {
+				failed = append(failed, methodFailure{method.Name, "did not answer before the search deadline"})
+			}
+		}
+	}
+	return fuseSearchHits(rankedLists, limit), succeeded, failed
 }
 
-func deduplicateResults(results []SearchResult, limit int) []SearchResult {
-	seen := make(map[string]bool)
-	var deduped []SearchResult
+type searchHit struct {
+	SearchResult
+	key string
+}
 
+func uniqueSearchHits(results []SearchResult) []searchHit {
+	seen := make(map[string]bool)
+	var hits []searchHit
 	for _, r := range results {
-		normalizedTitle := strings.ToLower(strings.TrimSpace(r.Title))
 		parsed, err := url.Parse(strings.TrimSpace(r.URL))
-		if normalizedTitle == "" || err != nil || parsed.Host == "" || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.User != nil {
+		if strings.TrimSpace(r.Title) == "" || err != nil || parsed.Host == "" || parsed.Scheme != "https" && parsed.Scheme != "http" || parsed.User != nil {
 			continue
 		}
 		parsed.Fragment, parsed.RawFragment = "", ""
 		parsed.Host = strings.ToLower(parsed.Host)
-		k := parsed.String()
-		if !seen[k] {
-			seen[k] = true
-			deduped = append(deduped, r)
-		}
-
-		if len(deduped) >= limit {
-			break
+		key := parsed.String()
+		if !seen[key] {
+			seen[key] = true
+			hits = append(hits, searchHit{SearchResult: r, key: key})
 		}
 	}
+	return hits
+}
 
-	return deduped
+// fuseSearchHits applies reciprocal rank fusion with k=60. Visit methods in
+// completion order so equal-ranked occurrences keep the earlier metadata.
+func fuseSearchHits(lists [][]searchHit, limit int) []SearchResult {
+	type fused struct {
+		SearchResult
+		ranks           []int
+		score           float64
+		bestRank        int
+		bestMethod      int
+		descriptionRank int
+	}
+	byURL := make(map[string]*fused)
+	var hits []*fused
+	for method, list := range lists {
+		for index, hit := range list {
+			rank := index + 1
+			entry := byURL[hit.key]
+			if entry == nil {
+				entry = &fused{}
+				byURL[hit.key] = entry
+				hits = append(hits, entry)
+			}
+			entry.ranks = append(entry.ranks, rank)
+			if entry.bestRank == 0 || rank < entry.bestRank {
+				entry.bestRank, entry.bestMethod = rank, method
+				entry.Title, entry.URL = hit.Title, hit.URL
+			}
+			if strings.TrimSpace(hit.Description) != "" && (entry.descriptionRank == 0 || rank < entry.descriptionRank) {
+				entry.descriptionRank, entry.Description = rank, hit.Description
+			}
+		}
+	}
+	for _, hit := range hits {
+		// Sum in rank order so the same ranks tie regardless of which method
+		// contributed each rank.
+		sort.Ints(hit.ranks)
+		for _, rank := range hit.ranks {
+			hit.score += 1.0 / float64(60+rank)
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		a, b := hits[i], hits[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		if a.bestRank != b.bestRank {
+			return a.bestRank < b.bestRank
+		}
+		return a.bestMethod < b.bestMethod
+	})
+	results := make([]SearchResult, 0, min(limit, len(hits)))
+	for _, hit := range hits[:min(limit, len(hits))] {
+		results = append(results, hit.SearchResult)
+	}
+	return results
 }
 
 // Search Engine Implementations
@@ -383,8 +508,12 @@ func searchStartpage(ctx context.Context, query string, limit int) ([]SearchResu
 func searchExaMCP(ctx context.Context, endpoint, query string, limit int) ([]SearchResult, error) {
 	httpClient := network.NewClient(15 * time.Second)
 	defer httpClient.CloseIdleConnections()
+	// The SDK detaches its session from the operation. Bind its session DELETE
+	// to the search too, so closing the session cannot delay cancellation.
+	sessionClient := *httpClient
+	sessionClient.Transport = exaSessionTransport{httpClient.Transport, ctx}
 	client := mcp.NewClient(&mcp.Implementation{Name: "crude-web", Version: "1"}, nil)
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: httpClient, DisableStandaloneSSE: true, MaxRetries: -1, MaxEventSize: maxResponseBytes}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: endpoint, HTTPClient: &sessionClient, DisableStandaloneSSE: true, MaxRetries: -1, MaxEventSize: maxResponseBytes}, nil)
 	if err != nil {
 		return nil, redactRequestURL(err)
 	}
@@ -404,6 +533,24 @@ func searchExaMCP(ctx context.Context, endpoint, query string, limit int) ([]Sea
 		return nil, fmt.Errorf("exa: %s", strings.TrimSpace(text.String()))
 	}
 	return parseExaResults(text.String(), limit)
+}
+
+type exaSessionTransport struct {
+	http.RoundTripper
+	search context.Context
+}
+
+func (transport exaSessionTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Method != http.MethodDelete {
+		return transport.RoundTripper.RoundTrip(req)
+	}
+	ctx := transport.search
+	if deadline, ok := req.Context().Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+	return transport.RoundTripper.RoundTrip(req.WithContext(ctx))
 }
 
 func parseExaResults(text string, limit int) ([]SearchResult, error) {

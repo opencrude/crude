@@ -27,9 +27,85 @@ func (s *AnthropicStandard) Info() ProtocolInfo {
 		Root:        "/v1",
 		ChatPath:    "messages",
 		ModelsPath:  "models",
+		WebSearch:   WebSearchTool,
 		Streaming:   FramingSSE,
 		// "fast" is fast mode (the speed parameter), not a service tier.
 		Options: ProtocolOptions{ServiceTiers: []string{"auto", "standard_only", "fast"}},
+	}
+}
+
+func (s *AnthropicStandard) EncodeWebSearch(model, query string, _ int) map[string]any {
+	// Forced tool choice fails on several models that support server search.
+	// Use automatic choice and require evidence from a search result block.
+	return map[string]any{
+		"model": model, "max_tokens": 1024,
+		"messages": []map[string]string{{"role": "user", "content": query}},
+		"tools":    []map[string]any{{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}},
+	}
+}
+
+func (s *AnthropicStandard) DecodeWebSearch(body []byte, limit int) ([]WebSearchSource, error) {
+	var response struct {
+		Content []struct {
+			Type    string          `json:"type"`
+			Content json.RawMessage `json:"content"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, errWebSearchRead
+	}
+	var sources []WebSearchSource
+	observed, hadEntries := false, false
+	for _, block := range response.Content {
+		if block.Type != "web_search_tool_result" || len(block.Content) == 0 {
+			continue
+		}
+		if block.Content[0] == '{' {
+			var failure struct {
+				Type string `json:"type"`
+				Code string `json:"error_code"`
+			}
+			if err := json.Unmarshal(block.Content, &failure); err != nil || failure.Type != "web_search_tool_result_error" {
+				return nil, errWebSearchRead
+			}
+			return nil, anthropicWebSearchError(failure.Code)
+		}
+		var rows []struct {
+			Type  string `json:"type"`
+			URL   string `json:"url"`
+			Title string `json:"title"`
+		}
+		if err := json.Unmarshal(block.Content, &rows); err != nil || rows == nil {
+			return nil, errWebSearchRead
+		}
+		observed, hadEntries = true, hadEntries || len(rows) != 0
+		for _, row := range rows {
+			if row.Type == "web_search_result" {
+				sources = append(sources, WebSearchSource{URL: row.URL, Title: row.Title})
+			}
+		}
+	}
+	if !observed || (hadEntries && len(sources) == 0) {
+		return nil, errWebSearchNoSources
+	}
+	return checkedWebSearchSources(sources, limit)
+}
+
+func anthropicWebSearchError(code string) error {
+	// Translate documented codes. Unknown codes can contain arbitrary text.
+	switch code {
+	case "too_many_requests":
+		return webSearchError("The search reached its rate limit. Try again later.")
+	case "invalid_tool_input":
+		return webSearchError("The account rejected the search query. Change the query.")
+	case "max_uses_exceeded":
+		return webSearchError("The account reached its search limit. Try a simpler query.")
+	case "query_too_long":
+		return webSearchError("The search query is too long. Use a shorter query.")
+	case "request_too_large":
+		return webSearchError("The search request is too large. Use a shorter query.")
+	default:
+		return webSearchError("Web search is not available. Try again later.")
 	}
 }
 

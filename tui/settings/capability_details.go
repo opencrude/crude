@@ -89,6 +89,9 @@ func (catalog *capabilityCatalog) setTabs() {
 			}
 		} else {
 			items = []ui.TabItem{{ID: "overview", Label: "Overview"}, {ID: "connection", Label: "Connection"}, {ID: "tools", Label: "Tools"}, {ID: "resources", Label: "Resources"}, {ID: "prompts", Label: "Prompts"}, {ID: "access", Label: "Access"}, {ID: "activity", Label: "Activity"}}
+			if catalog.builtinWebOpen() {
+				items = slices.Insert(items, 1, ui.TabItem{ID: webSearchPage, Label: "Search methods"})
+			}
 		}
 		if catalog.acquisition != nil {
 			items = append(items, ui.TabItem{ID: "acquisition", Label: "Review install"})
@@ -131,7 +134,8 @@ func (catalog *capabilityCatalog) focusDetailInput() {
 }
 
 func (catalog *capabilityCatalog) detailCollection() bool {
-	return catalog.kind == captypes.KindMCP && slices.Contains([]string{"tools", "resources", "prompts", "access"}, catalog.detailPage)
+	return catalog.kind == captypes.KindMCP && (slices.Contains([]string{"tools", "resources", "prompts", "access"}, catalog.detailPage) ||
+		catalog.detailPage == webSearchPage && catalog.builtinWebOpen())
 }
 
 func (catalog *capabilityCatalog) actionBars() []*ui.ActionBar {
@@ -328,9 +332,11 @@ func alignKeyValues(text string) string {
 func (catalog *capabilityCatalog) layoutDetail(ctx ui.LayoutContext, top, height int) {
 	width := catalog.Bounds().W
 	if catalog.detailCollection() {
-		catalog.filter.SetPlaceholder("Search " + catalog.detailPage)
+		catalog.filter.SetPlaceholder(mapState(catalog.detailPage == webSearchPage, "Filter search methods", "Search "+catalog.detailPage))
 		catalog.filter.Layout(ctx, ui.Rect{Y: top, W: width, H: min(1, height)})
-		tableHeight := min(6, max(0, (height-2)/2))
+		// The list is the page's main content: keep its header and two rows
+		// before the detail body takes space on short terminals.
+		tableHeight := min(6, max(0, min(3, height-2), (height-2)/2))
 		catalog.layoutTable(ctx, catalog.browse, catalog.browseScroll, ui.Rect{Y: top + 2, W: width, H: tableHeight})
 		catalog.layoutDetailBody(ctx, ui.Rect{Y: top + 2 + tableHeight, W: width, H: max(0, height-2-tableHeight)})
 	} else if catalog.kind == captypes.KindSkill && catalog.detailPage == "files" {
@@ -483,9 +489,23 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 			primary = append(primary, button("Fetch preview", "resource"), button("Stage context", "stage-context"))
 		case "prompts":
 			primary = append(primary, button("Fetch preview", "prompt"), button("Stage context", "stage-context"))
+		case webSearchPage:
+			if model.capabilityScope() == captypes.ScopeApplication {
+				_, selected := catalog.selectedWebSearchRoute()
+				add := button("Add method", "add-route")
+				add.Enabled = len(catalog.savedWebSearchRoutes()) < captypes.MaxWebSearchRoutes
+				edit, test, remove := button("Edit", "edit-route"), button("Test", "test-route"), button("Remove", "remove-route")
+				edit.Enabled, test.Enabled, remove.Enabled = selected, selected, selected
+				remove.Variant = ui.VariantDanger
+				primary = append(primary, add, edit, test, remove)
+			}
+			// The page acts on its methods only. Connection actions stay on
+			// the other pages, so Remove cannot be read as removing the
+			// connection.
+			return decision, primary, nil
 		case "connection":
 			if connection.IsBuiltinWeb() {
-				primary = append(primary, button("Model fallback", webFallbackEditor), button("Edit provider keys", "edit"))
+				primary = append(primary, button("Edit provider keys", "edit"))
 			} else {
 				primary = append(primary, button("Edit connection", "edit"))
 			}
@@ -497,7 +517,7 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 			}
 		default:
 			if connection.IsBuiltinWeb() {
-				primary = append(primary, button("Model fallback", webFallbackEditor), button("Edit provider keys", "edit"))
+				primary = append(primary, button("Search methods", "open-search-methods"), button("Edit provider keys", "edit"))
 			} else {
 				primary = append(primary, button("Edit", "edit"))
 			}
@@ -584,6 +604,11 @@ func (catalog *capabilityCatalog) buildDetailForm() *ui.FormModel {
 			fields = append(fields, capabilityReadOnly("auth-url", "Sign-in URL", state.AuthURL, "Open this endpoint-owned URL in your browser; paste the exact return URL below."), ui.TextFieldState("auth-return", "Authorization return", "", "Consumed only by Auth return; never copied to logs or previews."))
 		}
 		return formModel(fields...)
+	case webSearchPage:
+		if connection.IsBuiltinWeb() {
+			return catalog.webSearchPageForm()
+		}
+		return formModel(capabilityReadOnly("schema", "Search methods", "Only Crude's built-in web connection has search methods.", ""))
 	case "tools", "access":
 		return formModel(capabilityReadOnly("schema", "Tool schema and effective access", "Select a tool and Inspect schema. Review grant assigns an explicit effect, scope and observed fingerprint; server annotations are not grants.", "MCP writes are outside native file ownership and undo unless explicitly integrated."))
 	case "resources":
@@ -601,20 +626,31 @@ func (catalog *capabilityCatalog) buildDetailForm() *ui.FormModel {
 }
 
 func (catalog *capabilityCatalog) builtinWebSummary() string {
-	summary := "Search the web and read pages without an account."
+	summary := "Search the web and read pages. Free engines work without an account."
 	if catalog.owner.model.capabilities.Connections[catalog.id].Disabled {
 		summary = "Web search and fetch is off. Choose Enable to use it."
 	}
-	value := "Off"
-	if account, model, ok := catalog.savedWebSearchFallback().Selection(); ok {
-		entry := catalog.owner.model.accounts[account]
-		if supportsWebFallbackAccount(entry) {
-			value = entry.Label + " · " + model
-		} else {
-			value = "Account unavailable. Choose an account or turn fallback off."
+	var on []string
+	off := 0
+	for _, route := range catalog.savedWebSearchRoutes() {
+		if route.Disabled {
+			off++
+			continue
 		}
+		label := catalog.webRouteAccountLabel(route)
+		if route.Model != "" {
+			label += " · " + route.Model
+		}
+		on = append(on, label)
 	}
-	return "Model fallback: " + value + "\n\n" + summary
+	methods := "Free engines and provider keys"
+	if len(on) > 0 {
+		methods += ", " + strings.Join(on, ", ")
+	}
+	if off > 0 {
+		methods += fmt.Sprintf(" (%d off)", off)
+	}
+	return "Search methods: " + methods + "\n\n" + summary + " Every search method runs at the same time. Pages that more methods find rank first. Choose Search methods to add an account."
 }
 
 func (catalog *capabilityCatalog) activityText() string {
@@ -688,11 +724,18 @@ func (catalog *capabilityCatalog) syncDetailRows() {
 		for _, prompt := range state.Prompts {
 			add(prompt.Name, prompt.Name, prompt.Description, fmt.Sprintf("%d arguments", len(prompt.Arguments)), prompt)
 		}
+	case webSearchPage:
+		if !catalog.builtinWebOpen() {
+			return
+		}
+		catalog.syncWebSearchRows(add)
 	default:
 		return
 	}
 	stored := catalog.views[catalog.viewKey()]
-	catalog.browse.SetColumns([]ui.TableColumn{{ID: "name", Label: "Name", Track: ui.FractionGridTrack(2)}, {ID: "description", Label: "Description", Track: ui.FractionGridTrack(3)}, {ID: "access", Label: mapState(state.Cached, "Cached / unverified", "Access / type"), Track: ui.FractionGridTrack(2)}})
+	if catalog.detailPage != webSearchPage {
+		catalog.browse.SetColumns([]ui.TableColumn{{ID: "name", Label: "Name", Track: ui.FractionGridTrack(2)}, {ID: "description", Label: "Description", Track: ui.FractionGridTrack(3)}, {ID: "access", Label: mapState(state.Cached, "Cached / unverified", "Access / type"), Track: ui.FractionGridTrack(2)}})
+	}
 	catalog.browse.SetRows(rows)
 	for index, row := range rows {
 		if row.ID == stored.selected {
@@ -701,6 +744,13 @@ func (catalog *capabilityCatalog) syncDetailRows() {
 		}
 	}
 	catalog.browse.Scroll().ScrollTo(stored.offset)
+	if catalog.detailPage == webSearchPage {
+		catalog.refreshWebSearchDetail()
+		if control := catalog.form.Field("search-method"); control != nil {
+			control.Sync()
+		}
+		return
+	}
 	if (catalog.detailPage == "tools" || catalog.detailPage == "access") && stored.inspected != "" {
 		form := catalog.forms[catalog.viewKey()]
 		if form == nil || form.Field("schema") == nil {
@@ -740,6 +790,15 @@ func (catalog *capabilityCatalog) inspectItem() {
 	}
 	form := catalog.forms[catalog.viewKey()]
 	switch value := row.Payload.(type) {
+	case captypes.WebSearchRoute:
+		stored := catalog.views[catalog.viewKey()]
+		stored.inspected = value.ID
+		catalog.views[catalog.viewKey()] = stored
+		catalog.refreshWebSearchDetail()
+		if control := catalog.form.Field("search-method"); control != nil {
+			control.Sync()
+		}
+		return
 	case captypes.Tool:
 		stored := catalog.views[catalog.viewKey()]
 		stored.inspected = value.Name
@@ -870,14 +929,40 @@ func (catalog *capabilityCatalog) consumeResult() {
 	}()
 	if result.Err != nil {
 		catalog.message = result.Err.Error()
+		if request.action.WebSearchRoute != nil {
+			catalog.message = sentence(catalog.message)
+		}
 		if (request.action.Operation == "discover" || request.action.Operation == "search") && len(result.Entries) > 0 {
 			catalog.syncRows()
 		}
 		return
 	}
 	catalog.message = request.action.Operation + " completed"
-	if request.action.Operation == captypes.SetWebSearchFallback {
-		catalog.message = "Model fallback saved."
+	switch request.action.Operation {
+	case captypes.SaveWebSearchRoute:
+		catalog.message = "Search method saved. New searches use it."
+		if catalog.edit == webRouteEditor && request.form == catalog.owner.model.capabilityDraft &&
+			reflect.DeepEqual(request.draft, formDraftBytes(catalog.owner.model.capabilityDraft)) {
+			// The saved method returns to the list, selected and shown.
+			catalog.closeEditor()
+			stored := catalog.views[string(catalog.kind)+"/"+catalog.id+"/"+webSearchPage]
+			stored.selected, stored.inspected = request.action.WebSearchRoute.ID, request.action.WebSearchRoute.ID
+			catalog.views[string(catalog.kind)+"/"+catalog.id+"/"+webSearchPage] = stored
+			catalog.detailForm(webSearchPage)
+			catalog.owner.focusID(catalog.browse.ID())
+		}
+		catalog.actions()
+		return
+	case captypes.RemoveWebSearchRoute:
+		catalog.message = "Search method removed."
+		catalog.syncDetailRows()
+		catalog.actions()
+		return
+	case captypes.TestWebSearchRoute:
+		catalog.message = result.Content
+		catalog.syncDetailRows()
+		catalog.actions()
+		return
 	}
 	if request.action.Operation == "discover" || request.action.Operation == "search" {
 		catalog.syncRows()
@@ -962,7 +1047,7 @@ func (catalog *capabilityCatalog) consumeResult() {
 			catalog.message = "Remote response is failed, unknown or unsupported; it cannot be staged."
 		}
 	}
-	if slices.Contains([]string{"save-connection", "set-secrets", "save-skill", "save-source", "create-skill", "add-local", "import", "make-local-copy", captypes.SetWebSearchFallback}, request.action.Operation) {
+	if slices.Contains([]string{"save-connection", "set-secrets", "save-skill", "save-source", "create-skill", "add-local", "import", "make-local-copy"}, request.action.Operation) {
 		if request.form != nil && catalog.owner.model.capabilityDraft == request.form && reflect.DeepEqual(request.draft, formDraftBytes(catalog.owner.model.capabilityDraft)) {
 			catalog.baseline = slices.Clone(request.draft)
 			catalog.owner.model.capabilityDraft.Commit()

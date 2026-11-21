@@ -40,8 +40,9 @@ type Settings struct {
 	Connections map[string]ConnectionConfig `json:"connections,omitempty"`
 	Sources     map[string]SourceConfig     `json:"sources,omitempty"`
 	Acquisition AcquisitionSettings         `json:"acquisition,omitempty"`
-	// WebSearchFallback is an application-owned choice for Crude's Web MCP.
-	WebSearchFallback WebSearchFallback `json:"web_search_fallback,omitempty"`
+	// WebSearchRoutes are application-owned account search methods for
+	// Crude's Web MCP. A workspace cannot add or redirect them.
+	WebSearchRoutes []WebSearchRoute `json:"web_search_routes,omitempty"`
 	// ProjectToolDecisions is workspace-only authority owned by the dedicated
 	// project setup transaction, not by generic capability settings.
 	ProjectToolDecisions json.RawMessage `json:"project_tool_decisions,omitempty"`
@@ -221,6 +222,9 @@ type Snapshot struct {
 	// StoredSecrets names the values held in Crude's secret store. Values never
 	// leave the core.
 	StoredSecrets []string
+	// WebSearch holds the latest outcome of each search method, by route ID.
+	// A route without an entry has not searched since the core started.
+	WebSearch map[string]WebSearchObservation
 }
 
 type AgentBinding struct {
@@ -256,9 +260,9 @@ type Action struct {
 	Content    string
 	Arguments  map[string]string
 	Preview    *AcquisitionPreview
-	// WebSearchFallback is used only by SetWebSearchFallback. An empty pair
-	// in that operation explicitly turns fallback off.
-	WebSearchFallback WebSearchFallback
+	// WebSearchRoute is the route that Save, Remove and Test search method
+	// operations act on. Remove uses only its ID.
+	WebSearchRoute *WebSearchRoute
 }
 
 type RuntimeActor struct {

@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"sort"
@@ -40,6 +42,18 @@ type controlCapabilityInput struct {
 	Tool       string                  `json:"tool"`
 	Enabled    *bool                   `json:"enabled"`
 	Connection *controlConnectionInput `json:"connection"`
+	Account    *string                 `json:"account"`
+	Model      *string                 `json:"model"`
+}
+
+// CapabilitySearchMethodView is one account search method and its last
+// observed result.
+type CapabilitySearchMethodView struct {
+	ID         string `json:"id"`
+	Account    string `json:"account"`
+	Model      string `json:"model,omitempty"`
+	Enabled    bool   `json:"enabled"`
+	LastResult string `json:"last_result"`
 }
 
 // CapabilityConnectionView is the agent-visible summary of one connection.
@@ -60,6 +74,16 @@ type CapabilityControlView struct {
 	Connections   []CapabilityConnectionView `json:"connections"`
 	Skills        []string                   `json:"skills,omitempty"`
 	StoredSecrets []string                   `json:"stored_secrets,omitempty"`
+	// SearchMethods are the built-in web_search's account methods.
+	SearchMethods []CapabilitySearchMethodView `json:"search_methods,omitempty"`
+	// TestResult is the outcome of capabilities.test_search_method.
+	TestResult string `json:"test_result,omitempty"`
+}
+
+func newControlSearchMethodID() string {
+	var raw [8]byte
+	_, _ = rand.Read(raw[:])
+	return "r" + hex.EncodeToString(raw[:])
 }
 
 func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotocol.Owner) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
@@ -119,6 +143,40 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		}
 		merged, updates := mergeControlConnection(existing, *input.Connection)
 		action.Operation, action.Connection, action.Scope, secrets = "save-connection", &merged, scopeOf(existing), &updates
+	case "capabilities.save_search_method", "capabilities.test_search_method":
+		route := captypes.WebSearchRoute{ID: input.ID}
+		saved := slices.IndexFunc(current.WebSearchRoutes, func(existing captypes.WebSearchRoute) bool { return existing.ID == input.ID })
+		if input.ID != "" && saved < 0 {
+			return controlFailure(in, control.Invalid, "no search method has this id; omit id to add one")
+		}
+		if saved >= 0 {
+			route = current.WebSearchRoutes[saved]
+		}
+		if route.ID == "" && in.CommandID == "capabilities.save_search_method" {
+			route.ID = newControlSearchMethodID()
+		}
+		if input.Account != nil {
+			route.Account = *input.Account
+		}
+		if input.Model != nil {
+			route.Model = *input.Model
+		}
+		if input.Enabled != nil {
+			route.Disabled = !*input.Enabled
+		}
+		if route.Account == "" {
+			return controlFailure(in, control.Invalid, "account is required; give an account ID or the id of a saved method")
+		}
+		action.ID, action.WebSearchRoute = captypes.WebConnectionID, &route
+		action.Operation = captypes.SaveWebSearchRoute
+		if in.CommandID == "capabilities.test_search_method" {
+			action.Operation = captypes.TestWebSearchRoute
+		}
+	case "capabilities.remove_search_method":
+		if !slices.ContainsFunc(current.WebSearchRoutes, func(existing captypes.WebSearchRoute) bool { return existing.ID == input.ID }) {
+			return controlFailure(in, control.Invalid, "no search method has this id")
+		}
+		action.ID, action.Operation, action.WebSearchRoute = captypes.WebConnectionID, captypes.RemoveWebSearchRoute, &captypes.WebSearchRoute{ID: input.ID}
 	case "capabilities.remove_connection":
 		existing, exists := current.Connections[input.ID]
 		if !exists {
@@ -154,7 +212,11 @@ func (a *actor) prepareControlCapabilities(in control.Request, owner coreprotoco
 		if !ok {
 			return fault(rpc, "operation_failed", "capability result is unreadable")
 		}
-		response.Value = capabilityControlView(result)
+		view := capabilityControlView(result)
+		if action.Operation == captypes.TestWebSearchRoute {
+			view.TestResult = result.Content
+		}
+		response.Value = view
 		return response
 	}
 	var publish func(coreprotocol.Response) error
@@ -264,5 +326,14 @@ func capabilityControlView(result coreprotocol.CapabilityResult) CapabilityContr
 		view.Skills = append(view.Skills, id)
 	}
 	sort.Strings(view.Skills)
+	for _, route := range snapshot.Settings.WebSearchRoutes {
+		method := CapabilitySearchMethodView{ID: route.ID, Account: route.Account, Model: route.Model, Enabled: !route.Disabled, LastResult: "not checked yet"}
+		if observation, ok := snapshot.WebSearch[route.ID]; ok && observation.Working {
+			method.LastResult = fmt.Sprintf("working: %d sources in %d ms", observation.Results, observation.LatencyMS)
+		} else if ok {
+			method.LastResult = "failed: " + observation.Detail
+		}
+		view.SearchMethods = append(view.SearchMethods, method)
+	}
 	return view
 }

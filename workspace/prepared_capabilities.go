@@ -148,9 +148,15 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 		}
 	case "set-secrets":
 		err = service.SetSecrets(ctx, action.Arguments)
-	case captypes.SetWebSearchFallback:
-		err = applyWebSearchFallback(&working, action)
+	case captypes.SaveWebSearchRoute, captypes.RemoveWebSearchRoute:
+		err = applyWebSearchRoute(&working, action)
 		persist = err == nil
+	case captypes.TestWebSearchRoute:
+		if action.WebSearchRoute == nil {
+			err = errors.New("choose a search method to test")
+		} else {
+			content, err = service.TestWebSearchRoute(ctx, *action.WebSearchRoute)
+		}
 	case "save-source":
 		if action.Source == nil || action.Source.ID == "" || action.Source.Location == "" {
 			err = errors.New("source needs an identity and location")
@@ -356,8 +362,8 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 			}
 			published, err = p.commit(ctx, before, working, action.Scope)
 			if err == nil {
-				if action.Operation == captypes.SetWebSearchFallback {
-					service.SetPublishedWebSearchFallback(published.Capabilities.WebSearchFallback)
+				if action.Operation == captypes.SaveWebSearchRoute || action.Operation == captypes.RemoveWebSearchRoute {
+					service.SetPublishedWebSearchRoutes(published.Capabilities.WebSearchRoutes)
 					return service.Snapshot(), entries, content, published, nil
 				}
 				effective := published

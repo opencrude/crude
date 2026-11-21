@@ -90,15 +90,15 @@ func buildProjectToolTitleLines(msg types.ChatMessage, phase string, frame, widt
 		header.Spans = append(header.Spans, suffix...)
 		lines = wrapToolTitle(header, width)
 	}
-	if msg.ToolName == "web_search" && msg.ToolStatus == types.ToolStatusError && msg.ToolOutcome.Code == captypes.WebSearchFallbackAvailable {
-		label := "Set up a search fallback"
+	if msg.ToolName == "web_search" && msg.ToolStatus == types.ToolStatusError && msg.ToolOutcome.Code == captypes.WebSearchOutage {
+		label := "Set up search methods"
 		if rendering.VisibleWidth(label)+2 > width {
 			label = "Search settings"
 		}
 		if rendering.VisibleWidth(label)+2 <= width {
 			lines = append(lines, PaintLine{Spans: []RowSpan{
 				{Text: "│ ", Role: ui.ColorMuted},
-				{Text: label, Role: ui.ColorAccent, Attr: cell.AttrUnderline, Action: &ui.Action{ID: ChatWebSearchFallbackActionID}},
+				{Text: label, Role: ui.ColorAccent, Attr: cell.AttrUnderline, Action: &ui.Action{ID: ChatWebSearchMethodsActionID}},
 			}})
 		}
 	}

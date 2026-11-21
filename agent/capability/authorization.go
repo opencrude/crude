@@ -232,7 +232,7 @@ func (service *Service) localActorClients(actor captypes.RuntimeActor) *mcpclien
 }
 
 func (service *Service) actorSnapshot(actor captypes.RuntimeActor) captypes.Snapshot {
-	snapshot := service.Snapshot()
+	snapshot := service.snapshot()
 	snapshot.Connections = service.actorClients(actor).States()
 	return snapshot
 }

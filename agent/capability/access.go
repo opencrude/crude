@@ -21,7 +21,7 @@ func (service *Service) activationResult(ctx context.Context, actor captypes.Run
 		return captypes.Result{}, err
 	}
 	result := captypes.ActivationResult{ConnectionID: id, State: "connected", Notices: prepared.Notices}
-	budgets := service.Snapshot().Settings.Acquisition
+	budgets := service.snapshot().Settings.Acquisition
 	for _, state := range service.actorClients(actor).States() {
 		if state.ID == id {
 			result.State = state.State
