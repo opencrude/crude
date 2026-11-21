@@ -54,10 +54,12 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	var mu sync.Mutex
 	managers := make(map[string]*workspace.LSPManager)
 	engines := make(map[string]*countedAnalysisRuntime)
+	fixtureLSP := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
 		engine := &countedAnalysisRuntime{engine: &semanticLSPClient{}}
 		w.LSPMgr.SetRuntime(engine)
+		w.SetAppDefaults(types.AppSettings{LSP: fixtureLSP})
 		mu.Lock()
 		managers[root], engines[root] = w.LSPMgr, engine
 		mu.Unlock()
@@ -141,10 +143,12 @@ func TestAnalysisCoreCloseReportsAndRetainsUnverifiedAdmission(t *testing.T) {
 	}
 	engine := &countedAnalysisRuntime{engine: &semanticLSPClient{}, stopErr: errors.New("fixture teardown cannot be verified")}
 	var manager *workspace.LSPManager
+	fixtureLSP := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
 		manager = w.LSPMgr
 		manager.SetRuntime(engine)
+		w.SetAppDefaults(types.AppSettings{LSP: fixtureLSP})
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
