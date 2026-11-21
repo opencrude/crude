@@ -3,7 +3,7 @@ package types
 const (
 	// ErrandRoleID identifies the existing workspace helper in saved roles and
 	// sessions. The role's display name does not change that identity.
-	ErrandRoleID = "aeron"
+	ErrandRoleID = "errand"
 	ErrandName   = "Errand"
 
 	// AgentInheritMain is the ordinary role marker for following Main Agent.

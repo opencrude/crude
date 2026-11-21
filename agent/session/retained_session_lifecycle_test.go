@@ -78,7 +78,7 @@ func TestRetainedSessionStopSendLifecycle(t *testing.T) {
 			disabled := 0
 			category.ContextCompactionPercent = &disabled
 			cfg.Agents.Profiles["default"].Categories[CategoryDefault] = category
-			cfg.Agents.Profiles["default"].Categories[CategoryAeron] = category
+			cfg.Agents.Profiles["default"].Categories[CategoryErrand] = category
 			home := t.TempDir()
 			s, err := ResumeSessionWithDir(copyPath, cfg, home, directory)
 			if err != nil {

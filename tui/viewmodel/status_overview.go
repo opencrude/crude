@@ -410,8 +410,8 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		{Text: "Memory", FillRole: ui.ColorMuted, Pill: true, Active: active == termdock.PanelMemory, Action: "memory", Priority: 0},
 	}...)
 	segments = append(segments, m.performanceFooterSegment(active))
-	if aeron, ok := m.suggestionFooterSegment(); ok {
-		segments = append(segments, aeron)
+	if errand, ok := m.suggestionFooterSegment(); ok {
+		segments = append(segments, errand)
 	}
 	return append(segments, shellfooter.Segment{Text: "Workspace", FillRole: workspaceHue, Attention: needsInput > 0 || working > 0, Pill: true, Active: active == termdock.PanelWorkspace, Action: "workspace", Priority: 0})
 }
@@ -611,7 +611,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 	nodes := m.ws.AgentMgr().AllNodes()
 	count := 0
 	for _, node := range nodes {
-		if !m.isAeronAgent(node.ID) {
+		if !m.isErrandAgent(node.ID) {
 			count++
 		}
 	}
@@ -619,7 +619,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		items = append(items, statusoverview.Item{ID: "group-agents", Label: fmt.Sprintf("Open Agents (%d)", count), Header: true})
 	}
 	for _, node := range nodes {
-		if m.isAeronAgent(node.ID) {
+		if m.isErrandAgent(node.ID) {
 			continue
 		}
 		label := node.Label
@@ -830,13 +830,14 @@ func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 		}
 		if len(summary.Models) > 0 {
 			lines = append(lines, statusoverview.DetailLine{Blank: true}, statusoverview.DetailLine{Value: "Usage by model", Role: ui.ColorAccent2})
+			accounts := m.ws.AllAccounts()
 			for _, model := range summary.Models {
 				identity := firstNonempty(model.ModelID, "Unknown model")
 				if model.ProviderID != "" {
 					identity += " / " + model.ProviderID
 				}
 				if model.AccountID != "" {
-					identity += " / " + model.AccountID
+					identity += " / " + ttypes.AccountName(accounts, model.AccountID)
 				}
 				lines = append(lines, statusoverview.DetailLine{Value: identity, Role: ui.ColorFg}, statusoverview.DetailLine{Value: usageTurns(model.Turns, model.TurnsKnown) + " · " + usageCount(model.Requests, "request") + " · " + formatCost(model.Cost), Role: ui.ColorMuted})
 			}
@@ -915,8 +916,8 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.Cmd {
 	action := msg.Action
 	switch {
-	case action == workspaceAeronAction:
-		return m.openWorkspaceAeron()
+	case action == workspaceErrandAction:
+		return m.openWorkspaceErrand()
 	case action == "agent.retry":
 		return m.retryAgentRecovery(msg.Item.Owner.ID)
 	case action == "status.switch":

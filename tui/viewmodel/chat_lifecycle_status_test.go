@@ -21,7 +21,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	data := map[string]any{
 		"request_id": "compact-status-1", "trigger": "manual", "role": "root",
-		"model_id": "aeron/model", "stage": 2, "completed_stages": 1,
+		"model_id": "errand/model", "stage": 2, "completed_stages": 1,
 		"stage_count": 4, "stage_label": "Distilling work", "before_tokens": 510100,
 	}
 	plan := &activity.Plan{ID: "plan", Status: "active", Total: 4, Completed: 3,
@@ -126,7 +126,7 @@ func TestAutomaticCompactionBoundaryPaintsIdenticallyLiveAndResumed(t *testing.T
 	live := compactionBoundaryLines(t, func(app *App, id string) {
 		data := map[string]any{
 			"request_id": "compact-auto", "trigger": "automatic", "role": "root",
-			"provider_id": "provider", "model_id": "aeron/model",
+			"provider_id": "provider", "model_id": "errand/model",
 			"stage": 2, "completed_stages": 1, "stage_count": 4, "stage_label": "Distilling work",
 			"before_tokens": 420000,
 		}
@@ -191,7 +191,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	agentID := addBackendTestOrchestrator(t, app)
 	base := map[string]any{
 		"request_id": "compact-1", "trigger": "manual", "role": "root",
-		"provider_id": "provider", "model_id": "aeron/model",
+		"provider_id": "provider", "model_id": "errand/model",
 		"stage": 4, "completed_stages": 4, "stage_count": 4,
 		"before_tokens": 155955, "after_tokens": 10476,
 	}

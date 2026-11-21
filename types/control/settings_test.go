@@ -56,7 +56,7 @@ func TestSettingsChangesAuthorityDerivedCollectorFacts(t *testing.T) {
 }
 
 func TestTerminalEnvironmentRemainsAuthority(t *testing.T) {
-	for _, path := range []string{"terminal.environment", "terminal.environment.PATH", "terminal.environment.VIRTUAL_ENV", "lsp.ask_aeron"} {
+	for _, path := range []string{"terminal.environment", "terminal.environment.PATH", "terminal.environment.VIRTUAL_ENV", "lsp.ask_errand"} {
 		if !control.SettingsAuthority(path) {
 			t.Fatalf("terminal environment no longer needs caller-specific authority: %s", path)
 		}
@@ -64,12 +64,12 @@ func TestTerminalEnvironmentRemainsAuthority(t *testing.T) {
 }
 
 func TestErrandBindingCannotRedirectTheReviewer(t *testing.T) {
-	for _, path := range []string{"agents.Categories.aeron.Model", "agents.Categories.aeron.account_id"} {
+	for _, path := range []string{"agents.Categories.errand.Model", "agents.Categories.errand.account_id"} {
 		if !control.SettingsAuthority(path) {
 			t.Fatalf("agent could change the reviewer through %s", path)
 		}
 	}
-	if control.SettingsAuthority("agents.Categories.aeron.ThinkingEffort") || control.SettingsAuthority("agents.Categories.default.Model") {
+	if control.SettingsAuthority("agents.Categories.errand.ThinkingEffort") || control.SettingsAuthority("agents.Categories.default.Model") {
 		t.Fatal("an unrelated setting was treated as the reviewer binding")
 	}
 }

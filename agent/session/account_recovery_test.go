@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,7 +96,7 @@ func TestResumeRemovedAccountRetainsHistoryAndRecoversByExplicitSelection(t *tes
 	if before.AccountID != "work" || resumed.provider != nil {
 		t.Fatalf("session silently rebound: provider=%q account=%q bound=%v", before.ProviderID, before.AccountID, resumed.provider != nil)
 	}
-	if _, err := resumed.cfg.providerForCategory(resumed.cfg.GetActiveDefaultCategory()); err == nil || !strings.Contains(err.Error(), "work") {
+	if _, err := resumed.cfg.providerForCategory(resumed.cfg.GetActiveDefaultCategory()); !errors.Is(err, ErrAccountRequired) || !strings.Contains(err.Error(), "Choose another account") || strings.Contains(err.Error(), `"work"`) {
 		t.Fatalf("missing account constructed a provider: %v", err)
 	}
 	meta, err := sessiondb.GetMeta(resumed.DB())

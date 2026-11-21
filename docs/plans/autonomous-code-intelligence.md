@@ -1,7 +1,7 @@
 # Autonomous Code Intelligence
 
 > Status: IN PROGRESS. The thin assembly implementation is connected. Setup now
-> tasks workspace Aeron, with one real-model npm installation verified. The
+> tasks workspace Errand, with one real-model npm installation verified. The
 > core-managed store still lacks most package-manager methods, and complete setup
 > acceptance remains open after the 2026-11-03 rejection. The thin checkpoint cannot be banked until
 > the [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design)
@@ -44,6 +44,7 @@ detail: read the sections that the current checkpoint names.
 | Date | Decision | From |
 |---|---|---|
 | 2026-11-21 | Rename the workspace helper to **Errand**. Do not give Errands personal names or show old names in notifications. Keep the same workspace helper and saved identity. | User |
+| 2026-11-21 | Use `errand` for the workspace helper throughout the product. Leave old helper sessions on disk without migrating them. | User |
 | 2026-10-29 | Autonomy is the foundation. When a project opens, Crude finds what intelligence is possible, gets and configures the tools, checks that they work and maintains them. There is no hand-written intelligence layer for each language. | User |
 | 2026-10-29 | The quality goal is JetBrains level for measured workflows and languages. Native C and Zig dependencies are acceptable. | User |
 | 2026-10-29 | Ask the user to trust a folder when it opens. Restricted mode still allows editing. Done. | User |
@@ -58,11 +59,11 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-03 | Resume and finish the plan in checkpoint order, starting with the Windows watcher failures and misleading project-language detection. Use parallel bounded implementation while the parent owns architecture, integration and acceptance. Do not replace completion with a handoff. | User |
 | 2026-11-03 | Website work and its gate are outside this task. Keep the work on code intelligence and the plan. | User |
 | 2026-11-03 | Resolve plan divergences first. Merge Language Servers and Code intelligence tools, keeping Code Intelligence preferences separate; show whether Crude or the user installed each tool. Offer missing runtimes, use JetBrains products as a reference, and use the existing Acquisition policy for tools. The name and layout in [setup](code-intelligence-setup.md#replacement-design) are implementation choices, not separate user approvals. | User |
-| 2026-11-04 | Tool setup is done by one workspace Aeron agent (minimized by default, automatic approval, tasked by a prompt that the setup screen builds). No extra trust, scope or question machinery. Close setup quickly; spend the effort on editor interaction and cooperation with the language server. See [the direction](code-intelligence-setup.md#direction-a-workspace-aeron-does-the-setup-2026-11-04). | User |
-| 2026-11-04 | Aeron needs the full normal tool set, including web research and writing LSP launch settings. Navigation must survive Restart Language Servers, jump to a selected location without an inspect/confirm page, and use plain UI text. Code actions must have a usable path to their edits, and tree markers must match Problems. | User |
-| 2026-11-04 | The workspace Aeron is permanent. It is created or resumed shortly after the workspace opens, once the shell is idle, stays in the Agents sidebar with its idle/running state visible, and never takes the user's tab unless the user opens it. The user can choose to task it at any time. | User |
-| 2026-11-04 | Aeron opens in place in the Agents sidebar, with a Back button and a small task input, not the normal composer or a main chat tab. Its own view is its primary communication surface. Repair the failed setup and the previous Aeron commit without legacy adapters or a new approval framework. **Replaced by the next row.** | User |
-| 2026-11-04 | The sidebar page was rejected as duplicated, ugly UI. Remove it and all sidebar hosting of agents. Crude tasks Aeron autonomously (LSP setup, cleanup and similar IDE work); the user opens it like any other agent, as a tab or a window. Aeron's main channel to the user is the existing modal question and confirmation prompt, also while its tab is open. Main tabs get an official hover tooltip (absolute path for files). | User |
+| 2026-11-04 | Tool setup is done by one workspace Errand agent (minimized by default, automatic approval, tasked by a prompt that the setup screen builds). No extra trust, scope or question machinery. Close setup quickly; spend the effort on editor interaction and cooperation with the language server. See [the direction](code-intelligence-setup.md#direction-a-workspace-errand-does-the-setup-2026-11-04). | User |
+| 2026-11-04 | Errand needs the full normal tool set, including web research and writing LSP launch settings. Navigation must survive Restart Language Servers, jump to a selected location without an inspect/confirm page, and use plain UI text. Code actions must have a usable path to their edits, and tree markers must match Problems. | User |
+| 2026-11-04 | The workspace Errand is permanent. It is created or resumed shortly after the workspace opens, once the shell is idle, stays in the Agents sidebar with its idle/running state visible, and never takes the user's tab unless the user opens it. The user can choose to task it at any time. | User |
+| 2026-11-04 | Errand opens in place in the Agents sidebar, with a Back button and a small task input, not the normal composer or a main chat tab. Its own view is its primary communication surface. Repair the failed setup and the previous Errand commit without legacy adapters or a new approval framework. **Replaced by the next row.** | User |
+| 2026-11-04 | The sidebar page was rejected as duplicated, ugly UI. Remove it and all sidebar hosting of agents. Crude tasks Errand autonomously (LSP setup, cleanup and similar IDE work); the user opens it like any other agent, as a tab or a window. Errand's main channel to the user is the existing modal question and confirmation prompt, also while its tab is open. Main tabs get an official hover tooltip (absolute path for files). | User |
 | 2026-11-04 | Delegate only UI design, to Opus. Keep implementation and other work with the main agent. Reuse the existing components and state owners; do not add duplicate logic or competing authorities. | User |
 | 2026-11-04 | Keep the repair focused and clean: no overengineering, arbitrary restrictions or fragile replacements for established primitives. Regression tests must exercise actual failures and useful user outcomes, not merely check that rejected code is gone. | User |
 | 2026-11-06 | Every offered code action must reach a usable outcome. Command actions run once through the server; a server apply-edit is captured and reviewed like an ordinary edit, and a browser or informational result is shown to the user. Listing a provider action as unsupported is acceptable only when the protocol shape itself is unsupported. | User |
@@ -75,11 +76,11 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-09 | Fix the multi-file diagnostic failure through the real agent's `lsp` path. Consolidate the useful communication and engineering standards in the existing system prompt, with room for judgment and without repeated checklists. | User |
 | 2026-11-09 | Diagnostic messages use the Problems panel's severity icons. A line with several problems shows its highest severity in the gutter. Transient LSP boxes share compact chrome, source-relative placement and outside-click dismissal; they do not need close buttons. Change-review dialogs remain distinct. | User |
 | 2026-11-09 | Offer function, variable and member suggestions during ordinary typing, not only on explicit request or after a dot. Tab accepts a selected suggestion. Expose working completion behavior controls in Settings so users can choose automatic suggestions, timing and acceptance keys. | User |
-| 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Aeron work in the plans, not only in a chat answer. | User |
-| 2026-11-10 | Repair missing live diagnostics at their owner, not through a language-specific workaround. Move workspace Aeron out of the ordinary agent list into a header link. Problems keeps its style, shows up to three message lines, and expands messages in place. | User |
+| 2026-11-04 | When parallel lines of work meet, keep the progress of both. Drop earlier work only where a later plan decision replaces it. Record the open limits of the LSP and Errand work in the plans, not only in a chat answer. | User |
+| 2026-11-10 | Repair missing live diagnostics at their owner, not through a language-specific workaround. Move workspace Errand out of the ordinary agent list into a header link. Problems keeps its style, shows up to three message lines, and expands messages in place. | User |
 | 2026-11-10 | Clear actions must be undoable. Empty undo history must not imply another author exists. Shared lists must retain wheel scrolling when the pointer leaves; fix their owners rather than one Settings page. | User |
-| 2026-11-10 | The Aeron link belongs in the **Workspace panel header**, like Problems, not the application header. Aeron, including its generated name (Naveen), must not appear in that panel's normal agent list. This corrects the previous implementation. | User |
-| 2026-11-10 | Panel links must look consistent. Aeron's link must stay underlined like the Problems links, not only when focused. | User |
+| 2026-11-10 | The Errand link belongs in the **Workspace panel header**, like Problems, not the application header. Errand, including its generated name (Naveen), must not appear in that panel's normal agent list. This corrects the previous implementation. | User |
+| 2026-11-10 | Panel links must look consistent. Errand's link must stay underlined like the Problems links, not only when focused. | User |
 | 2026-11-10 | Automatic completion stays passive: keep the caret visible, choose no row, drop exact repeats, and show obvious continuations as faded inline text. Tab accepts visible inline text or an explicitly chosen row; otherwise it edits normally. | User |
 | 2026-11-10 | Keep the whole validation gate clean, regardless of failure origin. Fix recurring scheduler-dependent tests at their readiness and ownership boundaries; do not hide them with retries, sleeps or relaxed assertions. | User |
 | 2026-11-11 | Hunt editor gaps beyond the reported completion, paste and capacity failures. Fix as many as can be closed with production-quality verification; give remaining work one complete end-state specification, not a phased release promise. | User |
@@ -96,8 +97,8 @@ detail: read the sections that the current checkpoint names.
 | 2026-11-14 | Verify the recent developments on native Windows and move the project, local Go toolchain and CI to Go 1.27.4. Put further desktop captures on the second monitor. | User |
 | 2026-11-14 | Language-server controls: the Problems status button restarts only the failed server(s) (one button, "Restart failed servers" for several) instead of opening Settings. Language Tools shows each tool's live state and offers Restart/Stop or Start on the tool page plus Restart all; no Pause. An unexpected exit restarts automatically, at most four times in three minutes, then stays Failed until the user restarts it. | User |
 | 2026-11-14 | Close the LSP reliability and closed-file coverage gap in one focused, language-agnostic change. Adapt established designs instead of copying one editor; give the user one control. Stale results from a stopped server must never stay after a restart. Work alone, with inline Python for edits. | User |
-| 2026-11-14 | Every part of Crude must be able to get help from the workspace Aeron. When Crude finds a problem (a server that gave up, an error message from a server, a server that cannot see the project), Aeron wakes up, investigates with Crude's own abilities first, then the computer, and asks the user once with its findings before it changes anything. It may say that the fix needs approvals. The user must not be spammed; no per-language or per-configuration recipes. Terminals must start in the project's environment (a virtual environment is one example only). The closed-file check must never restart servers in a cycle. | User |
-| 2026-11-14 | Design (from review): problems are StatusCenter issues that their owner marks Investigate, raised on the core, not by a shell. One actor-owned dispatcher sends one runtime notice per cause through the collaboration journal (its idempotency key is the only memory), only while a shell is attached and Aeron is idle; no new event kind, ledger or core-side Aeron start. No catalog diagnostic codes: one structural rule (errors in at least one in five checked files). Aeron questions wait until the user pauses. Terminals use the attaching shell's environment, with VS Code's `${env:NAME}` and `${workspaceFolder}` in `terminal.environment`, which Aeron may set at workspace scope after the user agrees. `lsp.ask_aeron` lets the user turn the wake-up off. | Review, accepted by the main agent under the user's autonomy grant |
+| 2026-11-14 | Every part of Crude must be able to get help from the workspace Errand. When Crude finds a problem (a server that gave up, an error message from a server, a server that cannot see the project), Errand wakes up, investigates with Crude's own abilities first, then the computer, and asks the user once with its findings before it changes anything. It may say that the fix needs approvals. The user must not be spammed; no per-language or per-configuration recipes. Terminals must start in the project's environment (a virtual environment is one example only). The closed-file check must never restart servers in a cycle. | User |
+| 2026-11-14 | Design (from review): problems are StatusCenter issues that their owner marks Investigate, raised on the core, not by a shell. One actor-owned dispatcher sends one runtime notice per cause through the collaboration journal (its idempotency key is the only memory), only while a shell is attached and Errand is idle; no new event kind, ledger or core-side Errand start. No catalog diagnostic codes: one structural rule (errors in at least one in five checked files). Errand questions wait until the user pauses. Terminals use the attaching shell's environment, with VS Code's `${env:NAME}` and `${workspaceFolder}` in `terminal.environment`, which Errand may set at workspace scope after the user agrees. `lsp.ask_errand` lets the user turn the wake-up off. | Review, accepted by the main agent under the user's autonomy grant |
 | 2026-11-14 | Prove the system live and under load in an intensive session on a copy of Crude's source with injected issues, in every language that this computer can run, with sudden outside changes and corrupted files; fix every defect found; commit and push so that no work is lost. | User |
 | 2026-11-14 | The load sensor must not treat Crude's own work as the computer being busy and wait or give up because of it; it must still keep Crude from hanging the computer and must not cancel work wrongly. Design: rebase the load interval after each checked file, wait for a server's own work in progress as itself, and never remember a file without an answer under contention or server work (retry after one minute). | User |
 | 2026-11-14 | Background diagnostics must be aware of the computer and yield like established background indexers, with references from real projects, not memory: KDE Baloo (pause on battery), Windows Search (backoff under system activity, `DisableBackoff` override), Linux PSI with systemd's pressure threshold, LEDBAT's yield-to-foreground principle. The user keeps an Always override. | User |
@@ -119,7 +120,7 @@ Update a row only with evidence.
 | Detect languages | Linguist data through go-enry | The importer uses Linguist data at build time. Product detection uses catalog names/extensions plus bounded ignore-aware evidence and example paths. Dependency/temp false positives are fixed; ambiguous extensions still need content rules. |
 | Discover the project | Bounded scan that runs no project code: roots, manifests, modules, configurations | Assembly lists at most 100,000 entries without running project code and reports a limited scan. Rich project context remains separate and explicit. |
 | Resolve | Ordered resolver; compatibility rules as data | Assembly and startup share native executable lookup and catalog-driven Windows npm entry-point resolution. Unknown-package, environment and failure-state regressions pass; installed CSS/HTML/JSON startup and a JSON diagnostic/fix probe pass on Windows. See the [launch checkpoint](#windows-launch-resolution-2026-11-17). Compatibility evaluation remains incomplete. |
-| Acquire | Project decisions in workspace capability settings, one install policy; one shared store under `CRUDE_HOME` | The setup screen tasks Aeron; a real-model npm installation is verified. **Core-managed package methods remain blocked:** the store installs only GitHub release files (57 of 121 catalog packages). The other 64 (npm 27, PyPI 12, Cargo 9, Go 5, NuGet 3, generic 3, gem 2, LuaRocks 2, opam 1) have no store-owned installer. Existing decisions, staged acquisition and removal remain connected. Full setup acceptance remains open; see [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design). |
+| Acquire | Project decisions in workspace capability settings, one install policy; one shared store under `CRUDE_HOME` | The setup screen tasks Errand; a real-model npm installation is verified. **Core-managed package methods remain blocked:** the store installs only GitHub release files (57 of 121 catalog packages). The other 64 (npm 27, PyPI 12, Cargo 9, Go 5, NuGet 3, generic 3, gem 2, LuaRocks 2, opam 1) have no store-owned installer. Existing decisions, staged acquisition and removal remain connected. Full setup acceptance remains open; see [setup blockers](code-intelligence-setup.md#blocking-failures-and-rejected-design). |
 | Evaluate | Operational checks and independent fixtures; evidence for each feature | Acquired tools initialize in an independent inert root and join Stop before publication. Native real acquisition/activation and failed/cancelled/uncertain checks have normal/race evidence. This is protocol health, not per-feature semantic certification. |
 | Activate | Project-scoped producers, enabled feature by feature | Assembly starts project-scoped producers through the existing trust and process-admission gates. Open documents can share their server process. |
 | Maintain | Invalidation, staged replacement, bounded repair, memory of failed candidates | The watcher fences gaps and refreshes source/ignore topology across policy boundaries. Native move/root-loss, kernel-overflow, concurrent-close and exact reviewed-replacement tests pass; installed-server captures show unopened errors clear. Root loss stays fenced until restart; broader maintenance remains open. |
@@ -166,7 +167,7 @@ materialization before measurement; cold and width-change gates are retained.
 inventory/launcher contradiction and installed npm server failures are fixed.
 See the [checkpoint evidence and limits](#windows-launch-resolution-2026-11-17).
 
-**Crude asks Aeron for help; closed-file check without cycles (2026-11-14):
+**Crude asks Errand for help; closed-file check without cycles (2026-11-14):
 implemented, live acceptance open.** Generic, no language branch:
 
 - The project check no longer rotates servers. Crude's result for a closed file
@@ -189,10 +190,10 @@ implemented, live acceptance open.** Generic, no language branch:
   installed is a setup choice, not an issue). The issue text has no counts, so
   it stays one report while the check runs, and results kept for a stopped
   server keep raising it: before, the changing counts and idle stops reset or
-  resolved the issue, so it never settled and Aeron never heard of it. The dispatcher (`core/attention.go`) sends the workspace Aeron one
+  resolved the issue, so it never settled and Errand never heard of it. The dispatcher (`core/attention.go`) sends the workspace Errand one
   notice per cause after the issue stayed the same for 30 seconds, while a shell
-  is attached and Aeron is idle (`lsp.ask_aeron`, Settings → Code intelligence →
-  **When a server has a problem**). Aeron's contract (`agent/prompt/contracts.go`)
+  is attached and Errand is idle (`lsp.ask_errand`, Settings → Code intelligence →
+  **When a server has a problem**). Errand's contract (`agent/prompt/contracts.go`)
   makes it investigate with Crude first and ask once before it changes anything;
   its questions wait until the user pauses.
 - The load sensor does not count the check's own work: the load interval
@@ -201,7 +202,7 @@ implemented, live acceptance open.** Generic, no language branch:
   later instead of being remembered as unanswerable.
 - Terminals start with the attaching shell's environment; `terminal.environment`
   expands `${env:NAME}` and `${workspaceFolder}`; Auto login shell uses a login
-  shell only without that environment. The tool setup order asks Aeron to set up
+  shell only without that environment. The tool setup order asks Errand to set up
   a project environment for terminals.
 
 - The core file watch adds a watch for a new directory and reports what it
@@ -213,8 +214,8 @@ implemented, live acceptance open.** Generic, no language branch:
 
 Live acceptance (2026-11-14, isolated core, a copy of this repository with
 injected errors in Go, Python, C, C++, Rust, TypeScript, JavaScript, JSON,
-YAML, Markdown, Dockerfile, Shell, C#, Zig, Java and Lua, Aeron on DeepSeek):
-Aeron found the cause of the false clangd header errors (cgo flags), proposed
+YAML, Markdown, Dockerfile, Shell, C#, Zig, Java and Lua, Errand on DeepSeek):
+Errand found the cause of the false clangd header errors (cgo flags), proposed
 `compile_flags.txt`, wrote it after the user agreed, restarted clangd and
 verified 0 errors; it found the missing rust-analyzer component and set the
 installed toolchain copy after the user agreed; it explained that the
@@ -223,7 +224,7 @@ Problems in 7–10 s; a truncated file in 18 s. The live run found and fixed the
 silent missing settings command, the directory gap cycle and deleted files
 that stayed in Problems. A "single-file false alarm" change from that run was
 wrong: it silenced the user's own case (the project's only C header), and the
-real core then raised nothing; it is reverted, and Aeron separates errors in
+real core then raised nothing; it is reverted, and Errand separates errors in
 the user's code from a misconfiguration. The same check found that a build
 writing files during the closed-file check (rust-analyzer's `target/`) ended
 each wait early; Crude took that for a silent server, gave up on it after two
@@ -449,19 +450,19 @@ normal rebuild/restart, not forced shutdown or replacement of dirty buffers.
 The related pinned-WezTerm GUI Delete fix is in the installer-owned configuration;
 an installed GUI must refresh that configuration as well as its executable.
 
-**Immediate correction: Aeron panel placement (2026-11-10).**
+**Immediate correction: Errand panel placement (2026-11-10).**
 
-Remove the rejected application-header link. Put **Open workspace Aeron** beside
+Remove the rejected application-header link. Put **Open workspace Errand** beside
 the Workspace panel's search, with the same compact header flow as Problems.
-Filter Aeron by its session role, not its generated name, from Workspace and
+Filter Errand by its session role, not its generated name, from Workspace and
 ordinary agent lists. The link opens the same normal retained agent tab.
 Exit: real dock/tab/window placement and constrained-size checks show the link
-inside the panel, no Aeron/Naveen row, no application-header link, and successful
+inside the panel, no Errand/Naveen row, no application-header link, and successful
 opening without creating a new agent or losing the user's draft.
 
 Implemented: the panel uses the shared command-link control and the existing
-agent-open path. Role-based filtering removes Aeron and its subtree from the
-Workspace list/count, and the saved workspace-Aeron identity is excluded from
+agent-open path. Role-based filtering removes Errand and its subtree from the
+Workspace list/count, and the saved workspace-Errand identity is excluded from
 ordinary saved-session browsing without deleting its data. Dock, main-tab and
 pane-window journeys pass at 160×40 and 80×24, including draft retention.
 Keyboard and semantic activation use the same action as the pointer.
@@ -489,7 +490,7 @@ server results through connected editor and agent paths. Do not remove freshness
 checks or treat a connected process as proof of working diagnostics.
 Exit: a regression fails on the original watcher, recovery restores actual
 diagnostics, and focused ordinary/race plus native rendered checks pass.
-The Aeron, Problems, input undo, empty-history feedback and shared-list scroll
+The Errand, Problems, input undo, empty-history feedback and shared-list scroll
 corrections remain part of the same reported repair; prior acceptance does not
 close these regressions.
 
@@ -502,7 +503,7 @@ the agent diagnostic reader and the connected shell snapshot; ordinary and race
 runs pass. This reproduces the defect class, not the unrecorded original event.
 
 The other repairs pass focused component and connected-shell checks. The earlier
-Aeron application-header placement was rejected and is corrected above.
+Errand application-header placement was rejected and is corrected above.
 Problems shows three-line previews and expands in place without losing full
 copy text or source navigation. User clear actions preserve input history and
 reference identities; an exhausted document history is a quiet no-op.
@@ -644,16 +645,16 @@ also reported `TestImageFileConnectedExternalAndDeniedProjectLink` and package-w
 The later completion validation above records the latest pass. No assertion,
 deadline or performance ceiling was relaxed.
 
-**Immediate correction: LSP interaction and workspace Aeron (2026-11-04).**
+**Immediate correction: LSP interaction and workspace Errand (2026-11-04).**
 This user-requested correction takes priority over the remaining thin-assembly
 campaign below. Keep the existing acquisition/evaluation/store machinery; the
-setup checklist tasks Aeron instead of prescribing installation recipes.
+setup checklist tasks Errand instead of prescribing installation recipes.
 
-Scope: remove Aeron's role-specific restrictions, permit its `lsp.*` settings
+Scope: remove Errand's role-specific restrictions, permit its `lsp.*` settings
 writes, repair restart and cold-server requests, remove navigation's redundant
 inspection step, make supported code actions lead directly to their review, and
 derive tree markers from the same retained facts as Problems.
-The Aeron correction also covers its saved identity while idle, command and
+The Errand correction also covers its saved identity while idle, command and
 settings access through the real root-session path, delivery of setup work while
 another session opens, opening it as a normal agent tab, and modal prompts as
 its channel to the user. The main agent owns implementation; Opus supplies UI
@@ -672,7 +673,7 @@ do not report them as complete:
   edits to several files, and create-file operations now execute through one
   review. Rename and delete resource operations, annotations, notebooks and
   edit-plus-command actions remain visibly unsupported.
-- **Aeron installation coverage is limited.** The failed first run is repaired.
+- **Errand installation coverage is limited.** The failed first run is repaired.
   The configured `ollama/deepseek-v4.1-flash:1017` model installed
   yaml-language-server 2.0.0 with npm in a private Linux workspace, configured its
   absolute launch path and returned real diagnostics. An independent Crude
@@ -694,7 +695,7 @@ network policy, cancellation, failure and explicit retry. The combined
 Language Tools collection and replacement review have Linux evidence, but
 native Windows and complete acceptance remain open. The shared acquisition
 policy follows. See [setup](code-intelligence-setup.md#checkpoints). Since
-2026-11-04 the setup screen tasks Aeron, which can use a package manager
+2026-11-04 the setup screen tasks Errand, which can use a package manager
 itself; this sub-checkpoint remains for installs that the store owns.
 
 Goal: open a trusted project that uses a language Crude's Go code never names,
@@ -740,7 +741,7 @@ Exit test:
 
 Out of scope: work classes and containment beyond current process admission
 (so no new bulk project-wide work), project checks and build observation,
-policy presets, Aeron, remote campaigns.
+policy presets, Errand, remote campaigns.
 
 ### Integrated implementation (2026-11-03)
 
@@ -857,7 +858,7 @@ it. Current capabilities and safeguards are described in
 | Semantic coverage is limited | `types/language_servers.go` contains twelve built-in server entries plus custom configuration; a syntax grammar alone does not provide semantics. |
 | Severity tuning is per tool | Each tool has its own suppression syntax. Crude has one minimum-severity filter. |
 | Popups do not feel like a complete IDE | Parameter assistance, symbol documentation, selected-completion documentation and diagnostic readers now use mounted source anchoring. Inline prediction and broader semantic workflows remain open. |
-| Aeron never helps manual editing | Aeron drafts commit messages and compaction, nothing in the editor. |
+| Errand never helps manual editing | Errand drafts commit messages and compaction, nothing in the editor. |
 | Editor and agent coverage can differ | Agents get a session-gated `lsp` tool (`agent/tools/code_intelligence.go`) with document probes. The editor and agent should share the same revision- and context-qualified answers. |
 
 On one 20,000-line Python fixture Chroma document preparation cost 60–62 ms
@@ -894,7 +895,7 @@ honest experience while analysis is incomplete.
   policy, discover, acquire and configure tools and evaluate them against
   independent fixtures. Passing a fixture is evidence for that fixture, not
   proof that a tool finds all errors.
-- **Aeron is additive:** it may propose packs, recipes, policy and editor
+- **Errand is additive:** it may propose packs, recipes, policy and editor
   predictions. Deterministic functionality and trust decisions never depend on
   a model, and generated output does not gain execution authority.
 
@@ -925,7 +926,7 @@ new intelligence implementation for every row.
   root/configuration resolution, required effects, capabilities, evidence and
   invalidation inputs. Settings and recipes cannot silently authorize a new
   executable or cross a human-owned authority boundary.
-- If metadata cannot resolve a gap, optional Aeron research may propose a
+- If metadata cannot resolve a gap, optional Errand research may propose a
   constrained recipe. Deterministic validation and the existing permission
   owner control staging and execution. Bound research/spend/repair attempts;
   remember failed candidates to avoid infinite installation loops. A working
@@ -992,7 +993,7 @@ fixtures and baselines; no existing performance gate is loosened.
    precondition checks, transactional rollback, a safety snapshot and undo.
 7. **Shared answers:** editor, Problems, agents and control APIs use the same
    authoritative facts for the same workspace, context and document revision.
-8. **AI is additive and bounded:** mechanical features never depend on Aeron;
+8. **AI is additive and bounded:** mechanical features never depend on Errand;
    prediction and authoring obey budget, privacy and approval rules.
 
 ## Architecture
@@ -1016,7 +1017,7 @@ fixtures and baselines; no existing performance gate is loosened.
           popup        and file tree
 
  Governor (one per core): admission and platform-supported containment;
- Aeron is an optional prediction/authoring consumer, never semantic authority
+ Errand is an optional prediction/authoring consumer, never semantic authority
 ```
 
 Ownership:
@@ -1146,7 +1147,7 @@ requires the appropriate trust.
 staticcheck, clippy, eslint, ruff rule sets, and dependency advisories through
 osv-scanner.
 
-**Aeron.** Prediction and authoring only. Optional AI review hints are
+**Errand.** Prediction and authoring only. Optional AI review hints are
 labelled, opt-in, and never counted as errors or warnings.
 
 Suggestions in the counts are info and hint diagnostics plus findings that
@@ -1208,7 +1209,7 @@ reference executable artifacts, which require separate trust and authorization.
   Capabilities are declared per feature and tested; an available grammar or
   an LSP initialize response does not certify semantic quality.
 - Sources include built-in and pinned registry packs, explicit workspace
-  overrides and, when enabled, Aeron-authored proposals. An authored or
+  overrides and, when enabled, Errand-authored proposals. An authored or
   workspace-supplied pack is not automatically trusted, executable or allowed
   to override a more trusted pack. Apply existing policy, exact source/digest,
   approval, scope and explicit denials before activation.
@@ -1285,7 +1286,7 @@ gets no second installer.
   4. Ecosystem installers inside managed prefixes: uv for PyPI tools (uv also
      provides Python), npm with an acquired Node, `go install` with a matching
      Go, rustup components. A prefix by itself is not a sandbox.
-  5. Sources that Aeron found by research. Evaluate their exact source, bytes,
+  5. Sources that Errand found by research. Evaluate their exact source, bytes,
      effects and trust under the same policy; model output itself grants no
      authority.
 - Each tool installs once under `CRUDE_HOME`, in a directory named by tool,
@@ -1312,7 +1313,7 @@ gets no second installer.
 ### Resource contract
 
 - One governor per core admits language servers, their indexing, checkers,
-  indexers, observer, acquisition and Aeron work across all workspaces. Add
+  indexers, observer, acquisition and Errand work across all workspaces. Add
   process-tree teardown and admission before enabling heavier project-wide
   work, not as a later optional hardening pass.
 - Classes, highest first:
@@ -1368,7 +1369,7 @@ The user has three choices and one verb.
 |---|---|---|
 | Trust (per workspace) | Restricted, Trusted | Project execution, network, acquisitions and external tools still obey their own effect, source and approval policy |
 | Strictness | Project checks, Strict, Errors only | Which producers count, and at what severity; a check is labelled by what it actually ran |
-| Aeron suggestions | Off, When I ask, As I type | Proposed in [Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md); today's Settings still say Off, Light, Full |
+| Errand suggestions | Off, When I ask, As I type | Proposed in [Ask Crude and Errand suggestions](ask-crude-and-errand-suggestions.md); today's Settings still say Off, Light, Full |
 
 The verb: point at a diagnostic, group, file or folder and choose an action,
 or say what you want.
@@ -1380,7 +1381,7 @@ or say what you want.
   ([settings](../reference/settings.md)). Sharing them as a repository file is
   an explicit export.
 - `/insight <request>` turns plain language into rules or recipe overrides
-  through Aeron, with the same preview. Examples: "ignore generated/", "use
+  through Errand, with the same preview. Examples: "ignore generated/", "use
   the debug configuration", "check with -Wall -Wextra", "use basedpyright".
 - Every fact and every automatic decision has a **Why?** card: producer, tool
   version, flags and where they came from, and the rule that set the severity.
@@ -1410,7 +1411,7 @@ or say what you want.
   the cursor or pointer, never centered. Semantic highlighting, inlay hints,
   type/implementation navigation and call/type hierarchy appear when the
   provider advertises and passes tests for them. End-of-line messages are
-  optional. A quick-fix marker offers supported provider, recipe and Aeron
+  optional. A quick-fix marker offers supported provider, recipe and Errand
   fixes with their provenance.
 - Expand capability negotiation, dynamic registration and resolve-on-demand:
   preserve server completion identity, documentation, snippets, text edits and
@@ -1461,9 +1462,9 @@ rename requires every relevant bridge to establish its coverage and produce
 safe, revision-checked edits; incomplete or unknown coverage refuses the
 operation with a reason rather than silently applying a partial rename.
 
-### Aeron in the editor
+### Errand in the editor
 
-Moved on 2026-11-18 to [Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md),
+Moved on 2026-11-18 to [Ask Crude and Errand suggestions](ask-crude-and-errand-suggestions.md),
 which owns editor AI suggestions, their context, presentation, providers and
 budget, and Ask Crude (Explain and Fix included). This plan still owns the
 language-server facts that those features consume.
@@ -1671,8 +1672,8 @@ apply G0–G4 from [human-workflow acceptance](ide-workflow-acceptance.md#promot
 5. **Policy and control.** Add presets, reversible rule previews, `/insight`
    and explicit configuration export. A policy change re-filters without
    running a tool; incomplete and non-comparable baselines stay labelled.
-6. **Aeron in the editor.** Owned by
-   [Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md).
+6. **Errand in the editor.** Owned by
+   [Ask Crude and Errand suggestions](ask-crude-and-errand-suggestions.md).
 7. **Remote data gathering, scale and extended insight.** Only after the
    complete required local workflow passes, stage the exact verified candidate
    on an authorized private remote core, replay medium projects, then progress
@@ -2017,7 +2018,7 @@ original failures, gate logs and both native grids. These deterministic regressi
 do not close adaptive developer/device, complete-context, native-containment or
 broader semantic acceptance.
 
-Prediction prerequisites are now integrated but not an enabled Aeron feature.
+Prediction prerequisites are now integrated but not an enabled Errand feature.
 The single-line editor projection shares inlay geometry and preserves exact
 typed-through suffixes; native key routing, true owner departure, automatic
 completion exclusion and attachment-epoch retirement have independent negative
@@ -2037,7 +2038,7 @@ ordinary/race, build, lint, design/docs, benchmark, nested LSP/syntax, site and
 Windows/amd64 plus Darwin/arm64 native-feature cross-build gates. Cross-builds
 are compilation evidence, not Windows/macOS runtime acceptance.
 The follow-up source adds human-owned non-inheriting workspace consent and
-native preference rows, captured Aeron account binding, bounded partial context
+native preference rows, captured Errand account binding, bounded partial context
 and prompt builders, and an internal cancellation/cache/accounting composition.
 Shared source integration and affected-package ordinary/race checks cover native
 fields and source-qualified loopback requests, including policy changes and

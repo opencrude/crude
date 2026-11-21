@@ -184,7 +184,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 
 	// An unnamed session receives its personal identity once, before it is
 	// exposed as a live agent. Subsequent resumes use the durable value.
-	if meta.AgentName.String == "" && flags.MainAgent != CategoryAeron {
+	if meta.AgentName.String == "" && flags.MainAgent != CategoryErrand {
 		name, nameErr := allocateAgentName(homeDir)
 		if nameErr != nil {
 			_ = lg.Close()

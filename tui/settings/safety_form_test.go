@@ -167,8 +167,9 @@ func TestBackgroundAgentFormsUseErrandWithoutStoringCopiedDefaults(t *testing.T)
 	c := s.agents
 	for _, key := range []string{"role/memory", "role/auto-review"} {
 		c.begin(key, false)
-		account, model := m.backgroundBinding(c.draft)
-		if account != "errand" || model != "errand-test-model" || !strings.Contains(c.draft.Field(fieldModel).Placeholder, "errand-test-model") {
+		account, model := m.effectiveConnection(catAgents)
+		if account != "errand" || model != "errand-test-model" || c.draft.Field(fieldModel).Placeholder != "errand-test-model · Errand" ||
+			c.draft.Field(fieldConnection).Placeholder != "Errand account · Errand" {
 			t.Fatalf("%s did not show Errand inheritance: %q / %q", key, account, model)
 		}
 		if key == "role/auto-review" {

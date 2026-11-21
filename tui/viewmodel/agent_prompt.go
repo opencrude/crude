@@ -165,7 +165,7 @@ func (m *App) openNextAgentPrompt() {
 	}
 	if m.agentPrompt == nil && m.overlayHost != nil && !m.overlayHost.IsOpen(ui.OverlayDirtyClose) && !m.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
 		for _, state := range m.agentPrompts {
-			if state.inline || m.aeronPromptWaits(state) {
+			if state.inline || m.errandPromptWaits(state) {
 				continue
 			}
 			m.agentPrompt = state
@@ -180,17 +180,17 @@ func (m *App) openNextAgentPrompt() {
 	m.syncAgentPromptBlocking()
 }
 
-// aeronPromptWaits keeps a question from the background Errand closed while
+// errandPromptWaits keeps a question from the background Errand closed while
 // the user types or clicks, so the modal never takes keys meant for other
 // work. The Errand tick opens it once the user pauses.
-func (m *App) aeronPromptWaits(state *agentPromptState) bool {
-	return m.isAeronAgent(state.request.agentID) && !m.LastInteractionTime.IsZero() &&
-		time.Since(m.LastInteractionTime) < aeronEnsureQuietPeriod
+func (m *App) errandPromptWaits(state *agentPromptState) bool {
+	return m.isErrandAgent(state.request.agentID) && !m.LastInteractionTime.IsZero() &&
+		time.Since(m.LastInteractionTime) < errandEnsureQuietPeriod
 }
 
 func (m *App) agentPromptInlineEligible(agentID string) bool {
 	owner := m.ws.AgentMgr().OrchestratorFor(agentID)
-	if owner == nil || m.Win == nil || workspace.SessionIsAeron(m.ws.SessionsByAgent()[owner.ID]) {
+	if owner == nil || m.Win == nil || workspace.SessionIsErrand(m.ws.SessionsByAgent()[owner.ID]) {
 		return false
 	}
 	for _, group := range m.Win.AllGroupIDs() {
@@ -402,7 +402,7 @@ func (m *App) openAutoReviewSetup(state *agentPromptState) {
 }
 
 func (m *App) promptOwnerLabel(agentID string) string {
-	if node := m.ws.AgentMgr().Get(agentID); node != nil && node.IsOrchestrator() && m.isAeronAgent(agentID) {
+	if node := m.ws.AgentMgr().Get(agentID); node != nil && node.IsOrchestrator() && m.isErrandAgent(agentID) {
 		return m.agentLabel(node)
 	}
 	if node := m.ws.AgentMgr().Get(agentID); node != nil && node.Label != "" {

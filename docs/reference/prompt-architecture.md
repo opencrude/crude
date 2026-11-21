@@ -48,7 +48,7 @@ reviewer must not inherit the whole coding-agent prompt or acquire its tools.
 Domain packages may redact, bound and serialize source data before rendering;
 validation and state mutation do not move into a prompt builder.
 
-A root session whose selected main agent is the `aeron` role is the workspace's
+A root session whose selected main agent is the `errand` role is the workspace's
 permanent background agent. `RootOptions.WorkspaceAgent` adds only
 `prompt.WorkspaceAgentContract`: the user does not watch its chat, so it asks
 with the question tool, which the shell always shows as a modal prompt. The
@@ -71,7 +71,7 @@ it with `agent_send` or `agent_inspect`, so no agent searches history or starts
 a second workspace agent to find it. Errand gets its contract, every other root
 gets the peer note, and nothing else in the prompt changes. The root
 orchestrator registers in the collaboration registry under its session's root
-role, so the workspace Errand lists with category `aeron`, not `default`.
+role, so the workspace Errand lists with category `errand`, not `default`.
 
 Editor prediction prerequisites use a dedicated prompt rather than a coding-agent
 conversation. The request owner qualifies canonical source/diagnostic facts and

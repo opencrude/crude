@@ -42,10 +42,10 @@ type SessionLifecycleOperation struct {
 	// whose database was removed, instead of failing the workspace agent.
 	createIfMissing bool
 	// rememberRole makes a created session persist its root role, so resume
-	// restores the same role. rememberAeron records it as the workspace's one
+	// restores the same role. rememberErrand records it as the workspace's one
 	// Errand session.
-	rememberRole  string
-	rememberAeron bool
+	rememberRole   string
+	rememberErrand bool
 	// fork, when set, writes the new saved session from an open one before it
 	// is opened; the operation then names that new session.
 	fork   func() error
@@ -63,8 +63,8 @@ type SessionLifecycleResult struct {
 	registryErr     error
 	gate            *lifecycleEventGate
 	expectedAgentID string
-	// aeronSessionID is the exact session recorded as the workspace's Errand.
-	aeronSessionID string
+	// errandSessionID is the exact session recorded as the workspace's Errand.
+	errandSessionID string
 }
 
 // Cold runtimes may announce retained recovery immediately. Keep that evidence
@@ -260,7 +260,7 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 				return
 			}
 		}
-		if op.rememberAeron {
+		if op.rememberErrand {
 			// The saved workspace identity survives even if startup fails.
 			backend.Retain()
 			// Apply the workspace default once. Resume preserves the user's
@@ -300,11 +300,11 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		owner.installSettings(backend.SettingsSnapshots())
 		result.cold = true
 		result.registryErr = op.database.RegisterSession(owner.SessionID, op.root, filepath.Base(op.root), backend.ModelName(), backend.SettingsSnapshot().ProviderID)
-		if op.rememberAeron {
-			if err := op.database.SetSetting(workspaceAeronSessionKey, owner.SessionID); err != nil {
+		if op.rememberErrand {
+			if err := op.database.SetSetting(workspaceErrandSessionKey, owner.SessionID); err != nil {
 				result.registryErr = errors.Join(result.registryErr, fmt.Errorf("remember workspace Errand: %w", err))
 			}
-			result.aeronSessionID = owner.SessionID
+			result.errandSessionID = owner.SessionID
 		}
 		if op.sessionID == "" || op.fork != nil {
 			_ = op.database.SetAgentName(owner.SessionID, backend.AgentName())
@@ -395,8 +395,8 @@ func (w *Workspace) ApplyAgentSession(result SessionLifecycleResult) *NewSession
 	if owner == nil || w.SessionsByID[owner.SessionID] != owner {
 		return &NewSessionResult{Error: "Session owner changed"}
 	}
-	if result.aeronSessionID != "" {
-		w.aeronSessionID = result.aeronSessionID
+	if result.errandSessionID != "" {
+		w.errandSessionID = result.errandSessionID
 	}
 	owner.AgentID = result.agentID
 	if owner.AgentID == "" {

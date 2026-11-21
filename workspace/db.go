@@ -332,7 +332,7 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 		WHERE db_missing = 0
 		  AND session_id != COALESCE((SELECT value FROM workspace_metadata WHERE key = ?), '')
 		ORDER BY created_at DESC
-	`, workspaceAeronSessionKey)
+	`, workspaceErrandSessionKey)
 	if err != nil {
 		return nil, err
 	}

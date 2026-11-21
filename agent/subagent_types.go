@@ -30,7 +30,7 @@ const (
 const (
 	CatResearcher = "researcher"
 	CatCrafter    = "crafter"
-	CatAeron      = "aeron"
+	CatErrand     = "errand"
 )
 
 type SubAgentSpec struct {

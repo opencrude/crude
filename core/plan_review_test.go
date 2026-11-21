@@ -79,7 +79,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		cfg := &session.Config{Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {
 			MultiAgent: &off, Categories: map[string]session.CategoryConfig{
 				session.CategoryDefault: {AccountID: "test", Model: "model", ModelSupportsTools: true},
-				session.CategoryAeron:   {AccountID: "test", Model: "model"},
+				session.CategoryErrand:  {AccountID: "test", Model: "model"},
 			},
 		}}}, Accounts: map[string]provider.Account{"test": {
 			ID: "test", ProviderID: "openai", APIKey: "test",

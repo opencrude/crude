@@ -71,12 +71,12 @@ type projectToolsTestPort struct {
 // NewAgentSessionAs records the role instead of opening a real session.
 func (p *projectToolsTestPort) NewAgentSessionAs(role string) *workspace.NewSessionResult {
 	p.roles = append(p.roles, role)
-	return &workspace.NewSessionResult{SessionID: "aeron-session", OrchID: "aeron-agent"}
+	return &workspace.NewSessionResult{SessionID: "errand-session", OrchID: "errand-agent"}
 }
 
-// EnsureAeronSession follows the same test path: the setup action must reuse
+// EnsureErrandSession follows the same test path: the setup action must reuse
 // the workspace's one Errand, never create a second identity.
-func (p *projectToolsTestPort) EnsureAeronSession() *workspace.NewSessionResult {
+func (p *projectToolsTestPort) EnsureErrandSession() *workspace.NewSessionResult {
 	if p.busy > 0 {
 		p.busy--
 		return &workspace.NewSessionResult{Error: "bounded workspace operation capacity is occupied", Busy: true}
@@ -84,7 +84,7 @@ func (p *projectToolsTestPort) EnsureAeronSession() *workspace.NewSessionResult 
 	if p.onEnsure != nil {
 		p.onEnsure()
 	}
-	return p.NewAgentSessionAs("aeron")
+	return p.NewAgentSessionAs("errand")
 }
 
 func (p *projectToolsTestPort) LoadAppSettings() types.AppSettings { return p.settings }
@@ -173,10 +173,10 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 			if len(port.choices) != 2 || len(port.choices[1]) != 0 {
 				t.Fatal("Set up with Errand made Crude install tools itself", port.choices)
 			}
-			if len(port.roles) != 1 || port.roles[0] != "aeron" {
+			if len(port.roles) != 1 || port.roles[0] != "errand" {
 				t.Fatal("Set up with Errand did not open the workspace's Errand", port.roles)
 			}
-			pending := app.pendingFirstInputs["aeron-agent"][0]
+			pending := app.pendingFirstInputs["errand-agent"][0]
 			order := pending.Text
 			for _, want := range []string{"<set_up>", `package="fixture-server"`, "<leave_alone/>", "lsp.languages.&lt;id&gt;.command"} {
 				if !strings.Contains(order, want) {
@@ -361,7 +361,7 @@ func TestProjectToolsMixedSelectionMountedJourney(t *testing.T) {
 			if len(port.choices) != 1 || len(port.choices[0]) != 0 || len(port.roles) != 1 {
 				t.Fatalf("Set up with Errand did not hand the work to Errand: choices=%v roles=%v", port.choices, port.roles)
 			}
-			order := app.pendingFirstInputs["aeron-agent"][0].Text
+			order := app.pendingFirstInputs["errand-agent"][0].Text
 			setUp, leaveAlone, ok := strings.Cut(order, "<leave_alone>")
 			if !ok || !strings.Contains(setUp, `package="fixture-server"`) || !strings.Contains(setUp, `package="missing-server"`) ||
 				strings.Contains(setUp, `package="second-server"`) || !strings.Contains(leaveAlone, `package="second-server"`) {

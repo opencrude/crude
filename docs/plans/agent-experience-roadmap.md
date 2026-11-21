@@ -15,7 +15,7 @@ forgotten, and the agent never has to fight its environment to do its job.
 Four properties follow from that, in priority order:
 
 1. **Survivable.** Weak, cheap, rate-limited or flaky models (often deliberately
-   chosen for background Aeron work) and mid-run model switches never break a
+   chosen for background Errand work) and mid-run model switches never break a
    workflow or an agentic loop. Degradation is silent and bounded; work goes on.
 2. **Accurate.** Context compression, delegation and recovery never lose a
    requirement or replay an effect. Correctness is never traded for tokens.
@@ -42,7 +42,7 @@ fixed.
 | Guidance deferrals | ~17 tool calls deferred because a 146 KB `AGENTS.md` changed during runs |
 | Tool schema overhead | ~11.7K tokens of tool definitions on every request (46 tools) |
 | Root context economy | gpt-6.1-sol root: 2,635 requests, 586M prompt tokens (97% cached), average ~222K tokens per request, peak 899K |
-| Compaction | 3 runs, all triggered near 900K of a 1.05M window (85% default); 368 s and 540 s with a flash-class Aeron model; four sequential full-source stages |
+| Compaction | 3 runs, all triggered near 900K of a 1.05M window (85% default); 368 s and 540 s with a flash-class Errand model; four sequential full-source stages |
 | Child runs | 207 succeeded, 29 cancelled, 15 launch-aborted |
 | Search | HTML scraping of Brave/DuckDuckGo/Startpage plus Exa via an `EXA_API_KEY` environment variable; transport errors could expose the key |
 
@@ -92,7 +92,7 @@ fixed.
 
 ## Design rules for everything below
 
-- **Aeron work is best-effort and adaptive.** Compaction, memory extraction,
+- **Errand work is best-effort and adaptive.** Compaction, memory extraction,
   guidance compilation and review run on whatever the user chose, possibly a
   cheap model with low concurrency, small windows and small output caps. They
   learn each connection's limits (as output ceilings already are in

@@ -22,12 +22,14 @@ const (
 )
 
 // AccountChange is one identity-scoped application account mutation.
-// Other app preferences are never included in the write.
+// Removal also releases the application settings that use the account.
 type AccountChange struct {
 	ID         string
 	ProviderID string
 	Before     *provider.Account
 	After      *provider.Account
+	// RemovalPreview binds the confirmation to the consequences shown in Settings.
+	RemovalPreview string
 }
 
 // SettingsScope selects which layer a settings editor is writing.
@@ -109,7 +111,7 @@ func DefaultLSPSettings() LSPSettings {
 		CompletionDelayMS:  &delay,
 		CompletionAccept:   "tab-enter",
 		ProjectCheck:       ProjectCheckIdle,
-		AskAeron:           "on",
+		AskErrand:          "on",
 		MinSeverity:        "hint",
 		UpdateDebounceMS:   300,
 		MaxServers:         6,
@@ -271,8 +273,8 @@ func NormalizeLSP(s LSPSettings) LSPSettings {
 	s.CompletionDelayMS = &delay
 	s.CompletionAccept = s.CompletionAcceptance()
 	s.ProjectCheck = s.ProjectCheckMode()
-	if s.AskAeron != "off" {
-		s.AskAeron = "on"
+	if s.AskErrand != "off" {
+		s.AskErrand = "on"
 	}
 	if s.ServerThreads == 0 {
 		s.ServerThreads = def.ServerThreads

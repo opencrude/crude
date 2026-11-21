@@ -21,12 +21,12 @@ import (
 // another tool call), Crude compacts its context once. Any other root keeps
 // its context, a loop that called tools compacts only after its answer, and a
 // loop too small to shrink is left alone instead of failing visibly.
-func TestAeronCompactsWhenItsAgenticLoopEnds(t *testing.T) {
+func TestErrandCompactsWhenItsAgenticLoopEnds(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		aeron bool
-		lines int
-	}{{"aeron", true, 3000}, {"main agent", false, 3000}, {"small aeron loop", true, 1}} {
+		name   string
+		errand bool
+		lines  int
+	}{{"errand", true, 3000}, {"main agent", false, 3000}, {"small errand loop", true, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var turns, extractions atomic.Int32
 			var compactedBeforeAnswer atomic.Bool
@@ -53,24 +53,24 @@ func TestAeronCompactsWhenItsAgenticLoopEnds(t *testing.T) {
 				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Checked.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 			}))
 			defer server.Close()
-			cfg := modelAttributionConfig(server.URL, "aeron-model")
+			cfg := modelAttributionConfig(server.URL, "errand-model")
 			profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
-			profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "account", Model: "aeron-model"}
+			profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "account", Model: "errand-model"}
 			cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
-			provider.SetModelContext("aeron-model", 200_000)
+			provider.SetModelContext("errand-model", 200_000)
 			root := t.TempDir()
 			if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte(strings.Repeat("workspace notes line\n", tc.lines)), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			sess, err := NewWithSessionDir("aeron-loop", cfg, t.TempDir(), t.TempDir())
+			sess, err := NewWithSessionDir("errand-loop", cfg, t.TempDir(), t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer sess.Close()
 			sess.SetWorkDir(root)
-			if tc.aeron {
+			if tc.errand {
 				sess.mu.Lock()
-				sess.selectedMainAgent = CategoryAeron
+				sess.selectedMainAgent = CategoryErrand
 				sess.mu.Unlock()
 			}
 			sender := newMockEventSender()
@@ -86,12 +86,12 @@ func TestAeronCompactsWhenItsAgenticLoopEnds(t *testing.T) {
 			var records []sessiondb.CompactionRecord
 			for time.Now().Before(deadline) {
 				records = sess.CompactionRecords(o.ID)
-				if !tc.aeron || tc.lines == 1 || len(records) == 1 && records[0].State == sessiondb.CompactionCompleted {
+				if !tc.errand || tc.lines == 1 || len(records) == 1 && records[0].State == sessiondb.CompactionCompleted {
 					break
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			if !tc.aeron || tc.lines == 1 {
+			if !tc.errand || tc.lines == 1 {
 				time.Sleep(200 * time.Millisecond)
 				if extractions.Load() != 0 || len(sess.CompactionRecords(o.ID)) != 0 {
 					t.Fatal("this loop must keep its context")

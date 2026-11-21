@@ -27,21 +27,17 @@ const (
 
 func suggestionField(id string) bool { return strings.HasPrefix(id, "suggest-") }
 
-func (m *Model) suggestionFields(s types.SuggestionSettings, aeronAccount string) []*ui.FieldState {
+// suggestionFields builds the Suggestions tab. Its Account and Model show
+// Errand's choices the same way every agent editor shows inherited values;
+// syncSuggestionConnection fills them once the Errand draft is open.
+func (m *Model) suggestionFields(s types.SuggestionSettings) []*ui.FieldState {
 	n := s.Normalized()
-	accounts := append([]ui.FormOption{{ID: "", Label: "Errand's account"}}, m.connectionOptions(false)...)
-	providerID, accountID := m.suggestionAccount(s.AccountID, aeronAccount)
-	var fetched []types.ModelEntry
-	if accountID != "" {
-		fetched = m.models[accountModelKey(providerID, accountID)]
-	}
-	models := suggestionModelOptions(fetched)
-	tier := ui.SelectFieldState(fieldSuggestTier, "Speed", s.ServiceTier, m.suggestionTierOptions(accountID, s.ServiceTier),
+	tier := ui.SelectFieldState(fieldSuggestTier, "Speed", s.ServiceTier, nil,
 		"Processing tier for Chat suggestion requests. The account's protocol decides which tiers exist.")
 	fields := []*ui.FieldState{
-		ui.SelectFieldState(fieldSuggestAccount, "Account", s.AccountID, accounts,
+		ui.SelectFieldState(fieldSuggestAccount, "Account", s.AccountID, m.accountOptions(s.AccountID),
 			"Where suggestions go. Errand's account is the default."),
-		ui.ModelFieldState(fieldSuggestModel, "Model", s.Model, models,
+		ui.ModelFieldState(fieldSuggestModel, "Model", s.Model, nil,
 			"A fast model without thinking. Empty uses Errand's model. Suggestions feel best under 300 ms."),
 		ui.SelectFieldState(fieldSuggestFormat, "Request format", n.Format, []ui.FormOption{
 			{ID: types.SuggestionFormatChat, Label: "Chat", Detail: "Inserts and edits near the caret; works with every account"},
@@ -55,8 +51,7 @@ func (m *Model) suggestionFields(s types.SuggestionSettings, aeronAccount string
 		ui.NumberFieldState(fieldSuggestTimeout, "Timeout", n.TimeoutSeconds, "seconds", "A suggestion that takes longer is dropped."),
 		ui.NumberFieldState(fieldSuggestOutput, "Output limit", n.MaxOutputTokens, "tokens", "The most text one suggestion may use."),
 	}
-	// Empty values inherit; the select shows what they inherit.
-	fields[0].Placeholder, fields[1].Placeholder, tier.Placeholder = "Errand's account", "Errand's model", "Account default"
+	tier.Placeholder = "Account default"
 	for _, field := range fields {
 		field.Validator = func(ui.FieldValue) []string { return nil }
 	}
@@ -89,31 +84,34 @@ func numberRange(low, high int) func(ui.FieldValue) []string {
 	}
 }
 
-// suggestionAccount resolves the account that suggestions use: the chosen
-// one, else Errand's own account on the Model tab.
-func (m *Model) suggestionAccount(chosen, aeron string) (string, string) {
-	id := chosen
-	if id == "" {
-		id = aeron
-	}
-	if account, ok := m.accounts[id]; ok {
-		return account.ProviderID, id
-	}
-	return "", ""
-}
-
-// suggestionAccountID is the resolved account of the open Errand draft.
+// suggestionAccountID is the account suggestions use in the open Errand
+// draft: the chosen one, else Errand's.
 func (m *Model) suggestionAccountID() string {
 	form := m.categories[catAgents].Form
 	if form == nil || form.Field(fieldSuggestAccount) == nil {
 		return ""
 	}
-	aeron := ""
-	if field := form.Field(fieldConnection); field != nil {
-		aeron = field.Value.String()
+	id := form.Field(fieldSuggestAccount).Value.String()
+	if id == "" {
+		id = m.suggestionParent().account
 	}
-	_, id := m.suggestionAccount(form.Field(fieldSuggestAccount).Value.String(), aeron)
-	return id
+	if _, ok := m.accounts[id]; ok {
+		return id
+	}
+	return ""
+}
+
+// syncSuggestionConnection shows what empty suggestion choices use. It runs
+// when the Errand draft opens and when its Model tab changes.
+func (m *Model) syncSuggestionConnection() {
+	form := m.categories[catAgents].Form
+	if form == nil || form.Field(fieldSuggestAccount) == nil {
+		return
+	}
+	m.syncConnection(form, fieldSuggestAccount, fieldSuggestModel, m.suggestionParent())
+	if tier := form.Field(fieldSuggestTier); tier != nil {
+		tier.Options = m.suggestionTierOptions(m.suggestionAccountID(), tier.Value.String())
+	}
 }
 
 // suggestionTiers lists the speeds that the account's protocol can send; an
@@ -146,12 +144,6 @@ func (m *Model) suggestionTierOptions(accountID, current string) []ui.FormOption
 		options = append(options, ui.FormOption{ID: current, Label: tierLabel(current) + " (not offered)"})
 	}
 	return options
-}
-
-// suggestionModelOptions lists the account's models after the default, so
-// the user can always go back to Errand's model.
-func suggestionModelOptions(models []types.ModelEntry) []ui.FormOption {
-	return append([]ui.FormOption{{ID: "", Label: "Errand's model"}}, ui.ModelOptions(models)...)
 }
 
 // suggestionsFromForm reads the Suggestions tab of a draft.

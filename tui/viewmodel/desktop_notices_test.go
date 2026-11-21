@@ -318,19 +318,19 @@ func TestDesktopNoticeKindSwitchesSkipUnwantedNews(t *testing.T) {
 	}
 }
 
-func notAeron() bool { return false }
+func notErrand() bool { return false }
 
-func TestDesktopNoticeChildAndAeronNewsStaysQuiet(t *testing.T) {
-	if kind, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "c", ParentID: "p"}, Phase: ttypes.AgentCompleted}, notAeron); ok {
+func TestDesktopNoticeChildAndErrandNewsStaysQuiet(t *testing.T) {
+	if kind, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "c", ParentID: "p"}, Phase: ttypes.AgentCompleted}, notErrand); ok {
 		t.Fatalf("a child's finish is news: %v", kind)
 	}
 	if _, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "a"}, Phase: ttypes.AgentFailed}, func() bool { return true }); ok {
 		t.Fatal("the workspace Errand's stop is news")
 	}
-	if kind, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "c", ParentID: "p"}, Phase: ttypes.AgentApproval, NeedsAction: true}, notAeron); !ok || kind != noticeApproval {
+	if kind, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "c", ParentID: "p"}, Phase: ttypes.AgentApproval, NeedsAction: true}, notErrand); !ok || kind != noticeApproval {
 		t.Fatalf("a child's approval request must reach the user: %v %v", kind, ok)
 	}
-	if _, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "a"}, Phase: ttypes.AgentCancelled}, notAeron); ok {
+	if _, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "a"}, Phase: ttypes.AgentCancelled}, notErrand); ok {
 		t.Fatal("a run that the user cancelled is news")
 	}
 }

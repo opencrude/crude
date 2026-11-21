@@ -80,7 +80,7 @@ func TestChildReportsExactExecutionAndProtectsActiveCheckout(t *testing.T) {
 	const executionID = `execution<&"`
 	const executionRoot = `/workspace/child<&"`
 	for _, model := range []string{"gpt", "claude", "deepseek", "ollama"} {
-		for _, category := range []string{"crafter", "researcher", "aeron"} {
+		for _, category := range []string{"crafter", "researcher", "errand"} {
 			text, _ := BuildChild(ChildOptions{
 				Category: category, Model: model, ParentID: parentID,
 				ExecutionID: executionID, Isolation: "worktree", WorkDir: executionRoot,
@@ -138,7 +138,7 @@ func TestWorkspaceWideExecutionHygieneReachesEveryCapableRole(t *testing.T) {
 			}
 			prompts[mode] = ApplyRootOverlays(BuildRoot(RootOptions{Model: model, MultiAgent: multi}), "Only clean your own descendants", "Root", "")
 		}
-		for _, category := range []string{"crafter", "researcher", "aeron"} {
+		for _, category := range []string{"crafter", "researcher", "errand"} {
 			prompts[category], _ = BuildChild(ChildOptions{Category: category, Model: model, ProfileInstructions: "Silence means abandoned"})
 		}
 		for role, text := range prompts {

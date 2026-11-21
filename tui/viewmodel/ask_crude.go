@@ -278,7 +278,7 @@ func (m *App) askEligible(agentID string, idle bool) bool {
 	if node == nil || node.State == nil || node.Parent != nil || m.AgentView.IsHidden(agentID) {
 		return false
 	}
-	if workspace.SessionIsAeron(m.ws.SessionsByAgent()[agentID]) {
+	if workspace.SessionIsErrand(m.ws.SessionsByAgent()[agentID]) {
 		return false
 	}
 	return !idle || !m.ws.AgentTurnActive(agentID)

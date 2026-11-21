@@ -268,10 +268,10 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 	cfg := testConfig()
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryDefault] = CategoryConfig{AccountID: "account", Model: "main-test-model"}
-	profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "account", Model: "aeron-test-model"}
+	profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "account", Model: "errand-test-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	provider.SetModelContext("main-test-model", 200_000)
-	provider.SetModelContext("aeron-test-model", 200_000)
+	provider.SetModelContext("errand-test-model", 200_000)
 	s := &Session{
 		logger: lg, msgs: append([]provider.ChatMessage(nil), history...),
 		activeContext: append([]provider.ChatMessage(nil), history...), contextGeneration: 1,
@@ -287,7 +287,7 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 		t.Fatalf("compact result=%+v archive=%d active=%d generation=%d", result, len(s.msgs), len(s.activeContext), s.contextGeneration)
 	}
 	for index, model := range requestModels {
-		if model != "aeron-test-model" {
+		if model != "errand-test-model" {
 			t.Fatalf("compaction request %d model=%q want Errand category model", index, model)
 		}
 	}
@@ -295,7 +295,7 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 		t.Fatalf("active checkpoint=%q", s.activeContext[0].ContentString())
 	}
 	records, err := sessiondb.ListCompactionRecords(db, "compact", "compact")
-	if err != nil || len(records) != 1 || records[0].State != sessiondb.CompactionCompleted || records[0].CompletedStages != 4 || records[0].ModelID != "aeron-test-model" {
+	if err != nil || len(records) != 1 || records[0].State != sessiondb.CompactionCompleted || records[0].CompletedStages != 4 || records[0].ModelID != "errand-test-model" {
 		t.Fatalf("compaction lifecycle=%+v err=%v", records, err)
 	}
 }

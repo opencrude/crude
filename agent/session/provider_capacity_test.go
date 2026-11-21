@@ -6,28 +6,28 @@ import (
 	"crude/agent/provider"
 )
 
-func TestCategoryProvidersKeepDefaultAndAeronCapacities(t *testing.T) {
+func TestCategoryProvidersKeepDefaultAndErrandCapacities(t *testing.T) {
 	const model = "category-shared-capacity-model"
 	cfg := accountRoutingConfig()
 	profile := cfg.Agents.Profiles["default"]
 	profile.Categories[CategoryDefault] = CategoryConfig{AccountID: "work", Model: model, ModelContextWindow: 64_000}
-	profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "personal", Model: model, ModelContextWindow: 128_000}
+	profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "personal", Model: model, ModelContextWindow: 128_000}
 	cfg.Agents.Profiles["default"] = profile
 
 	mainCategory := cfg.GetActiveDefaultCategory()
-	aeronCategory := cfg.GetCategoryConfig(CategoryAeron)
+	errandCategory := cfg.GetCategoryConfig(CategoryErrand)
 	main, err := cfg.providerForCategory(mainCategory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	aeron, err := cfg.providerForCategory(aeronCategory)
+	errand, err := cfg.providerForCategory(errandCategory)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := main.ContextWindow(model); got != 64_000 {
 		t.Errorf("default provider context = %d, want 64000", got)
 	}
-	if got := aeron.ContextWindow(model); got != 128_000 {
+	if got := errand.ContextWindow(model); got != 128_000 {
 		t.Errorf("Errand compaction provider context = %d, want 128000", got)
 	}
 	if got := main.ContextWindow(model); got != 64_000 {

@@ -339,7 +339,7 @@ func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
 		connection.SetThinkingEffort("high")
 		a := newTestAgent(t, connection, connection.Model)
 		a.MaxOutputTokens = 600_000
-		a.CompactionAgentProfile = "default/aeron"
+		a.CompactionAgentProfile = "default/errand"
 		return a
 	}
 	first := makeAgent()

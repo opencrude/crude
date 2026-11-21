@@ -154,7 +154,7 @@ func (s *Session) compactionIdentity(agentID string) (providerID, accountID, mod
 	if s.runtimeProfile != nil {
 		effectiveCfg = s.runtimeProfile.GetEffectiveConfig(agentID)
 	}
-	compactionCfg := effectiveCfg.GetCategoryConfig(CategoryAeron)
+	compactionCfg := effectiveCfg.GetCategoryConfig(CategoryErrand)
 	return effectiveCfg.providerIDForAccount(compactionCfg.AccountID), compactionCfg.AccountID, compactionCfg.Model
 }
 
@@ -261,11 +261,11 @@ func (s *Session) startTurnEndCompaction(agentID, operationID string) func() {
 	}
 }
 
-// isAeronSession reports whether this is the workspace's permanent Errand.
-func (s *Session) isAeronSession() bool {
+// isErrandSession reports whether this is the workspace's permanent Errand.
+func (s *Session) isErrandSession() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.selectedMainAgent == CategoryAeron
+	return s.selectedMainAgent == CategoryErrand
 }
 
 // loopEndCompactionMinimumTokens is the least conversation (excluding the
@@ -378,7 +378,7 @@ func (s *Session) runPreparedCompaction(
 		effectiveCfg = s.runtimeProfile.GetEffectiveConfig(agentID)
 	}
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
-	compactionCfg := effectiveCfg.GetCategoryConfig(CategoryAeron)
+	compactionCfg := effectiveCfg.GetCategoryConfig(CategoryErrand)
 	usageModel = compactionCfg.Model
 	turnProvider, err := effectiveCfg.providerForCategory(compactionCfg)
 	if err != nil {
@@ -390,7 +390,7 @@ func (s *Session) runPreparedCompaction(
 	compactAgent.CompactionTargetModel = activeCfg.Model
 	compactAgent.MaxOutputTokens = compactionCfg.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(effectiveCfg)
-	compactAgent.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
+	compactAgent.CompactionAgentProfile = agentProfile + "/" + CategoryErrand
 	if targetProvider, targetErr := effectiveCfg.providerForCategory(activeCfg); targetErr == nil {
 		compactAgent.CompactionTargetWindow = targetProvider.ContextWindow(activeCfg.Model)
 	}

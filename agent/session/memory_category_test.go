@@ -8,7 +8,7 @@ func TestGetMemoryCategoryInheritsErrandByDefault(t *testing.T) {
 	cfg := &Config{Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
 			CategoryDefault: {AccountID: "openai-account", Model: "main-model"},
-			CategoryAeron:   {AccountID: "errand-account", Model: "errand-model", ThinkingEffort: "high", ServiceTier: "fast", Instructions: "Errand tools and prompt", AllowedTools: []string{"execute_command"}},
+			CategoryErrand:  {AccountID: "errand-account", Model: "errand-model", ThinkingEffort: "high", ServiceTier: "fast", Instructions: "Errand tools and prompt", AllowedTools: []string{"execute_command"}},
 		}}},
 	}}
 	got := cfg.GetMemoryCategory()

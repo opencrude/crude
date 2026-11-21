@@ -51,11 +51,14 @@ const (
 )
 
 type PromptMsg struct {
-	Target             *Model
-	Kind               PromptKind
-	ID                 string
-	Label              string
-	RelatedCount       int
+	Target       *Model
+	Kind         PromptKind
+	ID           string
+	Label        string
+	RelatedCount int
+	// AccountUses are the settings changes that removing the account makes,
+	// one sentence each (types.AccountUses).
+	AccountUses        []string
 	beforeAccount      *provider.Account
 	accountEditor      *accountEdit
 	accountDraft       *provider.Account
@@ -216,9 +219,11 @@ type Model struct {
 	lspHealth []types.LSPServerHealth
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
-	agents                   *types.AgentsSettings
-	memoryRanker             types.MemoryRankerSettings
-	memoryAgent              types.CategorySettings
+	agents       *types.AgentsSettings
+	memoryRanker types.MemoryRankerSettings
+	memoryAgent  types.CategorySettings
+	// draftParent is the parent kind of the agent open on the Agents page.
+	draftParent              string
 	autoReviewer             types.AutoPermissionSettings
 	capabilities             capability.Settings
 	capabilitySnapshot       capability.Snapshot
@@ -371,7 +376,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"], true)},
 		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"], false)},
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
-		{Name: "Errand", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
+		{Name: "Errand", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["errand"], false)},
 		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: m.buildMemoryForm(current.Memory)},
 		{Name: "Connection", Group: "Network", Description: "Application-wide connection timeouts, pooling, keep-alive, and HTTP protocol behavior.", Form: m.buildNetworkConnectionForm(current.Network)},
 		{Name: "Proxy", Group: "Network", Description: "Environment, direct, or custom HTTP and SOCKS proxy routing with explicit DNS behavior.", Form: m.buildNetworkProxyForm(current.Network)},
@@ -450,6 +455,9 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 				m.onChange()
 			}
 		})
+	}
+	for _, index := range []int{catMain, catResearcher, catCrafter, catErrand} {
+		m.syncAgentConnection(index)
 	}
 	m.ensureVisibleSelection()
 	m.preferencesBase = m.preferenceBytes()
@@ -746,12 +754,7 @@ func (m *Model) connectionOptions(includeBlank bool) []ui.FormOption {
 		return strings.Compare(a, b)
 	})
 	for _, id := range ids {
-		a := m.accounts[id]
-		label := a.Label
-		if label == "" {
-			label = id
-		}
-		out = append(out, ui.FormOption{ID: id, Label: label})
+		out = append(out, ui.FormOption{ID: id, Label: types.AccountName(m.accounts, id)})
 	}
 	return out
 }
@@ -925,7 +928,7 @@ func (m *Model) applyAccountChange(result AccountChangeResultMsg) {
 }
 
 func (m *Model) refreshAgentConnectionFields() {
-	for _, index := range []int{catMain, catResearcher, catCrafter, catAeron, catAgents} {
+	for _, index := range []int{catMain, catResearcher, catCrafter, catErrand, catAgents} {
 		form := m.categories[index].Form
 		if form == nil {
 			continue
@@ -934,17 +937,13 @@ func (m *Model) refreshAgentConnectionFields() {
 		if account == nil {
 			continue
 		}
-		account.Options = m.connectionOptions(false)
-		selected := account.Value.String()
-		if selected != "" {
+		m.syncAgentConnection(index)
+		if selected := account.Value.String(); selected != "" {
 			if _, exists := m.accounts[selected]; !exists {
-				account.Errors = []string{"This account is missing. Choose another before saving."}
+				account.Errors = []string{"This account was removed. Choose another account."}
 			} else {
 				account.Errors = nil
 			}
-		}
-		if model := form.Field(fieldModel); model != nil {
-			model.Options = ui.ModelOptions(m.models[accountModelKey(m.accounts[selected].ProviderID, selected)])
 		}
 	}
 }
@@ -1297,7 +1296,7 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool, modelSec
 	providerID := m.accounts[cfg.AccountID].ProviderID
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("agent", "Agent behavior"),
-		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.connectionOptions(false), "The account this agent connects through."),
+		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.accountOptions(cfg.AccountID), "The account this agent connects through."),
 		ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(m.models[accountModelKey(providerID, cfg.AccountID)]), "Models offered by this account. Enter fetches the list."),
 		thinkingSegments(cfg.ThinkingEffort),
 		serviceTierSegments(cfg.ServiceTier),
@@ -1565,61 +1564,14 @@ func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 		return nil
 	}
 	fields := []*ui.FieldState{
-		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, nil, "Use Errand's account or choose a separate account."),
-		ui.ModelFieldState(fieldModel, "Model", auto.Model, nil, "Use Errand's model or choose a decision or chat model."),
+		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, m.accountOptions(auto.AccountID), "Errand's account, or a separate account for reviews."),
+		ui.ModelFieldState(fieldModel, "Model", auto.Model, nil, "Errand's model, or a decision or chat model on the chosen account."),
 		modelTypeField(fieldReviewModelType, auto.ModelType),
 		serviceTierSegments(auto.ServiceTier),
 		purpose, instructions,
 	}
 	fields = append(fields, m.autoReviewPolicyFields(auto)...)
-	form := formModel(fields...)
-	m.configureBackgroundModel(form)
-	return form
-}
-
-func (m *Model) errandModel(form *ui.FormModel) (string, string, bool) {
-	if form == nil || form.Field(fieldReviewModelType) == nil && form.Field(fieldRankerAccount) == nil {
-		return "", "", false
-	}
-	if m.agents == nil {
-		return "", "", true
-	}
-	err := m.agents.Categories[types.ErrandRoleID]
-	if form.Field(fieldReviewModelType) == nil {
-		// Memory uses the normal, effective Errand role. Auto Review uses only
-		// the workspace's explicitly selected Errand connection.
-		main := m.agents.Categories["default"]
-		if err.Inherit == types.AgentInheritMain {
-			err.Model = ""
-		}
-		account, model := types.InheritRoleModel(err.AccountID, err.Model, main.AccountID, main.Model)
-		return account, model, true
-	}
-	return err.AccountID, err.Model, true
-}
-
-func (m *Model) backgroundBinding(form *ui.FormModel) (string, string) {
-	account, model, _ := m.errandModel(form)
-	return types.InheritAgentModel(form.Field(fieldConnection).Value.String(), form.Field(fieldModel).Value.String(), account, model)
-}
-
-func (m *Model) configureBackgroundModel(form *ui.FormModel) {
-	account := form.Field(fieldConnection)
-	account.Options = append([]ui.FormOption{{ID: "", Label: "Errand's account"}}, m.connectionOptions(false)...)
-	id, _ := m.backgroundBinding(form)
-	model := form.Field(fieldModel)
-	model.Options = m.agentModelOptions(form, id, m.models[accountModelKey(m.accounts[id].ProviderID, id)])
-	if _, inherited := m.backgroundBinding(form); model.Value.String() == "" && inherited != "" {
-		model.Placeholder = "Errand's model · " + inherited
-	}
-}
-
-func (m *Model) agentModelOptions(form *ui.FormModel, accountID string, models []types.ModelEntry) []ui.FormOption {
-	options := ui.ModelOptions(models)
-	if id, model, ok := m.errandModel(form); ok && accountID == id && model != "" && len(options) != 0 {
-		options = append([]ui.FormOption{{ID: "", Label: "Errand's model", Detail: model}}, options...)
-	}
-	return options
+	return formModel(fields...)
 }
 
 func (m *Model) autoReviewPolicyFields(settings types.AutoPermissionSettings) []*ui.FieldState {
@@ -1879,7 +1831,7 @@ func (m *Model) SetValueForTest(category int, fieldID, value string) {
 func (m *Model) SelectAccountForTest(id string) { m.selectAccount(id) }
 
 func (m *Model) isAgentCategory(index int) bool {
-	return index == catMain || index == catResearcher || index == catCrafter || index == catAeron || index == catAgents
+	return index == catMain || index == catResearcher || index == catCrafter || index == catErrand || index == catAgents
 }
 
 func (m *Model) handleFieldChanged(category int, fieldID string) {
@@ -1932,18 +1884,16 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		}
 		return
 	}
-	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldConnection {
-		providerID, accountID := m.resolvedAccount(category)
+	if m.isAgentCategory(category) && fieldID == fieldConnection {
 		form := m.categories[category].Form
 		if field := form.Field(fieldModel); field != nil {
 			form.SetValue(fieldModel, ui.StringValue(""))
-			field.Options = m.agentModelOptions(form, accountID, m.models[accountModelKey(providerID, accountID)])
-			field.Placeholder = "Choose or enter a model ID"
-			if inheritedAccount, model, ok := m.errandModel(form); ok && accountID == inheritedAccount && model != "" {
-				field.Placeholder = "Errand's model · " + model
-			}
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
+		if field := form.Field(fieldConnection); field != nil {
+			field.Errors = nil
+		}
+		m.syncAgentConnection(category)
 		return
 	}
 	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldModel {
@@ -2157,10 +2107,7 @@ func (m *Model) resolvedAccount(category int) (string, string) {
 		}
 		return m.accounts[m.accountID].ProviderID, m.accountID
 	default:
-		id := m.value(category, fieldConnection)
-		if id == "" && category == catAgents {
-			id, _, _ = m.errandModel(m.categories[category].Form)
-		}
+		id, _ := m.effectiveConnection(category)
 		return m.accounts[id].ProviderID, id
 	}
 }
@@ -2189,7 +2136,7 @@ func (m *Model) prefetchModels(category int) tea.Cmd {
 		return nil
 	}
 	if models, loaded := m.models[accountModelKey(providerID, accountID)]; loaded && len(models) > 0 {
-		field.Options = m.agentModelOptions(m.categories[category].Form, accountID, models)
+		field.Options = m.parentModelOptions(accountID, m.parentOf(category))
 		m.autofillCapabilities(category)
 		return nil
 	}
@@ -2231,7 +2178,7 @@ func (m *Model) setModelsForAccount(providerID, accountID string, models []types
 			continue
 		}
 		if field := m.categories[index].Form.Field(fieldModel); field != nil {
-			field.Options = m.agentModelOptions(m.categories[index].Form, accountID, models)
+			field.Options = m.parentModelOptions(accountID, m.parentOf(index))
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
 		if m.isAgentCategory(index) {
@@ -2361,19 +2308,34 @@ func (m *Model) resetWorkspacePath(path ...string) {
 // user's unsaved edits on other pages.
 func (m *Model) SectionResetModel(application, effective types.AppSettings, overrides types.WorkspaceOverrides, category int) *Model {
 	ownership, _ := pageOwnershipFor(category, m.Scope())
-	return m.rebased(application, effective, overrides, func(e types.SettingEdit) bool { return !ownership.owns(e.Path) })
+	return m.rebased(application, effective, overrides, func(e types.SettingEdit) bool { return !ownership.owns(e.Path) }, nil)
 }
 
 // SavedModel continues on the persisted settings after a successful Save:
 // every edit is now the baseline, and the page, pane and search are kept.
 func (m *Model) SavedModel(application, effective types.AppSettings, overrides types.WorkspaceOverrides) *Model {
-	return m.rebased(application, effective, overrides, func(types.SettingEdit) bool { return false })
+	return m.rebased(application, effective, overrides, func(types.SettingEdit) bool { return false }, nil)
+}
+
+// AccountRemovedModel continues on the committed settings after an account
+// was removed. The core released the account's uses in the same write; the
+// unsaved edits are kept, except that they cannot name the account either.
+// The page, pane, search and browsed account are kept.
+func (m *Model) AccountRemovedModel(application, effective types.AppSettings, overrides types.WorkspaceOverrides, accountID string) *Model {
+	next := m.rebased(application, effective, overrides, func(types.SettingEdit) bool { return true }, func(draft *types.AppSettings) {
+		types.ReleaseAccount(draft, accountID)
+	})
+	if _, ok := next.accounts[m.accountID]; ok {
+		next.accountID = m.accountID
+	}
+	return next
 }
 
 // rebased builds a model on committed layers, re-applying the unsaved edits
 // keep selects. The draft base is the layer the scope edits: effective
-// settings for a workspace, application settings otherwise.
-func (m *Model) rebased(application, effective types.AppSettings, overrides types.WorkspaceOverrides, keep func(types.SettingEdit) bool) *Model {
+// settings for a workspace, application settings otherwise. prepare, when
+// set, adjusts the draft after the edits.
+func (m *Model) rebased(application, effective types.AppSettings, overrides types.WorkspaceOverrides, keep func(types.SettingEdit) bool, prepare func(*types.AppSettings)) *Model {
 	pending := slices.DeleteFunc(m.Edits(), func(e types.SettingEdit) bool { return !keep(e) })
 	base := effective
 	if m.Scope() != types.SettingsScopeWorkspace {
@@ -2382,6 +2344,9 @@ func (m *Model) rebased(application, effective types.AppSettings, overrides type
 	baseline := NewScoped(m.th, base, m.presets, m.Scope(), application, overrides)
 	draft := types.CloneAppSettings(base)
 	_ = types.ApplySettingsEdits(&draft, pending)
+	if prepare != nil {
+		prepare(&draft)
+	}
 	// Edits patch persisted fields; the live inventory is observation metadata.
 	draft.TerminalShells, draft.AgentShells = base.TerminalShells, base.AgentShells
 	next := NewScoped(m.th, draft, m.presets, m.Scope(), application, overrides)
@@ -2477,7 +2442,7 @@ const railWorkspaceMarker = "◇"
 
 func (m *Model) workspaceOverridesPage(index int) bool {
 	switch index {
-	case catAgents, catMain, catResearcher, catCrafter, catAeron:
+	case catAgents, catMain, catResearcher, catCrafter, catErrand:
 		if m.storedOverrides.CategoryOverridden("agents") {
 			return true
 		}
@@ -2525,7 +2490,7 @@ func (m *Model) categoryDirty(index int) bool {
 		return m.lspLanguagesDirty()
 	}
 	if index == catAgents {
-		for _, agent := range []int{catMain, catResearcher, catCrafter, catAeron} {
+		for _, agent := range []int{catMain, catResearcher, catCrafter, catErrand} {
 			if form := m.categories[agent].Form; form != nil && form.AnyDirty() {
 				return true
 			}
@@ -2549,7 +2514,7 @@ func (m *Model) visibleCategoryIndices() []int {
 	indices := make([]int, 0, len(m.categories))
 	for index, category := range m.categories {
 		// Agent roles live inside the Agents catalog.
-		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron {
+		if index == catAgents || index == catResearcher || index == catCrafter || index == catErrand {
 			continue
 		}
 		// The Main Agent's own fields (model, thinking, command shell, …)
@@ -2652,7 +2617,7 @@ const (
 	catMain
 	catResearcher
 	catCrafter
-	catAeron
+	catErrand
 	catMemory
 	catNetworkConnection
 	catNetworkProxy
@@ -2824,7 +2789,7 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 	for _, entry := range []struct {
 		index int
 		key   string
-	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catAeron, "aeron"}} {
+	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catErrand, "errand"}} {
 		category := m.agentCategoryFromForm(m.categories[entry.index].Form, m.agents.Categories[entry.key])
 		agents.Categories[entry.key] = category
 	}

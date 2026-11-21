@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,7 @@ func TestAccountRemovedResumesWithoutBindingOrFallback(t *testing.T) {
 	if main.AccountID != "work" {
 		t.Fatalf("lost pinned connection: %+v", main)
 	}
-	if _, err := resumed.cfg.providerForCategory(main); err == nil || !strings.Contains(err.Error(), "work") {
+	if _, err := resumed.cfg.providerForCategory(main); !errors.Is(err, ErrAccountRequired) || strings.Contains(err.Error(), `"work"`) {
 		t.Fatalf("removed account rebound: %v", err)
 	}
 }

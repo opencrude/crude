@@ -210,7 +210,7 @@ type AgentsSettings struct {
 	// Auto (DefaultMaxWaitMinutes). A longer request ends at the bound and
 	// the agent may wait again.
 	MaxWaitMinutes int `json:"max_wait_minutes,omitempty"`
-	// Suggestions is the connection for Aeron's editor suggestions. It is
+	// Suggestions is the connection for Errand's editor suggestions. It is
 	// application-wide; each workspace keeps its own mode and hourly cap.
 	Suggestions SuggestionSettings `json:"suggestions,omitempty"`
 }
@@ -257,11 +257,11 @@ func DefaultAgentRoleCategories() map[string]CategorySettings {
 			DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 		},
 		"crafter": {Policy: "no-delete", Description: "Implementer - writes code, edits files, runs tests", DeniedTools: []string{"delete_file"}},
-		// Aeron is the workspace agent that installs and configures tools. It
+		// Errand is the workspace agent that installs and configures tools. It
 		// keeps the Main Agent's full tool set; agent.CategoryToolDefaults and
 		// agent.categoryPolicy say the same, and the user's permission mode is
 		// its only limit.
-		"aeron":  {Description: "Workspace agent - sets up tools and runs project errands"},
+		"errand": {Description: "Workspace agent - sets up tools and runs project errands"},
 		"memory": {},
 	}
 }
@@ -794,10 +794,10 @@ type LSPSettings struct {
 	// ProjectCheck is idle (check files that are not open while the user and
 	// the computer are idle), always (also on battery and under load) or off.
 	ProjectCheck string `json:"project_check,omitempty"`
-	// AskAeron is on (the workspace Aeron investigates a language-server
+	// AskErrand is on (the workspace Errand investigates a language-server
 	// problem that Crude finds and asks the user before it changes anything)
 	// or off. Only the user changes it.
-	AskAeron string `json:"ask_aeron,omitempty"`
+	AskErrand string `json:"ask_errand,omitempty"`
 	// MinSeverity is error, warning, info, or hint.
 	MinSeverity        string                         `json:"min_severity,omitempty"`
 	UpdateDebounceMS   int                            `json:"update_debounce_ms,omitempty"`
@@ -833,10 +833,10 @@ func (s LSPSettings) ProjectCheckMode() string {
 	return ProjectCheckIdle
 }
 
-// AeronInvestigates reports whether Crude asks the workspace Aeron to
+// ErrandInvestigates reports whether Crude asks the workspace Errand to
 // investigate a language-server problem it finds. It is on unless the user
 // turned it off.
-func (s LSPSettings) AeronInvestigates() bool { return s.AskAeron != "off" }
+func (s LSPSettings) ErrandInvestigates() bool { return s.AskErrand != "off" }
 
 // CompletionAcceptance is the key policy for a visible suggestion list only.
 // Without that list, indentation, newlines and snippet navigation are unchanged.

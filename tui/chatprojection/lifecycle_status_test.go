@@ -152,7 +152,7 @@ func TestCompactionTerminalFormsStayCompactAndDiscloseEvidence(t *testing.T) {
 			msg.LifecycleCompleted = 4
 			msg.LifecycleStageIndex = 4
 		}
-		msg.ModelID = "aeron/model"
+		msg.ModelID = "errand/model"
 		rendered := renderCompactionMessage(msg, renderContext{contentWidth: 76, innerW: 92})
 		if len(rendered.native) != 1 || !strings.Contains(rendered.lines[0], "▸") {
 			t.Fatalf("%s is not compact with disclosure: %q", phase, rendered.lines)
@@ -202,7 +202,7 @@ func TestAutomaticCompactionPaintsAsOneToolRow(t *testing.T) {
 			LifecycleStageName: test.stage, LifecycleRetryAttempt: 2, LifecycleRetryLimit: 3,
 			LifecycleStageIndex: 2, LifecycleCompleted: 1, LifecycleStageCount: 4,
 			LifecycleBeforeTokens: test.before, LifecycleAfterTokens: test.after,
-			Content: test.reason, ModelID: "aeron/model",
+			Content: test.reason, ModelID: "errand/model",
 		}
 		rendered := renderCompactionMessage(msg, renderContext{innerW: 100, contentWidth: 84})
 		want := test.want
@@ -228,7 +228,7 @@ func TestAutomaticCompactionRowHasNoContextBoundaryRules(t *testing.T) {
 	renderer.SyncMessages([]types.ChatMessage{{
 		InternalID: "auto-compact", Role: types.RoleStatus, LifecyclePhase: "compaction_completed",
 		LifecycleOperationID: "compact-auto", LifecycleTrigger: "automatic",
-		LifecycleBeforeTokens: 155955, LifecycleAfterTokens: 10476, ModelID: "aeron/model",
+		LifecycleBeforeTokens: 155955, LifecycleAfterTokens: 10476, ModelID: "errand/model",
 	}}, 1, 0)
 	rows, _, _ := renderer.ExportMessageRows(100)
 	if len(rows) != 1 || rows[0].ContextBoundary || len(rows[0].Lines) != 2 || strings.TrimSpace(rows[0].Lines[0]) != "" {
@@ -291,7 +291,7 @@ func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 }
 
 func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
-	path := "/home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-aeron-report.md"
+	path := "/home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-errand-report.md"
 	lines := buildToolTitleLines(types.ChatMessage{
 		ToolName: "publish_report", ToolStatus: types.ToolStatusSuccess,
 		ToolPreviewPhase: types.ToolPreviewDone,

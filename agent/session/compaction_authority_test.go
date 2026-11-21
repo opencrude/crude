@@ -58,10 +58,10 @@ func compactableSession(t *testing.T) (*Session, *atomic.Int32) {
 	cfg := testConfig()
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryDefault] = CategoryConfig{AccountID: "account", Model: "authority-main-model"}
-	profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "account", Model: "authority-aeron-model"}
+	profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "account", Model: "authority-errand-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	provider.SetModelContext("authority-main-model", 200_000)
-	provider.SetModelContext("authority-aeron-model", 200_000)
+	provider.SetModelContext("authority-errand-model", 200_000)
 	account := cfg.Accounts["account"]
 	connection := account.Connection
 	connection.ProviderURL = server.URL

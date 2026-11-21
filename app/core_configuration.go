@@ -28,38 +28,41 @@ func (a *App) commitCoreAccount(change ttypes.AccountChange) (ttypes.AppSettings
 				return fmt.Errorf("invalid account precondition")
 			}
 			if change.After == nil {
-				delete(current.Accounts, change.ID)
-			} else {
-				if change.Before != nil {
-					latest, exists := current.Accounts[change.ID]
-					if !exists {
-						return fmt.Errorf("account was removed; add an account to configure it again")
-					}
-					if err := ttypes.ApplySettingsEdits(&latest, ttypes.SettingsEdits(*change.Before, *change.After)); err != nil {
-						return err
-					}
-					change.After = &latest
+				latest, exists := current.Accounts[change.ID]
+				if !exists || change.Before != nil && !reflect.DeepEqual(latest, *change.Before) {
+					return fmt.Errorf("the account changed; review it and try again")
 				}
-				if change.After.ID != change.ID || change.After.ProviderID != change.ProviderID || strings.TrimSpace(change.After.Label) == "" {
-					return fmt.Errorf("invalid account identity or name")
-				}
-				resolved := change.After.Connection
-				if err := resolved.Validate(); err != nil {
-					return fmt.Errorf("invalid account connection: %w", err)
-				}
-				if resolved.AuthType != provider.AuthNone && change.After.APIKey == "" && (change.After.OAuth == nil || change.After.OAuth.AccessToken == "" && change.After.OAuth.RefreshToken == "") {
-					return fmt.Errorf("configure authentication for account %q", change.After.Label)
-				}
-				for id, other := range current.Accounts {
-					if id != change.ID && strings.EqualFold(strings.TrimSpace(other.Label), strings.TrimSpace(change.After.Label)) {
-						return fmt.Errorf("an account with that name already exists")
-					}
-				}
-				if current.Accounts == nil {
-					current.Accounts = make(map[string]provider.Account)
-				}
-				current.Accounts[change.ID] = cloneAccount(*change.After)
+				return releaseStoredAccount(current, change.ID, change.RemovalPreview)
 			}
+			if change.Before != nil {
+				latest, exists := current.Accounts[change.ID]
+				if !exists {
+					return fmt.Errorf("account was removed; add an account to configure it again")
+				}
+				if err := ttypes.ApplySettingsEdits(&latest, ttypes.SettingsEdits(*change.Before, *change.After)); err != nil {
+					return err
+				}
+				change.After = &latest
+			}
+			if change.After.ID != change.ID || change.After.ProviderID != change.ProviderID || strings.TrimSpace(change.After.Label) == "" {
+				return fmt.Errorf("invalid account identity or name")
+			}
+			resolved := change.After.Connection
+			if err := resolved.Validate(); err != nil {
+				return fmt.Errorf("invalid account connection: %w", err)
+			}
+			if resolved.AuthType != provider.AuthNone && change.After.APIKey == "" && (change.After.OAuth == nil || change.After.OAuth.AccessToken == "" && change.After.OAuth.RefreshToken == "") {
+				return fmt.Errorf("configure authentication for account %q", change.After.Label)
+			}
+			for id, other := range current.Accounts {
+				if id != change.ID && strings.EqualFold(strings.TrimSpace(other.Label), strings.TrimSpace(change.After.Label)) {
+					return fmt.Errorf("an account with that name already exists")
+				}
+			}
+			if current.Accounts == nil {
+				current.Accounts = make(map[string]provider.Account)
+			}
+			current.Accounts[change.ID] = cloneAccount(*change.After)
 			return nil
 		})
 		if saveErr != nil {
@@ -75,6 +78,32 @@ func (a *App) commitCoreAccount(change ttypes.AccountChange) (ttypes.AppSettings
 	}
 	a.notifyDefaultsChanged()
 	return detachedCoreSettings(updated), nil
+}
+
+// releaseStoredAccount removes the account and, in the same file write, every
+// setting that names it (types.ReleaseAccount). Nothing keeps an ID that no
+// account has.
+func releaseStoredAccount(current *FileConfig, id string, preview string) error {
+	before := FileConfigToAppSettings(*current)
+	if preview != "" && preview != ttypes.AccountRemovalPreview(before, id) {
+		return fmt.Errorf("account uses changed; review them and try again")
+	}
+	before.Accounts = nil
+	after := ttypes.CloneAppSettings(before)
+	if ttypes.ReleaseAccount(&after, id) {
+		if err := applyPreferenceEdits(current, after, ttypes.SettingsEdits(before, after)); err != nil {
+			return err
+		}
+		// The preference patch now owns the stored bytes, so the account
+		// leaves them in the same patch.
+		raw, err := ttypes.PatchStoredSettings(current.raw, []ttypes.SettingEdit{{Path: []string{"accounts", id}}})
+		if err != nil {
+			return err
+		}
+		current.raw = raw
+	}
+	delete(current.Accounts, id)
+	return nil
 }
 
 func (a *App) reloadFileConfiguration() error {
@@ -221,7 +250,7 @@ func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits
 				path[1] = "max_concurrent"
 			case "ActiveProfile":
 				path[1] = "active_profile"
-			case "agent_profiles", "shell", "max_wait_minutes":
+			case "agent_profiles", "shell", "max_wait_minutes", "suggestions":
 			default:
 				return fmt.Errorf("unknown agent setting")
 			}

@@ -103,6 +103,19 @@ explicit changes; unrelated preferences never replay the account map. Ordinary
 account edits do not require a configuration revision. Credential rotation still
 cannot revive a removed/reconnected account. Accounts remain application-only.
 
+**Removing an account cleans up application settings.** Before you confirm, the
+dialog shows which application settings change
+(`types.AccountUses`). Confirming removes the account and, in the same file
+write, releases those settings (`types.ReleaseAccount`): Researcher, Crafter,
+Errand, named agents, Memory Agent and editor suggestions go back to their
+parent's account and model; Main Agent has no account until you choose one;
+Memory ranking and Auto Review turn off if they use the removed account;
+search methods with the account are removed. The file owner checks that the
+account and the preview still match before it saves the changes. Open
+Settings continue on the cleaned values and keep unrelated unsaved edits. A
+setting that still names a missing account (a workspace override, a session
+choice) shows **Removed account**, never the ID, and cannot select it again.
+
 Additional request headers use a native **key/value table**
 (`ui.KeyValuesFieldState`): Name/Value captions, Add header, row removal, and normal
 editing/navigation. There is no inherited read-only header view. Secret fields
@@ -589,8 +602,8 @@ actual multiline editor, not encoded JSON. Tool access offers role defaults or
 explicit checkboxes; role safety ceilings remain in force, unavailable tools
 are disabled, and child reporting stays required.
 
-Errand is the workspace helper formerly called Aeron. Its role name is its only display name;
-its saved role ID and workspace session ID stay unchanged. It has the Main
+Errand is the workspace helper. Its role name is its only display name;
+its role ID is `errand`. It has the Main
 Agent's full tool set: it can research,
 install and configure workspace tools. It has no shipped allow-list, deny-list
 or read-only policy. Explicit user tool choices still apply. Its workspace
@@ -610,8 +623,12 @@ user chooses an override. Instructions and availability remain independent in
 Agents, and recall and extraction cadence remain on the Memory page. Disabling Memory Agent
 stops its automatic jobs and recall without deleting stored memories.
 
-**Agents › Memory Agent › Model** has a **Ranking** section for an optional,
-separate account and model. Choose a model from that account’s list,
+**Agents › Memory Agent › Model** has two sections. **Learning and tidying**
+is the Memory Agent itself: it writes and tidies memories after turns with the
+account and model above. **Memory ranking** is a separate job: while an agent
+works, it adds the saved memories that help with the next step. It has its own
+**Rank memories** switch, **Ranking account** and **Ranking model**, and never
+uses the Memory Agent's account. Choose a model from that account’s list,
 or enter its exact ID if it is not listed. The model can be a decision model
 or an ordinary chat model; see **Model type** below. Crude does not fall back to
 chat or another account. Use an API key or a local unauthenticated service. Explicit no-storage policies that the decision endpoint
@@ -1272,7 +1289,7 @@ computer is busy and until a new server's memory hint is free. It does not
 restart language servers. See
 [project check](editor.md#project-check-of-closed-files).
 
-**When a server has a problem** (`lsp.ask_aeron`) is **Ask Errand** (default) or
+**When a server has a problem** (`lsp.ask_errand`) is **Ask Errand** (default) or
 **Do nothing**. With Ask Errand, a language-server problem that Crude finds (a
 server that used up its restart budget or failed to start, an error message
 from a server, a server whose checked files have errors in at least one in

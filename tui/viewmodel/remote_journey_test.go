@@ -164,7 +164,7 @@ func remoteJourneyRuntimeConfig(t *testing.T, endpoint string, configureConfig f
 		profile := agents.Profiles["default"]
 		profile.MultiAgent = &off
 		profile.Categories["default"] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelSupportsTools: true, ModelContextWindow: 200_000}
-		profile.Categories[session.CategoryAeron] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelContextWindow: 200_000, ModelMaxOutput: 2_048}
+		profile.Categories[session.CategoryErrand] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelContextWindow: 200_000, ModelMaxOutput: 2_048}
 		agents.Profiles["default"] = profile
 		for _, apply := range configure {
 			apply(ws)
@@ -363,30 +363,30 @@ func TestRemoteAppJourneyPeerRootFocusAndWorkspaceSwitch(t *testing.T) {
 	assertAgentIsPaintedView(t, one.app, id)
 }
 
-func TestRemoteWorkspaceAeronIsEnsuredAndKeptOutOfAgentList(t *testing.T) {
+func TestRemoteWorkspaceErrandIsEnsuredAndKeptOutOfAgentList(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	runtime := remoteJourneyRuntime(t, "http://127.0.0.1:1")
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return len(shell.fifo) == 0 })
 
-	shell.app.requestWorkspaceAeronEnsure()
-	shell.app.aeronEnsureEarliest = time.Now().Add(-time.Millisecond)
-	shell.app.LastInteractionTime = time.Now().Add(-aeronEnsureQuietPeriod - time.Second)
-	cmd := shell.app.workspaceAeronTick(time.Now())
+	shell.app.requestWorkspaceErrandEnsure()
+	shell.app.errandEnsureEarliest = time.Now().Add(-time.Millisecond)
+	shell.app.LastInteractionTime = time.Now().Add(-errandEnsureQuietPeriod - time.Second)
+	cmd := shell.app.workspaceErrandTick(time.Now())
 	if cmd == nil {
 		t.Fatal("the workspace Errand was not due after the shell became quiet")
 	}
 	runAppCommand(t, shell.app, cmd)
-	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.workspaceAeronAgent() != "" })
-	id := shell.app.workspaceAeronAgent()
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.workspaceErrandAgent() != "" })
+	id := shell.app.workspaceErrandAgent()
 	if !shell.app.AgentView.IsHidden(id) {
 		t.Fatal("the workspace Errand took the user's tab")
 	}
-	requireAeronAbsentFromAgentList(t, shell.app)
+	requireErrandAbsentFromAgentList(t, shell.app)
 	if shell.app.agentStatus(id) != "idle" {
 		t.Fatal("ensuring Errand unexpectedly started work")
 	}
-	if again := shell.app.workspaceAeronTick(time.Now()); again != nil {
+	if again := shell.app.workspaceErrandTick(time.Now()); again != nil {
 		t.Fatal("a second tick created or resumed the workspace Errand again")
 	}
 }

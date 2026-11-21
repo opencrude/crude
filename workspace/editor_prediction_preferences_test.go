@@ -23,7 +23,7 @@ func predictionPreferenceFixture(t *testing.T) (*Workspace, string) {
 		Accounts: accounts, AccountManager: provider.NewAccountManager(accounts, nil),
 		Agents: session.AgentsConfig{ActiveProfile: "prediction", Profiles: map[string]session.ProfileConfig{
 			"prediction": {Categories: map[string]session.CategoryConfig{
-				session.CategoryAeron: {AccountID: account.ID, Model: "literal-model", ModelMaxOutput: 32},
+				session.CategoryErrand: {AccountID: account.ID, Model: "literal-model", ModelMaxOutput: 32},
 			}},
 		}},
 	}

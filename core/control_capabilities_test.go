@@ -109,8 +109,8 @@ func TestControlCapabilitiesManageSearchMethods(t *testing.T) {
 	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	app := types.AppSettings{Accounts: map[string]provider.Account{
-		"oc":   {ID: "oc", Label: "OC", APIKey: "fixture-key", ProviderID: "ollama-cloud", Connection: provider.Template{APIStandard: "ollama", ProviderURL: "https://ollama.example/api"}},
-		"chat": {ID: "chat", Label: "Chat", APIKey: "fixture-key", ProviderID: "custom", Connection: provider.Template{APIStandard: "openai", ProviderURL: "https://chat.example/v1"}},
+		"example-account": {ID: "example-account", Label: "Example account", APIKey: "fixture-key", ProviderID: "ollama-cloud", Connection: provider.Template{APIStandard: "ollama", ProviderURL: "https://ollama.example/api"}},
+		"chat":            {ID: "chat", Label: "Chat", APIKey: "fixture-key", ProviderID: "custom", Connection: provider.Template{APIStandard: "openai", ProviderURL: "https://chat.example/v1"}},
 	}}
 	app.Capabilities = captypes.WithDefaults(app.Capabilities)
 	ws.SetAppDefaults(app)
@@ -132,13 +132,13 @@ func TestControlCapabilitiesManageSearchMethods(t *testing.T) {
 		!strings.Contains(refused.Fault.Message, "cannot search the web") {
 		t.Fatalf("a protocol without native search became a method: %+v", refused)
 	}
-	added := runCapabilityControl(t, a, "add", "capabilities.save_search_method", map[string]any{"account": "oc", "model": "ignored"})
+	added := runCapabilityControl(t, a, "add", "capabilities.save_search_method", map[string]any{"account": "example-account", "model": "ignored"})
 	routes := ws.AppDefaults().Capabilities.WebSearchRoutes
-	if added.State != control.Committed || len(routes) != 1 || routes[0].Account != "oc" || routes[0].Model != "" || routes[0].Disabled || routes[0].ID == "" {
+	if added.State != control.Committed || len(routes) != 1 || routes[0].Account != "example-account" || routes[0].Model != "" || routes[0].Disabled || routes[0].ID == "" {
 		t.Fatalf("add=%+v routes=%+v", added, routes)
 	}
 	off := runCapabilityControl(t, a, "off", "capabilities.save_search_method", map[string]any{"id": routes[0].ID, "enabled": false})
-	if off.State != control.Committed || !ws.AppDefaults().Capabilities.WebSearchRoutes[0].Disabled || ws.AppDefaults().Capabilities.WebSearchRoutes[0].Account != "oc" {
+	if off.State != control.Committed || !ws.AppDefaults().Capabilities.WebSearchRoutes[0].Disabled || ws.AppDefaults().Capabilities.WebSearchRoutes[0].Account != "example-account" {
 		t.Fatalf("partial edit lost the account or did not turn the method off: %+v %+v", off, ws.AppDefaults().Capabilities.WebSearchRoutes)
 	}
 	var view CapabilityControlView

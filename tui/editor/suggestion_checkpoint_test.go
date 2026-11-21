@@ -11,7 +11,7 @@ func TestMultilineSuggestionKeepsTheRemainderAfterWordAccept(t *testing.T) {
 	e := newInlayTestEditor(t, "call()")
 	e.SetCursorPosition(0, 5)
 	text := "alpha + beta\nsecond()"
-	if err := e.SetSuggestion("aeron", e.Revision(), Suggestion{Start: 5, End: 5, Text: text}); err != nil {
+	if err := e.SetSuggestion("errand", e.Revision(), Suggestion{Start: 5, End: 5, Text: text}); err != nil {
 		t.Fatal(err)
 	}
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
@@ -28,7 +28,7 @@ func TestMultilineSuggestionKeepsTheRemainderAfterWordAccept(t *testing.T) {
 func TestMultilineSuggestionRowsNeverBecomeSourceUntilTab(t *testing.T) {
 	e := newInlayTestEditor(t, "call()\nnext()")
 	e.SetCursorPosition(0, 5)
-	if err := e.SetSuggestion("aeron", e.Revision(), Suggestion{Start: 5, End: 5, Text: "first\nsecond\nthird"}); err != nil {
+	if err := e.SetSuggestion("errand", e.Revision(), Suggestion{Start: 5, End: 5, Text: "first\nsecond\nthird"}); err != nil {
 		t.Fatal(err)
 	}
 	renderTestInlays(e, 80, 24, false)

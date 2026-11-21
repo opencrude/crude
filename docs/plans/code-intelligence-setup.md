@@ -1,12 +1,12 @@
 # Code-Intelligence Setup
 
 > Status: IN PROGRESS. The setup checklist now builds a task for workspace
-> Aeron. Its unrestricted normal tools cover research, installation and LSP
+> Errand. Its unrestricted normal tools cover research, installation and LSP
 > configuration; the earlier rigid installer is not the setup-screen path.
 > Native LSP navigation and edit-review interactions are verified at 80x24 and
 > 160x40. A real-model Linux npm installation is verified; broader acceptance remains open. See the
 > [open limits](#open-limits-2026-11-04) and
-> [the current direction](#direction-a-workspace-aeron-does-the-setup-2026-11-04).
+> [the current direction](#direction-a-workspace-errand-does-the-setup-2026-11-04).
 > This plan owns how Crude finds, asks for, installs and accounts for the tools
 > that give a project code intelligence. It implements the acquisition stage of
 > [autonomous code intelligence](autonomous-code-intelligence.md); read that
@@ -52,91 +52,91 @@ There is no other installer, approval store or registration table.
 | 2026-11-03 | The user decided that Settings has no separate Language Servers and Code intelligence tools pages: language servers are code-intelligence tools. One page lists them in one table that shows whether Crude or the user installed each tool, with a much better design. The user asked to resolve the plan divergences before more IDE plan work. |
 | 2026-11-03 | The user asked whether the feature should be called "intellisense". Research: "IntelliSense" is a registered Microsoft trademark and names only part of the feature. Keep **code intelligence** ([Name](#name)). |
 | 2026-11-03 | Merge only **Language Servers** and **Code intelligence tools**; keep **Code Intelligence** preferences separate. The user delegated the setup review design. Offer to install missing runtimes and use JetBrains products as a reference instead of asking the user to settle such details. The existing **Acquisition** install policy also governs code-intelligence tools. |
-| 2026-11-04 | Aeron's primary surface is a compact view inside the Agents sidebar, with Back and a small task input. Do not expose its structured work order or the normal composer. Opus supplies UI design only; the main agent implements and verifies the repairs. **Replaced by the next row.** |
-| 2026-11-04 | The sidebar page is removed. Aeron opens like any agent (tab or window, normal composer). Its questions and confirmations always use the modal agent prompt, and its system prompt tells it that the question tool is its channel to the user. Do not expose its structured work order. |
-| 2026-11-10 | Remove workspace Aeron from the normal Agents list. A header link, **Open workspace Aeron**, opens the same retained agent. |
-| 2026-11-10 | Header means the **Workspace panel header**, like Problems, not the application header. Remove Aeron/Naveen from that panel's normal agent list too. |
+| 2026-11-04 | Errand's primary surface is a compact view inside the Agents sidebar, with Back and a small task input. Do not expose its structured work order or the normal composer. Opus supplies UI design only; the main agent implements and verifies the repairs. **Replaced by the next row.** |
+| 2026-11-04 | The sidebar page is removed. Errand opens like any agent (tab or window, normal composer). Its questions and confirmations always use the modal agent prompt, and its system prompt tells it that the question tool is its channel to the user. Do not expose its structured work order. |
+| 2026-11-10 | Remove workspace Errand from the normal Agents list. A header link, **Open workspace Errand**, opens the same retained agent. |
+| 2026-11-10 | Header means the **Workspace panel header**, like Problems, not the application header. Remove Errand/Naveen from that panel's normal agent list too. |
 | 2026-11-15 | The automatic "tools are available" message after each edit or write was silly: it went away before the user saw it and came back after the next edit. Show it once, in a lasting and consistent place. Done: one Notices entry with a **Set up tools** action per set of missing tools, counted in the footer, never raised again after the user reads or dismisses it ([settings](../reference/settings.md#project-tool-setup)). The rejected setup page itself is unchanged. |
 
-## Direction: a workspace Aeron does the setup (2026-11-04)
+## Direction: a workspace Errand does the setup (2026-11-04)
 
 This section supersedes the [question flow](#question-flow), the one-shot
 consent preview and the "install through catalog recipes only" assumption where
 they disagree. Keep it small: the effort goes to editor interaction and the
 cooperation with the language server, not to a trust framework around setup.
 
-- **One Aeron per workspace.** Aeron is the existing narrow-task agent role, not
+- **One Errand per workspace.** Errand is the existing narrow-task agent role, not
   a new kind of agent. The workspace has one instance. The shell opens it
   shortly after the workspace opens, once startup has settled and the user is
   not working, so a restore or first input never competes with it. It starts
   minimized, outside the normal Agents list and its badge. A restart reopens
-  the same saved session. The user selects **Open workspace Aeron** in the
+  the same saved session. The user selects **Open workspace Errand** in the
   Workspace panel header to see its normal agent tab and task it whenever they choose.
   The tab keeps the normal window actions. It reaches the user through modal
   question and confirmation prompts. Crude parts and the main agent task it
   through the same session input owner. The user can also task the main agent to
-  do the same job if Aeron falls short.
+  do the same job if Errand falls short.
 - **The setup screen stays.** It shows the languages Crude found. Its switches
-  say what Aeron should set up and what it should leave alone. **Set up** builds
-  a prompt from them and sends it to Aeron. The screen installs nothing itself.
+  say what Errand should set up and what it should leave alone. **Set up** builds
+  a prompt from them and sends it to Errand. The screen installs nothing itself.
   Tools that the catalog cannot install directly are no longer fake switches:
-  Aeron works out how to get them (a package manager, a release file).
-- **Auto approve by default.** Aeron runs with the session permission mode and
+  Errand works out how to get them (a package manager, a release file).
+- **Auto approve by default.** Errand runs with the session permission mode and
   starts in the automatic mode. The core sets this once when it creates the
   session; reopening it preserves the saved mode. There is no second approval store, no scope
   compiler and no deduplicating question service. The switches are prompt text.
-- **Aeron has full control.** It has no tool allow-list or deny-list and no
+- **Errand has full control.** It has no tool allow-list or deny-list and no
   capability limit beyond the session permission mode. It searches the web,
   finds the right server and settings for the project, downloads and installs
   the tool, and writes the server's launch command and arguments in the
   workspace settings (`lsp.*` paths, through `crude_control`). That is the
-  point of an agent here: the user does not do these steps. Only Aeron may
+  point of an agent here: the user does not do these steps. Only Errand may
   write the `lsp.*` authority paths; every other agent keeps the human-only
-  rule (`aeronOwnsSetting` in `core/control_settings.go`). The existing check
+  rule (`errandOwnsSetting` in `core/control_settings.go`). The existing check
   (start, initialize, answer a fixture) runs after the change, and Problems
   shows the result.
-- **Few interruptions.** Aeron asks the user only for a decision it cannot make
+- **Few interruptions.** Errand asks the user only for a decision it cannot make
   (for example, a tool that needs administrator rights). It uses the normal agent
   question. The prompt tells it to ask once, to keep progress in its own view and
   to report a failure once. The prompt text lives in `agent/prompt/`.
-- **Cleanup.** Removal of tools stays on the Settings page. Aeron removes a tool
+- **Cleanup.** Removal of tools stays on the Settings page. Errand removes a tool
   only when the user asks.
 
 ### Implementation status (2026-11-04)
 
 Built: the Agents sidebar fold; `InvocationSelection.MainAgent` and
 `NewAgentSessionAs` (a session rooted in a built-in role, over the same core
-RPC); the Aeron role with no tool or capability restriction, in the agent
+RPC); the Errand role with no tool or capability restriction, in the agent
 filter, the role policy and the shipped role defaults
 (`types.DefaultAgentRoleCategories`, guarded by
-`agent/session/aeron_tools_test.go`); the setup screen (the 2026-11-03
+`agent/session/errand_tools_test.go`); the setup screen (the 2026-11-03
 list-and-details review, with every tool selectable and selected at first)
-that sends `prompt.ToolSetupMessage` to the workspace's Aeron, minimized and
-on automatic approval (`tui/viewmodel/workspace_aeron.go`), with a one-line
+that sends `prompt.ToolSetupMessage` to the workspace's Errand, minimized and
+on automatic approval (`tui/viewmodel/workspace_errand.go`), with a one-line
 summary as the chat text; the close button of the setup window; and the
-permanent workspace Aeron (`EnsureAeronSession`): the core records its session
+permanent workspace Errand (`EnsureErrandSession`): the core records its session
 in `workspace_metadata`, reopens that saved session on the next attach, reports
 `idle` in the Agents panel, and never takes the user's tab. The shell opens it
 after startup settles and the user is idle. A setup order waits while other
-session work holds the core and is delivered when Aeron opens. Multiple orders
-cannot overwrite each other. An open failure marks the Aeron row **needs setup**;
-opening the row then shows the cause and opens Aeron's settings. It sends a
+session work holds the core and is delivered when Errand opens. Multiple orders
+cannot overwrite each other. An open failure marks the Errand row **needs setup**;
+opening the row then shows the cause and opens Errand's settings. It sends a
 notice at once only when an order or an open request was waiting.
 
-Aeron has no surface of its own. Its row opens it as a normal agent tab (or a
+Errand has no surface of its own. Its row opens it as a normal agent tab (or a
 window from the context menu) with the normal composer, model choice and status
 bar. Its questions and confirmations always use the modal agent prompt, also
 while its tab is visible (`agentPromptInlineEligible`), and its root system
 prompt carries `prompt.WorkspaceAgentContract`, which makes the question tool its
-channel to the user. `TestAeronOpensAsAgentTabAndRunsTools` uses the real
+channel to the user. `TestErrandOpensAsAgentTabAndRunsTools` uses the real
 connected core, provider tool loop and shell Update path at 160x40 and 80x24: it
-opens Aeron from its row as a tab, sends a task from the normal composer, runs a
+opens Errand from its row as a tab, sends a task from the normal composer, runs a
 command and creates an LSP command entry through the control gateway, and checks
 the contract in the system prompt. The gateway uses the shared sparse
 settings-edit owner instead of a second recursive writer.
-`TestAeronQuestionIsAModalPrompt` covers a background question that opens the
-modal without changing the user's tab or draft, and stays modal when Aeron's tab
-opens. `TestEnsureAeronSessionIsOneAndReopens` covers the saved empty
+`TestErrandQuestionIsAModalPrompt` covers a background question that opens the
+modal without changing the user's tab or draft, and stays modal when Errand's tab
+opens. `TestEnsureErrandSessionIsOneAndReopens` covers the saved empty
 identity and permission mode.
 The full-suite run exposed a second display path: a core input receipt could
 publish the raw order before provider events arrived. Input publication, queue,
@@ -144,12 +144,12 @@ steering and persistence now use `UserInput.DisplayContent`; the existing
 `TestAgentIngressInputReceiptPublishesOnce` fails deterministically without that
 fix and asserts the actual readable summary.
 
-The first real run (2026-11-04) failed: the shipped Aeron default was still
+The first real run (2026-11-04) failed: the shipped Errand default was still
 read-only without commands or web access, and the saved application config had
 stored that default. Both were corrected.
 
 Real-model acceptance (2026-11-04): the configured
-`ollama/deepseek-v4.1-flash:1017` Aeron received the setup screen's
+`ollama/deepseek-v4.1-flash:1017` Errand received the setup screen's
 `prompt.ToolSetupMessage` through the connected core's `session.ensure` and
 ordinary input admission in a disposable trusted Linux workspace. It used web
 research, npm and normal settings control to install yaml-language-server 2.0.0
@@ -168,7 +168,7 @@ These items are not done. Do not report them as complete.
 - **Code-action support is not complete.** Command-based code actions
   (`workspace/executeCommand`) and code actions that change more than one file
   are not supported. Crude lists them as not available.
-- **Aeron installation coverage is limited.** One real-model Linux npm install
+- **Errand installation coverage is limited.** One real-model Linux npm install
   is verified above. Other package managers, native Windows and the whole setup
   journey on Windows are not verified. The 2026-11-17 Windows launch repair
   separately verifies already-installed npm servers: shared inventory/startup
@@ -247,7 +247,7 @@ describes the rejected implementation. The replacement review (list and
 details) has focused Linux selection and dismissal evidence and is the layout
 of the current setup screen. The 2026-11-04 direction above supersedes its
 catalog-only installation requirements: every tool is a real choice that
-Aeron sets up. Package-manager support in the store, real-model acceptance and
+Errand sets up. Package-manager support in the store, real-model acceptance and
 full setup acceptance remain open.
 
 ### Functional failures and evidence

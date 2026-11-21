@@ -464,7 +464,7 @@ they must show as one `Read 3 files` group one blank row under the answer.
 
 ### Errand and tab tooltip acceptance
 
-`TestAeronAndTabTooltipVisualAcceptance` (`CRUDE_VISUAL_AERON=1`) drives the
+`TestErrandAndTabTooltipVisualAcceptance` (`CRUDE_VISUAL_ERRAND=1`) drives the
 connected shell with a fixture provider. Precompile the viewmodel test binary
 and run it through `scripts/tuishot.sh` with `CRUDE_BIN`/`CRUDE_ARGS`, at
 160x40 and 80x24, one capture at a time. Rest the pointer on the file tab and
@@ -472,10 +472,10 @@ press F4 (the painted tooltip shows the absolute path). F3 releases Errand's
 question; F4 checks that it is a modal over the unchanged tab and draft.
 Click the modal's **Cancel**, then F4 checks that it closed. F5 shows the
 Workspace panel; click **Open workspace Errand** in its panel header; F4 checks its normal
-agent tab. F9 exits. `CRUDE_AERON_VISUAL_RESULT` receives
-`AERON_VISUAL_SUCCESS` or the failed phase and its state.
+agent tab. F9 exits. `CRUDE_ERRAND_VISUAL_RESULT` receives
+`ERRAND_VISUAL_SUCCESS` or the failed phase and its state.
 
-`TestAeronPanelAndBuildsVisualAcceptance` (`CRUDE_VISUAL_AERON_PANEL=1`) checks
+`TestErrandPanelAndBuildsVisualAcceptance` (`CRUDE_VISUAL_ERRAND_PANEL=1`) checks
 the corrected panel placement and connection version reader. Run it sequentially
 at 160x40 and 80x24. F2 opens Workspace, F3 observes the underlined panel link and absence
 of Errand/Naveen rows and application-header links. Tab/Enter or the pointer opens

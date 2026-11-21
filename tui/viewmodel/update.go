@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/core/port"
+	"crude/core/protocol"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/perf"
@@ -358,10 +360,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Auto Review may have been turned on or off: waiting confirmations
 		// show or hide the choice that opens it.
 		m.openNextAgentPrompt()
-		if m.aeronEnsureFailed {
+		if m.errandEnsureFailed {
 			// Errand may have waited for an account or model. A settings
 			// change is the user's chance to provide it.
-			m.requestWorkspaceAeronEnsure()
+			m.requestWorkspaceErrandEnsure()
 		}
 		// Desktop notifications may have been turned on, off or narrowed.
 		m.reportDesktopPresence()
@@ -884,7 +886,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	m.syncAgentStatusInventory()
 	m.syncPerfAttention(now)
 	perfCmd := m.requestPerfSnapshot(false)
-	aeronCmd := m.workspaceAeronTick(now)
+	errandCmd := m.workspaceErrandTick(now)
 	activityCmd := m.workspaceActivityCmd(now)
 	var launcherCmd tea.Cmd
 	if m.capabilityObservationVisible() {
@@ -899,10 +901,10 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, activityCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, errandCmd, activityCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, activityCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, errandCmd, activityCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -1484,6 +1486,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 					if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 						cmds = append(cmds, cmd)
 					}
+					if msg.Err == nil && msg.Change.After == nil {
+						application, effective, overrides := m.settingsLayers()
+						body.SetModel(msg.Target.AccountRemovedModel(application, effective, overrides, msg.Change.ID))
+						m.bindRemoteSettings(body)
+					}
 					w.Host().MarkLayout()
 				}
 			}
@@ -1540,7 +1547,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			models, err := fetch()
 			if err != nil {
-				return settingsui.ModelsErrorMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Error: err.Error()}
+				return settingsui.ModelsErrorMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Error: modelListProblem(err)}
 			}
 			return settingsui.ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: models}
 		})
@@ -1715,7 +1722,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		_, projection := m.sessionProjections.projectionForSettings(msg.target)
 		if projection != nil {
 			if msg.err != nil {
-				msg.target.ApplyModelsErrorForAccount(msg.providerID, msg.accountID, msg.generation, msg.err.Error())
+				msg.target.ApplyModelsErrorForAccount(msg.providerID, msg.accountID, msg.generation, modelListProblem(msg.err))
 			} else {
 				msg.target.ApplyModelsForAccount(msg.providerID, msg.accountID, msg.generation, msg.models)
 			}
@@ -2202,4 +2209,13 @@ func tickCmd() tea.Cmd {
 
 func streamingTickCmd() tea.Cmd {
 	return tea.Tick(16*time.Millisecond, func(at time.Time) tea.Msg { return types.TickMsg(at) })
+}
+
+// Model pickers show the core's explanation, not its protocol fault code.
+func modelListProblem(err error) string {
+	var fault *coreprotocol.Fault
+	if errors.As(err, &fault) {
+		return fault.Message
+	}
+	return err.Error()
 }

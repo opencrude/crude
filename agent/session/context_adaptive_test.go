@@ -117,8 +117,8 @@ func newAdaptiveCompactionSession(t *testing.T, serverURL string, capacity int, 
 	profile.Categories[CategoryDefault] = CategoryConfig{
 		AccountID: "account", Model: "adaptive-main-model", ModelContextWindow: 1_000_000,
 	}
-	profile.Categories[CategoryAeron] = CategoryConfig{
-		AccountID: "account", Model: "adaptive-aeron-model", ModelContextWindow: capacity, ModelMaxOutput: 2_048,
+	profile.Categories[CategoryErrand] = CategoryConfig{
+		AccountID: "account", Model: "adaptive-errand-model", ModelContextWindow: capacity, ModelMaxOutput: 2_048,
 	}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	template := cfg.Accounts["account"].Connection
@@ -128,12 +128,12 @@ func newAdaptiveCompactionSession(t *testing.T, serverURL string, capacity int, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	aeron, err := cfg.providerForCategory(cfg.GetCategoryConfig(CategoryAeron))
+	errand, err := cfg.providerForCategory(cfg.GetCategoryConfig(CategoryErrand))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if main.ContextWindow(main.Model) != 1_000_000 || aeron.ContextWindow(aeron.Model) != capacity {
-		t.Fatalf("category overrides not bound: main=%d Errand=%d", main.ContextWindow(main.Model), aeron.ContextWindow(aeron.Model))
+	if main.ContextWindow(main.Model) != 1_000_000 || errand.ContextWindow(errand.Model) != capacity {
+		t.Fatalf("category overrides not bound: main=%d Errand=%d", main.ContextWindow(main.Model), errand.ContextWindow(errand.Model))
 	}
 	return &Session{
 		logger: log, db: db, cfg: cfg, sessionID: sessionID,
@@ -157,7 +157,7 @@ func TestSessionAdaptiveCompactionInstallsCheckpointAndResumesPassively(t *testi
 		role     string
 	}{{capacity: 64_000, role: "assistant"}, {capacity: 128_000, role: "tool"}} {
 		t.Run(fmt.Sprintf("%d_%s", fixture.capacity, fixture.role), func(t *testing.T) {
-			probe := &adaptiveCompactionProbe{capacity: fixture.capacity, model: "adaptive-aeron-model"}
+			probe := &adaptiveCompactionProbe{capacity: fixture.capacity, model: "adaptive-errand-model"}
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 				_, call := probe.readRequest(t, request)
 				writeAdaptiveCompactionSSE(t, writer, fmt.Sprintf("- extraction %d: parser.go unchanged; no-delete constraint; failing test evidence retained", call))
@@ -271,9 +271,9 @@ func TestSessionCompactionLearnsOutputLimitAcrossNewSessions(t *testing.T) {
 		original := adaptiveMessageBytes(t, history)
 		s, _ := newAdaptiveCompactionSession(t, server.URL, 1_050_000, history)
 		profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
-		aeron := profile.Categories[CategoryAeron]
-		aeron.ModelMaxOutput = 600000
-		profile.Categories[CategoryAeron] = aeron
+		errand := profile.Categories[CategoryErrand]
+		errand.ModelMaxOutput = 600000
+		profile.Categories[CategoryErrand] = errand
 		s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
 		outputs = nil
 		result := s.HandleCompact()
@@ -298,7 +298,7 @@ func TestSessionCompactionLearnsOutputLimitAcrossNewSessions(t *testing.T) {
 func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *testing.T) {
 	for _, failure := range []string{"permanent_401", "empty_after_retries"} {
 		t.Run(failure, func(t *testing.T) {
-			probe := &adaptiveCompactionProbe{capacity: 64_000, model: "adaptive-aeron-model"}
+			probe := &adaptiveCompactionProbe{capacity: 64_000, model: "adaptive-errand-model"}
 			var session *Session
 			var original []byte
 			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

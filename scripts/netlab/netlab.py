@@ -482,7 +482,7 @@ class Lab:
         if len(self.clients) > 1:
             config["local_history"] = {"enabled": "on"}
             config["lsp"] = {"enabled": True, "auto_detect": True, "start_on_open": True, "goto_definition": True, "rename": True,
-                             "diagnostics": True, "ask_aeron": "off", "project_check": "off"}
+                             "diagnostics": True, "ask_errand": "off", "project_check": "off"}
         self.write("server", "/home/crude/.crude/config.json", json.dumps(config, indent=1), owner="crude")
 
     # Link control -----------------------------------------------------------

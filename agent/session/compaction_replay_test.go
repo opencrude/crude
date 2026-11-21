@@ -23,7 +23,7 @@ func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		if request.Model == "adaptive-aeron-model" {
+		if request.Model == "adaptive-errand-model" {
 			extractions.Add(1)
 			writeAdaptiveCompactionSSE(t, w, "<<<intent>>>\nPreserve requirements.\n<<<work>>>\nOlder evidence reviewed.\n<<<state>>>\nNo files changed.\n<<<continuation>>>\nContinue the pending request.")
 			return
@@ -74,7 +74,7 @@ func TestAutomaticCompactionCommitsLiveReplayTailAndContinues(t *testing.T) {
 	provider.SetModelContext(p.Model, 200_000)
 	a := agent.NewAgent(p, p.Model, s.logger)
 	a.MaxOutputTokens, a.ContextCompactionPercent = 2048, 20
-	a.CompactionProvider, err = s.cfg.providerForCategory(s.cfg.GetCategoryConfig(CategoryAeron))
+	a.CompactionProvider, err = s.cfg.providerForCategory(s.cfg.GetCategoryConfig(CategoryErrand))
 	if err != nil {
 		t.Fatal(err)
 	}

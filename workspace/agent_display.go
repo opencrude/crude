@@ -25,10 +25,10 @@ func AgentDisplayLabel(node *AgentNode) string {
 	return CategoryDisplayName(node.Category)
 }
 
-// SessionIsAeron reports whether the session's root agent is the Errand role:
+// SessionIsErrand reports whether the session's root agent is the Errand role:
 // the workspace's errand runner for tool setup and similar jobs.
-func SessionIsAeron(s *Session) bool {
-	return s != nil && s.Settings != nil && s.Settings.Effective.SessionMainAgent == session.CategoryAeron
+func SessionIsErrand(s *Session) bool {
+	return s != nil && s.Settings != nil && s.Settings.Effective.SessionMainAgent == session.CategoryErrand
 }
 
 // CategoryDisplayName maps an agent category/role key to its UI name.
@@ -41,7 +41,7 @@ func CategoryDisplayName(category string) string {
 		return "Researcher"
 	case session.CategoryCrafter:
 		return "Crafter"
-	case session.CategoryAeron:
+	case session.CategoryErrand:
 		return types.ErrandName
 	default:
 		return ""
@@ -76,7 +76,7 @@ func SubAgentActivityLabel(name, category, task string) string {
 // agentIdentityLabel projects the owner before status is published. Toasts,
 // prompt chrome and status panels consume the same label as the agent tabs.
 func (w *Workspace) agentIdentityLabel(node *AgentNode) string {
-	if node.Parent == nil && SessionIsAeron(w.SessionForAgent(node.ID)) {
+	if node.Parent == nil && SessionIsErrand(w.SessionForAgent(node.ID)) {
 		return types.ErrandName
 	}
 	if label := AgentDisplayLabel(node); label != "" {

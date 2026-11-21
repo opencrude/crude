@@ -21,12 +21,12 @@ import (
 // shown change of the active editor; every async result carries the editor,
 // its revision, the workspace generation and the request sequence.
 const (
-	suggestionGhostOwner = "aeron"
+	suggestionGhostOwner = "errand"
 	suggestionViewID     = "editor-suggestion"
 	suggestionMinPause   = 0
 	suggestionMaxPause   = 150 * time.Millisecond
 	suggestionStartPause = 50 * time.Millisecond
-	suggestionFooter     = "aeron-suggestions"
+	suggestionFooter     = "errand-suggestions"
 )
 
 type suggestionState struct {
@@ -690,7 +690,7 @@ func (m *App) openSuggestionMenu() tea.Cmd {
 		{Label: "Suggest now", Detail: "Alt+\\", Disabled: mode == types.PredictionOff, Action: func() {
 			m.runDetachedAsyncCmd(m.requestSuggestionNow())
 		}},
-		{Label: "Suggestion settings", Action: func() { m.runDetachedAsyncCmd(m.openApplicationAgentPage("role/aeron", "suggestions")) }},
+		{Label: "Suggestion settings", Action: func() { m.runDetachedAsyncCmd(m.openApplicationAgentPage("role/errand", "suggestions")) }},
 	}}
 	sections := []ui.ContextMenuSection{modes}
 	if len(info) > 0 {
@@ -800,7 +800,7 @@ func (m *App) suggestionDestination() string {
 	settings := m.ws.LoadAppSettings()
 	id := settings.Agents.Suggestions.AccountID
 	if id == "" {
-		id = settings.Agents.Categories["aeron"].AccountID
+		id = settings.Agents.Categories["errand"].AccountID
 	}
 	if id == "" {
 		id = settings.Agents.Categories["default"].AccountID

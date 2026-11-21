@@ -275,7 +275,7 @@ func (a *actor) prepareControlSettingsFields(in control.Request) (func(context.C
 		if strings.Contains(path, ".Profiles") || strings.Contains(path, "Price") || strings.HasSuffix(path, "ActiveProfile") {
 			return
 		}
-		human := ControlSettingsAuthority(path) && !a.aeronOwnsSetting(in.Caller, input.Scope, path)
+		human := ControlSettingsAuthority(path) && !a.errandOwnsSetting(in.Caller, input.Scope, path)
 		readonly := false
 		ownership := input.Scope
 		if input.Scope == "workspace" && (strings.HasPrefix(path, "accounts.") || strings.HasPrefix(path, "network.")) {

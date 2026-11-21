@@ -585,18 +585,18 @@ func TestAutomaticCompactionWorksForEveryPriceTierAndMissingData(t *testing.T) {
 	}
 	cheap, medium, expensive, premium, unknown := tier{"cheap", 0.05e-6}, tier{"medium", 1e-6}, tier{"expensive", 15e-6}, tier{"very-expensive", 75e-6}, tier{"unpriced", 0}
 	type scenario struct {
-		main, aeron tier
-		usage       bool
+		main, errand tier
+		usage        bool
 	}
 	var cases []scenario
 	for _, main := range []tier{cheap, medium, expensive, premium} {
-		for _, aeron := range []tier{cheap, premium} {
-			cases = append(cases, scenario{main, aeron, true})
+		for _, errand := range []tier{cheap, premium} {
+			cases = append(cases, scenario{main, errand, true})
 		}
 	}
 	cases = append(cases, scenario{premium, cheap, false}, scenario{unknown, unknown, true}, scenario{unknown, unknown, false})
 	for _, test := range cases {
-		name := test.main.name + "-main/" + test.aeron.name + "-aeron"
+		name := test.main.name + "-main/" + test.errand.name + "-errand"
 		if !test.usage {
 			name += "/no-usage"
 		}
@@ -612,9 +612,9 @@ func TestAutomaticCompactionWorksForEveryPriceTierAndMissingData(t *testing.T) {
 			}
 			provider.SetModelPrice(a.Model, price(test.main.input))
 			compaction := provider.FromPreset("openai-chat", "key", endpoint.URL)
-			compaction.Model = model + "-aeron"
+			compaction.Model = model + "-errand"
 			provider.SetModelContext(compaction.Model, 100_000)
-			provider.SetModelPrice(compaction.Model, price(test.aeron.input))
+			provider.SetModelPrice(compaction.Model, price(test.errand.input))
 			combinedCompactionFailures.Delete(combinedCompactionKey(compaction, compaction.Model))
 			a.CompactionProvider = compaction
 			window := a.Provider.ContextWindow(a.Model)

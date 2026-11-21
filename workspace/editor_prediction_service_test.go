@@ -105,7 +105,7 @@ func newSuggestionFixture(t *testing.T, text string, answer func(string) string)
 	accounts := map[string]provider.Account{account.ID: account}
 	cfg := &session.Config{Accounts: accounts, AccountManager: provider.NewAccountManager(accounts, nil),
 		Agents: session.AgentsConfig{ActiveProfile: "p", Profiles: map[string]session.ProfileConfig{
-			"p": {Categories: map[string]session.CategoryConfig{session.CategoryAeron: {AccountID: account.ID, Model: "fast"}}},
+			"p": {Categories: map[string]session.CategoryConfig{session.CategoryErrand: {AccountID: account.ID, Model: "fast"}}},
 		}}}
 	completer, err := cfg.SuggestionCompleter()
 	if err != nil {

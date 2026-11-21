@@ -82,7 +82,7 @@ var agentRoles = []struct {
 	{Key: "default", Name: "Main Agent"},
 	{Key: "researcher", Name: "Researcher"},
 	{Key: "crafter", Name: "Crafter"},
-	{Key: "aeron", Name: "Errand"},
+	{Key: "errand", Name: "Errand"},
 	{Key: "memory", Name: "Memory Agent"},
 }
 
@@ -173,15 +173,7 @@ func (s *Screen) accountLabel(id string) string {
 	if id == "" {
 		return "No account selected"
 	}
-	a, ok := s.accounts[id]
-	if !ok {
-		return "Missing account: " + id
-	}
-	label := a.Label
-	if label == "" {
-		label = id
-	}
-	return label
+	return types.AccountName(s.accounts, id)
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -1497,7 +1489,7 @@ func categoryFor(settings, base types.Settings, role string) types.CategorySetti
 		}
 		parent := profile.Category
 		switch parent {
-		case "researcher", "crafter", "aeron", memoryRole:
+		case "researcher", "crafter", "errand", memoryRole:
 		default:
 			return types.CategorySettings{}
 		}

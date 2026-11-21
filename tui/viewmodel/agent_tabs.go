@@ -26,12 +26,12 @@ func (m *App) AddOrchestrator(orchID string) {
 // addOrchestrator surfaces inventory without allowing peer-created roots to
 // steal this shell's selection or editor focus.
 func (m *App) addOrchestrator(orchID string, activate bool) {
-	if workspace.SessionIsAeron(m.ws.SessionsByAgent()[orchID]) {
+	if workspace.SessionIsErrand(m.ws.SessionsByAgent()[orchID]) {
 		// Errand arrives minimized unless the user asked to open it; then it
 		// opens as a normal agent tab.
-		activate = activate || m.aeronOpenRequested
-		m.aeronOpenRequested = false
-		m.prepareAeronAgent(orchID, activate)
+		activate = activate || m.errandOpenRequested
+		m.errandOpenRequested = false
+		m.prepareErrandAgent(orchID, activate)
 	}
 	if !activate {
 		m.ensureAgentProjection(orchID)

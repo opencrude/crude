@@ -15,10 +15,10 @@ func (a *actor) prepareInvocation(request coreprotocol.Request) (*workspace.Invo
 		return nil, errors.New("invalid invocation request")
 	}
 	if request.Method == coreprotocol.EnsureSession {
-		if input.SessionID != "" || !input.Selection.SelectsOnlyMainAgent(session.CategoryAeron) {
+		if input.SessionID != "" || !input.Selection.SelectsOnlyMainAgent(session.CategoryErrand) {
 			return nil, errors.New("the workspace agent request names only the Errand role")
 		}
-		return a.ws.PrepareAeronSession()
+		return a.ws.PrepareErrandSession()
 	}
 	if (request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.ForkSession) && input.SessionID == "" {
 		return nil, errors.New("session identity is required")

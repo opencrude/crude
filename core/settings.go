@@ -338,7 +338,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			}
 			models, err := operation()
 			if err != nil {
-				return fault(request, "models_failed", "account model discovery failed; repair the selected connection")
+				return fault(request, "models_failed", "Cannot fetch models. Check the account connection.")
 			}
 			return response(request, coreprotocol.AccountModelsResult{Models: models})
 		}, nil, true

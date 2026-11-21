@@ -114,14 +114,14 @@ func TestUpdateSessionCost(t *testing.T) {
 	}
 }
 
-func TestSavedWorkspaceAeronIsNotAnOrdinarySession(t *testing.T) {
+func TestSavedWorkspaceErrandIsNotAnOrdinarySession(t *testing.T) {
 	db := openTestWorkspaceDB(t)
-	for _, id := range []string{"workspace-aeron", "ordinary"} {
+	for _, id := range []string{"workspace-errand", "ordinary"} {
 		if err := db.RegisterSession(id, "/project", "Project", "model", "provider"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := db.SetSetting(workspaceAeronSessionKey, "workspace-aeron"); err != nil {
+	if err := db.SetSetting(workspaceErrandSessionKey, "workspace-errand"); err != nil {
 		t.Fatal(err)
 	}
 	sessions, err := db.ListSessions()

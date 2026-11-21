@@ -59,9 +59,9 @@
   const chapters = $$(".chapter");
   const scenes = {};
   $$(".scene").forEach((s) => (scenes[s.dataset.scene] = s));
-  const ORDER = ["chat", "agents", "memory", "lsp", "core", "review", "aeron"];
-  const STEPS = { memory: [0.62], lsp: [0.14, 0.4, 0.62, 0.8], review: [0.3, 0.5, 0.8], aeron: [0.45, 0.72] };
-  const RAIL = { chat: 0, agents: 1, memory: 4, lsp: 0, core: 0, review: 0, aeron: 1 };
+  const ORDER = ["chat", "agents", "memory", "lsp", "core", "review", "errand"];
+  const STEPS = { memory: [0.62], lsp: [0.14, 0.4, 0.62, 0.8], review: [0.3, 0.5, 0.8], errand: [0.45, 0.72] };
+  const RAIL = { chat: 0, agents: 1, memory: 4, lsp: 0, core: 0, review: 0, errand: 1 };
   const rail = $$(".ws-rail .ri");
   const typed = $$(".typed").map((el) => ({
     el, scene: el.closest(".scene").dataset.scene, text: el.dataset.text,

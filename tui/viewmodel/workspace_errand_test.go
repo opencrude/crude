@@ -17,7 +17,7 @@ import (
 
 // The workspace's Errand is created once per attachment, never takes the user's
 // tab, and opens from the header instead of the ordinary Agents collection.
-func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
+func TestWorkspaceErrandIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 	app, port := projectToolsTestApp(t, 120, 36)
 	port.onEnsure = func() {
 		//nolint:staticcheck // The wrapper is not a *local; unwrap its embedded workspace.
@@ -25,31 +25,31 @@ func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 		if base.SessionsByAgent == nil {
 			base.SessionsByAgent = make(map[string]*workspace.Session)
 		}
-		base.SessionsByAgent["aeron-agent"] = &workspace.Session{
-			SessionID: "aeron-session",
-			AgentID:   "aeron-agent",
-			Settings:  &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}},
+		base.SessionsByAgent["errand-agent"] = &workspace.Session{
+			SessionID: "errand-session",
+			AgentID:   "errand-agent",
+			Settings:  &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}},
 		}
-		base.AgentMgr.AddOrchestrator("aeron-agent", workspace.NewAgentState("aeron-agent", nil, nil))
+		base.AgentMgr.AddOrchestrator("errand-agent", workspace.NewAgentState("errand-agent", nil, nil))
 	}
-	cmd := app.ensureWorkspaceAeron()
-	if cmd == nil || !app.aeronEnsureInFlight {
+	cmd := app.ensureWorkspaceErrand()
+	if cmd == nil || !app.errandEnsureInFlight {
 		t.Fatal("the workspace Errand was not ensured")
 	}
 	runAppCommand(t, app, cmd)
-	if len(port.roles) != 1 || port.roles[0] != "aeron" {
+	if len(port.roles) != 1 || port.roles[0] != "errand" {
 		t.Fatalf("ensure did not ask for the Errand role: %v", port.roles)
 	}
-	if app.aeronEnsureInFlight || app.aeronEnsureFailed {
-		t.Fatalf("ensure did not settle: inFlight=%v failed=%v", app.aeronEnsureInFlight, app.aeronEnsureFailed)
+	if app.errandEnsureInFlight || app.errandEnsureFailed {
+		t.Fatalf("ensure did not settle: inFlight=%v failed=%v", app.errandEnsureInFlight, app.errandEnsureFailed)
 	}
-	if app.workspaceAeronAgent() != "aeron-agent" {
+	if app.workspaceErrandAgent() != "errand-agent" {
 		t.Fatal("the ensured Errand is not the workspace's agent")
 	}
-	if !app.AgentView.IsHidden("aeron-agent") {
+	if !app.AgentView.IsHidden("errand-agent") {
 		t.Fatal("the workspace Errand took the user's tab")
 	}
-	requireAeronAbsentFromAgentList(t, app)
+	requireErrandAbsentFromAgentList(t, app)
 	app.setActivity(activityAgents, true)
 	app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	app.paintShellFrame()
@@ -58,11 +58,11 @@ func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 		t.Fatalf("the panel header does not expose workspace Errand:\n%s", paint)
 	}
 	app.hideWorkspacePanel()
-	openAeronHeader(t, app)
-	if app.AgentView.ActiveID() != "aeron-agent" || app.AgentView.IsHidden("aeron-agent") {
+	openErrandHeader(t, app)
+	if app.AgentView.ActiveID() != "errand-agent" || app.AgentView.IsHidden("errand-agent") {
 		t.Fatal("the header did not restore the existing workspace Errand")
 	}
-	if again := app.ensureWorkspaceAeron(); again != nil {
+	if again := app.ensureWorkspaceErrand(); again != nil {
 		t.Fatal("a second ensure would create or resume the agent again")
 	}
 	if len(port.roles) != 1 {
@@ -70,11 +70,11 @@ func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 	}
 }
 
-func requireAeronAbsentFromAgentList(t *testing.T, app *App) {
+func requireErrandAbsentFromAgentList(t *testing.T, app *App) {
 	t.Helper()
 	for _, row := range app.agentSidebarItems() {
-		if row.Label == "Errand" || row.ID == "aeron:workspace" ||
-			strings.HasPrefix(row.ID, "agent:") && app.isAeronAgent(strings.TrimPrefix(row.ID, "agent:")) {
+		if row.Label == "Errand" || row.ID == "errand:workspace" ||
+			strings.HasPrefix(row.ID, "agent:") && app.isErrandAgent(strings.TrimPrefix(row.ID, "agent:")) {
 			t.Fatalf("workspace Errand remains in the ordinary agent list: %+v", row)
 		}
 	}
@@ -93,7 +93,7 @@ func findSidebarAgent(t *testing.T, app *App, id string) ui.ListItem {
 
 // The automatic ensure is background work: it waits for the startup delay, a
 // quiet shell and no history operation, so a restore never loses its slot.
-func TestWorkspaceAeronWaitsForQuietAndRestore(t *testing.T) {
+func TestWorkspaceErrandWaitsForQuietAndRestore(t *testing.T) {
 	app, port := projectToolsTestApp(t, 120, 36)
 	port.onEnsure = func() {
 		//nolint:staticcheck // The wrapper is not a *local; unwrap its embedded workspace.
@@ -101,33 +101,33 @@ func TestWorkspaceAeronWaitsForQuietAndRestore(t *testing.T) {
 		if base.SessionsByAgent == nil {
 			base.SessionsByAgent = make(map[string]*workspace.Session)
 		}
-		base.SessionsByAgent["aeron-agent"] = &workspace.Session{
-			SessionID: "aeron-session",
-			AgentID:   "aeron-agent",
-			Settings:  &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}},
+		base.SessionsByAgent["errand-agent"] = &workspace.Session{
+			SessionID: "errand-session",
+			AgentID:   "errand-agent",
+			Settings:  &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}},
 		}
-		base.AgentMgr.AddOrchestrator("aeron-agent", workspace.NewAgentState("aeron-agent", nil, nil))
+		base.AgentMgr.AddOrchestrator("errand-agent", workspace.NewAgentState("errand-agent", nil, nil))
 	}
-	app.requestWorkspaceAeronEnsure()
+	app.requestWorkspaceErrandEnsure()
 	now := time.Now()
-	due := now.Add(aeronEnsureStartupDelay + time.Millisecond)
+	due := now.Add(errandEnsureStartupDelay + time.Millisecond)
 
 	app.LastInteractionTime = now
-	if cmd := app.workspaceAeronTick(due); cmd != nil {
+	if cmd := app.workspaceErrandTick(due); cmd != nil {
 		t.Fatal("the workspace Errand started while the user was working")
 	}
 	app.historyOperation = &historyOperation{}
-	app.LastInteractionTime = now.Add(-aeronEnsureQuietPeriod - time.Second)
-	if cmd := app.workspaceAeronTick(due); cmd != nil {
+	app.LastInteractionTime = now.Add(-errandEnsureQuietPeriod - time.Second)
+	if cmd := app.workspaceErrandTick(due); cmd != nil {
 		t.Fatal("the workspace Errand started during a history restore")
 	}
 	app.historyOperation = nil
-	cmd := app.workspaceAeronTick(due)
+	cmd := app.workspaceErrandTick(due)
 	if cmd == nil {
 		t.Fatal("the workspace Errand did not start after the shell became quiet")
 	}
 	runAppCommand(t, app, cmd)
-	if app.workspaceAeronAgent() != "aeron-agent" {
+	if app.workspaceErrandAgent() != "errand-agent" {
 		t.Fatal("the quiet ensure did not install the workspace Errand")
 	}
 }
@@ -135,51 +135,51 @@ func TestWorkspaceAeronWaitsForQuietAndRestore(t *testing.T) {
 // Work for Errand is never dropped because other session work held the core:
 // it waits, Errand opens when admission is free, and the order is delivered.
 // The user is not asked to send it again and is not told about the wait.
-func TestWorkspaceAeronWorkWaitsThroughBusyAdmission(t *testing.T) {
+func TestWorkspaceErrandWorkWaitsThroughBusyAdmission(t *testing.T) {
 	app, port := projectToolsTestApp(t, 120, 36)
 	port.busy = 1
-	cmd := app.taskWorkspaceAeron("<order/>", "Set up 1 code intelligence tool: marksman.")
+	cmd := app.taskWorkspaceErrand("<order/>", "Set up 1 code intelligence tool: marksman.")
 	if cmd == nil {
 		t.Fatal("work for Errand did not start Errand")
 	}
 	runAppCommand(t, app, cmd)
-	if len(app.aeronOrders) == 0 || app.aeronEnsureFailed || !app.aeronEnsureScheduled {
-		t.Fatalf("busy admission dropped the work: orders=%v failed=%v scheduled=%v", app.aeronOrders, app.aeronEnsureFailed, app.aeronEnsureScheduled)
+	if len(app.errandOrders) == 0 || app.errandEnsureFailed || !app.errandEnsureScheduled {
+		t.Fatalf("busy admission dropped the work: orders=%v failed=%v scheduled=%v", app.errandOrders, app.errandEnsureFailed, app.errandEnsureScheduled)
 	}
 	if port.roles != nil {
 		t.Fatal("a busy answer opened an agent")
 	}
 	// The order does not wait for a quiet shell, only for the retry time.
 	app.LastInteractionTime = time.Now()
-	retry := app.workspaceAeronTick(time.Now().Add(aeronEnsureStartupDelay + time.Millisecond))
+	retry := app.workspaceErrandTick(time.Now().Add(errandEnsureStartupDelay + time.Millisecond))
 	if retry == nil {
 		t.Fatal("waiting work did not retry Errand")
 	}
 	runAppCommand(t, app, retry)
-	sent := app.pendingFirstInputs["aeron-agent"][0]
-	if sent.Text != "<order/>" || sent.DisplayText != "Set up 1 code intelligence tool: marksman." || len(app.aeronOrders) != 0 {
-		t.Fatalf("the waiting work was not delivered: sent=%+v orders=%v", sent, app.aeronOrders)
+	sent := app.pendingFirstInputs["errand-agent"][0]
+	if sent.Text != "<order/>" || sent.DisplayText != "Set up 1 code intelligence tool: marksman." || len(app.errandOrders) != 0 {
+		t.Fatalf("the waiting work was not delivered: sent=%+v orders=%v", sent, app.errandOrders)
 	}
 }
 
 // A background open that fails is silent and stops; work that cannot reach
 // Errand is reported once with the next step and is not retried in a loop.
-func TestWorkspaceAeronFailureStopsAndReportsOnlyWork(t *testing.T) {
+func TestWorkspaceErrandFailureStopsAndReportsOnlyWork(t *testing.T) {
 	app, _ := projectToolsTestApp(t, 120, 36)
-	app.aeronEnsureInFlight = true
-	if cmd := app.applyAeronEnsure(&workspace.NewSessionResult{Error: "no model", NeedsModel: true}); cmd != nil {
+	app.errandEnsureInFlight = true
+	if cmd := app.applyErrandEnsure(&workspace.NewSessionResult{Error: "no model", NeedsModel: true}); cmd != nil {
 		t.Fatal("a failed background open started more work")
 	}
-	if !app.aeronEnsureFailed || app.aeronEnsureInFlight {
+	if !app.errandEnsureFailed || app.errandEnsureInFlight {
 		t.Fatal("a failed background open did not stop")
 	}
-	if cmd := app.workspaceAeronTick(time.Now().Add(time.Hour)); cmd != nil {
+	if cmd := app.workspaceErrandTick(time.Now().Add(time.Hour)); cmd != nil {
 		t.Fatal("a failed background open retried in a loop")
 	}
-	app.aeronOrders = []provider.UserInput{{Text: "<order/>"}}
-	app.aeronEnsureInFlight = true
-	app.applyAeronEnsure(&workspace.NewSessionResult{Error: "no model", NeedsModel: true})
-	if len(app.aeronOrders) != 1 || app.aeronEnsureScheduled {
+	app.errandOrders = []provider.UserInput{{Text: "<order/>"}}
+	app.errandEnsureInFlight = true
+	app.applyErrandEnsure(&workspace.NewSessionResult{Error: "no model", NeedsModel: true})
+	if len(app.errandOrders) != 1 || app.errandEnsureScheduled {
 		t.Fatal("failed work was lost or started an automatic retry loop")
 	}
 	reported := false

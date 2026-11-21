@@ -24,8 +24,8 @@ import (
 // MarshalMsg implements msgp.Marshaler
 func (z *AccountChangeRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 2
-	o = append(o, 0x92)
+	// array header, size 4
+	o = append(o, 0x94)
 	o = msgp.AppendString(o, z.ID)
 	if z.After == nil {
 		o = msgp.AppendNil(o)
@@ -36,6 +36,8 @@ func (z *AccountChangeRequest) MarshalMsg(b []byte) (o []byte, err error) {
 			return
 		}
 	}
+	o = msgp.AppendString(o, z.BeforeRevision)
+	o = msgp.AppendString(o, z.RemovalPreview)
 	return
 }
 
@@ -51,8 +53,8 @@ func (z *AccountChangeRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 2 {
-		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
 		return
 	}
 	z.ID, bts, err = msgp.ReadStringBytes(bts)
@@ -76,6 +78,16 @@ func (z *AccountChangeRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			return
 		}
 	}
+	z.BeforeRevision, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "BeforeRevision")
+		return
+	}
+	z.RemovalPreview, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "RemovalPreview")
+		return
+	}
 	o = bts
 	return
 }
@@ -88,6 +100,7 @@ func (z *AccountChangeRequest) Msgsize() (s int) {
 	} else {
 		s += z.After.Msgsize()
 	}
+	s += msgp.StringPrefixSize + len(z.BeforeRevision) + msgp.StringPrefixSize + len(z.RemovalPreview)
 	return
 }
 

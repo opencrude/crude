@@ -164,10 +164,10 @@ type Workspace struct {
 	// A session may own more than one orchestrator over its lifetime.
 	SessionsByAgent map[string]*Session
 
-	// aeronSessionID is the workspace's one Errand session. It is persisted in
+	// errandSessionID is the workspace's one Errand session. It is persisted in
 	// workspace_metadata so a restart reopens the existing agent instead of
 	// creating another one. The zero value means Errand has not been created.
-	aeronSessionID string
+	errandSessionID string
 
 	// Agent admission and snapshots share the workspace's serialized owner.
 	// These are runtime facts, never a client's selected tab or pane geometry.
@@ -297,9 +297,9 @@ func NewWorkspace(
 	if dbErr != nil {
 		lg.Warn("WORKSPACE", "db_open_failed", "error", dbErr.Error())
 	}
-	aeronSessionID := ""
+	errandSessionID := ""
 	if wsDB != nil {
-		aeronSessionID = wsDB.GetSetting(workspaceAeronSessionKey)
+		errandSessionID = wsDB.GetSetting(workspaceErrandSessionKey)
 	}
 	historyStore, historyErr := openLocalHistory(rootPath, wsDir)
 	if historyErr != nil {
@@ -341,7 +341,7 @@ func NewWorkspace(
 		Sessions:           make([]*Session, 0),
 		SessionsByID:       make(map[string]*Session),
 		SessionsByAgent:    make(map[string]*Session),
-		aeronSessionID:     aeronSessionID,
+		errandSessionID:    errandSessionID,
 		Logger:             lg,
 		InitialModelName:   modelName,
 		InitialSettings:    initial,
@@ -403,10 +403,10 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 	oldDB := w.WorkspaceDB
 	oldStatus := w.Status
 	oldWriter := w.registryCostWriter
-	oldAeronSessionID := w.aeronSessionID
+	oldErrandSessionID := w.errandSessionID
 	w.WorkspaceDB = db
 	w.workspaceDBErr = nil
-	w.aeronSessionID = db.GetSetting(workspaceAeronSessionKey)
+	w.errandSessionID = db.GetSetting(workspaceErrandSessionKey)
 	collaborationStore, collaborationErr := collaboration.Attach(
 		db.DB, canonicalizePath(w.RootPath), filepath.Join(w.WorkspaceDir, "collaboration-locks"),
 	)
@@ -414,7 +414,7 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 		_ = db.Close()
 		w.WorkspaceDB = oldDB
 		w.workspaceDBErr = previousErr
-		w.aeronSessionID = oldAeronSessionID
+		w.errandSessionID = oldErrandSessionID
 		return fmt.Errorf("restore collaboration runtime: %w", collaborationErr)
 	}
 	w.Collaboration = collaborationStore
@@ -925,7 +925,7 @@ func (w *Workspace) OpenAgentSession(sessionID string) *NewSessionResult {
 }
 
 // NewAgentSessionAs creates a session whose root is the named built-in role or
-// profile (for example "aeron"), like NewAgentSession otherwise. The role's own
+// profile (for example "errand"), like NewAgentSession otherwise. The role's own
 // connection settings stay in force.
 func (w *Workspace) NewAgentSessionAs(mainAgent string) *NewSessionResult {
 	op, err := w.PrepareInvocationSession("", InvocationSelection{MainAgent: mainAgent})

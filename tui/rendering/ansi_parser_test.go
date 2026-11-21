@@ -28,7 +28,7 @@ func TestRenderToSurfaceClearsReusedFrame(t *testing.T) {
 }
 
 func TestTruncateMiddleVisualPreservesIdentityAndSuffix(t *testing.T) {
-	input := "Wrote /home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-aeron-report.md +21 <0.1s"
+	input := "Wrote /home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-errand-report.md +21 <0.1s"
 	got := TruncateMiddleVisual(input, 48, "…")
 	if VisibleWidth(got) > 48 {
 		t.Fatalf("width=%d text=%q", VisibleWidth(got), got)

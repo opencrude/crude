@@ -157,36 +157,36 @@ type App struct {
 	workspaceSwitchPreparations map[*remoteWorkspacePreparation]struct{}
 	sessionLifecycleSequence    uint64
 	sessionLifecyclePending     bool
-	// sessionLifecycleAfterAeron is the user's latest session request made
+	// sessionLifecycleAfterErrand is the user's latest session request made
 	// while the automatic Errand open held the slot; it starts when that open
 	// settles. A new attachment discards it with the Errand state.
-	sessionLifecycleAfterAeron func() tea.Cmd
-	composerDraftErr           error
-	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
-	composerDraftWrites        sync.WaitGroup
-	composerDraftStopping      atomic.Bool
-	pendingInputAdmissions     map[*workspace.InputAdmissionIntent]struct{}
-	referenceOverlay           *referenceOverlayState
-	attachmentOpen             *attachmentOpenState
-	terminalImages             terminalImageState
-	pixelMotion                pixelMotionState
-	imageResidency             imageResidency
-	imagePlacements            []tea.ImagePlacement
-	pastedTextRequests         []pastedTextStoredMsg
-	DirtyPromptPath            string
-	DirtyPromptChoice          int
-	operationIssue             *operationIssueOwner
-	pendingOperationIssues     []roottypes.OperationIssue
-	settingsPrompt             *settingsPromptState
-	capabilityOperations       map[uint64]capabilityOperation
-	capabilityPicker           *capabilityPickerOwner
-	capabilitySnapshotCancel   context.CancelFunc
-	capabilitySnapshotSequence uint64
-	launcherCapabilityCancel   context.CancelFunc
-	launcherCapabilitySequence uint64
-	launcherCapabilityAt       time.Time
-	agentPrompt                *agentPromptState
-	agentPrompts               []*agentPromptState
+	sessionLifecycleAfterErrand func() tea.Cmd
+	composerDraftErr            error
+	composerDraftOwners         map[*workspace.Session]*composerDraftOwner
+	composerDraftWrites         sync.WaitGroup
+	composerDraftStopping       atomic.Bool
+	pendingInputAdmissions      map[*workspace.InputAdmissionIntent]struct{}
+	referenceOverlay            *referenceOverlayState
+	attachmentOpen              *attachmentOpenState
+	terminalImages              terminalImageState
+	pixelMotion                 pixelMotionState
+	imageResidency              imageResidency
+	imagePlacements             []tea.ImagePlacement
+	pastedTextRequests          []pastedTextStoredMsg
+	DirtyPromptPath             string
+	DirtyPromptChoice           int
+	operationIssue              *operationIssueOwner
+	pendingOperationIssues      []roottypes.OperationIssue
+	settingsPrompt              *settingsPromptState
+	capabilityOperations        map[uint64]capabilityOperation
+	capabilityPicker            *capabilityPickerOwner
+	capabilitySnapshotCancel    context.CancelFunc
+	capabilitySnapshotSequence  uint64
+	launcherCapabilityCancel    context.CancelFunc
+	launcherCapabilitySequence  uint64
+	launcherCapabilityAt        time.Time
+	agentPrompt                 *agentPromptState
+	agentPrompts                []*agentPromptState
 	// pendingTabClose holds the tabs still to close after a bulk close
 	// ("Close others" / "Close to the right") stopped at a dirty buffer and
 	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close
@@ -283,37 +283,37 @@ type App struct {
 	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
-	headerScreen         *shellheader.Screen
-	footerScreen         *shellfooter.Screen
-	tabScreen            *shelltabs.Screen
-	sidebarScreen        *shelltree.Screen
-	activityBar          *activitybar.Screen
-	activityList         *activitylist.Screen
-	agentFolded          map[string]bool      // agent IDs whose children the Agents sidebar hides
-	aeronPrepared        map[string]bool      // Errand agents already minimized in this shell
-	aeronEnsureInFlight  bool                 // one workspace-Errand ensure request is running
-	aeronEnsureScheduled bool                 // an ensure waits for its start time and a free lifecycle slot
-	aeronEnsureEarliest  time.Time            // do not start the ensure before this time
-	aeronEnsureFailed    bool                 // Errand could not start; wait for a settings change or new work
-	aeronOrders          []provider.UserInput // work waiting until the workspace Errand is open
-	aeronEnsureError     string               // the last open failure, shown when the user opens Errand
-	aeronOpenRequested   bool                 // the user opened Errand before the core returned it
-	tooltip              pointerTooltip       // the one hover tooltip of the shell
-	gitPanel             *gitpanel.Panel
-	activityView         activitybar.View
-	termScreens          map[string]*shellterm.Screen
-	commandOutputs       map[string]*commandOutputWindow
-	terminalClientID     string
-	lastTerminalID       string
-	wheelHost            *ui.Host
-	terminalLeases       map[string]workspace.TerminalLease
-	terminalReads        map[string]bool
-	terminalDirty        map[string]bool
-	terminalPlacements   map[string]workspace.TerminalPlacement
-	terminalQueue        []tea.Cmd
-	terminalBusy         bool
-	terminalClipboard    map[string]string
-	terminalClosed       map[string]bool
+	headerScreen          *shellheader.Screen
+	footerScreen          *shellfooter.Screen
+	tabScreen             *shelltabs.Screen
+	sidebarScreen         *shelltree.Screen
+	activityBar           *activitybar.Screen
+	activityList          *activitylist.Screen
+	agentFolded           map[string]bool      // agent IDs whose children the Agents sidebar hides
+	errandPrepared        map[string]bool      // Errand agents already minimized in this shell
+	errandEnsureInFlight  bool                 // one workspace-Errand ensure request is running
+	errandEnsureScheduled bool                 // an ensure waits for its start time and a free lifecycle slot
+	errandEnsureEarliest  time.Time            // do not start the ensure before this time
+	errandEnsureFailed    bool                 // Errand could not start; wait for a settings change or new work
+	errandOrders          []provider.UserInput // work waiting until the workspace Errand is open
+	errandEnsureError     string               // the last open failure, shown when the user opens Errand
+	errandOpenRequested   bool                 // the user opened Errand before the core returned it
+	tooltip               pointerTooltip       // the one hover tooltip of the shell
+	gitPanel              *gitpanel.Panel
+	activityView          activitybar.View
+	termScreens           map[string]*shellterm.Screen
+	commandOutputs        map[string]*commandOutputWindow
+	terminalClientID      string
+	lastTerminalID        string
+	wheelHost             *ui.Host
+	terminalLeases        map[string]workspace.TerminalLease
+	terminalReads         map[string]bool
+	terminalDirty         map[string]bool
+	terminalPlacements    map[string]workspace.TerminalPlacement
+	terminalQueue         []tea.Cmd
+	terminalBusy          bool
+	terminalClipboard     map[string]string
+	terminalClosed        map[string]bool
 	// terminalClaims records why this shell asked for a terminal's input
 	// control, so the answer is reported (or kept quiet) for that reason.
 	terminalClaims        map[string]terminalClaim
@@ -756,7 +756,7 @@ func (m *App) Init() tea.Cmd {
 			return workspace.StatusCenterHydratedMsg{}
 		}
 	}
-	m.requestWorkspaceAeronEnsure()
+	m.requestWorkspaceErrandEnsure()
 	m.reportViewMemoryLoadError()
 	return tea.Batch(m.hostBidiStartCmd(), m.refreshRemotes(), m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadRemotePromptHistory(), m.onboardingCmd(), m.desktopNoticeEventsCmd())
 }

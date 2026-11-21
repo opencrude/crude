@@ -124,13 +124,13 @@ func SettingsAuthority(path string) bool {
 			return parts[len(parts)-1] != "enabled" || len(parts) != 4
 		}
 		switch parts[1] {
-		case "ask_aeron", "max_servers", "server_threads", "server_memory_mb", "idle_timeout_seconds", "max_document_bytes":
+		case "ask_errand", "max_servers", "server_threads", "server_memory_mb", "idle_timeout_seconds", "max_document_bytes":
 			return true
 		}
 	}
 	// This binding can select the model that reviews an agent's actions.
 	// The agent must not change the reviewer indirectly through Errand.
-	if len(parts) == 4 && strings.EqualFold(parts[0], "agents") && strings.EqualFold(parts[1], "categories") && strings.EqualFold(parts[2], "aeron") {
+	if len(parts) == 4 && strings.EqualFold(parts[0], "agents") && strings.EqualFold(parts[1], "categories") && strings.EqualFold(parts[2], "errand") {
 		switch strings.ToLower(parts[3]) {
 		case "model", "account_id":
 			return true

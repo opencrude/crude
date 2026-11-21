@@ -13,7 +13,7 @@ const (
 	CategoryDefault    = "default"
 	CategoryResearcher = "researcher"
 	CategoryCrafter    = "crafter"
-	CategoryAeron      = ttypes.ErrandRoleID
+	CategoryErrand     = ttypes.ErrandRoleID
 	CategoryMemory     = "memory"
 )
 
@@ -269,7 +269,7 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 		named = &profile
 		role = profile.Category
 	}
-	if role != CategoryResearcher && role != CategoryCrafter && role != CategoryAeron {
+	if role != CategoryResearcher && role != CategoryCrafter && role != CategoryErrand {
 		return CategoryConfig{}, fmt.Errorf("unknown root agent role %q", role)
 	}
 	selected, exists := prof.Categories[role]
@@ -441,7 +441,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 // explicit session overrides win over the effective Errand connection.
 func (c *Config) GetMemoryCategory() CategoryConfig {
 	memory := catSettingsToConfig(c.Memory.MemoryCategory)
-	defaults := c.GetCategoryConfig(CategoryAeron)
+	defaults := c.GetCategoryConfig(CategoryErrand)
 	profile, _ := activeProfileCfg(c)
 	if override, exists := profile.Categories[CategoryMemory]; exists {
 		memory = mergeCategoryConfig(memory, override)
@@ -470,7 +470,7 @@ func (s *Session) permissionReviewSettingsLocked() ttypes.AutoPermissionSettings
 		// Use the human-owned workspace binding, not a session override
 		// or the Main Agent that Errand itself might use for ordinary work.
 		profile, _ := activeProfileCfg(s.workspaceCfg)
-		errand := profile.Categories[CategoryAeron]
+		errand := profile.Categories[CategoryErrand]
 		settings.AccountID, settings.Model = ttypes.InheritAgentModel(settings.AccountID, settings.Model, errand.AccountID, errand.Model)
 	}
 	return settings
