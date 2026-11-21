@@ -225,10 +225,12 @@ type recoveryListEntry struct {
 
 var recoveryLists = newByteLRU[recoveryListKey, recoveryListEntry](messageCacheBytes)
 
-// rememberRecoveryList keeps its own copy: a checkpoint's lists can be its
-// caller's arrays.
-func rememberRecoveryList(key recoveryListKey, entry recoveryListEntry) {
-	entry.list.messages = append([]provider.ChatMessage(nil), entry.list.messages...)
+// A publication can share the active array the context cache already owns.
+// Standalone checkpoint lists and lists returned to callers must be copied.
+func rememberRecoveryList(key recoveryListKey, entry recoveryListEntry, owned bool) {
+	if !owned {
+		entry.list.messages = append([]provider.ChatMessage(nil), entry.list.messages...)
+	}
 	recoveryLists.put(key, entry, approxMessagesBytes(entry.list.messages))
 }
 
@@ -270,7 +272,7 @@ func planRecoveryListTx(key recoveryListKey, version int64, messages []provider.
 // field's version; the caller has stored its base. An unchanged list keeps
 // its version. The returned function records the written list once the
 // transaction commits.
-func writeRecoveryListTx(tx *sql.Tx, key recoveryListKey, stored storedList, version int64, write listWrite) (func(), error) {
+func writeRecoveryListTx(tx *sql.Tx, key recoveryListKey, stored storedList, version int64, write listWrite, owned bool) (func(), error) {
 	if !write.changesTail(stored) {
 		return func() {}, nil
 	}
@@ -286,7 +288,7 @@ func writeRecoveryListTx(tx *sql.Tx, key recoveryListKey, stored storedList, ver
 	if _, err := tx.Exec(`INSERT INTO agent_recovery_lists(incident_id,field,version) VALUES(?,?,?) ON CONFLICT(incident_id,field) DO UPDATE SET version=excluded.version`, key.incidentID, key.field, version); err != nil {
 		return nil, err
 	}
-	return func() { rememberRecoveryList(key, recoveryListEntry{version: version, list: write.result}) }, nil
+	return func() { rememberRecoveryList(key, recoveryListEntry{version: version, list: write.result}, owned) }, nil
 }
 
 // loadRecoveryListTx decodes an incident field's base and tail rows, and
@@ -302,9 +304,14 @@ func loadRecoveryListTx(tx *sql.Tx, key recoveryListKey, version int64, base []b
 		return nil, fmt.Errorf("sessiondb: decode recovery %s: %w", key.field, err)
 	}
 	if version != 0 {
-		rememberRecoveryList(key, recoveryListEntry{version: version, list: stored})
+		rememberRecoveryList(key, recoveryListEntry{version: version, list: stored}, false)
 	}
 	return stored.messages, nil
+}
+
+// sameMessageArray reports exact aliasing of a nonempty message slice.
+func sameMessageArray(a, b []provider.ChatMessage) bool {
+	return len(a) != 0 && len(a) == len(b) && &a[0] == &b[0]
 }
 
 // commonMessagePrefix is the number of leading messages a and b share.

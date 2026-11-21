@@ -61,7 +61,7 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 		return fmt.Errorf("sessiondb: begin recovery checkpoint: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	recorded, err := saveRecoveryCheckpointTx(tx, db, sessionID, checkpoint)
+	recorded, err := saveRecoveryCheckpointTx(tx, db, sessionID, checkpoint, false)
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 // grow by a round per checkpoint and are stored as message lists, so a round
 // writes what it added. The returned function records the written lists once
 // the transaction commits.
-func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoint RecoveryCheckpoint) (func(), error) {
+func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoint RecoveryCheckpoint, activeOwned bool) (func(), error) {
 	if sessionID == "" || checkpoint.Status.ID == "" || checkpoint.Status.AgentID == "" || checkpoint.Status.Generation == 0 {
 		return nil, errors.New("sessiondb: invalid recovery identity")
 	}
@@ -173,11 +173,12 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoi
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: save recovery checkpoint: %w", err)
 	}
-	recordArchive, err := writeRecoveryListTx(tx, archiveKey, archiveStored, archiveVersion, archive)
+	archiveOwned := activeOwned && sameMessageArray(checkpoint.Archive, checkpoint.ActiveContext)
+	recordArchive, err := writeRecoveryListTx(tx, archiveKey, archiveStored, archiveVersion, archive, archiveOwned)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: save recovery archive: %w", err)
 	}
-	recordActive, err := writeRecoveryListTx(tx, activeKey, activeStored, activeVersion, active)
+	recordActive, err := writeRecoveryListTx(tx, activeKey, activeStored, activeVersion, active, activeOwned)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: save recovery context: %w", err)
 	}

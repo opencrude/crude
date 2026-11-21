@@ -49,6 +49,31 @@ func TestPublishContextCASAppendAndIdempotence(t *testing.T) {
 	}
 }
 
+func TestPublishedRecoveryListsStayDetachedFromCaller(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	defer db.Close()
+	if err := CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	message := provider.NewTextMessage("user", "retained context")
+	message.InternalID = "first-message"
+	messages := []provider.ChatMessage{message}
+	state, err := PublishContext(db, ContextPublication{
+		SessionID: "session", AgentID: "root", RuntimeAgentID: "root",
+		Mutation: ContextMutation{Replace: &ContextReplacement{Generation: 1, Reason: "checkpoint", Messages: messages}},
+		Recovery: &RecoveryCheckpoint{Status: recovery.Status{ID: "incident", AgentID: "root", Generation: 1}, Archive: messages},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	messages[0] = provider.NewTextMessage("user", "changed input")
+	state.Messages[0] = provider.NewTextMessage("user", "changed response")
+	loaded, ok, err := LoadRecoveryCheckpoint(db, "session", "root")
+	if err != nil || !ok || !reflect.DeepEqual(loaded.Archive, []provider.ChatMessage{message}) || !reflect.DeepEqual(loaded.ActiveContext, loaded.Archive) {
+		t.Fatalf("checkpoint changed after publication: %+v, found=%v, error=%v", loaded, ok, err)
+	}
+}
+
 func TestRecoveryOnlyPublicationDoesNotRewriteImmutableContext(t *testing.T) {
 	db := OpenAndMigrateAt(t.TempDir())
 	defer db.Close()

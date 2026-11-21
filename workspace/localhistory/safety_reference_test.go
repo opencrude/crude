@@ -47,8 +47,13 @@ func TestRetainedSnapshotSurvivesPruneReopenAndExplicitRelease(t *testing.T) {
 			}
 			writeTestFile(t, workspace, "review.txt", []byte("changed"), 0o600)
 			other := retainedSnapshot(t, store, "review-10_before")
-			retentionSnapshot(t, store, "ordinary\n")
+			ordinary := retentionSnapshot(t, store, "ordinary\n")
 			latest := retentionSnapshot(t, store, "latest\n")
+			// Force the clock-resolution collision seen on Windows. Prune must
+			// keep the latest committed snapshot even when their times match.
+			if _, err := store.db.Exec(`UPDATE history_snapshots SET created_at=? WHERE snapshot_id=?`, latest.CreatedAt, ordinary.ID); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := store.Prune(ctx, policy); err != nil {
 				t.Fatal(err)
 			}
