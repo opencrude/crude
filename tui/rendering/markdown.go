@@ -12,6 +12,7 @@ import (
 	"charm.land/glamour/v2/ansi"
 	"charm.land/glamour/v2/styles"
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer"
@@ -36,16 +37,26 @@ func (r *MarkdownRenderer) Render(in string) (string, error) {
 	return buf.String(), err
 }
 
-func (r *MarkdownRenderer) render(in string, trace *markdownTrace) (string, error) {
+// MarkdownDocument is Goldmark's parsed source. Its geometry is not known
+// until the owning content box is laid out.
+type MarkdownDocument struct {
+	source []byte
+	node   ast.Node
+}
+
+func (r *MarkdownRenderer) Parse(in string) MarkdownDocument {
 	source := []byte(in)
-	node := r.md.Parser().Parse(text.NewReader(source))
+	return MarkdownDocument{source, r.md.Parser().Parse(text.NewReader(source))}
+}
+
+func (r *MarkdownRenderer) renderParsed(doc MarkdownDocument, trace ansi.SourceTrace) (string, error) {
 	options := r.options
 	if trace != nil {
 		options.Source = trace
 	}
 	out := renderer.NewRenderer(renderer.WithNodeRenderers(util.Prioritized(ansi.NewRenderer(options), 1000)))
 	var buf bytes.Buffer
-	err := out.Render(&buf, source, node)
+	err := out.Render(&buf, doc.source, doc.node)
 	return buf.String(), err
 }
 
@@ -70,11 +81,9 @@ func newMarkdownRenderer(options ansi.Options) *MarkdownRenderer {
 	return &MarkdownRenderer{md: md, options: options}
 }
 
+// MakeMdRenderer lays out Markdown in a content box of exactly width columns.
+// Its caller owns the viewport, margins, and any reserved transcript chrome.
 func MakeMdRenderer(width int, th *theme.Theme) *MarkdownRenderer {
-	w := width - 4 - 16
-	if w < 20 {
-		w = 20
-	}
 	style := styles.DarkStyleConfig
 	c := th.Colors
 	r, g, b, _ := c.Bg.RGBA()
@@ -132,7 +141,7 @@ func MakeMdRenderer(width int, th *theme.Theme) *MarkdownRenderer {
 	style.List.Margin = uintPtr(0)
 	style.Table.Margin = uintPtr(0)
 
-	return newMarkdownRenderer(ansi.Options{WordWrap: w, Styles: style})
+	return newMarkdownRenderer(ansi.Options{WordWrap: max(1, width), Styles: style})
 }
 
 func uintPtr(u uint) *uint    { return &u }

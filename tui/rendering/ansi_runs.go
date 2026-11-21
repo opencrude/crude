@@ -30,17 +30,22 @@ func ParseAnsiRuns(line string) []AnsiRun {
 // The zero value starts with default colours and attributes. OSC/DCS/APC data
 // is metadata, never text. Tokenization uses the calibrated shared width path.
 type AnsiRunParser struct {
-	fg, bg cell.Color
-	attr   cell.Attrs
-	state  byte
-	link   *cell.Link
-	copy   *copyParser
+	fg, bg   cell.Color
+	attr     cell.Attrs
+	state    byte
+	link     *cell.Link
+	copy     *copyParser
+	geometry geometryParser
 }
 
 func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 	var runs []AnsiRun
 	var b strings.Builder
 	var sourceRun CopyRange
+	col := 0
+	if p.copy != nil {
+		p.geometry.row = nil
+	}
 	flush := func() {
 		if b.Len() == 0 {
 			return
@@ -56,9 +61,16 @@ func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 			break
 		}
 		line, p.state = line[n:], state
-		if p.copy != nil && p.copy.control(sequence) {
-			flush()
-			continue
+		if p.copy != nil {
+			if mark, ok := geometryControl(sequence); ok {
+				flush()
+				p.layoutControl(mark, col)
+				continue
+			}
+			if p.copy.control(sequence) {
+				flush()
+				continue
+			}
 		}
 		if width == 0 {
 			if link, ok := oscHyperlink(sequence); ok {
@@ -87,6 +99,7 @@ func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 			}
 		}
 		b.WriteString(sequence)
+		col += width
 	}
 	flush()
 	return runs

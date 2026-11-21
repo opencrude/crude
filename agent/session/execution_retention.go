@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/workspace/fileio"
 )
@@ -37,44 +36,59 @@ func (s *Session) ExecutionRetention(id, root string) error {
 			}
 		}
 	}
-	return ExecutionDatabaseRetention(s.db, id)
+	binding, err := executionInvestigationBinding(s.db, id)
+	if err != nil {
+		return err
+	}
+	if err := executionDatabaseRetention(s.db, id, binding); err != nil {
+		return err
+	}
+	if binding.Cycle != "" {
+		if s.planInvestigationTurnRetains(binding) {
+			return fmt.Errorf("a running Plan mode turn retains this investigation")
+		}
+		if s.planInvestigationToolMu.Busy() {
+			return fmt.Errorf("investigation work or evidence settlement is still running")
+		}
+	}
+	return nil
 }
 
 // ExecutionDatabaseRetention is a narrow read of recoveries, selected execution
 // and queued input. It neither hydrates transcripts nor starts a session.
 func ExecutionDatabaseRetention(db *sql.DB, id string) error {
-	if db == nil {
-		return fmt.Errorf("session database unavailable")
-	}
-	rows, err := db.Query(`SELECT incident_id,agent_id,generation,owner_data,pending_input_json FROM agent_recoveries WHERE state NOT IN ('recovered','cancelled','failed')`)
+	binding, err := executionInvestigationBinding(db, id)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var incident, agentID string
-		var generation uint64
-		var owner, pending []byte
-		if err := rows.Scan(&incident, &agentID, &generation, &owner, &pending); err != nil {
+	return executionDatabaseRetention(db, id, binding)
+}
+
+func executionDatabaseRetention(db *sql.DB, id string, binding planInvestigationBinding) error {
+	if db == nil {
+		return fmt.Errorf("session database unavailable")
+	}
+	if binding.Cycle != "" {
+		current, err := sessiondb.LoadRuntimeState(context.Background(), db, planModeKey)
+		if err != nil {
 			return err
 		}
+		if binding.Cycle == string(current) {
+			return PlanReviewError("Plan mode retains this investigation. Finish the plan or turn Plan mode off before cleanup.")
+		}
+	}
+	owners, err := sessiondb.LoadOpenRecoveryExecutionOwners(db)
+	if err != nil {
+		return err
+	}
+	for _, owner := range owners {
 		var retained childRecoveryOwner
-		if len(owner) != 0 && json.Unmarshal(owner, &retained) != nil {
+		if len(owner.OwnerData) != 0 && json.Unmarshal(owner.OwnerData, &retained) != nil {
 			return fmt.Errorf("unreadable recovery owner")
 		}
-		var input provider.UserInput
-		if len(pending) != 0 && json.Unmarshal(pending, &input) != nil {
-			return fmt.Errorf("unreadable recovery input")
+		if retained.Spec.ExecutionID == id || owner.ExecutionID == id || binding.retains(owner.PlanningCycle, owner.ExecutionID) {
+			return fmt.Errorf("open recovery retains execution: agent_id=%s recovery_id=%s recovery_generation=%d; inspect the owner, then explicitly continue or settle it before cleanup", owner.AgentID, owner.IncidentID, owner.Generation)
 		}
-		if retained.Spec.ExecutionID == id || input.ControlTarget != nil && input.ControlTarget.ExecutionID == id {
-			return fmt.Errorf("open recovery retains execution: agent_id=%s recovery_id=%s recovery_generation=%d; inspect the owner, then explicitly continue or settle it before cleanup", agentID, incident, generation)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
 	}
 	var selected []byte
 	err = db.QueryRow(`SELECT value FROM session_runtime_state WHERE key='execution_selection'`).Scan(&selected)
@@ -105,6 +119,19 @@ func ExecutionDatabaseRetention(db *sql.DB, id string) error {
 	return nil
 }
 
+func executionInvestigationBinding(db *sql.DB, id string) (planInvestigationBinding, error) {
+	bindings, err := readPlanInvestigations(context.Background(), db)
+	if err != nil {
+		return planInvestigationBinding{}, err
+	}
+	for _, b := range bindings {
+		if b.ID == id {
+			return b, nil
+		}
+	}
+	return planInvestigationBinding{}, nil
+}
+
 // CancelExecutionRecovery is a workspace janitorial decision for an exact parked
 // task, not authority to stop live peers. The ordinary recovery owner performs
 // the durable settlement, preserving transcript and archived effects.
@@ -133,8 +160,18 @@ func (s *Session) CancelExecutionRecovery(id, agentID, incident string, generati
 	if len(checkpoint.OwnerData) != 0 && json.Unmarshal(checkpoint.OwnerData, &owner) != nil {
 		return fmt.Errorf("unreadable recovery execution owner")
 	}
-	if owner.Spec.ExecutionID != id && (checkpoint.PendingInput.ControlTarget == nil || checkpoint.PendingInput.ControlTarget.ExecutionID != id) {
-		return fmt.Errorf("recovery does not retain this execution")
+	sourceID := ""
+	if checkpoint.PendingInput.ControlTarget != nil {
+		sourceID = checkpoint.PendingInput.ControlTarget.ExecutionID
+	}
+	if owner.Spec.ExecutionID != id && sourceID != id {
+		binding, err := executionInvestigationBinding(s.db, id)
+		if err != nil {
+			return err
+		}
+		if !binding.retains(checkpoint.PlanningCycle, sourceID) {
+			return fmt.Errorf("recovery does not retain this execution")
+		}
 	}
 	return s.cancelRecoveryFor(agentID, incident, generation)
 }

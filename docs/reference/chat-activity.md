@@ -679,8 +679,9 @@ repeating those hints on every frame.
   open-at-EOF code block is also copyable; there is no second fence scanner.
 - **Copy ranges belong to the row projection.** No source metadata is persisted
   in canonical messages, stored in screen cells, or retained in a global lookup.
-  Streaming keeps one completed-prefix native projection qualified by exact
-  source bytes and renderer identity. Text changes, width/theme changes and
+  Streaming retains the completed prefix and the unfinished paragraph separately,
+  keyed by exact source bytes, message, content width and renderer. A cursor
+  blink does not rewrap or resolve either. Text changes, width/theme changes and
   conversation switches cannot reuse a stale source map. The chat's one selection
   owner retains source endpoints across reflow; it clears selection if that source
   changes or disappears. When both endpoints belong to one semantic text, copy

@@ -158,6 +158,10 @@ func (a *Agent) parallelCommandAllowed(call provider.ToolCall) bool {
 	if call.Function.Name == "write_stdin" {
 		return getStr(params, "chars") == ""
 	}
+	if a.PlanInvestigation != nil {
+		// Even a normally safe test may need the shared human response lane.
+		return false
+	}
 	if getStr(params, "sandbox_permissions") == "require_escalated" {
 		return false
 	}

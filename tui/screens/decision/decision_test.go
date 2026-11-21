@@ -225,3 +225,45 @@ func TestAlternateAnswerIsExplicitAndDistinct(t *testing.T) {
 		t.Fatal("an answer that stays closed the decision")
 	}
 }
+
+func TestNarrowPlanDecisionKeepsAllActionsReadableAndReachable(t *testing.T) {
+	th := theme.DefaultDark()
+	open := func() (*ui.Host, *surface.CellBuffer) {
+		s := New(th)
+		s.Show(Spec{Purpose: "implement_plan", Title: "Implement this plan?", ReadingLayout: true,
+			Facts:      []Fact{{"Plan", "Correct the value · revision 1"}, {"Implement", "Turn off Plan mode and implement this revision."}},
+			Confirm:    Answer{Label: "Implement", Shortcut: "y"},
+			Alternates: []Answer{{ID: "new_session", Label: "New session", Shortcut: "c"}, {ID: "review", Label: "Review", Shortcut: "r", Stay: true}},
+			Cancel:     Answer{Label: "Keep planning", Shortcut: "n"}})
+		d := ui.NewPanelDeck("deck", ui.NewTokenSet(th))
+		d.Open(ui.PanelEntry{ID: "plan", Title: "Plan", Content: s, Policy: ui.PanelInteractive})
+		h := ui.NewHost(th, d)
+		h.Resize(41, 12)
+		h.Layout()
+		if !h.Focus(ActionsID) {
+			t.Fatal("could not focus the plan choices")
+		}
+		b := surface.NewCellBuffer(41, 12)
+		h.Paint(b)
+		return h, b
+	}
+	h, b := open()
+	for _, want := range []string{"Implement this plan?", "Turn off Plan mode", "Implement (y)", "New session (c)", "Review (r)", "Keep planning (n)"} {
+		if !contains(b, want) {
+			t.Fatalf("narrow decision does not show %q:\n%s", want, text(b))
+		}
+	}
+	if r := h.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); r.Cmd == nil || r.Cmd().(ResultMsg).Confirmed {
+		t.Fatalf("Enter without choosing an answer must keep planning: %+v", r)
+	}
+	h, b = open()
+	click := findPainted(b, "New session (c)")
+	if r := h.Handle(tea.MouseClickMsg{X: click.x, Y: click.y, Button: tea.MouseLeft}); r.Cmd == nil || r.Cmd().(ResultMsg).Choice != "new_session" {
+		t.Fatalf("the painted New session action cannot be clicked: %+v", r)
+	}
+	h, _ = open()
+	h.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if r := h.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); r.Cmd == nil || !r.Cmd().(ResultMsg).Stay {
+		t.Fatalf("Review is not reachable by arrow and Enter without settling: %+v", r)
+	}
+}

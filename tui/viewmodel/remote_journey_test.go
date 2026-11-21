@@ -93,7 +93,12 @@ func newRemoteJourneyShell(t *testing.T, runtime *core.Runtime, root string) rem
 
 func remoteJourneyUntil(t *testing.T, shells []remoteJourneyShell, condition func() bool) {
 	t.Helper()
-	deadline := time.NewTimer(8 * time.Second)
+	remoteJourneyUntilWithin(t, shells, 8*time.Second, condition)
+}
+
+func remoteJourneyUntilWithin(t *testing.T, shells []remoteJourneyShell, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()

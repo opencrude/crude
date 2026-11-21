@@ -21,6 +21,7 @@ import (
 )
 
 const planReviewKey = "plan_review"
+const planHandoffReceiptKey = "plan_handoff_receipt"
 
 type planReviewRecord struct {
 	Revisions []planRevisionRecord `json:"revisions"`
@@ -30,6 +31,14 @@ type planReviewRecord struct {
 type planRevisionRecord struct {
 	types.PlanRevision        // Path is relative in storage.
 	Proposal           string `json:"proposal"`
+	// Approval in a new session closes only this proposal's originating
+	// planning cycle, never an independently resumed or forked investigation.
+	InvestigationCycle   string `json:"investigation_cycle,omitempty"`
+	InvestigationSession string `json:"investigation_session,omitempty"`
+	HandoffSource        string `json:"handoff_source,omitempty"`
+	HandoffAgent         string `json:"handoff_agent,omitempty"`
+	HandoffInput         string `json:"handoff_input,omitempty"`
+	HandoffEpoch         uint64 `json:"handoff_epoch,omitempty"`
 }
 
 // PlanReviewError is a complete message the shell can show to the user.
@@ -39,10 +48,15 @@ func (e PlanReviewError) Error() string { return string(e) }
 
 const (
 	// ErrPlanReviewTooLong is also used when the disk source exceeds its read bound.
-	ErrPlanReviewTooLong = PlanReviewError("This plan is too long. Shorten it and try again.")
-	errPlanMissing       = PlanReviewError("This plan revision is not available. Open the latest plan.")
-	errPlanClosed        = PlanReviewError("This plan revision is closed. Open the latest plan.")
-	errPlanFile          = PlanReviewError("Could not open the plan file. Check the session folder and try again.")
+	ErrPlanReviewTooLong  = PlanReviewError("This plan is too long. Shorten it and try again.")
+	errPlanMissing        = PlanReviewError("This plan revision is not available. Open the latest plan.")
+	errPlanClosed         = PlanReviewError("This plan revision is closed. Open the latest plan.")
+	errPlanFile           = PlanReviewError("Could not open the plan file. Check the session folder and try again.")
+	errPlanHandoffOpen    = PlanReviewError("This plan was sent to a new session. Choose Check to confirm that it arrived.")
+	errPlanHandoffCheck   = PlanReviewError("Could not confirm that the new session received the plan. Choose Check to try again.")
+	errPlanHandoffTarget  = PlanReviewError("The new session is not available. Open a new session from this plan.")
+	errPlanHandoffSend    = PlanReviewError("Could not send the plan to the new session. Try again from this plan.")
+	errPlanHandoffMissing = PlanReviewError("The new session did not receive the plan. Choose New session to try again.")
 )
 
 func (s *Session) loadPlanReview() error {
@@ -59,8 +73,13 @@ func (s *Session) loadPlanReview() error {
 		return err
 	}
 	for _, r := range review.Revisions {
-		if r.Number < 1 || r.Path != planRevisionPath(r.Title, r.Number) {
-			return errors.New("invalid plan revision path")
+		if r.Number < 1 || r.Path != planRevisionPath(r.Title, r.Number) || len(r.Evidence) > maxEvidenceCommands {
+			return errors.New("invalid plan revision")
+		}
+		for _, ref := range r.Evidence {
+			if !validEvidenceDigest(ref.Digest) {
+				return errors.New("invalid plan evidence digest")
+			}
 		}
 	}
 	s.planReview.Store(&review)
@@ -77,7 +96,11 @@ func (s *Session) PlanReview() (types.PlanReview, bool) {
 	for i, stored := range record.Revisions {
 		revision := stored.PlanRevision
 		revision.Path = record.path(stored)
+		if revision.Open() && stored.HandoffSource != s.sessionID {
+			revision.NewSessionID = ""
+		}
 		revision.Comments = slices.Clone(revision.Comments)
+		revision.Evidence = slices.Clone(revision.Evidence)
 		out.Revisions[i] = revision
 	}
 	return out, true
@@ -117,7 +140,7 @@ func planRevisionPath(title string, number int) string {
 }
 
 // recordProposedPlan is called only by a completed Plan mode root turn.
-func (s *Session) recordProposedPlan(generation uint64, reply string) error {
+func (s *Session) recordProposedPlan(generation uint64, reply, investigationCycle, sourceID string) error {
 	proposal, ok := types.ProposedPlan(reply)
 	if !ok || len(proposal) > types.PlanReviewMaxPlanText {
 		return nil
@@ -148,13 +171,25 @@ func (s *Session) recordProposedPlan(generation uint64, reply string) error {
 			next.Revisions[i].Outcome = types.PlanOutcomeReplaced
 		}
 	}
+	ctx := context.Background()
+	journal, err := s.loadInvestigationEvidenceJournal(ctx)
+	if err != nil {
+		return err
+	}
+	evidence, omitted, err := s.proposedPlanEvidence(ctx, journal, generation, investigationCycle, sourceID)
+	if err != nil {
+		return err
+	}
 	title := types.PlanTitle(proposal)
 	revision := planRevisionRecord{
 		PlanRevision: types.PlanRevision{
 			Number: number, Generation: generation, Title: title,
-			Path: planRevisionPath(title, number), CreatedAt: time.Now().UTC(),
+			Path: planRevisionPath(title, number), CreatedAt: time.Now().UTC(), Evidence: evidence, EvidenceOmitted: omitted,
 		},
 		Proposal: proposal,
+	}
+	if investigationCycle != "" {
+		revision.InvestigationCycle, revision.InvestigationSession = investigationCycle, s.sessionID
 	}
 	path := next.path(revision)
 	created, err := ensurePlanFile(path, proposal, true)
@@ -164,7 +199,13 @@ func (s *Session) recordProposedPlan(generation uint64, reply string) error {
 	next.Revisions = append(next.Revisions, revision)
 	dropped := next.Revisions[:max(0, len(next.Revisions)-types.PlanRevisionMaxCount)]
 	next.Revisions = slices.Clone(next.Revisions[len(dropped):])
-	if err := s.savePlanReview(&next); err != nil {
+	var retired []string
+	for _, old := range dropped {
+		for _, ref := range old.Evidence {
+			retired = append(retired, ref.Digest)
+		}
+	}
+	if err := s.savePlanReviewState(ctx, &next, nil, evidenceRetiredKeys(&next, journal, retired)...); err != nil {
 		if created {
 			_ = os.Remove(path)
 		}
@@ -263,7 +304,7 @@ func (r *planReviewRecord) cloneRevision(i int) *planReviewRecord {
 	return next
 }
 
-func (s *Session) savePlanReview(next *planReviewRecord) error {
+func (s *Session) savePlanReviewState(ctx context.Context, next *planReviewRecord, updates []sessiondb.RuntimeStateUpdate, clear ...string) error {
 	if s.db == nil {
 		return errors.New("session database is unavailable")
 	}
@@ -271,7 +312,8 @@ func (s *Session) savePlanReview(next *planReviewRecord) error {
 	if err != nil {
 		return err
 	}
-	err = sessiondb.SaveRuntimeState(context.Background(), s.db, planReviewKey, raw)
+	updates = append(updates, sessiondb.RuntimeStateUpdate{Key: planReviewKey, Value: raw})
+	err = sessiondb.CommitRuntimeState(ctx, s.db, updates, clear...)
 	if err == nil {
 		s.planReview.Store(next)
 	}
@@ -291,6 +333,9 @@ func (s *Session) EditPlanComment(edit types.PlanCommentEdit) error {
 	}
 	if !record.Revisions[i].Open() {
 		return errPlanClosed
+	}
+	if record.Revisions[i].HandoffSource == s.sessionID {
+		return errPlanHandoffOpen
 	}
 	next := record.cloneRevision(i)
 	revision := &next.Revisions[i]
@@ -349,25 +394,21 @@ func (s *Session) EditPlanComment(edit types.PlanCommentEdit) error {
 	return s.commitPlanReviewChange(next)
 }
 
-// SettlePlanReview settles the latest open revision and sends an in-session
-// action to this session's main agent. New session actions return text to send.
+// SettlePlanReview settles a review action that stays in this session.
 func (s *Session) SettlePlanReview(settle types.PlanReviewSettle) (types.PlanReviewSettlement, error) {
 	agentID := ""
 	if root := s.liveOrchestrator(); root != nil {
 		agentID = root.ID
 	}
-	return s.SettlePlanReviewForAgent(context.Background(), agentID, settle, provider.UserInput{})
+	return s.SettlePlanReviewForAgent(context.Background(), agentID, settle, provider.UserInput{}, nil)
 }
 
 // SettlePlanReviewForAgent also captures the initiating shell's control target
 // and exact request identity. Text comes from its editor or the canonical file.
-func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, settle types.PlanReviewSettle, input provider.UserInput) (types.PlanReviewSettlement, error) {
+func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, settle types.PlanReviewSettle, input provider.UserInput, destination *Session) (types.PlanReviewSettlement, error) {
 	var out types.PlanReviewSettlement
-	after := strings.TrimRight(settle.Text, "\n")
-	if len(after) > types.PlanReviewMaxPlanText {
-		return out, ErrPlanReviewTooLong
-	}
 	implement := settle.Action == types.PlanReviewImplement
+	newSession := settle.Action == types.PlanReviewNewSession
 	finish, err := s.beginPlanReviewOperation()
 	if err != nil {
 		return out, err
@@ -380,6 +421,18 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 	if i != len(record.Revisions)-1 || !record.Revisions[i].Open() {
 		return out, errPlanClosed
 	}
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	prior := record.Revisions[i]
+	observe := prior.HandoffSource == s.sessionID
+	if observe && (!newSession || prior.NewSessionID != settle.DestinationSessionID) {
+		return out, errPlanHandoffOpen
+	}
+	after := strings.TrimRight(settle.Text, "\n")
+	if !observe && len(after) > types.PlanReviewMaxPlanText {
+		return out, ErrPlanReviewTooLong
+	}
 	next := record.cloneRevision(i)
 	revision := &next.Revisions[i]
 	pending := revision.PendingComments()
@@ -388,12 +441,31 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 	if settle.Action == types.PlanReviewFeedback && pending == 0 && !edited {
 		return out, PlanReviewError("Add a comment or edit the plan first.")
 	}
-	if (implement || settle.Action == types.PlanReviewNewSession) && pending > 0 {
+	if (implement || newSession) && pending > 0 {
 		return out, PlanReviewError("Send or delete the comments first.")
+	}
+	if newSession && (destination == nil || destination == s || destination.sessionID != settle.DestinationSessionID) {
+		return out, errPlanHandoffTarget
+	}
+	if newSession {
+		finishDestination, ok := destination.beginIdleWork()
+		if !ok {
+			return out, errPlanHandoffTarget
+		}
+		defer finishDestination()
+	}
+	if implement || newSession {
+		if !s.planInvestigationToolMu.TryLock() {
+			return out, PlanReviewError("An investigation command or edit is still running. Wait for it to finish, then try again.")
+		}
+		defer s.planInvestigationToolMu.Unlock()
+	}
+	if observe {
+		return out, s.submitFreshPlanReview(ctx, agentID, record, next, i, destination, nil)
 	}
 	var edits string
 	var added, removed int
-	if edited && settle.Action != types.PlanReviewNewSession {
+	if edited && !newSession {
 		// Feed complete lines to the diff so a final newline alone never
 		// appears as a changed line.
 		if after != "" {
@@ -426,12 +498,29 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 		revision.Outcome = types.PlanOutcomeImplemented
 	case types.PlanReviewNewSession:
 		out.Text = prompt.PlanImplementationFreshContext(settle.Text)
-		revision.Outcome = types.PlanOutcomeNewSession
 	default:
 		return out, PlanReviewError("Choose how to use this plan.")
 	}
-	if settle.Action == types.PlanReviewNewSession {
-		err = s.commitPlanReviewChange(next)
+	if (implement || newSession) && len(revision.Evidence) != 0 {
+		if implement {
+			out.Text, err = s.implementationEvidence(ctx, next.dir, revision, out.Text)
+			if err != nil {
+				return types.PlanReviewSettlement{}, err
+			}
+		}
+		if out.Display == "" {
+			out.Display = fmt.Sprintf("Implement the plan (revision %d).", revision.Number)
+		}
+	}
+	if newSession {
+		fresh := provider.UserInput{Text: out.Text, DisplayText: out.Display, Origin: provider.OriginHuman}
+		if input.ControlTarget != nil {
+			target := input.ControlTarget.Clone()
+			target.SessionID, target.ExecutionID = destination.sessionID, ""
+			fresh.ControlTarget = &target
+		}
+		err = s.submitFreshPlanReview(ctx, agentID, record, next, i, destination, &fresh)
+		out.Text = fresh.Text
 	} else {
 		input.Text, input.DisplayText, input.Origin = out.Text, out.Display, provider.OriginHuman
 		err = s.submitPlanReview(ctx, agentID, input, next, implement)
@@ -440,6 +529,163 @@ func (s *Session) SettlePlanReviewForAgent(ctx context.Context, agentID string, 
 		return types.PlanReviewSettlement{}, err
 	}
 	return out, nil
+}
+
+// New session spans two databases. Bind the exact first input before sending
+// it. If the last source write fails, only an observation of that input in
+// that destination can finish the handoff; never send it a second time.
+func (s *Session) submitFreshPlanReview(ctx context.Context, agentID string, prior, next *planReviewRecord, i int, destination *Session, input *provider.UserInput) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.queueAdmitMu.Lock()
+	defer s.queueAdmitMu.Unlock()
+	revision := &next.Revisions[i]
+	fromThisCycle := revision.InvestigationSession == s.sessionID && revision.InvestigationCycle != ""
+	if agentID != "" {
+		const busy = PlanReviewError("The agent has work in progress. Wait for it to finish, then try again.")
+		if s.shouldQueueInput(agentID) {
+			return busy
+		}
+		intent, err := s.prepareReservedAdmission(agentID, provider.UserInput{}, 0)
+		if err != nil {
+			return busy
+		}
+		defer s.finishInputAdmission(intent)
+		defer intent.orchestrator.endTurn(intent.TurnGeneration)
+	}
+	if err := s.beginSessionControlOperation(); err != nil {
+		return PlanReviewError("The session is closing. Reopen it to review the plan.")
+	}
+	defer s.endSettingsOperation()
+	var updates []sessiondb.RuntimeStateUpdate
+	if fromThisCycle && s.PlanMode() {
+		cycle, err := s.planInvestigationCycle(ctx)
+		if err != nil {
+			return s.planReviewSaveError(err)
+		}
+		if cycle == revision.InvestigationCycle {
+			updates = append(updates, sessiondb.RuntimeStateUpdate{Key: planModeKey, Value: []byte(newPlanInvestigationCycle())})
+		}
+	}
+	if revision.HandoffSource == s.sessionID {
+		raw, err := sessiondb.LoadRuntimeState(ctx, destination.db, planHandoffReceiptKey)
+		var receipt InputAdmissionReceipt
+		if err != nil {
+			return errPlanHandoffCheck
+		}
+		if len(raw) == 0 {
+			// No destination transaction committed, and the original
+			// worker no longer owns the source review. A new choice is safe.
+			revision.NewSessionID, revision.HandoffSource, revision.HandoffAgent, revision.HandoffInput = "", "", "", ""
+			revision.HandoffEpoch = 0
+			if err := s.savePlanReviewState(ctx, next, nil); err != nil {
+				return errPlanHandoffCheck
+			}
+			return errPlanHandoffMissing
+		}
+		if json.Unmarshal(raw, &receipt) != nil || receipt.SessionID != destination.sessionID || receipt.AgentID != revision.HandoffAgent ||
+			receipt.InputID != revision.HandoffInput || receipt.OwnerEpoch != revision.HandoffEpoch || receipt.AcceptedAt.IsZero() {
+			// A conflicting record is not evidence of non-delivery.
+			return errPlanHandoffCheck
+		}
+	} else {
+		owner := destination.liveOrchestrator()
+		if owner == nil || !destination.queueAdmitMu.TryLock() {
+			return errPlanHandoffTarget
+		}
+		defer destination.queueAdmitMu.Unlock()
+		if destination.PlanMode() || destination.shouldQueueInput(owner.ID) {
+			return errPlanHandoffTarget
+		}
+		if raw, err := sessiondb.LoadRuntimeState(ctx, destination.db, planHandoffReceiptKey); err != nil || len(raw) != 0 {
+			return errPlanHandoffTarget
+		}
+		// Reserve the first turn without binding a worktree or continuing old
+		// work. Its durable handoff receipt identifies it as implementation.
+		intent, err := destination.prepareReservedAdmission(owner.ID, *input, 0)
+		if err != nil {
+			return errPlanHandoffTarget
+		}
+		defer func() {
+			intent.orchestrator.endTurn(intent.TurnGeneration)
+			destination.finishInputAdmission(intent)
+		}()
+		if intent.request.sessionTurn != 1 || destination.shouldQueueInput(owner.ID) {
+			return errPlanHandoffTarget
+		}
+		if len(revision.Evidence) != 0 {
+			// Read the approved bytes from the source's immutable record, but
+			// keep the verified files with the destination and its first input.
+			input.Text, err = s.implementationEvidence(ctx, destination.SessionDir(), revision, input.Text)
+			if err != nil {
+				return err
+			}
+		}
+		input.InternalID = intent.InputID
+		revision.NewSessionID, revision.HandoffSource = destination.sessionID, s.sessionID
+		revision.HandoffAgent, revision.HandoffInput, revision.HandoffEpoch = intent.AgentID, intent.InputID, intent.OwnerEpoch
+		if err := s.savePlanReviewState(ctx, next, nil); err != nil {
+			return s.planReviewSaveError(err)
+		}
+		// Once the intent is bound, this worker owns the durable decision,
+		// including if the shell disconnects before the reply.
+		ctx = context.WithoutCancel(ctx)
+		receipt, err := destination.queueInput(intent.AgentID, *input, 0, func(items []QueuedInput) error {
+			if len(items) != 1 || items[0].Input.InternalID != intent.InputID {
+				return errors.New("the destination already has an input")
+			}
+			queued, err := json.Marshal(items)
+			if err != nil {
+				return err
+			}
+			proof, err := json.Marshal(InputAdmissionReceipt{SessionID: intent.SessionID, AgentID: intent.AgentID,
+				InputID: intent.InputID, OwnerEpoch: intent.OwnerEpoch, AcceptedAt: items[0].QueuedAt})
+			if err != nil {
+				return err
+			}
+			return sessiondb.CommitRuntimeState(ctx, destination.db, []sessiondb.RuntimeStateUpdate{
+				{Key: queuedInputsStateKey, Value: queued}, {Key: planHandoffReceiptKey, Value: proof},
+			})
+		})
+		if err != nil {
+			s.logger.Warn("SESSION", "plan_handoff_admission_failed", "error", err.Error())
+			if err := s.savePlanReviewState(ctx, prior, nil); err != nil {
+				return errPlanHandoffCheck
+			}
+			return errPlanHandoffSend
+		}
+		if receipt.SessionID != intent.SessionID || receipt.AgentID != intent.AgentID ||
+			receipt.InputID != intent.InputID || receipt.AcceptedAt.IsZero() {
+			return errPlanHandoffCheck
+		}
+		next = next.cloneRevision(i) // the open handoff record is now published
+		revision = &next.Revisions[i]
+	}
+	revision.Outcome = types.PlanOutcomeNewSession
+	revision.HandoffSource, revision.HandoffAgent, revision.HandoffInput = "", "", ""
+	revision.HandoffEpoch = 0
+	if err := s.savePlanReviewState(ctx, next, updates); err != nil {
+		s.logger.Warn("SESSION", "plan_handoff_settle_failed", "error", err.Error())
+		return errPlanHandoffCheck
+	}
+	return nil
+}
+
+func (s *Session) isPlanHandoffInput(ctx context.Context, inputID string) (bool, error) {
+	if inputID == "" {
+		return false, nil
+	}
+	raw, err := sessiondb.LoadRuntimeState(ctx, s.db, planHandoffReceiptKey)
+	if err != nil || len(raw) == 0 {
+		return false, err
+	}
+	var receipt InputAdmissionReceipt
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		return false, fmt.Errorf("read plan handoff receipt: %w", err)
+	}
+	return receipt.SessionID == s.sessionID && receipt.InputID == inputID &&
+		receipt.AgentID != "" && !receipt.AcceptedAt.IsZero(), nil
 }
 
 func (s *Session) submitPlanReview(ctx context.Context, agentID string, input provider.UserInput, next *planReviewRecord, implement bool) error {
@@ -452,12 +698,7 @@ func (s *Session) submitPlanReview(ctx context.Context, agentID string, input pr
 	defer s.queueAdmitMu.Unlock()
 	intent, err := s.prepareInputAdmission(agentID, input, 0, true)
 	if err != nil {
-		var refusal PlanReviewError
-		if errors.As(err, &refusal) {
-			return refusal
-		}
-		s.logger.Warn("SESSION", "plan_review_input_rejected", "error", err.Error())
-		return PlanReviewError("Could not send the plan review. Make sure the session is open and try again.")
+		return s.planReviewAdmissionError(err)
 	}
 	defer s.finishInputAdmission(intent)
 	if err := s.beginSessionControlOperation(); err != nil {
@@ -509,8 +750,17 @@ func (s *Session) submitPlanReview(ctx context.Context, agentID string, input pr
 	return nil
 }
 
+func (s *Session) planReviewAdmissionError(err error) error {
+	var refusal PlanReviewError
+	if errors.As(err, &refusal) {
+		return refusal
+	}
+	s.logger.Warn("SESSION", "plan_review_input_rejected", "error", err.Error())
+	return PlanReviewError("Could not send the plan review. Make sure the session is open and try again.")
+}
+
 func (s *Session) commitPlanReviewChange(next *planReviewRecord) error {
-	if err := s.savePlanReview(next); err != nil {
+	if err := s.savePlanReviewState(context.Background(), next, nil); err != nil {
 		return s.planReviewSaveError(err)
 	}
 	return nil

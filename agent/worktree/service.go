@@ -23,11 +23,33 @@ import (
 )
 
 type Service struct {
-	mu          sync.Mutex
-	root, store string
-	options     Options
-	contexts    map[string]Context
-	sizes       map[string]int64
+	mu                     sync.Mutex
+	root, store            string
+	options                Options
+	contexts               map[string]Context
+	sizes                  map[string]int64
+	investigationArtifacts map[string]investigationArtifacts
+	// Derived from committed manifests under mu, read without blocking the actor.
+	investigationCounts sync.Map
+}
+
+// LogicalRoot reports the immutable workspace identity of this store.
+func (s *Service) LogicalRoot() string { return s.root }
+
+func (s *Service) manifestPath(id string) string { return filepath.Join(s.store, id+".json") }
+
+func (s *Service) HasPlanInvestigations(sessionID string) bool {
+	_, ok := s.investigationCounts.Load(sessionID)
+	return ok
+}
+
+func (s *Service) countPlanInvestigation(sessionID string, delta int) {
+	value, _ := s.investigationCounts.LoadOrStore(sessionID, 0)
+	if count := value.(int) + delta; count > 0 {
+		s.investigationCounts.Store(sessionID, count)
+	} else {
+		s.investigationCounts.Delete(sessionID)
+	}
 }
 
 // Open is passive: it loads only current-format manifests; it neither invokes
@@ -58,7 +80,7 @@ func Open(root, store string, options Options) (*Service, error) {
 	if options.MaxFileBytes <= 0 {
 		options.MaxFileBytes = 32 << 20
 	}
-	s := &Service{root: r, store: a, options: options, contexts: map[string]Context{}, sizes: map[string]int64{}}
+	s := &Service{root: r, store: a, options: options, contexts: map[string]Context{}, sizes: map[string]int64{}, investigationArtifacts: map[string]investigationArtifacts{}}
 	entries, err := os.ReadDir(a)
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
@@ -82,10 +104,11 @@ func Open(root, store string, options Options) (*Service, error) {
 		if err != nil {
 			return nil, err
 		}
-		var c Context
-		if err := json.Unmarshal(data, &c); err != nil {
+		var manifest investigationManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
 			return nil, err
 		}
+		c := manifest.Context
 		if c.Version != FormatVersion || c.LogicalRoot != r || e.Name() != c.ID+".json" || !validID(c.ID) || !validOwner(c.Owner) {
 			return nil, errors.New("invalid current-format worktree manifest")
 		}
@@ -140,10 +163,32 @@ func Open(root, store string, options Options) (*Service, error) {
 				return nil, errors.New("invalid pin identity")
 			}
 		}
+		if c.Investigation != nil {
+			if err := s.openInvestigation(&c, manifest.ResultDigest); err != nil {
+				return nil, err
+			}
+		} else if manifest.ResultDigest != "" {
+			return nil, errors.New("unexpected Plan investigation evidence reference")
+		}
 		s.contexts[c.ID] = c
 		s.sizes[c.ID] = fi.Size()
 	}
+	investigations := map[struct {
+		Investigation
+		Source string
+	}]bool{}
 	for _, c := range s.contexts {
+		if c.Investigation != nil && !c.Removed {
+			key := struct {
+				Investigation
+				Source string
+			}{*c.Investigation, c.SourceContextID}
+			if investigations[key] {
+				return nil, errors.New("duplicate Plan investigation identity")
+			}
+			investigations[key] = true
+			s.countPlanInvestigation(c.Investigation.SessionID, 1)
+		}
 		if c.Mode == Shared {
 			want := r
 			if c.SourceContextID != "" {
@@ -278,10 +323,13 @@ func (s *Service) gitInput(ctx context.Context, root string, stdin []byte, args 
 }
 
 func (s *Service) save(c Context) error {
+	c.StorageBytes = 0
+	if c.Investigation != nil {
+		return s.saveInvestigation(c)
+	}
 	if err := os.MkdirAll(s.store, 0700); err != nil {
 		return err
 	}
-	c.StorageBytes = 0
 	data, err := json.Marshal(c)
 	if err != nil {
 		return err
@@ -302,7 +350,7 @@ func (s *Service) save(c Context) error {
 			return err
 		}
 	}
-	if err := fileio.WriteAtomicChecked(filepath.Join(s.store, c.ID+".json"), data, 0600, nil); err != nil {
+	if err := fileio.WriteAtomicChecked(s.manifestPath(c.ID), data, 0600, nil); err != nil {
 		return err
 	}
 	s.contexts[c.ID] = c
@@ -313,11 +361,19 @@ func (s *Service) save(c Context) error {
 func clone[T any](v T) T { data, _ := json.Marshal(v); var c T; _ = json.Unmarshal(data, &c); return c }
 func (s *Service) Inspect(id string) (Context, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	c, ok := s.contexts[id]
 	if !ok {
+		s.mu.Unlock()
 		return Context{}, errors.New("unknown execution context")
 	}
+	if c.Investigation != nil {
+		// The referenced evidence is immutable. An explicit full read must
+		// not block unrelated session metadata or pin updates.
+		resultDigest := s.investigationArtifacts[id].resultDigest
+		s.mu.Unlock()
+		return s.inspectInvestigation(c, resultDigest)
+	}
+	defer s.mu.Unlock()
 	if c.Removed && len(c.Baseline) == 0 {
 		data, err := os.ReadFile(filepath.Join(s.store, "archive", c.ID+".json"))
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -328,7 +384,8 @@ func (s *Service) Inspect(id string) (Context, error) {
 			if err := json.Unmarshal(data, &archived); err != nil {
 				return Context{}, err
 			}
-			if archived.ID != c.ID || archived.Owner != c.Owner || !archived.Removed {
+			if archived.ID != c.ID || archived.Owner != c.Owner || !sameInvestigation(archived.Investigation, c.Investigation) ||
+				archived.BaselineDigest != c.BaselineDigest || !archived.Removed {
 				return Context{}, errors.New("execution archive identity mismatch")
 			}
 			return archived, nil
@@ -336,15 +393,82 @@ func (s *Service) Inspect(id string) (Context, error) {
 	}
 	return clone(c), nil
 }
+
+func sameInvestigation(a, b *Investigation) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func compactContext(c Context) Context {
+	c.Baseline, c.ArchivedResult, c.DocumentRevisions = nil, nil, nil
+	c.Pins = slices.Clone(c.Pins)
+	if c.Investigation != nil {
+		investigation := *c.Investigation
+		c.Investigation = &investigation
+	}
+	if c.Integration != nil {
+		integration := *c.Integration
+		c.Integration = &integration
+	}
+	return c
+}
+
+// InspectSummary exposes retained-use metadata without exporting the baseline
+// or reading the archive. Inspect is the exact evidence reader.
+func (s *Service) InspectSummary(id string) (Context, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.contexts[id]
+	if !ok {
+		return Context{}, errors.New("unknown execution context")
+	}
+	return compactContext(c), nil
+}
+
+// ValidateOrdinaryMutation blocks normal native tools from aliasing a Plan
+// investigation or overwriting the managed store's control data. Ordinary
+// managed checkout paths are still governed by the caller's own execution.
+func (s *Service) ValidateOrdinaryMutation(targets []string) error {
+	for _, target := range targets {
+		abs, err := filepath.Abs(target)
+		if err != nil {
+			return err
+		}
+		canon, err := canonicalFuture(abs)
+		if err != nil {
+			return err
+		}
+		for _, candidate := range []string{abs, canon} {
+			if !within(s.store, candidate) && !within(candidate, s.store) {
+				continue
+			}
+			rel, _ := filepath.Rel(s.store, candidate)
+			id, _, _ := strings.Cut(rel, string(filepath.Separator))
+			s.mu.Lock()
+			c, known := s.contexts[id]
+			s.mu.Unlock()
+			if !known || c.Removed || c.Investigation != nil || !within(c.Root, candidate) {
+				return errors.New("ordinary tools cannot change a Plan investigation or the managed checkout store")
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Service) List() []Context {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result := make([]Context, 0, len(s.contexts))
 	for _, c := range s.contexts {
 		// Inventory must not export every baseline byte just to show paths/pins.
-		c.Baseline, c.ArchivedResult, c.DocumentRevisions = nil, nil, nil
 		c.StorageBytes = s.sizes[c.ID]
-		result = append(result, clone(c))
+		if c.Investigation != nil && !c.Removed {
+			artifacts := s.investigationArtifacts[c.ID]
+			c.StorageBytes += artifacts.baselineBytes + artifacts.resultBytes
+		}
+		result = append(result, compactContext(c))
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
@@ -373,12 +497,35 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if mode != Auto && mode != Shared && mode != Isolated {
 		return Context{}, errors.New("unknown isolation mode")
 	}
+	var investigation *Investigation
+	if req.Investigation != (Investigation{}) {
+		if mode != Isolated || req.Investigation.SessionID == "" || req.Investigation.Cycle == "" {
+			return Context{}, errors.New("plan investigation requires explicit worktree isolation and an exact session and cycle")
+		}
+		value := req.Investigation
+		investigation = &value
+		// A crash may publish the manifest before the session binds it.
+		// Observe that exact checkout; never recapture a changed source or
+		// finish interrupted setup under a second identity.
+		for _, existing := range s.contexts {
+			if existing.Removed || !sameInvestigation(existing.Investigation, investigation) || existing.SourceContextID != req.SourceContextID {
+				continue
+			}
+			if !existing.Ready {
+				return compactContext(existing), errors.New("plan investigation preparation did not finish; review the retained checkout for discard")
+			}
+			return s.pinInvestigation(ctx, existing.ID, value, req.SourceContextID, req.Owner)
+		}
+	}
 	sourceRoot := s.root
 	var source *Context
 	if req.SourceContextID != "" {
 		c, ok := s.contexts[req.SourceContextID]
 		if !ok || !c.Ready || c.Removed || c.LogicalRoot != s.root {
 			return Context{}, errors.New("source execution context unavailable or foreign")
+		}
+		if c.Investigation != nil {
+			return Context{}, errors.New("a Plan investigation cannot be used as an execution source")
 		}
 		if err := s.verifyCheckout(ctx, c); err != nil {
 			return Context{}, err
@@ -526,10 +673,16 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if _, err := rand.Read(random[:]); err != nil {
 		return Context{}, err
 	}
-	c := Context{Version: FormatVersion, ID: hex.EncodeToString(random[:]), LogicalRoot: s.root, Root: sourceRoot, SourceContextID: req.SourceContextID, CommonGitDir: common, Mode: mode, Reason: reason, BaseCommit: base, Owner: req.Owner, CreatedAt: time.Now().UTC(), Baseline: baseline, Pins: []Owner{req.Owner}}
+	if investigation != nil {
+		reason = "Plan investigation checkout; not for integration"
+	}
+	c := Context{Version: FormatVersion, ID: hex.EncodeToString(random[:]), LogicalRoot: s.root, Root: sourceRoot, SourceContextID: req.SourceContextID, CommonGitDir: common, Mode: mode, Reason: reason, BaseCommit: base, Owner: req.Owner, Investigation: investigation, CreatedAt: time.Now().UTC(), Baseline: baseline, Pins: []Owner{req.Owner}}
 	c.DocumentRevisions = map[string]uint64{}
 	for path, document := range req.Documents {
 		c.DocumentRevisions[path] = document.Revision
+	}
+	if c.Investigation != nil {
+		c.BaselineDigest = investigationBaselineDigest(c)
 	}
 	if mode == Isolated {
 		c.Root = filepath.Join(s.store, c.ID, "checkout")
@@ -543,33 +696,39 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	if err := s.save(c); err != nil {
 		return Context{}, err
 	}
+	created := func() Context {
+		if c.Investigation != nil {
+			return compactContext(c)
+		}
+		return clone(c)
+	}
 	if mode == Isolated {
 		if err := os.MkdirAll(filepath.Dir(c.Root), 0700); err != nil {
-			return clone(c), err
+			return created(), err
 		}
 		// No checkout: Git filters and post-checkout hooks must not execute.
 		if _, err := s.git(ctx, s.root, "worktree", "add", "--detach", "--no-checkout", c.Root, base); err != nil {
-			return clone(c), err
+			return created(), err
 		}
 		if _, err := s.git(ctx, c.Root, "read-tree", base); err != nil {
-			return clone(c), err
+			return created(), err
 		}
 		// Remove only known tracked files missing from the accepted baseline in
 		// this newly allocated checkout, never anything in the logical checkout.
 		tracked, err := s.git(ctx, c.Root, "ls-files", "-z")
 		if err != nil {
-			return clone(c), err
+			return created(), err
 		}
 		for _, p := range nulPaths(tracked) {
 			if err := ctx.Err(); err != nil {
-				return clone(c), err
+				return created(), err
 			}
 			if err := safeRelative(p); err != nil {
-				return clone(c), err
+				return created(), err
 			}
 			if _, ok := baseline[p]; !ok {
 				if err := os.Remove(filepath.Join(c.Root, filepath.FromSlash(p))); err != nil && !errors.Is(err, os.ErrNotExist) {
-					return clone(c), err
+					return created(), err
 				}
 			}
 		}
@@ -578,28 +737,54 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 		// Readiness is published only after every file is written.
 		for p, f := range baseline {
 			if err := ctx.Err(); err != nil {
-				return clone(c), err
+				return created(), err
 			}
 			target, err := safePath(c.Root, p)
 			if err != nil {
-				return clone(c), err
+				return created(), err
 			}
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return clone(c), err
+				return created(), err
 			}
 			if err := os.WriteFile(target, f.Data, os.FileMode(f.Mode)); err != nil {
-				return clone(c), err
+				return created(), err
 			}
 			if err := os.Chmod(target, os.FileMode(f.Mode)); err != nil {
-				return clone(c), err
+				return created(), err
 			}
 		}
 	}
-	c.Ready = true
-	if err := s.save(c); err != nil {
-		return clone(c), err
+	ready := c
+	ready.Ready = true
+	if err := s.save(ready); err != nil {
+		return created(), err
 	}
-	return clone(c), nil
+	if ready.Investigation != nil {
+		return compactContext(ready), nil
+	}
+	return clone(ready), nil
+}
+
+func investigationBaselineDigest(c Context) string {
+	type fileIdentity struct {
+		Type string
+		Mode uint32
+		Hash string
+	}
+	metadata := make(map[string]fileIdentity, len(c.Baseline))
+	for path, f := range c.Baseline {
+		metadata[path] = fileIdentity{f.Type, f.Mode, f.Hash}
+	}
+	revisions := c.DocumentRevisions
+	if len(revisions) == 0 {
+		revisions = nil
+	}
+	data, _ := json.Marshal(struct {
+		Commit    string
+		Files     map[string]fileIdentity
+		Revisions map[string]uint64
+	}{c.BaseCommit, metadata, revisions})
+	return hash(data)
 }
 
 // baselinesEqual compares two captures by content identity. Each File's Hash

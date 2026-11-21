@@ -14,8 +14,11 @@ import (
 // RecoveryCheckpoint is the durable, replay-safe state of one unfinished run.
 // Archive and ActiveContext are snapshots, not instructions to restart work.
 type RecoveryCheckpoint struct {
-	Status             recovery.Status
-	PendingInput       provider.UserInput
+	Status       recovery.Status
+	PendingInput provider.UserInput
+	// PlanningCycle is the policy captured when the root turn started.
+	// Nil means not yet captured; an empty string means ordinary execution.
+	PlanningCycle      *string
 	InputAdmitted      bool
 	Archive            []provider.ChatMessage
 	ActiveContext      []provider.ChatMessage
@@ -30,6 +33,7 @@ type RecoveryCheckpoint struct {
 
 type recoveryInput struct {
 	provider.UserInput
+	PlanningCycle      *string                `json:"planning_cycle,omitempty"`
 	TerminalSettlement json.RawMessage        `json:"terminal_settlement,omitempty"`
 	InFlightTools      []provider.ChatMessage `json:"in_flight_tools,omitempty"`
 }
@@ -86,7 +90,10 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, db *sql.DB, sessionID string, checkpoi
 		return nil, err
 	}
 	rowExists := err == nil
-	pending, err := json.Marshal(recoveryInput{UserInput: checkpoint.PendingInput, TerminalSettlement: checkpoint.TerminalSettlement, InFlightTools: checkpoint.InFlightTools})
+	pending, err := json.Marshal(recoveryInput{
+		UserInput: checkpoint.PendingInput, PlanningCycle: checkpoint.PlanningCycle,
+		TerminalSettlement: checkpoint.TerminalSettlement, InFlightTools: checkpoint.InFlightTools,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: encode recovery input: %w", err)
 	}
@@ -236,6 +243,43 @@ func LoadOpenRecoveryCheckpoints(db *sql.DB, sessionID string) ([]RecoveryCheckp
 		return nil, fmt.Errorf("sessiondb: load open recoveries: %w", err)
 	}
 	return checkpoints, nil
+}
+
+// RecoveryExecutionOwner identifies the source and policy of one unfinished
+// run without loading its archive or active context.
+type RecoveryExecutionOwner struct {
+	IncidentID, AgentID, ExecutionID string
+	Generation                       uint64
+	OwnerData                        []byte
+	PlanningCycle                    *string
+}
+
+func LoadOpenRecoveryExecutionOwners(db *sql.DB) ([]RecoveryExecutionOwner, error) {
+	rows, err := db.Query(`SELECT incident_id, agent_id, generation, owner_data, pending_input_json
+		FROM agent_recoveries WHERE state NOT IN (?, ?, ?, ?)`,
+		string(recovery.Recovered), string(recovery.Cancelled), string(recovery.Continued), string(recovery.Failed))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var owners []RecoveryExecutionOwner
+	for rows.Next() {
+		var owner RecoveryExecutionOwner
+		var pending []byte
+		if err := rows.Scan(&owner.IncidentID, &owner.AgentID, &owner.Generation, &owner.OwnerData, &pending); err != nil {
+			return nil, err
+		}
+		var input recoveryInput
+		if err := json.Unmarshal(pending, &input); err != nil {
+			return nil, fmt.Errorf("sessiondb: decode recovery input: %w", err)
+		}
+		if input.ControlTarget != nil {
+			owner.ExecutionID = input.ControlTarget.ExecutionID
+		}
+		owner.PlanningCycle = input.PlanningCycle
+		owners = append(owners, owner)
+	}
+	return owners, rows.Err()
 }
 
 // loadRecoveryCheckpoints reads checkpoints and their list tails in one
@@ -397,6 +441,7 @@ func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, []byte
 		return RecoveryCheckpoint{}, nil, nil, fmt.Errorf("sessiondb: decode recovery input: %w", err)
 	}
 	checkpoint.PendingInput, checkpoint.TerminalSettlement = input.UserInput, input.TerminalSettlement
+	checkpoint.PlanningCycle = input.PlanningCycle
 	checkpoint.InFlightTools = input.InFlightTools
 	return checkpoint, archive, active, nil
 }

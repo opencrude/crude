@@ -78,11 +78,11 @@ func interactiveRetrieval(descriptor OutputDescriptor, info AsyncCmdInfo, firstO
 // StartInteractive runs exec_command. An empty Shell is the agent command
 // shell; Login starts a POSIX shell as a login shell. PowerShell never loads
 // the user's profile (see shellCommand).
-func (m *AsyncCommandManager) StartInteractive(ctx context.Context, opts InteractiveOptions, yield time.Duration, maxTokens int) (InteractiveResult, error) {
+func (m *AsyncCommandManager) StartInteractive(ctx context.Context, opts InteractiveOptions, yield time.Duration, maxTokens int, options ...*CommandOptions) (InteractiveResult, error) {
 	if err := ctx.Err(); err != nil {
 		return InteractiveResult{}, err
 	}
-	uc, err := m.startUntracked(nil, opts.Command, opts.CWD, 0, &opts)
+	uc, err := m.startUntracked(nil, opts.Command, opts.CWD, 0, &opts, firstCommandOptions(options))
 	if err != nil {
 		return InteractiveResult{}, err
 	}

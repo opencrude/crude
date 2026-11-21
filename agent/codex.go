@@ -23,10 +23,23 @@ func (a *Agent) configureModelTools() {
 }
 
 func (a *Agent) validatePatchPermissions(params map[string]any) string {
-	if err := CheckPatchPolicy(a.Policy, getStr(params, "input")); err != nil {
+	policy := a.Policy
+	if a.PlanInvestigation != nil {
+		policy = PlanInvestigationPatchPolicy()
+	}
+	if err := CheckPatchPolicy(policy, getStr(params, "input")); err != nil {
 		return "Error: " + err.Error()
 	}
 	return ""
+}
+
+// PlanInvestigationPatchPolicy checks operations only. The Plan tool owner
+// must separately scope every operand to the exact investigation checkout.
+func PlanInvestigationPatchPolicy() safety.Policy {
+	policy := safety.ReadOnlyPolicy()
+	policy.AllowedCapabilities[safety.CanCreate] = true
+	policy.AllowedCapabilities[safety.CanUpdate] = true
+	return policy
 }
 
 // CheckPatchPolicy applies explicit filesystem authorization, not a restricted

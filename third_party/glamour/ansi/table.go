@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"slices"
 
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
@@ -20,6 +21,15 @@ type TableElement struct {
 
 	tableImages []tableLink
 	tableLinks  []tableLink
+
+	headerRTL, headerStrong bool
+	rowCells                []tracedCell
+	cells                   [][]tracedCell // header, then body rows, in layout order
+}
+
+type tracedCell struct {
+	id  int
+	rtl bool
 }
 
 // A TableRowElement is used to render a single row in a table.
@@ -64,6 +74,13 @@ func (e *TableElement) Render(w io.Writer, ctx RenderContext) error {
 		wrap = *ctx.options.TableWrap
 	}
 	ctx.table.lipgloss = table.New().Width(width).Wrap(wrap)
+	if source := ctx.options.Source; source != nil {
+		source.BeginTable()
+		ctx.table.lipgloss.CellRenderFunc(func(row, col int, style lipgloss.Style, content string) string {
+			cell := ctx.table.cells[row+1][col]
+			return source.TableCellBox(cell.id, style.RenderContent(source.TableCellContent, content))
+		})
+	}
 
 	if err := e.collectLinksAndImages(ctx); err != nil {
 		return err
@@ -79,7 +96,7 @@ func (e *TableElement) setStyles(ctx RenderContext) {
 		ctx.table.lipgloss.BaseStyle(baseStyle)
 	}
 
-	ctx.table.lipgloss = ctx.table.lipgloss.StyleFunc(func(_, col int) lipgloss.Style {
+	ctx.table.lipgloss = ctx.table.lipgloss.StyleFunc(func(row, col int) lipgloss.Style {
 		st := lipgloss.NewStyle().Inline(false)
 		// Default Styles
 		st = st.Margin(0, 1)
@@ -88,7 +105,11 @@ func (e *TableElement) setStyles(ctx RenderContext) {
 		if m := ctx.options.Styles.Table.Margin; m != nil {
 			st = st.Padding(0, int(*m)) //nolint: gosec
 		}
-		switch e.table.Alignments[col] {
+		sourceCol := col
+		if ctx.table.headerRTL {
+			sourceCol = len(e.table.Alignments) - 1 - col
+		}
+		switch e.table.Alignments[sourceCol] {
 		case astext.AlignLeft:
 			st = st.Align(lipgloss.Left).PaddingRight(0)
 		case astext.AlignCenter:
@@ -96,7 +117,9 @@ func (e *TableElement) setStyles(ctx RenderContext) {
 		case astext.AlignRight:
 			st = st.Align(lipgloss.Right).PaddingLeft(0)
 		case astext.AlignNone:
-			// do nothing
+			if ctx.options.Source != nil && ctx.table.cells[row+1][col].rtl {
+				st = st.Align(lipgloss.Right)
+			}
 		}
 
 		return st
@@ -126,11 +149,12 @@ func (e *TableElement) setBorders(ctx RenderContext) {
 // Finish finishes rendering a TableElement.
 func (e *TableElement) Finish(_ io.Writer, ctx RenderContext) error {
 	defer func() {
-		ctx.table.lipgloss = nil
-		ctx.table.tableImages = nil
-		ctx.table.tableLinks = nil
+		*ctx.table = TableElement{}
 	}()
 
+	if ctx.options.Source != nil {
+		ctx.options.Source.EndTable()
+	}
 	rules := ctx.options.Styles.Table
 
 	e.setStyles(ctx)
@@ -146,7 +170,6 @@ func (e *TableElement) Finish(_ io.Writer, ctx RenderContext) error {
 
 	e.printTableLinks(ctx)
 
-	ctx.table.lipgloss = nil
 	return nil
 }
 
@@ -156,6 +179,7 @@ func (e *TableRowElement) Finish(_ io.Writer, ctx RenderContext) error {
 		return nil
 	}
 
+	ctx.table.finishRow(ctx.table.row)
 	ctx.table.lipgloss.Row(ctx.table.row...)
 	ctx.table.row = []string{}
 	return nil
@@ -167,9 +191,25 @@ func (e *TableHeadElement) Finish(_ io.Writer, ctx RenderContext) error {
 		return nil
 	}
 
+	if ctx.options.Source != nil && !ctx.table.headerStrong {
+		ctx.table.headerRTL = ctx.blockStack.direction() == rightToLeft
+	}
+	ctx.table.finishRow(ctx.table.header)
 	ctx.table.lipgloss.Headers(ctx.table.header...)
 	ctx.table.header = []string{}
 	return nil
+}
+
+func (e *TableElement) finishRow(row []string) {
+	if e.rowCells == nil {
+		return
+	}
+	if e.headerRTL {
+		slices.Reverse(row)
+		slices.Reverse(e.rowCells)
+	}
+	e.cells = append(e.cells, e.rowCells)
+	e.rowCells = nil
 }
 
 // Render renders a TableCellElement.
@@ -197,6 +237,14 @@ func (e *TableCellElement) Render(_ io.Writer, ctx RenderContext) error {
 		}
 	}
 
+	if source := ctx.options.Source; source != nil {
+		id, rtl, strong := source.EndTableCell()
+		ctx.table.rowCells = append(ctx.table.rowCells, tracedCell{id: id, rtl: rtl})
+		if e.Head && !ctx.table.headerStrong && strong {
+			ctx.table.headerStrong = true
+			ctx.table.headerRTL = rtl
+		}
+	}
 	if e.Head {
 		ctx.table.header = append(ctx.table.header, b.String())
 	} else {

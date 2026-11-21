@@ -152,6 +152,8 @@ func TestApplyAgentStatusEventPermissionsUseFamilyPolicy(t *testing.T) {
 	w.AgentMgr.AddOrchestrator("foreground", NewAgentState("foreground", nil, nil))
 	apply("confirmation", map[string]any{"operation": "execute"})
 	requireAgentStatusPhase(t, w, child.ID, ttypes.AgentTool, "Working", false)
+	apply("blocking", map[string]string{"operation": ttypes.PlanInvestigationHostOperation})
+	requireAgentStatusPhase(t, w, child.ID, ttypes.AgentApproval, "Needs approval", true)
 	apply("blocking", map[string]any{"operation": "questions"})
 	requireAgentStatusPhase(t, w, child.ID, ttypes.AgentQuestion, "Needs answer", true)
 	apply("blocking_complete", nil)

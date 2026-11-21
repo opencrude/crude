@@ -172,6 +172,17 @@ func (l *local) PlanReviewForAgent(agentID string) (types.PlanReview, bool) {
 	return l.ws.PlanReviewForAgent(agentID)
 }
 
+func (l *local) ReadPlanEvidence(ctx context.Context, agentID string, revision int, digest string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	run, err := l.ws.PrepareReadPlanEvidence(agentID, revision, digest)
+	if err != nil {
+		return "", err
+	}
+	return run()
+}
+
 func (l *local) OpenPlanRevision(agentID string, revision int) (string, error) {
 	return l.ws.OpenPlanRevision(agentID, revision)
 }

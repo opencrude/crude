@@ -71,7 +71,13 @@ func (e *HeadingElement) Finish(w io.Writer, ctx RenderContext) error {
 		return fmt.Errorf("glamour: error writing to writer: %w", err)
 	}
 
-	_, _ = renderText(w, bs.Current().Style.StylePrimitive, rules.Suffix)
+	if source := ctx.options.Source; source != nil && rules.Suffix != "" {
+		_, _ = io.WriteString(w, source.Decoration(true))
+		_, _ = renderText(w, bs.Current().Style.StylePrimitive, rules.Suffix)
+		_, _ = io.WriteString(w, source.Decoration(false))
+	} else {
+		_, _ = renderText(w, bs.Current().Style.StylePrimitive, rules.Suffix)
+	}
 	_, _ = renderText(w, bs.Parent().Style.StylePrimitive, rules.BlockSuffix)
 
 	bs.Current().Block.Reset()

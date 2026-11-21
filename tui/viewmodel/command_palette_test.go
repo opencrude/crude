@@ -428,6 +428,7 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 		"memory.browse",
 		"notifications.test",
 		"performance.open",
+		"plan.evidence",
 		"plan.implement",
 		"plan.review",
 		"plan.send",

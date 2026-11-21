@@ -1,5 +1,7 @@
 package workspace
 
+import "crude/types"
+
 // AgentEffects describes notifications produced by one event reduction. Changed
 // flags distinguish an explicit reset from an event that leaves a value alone.
 // The caller owns presentation and scheduling; these values contain no commands
@@ -20,18 +22,32 @@ type AgentEffects struct {
 
 // AgentPrompt retains the exact pending block identity and prompt payload.
 type AgentPrompt struct {
-	BlockID    string
-	Question   string
-	Operation  string
-	Tool       string
-	Target     string
-	Risk       string
-	Reason     string
-	Suggestion string
+	BlockID           string
+	Question          string
+	Operation         string
+	Tool              string
+	Target            string
+	Risk              string
+	Reason            string
+	Suggestion        string
+	InvestigationPath bool
+	Directory         string
 	// AutoReview tells the user why Auto Review left this request to them.
 	AutoReview    string
 	QuestionsJSON string
 	IsQuestion    bool
+}
+
+// AcceptsConfirmation keeps plan-scoped host consent distinct from a normal
+// tool approval, including one automatically granted by a shell.
+func (p AgentPrompt) AcceptsConfirmation(blockID, choice string) bool {
+	if p.IsQuestion || p.BlockID != blockID || blockID == "" {
+		return false
+	}
+	if p.Operation == types.PlanInvestigationHostOperation {
+		return choice == types.PlanInvestigationHostAllow || choice == "deny"
+	}
+	return choice == "allow" || (choice == "always" && !p.InvestigationPath) || choice == "deny"
 }
 
 type AgentDoneResult struct {

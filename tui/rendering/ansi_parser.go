@@ -151,7 +151,7 @@ func sgrParameters(sequence string) (string, bool) {
 // parseSGR parses an SGR parameter string and updates the style state.
 // The params string is the content between \x1b[ and m (e.g., "0;1;38;2;255;100;50")
 func parseSGR(params string, fg, bg *cell.Color, attr *cell.Attrs) {
-	if params == "" {
+	if params == "" || params == "0" {
 		// \x1b[m is equivalent to \x1b[0m (reset)
 		*fg = cell.NoColor
 		*bg = cell.NoColor
@@ -159,7 +159,10 @@ func parseSGR(params string, fg, bg *cell.Color, attr *cell.Attrs) {
 		return
 	}
 
-	parts := splitParams(params)
+	// A true-colour instruction uses five parameters. The ordinary SGR
+	// stream doesn't need a heap allocation for every change of ink.
+	var scratch [12]sgrParam
+	parts := splitParams(params, scratch[:0])
 
 	i := 0
 	for i < len(parts) {
@@ -245,14 +248,7 @@ type sgrParam struct {
 
 // splitParams splits an SGR parameter string by semicolons.
 // It preserves colon subparameters (e.g. 4:3 for wavy underline) in sgrParam.
-func splitParams(s string) []sgrParam {
-	count := 1
-	for i := 0; i < len(s); i++ {
-		if s[i] == ';' {
-			count++
-		}
-	}
-	result := make([]sgrParam, 0, count)
+func splitParams(s string, result []sgrParam) []sgrParam {
 	start := 0
 	for i := 0; i <= len(s); i++ {
 		if i == len(s) || s[i] == ';' {

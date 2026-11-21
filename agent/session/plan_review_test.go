@@ -21,6 +21,7 @@ import (
 	"crude/logger"
 	"crude/text/anchor"
 	"crude/types"
+	"crude/types/control"
 )
 
 func planReply(plan string) string {
@@ -183,7 +184,7 @@ func TestPlanReviewPersistsRelativePathAndRecreatesInFork(t *testing.T) {
 	t.Cleanup(s.Close)
 	s.Retain()
 	const proposal = "# A source plan\n\nDo the work."
-	if err := s.recordProposedPlan(1, planReply(proposal)); err != nil {
+	if err := s.recordProposedPlan(1, planReply(proposal), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	edit := types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{ID: "one", Body: "Keep this."}}
@@ -274,6 +275,18 @@ func assertPlanFile(t *testing.T, path, want string) {
 
 func reviewFixture(t *testing.T, plan string) (*Session, *mockEventSender) {
 	t.Helper()
+	s, sender := reviewSessionFixture(t)
+	if err := s.SetPlanMode(true); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.recordProposedPlan(1, planReply(plan), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	return s, sender
+}
+
+func reviewSessionFixture(t *testing.T) (*Session, *mockEventSender) {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Acknowledged.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
@@ -287,12 +300,6 @@ func reviewFixture(t *testing.T, plan string) (*Session, *mockEventSender) {
 	s.SetWorkDir(t.TempDir())
 	sender := newMockEventSender()
 	if _, err := s.NewOrchestrator(sender); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetPlanMode(true); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.recordProposedPlan(1, planReply(plan)); err != nil {
 		t.Fatal(err)
 	}
 	return s, sender
@@ -421,7 +428,7 @@ func TestPlanReviewActionsRespectBoundsAndStaleRevisions(t *testing.T) {
 		t.Fatal("accepted more than the allowed comments")
 	}
 	first := latestReview(t, s)
-	if err := s.recordProposedPlan(2, planReply(plan)); err != nil {
+	if err := s.recordProposedPlan(2, planReply(plan), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewFeedback}); err == nil {
@@ -431,18 +438,21 @@ func TestPlanReviewActionsRespectBoundsAndStaleRevisions(t *testing.T) {
 		t.Fatal("replaced revision accepted new comments")
 	}
 	big := strings.Repeat("x", types.PlanReviewMaxPlanText)
-	if err := s.recordProposedPlan(3, planReply(big+"x")); err != nil || latestReview(t, s).Number != 2 {
+	if err := s.recordProposedPlan(3, planReply(big+"x"), "", ""); err != nil || latestReview(t, s).Number != 2 {
 		t.Fatalf("oversize proposal was recorded: %v", err)
 	}
 	if _, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 2, Text: big + "x", Action: types.PlanReviewNewSession}); err == nil {
 		t.Fatal("oversize settlement was accepted")
 	}
-	out, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 2, Text: plan + "\n", Action: types.PlanReviewNewSession})
+	destination, _ := reviewSessionFixture(t)
+	out, err := s.SettlePlanReviewForAgent(t.Context(), s.liveOrchestrator().ID,
+		types.PlanReviewSettle{Revision: 2, Text: plan + "\n", Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID},
+		provider.UserInput{}, destination)
 	if err != nil || out.Display != "" || !strings.HasSuffix(out.Text, plan+"\n") ||
 		!s.PlanMode() || latestReview(t, s).Outcome != types.PlanOutcomeNewSession {
 		t.Fatalf("fresh context settlement: %+v, %v", out, err)
 	}
-	if err := s.recordProposedPlan(3, planReply(big)); err != nil {
+	if err := s.recordProposedPlan(3, planReply(big), "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := s.SettlePlanReview(types.PlanReviewSettle{Revision: 3, Text: big + "\n", Action: types.PlanReviewImplement}); err != nil ||
@@ -450,7 +460,7 @@ func TestPlanReviewActionsRespectBoundsAndStaleRevisions(t *testing.T) {
 		t.Fatalf("maximum length unchanged approval: len=%d, %q, %v", len(out.Text), out.Display, err)
 	}
 	for n := 4; n <= types.PlanRevisionMaxCount+2; n++ {
-		if err := s.recordProposedPlan(uint64(n), planReply(plan)); err != nil {
+		if err := s.recordProposedPlan(uint64(n), planReply(plan), "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -514,4 +524,195 @@ func TestPlanReviewFeedbackPreservesChangedQuoteAndTruncatesOnlyDisplay(t *testi
 	if !strings.Contains(out.Display, `"`+strings.Repeat("é", 60)+`…" Keep the intent.`) || strings.Contains(out.Display, quote) {
 		t.Fatalf("display did not truncate the quote at 60 runes: %s", out.Display)
 	}
+}
+
+func genuineUserInputs(s *Session) []string {
+	s.msgsMu.Lock()
+	defer s.msgsMu.Unlock()
+	var out []string
+	for _, message := range s.msgs {
+		if message.IsGenuineUserInput() {
+			out = append(out, message.ContentString())
+		}
+	}
+	return out
+}
+
+type planHandoffTestSender struct {
+	*mockEventSender
+	onQueued func()
+}
+
+func (s *planHandoffTestSender) SendAgentEventWithID(typ string, data any, agentID string) {
+	if typ == "input_queued" {
+		s.onQueued()
+	}
+	s.mockEventSender.SendAgentEventWithID(typ, data, agentID)
+}
+
+func TestPlanNewSessionHandoffFirstTurnRemainsImplementation(t *testing.T) {
+	const plan = "# Fresh implementation\n\n- Use these exact steps."
+	source, _ := reviewFixture(t, plan)
+	requests := make(chan planModeRequest, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body planModeRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- body
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Acknowledged.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+	destination, err := NewWithSessionDir("", mediaAttributionConfig(server.URL, "review-handoff-mode", "openai"), t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(destination.Close)
+	destination.SetWorkDir(t.TempDir())
+	target := control.Target{WorkspaceID: "original-workspace", ExecutionID: "source-only-checkout", SessionID: source.sessionID,
+		Shell: &control.ShellOwner{ClientID: "original-shell", Epoch: 4}}
+	var queued provider.UserInput
+	var toggleErr error
+	sender := &planHandoffTestSender{mockEventSender: newMockEventSender(), onQueued: func() {
+		queued = destination.QueuedInputs()[0].Input
+		toggleErr = destination.SetPlanMode(true)
+	}}
+	owner, err := destination.NewOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := source.SettlePlanReviewForAgent(t.Context(), source.liveOrchestrator().ID,
+		types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID},
+		provider.UserInput{ControlTarget: &target}, destination)
+	if err != nil || toggleErr != nil {
+		t.Fatalf("handoff failed: %v; mode change: %v", err, toggleErr)
+	}
+	wantTarget := target
+	wantTarget.SessionID, wantTarget.ExecutionID = destination.sessionID, ""
+	if queued.Origin != provider.OriginHuman || queued.Text != out.Text || !strings.Contains(queued.Text, plan) ||
+		!reflect.DeepEqual(queued.ControlTarget, &wantTarget) {
+		t.Fatalf("handoff changed the approved input or submitting attachment: %+v", queued)
+	}
+	waitTurnDone(t, sender.mockEventSender, owner.ID)
+	first := <-requests
+	if !destination.PlanMode() || first.offers("open_plan_investigation") || strings.Contains(first.text(0), "<plan_mode>") {
+		t.Fatal("first destination turn did not implement the plan in ordinary mode")
+	}
+	if !owner.SubmitInput(provider.PlainInput("Plan the follow-up.")) {
+		t.Fatal("follow-up was not accepted")
+	}
+	waitTurnDone(t, sender.mockEventSender, owner.ID)
+	followup := <-requests
+	if !followup.offers("open_plan_investigation") || !strings.Contains(followup.text(0), "<plan_mode>") {
+		t.Fatal("handoff policy overrode Plan mode for a later input")
+	}
+}
+
+// New session spans two databases. When the source cannot record a delivered
+// handoff, the review stays bound to that destination: only its exact receipt
+// can close the review, and the plan is never sent a second time. A bound
+// destination without that receipt definitely did not receive the plan, so
+// the check reopens the choice instead of leaving the review stuck.
+func TestPlanNewSessionHandoffIsCheckedNeverResent(t *testing.T) {
+	const plan = "# Fresh context plan\n\n- Do the work"
+	s, _ := reviewFixture(t, plan)
+	agentID := s.liveOrchestrator().ID
+	destination, sender := reviewSessionFixture(t)
+	settle := types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID}
+	if _, err := s.db.Exec(`CREATE TRIGGER block_handoff_close BEFORE INSERT ON session_runtime_state
+		WHEN NEW.key = 'plan_review' AND instr(CAST(NEW.value AS TEXT), '"outcome":"new_session"') > 0
+		BEGIN SELECT RAISE(ABORT, 'source storage failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SettlePlanReviewForAgent(t.Context(), agentID, settle, provider.UserInput{}, destination); err != errPlanHandoffCheck {
+		t.Fatalf("unrecorded delivery: %v", err)
+	}
+	bound := latestReview(t, s)
+	if !bound.Open() || bound.NewSessionID != destination.sessionID || !s.PlanMode() {
+		t.Fatalf("delivered handoff is not bound to its destination: %+v", bound)
+	}
+	waitTurnDone(t, sender, destination.liveOrchestrator().ID)
+	if inputs := genuineUserInputs(destination); len(inputs) != 1 || !strings.Contains(inputs[0], "- Do the work") {
+		t.Fatalf("destination inputs after delivery = %q", inputs)
+	}
+	for _, refused := range []types.PlanReviewSettle{
+		{Revision: 1, Text: plan, Action: types.PlanReviewImplement},
+		{Revision: 1, Text: plan, Action: types.PlanReviewNewSession},
+	} {
+		if _, err := s.SettlePlanReviewForAgent(t.Context(), agentID, refused, provider.UserInput{}, destination); err != errPlanHandoffOpen {
+			t.Fatalf("%s while bound: %v", refused.Action, err)
+		}
+	}
+	if err := s.EditPlanComment(types.PlanCommentEdit{Revision: 1, Op: types.PlanCommentAdd, Comment: types.PlanComment{ID: "late", Body: "Late."}}); err != errPlanHandoffOpen {
+		t.Fatalf("comment on a bound handoff: %v", err)
+	}
+	if _, err := s.db.Exec(`DROP TRIGGER block_handoff_close`); err != nil {
+		t.Fatal(err)
+	}
+	check := types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewNewSession, DestinationSessionID: destination.sessionID}
+	exact, err := sessiondb.LoadRuntimeState(t.Context(), destination.db, planHandoffReceiptKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.SaveRuntimeState(t.Context(), destination.db, planHandoffReceiptKey, []byte(`{"InputID":"another-input"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SettlePlanReviewForAgent(t.Context(), agentID, check, provider.UserInput{}, destination); err != errPlanHandoffCheck ||
+		latestReview(t, s).NewSessionID != destination.sessionID {
+		t.Fatalf("a conflicting receipt unlocked an already delivered plan: %v", err)
+	}
+	if err := sessiondb.SaveRuntimeState(t.Context(), destination.db, planHandoffReceiptKey, exact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SettlePlanReviewForAgent(t.Context(), agentID, check, provider.UserInput{}, destination); err != nil {
+		t.Fatalf("check of the delivered handoff: %v", err)
+	}
+	if closed := latestReview(t, s); closed.Outcome != types.PlanOutcomeNewSession || closed.NewSessionID != destination.sessionID || !s.PlanMode() {
+		t.Fatalf("checked handoff did not close the source review: %+v", closed)
+	}
+	if inputs := genuineUserInputs(destination); len(inputs) != 1 || len(destination.QueuedInputs()) != 0 {
+		t.Fatalf("check resent the plan: %q, queued %d", inputs, len(destination.QueuedInputs()))
+	}
+
+	// A bound record whose destination has no receipt: the queue write
+	// failed and so did restoring the source.
+	s2, _ := reviewFixture(t, plan)
+	empty, emptySender := reviewSessionFixture(t)
+	if _, err := empty.DB().Exec(`CREATE TRIGGER reject_plan_input BEFORE INSERT ON session_runtime_state
+		WHEN NEW.key = 'plan_handoff_receipt' BEGIN SELECT RAISE(ABORT, 'destination storage failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.db.Exec(`CREATE TRIGGER block_restore BEFORE INSERT ON session_runtime_state
+		WHEN NEW.key = 'plan_review' AND instr(CAST(NEW.value AS TEXT), '"handoff_source"') = 0
+		BEGIN SELECT RAISE(ABORT, 'source storage failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	lost := settle
+	lost.DestinationSessionID = empty.sessionID
+	if _, err := s2.SettlePlanReviewForAgent(t.Context(), s2.liveOrchestrator().ID, lost, provider.UserInput{}, empty); err != errPlanHandoffCheck {
+		t.Fatalf("failed delivery with failed restore: %v", err)
+	}
+	if latestReview(t, s2).NewSessionID != empty.sessionID {
+		t.Fatal("failed restore did not leave the binding for a check")
+	}
+	if _, err := empty.DB().Exec(`DROP TRIGGER reject_plan_input`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.db.Exec(`DROP TRIGGER block_restore`); err != nil {
+		t.Fatal(err)
+	}
+	check.DestinationSessionID = empty.sessionID
+	if _, err := s2.SettlePlanReviewForAgent(t.Context(), s2.liveOrchestrator().ID, check, provider.UserInput{}, empty); err != errPlanHandoffMissing {
+		t.Fatalf("check without a receipt: %v", err)
+	}
+	if reopened := latestReview(t, s2); !reopened.Open() || reopened.NewSessionID != "" || len(genuineUserInputs(empty)) != 0 {
+		t.Fatalf("missing receipt did not reopen the choice: %+v", reopened)
+	}
+	if _, err := s2.SettlePlanReviewForAgent(t.Context(), s2.liveOrchestrator().ID, lost, provider.UserInput{}, empty); err != nil ||
+		latestReview(t, s2).Outcome != types.PlanOutcomeNewSession {
+		t.Fatalf("New session after a reopened choice: %v", err)
+	}
+	waitTurnDone(t, emptySender, empty.liveOrchestrator().ID)
 }

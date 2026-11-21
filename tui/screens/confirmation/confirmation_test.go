@@ -1,6 +1,7 @@
 package confirmation
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -206,4 +207,61 @@ func findPainted(buf *surface.CellBuffer, want string) paintedAt {
 		}
 	}
 	return paintedAt{x: -1, y: -1}
+}
+
+func TestInvestigationHostConsentIsNotAnOrdinaryApproval(t *testing.T) {
+	for _, tc := range []struct {
+		key  rune
+		want string
+	}{{'y', "allow_investigation"}, {'n', "deny"}, {'a', ""}, {'r', ""}} {
+		_, host := testHost(t, Details{Question: "Run investigation commands on this computer?", Operation: "plan_investigation_host", OfferAutoReview: true})
+		result := host.Handle(tea.KeyPressMsg{Code: tc.key, Text: string(tc.key)})
+		if tc.want == "" {
+			if result.Cmd != nil {
+				t.Fatalf("%q answered the host consent", tc.key)
+			}
+			continue
+		}
+		if result.Cmd == nil || result.Cmd().(ResultMsg).Choice != tc.want {
+			t.Fatalf("%q did not send %q", tc.key, tc.want)
+		}
+	}
+}
+
+func TestNarrowInvestigationConsentShowsRiskAndPagesExactDetails(t *testing.T) {
+	_, host := testHost(t, Details{
+		Question: "Allow commands for this investigation?", Operation: "plan_investigation_host", OfferAutoReview: true,
+		Reason: "Commands run on this computer, outside a sandbox. They can access files outside the investigation folder.",
+		Target: "go test -count=1 -run TestValue .", Directory: "/tmp/" + strings.Repeat("long-directory/", 20) + "checkout-tail",
+	})
+	host.Resize(41, 11)
+	host.Layout()
+	buf := surface.NewCellBuffer(41, 11)
+	host.Paint(buf)
+	for _, want := range []string{"outside a sandbox", "Allow for this plan (y)", "Do not run (n)"} {
+		if !bufferContains(buf, want) {
+			t.Fatalf("narrow consent does not show %q:\n%s", want, bufferText(buf))
+		}
+	}
+	for _, unwanted := range []string{"Always allow", "Auto Review", "checkout-tail"} {
+		if bufferContains(buf, unwanted) {
+			t.Fatalf("unexpected %q in first page:\n%s", unwanted, bufferText(buf))
+		}
+	}
+	commandSeen := bufferContains(buf, "Command: go test")
+	for i := 0; i < 5 && !bufferContains(buf, "checkout-tail"); i++ {
+		result := host.Handle(tea.KeyPressMsg{Code: tea.KeyPgDown})
+		if !result.Handled || result.Cmd != nil {
+			t.Fatalf("Page Down did not browse the details without answering: %+v", result)
+		}
+		host.Paint(buf)
+		commandSeen = commandSeen || bufferContains(buf, "Command: go test")
+	}
+	if !commandSeen || !bufferContains(buf, "checkout-tail") || !bufferContains(buf, "Do not run (n)") {
+		t.Fatalf("command, exact folder or safe action is unreachable:\n%s", bufferText(buf))
+	}
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil || result.Cmd().(ResultMsg).Choice != ChoiceDeny {
+		t.Fatalf("Enter approved without choosing Allow: %+v", result)
+	}
 }

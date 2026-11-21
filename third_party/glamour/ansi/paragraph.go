@@ -38,6 +38,19 @@ func (e *ParagraphElement) Finish(w io.Writer, ctx RenderContext) error {
 	bs := ctx.blockStack
 	rules := bs.Current().Style
 
+	// Crude can keep an unboxed top-level paragraph as native runs. The
+	// source sink requests this only for prose documents with no outer
+	// decoration; all inline rendering has already used the normal path.
+	if sink, ok := ctx.options.Source.(interface{ CaptureParagraph(string) }); ok {
+		blk := bs.Current().Block.String()
+		if !ctx.options.PreserveNewLines {
+			blk = strings.ReplaceAll(blk, "\n", " ")
+		}
+		sink.CaptureParagraph(blk)
+		bs.Pop()
+		return nil
+	}
+
 	mw := NewMarginWriter(ctx, w, rules)
 	defer mw.Close() //nolint:errcheck
 	if len(strings.TrimSpace(bs.Current().Block.String())) > 0 {

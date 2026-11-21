@@ -33,6 +33,7 @@ type Spec struct {
 	Alternates     []Answer
 	Cancel         Answer
 	ConfirmDanger  bool
+	ReadingLayout  bool
 	SemanticsLabel string
 }
 
@@ -77,12 +78,23 @@ func New(th *theme.Theme) *Screen {
 // Show replaces the decision; focus starts on the declining answer.
 func (s *Screen) Show(spec Spec) {
 	s.spec = spec
-	model := ui.NewFormModel()
-	for index, fact := range spec.Facts {
-		value := ui.StringValue(fact.Value)
-		model.AddField(&ui.FieldState{ID: string(rune('a' + index)), Label: fact.Label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true})
+	if spec.ReadingLayout {
+		lines := make([]string, 0, len(spec.Facts)+1)
+		for _, fact := range spec.Facts {
+			lines = append(lines, fact.Label+": "+fact.Value)
+		}
+		if spec.Hint != "" {
+			lines = append(lines, spec.Hint)
+		}
+		s.form = ui.NewDockedReadingForm(FormID, spec.Title, strings.Join(lines, "\n"), s.tokens)
+	} else {
+		model := ui.NewFormModel()
+		for index, fact := range spec.Facts {
+			value := ui.StringValue(fact.Value)
+			model.AddField(&ui.FieldState{ID: string(rune('a' + index)), Label: fact.Label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true})
+		}
+		s.form = ui.NewDockedForm(FormID, model, spec.Title, spec.Hint, s.tokens)
 	}
-	s.form = ui.NewDockedForm(FormID, model, spec.Title, spec.Hint, s.tokens)
 	variant := ui.VariantPrimary
 	if spec.ConfirmDanger {
 		variant = ui.VariantDanger
@@ -95,6 +107,14 @@ func (s *Screen) Show(spec Spec) {
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 	s.actions.SetCancelAction("decision.cancel")
 	s.actions.FocusLast()
+	if spec.ReadingLayout {
+		s.actions.SetWrap(true)
+		for _, button := range buttons {
+			if button.Shortcut != "" {
+				s.form.SetChordAction(button.Shortcut, button.Action)
+			}
+		}
+	}
 }
 
 func (s *Screen) Purpose() string { return s.spec.Purpose }
@@ -117,15 +137,15 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 var _ ui.PreferredHeightComponent = (*Screen)(nil)
 
-func (s *Screen) PreferredHeight(_, maxHeight int) int {
-	chrome := s.actions.PreferredHeight()
-	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-chrome))+chrome)
+func (s *Screen) PreferredHeight(width, maxHeight int) int {
+	chrome := s.actions.PreferredHeightAtWidth(width)
+	return min(maxHeight, s.form.PreferredHeightAtWidth(width, max(0, maxHeight-chrome))+chrome)
 }
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	chrome := s.actions.PreferredHeight()
-	s.form.Layout(ctx, ui.Rect{W: r.W, H: max(1, r.H-chrome)})
-	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
+	chrome := min(r.H, s.actions.PreferredHeightAtWidth(r.W))
+	s.form.Layout(ctx, ui.Rect{W: r.W, H: r.H - chrome})
+	s.actions.Layout(ctx, ui.Rect{Y: r.H - chrome, W: r.W, H: chrome})
 }
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
@@ -133,6 +153,9 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		return ui.EventResult{}
 	}
 	key := evt.Key
+	if page := s.form.ReadPage(key); page.Handled {
+		return page
+	}
 	switch {
 	case key.Code == tea.KeyEsc || key.String() == s.spec.Cancel.Shortcut:
 		return s.result(false)

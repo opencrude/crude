@@ -69,7 +69,7 @@ func (tr *ANSIRenderer) NewElement(node ast.Node, source []byte) Element {
 
 	// Paragraph
 	case ast.KindParagraph:
-		if node.Parent() != nil {
+		if ctx.options.Source == nil && node.Parent() != nil {
 			kind := node.Parent().Kind()
 			if kind == ast.KindListItem {
 				return Element{}
@@ -146,26 +146,22 @@ func (tr *ANSIRenderer) NewElement(node ast.Node, source []byte) Element {
 			post = ""
 		}
 
+		var marker ElementRenderer = &ItemElement{
+			IsOrdered:   node.Parent().(*ast.List).IsOrdered(),
+			Enumeration: e,
+		}
 		if node.FirstChild() != nil &&
 			node.FirstChild().FirstChild() != nil &&
 			node.FirstChild().FirstChild().Kind() == astext.KindTaskCheckBox {
 			nc := node.FirstChild().FirstChild().(*astext.TaskCheckBox)
-
-			return Element{
-				Exiting: post,
-				Renderer: &TaskElement{
-					Checked: nc.IsChecked,
-				},
-			}
+			marker = &TaskElement{Checked: nc.IsChecked}
 		}
 
-		return Element{
-			Exiting: post,
-			Renderer: &ItemElement{
-				IsOrdered:   node.Parent().(*ast.List).IsOrdered(),
-				Enumeration: e,
-			},
+		if ctx.options.Source != nil {
+			item := &itemBox{marker: marker}
+			return Element{Exiting: post, Renderer: item, Finisher: item}
 		}
+		return Element{Exiting: post, Renderer: marker}
 
 	// Text Elements
 	case ast.KindText:
@@ -210,6 +206,13 @@ func (tr *ANSIRenderer) NewElement(node ast.Node, source []byte) Element {
 		}
 
 	case ast.KindThematicBreak:
+		if ctx.options.Source != nil {
+			return Element{
+				Entering: "\n",
+				Exiting:  "\n",
+				Renderer: thematicBreakElement{},
+			}
+		}
 		return Element{
 			Entering: "",
 			Exiting:  "",

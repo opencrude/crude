@@ -57,6 +57,25 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 			}
 			return response(request, coreprotocol.BoolResult{OK: true})
 		}, true
+	case coreprotocol.AgentPlanEvidence:
+		var in coreprotocol.AgentPlanEvidenceRequest
+		if err := decodeRequest(request, &in); err != nil {
+			return bad(err)
+		}
+		run, err := ws.PrepareReadPlanEvidence(in.AgentID, in.Revision, in.Digest)
+		if err != nil {
+			return done(wire(coreprotocol.AgentPlanEvidenceResult{Error: err.Error()}))
+		}
+		return func(ctx context.Context) coreprotocol.Response {
+			if err := ctx.Err(); err != nil {
+				return fault(request, "cancelled", err.Error())
+			}
+			text, err := run()
+			if err != nil {
+				return response(request, coreprotocol.AgentPlanEvidenceResult{Error: err.Error()})
+			}
+			return response(request, coreprotocol.AgentPlanEvidenceResult{Text: text})
+		}, true
 	case coreprotocol.AgentPlanReviewOpen:
 		var in coreprotocol.AgentPlanReviewOpenRequest
 		if err := decodeRequest(request, &in); err != nil {
@@ -290,7 +309,7 @@ func ownerOperation(method string) bool {
 	switch method {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact, coreprotocol.AgentPlanMode, coreprotocol.AgentGoal, coreprotocol.AgentLoop,
 		coreprotocol.AgentPlanReviewOpen, coreprotocol.AgentPlanComment, coreprotocol.AgentPlanSettle,
-		coreprotocol.HistoryUndoScopes, coreprotocol.CommandViewOpen,
+		coreprotocol.HistoryUndoScopes, coreprotocol.CommandViewOpen, coreprotocol.AgentPlanEvidence,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true
 	}

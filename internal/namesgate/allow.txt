@@ -1,6 +1,7 @@
 # Reviewed exceptions for the names gate: path<TAB>literal<TAB>reason.
 # Each line covers one literal in one file. These files use a name that the
 # catalog also knows, for a purpose that is not code intelligence.
+agent/session/investigation_evidence.go	.md	The session exports a verified Markdown evidence record, not a language mapping.
 app/core_restart.go	.json	Crude's own restart record file.
 types/language_servers.go	.cmd	Native Windows command-wrapper suffix matching, not project language recognition.
 types/language_servers.go	.bat	Native Windows command-wrapper suffix matching, not project language recognition.
@@ -37,7 +38,6 @@ workspace/localhistory/retention.go	.json	Local History's own metadata files.
 workspace/localhistory/snapshot.go	.json	Local History's own metadata files.
 workspace/localhistory/store.go	.json	Local History's own metadata files.
 agent/mcpclient/oauth.go	.json	MCP OAuth token file.
-agent/worktree/review.go	.json	Managed execution records.
 agent/worktree/service.go	.json	Managed execution records.
 agent/provider/mime.go	.svg	Image MIME type for model attachments.
 agent/safety/command_checker.go	.bash_login	Safety rule: commands that write shell startup files.

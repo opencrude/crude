@@ -99,6 +99,9 @@ func (s *Session) SelectExecution(ctx context.Context, id string, revision uint6
 		if err != nil || !c.Ready || c.Removed || c.LogicalRoot != s.WorkDir() {
 			return ExecutionSelection{}, errors.New("execution selection is unavailable or foreign")
 		}
+		if c.Investigation != nil {
+			return ExecutionSelection{}, errors.New("plan investigations cannot be selected for ordinary execution")
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -157,6 +160,9 @@ func (s *Session) lockInputExecution(input provider.UserInput) (func(), error) {
 		if err == nil && (!c.Ready || c.Removed || c.LogicalRoot != s.WorkDir()) {
 			err = errors.New("input execution is no longer available; choose shared or another ready execution")
 		}
+		if err == nil && c.Investigation != nil {
+			err = errors.New("plan investigations cannot receive ordinary input")
+		}
 	}
 	if err != nil {
 		unlock()
@@ -172,6 +178,17 @@ func (s *Session) executionService() (ExecutionService, error) {
 		return nil, errors.New("workspace execution service unavailable")
 	}
 	return s.execution, nil
+}
+
+func (s *Session) validateNoInvestigationMutation(targets []string) error {
+	service, err := s.executionService()
+	if err != nil {
+		return nil // Standalone sessions have no managed store.
+	}
+	if owner, ok := service.(interface{ ValidateOrdinaryMutation([]string) error }); ok {
+		return owner.ValidateOrdinaryMutation(targets)
+	}
+	return nil
 }
 
 func (s *Session) CreateExecution(ctx context.Context, request worktree.Request) (worktree.Context, error) {
@@ -400,6 +417,9 @@ func (s *Session) pinRootExecution(ctx context.Context, id string, owner worktre
 	if !execution.Ready || execution.Removed || execution.LogicalRoot != s.WorkDir() || !filepath.IsAbs(execution.Root) {
 		return "", errors.New("execution artifact is unavailable or belongs to another workspace")
 	}
+	if execution.Investigation != nil {
+		return "", errors.New("plan investigations cannot be used as ordinary execution checkouts")
+	}
 	if err := service.Pin(id, owner); err != nil {
 		return "", err
 	}
@@ -447,10 +467,21 @@ func (s *Session) reconcileRootExecutionPins() {
 				continue
 			}
 			run, err := store.Run(context.Background(), pin.RunID)
-			if err == nil && run.AgentID == pin.AgentID && run.State.Terminal() {
-				if err := service.Unpin(c.ID, pin); err != nil && s.logger != nil {
-					s.logger.Warn("EXECUTION", "root_unpin_failed", "execution_id", c.ID, "run_id", pin.RunID, "error", err.Error())
-				}
+			if err != nil || run.AgentID != pin.AgentID || !run.State.Terminal() {
+				continue
+			}
+			// Inspect the lease after proving the exact run terminal. An edit
+			// or command preparation can outlive that transition, but any new
+			// operation under the lease must verify that its run is live.
+			// Reconciliation never owns the lease, even during a pin write.
+			if c.Investigation != nil && s.planInvestigationToolMu.Busy() {
+				continue
+			}
+			if s.asyncMgr != nil && s.asyncMgr.Running() {
+				return
+			}
+			if err := service.Unpin(c.ID, pin); err != nil && s.logger != nil {
+				s.logger.Warn("EXECUTION", "root_unpin_failed", "execution_id", c.ID, "run_id", pin.RunID, "error", err.Error())
 			}
 		}
 	}

@@ -2,12 +2,15 @@
 package confirmation
 
 import (
-	tea "charm.land/bubbletea/v2"
+	"slices"
 	"strings"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // choiceActionPrefix names a Choice as an action-bar action.
@@ -25,7 +28,9 @@ type Details struct {
 	AutoReview string
 	// OfferAutoReview adds the choice that opens the Auto Review Agent. The
 	// owner sets it while Auto Review is off and the request can be reviewed.
-	OfferAutoReview bool
+	OfferAutoReview   bool
+	InvestigationPath bool
+	Directory         string
 }
 
 // Choice is one answer a tool confirmation offers. The docked screen and the
@@ -66,6 +71,39 @@ func OffersAutoReview(autoReviewOn bool, risk string) bool {
 	return !autoReviewOn && risk != "blocked"
 }
 
+// Choices for host execution do not offer durable workspace permission or auto review.
+func (d Details) Choices() []Choice {
+	if d.Operation == types.PlanInvestigationHostOperation {
+		return []Choice{{ID: types.PlanInvestigationHostAllow, Label: "Allow for this plan", Shortcut: "y", Variant: ui.VariantPrimary}, {ID: ChoiceDeny, Label: "Do not run", Shortcut: "n", Variant: ui.VariantSecondary}}
+	}
+	choices := Choices(d.OfferAutoReview)
+	if d.InvestigationPath {
+		return slices.DeleteFunc(choices, func(c Choice) bool { return c.ID == ChoiceAlways })
+	}
+	return choices
+}
+
+func (d Details) operationLabel() string {
+	if d.Operation == types.PlanInvestigationHostOperation {
+		return ""
+	}
+	return d.Operation
+}
+
+// HostDetails puts the permission warning before the command and folder. The
+// modal and dock show the same scope and decision-critical details.
+func (d Details) HostDetails() string {
+	var lines []string
+	for _, field := range []struct{ label, value string }{
+		{"", d.Reason}, {"Command: ", d.Target}, {"Folder: ", d.Directory}, {"", d.Suggestion},
+	} {
+		if field.value != "" {
+			lines = append(lines, field.label+field.value)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 type ResultMsg struct {
 	Target *Screen
 	Choice string
@@ -94,33 +132,46 @@ func New(th *theme.Theme) *Screen {
 
 func (s *Screen) Reset(details Details) {
 	s.details = details
-	model := ui.NewFormModel()
-	for _, field := range []struct{ id, label, value string }{
-		{"risk", "Risk", riskLabel(details.Risk)}, {"operation", "Operation", details.Operation},
-		{"tool", "Tool", details.Tool}, {"target", "Target", details.Target},
-		{"reason", "Reason", details.Reason}, {"suggestion", "Suggestion", details.Suggestion},
-		{"auto-review", "Auto Review", details.AutoReview},
-	} {
-		if field.value == "" {
-			continue
+	hostConsent := details.Operation == types.PlanInvestigationHostOperation
+	if hostConsent {
+		s.form = ui.NewDockedReadingForm(FormID, "Confirmation required", details.Question+"\n"+details.HostDetails(), s.tokens)
+	} else {
+		model := ui.NewFormModel()
+		for _, field := range []struct{ id, label, value string }{
+			{"risk", "Risk", riskLabel(details.Risk)}, {"operation", "Operation", details.operationLabel()},
+			{"tool", "Tool", details.Tool}, {"target", "Target", details.Target},
+			{"folder", "Folder", details.Directory}, {"reason", "Reason", details.Reason}, {"suggestion", "Suggestion", details.Suggestion},
+			{"auto-review", "Auto Review", details.AutoReview},
+		} {
+			if field.value == "" {
+				continue
+			}
+			value := ui.StringValue(field.value)
+			state := &ui.FieldState{ID: field.id, Label: field.label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true}
+			if lines := strings.Count(field.value, "\n") + 1; lines > 1 {
+				// Exact operation arguments arrive one "path: value" per line.
+				state = ui.TextAreaFieldState(field.id, field.label, field.value, "")
+				state.ReadOnly, state.Rows = true, lines
+			}
+			model.AddField(state)
 		}
-		value := ui.StringValue(field.value)
-		state := &ui.FieldState{ID: field.id, Label: field.label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true}
-		if lines := strings.Count(field.value, "\n") + 1; lines > 1 {
-			// Exact operation arguments arrive one "path: value" per line.
-			state = ui.TextAreaFieldState(field.id, field.label, field.value, "")
-			state.ReadOnly, state.Rows = true, lines
-		}
-		model.AddField(state)
+		s.form = ui.NewDockedForm(FormID, model, "Confirmation required", details.Question, s.tokens)
 	}
-	s.form = ui.NewDockedForm(FormID, model, "Confirmation required", details.Question, s.tokens)
 	var buttons []ui.ActionBarButton
-	for _, choice := range Choices(details.OfferAutoReview) {
+	for _, choice := range details.Choices() {
+		action := choiceActionPrefix + choice.ID
 		buttons = append(buttons, ui.ActionBarButton{ID: ui.NewID(ActionsID, choice.ID), Label: choice.Label,
-			Action: choiceActionPrefix + choice.ID, Shortcut: choice.Shortcut, Variant: choice.Variant, Enabled: true})
+			Action: action, Shortcut: choice.Shortcut, Variant: choice.Variant, Enabled: true})
+		if hostConsent {
+			s.form.SetChordAction(choice.Shortcut, action)
+		}
 	}
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens, buttons...)
 	s.actions.SetCancelAction("confirmation.cancel")
+	if hostConsent {
+		s.actions.SetWrap(true)
+		s.actions.FocusLast()
+	}
 }
 
 func (s *Screen) Dismiss()                 { s.Reset(Details{}) }
@@ -143,15 +194,15 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 var _ ui.PreferredHeightComponent = (*Screen)(nil)
 
-func (s *Screen) PreferredHeight(_, maxHeight int) int {
-	chrome := s.actions.PreferredHeight()
-	return min(maxHeight, s.form.PreferredHeight(max(0, maxHeight-chrome))+chrome)
+func (s *Screen) PreferredHeight(width, maxHeight int) int {
+	chrome := s.actions.PreferredHeightAtWidth(width)
+	return min(maxHeight, s.form.PreferredHeightAtWidth(width, max(0, maxHeight-chrome))+chrome)
 }
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	chrome := s.actions.PreferredHeight()
-	s.form.Layout(ctx, ui.Rect{W: r.W, H: max(1, r.H-chrome)})
-	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-chrome), W: r.W, H: chrome})
+	chrome := min(r.H, s.actions.PreferredHeightAtWidth(r.W))
+	s.form.Layout(ctx, ui.Rect{W: r.W, H: r.H - chrome})
+	s.actions.Layout(ctx, ui.Rect{Y: r.H - chrome, W: r.W, H: chrome})
 }
 func (s *Screen) Paint(_ *surface.CellBuffer, _, _ int, _ ui.PaintContext) {}
 func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
@@ -159,15 +210,21 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		return ui.EventResult{}
 	}
 	key := evt.Key
+	if page := s.form.ReadPage(key); page.Handled {
+		return page
+	}
 	switch key.Code {
 	case tea.KeyEsc:
 		return s.cancel()
 	case tea.KeyEnter:
+		if s.details.Operation == types.PlanInvestigationHostOperation {
+			return s.result(ChoiceDeny)
+		}
 		return s.result(ChoiceAllow)
 	case tea.KeyLeft, tea.KeyRight, tea.KeyTab:
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
-	for _, choice := range Choices(s.details.OfferAutoReview) {
+	for _, choice := range s.details.Choices() {
 		if key.String() == choice.Shortcut {
 			return s.result(choice.ID)
 		}
@@ -179,14 +236,14 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return s.cancel()
 	}
 	if choice, ok := strings.CutPrefix(action.ID, choiceActionPrefix); ok {
-		for _, offered := range Choices(s.details.OfferAutoReview) {
+		for _, offered := range s.details.Choices() {
 			if offered.ID == choice {
 				return s.result(choice)
 			}
 		}
 	}
 	if action.ID == "form.exit.forward" || action.ID == "form.exit.backward" {
-		if action.ID == "form.exit.backward" {
+		if action.ID == "form.exit.backward" || s.details.Operation == types.PlanInvestigationHostOperation {
 			s.actions.FocusLast()
 		} else {
 			s.actions.FocusFirst()

@@ -32,6 +32,7 @@ type recoverySlot struct {
 type recoveryRunState struct {
 	mu                 sync.Mutex
 	pending            provider.UserInput
+	planningCycle      *string
 	inputAdmitted      bool
 	archive            []provider.ChatMessage
 	active             []provider.ChatMessage
@@ -52,6 +53,7 @@ func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.Recover
 		return state
 	}
 	state.pending = cloneUserInput(checkpoint.PendingInput)
+	state.planningCycle = checkpoint.PlanningCycle
 	state.inputAdmitted = checkpoint.InputAdmitted
 	state.archive = append([]provider.ChatMessage(nil), checkpoint.Archive...)
 	state.active = append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
@@ -189,8 +191,13 @@ func (s *recoveryRunState) contextRevisionValue() uint64 {
 func (s *recoveryRunState) checkpoint(status recoverytypes.Status) sessiondb.RecoveryCheckpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.checkpointLocked(status)
+}
+
+func (s *recoveryRunState) checkpointLocked(status recoverytypes.Status) sessiondb.RecoveryCheckpoint {
 	return sessiondb.RecoveryCheckpoint{
 		Status: status, PendingInput: cloneUserInput(s.pending), InputAdmitted: s.inputAdmitted,
+		PlanningCycle:  s.planningCycle,
 		Archive:        append([]provider.ChatMessage(nil), s.archive...),
 		ActiveContext:  append([]provider.ChatMessage(nil), s.active...),
 		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
@@ -203,14 +210,7 @@ func (s *recoveryRunState) checkpoint(status recoverytypes.Status) sessiondb.Rec
 func (s *recoveryRunState) publish(db *sql.DB, sessionID string, status recoverytypes.Status) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	checkpoint := sessiondb.RecoveryCheckpoint{
-		Status: status, PendingInput: cloneUserInput(s.pending), InputAdmitted: s.inputAdmitted,
-		Archive: append([]provider.ChatMessage(nil), s.archive...), ActiveContext: append([]provider.ChatMessage(nil), s.active...),
-		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
-		ContextReason: s.contextReason, OwnerData: append([]byte(nil), s.ownerData...),
-		TerminalSettlement: append(json.RawMessage(nil), s.terminalSettlement...),
-		InFlightTools:      append([]provider.ChatMessage(nil), s.inFlightTools...),
-	}
+	checkpoint := s.checkpointLocked(status)
 	owner, revision := s.contextOwnerID, s.contextRevision
 	sourceRevision := s.sourceRevision
 	dirty := sourceRevision != s.publishedRevision

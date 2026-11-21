@@ -3,6 +3,7 @@ package chatprojection
 import (
 	"strings"
 
+	"crude/tui/bidi"
 	"crude/tui/rendering"
 )
 
@@ -44,6 +45,29 @@ func CopySelection(rows []MessageRow, startLine, startCol, endLine, endCol int) 
 		}
 		lastRow = line
 	}
+	var table rendering.CopyRange
+	tableLine := 0
+	flushTable := func() {
+		if table.Valid() {
+			emit("", table, tableLine)
+			table = rendering.CopyRange{}
+		}
+	}
+	collect := func(text string, source rendering.CopyRange, line int) {
+		if source.Valid() && source.Text.Table {
+			if table.Text != source.Text {
+				flushTable()
+				table, tableLine = source, line
+			} else {
+				table.Start, table.End = min(table.Start, source.Start), max(table.End, source.End)
+			}
+			return
+		}
+		if text != "" || source.Valid() {
+			flushTable()
+			emit(text, source, line)
+		}
+	}
 	for _, row := range rows {
 		for index, plain := range row.Lines {
 			line := lineIndex
@@ -52,6 +76,7 @@ func CopySelection(rows []MessageRow, startLine, startCol, endLine, endCol int) 
 				continue
 			}
 			if line > endLine {
+				flushTable()
 				return out.String()
 			}
 			start, end := 0, 1<<30
@@ -62,10 +87,17 @@ func CopySelection(rows []MessageRow, startLine, startCol, endLine, endCol int) 
 				end = endCol
 			}
 			if index >= len(row.Native) {
-				emit(rendering.ExtractVisibleRange(rendering.StripAnsi(plain), start, end), rendering.CopyRange{}, line)
+				collect(rendering.ExtractVisibleRange(rendering.StripAnsi(plain), start, end), rendering.CopyRange{}, line)
 				continue
 			}
 			native := row.Native[index]
+			if native.prose != nil {
+				for _, box := range native.prose.boxes {
+					if box.Cell.Source.Start == box.Cell.Source.End && start <= box.Start+native.prose.shift && end >= box.End+native.prose.shift {
+						collect("", box.Cell.Source, line)
+					}
+				}
+			}
 			col := 0
 			for _, span := range native.Spans {
 				width := rendering.VisibleWidth(span.Text)
@@ -77,16 +109,17 @@ func CopySelection(rows []MessageRow, startLine, startCol, endLine, endCol int) 
 					selected := rendering.ExtractVisibleRange(span.Text, from, to)
 					if selected != "" {
 						part := span.Slice(len(prefix), len(prefix)+len(selected))
-						emit("", part.Copy, line)
+						collect("", part.Copy, line)
 					}
 				}
 				if to > from && !span.Copy.Valid() && !native.SourceAware {
-					emit(rendering.ExtractVisibleRange(span.Text, from, to), rendering.CopyRange{}, line)
+					collect(rendering.ExtractVisibleRange(span.Text, from, to), rendering.CopyRange{}, line)
 				}
 				col += width
 			}
 		}
 	}
+	flushTable()
 	return out.String()
 }
 
@@ -109,11 +142,30 @@ func AnchorAt(rows []MessageRow, line, col int) (CopyAnchor, bool) {
 		if at < 0 || at >= len(row.Native) || !row.Native[at].SourceAware {
 			return CopyAnchor{}, false
 		}
+		native := row.Native[at]
+		var domain rendering.CopyRange
+		if native.prose != nil {
+			shift := native.prose.shift
+			for _, box := range native.prose.boxes {
+				if col >= box.Start+shift && col < box.End+shift {
+					domain = box.Cell.Source
+					if box.Cell.RTL && bidi.Current().Arrange {
+						switch {
+						case col < box.ContentStart+shift:
+							col = box.ContentEnd + shift
+						case col >= box.ContentEnd+shift:
+							col = box.ContentStart + shift
+						}
+					}
+					break
+				}
+			}
+		}
 		x := 0
 		var last CopyAnchor
-		for _, span := range row.Native[at].Spans {
+		for _, span := range native.Spans {
 			width := rendering.VisibleWidth(span.Text)
-			if span.Copy.Valid() {
+			if span.Copy.Valid() && (!domain.Valid() || span.Copy.Text == domain.Text && span.Copy.Start >= domain.Start && span.Copy.End <= domain.End) {
 				last = CopyAnchor{MessageID: row.ID, Source: span.Copy.Text, Offset: span.Copy.End}
 				if col <= x+width {
 					n := len(rendering.ExtractVisibleRange(span.Text, 0, max(0, col-x)))
@@ -128,6 +180,9 @@ func AnchorAt(rows []MessageRow, line, col int) (CopyAnchor, bool) {
 				}
 			}
 			x += width
+		}
+		if last.Source == nil && domain.Valid() {
+			last = CopyAnchor{MessageID: row.ID, Source: domain.Text, Offset: domain.End}
 		}
 		return last, last.Source != nil
 	}
@@ -164,11 +219,10 @@ func LocateAnchor(rows []MessageRow, anchor CopyAnchor) (line, col int, ok bool)
 	return 0, 0, false
 }
 
-// SourceSelectionCols projects one logical source selection into a painted row.
+// SourceSelectionRanges projects one logical source selection into a painted row.
 // Only spans from that source are highlighted, not adjacent table cells, rails
 // or wrap padding. Expanded source units remain atomic in both copy and paint.
-func SourceSelectionCols(line PaintLine, selection rendering.CopyRange) (start, end int) {
-	found := false
+func SourceSelectionRanges(dst []bidi.ColumnRange, line PaintLine, selection rendering.CopyRange) []bidi.ColumnRange {
 	col := 0
 	for _, span := range line.Spans {
 		width := rendering.VisibleWidth(span.Text)
@@ -181,14 +235,14 @@ func SourceSelectionCols(line PaintLine, selection rendering.CopyRange) (start, 
 					a += rendering.VisibleWidth(span.Text[:from-source.Start])
 					b = col + rendering.VisibleWidth(span.Text[:to-source.Start])
 				}
-				if !found {
-					start = a
-					found = true
+				if n := len(dst); n > 0 && dst[n-1].End == a {
+					dst[n-1].End = b
+				} else {
+					dst = append(dst, bidi.ColumnRange{Start: a, End: b})
 				}
-				end = b
 			}
 		}
 		col += width
 	}
-	return
+	return dst
 }

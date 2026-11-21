@@ -13,7 +13,7 @@ import (
 	"crude/workspace/fileio"
 )
 
-func executeCodexCommand(ctx context.Context, mgr *fileio.AsyncCommandManager, root, tool string, params map[string]any, policy safety.CommandPolicy) (tools.ToolResult, error) {
+func executeCodexCommand(ctx context.Context, mgr *fileio.AsyncCommandManager, root, tool string, params map[string]any, policy safety.CommandPolicy, commandOptions ...*fileio.CommandOptions) (tools.ToolResult, error) {
 	if mgr == nil {
 		return tools.ToolResult{}, fmt.Errorf("command manager unavailable")
 	}
@@ -54,14 +54,16 @@ func executeCodexCommand(ctx context.Context, mgr *fileio.AsyncCommandManager, r
 			}
 		}
 		wait := max(250, min(tools.GetIntArgAny(params, "yield_time_ms", 10000), 30000))
-		result, err = mgr.StartInteractive(ctx, options, time.Duration(wait)*time.Millisecond, maxTokens)
+		result, err = mgr.StartInteractive(ctx, options, time.Duration(wait)*time.Millisecond, maxTokens, commandOptions...)
 	}
 	if err != nil && result.OutputDescriptor.Status == "" {
 		return tools.ToolResult{Content: "Error: " + err.Error()}, err
 	}
-	result.Cancelled = errors.Is(err, context.Canceled)
+	result.Cancelled = result.Cancelled || errors.Is(err, context.Canceled)
 	if err == nil && result.ExitCode != nil && *result.ExitCode != 0 {
 		err = fmt.Errorf("command exited with code %d", *result.ExitCode)
+	} else if err == nil && result.Failed() {
+		err = fmt.Errorf("command failed: %s", result.Error)
 	}
 	return tools.ToolResult{Content: tools.CommandResultContent(result)}, err
 }

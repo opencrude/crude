@@ -71,6 +71,32 @@ type PlanRevision struct {
 	CreatedAt time.Time     `json:"created_at"`
 	Outcome   PlanOutcome   `json:"outcome,omitempty"`
 	Comments  []PlanComment `json:"comments,omitempty"`
+	// NewSessionID is the exact destination for a New session handoff.
+	// If the revision is still open, check this destination before retrying.
+	NewSessionID string `json:"new_session_id,omitempty"`
+	// Evidence is bound by the session when it records this exact revision.
+	Evidence []PlanEvidenceRef `json:"evidence,omitempty"`
+	// EvidenceOmitted counts older command records beyond the planning cycle's
+	// retained window. Earlier revisions keep their own referenced records.
+	EvidenceOmitted int `json:"evidence_omitted,omitempty"`
+}
+
+// PlanEvidenceStatus reports what an investigation command established.
+type PlanEvidenceStatus string
+
+const (
+	PlanEvidencePassed       PlanEvidenceStatus = "passed"
+	PlanEvidenceFailed       PlanEvidenceStatus = "failed"
+	PlanEvidenceInterrupted  PlanEvidenceStatus = "interrupted"
+	PlanEvidenceInconclusive PlanEvidenceStatus = "inconclusive"
+)
+
+// PlanEvidenceRef identifies immutable investigation evidence. The command is
+// only a display label; use the owning session and revision to read by digest.
+type PlanEvidenceRef struct {
+	Digest  string             `json:"digest"`
+	Command string             `json:"command"`
+	Status  PlanEvidenceStatus `json:"status"`
 }
 
 // Open reports whether the revision can still take comments and be settled.
@@ -159,12 +185,12 @@ type PlanReviewSettle struct {
 	Revision int              `json:"revision"`
 	Action   PlanReviewAction `json:"action"`
 	Text     string           `json:"text"`
+	// DestinationSessionID is the session that the shell created for New session.
+	DestinationSessionID string `json:"destination_session_id,omitempty"`
 }
 
 // PlanReviewSettlement is the message of a settled action: Text for the model
-// and Display for the transcript. For feedback and implement the core queues
-// it with the settled record; for a new session the shell sends it as that
-// session's first message.
+// and Display for the transcript. The core sends it; the shell does not replay it.
 type PlanReviewSettlement struct {
 	Text    string `json:"text"`
 	Display string `json:"display,omitempty"`

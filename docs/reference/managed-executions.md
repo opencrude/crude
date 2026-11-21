@@ -23,6 +23,30 @@ editing. This is a conservative policy, not universal automatic task analysis or
 a security sandbox. File claims cannot constrain opaque command/MCP effects.
 Use the service, not ad hoc shell `git worktree` setup or merge improvisation.
 
+## Plan investigations
+
+A root can open an explicit isolated checkout to gather evidence in Plan mode,
+without selecting an execution or launching a child. Its session, planning
+cycle and source identify it across turns; its creating run is still the
+worktree owner. Creation retries observe the same manifest. A partial setup is
+not runnable. Plan-only checkout access is distinct from a general execution
+selection, child source, or integration target. The planning session retains
+the checkout between turns; terminal run pins alone cannot represent review or
+cold recovery. Ending the cycle can release it only after exact retention
+checks and verified archival. Immutable revision evidence is independent of the
+live checkout. For consent, review and handoff see [Plan mode](session-commands.md#investigation-worktrees).
+
+The service writes the investigation baseline once, before publishing the first
+state record. Readiness, pins, Keep and discard decisions write only that compact
+record. Summary reads copy metadata without reading or exporting evidence. Cold
+open verifies live baseline bytes and accepted document revisions before use.
+The service verifies the durable baseline again before disposal and publishes
+any result as separate checked evidence before changing or removing the checkout.
+It retains these files after disposal for exact inspection. Files left by an
+interrupted publication do not create a runnable checkout; startup does not
+delete them. This storage contract is only for Plan investigations. Ordinary
+managed manifests and archives keep their existing format.
+
 ## Faithful baseline
 
 Creation captures the current dirty tracked/untracked files and accepted shared

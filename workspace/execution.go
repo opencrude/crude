@@ -68,6 +68,13 @@ func (s *ExecutionService) Create(ctx context.Context, request worktree.Request)
 }
 
 func (s *ExecutionService) Apply(ctx context.Context, plan worktree.PlanDelta) (worktree.Receipt, error) {
+	c, err := s.InspectSummary(plan.ContextID)
+	if err != nil {
+		return worktree.Receipt{}, err
+	}
+	if c.Investigation != nil {
+		return worktree.Receipt{}, worktree.ErrInvestigationIntegration
+	}
 	if s.documents == nil || s.history == nil || s.history.store == nil {
 		return worktree.Receipt{}, errors.New("execution integration requires document authority and Local History")
 	}
@@ -87,8 +94,17 @@ func (s *ExecutionService) Review(ctx context.Context, id string) (worktree.Plan
 		return worktree.PlanDelta{}, err
 	}
 	defer unlock()
-	if err := s.checkoutDocumentsLocked(id); err != nil {
+	c, err := s.InspectSummary(id)
+	if err != nil {
 		return worktree.PlanDelta{}, err
+	}
+	if err := s.checkoutDocumentsLocked(c); err != nil {
+		return worktree.PlanDelta{}, err
+	}
+	if c.Investigation != nil {
+		// Evidence describes the investigation's exact changes, independent
+		// of accepted edits in the logical destination. It is not a merge plan.
+		return s.Service.Review(ctx, id)
 	}
 	documents, err := s.documents.executionDocumentsLocked()
 	if err != nil {
@@ -103,19 +119,35 @@ func (s *ExecutionService) ReviewDiscard(ctx context.Context, id string) (worktr
 	}
 	s.documents.mu.Lock()
 	defer s.documents.mu.Unlock()
-	if err := s.checkoutDocumentsLocked(id); err != nil {
+	c, err := s.InspectSummary(id)
+	if err != nil {
+		return worktree.PlanDelta{}, err
+	}
+	if err := s.checkoutDocumentsLocked(c); err != nil {
 		return worktree.PlanDelta{}, err
 	}
 	return s.Service.ReviewDiscard(ctx, id)
 }
 
+func (s *ExecutionService) PrepareInvestigationDiscard(ctx context.Context, id string) (string, error) {
+	if s.documents == nil {
+		return "", errors.New("document authority unavailable")
+	}
+	s.documents.mu.Lock()
+	defer s.documents.mu.Unlock()
+	c, err := s.InspectSummary(id)
+	if err != nil {
+		return "", err
+	}
+	if err := s.checkoutDocumentsLocked(c); err != nil {
+		return "", err
+	}
+	return s.Service.PrepareInvestigationDiscard(ctx, id)
+}
+
 // Managed source edits must be saved before review so no accepted human text is
 // silently omitted. Cleanup holds this same owner lock through removal.
-func (s *ExecutionService) checkoutDocumentsLocked(id string) error {
-	c, err := s.Inspect(id)
-	if err != nil {
-		return err
-	}
+func (s *ExecutionService) checkoutDocumentsLocked(c worktree.Context) error {
 	if c.Root == c.LogicalRoot {
 		return nil
 	}
@@ -152,7 +184,7 @@ func (s *ExecutionService) Integration(operationID string) (IntegrationStatus, e
 // supplied evidence. The artifact owner additionally verifies source archives
 // and refuses pins/Keep/newer unintegrated changes before ordinary Git removal.
 func (s *ExecutionService) Cleanup(ctx context.Context, id string, owner worktree.Owner, options ...worktree.CleanupOptions) error {
-	c, err := s.Inspect(id)
+	c, err := s.InspectSummary(id)
 	if err != nil {
 		return err
 	}
@@ -176,7 +208,7 @@ func (s *ExecutionService) Cleanup(ctx context.Context, id string, owner worktre
 	}
 	s.documents.mu.Lock()
 	defer s.documents.mu.Unlock()
-	if err := s.checkoutDocumentsLocked(id); err != nil {
+	if err := s.checkoutDocumentsLocked(c); err != nil {
 		return err
 	}
 	return s.Service.Cleanup(ctx, id, owner, options...)

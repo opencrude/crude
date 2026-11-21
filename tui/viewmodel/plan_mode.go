@@ -50,7 +50,7 @@ func (m *App) applyPlanModeResult(msg planModeResultMsg) tea.Cmd {
 	if m.ActiveSession != nil && m.ws.SessionsByAgent()[msg.agentID] == m.ActiveSession {
 		label := "Plan off · next turn"
 		if msg.enabled {
-			label = "Plan on · next turn is read-only"
+			label = "Plan on · next turn"
 		}
 		m.Feedback.NotifyInfo(label)
 	}

@@ -97,9 +97,15 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			}
 		}
 		resolveRelativeParamsAtRoot(root, tool, params)
-		if isWriteTool(tool) && root != s.WorkDir() {
-			if err := validateExecutionWriteTargets(root, s.TempDir(), writeToolTargets(tool, params)); err != nil {
+		if isWriteTool(tool) {
+			targets := writeToolTargets(tool, params)
+			if err := s.validateNoInvestigationMutation(targets); err != nil {
 				return tools.ToolResult{}, err
+			}
+			if root != s.WorkDir() {
+				if err := validateExecutionWriteTargets(root, s.TempDir(), targets); err != nil {
+					return tools.ToolResult{}, err
+				}
 			}
 		}
 		s.recordToolTouch(tool, params)
@@ -220,6 +226,13 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			}
 			opts.WorkDir = root
 			opts.PrepareMutation = func(receipt fileio.MutationReceipt) (fileio.MutationComplete, error) {
+				targets := make([]string, 0, len(receipt.Paths))
+				for _, state := range receipt.Paths {
+					targets = append(targets, state.Path)
+				}
+				if err := s.validateNoInvestigationMutation(targets); err != nil {
+					return nil, err
+				}
 				return s.prepareHistoryMutation(ctx, receipt)
 			}
 			result := tools.ExecuteWithJSONOptions(tool, params, s.exec, s.editor, s.YoloEnabled(), s.logger, ctx, opts)
@@ -309,7 +322,7 @@ func getStrParam(params map[string]any, key string) string {
 	return ""
 }
 
-func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
+func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[string]any, options ...*fileio.CommandOptions) (tools.ToolResult, error) {
 	cmd := getStrParam(params, "command")
 	if cmd == "" {
 		return tools.ToolResult{}, fmt.Errorf("execute_command: missing 'command'")
@@ -336,7 +349,7 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 		timeout = 60
 	}
 
-	uc, err := s.asyncMgr.StartUntracked(cmd, cwd, timeout)
+	uc, err := s.asyncMgr.StartUntracked(cmd, cwd, timeout, options...)
 	if err != nil {
 		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
 	}

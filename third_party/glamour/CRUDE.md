@@ -19,6 +19,24 @@ instead of being interpreted a second time. Parsed block/cell boundaries retain
 semantic separators. No parser, highlighter, table engine or wrap algorithm is
 reimplemented here.
 
+Mapped chat tables additionally keep parsed cells in source order for copy
+and pass RTL header order to Lip Gloss as a column permutation. A neutral
+header takes the enclosing list or quote's direction, then LTR. Goldmark's
+containers pick a direction once from their first strong prose character,
+skipping tables and code, and inherit when neutral. Glamour measures marker
+and rail widths at layout, reserves each item's marker width on continuation
+rows, and annotates the outside prefix on every row of the container. Crude
+places those prefixes at inline-start, independently from the contained
+paragraph direction. It resolves marker text in its own bidi run, as in
+[CSS Lists 3](https://drafts.csswg.org/css-lists-3/#marker-pseudo).
+
+Heading decoration also stays outside the source paragraph. The pinned Lip
+Gloss layout hooks mark final cell boxes and their wrapped text, before it
+is joined with adjacent columns. Thematic breaks use the actual block width
+as non-source decoration. Mapped padding writes one styled run of spaces
+instead of formatting each column separately. Unmapped rendering retains
+upstream output.
+
 Inferred file-reference AutoLink nodes carry the private
 `crude-source-reference` attribute. They use the normal link painter with their
 literal source spelling, including inside tables, without a duplicate footer.

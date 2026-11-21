@@ -259,6 +259,26 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		return intent.result
 	}
 	defer s.finishInputAdmission(intent)
+	// Reserve the next-turn policy before the filesystem mutation lock
+	// (settling a plan also takes settings before that lock). The recovery
+	// envelope publishes it with the accepted input and its original revision.
+	// Starting this already-admitted turn must not publish the context again.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	input := cloneUserInput(intent.request.input)
+	sourceID := ""
+	if input.ControlTarget != nil {
+		sourceID = input.ControlTarget.ExecutionID
+	}
+	cycle, releasePolicy, err := s.capturePlanInvestigationTurn(context.WithoutCancel(ctx), nil, sourceID, input.InternalID)
+	if err != nil {
+		intent.orchestrator.endTurn(intent.TurnGeneration)
+		intent.committed = true
+		intent.result = InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionStorageFailure, Err: err}
+		return intent.result
+	}
+	defer releasePolicy()
 	unlock, executionErr := s.lockInputExecution(intent.request.input)
 	if executionErr != nil {
 		intent.orchestrator.endTurn(intent.TurnGeneration)
@@ -271,13 +291,9 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		intent.orchestrator.endTurn(intent.TurnGeneration)
 		return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionStorageFailure, Err: err}
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	// Context cancellation stops execution, not ownership of an already
 	// prepared local send. Persistence uses the session lifetime below.
 	orchestrator, request := intent.orchestrator, intent.request
-	input := cloneUserInput(request.input)
 	var cfg *Config
 	if s.runtimeProfile != nil {
 		cfg = s.runtimeProfile.GetEffectiveConfig(intent.AgentID)
@@ -297,7 +313,7 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 	}
 	checkpoint := sessiondb.RecoveryCheckpoint{
 		Status:       agent.NewSupervisor(intent.AgentID, request.generation, nil).CheckpointStatus(),
-		PendingInput: cloneUserInput(input), InputAdmitted: true,
+		PendingInput: cloneUserInput(input), InputAdmitted: true, PlanningCycle: &cycle,
 		Archive:       append([]provider.ChatMessage(nil), s.msgs...),
 		ActiveContext: append([]provider.ChatMessage(nil), s.activeContext...),
 	}

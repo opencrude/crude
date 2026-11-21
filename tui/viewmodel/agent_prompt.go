@@ -12,6 +12,7 @@ import (
 	"crude/tui/screens/question"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -23,18 +24,20 @@ const (
 )
 
 type agentPromptRequest struct {
-	kind          agentPromptKind
-	agentID       string
-	blockID       string
-	question      string
-	operation     string
-	tool          string
-	target        string
-	risk          string
-	reason        string
-	suggestion    string
-	autoReview    string
-	questionsJSON string
+	kind              agentPromptKind
+	agentID           string
+	blockID           string
+	question          string
+	operation         string
+	investigationPath bool
+	directory         string
+	tool              string
+	target            string
+	risk              string
+	reason            string
+	suggestion        string
+	autoReview        string
+	questionsJSON     string
 }
 
 type agentPromptState struct {
@@ -52,7 +55,7 @@ func (s *agentPromptState) panelID() string {
 }
 
 func (m *App) enqueueAgentConfirmation(req agentPromptRequest) {
-	if m.agentYoloEnabled(req.agentID) {
+	if req.operation != types.PlanInvestigationHostOperation && m.agentYoloEnabled(req.agentID) {
 		return
 	}
 	m.enqueueAgentPrompt(req)
@@ -99,18 +102,18 @@ func (m *App) refreshConfirmationChoices(state *agentPromptState, force bool) bo
 	if state == nil || state.confirmation == nil {
 		return false
 	}
-	offer := m.autoReviewSetupAvailable(state.request.risk)
+	offer := state.request.operation != types.PlanInvestigationHostOperation && m.autoReviewSetupAvailable(state.request.risk)
 	if !force && offer == state.offerAutoReview {
 		return false
 	}
 	req := state.request
 	state.offerAutoReview = offer
-	state.choice = min(state.choice, len(confirmation.Choices(offer))-1)
 	state.confirmation.Reset(confirmation.Details{
 		Question: req.question, Operation: req.operation, Tool: req.tool, Target: req.target,
 		Risk: req.risk, Reason: req.reason, Suggestion: req.suggestion, AutoReview: req.autoReview,
-		OfferAutoReview: offer,
+		OfferAutoReview: offer, InvestigationPath: req.investigationPath, Directory: req.directory,
 	})
+	state.choice = min(state.choice, len(state.confirmation.Details().Choices())-1)
 	return true
 }
 
@@ -138,7 +141,7 @@ func (m *App) openNextAgentPrompt() {
 			m.removeAgentPrompt(state)
 			continue
 		}
-		if state.request.kind == agentPromptConfirmation && m.agentYoloEnabled(state.request.agentID) {
+		if state.request.kind == agentPromptConfirmation && state.request.operation != types.PlanInvestigationHostOperation && m.agentYoloEnabled(state.request.agentID) {
 			m.ws.ResolveConfirmation(state.request.agentID, state.request.blockID, "allow")
 			m.removeAgentPrompt(state)
 			continue
@@ -255,17 +258,27 @@ func (m *App) promptForScreen(target any) *agentPromptState {
 
 func (m *App) openAgentConfirmationPrompt(state *agentPromptState) {
 	req := state.request
+	operation := req.operation
+	if operation == types.PlanInvestigationHostOperation {
+		operation = ""
+	}
 	detail := strings.Join(nonemptyPromptParts(
 		promptPart("Agent", m.promptOwnerLabel(state.request.agentID)),
-		promptPart("Operation", req.operation), promptPart("Tool", req.tool), promptPart("Target", req.target),
-		promptPart("Risk", req.risk), promptPart("Reason", req.reason), promptPart("Suggestion", req.suggestion),
+		promptPart("Operation", operation), promptPart("Tool", req.tool), promptPart("Target", req.target),
+		promptPart("Folder", req.directory), promptPart("Risk", req.risk), promptPart("Reason", req.reason), promptPart("Suggestion", req.suggestion),
 		promptPart("Auto Review", req.autoReview),
 	), "\n")
+	if req.operation == types.PlanInvestigationHostOperation {
+		detail = strings.Join(nonemptyPromptParts(
+			promptPart("Agent", m.promptOwnerLabel(state.request.agentID)),
+			state.confirmation.Details().HostDetails(),
+		), "\n")
+	}
 	severity := ui.ConfirmPromptWarning
 	if req.risk == "destructive" || req.risk == "blocked" {
 		severity = ui.ConfirmPromptDanger
 	}
-	choices := confirmation.Choices(state.offerAutoReview)
+	choices := state.confirmation.Details().Choices()
 	buttons := make([]ui.ConfirmButtonSpec, len(choices))
 	for i, choice := range choices {
 		buttons[i] = ui.ConfirmButtonSpec{Label: choice.Label, ActionID: confirmChoiceActionID(choice.ID)}
@@ -315,7 +328,7 @@ func (m *App) handleAgentPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	count := len(confirmation.Choices(state.offerAutoReview))
+	count := len(state.confirmation.Details().Choices())
 	switch msg.Code {
 	case tea.KeyLeft, tea.KeyUp:
 		if n := ui.MoveConfirmFocus(cw, -1, count); n >= 0 {
@@ -342,7 +355,7 @@ func (m *App) resolveAgentConfirmationChoice(choice int) {
 	if state == nil || state.inline {
 		return
 	}
-	choices := confirmation.Choices(state.offerAutoReview)
+	choices := state.confirmation.Details().Choices()
 	choiceName := confirmation.ChoiceDeny
 	if choice >= 0 && choice < len(choices) {
 		choiceName = choices[choice].ID
@@ -359,7 +372,7 @@ func (m *App) resolveAgentConfirmationChoice(choice int) {
 // action vocabulary so its button variants read like the docked screen.
 func confirmChoiceActionID(choiceID string) string {
 	switch choiceID {
-	case confirmation.ChoiceAllow:
+	case confirmation.ChoiceAllow, types.PlanInvestigationHostAllow:
 		return ui.ConfirmActionYes
 	case confirmation.ChoiceAlways:
 		return ui.ConfirmActionSave

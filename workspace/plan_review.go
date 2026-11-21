@@ -32,6 +32,16 @@ func (w *Workspace) PrepareOpenPlanRevision(agentID string, revision int) (func(
 	return func() (string, error) { return backend.OpenPlanRevision(revision) }, nil
 }
 
+// PrepareReadPlanEvidence fixes the session before the worker reads its verified record.
+func (w *Workspace) PrepareReadPlanEvidence(agentID string, revision int, digest string) (func() (string, error), error) {
+	sess := w.SessionsByAgent[agentID]
+	if sess == nil || sess.backend == nil {
+		return nil, errPlanReviewOwner
+	}
+	backend := sess.backend
+	return func() (string, error) { return backend.ReadPlanEvidence(revision, digest) }, nil
+}
+
 // PrepareEditPlanComment resolves the owner before persistence.
 func (w *Workspace) PrepareEditPlanComment(agentID string, edit types.PlanCommentEdit) (func() error, error) {
 	sess := w.SessionsByAgent[agentID]
@@ -51,6 +61,10 @@ func (w *Workspace) PrepareSettlePlanReview(agentID string, settle types.PlanRev
 		return nil, errPlanReviewOwner
 	}
 	backend, docs := sess.backend, w.LiveDocuments
+	var destination *session.Session
+	if settle.Action == types.PlanReviewNewSession {
+		destination = w.BackendSession(settle.DestinationSessionID)
+	}
 	return func(ctx context.Context) (types.PlanReviewSettlement, error) {
 		if err := ctx.Err(); err != nil {
 			return types.PlanReviewSettlement{}, err
@@ -59,7 +73,7 @@ func (w *Workspace) PrepareSettlePlanReview(agentID string, settle types.PlanRev
 		if input.Text == "" {
 			review, _ := backend.PlanReview()
 			latest, _ := review.Latest()
-			if latest.Number == input.Revision && latest.Path != "" && latest.Open() {
+			if latest.Number == input.Revision && latest.Path != "" && latest.Open() && latest.NewSessionID == "" {
 				var open bool
 				if docs != nil {
 					snap, found := docs.SnapshotIfOpen(latest.Path)
@@ -83,7 +97,7 @@ func (w *Workspace) PrepareSettlePlanReview(agentID string, settle types.PlanRev
 		if err := ctx.Err(); err != nil {
 			return types.PlanReviewSettlement{}, err
 		}
-		return backend.SettlePlanReviewForAgent(ctx, agentID, input, sender)
+		return backend.SettlePlanReviewForAgent(ctx, agentID, input, sender, destination)
 	}, nil
 }
 

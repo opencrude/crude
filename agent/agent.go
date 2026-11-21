@@ -86,6 +86,9 @@ type Agent struct {
 	// CommandApprovals holds the session's "Always allow" answers for
 	// commands. Nil records nothing.
 	CommandApprovals CommandApprovals
+	// PlanInvestigation is set only on a root turn that started in Plan mode.
+	// It grants no generic execution or file-write capability.
+	PlanInvestigation *PlanInvestigationPolicy
 	// PermissionPolicyChanged returns a channel that closes at the next
 	// change of the session's permission policy, such as Auto Review being
 	// turned on. A waiting permission request is then checked again.

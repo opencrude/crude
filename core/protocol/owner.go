@@ -12,6 +12,7 @@ import (
 const (
 	AgentYolo           = "agent.yolo"
 	AgentPlanMode       = "agent.plan_mode"
+	AgentPlanEvidence   = "agent.plan_evidence"
 	AgentPlanReviewOpen = "agent.plan_review_open"
 	AgentPlanComment    = "agent.plan_comment"
 	AgentPlanSettle     = "agent.plan_review_settle"
@@ -59,6 +60,17 @@ type AgentPlanReviewOpenRequest struct {
 
 type AgentPlanReviewOpenResult struct {
 	Path  string
+	Error string
+}
+
+type AgentPlanEvidenceRequest struct {
+	AgentID  string
+	Revision int
+	Digest   string
+}
+
+type AgentPlanEvidenceResult struct {
+	Text  string
 	Error string
 }
 

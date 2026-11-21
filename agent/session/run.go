@@ -215,6 +215,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	userInput := request.input
 	ctx := request.ctx
 	turnGeneration := request.generation
+	sourceExecutionID := ""
+	if userInput.ControlTarget != nil {
+		sourceExecutionID = userInput.ControlTarget.ExecutionID
+	}
+	var persistedCycle *string
+	if request.recovery != nil {
+		persistedCycle = request.recovery.PlanningCycle
+	}
+	planningCycle, releasePlanTurn, cycleErr := s.capturePlanInvestigationTurn(ctx, persistedCycle, sourceExecutionID, userInput.InternalID)
+	defer func() { releasePlanTurn() }()
 	recoveryState := newRecoveryRunState(userInput, request.recovery)
 	if request.recovery == nil {
 		s.msgsMu.Lock()
@@ -437,6 +447,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			s.parkRecovery(recoveryState.checkpoint(status))
 			recoveryParked = true
 		}
+		releasePlanTurn()
 		o.endTurn(turnGeneration)
 		if !recoveryParked {
 			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
@@ -518,6 +529,18 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			return true
 		}
 	}
+	if cycleErr != nil && !recoverStep(agent.RecoveryFailureStorage, func() error {
+		planningCycle, releasePlanTurn, cycleErr = s.capturePlanInvestigationTurn(ctx, persistedCycle, sourceExecutionID, userInput.InternalID)
+		return cycleErr
+	}) {
+		return
+	}
+	if persistedCycle == nil {
+		// The next-turn setting is not part of the submitted input. Freeze
+		// the decision even for an ordinary turn and save it before preflight
+		// or provider work can fail. A resumed turn reads this same decision.
+		recoveryState.planningCycle = &planningCycle
+	}
 	if request.retry {
 		s.msgsMu.Lock()
 		recoveryState.snapshot(s.msgs, s.activeContext)
@@ -535,12 +558,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		request.recovery.Archive, request.recovery.ActiveContext = recoveryState.contexts()
 	}
-	if !locallyAdmitted && !request.retry {
-		// The connected admission receipt already committed this exact input,
-		// preparation and initial recovery envelope atomically. Retry likewise
-		// published its continuation above. Direct execution, which just
-		// admitted the submitted row here, still needs its first
-		// envelope; never rewrite an unchanged image snapshot before every run.
+	if !request.retry && (!locallyAdmitted || persistedCycle == nil) {
+		// Direct execution needs its first envelope. An admitted turn adds
+		// only the policy it just captured to its existing envelope. Retry
+		// already published the policy alongside its continuation above.
 		if !recoverStep(agent.RecoveryFailureStorage, func() error {
 			return s.persistPendingRecovery(supervisor)
 		}) {
@@ -867,7 +888,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	eventSource := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
 	// Plan mode is fixed for the whole turn; a toggle applies from the next one.
-	planMode := s.PlanMode()
+	planMode := planningCycle != ""
 	sendRuntimeEvent(sender, eventSource.bind(agent.AgentEvent{Type: "turn_started", Data: turnIdentity}))
 	planModeEnded := s.notePlanModeTurn(planMode)
 	s.syncGoalPlanAccounting(&planMode)
@@ -882,8 +903,12 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	ag.WorkDir = executionRoot
 	ag.ToolFn = s.buildToolFnAtRoot(effectiveCfg.IsMultiAgentEnabled(), turnProvider, activeCfg.ModelModalities, executionRoot)
+	investigationOwner := worktree.Owner{AgentID: o.ID, RunID: collaborationRun.ID}
 	if planMode {
 		ag.Policy = safety.ReadOnlyPolicy()
+		ag.PlanInvestigation = &agent.PlanInvestigationPolicy{HostCommand: func(toolCtx context.Context, tool string, params map[string]any) (*agent.PlanInvestigationHostRequest, error) {
+			return s.planInvestigationHostRequest(withPlanInvestigationCycle(toolCtx, planningCycle), sourceExecutionID, executionRoot, investigationOwner, tool, params)
+		}}
 	}
 	ag.GuidancePaths = append([]string(nil), userInput.ActivePaths...)
 	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
@@ -944,12 +969,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	baseToolFn := ag.ToolFn
 	ag.ToolFn = func(toolCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		toolCtx = withDelegationOwner(toolCtx, o.ID, turnGeneration)
 		if planMode {
+			if tool == "open_plan_investigation" || planInvestigationFileTool(tool) || planInvestigationCommandTool(tool) || tool == "write_stdin" {
+				return s.executePlanInvestigationTool(withPlanInvestigationCycle(toolCtx, planningCycle), sourceExecutionID, executionRoot, investigationOwner, turnGeneration, tool, params)
+			}
 			if err := planModeRefusal(tool, params, ag.ToolMetadata, s.logger, s.agentShell().Syntax); err != nil {
 				return tools.ToolResult{AgentHint: rootprompt.HintPlanMode, Outcome: toolresult.Outcome{State: toolresult.Denied}}, err
 			}
 		}
-		return baseToolFn(withDelegationOwner(toolCtx, o.ID, turnGeneration), tool, params)
+		return baseToolFn(toolCtx, tool, params)
 	}
 	ag.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
 		// Publish the tool snapshot and its settings notices together, after
@@ -959,7 +988,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
 		defs, notices := configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
 		if planMode {
-			defs = planModeTools(defs, ag.ToolMetadata)
+			category := current.GetActiveDefaultCategory()
+			defs = append(defs, agent.FilterToolsForModel([]tools.ToolDef{tools.OpenPlanInvestigationTool}, category.AllowedTools, category.DeniedTools, "", false, ag.Model)...)
 		}
 		if planModeEnded {
 			planModeEnded = false
@@ -969,8 +999,26 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	s.bindAgentRuntime(ctx, ag, captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, AllowedTools: activeCfg.AllowedTools, DeniedTools: activeCfg.DeniedTools, SkillModes: activeCfg.SkillModes}, s.AgentName())
 	s.bindAgentControl(ctx, ag, userInput.ControlTarget)
-	s.bindCodeIntelligence(ag)
-	s.bindPlanDiscipline(ag)
+	if !planMode {
+		// A project language server can run project plug-ins. Do not start
+		// one or probe source files as a side effect of investigation edits.
+		s.bindCodeIntelligence(ag)
+		s.bindPlanDiscipline(ag)
+	}
+	if planMode {
+		prepare := ag.PrepareStep
+		ag.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
+			defs, notices := prepare()
+			return planModeTools(defs, ag.ToolMetadata), notices
+		}
+		dispatch := ag.ToolFn
+		ag.ToolFn = func(toolCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+			if !planModeAllows(tool, ag.ToolMetadata) {
+				return investigationDenied(PlanReviewError(fmt.Sprintf("Plan mode does not allow %s.", tool)))
+			}
+			return dispatch(toolCtx, tool, params)
+		}
+	}
 	defer s.FileOwnership().Release(agent.AgentID(o.ID))
 	var pendingCollaboration []collaboration.PendingDelivery
 	defer func() {
@@ -1232,7 +1280,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	// cannot reach a shell without the new revision.
 	if planMode && runResult.State == agent.SupervisedRunCompleted && terminalDone != nil && terminalDone.AgentID == o.ID {
 		if !recoverStep(agent.RecoveryFailureStorage, func() error {
-			return s.recordProposedPlan(turnGeneration, finalContent)
+			return s.recordProposedPlan(turnGeneration, finalContent, planningCycle, sourceExecutionID)
 		}) {
 			return
 		}
@@ -1295,6 +1343,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		// further tool calls. Compact now so the permanent agent stays small.
 		launchCompaction = s.startLoopEndCompaction(o.ID)
 	}
+	releasePlanTurn()
 	o.endTurn(turnGeneration)
 	if terminalDone != nil {
 		sendRuntimeEvent(sender, *terminalDone)
@@ -1350,7 +1399,7 @@ func terminalReasonFromEvent(event agent.AgentEvent) string {
 
 func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
 	s := o.session
-	if data != nil {
+	if data != nil && data["operation"] != ttypes.PlanInvestigationHostOperation && data["plan_investigation_path"] != "true" {
 		op := safety.CRUDEOp(data["operation"])
 		tool := data["tool"]
 		target := data["target"]

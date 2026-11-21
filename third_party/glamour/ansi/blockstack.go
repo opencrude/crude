@@ -2,6 +2,8 @@ package ansi
 
 import (
 	"bytes"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 // BlockStack is a stack of block elements, used to calculate the current
@@ -59,10 +61,20 @@ func (s BlockStack) Margin() uint {
 
 // Width returns the available rendering width.
 func (s BlockStack) Width(ctx RenderContext) uint {
-	if s.Indent()+s.Margin()*2 > uint(ctx.options.WordWrap) { //nolint: gosec
+	indent := s.Indent() + s.Margin()*2
+	if ctx.options.Source != nil {
+		for _, block := range s {
+			if block.Style.IndentToken != nil && block.Style.Indent != nil {
+				// A rail token can occupy more than one column.
+				width := uint(max(1, ansi.StringWidth(*block.Style.IndentToken))) //nolint:gosec
+				indent += *block.Style.Indent * (width - 1)
+			}
+		}
+	}
+	if indent > uint(ctx.options.WordWrap) { //nolint: gosec
 		return 0
 	}
-	return uint(ctx.options.WordWrap) - s.Indent() - s.Margin()*2 //nolint: gosec
+	return uint(ctx.options.WordWrap) - indent //nolint: gosec
 }
 
 // Parent returns the current BlockElement's parent.

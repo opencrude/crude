@@ -626,10 +626,9 @@ func (w *Workspace) CloseAgent(agentID string) {
 // ResolveConfirmation sends a request-correlated permission response to the
 // owning orchestrator.
 func (w *Workspace) ResolveConfirmation(agentID, blockID, choice string) bool {
-	switch choice {
-	case "allow", "always", "deny":
-	default:
-		choice = "deny"
+	prompt, pending := w.agentPrompts[agentID]
+	if !pending || !prompt.AcceptsConfirmation(blockID, choice) {
+		return false
 	}
 	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
 		RequestID: blockID,

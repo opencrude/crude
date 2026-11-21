@@ -1170,6 +1170,104 @@ func (z *AgentPlanCommentRequest) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z AgentPlanEvidenceRequest) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.AgentID)
+	o = msgp.AppendInt(o, z.Revision)
+	o = msgp.AppendString(o, z.Digest)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *AgentPlanEvidenceRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.AgentID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "AgentID")
+		return
+	}
+	z.Revision, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Revision")
+		return
+	}
+	z.Digest, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Digest")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z AgentPlanEvidenceRequest) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.AgentID) + msgp.IntSize + msgp.StringPrefixSize + len(z.Digest)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z AgentPlanEvidenceResult) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 2
+	o = append(o, 0x92)
+	o = msgp.AppendString(o, z.Text)
+	o = msgp.AppendString(o, z.Error)
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *AgentPlanEvidenceResult) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 2 {
+		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+		return
+	}
+	z.Text, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Text")
+		return
+	}
+	z.Error, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Error")
+		return
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z AgentPlanEvidenceResult) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Text) + msgp.StringPrefixSize + len(z.Error)
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z AgentPlanModeRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	// array header, size 2

@@ -34,6 +34,7 @@ type FormField struct {
 	hideDescription bool
 	fillWidth       bool
 	colWidths       []int
+	fitReader       bool
 }
 
 // Spacious control geometry. Every control is a box that starts on the form's
@@ -327,6 +328,14 @@ func (ff *FormField) height() int {
 
 func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 	ff.SetBounds(r)
+	if ff.fitReader {
+		width := r.W
+		if width > 1 && ff.area.VisualLineCount(width) > r.H {
+			width--
+		}
+		ff.area.Layout(ctx, Rect{W: width, H: r.H})
+		return
+	}
 	if !ff.compact {
 		ff.layoutSpacious(ctx, r)
 		return
@@ -550,6 +559,16 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	x, y := originX+r.X, originY+r.Y
+	if ff.fitReader {
+		ff.area.SetBackgroundColor(bg)
+		ff.area.Paint(buf, x, y, ctx)
+		if r.W > ff.area.Bounds().W {
+			for row := range r.H {
+				PaintScrollbarCell(buf, x+r.W-1, y+row, ff.area.Scroll(), r.H, row, ff.tokens, bg)
+			}
+		}
+		return
+	}
 	if ff.field.Type == FieldSpacer {
 		return
 	}

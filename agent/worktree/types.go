@@ -48,6 +48,9 @@ type Options struct {
 
 type Request struct {
 	Owner Owner
+	// Investigation is set only by the planning session. These checkouts are
+	// never ordinary execution targets or integration sources.
+	Investigation Investigation
 	// SourceContextID selects exact current checkout bytes, without logical document overlays.
 	SourceContextID string
 	Mode            Mode
@@ -60,28 +63,38 @@ type Request struct {
 	IncludeIgnored []string
 }
 
+type Investigation struct {
+	SessionID string `json:"session_id"`
+	Cycle     string `json:"cycle"`
+}
+
 type Context struct {
-	Version           int               `json:"version"`
-	ID                string            `json:"id"`
-	SourceContextID   string            `json:"source_context_id,omitempty"`
-	LogicalRoot       string            `json:"logical_root"`
-	Root              string            `json:"root"`
-	CommonGitDir      string            `json:"common_git_dir,omitempty"`
-	Mode              Mode              `json:"mode"`
-	Reason            string            `json:"reason"`
-	BaseCommit        string            `json:"base_commit,omitempty"`
-	Owner             Owner             `json:"owner"`
-	CreatedAt         time.Time         `json:"created_at"`
-	Baseline          map[string]File   `json:"baseline"`
-	DocumentRevisions map[string]uint64 `json:"document_revisions,omitempty"`
-	Pins              []Owner           `json:"pins"`
-	Kept              bool              `json:"kept"`
-	Ready             bool              `json:"ready"`
-	Removed           bool              `json:"removed"`
-	Integration       *Receipt          `json:"integration,omitempty"`
-	IntegratedSource  string            `json:"integrated_source,omitempty"`
-	ArchivedResult    map[string]File   `json:"archived_result,omitempty"`
-	ArchiveCommit     string            `json:"archive_commit,omitempty"`
+	Version         int            `json:"version"`
+	ID              string         `json:"id"`
+	SourceContextID string         `json:"source_context_id,omitempty"`
+	LogicalRoot     string         `json:"logical_root"`
+	Root            string         `json:"root"`
+	CommonGitDir    string         `json:"common_git_dir,omitempty"`
+	Mode            Mode           `json:"mode"`
+	Reason          string         `json:"reason"`
+	BaseCommit      string         `json:"base_commit,omitempty"`
+	Owner           Owner          `json:"owner"`
+	Investigation   *Investigation `json:"investigation,omitempty"`
+	// Automatic discard never re-reviews later bytes under the same decision.
+	InvestigationDiscardDigest  string            `json:"investigation_discard_digest,omitempty"`
+	InvestigationDiscardBlocked bool              `json:"investigation_discard_blocked,omitempty"`
+	CreatedAt                   time.Time         `json:"created_at"`
+	Baseline                    map[string]File   `json:"baseline"`
+	BaselineDigest              string            `json:"baseline_digest,omitempty"`
+	DocumentRevisions           map[string]uint64 `json:"document_revisions,omitempty"`
+	Pins                        []Owner           `json:"pins"`
+	Kept                        bool              `json:"kept"`
+	Ready                       bool              `json:"ready"`
+	Removed                     bool              `json:"removed"`
+	Integration                 *Receipt          `json:"integration,omitempty"`
+	IntegratedSource            string            `json:"integrated_source,omitempty"`
+	ArchivedResult              map[string]File   `json:"archived_result,omitempty"`
+	ArchiveCommit               string            `json:"archive_commit,omitempty"`
 	// StorageBytes is inventory telemetry, not persisted snapshot content.
 	StorageBytes int64 `json:"storage_bytes,omitempty"`
 }
@@ -91,6 +104,9 @@ type Context struct {
 type CleanupOptions struct {
 	Discard bool   `json:"discard,omitempty"`
 	Digest  string `json:"digest,omitempty"`
+	// InvestigationAutomatic uses the one durable, reviewed disposition of
+	// a closed cycle. It is never caller input.
+	InvestigationAutomatic bool `json:"-"`
 	// Check is the workspace owner's final retained-use check under the shared
 	// mutation lease, before locking artifact state. It is never caller input.
 	Check func(context.Context) error `json:"-"`
@@ -103,14 +119,15 @@ type Change struct {
 }
 
 type PlanDelta struct {
-	ContextID     string   `json:"context_id"`
-	Owner         Owner    `json:"owner"`
-	Digest        string   `json:"digest"`
-	SourceDigest  string   `json:"source_digest,omitempty"`
-	Changes       []Change `json:"changes"`
-	DiscardDigest string   `json:"discard_digest,omitempty"`
-	IgnoredPaths  []string `json:"ignored_paths,omitempty"`
-	HeadCommit    string   `json:"head_commit,omitempty"`
+	ContextID      string   `json:"context_id"`
+	Owner          Owner    `json:"owner"`
+	Digest         string   `json:"digest"`
+	SourceDigest   string   `json:"source_digest,omitempty"`
+	BaselineDigest string   `json:"baseline_digest,omitempty"`
+	Changes        []Change `json:"changes"`
+	DiscardDigest  string   `json:"discard_digest,omitempty"`
+	IgnoredPaths   []string `json:"ignored_paths,omitempty"`
+	HeadCommit     string   `json:"head_commit,omitempty"`
 }
 
 // Receipt is evidence supplied by the existing integration owner, not a claim

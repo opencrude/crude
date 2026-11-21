@@ -8,6 +8,19 @@ import (
 	"time"
 )
 
+func TestCommandTitleWaitsForDispatch(t *testing.T) {
+	for _, name := range []string{"execute_command", "async_execute_command", "exec_command"} {
+		msg := types.ChatMessage{ToolName: name, ToolCommand: "go test .", ToolStatus: types.ToolStatusStreaming}
+		if got := BuildToolTitle(msg, types.ToolPreviewStreaming); !strings.HasPrefix(got.Action, "Preparing") || got.Operand != msg.ToolCommand {
+			t.Errorf("before dispatch: %+v", got)
+		}
+		msg.ToolStatus = types.ToolStatusCalling
+		if got := BuildToolTitle(msg, types.ToolPreviewStreaming); got.Action != "Running" {
+			t.Errorf("after dispatch: %+v", got)
+		}
+	}
+}
+
 func TestToolErrorReasonSummarizesPlanFailures(t *testing.T) {
 	cases := []struct {
 		name    string

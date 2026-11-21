@@ -41,11 +41,8 @@ func (r planModeRequest) offers(name string) bool {
 	return false
 }
 
-// Plan mode is enforced by the runtime, not only described: a Plan mode turn
-// carries the contract and offers no tool that writes or tracks progress,
-// the mode persists across resume, and the first turn after the user turns
-// it off regains its tools and is told the mode ended.
-func TestPlanModeTurnsAreReadOnlyAndEndExplicitly(t *testing.T) {
+// Plan mode keeps ordinary source inspection and adds only scoped writes.
+func TestPlanModeTurnsOfferScopedInvestigationAndEndExplicitly(t *testing.T) {
 	requests := make(chan planModeRequest, 8)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body planModeRequest
@@ -87,13 +84,15 @@ func TestPlanModeTurnsAreReadOnlyAndEndExplicitly(t *testing.T) {
 	}
 	planned := <-requests
 	waitTurnDone(t, sender, o.ID)
-	if !strings.Contains(planned.text(0), "<plan_mode>") {
+	if !strings.Contains(planned.text(0), "<plan_mode>") || !strings.Contains(planned.text(0), "Keep the source unchanged") {
 		t.Fatal("Plan mode turn lacks the Plan mode contract")
 	}
-	if !planned.offers("read_file") || !planned.offers("question") {
-		t.Fatal("Plan mode turn lost its read-only tools")
+	for _, tool := range []string{"read_file", "question", "open_plan_investigation", "write_file", "edit_file"} {
+		if !planned.offers(tool) {
+			t.Fatalf("Plan mode turn lacks %s", tool)
+		}
 	}
-	for _, tool := range []string{"write_file", "edit_file", "apply_patch", "delete_file", "update_plan", "agent_start", "crude_control"} {
+	for _, tool := range []string{"delete_file", "update_plan", "agent_start", "crude_control", "capability_activate", "mcp_request_access"} {
 		if planned.offers(tool) {
 			t.Fatalf("Plan mode turn offers %s", tool)
 		}
@@ -107,7 +106,7 @@ func TestPlanModeTurnsAreReadOnlyAndEndExplicitly(t *testing.T) {
 	}
 	normal := <-requests
 	waitTurnDone(t, sender, o.ID)
-	if strings.Contains(normal.text(0), "<plan_mode>") || !normal.offers("write_file") {
+	if strings.Contains(normal.text(0), "<plan_mode>") || !normal.offers("write_file") || normal.offers("open_plan_investigation") {
 		t.Fatal("normal turn after Plan mode is still restricted")
 	}
 	ended := false
