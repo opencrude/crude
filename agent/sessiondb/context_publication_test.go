@@ -50,27 +50,38 @@ func TestPublishContextCASAppendAndIdempotence(t *testing.T) {
 }
 
 func TestPublishedRecoveryListsStayDetachedFromCaller(t *testing.T) {
-	db := OpenAndMigrateAt(t.TempDir())
-	defer db.Close()
-	if err := CreateSessionRow(db, "session"); err != nil {
-		t.Fatal(err)
-	}
-	message := provider.NewTextMessage("user", "retained context")
-	message.InternalID = "first-message"
-	messages := []provider.ChatMessage{message}
-	state, err := PublishContext(db, ContextPublication{
-		SessionID: "session", AgentID: "root", RuntimeAgentID: "root",
-		Mutation: ContextMutation{Replace: &ContextReplacement{Generation: 1, Reason: "checkpoint", Messages: messages}},
-		Recovery: &RecoveryCheckpoint{Status: recovery.Status{ID: "incident", AgentID: "root", Generation: 1}, Archive: messages},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	messages[0] = provider.NewTextMessage("user", "changed input")
-	state.Messages[0] = provider.NewTextMessage("user", "changed response")
-	loaded, ok, err := LoadRecoveryCheckpoint(db, "session", "root")
-	if err != nil || !ok || !reflect.DeepEqual(loaded.Archive, []provider.ChatMessage{message}) || !reflect.DeepEqual(loaded.ActiveContext, loaded.Archive) {
-		t.Fatalf("checkpoint changed after publication: %+v, found=%v, error=%v", loaded, ok, err)
+	for _, kind := range []string{"replace", "append", "distinct archive"} {
+		t.Run(kind, func(t *testing.T) {
+			db := OpenAndMigrateAt(t.TempDir())
+			defer db.Close()
+			if err := CreateSessionRow(db, "session"); err != nil {
+				t.Fatal(err)
+			}
+			message := provider.NewTextMessage("user", "retained context")
+			message.InternalID = "first-message"
+			messages := []provider.ChatMessage{message}
+			archive := messages
+			mutation := ContextMutation{Replace: &ContextReplacement{Generation: 1, Reason: "checkpoint", Messages: messages}}
+			if kind == "append" {
+				mutation = ContextMutation{Append: []ContextMessageDelta{{Message: message, CreatedAt: 1}}}
+			} else if kind == "distinct archive" {
+				archive = []provider.ChatMessage{provider.NewTextMessage("user", "earlier history")}
+			}
+			wantArchive := append([]provider.ChatMessage(nil), archive...)
+			state, err := PublishContext(db, ContextPublication{
+				SessionID: "session", AgentID: "root", RuntimeAgentID: "root", Mutation: mutation,
+				Recovery: &RecoveryCheckpoint{Status: recovery.Status{ID: "incident", AgentID: "root", Generation: 1}, Archive: archive},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			archive[0] = provider.NewTextMessage("user", "changed input")
+			state.Messages[0] = provider.NewTextMessage("user", "changed response")
+			loaded, ok, err := LoadRecoveryCheckpoint(db, "session", "root")
+			if err != nil || !ok || !reflect.DeepEqual(loaded.Archive, wantArchive) || !reflect.DeepEqual(loaded.ActiveContext, []provider.ChatMessage{message}) {
+				t.Fatalf("checkpoint changed after publication: %+v, found=%v, error=%v", loaded, ok, err)
+			}
+		})
 	}
 }
 

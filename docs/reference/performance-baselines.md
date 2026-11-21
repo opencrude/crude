@@ -1088,8 +1088,8 @@ Measured on the user's sessions:
   tail rows (see [run recovery](run-recovery.md)), so a round validates, encodes
   and writes only the messages it adds. What still scales with history is an
   in-memory comparison and copy of message headers. A published checkpoint
-  shares its immutable active message array with recovery; an archive that
-  uses the exact same array also shares that copy. The checkpoint benchmarks
+  shares its immutable active message array with recovery; an archive with
+  the same messages also shares that copy. The checkpoint benchmarks
   are gated on allocations; their allocation counts are flat from 560 to 2,000
   messages (GOMAXPROCS=2, i7-10750H Linux).
 - Expanded file-edit rows lex at most 1 KiB synchronously; larger diffs get
