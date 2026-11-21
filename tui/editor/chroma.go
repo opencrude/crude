@@ -369,24 +369,32 @@ func lexSyntax(ctx context.Context, lexer chroma.Lexer, source textSnapshot) (do
 	if err != nil {
 		return nil, err
 	}
-	iterator, err := lexer.Tokenise(&chroma.TokeniseOptions{State: "root"}, document.text)
-	if err != nil {
-		return nil, err
-	}
-	offset := 0
-	for {
-		if err := ctx.Err(); err != nil {
+	if lexer.Config().Name == "plaintext" {
+		// Chroma's plain-text rules only emit Text. Use one span without
+		// running its regex engine for every line. Keep the bracket index.
+		if len(document.text) != 0 {
+			document.spans = []syntaxSpan{{end: len(document.text), kind: chroma.Text}}
+		}
+	} else {
+		iterator, err := lexer.Tokenise(&chroma.TokeniseOptions{State: "root"}, document.text)
+		if err != nil {
 			return nil, err
 		}
-		token := iterator()
-		if token == chroma.EOF {
-			break
-		}
-		offset = min(len(document.text), offset+len(token.Value))
-		if n := len(document.spans); n > 0 && document.spans[n-1].kind == token.Type {
-			document.spans[n-1].end = offset
-		} else {
-			document.spans = append(document.spans, syntaxSpan{end: offset, kind: token.Type})
+		offset := 0
+		for {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			token := iterator()
+			if token == chroma.EOF {
+				break
+			}
+			offset = min(len(document.text), offset+len(token.Value))
+			if n := len(document.spans); n > 0 && document.spans[n-1].kind == token.Type {
+				document.spans[n-1].end = offset
+			} else {
+				document.spans = append(document.spans, syntaxSpan{end: offset, kind: token.Type})
+			}
 		}
 	}
 	index := 0

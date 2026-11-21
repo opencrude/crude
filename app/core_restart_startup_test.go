@@ -57,6 +57,11 @@ func TestCoreRestartStartupSelectorsAreExactAndIdentityIsNoninteractive(t *testi
 
 func makeRestartStartupManifest(t *testing.T, home string, old coreOwner) (string, CoreRestartIdentity) {
 	t.Helper()
+	// Prepare the handover's private profile before staging creates parents
+	// with the Windows runner's default owner.
+	if err := restartPrivateDirs(home, DataDir(home)); err != nil {
+		t.Fatal(err)
+	}
 	identity, err := CoreRestartIdentityForCurrent()
 	if err != nil {
 		t.Fatal(err)

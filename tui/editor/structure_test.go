@@ -36,6 +36,23 @@ func TestStructuralBracketMotionAndPaintIgnoreQuotedAndCommentDelimiters(t *test
 	}
 }
 
+func TestPlainTextBracketMotionUsesCurrentSource(t *testing.T) {
+	const source = "example (\n  note\n)\n"
+	e := loadEditorText(t, "notes.txt", source)
+	move := func() { e.HandleEvent(ActionMsg{ID: "move.matchingBracket"}) }
+	e.SetCursorPosition(0, 8)
+	move()
+	require.Equal(t, Position{Line: 2}, e.cursor)
+
+	e.InsertRune('x')
+	settleSyntax(t, e)
+	e.SetCursorPosition(0, 8)
+	move()
+	require.Equal(t, Position{Line: 2, Col: 1}, e.cursor)
+	e.Undo()
+	require.Equal(t, source, e.Value())
+}
+
 func TestStructuralSelectionUsesCurrentSyntaxAndShrinksExactly(t *testing.T) {
 	source := "package p\nfunc f() {\n    result := wrap(arg + 1)\n}\n"
 	e := loadEditorText(t, "ranges.go", source)
