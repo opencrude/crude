@@ -104,7 +104,10 @@ func replaceAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger
 		return fmt.Errorf("atomic write: write data: %w", err)
 	}
 
-	if runtime.GOOS != "windows" {
+	// Windows has only a read-only attribute, and a replacement keeps the
+	// target's own. A new file has no target, so it gets the requested mode:
+	// a caller that asks for a read-only record must not receive a writable one.
+	if runtime.GOOS != "windows" || newOnly {
 		if err := tmp.Chmod(perm); err != nil {
 			return fmt.Errorf("atomic write: chmod: %w", err)
 		}

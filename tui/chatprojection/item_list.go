@@ -246,11 +246,11 @@ func (vl *itemList) EnsureHeights(renderFn func(idx int, item *renderItem, width
 	}
 }
 
-// MaterializeNear renders dirty items nearest to center first until the
-// deadline passes, so offscreen history settles over a few frames instead of
-// blocking one. Unrendered items keep their estimated heights meanwhile. It
+// MaterializeNear renders dirty items nearest to center first until now
+// reaches the deadline, so offscreen history settles over a few frames instead
+// of blocking one. Unrendered items keep their estimated heights meanwhile. It
 // reports whether dirty items remain.
-func (vl *itemList) MaterializeNear(renderFn func(idx int, item *renderItem, width int) []string, width, center int, deadline time.Time) bool {
+func (vl *itemList) MaterializeNear(renderFn func(idx int, item *renderItem, width int) []string, width, center int, now func() time.Time, deadline time.Time) bool {
 	n := len(vl.items)
 	if n == 0 {
 		return false
@@ -262,7 +262,7 @@ func (vl *itemList) MaterializeNear(renderFn func(idx int, item *renderItem, wid
 		if !item.Dirty && item.Rendered != nil {
 			return true
 		}
-		if !time.Now().Before(deadline) {
+		if !now().Before(deadline) {
 			remaining = true
 			return false
 		}

@@ -35,8 +35,20 @@ func findChatApp(t *testing.T) (*App, *shellchat.Screen) {
 	// Keep history incomplete at first paint. Counter tests must observe the
 	// search finishing instead of relying on a fast renderer or scheduler.
 	app.activeMessageList().MaterializeBudget = time.Nanosecond
+	app.activeMessageList().MaterializeClock = steppingMaterializeClock()
 	app.paintShellFrame()
 	return app, screen
+}
+
+// steppingMaterializeClock advances a millisecond at every reading, so a
+// one-nanosecond history budget runs out before the first offscreen row on
+// every platform timer. The Windows clock can stand still for 15.6 ms.
+func steppingMaterializeClock() func() time.Time {
+	now := time.Unix(0, 0)
+	return func() time.Time {
+		now = now.Add(time.Millisecond)
+		return now
+	}
 }
 
 // chatFindFrame is the window a chat search must use: the same one the editor
@@ -85,6 +97,7 @@ func settleChatFind(t *testing.T, app *App) {
 	}
 	renderer := app.activeMessageList()
 	renderer.MaterializeBudget = 0
+	renderer.MaterializeClock = nil
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
 	for {
@@ -275,6 +288,7 @@ func TestChatFindFinishesHistoryThatAResizeLeftUndrawn(t *testing.T) {
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	renderer := app.activeMessageList()
 	renderer.MaterializeBudget = time.Nanosecond // history draws slower than the first frames
+	renderer.MaterializeClock = steppingMaterializeClock()
 	for i := 0; i < 60; i++ {
 		text := fmt.Sprintf("reply %d about the viewport and the scroll model", i)
 		app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: text, Time: time.Unix(10+int64(i), 0)})

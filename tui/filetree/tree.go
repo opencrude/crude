@@ -1711,23 +1711,17 @@ func (m *FileTreeModel) IsDir(path string) bool {
 	return n.IsDir
 }
 
-// ParentDir returns the parent directory of the given path, or ""
-// for top-level entries.
+// ParentDir returns the parent directory of the given path, or "" for a
+// path without one. Tree paths are native, so a Windows path splits at '\'.
 func (m *FileTreeModel) ParentDir(path string) string {
 	if path == "" {
 		return ""
 	}
-	// Find the last separator.
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' {
-			parent := path[:i]
-			if parent == "" {
-				return "/"
-			}
-			return parent
-		}
+	parent := filepath.Dir(filepath.Clean(path))
+	if parent == "." {
+		return ""
 	}
-	return ""
+	return parent
 }
 
 // ExpandToPath expands (lazily loading as needed) every ancestor of the

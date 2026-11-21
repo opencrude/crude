@@ -101,9 +101,13 @@ type Renderer struct {
 	// DefaultMaterializeBudget and a negative value renders everything in
 	// the export that needs it.
 	MaterializeBudget time.Duration
-	frameSensitive    map[string]struct{}
-	thinkingPanes     map[string]string
-	thinkingOriginal  map[string]types.ChatMessage
+	// MaterializeClock reads the time that MaterializeBudget measures; nil
+	// uses time.Now. The Windows clock advances only every 0.5 to 15.6 ms,
+	// so a test that needs the budget to run out supplies a clock that moves.
+	MaterializeClock func() time.Time
+	frameSensitive   map[string]struct{}
+	thinkingPanes    map[string]string
+	thinkingOriginal map[string]types.ChatMessage
 }
 
 type MessageRowsSnapshot struct {
@@ -1968,7 +1972,11 @@ func (r *Renderer) materializeOffscreen(width int) {
 		return
 	}
 	anchor, local := r.vl.ItemAtLine(r.vl.ScrollY())
-	r.materializing = r.vl.MaterializeNear(r.renderItem, width, anchor, time.Now().Add(budget))
+	now := r.MaterializeClock
+	if now == nil {
+		now = time.Now
+	}
+	r.materializing = r.vl.MaterializeNear(r.renderItem, width, anchor, now, now().Add(budget))
 	r.materializedAt = time.Now()
 	if r.autoScroll() {
 		return
