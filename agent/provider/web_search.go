@@ -71,10 +71,18 @@ type WebSearchObservation struct {
 
 type webSearchObservationKey struct{ scope, account, model string }
 
-var webSearchObservations = struct {
+type webSearchRecord struct {
+	observation WebSearchObservation
+	sequence    uint64
+}
+
+type webSearchObservationStore struct {
 	sync.Mutex
-	entries map[webSearchObservationKey]WebSearchObservation
-}{entries: make(map[webSearchObservationKey]WebSearchObservation)}
+	entries  map[webSearchObservationKey]webSearchRecord
+	sequence uint64
+}
+
+var webSearchObservations = webSearchObservationStore{}
 
 func (p *Provider) webSearchObservationKey(model string) webSearchObservationKey {
 	if protocol := p.Protocol(); protocol == nil || protocol.Info().WebSearch != WebSearchTool {
@@ -92,33 +100,40 @@ func (p *Provider) WebSearchObservation(model string) (WebSearchObservation, boo
 	if p == nil {
 		return WebSearchObservation{}, false
 	}
-	key := p.webSearchObservationKey(model)
-	webSearchObservations.Lock()
-	defer webSearchObservations.Unlock()
-	observation, ok := webSearchObservations.entries[key]
-	return observation, ok
+	return webSearchObservations.get(p.webSearchObservationKey(model))
 }
 
-func recordWebSearch(key webSearchObservationKey, started time.Time, count int, err error) {
-	webSearchObservations.Lock()
-	defer webSearchObservations.Unlock()
+func (s *webSearchObservationStore) get(key webSearchObservationKey) (WebSearchObservation, bool) {
+	s.Lock()
+	defer s.Unlock()
+	record, ok := s.entries[key]
+	return record.observation, ok
+}
+
+func (s *webSearchObservationStore) record(key webSearchObservationKey, started time.Time, count int, err error) {
+	s.Lock()
+	defer s.Unlock()
 	at := time.Now()
-	entry := WebSearchObservation{Working: err == nil, Results: count, Latency: at.Sub(started), At: at}
+	observation := WebSearchObservation{Working: err == nil, Results: count, Latency: at.Sub(started), At: at}
 	if err != nil {
-		entry.Detail = err.Error()
+		observation.Detail = err.Error()
 	}
-	entries := webSearchObservations.entries
-	if _, exists := entries[key]; !exists && len(entries) >= webSearchObservationLimit {
+	if s.entries == nil {
+		s.entries = make(map[webSearchObservationKey]webSearchRecord)
+	}
+	if _, exists := s.entries[key]; !exists && len(s.entries) >= webSearchObservationLimit {
+		// The time is for display. On a coarse clock many results share it.
 		var oldest webSearchObservationKey
-		var oldestAt time.Time
-		for k, v := range entries {
-			if oldestAt.IsZero() || v.At.Before(oldestAt) {
-				oldest, oldestAt = k, v.At
+		var oldestSequence uint64
+		for k, v := range s.entries {
+			if oldestSequence == 0 || v.sequence < oldestSequence {
+				oldest, oldestSequence = k, v.sequence
 			}
 		}
-		delete(entries, oldest)
+		delete(s.entries, oldest)
 	}
-	entries[key] = entry
+	s.sequence++
+	s.entries[key] = webSearchRecord{observation, s.sequence}
 }
 
 // SearchWeb sends one fixed, stateless request through the account's native
@@ -141,7 +156,7 @@ func (p *Provider) SearchWeb(ctx context.Context, model, query string, limit int
 			sources, err = nil, webSearchTimeoutError{}
 		}
 		if p != nil {
-			recordWebSearch(key, started, len(sources), err)
+			webSearchObservations.record(key, started, len(sources), err)
 		}
 	}()
 	if err := searchCtx.Err(); err != nil {

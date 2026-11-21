@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf8"
 )
@@ -477,7 +478,7 @@ func TestWebSearchObservationScopeAndEviction(t *testing.T) {
 			}
 		})
 	}
-	for i := range 512 {
+	for i := range webSearchObservationLimit {
 		// Use a validation failure to fill the process cache without HTTP I/O.
 		if _, err := p.SearchWeb(t.Context(), fmt.Sprintf("model-%d", i), "", 1); err == nil {
 			t.Fatal("blank query was not refused")
@@ -491,4 +492,25 @@ func TestWebSearchObservationScopeAndEviction(t *testing.T) {
 			t.Fatalf("current failure observation = %+v, present = %v", got, ok)
 		}
 	}
+}
+
+func TestWebSearchEvictsOldestOutcomeWhenTimesMatch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var store webSearchObservationStore
+		started := time.Now()
+		key := func(i int) webSearchObservationKey {
+			return webSearchObservationKey{model: fmt.Sprint(i)}
+		}
+		for i := range webSearchObservationLimit {
+			store.record(key(i), started, i, nil)
+		}
+		store.record(key(0), started, 42, nil)
+		store.record(key(webSearchObservationLimit), started, 1, nil)
+		if _, ok := store.get(key(1)); ok {
+			t.Fatal("did not evict the least recently recorded outcome")
+		}
+		if got, ok := store.get(key(0)); !ok || got.Results != 42 || !got.At.Equal(started) {
+			t.Fatalf("refreshed outcome was lost: %+v, present = %v", got, ok)
+		}
+	})
 }

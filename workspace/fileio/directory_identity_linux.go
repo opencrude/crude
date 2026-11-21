@@ -30,7 +30,21 @@ func (h nativeDirectoryIdentityHandle) identity(withBirth bool) (string, error) 
 	if err := unix.Statx(int(h), "", unix.AT_EMPTY_PATH|unix.AT_SYMLINK_NOFOLLOW, unix.STATX_TYPE|unix.STATX_INO|unix.STATX_BTIME, &stat); err != nil {
 		return "", fmt.Errorf("statx directory identity unavailable (kernel/filesystem must support statx birth time): %w", err)
 	}
-	return linuxDirectoryIdentity(stat, withBirth)
+	object, err := linuxDirectoryIdentity(stat, withBirth)
+	if err != nil || !withBirth {
+		return object, err
+	}
+	// A filesystem can reuse both an inode and its coarse birth timestamp.
+	// Use its persistent file handle as well. "." is relative to this open
+	// directory, not a second lookup of its former path or a privileged reopen.
+	handle, _, err := unix.NameToHandleAt(int(h), ".", 0)
+	if err != nil {
+		return "", fmt.Errorf("directory identity unavailable: use a filesystem with persistent file handles: %w", err)
+	}
+	if handle.Size() == 0 || handle.Size() > 128 {
+		return "", fmt.Errorf("directory identity unavailable: invalid filesystem handle")
+	}
+	return fmt.Sprintf("%s:%x:%x", object, handle.Type(), handle.Bytes()), nil
 }
 
 func linuxDirectoryIdentity(stat unix.Statx_t, withBirth bool) (string, error) {

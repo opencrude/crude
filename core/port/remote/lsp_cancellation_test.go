@@ -84,11 +84,23 @@ func (r cancelledPortRuntime) NewClient(_ types.LSPServerSpec, _ string, admit f
 }
 
 func TestSignatureRemoteServiceCancellationRetiresProviderAndKeepsAttachment(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	provider := &cancelledPortProvider{entered: make(chan chan struct{}, 1)}
 	managers := make(chan *workspace.LSPManager, 1)
 	retained, err := core.New(func(root string) (*workspace.Workspace, error) {
 		ws := workspace.NewWorkspace(root, "", "test", types.Settings{}, nil)
 		ws.LSPMgr.SetRuntime(cancelledPortRuntime{provider})
+		settings := types.DefaultLSPSettings()
+		settings.Languages = map[string]types.LSPLanguageSettings{
+			"example": {Enabled: true, Command: executable, Extensions: []string{".example"}, LanguageID: "example"},
+		}
+		if err := settings.Validate(); err != nil {
+			return nil, err
+		}
+		ws.SetAppDefaults(types.AppSettings{LSP: settings})
 		managers <- ws.LSPMgr
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -101,8 +113,8 @@ func TestSignatureRemoteServiceCancellationRetiresProviderAndKeepsAttachment(t *
 		}
 	})
 	root := t.TempDir()
-	path := filepath.Join(root, "main.go")
-	if err := os.WriteFile(path, []byte("package main\n"), 0600); err != nil {
+	path := filepath.Join(root, "main.example")
+	if err := os.WriteFile(path, []byte("example(arg)\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)

@@ -1511,11 +1511,12 @@ Native identity is rechecked on the manager worker before
 root discovery and every new launch; replacement or unavailable identity blocks
 execution, invalidates dependent facts and exposes repair guidance.
 
-Linux requires native statx birth identity, Darwin uses native birth identity,
-and Windows uses native volume/file identity plus creation time. Missing native
-identity, unsafe path components, symlinks/reparse points or unsupported
-platforms fail closed. These metadata checks detect observed replacement, not
-every adversarial path race, and are not a filesystem sandbox. Native
+Linux requires a native statx birth identity and a persistent filesystem handle
+to distinguish recycled inodes on coarse clocks. Darwin uses native birth
+identity, and Windows uses native volume/file identity plus creation time.
+Missing native identity, unsafe path components, symlinks/reparse points or
+unsupported platforms fail closed. These metadata checks detect observed
+replacement, not every adversarial path race, and are not a filesystem sandbox. Native
 Windows/macOS runtime acceptance remains separate from cross-build evidence.
 
 Revoking Trust stops admission immediately, cancels queued/starting work and
