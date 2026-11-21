@@ -284,7 +284,9 @@ func TestProjectContextRechecksEveryFileAfterWholeSetDerivation(t *testing.T) {
 	}
 	read := func(ctx context.Context, root, path string, budget int64) ([]byte, projectArtifactStamp, error) {
 		if path == "b.json" {
-			if err := os.Remove(filepath.Join(root, "a.json")); err != nil {
+			// Keep the old file so the filesystem cannot recycle its identity
+			// in the same timestamp tick. The replacement has the same bytes.
+			if err := os.Rename(filepath.Join(root, "a.json"), filepath.Join(root, "original.json")); err != nil {
 				t.Fatal(err)
 			}
 			writeProjectContextFixture(t, root, "a.json", "[]")
