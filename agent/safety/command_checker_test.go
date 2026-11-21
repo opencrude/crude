@@ -335,9 +335,9 @@ func TestCheckCommandSafetyEmpty(t *testing.T) {
 func TestLocalToolingCommandsAreNotHardBlocked(t *testing.T) {
 	commands := []string{
 		`bash -c 'go build ./...'`,
-		`cd /home/lenovo/ocd/crude && bash -c '. scripts/libghostty_env.sh && golangci-lint run ./... 2>&1 | tail -20'`,
-		`cd /home/lenovo/ocd/crude && gofmt -l a.go b.go; bash scripts/docs_check.sh 2>&1 | tail -15`,
-		`cd /home/lenovo/ocd/crude && gofmt -l a.go b.go; bash -c 'go build ./... && go test -count=1 ./tui/viewmodel/' 2>&1 | tail -5`,
+		`cd /home/example/project && bash -c '. scripts/libghostty_env.sh && golangci-lint run ./... 2>&1 | tail -20'`,
+		`cd /home/example/project && gofmt -l a.go b.go; bash scripts/docs_check.sh 2>&1 | tail -15`,
+		`cd /home/example/project && gofmt -l a.go b.go; bash -c 'go build ./... && go test -count=1 ./tui/viewmodel/' 2>&1 | tail -5`,
 		`cd repo && . scripts/env.sh && go test ./... && bash scripts/check.sh`,
 		`bash scripts/docs_check.sh`,
 		`bash -c 'echo hi' | tail -1`,
@@ -498,7 +498,7 @@ func TestFlagParsingDoesNotReadOperands(t *testing.T) {
 // A backslash-newline continuation is shell syntax; rewriting it to `/` broke
 // parsing and asked the user to approve an "unknown command //*".
 func TestLineContinuationsParse(t *testing.T) {
-	cmd := "cd /home/lenovo/ocd/crude\nrg -n 'x' -g '*.go' . \\\n | grep -v -E ':[0-9]+:[[:space:]]*(//|/\\*|\\*)' \\\n > \"$CRUDE_TEMP_DIR/out.txt\"\nwc -l < \"$CRUDE_TEMP_DIR/out.txt\""
+	cmd := "cd /home/example/project\nrg -n 'x' -g '*.go' . \\\n | grep -v -E ':[0-9]+:[[:space:]]*(//|/\\*|\\*)' \\\n > \"$CRUDE_TEMP_DIR/out.txt\"\nwc -l < \"$CRUDE_TEMP_DIR/out.txt\""
 	r := CheckCommandSafety(cmd, nil)
 	if r.Risk != RiskSafe || r.BaseCommand == "//*" {
 		t.Fatalf("continued pipeline = %v base=%q (%s), want safe", r.Risk, r.BaseCommand, r.Reason)

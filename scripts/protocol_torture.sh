@@ -8,8 +8,8 @@ export LC_ALL=C
 export GOMAXPROCS="${GOMAXPROCS:-2}"
 export CRUDE_PROTOCOL_TORTURE=1
 export CRUDE_TORTURE_HTOP="${CRUDE_TORTURE_HTOP:-$(command -v htop || true)}"
-export CRUDE_TORTURE_FFMPEG="${CRUDE_TORTURE_FFMPEG:-/home/lenovo/tools/ffmpeg/ffmpeg}"
-export CRUDE_TORTURE_MPV="${CRUDE_TORTURE_MPV:-/home/lenovo/tools/mpv/mpv}"
+export CRUDE_TORTURE_FFMPEG="${CRUDE_TORTURE_FFMPEG:-$(command -v ffmpeg || true)}"
+export CRUDE_TORTURE_MPV="${CRUDE_TORTURE_MPV:-$(command -v mpv || true)}"
 for binary in "$CRUDE_TORTURE_HTOP" "$CRUDE_TORTURE_FFMPEG" "$CRUDE_TORTURE_MPV"; do
   [[ -n "$binary" && -x "$binary" ]] || { echo "FAIL: required executable unavailable: $binary" >&2; exit 1; }
 done

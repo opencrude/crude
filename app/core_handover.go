@@ -55,13 +55,13 @@ func lockCoreLifetime(home string) (*flock.Flock, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, "lifetime.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
-	if err == nil {
-		_ = f.Close()
-		if err := secureOwnerPath(path, false); err != nil {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		// Another starter may win. Either winner is private before its lock
+		// inode becomes visible, and the published inode is never replaced.
+		if err := publishCorePrivateFile(path, nil); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
-	} else if !errors.Is(err, os.ErrExist) {
+	} else if err != nil {
 		return nil, err
 	}
 	if err := validateOwnerPath(path, false); err != nil {
@@ -171,7 +171,11 @@ func publishCoreOwner(path string, owner coreOwner) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".owner-*")
+	return publishCorePrivateFile(path, data)
+}
+
+func publishCorePrivateFile(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".private-*")
 	if err != nil {
 		return err
 	}
@@ -184,7 +188,7 @@ func publishCoreOwner(path string, owner coreOwner) error {
 	if err := secureOwnerPath(f.Name(), false); err != nil {
 		return err
 	}
-	// No replacement: a prior descriptor is never silently displaced.
+	// No replacement: a prior lock inode or descriptor is never displaced.
 	return os.Link(f.Name(), path)
 }
 

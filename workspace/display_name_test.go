@@ -14,7 +14,7 @@ func TestWorkspaceDisplayName_NeverShowsRawHash(t *testing.T) {
 		got := WorkspaceDisplayName(WorkspaceInfo{
 			ID:          hash,
 			ProjectName: "",
-			ProjectDir:  "/home/lenovo/ocd/my-project",
+			ProjectDir:  "/home/example/projects/my-project",
 		})
 		if got != "my-project" {
 			t.Fatalf("got %q want my-project", got)
@@ -39,7 +39,7 @@ func TestWorkspaceDisplayName_NeverShowsRawHash(t *testing.T) {
 		got := WorkspaceDisplayName(WorkspaceInfo{
 			ID:          hash,
 			ProjectName: "Friendly",
-			ProjectDir:  "/home/lenovo/ocd/other",
+			ProjectDir:  "/home/example/projects/other",
 		})
 		if got != "Friendly" {
 			t.Fatalf("got %q want Friendly", got)

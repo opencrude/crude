@@ -313,8 +313,8 @@ func tortureFingerprint(p workspace.TerminalProjection) uint64 {
 
 func TestProtocolTortureMPVPTYResponse(t *testing.T) {
 	requireProtocolTorture(t)
-	ffmpeg := tortureBinary(t, "CRUDE_TORTURE_FFMPEG", "/home/lenovo/tools/ffmpeg/ffmpeg")
-	mpv := tortureBinary(t, "CRUDE_TORTURE_MPV", "/home/lenovo/tools/mpv/mpv")
+	ffmpeg := tortureBinary(t, "CRUDE_TORTURE_FFMPEG", "ffmpeg")
+	mpv := tortureBinary(t, "CRUDE_TORTURE_MPV", "mpv")
 	mediaDir, err := os.MkdirTemp(os.Getenv("CRUDE_TEMP_DIR"), "crude-video-")
 	if err != nil {
 		t.Fatal(err)

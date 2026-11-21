@@ -93,14 +93,7 @@ func runNavigationVisual(t *testing.T, headless bool, width, height int) {
 	if runtime.GOOS != "linux" {
 		t.Skip("exact fixture provider process oracle uses Linux /proc")
 	}
-	gopls := os.Getenv("CRUDE_LSP_VISUAL_GOPLS")
-	if gopls == "" {
-		gopls, _ = exec.LookPath("gopls")
-		if gopls == "" {
-			gopls = "/home/lenovo/go/bin/gopls"
-		}
-	}
-	executable, err := filepath.EvalSymlinks(gopls)
+	executable, err := visualGoplsPath()
 	if err != nil {
 		t.Fatalf("installed real gopls required: %v", err)
 	}

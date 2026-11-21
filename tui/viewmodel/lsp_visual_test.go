@@ -55,23 +55,29 @@ const lspVisualLib = "package journey\n\n// Answer returns the LSP_HOVER_SENTINE
 const lspVisualParameters = "package journey\n\n// Repeat returns the SIGNATURE_HELP_SENTINEL prefix.\nfunc Repeat(prefix string, count int) string { return prefix }\n\nvar SignatureValue = Repeat(\"x\", 2)\n"
 const lspVisualSnippet = "package journey\n\nvar CompletionValue = Rep\n"
 
+// visualGoplsPath resolves an explicit fixture override or the installed tool.
+func visualGoplsPath() (string, error) {
+	path := os.Getenv("CRUDE_LSP_VISUAL_GOPLS")
+	if path == "" {
+		var err error
+		path, err = exec.LookPath("gopls")
+		if err != nil {
+			return "", fmt.Errorf("install gopls %s or set CRUDE_LSP_VISUAL_GOPLS: %w", visualGoplsVersion, err)
+		}
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(path)
+}
+
 func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("exact process-join oracle currently requires Linux /proc")
 	}
-	gopls := os.Getenv("CRUDE_LSP_VISUAL_GOPLS")
-	if gopls == "" {
-		gopls, _ = exec.LookPath("gopls")
-		if gopls == "" {
-			gopls = "/home/lenovo/go/bin/gopls"
-		}
-	}
-	gopls, err := filepath.Abs(gopls)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gopls, err = filepath.EvalSymlinks(gopls)
+	gopls, err := visualGoplsPath()
 	if err != nil {
 		if headless {
 			t.Skipf("installed gopls unavailable: %v", err)
