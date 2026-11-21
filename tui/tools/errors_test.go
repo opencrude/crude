@@ -213,8 +213,8 @@ func TestCollaborationToolTitlesKeepExactAgentAndReportIdentity(t *testing.T) {
 // HTML-escaping (\u0026 for &, \u003e for >); a hand-written operand scanner that
 // omitted \uXXXX painted a literal "u0026u0026" where the shell ran "&&".
 func TestCommandTitlesNeverPaintJSONEscapes(t *testing.T) {
-	raw := `{"command":"cd /home/user/projects/crude \u0026\u0026 golangci-lint run ./x 2\u003e\u00261 | tail -20","timeout_seconds":600}`
-	want := "cd /home/user/projects/crude && golangci-lint run ./x 2>&1 | tail -20"
+	raw := `{"command":"cd /home/example/project \u0026\u0026 golangci-lint run ./x 2\u003e\u00261 | tail -20","timeout_seconds":600}`
+	want := "cd /home/example/project && golangci-lint run ./x 2>&1 | tail -20"
 
 	for _, status := range []string{types.ToolStatusStreaming, types.ToolStatusSuccess} {
 		msg := types.ChatMessage{

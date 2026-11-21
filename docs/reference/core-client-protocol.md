@@ -893,6 +893,8 @@ same-user client to harmless reads.
 private corewire/owner.json record: random owner generation, exact staged helper path
 and full image digest, schema and source cohort. An exclusive `lifetime.lock` is
 held through runtime shutdown, including the listener-close/data-flush interval.
+The lock file is private before publication. Concurrent starters acquire the
+same inode without replacing it or changing its ownership.
 Autostart requires positive endpoint absence and exclusive lifetime proof before
 reclaiming a crash-left record; failed admission, permission errors and incomplete
 probes never mean absence.

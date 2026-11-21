@@ -291,7 +291,7 @@ func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 }
 
 func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
-	path := "/home/user/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-errand-report.md"
+	path := "/home/example/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-errand-report.md"
 	lines := buildToolTitleLines(types.ChatMessage{
 		ToolName: "publish_report", ToolStatus: types.ToolStatusSuccess,
 		ToolPreviewPhase: types.ToolPreviewDone,

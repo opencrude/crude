@@ -588,7 +588,7 @@ func assertSameRows(t *testing.T, label string, live, hydrated chatprojection.Me
 // directly, which is why the other parity cases could not observe the defect)
 // and asserts on the painted row text the user actually reads.
 func TestPaintedCommandRowShowsRealOperators(t *testing.T) {
-	const want = "cd /home/user/projects/crude && golangci-lint run ./x 2>&1 | tail -20"
+	const want = "cd /home/example/project && golangci-lint run ./x 2>&1 | tail -20"
 
 	// Build the payload the way it actually arrives. Go's json.Marshal applies
 	// HTML-escaping by default, so the "&&" and ">" reach the event as

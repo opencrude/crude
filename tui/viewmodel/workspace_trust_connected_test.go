@@ -23,10 +23,17 @@ func TestConnectedWorkspaceTrustStartsServerAndClosesPeerPrompt(t *testing.T) {
 	if err := os.WriteFile(path, []byte("package main\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := &immediateTreeDiagRuntime{filePath: path}
 	authority := make(chan *workspace.LSPManager, 1)
 	runtime := remoteJourneyRuntime(t, "", func(w *workspace.Workspace) {
 		w.LSPMgr.SetRuntime(server)
+		settings := w.AppDefaults()
+		settings.LSP.Languages["go"] = types.LSPLanguageSettings{Enabled: true, Command: executable}
+		w.SetAppDefaults(settings)
 		authority <- w.LSPMgr
 	})
 	one := newRemoteJourneyShell(t, runtime, root)

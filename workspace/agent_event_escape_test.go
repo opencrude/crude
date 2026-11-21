@@ -11,8 +11,8 @@ import (
 // used to be read by a hand-written scanner that knew \" \n \t but not \uXXXX,
 // printing "u0026u0026" where the shell ran "&&".
 func TestLiveCommandTitleShowsRealOperators(t *testing.T) {
-	args := `{"command":"cd /home/user/projects/crude \u0026\u0026 golangci-lint run ./tui/settings/... 2\u003e\u00261 | tail -20","timeout_seconds":600}`
-	want := "cd /home/user/projects/crude && golangci-lint run ./tui/settings/... 2>&1 | tail -20"
+	args := `{"command":"cd /home/example/project \u0026\u0026 golangci-lint run ./tui/settings/... 2\u003e\u00261 | tail -20","timeout_seconds":600}`
+	want := "cd /home/example/project && golangci-lint run ./tui/settings/... 2>&1 | tail -20"
 
 	state := NewAgentState("agent", nil, nil)
 	state.ApplyEvent(AgentEvent{Type: "tool_call", Data: map[string]any{

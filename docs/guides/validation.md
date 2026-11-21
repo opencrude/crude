@@ -25,6 +25,7 @@ Locally:
 
 ```bash
 . scripts/libghostty_env.sh          # once per shell; libghostty-vt for terminals
+go install golang.org/x/tools/gopls@v0.22.0 # Linux diagnostic reader fixture; put gopls on PATH
 go run ./internal/wiregen -check      # nonmutating source-cohort freshness
 go build ./...
 go test ./<affected packages>/...     # focused first
