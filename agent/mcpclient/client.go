@@ -74,7 +74,8 @@ type Manager struct {
 	authCallbacks map[string]*authorizationFlow
 	// Admission under mu precedes every add; Close rejects new work before
 	// joining connects and detached reconfiguration cleanup.
-	lifetimeTasks sync.WaitGroup
+	lifetimeTasks    sync.WaitGroup
+	builtinOverrides map[string]BuiltinFactory
 }
 
 func New(root string) *Manager {
@@ -925,6 +926,10 @@ func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments 
 	}
 	projection := newContentProjection(manager, config)
 	projection.result.IsError = result.IsError
+	if ctx.Err() == nil && config.IsBuiltinWeb() && tool.OriginalName == "web_search" && result.IsError &&
+		result.Meta[captypes.WebSearchFallbackAvailable] == true {
+		projection.result.Code = captypes.WebSearchFallbackAvailable
+	}
 	var evidenceError error
 	for _, item := range result.Content {
 		if err := projection.appendContent(item); err != nil {

@@ -22,6 +22,7 @@ type imagePreview struct {
 	image                 image.Image
 	resource              *tea.TerminalImage
 	graphics              tea.ImageProtocol
+	sixelPreview          bool
 	cellWidth, cellHeight int
 	placeholderSize       ui.Size
 	placeholderID         uint32
@@ -45,14 +46,23 @@ func (p *imagePreview) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintCont
 		return
 	}
 	source := p.image.Bounds()
-	if p.graphics != tea.ImageNone && p.resource != nil && !p.imageRect().Empty() {
-		p.paintGraphics(buf, ox, oy, bg)
-		return
-	}
-	w, h := r.W, max(1, int(int64(source.Dy())*int64(r.W)/int64(source.Dx())))
-	if h > r.H*2 {
-		h = r.H * 2
-		w = max(1, int(int64(source.Dx())*int64(h)/int64(source.Dy())))
+	native := p.imageRect()
+	w, h := r.W, 0
+	if !native.Empty() && p.resource.Supports(p.graphics) {
+		if !p.sixelPreview {
+			p.paintGraphics(buf, ox, oy, native, bg)
+			return
+		}
+		// Keep the measured native fit during motion, not the aspect guess
+		// used on terminals that cannot report cell size.
+		r = native
+		w, h = r.W, r.H*2
+	} else {
+		h = max(1, int(int64(source.Dy())*int64(r.W)/int64(source.Dx())))
+		if h > r.H*2 {
+			h = r.H * 2
+			w = max(1, int(int64(source.Dx())*int64(h)/int64(source.Dy())))
+		}
 	}
 	x0, y0 := ox+r.X+(r.W-w)/2, oy+r.Y+(r.H-(h+1)/2)/2
 	sample := func(x, y int) cell.Color {
@@ -98,11 +108,7 @@ func (p *imagePreview) imageRect() ui.Rect {
 	return ui.Rect{X: r.X + (r.W-w)/2, Y: r.Y + (r.H-h)/2, W: w, H: h}
 }
 
-func (p *imagePreview) paintGraphics(buf *surface.CellBuffer, ox, oy int, bg cell.Color) {
-	r := p.imageRect()
-	if r.Empty() {
-		return
-	}
+func (p *imagePreview) paintGraphics(buf *surface.CellBuffer, ox, oy int, r ui.Rect, bg cell.Color) {
 	if size := (ui.Size{W: r.W, H: r.H}); p.placeholderSize != size || p.placeholderID != p.resource.ID() {
 		p.placeholderSize = size
 		p.placeholderID = p.resource.ID()

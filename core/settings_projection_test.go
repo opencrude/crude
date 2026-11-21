@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"crude/agent/hostshell"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/agent/hostshell"
 	"crude/agent/provider"
 	"crude/core/protocol"
 	"crude/types"
@@ -42,7 +42,7 @@ func TestSettingsCaptureAndPreparationBypassHeldSQL(t *testing.T) {
 		if out.Effective.Editor.TabSize != 8 || !out.Accounts["account"].APIKeyPresent || out.Accounts["account"].Connection.ProviderURL != "https://example.test/api" {
 			t.Error("capture lost committed settings or account redaction")
 		}
-		if out.TerminalShells != nil {
+		if out.TerminalShells != nil || out.AgentShells != nil {
 			t.Error("pure actor capture performed shell discovery")
 		}
 		out.Overrides.Editor[0] = '!'
@@ -66,21 +66,26 @@ func TestSettingsCaptureAndPreparationBypassHeldSQL(t *testing.T) {
 	if err := coreprotocol.Decode(run(t.Context()).Payload, &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Effective.Editor.TabSize != 8 || !reflect.DeepEqual(out.TerminalShells, hostshell.Detect()) {
+	shells := hostshell.Detect()
+	if out.Effective.Editor.TabSize != 8 || !reflect.DeepEqual(out.TerminalShells, shells) || !reflect.DeepEqual(out.AgentShells, shells) {
 		t.Fatal("worker did not deliver detached committed settings with core-host shells")
 	}
 }
 
 func TestSettingsShellDiscoveryOccursOnlyWhenWorkerRuns(t *testing.T) {
+	name := "bash"
 	if runtime.GOOS == "windows" {
-		t.Skip("synthetic POSIX shell fixture")
+		name = "pwsh.exe"
+		for _, key := range []string{"ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA", "SystemRoot", "ComSpec"} {
+			t.Setenv(key, "")
+		}
 	}
 	dir := t.TempDir()
 	t.Setenv("PATH", dir)
 	t.Setenv("SHELL", "")
 	a := &actor{ws: &workspace.Workspace{Logger: coreTestLogger{}}}
 	out, _ := a.captureSettings()
-	if out.TerminalShells != nil {
+	if out.TerminalShells != nil || out.AgentShells != nil {
 		t.Fatal("capture included host discovery")
 	}
 	run, _, ok := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: emptyPayload})
@@ -89,7 +94,7 @@ func TestSettingsShellDiscoveryOccursOnlyWhenWorkerRuns(t *testing.T) {
 	}
 	// Nothing existed at capture/preparation time. Worker discovery must see the
 	// newly installed executable, not replay an actor-side observation.
-	shell := filepath.Join(dir, "bash")
+	shell := filepath.Join(dir, name)
 	if err := os.WriteFile(shell, []byte("#!/bin/sh\n"), 0700); err != nil {
 		t.Fatal(err)
 	}

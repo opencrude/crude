@@ -49,11 +49,11 @@ func TestWorkspaceAeronPanelPlacementAndNamedAgentAbsence(t *testing.T) {
 					app.handleHostAction(&ui.Action{ID: action, Payload: termdock.PanelWorkspace})
 				}
 				app.paintShellFrame()
-				if strings.Contains(rowText(app, app.frameTopRow()), "Aeron") {
-					t.Fatal("rejected Aeron application-header link is still visible")
+				if strings.Contains(rowText(app, app.frameTopRow()), "Errand") {
+					t.Fatal("rejected Errand application-header link is still visible")
 				}
 				for _, item := range app.statusTabItems() {
-					if item.ID == "agent:workspace-agent" || item.Label == "Naveen" || item.Label == "Aeron" {
+					if item.ID == "agent:workspace-agent" || item.Label == "Naveen" || item.Label == "Errand" {
 						t.Fatalf("workspace agent remains in the normal panel list: %+v", item)
 					}
 					if item.ID == "group-agents" && item.Label != "Open Agents (1)" {
@@ -68,11 +68,11 @@ func TestWorkspaceAeronPanelPlacementAndNamedAgentAbsence(t *testing.T) {
 				_, cmd := app.Update(tea.MouseClickMsg{X: rect.X + 1, Y: rect.Y, Button: tea.MouseLeft})
 				runAppCommand(t, app, cmd)
 				if app.AgentView.ActiveID() != "workspace-agent" {
-					t.Fatal("panel link did not open the existing named Aeron")
+					t.Fatal("panel link did not open the existing named Errand")
 				}
 				app.restoreAgent("main")
 				if app.Input.Value() != "private draft" {
-					t.Fatal("opening Aeron lost the original session draft", app.Input.Value())
+					t.Fatal("opening Errand lost the original session draft", app.Input.Value())
 				}
 			})
 		}

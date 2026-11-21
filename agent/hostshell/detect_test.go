@@ -147,3 +147,35 @@ func TestGitBashDetectedFromGitExecutableLayouts(t *testing.T) {
 		})
 	}
 }
+
+func TestInventoryUsesBoundEnvironmentAndReusesUnchangedSearch(t *testing.T) {
+	old, updated := t.TempDir(), t.TempDir()
+	name, second, key := "bash", "sh", "PATH"
+	if runtime.GOOS == "windows" {
+		name, second, key = "pwsh.exe", "cmd.exe", "Path"
+	}
+	t.Setenv("PATH", old)
+	t.Setenv("SHELL", "")
+	oldPath := fakeExecutable(t, old, name)
+	newPath := fakeExecutable(t, updated, name)
+	var owner Inventory
+	first := SearchEnvironmentFrom([]string{"PATH=" + old})
+	secondEnv := SearchEnvironmentFrom([]string{key + "=" + updated, "SOME_SETTING=opaque"})
+	if got := owner.Detect(first); len(got) != 1 || got[0].Path != oldPath {
+		t.Fatalf("first observation = %+v; want %s", got, oldPath)
+	}
+	if got := owner.Detect(secondEnv); len(got) != 1 || got[0].Path != newPath {
+		t.Fatalf("changed PATH = %+v; want %s", got, newPath)
+	}
+	if got := Detect(); len(got) == 0 || got[0].Path != oldPath {
+		t.Fatalf("local attachment changed the core process's choices: %+v", got)
+	}
+	fakeExecutable(t, updated, second)
+	if got := owner.Detect(secondEnv); len(got) != 1 {
+		t.Fatalf("unchanged environment repeated host discovery: %+v", got)
+	}
+	owner.at = owner.at.Add(-detectionTTL) // Observe expiry without a timer wait.
+	if got := owner.Detect(secondEnv); len(got) != 2 || got[0].Path != newPath {
+		t.Fatalf("expired observation did not find the new shell: %+v", got)
+	}
+}

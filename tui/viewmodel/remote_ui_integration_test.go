@@ -79,7 +79,7 @@ func TestRemoteUIWordmarkDetailsAndPaletteUseRetainedRemotes(t *testing.T) {
 			if !strings.Contains(row, "Crude") || strings.Contains(row, "Local") || strings.Contains(row, "quic") || strings.Contains(row, "12 ms") {
 				t.Fatalf("header did not move link telemetry to the wordmark: %q", row)
 			}
-			anchor := app.connectionWordmarkRect()
+			anchor := app.connectionActionRect(shellheader.ConnectionAction)
 			app.Update(tea.MouseMotionMsg{X: anchor.X + 2, Y: r.Y})
 			if text := connectionPopoverText(app); !strings.Contains(text, "Local") || !strings.Contains(text, "QUIC") || !strings.Contains(text, "12 ms") {
 				t.Fatalf("wordmark details lost live telemetry: %q", text)

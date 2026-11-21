@@ -13,6 +13,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/mcpclient"
 	"crude/agent/provider"
+	"crude/agent/session"
 	"crude/agent/skills"
 	"crude/buildinfo"
 	"crude/types"
@@ -62,7 +63,21 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 	}
 	service.SetRegistrationStore(newCapabilityRegistrationStore(workspace))
 	service.SetRuntimeAuthority(capabilityRuntimeAuthority{store: workspace.Collaboration})
-	if err := service.Configure(ctx, workspace.LoadAppSettings().Capabilities); err != nil {
+	if cfg := workspace.sessionCfg; cfg != nil && cfg.AccountManager != nil {
+		// Capture the application credential owner, not a session profile,
+		// workspace defaults map, or a copy of live credentials.
+		accounts := &session.Config{AccountManager: cfg.AccountManager}
+		service.SetWebSearchFallbackRunner(func(ctx context.Context, accountID, model, query string, limit int) ([]provider.WebSearchSource, error) {
+			connection, err := accounts.ConnectionProvider(accountID)
+			if err != nil {
+				return nil, errors.New("the fallback account is unavailable. Choose an account in Settings")
+			}
+			return connection.SearchWebOnce(ctx, model, query, limit)
+		})
+	}
+	settings := workspace.LoadAppSettings().Capabilities
+	service.SetPublishedWebSearchFallback(workspace.AppDefaults().Capabilities.WebSearchFallback)
+	if err := service.Configure(ctx, settings); err != nil {
 		service.Close()
 		return err
 	}
@@ -183,6 +198,23 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 		}
 	case "set-secrets":
 		err = service.SetSecrets(ctx, action.Arguments)
+	case captypes.SetWebSearchFallback:
+		if err = applyWebSearchFallback(&working, action); err == nil {
+			// Commit only this exact route. The persisted settings owner keeps
+			// any concurrent edits to neighboring keys and registrations.
+			edit := types.SettingEdit{Path: []string{"capabilities", "web_search_fallback"}}
+			if len(working.Capabilities.WebSearchFallback) != 0 {
+				edit.After, _ = json.Marshal(working.Capabilities.WebSearchFallback)
+			}
+			if err = ctx.Err(); err == nil {
+				result := workspace.PreparePreferencesSave(types.SettingsScopeApplication, []types.SettingEdit{edit})()
+				err = result.Err
+				if err == nil {
+					workspace.ApplyPreferencesSave(result)
+					service.SetPublishedWebSearchFallback(result.AppSettings.Capabilities.WebSearchFallback)
+				}
+			}
+		}
 	case "save-source":
 		if action.Source == nil || action.Source.ID == "" || action.Source.Location == "" {
 			err = errors.New("source needs an identity and location")
@@ -457,4 +489,32 @@ func builtinIdentity(settings captypes.Settings, value captypes.ConnectionConfig
 		value.URL, value.Args, value.Directory, value.Source = "", nil, "", ""
 	}
 	return value
+}
+
+// applyWebSearchFallback is shared by the connected and in-process Settings
+// owners. It validates and stages the exact application-only route without
+// probing or requesting inference. The provider rechecks it at each attempt.
+func applyWebSearchFallback(working *types.AppSettings, action captypes.Action) error {
+	if action.Scope != captypes.ScopeApplication {
+		return errors.New("change Model fallback in Application Settings")
+	}
+	if action.Kind != captypes.KindMCP || action.ID != captypes.WebConnectionID ||
+		!working.Capabilities.Connections[captypes.WebConnectionID].IsBuiltinWeb() {
+		return errors.New("only Crude's built-in Web search and fetch supports model fallback")
+	}
+	next := action.WebSearchFallback
+	if len(next) == 0 {
+		working.Capabilities.WebSearchFallback = nil
+		return nil
+	}
+	accountID, _, ok := next.Selection()
+	if !ok {
+		return errors.New("choose an account and a valid model for model fallback")
+	}
+	account, ok := working.Accounts[accountID]
+	if !ok || account.APIKey == "" || account.OAuth != nil || !provider.SupportsWebSearchFallback(account.Connection) {
+		return errors.New("choose an OpenAI Responses account with an API key")
+	}
+	working.Capabilities.WebSearchFallback = append(captypes.WebSearchFallback(nil), next...)
+	return nil
 }

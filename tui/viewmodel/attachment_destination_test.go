@@ -52,6 +52,44 @@ func desktopAttachmentFile(t *testing.T, calls <-chan desktopLaunchRecord, revea
 	return requireDesktopLaunch(t, calls, reveal)
 }
 
+func TestPastedAttachmentChipAndPreviewUseTheSameName(t *testing.T) {
+	for _, kind := range []sessiondb.Kind{sessiondb.KindPastedText, sessiondb.KindPastedTextFile, sessiondb.KindPastedImage} {
+		t.Run(string(kind), func(t *testing.T) {
+			app := newTranscriptAttachmentApp(t)
+			setAttachmentDestination(t, app, "crude")
+			request := sessiondb.CreateRequest{Kind: kind, Title: "Clipboard capture description", Mime: "text/plain", Content: "original", Inline: kind == sessiondb.KindPastedText}
+			if kind == sessiondb.KindPastedImage {
+				request.Mime, request.Content, request.Data = "image/png", "", attachmentImageBytes(t)
+			}
+			ref, err := app.RefStore().CreateReference(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			draft := "Keep this draft " + ref.Label
+			app.Input.SetInput(draft)
+			app.paintShellFrame()
+			chips := app.Input.ReferenceChips(app.inputRect.W)
+			if len(chips) != 1 || chips[0].ID != ref.ID {
+				t.Fatalf("missing clipboard chip: %+v", chips)
+			}
+			x, y := app.inputRect.X+chips[0].Body.X+1, app.inputRect.Y+chips[0].Body.Y
+			_, command := app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+			runAppCommand(t, app, command)
+			window := app.overlayHost.Window(ui.OverlayTextOverlay)
+			if window == nil {
+				t.Fatal("click did not open the attachment")
+			}
+			frame := window.Content.(*ui.WindowFrameWidget).Frame()
+			if got := frame.Title(); got != chips[0].Label || got != ref.Label {
+				t.Fatalf("header = %q, chip = %q; both must use %q", got, chips[0].Label, ref.Label)
+			}
+			if app.Input.Value() != draft {
+				t.Fatal("preview changed the composer draft")
+			}
+		})
+	}
+}
+
 func TestAttachmentDestinationAllEntryPoints(t *testing.T) {
 	for _, destination := range []string{"", "system", "file-manager", "crude"} {
 		for _, entry := range []string{"chip", "keyboard", "posted", "sqlite", "prompt-history"} {

@@ -4,15 +4,16 @@ import (
 	"testing"
 )
 
-func TestGetMemoryCategoryInheritsMainByDefault(t *testing.T) {
+func TestGetMemoryCategoryInheritsErrandByDefault(t *testing.T) {
 	cfg := &Config{Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
-			CategoryDefault: {AccountID: "openai-account", Model: "gpt-5.6"},
+			CategoryDefault: {AccountID: "openai-account", Model: "main-model"},
+			CategoryAeron:   {AccountID: "errand-account", Model: "errand-model", ThinkingEffort: "high", ServiceTier: "fast", Instructions: "Errand tools and prompt", AllowedTools: []string{"execute_command"}},
 		}}},
 	}}
 	got := cfg.GetMemoryCategory()
-	if got.Model != "gpt-5.6" || got.AccountID != "openai-account" {
-		t.Fatalf("memory category = %+v, want inherit main", got)
+	if got.Model != "errand-model" || got.AccountID != "errand-account" || got.ThinkingEffort != "" || got.ServiceTier != "" || got.Instructions != "" || len(got.AllowedTools) != 0 {
+		t.Fatalf("memory category = %+v, want only the Errand binding", got)
 	}
 }
 

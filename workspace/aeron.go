@@ -7,12 +7,12 @@ import (
 	"crude/agent/session"
 )
 
-// workspaceAeronSessionKey stores the workspace's one Aeron session identity.
+// workspaceAeronSessionKey stores the workspace's one Errand session identity.
 // It is deliberately workspace metadata, not a shell preference: every shell
 // that attaches to this workspace sees the same agent.
 const workspaceAeronSessionKey = "agent.aeron_session"
 
-// liveAeronSession returns the running Aeron, or nil when this workspace has
+// liveAeronSession returns the running Errand, or nil when this workspace has
 // none. The caller owns the serialized workspace state.
 func (w *Workspace) liveAeronSession() *Session {
 	for _, sess := range w.Sessions {
@@ -23,7 +23,7 @@ func (w *Workspace) liveAeronSession() *Session {
 	return nil
 }
 
-// PrepareAeronSession returns the workspace's Aeron as a lifecycle operation.
+// PrepareAeronSession returns the workspace's Errand as a lifecycle operation.
 // It reuses a live session, resumes the remembered saved one, or creates the
 // first one. It never starts a turn.
 func (w *Workspace) PrepareAeronSession() (*InvocationLifecycleOperation, error) {
@@ -41,7 +41,7 @@ func (w *Workspace) PrepareAeronSession() (*InvocationLifecycleOperation, error)
 	id := w.aeronSessionID
 	if existing := w.SessionsByID[id]; existing != nil && !SessionIsAeron(existing) {
 		// The user gave the remembered session another root role. Keep that
-		// session and create a separate Aeron instead of rewriting it.
+		// session and create a separate Errand instead of rewriting it.
 		id = ""
 	}
 	cfg, err := invocationConfig(w.sessionCfg, InvocationSelection{MainAgent: session.CategoryAeron})
@@ -58,7 +58,7 @@ func (w *Workspace) PrepareAeronSession() (*InvocationLifecycleOperation, error)
 	return &InvocationLifecycleOperation{op: op}, nil
 }
 
-// EnsureAeronSession returns the running or saved Aeron for this workspace,
+// EnsureAeronSession returns the running or saved Errand for this workspace,
 // creating it once when the workspace has none. It does not submit input.
 func (w *Workspace) EnsureAeronSession() *NewSessionResult {
 	op, err := w.PrepareAeronSession()
@@ -68,7 +68,7 @@ func (w *Workspace) EnsureAeronSession() *NewSessionResult {
 	return w.ApplyAgentSession(op.Run(context.Background()))
 }
 
-// AeronAgentID returns the root agent of the running workspace Aeron, or ""
+// AeronAgentID returns the root agent of the running workspace Errand, or ""
 // when it is not running. The caller owns the serialized workspace state.
 func (w *Workspace) AeronAgentID() string {
 	if live := w.liveAeronSession(); live != nil {

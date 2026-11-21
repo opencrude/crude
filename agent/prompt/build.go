@@ -15,9 +15,9 @@ type RootOptions struct {
 	WorkDir  string
 	TempDir  string
 	Model    string
-	// WorkspaceAgent adds the contract of the workspace's permanent Aeron.
+	// WorkspaceAgent adds the contract of the workspace's permanent Errand.
 	WorkspaceAgent bool
-	// CrudeVersion is the running Crude build, which Aeron compares with the
+	// CrudeVersion is the running Crude build, which Errand compares with the
 	// latest release.
 	CrudeVersion string
 	// Shell is the resolved agent command shell the environment describes.

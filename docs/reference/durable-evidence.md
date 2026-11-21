@@ -2,7 +2,7 @@
 
 > Status: Current reference — Crude's working-set, run, file and performance evidence.
 
-Crude exposes read-only evidence through its existing tools. Aeron is a role in
+Crude exposes read-only evidence through its existing tools. Errand is a role in
 that runtime and uses the same owners and access checks. An inspection does not
 start agents, resume sessions, launch language services or change any file.
 The underlying stores are not agent interfaces.

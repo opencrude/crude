@@ -2,11 +2,17 @@ package tea
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -59,6 +65,52 @@ func sixelView(p ImagePlacement, surface uv.Surface) View {
 	return v
 }
 
+type sixelTestRenderer struct {
+	*cursedRenderer
+	ready <-chan struct{}
+}
+
+func newSixelTestRenderer(tb testing.TB, w io.Writer, width, height int) *sixelTestRenderer {
+	tb.Helper()
+	ready := make(chan struct{}, 1)
+	r := newCursedRenderer(w, nil, width, height)
+	r.sixelWake = func() {
+		select {
+		case ready <- struct{}{}:
+		default:
+		}
+	}
+	tb.Cleanup(func() { _ = r.close() })
+	return &sixelTestRenderer{r, ready}
+}
+
+// Await actual Sixel output, not a sleep or a readiness proxy. Direct-renderer
+// tests drive flush themselves; Program integration tests use the paced writer.
+func (r *sixelTestRenderer) show(tb testing.TB, v View) {
+	tb.Helper()
+	r.render(v)
+	r.awaitRasters(tb)
+}
+
+func (r *sixelTestRenderer) awaitRasters(tb testing.TB) {
+	tb.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	for {
+		if err := r.flush(false); err != nil {
+			tb.Fatal(err)
+		}
+		if len(r.sixelImages) == len(r.lastView.sixels) {
+			return
+		}
+		select {
+		case <-r.ready:
+		case <-deadline.C:
+			tb.Fatal("image did not reach the terminal writer")
+		}
+	}
+}
+
 // Use the existing VT and Sixel parsers, including for our output assertions.
 func sixelPayloads(t testing.TB, output string) []image.Image {
 	t.Helper()
@@ -87,8 +139,8 @@ func sixelPayloads(t testing.TB, output string) []image.Image {
 func TestSixelRendererPreservesSubcellPixelsAndNonzeroSource(t *testing.T) {
 	p, source := sixelFixture(t)
 	var output bytes.Buffer
-	r := newCursedRenderer(&output, nil, 12, 8)
-	kittyFlush(t, r, sixelView(p, source))
+	r := newSixelTestRenderer(t, &output, 12, 8)
+	r.show(t, sixelView(p, source))
 	images := sixelPayloads(t, output.String())
 	if len(images) != 1 || images[0].Bounds() != image.Rect(0, 0, 8, 12) {
 		t.Fatalf("native raster bounds: %v", images)
@@ -115,9 +167,9 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	source.Clear()
 	setSixelCells(source.Buffer, p, -1, 2)
 	var output bytes.Buffer
-	r := newCursedRenderer(&output, nil, 12, 8)
+	r := newSixelTestRenderer(t, &output, 12, 8)
 	v := sixelView(p, source)
-	kittyFlush(t, r, v)
+	r.show(t, v)
 	images := sixelPayloads(t, output.String())
 	if len(images) != 1 || images[0].Bounds().Dx() != 6 || r.sixelImages[0].tile.column != 1 {
 		t.Fatal("left clipping changed source coordinates or raster dimensions")
@@ -128,7 +180,7 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	source.FillArea(&uv.Cell{Content: "X", Width: 1}, cover)
 	source.generation++
 	output.Reset()
-	kittyFlush(t, r, v)
+	r.show(t, v)
 	if len(sixelPayloads(t, output.String())) != 4 || !strings.Contains(output.String(), "XX") {
 		t.Fatal("ordinary opaque window did not split and cover the image")
 	}
@@ -141,7 +193,7 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	setSixelCells(source.Buffer, p, 7, 5)
 	source.generation++
 	output.Reset()
-	kittyFlush(t, r, v)
+	r.show(t, v)
 	if len(sixelPayloads(t, output.String())) != 1 || len(r.sixelImages) != 1 || r.sixelImages[0].tile.rect.Min != image.Pt(7, 5) {
 		t.Fatal("moving the image left stale crops or ignored its new position")
 	}
@@ -149,7 +201,7 @@ func TestSixelRendererClipOccludeMoveAndRemove(t *testing.T) {
 	source.generation++
 	v.Images = nil
 	output.Reset()
-	kittyFlush(t, r, v)
+	r.show(t, v)
 	if len(r.sixelImages) != 0 || output.Len() == 0 || len(sixelPayloads(t, output.String())) != 0 ||
 		strings.Contains(output.String(), ansi.EraseEntireScreen) {
 		t.Fatal("removing an image did not repaint only its old cells")
@@ -171,18 +223,16 @@ func TestSixelRendererWarmFramesAndUnrelatedTextReuseRaster(t *testing.T) {
 	pixels := &countedSixelPixels{Image: p.Image.pixels}
 	p.Image.pixels = pixels
 	var output bytes.Buffer
-	r := newCursedRenderer(&output, nil, 12, 8)
+	r := newSixelTestRenderer(t, &output, 12, 8)
 	v := sixelView(p, source)
 	r.render(v)
 	if pixels.reads.Load() != 0 {
 		t.Fatal("producer handoff resampled pixels on the UI goroutine")
 	}
-	if err := r.flush(false); err != nil {
-		t.Fatal(err)
-	}
+	r.awaitRasters(t)
 	reads := pixels.reads.Load()
 	if reads == 0 {
-		t.Fatal("terminal writer never sampled the original pixels")
+		t.Fatal("Sixel preparation never sampled the original pixels")
 	}
 	output.Reset()
 	allocs := testing.AllocsPerRun(50, func() {
@@ -197,17 +247,58 @@ func TestSixelRendererWarmFramesAndUnrelatedTextReuseRaster(t *testing.T) {
 	// Different row: no re-encoding or retransmission.
 	source.SetCell(0, 0, &uv.Cell{Content: "A", Width: 1})
 	source.generation++
-	kittyFlush(t, r, v)
+	r.show(t, v)
 	if pixels.reads.Load() != reads || len(sixelPayloads(t, output.String())) != 0 {
 		t.Fatal("unrelated text re-encoded or retransmitted the image")
 	}
-	// Same row: the text writer can erase cells, so restore the cached raster.
+
+}
+
+func TestSixelRendererKeepsDisjointImageOnSharedRows(t *testing.T) {
+	p, source := sixelFixture(t)
+	var output bytes.Buffer
+	r := newSixelTestRenderer(t, &output, 12, 8)
+	v := sixelView(p, source)
+	// A neighboring pane changes on these rows, with stable ink on both
+	// sides. This update writes only one cell; there is no line erase.
+	source.SetCell(0, 3, &uv.Cell{Content: "A", Width: 1})
+	source.SetCell(11, 3, &uv.Cell{Content: "|", Width: 1})
+	r.show(t, v)
+	output.Reset()
 	source.SetCell(0, 3, &uv.Cell{Content: "B", Width: 1})
 	source.generation++
+	r.show(t, v)
+	if !strings.Contains(output.String(), "B") || len(sixelPayloads(t, output.String())) != 0 {
+		t.Fatalf("updating a disjoint cell must paint text without retransmitting the stable image (%d output bytes)", output.Len())
+	}
+}
+
+func TestSixelRendererRestoresRasterAfterTerminalLineErase(t *testing.T) {
+	p, source := sixelFixture(t)
+	// Adjacent spaces use the same style as native markers after the
+	// renderer replaces them with spaces. A real EL can erase both.
+	blank := *source.CellAt(2, 3)
+	blank.Content = " "
+	for x := range source.Width() {
+		if x < 2 || x >= 2+p.Columns {
+			source.SetCell(x, 3, &blank)
+		}
+	}
+	ink := blank
+	ink.Content = "A"
+	source.SetCell(0, 3, &ink)
+	source.SetCell(11, 7, &uv.Cell{Content: "|", Width: 1})
+	var output bytes.Buffer
+	r := newSixelTestRenderer(t, &output, 12, 8)
+	v := sixelView(p, source)
+	r.show(t, v)
 	output.Reset()
-	kittyFlush(t, r, v)
-	if pixels.reads.Load() != reads || len(sixelPayloads(t, output.String())) != 1 {
-		t.Fatal("same-row text failed to restore the cached image without resampling")
+	source.SetCell(0, 3, &blank)
+	source.generation++
+	r.show(t, v)
+	out := output.String()
+	if !strings.Contains(out, ansi.EraseLineRight) || len(sixelPayloads(t, out)) != 1 {
+		t.Fatalf("terminal line erase must restore the intersected image: %q", out)
 	}
 }
 
@@ -215,9 +306,9 @@ func TestSixelRendererResizeResetFailureAndClose(t *testing.T) {
 	for _, action := range []string{"resize", "reset", "clear", "failed-write"} {
 		t.Run(action, func(t *testing.T) {
 			p, source := sixelFixture(t)
-			r := newCursedRenderer(io.Discard, nil, 12, 8)
+			r := newSixelTestRenderer(t, io.Discard, 12, 8)
 			v := sixelView(p, source)
-			kittyFlush(t, r, v)
+			r.show(t, v)
 			switch action {
 			case "resize":
 				r.resize(4, 4) // before the producer has delivered new geometry
@@ -240,7 +331,7 @@ func TestSixelRendererResizeResetFailureAndClose(t *testing.T) {
 			}
 			var output bytes.Buffer
 			r.w = &output
-			kittyFlush(t, r, v)
+			r.show(t, v)
 			if len(sixelPayloads(t, output.String())) != 1 {
 				t.Fatal("image was not restored after terminal invalidation")
 			}
@@ -266,8 +357,8 @@ func TestSixelRendererAlphaIsCompositedOverSurface(t *testing.T) {
 	pixels.SetNRGBA(3, 5, color.NRGBA{})
 	pixels.SetNRGBA(4, 5, color.NRGBA{R: 255, A: 128})
 	var output bytes.Buffer
-	r := newCursedRenderer(&output, nil, 12, 8)
-	kittyFlush(t, r, sixelView(p, source))
+	r := newSixelTestRenderer(t, &output, 12, 8)
+	r.show(t, sixelView(p, source))
 	images := sixelPayloads(t, output.String())
 	for x, want := range []color.NRGBA{{20, 40, 60, 255}, {138, 20, 30, 255}} {
 		got := color.NRGBAModel.Convert(images[0].At(x, 0)).(color.NRGBA)
@@ -292,8 +383,8 @@ func TestSixelSizeBounds(t *testing.T) {
 
 func TestSixelCloseFailureKeepsExactDamageUntilSuccessfulCleanup(t *testing.T) {
 	p, source := sixelFixture(t)
-	r := newCursedRenderer(io.Discard, nil, 12, 8)
-	kittyFlush(t, r, sixelView(p, source))
+	r := newSixelTestRenderer(t, io.Discard, 12, 8)
+	r.show(t, sixelView(p, source))
 	r.w = kittyFailWriter{}
 	if err := r.close(); err == nil || len(r.sixelImages) != 1 {
 		t.Fatal("failed close forgot the terminal image that can still be visible")
@@ -315,8 +406,376 @@ func BenchmarkSixelEncodeVisibleRaster(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		if _, err := encodeSixel(tile); err != nil {
+		if _, err := encodeSixel(context.Background(), tile); err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func sixelPhotoBenchmarkImage(b *testing.B) *TerminalImage {
+	b.Helper()
+	name := os.Getenv("CRUDE_SIXEL_PHOTO")
+	if name == "" {
+		name = filepath.Join(runtime.GOROOT(), "src", "image", "testdata", "video-001.jpeg")
+		if _, err := os.Stat(name); os.IsNotExist(err) {
+			b.Skip("Set CRUDE_SIXEL_PHOTO to a local photographic JPEG")
+		}
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer f.Close()
+	pixels, err := jpeg.Decode(f)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var data bytes.Buffer
+	if err := png.Encode(&data, pixels); err != nil {
+		b.Fatal(err)
+	}
+	return NewTerminalImage(data.Bytes(), pixels)
+}
+
+func BenchmarkSixelEncodePhoto(b *testing.B) {
+	resource := sixelPhotoBenchmarkImage(b)
+	for _, size := range []struct {
+		name          string
+		columns, rows int
+	}{
+		{"Typical", 90, 28},
+		{"Large", 170, 68},
+	} {
+		b.Run(size.name, func(b *testing.B) {
+			p := ImagePlacement{Image: resource, Columns: size.columns, Rows: size.rows,
+				Protocol: ImageSixel, CellWidth: 9, CellHeight: 20}
+			tile := sixelTile{placement: p, rect: image.Rect(0, 0, p.Columns, p.Rows), background: uv.RGBColor(20, 40, 60)}
+			b.ReportAllocs()
+			b.ResetTimer()
+			var n int
+			for range b.N {
+				s, err := encodeSixel(context.Background(), tile)
+				if err != nil {
+					b.Fatal(err)
+				}
+				n += len(s)
+			}
+			b.ReportMetric(float64(n)/float64(b.N), "wire-B/op")
+		})
+	}
+}
+
+type sixelBenchmarkWriter struct{ n int }
+
+func (w *sixelBenchmarkWriter) Write(p []byte) (int, error) {
+	w.n += len(p)
+	return len(p), nil
+}
+
+func BenchmarkSixelRendererPhoto(b *testing.B) {
+	resource := sixelPhotoBenchmarkImage(b)
+	for _, mode := range []string{"Warm", "Unrelated", "SharedRow", "Move", "Open", "Resize", "Remove"} {
+		b.Run(mode, func(b *testing.B) {
+			p := ImagePlacement{Image: resource, Columns: 90, Rows: 28, Protocol: ImageSixel, CellWidth: 9, CellHeight: 20}
+			source := &generationSurface{Buffer: uv.NewBuffer(160, 40), generation: 1}
+			write := new(sixelBenchmarkWriter)
+			r := newSixelTestRenderer(b, write, 160, 40)
+			base, withImage := NewViewFromSurface(source), sixelView(p, source)
+			base.AltScreen = true
+			flush := func(v View) {
+				r.render(v)
+				if err := r.flush(false); err != nil {
+					b.Fatal(err)
+				}
+			}
+			setSixelCells(source.Buffer, p, 1, 1)
+			if mode == "SharedRow" {
+				source.SetCell(0, 3, &uv.Cell{Content: "B", Width: 1})
+				source.SetCell(159, 3, &uv.Cell{Content: "|", Width: 1})
+			}
+			if mode != "Open" {
+				r.show(b, withImage)
+			}
+			if mode == "Move" {
+				// Prime both buffer sizes so the measured iterations describe
+				// steady re-positioning, not the first growth of the envelope.
+				for _, pos := range []int{2, 1} {
+					source.Clear()
+					setSixelCells(source.Buffer, p, pos, pos)
+					source.generation++
+					flush(withImage)
+				}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			write.n = 0
+			var transferred int
+			var firstPass time.Duration
+			for i := range b.N {
+				switch mode {
+				case "Warm":
+					flush(withImage)
+				case "Unrelated", "SharedRow":
+					y := 0
+					if mode == "SharedRow" {
+						y = 3
+					}
+					source.SetCell(0, y, &uv.Cell{Content: []string{"A", "B"}[i%2], Width: 1})
+					source.generation++
+					flush(withImage)
+				case "Move":
+					b.StopTimer()
+					source.Clear()
+					setSixelCells(source.Buffer, p, 1+(i+1)%2, 1+(i+1)%2)
+					source.generation++
+					b.StartTimer()
+					flush(withImage)
+				case "Open", "Resize", "Remove":
+					b.StopTimer()
+					source.Clear()
+					source.generation++
+					switch mode {
+					case "Open":
+						flush(base)
+						setSixelCells(source.Buffer, p, 1, 1)
+					case "Resize":
+						setSixelCells(source.Buffer, p, 1, 1)
+						r.show(b, withImage)
+						source.Clear()
+						p2 := p
+						p2.Rows--
+						setSixelCells(source.Buffer, p2, 1, 1)
+						withImage = sixelView(p2, source)
+					case "Remove":
+						setSixelCells(source.Buffer, p, 1, 1)
+						r.show(b, withImage)
+						source.Clear()
+					}
+					source.generation++
+					write.n = 0
+					b.StartTimer()
+					if mode == "Remove" {
+						flush(base)
+					} else {
+						start := time.Now()
+						flush(withImage)
+						firstPass += time.Since(start)
+						r.awaitRasters(b)
+					}
+					if mode == "Resize" {
+						withImage = sixelView(p, source)
+					}
+				}
+				transferred += write.n
+				write.n = 0
+			}
+			b.ReportMetric(float64(transferred)/float64(b.N), "wire-B/op")
+			if mode == "Open" || mode == "Resize" {
+				b.ReportMetric(float64(firstPass.Nanoseconds())/1000/float64(b.N), "first-flush-us/op")
+			}
+		})
+	}
+}
+
+type gatedSixelPixels struct {
+	image.Image
+	entered, release chan struct{}
+	once             sync.Once
+}
+
+func (p *gatedSixelPixels) At(x, y int) color.Color {
+	p.once.Do(func() {
+		close(p.entered)
+		<-p.release
+	})
+	return p.Image.At(x, y)
+}
+
+// Measure pane removal with real photographic work known to be pending. The
+// gate releases at the removal handoff. A writer that owns conversion still
+// cannot present removal until that cold raster has been completed and sent.
+func BenchmarkSixelPendingRemovalPhoto(b *testing.B) {
+	resource := sixelPhotoBenchmarkImage(b)
+	p := ImagePlacement{Columns: 90, Rows: 28, Protocol: ImageSixel, CellWidth: 9, CellHeight: 20}
+	source := &generationSurface{Buffer: uv.NewBuffer(160, 40), generation: 1}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		b.StopTimer()
+		gate := &gatedSixelPixels{Image: resource.pixels, entered: make(chan struct{}), release: make(chan struct{})}
+		image := *resource
+		image.pixels = gate
+		p.Image = &image
+		setSixelCells(source.Buffer, p, 1, 1)
+		source.generation++
+		r := newCursedRenderer(io.Discard, nil, 160, 40)
+		r.render(sixelView(p, source))
+		flushed := make(chan error, 1)
+		go func() { flushed <- r.flush(false) }()
+		select {
+		case <-gate.entered:
+		case <-time.After(5 * time.Second):
+			close(gate.release)
+			b.Fatal("cold raster was not admitted")
+		}
+		source.Clear()
+		source.SetCell(1, 1, &uv.Cell{Content: "X", Width: 1})
+		source.generation++
+
+		b.StartTimer()
+		r.render(View{Surface: source, AltScreen: true})
+		close(gate.release)
+		err := r.flush(false)
+		b.StopTimer()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := <-flushed; err != nil {
+			b.Fatal(err)
+		}
+		if err := r.close(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+type sixelObservingWriter struct{ output chan string }
+
+func (w sixelObservingWriter) Write(p []byte) (int, error) {
+	w.output <- string(p)
+	return len(p), nil
+}
+
+func awaitSixelStage(t *testing.T, gate <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-gate:
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not reach cold raster preparation")
+	}
+}
+
+func awaitSixelText(t *testing.T, out <-chan string, text string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case frame := <-out:
+			if len(sixelPayloads(t, frame)) != 0 {
+				t.Fatal("superseded image reached the terminal")
+			}
+			if strings.Contains(frame, text) {
+				return
+			}
+		case <-deadline:
+			t.Fatal("pending raster preparation blocked the terminal update")
+		}
+	}
+}
+
+func TestSixelRendererPresentsPaneRemovalWhileImagePreparationIsPending(t *testing.T) {
+	p, source := sixelFixture(t)
+	pixels := &gatedSixelPixels{Image: p.Image.pixels, entered: make(chan struct{}), release: make(chan struct{})}
+	p.Image.pixels = pixels
+	out := make(chan string, 16)
+	w := sixelObservingWriter{out}
+	program := NewProgram(nil, WithOutput(w))
+	program.renderer = newCursedRenderer(w, nil, 12, 8)
+	program.startRenderer()
+	defer program.stopRenderer(true)
+	release := sync.OnceFunc(func() { close(pixels.release) })
+	defer release()
+
+	program.present(sixelView(p, source))
+	awaitSixelStage(t, pixels.entered)
+	source.Clear()
+	source.SetCell(1, 1, &uv.Cell{Content: "Closed", Width: 6})
+	source.generation++
+	program.present(View{Surface: source, AltScreen: true})
+	awaitSixelText(t, out, "Closed")
+
+	// Advance the real writer after releasing the obsolete preparation. Its
+	// completion must not resurrect the removed pane.
+	release()
+	source.SetCell(1, 2, &uv.Cell{Content: "After", Width: 5})
+	source.generation++
+	program.present(View{Surface: source, AltScreen: true})
+	awaitSixelText(t, out, "After")
+}
+
+func TestSixelRendererPendingRasterUsesLatestClippedGeometry(t *testing.T) {
+	p, source := sixelFixture(t)
+	pixels := &gatedSixelPixels{Image: p.Image.pixels, entered: make(chan struct{}), release: make(chan struct{})}
+	p.Image.pixels = pixels
+	var output bytes.Buffer
+	r := newSixelTestRenderer(t, &output, 12, 8)
+	release := sync.OnceFunc(func() { close(pixels.release) })
+	defer release()
+
+	r.render(sixelView(p, source))
+	if err := r.flush(false); err != nil {
+		t.Fatal(err)
+	}
+	awaitSixelStage(t, pixels.entered)
+	r.resize(5, 6) // clips the old detached surface before the model fits again
+	if err := r.flush(false); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	r.awaitRasters(t)
+	images := sixelPayloads(t, output.String())
+	if len(images) != 1 || images[0].Bounds() != image.Rect(0, 0, 6, 12) {
+		t.Fatalf("resize sent a stale raster instead of the clipped 6×12 crop: %v", images)
+	}
+}
+
+func TestSixelRendererStopRestoresTerminalBeforeJoiningPendingRaster(t *testing.T) {
+	p, source := sixelFixture(t)
+	pixels := &gatedSixelPixels{Image: p.Image.pixels, entered: make(chan struct{}), release: make(chan struct{})}
+	p.Image.pixels = pixels
+	out := make(chan string, 16)
+	w := sixelObservingWriter{out}
+	program := NewProgram(nil, WithOutput(w))
+	program.renderer = newCursedRenderer(w, nil, 12, 8)
+	program.startRenderer()
+	defer program.stopRenderer(true)
+	release := sync.OnceFunc(func() { close(pixels.release) })
+	defer release()
+
+	program.present(sixelView(p, source))
+	awaitSixelStage(t, pixels.entered)
+	stopped := make(chan struct{})
+	go func() {
+		program.stopRenderer(false)
+		close(stopped)
+	}()
+	awaitSixelText(t, out, ansi.ResetModeAltScreenSaveCursor)
+	select {
+	case <-stopped:
+		t.Fatal("terminal stop abandoned a live raster worker")
+	default:
+	}
+	release()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal stop did not join canceled raster preparation")
+	}
+	program.startRenderer()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case frame := <-out:
+			images := sixelPayloads(t, frame)
+			if len(images) == 0 {
+				continue
+			}
+			if len(images) != 1 || images[0].Bounds() != image.Rect(0, 0, 8, 12) {
+				t.Fatalf("restore did not recreate the intended raster: %v", images)
+			}
+			return
+		case <-deadline:
+			t.Fatal("the current image was not restored after terminal stop/start")
 		}
 	}
 }
@@ -324,7 +783,7 @@ func BenchmarkSixelEncodeVisibleRaster(b *testing.B) {
 func TestSixelRendererHandoffWhileWriterStalled(t *testing.T) {
 	p, source := sixelFixture(t)
 	w := &gatedWriter{entered: make(chan struct{}), release: make(chan struct{})}
-	r := newCursedRenderer(w, nil, 12, 8)
+	r := newSixelTestRenderer(t, w, 12, 8)
 	v := sixelView(p, source)
 	r.render(v)
 	w.armed.Store(true)

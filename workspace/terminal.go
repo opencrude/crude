@@ -153,8 +153,14 @@ type TerminalManager struct {
 	// shellEnvironment is the sole retained base for this workspace's new
 	// terminals. Nil means no same-host shell has supplied one. Never expose it
 	// through Settings, Host, inventory, persistence or diagnostics.
-	shellEnvironment []string
+	shellEnvironment *terminalShellEnvironment
+	shellInventory   hostshell.Inventory
 	nextNumber       int
+}
+
+type terminalShellEnvironment struct {
+	env    []string
+	search hostshell.SearchEnvironment
 }
 
 type terminalSession struct {
@@ -382,9 +388,33 @@ func (m *TerminalManager) SetShellEnvironment(env []string) {
 	if m == nil {
 		return
 	}
+	var snapshot *terminalShellEnvironment
+	if env != nil {
+		detached := slices.Clone(env)
+		snapshot = &terminalShellEnvironment{env: detached, search: hostshell.SearchEnvironmentFrom(detached)}
+	}
 	m.mu.Lock()
-	m.shellEnvironment = slices.Clone(env)
+	m.shellEnvironment = snapshot
 	m.mu.Unlock()
+}
+
+// DetectShells observes the host executables available to new terminals, using
+// the same launch environment as CreatePrepared. Call it off the UI and actor.
+func (m *TerminalManager) DetectShells() []ttypes.TerminalShell {
+	if m == nil {
+		return hostshell.Detect()
+	}
+	m.mu.Lock()
+	base := m.shellEnvironment
+	m.mu.Unlock()
+	return m.detectShells(base)
+}
+
+func (m *TerminalManager) detectShells(base *terminalShellEnvironment) []ttypes.TerminalShell {
+	if base == nil {
+		return hostshell.Detect()
+	}
+	return m.shellInventory.Detect(base.search)
 }
 
 // Settings returns the configuration new terminals start with.
@@ -471,26 +501,46 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 	}
 	m.mu.Lock()
 	settings := ttypes.CloneTerminalSettings(m.settings)
-	base := slices.Clone(m.shellEnvironment)
+	attached := m.shellEnvironment
 	m.mu.Unlock()
-	if base == nil {
+	var base []string
+	if attached == nil {
 		base = os.Environ()
-	} else if settings.LoginShell == "" {
-		// The attaching shell has already initialized PATH and its tool setup.
-		// A login profile could replace them; only an explicit On opts into it.
-		settings.LoginShell = "off"
+	} else {
+		base = attached.env
+		if settings.LoginShell == "" {
+			// The attaching shell already initialized PATH. Only explicit On
+			// lets a login profile replace it.
+			settings.LoginShell = "off"
+		}
 	}
 	command, args := opts.Command, opts.Args
 	interactive := command == ""
-	if command == "" {
+	if interactive {
+		var shells []ttypes.TerminalShell
+		if settings.Shell != ttypes.TerminalShellCustom {
+			shells = m.detectShells(attached)
+		}
 		var err error
-		if command, args, err = ttypes.ResolveTerminalLaunch(settings, hostshell.Detect()); err != nil {
+		if command, args, err = ttypes.ResolveTerminalLaunch(settings, shells); err != nil {
 			return TerminalInfo{}, err
 		}
 	}
 	env := terminalEnviron(base, settings.Environment, m.root)
+	if interactive && settings.Shell == ttypes.TerminalShellCustom && filepath.Base(command) == command {
+		// Both exec.Command and CreateProcess otherwise search the parent's
+		// PATH for a name before applying an explicit child environment.
+		path := hostshell.SearchEnvironmentFrom(env).LookPath(command)
+		if path == "" {
+			return TerminalInfo{}, fmt.Errorf("could not start the terminal. Command %q was not found on PATH. Set its path in Settings › Terminal", command)
+		}
+		command = path
+	}
 	io, err := startTerminalIO(command, args, env, cwd, cols, rows)
 	if err != nil {
+		if interactive {
+			return TerminalInfo{}, fmt.Errorf("could not start the terminal shell %q. Check Command in Settings › Terminal: %w", command, err)
+		}
 		return TerminalInfo{}, fmt.Errorf("start %s: %w", command, err)
 	}
 	sess := &terminalSession{

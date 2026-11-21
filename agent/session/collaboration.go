@@ -19,6 +19,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
 	"crude/agent/worktree"
+	"crude/types"
 	captypes "crude/types/capability"
 	"crude/types/command"
 	"crude/types/toolresult"
@@ -137,7 +138,7 @@ func (s *Session) registerCollaborator(ctx context.Context, id, name, sessionID,
 		}
 	}
 	registered, err := store.RegisterAgent(ctx, collaboration.AgentRegistration{
-		ID: id, Name: name, SessionID: sessionID, ParentID: parentID,
+		ID: id, Name: types.AgentNameForRole(category, name), SessionID: sessionID, ParentID: parentID,
 		Category: category, State: collaboration.AgentAvailable, OwnerInstance: instanceID,
 		Admissions: receipts, PendingTerminal: pendingTerminal,
 	})

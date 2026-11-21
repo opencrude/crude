@@ -34,10 +34,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 	if session := w.SessionForAgent(evt.AgentID); session != nil {
 		snapshot.Ref.SessionID = session.SessionID
 	}
-	snapshot.Label = node.Label
-	if snapshot.Label == "" {
-		snapshot.Label = "Main Agent"
-	}
+	snapshot.Label = w.agentIdentityLabel(node)
 	snapshot.ModelID = node.Model
 	if node.Parent != nil {
 		snapshot.Ref.ParentID = node.Parent.ID

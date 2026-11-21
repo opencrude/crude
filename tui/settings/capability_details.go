@@ -359,6 +359,10 @@ func (catalog *capabilityCatalog) entry() captypes.Entry {
 			return entry
 		}
 	}
+	if builtin, ok := captypes.Builtin(catalog.id); ok && catalog.kind == captypes.KindMCP {
+		// The built-in editor can open before the first live MCP snapshot.
+		return captypes.Entry{ID: catalog.id, Kind: captypes.KindMCP, Name: builtin.Name, Installed: true, Transport: captypes.TransportBuiltin}
+	}
 	return captypes.Entry{ID: catalog.id}
 }
 
@@ -480,7 +484,11 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 		case "prompts":
 			primary = append(primary, button("Fetch preview", "prompt"), button("Stage context", "stage-context"))
 		case "connection":
-			primary = append(primary, button("Edit connection", "edit"))
+			if connection.IsBuiltinWeb() {
+				primary = append(primary, button("Model fallback", webFallbackEditor), button("Edit provider keys", "edit"))
+			} else {
+				primary = append(primary, button("Edit connection", "edit"))
+			}
 			if connection.Auth == "oauth" {
 				secondary = append(secondary, button("Sign in", "sign-in"), button("Sign out", "sign-out"), button("Auth return", "auth-return"))
 				if state.AuthPending && state.AuthURL != "" {
@@ -488,7 +496,11 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 				}
 			}
 		default:
-			primary = append(primary, button("Edit", "edit"))
+			if connection.IsBuiltinWeb() {
+				primary = append(primary, button("Model fallback", webFallbackEditor), button("Edit provider keys", "edit"))
+			} else {
+				primary = append(primary, button("Edit", "edit"))
+			}
 		}
 		if state.State == "connected" {
 			secondary = append(secondary, button("Disconnect", "disconnect"), button("Refresh tools", "refresh-tools"))
@@ -501,7 +513,10 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 		if entry.Source != "" {
 			secondary = append(secondary, button("Update", "update"))
 		}
-		secondary = append(secondary, button(mapState(connection.Disabled, "Enable", "Disable"), mapState(connection.Disabled, "enable", "disable")), button("Remove", "remove"))
+		secondary = append(secondary, button(mapState(connection.Disabled, "Enable", "Disable"), mapState(connection.Disabled, "enable", "disable")))
+		if !connection.IsBuiltin() {
+			secondary = append(secondary, button("Remove", "remove"))
+		}
 		if catalog.inheritedAvailable() {
 			secondary = append(secondary, button("Reset inherited", "reset-inherited"))
 		}
@@ -561,6 +576,9 @@ func (catalog *capabilityCatalog) buildDetailForm() *ui.FormModel {
 	connection, state := model.capabilities.Connections[catalog.id], catalog.connectionState()
 	switch catalog.detailPage {
 	case "connection":
+		if connection.IsBuiltinWeb() {
+			return formModel(capabilityReadOnly("connection", "Search options", catalog.builtinWebSummary(), ""))
+		}
 		fields := []*ui.FieldState{capabilityReadOnly("connection", "Saved connection", fmt.Sprintf("Transport: %s\nEndpoint: %s\nExecutable: %s\nArguments: %q\nWorking directory: %s\nAuthentication: %s\nTimeout: %d seconds\nState: %s\nCached discovery: %t\n\nOpening never connects. Test draft is detached; Save connection is still required.", connection.Transport, connection.URL, connection.Command, connection.Args, connection.Directory, connection.Auth, connection.TimeoutSeconds, state.State, state.Cached), "")}
 		if connection.Auth == "oauth" {
 			fields = append(fields, capabilityReadOnly("auth-url", "Sign-in URL", state.AuthURL, "Open this endpoint-owned URL in your browser; paste the exact return URL below."), ui.TextFieldState("auth-return", "Authorization return", "", "Consumed only by Auth return; never copied to logs or previews."))
@@ -575,8 +593,28 @@ func (catalog *capabilityCatalog) buildDetailForm() *ui.FormModel {
 	case "activity":
 		return formModel(capabilityReadOnly("activity", "Redacted activity", catalog.activityText(), "Read-only logs. Credentials and authorization return payloads are never shown here."))
 	default:
+		if connection.IsBuiltinWeb() {
+			return formModel(capabilityReadOnly("overview", "Search options", catalog.builtinWebSummary(), ""))
+		}
 		return formModel(capabilityReadOnly("overview", "Connection identity and availability", fmt.Sprintf("Identity: %s\nName: %s\nDescription: %s\nSource: %s\nPublisher: %s\nRevision: %s\nOrigin: %s\nSelected scope: %s\nConnection: %s\nCached discovery: %t\nReason: %s\n\nCoverage: managed stdio and Streamable HTTP; endpoint-bound OAuth; bounded tools/resources/prompts discovery; schema-change review; text, structured and image tool results; progress, timeouts and cancellation. Resource/prompt composer previews are text-only. Elicitation, sampling, task extensions, remote channels and rich MCP apps are unsupported and not advertised.\n\nSelection is not approval. Unknown effects or changed schemas fail closed. External writes are outside native file ownership and undo.", entry.ID, entry.Name, entry.Description, entry.Source, entry.Publisher, entry.Version, entry.Origin, model.capabilityScope(), state.State, state.Cached, entry.Reason), ""))
 	}
+}
+
+func (catalog *capabilityCatalog) builtinWebSummary() string {
+	summary := "Search the web and read pages without an account."
+	if catalog.owner.model.capabilities.Connections[catalog.id].Disabled {
+		summary = "Web search and fetch is off. Choose Enable to use it."
+	}
+	value := "Off"
+	if account, model, ok := catalog.savedWebSearchFallback().Selection(); ok {
+		entry := catalog.owner.model.accounts[account]
+		if supportsWebFallbackAccount(entry) {
+			value = entry.Label + " · " + model
+		} else {
+			value = "Account unavailable. Choose an account or turn fallback off."
+		}
+	}
+	return "Model fallback: " + value + "\n\n" + summary
 }
 
 func (catalog *capabilityCatalog) activityText() string {
@@ -838,6 +876,9 @@ func (catalog *capabilityCatalog) consumeResult() {
 		return
 	}
 	catalog.message = request.action.Operation + " completed"
+	if request.action.Operation == captypes.SetWebSearchFallback {
+		catalog.message = "Model fallback saved."
+	}
 	if request.action.Operation == "discover" || request.action.Operation == "search" {
 		catalog.syncRows()
 		catalog.message = ""
@@ -921,7 +962,7 @@ func (catalog *capabilityCatalog) consumeResult() {
 			catalog.message = "Remote response is failed, unknown or unsupported; it cannot be staged."
 		}
 	}
-	if slices.Contains([]string{"save-connection", "set-secrets", "save-skill", "save-source", "create-skill", "add-local", "import", "make-local-copy"}, request.action.Operation) {
+	if slices.Contains([]string{"save-connection", "set-secrets", "save-skill", "save-source", "create-skill", "add-local", "import", "make-local-copy", captypes.SetWebSearchFallback}, request.action.Operation) {
 		if request.form != nil && catalog.owner.model.capabilityDraft == request.form && reflect.DeepEqual(request.draft, formDraftBytes(catalog.owner.model.capabilityDraft)) {
 			catalog.baseline = slices.Clone(request.draft)
 			catalog.owner.model.capabilityDraft.Commit()

@@ -92,6 +92,7 @@ type workspaceList struct {
 	owner   *Screen
 	list    *ui.VirtualList
 	hovered int // workspace index
+	hoverY  int
 }
 
 func (l *workspaceList) Layout(ctx ui.LayoutContext, r ui.Rect) {
@@ -131,6 +132,7 @@ func (l *workspaceList) Handle(ctx ui.EventContext, event ui.Event) ui.EventResu
 	}
 	switch event.Kind {
 	case ui.EventMouseMotion:
+		l.hoverY = ctx.LocalY
 		index := l.indexAt(ctx.LocalX, ctx.LocalY)
 		if l.hovered != index {
 			l.hovered = index
@@ -156,6 +158,20 @@ func (l *workspaceList) Handle(ctx ui.EventContext, event ui.Event) ui.EventResu
 func (l *workspaceList) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleList, Label: "Recent workspaces"}
 }
+
+func (l *workspaceList) Tooltip() (string, ui.Rect, bool) {
+	index := l.indexAt(0, l.hoverY)
+	if index < 0 || index != l.hovered {
+		return "", ui.Rect{}, false
+	}
+	ws := l.owner.workspaces[index]
+	offset := l.list.Scroll().Offset()
+	first := l.hoverY - (offset+l.hoverY)%workspaceRowStride
+	last := min(l.Bounds().H, first+workspaceContentHeight)
+	first = max(0, first)
+	return WorkspaceTooltip(ws.Path, ws.activity), ui.Rect{Y: first, W: l.Bounds().W, H: last - first}, true
+}
+
 func (l *workspaceList) rowPainter(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, row int, _ ui.ControlState, ctx ui.PaintContext, tokens *ui.TokenSet) {
 	index, ok := item.Payload.(int)
 	if !ok {
@@ -193,22 +209,26 @@ func (l *workspaceList) paintEntry(buf *surface.CellBuffer, x, y, width, row, in
 		prefix, prefixW = "", 0
 	}
 	if row == 1 {
-		buf.WriteString(x+prefixW, y, l.owner.displayPath(ws.Path, width-prefixW), meta, bg, 0)
+		buf.WriteString(x+prefixW, y, rendering.TruncateMiddleVisual(ws.DisplayPath, width-prefixW, "…"), meta, bg, 0)
 		return
 	}
-	count := ""
-	if ws.SessionCount == 1 {
-		count = "1 session"
-	} else if ws.SessionCount > 1 {
-		count = fmt.Sprintf("%d sessions", ws.SessionCount)
-	}
 	available := width - prefixW
-	if rendering.VisibleWidth(ws.Name)+rendering.VisibleWidth(count)+2 > available {
-		count = ""
+	const minName = 5
+	count, countW := ws.badges.Fit(available - minName - ui.TableMinGap)
+	if ws.badges == (ui.RowBadges{}) && ws.SessionCount > 0 {
+		if ws.SessionCount == 1 {
+			count = "1 session"
+		} else {
+			count = fmt.Sprintf("%d sessions", ws.SessionCount)
+		}
+		countW = rendering.VisibleWidth(count)
+		if rendering.VisibleWidth(ws.Name)+countW+ui.TableMinGap > available {
+			count, countW = "", 0
+		}
 	}
 	nameW := available
-	if count != "" {
-		nameW -= rendering.VisibleWidth(count) + 2
+	if countW > 0 {
+		nameW -= countW + ui.TableMinGap
 	}
 	ink := rendering.ThemeColorToCell(icon.Color)
 	if ink.IsDefault() {
@@ -216,5 +236,7 @@ func (l *workspaceList) paintEntry(buf *surface.CellBuffer, x, y, width, row, in
 	}
 	buf.WriteString(x, y, prefix, ink, bg, 0)
 	buf.WriteString(x+prefixW, y, rendering.TruncateVisual(ws.Name, max(0, nameW), "…"), fg, bg, cell.AttrBold)
-	buf.WriteString(x+width-rendering.VisibleWidth(count), y, count, meta, bg, 0)
+	if countW > 0 {
+		buf.WriteString(x+width-countW, y, count, meta, bg, 0)
+	}
 }

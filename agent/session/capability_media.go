@@ -84,6 +84,9 @@ func capabilityMediaResult(result captypes.Result, original error, policy *tools
 		out.AgentHint = prompt.HintUncertain
 	}
 	if result.IsError {
+		if !result.Unknown && result.Code == captypes.WebSearchFallbackAvailable {
+			out.Outcome = toolresult.Outcome{State: toolresult.Failed, Code: result.Code, Summary: "Search providers did not respond."}
+		}
 		blockText.WriteString("\nMCP server reported a tool failure.")
 		if original == nil {
 			original = errors.New("MCP server reported a tool failure")

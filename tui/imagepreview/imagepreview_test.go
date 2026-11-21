@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"golang.org/x/image/bmp"
 )
 
@@ -85,7 +86,7 @@ func encodedFormats(t *testing.T) map[string][]byte {
 func TestDecodeRealFormats(t *testing.T) {
 	for format, data := range encodedFormats(t) {
 		t.Run(format, func(t *testing.T) {
-			img, resource, err := Decode(context.Background(), data)
+			img, resource, err := Decode(context.Background(), data, tea.ImageKitty)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +127,7 @@ func TestPreparePNGRetainsOriginalBytes(t *testing.T) {
 	data := encodedFormats(t)["png"]
 	// Ancillary/trailing bytes must not disappear through an unnecessary encode.
 	data = append(data, []byte("original trailing metadata")...)
-	img, _, err := Decode(context.Background(), data)
+	img, _, err := Decode(context.Background(), data, tea.ImageKitty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,6 +135,41 @@ func TestPreparePNGRetainsOriginalBytes(t *testing.T) {
 	if err != nil || !bytes.Equal(prepared, data) || &prepared[0] != &data[0] {
 		t.Fatalf("original PNG was replaced: %v", err)
 	}
+}
+
+func TestPrepareChargesPixelBackingAndOnlyNeededNativeBytes(t *testing.T) {
+	img := image.NewNRGBA64(image.Rect(0, 0, 7, 3))
+	img.SetNRGBA64(0, 0, color.NRGBA64{R: 20000, G: 30000, B: 40000, A: 50000})
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	const pixelBytes = 7 * 3 * 8
+	for _, tc := range []struct {
+		protocol tea.ImageProtocol
+		want     int64
+	}{
+		{tea.ImageKitty, pixelBytes + int64(encoded.Len())},
+		{tea.ImageSixel, pixelBytes},
+	} {
+		got, err := Prepare(context.Background(), encoded.Bytes(), tc.protocol)
+		if err != nil || got.Bytes != tc.want || !got.Resource.Supports(tc.protocol) {
+			t.Fatalf("protocol %v: retained %d bytes, want %d with native resource: %v", tc.protocol, got.Bytes, tc.want, err)
+		}
+	}
+}
+
+func TestCheckHeaderLeavesPixelValidationToDecode(t *testing.T) {
+	data := encodedFormats(t)["png"]
+	idat := bytes.Index(data, []byte("IDAT"))
+	if idat < 0 {
+		t.Fatal("PNG fixture has no pixel chunk")
+	}
+	truncated := data[:idat+5]
+	if err := CheckHeader(context.Background(), truncated); err != nil {
+		t.Fatalf("a valid header was rejected: %v", err)
+	}
+	requireDecodeError(t, truncated, "cannot decode")
 }
 
 func TestDecodeRejectsInvalidAndTruncatedData(t *testing.T) {
@@ -201,7 +237,7 @@ func TestDecodeInputLimit(t *testing.T) {
 
 func requireDecodeError(t *testing.T, data []byte, contains string) {
 	t.Helper()
-	img, resource, err := Decode(context.Background(), data)
+	img, resource, err := Decode(context.Background(), data, tea.ImageKitty)
 	if err == nil || img != nil || resource != nil {
 		t.Fatalf("Decode = (%v, %v, %v), want no pixels/resource and an error", img, resource, err)
 	}
@@ -219,7 +255,7 @@ func TestDecodeCancellation(t *testing.T) {
 		ctx context.Context
 		err error
 	}{{ctx, context.Canceled}, {expired, context.DeadlineExceeded}} {
-		img, resource, err := Decode(tc.ctx, encodedFormats(t)["png"])
+		img, resource, err := Decode(tc.ctx, encodedFormats(t)["png"], tea.ImageKitty)
 		if !errors.Is(err, tc.err) || img != nil || resource != nil {
 			t.Fatalf("Decode = (%v, %v, %v), want cancellation %v", img, resource, err, tc.err)
 		}
@@ -264,5 +300,12 @@ func TestBoundedPNGBufferAndCancelledReads(t *testing.T) {
 	}
 	if n, err := w.Write([]byte("5")); n != 0 || !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled write = %d, %v", n, err)
+	}
+}
+
+func TestSixelDecodeDoesNotPreparePNG(t *testing.T) {
+	pixels, resource, err := Decode(t.Context(), encodedFormats(t)["jpeg"], tea.ImageSixel)
+	if err != nil || pixels == nil || !resource.Supports(tea.ImageSixel) || resource.Supports(tea.ImageKitty) {
+		t.Fatalf("Sixel must receive pixels without a Kitty upload: %v, %v", resource, err)
 	}
 }

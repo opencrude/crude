@@ -695,7 +695,7 @@ var defaultActions = []*ActionDef{
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "shift+alt+f9"}, {Key: "alt+shift+f9"}}, HintKey: "Shift+Alt+F9"},
 	{ID: "ai.ask", Label: "Ask Crude", Description: "ask about the code in the chat beside it",
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: AskCrudeKey}}, HintKey: "Ctrl+K"},
-	{ID: "ai.suggest", Label: "Ask Aeron for a Suggestion", Description: "suggest the next edit at the caret",
+	{ID: "ai.suggest", Label: "Ask Errand for a Suggestion", Description: "suggest the next edit at the caret",
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "alt+\\"}}, HintKey: "Alt+\\"},
 	{ID: "lsp.codeActions", Label: "Code Actions", Description: "inspect edit-only language actions for the saved editor source and selection",
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: CodeActionsChord}}, HintKey: CodeActionsChord},

@@ -97,7 +97,8 @@ func (w *Workspace) AppDefaults() types.AppSettings {
 	value := types.MergeAppWorkspace(w.settings.current.fetch.Application, types.WorkspaceOverrides{})
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
-	value.TerminalShells = slices.Clone(w.settings.current.fetch.TerminalShells)
+	value.TerminalShells = types.CloneTerminalShells(w.settings.current.fetch.TerminalShells)
+	value.AgentShells = types.CloneTerminalShells(w.settings.current.fetch.AgentShells)
 	return value
 }
 
@@ -110,7 +111,8 @@ func (w *Workspace) LoadAppSettings() types.AppSettings {
 	types.ApplyAppDefaults(&value)
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
-	value.TerminalShells = slices.Clone(w.settings.current.fetch.TerminalShells)
+	value.TerminalShells = types.CloneTerminalShells(w.settings.current.fetch.TerminalShells)
+	value.AgentShells = types.CloneTerminalShells(w.settings.current.fetch.AgentShells)
 	return value
 }
 
@@ -133,6 +135,11 @@ func (w *Workspace) settingsBase() coreprotocol.SettingsFetchResult {
 }
 
 func (w *Workspace) refreshSettings() { w.resetTopic(coreprotocol.TopicSettings) }
+
+// RequestSettingsShellDiscovery asks the existing settings subscription for a
+// fresh observation. This only signals the owned subscription; it performs no
+// RPC on the caller and introduces no second replica writer.
+func (w *Workspace) RequestSettingsShellDiscovery() { w.refreshSettings() }
 
 // draft converts an edited account into a write-only draft. Unchanged stored
 // markers keep the core's credentials; anything else replaces or clears them.

@@ -4,15 +4,18 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/provider"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
+	"crude/types"
 	captypes "crude/types/capability"
 )
 
@@ -21,6 +24,12 @@ const capabilityFilterID ui.ComponentID = "settings/capabilities/filter"
 const capabilityStoreID ui.ComponentID = "settings/capabilities/store"
 const capabilityFormID ui.ComponentID = "settings/capabilities/form"
 const capabilityTabsID ui.ComponentID = "settings/capabilities/tabs"
+
+const (
+	webFallbackEditor  = "web-search-fallback"
+	webFallbackAccount = "web-fallback-account"
+	webFallbackModel   = "web-fallback-model"
+)
 
 type capabilityCatalog struct {
 	ui.Base
@@ -72,6 +81,7 @@ type capabilityCatalog struct {
 	acquisitionReturnToStore bool
 	storeSources             []string
 	storeTypes               []string
+	webFallbackAccount       string
 }
 
 type capabilityListState struct {
@@ -91,8 +101,9 @@ type capabilityViewRequest struct {
 	entity []byte
 }
 type capabilityNavigation struct {
-	kind      captypes.Kind
-	query, id string
+	kind        captypes.Kind
+	query, id   string
+	webFallback bool
 }
 
 func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
@@ -310,6 +321,14 @@ func (catalog *capabilityCatalog) actions() {
 		if builtin && catalog.edit == "edit" {
 			decision[0].Label = "Save keys"
 		}
+		if catalog.edit == webFallbackEditor {
+			if catalog.owner.model.capabilityScope() == captypes.ScopeWorkspace {
+				decision = decision[1:]
+			} else {
+				decision[0].Label = "Save fallback"
+				decision[0].Enabled = catalog.dirty()
+			}
+		}
 	} else if catalog.detail {
 		decision, primary, secondary = catalog.detailActions(button)
 	} else if catalog.choosing != "" {
@@ -386,6 +405,9 @@ func (catalog *capabilityCatalog) statusText() string {
 		if pending.Operation == "discover" {
 			return "Searching enabled sources…"
 		}
+		if pending.Operation == captypes.SetWebSearchFallback {
+			return "Saving model fallback…"
+		}
 		return pending.Operation + " running — Cancel operation stops it"
 	}
 	return strings.ReplaceAll(catalog.message, "\n", " ")
@@ -409,7 +431,9 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	catalog.consumeResult()
 	if catalog.seen != catalog.owner.model.capabilityRevision {
 		catalog.saveListState()
-		if catalog.detail {
+		if catalog.edit == webFallbackEditor && !catalog.dirty() {
+			catalog.rebaseWebSearchFallback()
+		} else if catalog.detail {
 			catalog.syncDetailRows()
 		} else if catalog.edit == "" {
 			catalog.syncRows()
@@ -473,6 +497,11 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	height := max(0, catalog.statusY-contentY)
 	if catalog.edit != "" {
 		// Field help reads in the shared settings footer.
+		if catalog.edit == webFallbackEditor {
+			if model := catalog.form.Field(webFallbackModel); model != nil {
+				model.Sync()
+			}
+		}
 		catalog.layoutForm(ctx, ui.Rect{Y: contentY, W: rect.W, H: max(1, height)})
 	} else if catalog.detail {
 		catalog.layoutDetail(ctx, contentY, height)
@@ -568,10 +597,19 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 	case "form.cancel":
 		return catalog.back()
 	case "form.changed":
+		result := catalog.changed()
+		if catalog.edit == webFallbackEditor && action.Payload == webFallbackAccount {
+			catalog.syncWebSearchFallbackAccount(true)
+			result.Cmd = catalog.prefetchWebSearchFallbackModels()
+		}
 		catalog.actions()
-		return catalog.changed()
+		return result
 	case "form.select.open":
-		return catalog.changed()
+		result := catalog.changed()
+		if catalog.edit == webFallbackEditor && action.Payload == webFallbackModel {
+			result.Cmd = catalog.prefetchWebSearchFallbackModels()
+		}
+		return result
 	case "form.exit.forward":
 		if catalog.detail && catalog.edit == "" {
 			catalog.owner.focusID(catalog.reader.ID())
@@ -628,6 +666,11 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 		return catalog.submit(request)
 	case "back":
 		return catalog.back()
+	case webFallbackEditor:
+		if catalog.dirty() {
+			return catalog.owner.requestPrompt(PromptDiscardEditor, "", "", 0)
+		}
+		return catalog.openWebSearchFallbackEditor()
 	case "sources":
 		if catalog.dirty() {
 			model.nextCategory = catSources
@@ -783,6 +826,9 @@ func (catalog *capabilityCatalog) back() ui.EventResult {
 		return catalog.owner.requestPrompt(PromptDiscardEditor, "", "", 0)
 	}
 	if catalog.edit != "" && catalog.detail {
+		if catalog.edit == webFallbackEditor {
+			catalog.message = ""
+		}
 		catalog.closeEditor()
 		catalog.detailForm(catalog.detailPage)
 		return catalog.changed()
@@ -978,6 +1024,9 @@ func (catalog *capabilityCatalog) draftAction() (captypes.Action, error) {
 		request.Operation, request.Content = "import", value("import")
 		return request, nil
 	}
+	if catalog.edit == webFallbackEditor {
+		return catalog.webSearchFallbackAction(request, form)
+	}
 	if existing, ok := catalog.owner.model.capabilities.Connections[catalog.id]; catalog.kind == captypes.KindMCP && ok && existing.IsBuiltin() {
 		return builtinSecretsAction(request, form)
 	}
@@ -1052,13 +1101,24 @@ func (catalog *capabilityCatalog) detailForm(page string) {
 }
 
 func (surface *WorkspaceSettingsSurface) OpenCapabilities(kind captypes.Kind, query, id string) ui.EventResult {
+	return surface.openCapabilityNavigation(capabilityNavigation{kind: kind, query: query, id: id})
+}
+
+// OpenWebSearchFallback opens the exact built-in setting in the retained MCP
+// manager. It shares the normal dirty-draft guard and never starts a search.
+func (surface *WorkspaceSettingsSurface) OpenWebSearchFallback() ui.EventResult {
+	return surface.openCapabilityNavigation(capabilityNavigation{kind: captypes.KindMCP, id: captypes.WebConnectionID, webFallback: true})
+}
+
+func (surface *WorkspaceSettingsSurface) openCapabilityNavigation(next capabilityNavigation) ui.EventResult {
+	kind, query, id := next.kind, next.query, next.id
 	if surface.model.accountEditorDirty() || surface.capCatalog.dirty() {
-		surface.capCatalog.nextOpen = &capabilityNavigation{kind: kind, query: query, id: id}
+		surface.capCatalog.nextOpen = &next
 		return surface.requestPrompt(PromptDiscardEditor, "", "", 0)
 	}
 	if surface.agents.draft != nil && surface.agents.dirty() {
-		surface.capCatalog.nextOpen = &capabilityNavigation{kind: kind, query: query, id: id}
-		return surface.agents.back()
+		surface.capCatalog.nextOpen = &next
+		return surface.agents.leave()
 	}
 	if surface.agents.draft != nil {
 		surface.agents.closeDraft()
@@ -1076,6 +1136,7 @@ func (surface *WorkspaceSettingsSurface) OpenCapabilities(kind captypes.Kind, qu
 	catalog.closeEditor()
 	catalog.switchKind(kind)
 	catalog.id, catalog.detail, catalog.edit = id, id != "", ""
+	catalog.message = ""
 	state := catalog.views[catalog.viewKey()]
 	state.query = query
 	catalog.views[catalog.viewKey()] = state
@@ -1085,6 +1146,169 @@ func (surface *WorkspaceSettingsSurface) OpenCapabilities(kind captypes.Kind, qu
 		catalog.detailForm("overview")
 	}
 	surface.refreshForm()
+	if next.webFallback {
+		return catalog.openWebSearchFallbackEditor()
+	}
 	catalog.focusContent()
 	return catalog.submit(captypes.Action{Operation: "snapshot", Kind: kind})
+}
+
+func (catalog *capabilityCatalog) savedWebSearchFallback() captypes.WebSearchFallback {
+	model := catalog.owner.model
+	if model.capabilitySnapshot.Generation > 0 {
+		return model.capabilitySnapshot.Settings.WebSearchFallback
+	}
+	return model.appDefaults.Capabilities.WebSearchFallback
+}
+
+func (catalog *capabilityCatalog) openWebSearchFallbackEditor() ui.EventResult {
+	model := catalog.owner.model
+	if catalog.kind != captypes.KindMCP || !model.capabilities.Connections[catalog.id].IsBuiltinWeb() {
+		return catalog.changed()
+	}
+	catalog.edit = webFallbackEditor
+	catalog.message = ""
+	accountID, modelID, _ := catalog.savedWebSearchFallback().Selection()
+	options := []ui.FormOption{{Label: "Off"}}
+	for id, account := range model.accounts {
+		if supportsWebFallbackAccount(account) {
+			options = append(options, ui.FormOption{ID: id, Label: account.Label})
+		}
+	}
+	sort.Slice(options[1:], func(i, j int) bool {
+		a, b := options[i+1], options[j+1]
+		if strings.EqualFold(a.Label, b.Label) {
+			return a.ID < b.ID
+		}
+		return strings.ToLower(a.Label) < strings.ToLower(b.Label)
+	})
+	if accountID != "" && !supportsWebFallbackAccount(model.accounts[accountID]) {
+		label := model.accounts[accountID].Label
+		if label != "" {
+			label += " (unavailable)"
+		} else {
+			label = "Account unavailable"
+		}
+		options = append(options, ui.FormOption{ID: accountID, Label: label, Disabled: true})
+	}
+	account := ui.SelectFieldState(webFallbackAccount, "Model fallback", accountID, options,
+		"OpenAI receives the query only when all search providers fail. Charges can apply.")
+	account.Placeholder = "Off"
+	modelField := ui.ModelFieldState(webFallbackModel, "Model", modelID, nil,
+		"Choose an OpenAI Responses model that supports web search.")
+	note := "When every search provider fails, OpenAI receives the query. Charges can apply."
+	if len(options) == 1 {
+		note = "Add an OpenAI Responses account with an API key in Accounts."
+	}
+	if model.capabilityScope() == captypes.ScopeWorkspace {
+		account.Disabled, modelField.Disabled = true, true
+		note = "Switch to Application to change Model fallback."
+	}
+	help := capabilityReadOnly("web-fallback-help", "About", note, "")
+	help.Rows = 3
+	model.capabilityDraft = formModel(account, modelField, help)
+	catalog.form.SetForm(model.capabilityDraft, "", "")
+	catalog.baseline = formDraftBytes(model.capabilityDraft)
+	catalog.form.FocusField(webFallbackAccount)
+	catalog.owner.focusID(catalog.form.ID())
+	result := catalog.changed()
+	catalog.syncWebSearchFallbackAccount(false)
+	result.Cmd = catalog.prefetchWebSearchFallbackModels()
+	catalog.actions()
+	return result
+}
+
+func supportsWebFallbackAccount(account provider.Account) bool {
+	return account.ID != "" && account.APIKey != "" && account.OAuth == nil &&
+		provider.SupportsWebSearchFallback(account.Connection)
+}
+
+func (catalog *capabilityCatalog) syncWebSearchFallbackAccount(clearModel bool) {
+	model := catalog.owner.model
+	form := model.capabilityDraft
+	account, field := form.Field(webFallbackAccount), form.Field(webFallbackModel)
+	accountID := account.Value.String()
+	if clearModel && accountID != catalog.webFallbackAccount {
+		form.SetValue(webFallbackModel, ui.StringValue(""))
+	}
+	catalog.webFallbackAccount = accountID
+	entry := model.accounts[accountID]
+	field.Disabled = !supportsWebFallbackAccount(entry) || model.capabilityScope() != captypes.ScopeApplication
+	field.Placeholder = "Choose or enter a model ID"
+	if field.Disabled && accountID == "" {
+		field.Placeholder = "Off"
+	}
+	field.Options = ui.ModelOptions(model.models[accountModelKey(entry.ProviderID, accountID)])
+	field.Loading, field.LoadMessage = false, ""
+	field.Description = "Choose an OpenAI Responses model that supports web search."
+	if control := catalog.form.Field(webFallbackModel); control != nil {
+		control.Sync()
+	}
+}
+
+func (catalog *capabilityCatalog) rebaseWebSearchFallback() {
+	form := catalog.owner.model.capabilityDraft
+	accountID, modelID, _ := catalog.savedWebSearchFallback().Selection()
+	if form.Field(webFallbackAccount).Value.String() == accountID && form.Field(webFallbackModel).Value.String() == modelID {
+		return
+	}
+	form.SetValue(webFallbackAccount, ui.StringValue(accountID))
+	form.SetValue(webFallbackModel, ui.StringValue(modelID))
+	catalog.syncWebSearchFallbackAccount(false)
+	catalog.baseline = formDraftBytes(form)
+	form.Commit()
+}
+
+func (catalog *capabilityCatalog) prefetchWebSearchFallbackModels() tea.Cmd {
+	model := catalog.owner.model
+	form := model.capabilityDraft
+	field := form.Field(webFallbackModel)
+	if field == nil || field.Disabled || field.Loading || len(field.Options) != 0 {
+		return nil
+	}
+	accountID := form.Field(webFallbackAccount).Value.String()
+	account := model.accounts[accountID]
+	if _, loaded := model.models[accountModelKey(account.ProviderID, accountID)]; loaded {
+		return nil
+	}
+	field.Loading, field.LoadMessage = true, "Fetching models…"
+	return model.fetchModelsForAccountCmd(account.ProviderID, accountID)
+}
+
+func (m *Model) setWebSearchFallbackModels(providerID, accountID string, models []types.ModelEntry, problem string) {
+	if m.capabilityDraft == nil {
+		return
+	}
+	form := m.capabilityDraft
+	account, field := form.Field(webFallbackAccount), form.Field(webFallbackModel)
+	if field == nil || account == nil || account.Value.String() != accountID || m.accounts[accountID].ProviderID != providerID {
+		return
+	}
+	field.Loading, field.LoadMessage = false, ""
+	if problem == "" {
+		field.Options = ui.ModelOptions(models)
+		field.Description = "Choose an OpenAI Responses model that supports web search."
+	} else {
+		field.Description = "Could not list models. Enter the exact model ID or check the account."
+	}
+}
+
+func (catalog *capabilityCatalog) webSearchFallbackAction(request captypes.Action, form *ui.FormModel) (captypes.Action, error) {
+	if catalog.owner.model.capabilityScope() != captypes.ScopeApplication {
+		return request, fmt.Errorf("change Model fallback in Application Settings")
+	}
+	request.Operation = captypes.SetWebSearchFallback
+	account := form.Field(webFallbackAccount).Value.String()
+	if account == "" {
+		return request, nil
+	}
+	if !supportsWebFallbackAccount(catalog.owner.model.accounts[account]) {
+		return request, fmt.Errorf("choose an OpenAI Responses account with an API key")
+	}
+	pair := captypes.WebSearchFallback{account, form.Field(webFallbackModel).Value.String()}
+	if _, _, ok := pair.Selection(); !ok {
+		return request, fmt.Errorf("choose a model for model fallback")
+	}
+	request.WebSearchFallback = pair
+	return request, nil
 }

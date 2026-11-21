@@ -674,7 +674,7 @@ func (a *Agent) Compact(
 
 // Session-operation compaction triggers. Both run outside a model turn:
 // manual is a human /compact; loop end is Crude compacting the workspace
-// Aeron after its agentic loop ends.
+// Errand after its agentic loop ends.
 const (
 	CompactionTriggerManual  = "manual"
 	CompactionTriggerLoopEnd = "loop_end"

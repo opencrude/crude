@@ -416,7 +416,7 @@ func (m *App) workspaceResourceMenu(entry launcher.WorkspaceEntry) *ui.ContextMe
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	valid := func() bool { return m.ws == owner && generation == m.workspaceSwitchGen.Load() }
 	st := ui.QuickMenu("",
-		ui.ContextMenuItem{Label: "Open", Disabled: sameWorkspaceRoot(m.ws.RootPath(), entry.Path), Action: func() {
+		ui.ContextMenuItem{Label: "Open", Disabled: m.workspaceRootMatches(entry.Path), Action: func() {
 			if valid() {
 				m.runDetachedAsyncCmd(m.launcherOpenFolder(entry.Path))
 			}
@@ -429,7 +429,7 @@ func (m *App) workspaceResourceMenu(entry launcher.WorkspaceEntry) *ui.ContextMe
 	)
 	st.Title = entry.Name
 	st.Sections = append(st.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{
-		{Label: "Delete workspace", Disabled: sameWorkspaceRoot(m.ws.RootPath(), entry.Path), Action: func() {
+		{Label: "Delete workspace", Disabled: m.workspaceRootMatches(entry.Path), Action: func() {
 			if valid() {
 				m.openWorkspaceDelete(entry)
 			}
@@ -455,7 +455,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 	}
 	st := &ui.ContextMenuState{Title: title}
 	if node != nil {
-		// Aeron opens like any agent but is permanent: it has no Terminate.
+		// Errand opens like any agent but is permanent: it has no Terminate.
 		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[node.ID])
 		items := []ui.ContextMenuItem{
 			{Label: "Open agent", Action: func() { m.restoreAgent(node.ID) }},

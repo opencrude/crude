@@ -26,7 +26,8 @@ longer true.
 
 There is no second notification store. In-app notices stay in the status
 center; desktop notifications are derived from the same agent status and keep
-no history of their own.
+no history of their own. An Errand question or approval uses the role name
+from agent status, not a personal name from older session metadata.
 
 ## Local Crude, remote Crude and many shells
 
@@ -77,8 +78,8 @@ shell can take over.
 |---|---|---|
 | Needs your answer | `NeedsAction` in a question | Every agent, children too |
 | Needs your approval | `NeedsAction` in an approval | Every agent, children too |
-| Stopped | `needs_attention`, `interrupted`, `failed` | Agents the user started (no parent), not the workspace Aeron |
-| Finished | `completed` | Agents the user started, not the workspace Aeron |
+| Stopped | `needs_attention`, `interrupted`, `failed` | Agents the user started (no parent), not the workspace Errand |
+| Finished | `completed` | Agents the user started, not the workspace Errand |
 
 Each kind has its own switch in Settings; a switched-off kind is never news.
 

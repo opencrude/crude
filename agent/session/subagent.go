@@ -399,7 +399,9 @@ func (r *SubAgentRunner) admitAndLaunch(ctx context.Context, spec agent.SubAgent
 		return nil, tools.ToolResult{Content: "Agent role is disabled in settings."}, fmt.Errorf("%s role is disabled", spec.Category)
 	}
 	identity := ""
-	if strings.TrimSpace(nickname) != "" {
+	if spec.Category == CategoryAeron {
+		spec.Name = ttypes.ErrandName
+	} else if strings.TrimSpace(nickname) != "" {
 		var err error
 		if identity, err = validChildName(nickname); err != nil {
 			return nil, tools.ToolResult{}, err
@@ -411,7 +413,9 @@ func (r *SubAgentRunner) admitAndLaunch(ctx context.Context, spec agent.SubAgent
 			return nil, tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
 		}
 	}
-	spec.Name = identity + " sub " + r.session.AgentName()
+	if identity != "" {
+		spec.Name = identity + " sub " + r.session.AgentName()
+	}
 	if callID, _ := ctx.Value(agent.SubAgentToolCallIDKey{}).(string); callID != "" {
 		spec.ParentToolCallID = callID
 	}

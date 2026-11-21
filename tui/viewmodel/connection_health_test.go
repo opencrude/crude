@@ -123,7 +123,7 @@ func TestConnectionHealthWordmarkStatesAndFastClock(t *testing.T) {
 func TestConnectionHealthHoverLiveDetailsAndFocus(t *testing.T) {
 	app, w := newConnectionHealthApp(t)
 	app.remotes = &remoteManagerState{current: "development", snapshot: remoteconn.Snapshot{Connections: []remoteconn.Connection{{ID: "development", Name: "Development"}}}}
-	anchor := app.connectionWordmarkRect()
+	anchor := app.connectionActionRect(shellheader.ConnectionAction)
 	focus, agent, group := app.rootHost.Focused(), app.AgentView.ActiveID(), app.Win.ActiveGroup()
 	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 2, Y: anchor.Y})
 	if app.connectionHover == nil {
@@ -163,7 +163,7 @@ func TestConnectionDetailsShowDistinctNativeBuilds(t *testing.T) {
 	app, w := newConnectionHealthApp(t)
 	app.tuiBuildID = "0123456789abcdef"
 	w.status.CoreVersion, w.status.CoreBuildID = "v0.8.0-rc.1", "fedcba9876543210"
-	app.openConnectionHover(app.connectionWordmarkRect())
+	app.openConnectionHover(shellheader.ConnectionAction)
 	for _, want := range []string{
 		"TUI build    " + buildinfo.Version + " / 0123456789abcdef",
 		"Core build   v0.8.0-rc.1 / fedcba9876543210",
@@ -189,7 +189,7 @@ func TestConnectedConnectionDetailsUsesServerImage(t *testing.T) {
 	runtime.SetBuildID("c0dec0dec0dec0de")
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	shell.app.paintShellFrame()
-	shell.app.openConnectionHover(shell.app.connectionWordmarkRect())
+	shell.app.openConnectionHover(shellheader.ConnectionAction)
 	text := connectionPopoverText(shell.app)
 	if len(shell.app.tuiBuildID) != 16 {
 		t.Fatalf("shell did not identify its native image: %q", shell.app.tuiBuildID)
@@ -208,7 +208,7 @@ func TestConnectionHealthDismissalAndLifetimeBoundaries(t *testing.T) {
 	for _, scenario := range []string{"leave", "escape", "outside", "modal", "workspace", "replacement", "capture", "tiny"} {
 		t.Run(scenario, func(t *testing.T) {
 			app, _ := newConnectionHealthApp(t)
-			anchor := app.connectionWordmarkRect()
+			anchor := app.connectionActionRect(shellheader.ConnectionAction)
 			app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 2, Y: anchor.Y})
 			old := app.connectionHover
 			if old == nil {
@@ -250,7 +250,7 @@ func TestConnectionHealthDismissalAndLifetimeBoundaries(t *testing.T) {
 func TestConnectionHealthClickAndKeyboardAccess(t *testing.T) {
 	app, _ := newConnectionHealthApp(t)
 	focus := app.rootHost.Focused()
-	anchor := app.connectionWordmarkRect()
+	anchor := app.connectionActionRect(shellheader.ConnectionAction)
 	_, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: anchor.X + 2, Y: anchor.Y, Button: tea.MouseLeft})
 	runAppCommand(t, app, cmd)
 	app.dispatchMouseRelease(tea.MouseReleaseMsg{X: anchor.X + 2, Y: anchor.Y, Button: tea.MouseLeft})
@@ -275,7 +275,7 @@ func TestConnectionHealthClickAndKeyboardAccess(t *testing.T) {
 		t.Fatal("Escape failed to dismiss keyboard details")
 	}
 	// The wordmark uses painted hit geometry, not a second viewmodel width.
-	if got := app.headerScreen.ActionBounds(shellheader.ConnectionAction).W; got != 5 {
+	if got := app.headerScreen.ActionBounds(shellheader.ConnectionAction).W; got <= 5 {
 		t.Fatalf("wordmark hit width=%d", got)
 	}
 }
@@ -300,7 +300,7 @@ func TestConnectionHealthRoundTripIsMeasuredNotInvented(t *testing.T) {
 
 func TestConnectionHealthSelectionKeepsOwnershipAndCopies(t *testing.T) {
 	app, w := newConnectionHealthApp(t)
-	anchor := app.connectionWordmarkRect()
+	anchor := app.connectionActionRect(shellheader.ConnectionAction)
 	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 2, Y: anchor.Y})
 	h := app.connectionHover
 	if h == nil {
@@ -353,5 +353,63 @@ func TestConnectionDetailsShowTUIAndCoreUptime(t *testing.T) {
 	h.status = shellport.RemoteStatus{State: "connected"}
 	if detail := h.projection().Detail; !strings.Contains(detail, "Core uptime  Not observed") {
 		t.Fatalf("unknown core start must not invent an uptime:\n%s", detail)
+	}
+}
+
+func TestRemoteHeaderShowsSignalAndTintOnlyOnRemote(t *testing.T) {
+	app, w := newConnectionHealthApp(t)
+	for _, nerd := range []bool{true, false} {
+		app.Theme.Tree.Config.UseNerdFont = &nerd
+		mark := "⇄"
+		glyphs := []string{"···", "▂··", "▂▄·", "▂▄▆"}
+		if nerd {
+			mark, glyphs = "\ueb3a", []string{"\U000f08bf", "\U000f08bc", "\U000f08bd", "\U000f08be"}
+		}
+		w.status.Carrier = "ssh"
+		for level, rtt := range []time.Duration{0, 310 * time.Millisecond, 125 * time.Millisecond, 35 * time.Millisecond} {
+			w.status.RTT = rtt
+			app.paintShellFrame()
+			line := shellBufferRow(app, app.frameTopRow())
+			if !strings.Contains(line, mark+" Crude") || !strings.HasSuffix(strings.TrimSpace(line), glyphs[level]) {
+				t.Fatalf("RTT %s: remote marker or rightmost signal missing from %q", rtt, line)
+			}
+		}
+		signal := app.connectionActionRect(shellheader.ConnectionSignalAction)
+		if signal.Empty() || !app.mainSurf.Buffer().Get(signal.X, signal.Y).BG.Equal(app.rootHost.Tokens().Color(ui.ColorRemoteHeaderBg)) {
+			t.Fatal("signal was not painted on the remote header tint")
+		}
+		app.dispatchMouseMotion(tea.MouseMotionMsg{X: signal.X, Y: signal.Y})
+		if h := app.connectionHover; h == nil || h.anchor != signal || !strings.Contains(connectionPopoverText(app), "35 ms") {
+			t.Fatal("signal hover did not open measured link details")
+		}
+		app.clearConnectionHover()
+		w.status.Carrier = "local"
+		app.paintShellFrame()
+		if !app.connectionActionRect(shellheader.ConnectionSignalAction).Empty() || strings.Contains(shellBufferRow(app, app.frameTopRow()), mark+" Crude") || app.mainSurf.Buffer().Get(signal.X, signal.Y).BG.Equal(app.rootHost.Tokens().Color(ui.ColorRemoteHeaderBg)) {
+			t.Fatal("remote chrome survived return to the local core")
+		}
+	}
+}
+
+func TestRemoteHeaderTintStaysCloseToTheThemeBackground(t *testing.T) {
+	app, w := newConnectionHealthApp(t)
+	w.status.Carrier = "quic"
+	for _, preset := range []string{"dark", "light"} {
+		app.ApplyThemePreset(preset)
+		app.paintShellFrame()
+		anchor := app.connectionActionRect(shellheader.ConnectionAction)
+		if anchor.Empty() {
+			t.Fatalf("%s has no remote wordmark", preset)
+		}
+		tint := app.mainSurf.Buffer().Get(anchor.X, anchor.Y).BG
+		bg := app.rootHost.Tokens().Color(ui.ColorBg)
+		if tint.Equal(bg) {
+			t.Fatalf("%s has no visible remote tint", preset)
+		}
+		for _, d := range []int{int(tint.R) - int(bg.R), int(tint.G) - int(bg.G), int(tint.B) - int(bg.B)} {
+			if d < -16 || d > 16 {
+				t.Fatalf("%s remote strip overwhelms the shell background: %v on %v", preset, tint, bg)
+			}
+		}
 	}
 }

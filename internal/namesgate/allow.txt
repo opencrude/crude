@@ -68,7 +68,6 @@ workspace/lsp_assembly.go	Package	Generic package identity field, not a language
 workspace/project_tool_setup.go	Package	Generic package identity field, not a language name.
 tui/settings/language_server_catalog.go	Package	Generic package identity field for matching recorded tool history.
 tui/settings/language_tools_projection.go	Package	Generic package identity field matched to catalog data.
-tui/screens/launcher/launcher.go	bb	Local path comparison variable, not a language name.
 workspace/path_browser.go	build	Generic directory browsing exclusion, not language detection.
 syntax/registry.go	Go	Static linked grammar binding and selection, not project language detection.
 syntax/registry.go	Python	Static linked grammar binding and selection, not project language detection.

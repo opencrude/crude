@@ -20,8 +20,16 @@ func (m *Model) agentShellField() *ui.FieldState {
 	if m.agents != nil && m.agents.Shell != "" {
 		current = m.agents.Shell
 	}
-	return ui.SelectFieldState(fieldAgentShell, "Command shell", current, agentShellOptions(current, m.terminalShells),
+	return ui.SelectFieldState(fieldAgentShell, "Command shell", current, agentShellOptions(current, m.agentShells),
 		"Runs every agent command. Auto prefers Git Bash, then PowerShell 7.")
+}
+
+func (m *Model) syncAgentShellOptions(form *ui.FormModel) {
+	if form != nil {
+		if field := form.Field(fieldAgentShell); field != nil {
+			field.Options = agentShellOptions(field.Value.String(), m.agentShells)
+		}
+	}
 }
 
 func agentShellOptions(selected string, shells []types.TerminalShell) []ui.FormOption {

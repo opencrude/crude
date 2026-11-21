@@ -17,13 +17,13 @@ const workspaceAeronAction = "workspace-aeron"
 const (
 	// The workspace agent is background inventory. The shell opens it after it
 	// has had time to paint and only while the user is not working, so it never
-	// competes with a restore, switch or first input. Work for Aeron does not
+	// competes with a restore, switch or first input. Work for Errand does not
 	// wait for a quiet shell: it starts as soon as the lifecycle slot is free.
 	aeronEnsureStartupDelay = 2 * time.Second
 	aeronEnsureQuietPeriod  = 3 * time.Second
 )
 
-// workspaceAeronAgent returns the root agent of this workspace's open Aeron
+// workspaceAeronAgent returns the root agent of this workspace's open Errand
 // session, or "" when none is open.
 func (m *App) workspaceAeronAgent() string {
 	if m.ws == nil {
@@ -46,11 +46,11 @@ func (m *App) isAeronAgent(id string) bool {
 }
 
 // agentLabel is the shell's one display name for an agent. The workspace's
-// Aeron root is always "Aeron", not its generated session name, so its tab,
+// Errand root is always "Errand", not its generated session name, so its tab,
 // header, notices, tooltip and prompts name the same agent.
 func (m *App) agentLabel(node *workspace.AgentNode) string {
 	if node != nil && node.IsOrchestrator() && workspace.SessionIsAeron(m.ws.SessionsByAgent()[node.ID]) {
-		return "Aeron"
+		return "Errand"
 	}
 	return workspace.AgentDisplayLabel(node)
 }
@@ -76,9 +76,9 @@ func (m *App) agentStatus(id string) string {
 	return "idle"
 }
 
-// openWorkspaceAeron opens Aeron like any other agent, as a tab. Before the
+// openWorkspaceAeron opens Errand like any other agent, as a tab. Before the
 // core has returned it, the request waits and the tab opens when it arrives.
-// A failed start opens Aeron's settings, where the cause can be fixed.
+// A failed start opens Errand's settings, where the cause can be fixed.
 func (m *App) openWorkspaceAeron() tea.Cmd {
 	// This is an explicit user navigation. The panel must not retain the
 	// keyboard after it opens the agent's normal composer.
@@ -99,7 +99,7 @@ func (m *App) openWorkspaceAeron() tea.Cmd {
 	return m.ensureWorkspaceAeron()
 }
 
-// requestWorkspaceAeronEnsure schedules the background open of Aeron. The
+// requestWorkspaceAeronEnsure schedules the background open of Errand. The
 // tick starts it after the startup delay and a quiet period without user work.
 func (m *App) requestWorkspaceAeronEnsure() {
 	if m.ws == nil {
@@ -114,7 +114,7 @@ func (m *App) requestWorkspaceAeronEnsure() {
 // work, history restore and any lifecycle operation already in flight.
 func (m *App) workspaceAeronTick(now time.Time) tea.Cmd {
 	if m.agentPrompt == nil {
-		// A waiting Aeron question opens when the user pauses.
+		// A waiting Errand question opens when the user pauses.
 		for _, state := range m.agentPrompts {
 			if !state.inline && !m.aeronPromptWaits(state) {
 				m.openNextAgentPrompt()
@@ -139,7 +139,7 @@ func (m *App) workspaceAeronTick(now time.Time) tea.Cmd {
 	return m.ensureWorkspaceAeron()
 }
 
-// ensureWorkspaceAeron asks the core for the workspace's one Aeron: it reuses,
+// ensureWorkspaceAeron asks the core for the workspace's one Errand: it reuses,
 // resumes or creates it. The agent reaches this shell as normal inventory and
 // never takes the user's tab.
 func (m *App) ensureWorkspaceAeron() tea.Cmd {
@@ -160,7 +160,7 @@ func (m *App) ensureWorkspaceAeron() tea.Cmd {
 }
 
 // applyAeronEnsure settles one ensure result. Busy admission tries again later.
-// Any other failure is reported only when work was waiting for Aeron; an
+// Any other failure is reported only when work was waiting for Errand; an
 // automatic open stays silent so a new user is not interrupted before setup.
 func (m *App) applyAeronEnsure(result *workspace.NewSessionResult) tea.Cmd {
 	m.aeronEnsureInFlight = false
@@ -179,12 +179,12 @@ func (m *App) applyAeronEnsure(result *workspace.NewSessionResult) tea.Cmd {
 	}
 	m.aeronEnsureFailed = true
 	m.aeronEnsureScheduled = false
-	detail := "Aeron could not start. Check the Aeron model in Settings."
+	detail := "Errand could not start. Check the Errand model in Settings."
 	switch {
 	case result != nil && result.NeedsAccount:
-		detail = "Aeron needs an account. Choose an account in Settings."
+		detail = "Errand needs an account. Choose an account in Settings."
 	case result != nil && result.NeedsModel:
-		detail = "Aeron needs a model. Choose a model in Settings."
+		detail = "Errand needs a model. Choose a model in Settings."
 	}
 	m.aeronEnsureError = detail
 	if (len(m.aeronOrders) > 0 || m.aeronOpenRequested) && m.Feedback != nil {
@@ -208,9 +208,9 @@ func (m *App) deliverAeronOrders(id string) tea.Cmd {
 	return tea.Sequence(commands...)
 }
 
-// resetWorkspaceAeron forgets the previous attachment's Aeron presentation.
+// resetWorkspaceAeron forgets the previous attachment's Errand presentation.
 // The session itself remains workspace-owned and is found again on attach.
-// Work for the previous workspace's Aeron is not carried to another project.
+// Work for the previous workspace's Errand is not carried to another project.
 func (m *App) resetWorkspaceAeron() {
 	m.aeronPrepared = nil
 	m.aeronEnsureInFlight = false
@@ -221,7 +221,7 @@ func (m *App) resetWorkspaceAeron() {
 	m.requestWorkspaceAeronEnsure()
 }
 
-// prepareAeronAgent keeps Aeron out of the way: the first time this shell sees
+// prepareAeronAgent keeps Errand out of the way: the first time this shell sees
 // it, it is minimized unless the user opened it. Approval defaults belong to
 // the core session lifecycle; this presentation path does no RPC or persistence.
 func (m *App) prepareAeronAgent(id string, open bool) {
@@ -237,10 +237,10 @@ func (m *App) prepareAeronAgent(id string, open bool) {
 	}
 }
 
-// taskWorkspaceAeron sends a work order to this workspace's Aeron. The chat
-// shows display, not the full order. When Aeron is not open yet, the order
-// waits and Aeron opens as soon as no other session work runs. The user keeps
-// their tab: Aeron asks for attention with modal prompts, and the user can
+// taskWorkspaceAeron sends a work order to this workspace's Errand. The chat
+// shows display, not the full order. When Errand is not open yet, the order
+// waits and Errand opens as soon as no other session work runs. The user keeps
+// their tab: Errand asks for attention with modal prompts, and the user can
 // open it from the Agents panel like any other agent.
 func (m *App) taskWorkspaceAeron(text, display string) tea.Cmd {
 	input := provider.UserInput{Text: text, DisplayText: display, Origin: provider.OriginHuman}
@@ -253,6 +253,6 @@ func (m *App) taskWorkspaceAeron(text, display string) tea.Cmd {
 	m.aeronEnsureEarliest = time.Time{}
 	m.aeronEnsureFailed = false
 	m.aeronEnsureError = ""
-	// A busy slot is not an error: the tick starts Aeron when it is free.
+	// A busy slot is not an error: the tick starts Errand when it is free.
 	return m.ensureWorkspaceAeron()
 }

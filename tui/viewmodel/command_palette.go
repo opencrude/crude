@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/connectionpopover"
+	"crude/tui/screens/shellheader"
 	"crude/tui/screens/termdock"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -482,7 +483,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "remote.connect", "remote.switch":
 		return m.OpenRemotes()
 	case "remote.health":
-		m.openConnectionHover(m.connectionWordmarkRect())
+		m.openConnectionHover(shellheader.ConnectionAction)
 		if fw := m.overlayHost.Window(ui.OverlayConnectionHealth); fw != nil {
 			m.connectionHover.widget.Focus(connectionpopover.DetailID)
 			m.windowManager.FocusWindow(fw.ID)

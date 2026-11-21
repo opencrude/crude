@@ -212,7 +212,7 @@ func (j *suggestionJourney) until(what string, condition func() bool) {
 	}
 }
 
-// turnOn chooses a mode from the Aeron footer menu and answers the consent
+// turnOn chooses a mode from the Errand footer menu and answers the consent
 // question with Enter, as the user does.
 func (j *suggestionJourney) turnOn(mode types.EditorPredictionMode) {
 	j.t.Helper()
@@ -333,8 +333,8 @@ func TestConnectedSuggestionCaretMoveCancelsTheRunningRequest(t *testing.T) {
 	j.key(tea.KeyPressMsg{Code: tea.KeyEnd})
 	j.typeText("x")
 	j.until("request reached the model", func() bool { return j.model.calls.Load() == 1 })
-	if paint := ansi.Strip(j.app.View().RenderContent()); !strings.Contains(paint, "Aeron …") {
-		t.Fatalf("the footer does not show that Aeron is working:\n%s", paint)
+	if paint := ansi.Strip(j.app.View().RenderContent()); !strings.Contains(paint, "Errand …") {
+		t.Fatalf("the footer does not show that Errand is working:\n%s", paint)
 	}
 	j.key(tea.KeyPressMsg{Code: tea.KeyLeft})
 	j.until("model request cancelled", func() bool { return j.model.cancelled.Load() == 1 })
@@ -342,7 +342,7 @@ func TestConnectedSuggestionCaretMoveCancelsTheRunningRequest(t *testing.T) {
 	if _, ok := j.shown(); ok {
 		t.Fatal("a cancelled request showed a suggestion")
 	}
-	if paint := ansi.Strip(j.app.View().RenderContent()); strings.Contains(paint, "Aeron …") || strings.Contains(paint, "Aeron !") {
+	if paint := ansi.Strip(j.app.View().RenderContent()); strings.Contains(paint, "Errand …") || strings.Contains(paint, "Errand !") {
 		t.Fatalf("the footer kept a working or problem state after cancel:\n%s", paint)
 	}
 }

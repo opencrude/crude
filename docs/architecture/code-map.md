@@ -35,7 +35,7 @@ Single-purpose leaves stay at the root: `assets/`, `buildinfo/`, `clientstate/`,
 | `main.go`, `app/` | CLI parsing, application config, core spawning (`core_image.go` staged executable, detach), MCP control entry. No session or orchestrator knowledge. |
 | `buildinfo/` | Build identity and `buildinfo.Home`, the single Crude data root (`CRUDE_HOME`). |
 | `crashlog/` | Process-local synchronous fatal output and recovered TUI panic reports; no event-loop or normal-log dependency. |
-| `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. `core/attention.go` sends the workspace Aeron one notice per Investigate issue; `core/presence.go` elects the shell that shows desktop notifications. |
+| `core/` | Retained workspace actors, serialized ingress lanes, snapshot/subscription admission, mutation receipts. `core/attention.go` sends the workspace Errand one notice per Investigate issue; `core/presence.go` elects the shell that shows desktop notifications. |
 | `core/protocol/` | Versioned, presentation-neutral core API types. |
 | `core/projectpath/` | Core-host directory identity and navigation-only home, personal-folder, and volume-root classification. Bounded directory browsing creates no project state. |
 | `core/wire/` | Bounded framed transport (local socket, SSH stdio bridge). |
@@ -57,7 +57,7 @@ Single-purpose leaves stay at the root: `assets/`, `buildinfo/`, `clientstate/`,
 | `agent/prompt/` | Every code-authored model instruction template ([prompt architecture](../reference/prompt-architecture.md)). |
 | `agent/provider/` | Wire protocols, streaming, failure classification, connection accounting. |
 | `agent/provider/text_once.go`, `agent/provider/fim_once.go` | Bounded one-attempt no-tools text/FIM operations with original-wire usage-presence evidence; no prediction coordinator, consent authority, retry or adapter fallback. |
-| `agent/session/editor_prediction.go` | Captured Aeron account/role binding for usage-preserving one-shot requests; live connection preflight, no consent, endpoint probing or chat-session creation. |
+| `agent/session/editor_prediction.go` | Captured Errand account/role binding for usage-preserving one-shot requests; live connection preflight, no consent, endpoint probing or chat-session creation. |
 | `agent/codexio/` | Native Codex/OpenAI interfaces such as freeform `apply_patch`. |
 | `agent/tools/` | Tool schemas, argument summaries, parallel dispatch, effects. |
 | `agent/plan/` | Revisioned declarative plan store and activity view. |

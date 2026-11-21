@@ -6,7 +6,7 @@ import (
 	"crude/types"
 )
 
-// Suggestions is the connected flow for Aeron's editor suggestions and the
+// Suggestions is the connected flow for Errand's editor suggestions and the
 // recent-edit history. The core owns text, context, the model call and the
 // ledger; a shell sends identity and the caret and paints the answer.
 type Suggestions interface {

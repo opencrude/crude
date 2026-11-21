@@ -129,6 +129,7 @@ type TerminalRenderer struct {
 	w                io.Writer
 	buf              *bytes.Buffer // buffer for writing to the screen
 	curbuf           *RenderBuffer // the current buffer
+	damage           []CellSpan    // optional physical text damage for the current render
 	tabs             *TabStops
 	hasher           maphash.Hash
 	oldhash, newhash []uint64     // the old and new hash values for each line
@@ -443,7 +444,8 @@ func (s *TerminalRenderer) move(newbuf *RenderBuffer, x, y int) {
 	}
 
 	// We set the new cursor in tscreen.moveCursor].
-	s.moveCursor(newbuf, x, y, true) // Overwrite cells if possible
+	// A cursor move must not write untracked cells over external graphics.
+	s.moveCursor(newbuf, x, y, s.damage == nil)
 }
 
 // cellEqual returns whether the two cells are equal. A nil cell is considered
@@ -511,6 +513,7 @@ func (s *TerminalRenderer) putAttrCell(newbuf *RenderBuffer, cell *Cell) {
 		cellWidth = cell.Width
 	}
 
+	s.recordDamage(s.cur.Y, s.cur.X, s.cur.X+cellWidth)
 	s.cur.X += cellWidth
 	if s.cur.X >= newbuf.Width() {
 		s.atPhantom = true
@@ -615,6 +618,7 @@ func (s *TerminalRenderer) emitRange(newbuf *RenderBuffer, line Line, n int) (eo
 			rep := ansi.RepeatPreviousCharacter(count)
 			if hasECH && count > len(ech)+len(cup) && canClearWith(&cell0) {
 				s.updatePen(&cell0)
+				s.recordDamage(s.cur.Y, s.cur.X, s.cur.X+count)
 				_, _ = s.buf.WriteString(ech)
 
 				// If this is the last cell, we don't need to move the cursor.
@@ -641,6 +645,7 @@ func (s *TerminalRenderer) emitRange(newbuf *RenderBuffer, line Line, n int) (eo
 				s.putCell(newbuf, &cell0)
 				repCount-- // cell0 is a single width cell ASCII character
 
+				s.recordDamage(s.cur.Y, s.cur.X, s.cur.X+repCount)
 				_, _ = s.buf.WriteString(ansi.RepeatPreviousCharacter(repCount))
 				s.cur.X += repCount
 				if wrapPossible {
@@ -729,6 +734,7 @@ func (s *TerminalRenderer) clearToEnd(newbuf *RenderBuffer, blank *Cell, force b
 		s.updatePen(blank)
 		count := newbuf.Width() - s.cur.X
 		if s.el0Cost() <= count {
+			s.recordDamage(s.cur.Y, s.cur.X, newbuf.Width())
 			_, _ = s.buf.WriteString(ansi.EraseLineRight)
 		} else {
 			for i := 0; i < count; i++ {
@@ -746,6 +752,7 @@ func (s *TerminalRenderer) clearBlank() *Cell {
 // insertCells inserts the count cells pointed by the given line at the current
 // cursor position.
 func (s *TerminalRenderer) insertCells(newbuf *RenderBuffer, line Line, count int) {
+	s.recordDamage(s.cur.Y, s.cur.X, newbuf.Width())
 	supportsICH := s.caps.Contains(capICH)
 	if supportsICH {
 		// Use [ansi.ICH] as an optimization.
@@ -819,10 +826,12 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 				if nFirstCell >= newbuf.Width() {
 					s.move(newbuf, 0, y)
 					s.updatePen(blank)
+					s.recordDamage(y, 0, newbuf.Width())
 					_, _ = s.buf.WriteString(ansi.EraseLineRight)
 				} else {
 					s.move(newbuf, nFirstCell-1, y)
 					s.updatePen(blank)
+					s.recordDamage(y, 0, nFirstCell)
 					_, _ = s.buf.WriteString(ansi.EraseLineLeft)
 				}
 
@@ -961,7 +970,7 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 				s.clearToEnd(newbuf, blank, false)
 			} else {
 				s.updatePen(blank)
-				s.deleteCells(oLastCell - nLastCell)
+				s.deleteCells(oLastCell-nLastCell, newbuf.Width())
 			}
 		}
 	}
@@ -976,7 +985,8 @@ func (s *TerminalRenderer) transformLine(newbuf *RenderBuffer, y int) {
 
 // deleteCells deletes the count cells at the current cursor position and moves
 // the rest of the line to the left. This is equivalent to [ansi.DCH].
-func (s *TerminalRenderer) deleteCells(count int) {
+func (s *TerminalRenderer) deleteCells(count, width int) {
+	s.recordDamage(s.cur.Y, s.cur.X, width)
 	// [ansi.DCH] will shift in cells from the right margin so we need to
 	// ensure that they are the right style.
 	_, _ = s.buf.WriteString(ansi.DeleteCharacter(count))
@@ -990,6 +1000,11 @@ func (s *TerminalRenderer) clearToBottom(blank *Cell) {
 		row = 0
 	}
 
+	width := s.curbuf.Width()
+	s.recordDamage(row, col, width)
+	for y := row + 1; y < len(s.damage); y++ {
+		s.recordDamage(y, 0, width)
+	}
 	s.updatePen(blank)
 	_, _ = s.buf.WriteString(ansi.EraseScreenBelow)
 	// Clear the rest of the current line
@@ -1055,6 +1070,9 @@ func (s *TerminalRenderer) clearScreen(blank *Cell) {
 	s.updatePen(blank)
 	_, _ = s.buf.WriteString(ansi.CursorHomePosition)
 	_, _ = s.buf.WriteString(ansi.EraseEntireScreen)
+	for y := range s.damage {
+		s.recordDamage(y, 0, s.curbuf.Width())
+	}
 	s.cur.X, s.cur.Y = 0, 0
 	s.curbuf.Fill(blank)
 }
@@ -1176,7 +1194,7 @@ func (s *TerminalRenderer) Render(newbuf *RenderBuffer) {
 		// misbehaves and moves the cursor outside of the scrolling region. For
 		// now, we disable the optimizations completely on Windows.
 		// See https://github.com/microsoft/terminal/issues/19016
-		if s.flags.Contains(tScrollOptim) && s.flags.Contains(tFullscreen) {
+		if s.damage == nil && s.flags.Contains(tScrollOptim) && s.flags.Contains(tFullscreen) {
 			// Optimize scrolling for the alternate screen buffer.
 			// TODO: Should we optimize for inline mode as well? If so, we need
 			// to know the actual cursor position to use [ansi.DECSTBM].

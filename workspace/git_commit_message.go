@@ -19,7 +19,7 @@ const (
 
 var ErrGitNoChanges = errors.New("there are no changes to describe")
 
-// CommitMessageWriter drafts a commit message with the Aeron model. It is
+// CommitMessageWriter drafts a commit message with the Errand model. It is
 // prepared on the UI goroutine (the configuration is read there); Write only
 // performs repository reads and the model request.
 type CommitMessageWriter struct {
@@ -28,7 +28,7 @@ type CommitMessageWriter struct {
 	git       *GitService
 }
 
-// PrepareCommitMessageWriter resolves the Aeron model now and fails when no
+// PrepareCommitMessageWriter resolves the Errand model now and fails when no
 // usable model is configured, so the UI can say why before starting.
 func (w *Workspace) PrepareCommitMessageWriter() (CommitMessageWriter, error) {
 	if w == nil || w.sessionCfg == nil {

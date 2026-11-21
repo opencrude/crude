@@ -17,13 +17,13 @@ const (
 
 // predictionFields are the workspace's own suggestion choice: the mode and
 // the hourly cap. They are not an application default or part of analysis
-// Trust; the connection is on Agents, Aeron, Suggestions. They only edit a
+// Trust; the connection is on Agents, Errand, Suggestions. They only edit a
 // draft; turning suggestions on records this workspace's consent on save.
 func (m *Model) predictionFields(cfg types.WorkspacePredictionSettings) []*ui.FieldState {
 	if m.Scope() != types.SettingsScopeWorkspace {
 		var fields []*ui.FieldState
 		for _, row := range []struct{ id, label string }{
-			{fieldPredictionMode, "Aeron suggestions"},
+			{fieldPredictionMode, "Errand suggestions"},
 			{fieldPredictionLimit, "Hourly limit"},
 		} {
 			field := ui.TextFieldState(row.id, row.label, "Workspace only",
@@ -38,11 +38,11 @@ func (m *Model) predictionFields(cfg types.WorkspacePredictionSettings) []*ui.Fi
 		limit = types.DefaultPredictionHourlyTokens
 	}
 	fields := []*ui.FieldState{
-		ui.SegmentedFieldState(fieldPredictionMode, "Aeron suggestions", []ui.FormOption{
+		ui.SegmentedFieldState(fieldPredictionMode, "Errand suggestions", []ui.FormOption{
 			{ID: string(types.PredictionOff), Label: "Off"},
 			{ID: string(types.PredictionAsk), Label: "When I ask"},
 			{ID: string(types.PredictionType), Label: "As I type"},
-		}, string(cfg.Mode), "When I ask: press Alt+\\ in the editor. As I type: Aeron also suggests after a short pause. Aeron sends nearby code, recent edits and related code to its account."),
+		}, string(cfg.Mode), "When I ask: press Alt+\\ in the editor. As I type: Errand also suggests after a short pause. Errand sends nearby code, recent edits and related code to its account."),
 		ui.NumberFieldState(fieldPredictionLimit, "Hourly limit", 0, "tokens",
 			"Suggestions stop for the rest of the hour at this limit. Usage is counted in tokens, not money."),
 	}

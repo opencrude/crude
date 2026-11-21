@@ -35,7 +35,7 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, edits []ty
 	var predictionConnectionErr error
 	if len(predictionEdits(edits)) != 0 {
 		if w.sessionCfg == nil || w.sessionCfg.AccountManager == nil {
-			predictionConnectionErr = fmt.Errorf("configure an Aeron connection before enabling prediction")
+			predictionConnectionErr = fmt.Errorf("configure an Errand connection before enabling prediction")
 		} else {
 			predictionCompleter, predictionConnectionErr = w.sessionCfg.SuggestionCompleter()
 		}

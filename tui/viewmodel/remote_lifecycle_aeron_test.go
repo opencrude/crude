@@ -9,7 +9,7 @@ import (
 	"crude/tui/screens/launcher"
 )
 
-// The automatic open of the workspace Aeron is background work. On a slow
+// The automatic open of the workspace Errand is background work. On a slow
 // link its reply can take seconds; a New Session click in that time must
 // still open the user's session when the open settles, never be lost.
 func TestRemoteNewSessionClickWaitsForAutomaticAeronOpen(t *testing.T) {
@@ -24,7 +24,7 @@ func TestRemoteNewSessionClickWaitsForAutomaticAeronOpen(t *testing.T) {
 	app.LastInteractionTime = time.Now().Add(-aeronEnsureQuietPeriod - time.Second)
 	aeronOpen := app.workspaceAeronTick(time.Now())
 	if aeronOpen == nil || !app.aeronEnsureInFlight {
-		t.Fatal("the automatic Aeron open did not start")
+		t.Fatal("the automatic Errand open did not start")
 	}
 
 	// The open's reply has not reached Update yet: the user clicks the
@@ -41,7 +41,7 @@ func TestRemoteNewSessionClickWaitsForAutomaticAeronOpen(t *testing.T) {
 	_, release := app.Update(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
 	runAppCommand(t, app, release)
 	if app.sessionLifecycleSequence != sequence || !app.aeronEnsureInFlight {
-		t.Fatal("the click started a second session request beside the Aeron open")
+		t.Fatal("the click started a second session request beside the Errand open")
 	}
 
 	runAppCommand(t, app, aeronOpen)
@@ -52,14 +52,14 @@ func TestRemoteNewSessionClickWaitsForAutomaticAeronOpen(t *testing.T) {
 	assertAgentIsPaintedView(t, app, app.AgentView.ActiveID())
 	aeron := app.workspaceAeronAgent()
 	if aeron == "" || !app.AgentView.IsHidden(aeron) {
-		t.Fatalf("the workspace Aeron did not open in the background: id=%q", aeron)
+		t.Fatalf("the workspace Errand did not open in the background: id=%q", aeron)
 	}
 	if app.sessionLifecyclePending || app.sessionLifecycleAfterAeron != nil {
 		t.Fatal("the session request did not settle")
 	}
 }
 
-// Opening another workspace while the automatic Aeron open is in flight waits
+// Opening another workspace while the automatic Errand open is in flight waits
 // for that reply and then switches; it does not refuse the user's choice.
 func TestRemoteWorkspaceSwitchWaitsForAutomaticAeronOpen(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -74,14 +74,14 @@ func TestRemoteWorkspaceSwitchWaitsForAutomaticAeronOpen(t *testing.T) {
 	app.LastInteractionTime = time.Now().Add(-aeronEnsureQuietPeriod - time.Second)
 	aeronOpen := app.workspaceAeronTick(time.Now())
 	if aeronOpen == nil || !app.aeronEnsureInFlight {
-		t.Fatal("the automatic Aeron open did not start")
+		t.Fatal("the automatic Errand open did not start")
 	}
 	runAppCommand(t, app, confirmWorkspaceSwitchTest(t, app, target))
 	if len(app.pendingOperationIssues) != 0 || app.workspaceSwitchIntent == nil {
-		t.Fatalf("the switch was refused while Aeron opened: issues=%+v", app.pendingOperationIssues)
+		t.Fatalf("the switch was refused while Errand opened: issues=%+v", app.pendingOperationIssues)
 	}
 	if !sameWorkspaceRoot(app.ws.RootPath(), root) {
-		t.Fatal("the switch did not wait for the Aeron reply")
+		t.Fatal("the switch did not wait for the Errand reply")
 	}
 
 	runAppCommand(t, app, aeronOpen)

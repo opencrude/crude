@@ -325,7 +325,7 @@ func TestDesktopNoticeChildAndAeronNewsStaysQuiet(t *testing.T) {
 		t.Fatalf("a child's finish is news: %v", kind)
 	}
 	if _, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "a"}, Phase: ttypes.AgentFailed}, func() bool { return true }); ok {
-		t.Fatal("the workspace Aeron's stop is news")
+		t.Fatal("the workspace Errand's stop is news")
 	}
 	if kind, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "c", ParentID: "p"}, Phase: ttypes.AgentApproval, NeedsAction: true}, notAeron); !ok || kind != noticeApproval {
 		t.Fatalf("a child's approval request must reach the user: %v %v", kind, ok)
@@ -452,5 +452,22 @@ func TestDesktopNoticeAllKindsOffMeansCannotNotify(t *testing.T) {
 	h.app.reportDesktopPresence()
 	if last := h.ws.reports[len(h.ws.reports)-1]; last.notifies {
 		t.Fatal("a shell that wants no news must not take the election from another shell")
+	}
+}
+
+func TestDesktopNoticeUsesErrandRoleForAQuestion(t *testing.T) {
+	h := newNoticeHarness(t)
+	h.elect(false, true)
+	w := shellport.Unwrap(h.ws.Workspace)
+	parent := w.AgentMgr.AddOrchestrator("parent", nil)
+	child := w.AgentMgr.AddSubAgent("errand-child", parent.ID, "RetainedPersonalName", "model", ttypes.ErrandRoleID, nil)
+	w.ApplyAgentStatusEvent(workspace.AgentEvent{AgentID: child.ID, Type: "blocking", Data: map[string]any{"operation": "question"}})
+	if h.observe() == nil {
+		t.Fatal("Errand's question did not reach the desktop notification owner")
+	}
+	h.settle()
+	shown := h.lastShown()
+	if !strings.Contains(shown.Title+shown.Body, "Errand") || strings.Contains(shown.Title+shown.Body, "RetainedPersonalName") {
+		t.Fatalf("notification did not use the shared role label: %+v", shown)
 	}
 }

@@ -39,13 +39,13 @@ func openAeronHeader(t *testing.T, app *App) {
 	app.paintShellFrame()
 	bounds, ok := app.screenRectOf(statusoverview.HeaderLinkID)
 	if !ok || bounds.Empty() {
-		t.Fatal("Open workspace Aeron is not visible in the Workspace panel header")
+		t.Fatal("Open workspace Errand is not visible in the Workspace panel header")
 	}
 	_, cmd := app.Update(tea.MouseClickMsg{X: bounds.X + 1, Y: bounds.Y, Button: tea.MouseLeft})
 	runAppCommand(t, app, cmd)
 }
 
-// Aeron opens from its header link as a normal agent tab, with the normal composer, and
+// Errand opens from its header link as a normal agent tab, with the normal composer, and
 // runs real commands and settings changes through the connected core. The
 // session's system prompt carries the workspace-agent contract.
 func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
@@ -82,13 +82,13 @@ func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
 					aeronToolReply(w, "execute_command", map[string]any{"command": "echo AERON_COMMAND_WORKS"}, round)
 				case 2:
 					if !strings.Contains(lastTool, "AERON_COMMAND_WORKS") {
-						t.Errorf("Aeron's command did not run: %s", lastTool)
+						t.Errorf("Errand's command did not run: %s", lastTool)
 					}
 					aeronToolReply(w, "crude_control", map[string]any{"command": "settings.set",
 						"arguments": map[string]any{"scope": "workspace", "path": "lsp.languages.aeron-fixture.command", "value": commandPath}}, round)
 				default:
 					if !strings.Contains(lastTool, `"state":"committed"`) {
-						t.Errorf("Aeron cannot configure the tool it set up: %s", lastTool)
+						t.Errorf("Errand cannot configure the tool it set up: %s", lastTool)
 					}
 					fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"AERON_OK\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 				}
@@ -110,24 +110,24 @@ func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
 			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return app.workspaceAeronAgent() != "" })
 			aeron := app.workspaceAeronAgent()
 			if !app.AgentView.IsHidden(aeron) {
-				t.Fatal("the background Aeron took a tab before the user opened it")
+				t.Fatal("the background Errand took a tab before the user opened it")
 			}
 
 			openAeronHeader(t, app)
 			if app.AgentView.ActiveID() != aeron || app.Win.ActiveTab() == nil || app.Win.ActiveTab().Title != app.agentTabTitle(aeron) {
-				t.Fatal("opening Aeron did not select its agent tab")
+				t.Fatal("opening Errand did not select its agent tab")
 			}
 			if app.ActiveSession != app.ws.SessionsByAgent()[aeron] {
-				t.Fatal("the normal composer does not send to Aeron")
+				t.Fatal("the normal composer does not send to Errand")
 			}
 			// The tab and tooltip name the same agent, not its
 			// generated session name.
 			requireAeronAbsentFromAgentList(t, app)
-			if app.Win.ActiveTab().DisplayTitle != "Aeron" || !strings.HasPrefix(app.tabTooltip(app.Win.ActiveTab().ID), "Aeron\n") {
-				t.Fatalf("Aeron is not named Aeron in its tab: %q", app.Win.ActiveTab().DisplayTitle)
+			if app.Win.ActiveTab().DisplayTitle != "Errand" || !strings.HasPrefix(app.tabTooltip(app.Win.ActiveTab().ID), "Errand\n") {
+				t.Fatalf("Errand is not named Errand in its tab: %q", app.Win.ActiveTab().DisplayTitle)
 			}
 			app.paintShellFrame()
-			for _, gone := range []string{"Give Aeron a task", "Esc back"} {
+			for _, gone := range []string{"Give Errand a task", "Esc back"} {
 				if strings.Contains(app.View().Content, gone) {
 					t.Fatalf("the removed sidebar page is still painted: %q", gone)
 				}
@@ -143,7 +143,7 @@ func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
 				t.Fatalf("the configured command did not reach workspace settings: %q", got)
 			}
 			if !sawContract.Load() {
-				t.Fatal("Aeron's system prompt has no workspace-agent contract")
+				t.Fatal("Errand's system prompt has no workspace-agent contract")
 			}
 			if calls.Load() != 3 {
 				t.Fatalf("the task was submitted more than once: %d requests", calls.Load())
@@ -152,7 +152,7 @@ func TestAeronOpensAsAgentTabAndRunsTools(t *testing.T) {
 	}
 }
 
-// Aeron's question is a modal prompt even when its own tab is open, and the
+// Errand's question is a modal prompt even when its own tab is open, and the
 // user's draft and tab stay as they were.
 func TestAeronQuestionIsAModalPrompt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -169,25 +169,25 @@ func TestAeronQuestionIsAModalPrompt(t *testing.T) {
 	runAppCommand(t, app, app.taskWorkspaceAeron("<tool_setup_task>Ask a question</tool_setup_task>", "Set up the fixture tool."))
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return len(app.agentPrompts) == 1 })
 	if !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) || app.agentPrompts[0].inline {
-		t.Fatal("Aeron's question is not shown as a modal prompt")
+		t.Fatal("Errand's question is not shown as a modal prompt")
 	}
 	if app.AgentView.ActiveID() != main || app.Input.Value() != "MAIN DRAFT STAYS" {
-		t.Fatal("Aeron's question changed the user's tab or draft")
+		t.Fatal("Errand's question changed the user's tab or draft")
 	}
 	if fw := app.overlayHost.Window(ui.OverlayAgentPrompt); fw == nil || !strings.Contains(fw.Title, "Questions") {
 		t.Fatal("the modal is not the question prompt")
 	}
 
-	// Opening Aeron's own tab keeps the question in the modal; it never moves
+	// Opening Errand's own tab keeps the question in the modal; it never moves
 	// into the tab's deck.
 	app.restoreAgent(app.workspaceAeronAgent())
 	app.openNextAgentPrompt()
 	if !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) || app.agentPrompts[0].inline {
-		t.Fatal("Aeron's question moved out of the modal when its tab opened")
+		t.Fatal("Errand's question moved out of the modal when its tab opened")
 	}
 }
 
-// Aeron works in the background, so its question must not open under the
+// Errand works in the background, so its question must not open under the
 // user's keys while the user types; it opens at the next tick after a pause.
 func TestAeronQuestionWaitsWhileTheUserTypes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,11 +204,11 @@ func TestAeronQuestionWaitsWhileTheUserTypes(t *testing.T) {
 	app.LastInteractionTime = time.Now().Add(time.Hour) // the user keeps typing
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return len(app.agentPrompts) == 1 })
 	if app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
-		t.Fatal("Aeron's question opened while the user was typing")
+		t.Fatal("Errand's question opened while the user was typing")
 	}
 	app.LastInteractionTime = time.Now().Add(-aeronEnsureQuietPeriod)
 	app.workspaceAeronTick(time.Now())
 	if !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) || app.agentPrompts[0].inline {
-		t.Fatal("Aeron's question did not open after the user paused")
+		t.Fatal("Errand's question did not open after the user paused")
 	}
 }

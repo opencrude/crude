@@ -1,5 +1,11 @@
 package capability
 
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
 // TransportBuiltin marks a connection served in-process by Crude itself. Its
 // server is Crude's own code: it needs no launch approval, its tools keep their
 // plain names, and it can be disabled but not removed.
@@ -10,6 +16,34 @@ const TransportSSE = "sse"
 
 // WebConnectionID is the built-in web search and fetch connection.
 const WebConnectionID = "web"
+
+const (
+	// WebSearchFallbackAvailable is a local result code, not MCP server text.
+	// It allows the failed built-in search row to link to its settings.
+	WebSearchFallbackAvailable = "web_search_fallback_available"
+	SetWebSearchFallback       = "save-web-search-fallback"
+)
+
+// WebSearchFallback holds [account ID, model ID]; an absent pair means Off.
+// It is one atomic settings value so concurrent saves cannot mix the account
+// from one selection with the model from another. It never contains secrets.
+type WebSearchFallback []string
+
+func (fallback WebSearchFallback) Selection() (account, model string, ok bool) {
+	if len(fallback) != 2 || !validSearchSelection(fallback[0], 256) || !validSearchSelection(fallback[1], 1024) {
+		return "", "", false
+	}
+	return fallback[0], fallback[1], true
+}
+
+func validSearchSelection(value string, maxBytes int) bool {
+	return len(value) > 0 && len(value) <= maxBytes && strings.TrimSpace(value) == value &&
+		utf8.ValidString(value) && !strings.ContainsFunc(value, unicode.IsControl)
+}
+
+func (config ConnectionConfig) IsBuiltinWeb() bool {
+	return config.ID == WebConnectionID && config.Command == WebConnectionID && config.IsBuiltin()
+}
 
 // BuiltinSecret describes one optional credential a built-in server reads from
 // Crude's secret store (falling back to the host environment variable of the

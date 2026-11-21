@@ -12,7 +12,7 @@ import (
 	"crude/workspace"
 )
 
-// gitCommitWriteTimeout bounds one Aeron draft, including slow first tokens.
+// gitCommitWriteTimeout bounds one Errand draft, including slow first tokens.
 const gitCommitWriteTimeout = 2 * time.Minute
 
 // gitCommitDeltaMsg carries streamed draft text; gitCommitWrittenMsg ends a run.
@@ -31,7 +31,7 @@ type gitCommitWrittenMsg struct {
 
 var errGitCommitWriteStopped = errors.New("generation stopped · your previous draft is restored")
 
-// startCommitMessageWriter asks Aeron for a message describing exactly what
+// startCommitMessageWriter asks Errand for a message describing exactly what
 // Commit would record. The model and account are resolved here, on the update
 // goroutine; only repository reads and the request run in the background.
 func (m *App) startCommitMessageWriter(request gitpanel.GenerateRequest) tea.Cmd {
@@ -106,7 +106,7 @@ func (m *App) applyCommitMessageWritten(msg gitCommitWrittenMsg) tea.Cmd {
 		return m.prepareGitChangesIfVisible()
 	}
 	if msg.err == nil && m.Feedback != nil {
-		m.Feedback.NotifyInfo("Aeron drafted the commit message · review it, then Commit")
+		m.Feedback.NotifyInfo("Errand drafted the commit message · review it, then Commit")
 	}
 	return nil
 }

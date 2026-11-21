@@ -67,7 +67,10 @@ func (d *TerminalReader) streamData(ctx context.Context, readc chan []byte) erro
 		case readc <- buf.Bytes():
 		}
 
-		buf.Reset()
+		// The send transfers the bytes, not confirmation that StreamEvents
+		// copied them. A reset would let the next console batch overwrite a
+		// partial terminal reply while the input loop is still reading it.
+		buf = bytes.Buffer{}
 	}
 }
 

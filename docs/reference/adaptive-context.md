@@ -11,7 +11,7 @@ context admission, extraction and recovery, not a second set of prompt templates
 The reported manual-compaction failure sent about 498K estimated input tokens to
 an extraction connection using a 256K window. The old implementation sent the
 entire history to each of four stages, then retried the same impossible input.
-Automatic compaction used only the main model's window, and explicit Aeron
+Automatic compaction used only the main model's window, and explicit Errand
 category capacity was not bound to its connection.
 
 Provider request usage remains the ordinary-context authority. The per-agent
@@ -144,7 +144,7 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
 2. Decide when to compact with the adaptive policy below (or the user's
    explicit percentage, bounded by the main model's normal response and
    safety reserves). Extraction plans each request independently against the
-   resolved Aeron connection's capacity; a small extraction model uses smaller
+   resolved Errand connection's capacity; a small extraction model uses smaller
    source chunks instead of forcing early compaction of a larger main model.
 3. Persist the exact source before any extraction. A fitting source shares its
    immutable prefix with the conversation's cached prefix. Oversized sources use
@@ -171,7 +171,7 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    instead tunes the output allowance immediately without changing the source,
    reasoning, or completed stages. That bound applies to all following stages.
    The app-owned `model-catalog.db` durably stores the lowest confirmed ceiling
-   under the Aeron agent profile, exact provider endpoint/protocol, account,
+   under the Errand agent profile, exact provider endpoint/protocol, account,
    and model. New sessions, workspaces, and process restarts start below the
    previously rejected value; other agent profiles or connections do not share
    it. Learned limits expire after seven days so a changed provider cap can
@@ -330,7 +330,7 @@ Responses delta uploads and inline-image replay recovery are specified in
   errors. A typed 400/422 naming the exact sent output token value and valid
   upper bound reduces that stage's allowance, not its source or thinking mode.
   App-wide `model-catalog.db` retains the lowest confirmed ceiling keyed by
-  Aeron agent profile, provider endpoint/protocol, account, and model across
+  Errand agent profile, provider endpoint/protocol, account, and model across
   new sessions/workspaces and restarts, expiring after seven days. Never tie
   this learned transport capacity to one session DB or retry a known-invalid
   output request for every stage. Recursive source reduction still recomputes
@@ -362,7 +362,7 @@ Responses delta uploads and inline-image replay recovery are specified in
 - **Quality floor.** A checkpoint is lossy, a cost the spend accounting cannot
   see, so the economic rule never compacts below half of the hard limit
   (`economicFloor`), and a prepared checkpoint is not adopted below it either.
-  Without the floor a cheap Aeron model next to an expensive main model
+  Without the floor a cheap Errand model next to an expensive main model
   compacted a 1M-token window at ~90K tokens after a few steps. Below the
   floor only the physical trigger or an explicit percentage compacts.
 - **Explicit.** A user percentage is a boundary: past it the next request
@@ -413,7 +413,7 @@ Responses delta uploads and inline-image replay recovery are specified in
 
 ## Compaction operations
 
-- **Aeron compacts when its agentic loop ends.** The workspace Aeron is
+- **Errand compacts when its agentic loop ends.** The workspace Errand is
   permanent, so when one of its runs completes naturally (the model answers
   without another tool call), the session registers a compaction with trigger
   `loop_end` before the turn releases admission, like a `/compact` the turn
@@ -424,7 +424,7 @@ Responses delta uploads and inline-image replay recovery are specified in
   about checkpoint size and is left alone. A human `/compact` already registered
   makes it unnecessary. The replaced context records reason `loop_end_compaction`.
 
-- Automatic and manual compaction use the resolved Aeron category model for
+- Automatic and manual compaction use the resolved Errand category model for
   a combined no-tools extraction of four sections (intent, work, state,
   continuation) over one immutable durable source, falling back to one request
   per section when needed. Fitting sources share the cached prefix; oversized
@@ -593,7 +593,7 @@ implementation still matched the product:
 ## Validation and limits
 
 Regressions cover an approximately 540K-token source against a 256K extractor,
-real `Session.HandleCompact` histories above 350K with 64K/128K Aeron connections,
+real `Session.HandleCompact` histories above 350K with 64K/128K Errand connections,
 huge tool arguments/results, UTF-8 boundaries, late child wakes, provider capacity
 rejections, stage-local retries, reasoning-preserving output-cap recovery,
 checkpoint refinement, typed output-ceiling learning across new sessions and

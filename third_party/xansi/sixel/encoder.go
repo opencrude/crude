@@ -1,26 +1,16 @@
 package sixel
 
 import (
+	"context"
 	"fmt"
 	"image"
-	"image/color"
-	"image/draw"
 	"io"
 	"strconv"
-	"strings"
-
-	"github.com/bits-and-blooms/bitset"
 )
 
-// Sixels are a protocol for writing images to the terminal by writing a large blob of ANSI-escaped data.
-// They function by encoding columns of 6 pixels into a single character (in much the same way base64
-// encodes data 6 bits at a time). Sixel images are paletted, with a palette established at the beginning
-// of the image blob and pixels identifying palette entires by index while writing the pixel data.
-//
-// Sixels are written one 6-pixel-tall band at a time, one color at a time. For each band, a single
-// color's pixels are written, then a carriage return is written to bring the "cursor" back to the
-// beginning of a band where a new color is selected and pixels written. This continues until the entire
-// band has been drawn, at which time a line break is written to begin the next band.
+// Sixels encode a paletted image one six-pixel-high band at a time, one color
+// at a time. A carriage return brings the graphics cursor back to the start
+// of the band for the next color; a line break starts the next band.
 
 // Sixel control functions.
 const (
@@ -34,252 +24,131 @@ const (
 // Encoder is a Sixel encoder. It encodes an image to Sixel data format.
 type Encoder struct {
 	// Dither reduces palette bands in opaque images with more than 256 colors.
-	// It uses image/draw's Floyd-Steinberg diffusion with the adaptive palette.
-	// Images with transparency retain the ordinary alpha-aware encoding.
+	// It uses Floyd-Steinberg diffusion with the adaptive palette. Images with
+	// transparency retain the ordinary alpha-aware encoding.
 	Dither bool
 }
 
-// Encode will accept an Image and write sixel data to a Writer. The sixel data
-// will be everything after the 'q' that ends the DCS parameters and before the ST
-// that ends the sequence.  That means it includes the pixel metrics and color
-// palette.
+// Encode writes the contents of a Sixel DCS, including the raster dimensions
+// and palette, but not the DCS introducer or terminator.
 func (e *Encoder) Encode(w io.Writer, img image.Image) error {
+	return e.EncodeContext(context.Background(), w, img)
+}
+
+// EncodeContext is Encode with cooperative cancellation during palette
+// construction and between raster rows. Cancellation or a writer error can
+// leave an incomplete payload; callers framing a DCS must discard it.
+func (e *Encoder) EncodeContext(ctx context.Context, w io.Writer, img image.Image) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if img == nil {
 		return nil
 	}
 
-	imageBounds := img.Bounds()
-
-	// Set the default raster 1:1 aspect ratio if it's not set
-	if _, err := WriteRaster(w, 1, 1, imageBounds.Dx(), imageBounds.Dy()); err != nil {
+	bounds := img.Bounds()
+	palette, dither, err := newSixelPalette(ctx, img, MaxColors, e.Dither)
+	if err != nil {
+		return err
+	}
+	if _, err := WriteRaster(w, 1, 1, bounds.Dx(), bounds.Dy()); err != nil {
 		return fmt.Errorf("error encoding raster: %w", err)
 	}
-
-	palette := newSixelPalette(img, MaxColors)
-	var dithered *image.Paletted
-	if e.Dither && len(palette.paletteIndexes) > len(palette.PaletteColors) {
-		colors := make(color.Palette, len(palette.PaletteColors))
-		opaque := true
-		for i, c := range palette.PaletteColors {
-			colors[i] = sixelRGB(int(c.Red), int(c.Green), int(c.Blue))
-			opaque = opaque && c.Alpha == 100
-		}
-		if opaque {
-			dithered = image.NewPaletted(imageBounds, colors)
-			draw.FloydSteinberg.Draw(dithered, imageBounds, img, imageBounds.Min)
+	for i, c := range palette.PaletteColors {
+		if _, err := WriteColor(w, i, 2, int(c.Red), int(c.Green), int(c.Blue)); err != nil {
+			return fmt.Errorf("error encoding palette: %w", err)
 		}
 	}
 
-	for paletteIndex, color := range palette.PaletteColors {
-		e.encodePaletteColor(w, paletteIndex, color)
+	return encodeBands(ctx, w, img, palette, dither)
+}
+
+func encodeBands(ctx context.Context, w io.Writer, img image.Image, palette sixelPalette, dither bool) error {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	if bounds.Empty() {
+		_, err := io.WriteString(w, string(LineBreak))
+		return err
 	}
 
-	scratch := newSixelBuilder(imageBounds.Dx(), imageBounds.Dy(), palette)
+	var diffusion *sixelDiffusion
+	if dither {
+		diffusion = newSixelDiffusion(width, palette.PaletteColors)
+	}
+	rgba := readSixelRGBA(img)
 
-	for y := range imageBounds.Dy() {
-		for x := range imageBounds.Dx() {
-			if dithered != nil {
-				scratch.setPaletteIndex(x, y, int(dithered.ColorIndexAt(imageBounds.Min.X+x, imageBounds.Min.Y+y)))
-			} else {
-				scratch.SetColor(x, y, img.At(imageBounds.Min.X+x, imageBounds.Min.Y+y))
+	// Retain only one band. A mask packs the band's six pixels for one
+	// column/color. Find the occupied range while filling it so a sparse color
+	// neither scans its leading holes nor encodes its trailing holes.
+	mask := make([]byte, width*len(palette.PaletteColors))
+	var first, end [MaxColors]int
+	var band []byte
+	for y := bounds.Min.Y; y < bounds.Max.Y; {
+		for row := 0; row < 6 && y < bounds.Max.Y; row, y = row+1, y+1 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			for col := range width {
+				r, g, b, a := rgba(bounds.Min.X+col, y)
+				var index uint8
+				if diffusion != nil {
+					index = diffusion.pixel(col, r, g, b)
+				} else {
+					index = palette.paletteIndexes[sixelConvertColor(r, g, b, a)]
+					if palette.PaletteColors[index].Alpha == 0 {
+						continue
+					}
+				}
+				mask[int(index)*width+col] |= 1 << row
+				if end[index] == 0 || col < first[index] {
+					first[index] = col
+				}
+				end[index] = max(end[index], col+1)
+			}
+			if diffusion != nil {
+				diffusion.nextRow()
 			}
 		}
-	}
 
-	pixels := scratch.GeneratePixels()
-	io.WriteString(w, pixels) //nolint:errcheck,gosec
-
-	return nil
-}
-
-func (e *Encoder) encodePaletteColor(w io.Writer, paletteIndex int, c sixelColor) {
-	// Initializing palette entries
-	// #<a>;<b>;<c>;<d>;<e>
-	// a = palette index
-	// b = color type, 2 is RGB
-	// c = R
-	// d = G
-	// e = B
-
-	w.Write([]byte{ColorIntroducer})              //nolint:errcheck,gosec
-	io.WriteString(w, strconv.Itoa(paletteIndex)) //nolint:errcheck,gosec
-	io.WriteString(w, ";2;")                      //nolint:errcheck,gosec
-	io.WriteString(w, strconv.Itoa(int(c.Red)))   //nolint:errcheck,gosec
-	w.Write([]byte{';'})                          //nolint:errcheck,gosec
-	io.WriteString(w, strconv.Itoa(int(c.Green))) //nolint:errcheck,gosec
-	w.Write([]byte{';'})                          //nolint:errcheck,gosec
-	io.WriteString(w, strconv.Itoa(int(c.Blue)))  //nolint:errcheck,gosec
-}
-
-// sixelBuilder is a temporary structure used to create a SixelImage. It handles
-// breaking pixels out into bits, and then encoding them into a sixel data string. RLE
-// handling is included.
-//
-// Making use of a sixelBuilder is done in two phases.  First, SetColor is used to write all
-// pixels to the internal BitSet data.  Then, GeneratePixels is called to retrieve a string
-// representing the pixel data encoded in the sixel format.
-type sixelBuilder struct {
-	SixelPalette sixelPalette
-
-	imageHeight int
-	imageWidth  int
-
-	pixelBands bitset.BitSet
-
-	imageData   strings.Builder
-	repeatByte  byte
-	repeatCount int
-}
-
-// newSixelBuilder creates a sixelBuilder and prepares it for writing.
-func newSixelBuilder(width, height int, palette sixelPalette) sixelBuilder {
-	scratch := sixelBuilder{
-		imageWidth:   width,
-		imageHeight:  height,
-		SixelPalette: palette,
-	}
-
-	return scratch
-}
-
-// BandHeight returns the number of six-pixel bands this image consists of.
-func (s *sixelBuilder) BandHeight() int {
-	bandHeight := s.imageHeight / 6
-	if s.imageHeight%6 != 0 {
-		bandHeight++
-	}
-
-	return bandHeight
-}
-
-// SetColor will write a single pixel to sixelBuilder's internal bitset data to be used by
-// GeneratePixels.
-func (s *sixelBuilder) SetColor(x int, y int, color color.Color) {
-	paletteIndex := s.SixelPalette.ColorIndex(sixelConvertColor(color))
-	s.setPaletteIndex(x, y, paletteIndex)
-}
-
-func (s *sixelBuilder) setPaletteIndex(x, y, paletteIndex int) {
-	bandY := y / 6
-	bit := s.BandHeight()*s.imageWidth*6*paletteIndex + bandY*s.imageWidth*6 + (x * 6) + (y % 6)
-	s.pixelBands.Set(uint(bit)) //nolint:gosec
-}
-
-// GeneratePixels is used to write the pixel data to the internal imageData string builder.
-// All pixels in the image must be written to the sixelBuilder using SetColor before this method is
-// called. This method returns a string that represents the pixel data.  Sixel strings consist of five parts:
-// ISC <header> <palette> <pixels> ST
-// The header contains some arbitrary options indicating how the sixel image is to be drawn.
-// The palette maps palette indices to RGB colors
-// The pixels indicates which pixels are to be drawn with which palette colors.
-//
-// GeneratePixels only produces the <pixels> part of the string.  The rest is written by
-// Style.RenderSixelImage.
-func (s *sixelBuilder) GeneratePixels() string {
-	s.imageData = strings.Builder{}
-	bandHeight := s.BandHeight()
-
-	for bandY := range bandHeight {
-		if bandY > 0 {
-			s.writeControlRune(LineBreak)
-		}
-
-		hasWrittenAColor := false
-
-		for paletteIndex := range s.SixelPalette.PaletteColors {
-			if s.SixelPalette.PaletteColors[paletteIndex].Alpha < 1 {
-				// Don't draw anything for purely transparent pixels
+		band = band[:0]
+		for index, last := range end[:len(palette.PaletteColors)] {
+			if last == 0 {
 				continue
 			}
-
-			firstColorBit := uint(s.BandHeight()*s.imageWidth*6*paletteIndex + bandY*s.imageWidth*6) //nolint:gosec
-			nextColorBit := firstColorBit + uint(s.imageWidth*6)                                     //nolint:gosec
-
-			firstSetBitInBand, anySet := s.pixelBands.NextSet(firstColorBit)
-			if !anySet || firstSetBitInBand >= nextColorBit {
-				// Color not appearing in this row
-				continue
+			if len(band) != 0 {
+				band = append(band, CarriageReturn)
 			}
-
-			if hasWrittenAColor {
-				s.writeControlRune(CarriageReturn)
+			band = append(band, ColorIntroducer)
+			band = strconv.AppendInt(band, int64(index), 10)
+			band = appendSixelRun(band, first[index], '?')
+			columns := mask[index*width+first[index] : index*width+last]
+			for from := 0; from < len(columns); {
+				to := from + 1
+				for to < len(columns) && columns[to] == columns[from] {
+					to++
+				}
+				band = appendSixelRun(band, to-from, columns[from]+'?')
+				from = to
 			}
-			hasWrittenAColor = true
-
-			s.writeControlRune(ColorIntroducer)
-			s.imageData.WriteString(strconv.Itoa(paletteIndex))
-			for x := 0; x < s.imageWidth; x += 4 {
-				bit := firstColorBit + uint(x*6) //nolint:gosec
-				word := s.pixelBands.GetWord64AtBit(bit)
-
-				pixel1 := byte((word & 63) + '?')
-				pixel2 := byte(((word >> 6) & 63) + '?')
-				pixel3 := byte(((word >> 12) & 63) + '?')
-				pixel4 := byte(((word >> 18) & 63) + '?')
-
-				s.writeImageRune(pixel1)
-
-				if x+1 >= s.imageWidth {
-					continue
-				}
-				s.writeImageRune(pixel2)
-
-				if x+2 >= s.imageWidth {
-					continue
-				}
-				s.writeImageRune(pixel3)
-
-				if x+3 >= s.imageWidth {
-					continue
-				}
-				s.writeImageRune(pixel4)
-			}
+			clear(columns)
+			end[index] = 0
+		}
+		band = append(band, LineBreak)
+		if _, err := w.Write(band); err != nil {
+			return fmt.Errorf("error encoding band: %w", err)
 		}
 	}
-
-	s.writeControlRune('-')
-	return s.imageData.String()
+	return ctx.Err()
 }
 
-// writeImageRune will write a single line of six pixels to pixel data.  The data
-// doesn't get written to the imageData, it gets buffered for the purposes of RLE.
-func (s *sixelBuilder) writeImageRune(r byte) {
-	if r == s.repeatByte {
-		s.repeatCount++
-		return
+func appendSixelRun(out []byte, n int, c byte) []byte {
+	if n > 3 {
+		out = append(out, RepeatIntroducer)
+		out = strconv.AppendInt(out, int64(n), 10)
+		return append(out, c)
 	}
-
-	s.flushRepeats()
-	s.repeatByte = r
-	s.repeatCount = 1
-}
-
-// writeControlRune will write a special rune such as a new line or carriage return
-// rune. It will call flushRepeats first, if necessary.
-func (s *sixelBuilder) writeControlRune(r byte) {
-	if s.repeatCount > 0 {
-		s.flushRepeats()
-		s.repeatCount = 0
-		s.repeatByte = 0
+	for range n {
+		out = append(out, c)
 	}
-
-	s.imageData.WriteByte(r)
-}
-
-// flushRepeats is used to actually write the current repeatByte to the imageData when
-// it is about to change. This buffering is used to manage RLE in the sixelBuilder.
-func (s *sixelBuilder) flushRepeats() {
-	if s.repeatCount == 0 {
-		return
-	}
-
-	// Only write using the RLE form if it's actually providing space savings
-	if s.repeatCount > 3 {
-		WriteRepeat(&s.imageData, s.repeatCount, s.repeatByte) //nolint:errcheck,gosec
-		return
-	}
-
-	for range s.repeatCount {
-		s.imageData.WriteByte(s.repeatByte)
-	}
+	return out
 }

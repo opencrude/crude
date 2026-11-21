@@ -7,29 +7,34 @@ import (
 )
 
 const (
-	FilesBrowse        = "files.browse"
-	FilesCatalog       = "files.catalog"
-	FilesRead          = "files.read"
-	FilesCreate        = "files.create"
-	FilesCreateFolder  = "files.create_folder"
-	FilesRename        = "files.rename"
-	FilesCopy          = "files.copy"
-	FilesDelete        = "files.delete"
-	FilesEdit          = "files.edit"
-	FilesSearch        = "files.search"
-	HistoryTimeline    = "history.timeline"
-	HistoryFile        = "history.file"
-	HistoryStats       = "history.stats"
-	HistoryPlan        = "history.plan"
-	HistoryPlanPaths   = "history.plan_paths"
-	HistoryPlanMessage = "history.plan_message"
-	HistoryPlanAgent   = "history.plan_agent"
-	HistoryApply       = "history.apply"
-	HistoryVerify      = "history.verify"
-	HistoryPrune       = "history.prune"
-	HistoryCapture     = "history.capture"
-	SavedWorkspaces    = "files.saved_workspaces"
+	FilesBrowse            = "files.browse"
+	FilesCatalog           = "files.catalog"
+	FilesRead              = "files.read"
+	FilesCreate            = "files.create"
+	FilesCreateFolder      = "files.create_folder"
+	FilesRename            = "files.rename"
+	FilesCopy              = "files.copy"
+	FilesDelete            = "files.delete"
+	FilesEdit              = "files.edit"
+	FilesSearch            = "files.search"
+	HistoryTimeline        = "history.timeline"
+	HistoryFile            = "history.file"
+	HistoryStats           = "history.stats"
+	HistoryPlan            = "history.plan"
+	HistoryPlanPaths       = "history.plan_paths"
+	HistoryPlanMessage     = "history.plan_message"
+	HistoryPlanAgent       = "history.plan_agent"
+	HistoryApply           = "history.apply"
+	HistoryVerify          = "history.verify"
+	HistoryPrune           = "history.prune"
+	HistoryCapture         = "history.capture"
+	SavedWorkspaces        = "files.saved_workspaces"
+	SavedWorkspaceActivity = "files.saved_workspace_activity"
 )
+
+// WorkspaceActivities is a retained-only read keyed by the catalog's stable
+// workspace IDs. Absent IDs were not observed, not measured at zero.
+type WorkspaceActivities map[string]workspace.WorkspaceActivity
 
 const MaxFileChunk = 256 << 10
 const MaxFileRead = 64 << 20

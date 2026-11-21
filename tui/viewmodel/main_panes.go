@@ -67,6 +67,7 @@ type mainPaneView struct {
 	diskBar                      *ui.NoticeBar
 	planBar                      *ui.NoticeBar
 	image                        *imageviewer.Screen
+	imageState                   paneImageViewState
 	deck                         *deckMount
 	reflowContentW, reflowInnerW int
 	chatSource, chatGeneration   uint64
@@ -188,13 +189,35 @@ func (m *App) bindMainPaneFocus() {
 	}
 }
 
+// mainPaneBounds supplies the same docked geometry to layout and the image
+// loader so compact panes do not keep hidden selections pinned.
+func (m *App) mainPaneBounds() ui.Rect {
+	frame := m.frameInsets()
+	left := frame.Left + m.activityChromeWidth()
+	if m.sidebarHostVisible() {
+		left += m.sidebarPanelWidth() + 1
+	}
+	top := m.shellTopRow()
+	return ui.Rect{
+		X: left, Y: top, W: max(0, m.width-frame.Right-left),
+		H: max(0, m.height-m.chromeBottomRows()-m.termDockHeightClamped()-top),
+	}
+}
+
+func compactPaneLayout(root *window.PaneNode, r ui.Rect) bool {
+	if root == nil || root.Split == nil {
+		return false
+	}
+	w, h := paneMinimum(root)
+	return r.W < w || r.H < h
+}
+
 func (p *mainPaneLayout) resolve(r ui.Rect) {
 	p.SetBounds(r)
 	clear(p.placements)
 	clear(p.dividerRects)
 	root := p.app.Win.PaneRoot()
-	w, h := paneMinimum(root)
-	p.compact = (r.W < w || r.H < h) && len(p.app.Win.GroupIDs()) > 1
+	p.compact = compactPaneLayout(root, r)
 	if p.compact {
 		p.placements[p.app.Win.ActiveGroup()] = ui.Rect{W: r.W, H: r.H}
 		return

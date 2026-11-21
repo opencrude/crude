@@ -72,6 +72,15 @@ type keyedEngine struct {
 	search func(context.Context, string, int) ([]SearchResult, error)
 }
 
+// ModelFallback is one explicitly selected, independent search route. It
+// returns provider-attributed search evidence, not a model's generated answer.
+type ModelFallback func(ctx context.Context, query string, limit int) (results []SearchResult, source string, err error)
+
+// ProvidersFailed distinguishes an outage from a search that completed empty.
+type ProvidersFailed struct{ detail string }
+
+func (err *ProvidersFailed) Error() string { return err.detail }
+
 // keyedEngines returns the configured paid/self-hosted providers in quality
 // order. Each costs money or quota per query, so they are tried one at a time.
 func (client *Client) keyedEngines() []keyedEngine {
@@ -101,7 +110,13 @@ func (client *Client) keyedEngines() []keyedEngine {
 
 // Search returns formatted results for query.
 func (client *Client) Search(ctx context.Context, query string, limit int) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	return client.SearchWithModelFallback(ctx, query, limit, nil)
+}
+
+// SearchWithModelFallback shares one deadline across primary and model search.
+// A model may run only if no ordinary provider completed the search.
+func (client *Client) SearchWithModelFallback(parent context.Context, query string, limit int, model ModelFallback) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, operationTimeout)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -113,12 +128,18 @@ func (client *Client) Search(ctx context.Context, query string, limit int) (stri
 	if limit <= 0 {
 		limit = 6
 	}
+	limit = min(limit, 10)
 	start := time.Now()
 	failed := make(map[string]string)
+	var completed []string
 	engines := client.keyedEngines()
 	deadline, _ := ctx.Deadline()
+	providerDeadline := deadline
+	if model != nil {
+		providerDeadline = deadline.Add(-min(8*time.Second, max(0, time.Until(deadline)/2)))
+	}
 	// Preserve a keyless fallback even when every configured key is unusable.
-	keyedDeadline := deadline.Add(-min(8*time.Second, time.Until(deadline)/2))
+	keyedDeadline := providerDeadline.Add(-min(8*time.Second, max(0, time.Until(providerDeadline)/2)))
 	for index, engine := range engines {
 		budget := time.Until(keyedDeadline) / time.Duration(len(engines)-index)
 		if budget <= 0 {
@@ -127,8 +148,8 @@ func (client *Client) Search(ctx context.Context, query string, limit int) (stri
 		attempt, stop := context.WithTimeout(ctx, min(8*time.Second, budget))
 		results, err := engine.search(attempt, query, limit)
 		stop()
-		if ctx.Err() != nil {
-			return "", ctx.Err()
+		if err := parent.Err(); err != nil {
+			return "", err
 		}
 		if err != nil {
 			failed[engine.name] = err.Error()
@@ -143,28 +164,52 @@ func (client *Client) Search(ctx context.Context, query string, limit int) (stri
 			})
 			return formatResults(query, results, []string{engine.name}, failed), nil
 		}
-		failed[engine.name] = "no results"
+		completed = append(completed, engine.name)
 	}
-	fallback, stop := context.WithTimeout(ctx, 8*time.Second)
+	fallback, stop := context.WithDeadline(ctx, time.Now().Add(min(8*time.Second, time.Until(providerDeadline))))
 	results, succeeded, keylessFailed := client.keyless(fallback, query, limit)
 	stop()
-	if ctx.Err() != nil {
-		return "", ctx.Err()
+	if err := parent.Err(); err != nil {
+		return "", err
 	}
 	for name, reason := range keylessFailed {
 		failed[name] = reason
+	}
+	succeeded = append(completed, succeeded...)
+	for _, name := range succeeded {
+		delete(failed, name)
 	}
 	logIf(func(lg *logger.Logger) {
 		lg.Info("SEARCH", "search_done", "results", len(results), "engines", len(succeeded), "latency_ms", time.Since(start).Milliseconds())
 	})
 	if len(results) == 0 {
-		if len(succeeded) == 0 {
-			if len(failed) == 0 {
-				failed["search"] = "provider requests did not complete before the search deadline"
-			}
-			return "", errors.New(noResults(query, succeeded, failed))
+		if len(succeeded) > 0 {
+			return noResults(query, succeeded, failed), nil
 		}
-		return noResults(query, succeeded, failed), nil
+		if len(failed) == 0 {
+			failed["search"] = "provider requests did not complete before the search deadline"
+		}
+		detail := noResults(query, succeeded, failed)
+		if model != nil && ctx.Err() == nil {
+			modelResults, source, err := model(ctx, query, limit)
+			if parent.Err() != nil {
+				return "", parent.Err()
+			}
+			if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
+				detail += "\nModel fallback timed out."
+			} else if errors.Is(err, context.Canceled) {
+				return "", err
+			} else if err != nil {
+				detail += "\nModel fallback failed: " + err.Error()
+			} else if verified := deduplicateResults(modelResults, limit); len(verified) > 0 {
+				return formatResults(query, verified, []string{source}, failed), nil
+			} else if len(modelResults) == 0 {
+				return noResults(query, []string{source}, failed), nil
+			} else {
+				detail += "\nModel fallback returned no usable sources."
+			}
+		}
+		return "", &ProvidersFailed{detail: detail}
 	}
 	return formatResults(query, results, succeeded, failed), nil
 }

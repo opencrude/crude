@@ -15,7 +15,7 @@ import (
 
 func suggestionConfig(endpoint string) *Config {
 	accounts := map[string]provider.Account{
-		"aeron-account": {ID: "aeron-account", ProviderID: "openai", APIKey: "fixture-key", Label: "Aeron",
+		"aeron-account": {ID: "aeron-account", ProviderID: "openai", APIKey: "fixture-key", Label: "Errand",
 			Connection: provider.Template{Name: "Local", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthBearer}},
 		"fast-account": {ID: "fast-account", ProviderID: "openai", APIKey: "fixture-key-2", Label: "Fast",
 			Connection: provider.Template{Name: "Fast", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthBearer}},
@@ -26,8 +26,8 @@ func suggestionConfig(endpoint string) *Config {
 		}}}}}
 }
 
-// Suggestions follow Aeron's account and model by default, always send
-// thinking "none", and a Suggestions account replaces Aeron's completely.
+// Suggestions follow Errand's account and model by default, always send
+// thinking "none", and a Suggestions account replaces Errand's completely.
 func TestSuggestionCompleterUsesAeronAndSendsNoThinking(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []map[string]any
@@ -77,7 +77,7 @@ func TestSuggestionCompleterUsesAeronAndSendsNoThinking(t *testing.T) {
 		t.Fatalf("suggestions sent thinking %v, want none", effort)
 	}
 	if strings.Contains(string(suggestionJSON(body)), "high") {
-		t.Fatalf("Aeron's own thinking level leaked into a suggestion: %s", suggestionJSON(body))
+		t.Fatalf("Errand's own thinking level leaked into a suggestion: %s", suggestionJSON(body))
 	}
 
 	cfg.Agents.Suggestions = ttypes.SuggestionSettings{AccountID: "fast-account", Model: "fast-model", TimeoutSeconds: 3}
@@ -109,7 +109,7 @@ func TestSuggestionCompleterRefusalsAreUserText(t *testing.T) {
 	role.Enabled = &off
 	cfg.Agents.Profiles["p"].Categories[CategoryAeron] = role
 	if _, err := cfg.SuggestionCompleter(); err == nil || !strings.Contains(err.Error(), "turned off") {
-		t.Fatalf("disabled Aeron: %v", err)
+		t.Fatalf("disabled Errand: %v", err)
 	}
 	var none *Config
 	if _, err := none.SuggestionCompleter(); err == nil {

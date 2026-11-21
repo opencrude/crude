@@ -2,14 +2,15 @@ package types
 
 import (
 	"bytes"
-	"crude/insight/catalog"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 
 	"crude/agent/provider"
+	"crude/insight/catalog"
 	"crude/network"
 	captypes "crude/types/capability"
 )
@@ -358,6 +359,8 @@ func capabilityDiff(base, working captypes.Settings) json.RawMessage {
 	if raw := sparseDiff(base, working); len(raw) > 0 {
 		_ = json.Unmarshal(raw, &delta)
 	}
+	// Only Application can change where the Web MCP sends fallback queries.
+	delete(delta, "web_search_fallback")
 	baseMap, _ := jsonObject(base)
 	workingMap, _ := jsonObject(working)
 	for _, collection := range []string{"skills", "connections", "sources"} {
@@ -397,6 +400,12 @@ func mergeCapabilities(base captypes.Settings, overlay json.RawMessage) captypes
 	var changes map[string]any
 	if json.Unmarshal(overlay, &changes) != nil {
 		return base
+	}
+	// A stored workspace override cannot redirect model requests.
+	for key := range changes {
+		if strings.EqualFold(key, "web_search_fallback") {
+			delete(changes, key)
+		}
 	}
 	values, _ := jsonObject(base)
 	mergeCapabilityObjects(values, changes)
@@ -681,7 +690,8 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
 	out.LSP = CloneLSPSettings(s.LSP)
 	out.Terminal = CloneTerminalSettings(s.Terminal)
-	out.TerminalShells = slices.Clone(s.TerminalShells)
+	out.TerminalShells = CloneTerminalShells(s.TerminalShells)
+	out.AgentShells = CloneTerminalShells(s.AgentShells)
 	return out
 }
 

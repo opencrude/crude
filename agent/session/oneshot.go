@@ -17,7 +17,7 @@ type TextCompleter struct {
 	maxOutput int
 }
 
-// AeronCompleter resolves the Aeron role (small, narrowly scoped tasks) for a
+// AeronCompleter resolves the Errand role (small, narrowly scoped tasks) for a
 // one-shot completion. A disabled role is reported, never silently replaced.
 func (c *Config) AeronCompleter() (TextCompleter, error) {
 	if c == nil {
@@ -25,7 +25,7 @@ func (c *Config) AeronCompleter() (TextCompleter, error) {
 	}
 	category := c.GetCategoryConfig(CategoryAeron)
 	if category.Enabled != nil && !*category.Enabled {
-		return TextCompleter{}, fmt.Errorf("the Aeron agent is disabled in settings")
+		return TextCompleter{}, fmt.Errorf("the Errand agent is disabled in settings")
 	}
 	p, err := c.providerForCategory(category)
 	if err != nil {

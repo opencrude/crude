@@ -29,7 +29,7 @@ func ControlSettingsAuthority(path string) bool {
 	return control.SettingsAuthority(path)
 }
 
-// aeronOwnsSetting permits this workspace's Aeron to configure its language
+// aeronOwnsSetting permits this workspace's Errand to configure its language
 // servers and terminal environment. Application settings and every other
 // agent retain the human-only rule for these authority paths.
 func (a *actor) aeronOwnsSetting(caller control.Caller, scope, path string) bool {
@@ -233,11 +233,6 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 			if _, ok := a.ws.AllAccounts()[account]; !ok {
 				return controlFailure(in, control.Invalid, "selected stored account is unavailable")
 			}
-		}
-	}
-	if input.Path == "terminal.shell" {
-		if _, _, err := types.ResolveTerminalLaunch(after.Terminal, a.states.shells); err != nil {
-			return controlFailure(in, control.Invalid, err.Error())
 		}
 	}
 	if input.Scope == "application" {

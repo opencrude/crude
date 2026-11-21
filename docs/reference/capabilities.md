@@ -115,8 +115,26 @@ is in [settings design](settings-design.md#skills-and-mcp-store).
   requests; a stalled provider cannot hold useful results hostage. Exa's public
   endpoint uses the shared MCP SDK rather than a second JSON/SSE parser.
   Total provider failure is an error, distinct from a completed empty search.
+  A completed empty result from any ordinary engine never starts a model.
   Generic MCP failure projection retains the actual transport/error cause for
-  every connection, not a web-only exception. `web_fetch` pages
+  every connection, not a web-only exception.
+- **Application Settings → MCP → Web search and fetch → Model fallback** is
+  **Off** by default. The user can choose an existing API-key account on the
+  official OpenAI Responses API and one exact model that supports native
+  web search. Chat Completions, Codex/ChatGPT, compatible gateways, and other
+  providers are not supported. The choice stores only the account and model
+  IDs. It does not change the running agent's account or model, and it
+  does not add fields to external MCP connections.
+- When all ordinary engines fail, an already admitted `web_search` can send
+  its query to that pair once. It sends no transcript, files, other tool
+  arguments or custom request body. The call requests `store: false` and one
+  native search within the same 24-second budget. Results use only concrete
+  HTTP(S) URLs from the completed search's typed source records, not links
+  parsed from the generated answer. Charges can apply. Saves and observation
+  never start or replay inference. Built-in and session/tool disable still
+  apply. Only a genuine built-in search outage can offer a row link to
+  **Model fallback**; empty, cancelled, denied and disabled calls do not.
+- `web_fetch` pages
   results (32,768 characters by default, the `read_async_output` page) with an
   offset to continue, serves later pages from a bounded per-connection cache,
   never exceeds the MCP result budget, and falls back to Exa contents or Jina

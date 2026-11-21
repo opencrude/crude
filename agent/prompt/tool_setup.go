@@ -21,7 +21,7 @@ type ToolSetupItem struct {
 }
 
 // ToolSetupTask is the work order that the setup screen sends to the
-// workspace's Aeron. The user's switches decide which list a tool is in.
+// workspace's Errand. The user's switches decide which list a tool is in.
 type ToolSetupTask struct {
 	Project string
 	Setup   []ToolSetupItem
@@ -39,7 +39,7 @@ const toolSetupRules = `<rules>
 <rule>Keep your progress in your plan, not in questions. End with one short message that lists each tool as working or failed, with the reason for a failure.</rule>
 </rules>`
 
-// ToolSetupMessage renders the work order for Aeron. The setup screen builds
+// ToolSetupMessage renders the work order for Errand. The setup screen builds
 // the data; the wording of the instructions lives only here.
 func ToolSetupMessage(task ToolSetupTask) string {
 	var b strings.Builder

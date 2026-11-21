@@ -7,7 +7,7 @@ import (
 	"crude/types"
 )
 
-// The workspace Aeron installs tools, runs their version commands, researches
+// The workspace Errand installs tools, runs their version commands, researches
 // installation on the web and writes LSP settings. A shipped role default that
 // narrows its tools makes every setup task fail, and once the application
 // config is saved that stale narrowing is stored and outlives the code change.
@@ -34,11 +34,11 @@ func TestAeronRootSessionKeepsTheMainAgentToolSet(t *testing.T) {
 			// Web tools join later, per provider, for every root alike.
 			for _, need := range []string{"execute_command", "async_execute_command", "update_plan", "question", "delete_file"} {
 				if !slices.Contains(aeronTools, need) {
-					t.Errorf("Aeron root session lacks %s", need)
+					t.Errorf("Errand root session lacks %s", need)
 				}
 			}
 			if !slices.Equal(main, aeronTools) {
-				t.Fatalf("Aeron root tools differ from the Main Agent:\nmain:  %v\naeron: %v", main, aeronTools)
+				t.Fatalf("Errand root tools differ from the Main Agent:\nmain:  %v\naeron: %v", main, aeronTools)
 			}
 		})
 	}

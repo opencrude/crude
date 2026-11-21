@@ -20,7 +20,7 @@ const (
 	ActionMessageCancel = "git-message-editor.cancel"
 
 	// commitSubjectLimit is Git's conventional subject width (prompt/commit.go
-	// asks Aeron for the same).
+	// asks Errand for the same).
 	commitSubjectLimit = 72
 )
 

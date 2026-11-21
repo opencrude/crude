@@ -288,7 +288,7 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 	}
 	for index, model := range requestModels {
 		if model != "aeron-test-model" {
-			t.Fatalf("compaction request %d model=%q want Aeron category model", index, model)
+			t.Fatalf("compaction request %d model=%q want Errand category model", index, model)
 		}
 	}
 	if !strings.Contains(s.activeContext[0].ContentString(), `version="3"`) {

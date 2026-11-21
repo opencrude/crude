@@ -1004,7 +1004,7 @@ silently changing its runtime. `--system` adds lower-priority profile instructio
 not a replacement for canonical policy. Key overrides use ephemeral accounts;
 they never update application configuration or appear in snapshots/receipts.
 `session.ensure` carries only the `aeron` role. It returns the workspace's one
-Aeron, reopening the remembered session or creating it on first use. It never
+Errand, reopening the remembered session or creating it on first use. It never
 selects a shell tab or starts a turn.
 Prefer configured Accounts over command-line keys, which can leak through shell
 history/process arguments even though the core read models are redacted.

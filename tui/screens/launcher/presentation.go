@@ -5,16 +5,46 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
+	"crude/workspace"
 	"fmt"
-	"path/filepath"
+	"strconv"
 	"strings"
 )
 
-func (s *Screen) displayPath(path string, width int) string {
-	if s.home != "" && (path == s.home || strings.HasPrefix(path, s.home+string(filepath.Separator))) {
-		path = "~" + strings.TrimPrefix(path, s.home)
+// WorkspaceBadges is the same compact presentation in each recent-workspace
+// collection. Unknown and zero counts have no badge.
+func WorkspaceBadges(summary workspace.WorkspaceActivity) ui.RowBadges {
+	var badges ui.RowBadges
+	for i, value := range [3]workspace.ActivityCount{summary.Agents, summary.Terminals, summary.Unsaved} {
+		if value.Observed && value.Value > 0 {
+			digits := "99+"
+			if value.Value < 100 {
+				digits = strconv.Itoa(value.Value)
+			}
+			badges[i] = [...]string{"◈", ">_", "✎"}[i] + digits
+		}
 	}
-	return rendering.TruncateMiddleVisual(path, width, "…")
+	return badges
+}
+
+// WorkspaceTooltip disambiguates shortened paths and names the exact counts.
+// A cold or busy workspace makes no cleanliness or inactivity claim.
+func WorkspaceTooltip(path string, summary workspace.WorkspaceActivity) string {
+	var lines [5]string
+	lines[0] = path
+	n := 1
+	for i, count := range [3]workspace.ActivityCount{summary.Agents, summary.Terminals, summary.Unsaved} {
+		if count.Observed && count.Value > 0 {
+			labels := [...]string{"Running agents", "Open terminals", "Unsaved documents"}
+			lines[n] = labels[i] + ": " + strconv.Itoa(count.Value)
+			n++
+		}
+	}
+	if !summary.Agents.Observed || !summary.Terminals.Observed || !summary.Unsaved.Observed {
+		lines[n] = "Some activity is not available."
+		n++
+	}
+	return strings.Join(lines[:n], "\n")
 }
 
 type sectionHeader struct {

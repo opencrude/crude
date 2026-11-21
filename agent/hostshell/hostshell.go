@@ -1,6 +1,6 @@
-// Package hostshell finds the shells installed on the core's machine and
-// resolves the shell that runs agent commands. Integrated terminals and agent
-// commands share this one inventory; each applies its own Auto order.
+// Package hostshell finds shells on the core's machine for an explicit search
+// environment. Integrated terminals and agent commands share the discovery
+// rules but can inherit different environments and use different Auto orders.
 package hostshell
 
 import (
@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,33 +24,32 @@ import (
 // time; a changed environment detects again at once.
 const detectionTTL = 10 * time.Second
 
-var inventory struct {
+// Inventory retains the most recent observation for one launch owner. It
+// refreshes immediately when the search environment changes.
+type Inventory struct {
 	sync.Mutex
-	key    string
+	env    SearchEnvironment
 	at     time.Time
 	shells []ttypes.TerminalShell
 }
 
+var processInventory Inventory
+
 // Detect lists the shells installed on this machine. Terminals and agent
-// commands apply their own Auto order to this one inventory.
+// commands use the same observation when they inherit the core process's
+// environment.
 func Detect() []ttypes.TerminalShell {
-	key := environmentKey()
-	inventory.Lock()
-	defer inventory.Unlock()
-	if inventory.at.IsZero() || inventory.key != key || time.Since(inventory.at) >= detectionTTL {
-		inventory.key, inventory.at, inventory.shells = key, time.Now(), detect()
-	}
-	return slices.Clone(inventory.shells)
+	return processInventory.Detect(currentSearchEnvironment())
 }
 
-// environmentKey holds every variable that detection reads.
-func environmentKey() string {
-	var key strings.Builder
-	for _, name := range []string{"PATH", "PATHEXT", "SHELL", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA", "SystemRoot", "ComSpec"} {
-		key.WriteString(os.Getenv(name))
-		key.WriteByte(0)
+func (i *Inventory) Detect(env SearchEnvironment) []ttypes.TerminalShell {
+	i.Lock()
+	defer i.Unlock()
+	if i.at.IsZero() || i.env != env || time.Since(i.at) >= detectionTTL {
+		i.env, i.shells = env, detect(env)
+		i.at = time.Now()
 	}
-	return key.String()
+	return ttypes.CloneTerminalShells(i.shells)
 }
 
 // ResolveAgent resolves the configured agent command shell on this machine.

@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"io"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -53,8 +54,12 @@ type cursedRenderer struct {
 	kittyReveal                        bool                      // first placement needs one extra pass
 	kittyTmux                          bool
 	sixelImages                        []encodedSixel
+	sixelTextDamage                    []uv.CellSpan
 	sixelUncertain                     []image.Rectangle
 	sixelInvalid                       bool
+	sixelWork                          *sixelWork
+	sixelPrepared                      uint64
+	sixelWake                          func()
 }
 
 var _ renderer = &cursedRenderer{}
@@ -185,6 +190,13 @@ func (s *cursedRenderer) start() {
 func (s *cursedRenderer) close() (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if work := s.sixelWork; work != nil {
+		work.cancel()
+		// Clear the physical screen without waiting for a resample in flight.
+		// Join it before a new terminal lifetime can start.
+		defer func() { <-work.done }()
+		s.sixelWork, s.sixelPrepared = nil, 0
+	}
 	s.deleteKittyImages()
 	s.clearSixels()
 
@@ -473,16 +485,25 @@ func (s *cursedRenderer) flush(closing bool) error {
 
 	s.reconcileKittyImages(view.Images, s.kittyInvalid || shouldUpdateAltScreen, oldScreenPrefix > 0)
 	s.sixelInvalid = s.sixelInvalid || shouldUpdateAltScreen
-	sixels, sixelDirty, err := s.prepareSixels(view)
-	if err != nil {
-		return fmt.Errorf("bubbletea: cannot prepare Sixel image: %w", err)
+	tiles := view.sixels
+	if closing {
+		// The final text flush must not schedule or upload images just before
+		// close restores the terminal. Keep the desired view for resume.
+		tiles = nil
 	}
+	sixels := s.prepareSixels(tiles)
 	// Text scroll operations cannot preserve Sixel graphics on every terminal.
-	s.scr.SetScrollOptim(runtime.GOOS != "windows" && len(sixels) == 0 && len(s.sixelImages) == 0)
+	s.scr.SetScrollOptim(runtime.GOOS != "windows" && len(tiles) == 0 && len(s.sixelImages) == 0 && len(s.sixelUncertain) == 0)
 
-	// Render and queue changes to the screen buffer.
-	s.scr.Render(s.cellbuf.RenderBuffer)
-	s.paintSixels(sixels, sixelDirty)
+	// Render text first. Physical text damage can extend farther than the
+	// changed cells (line erases, cell shifts), but need not touch the whole row.
+	if len(sixels) > 0 {
+		s.sixelTextDamage = slices.Grow(s.sixelTextDamage[:0], s.cellbuf.Height())[:s.cellbuf.Height()]
+		s.scr.RenderWithDamage(s.cellbuf.RenderBuffer, s.sixelTextDamage)
+		s.paintSixels(sixels)
+	} else {
+		s.scr.Render(s.cellbuf.RenderBuffer)
+	}
 
 	if cur := view.Cursor; cur != nil {
 		// MoveTo must come after [uv.TerminalRenderer.Render] because the
@@ -719,7 +740,9 @@ func (s *cursedRenderer) drawFrame(closing bool) (View, bool) {
 	if s.starting && s.hardTabs {
 		_, _ = s.scr.WriteString(ansi.SetTabEvery8Columns)
 	}
-	if !resized && !s.starting && !s.kittyInvalid && !s.sixelInvalid && !s.bidiPending && !closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
+	sixelReady := s.sixelWork != nil && s.sixelWork.revision.Load() != s.sixelPrepared
+	if !resized && !s.starting && !s.kittyInvalid && !s.sixelInvalid && !sixelReady && !s.bidiPending &&
+		!closing && viewEquals(s.lastView, &view) && frameArea == s.cellbuf.Bounds() {
 		return view, true
 	}
 	s.starting = false

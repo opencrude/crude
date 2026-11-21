@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"crude/agent/hostshell"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,11 +12,13 @@ import (
 	"slices"
 	"strings"
 
+	"crude/agent/hostshell"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core/protocol"
 	"crude/types"
 	captypes "crude/types/capability"
+	"crude/workspace"
 )
 
 // A keyed entity digest is opaque even for low-entropy credentials. Revisions
@@ -237,8 +238,8 @@ func resolveAccount(draft coreprotocol.AccountDraft, before provider.Account) (p
 }
 
 // captureSettings captures a detached public settings projection on the actor.
-// It performs no storage, shell discovery or other host I/O. Worker callers may
-// add TerminalShells; state publications reuse host discovery owned at startup.
+// It performs no storage, shell discovery or other host I/O. Workers add
+// shell observations for both bootstrap reads and the settings topic.
 func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, types.AgentsSettings) {
 	app := a.ws.AppDefaults()
 	overrides := a.ws.LoadWorkspaceOverrides()
@@ -269,6 +270,11 @@ func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, types.Agent
 	return out, defaults
 }
 
+func observeSettingsShells(out *coreprotocol.SettingsFetchResult, manager *workspace.TerminalManager) {
+	out.TerminalShells = manager.DetectShells()
+	out.AgentShells = hostshell.Detect()
+}
+
 // prepareSettings captures values/backend identity on the actor. Mutation paths
 // lacking an atomic owner API fail explicitly rather than execute unsafe worker
 // callbacks. The parent owns startJob/journal integration.
@@ -285,12 +291,13 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			return bad("invalid_request", err.Error())
 		}
 		out, _ := a.captureSettings()
+		manager := a.ws.TermMgr
 		return func(ctx context.Context) coreprotocol.Response {
 			if ctx.Err() != nil {
 				return fault(request, "cancelled", "settings observation cancelled")
 			}
 			observed := out
-			observed.TerminalShells = hostshell.Detect()
+			observeSettingsShells(&observed, manager)
 			return response(request, observed)
 		}, nil, true
 	case coreprotocol.SessionSettingsRead:

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	ttypes "crude/types"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -180,7 +181,11 @@ func permuteBelow(value, size *big.Int, key []byte, tier int) *big.Int {
 	}
 }
 
-func (s *Session) AgentName() string { return s.agentName }
+func (s *Session) AgentName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return ttypes.AgentNameForRole(s.selectedMainAgent, s.agentName)
+}
 
 // validChildName accepts a name a parent gives its child: a short human name in
 // any script, never markup or control text.

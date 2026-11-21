@@ -2,7 +2,7 @@ package prompt
 
 import "strings"
 
-// AttentionNotice is the one sentence Crude sends the workspace Aeron about a
+// AttentionNotice is the one sentence Crude sends the workspace Errand about a
 // problem it found. It carries only Crude's own summary of the issue: the
 // server's own text stays in diagnostics.workspace, where it is labelled as
 // evidence. WorkspaceAgentContract holds the rules for handling it.

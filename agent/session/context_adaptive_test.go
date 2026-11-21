@@ -133,7 +133,7 @@ func newAdaptiveCompactionSession(t *testing.T, serverURL string, capacity int, 
 		t.Fatal(err)
 	}
 	if main.ContextWindow(main.Model) != 1_000_000 || aeron.ContextWindow(aeron.Model) != capacity {
-		t.Fatalf("category overrides not bound: main=%d Aeron=%d", main.ContextWindow(main.Model), aeron.ContextWindow(aeron.Model))
+		t.Fatalf("category overrides not bound: main=%d Errand=%d", main.ContextWindow(main.Model), aeron.ContextWindow(aeron.Model))
 	}
 	return &Session{
 		logger: log, db: db, cfg: cfg, sessionID: sessionID,
@@ -285,7 +285,7 @@ func TestSessionCompactionLearnsOutputLimitAcrossNewSessions(t *testing.T) {
 				t.Fatalf("first session did not exercise provider rejection: %v", outputs)
 			}
 		} else if len(outputs) != 4 {
-			t.Fatalf("new session did not inherit its Aeron profile's learned cap: %v", outputs)
+			t.Fatalf("new session did not inherit its Errand profile's learned cap: %v", outputs)
 		}
 		for _, cap := range outputs[1:] {
 			if cap > 393216 {
@@ -314,7 +314,7 @@ func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *tes
 						t.Errorf("failure did not occur on the later source chunk: call=%d", call)
 					}
 					if failure == "permanent_401" {
-						http.Error(writer, `{"error":{"message":"invalid Aeron credentials","type":"authentication_error"}}`, http.StatusUnauthorized)
+						http.Error(writer, `{"error":{"message":"invalid Errand credentials","type":"authentication_error"}}`, http.StatusUnauthorized)
 						return
 					}
 					writeAdaptiveCompactionSSE(t, writer, "")

@@ -76,7 +76,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg, tea.PasteMsg:
-		// Background maintenance (the workspace Aeron) waits for a quiet
+		// Background maintenance (the workspace Errand) waits for a quiet
 		// shell. Every real interaction resets that quiet period.
 		m.LastInteractionTime = time.Now()
 	}
@@ -99,7 +99,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousView := m.toolLayout.Views[m.activityView.ID()]
 	previousEditor := m.logicalEditorFocus()
 	previousMode := m.editorSettings.AutoSave
-	model, command := m.update(msg)
+	model, command := m.updateWithPixelMotion(msg)
 	if m.treeReveal != nil && !m.treeRevealCurrent(m.treeReveal) {
 		m.cancelTreeReveal()
 	}
@@ -148,7 +148,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		previousEditor.IsOpen() && previousEditor != m.logicalEditorFocus() && m.DirtyPromptPath == "" {
 		command = tea.Batch(command, m.requestEditorSave(previousEditor, workspace.DocumentSaveFocusOut, false))
 	}
-	command = tea.Batch(command, m.finishCoreRestartUpdate())
+	command = tea.Batch(command, m.finishCoreRestartUpdate(), m.syncImageResidency())
 	return model, command
 }
 
@@ -348,16 +348,18 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyPerfSnapshot(msg)
 		return m, nil
 	case shellport.SettingsChangedMsg:
-		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
-		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
-		m.applySuggestionSettings(m.ws.LoadAppSettings().Prediction)
-		m.applyTextDirectionSettings(m.ws.LoadAppSettings())
+		effective := m.ws.LoadAppSettings()
+		m.applyThemePreset(themePresetFromSettings(effective))
+		m.applyEditorSettings(effective.Editor)
+		m.applySuggestionSettings(effective.Prediction)
+		m.applyTextDirectionSettings(effective)
+		m.applySettingsShellInventory(effective)
 		treeCmd := m.applyTreeHiddenSetting()
 		// Auto Review may have been turned on or off: waiting confirmations
 		// show or hide the choice that opens it.
 		m.openNextAgentPrompt()
 		if m.aeronEnsureFailed {
-			// Aeron may have waited for an account or model. A settings
+			// Errand may have waited for an account or model. A settings
 			// change is the user's chance to provide it.
 			m.requestWorkspaceAeronEnsure()
 		}
@@ -413,6 +415,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyRepairConfigLoaded(msg)
 	case pastedTextStoredMsg:
 		m.applyPastedText(msg)
+	case paneImageLoadedMsg:
+		m.applyPaneImageLoaded(msg)
 	case referenceContentLoadedMsg:
 		m.applyReferenceContent(msg)
 	case desktopPathOpenedMsg:
@@ -480,8 +484,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleConnectionHealthAction(msg)
 	case shellheader.ActionMsg:
 		switch msg.Action {
-		case shellheader.ConnectionAction:
-			m.openConnectionHover(m.connectionWordmarkRect())
+		case shellheader.ConnectionAction, shellheader.ConnectionSignalAction:
+			m.openConnectionHover(msg.Action)
 		case "remotes":
 			return m, m.OpenRemotes()
 		case "panes":
@@ -744,8 +748,8 @@ func (m *App) invalidateMessageRegions(msg tea.Msg) {
 		}
 	}
 	switch msg := msg.(type) {
-	case interactiveFrameMsg:
-		return
+	case interactiveFrameMsg, workspaceActivityResultMsg:
+		return // the result owner marks its changed catalog surfaces
 	case tea.KeyPressMsg:
 		if m.terminalOwnsKeys() {
 			// The focused terminal Host owns selection, blink and prediction
@@ -881,6 +885,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	m.syncPerfAttention(now)
 	perfCmd := m.requestPerfSnapshot(false)
 	aeronCmd := m.workspaceAeronTick(now)
+	activityCmd := m.workspaceActivityCmd(now)
 	var launcherCmd tea.Cmd
 	if m.capabilityObservationVisible() {
 		launcherCmd = m.launcherCapabilitiesCmd(now)
@@ -894,10 +899,10 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, activityCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, perfCmd, aeronCmd, activityCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -940,7 +945,7 @@ func (m *App) wantsFastTick() bool {
 	if m.chatFindPending() {
 		return true
 	}
-	// Aeron drafting a commit message animates its progress rule.
+	// Errand drafting a commit message animates its progress rule.
 	if m.gitPanel != nil && m.gitPanel.Writing() && m.gitPanelOpen() {
 		return true
 	}
@@ -1026,6 +1031,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.launcherScreen == msg.Screen {
 			cmds = append(cmds, m.handleLauncherCommand(msg))
 		}
+	case workspaceActivityResultMsg:
+		m.applyWorkspaceActivityResult(msg)
 	case launcherWorkspacesMsg:
 		// Async workspace listing. Apply only the newest kick, and only if
 		// the launcher is still mounted (a session may have opened in the
@@ -1538,9 +1545,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			return settingsui.ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: models}
 		})
 	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg, types.ModelCatalogUpdatedMsg:
-		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
-			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-				cmds = append(cmds, cmd)
+		if fw := m.overlayHost.Window(ui.OverlayWorkspaceSettings); fw != nil {
+			if body := m.settingsSurface(fw); body != nil {
+				// Results belong to the retained Settings model, not the field
+				// that happens to have keyboard focus when the list arrives.
+				model := body.Model()
+				_, cmd := model.Update(msg)
+				body.SetModel(model)
+				if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+					frame.Host().MarkLayout()
+				}
+				fw.MarkContentDirty()
+				if cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		}
 	case historyscreen.TimelineMsg, historyscreen.PlanMsg:

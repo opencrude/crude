@@ -531,6 +531,11 @@ func (c *Connection) attach(ctx context.Context, request coreprotocol.Request) c
 		a.ws.TermMgr.SetShellEnvironment(input.Environment)
 	}
 	c.mu.Unlock()
+	if input.Environment != nil {
+		// Peer forms observe the terminal launch environment of this workspace.
+		// Only the topic worker searches the host; attach queues its derivation.
+		_ = a.inspect(a.ctx, func() { a.queueState(coreprotocol.TopicSettings) })
+	}
 	// The first attach brings back terminals saved when an earlier core
 	// stopped, with their buffers, after the shell environment is known.
 	if terminals, logger := a.ws.Terminals, a.ws.Logger; terminals != nil {

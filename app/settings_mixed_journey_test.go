@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -227,5 +228,66 @@ func TestSettingsMixedScopesExplicitChoicesRestartAndRepair(t *testing.T) {
 	saveWorkspace(types.SettingEdit{Path: []string{"agents"}})
 	if !readSession(sid).Effective.Value.Agents.Enabled || !fetch().Effective.Capabilities.Connections["fixture:mcp.one"].Disabled || fetch().Effective.Editor.TabSize != 8 {
 		t.Fatal("workspace section reset changed neighbors")
+	}
+}
+
+// Use the real framed application settings owner and disk config. Neither Save
+// nor re-opening Settings should start a provider request.
+func TestWebSearchFallbackPersistsByApplicationOnly(t *testing.T) {
+	defer setTestHome(t, t.TempDir())()
+	ordinary := captypes.ConnectionConfig{ID: "other", Name: "Other MCP", Transport: "http", URL: "http://127.0.0.1:1/mcp", Scope: captypes.ScopeApplication, Disabled: true}
+	fc := FileConfig{
+		Accounts: map[string]provider.Account{"search": {ID: "search", Label: "Search account", APIKey: "fixture-key", ProviderID: "openai", Connection: provider.Template{
+			APIStandard: "openai-responses", ProviderURL: "https://api.openai.com/v1", AuthType: provider.AuthBearer,
+		}}},
+		Capabilities: &captypes.Settings{Connections: map[string]captypes.ConnectionConfig{ordinary.ID: ordinary}},
+	}
+	if err := SaveFileConfig(fc); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(Opts{FC: LoadFileConfig()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := core.New(func(root string) (*workspace.Workspace, error) { return app.newWorkspace(root, &appLogger{}) }, filepath.Join(t.TempDir(), "receipts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	peer, transport := net.Pipe()
+	go func() { _ = core.ServeConnection(t.Context(), runtime, peer) }()
+	client, err := coreclient.Dial(t.Context(), coreclient.SingleCarrier(transport), "fallback-settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	var attached coreprotocol.AttachResult
+	if err := client.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: t.TempDir()}, &attached); err != nil {
+		t.Fatal(err)
+	}
+	save := func(scope captypes.Scope, choice captypes.WebSearchFallback) error {
+		return client.Call(t.Context(), attached.WorkspaceID, coreprotocol.CapabilityAction,
+			&coreprotocol.CapabilityActionRequest{Action: captypes.Action{Operation: captypes.SetWebSearchFallback,
+				Scope: scope, ID: captypes.WebConnectionID, Kind: captypes.KindMCP, WebSearchFallback: choice}}, &coreprotocol.CapabilityResult{})
+	}
+	selected := captypes.WebSearchFallback{"search", "chosen-model"}
+	if err := save(captypes.ScopeWorkspace, selected); err == nil {
+		t.Fatal("workspace could redirect Web MCP's model fallback")
+	}
+	for _, choice := range []captypes.WebSearchFallback{selected, nil} {
+		if err := save(captypes.ScopeApplication, choice); err != nil {
+			t.Fatal(err)
+		}
+		after := FileConfigToAppSettings(LoadFileConfig()).Capabilities
+		if !slices.Equal(after.WebSearchFallback, choice) || after.Connections[ordinary.ID].URL != ordinary.URL || !after.Connections[ordinary.ID].Disabled {
+			t.Fatal("disk did not retain the exact choice and neighboring connection")
+		}
+		var fetched coreprotocol.SettingsFetchResult
+		if err := client.Call(t.Context(), attached.WorkspaceID, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &fetched); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(fetched.Effective.Capabilities.WebSearchFallback, choice) || strings.Contains(string(fetched.Overrides.Capabilities), "web_search_fallback") {
+			t.Fatal("workspace did not inherit the committed Web MCP choice passively")
+		}
 	}
 }

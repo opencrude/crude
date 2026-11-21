@@ -17,6 +17,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
+	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shellheader"
 	"crude/tui/screens/shelltree"
@@ -38,6 +39,7 @@ func (m *App) View() tea.View {
 	m.syncRenderFocus()
 	m.configureShell()
 	m.prepareShellSurface()
+	m.applyPixelMotionLayout()
 	// Host generations own both source ink and mounted geometry. With no
 	// floating layers, a clean retained Host is already the complete frame;
 	// reuse its publication rather than clearing/composing/snapshotting it.
@@ -194,17 +196,13 @@ func boundedContentGeometry(contentW, requestedPad int) (padLR, innerW int) {
 // shell height, chat/editor/input/deck rects, tree height messages, message
 // list bounds) but produces no ANSI: the root tree paints the shell.
 func (m *App) computeContentLayout() contentLayout {
-	frame := m.frameInsets()
-	left := frame.Left + m.activityChromeWidth()
-	if m.sidebarHostVisible() {
-		left += m.sidebarPanelWidth() + 1
-	}
-	width := max(0, m.width-frame.Right-left)
+	bounds := m.mainPaneBounds()
+	left, width := bounds.X, bounds.W
 	pad, inner := boundedContentGeometry(width, m.Theme.Spacing.PadLR)
 	dockH := m.termDockHeightClamped()
-	bottom := max(m.shellTopRow(), m.height-m.chromeBottomRows()-dockH)
+	bottom := bounds.Y + bounds.H
 	p := m.ensureMainPanes()
-	p.resolve(ui.Rect{X: left, Y: m.shellTopRow(), W: width, H: max(0, bottom-m.shellTopRow())})
+	p.resolve(bounds)
 	m.Win.SetWidth(inner)
 	lay := contentLayout{SidebarW: left, ContentW: width, InnerW: inner, PadLR: pad}
 	if dockH > 0 {
@@ -516,6 +514,16 @@ func (m *App) configureHeaderScreen() {
 	health := m.connectionHealth()
 	left := m.statusHeaderLeftSegments()
 	left[0] = shellheader.Wordmark(health.brand)
+	right := m.statusHeaderRightSegments()
+	if health.remote {
+		nerdFont := panelchrome.NerdFont(m.Theme)
+		icon := "⇄"
+		if nerdFont {
+			icon = "\ueb3a"
+		}
+		left[0].Text = icon + " " + left[0].Text
+		right = append(right, health.signal(nerdFont))
+	}
 	if m.headerScreen.SetProjection(shellheader.Projection{
 		ModelName: m.ModelName,
 		StartTime: m.ws.StartTime(),
@@ -524,8 +532,9 @@ func (m *App) configureHeaderScreen() {
 		Width:         m.width - frame.Left - frame.Right,
 		LeftSegments:  left,
 		NavSegments:   m.statusHeaderNavSegments(),
-		RightSegments: m.statusHeaderRightSegments(),
+		RightSegments: right,
 		Connection:    health.brand,
+		Remote:        health.remote,
 	}) {
 		m.rootHost.MarkComponentPaint(m.headerScreen.ID())
 	}

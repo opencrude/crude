@@ -1,6 +1,6 @@
 // Package toolsetup presents the project's missing code-intelligence tools.
 // It owns the user's selection only. The selection becomes a work order for
-// the workspace Aeron; this screen downloads and installs nothing itself.
+// the workspace Errand; this screen downloads and installs nothing itself.
 package toolsetup
 
 import (
@@ -34,7 +34,7 @@ type DecisionMsg struct {
 type CloseMsg struct{ Target *Screen }
 
 // Screen displays the review. Every tool with a usable identity is a real
-// choice and starts selected: Aeron works out how to get a tool that Crude
+// choice and starts selected: Errand works out how to get a tool that Crude
 // cannot download itself. Only rows without a unique identity are disabled.
 type Screen struct {
 	ui.Base
@@ -80,10 +80,10 @@ func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
 	s.detail.SetBackgroundColor(tokens.Color(ui.ColorPopupBg))
 	s.intro = ui.NewLabel("project-tools/intro", "Project: "+review.Project, th)
 	s.caption = ui.NewLabel("project-tools/caption",
-		"Aeron sets up the tools you select. It works in the background and shows a prompt when it needs your answer. Editing works without these tools.", th)
+		"Errand sets up the tools you select. It works in the background and shows a prompt when it needs your answer. Editing works without these tools.", th)
 	s.caption.SetColorRole(ui.ColorMuted)
 	s.actions = ui.NewActionBar(ActionsID, tokens,
-		ui.ActionBarButton{Label: "Set up with Aeron", Action: ActionInstall, Variant: ui.VariantPrimary},
+		ui.ActionBarButton{Label: "Set up with Errand", Action: ActionInstall, Variant: ui.VariantPrimary},
 		ui.ActionBarButton{Label: "Not now", Action: ActionDecline, Enabled: true, Variant: ui.VariantSecondary})
 	s.actions.SetAlignEnd(false)
 	s.actions.SetShowRule(true)
@@ -154,7 +154,7 @@ func (s *Screen) updateDetail() {
 				if item.Version != "" {
 					name += " " + item.Version
 				}
-				value = fmt.Sprintf("%s\n\nCrude cannot download this tool itself. Aeron finds another way to get it, for example a package manager.\n\nSource: %s\nProgram: %s\nLanguages: %s\nLicense: %s\nProject: %s",
+				value = fmt.Sprintf("%s\n\nCrude cannot download this tool itself. Errand finds another way to get it, for example a package manager.\n\nSource: %s\nProgram: %s\nLanguages: %s\nLicense: %s\nProject: %s",
 					name, valueOr(item.Source, "Not provided"), valueOr(item.Command, "Not provided"),
 					valueOr(strings.Join(item.Languages, ", "), "Not provided"),
 					valueOr(strings.Join(item.Licenses, ", "), "Not provided"), s.project)

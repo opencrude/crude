@@ -128,6 +128,14 @@ func SettingsAuthority(path string) bool {
 			return true
 		}
 	}
+	// This binding can select the model that reviews an agent's actions.
+	// The agent must not change the reviewer indirectly through Errand.
+	if len(parts) == 4 && strings.EqualFold(parts[0], "agents") && strings.EqualFold(parts[1], "categories") && strings.EqualFold(parts[2], "aeron") {
+		switch strings.ToLower(parts[3]) {
+		case "model", "account_id":
+			return true
+		}
+	}
 	if parts[0] == "agents" || parts[0] == "overrides" || strings.HasPrefix(path, "memory.memory_category.") || (len(parts) > 1 && parts[0] == "value" && parts[1] == "Agents") {
 		return !OrdinaryAgentLeaf(parts[len(parts)-1])
 	}

@@ -13,8 +13,8 @@ import (
 	ttypes "crude/types"
 )
 
-// EditorPredictionCompleter is the bound connection for Aeron's editor
-// suggestions: the Suggestions settings over the Aeron role, with thinking
+// EditorPredictionCompleter is the bound connection for Errand's editor
+// suggestions: the Suggestions settings over the Errand role, with thinking
 // "none". It is built on the workspace owner and used off it. It never builds
 // prompts or grants consent or budget.
 //
@@ -38,7 +38,7 @@ type EditorPredictionCompleter struct {
 }
 
 // ErrSuggestionsUnconfigured explains a missing suggestion connection.
-var ErrSuggestionsUnconfigured = errors.New("choose a model for Aeron in Settings, Agents")
+var ErrSuggestionsUnconfigured = errors.New("choose a model for Errand in Settings, Agents")
 
 // SuggestionCompleter binds the current Suggestions settings. Errors are
 // written for the user and contain no endpoint or credential.
@@ -51,7 +51,7 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	stored := profile.Categories[CategoryAeron]
 	aeron := c.GetCategoryConfig(CategoryAeron)
 	if (stored.Enabled != nil && !*stored.Enabled) || (aeron.Enabled != nil && !*aeron.Enabled) {
-		return EditorPredictionCompleter{}, errors.New("the Aeron agent is turned off in Settings, Agents")
+		return EditorPredictionCompleter{}, errors.New("the Errand agent is turned off in Settings, Agents")
 	}
 	role := CategoryConfig{AccountID: aeron.AccountID, Model: aeron.Model, ServiceTier: aeron.ServiceTier,
 		ModelMaxOutput: aeron.ModelMaxOutput, ModelContextWindow: aeron.ModelContextWindow}
@@ -77,7 +77,7 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	}
 	account, err := c.resolveAccount(role.AccountID)
 	if err != nil {
-		return EditorPredictionCompleter{}, errors.New("the account for Aeron suggestions is not available")
+		return EditorPredictionCompleter{}, errors.New("the account for Errand suggestions is not available")
 	}
 	oauth := account.OAuth != nil || account.Connection.AuthType == provider.AuthChatGPT
 	if oauth && settings.Format != ttypes.SuggestionFormatChat {
@@ -95,16 +95,16 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	snapshot := &Config{Accounts: accounts}
 	p, err := snapshot.providerForCategory(role)
 	if err != nil {
-		return EditorPredictionCompleter{}, errors.New("the connection for Aeron suggestions is not valid")
+		return EditorPredictionCompleter{}, errors.New("the connection for Errand suggestions is not valid")
 	}
 	if err := manager.Bind(p, account.ID); err != nil {
-		return EditorPredictionCompleter{}, errors.New("the account for Aeron suggestions is not available")
+		return EditorPredictionCompleter{}, errors.New("the account for Errand suggestions is not available")
 	}
 	timeout := settings.TimeoutSeconds
 	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1, RequestTimeoutSeconds: timeout, ConnectTimeoutSeconds: timeout})
 	client, err := p.Client(provider.WithResponseLimit(256 << 10))
 	if err != nil {
-		return EditorPredictionCompleter{}, errors.New("the connection for Aeron suggestions is not valid")
+		return EditorPredictionCompleter{}, errors.New("the connection for Errand suggestions is not valid")
 	}
 	identity, err := suggestionConnectionIdentity(account, role.Model, settings)
 	if err != nil {
@@ -140,7 +140,7 @@ func suggestionConnectionIdentity(account provider.Account, model string, settin
 	}{account.ID, account.ProviderID, connection.ProviderURL, connection.APIStandard, connection.Headers,
 		model, settings.Format, settings.EndpointPath})
 	if err != nil {
-		return "", errors.New("the connection for Aeron suggestions is not valid")
+		return "", errors.New("the connection for Errand suggestions is not valid")
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
@@ -157,11 +157,11 @@ func (t EditorPredictionCompleter) Current() error {
 	}
 	account, ok := t.manager.Account(t.AccountID)
 	if !ok {
-		return errors.New("the account for Aeron suggestions was removed")
+		return errors.New("the account for Errand suggestions was removed")
 	}
 	identity, err := suggestionConnectionIdentity(account, t.Model, ttypes.SuggestionSettings{Format: t.Format, EndpointPath: t.EndpointPath})
 	if err != nil || identity != t.ConnectionIdentity {
-		return errors.New("the connection for Aeron suggestions changed")
+		return errors.New("the connection for Errand suggestions changed")
 	}
 	return nil
 }

@@ -13,7 +13,7 @@ const (
 	CategoryDefault    = "default"
 	CategoryResearcher = "researcher"
 	CategoryCrafter    = "crafter"
-	CategoryAeron      = "aeron"
+	CategoryAeron      = ttypes.ErrandRoleID
 	CategoryMemory     = "memory"
 )
 
@@ -21,7 +21,7 @@ const (
 // configuration source rather than storing a copied value.
 const (
 	// InheritMain follows this session's main agent live.
-	InheritMain = "main"
+	InheritMain = ttypes.AgentInheritMain
 	// InheritWorkspace follows the workspace baseline's main agent live.
 	InheritWorkspace = "workspace"
 )
@@ -77,7 +77,7 @@ type AgentsConfig struct {
 	Shell string `json:"shell,omitempty"`
 	// MaxWaitMinutes bounds one agent wait; zero is Auto.
 	MaxWaitMinutes int `json:"max_wait_minutes,omitempty"`
-	// Suggestions is the connection for Aeron's editor suggestions.
+	// Suggestions is the connection for Errand's editor suggestions.
 	Suggestions ttypes.SuggestionSettings `json:"suggestions,omitempty"`
 }
 
@@ -405,9 +405,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 		switch {
 		case cat.Inherit == InheritWorkspace && c.workspaceMain != nil:
 			resolved := *c.workspaceMain
-			if cat.AccountID != "" {
-				resolved.AccountID = cat.AccountID
-			}
+			resolved.AccountID, resolved.Model = ttypes.InheritRoleModel(cat.AccountID, "", resolved.AccountID, resolved.Model)
 			if cat.ServiceTier != "" {
 				resolved.ServiceTier = cat.ServiceTier
 			}
@@ -416,9 +414,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 			return resolved
 		case cat.Inherit == InheritMain:
 			main := c.GetActiveDefaultCategory()
-			if cat.AccountID != "" {
-				main.AccountID = cat.AccountID
-			}
+			main.AccountID, main.Model = ttypes.InheritRoleModel(cat.AccountID, "", main.AccountID, main.Model)
 			if cat.ServiceTier != "" {
 				main.ServiceTier = cat.ServiceTier
 			}
@@ -430,12 +426,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 		// Models and thinking remain role-owned; only absent values inherit.
 		if cat.Model == "" || inheritsAccount || cat.ThinkingEffort == "" {
 			main := c.GetActiveDefaultCategory()
-			if inheritsAccount {
-				cat.AccountID = main.AccountID
-			}
-			if cat.Model == "" {
-				cat.Model = main.Model
-			}
+			cat.AccountID, cat.Model = ttypes.InheritRoleModel(cat.AccountID, cat.Model, main.AccountID, main.Model)
 			if cat.ThinkingEffort == "" {
 				cat.ThinkingEffort = main.ThinkingEffort
 			}
@@ -446,78 +437,43 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 	return c.GetActiveDefaultCategory()
 }
 
-// GetMemoryCategory resolves the memory agent's configuration. It behaves like
-// any other agent: an explicit session override (profile Categories["memory"]),
-// then the configured MemoryCategory, wins; otherwise it inherits the main
-// agent live.
+// GetMemoryCategory resolves the no-tools memory job. Its own settings and
+// explicit session overrides win over the effective Errand connection.
 func (c *Config) GetMemoryCategory() CategoryConfig {
 	memory := catSettingsToConfig(c.Memory.MemoryCategory)
-	finish := func(cat CategoryConfig) CategoryConfig {
-		if memory.Enabled != nil {
-			cat.Enabled = cloneBoolPtr(memory.Enabled)
-		}
-		if cat.Instructions == "" {
-			cat.Instructions = memory.Instructions
-		}
-		return cat
-	}
-	// A live session/workspace override stored in the active profile.
-	prof, _ := activeProfileCfg(c)
-	if cat, ok := prof.Categories[CategoryMemory]; ok {
+	defaults := c.GetCategoryConfig(CategoryAeron)
+	profile, _ := activeProfileCfg(c)
+	if override, exists := profile.Categories[CategoryMemory]; exists {
+		memory = mergeCategoryConfig(memory, override)
 		switch {
-		case cat.Inherit == InheritWorkspace && c.workspaceMain != nil:
-			resolved := *c.workspaceMain
-			if cat.AccountID != "" {
-				resolved.AccountID = cat.AccountID
-			}
-			if cat.ServiceTier != "" {
-				resolved.ServiceTier = cat.ServiceTier
-			}
-			c.resolveCategoryDefaults(&resolved)
-			return finish(resolved)
-		case cat.Inherit == InheritMain:
+		case override.Inherit == InheritWorkspace && c.workspaceMain != nil:
+			memory.AccountID, memory.Model = ttypes.InheritRoleModel(override.AccountID, "", c.workspaceMain.AccountID, c.workspaceMain.Model)
+		case override.Inherit == InheritMain:
 			main := c.GetActiveDefaultCategory()
-			if cat.AccountID != "" {
-				main.AccountID = cat.AccountID
-			}
-			if cat.ServiceTier != "" {
-				main.ServiceTier = cat.ServiceTier
-			}
-			return finish(main)
+			memory.AccountID, memory.Model = ttypes.InheritRoleModel(override.AccountID, "", main.AccountID, main.Model)
 		}
-		if cat.AccountID == "" || cat.Model == "" || cat.ThinkingEffort == "" {
-			main := c.GetActiveDefaultCategory()
-			if cat.AccountID == "" {
-				cat.AccountID = main.AccountID
-			}
-			if cat.Model == "" {
-				cat.Model = main.Model
-			}
-			if cat.ThinkingEffort == "" {
-				cat.ThinkingEffort = main.ThinkingEffort
-			}
-		}
-		c.resolveCategoryDefaults(&cat)
-		return finish(cat)
 	}
-	cat := memory
-	main := c.GetActiveDefaultCategory()
-	if cat.AccountID == "" && cat.Model == "" && cat.ThinkingEffort == "" && cat.ServiceTier == "" && cat.ModelMaxOutput == 0 && cat.ModelContextWindow == 0 && cat.ModelTemperature == nil && cat.ModelTopP == nil && cat.ModelModalities == nil {
-		main.Enabled = cloneBoolPtr(cat.Enabled)
-		main.Instructions = cat.Instructions
-		return main
+	memory.AccountID, memory.Model = ttypes.InheritAgentModel(memory.AccountID, memory.Model, defaults.AccountID, defaults.Model)
+	c.resolveCategoryDefaults(&memory)
+	return memory
+}
+
+// permissionReviewSettingsLocked is a request projection, not a saved settings
+// value. Only the model binding is inherited; consent and policy stay local
+// to Auto Review and never flow from the Errand role.
+func (s *Session) permissionReviewSettingsLocked() ttypes.AutoPermissionSettings {
+	if s.cfg == nil {
+		return ttypes.AutoPermissionSettings{}
 	}
-	if cat.AccountID == "" {
-		cat.AccountID = main.AccountID
+	settings := s.cfg.Safety.AutoPermission.Normalized()
+	if settings.Enabled == "on" && s.workspaceCfg != nil {
+		// Use the human-owned workspace binding, not a session override
+		// or the Main Agent that Errand itself might use for ordinary work.
+		profile, _ := activeProfileCfg(s.workspaceCfg)
+		errand := profile.Categories[CategoryAeron]
+		settings.AccountID, settings.Model = ttypes.InheritAgentModel(settings.AccountID, settings.Model, errand.AccountID, errand.Model)
 	}
-	if cat.Model == "" {
-		cat.Model = main.Model
-	}
-	if cat.ThinkingEffort == "" {
-		cat.ThinkingEffort = main.ThinkingEffort
-	}
-	c.resolveCategoryDefaults(&cat)
-	return cat
+	return settings
 }
 
 func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
@@ -749,7 +705,7 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	cfg.Agents.Shell = agents.Shell
 	// So is the wait bound: zero restores Auto.
 	cfg.Agents.MaxWaitMinutes = agents.MaxWaitMinutes
-	// And the suggestion connection: empty uses Aeron's account and model.
+	// And the suggestion connection: empty uses Errand's account and model.
 	cfg.Agents.Suggestions = agents.Suggestions
 	if len(agents.Categories) == 0 && agents.ActiveProfile == "" &&
 		agents.MaxConcurrent == 0 {

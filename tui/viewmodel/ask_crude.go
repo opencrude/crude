@@ -271,7 +271,7 @@ func askProblem(diags []types.LSPDiagnostic) string {
 }
 
 // askEligible reports whether an agent's tab is a chat that Ask Crude may
-// use: a root agent with a composer, never the workspace Aeron. Prepared
+// use: a root agent with a composer, never the workspace Errand. Prepared
 // prompts also need an idle agent, so they never steer a running turn.
 func (m *App) askEligible(agentID string, idle bool) bool {
 	node := m.ws.AgentMgr().Get(agentID)

@@ -421,6 +421,16 @@ func TestImageFileVisualAcceptance(t *testing.T) {
 	}
 	app, ws := newRealShellApp(t)
 	path := writeImageDetailFixture(t, ws.RootPath)
+	if photo := os.Getenv("CRUDE_VISUAL_SIXEL_PHOTO"); photo != "" {
+		data, err := os.ReadFile(photo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path = filepath.Join(ws.RootPath, "photo.jpg")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	model := &imageFileVisualModel{App: app, path: path}
 	runImageVisualAcceptance(t, model)
 }
@@ -430,21 +440,31 @@ func TestSixelAttachmentVisualAcceptance(t *testing.T) {
 		t.Skip("requires the repository terminal capture workflow")
 	}
 	app := newTranscriptAttachmentApp(t)
-	path := writeImageDetailFixture(t, t.TempDir())
+	path, mime := os.Getenv("CRUDE_VISUAL_SIXEL_PHOTO"), "image/jpeg"
+	if path == "" {
+		path, mime = writeImageDetailFixture(t, t.TempDir()), "image/png"
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedImage, Mime: "image/png", Data: data})
+	ref, err := app.RefStore().CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedImage, Title: "Clipboard photo", Mime: mime, Data: data})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runImageVisualAcceptance(t, &imageFileVisualModel{App: app, reference: &ref})
+	draft := app.Input.Value()
+	if os.Getenv("CRUDE_VISUAL_ATTACHMENT_CHIP") == "1" {
+		setAttachmentDestination(t, app, "crude")
+		draft = ref.Label + " " + draft
+		app.Input.SetInput(draft)
+	}
+	runImageVisualAcceptance(t, &imageFileVisualModel{App: app, reference: &ref, draft: draft})
 }
 
 func runImageVisualAcceptance(t *testing.T, model *imageFileVisualModel) {
 	t.Helper()
 	app := model.App
+	model.t = t
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	app.SetProgram(program)
 	restore := installDetachedMessageSinkForTest(app, program.Send)
@@ -452,13 +472,17 @@ func runImageVisualAcceptance(t *testing.T, model *imageFileVisualModel) {
 	if _, err := program.Run(); err != nil {
 		t.Fatal(err)
 	}
-	if len(model.errors) > 0 {
-		t.Fatal(strings.Join(model.errors, "; "))
-	}
 	if evidence := os.Getenv("CRUDE_CAPTURE_EVIDENCE"); evidence != "" {
-		if err := os.WriteFile(evidence, []byte("PASS image native\n"), 0o600); err != nil {
+		proof := "PASS image native"
+		if len(model.errors) > 0 {
+			proof = strings.Join(model.errors, "; ")
+		}
+		if err := os.WriteFile(evidence, []byte(proof+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if len(model.errors) > 0 {
+		t.Fatal(strings.Join(model.errors, "; "))
 	}
 }
 
@@ -500,9 +524,13 @@ func writeImageDetailFixture(t *testing.T, root string) string {
 
 type imageFileVisualModel struct {
 	*App
-	path      string
-	reference *sessiondb.Reference
-	errors    []string
+	t                                           *testing.T
+	ready                                       bool
+	path                                        string
+	reference                                   *sessiondb.Reference
+	draft                                       string
+	errors                                      []string
+	sawSixel, sawMotion, sawSettled, sawCaption bool
 }
 
 func (m *imageFileVisualModel) Init() tea.Cmd {
@@ -512,6 +540,20 @@ func (m *imageFileVisualModel) Init() tea.Cmd {
 }
 
 func (m *imageFileVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	for _, placement := range m.imagePlacements {
+		if placement.Protocol == tea.ImageSixel {
+			m.sawSixel = true
+			m.sawSettled = m.sawSettled || m.sawMotion && len(m.pixelMotion.active) == 0
+		}
+	}
+	if m.reference != nil && !m.sawCaption {
+		if w := m.overlayHost.Window(ui.OverlayTextOverlay); w != nil {
+			frame := w.Content.(*ui.WindowFrameWidget).Frame()
+			for _, chip := range m.Input.ReferenceChips(m.inputRect.W) {
+				m.sawCaption = m.sawCaption || chip.ID == m.reference.ID && chip.Label == m.reference.Label && chip.Label == frame.Title()
+			}
+		}
+	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
@@ -527,19 +569,29 @@ func (m *imageFileVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.reference == nil && m.focusedPopup() != nil {
 				m.errors = append(m.errors, "a modal still covers the image viewer")
 			}
-			if m.reference != nil && (!m.overlayHost.IsOpen(ui.OverlayTextOverlay) || m.Input.Value() != "KEEP MY COMPOSER DRAFT") {
-				m.errors = append(m.errors, "the attachment did not preserve its frame or composer draft")
+			if m.reference != nil {
+				wantOpen := os.Getenv("CRUDE_VISUAL_SIXEL_CLOSE") != "1"
+				if m.overlayHost.IsOpen(ui.OverlayTextOverlay) != wantOpen || m.Input.Value() != m.draft {
+					m.errors = append(m.errors, "the attachment has the wrong frame state or lost the composer draft")
+				}
 			}
 			if os.Getenv("CRUDE_VISUAL_EXPECT_GRAPHICS") == "1" && len(m.imagePlacements) == 0 {
 				m.errors = append(m.errors, "native image graphics were not negotiated")
 			}
-			if os.Getenv("CRUDE_VISUAL_EXPECT_SIXEL") == "1" &&
-				(len(m.imagePlacements) == 0 || m.imagePlacements[0].Protocol != tea.ImageSixel) {
+			if os.Getenv("CRUDE_VISUAL_EXPECT_SIXEL") == "1" && !m.sawSixel {
 				m.errors = append(m.errors, "Sixel graphics were not negotiated")
+			}
+			if os.Getenv("CRUDE_VISUAL_SIXEL_MOTION") == "1" && (!m.sawMotion || !m.sawSettled) {
+				m.errors = append(m.errors, "native input did not move the preview and settle back to Sixel")
+			}
+			if os.Getenv("CRUDE_VISUAL_ATTACHMENT_CHIP") == "1" && !m.sawCaption {
+				m.errors = append(m.errors, "attachment chip and frame did not show the same caption")
 			}
 			return m, tea.Quit
 		}
 	}
 	_, cmd := m.App.Update(msg)
+	markCaptureReady(m.t, m.App, &m.ready)
+	m.sawMotion = m.sawMotion || len(m.pixelMotion.active) > 0
 	return m, cmd
 }

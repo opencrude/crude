@@ -16,7 +16,7 @@ func (a *actor) prepareInvocation(request coreprotocol.Request) (*workspace.Invo
 	}
 	if request.Method == coreprotocol.EnsureSession {
 		if input.SessionID != "" || !input.Selection.SelectsOnlyMainAgent(session.CategoryAeron) {
-			return nil, errors.New("the workspace agent request names only the Aeron role")
+			return nil, errors.New("the workspace agent request names only the Errand role")
 		}
 		return a.ws.PrepareAeronSession()
 	}

@@ -13,10 +13,10 @@ import (
 	"crude/types"
 )
 
-// Crude asks its workspace Aeron for help through the collaboration journal:
+// Crude asks its workspace Errand for help through the collaboration journal:
 // a problem that the owner marked Investigate, and that stayed open for
-// attentionRipe, becomes one runtime notice to Aeron. The journal's
-// idempotency key is the only memory of what Aeron was told, so a problem is
+// attentionRipe, becomes one runtime notice to Errand. The journal's
+// idempotency key is the only memory of what Errand was told, so a problem is
 // raised once per cause, across core restarts, and a changed cause is new.
 // The actor decides on its own goroutine from in-memory state; the publish
 // itself runs on the resource lane.
@@ -49,7 +49,7 @@ func attentionKey(issue types.IssueSnapshot) string {
 	return "attention:" + hex.EncodeToString(sum[:])
 }
 
-// aeronReady reports whether the workspace Aeron can take a notice now: it
+// aeronReady reports whether the workspace Errand can take a notice now: it
 // runs, has no turn and waits for no answer. A turn that the user cancelled or
 // that failed waits for the user, not for Crude.
 func aeronReady(status types.AgentStatusSnapshot) bool {
@@ -103,7 +103,7 @@ func (a *actor) evaluateAttention(now time.Time) {
 	})
 }
 
-// dueAttention returns the open Investigate issues that Aeron was not told
+// dueAttention returns the open Investigate issues that Errand was not told
 // about and that stayed unchanged for attentionRipe, most severe first and at
 // most attentionBatch, and how long until the next one ripens (0 for none).
 func dueAttention(now time.Time, issues []types.IssueSnapshot, sent map[string]bool) ([]types.IssueSnapshot, time.Duration) {

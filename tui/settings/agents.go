@@ -37,7 +37,7 @@ var agentIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
 var agentRoles = []struct {
 	key, label string
 	index      int
-}{{"default", "Main Agent", catMain}, {"researcher", "Researcher", catResearcher}, {"crafter", "Crafter", catCrafter}, {"aeron", "Aeron", catAeron}, {"memory", "Memory Agent", catMemory}, {"auto-review", "Auto Review Agent", catAutoReviewPolicy}}
+}{{"default", "Main Agent", catMain}, {"researcher", "Researcher", catResearcher}, {"crafter", "Crafter", catCrafter}, {"aeron", "Errand", catAeron}, {"memory", "Memory Agent", catMemory}, {"auto-review", "Auto Review Agent", catAutoReviewPolicy}}
 
 type agentCatalog struct {
 	ui.Base
@@ -254,6 +254,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 		c.draft = c.model.buildAutoReviewerForm()
 	case catMemory:
 		c.draft = c.model.buildAgentForm(c.base, false, c.model.rankerFields()...)
+		c.model.configureBackgroundModel(c.draft)
 	default:
 		c.draft = c.model.buildAgentForm(c.base, c.roleIndex == catMain)
 	}
@@ -271,7 +272,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 			}
 			return nil
 		}
-		fields := []*ui.FieldState{name, ui.SelectFieldState("agent-role", "Role", c.profile.Category, []ui.FormOption{{ID: "researcher", Label: "Researcher", Detail: "Read and investigate"}, {ID: "crafter", Label: "Crafter", Detail: "Implement and test"}, {ID: "aeron", Label: "Aeron", Detail: "Focused mechanical work"}}, "Role rules remain a hard limit on tool access.")}
+		fields := []*ui.FieldState{name, ui.SelectFieldState("agent-role", "Role", c.profile.Category, []ui.FormOption{{ID: "researcher", Label: "Researcher", Detail: "Read and investigate"}, {ID: "crafter", Label: "Crafter", Detail: "Implement and test"}, {ID: "aeron", Label: "Errand", Detail: "Focused mechanical work"}}, "Role rules remain a hard limit on tool access.")}
 		fields = append(fields, c.draft.Fields()...)
 		fields = append(fields, ui.BoolFieldState("agent-inherit-modalities", "Inherit modalities", c.profile.ModelModalities == nil, "Use the role's media capabilities."))
 		ownership := ui.TextAreaFieldState("agent-file-ownership", "File ownership", strings.Join(c.profile.FileOwnership, "\n"), "Exclusive paths, one per line.")
@@ -460,20 +461,21 @@ func (c *agentCatalog) apply() bool {
 		enabled := ui.BoolFieldValue(c.draft.Field("agent-enabled"))
 		accountID := c.draft.Field(fieldConnection).Value.String()
 		model := c.draft.Field(fieldModel).Value.String()
-		if enabled && (accountID == "" || model == "") {
+		resolvedAccount, resolvedModel := c.model.backgroundBinding(c.draft)
+		if enabled && (resolvedAccount == "" || resolvedModel == "" || c.model.accounts[resolvedAccount].ID == "") {
 			fieldID := fieldConnection
-			if accountID != "" {
+			if c.model.accounts[resolvedAccount].ID != "" {
 				fieldID = fieldModel
 			}
-			c.draft.Field(fieldID).Errors = []string{"Required while Auto Review is enabled."}
+			c.draft.Field(fieldID).Errors = []string{"Set up Errand or choose a connection for Auto Review."}
 			c.setPage("model")
 			c.form.FocusField(fieldID)
 			c.owner.focusID(c.form.ID())
 			return false
 		}
 		format := c.draft.Field(fieldAutoPermFormat).Value.String()
-		if accountID != "" && (format == types.AutoPermissionFormatJSONSchema || format == types.AutoPermissionFormatJSONObject) {
-			account, ok := c.model.accounts[accountID]
+		if resolvedAccount != "" && (format == types.AutoPermissionFormatJSONSchema || format == types.AutoPermissionFormatJSONObject) {
+			account, ok := c.model.accounts[resolvedAccount]
 			standard := ""
 			if ok {
 				standard = account.Connection.APIStandard
@@ -790,7 +792,7 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		}
 		if next := c.owner.capCatalog.nextOpen; next != nil {
 			c.owner.capCatalog.nextOpen = nil
-			return c.owner.OpenCapabilities(next.kind, next.query, next.id)
+			return c.owner.openCapabilityNavigation(*next)
 		}
 		if next := c.model.nextScope; next != "" {
 			c.model.nextScope = ""

@@ -13,9 +13,9 @@ import (
 	"crude/agent/sessiondb"
 )
 
-// A prepared input (a skill invocation, Aeron's work order) shows its
+// A prepared input (a skill invocation, Errand's work order) shows its
 // DisplayText in the transcript while the model receives the full Text. The
-// saved transcript row once took the full Text, so Aeron's chat showed the raw
+// saved transcript row once took the full Text, so Errand's chat showed the raw
 // XML work order.
 func TestPreparedInputTranscriptShowsDisplayTextAndModelGetsText(t *testing.T) {
 	requests := make(chan string, 4)

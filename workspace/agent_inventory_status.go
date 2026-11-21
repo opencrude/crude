@@ -21,7 +21,7 @@ func (w *Workspace) SyncAgentStatusInventory() {
 		if !exists {
 			status = types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: node.ID}, Phase: types.AgentIdle, Detail: "Idle"}
 		}
-		status.Label, status.ReadOnly = node.Label, state.Completed
+		status.Label, status.ReadOnly = w.agentIdentityLabel(node), state.Completed
 		if node.Model != "" {
 			status.ModelID = node.Model
 		}

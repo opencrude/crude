@@ -180,6 +180,22 @@ are text-only. Sampling, elicitation, task extensions, rich MCP apps and optiona
 remote UI channels are unsupported and not advertised. Resume starts no connection,
 download, update or tool replay.
 
+### Model fallback for web search
+
+Open **Application Settings → MCP → Web search and fetch → Manage → Model
+fallback**. Leave it **Off** to use only the usual search providers. To allow a
+backup search, choose an existing OpenAI Responses account and a model that
+supports [OpenAI's native web search](https://developers.openai.com/api/docs/guides/tools-web-search).
+Use an API key for `https://api.openai.com/v1`. Choose a model in the list or
+enter its exact ID. Choose **Save fallback**. You can return here to choose
+**Off**. Workspace Settings shows the application choice without changing it.
+
+If all usual providers fail, Crude can send the query to this account once.
+Charges can apply. Crude does not send the conversation or change the agent's
+model. A provider that completed with no matches does not trigger fallback.
+A failed search can show a **Set up a search fallback** link on its row. Opening
+the link or saving a choice does not repeat the search.
+
 ## Host locality and external computer-use
 
 Connection host defaults to `core`; stdio runs on that host with the resolved
@@ -305,7 +321,7 @@ one-glyph row action) so it reads as clickable.
 Git is a bottom-dock destination (footer **Git** pill, `Ctrl+Alt+G`, palette
 "Git"), not a sidebar. Its **Changes** tab is a two-pane workbench: on the left a
 branch/tracking line, a commit message box with `[ Commit ]` and
-`[ Generate ]` (Aeron streams a message drafted from exactly what Commit would
+`[ Generate ]` (Errand streams a message drafted from exactly what Commit would
 record, with an animated progress rule; `[ Stop ]` restores your draft),
 and the change list grouped Merge Conflicts / Staged / Changes; on the right a
 live hunk preview of the selected file, separated by a draggable divider. Rows show the status letter, name and

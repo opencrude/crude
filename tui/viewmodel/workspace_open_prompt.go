@@ -22,7 +22,7 @@ func (m *App) requestWorkspaceOpen(root, resumeID string) tea.Cmd {
 	if root == "" || m.asyncIOStopped.Load() || m.workspaceAttachPending || m.workspaceOpenPrompt != nil {
 		return nil
 	}
-	if sameWorkspaceRoot(m.ws.RootPath(), root) {
+	if m.workspaceRootMatches(root) {
 		if resumeID != "" {
 			return m.remoteSessionCommand(resumeID)
 		}

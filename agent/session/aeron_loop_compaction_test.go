@@ -17,7 +17,7 @@ import (
 	"crude/agent/sessiondb"
 )
 
-// When the workspace Aeron's agentic loop ends (the model answers without
+// When the workspace Errand's agentic loop ends (the model answers without
 // another tool call), Crude compacts its context once. Any other root keeps
 // its context, a loop that called tools compacts only after its answer, and a
 // loop too small to shrink is left alone instead of failing visibly.

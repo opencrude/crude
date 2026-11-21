@@ -16,7 +16,7 @@ import (
 	"crude/types"
 )
 
-// Aeron's editor suggestions. The core owns text, context, the model call and
+// Errand's editor suggestions. The core owns text, context, the model call and
 // the ledger. This shell owner holds one typing intent, one request and the
 // shown change of the active editor; every async result carries the editor,
 // its revision, the workspace generation and the request sequence.
@@ -36,7 +36,7 @@ type suggestionState struct {
 	sequence uint64
 	intent   *suggestionIntent
 	request  *suggestionRequest
-	// shown is Aeron's change on screen, from the answer to its outcome.
+	// shown is Errand's change on screen, from the answer to its outcome.
 	shown *suggestionShown
 	// held is an answer that waits until the completion list closes.
 	held *suggestionResultMsg
@@ -147,7 +147,7 @@ func (m *App) suggestionPort() (shellport.Suggestions, bool) {
 	return port, ok
 }
 
-// cancelSuggestion drops the intent, the running request and Aeron's shown
+// cancelSuggestion drops the intent, the running request and Errand's shown
 // change, and tells the core to retire this view. It never touches another
 // producer's inline text.
 func (m *App) cancelSuggestion() {
@@ -198,7 +198,7 @@ func (m *App) onSuggestionTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 	m.scheduleSuggestion(ed, m.suggest.pause, true, false)
 }
 
-// onSuggestionOutcome follows what the user did with Aeron's shown change.
+// onSuggestionOutcome follows what the user did with Errand's shown change.
 // After the whole change is taken, the next change of the same answer shows
 // at once when the core holds one; As I type also asks for a fresh one.
 func (m *App) onSuggestionOutcome(ed *editor.Editor, owner string, outcome editor.GhostOutcome) {
@@ -275,7 +275,7 @@ func (m *App) suggestionEditorOwnsInput(ed *editor.Editor) bool {
 		!m.sessionDeckCapturesInput() && !ed.HasMultipleCarets() && !ed.HasSelection()
 }
 
-// syncSuggestion reconciles Aeron's request, shown change and intent with the
+// syncSuggestion reconciles Errand's request, shown change and intent with the
 // active editor on every Update. A request or change that no longer belongs
 // to the focused editor, its revision or its caret is cancelled and the core
 // view is released. A due intent starts its request here, so a wake that
@@ -345,12 +345,12 @@ func (m *App) cancelSuggestionIntent() {
 	}
 }
 
-// requestSuggestionNow is "Ask Aeron for a suggestion" (Alt+\).
+// requestSuggestionNow is "Ask Errand for a suggestion" (Alt+\).
 func (m *App) requestSuggestionNow() tea.Cmd {
 	ed := m.EditorState.Editor
 	switch {
 	case m.suggestionMode() == types.PredictionOff:
-		m.Feedback.NotifyInfo("Aeron suggestions are off. Turn them on from Aeron in the footer.")
+		m.Feedback.NotifyInfo("Errand suggestions are off. Turn them on from Errand in the footer.")
 		return nil
 	case !m.suggestionEditorOwnsInput(ed):
 		m.Feedback.NotifyInfo("Put one caret in the code, without a selection, to ask for a suggestion.")
@@ -462,7 +462,7 @@ func (m *App) applySuggestionResult(msg suggestionResultMsg) {
 	}
 	if msg.result.Empty() {
 		if !request.automatic && !request.follow {
-			m.Feedback.NotifyInfo("Aeron has no suggestion here.")
+			m.Feedback.NotifyInfo("Errand has no suggestion here.")
 		}
 		return
 	}
@@ -604,7 +604,7 @@ func suggestionProblemText(err error) string {
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "Aeron could not make a suggestion."
+		return "Errand could not make a suggestion."
 	}
 	return strings.ToUpper(text[:1]) + strings.TrimSuffix(text[1:], ".") + "."
 }
@@ -638,7 +638,7 @@ func (m *App) applySuggestionStatus(msg suggestionStatusMsg) {
 	m.forceFrame()
 }
 
-// suggestionFooterSegment is the quiet Aeron item. It shows one state.
+// suggestionFooterSegment is the quiet Errand item. It shows one state.
 func (m *App) suggestionFooterSegment() (shellfooter.Segment, bool) {
 	mode := m.suggestionMode()
 	if m.EditorState == nil || m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
@@ -646,19 +646,19 @@ func (m *App) suggestionFooterSegment() (shellfooter.Segment, bool) {
 			return shellfooter.Segment{}, false
 		}
 	}
-	segment := shellfooter.Segment{Text: "Aeron", FillRole: ui.ColorAccent2, Pill: true, Action: suggestionFooter, Priority: 0}
+	segment := shellfooter.Segment{Text: "Errand", FillRole: ui.ColorAccent2, Pill: true, Action: suggestionFooter, Priority: 0}
 	switch {
 	case mode == types.PredictionOff:
-		segment.Text, segment.FillRole = "Aeron off", ui.ColorMuted
+		segment.Text, segment.FillRole = "Errand off", ui.ColorMuted
 	case m.suggest.problem != "":
-		segment.Text, segment.FillRole, segment.Attention = "Aeron !", ui.ColorWarning, true
+		segment.Text, segment.FillRole, segment.Attention = "Errand !", ui.ColorWarning, true
 	case m.suggest.request != nil:
-		segment.Text, segment.Attention = "Aeron …", true
+		segment.Text, segment.Attention = "Errand …", true
 	}
 	return segment, true
 }
 
-// openSuggestionMenu is the Aeron item's menu: the mode, Suggest now, the
+// openSuggestionMenu is the Errand item's menu: the mode, Suggest now, the
 // measured speed, the hourly meter and Settings.
 func (m *App) openSuggestionMenu() tea.Cmd {
 	mode := m.suggestionMode()
@@ -697,7 +697,7 @@ func (m *App) openSuggestionMenu() tea.Cmd {
 		sections = append(sections, ui.ContextMenuSection{Items: info})
 	}
 	sections = append(sections, actions)
-	menu := &ui.ContextMenuState{Title: "Aeron", Sections: sections}
+	menu := &ui.ContextMenuState{Title: "Errand", Sections: sections}
 	if anchor, ok := m.footerSegmentRect(suggestionFooter); ok {
 		return tea.Batch(m.openMenuFor(anchor, menu), m.refreshSuggestionStatus())
 	}
@@ -725,7 +725,7 @@ func (m *App) chooseSuggestionMode(mode types.EditorPredictionMode) {
 	}
 	edits := []types.SettingEdit{{Path: []string{"prediction", "mode"}, After: []byte(`"` + string(mode) + `"`)}}
 	if mode == types.PredictionOff {
-		m.runDetachedAsyncCmd(m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Aeron suggestions are off.", nil, 0))
+		m.runDetachedAsyncCmd(m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Errand suggestions are off.", nil, 0))
 		return
 	}
 	limit := m.suggest.limit
@@ -733,9 +733,9 @@ func (m *App) chooseSuggestionMode(mode types.EditorPredictionMode) {
 		limit = types.DefaultPredictionHourlyTokens
 	}
 	edits = append(edits, types.SettingEdit{Path: []string{"prediction", "hourly_token_limit"}, After: []byte(fmt.Sprint(limit))})
-	label := "Aeron suggests when you press Alt+\\."
+	label := "Errand suggests when you press Alt+\\."
 	if mode == types.PredictionType {
-		label = "Aeron suggests as you type."
+		label = "Errand suggests as you type."
 	}
 	save := func() tea.Cmd {
 		return tea.Batch(m.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, label, nil, 0), m.refreshSuggestionStatus())
@@ -765,8 +765,8 @@ type suggestionConsent struct {
 
 func (m *App) suggestionConsentFrame() *ui.ComponentWidget {
 	return ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
-		Title: "Aeron suggestions", Question: "Turn on suggestions in this workspace?",
-		Detail:   "Aeron sends nearby code, recent edits and related code to " + m.suggestionDestination() + ". Suggestions count toward the hourly token limit.",
+		Title: "Errand suggestions", Question: "Turn on suggestions in this workspace?",
+		Detail:   "Errand sends nearby code, recent edits and related code to " + m.suggestionDestination() + ". Suggestions count toward the hourly token limit.",
 		Severity: ui.ConfirmPromptQuestion, Width: min(70, max(36, m.width-4)), FocusedIndex: 0, DetailMaxLines: 5,
 		Buttons: []ui.ConfirmButtonSpec{
 			{Label: "Cancel", ActionID: ui.ConfirmActionNo},
@@ -813,5 +813,5 @@ func (m *App) suggestionDestination() string {
 			return account.Connection.Name
 		}
 	}
-	return "Aeron's account"
+	return "Errand's account"
 }

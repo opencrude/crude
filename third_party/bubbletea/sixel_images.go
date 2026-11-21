@@ -2,9 +2,13 @@ package tea
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"math"
+	"slices"
+	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 
 	uv "github.com/charmbracelet/ultraviolet"
@@ -15,7 +19,7 @@ import (
 )
 
 // MaxSixelPixels bounds the visible raster, not the source or virtual zoom grid.
-// The encoder uses up to 256 palette bitplanes as well as the output bitmap.
+// It bounds resampling, palette construction and the encoded payload.
 const MaxSixelPixels = 2 * 1024 * 1024
 
 // SixelSizeSupported checks visible raster bounds without multiplying unchecked
@@ -42,9 +46,16 @@ type encodedSixel struct {
 	sequence string
 }
 
-func sameSixelRaster(a, b sixelTile) bool {
-	return a.placement == b.placement && a.rect.Size() == b.rect.Size() &&
-		a.column == b.column && a.row == b.row && a.background == b.background
+// Raster identity excludes the terminal position. Only movement of an otherwise
+// identical crop can use the same pixels from an older frame.
+type sixelRaster struct {
+	placement    ImagePlacement
+	size, offset image.Point
+	background   uv.Color
+}
+
+func (t sixelTile) raster() sixelRaster {
+	return sixelRaster{t.placement, t.rect.Size(), image.Pt(t.column, t.row), t.background}
 }
 
 var imageDiacritics = func() map[rune]int {
@@ -127,11 +138,14 @@ func snapshotSixelTiles(buf *uv.Buffer, placements []ImagePlacement) []sixelTile
 	return tiles
 }
 
-func encodeSixel(tile sixelTile) (string, error) {
+func encodeSixel(ctx context.Context, tile sixelTile) (string, error) {
 	p := tile.placement
-	w, h := tile.rect.Dx()*p.CellWidth, tile.rect.Dy()*p.CellHeight
-	if w <= 0 || h <= 0 || w > MaxSixelPixels/h {
+	if !SixelSizeSupported(tile.rect.Dx(), tile.rect.Dy(), p.CellWidth, p.CellHeight) {
 		return "", nil
+	}
+	w, h := tile.rect.Dx()*p.CellWidth, tile.rect.Dy()*p.CellHeight
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	src := p.Image.pixels
 	bounds := src.Bounds()
@@ -156,13 +170,127 @@ func encodeSixel(tile sixelTile) (string, error) {
 		max(1, int(math.Round(float64(bounds.Dy())*scale)))))}
 	draw.ApproxBiLinear.Scale(pixels, target, src, bounds, draw.Over, nil)
 	var payload bytes.Buffer
-	if err := (&sixel.Encoder{Dither: true}).Encode(&payload, pixels); err != nil {
+	if err := (&sixel.Encoder{Dither: true}).EncodeContext(ctx, &payload, pixels); err != nil {
 		return "", err
 	}
 	// x/ansi ends every raster with a graphics newline. No pixels follow the
 	// final one; omit it so an image at the bottom cannot scroll the text grid.
 	data := bytes.TrimSuffix(payload.Bytes(), []byte{'-'})
 	return ansi.SixelGraphics(0, 1, 0, data), nil
+}
+
+// sixelWork prepares only the latest writer-clipped set. It has no terminal
+// access. There is one active crop and one replaceable set per renderer; a late
+// result cannot be admitted after that crop's exact raster identity disappears.
+type sixelWork struct {
+	mu           sync.Mutex
+	cancel       context.CancelFunc
+	done         chan struct{}
+	changed      chan struct{}
+	wanted       []sixelTile
+	results      map[sixelRaster]string
+	active       sixelRaster
+	cancelActive context.CancelFunc
+	revision     atomic.Uint64
+}
+
+func newSixelWork(wake func(), tmux bool) *sixelWork {
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &sixelWork{
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		changed: make(chan struct{}, 1),
+		results: make(map[sixelRaster]string),
+	}
+	go w.run(ctx, wake, tmux)
+	return w
+}
+
+func (w *sixelWork) run(ctx context.Context, wake func(), tmux bool) {
+	defer close(w.done)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.changed:
+		}
+		for ctx.Err() == nil {
+			w.mu.Lock()
+			var tile sixelTile
+			for _, wanted := range w.wanted {
+				if _, ok := w.results[wanted.raster()]; !ok {
+					tile = wanted
+					break
+				}
+			}
+			if tile.placement.Image == nil {
+				w.mu.Unlock()
+				break
+			}
+			task, cancel := context.WithCancel(ctx)
+			key := tile.raster()
+			w.active, w.cancelActive = key, cancel
+			w.mu.Unlock()
+
+			// Encoding is into memory; the only writer error is cancellation.
+			sequence, _ := encodeSixel(task, tile)
+			if sequence != "" {
+				sequence = ansi.SaveCursor + sequence + ansi.RestoreCursor
+				if tmux {
+					sequence = ansi.TmuxPassthrough(sequence)
+				}
+			}
+
+			w.mu.Lock()
+			admitted := task.Err() == nil
+			if admitted {
+				w.results[key] = sequence
+				w.revision.Add(1)
+			}
+			cancel()
+			w.active, w.cancelActive = sixelRaster{}, nil
+			w.mu.Unlock()
+			if admitted && wake != nil {
+				wake()
+			}
+		}
+	}
+}
+
+func (w *sixelWork) prepare(tiles []sixelTile) ([]encodedSixel, uint64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !slices.Equal(w.wanted, tiles) {
+		w.wanted = tiles
+		hasRaster := func(key sixelRaster) bool {
+			for _, tile := range tiles {
+				if tile.raster() == key {
+					return true
+				}
+			}
+			return false
+		}
+		for key := range w.results {
+			if !hasRaster(key) {
+				delete(w.results, key)
+			}
+		}
+		if w.cancelActive != nil && !hasRaster(w.active) {
+			w.cancelActive()
+		}
+		select {
+		case w.changed <- struct{}{}:
+		default:
+		}
+	}
+
+	var next []encodedSixel
+	for _, tile := range tiles {
+		if sequence := w.results[tile.raster()]; sequence != "" {
+			next = append(next, encodedSixel{tile, sequence})
+		}
+	}
+	return next, w.revision.Load()
 }
 
 func (s *cursedRenderer) invalidateSixelArea(rect image.Rectangle) {
@@ -173,69 +301,58 @@ func (s *cursedRenderer) invalidateSixelArea(rect image.Rectangle) {
 	}
 }
 
-// prepareSixels runs only on the single writer, after the producer lock is
-// released. Cached rasters belong to the last successful publication, not to a
-// tab's mutable geometry. Failed/partial writes keep their exact damaged areas.
-func (s *cursedRenderer) prepareSixels(view View) ([]encodedSixel, []bool, error) {
-	if len(view.sixels) == 0 && len(s.sixelImages) == 0 && len(s.sixelUncertain) == 0 {
-		return nil, nil, nil
-	}
-	next := make([]encodedSixel, len(view.sixels))
-	dirty := make([]bool, len(next))
-	changed := s.sixelInvalid || len(next) != len(s.sixelImages)
-	for i, tile := range view.sixels {
-		next[i].tile = tile
-		for _, old := range s.sixelImages {
-			if sameSixelRaster(old.tile, tile) {
-				next[i].sequence = old.sequence
-				changed = changed || old.tile != tile
-				break
-			}
-		}
-		if next[i].sequence == "" {
-			changed = true
-			sequence, err := encodeSixel(tile)
-			if err != nil {
-				return nil, nil, err
-			}
-			next[i].sequence = sequence
+func containsTile(rasters []encodedSixel, tile sixelTile) bool {
+	for _, entry := range rasters {
+		if entry.tile == tile {
+			return true
 		}
 	}
-	if changed || len(s.sixelUncertain) > 0 {
-		for _, old := range s.sixelImages {
-			s.invalidateSixelArea(old.tile.rect)
-		}
-		for _, rect := range s.sixelUncertain {
-			s.invalidateSixelArea(rect)
-		}
-	}
-	for i, tile := range view.sixels {
-		dirty[i] = changed
-		for y := tile.rect.Min.Y; !dirty[i] && y < tile.rect.Max.Y && y < len(s.cellbuf.Touched); y++ {
-			line := s.cellbuf.Touched[y]
-			dirty[i] = line != nil && (line.FirstCell != -1 || line.LastCell != -1)
-		}
-	}
-	return next, dirty, nil
+	return false
 }
 
-func (s *cursedRenderer) paintSixels(images []encodedSixel, dirty []bool) {
-	for i, entry := range images {
-		if !dirty[i] || entry.sequence == "" {
+// The writer owns physical graphics history, separately from prepared payloads.
+// A pending or obsolete crop must not hold up the new composed text.
+func (s *cursedRenderer) prepareSixels(tiles []sixelTile) []encodedSixel {
+	if len(tiles) > 0 && s.sixelWork == nil {
+		s.sixelWork = newSixelWork(s.sixelWake, s.kittyTmux)
+	}
+	var next []encodedSixel
+	if s.sixelWork != nil {
+		next, s.sixelPrepared = s.sixelWork.prepare(tiles)
+	}
+
+	for _, old := range s.sixelImages {
+		if s.sixelInvalid || !containsTile(next, old.tile) {
+			s.invalidateSixelArea(old.tile.rect)
+		}
+	}
+	for _, rect := range s.sixelUncertain {
+		s.invalidateSixelArea(rect)
+	}
+	return next
+}
+
+func (s *cursedRenderer) paintSixels(images []encodedSixel) {
+	for _, entry := range images {
+		rect := entry.tile.rect
+		dirty := s.sixelInvalid || !containsTile(s.sixelImages, entry.tile)
+		for y := rect.Min.Y; !dirty && y < rect.Max.Y && y < len(s.sixelTextDamage); y++ {
+			span := s.sixelTextDamage[y]
+			dirty = span.Start < span.End && span.Start < rect.Max.X && rect.Min.X < span.End
+		}
+		if !dirty || entry.sequence == "" {
 			continue
 		}
 		s.scr.MoveTo(entry.tile.rect.Min.X, entry.tile.rect.Min.Y)
-		sequence := ansi.SaveCursor + entry.sequence + ansi.RestoreCursor
-		if s.kittyTmux {
-			sequence = ansi.TmuxPassthrough(sequence)
-		}
-		_, _ = s.scr.WriteString(sequence)
+		_, _ = s.scr.WriteString(entry.sequence)
 	}
 }
 
 func (s *cursedRenderer) failSixels(images []encodedSixel) {
 	for _, entry := range images {
-		s.sixelUncertain = append(s.sixelUncertain, entry.tile.rect)
+		if !slices.Contains(s.sixelUncertain, entry.tile.rect) {
+			s.sixelUncertain = append(s.sixelUncertain, entry.tile.rect)
+		}
 	}
 	s.sixelInvalid = true
 }

@@ -7,6 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/activitylist"
+	"crude/tui/screens/launcher"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/tui/wm"
@@ -45,6 +47,15 @@ func (m *App) syncPointerTooltip(msg tea.Msg) tea.Cmd {
 		return m.setTooltipTarget(m.tooltipTargetAt(msg.Mouse().X, msg.Mouse().Y))
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.PasteMsg, tea.BlurMsg:
 		m.dismissTooltip()
+	case workspaceActivityResultMsg, launcherWorkspacesMsg:
+		// Activity can settle while the pointer is still on the row.
+		target := m.tooltip.shown
+		if target == nil {
+			target = m.tooltip.pending
+		}
+		if target != nil && (target.source == activitylist.ListID || target.source == launcher.WorkspaceListID) {
+			return m.setTooltipTarget(m.tooltipTargetAt(target.anchor.X, target.anchor.Y))
+		}
 	}
 	return nil
 }

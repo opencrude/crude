@@ -32,7 +32,7 @@ type paneFilePrepared struct {
 	err         error
 	existing    bool
 	imageFile   bool
-	image       *paneImage
+	image       *paneImageSnapshot
 	imageTab    window.TabID
 	recovery    clientstate.EditorRecoveryRecord
 	recoveryErr error
@@ -89,10 +89,13 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 	files, remoteFiles := m.ws.(shellport.ClientFiles)
 	root := m.ws.RootPath()
 	existingImages := make(map[string]window.TabID)
+	var imageStore *paneImageStore
+	var imageLane chan struct{}
 	for _, path := range paths {
 		if imagepreview.SupportedPath(path) {
-			for _, tab := range m.Win.Tabs() {
-				if tab.Group == group && isImageTab(&tab) {
+			imageStore, imageLane = m.imageResidency.snapshotOwner()
+			for _, tab := range m.Win.GroupTabs(group) {
+				if isImageTab(&tab) {
 					existingImages[tab.Resource.ID] = tab.ID
 				}
 			}
@@ -112,7 +115,7 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 		prepared := editor.NewBufferManager()
 		for _, path := range paths {
 			if imagepreview.SupportedPath(path) {
-				file := paneFilePrepared{path: path, imageFile: true}
+				file := paneFilePrepared{path: path, requested: path, imageFile: true}
 				if remoteFiles {
 					file.path = files.CanonicalClientPath(path)
 				} else {
@@ -126,9 +129,9 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 				if file.err == nil && file.imageTab == 0 {
 					if remoteFiles {
 						external := !clientPathWithinRoot(files.CanonicalClientPath(root), file.path)
-						file.image, file.err = preparePaneImage(ctx, files, file.path, external)
+						file.image, file.err = preparePaneImage(ctx, files, file.path, external, imageStore, imageLane)
 					} else {
-						file.image, file.err = preparePaneImage(ctx, nil, file.path, false)
+						file.image, file.err = preparePaneImage(ctx, nil, file.path, false, imageStore, imageLane)
 					}
 				}
 				msg.files = append(msg.files, file)
@@ -418,14 +421,23 @@ func (m *App) applyPaneFilesOpened(msg paneFilesOpenedMsg) tea.Cmd {
 }
 
 func releasePaneDocuments(msg paneFilesOpenedMsg) tea.Cmd {
-	if msg.refs == nil {
-		return nil
-	}
 	var cmds []tea.Cmd
+	var images []*paneImageSnapshot
 	for _, file := range msg.files {
-		if file.err == nil && file.snapshot != nil {
+		if msg.refs != nil && file.err == nil && file.snapshot != nil {
 			cmds = append(cmds, msg.refs.releaseCmd(file.snapshot.ID))
 		}
+		if file.image.take() {
+			images = append(images, file.image)
+		}
+	}
+	if len(images) > 0 {
+		cmds = append(cmds, func() tea.Msg {
+			for _, image := range images {
+				image.discard()
+			}
+			return nil
+		})
 	}
 	return tea.Batch(cmds...)
 }

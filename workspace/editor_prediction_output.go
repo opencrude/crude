@@ -201,7 +201,7 @@ func checkSuggestion(text []byte, caret int, h suggestionHunk, own []types.Recen
 }
 
 // suggestionAgentWindow is how long lines that an agent or the disk changed
-// stay out of suggestions: Aeron does not suggest where an agent is editing.
+// stay out of suggestions: Errand does not suggest where an agent is editing.
 const suggestionAgentWindow = 10 * time.Second
 
 // agentBusy reports whether h touches lines of rel that another author

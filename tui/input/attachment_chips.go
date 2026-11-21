@@ -28,10 +28,7 @@ func (m Model) ReferenceChips(width int) []ReferenceChip {
 	chips := make([]ReferenceChip, 0, min(len(refs), 8))
 	for i := start; i < len(refs); i++ {
 		ref := refs[i]
-		label := strings.Join(strings.Fields(ref.Title), " ")
-		if label == "" {
-			label = ref.DisplayName()
-		}
+		label := ref.Caption()
 		reserve := 0
 		if i+1 < len(refs) || start > 0 {
 			reserve = 7

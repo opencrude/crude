@@ -88,13 +88,13 @@ func TestAeronCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
 			continue
 		}
 		if out.State != control.Committed || out.Fault != nil {
-			t.Fatalf("Aeron could not configure its installed server: %+v", out)
+			t.Fatalf("Errand could not configure its installed server: %+v", out)
 		}
 		if apply != nil {
 			apply(out)
 		}
 		if got := ws.LoadAppSettings().LSP.Languages["go"].Command; got != command {
-			t.Fatalf("Aeron's launch command did not reach live settings: %q", got)
+			t.Fatalf("Errand's launch command did not reach live settings: %q", got)
 		}
 	}
 	// The exception does not include unrelated authority.
@@ -266,7 +266,7 @@ func TestAeronOwnsSettingOnlyAtWorkspaceScope(t *testing.T) {
 					continue
 				}
 				if out.Fault != nil || out.State != control.Committed {
-					t.Fatalf("workspace Aeron write failed: %s: %+v", path, out)
+					t.Fatalf("workspace Errand write failed: %s: %+v", path, out)
 				}
 				if apply != nil {
 					apply(out)
@@ -288,7 +288,7 @@ func TestAeronOwnsSettingOnlyAtWorkspaceScope(t *testing.T) {
 	}
 	want := map[string]string{"PATH": "${workspaceFolder}/.venv/bin:${env:PATH}", "VIRTUAL_ENV": "${workspaceFolder}/.venv"}
 	if got := ws.TermMgr.Settings().Environment; !reflect.DeepEqual(got, want) {
-		t.Fatalf("terminal launch settings did not receive Aeron's environment: %+v", got)
+		t.Fatalf("terminal launch settings did not receive Errand's environment: %+v", got)
 	}
 	if got := ws.AppDefaults().Terminal.Environment["PATH"]; got != "app-value" {
 		t.Fatalf("workspace environment changed application defaults: %q", got)

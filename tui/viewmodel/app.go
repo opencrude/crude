@@ -158,8 +158,8 @@ type App struct {
 	sessionLifecycleSequence    uint64
 	sessionLifecyclePending     bool
 	// sessionLifecycleAfterAeron is the user's latest session request made
-	// while the automatic Aeron open held the slot; it starts when that open
-	// settles. A new attachment discards it with the Aeron state.
+	// while the automatic Errand open held the slot; it starts when that open
+	// settles. A new attachment discards it with the Errand state.
 	sessionLifecycleAfterAeron func() tea.Cmd
 	composerDraftErr           error
 	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
@@ -169,6 +169,8 @@ type App struct {
 	referenceOverlay           *referenceOverlayState
 	attachmentOpen             *attachmentOpenState
 	terminalImages             terminalImageState
+	pixelMotion                pixelMotionState
+	imageResidency             imageResidency
 	imagePlacements            []tea.ImagePlacement
 	pastedTextRequests         []pastedTextStoredMsg
 	DirtyPromptPath            string
@@ -288,14 +290,14 @@ type App struct {
 	activityBar          *activitybar.Screen
 	activityList         *activitylist.Screen
 	agentFolded          map[string]bool      // agent IDs whose children the Agents sidebar hides
-	aeronPrepared        map[string]bool      // Aeron agents already minimized in this shell
-	aeronEnsureInFlight  bool                 // one workspace-Aeron ensure request is running
+	aeronPrepared        map[string]bool      // Errand agents already minimized in this shell
+	aeronEnsureInFlight  bool                 // one workspace-Errand ensure request is running
 	aeronEnsureScheduled bool                 // an ensure waits for its start time and a free lifecycle slot
 	aeronEnsureEarliest  time.Time            // do not start the ensure before this time
-	aeronEnsureFailed    bool                 // Aeron could not start; wait for a settings change or new work
-	aeronOrders          []provider.UserInput // work waiting until the workspace Aeron is open
-	aeronEnsureError     string               // the last open failure, shown when the user opens Aeron
-	aeronOpenRequested   bool                 // the user opened Aeron before the core returned it
+	aeronEnsureFailed    bool                 // Errand could not start; wait for a settings change or new work
+	aeronOrders          []provider.UserInput // work waiting until the workspace Errand is open
+	aeronEnsureError     string               // the last open failure, shown when the user opens Errand
+	aeronOpenRequested   bool                 // the user opened Errand before the core returned it
 	tooltip              pointerTooltip       // the one hover tooltip of the shell
 	gitPanel             *gitpanel.Panel
 	activityView         activitybar.View
@@ -332,6 +334,7 @@ type App struct {
 	onboarding             onboardingState
 	projectTools           projectToolsState
 	workspaceInfos         []workspace.WorkspaceInfo
+	workspaceActivity      workspaceActivityState
 	workspaceListLoading   bool
 	workspaceListError     string
 	workspaceListCancel    context.CancelFunc
@@ -430,7 +433,7 @@ type App struct {
 	navigation            *navigationState
 	completion            *completionState
 	completionIntent      *completionIntent
-	// suggest owns Aeron's editor suggestions in this shell.
+	// suggest owns Errand's editor suggestions in this shell.
 	suggest              suggestionState
 	completionSequence   uint64
 	inlayViews           map[*editor.Editor]*inlayViewState
@@ -1023,6 +1026,7 @@ func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 		wsWidget.FocusSearch()
 	}
 	win.MarkContentDirty()
+	m.requestSettingsShellInventory()
 }
 
 func (m *App) updateSettingsWindowTitle() {

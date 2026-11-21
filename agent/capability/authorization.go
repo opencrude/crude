@@ -223,7 +223,7 @@ func (service *Service) localActorClients(actor captypes.RuntimeActor) *mcpclien
 	key := taskKey(actor)
 	clients := service.executionClients[key]
 	if clients == nil {
-		clients = mcpclient.New(actor.ExecutionRoot)
+		clients = service.newMCPManager(actor.ExecutionRoot)
 		clients.SetCredentialDirectory(filepath.Join(filepath.Dir(service.cache), "credentials"))
 		clients.Configure(service.settings.Connections)
 		service.executionClients[key] = clients

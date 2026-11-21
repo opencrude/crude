@@ -2,8 +2,8 @@ package sixel
 
 import (
 	"container/heap"
+	"context"
 	"image"
-	"image/color"
 	"math"
 )
 
@@ -26,13 +26,16 @@ import (
 //     shades of the same color.
 //   - If a single color sits on a cut line, all pixels of that color are assigned to one of the subcubes
 //     rather than try to split them up between the subcubes.  This allows us to use a slice of unique colors
-//     and a map of pixel counts rather than try to represent each pixel individually.
+//     with a pixel count per color rather than trying to represent each pixel individually.
 type sixelPalette struct {
-	// Map used to convert colors from the image to palette colors
-	colorConvert map[sixelColor]sixelColor
 	// Lookup to get palette index from image color
-	paletteIndexes map[sixelColor]int
+	paletteIndexes map[sixelColor]uint8
 	PaletteColors  []sixelColor
+}
+
+type weightedSixelColor struct {
+	sixelColor
+	count uint64
 }
 
 // quantizationChannel is an enum type which indicates an axis in the color cube. Used to indicate which
@@ -94,15 +97,16 @@ func (p *cubePriorityQueue) Swap(i, j int) {
 }
 
 // createCube is used to initialize a new quantizationCube containing a region of the uniqueColors slice.
-func (p *sixelPalette) createCube(uniqueColors []sixelColor, pixelCounts map[sixelColor]uint64, startIndex, bucketLength int) quantizationCube {
-	minRed, minGreen, minBlue, minAlpha := uint32(0xffff), uint32(0xffff), uint32(0xffff), uint32(0xffff)
-	maxRed, maxGreen, maxBlue, maxAlpha := uint32(0), uint32(0), uint32(0), uint32(0)
+func (p *sixelPalette) createCube(uniqueColors []weightedSixelColor, startIndex, bucketLength int) quantizationCube {
+	minRed, minGreen, minBlue, minAlpha := uint8(0xff), uint8(0xff), uint8(0xff), uint8(0xff)
+	var maxRed, maxGreen, maxBlue, maxAlpha uint8
 	totalWeight := uint64(0)
 
 	// Figure out which channel has the greatest variance
 	for i := startIndex; i < startIndex+bucketLength; i++ {
-		r, g, b, a := uniqueColors[i].Red, uniqueColors[i].Green, uniqueColors[i].Blue, uniqueColors[i].Alpha
-		totalWeight += pixelCounts[uniqueColors[i]]
+		c := uniqueColors[i]
+		r, g, b, a := c.Red, c.Green, c.Blue, c.Alpha
+		totalWeight += c.count
 
 		if r < minRed {
 			minRed = r
@@ -163,32 +167,34 @@ func (p *sixelPalette) createCube(uniqueColors []sixelColor, pixelCounts map[six
 
 // quantize is a method that will initialize the palette's colors and lookups, provided a set
 // of unique colors and a map containing pixel counts for those colors.
-func (p *sixelPalette) quantize(uniqueColors []sixelColor, pixelCounts map[sixelColor]uint64, maxColors int) {
-	p.colorConvert = make(map[sixelColor]sixelColor)
-	p.paletteIndexes = make(map[sixelColor]int)
-
+func (p *sixelPalette) quantize(ctx context.Context, uniqueColors []weightedSixelColor, maxColors int) error {
 	// We don't need to quantize if we don't even have more than the maximum colors, and in fact, this code will explode
 	// if we have fewer than maximum colors
 	if len(uniqueColors) <= maxColors {
-		p.PaletteColors = uniqueColors
-		return
+		for _, c := range uniqueColors {
+			p.PaletteColors = append(p.PaletteColors, c.sixelColor)
+		}
+		return ctx.Err()
 	}
 
 	cubeHeap := make(cubePriorityQueue, 0, maxColors)
 
 	// Start with a cube that contains all colors
 	heap.Init(&cubeHeap)
-	heap.Push(&cubeHeap, p.createCube(uniqueColors, pixelCounts, 0, len(uniqueColors)))
+	heap.Push(&cubeHeap, p.createCube(uniqueColors, 0, len(uniqueColors)))
 
 	// Slice the best cube into two cubes until we have max colors, then we have our palette
 	for cubeHeap.Len() < maxColors {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		cubeToSplit := heap.Pop(&cubeHeap).(quantizationCube)
 
 		//nolint:godox
 		// TODO: Use slices.SortFunc and cmp.Compare in the future (>=1.24)
 		// Then can delete palette_sort.go
 		sortFunc(uniqueColors[cubeToSplit.startIndex:cubeToSplit.startIndex+cubeToSplit.length],
-			func(left sixelColor, right sixelColor) int {
+			func(left weightedSixelColor, right weightedSixelColor) int {
 				switch cubeToSplit.sliceChannel { //nolint:exhaustive // alpha channel not used
 				case quantizationRed:
 					return compare(left.Red, right.Red)
@@ -204,13 +210,12 @@ func (p *sixelPalette) quantize(uniqueColors []sixelColor, pixelCounts map[sixel
 		// We need to split up the colors in this cube so that the pixels are evenly split between the two,
 		// or at least as close as we can reasonably get. What we do is count up the pixels as we go through
 		// and place the cut point where around half of the pixels are on the left side
-		countSoFar := pixelCounts[uniqueColors[cubeToSplit.startIndex]]
+		countSoFar := uniqueColors[cubeToSplit.startIndex].count
 		targetCount := cubeToSplit.pixelCount / 2
 		leftLength := 1
 
 		for i := cubeToSplit.startIndex + 1; i < cubeToSplit.startIndex+cubeToSplit.length; i++ {
-			c := uniqueColors[i]
-			weight := pixelCounts[c]
+			weight := uniqueColors[i].count
 			if countSoFar+weight > targetCount {
 				break
 			}
@@ -220,41 +225,38 @@ func (p *sixelPalette) quantize(uniqueColors []sixelColor, pixelCounts map[sixel
 
 		rightLength := cubeToSplit.length - leftLength
 		rightIndex := cubeToSplit.startIndex + leftLength
-		heap.Push(&cubeHeap, p.createCube(uniqueColors, pixelCounts, cubeToSplit.startIndex, leftLength))
-		heap.Push(&cubeHeap, p.createCube(uniqueColors, pixelCounts, rightIndex, rightLength))
+		heap.Push(&cubeHeap, p.createCube(uniqueColors, cubeToSplit.startIndex, leftLength))
+		heap.Push(&cubeHeap, p.createCube(uniqueColors, rightIndex, rightLength))
 	}
 
 	// Once we've got max cubes in the heap, pull them all out and load them into the palette
 	for cubeHeap.Len() > 0 {
 		bucketToLoad := heap.Pop(&cubeHeap).(quantizationCube)
-		p.loadColor(uniqueColors, pixelCounts, bucketToLoad.startIndex, bucketToLoad.length)
+		p.loadColor(uniqueColors, bucketToLoad.startIndex, bucketToLoad.length)
 	}
-}
-
-// ColorIndex accepts a raw image color (NOT a palette color) and provides the palette index of that color.
-func (p *sixelPalette) ColorIndex(c sixelColor) int {
-	return p.paletteIndexes[c]
+	return ctx.Err()
 }
 
 // loadColor accepts a range of colors representing a single median cut cube. It calculates the
 // average color in the cube and adds it to the palette.
-func (p *sixelPalette) loadColor(uniqueColors []sixelColor, pixelCounts map[sixelColor]uint64, startIndex, cubeLen int) {
+func (p *sixelPalette) loadColor(uniqueColors []weightedSixelColor, startIndex, cubeLen int) {
 	totalRed, totalGreen, totalBlue, totalAlpha := uint64(0), uint64(0), uint64(0), uint64(0)
 	totalCount := uint64(0)
 	for i := startIndex; i < startIndex+cubeLen; i++ {
-		count := pixelCounts[uniqueColors[i]]
-		totalRed += uint64(uniqueColors[i].Red) * count
-		totalGreen += uint64(uniqueColors[i].Green) * count
-		totalBlue += uint64(uniqueColors[i].Blue) * count
-		totalAlpha += uint64(uniqueColors[i].Alpha) * count
+		c := uniqueColors[i]
+		count := c.count
+		totalRed += uint64(c.Red) * count
+		totalGreen += uint64(c.Green) * count
+		totalBlue += uint64(c.Blue) * count
+		totalAlpha += uint64(c.Alpha) * count
 		totalCount += count
 	}
 
 	averageColor := sixelColor{
-		Red:   uint32(totalRed / totalCount),   //nolint:gosec
-		Green: uint32(totalGreen / totalCount), //nolint:gosec
-		Blue:  uint32(totalBlue / totalCount),  //nolint:gosec
-		Alpha: uint32(totalAlpha / totalCount), //nolint:gosec
+		Red:   uint8(totalRed / totalCount),   //nolint:gosec
+		Green: uint8(totalGreen / totalCount), //nolint:gosec
+		Blue:  uint8(totalBlue / totalCount),  //nolint:gosec
+		Alpha: uint8(totalAlpha / totalCount), //nolint:gosec
 	}
 
 	p.PaletteColors = append(p.PaletteColors, averageColor)
@@ -263,86 +265,100 @@ func (p *sixelPalette) loadColor(uniqueColors []sixelColor, pixelCounts map[sixe
 // sixelColor is a flat struct that contains a single color: all channels are 0-100
 // instead of anything sensible.
 type sixelColor struct {
-	Red   uint32
-	Green uint32
-	Blue  uint32
-	Alpha uint32
+	Red   uint8
+	Green uint8
+	Blue  uint8
+	Alpha uint8
 }
 
-// sixelConvertColor accepts an ordinary Go color and converts it to a sixelColor, which
-// has channels ranging from 0-100.
-func sixelConvertColor(c color.Color) sixelColor {
-	r, g, b, a := c.RGBA()
+// sixelConvertColor converts premultiplied 16-bit RGBA to Sixel's 0-100 channels.
+func sixelConvertColor(r, g, b, a uint32) sixelColor {
 	return sixelColor{
-		Red:   sixelConvertChannel(r),
-		Green: sixelConvertChannel(g),
-		Blue:  sixelConvertChannel(b),
-		Alpha: sixelConvertChannel(a),
+		Red:   uint8(ConvertChannel(r)), //nolint:gosec // 0-100
+		Green: uint8(ConvertChannel(g)), //nolint:gosec // 0-100
+		Blue:  uint8(ConvertChannel(b)), //nolint:gosec // 0-100
+		Alpha: uint8(ConvertChannel(a)), //nolint:gosec // 0-100
 	}
 }
 
-// sixelConvertChannel converts a single color channel from go's standard 0-0xffff range to
-// sixel's 0-100 range.
-func sixelConvertChannel(channel uint32) uint32 {
-	// We add 328 because that is about 0.5 in the sixel 0-100 color range, we're trying to
-	// round to the nearest value
-	return (channel + 328) * 100 / 0xffff
+func readSixelRGBA(img image.Image) func(int, int) (uint32, uint32, uint32, uint32) {
+	// Reading through At boxes common decoded pixels into a color.Color for
+	// every sample. RGBA64At retains the same precision without the allocation.
+	if pixels, ok := img.(image.RGBA64Image); ok {
+		return func(x, y int) (uint32, uint32, uint32, uint32) {
+			return pixels.RGBA64At(x, y).RGBA()
+		}
+	}
+	return func(x, y int) (uint32, uint32, uint32, uint32) { return img.At(x, y).RGBA() }
 }
 
 // newSixelPalette accepts an image and produces an N-color quantized color palette using the median cut
-// algorithm. The produced sixelPalette can convert colors from the image to the quantized palette
-// in O(1) time.
-func newSixelPalette(image image.Image, maxColors int) sixelPalette {
-	pixelCounts := make(map[sixelColor]uint64)
-
-	height := image.Bounds().Dy()
-	width := image.Bounds().Dx()
-
-	// Record pixel counts for every color while also getting a set of all unique colors in the image
-	for y := range height {
-		for x := range width {
-			c := sixelConvertColor(image.At(image.Bounds().Min.X+x, image.Bounds().Min.Y+y))
-			count := pixelCounts[c]
-			count++
-
-			pixelCounts[c] = count
+// algorithm. Only the non-dithered path needs a reverse lookup for the unmodified source values.
+func newSixelPalette(ctx context.Context, img image.Image, maxColors int, dither bool) (sixelPalette, bool, error) {
+	colorPositions := make(map[sixelColor]int)
+	var uniqueColors []weightedSixelColor
+	opaque := true
+	rgba := readSixelRGBA(img)
+	bounds := img.Bounds()
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		if err := ctx.Err(); err != nil {
+			return sixelPalette{}, false, err
+		}
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			c := sixelConvertColor(rgba(x, y))
+			if i, ok := colorPositions[c]; ok {
+				uniqueColors[i].count++
+			} else {
+				// Stable first-seen order makes median cut's tied splits and
+				// the wire payload deterministic across encodes.
+				colorPositions[c] = len(uniqueColors)
+				uniqueColors = append(uniqueColors, weightedSixelColor{c, 1})
+				opaque = opaque && c.Alpha == 100
+			}
 		}
 	}
 
 	p := sixelPalette{}
-	uniqueColors := make([]sixelColor, 0, len(pixelCounts))
-	for c := range pixelCounts {
-		uniqueColors = append(uniqueColors, c)
+	if err := p.quantize(ctx, uniqueColors, maxColors); err != nil {
+		return sixelPalette{}, false, err
+	}
+	if dither && opaque && len(uniqueColors) > len(p.PaletteColors) {
+		return p, true, nil
 	}
 
-	// Build up p.PaletteColors using the median cut algorithm
-	p.quantize(uniqueColors, pixelCounts, maxColors)
+	p.paletteIndexes = make(map[sixelColor]uint8, len(uniqueColors))
+	if len(uniqueColors) == len(p.PaletteColors) {
+		for i, c := range p.PaletteColors {
+			p.paletteIndexes[c] = uint8(i) // at most MaxColors entries
+		}
+		return p, false, ctx.Err()
+	}
 
-	// The average color for a cube a color occupies is not always the closest palette color.  As a result,
-	// we need to use this very upsetting double loop to find the lookup palette color for each
-	// unique color in the image.
-	for _, c := range uniqueColors {
-		var bestColor sixelColor
-		var bestColorIndex int
+	// The average color of a cube is not necessarily the nearest palette color.
+	for i, c := range uniqueColors {
+		if i%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return sixelPalette{}, false, err
+			}
+		}
+		var bestColorIndex uint8
 		bestScore := uint32(math.MaxUint32)
 
 		for paletteIndex, paletteColor := range p.PaletteColors {
-			redDiff := c.Red - paletteColor.Red
-			greenDiff := c.Green - paletteColor.Green
-			blueDiff := c.Blue - paletteColor.Blue
-			alphaDiff := c.Alpha - paletteColor.Alpha
+			redDiff := uint32(c.Red) - uint32(paletteColor.Red)
+			greenDiff := uint32(c.Green) - uint32(paletteColor.Green)
+			blueDiff := uint32(c.Blue) - uint32(paletteColor.Blue)
+			alphaDiff := uint32(c.Alpha) - uint32(paletteColor.Alpha)
 
 			score := (redDiff * redDiff) + (greenDiff * greenDiff) + (blueDiff * blueDiff) + (alphaDiff * alphaDiff)
 			if score < bestScore {
-				bestColor = paletteColor
-				bestColorIndex = paletteIndex
+				bestColorIndex = uint8(paletteIndex)
 				bestScore = score
 			}
 		}
 
-		p.paletteIndexes[c] = bestColorIndex
-		p.colorConvert[c] = bestColor
+		p.paletteIndexes[c.sixelColor] = bestColorIndex
 	}
 
-	return p
+	return p, false, ctx.Err()
 }
