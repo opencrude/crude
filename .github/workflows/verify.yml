@@ -10,7 +10,9 @@ jobs:
   linux:
     name: Linux quality and tests
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    # The full race suite follows the normal suite on this runner. Keep the
+    # per-test and per-group limits in test_go.py.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
