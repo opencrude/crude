@@ -62,9 +62,10 @@ func TestPublishedRecoveryListsStayDetachedFromCaller(t *testing.T) {
 			messages := []provider.ChatMessage{message}
 			archive := messages
 			mutation := ContextMutation{Replace: &ContextReplacement{Generation: 1, Reason: "checkpoint", Messages: messages}}
-			if kind == "append" {
+			switch kind {
+			case "append":
 				mutation = ContextMutation{Append: []ContextMessageDelta{{Message: message, CreatedAt: 1}}}
-			} else if kind == "distinct archive" {
+			case "distinct archive":
 				archive = []provider.ChatMessage{provider.NewTextMessage("user", "earlier history")}
 			}
 			wantArchive := append([]provider.ChatMessage(nil), archive...)

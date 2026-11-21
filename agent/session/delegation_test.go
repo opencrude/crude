@@ -89,12 +89,28 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	}
 	nextRequest := func() provider.ChatRequest {
 		t.Helper()
-		select {
-		case request := <-requests:
-			return request
-		case <-time.After(5 * time.Second):
-			t.Fatal("model request missing")
-			return provider.ChatRequest{}
+		timeout := time.NewTimer(5 * time.Second)
+		defer timeout.Stop()
+		var lastRecovery any
+		for {
+			select {
+			case request := <-requests:
+				return request
+			case event := <-sender.ch:
+				// Like a connected shell, drain events while the turn runs.
+				// A full test channel must not block the next model call.
+				if event.agentID == orch.ID {
+					switch event.typ {
+					case "recovery":
+						lastRecovery = event.data
+					case "done":
+						t.Fatalf("turn ended before the next model request; last recovery: %+v", lastRecovery)
+					}
+				}
+			case <-timeout.C:
+				t.Fatalf("model request missing; last recovery: %+v", lastRecovery)
+				return provider.ChatRequest{}
+			}
 		}
 	}
 	hasTool := func(request provider.ChatRequest, name string) bool {
