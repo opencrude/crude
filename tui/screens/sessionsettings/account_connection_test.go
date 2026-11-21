@@ -68,7 +68,7 @@ func TestRoleModelsIgnoreStaleAccountAndMissingAccountFailsClosed(t *testing.T) 
 	}
 	screen.ConfigureAccounts(map[string]provider.Account{"a": {ID: "a", ProviderID: "openrouter", Label: "A", Connection: provider.DefaultTemplates()["openrouter"]}})
 	screen.openRole("default")
-	if got := screen.formModel.Field(fieldProvider).Description; !strings.Contains(got, "Missing account: b") {
+	if got := screen.formModel.Field(fieldProvider).Description; got != types.RemovedAccountName {
 		t.Fatalf("missing explicit account redirected: %q", got)
 	}
 	if cmd := screen.openModelPicker(); cmd != nil {

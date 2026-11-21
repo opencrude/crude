@@ -60,7 +60,7 @@ func TestGhostOutcomeTabCommitsInsertionReplacementOrJump(t *testing.T) {
 }
 
 func TestGhostOutcomePartialAcceptKeepsTheSameProducersRemainder(t *testing.T) {
-	const start, owner = 5, "aeron"
+	const start, owner = 5, "errand"
 	for _, tc := range []struct {
 		name       string
 		key        tea.KeyPressMsg

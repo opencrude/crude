@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1506,7 +1507,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		if !ok {
 			return ui.EventResult{Handled: true}
 		}
-		return s.requestPrompt(PromptRemoveAccount, account.ID, account.Label, 0)
+		return s.requestPrompt(PromptRemoveAccount, account.ID, ttypes.AccountName(s.model.accounts, account.ID), 0)
 	case "settings.account.confirm-remove":
 		id, _ := action.Payload.(string)
 		if s.model.accountBusy || id == "" || id != s.model.accountID {
@@ -1516,6 +1517,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		if err != nil {
 			return ui.EventResult{Handled: true}
 		}
+		change.RemovalPreview = ttypes.AccountRemovalPreview(s.accountRemovalSettings(), id)
 		return s.submitAccountChange(change)
 	case "settings.chatgpt.signin":
 		if s.model.Scope() != ttypes.SettingsScopeApplication || s.model.accountEditor == nil || s.model.accountBusy || s.model.accountEditor.draft.Connection.AuthType != provider.AuthChatGPT || s.model.authWaitingID == s.model.accountEditor.draft.ID {
@@ -1857,6 +1859,7 @@ func (s *WorkspaceSettingsSurface) requestPrompt(kind PromptKind, id, label stri
 	case PromptRemoveAccount:
 		before := provider.CloneAccount(owner.accounts[id])
 		msg.beforeAccount = &before
+		msg.AccountUses = ttypes.AccountUses(s.accountRemovalSettings(), id)
 	case PromptDiscardEditor, PromptDiscardSettings:
 		if kind == PromptDiscardSettings {
 			msg.preferences = owner.preferenceBytes()
@@ -1880,6 +1883,14 @@ func (s *WorkspaceSettingsSurface) requestPrompt(kind PromptKind, id, label stri
 	}}
 }
 
+// Account removal writes the application layer, not a Settings draft.
+func (s *WorkspaceSettingsSurface) accountRemovalSettings() ttypes.AppSettings {
+	saved := s.model.appDefaults
+	saved.Accounts = s.model.accounts
+	saved.Capabilities.WebSearchRoutes = s.capCatalog.savedWebSearchRoutes()
+	return saved
+}
+
 // PromptRelevant rejects queued actions from a closed, replaced, or switched
 // settings page before opening another modal window above it.
 func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
@@ -1893,7 +1904,8 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 		return s.remoteRevokeRelevant(msg)
 	case PromptRemoveAccount:
 		current, ok := s.model.accounts[msg.ID]
-		return ok && s.accountsOpen() && s.model.accountID == msg.ID && msg.beforeAccount != nil && reflect.DeepEqual(current, *msg.beforeAccount)
+		return ok && s.accountsOpen() && s.model.accountID == msg.ID && msg.beforeAccount != nil && reflect.DeepEqual(current, *msg.beforeAccount) &&
+			slices.Equal(msg.AccountUses, ttypes.AccountUses(s.accountRemovalSettings(), msg.ID))
 	case PromptDiscardEditor:
 		if s.model.capabilityDraft != nil && msg.capabilityEditor == s.capCatalog {
 			return reflect.DeepEqual(formDraftBytes(s.model.capabilityDraft), msg.capabilityDraft)

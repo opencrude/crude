@@ -29,17 +29,17 @@ func ControlSettingsAuthority(path string) bool {
 	return control.SettingsAuthority(path)
 }
 
-// aeronOwnsSetting permits this workspace's Errand to configure its language
+// errandOwnsSetting permits this workspace's Errand to configure its language
 // servers and terminal environment. Application settings and every other
 // agent retain the human-only rule for these authority paths.
-func (a *actor) aeronOwnsSetting(caller control.Caller, scope, path string) bool {
-	if scope != "workspace" || path == "lsp.ask_aeron" || caller.Kind != control.AgentCaller || caller.AgentID == "" {
+func (a *actor) errandOwnsSetting(caller control.Caller, scope, path string) bool {
+	if scope != "workspace" || path == "lsp.ask_errand" || caller.Kind != control.AgentCaller || caller.AgentID == "" {
 		return false
 	}
 	if !strings.HasPrefix(path, "lsp.") && path != "terminal.environment" && !strings.HasPrefix(path, "terminal.environment.") {
 		return false
 	}
-	return workspace.SessionIsAeron(a.ws.SessionForAgent(caller.AgentID))
+	return workspace.SessionIsErrand(a.ws.SessionForAgent(caller.AgentID))
 }
 
 func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Owner) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
@@ -86,7 +86,7 @@ func (a *actor) prepareControlSettings(in control.Request, owner coreprotocol.Ow
 	if input.Path == "" {
 		return controlFailure(in, control.Invalid, "exact field path is required")
 	}
-	if ControlSettingsAuthority(input.Path) && !a.aeronOwnsSetting(in.Caller, input.Scope, input.Path) {
+	if ControlSettingsAuthority(input.Path) && !a.errandOwnsSetting(in.Caller, input.Scope, input.Path) {
 		return controlFailure(in, control.Denied, "authority, secret and entity settings require a human-owned operation")
 	}
 	reset := in.CommandID == "settings.reset"

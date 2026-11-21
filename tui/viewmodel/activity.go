@@ -134,8 +134,8 @@ func (m *App) refreshActivityList() {
 			// Counts every agent the panel lists, minimized included:
 			// that badge is how a backgrounded agent stays discoverable.
 			count := m.ws.AgentMgr().Count()
-			if aeron := m.ws.AgentMgr().Get(m.workspaceAeronAgent()); aeron != nil {
-				descendants, _ := agentSubtreeSummary(aeron)
+			if errand := m.ws.AgentMgr().Get(m.workspaceErrandAgent()); errand != nil {
+				descendants, _ := agentSubtreeSummary(errand)
 				count -= 1 + descendants
 			}
 			m.activityBar.SetBadge(activityAgents, count)
@@ -261,7 +261,7 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		}
 	}
 	for i, root := range roots {
-		if !workspace.SessionIsAeron(m.ws.SessionsByAgent()[root.ID]) {
+		if !workspace.SessionIsErrand(m.ws.SessionsByAgent()[root.ID]) {
 			appendTree(root, 0, i == len(roots)-1)
 		}
 	}

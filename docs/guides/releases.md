@@ -87,6 +87,14 @@ download path second, because a network can carry one and fail the other. Each
 source gets three bounded attempts, and the pinned checksum decides what is
 accepted.
 
+### Errand transition in v0.8.1
+
+The installer does not change your Crude data. The new workspace helper starts
+as Errand; its old sessions are left on disk and are not adopted or migrated.
+Back up your Crude profile before updating. After the update, open **Application
+Settings → Agents → Errand** if you want to choose a separate account or model.
+Errand can otherwise use the Main Agent's settings.
+
 ### The Git shell
 
 Agent commands run in one shell. On Windows, Git Bash starts in about 40 ms and

@@ -554,7 +554,7 @@ func webSearchFixture(t *testing.T) (*Model, *WorkspaceSettingsSurface, *ui.Host
 	// Support comes from each account's protocol declaration. The Responses
 	// account is a gateway, not one vendor host.
 	model.accounts = map[string]provider.Account{
-		"oc": {ID: "oc", ProviderID: "ollama-cloud", Label: "Ollama Fixture", APIKey: "not-a-real-key",
+		"example-account": {ID: "example-account", ProviderID: "ollama-cloud", Label: "Ollama Fixture", APIKey: "not-a-real-key",
 			Connection: provider.Template{ProviderURL: "https://ollama.example/api", APIStandard: "ollama"}},
 		"gateway": {ID: "gateway", ProviderID: "custom", Label: "Gateway Responses", APIKey: "not-a-real-key",
 			Connection: provider.Template{ProviderURL: "https://gateway.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}},
@@ -617,7 +617,7 @@ func TestWebSearchMethodsChooseOnAccountAndModelExplicitly(t *testing.T) {
 	if result := click(buffer, "Ollama Fixture"); result.Cmd != nil {
 		t.Fatal("an account that searches without a model requested a model list")
 	}
-	if form.Field(webRouteAccount).Value.String() != "oc" || !form.Field(webRouteModel).Disabled || form.Field(webRouteModel).Value.String() != "" {
+	if form.Field(webRouteAccount).Value.String() != "example-account" || !form.Field(webRouteModel).Disabled || form.Field(webRouteModel).Value.String() != "" {
 		t.Fatalf("choosing the Ollama account did not mark the model as not used: %+v", form.Field(webRouteModel))
 	}
 	if got := bufferPlain(paint()); !strings.Contains(got, "Not used") || !strings.Contains(got, "Ollama searches with the account") {
@@ -626,7 +626,7 @@ func TestWebSearchMethodsChooseOnAccountAndModelExplicitly(t *testing.T) {
 
 	request = capabilityRequest(t, click(paint(), "[ Test ]"))
 	if action := request.Action; action.Operation != captypes.TestWebSearchRoute || action.Scope != captypes.ScopeApplication ||
-		action.WebSearchRoute == nil || action.WebSearchRoute.Account != "oc" || action.WebSearchRoute.Model != "" {
+		action.WebSearchRoute == nil || action.WebSearchRoute.Account != "example-account" || action.WebSearchRoute.Model != "" {
 		t.Fatalf("Test sent the wrong route: %+v", action)
 	}
 	apply(request, snapshot, "Search works: 5 sources in 1.4 s.")
@@ -637,7 +637,7 @@ func TestWebSearchMethodsChooseOnAccountAndModelExplicitly(t *testing.T) {
 	request = capabilityRequest(t, click(paint(), "[ Save method ]"))
 	saved := request.Action.WebSearchRoute
 	if action := request.Action; action.Operation != captypes.SaveWebSearchRoute || action.Scope != captypes.ScopeApplication || saved == nil ||
-		saved.ID == "" || saved.Account != "oc" || saved.Model != "" || saved.Disabled || action.Connection != nil || len(action.Arguments) != 0 {
+		saved.ID == "" || saved.Account != "example-account" || saved.Model != "" || saved.Disabled || action.Connection != nil || len(action.Arguments) != 0 {
 		t.Fatalf("Save sent more or less than one route: %+v", action)
 	}
 	snapshot.Generation++
@@ -709,7 +709,7 @@ func TestWebSearchMethodsChooseOnAccountAndModelExplicitly(t *testing.T) {
 
 func TestWebSearchMethodsAreReadOnlyInWorkspaceScope(t *testing.T) {
 	model, root, host, snapshot := webSearchFixture(t)
-	snapshot.Settings.WebSearchRoutes = []captypes.WebSearchRoute{{ID: "r1", Account: "oc"}}
+	snapshot.Settings.WebSearchRoutes = []captypes.WebSearchRoute{{ID: "r1", Account: "example-account"}}
 	snapshot.WebSearch = map[string]captypes.WebSearchObservation{"r1": {Detail: "The account refused the key (HTTP 401). Check the account in Settings.", At: 1}}
 	model.SetCapabilitySnapshot(snapshot)
 	model.SetScope(types.SettingsScopeWorkspace)

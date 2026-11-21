@@ -49,10 +49,10 @@ func attentionKey(issue types.IssueSnapshot) string {
 	return "attention:" + hex.EncodeToString(sum[:])
 }
 
-// aeronReady reports whether the workspace Errand can take a notice now: it
+// errandReady reports whether the workspace Errand can take a notice now: it
 // runs, has no turn and waits for no answer. A turn that the user cancelled or
 // that failed waits for the user, not for Crude.
-func aeronReady(status types.AgentStatusSnapshot) bool {
+func errandReady(status types.AgentStatusSnapshot) bool {
 	return !status.NeedsAction && (status.Phase == types.AgentIdle || status.Phase == types.AgentCompleted)
 }
 
@@ -61,14 +61,14 @@ func aeronReady(status types.AgentStatusSnapshot) bool {
 func (a *actor) evaluateAttention(now time.Time) {
 	a.attention.stop()
 	if a.retiring || a.ws.Status == nil || a.ws.Collaboration == nil || a.ws.LSPMgr == nil ||
-		!a.ws.LSPMgr.Settings().AeronInvestigates() || len(a.subscribers) == 0 {
+		!a.ws.LSPMgr.Settings().ErrandInvestigates() || len(a.subscribers) == 0 {
 		return
 	}
-	aeron := a.ws.AeronAgentID()
-	if aeron == "" {
+	errand := a.ws.ErrandAgentID()
+	if errand == "" {
 		return
 	}
-	if status, ok := a.ws.Status.Agent(aeron); !ok || !aeronReady(status) {
+	if status, ok := a.ws.Status.Agent(errand); !ok || !errandReady(status) {
 		return
 	}
 	due, next := dueAttention(now, a.ws.Status.Issues(), a.attention.sent)
@@ -87,8 +87,8 @@ func (a *actor) evaluateAttention(now time.Time) {
 		key := attentionKey(issue)
 		a.attention.sent[key] = true
 		requests = append(requests, collaboration.PublishRequest{
-			SenderID: aeron, SenderName: "Crude", IdempotencyKey: key,
-			RecipientIDs: []string{aeron}, Origin: collaboration.OriginRuntime, Kind: collaboration.EventPeerNote,
+			SenderID: errand, SenderName: "Crude", IdempotencyKey: key,
+			RecipientIDs: []string{errand}, Origin: collaboration.OriginRuntime, Kind: collaboration.EventPeerNote,
 			Body: prompt.AttentionNotice(issue.Summary),
 		})
 	}

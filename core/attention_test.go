@@ -51,16 +51,16 @@ func TestAttentionRaisesEachCauseOnceAfterItSettles(t *testing.T) {
 
 // Errand takes a notice only while it waits for work: not during a turn, not
 // while it waits for an answer, and not after the user stopped it.
-func TestAttentionWaitsForAnIdleAeron(t *testing.T) {
+func TestAttentionWaitsForAnIdleErrand(t *testing.T) {
 	for phase, want := range map[types.AgentPhase]bool{
 		types.AgentIdle: true, types.AgentCompleted: true,
 		types.AgentThinking: false, types.AgentCancelled: false, types.AgentFailed: false,
 	} {
-		if got := aeronReady(types.AgentStatusSnapshot{Phase: phase}); got != want {
+		if got := errandReady(types.AgentStatusSnapshot{Phase: phase}); got != want {
 			t.Fatalf("phase %s ready=%v", phase, got)
 		}
 	}
-	if aeronReady(types.AgentStatusSnapshot{Phase: types.AgentIdle, NeedsAction: true}) {
+	if errandReady(types.AgentStatusSnapshot{Phase: types.AgentIdle, NeedsAction: true}) {
 		t.Fatal("Errand took a notice while it waited for the user")
 	}
 }

@@ -233,7 +233,7 @@ func (m *App) observeDesktopStatus(now time.Time) tea.Cmd {
 	}
 	current := make(map[string]bool)
 	for _, status := range m.ws.Status().Agents() {
-		kind, ok := desktopNoticeKind(status, func() bool { return m.isAeronAgent(status.Ref.ID) })
+		kind, ok := desktopNoticeKind(status, func() bool { return m.isErrandAgent(status.Ref.ID) })
 		if !ok {
 			continue
 		}
@@ -261,7 +261,7 @@ func (m *App) observeDesktopStatus(now time.Time) tea.Cmd {
 // from any agent needs the user. A stop or a finish is news only for an
 // agent that the user started: a child reports to its parent, and the
 // workspace Errand works in the background.
-func desktopNoticeKind(status ttypes.AgentStatusSnapshot, aeron func() bool) (noticeKind, bool) {
+func desktopNoticeKind(status ttypes.AgentStatusSnapshot, errand func() bool) (noticeKind, bool) {
 	if status.Hidden {
 		return 0, false
 	}
@@ -280,7 +280,7 @@ func desktopNoticeKind(status ttypes.AgentStatusSnapshot, aeron func() bool) (no
 	default:
 		return 0, false
 	}
-	if status.Ref.ParentID != "" || aeron() {
+	if status.Ref.ParentID != "" || errand() {
 		return 0, false
 	}
 	return kind, true

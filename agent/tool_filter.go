@@ -35,7 +35,7 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 			AllowedTools: nil,
 			DeniedTools:  []string{"delete_file"},
 		}
-	case CatAeron:
+	case CatErrand:
 		// Errand is the workspace's errand runner and has full control: no
 		// allow-list and no denied tools. The user's permission mode is its
 		// only limit.

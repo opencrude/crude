@@ -34,7 +34,7 @@ func (w *Workspace) PrepareCommitMessageWriter() (CommitMessageWriter, error) {
 	if w == nil || w.sessionCfg == nil {
 		return CommitMessageWriter{}, errors.New("no model is configured for this workspace")
 	}
-	completer, err := w.sessionCfg.AeronCompleter()
+	completer, err := w.sessionCfg.ErrandCompleter()
 	if err != nil {
 		return CommitMessageWriter{}, err
 	}

@@ -125,7 +125,7 @@ func TestReviewCardsFollowGhostRowsAndUseLastSourceLine(t *testing.T) {
 	e := newInlayTestEditor(t, source)
 	e.SetReviewComments([]ReviewComment{reviewTestComment("multi", source, "head\ncall()\n", "Review")})
 	e.SetCursorPosition(1, 5)
-	if err := e.SetSuggestion("aeron", e.Revision(), Suggestion{Start: 10, End: 10, Text: "first\nsecond\nthird"}); err != nil {
+	if err := e.SetSuggestion("errand", e.Revision(), Suggestion{Start: 10, End: 10, Text: "first\nsecond\nthird"}); err != nil {
 		t.Fatal(err)
 	}
 	b := renderTestInlays(e, 80, 10, false)

@@ -177,7 +177,7 @@ documents to read before changing each area.
   activation, with coverage-qualified, resource-governed editor and agent
   views. Its top sections hold the rules, decisions, stage status and current
   checkpoint.
-- [Ask Crude and Errand suggestions](plans/ask-crude-and-aeron-suggestions.md)
+- [Ask Crude and Errand suggestions](plans/ask-crude-and-errand-suggestions.md)
   — Ctrl+K and editor-menu asks on the real agent loop beside the code;
   integrated Errand suggestions and workspace text index remain in progress.
   Includes the verified checkpoint and next-work handoff.

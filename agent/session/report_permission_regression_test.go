@@ -18,7 +18,7 @@ import (
 )
 
 func TestChildReportTaskAllowlistMatchesPromptSchemaAndExecution(t *testing.T) {
-	for _, category := range []string{CategoryResearcher, CategoryCrafter, CategoryAeron} {
+	for _, category := range []string{CategoryResearcher, CategoryCrafter, CategoryErrand} {
 		t.Run(category, func(t *testing.T) {
 			s, store, parent, child := collaborationContractFixture(t)
 			run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: child.ID, RuntimeEpoch: child.RuntimeEpoch, Origin: collaboration.OriginPeer})

@@ -802,7 +802,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 	if s.cfg != nil {
 		cfg = copyConfig(s.cfg)
 	}
-	workspaceAgent := s.selectedMainAgent == CategoryAeron
+	workspaceAgent := s.selectedMainAgent == CategoryErrand
 	s.mu.Unlock()
 	shell := s.agentShell()
 	s.systemPromptMu.Lock()
@@ -1135,7 +1135,7 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 		}
 	}()
 	// The registry lists the root under its session's root role, so the
-	// workspace Errand is found as category "aeron". Read it before orchMu.
+	// workspace Errand is found as category "errand". Read it before orchMu.
 	s.mu.Lock()
 	rootCategory := s.selectedMainAgent
 	s.mu.Unlock()

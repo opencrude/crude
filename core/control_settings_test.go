@@ -59,21 +59,21 @@ func TestControlSettingsApplicationCaptureCommitApply(t *testing.T) {
 	}
 }
 
-func TestAeronCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
+func TestErrandCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
 	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
-	ws.SessionsByAgent["aeron"] = &workspace.Session{AgentID: "aeron",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}}}
+	ws.SessionsByAgent["errand"] = &workspace.Session{AgentID: "errand",
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}}}
 	ws.SessionsByAgent["main"] = &workspace.Session{AgentID: "main",
 		Settings: &workspace.SessionSettingsState{Effective: types.Settings{}}}
 	a := &actor{ws: ws}
 	command := filepath.Join(t.TempDir(), "language-server.exe")
-	for _, agentID := range []string{"main", "aeron"} {
+	for _, agentID := range []string{"main", "errand"} {
 		raw, _ := json.Marshal(map[string]any{"scope": "workspace", "path": "lsp.languages.go.command", "value": command})
 		in := control.Request{ID: "lsp-" + agentID, CommandID: "settings.set", Input: raw,
 			Caller: control.Caller{Kind: control.AgentCaller, AgentID: agentID}}
 		desc, err := a.staticControlDescriptor(in)
-		if err != nil || desc.HumanOnly != (agentID != "aeron") {
+		if err != nil || desc.HumanOnly != (agentID != "errand") {
 			t.Fatalf("%s descriptor has the wrong authority: %+v, %v", agentID, desc, err)
 		}
 		run, apply, handled := a.prepareControlDomain(in, coreprotocol.Owner{ClientID: "trusted", Epoch: 1})
@@ -98,7 +98,7 @@ func TestAeronCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
 		}
 	}
 	// The exception does not include unrelated authority.
-	if a.aeronOwnsSetting(control.Caller{Kind: control.AgentCaller, AgentID: "aeron"}, "workspace", "safety.confirm_at") {
+	if a.errandOwnsSetting(control.Caller{Kind: control.AgentCaller, AgentID: "errand"}, "workspace", "safety.confirm_at") {
 		t.Fatal("language-server setup granted unrelated authority")
 	}
 }
@@ -211,36 +211,36 @@ func TestControlSessionCodeIntelligenceSetAndReset(t *testing.T) {
 	}
 }
 
-func TestAeronOwnsSettingOnlyAtWorkspaceScope(t *testing.T) {
+func TestErrandOwnsSettingOnlyAtWorkspaceScope(t *testing.T) {
 	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(types.AppSettings{Terminal: types.TerminalSettings{Environment: map[string]string{"PATH": "app-value"}}})
-	ws.SessionsByAgent["aeron"] = &workspace.Session{AgentID: "aeron",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}}}
+	ws.SessionsByAgent["errand"] = &workspace.Session{AgentID: "errand",
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}}}
 	ws.SessionsByAgent["main"] = &workspace.Session{AgentID: "main",
 		Settings: &workspace.SessionSettingsState{Effective: types.Settings{}}}
 	a := &actor{ws: ws}
 	for _, scope := range []string{"workspace", "application", "session", ""} {
 		for _, caller := range []control.Caller{
-			{Kind: control.AgentCaller, AgentID: "aeron"},
+			{Kind: control.AgentCaller, AgentID: "errand"},
 			{Kind: control.AgentCaller, AgentID: "main"},
-			{Kind: control.ExternalCaller, AgentID: "aeron"},
+			{Kind: control.ExternalCaller, AgentID: "errand"},
 		} {
-			for _, path := range []string{"lsp.languages.test.command", "terminal.environment", "terminal.environment.PATH", "terminal.environment_other", "terminal.command", "safety.confirm_at", "lsp.ask_aeron"} {
+			for _, path := range []string{"lsp.languages.test.command", "terminal.environment", "terminal.environment.PATH", "terminal.environment_other", "terminal.command", "safety.confirm_at", "lsp.ask_errand"} {
 				eligible := path == "lsp.languages.test.command" || path == "terminal.environment" || path == "terminal.environment.PATH"
-				want := eligible && scope == "workspace" && caller.Kind == control.AgentCaller && caller.AgentID == "aeron"
-				if got := a.aeronOwnsSetting(caller, scope, path); got != want {
+				want := eligible && scope == "workspace" && caller.Kind == control.AgentCaller && caller.AgentID == "errand"
+				if got := a.errandOwnsSetting(caller, scope, path); got != want {
 					t.Fatalf("caller=%+v scope=%q path=%q: allowed=%v, want %v", caller, scope, path, got, want)
 				}
 			}
 		}
 	}
 	for _, scope := range []string{"workspace", "application"} {
-		for _, agent := range []string{"main", "aeron"} {
+		for _, agent := range []string{"main", "errand"} {
 			caller := control.Caller{Kind: control.AgentCaller, AgentID: agent}
-			allowed := scope == "workspace" && agent == "aeron"
-			for _, path := range []string{"terminal.environment", "terminal.environment.PATH", "lsp.languages.test.command", "lsp.ask_aeron"} {
-				writeAllowed := allowed && path != "lsp.ask_aeron"
+			allowed := scope == "workspace" && agent == "errand"
+			for _, path := range []string{"terminal.environment", "terminal.environment.PATH", "lsp.languages.test.command", "lsp.ask_errand"} {
+				writeAllowed := allowed && path != "lsp.ask_errand"
 				value := any("${workspaceFolder}/.venv/bin:${env:PATH}")
 				switch path {
 				case "terminal.environment":

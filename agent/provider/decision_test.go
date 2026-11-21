@@ -103,7 +103,7 @@ func TestOllamaTemplateFindsDecisionModelsAndSystemOne(t *testing.T) {
 		switch r.URL.Path {
 		case "/proxy/api/tags":
 			lists++
-			fmt.Fprint(w, `{"models":[{"name":"clef:27b","capabilities":["decision","vision"]},{"name":"beam","capabilities":["completion","tools"]}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"example-decider","capabilities":["decision","vision"]},{"name":"beam","capabilities":["completion","tools"]}]}`)
 		case "/proxy/v1/systemone":
 			var req struct {
 				Questions map[string]DecisionQuestion
@@ -120,7 +120,7 @@ func TestOllamaTemplateFindsDecisionModelsAndSystemOne(t *testing.T) {
 	defer srv.Close()
 	p := FromPreset("ollama-cloud", "key", srv.URL+"/proxy/api")
 	p.AccountID = "ollama-template-" + t.Name()
-	for model, want := range map[string]string{"clef:27b": ModelTypeDecision, "beam": ModelTypeChat} {
+	for model, want := range map[string]string{"example-decider": ModelTypeDecision, "beam": ModelTypeChat} {
 		p.Model = model
 		got, err := p.ResolveModelType(t.Context(), ModelTypeAutomatic)
 		if err != nil || got != want {
@@ -134,7 +134,7 @@ func TestOllamaTemplateFindsDecisionModelsAndSystemOne(t *testing.T) {
 	if got, _ := p.ResolveModelType(t.Context(), ModelTypeDecision); got != ModelTypeDecision {
 		t.Fatal("explicit model type was not kept")
 	}
-	p.Model = "clef:27b"
+	p.Model = "example-decider"
 	answers, err := p.Decide(t.Context(), `{"tool":"execute_command"}`, map[string]DecisionQuestion{"d": {Type: "choice", Instructions: "May it run?", Criteria: map[string]string{"allow": "a", "deny": "d", "ask": "q"}}})
 	if err != nil || answers["d"].Choice != "deny" || answers["d"].Probabilities["deny"] != 0.98 {
 		t.Fatal(answers, err)

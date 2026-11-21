@@ -129,7 +129,7 @@ func TestAgentOutputLimitPersistsAndIsolatesConnectionAndProfile(t *testing.T) {
 	t.Cleanup(func() { _ = catalog.Close() })
 	connection := FromPreset("commandcode", "key", "https://provider.example/v1")
 	connection.AccountID = "account-1"
-	const profile, model = "default/aeron", "cmd/deepseek/deepseek-v4-flash"
+	const profile, model = "default/errand", "cmd/deepseek/deepseek-v4-flash"
 	if err := RecordOutputLimit(profile, connection, model, 393216); err != nil {
 		t.Fatal(err)
 	}
@@ -142,8 +142,8 @@ func TestAgentOutputLimitPersistsAndIsolatesConnectionAndProfile(t *testing.T) {
 		want                 int
 	}{
 		{"same identity", profile, model, nil, 393216},
-		{"other agent profile", "another/aeron", model, nil, 0},
-		{"other model", profile, "cmd/deepseek/deepseek-v4.1-flash", nil, 0},
+		{"other agent profile", "another/errand", model, nil, 0},
+		{"other model", profile, "cmd/example/other-model", nil, 0},
 		{"other account", profile, model, func(p *Provider) { p.AccountID = "account-2" }, 0},
 		{"other endpoint", profile, model, func(p *Provider) { p.BaseURL = "https://other.example/v1" }, 0},
 		{"other protocol", profile, model, func(p *Provider) { _ = p.SetProtocolID("anthropic") }, 0},

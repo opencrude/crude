@@ -390,7 +390,7 @@ func TestDockedFormIsSingleLineRows(t *testing.T) {
 	model := NewFormModel()
 	model.AddField(&FieldState{
 		ID: "multi", Label: "Multi-agent", Type: FieldCycle, Value: StringValue("off"),
-		Description: "Allow this session to spawn researcher, crafter, and aeron sub-agents.",
+		Description: "Allow this session to spawn researcher, crafter, and errand sub-agents.",
 		Options:     []FormOption{{ID: "on", Label: "on"}, {ID: "off", Label: "off"}},
 	})
 	model.AddField(&FieldState{

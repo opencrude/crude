@@ -13,13 +13,13 @@ import (
 	"crude/workspace"
 )
 
-func seedNamedAeronPanel(t *testing.T, app *App) {
+func seedNamedErrandPanel(t *testing.T, app *App) {
 	t.Helper()
 	ws := wsOf(app)
 	ws.Logger = stubLogger{}
 	ws.AgentMgr.AddOrchestrator("workspace-agent", workspace.NewAgentState("workspace-agent", nil, nil)).Label = "Naveen"
 	sess := &workspace.Session{SessionID: "workspace-session", AgentID: "workspace-agent",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}}}
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}}}
 	if ws.SessionsByAgent == nil {
 		ws.SessionsByAgent = make(map[string]*workspace.Session)
 	}
@@ -27,7 +27,7 @@ func seedNamedAeronPanel(t *testing.T, app *App) {
 	app.AgentView.SetHidden("workspace-agent", true)
 }
 
-func TestWorkspaceAeronPanelPlacementAndNamedAgentAbsence(t *testing.T) {
+func TestWorkspaceErrandPanelPlacementAndNamedAgentAbsence(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		for _, placement := range []string{"dock", "tab", "window"} {
 			t.Run(fmt.Sprint(size)+placement, func(t *testing.T) {
@@ -37,7 +37,7 @@ func TestWorkspaceAeronPanelPlacementAndNamedAgentAbsence(t *testing.T) {
 				app.ActiveSession = workspace.NewSession("main", t.TempDir(), nil, stubLogger{})
 				wsOf(app).SessionsByAgent = map[string]*workspace.Session{"main": app.ActiveSession}
 				app.maybeHydrateComposerDraft()
-				seedNamedAeronPanel(t, app)
+				seedNamedErrandPanel(t, app)
 				app.Input.SetInput("private draft")
 				app.setActivity(activityAgents, true)
 				app.toggleWorkspacePanel(termdock.PanelWorkspace)
@@ -60,7 +60,7 @@ func TestWorkspaceAeronPanelPlacementAndNamedAgentAbsence(t *testing.T) {
 						t.Fatal("workspace agent still affects panel count", item.Label)
 					}
 				}
-				requireAeronAbsentFromAgentList(t, app)
+				requireErrandAbsentFromAgentList(t, app)
 				rect, ok := app.screenRectOf(statusoverview.HeaderLinkID)
 				if !ok || rect.Empty() || rect.Y <= app.headerScreen.Bounds().Y {
 					t.Fatalf("link is not mounted in the panel: %+v", rect)

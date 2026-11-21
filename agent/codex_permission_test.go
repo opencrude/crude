@@ -58,7 +58,7 @@ func TestEmptyToolFilterCannotRestoreFullGPTTools(t *testing.T) {
 }
 
 func TestPatchExplicitToolSelection(t *testing.T) {
-	for _, role := range []string{CatCrafter, CatAeron, "custom"} {
+	for _, role := range []string{CatCrafter, CatErrand, "custom"} {
 		defs := FilterToolsForModel(tools.AgentTools, []string{"apply_patch"}, nil, role, true, "gpt-test")
 		if findToolDef("apply_patch", defs) == nil {
 			t.Fatalf("explicit patch missing for %s", role)

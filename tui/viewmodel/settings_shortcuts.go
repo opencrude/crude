@@ -75,7 +75,7 @@ func promotedSessionEdits(settings types.Settings) []types.SettingEdit {
 			if _, exists := settings.Agents.AgentProfiles[name]; !exists {
 				continue
 			}
-		} else if role != "default" && role != "researcher" && role != "crafter" && role != "aeron" && role != "memory" {
+		} else if role != "default" && role != "researcher" && role != "crafter" && role != "errand" && role != "memory" {
 			continue
 		}
 		// These are the session-owned role choices, not resolved provider facts.

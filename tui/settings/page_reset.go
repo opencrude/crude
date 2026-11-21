@@ -57,7 +57,7 @@ func pageOwnershipFor(category int, scope types.SettingsScope) (pageOwnership, b
 		return pageOwnership{include: [][]string{{"terminal"}}}, true
 	case catAcquisition:
 		return pageOwnership{include: [][]string{{"capabilities", "acquisition"}}}, true
-	case catAgents, catMain, catResearcher, catCrafter, catAeron:
+	case catAgents, catMain, catResearcher, catCrafter, catErrand:
 		// The application agent catalog has no reset: built-in roles are edited
 		// and named agents removed individually. A workspace returns the whole
 		// catalog to the application's agents.

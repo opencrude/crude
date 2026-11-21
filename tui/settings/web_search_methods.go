@@ -82,11 +82,7 @@ func protocolLabel(account provider.Account) string {
 }
 
 func (catalog *capabilityCatalog) webRouteAccountLabel(route captypes.WebSearchRoute) string {
-	account, ok := catalog.owner.model.accounts[route.Account]
-	if !ok {
-		return "Account removed"
-	}
-	return mapDefault(account.Label, route.Account)
+	return types.AccountName(catalog.owner.model.accounts, route.Account)
 }
 
 func (catalog *capabilityCatalog) webRouteObservation(route captypes.WebSearchRoute) (captypes.WebSearchObservation, bool) {
@@ -218,7 +214,7 @@ func (catalog *capabilityCatalog) openWebRouteEditor(route captypes.WebSearchRou
 	options := make([]ui.FormOption, 0, len(model.accounts))
 	for id, account := range model.accounts {
 		if supported, _ := webSearchAccount(account); supported {
-			options = append(options, ui.FormOption{ID: id, Label: mapDefault(account.Label, id)})
+			options = append(options, ui.FormOption{ID: id, Label: types.AccountName(model.accounts, id)})
 		}
 	}
 	sort.Slice(options, func(i, j int) bool {

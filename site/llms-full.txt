@@ -77,9 +77,9 @@ Stage or discard every file and hunk. Risky commands wait for your approval. Loc
 - Command approval
 - Local History restore
 
-## Aeron, the workspace agent — Problems don’t wait. Neither does Aeron.
+## Errand, the workspace agent — Problems don’t wait. Neither does Errand.
 
-Aeron works in the background of every workspace. When a language server stops or project setup breaks, Aeron investigates and asks you only when the decision is yours. Your open tab and unsent text stay untouched.
+Errand works in the background of every workspace. When a language server stops or project setup breaks, Errand investigates and asks you only when the decision is yours. Your open tab and unsent text stay untouched.
 
 - Always on
 - Asks, never assumes

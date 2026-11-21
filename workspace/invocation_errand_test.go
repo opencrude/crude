@@ -17,29 +17,29 @@ func TestNewAgentSessionAsRootsSessionInTheRole(t *testing.T) {
 	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 	cfg := historyE2EConfig("http://127.0.0.1:1")
 	prof := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
-	if _, ok := prof.Categories[session.CategoryAeron]; !ok {
-		prof.Categories[session.CategoryAeron] = session.CategoryConfig{Inherit: session.InheritMain}
+	if _, ok := prof.Categories[session.CategoryErrand]; !ok {
+		prof.Categories[session.CategoryErrand] = session.CategoryConfig{Inherit: session.InheritMain}
 		cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = prof
 	}
 	w.SetBackendConfig(cfg, t.TempDir())
 	w.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
 
-	created := w.NewAgentSessionAs(session.CategoryAeron)
+	created := w.NewAgentSessionAs(session.CategoryErrand)
 	if created.Error != "" {
 		t.Fatal(created.Error)
 	}
 	owner := w.SessionsByID[created.SessionID]
-	if owner == nil || !SessionIsAeron(owner) {
+	if owner == nil || !SessionIsErrand(owner) {
 		t.Fatalf("session is not rooted in Errand: %+v", owner)
 	}
-	if got := w.BackendSession(created.SessionID).SettingsSnapshot().SessionMainAgent; got != session.CategoryAeron {
-		t.Fatalf("backend role = %q, want %q", got, session.CategoryAeron)
+	if got := w.BackendSession(created.SessionID).SettingsSnapshot().SessionMainAgent; got != session.CategoryErrand {
+		t.Fatalf("backend role = %q, want %q", got, session.CategoryErrand)
 	}
 	plain := w.NewAgentSession()
 	if plain.Error != "" {
 		t.Fatal(plain.Error)
 	}
-	if SessionIsAeron(w.SessionsByID[plain.SessionID]) {
+	if SessionIsErrand(w.SessionsByID[plain.SessionID]) {
 		t.Fatal("an ordinary session became Errand")
 	}
 	if bad := w.NewAgentSessionAs("no-such-role"); bad.Error == "" {
@@ -49,7 +49,7 @@ func TestNewAgentSessionAsRootsSessionInTheRole(t *testing.T) {
 
 // The workspace keeps exactly one Errand, and reopening the workspace resumes
 // that same saved agent instead of creating another one.
-func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
+func TestEnsureErrandSessionIsOneAndReopens(t *testing.T) {
 	setTestHome(t)
 	root := t.TempDir()
 	makeWorkspace := func() *Workspace {
@@ -57,8 +57,8 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 		cfg := historyE2EConfig("http://127.0.0.1:1")
 		prof := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
-		if _, ok := prof.Categories[session.CategoryAeron]; !ok {
-			prof.Categories[session.CategoryAeron] = session.CategoryConfig{Inherit: session.InheritMain}
+		if _, ok := prof.Categories[session.CategoryErrand]; !ok {
+			prof.Categories[session.CategoryErrand] = session.CategoryConfig{Inherit: session.InheritMain}
 			cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = prof
 		}
 		w.SetBackendConfig(cfg, t.TempDir())
@@ -67,50 +67,50 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 	}
 
 	w := makeWorkspace()
-	first := w.EnsureAeronSession()
+	first := w.EnsureErrandSession()
 	if first.Error != "" {
 		t.Fatal(first.Error)
 	}
-	if !SessionIsAeron(w.SessionsByID[first.SessionID]) {
+	if !SessionIsErrand(w.SessionsByID[first.SessionID]) {
 		t.Fatalf("ensure did not root the session in Errand: %+v", w.SessionsByID[first.SessionID])
 	}
 	if !w.YoloForAgent(first.OrchID) {
 		t.Fatal("the workspace Errand did not start in automatic approval mode")
 	}
-	if got := w.WorkspaceDB.GetSetting(workspaceAeronSessionKey); got != first.SessionID {
+	if got := w.WorkspaceDB.GetSetting(workspaceErrandSessionKey); got != first.SessionID {
 		t.Fatalf("remembered Errand = %q, want %q", got, first.SessionID)
 	}
-	// Other agents find Errand with agent_list query "aeron": the registry
+	// Other agents find Errand with agent_list query "errand": the registry
 	// lists the root under its role, not as an ordinary default agent.
 	if w.Collaboration == nil {
 		t.Fatal("test workspace has no collaboration registry")
 	}
 	{
-		agents, err := w.Collaboration.ListAgents(t.Context(), collaboration.AgentQuery{Query: "aeron"})
+		agents, err := w.Collaboration.ListAgents(t.Context(), collaboration.AgentQuery{Query: "errand"})
 		if err != nil {
 			t.Fatal(err)
 		}
 		found := false
 		for _, listed := range agents {
 			if listed.ID == first.OrchID {
-				found = listed.Category == session.CategoryAeron
+				found = listed.Category == session.CategoryErrand
 			}
 		}
 		if !found {
-			t.Fatalf("workspace Errand %q is not listed with category %q: %+v", first.OrchID, session.CategoryAeron, agents)
+			t.Fatalf("workspace Errand %q is not listed with category %q: %+v", first.OrchID, session.CategoryErrand, agents)
 		}
 	}
-	second := w.EnsureAeronSession()
+	second := w.EnsureErrandSession()
 	if second.Error != "" || second.SessionID != first.SessionID || second.OrchID != first.OrchID {
 		t.Fatalf("second ensure created another agent: first=%+v second=%+v", first, second)
 	}
-	if got := w.BackendSession(first.SessionID).SettingsSnapshot().SessionMainAgent; got != session.CategoryAeron {
-		t.Fatalf("saved role = %q, want %q", got, session.CategoryAeron)
+	if got := w.BackendSession(first.SessionID).SettingsSnapshot().SessionMainAgent; got != session.CategoryErrand {
+		t.Fatalf("saved role = %q, want %q", got, session.CategoryErrand)
 	}
 	// An idle workspace agent is still a saved identity. Do not add a fake
 	// transcript row to keep it alive: it must survive before its first task.
 	w.SetYoloForAgent(first.OrchID, false)
-	if again := w.EnsureAeronSession(); again.Error != "" || w.YoloForAgent(first.OrchID) {
+	if again := w.EnsureErrandSession(); again.Error != "" || w.YoloForAgent(first.OrchID) {
 		t.Fatal("ensuring a live Errand replaced the user's permission mode")
 	}
 	w.CloseAllSessions()
@@ -118,33 +118,33 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 
 	w = makeWorkspace()
 	t.Cleanup(w.Close)
-	resumed := w.EnsureAeronSession()
+	resumed := w.EnsureErrandSession()
 	if resumed.Error != "" {
 		t.Fatal(resumed.Error)
 	}
 	if resumed.SessionID != first.SessionID {
 		t.Fatalf("reopen created %q, want saved Errand %q", resumed.SessionID, first.SessionID)
 	}
-	if !SessionIsAeron(w.SessionsByID[resumed.SessionID]) {
+	if !SessionIsErrand(w.SessionsByID[resumed.SessionID]) {
 		t.Fatal("reopened session lost its Errand role")
 	}
 	if w.YoloForAgent(resumed.OrchID) {
 		t.Fatal("reopening Errand replaced the saved permission mode")
 	}
-	if other := w.EnsureAeronSession(); other.SessionID != resumed.SessionID {
+	if other := w.EnsureErrandSession(); other.SessionID != resumed.SessionID {
 		t.Fatalf("reopened workspace made a second Errand: %+v", other)
 	}
 }
 
 func TestInvocationSelectionSelectsOnlyMainAgent(t *testing.T) {
-	if !(InvocationSelection{MainAgent: "aeron"}).SelectsOnlyMainAgent("aeron") {
+	if !(InvocationSelection{MainAgent: "errand"}).SelectsOnlyMainAgent("errand") {
 		t.Fatal("the bare role selection was not recognized")
 	}
 	for _, selection := range []InvocationSelection{
-		{}, {MainAgent: "other"}, {MainAgent: "aeron", Model: "model"},
-		{MainAgent: "aeron", AccountID: "account"}, {MainAgent: "aeron", Instructions: "policy"},
+		{}, {MainAgent: "other"}, {MainAgent: "errand", Model: "model"},
+		{MainAgent: "errand", AccountID: "account"}, {MainAgent: "errand", Instructions: "policy"},
 	} {
-		if selection.SelectsOnlyMainAgent("aeron") {
+		if selection.SelectsOnlyMainAgent("errand") {
 			t.Fatalf("accepted an overridden workspace-agent selection: %+v", selection)
 		}
 	}

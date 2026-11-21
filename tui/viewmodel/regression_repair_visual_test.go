@@ -33,14 +33,14 @@ func TestRegressionRepairVisualAcceptance(t *testing.T) {
 	app.ActiveSession = workspace.NewSession("draft-owner", t.TempDir(), nil, stubLogger{})
 	ws.SessionsByAgent = map[string]*workspace.Session{"draft-owner": app.ActiveSession}
 	app.maybeHydrateComposerDraft()
-	ws.AgentMgr.AddOrchestrator("aeron-fixture", workspace.NewAgentState("aeron-fixture", nil, nil))
-	ws.SessionsByAgent["aeron-fixture"] = &workspace.Session{
-		SessionID: "aeron-fixture", AgentID: "aeron-fixture",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "aeron"}},
+	ws.AgentMgr.AddOrchestrator("errand-fixture", workspace.NewAgentState("errand-fixture", nil, nil))
+	ws.SessionsByAgent["errand-fixture"] = &workspace.Session{
+		SessionID: "errand-fixture", AgentID: "errand-fixture",
+		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}},
 	}
-	app.AgentView.SetHidden("aeron-fixture", true)
+	app.AgentView.SetHidden("errand-fixture", true)
 	app.setActivity(activityAgents, true)
-	requireAeronAbsentFromAgentList(t, app)
+	requireErrandAbsentFromAgentList(t, app)
 	path := filepath.Join(app.ws.RootPath(), "example.go")
 	app.lspFacts = map[string]types.InsightDiagnostics{path: {
 		ID: "visual-problem",

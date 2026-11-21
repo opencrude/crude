@@ -15,20 +15,20 @@ import (
 
 func suggestionConfig(endpoint string) *Config {
 	accounts := map[string]provider.Account{
-		"aeron-account": {ID: "aeron-account", ProviderID: "openai", APIKey: "fixture-key", Label: "Errand",
+		"errand-account": {ID: "errand-account", ProviderID: "openai", APIKey: "fixture-key", Label: "Errand",
 			Connection: provider.Template{Name: "Local", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthBearer}},
 		"fast-account": {ID: "fast-account", ProviderID: "openai", APIKey: "fixture-key-2", Label: "Fast",
 			Connection: provider.Template{Name: "Fast", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthBearer}},
 	}
 	return &Config{Accounts: accounts, AccountManager: provider.NewAccountManager(accounts, nil),
 		Agents: AgentsConfig{ActiveProfile: "p", Profiles: map[string]ProfileConfig{"p": {Categories: map[string]CategoryConfig{
-			CategoryAeron: {AccountID: "aeron-account", Model: "aeron-model", ThinkingEffort: "high", ModelMaxOutput: 100},
+			CategoryErrand: {AccountID: "errand-account", Model: "errand-model", ThinkingEffort: "high", ModelMaxOutput: 100},
 		}}}}}
 }
 
 // Suggestions follow Errand's account and model by default, always send
 // thinking "none", and a Suggestions account replaces Errand's completely.
-func TestSuggestionCompleterUsesAeronAndSendsNoThinking(t *testing.T) {
+func TestSuggestionCompleterUsesErrandAndSendsNoThinking(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +48,7 @@ func TestSuggestionCompleterUsesAeronAndSendsNoThinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completer.Model != "aeron-model" || completer.AccountID != "aeron-account" || completer.MaxOutputTokens != 100 || completer.Format != ttypes.SuggestionFormatChat {
+	if completer.Model != "errand-model" || completer.AccountID != "errand-account" || completer.MaxOutputTokens != 100 || completer.Format != ttypes.SuggestionFormatChat {
 		t.Fatalf("completer = %+v", completer)
 	}
 	stream, err := completer.Stream(t.Context(), "system", "input")
@@ -70,7 +70,7 @@ func TestSuggestionCompleterUsesAeronAndSendsNoThinking(t *testing.T) {
 	mu.Lock()
 	body := bodies[0]
 	mu.Unlock()
-	if body["model"] != "aeron-model" {
+	if body["model"] != "errand-model" {
 		t.Fatalf("model = %v", body["model"])
 	}
 	if effort, ok := body["reasoning_effort"]; ok && effort != "none" {
@@ -105,9 +105,9 @@ func TestSuggestionCompleterRefusalsAreUserText(t *testing.T) {
 	}
 	off := false
 	cfg = suggestionConfig("http://127.0.0.1:1")
-	role := cfg.Agents.Profiles["p"].Categories[CategoryAeron]
+	role := cfg.Agents.Profiles["p"].Categories[CategoryErrand]
 	role.Enabled = &off
-	cfg.Agents.Profiles["p"].Categories[CategoryAeron] = role
+	cfg.Agents.Profiles["p"].Categories[CategoryErrand] = role
 	if _, err := cfg.SuggestionCompleter(); err == nil || !strings.Contains(err.Error(), "turned off") {
 		t.Fatalf("disabled Errand: %v", err)
 	}
@@ -124,14 +124,14 @@ func TestSuggestionConnectionIdentityFollowsTheDestination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	account := cfg.Accounts["aeron-account"]
+	account := cfg.Accounts["errand-account"]
 	account.APIKey = "rotated"
-	cfg.AccountManager.Replace(map[string]provider.Account{"aeron-account": account, "fast-account": cfg.Accounts["fast-account"]})
+	cfg.AccountManager.Replace(map[string]provider.Account{"errand-account": account, "fast-account": cfg.Accounts["fast-account"]})
 	if err := completer.Current(); err != nil {
 		t.Fatalf("a rotated key revoked consent: %v", err)
 	}
 	account.Connection.ProviderURL = "http://127.0.0.1:2"
-	cfg.AccountManager.Replace(map[string]provider.Account{"aeron-account": account})
+	cfg.AccountManager.Replace(map[string]provider.Account{"errand-account": account})
 	if err := completer.Current(); err == nil {
 		t.Fatal("a new URL kept the old consent")
 	}

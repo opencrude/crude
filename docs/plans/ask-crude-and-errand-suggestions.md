@@ -1,4 +1,4 @@
-# Ask Crude and Aeron Suggestions
+# Ask Crude and Errand Suggestions
 
 > Status: IMPLEMENTED 2026-11-18; one acceptance gate open (300 ms visible p50,
 > see [Implementation status](#implementation-status)). Design accepted on
@@ -12,8 +12,8 @@
    override older text further down and older prediction notes in other plans.
 2. **One engine for each kind of work.** Ask Crude is a normal agent session
    on the existing agentic loop: same tools, composer, deck, recovery and
-   history. Aeron suggestions are one-shot model requests through the existing
-   Aeron role binding: never an agent run, never a tool call, never a second
+   history. Errand suggestions are one-shot model requests through the existing
+   Errand role binding: never an agent run, never a tool call, never a second
    loop.
 3. **Typing never waits.** No key handler, Update or Paint waits for context,
    a language server, the index or the network. Every asynchronous result has
@@ -28,7 +28,7 @@
 6. **Related plans.** [Autonomous code intelligence](autonomous-code-intelligence.md)
    owns language servers, facts and diagnostics; this plan only consumes them.
    [Complete editor experience](editor-parity.md) owns general editor behavior.
-   This plan owns Ask Crude, Aeron suggestions, prediction context and the
+   This plan owns Ask Crude, Errand suggestions, prediction context and the
    workspace text index.
 
 ## Decisions
@@ -36,15 +36,16 @@
 | Date | Decision | From |
 |---|---|---|
 | 2026-11-21 | Rename the workspace helper to **Errand**. Do not give Errands personal names or show old names in notifications. Keep the same workspace helper and saved identity. | User |
-| 2026-11-18 | Add **Ask Crude**: Ctrl+I in the editor (as in VS Code) and an entry in the editor context menu. Give **Aeron** the ability to act as an advanced AI autocomplete. Research how other editors do both, and design for very low latency together with real context. Crude has no semantic code index; it has a fast cross-platform fzf-based search that may be made faster. The UI and UX need a deep understanding of Crude. | User |
+| 2026-11-21 | Use `errand` for the workspace helper throughout the product. Leave old helper sessions on disk without migrating them. | User |
+| 2026-11-18 | Add **Ask Crude**: Ctrl+I in the editor (as in VS Code) and an entry in the editor context menu. Give **Errand** the ability to act as an advanced AI autocomplete. Research how other editors do both, and design for very low latency together with real context. Crude has no semantic code index; it has a fast cross-platform fzf-based search that may be made faster. The UI and UX need a deep understanding of Crude. | User |
 | 2026-11-18 | Use a shortcut with few terminal conflicts; Ctrl+K is fixed across keyboard negotiation. Copy, Select All and other shortcuts must work after a non-Latin layout switch. Batch shell/Python work with the same care. | User |
 | 2026-11-18 | Stop the long implementation for departure. Verify GPT 6.2 and Crude, commit and push a working checkpoint, and leave a handoff. This checkpoint does not accept the unfinished integrated feature. | User |
 | 2026-11-18 | Accept the recommendations, except phasing: everything is implemented as one integrated delivery, with special care for the Ask Crude UI and UX. | User |
-| 2026-11-18 | No local model installation (no llama.cpp setup by Crude). The user may point the whole Aeron at a local server; Crude is responsible only for talking to it. | User |
+| 2026-11-18 | No local model installation (no llama.cpp setup by Crude). The user may point the whole Errand at a local server; Crude is responsible only for talking to it. | User |
 | 2026-11-18 | Crude decides the thinking level of suggestion requests. Suggestions use the same base as Auto Review: an explicit account, model, thinking and timeout, sent through the normal provider client. | User |
 | 2026-11-18 | Ask Crude opens the chat in a split pane with the code attached (Ctrl+K and the context menu), not VS Code's inline box. Existing multiple panes must work without competing authorities, myopic failures or fragile hand-rolled logic. Learn from earlier bugs; keep it consistent and beautiful; do not overengineer. | User |
-| 2026-11-04 | Inherited: Aeron is a role inside the existing agentic system. No fork, no second loop, no narrower tool belt; the composer and loop are reused as they are. | User |
-| 2026-11-04 | Inherited: do not contain or sandbox Aeron's execution. | User |
+| 2026-11-04 | Inherited: Errand is a role inside the existing agentic system. No fork, no second loop, no narrower tool belt; the composer and loop are reused as they are. | User |
+| 2026-11-04 | Inherited: do not contain or sandbox Errand's execution. | User |
 | 2026-11-10 | Inherited: automatic completion stays passive. Keep the caret visible, choose no row, show obvious continuations as faded inline text. Tab accepts visible inline text or a chosen row; otherwise it edits normally. Typing must stay pleasant. | User ([code intelligence](autonomous-code-intelligence.md#decisions)) |
 
 ### Resolved questions
@@ -55,9 +56,9 @@
 | D2 | Ctrl+I when an agent already works on the file | Reuse the chat visible beside the code; otherwise a new chat. See [Where the chat opens](#where-the-chat-opens). |
 | D3 | Unsaved text | Ask Crude saves the file first. |
 | D4 | Inline Keep / Undo marks | Replaced by the split-pane design: review uses Git marks, chat diffs and `/undo`. See [Reviewing changes](#reviewing-changes). |
-| D5 | Suggestions model | A separate Suggestions model under Aeron, on the Auto Review base. It starts from Aeron's account and model; Crude sets thinking to none. |
+| D5 | Suggestions model | A separate Suggestions model under Errand, on the Auto Review base. It starts from Errand's account and model; Crude sets thinking to none. |
 | D6 | Local model | No installation. Local servers are supported as accounts (OpenAI-compatible chat or completions with a suffix, Ollama). |
-| D7 | Aeron proposing larger changes in the background | Not a background process. **Finish this change** in the Crude menu sends the user's recent edits to the chat beside, on request. |
+| D7 | Errand proposing larger changes in the background | Not a background process. **Finish this change** in the Crude menu sends the user's recent edits to the chat beside, on request. |
 
 ## Scope
 
@@ -65,7 +66,7 @@ One delivery. Each line is required.
 
 - Ask Crude: chord, menu, palette, code-selection reference, pane placement,
   save first, prepared prompts, chip open, lifecycle, documentation and tests.
-- Aeron suggestions: Suggestions tab under Aeron in Agents, request path on
+- Errand suggestions: Suggestions tab under Errand in Agents, request path on
   the normal provider client with thinking none, core request and shell
   transport, modes Off / When I ask / As I type, triggers and cancellation,
   context (cursor block, recent edits with authors, diagnostics, completion
@@ -82,7 +83,7 @@ Updated with evidence as parts land. A part not listed here does not exist.
 | Part | State |
 |---|---|
 | Ask Crude | Implemented: Ctrl+K, the editor menu's **Crude** section, the `code_selection` reference through local and connected cores, placement in [main view panes](../reference/main-view-panes.md#ask-crude-opens-the-chat-beside-the-code), chip reuse and click-to-open. Prepared prompts (**Explain**, **Fix**, **Finish this change**) send only after a save that started at or after the ask; a failed save, a disk conflict or a revert sends nothing and says why. **Finish this change** appears after a local edit in local and connected documents. Evidence: `ask_crude_test.go`, `ask_save_order_test.go`, Windows captures (Ctrl+K split, Crude menu). |
-| Aeron suggestions | Implemented: modes Off / When I ask / As I type with workspace consent (shared confirm frame, Cancel focused) and the hourly limit; insertion, nearby replacement and next-place marker; Tab, Ctrl+Right, Alt+End, Esc with dismissal memory; Tab-Tab follow-up from the same answer without a model call; completion-list precedence; cancel and release on caret, revision, focus or editor change; Suggestions tab (account, model with **Aeron's model**, format, endpoint, speed from the protocol, timeout and output limits). Chat binds thinking none; fill-in-the-middle binds no chat overrides. Changes on lines another author changed in the last 10 s are not shown. Evidence: `editor_suggestions_connected_test.go` (four connected journeys), `editor_prediction_followup_test.go`, `ghost_outcome_test.go`, `ghost_projection_test.go`, `agent_suggestions_test.go`; Windows captures of consent, a real multi-line suggestion and its acceptance at 140x36, Settings at 140x36 and 80x24. |
+| Errand suggestions | Implemented: modes Off / When I ask / As I type with workspace consent (shared confirm frame, Cancel focused) and the hourly limit; insertion, nearby replacement and next-place marker; Tab, Ctrl+Right, Alt+End, Esc with dismissal memory; Tab-Tab follow-up from the same answer without a model call; completion-list precedence; cancel and release on caret, revision, focus or editor change; Suggestions tab (account, model with **Errand's model**, format, endpoint, speed from the protocol, timeout and output limits). Chat binds thinking none; fill-in-the-middle binds no chat overrides. Changes on lines another author changed in the last 10 s are not shown. Evidence: `editor_suggestions_connected_test.go` (four connected journeys), `editor_prediction_followup_test.go`, `ghost_outcome_test.go`, `ghost_projection_test.go`, `agent_suggestions_test.go`; Windows captures of consent, a real multi-line suggestion and its acceptance at 140x36, Settings at 140x36 and 80x24. |
 | Measurement | Stages in microseconds (`suggest.context`, `ledger`, `first_byte`, `model`, `check`, `total`), shell `suggest.visible`, outcome counters and the `suggest.outcomes` table per context source, and `suggest.index` memory, curated on the dashboard's Services tab. Context assembly on the 2 MiB worst case: `BenchmarkBuildDense` 1.34-1.38 ms plus `BenchmarkRelated` 0.12-0.15 ms, under the 5 ms target. The 300 ms keystroke-to-visible p50 is observed, not yet a gate: it needs repeated measurements against a hosted model. |
 | Workspace text index | Implemented: git ignore precedence (root first, deeper wins, negation), ignore-file changes rebuild, a lost or overflowed watch rebuilds and the index reports itself incomplete until then, idempotent start and close, memory counted over text, chunks and postings against the 64 MiB limit. Related snippets stop while the index is incomplete. Find in Files still reads the disk. |
 | Next edit | Region rewrites produce checked hunks; remaining hunks chain after an accept; the marker jumps. |
@@ -134,7 +135,7 @@ the composer. The user types and presses Enter. Accept when:
 - Closing the chat tab never stops the agent or loses the draft.
 - Unsaved code is saved first; a conflict never loses either version.
 
-**Aeron suggestions.** While the user types, Aeron offers the next edit as
+**Errand suggestions.** While the user types, Errand offers the next edit as
 faded text at the caret, as a small marked change near the caret, or as a
 pointer to the next place to edit. Tab accepts. Accept when:
 
@@ -170,7 +171,7 @@ replacements and jumps are not supported.
 - `insight/predictionbudget/ledger.go`: an hourly token ledger. Each request
   runs Reserve and Start transactions before the network call and Settle after
   it. These SQLite writes are on the keystroke path and are not measured yet.
-- `agent/session/editor_prediction.go`: binds the Aeron role's account and model.
+- `agent/session/editor_prediction.go`: binds the Errand role's account and model.
 - `agent/provider/fim_once.go` (OpenAI completions, DeepSeek and Codestral FIM) and
   `agent/provider/text_once.go` (OpenAI Chat and Responses only). Both stream on the
   wire but return only at the end.
@@ -182,7 +183,7 @@ replacements and jumps are not supported.
   typing pause then equals the measured latency, so a slow connection waits
   longer before it even asks.
 
-**The Aeron role uses an agent model.** On this computer it is a thinking
+**The Errand role uses an agent model.** On this computer it is a thinking
 model at high effort. That suits agent work and is the wrong latency class
 for keystroke suggestions (D5).
 
@@ -233,7 +234,7 @@ Copilot's own report calls just as important:
    exactly: when the user edits a declaration name, offer the language
    server's Rename (reviewed) rather than a model's guess at the call sites.
 2. **Edit history with authors.** Crude knows which edits came from the user,
-   from an agent and from disk. After an agent changes a signature, Aeron can
+   from an agent and from disk. After an agent changes a signature, Errand can
    suggest the call sites the user is fixing. While an agent edits a region,
    suggestions stay out of it.
 3. **Context ready before the keystroke.** Warmers prepare definitions and
@@ -254,7 +255,7 @@ Copilot's own report calls just as important:
 Ask Crude opens the real agent chat in a pane beside the code, with the code
 already attached. There is no inline card: a box over the code is ugly in a
 terminal, hides the code it asks about and would be a second chat surface
-next to the agent tab (the same reason the Aeron sidebar page was rejected on
+next to the agent tab (the same reason the Errand sidebar page was rejected on
 2026-11-04). The agent tab, its composer, deck, transcript, model picker,
 recovery and history are used as they are.
 
@@ -308,7 +309,7 @@ so it cannot disagree with the pane owner. Groups in floating windows count
 like docked groups.
 
 1. **Reuse a visible chat.** A group other than the editor's whose selected
-   tab is an agent with a composer (not the workspace Aeron). With several,
+   tab is an agent with a composer (not the workspace Errand). With several,
    prefer the agent the user focused last, then the nearest neighbor (right,
    below, left, above), then the first in layout order. Ask Crude adds the chip
    to that agent's draft; a running agent receives it as steering when the
@@ -355,7 +356,7 @@ overlapping edits). There is no separate Keep/Undo overlay: it would be a
 second review authority beside Git marks and Local History, and Keep has no
 meaning when the files are already written.
 
-## Part 2: Aeron suggestions
+## Part 2: Errand suggestions
 
 ### What the user gets
 
@@ -370,9 +371,9 @@ meaning when the files are already written.
 
 ### Who does what
 
-- The **Aeron role** supplies the connection: its account plus the
+- The **Errand role** supplies the connection: its account plus the
   Suggestions model (D5).
-- The **workspace Aeron agent** is not involved per keystroke.
+- The **workspace Errand agent** is not involved per keystroke.
 - The **core** owns the predictor: canonical text, facts, edit history,
   index, provider connection and budget. The shell sends intents and paints
   candidates.
@@ -493,7 +494,7 @@ index that the core keeps current:
 - **Next place**: a muted `⇥ line 61` at the end of the caret line and a
   gutter arrow at the target when it is visible. First Tab moves the caret
   there and shows the change; second Tab accepts.
-- **Status**: a quiet **Aeron** footer item with one state (ready, working,
+- **Status**: a quiet **Errand** footer item with one state (ready, working,
   off, limit reached, connection problem). Its menu changes the mode, opens
   Settings and shows the measured speed and the meter.
 - **Never**: hide the caret, scroll, open a list, change the selection, show
@@ -511,13 +512,13 @@ index that the core keeps current:
 | Ask now | Alt+\\ | Works in When I ask and As I type. |
 | Keep typing | — | Matching characters keep the remainder (exists). |
 
-When the completion list is open, Aeron shows text only if it continues the
+When the completion list is open, Errand shows text only if it continues the
 list's single visible or chosen row; otherwise it waits, as in Zed.
 
 ### Settings, consent and spending
 
-- **Settings → Agents → Aeron → Suggestions** is built like the Auto Review
-  Agent's tabs (same base): account and model (empty means Aeron's own),
+- **Settings → Agents → Errand → Suggestions** is built like the Auto Review
+  Agent's tabs (same base): account and model (empty means Errand's own),
   request format (Chat, or Completions with a suffix for fill-in-the-middle
   servers, with its endpoint path), service tier, timeout and the output
   limit. Thinking is not a choice: Crude sends thinking none, which every
@@ -530,7 +531,7 @@ list's single visible or chosen row; otherwise it waits, as in Zed.
 - The workspace keeps only the mode and the hourly token cap. The old
   workspace protocol and endpoint fields go away.
 - **Workspace consent** stays. The first time suggestions turn on in a
-  workspace, one question: "Aeron sends nearby code, recent edits and related
+  workspace, one question: "Errand sends nearby code, recent edits and related
   snippets to <provider>. Turn on suggestions in this workspace?"
 - **Spending limit**: the hourly token cap stays; when the catalog knows the
   price, Settings also shows an estimate in money.

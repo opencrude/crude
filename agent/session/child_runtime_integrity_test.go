@@ -206,7 +206,7 @@ func TestChildRuntimeReceiptImmediatelyPreparesCompactionFromExactSource(t *test
 	profile.Categories[CategoryResearcher] = CategoryConfig{
 		AccountID: "account", Model: "child-notice-compaction", ModelContextWindow: 64_000, ContextCompactionPercent: &threshold,
 	}
-	profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "account", Model: "child-compactor", ModelContextWindow: 64_000}
+	profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "account", Model: "child-compactor", ModelContextWindow: 64_000}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	s, err := NewWithSessionDir("", cfg, home, home)
 	if err != nil {

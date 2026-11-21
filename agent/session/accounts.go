@@ -34,10 +34,13 @@ func (c *Config) account(id string) (provider.Account, bool) {
 func (c *Config) resolveAccount(accountID string) (provider.Account, error) {
 	account, ok := c.account(accountID)
 	if !ok || account.ID != accountID {
-		return provider.Account{}, fmt.Errorf("%w: account %q is unavailable", ErrAccountRequired, accountID)
+		if accountID == "" {
+			return provider.Account{}, ErrAccountRequired
+		}
+		return provider.Account{}, fmt.Errorf("%w: the selected account was removed. Choose another account", ErrAccountRequired)
 	}
 	if account.ProviderID == "" {
-		return provider.Account{}, fmt.Errorf("%w: account %q has no provider attribution", ErrAccountRequired, accountID)
+		return provider.Account{}, fmt.Errorf("%w: the selected account has no provider", ErrAccountRequired)
 	}
 	return account, nil
 }

@@ -323,7 +323,7 @@ func (m *App) agentTooltip(agentID string) string {
 		return ""
 	}
 	lines := []string{m.agentLabel(node)}
-	if node.IsOrchestrator() && m.isAeronAgent(agentID) {
+	if node.IsOrchestrator() && m.isErrandAgent(agentID) {
 		lines = append(lines, "Works in the background and asks with a prompt")
 	}
 	state := capitalizeFirst(m.agentStatus(agentID))

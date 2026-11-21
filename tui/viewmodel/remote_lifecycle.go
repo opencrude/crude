@@ -23,9 +23,9 @@ type remoteSessionReadyMsg struct {
 	plan *planSettledMsg
 	// ask places the new session beside the code that Ask Crude asked about.
 	ask *askRequest
-	// aeron marks the workspace's Errand. It opens minimized and never takes
-	// the user's selection; work for it waits in App.aeronOrders, not initial.
-	aeron bool
+	// errand marks the workspace's Errand. It opens minimized and never takes
+	// the user's selection; work for it waits in App.errandOrders, not initial.
+	errand bool
 }
 
 // sessionLifecycleBusy reports whether a user's session request must wait for
@@ -37,8 +37,8 @@ func (m *App) sessionLifecycleBusy(start func() tea.Cmd) (busy, kept bool) {
 	if !m.sessionLifecyclePending && !m.workspaceAttachPending {
 		return false, false
 	}
-	if m.aeronEnsureInFlight && !m.workspaceAttachPending {
-		m.sessionLifecycleAfterAeron = start
+	if m.errandEnsureInFlight && !m.workspaceAttachPending {
+		m.sessionLifecycleAfterErrand = start
 		return true, true
 	}
 	return true, false
@@ -153,10 +153,10 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 		m.reofferPlanDecision(*msg.plan)
 	}
 	m.sessionLifecyclePending = false
-	if msg.aeron {
-		cmd := m.applyAeronEnsure(msg.result)
-		if start := m.sessionLifecycleAfterAeron; start != nil {
-			m.sessionLifecycleAfterAeron = nil
+	if msg.errand {
+		cmd := m.applyErrandEnsure(msg.result)
+		if start := m.sessionLifecycleAfterErrand; start != nil {
+			m.sessionLifecycleAfterErrand = nil
 			cmd = tea.Batch(cmd, start())
 		}
 		return cmd
@@ -441,7 +441,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 	old := m.ws.(shellport.Connection)
 	m.resetDesktopNotices()
 	m.ws = msg.next
-	m.resetWorkspaceAeron()
+	m.resetWorkspaceErrand()
 	if m.remotes != nil && backendID != "" {
 		m.remotes.current = backendID
 	}

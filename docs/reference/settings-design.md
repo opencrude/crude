@@ -145,8 +145,16 @@ The shared Model dropdown filters the selected account’s catalog. Typing or pa
 an unlisted ID adds a **Use …** choice, even if the catalog is empty. Enter commits
 the highlighted choice; filtering alone never changes the saved model.
 The model page puts Speed beside Account, Model and Thinking, before the longer
-capability section. Named agents label the inherited value Role; built-ins and
-the Auto Review Agent inherit their account.
+capability section. Named agents label the inherited Speed Role. **Enabled** is
+the first row of every agent's Model page (Main Agent has none), because it
+decides whether the rest applies. An empty Account or Model always says what it
+uses, in the same words on both rows: `<account name> · <Parent>` and
+`<model ID> · <Parent>`, with the same choice first in the list
+(`syncConnection`). Researcher, Crafter and Errand follow Main Agent, named
+agents their role, Memory Agent and Auto Review follow Errand, and Errand's
+suggestions follow its Model tab. With nothing to inherit the rows say
+**Choose an account** and **Choose or enter a model ID**; agent rows never say
+Not set. An account that no longer exists is **Removed account**, never an ID.
 
 ## Collections (list → detail)
 

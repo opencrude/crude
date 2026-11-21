@@ -14,7 +14,7 @@ import (
 	"crude/types"
 )
 
-func newAeronSuggestionSettings() types.AppSettings {
+func newErrandSuggestionSettings() types.AppSettings {
 	return types.AppSettings{
 		Accounts: map[string]provider.Account{
 			"role-account": {ID: "role-account", ProviderID: "openai", Label: "Role account", APIKey: "test",
@@ -23,22 +23,22 @@ func newAeronSuggestionSettings() types.AppSettings {
 				Connection: provider.Template{ProviderURL: "https://suggestions.example.invalid", APIStandard: "ollama"}},
 		},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
-			"aeron": {AccountID: "role-account", Model: "role-model"},
+			"errand": {AccountID: "role-account", Model: "role-model"},
 		}},
 	}
 }
 
-func openAeronSuggestions(settings types.AppSettings) (*Model, *WorkspaceSettingsSurface, tea.Cmd) {
+func openErrandSuggestions(settings types.AppSettings) (*Model, *WorkspaceSettingsSurface, tea.Cmd) {
 	th := theme.DefaultDark()
 	m := New(th, settings, nil)
 	s := NewSurface(th, m)
 	m.SelectCategory(catAgents)
-	cmd := s.agents.begin("role/aeron", false)
+	cmd := s.agents.begin("role/errand", false)
 	s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "tabs.enter", Payload: "suggestions"})
 	return m, s, cmd
 }
 
-func TestAeronSuggestionSpeedUsesResolvedAccountAndMarksUnavailableChoice(t *testing.T) {
+func TestErrandSuggestionSpeedUsesResolvedAccountAndMarksUnavailableChoice(t *testing.T) {
 	for _, tc := range []struct {
 		name, account, saved string
 		options              []ui.FormOption
@@ -48,12 +48,12 @@ func TestAeronSuggestionSpeedUsesResolvedAccountAndMarksUnavailableChoice(t *tes
 		{"saved tier is not offered", "separate", "fast", []ui.FormOption{{ID: "fast", Label: "Fast (not offered)"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			settings := newAeronSuggestionSettings()
+			settings := newErrandSuggestionSettings()
 			settings.Agents.Suggestions = types.SuggestionSettings{AccountID: tc.account, ServiceTier: tc.saved}
 			if tc.account != "" {
 				settings.Agents.Suggestions.Model = "custom-model"
 			}
-			_, s, _ := openAeronSuggestions(settings)
+			_, s, _ := openErrandSuggestions(settings)
 			c := s.agents
 			tier := c.form.Field(fieldSuggestTier).FieldState()
 			want := append([]ui.FormOption{{ID: "", Label: "Account default"}}, tc.options...)
@@ -73,7 +73,7 @@ func TestAeronSuggestionSpeedUsesResolvedAccountAndMarksUnavailableChoice(t *tes
 	}
 }
 
-func TestAeronSuggestionNumericLimitsRejectInvalidValuesAndAcceptBounds(t *testing.T) {
+func TestErrandSuggestionNumericLimitsRejectInvalidValuesAndAcceptBounds(t *testing.T) {
 	for _, tc := range []struct {
 		label, id string
 		low, high int
@@ -84,7 +84,7 @@ func TestAeronSuggestionNumericLimitsRejectInvalidValuesAndAcceptBounds(t *testi
 		t.Run(tc.label, func(t *testing.T) {
 			for _, value := range []string{"not a number", "1.5", "0", "-1", strconv.Itoa(tc.high + 1)} {
 				t.Run(value, func(t *testing.T) {
-					m, s, _ := openAeronSuggestions(newAeronSuggestionSettings())
+					m, s, _ := openErrandSuggestions(newErrandSuggestionSettings())
 					c := s.agents
 					before := m.AppSettings().Agents.Suggestions
 					c.draft.SetValue(tc.id, ui.StringValue(value))
@@ -97,7 +97,7 @@ func TestAeronSuggestionNumericLimitsRejectInvalidValuesAndAcceptBounds(t *testi
 			}
 			for _, value := range []int{tc.low, tc.high} {
 				t.Run(strconv.Itoa(value), func(t *testing.T) {
-					m, s, _ := openAeronSuggestions(newAeronSuggestionSettings())
+					m, s, _ := openErrandSuggestions(newErrandSuggestionSettings())
 					c := s.agents
 					c.draft.SetValue(tc.id, ui.StringValue(strconv.Itoa(value)))
 					if !c.apply() {
@@ -117,10 +117,10 @@ func TestAeronSuggestionNumericLimitsRejectInvalidValuesAndAcceptBounds(t *testi
 	}
 }
 
-func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
-	settings := newAeronSuggestionSettings()
+func TestErrandSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
+	settings := newErrandSuggestionSettings()
 	settings.Agents.Suggestions = types.SuggestionSettings{AccountID: "separate", Model: "quick"}
-	m, s, open := openAeronSuggestions(settings)
+	m, s, open := openErrandSuggestions(settings)
 	field := s.agents.form.Field(fieldSuggestModel).FieldState()
 	request := accountModelsRequest(t, open, "separate")
 	if request.ProviderID != "openai" || request.StandardID != "ollama" || request.BaseURL != "https://suggestions.example.invalid" ||
@@ -141,7 +141,7 @@ func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
 		t.Fatalf("Suggestions Model did not recover with the account's result: options=%+v, selected=%q, loading=%t, errors=%v",
 			field.Options, field.Value.String(), field.Loading, field.Errors)
 	}
-	if cmd := s.agents.begin("role/aeron", false); cmd != nil {
+	if cmd := s.agents.begin("role/errand", false); cmd != nil {
 		// The Model tab may still fetch Errand's separate account. The
 		// Suggestions model list already arrived and must not fetch again.
 		if _, found := findAccountModelsRequest(cmd, "separate"); found {
@@ -150,36 +150,36 @@ func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
 	}
 }
 
-func TestAeronSuggestionChoicesSaveReopenAndReturnToDefaults(t *testing.T) {
-	stored := newAeronSuggestionSettings()
-	m, s, _ := openAeronSuggestions(stored)
-	change := chooseAeronSuggestion(t, s.agents, fieldSuggestAccount, "separate")
+func TestErrandSuggestionChoicesSaveReopenAndReturnToDefaults(t *testing.T) {
+	stored := newErrandSuggestionSettings()
+	m, s, _ := openErrandSuggestions(stored)
+	change := chooseErrandSuggestion(t, s.agents, fieldSuggestAccount, "separate")
 	request := accountModelsRequest(t, change, "separate")
 	m.Update(ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation,
 		Models: []types.ModelEntry{{ID: "quick", Name: "Quick model"}}})
-	chooseAeronSuggestion(t, s.agents, fieldSuggestModel, "quick")
+	chooseErrandSuggestion(t, s.agents, fieldSuggestModel, "quick")
 	saveAgentCatalogSettings(t, s, &stored)
 	if got := stored.Agents.Suggestions; got != (types.SuggestionSettings{AccountID: "separate", Model: "quick"}) {
 		t.Fatalf("saved Suggestion choices = %+v", got)
 	}
-	m, s, _ = openAeronSuggestions(stored)
+	m, s, _ = openErrandSuggestions(stored)
 	c := s.agents
 	if account, model := c.draft.Field(fieldSuggestAccount).Value.String(), c.draft.Field(fieldSuggestModel).Value.String(); account != "separate" || model != "quick" {
 		t.Fatalf("reopened suggests account=%q model=%q, want separate/quick", account, model)
 	}
-	change = chooseAeronSuggestion(t, c, fieldSuggestAccount, "")
+	change = chooseErrandSuggestion(t, c, fieldSuggestAccount, "")
 	if request, ok := findAccountModelsRequest(change, "role-account"); ok {
 		m.Update(ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation,
 			Models: []types.ModelEntry{{ID: "role-model", Name: "Role model"}}})
 	}
 	if c.draft.Field(fieldSuggestModel).Value.String() != "" {
-		chooseAeronSuggestion(t, c, fieldSuggestModel, "")
+		chooseErrandSuggestion(t, c, fieldSuggestModel, "")
 	}
 	saveAgentCatalogSettings(t, s, &stored)
 	if got := stored.Agents.Suggestions; got != (types.SuggestionSettings{}) {
 		t.Fatalf("returned to defaults but stored Suggestion overrides remain: %+v", got)
 	}
-	_, s, _ = openAeronSuggestions(stored)
+	_, s, _ = openErrandSuggestions(stored)
 	for id, want := range map[string]string{
 		fieldSuggestAccount: "", fieldSuggestModel: "", fieldSuggestFormat: types.SuggestionFormatChat,
 		fieldSuggestTier: "", fieldSuggestTimeout: "5", fieldSuggestOutput: "256",
@@ -190,7 +190,7 @@ func TestAeronSuggestionChoicesSaveReopenAndReturnToDefaults(t *testing.T) {
 	}
 }
 
-func chooseAeronSuggestion(t *testing.T, c *agentCatalog, id, value string) tea.Cmd {
+func chooseErrandSuggestion(t *testing.T, c *agentCatalog, id, value string) tea.Cmd {
 	t.Helper()
 	field := c.form.Field(id).FieldState()
 	if !slices.ContainsFunc(field.Options, func(o ui.FormOption) bool { return o.ID == value && !o.Disabled }) {

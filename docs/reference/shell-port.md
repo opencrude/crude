@@ -183,7 +183,7 @@ Sessions is the session registry, lifecycle and per-session settings surface.
 | `ListSessions` | 1 | reads | yes | session.list |
 | `NewAgentSession` | 1 | mutates | partial: result is data, but the session it creates is a live object the replica must materialize | session.create |
 | `NewAgentSessionAs` | 1 | mutates | partial: same as NewAgentSession, rooted in the requested role | session.create (role selection) |
-| `EnsureAeronSession` | 1 | mutates | partial: the core reuses, resumes or creates the workspace's one Errand; replica materializes it | session.ensure |
+| `EnsureErrandSession` | 1 | mutates | partial: the core reuses, resumes or creates the workspace's one Errand; replica materializes it | session.ensure |
 | `OpenAgentSession` | 1 | mutates | partial: same as NewAgentSession | session.open |
 | `BackendSession` | 1 | reads | no: returns live *session.Session backend | none; live backend (replica exposes a settings snapshot instead: settings.session.read) |
 | `SessionConnectionIssue` | 1 | reads | yes | registry/workspace topic replica |
@@ -647,7 +647,7 @@ These signatures are local port contracts, not wire payloads. The connected adap
 | `Agents.PrepareAgentInputAdmission` / `CommitAgentInputAdmission` / `ApplyAgentInputAdmission` | Local intent binds one `agent.submit` result and exact draft receipt. |
 | `Sessions.Sessions*` / `SessionForAgent` | Replica sessions without backend/database ownership. |
 | `Sessions.NewAgentSession` / `NewAgentSessionAs` / `OpenAgentSession` | `session.create/open` identities; replica materializes their state later. |
-| `Sessions.EnsureAeronSession` | `session.ensure` returns the workspace's one Errand (reused, resumed or created); replica materializes it like any root. |
+| `Sessions.EnsureErrandSession` | `session.ensure` returns the workspace's one Errand (reused, resumed or created); replica materializes it like any root. |
 | `Sessions.BackendSession` | Always unavailable in connected shells. |
 | `Sessions.PrepareMultiAgentToggle` / `PrepareSessionCapabilityToggle` / `PrepareSessionSettingsSave` / `PrepareSessionSettingsReset` / `ApplySessionSettingsResult` | Captured typed settings RPC/result; local owner pointers stay client-side. |
 | `Settings.PreparePreferencesSave` | Off-UI typed scoped set/remove edits; awaits durability, last explicit write wins. |

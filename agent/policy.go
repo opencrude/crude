@@ -60,7 +60,7 @@ func categoryPolicy(category string) safety.Policy {
 		p := safety.DefaultPolicy()
 		p.AllowedCapabilities[safety.CanDelete] = false
 		return p
-	case CatAeron:
+	case CatErrand:
 		return safety.DefaultPolicy()
 	default:
 		return safety.DefaultPolicy()

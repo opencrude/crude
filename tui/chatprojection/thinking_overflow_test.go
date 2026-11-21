@@ -59,7 +59,7 @@ func TestThinkingOverflowsInlineIsWidthSensitive(t *testing.T) {
 func TestThinkingOverflowsInlineReplaysRealStreamShapes(t *testing.T) {
 	const width = 70
 
-	// deepseek-v4.1-flash: ~42035 chars / ~600 rows over 57s (~10 rows/s). Replay
+	// A real reasoning model: ~42035 chars / ~600 rows over 57s (~10 rows/s). Replay
 	// the measured magnitude and require promotion once it is long.
 	reasoning := strings.Repeat("reasoning detail about the design ", 1236)
 	started := time.Now().Add(-57 * time.Second)

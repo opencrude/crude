@@ -7,7 +7,7 @@ import (
 
 func TestOpaqueReplayRequiresProviderScopeAndExactPrefix(t *testing.T) {
 	producer := &Provider{ID: "anthropic", BaseURL: "https://api.anthropic.com", StandardName: "anthropic"}
-	other := &Provider{ID: "proxy", BaseURL: "https://proxy.example", StandardName: "anthropic"}
+	other := &Provider{ID: "other-provider", BaseURL: "https://other.example", StandardName: "anthropic"}
 	tools := []ToolDef{{Type: "function", Function: FunctionDef{Name: "read_file"}}}
 	prefix := []ChatMessage{NewTextMessage("system", "stable"), NewTextMessage("user", "inspect")}
 	item := ProviderItem{Standard: "anthropic", Type: "redacted_thinking", Data: json.RawMessage(`{"type":"redacted_thinking","data":"opaque"}`)}

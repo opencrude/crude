@@ -129,8 +129,8 @@ func childCategoryContract(category string) string {
 		return `<category_contract name="researcher"><rule>Investigate thoroughly and return evidence with exact paths and symbols.</rule><rule>Do not edit files.</rule></category_contract>`
 	case "crafter":
 		return `<category_contract name="crafter"><rule>Implement the delegated scope end to end.</rule><rule>Respect file ownership and verify focused behavior before reporting.</rule></category_contract>`
-	case "aeron":
-		return `<category_contract name="aeron"><rule>Execute the narrowly delegated task directly.</rule><rule>Return concise evidence and do not expand scope.</rule></category_contract>`
+	case "errand":
+		return `<category_contract name="errand"><rule>Execute the narrowly delegated task directly.</rule><rule>Return concise evidence and do not expand scope.</rule></category_contract>`
 	default:
 		return `<category_contract name="leaf"><rule>Complete only the delegated assignment.</rule></category_contract>`
 	}
@@ -138,7 +138,7 @@ func childCategoryContract(category string) string {
 
 func BuildChild(options ChildOptions) (systemPrompt, assignment string) {
 	planning := ""
-	if options.Category != "aeron" {
+	if options.Category != "errand" {
 		planning = PlanningContract
 	}
 	systemPrompt = strings.Join([]string{

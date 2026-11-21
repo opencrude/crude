@@ -16,7 +16,7 @@ import (
 func TestWorkspacePanelLinkMatchesProblems(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		for _, width := range []int{34, 80, 160} {
-			s := NewDocked(th, Projection{Active: ViewTabs, HeaderAction: "workspace-aeron", HeaderLabel: "Open workspace Errand"})
+			s := NewDocked(th, Projection{Active: ViewTabs, HeaderAction: "workspace-errand", HeaderLabel: "Open workspace Errand"})
 			host := ui.NewHost(th, s)
 			host.Resize(width, 10)
 			buf := surface.NewCellBuffer(width, 10)
@@ -57,7 +57,7 @@ func TestWorkspacePanelLinkMatchesProblems(t *testing.T) {
 func TestDockedHeaderActionUsesPanelFlow(t *testing.T) {
 	for _, width := range []int{34, 80, 160} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			s := NewDocked(theme.DefaultDark(), Projection{Active: ViewTabs, HeaderAction: "workspace-aeron", HeaderLabel: "Open workspace Errand"})
+			s := NewDocked(theme.DefaultDark(), Projection{Active: ViewTabs, HeaderAction: "workspace-errand", HeaderLabel: "Open workspace Errand"})
 			s.SetDockHeaderInset(10)
 			host := ui.NewHost(theme.DefaultDark(), s)
 			s.SetFocusHandler(func(id ui.ComponentID) { host.Focus(id) })
@@ -70,7 +70,7 @@ func TestDockedHeaderActionUsesPanelFlow(t *testing.T) {
 				t.Fatalf("panel header link is not bounded: %+v", link)
 			}
 			result := host.Handle(tea.MouseClickMsg{X: link.X + 1, Y: link.Y, Button: tea.MouseLeft})
-			if result.Cmd == nil || result.Cmd().(NavigateMsg).Action != "workspace-aeron" {
+			if result.Cmd == nil || result.Cmd().(NavigateMsg).Action != "workspace-errand" {
 				t.Fatal("pointer link does not use panel navigation")
 			}
 			host.Focus(SearchID)
@@ -79,7 +79,7 @@ func TestDockedHeaderActionUsesPanelFlow(t *testing.T) {
 				t.Fatal("panel link is not keyboard-reachable")
 			}
 			result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-			if result.Cmd == nil || result.Cmd().(NavigateMsg).Action != "workspace-aeron" {
+			if result.Cmd == nil || result.Cmd().(NavigateMsg).Action != "workspace-errand" {
 				t.Fatal("keyboard did not activate the same panel link")
 			}
 			host.Handle(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -101,7 +101,7 @@ func TestDockedHeaderActionUsesPanelFlow(t *testing.T) {
 				}
 				found = true
 				result, err := host.Control(HeaderLinkID, node.OpenEpoch, &node.Revision, ui.ControlOperation{Verb: "activate"})
-				if err != nil || result.Cmd == nil || result.Cmd().(NavigateMsg).Action != "workspace-aeron" {
+				if err != nil || result.Cmd == nil || result.Cmd().(NavigateMsg).Action != "workspace-errand" {
 					t.Fatal("semantic activation differs from the native panel link", err)
 				}
 			}

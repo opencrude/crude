@@ -53,7 +53,7 @@ func TestGhostProjectionCannotAcceptAnEditHiddenInsideAFold(t *testing.T) {
 	before := e.Value()
 	// A producer may refuse the hidden range. If it offers a preview,
 	// it must reveal that preview before Tab can edit the hidden source.
-	_ = e.SetSuggestion("aeron", e.Revision(), Suggestion{Start: start, End: start + len("call"), Text: "corrected"})
+	_ = e.SetSuggestion("errand", e.Revision(), Suggestion{Start: start, End: start + len("call"), Text: "corrected"})
 	preview := paintWrappedInlays(t, e, 80, 14, false)
 	if e.Value() != before || e.Modified() {
 		t.Fatal("preview changed the folded source before Tab")
@@ -184,7 +184,7 @@ func TestGhostProjectionDoesNotOfferASuggestionWithTwoCarets(t *testing.T) {
 		return e
 	}
 	e, baseline := setup(), setup()
-	_ = e.SetSuggestion("aeron", e.Revision(), Suggestion{Start: 1, End: 1, Text: "Ghost"})
+	_ = e.SetSuggestion("errand", e.Revision(), Suggestion{Start: 1, End: 1, Text: "Ghost"})
 	requireGhostProjectionRows(t, e, renderTestInlays(e, 40, 8, false), "ab", "cd")
 	if _, shown := e.GhostSuggestion(); shown {
 		t.Fatal("a suggestion remained eligible with two carets")
@@ -244,7 +244,7 @@ func TestGhostProjectionMarkerPaintsAtTheNextPlaceAndTabJumps(t *testing.T) {
 
 func offerGhostProjection(t *testing.T, e *Editor, offer Suggestion) {
 	t.Helper()
-	if err := e.SetSuggestion("aeron", e.Revision(), offer); err != nil {
+	if err := e.SetSuggestion("errand", e.Revision(), offer); err != nil {
 		t.Fatal(err)
 	}
 }

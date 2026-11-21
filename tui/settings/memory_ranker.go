@@ -32,11 +32,18 @@ func (m *Model) rankerFields() []*ui.FieldState {
 	cadence.Validator = numberRange(1, math.MaxInt)
 	k := ui.NumberFieldState("ranker-top_k", "Add up to", r.TopK, "memories", "Add fewer memories when none of the others would help.")
 	k.Validator = numberRange(1, types.MaxRankedMemories)
-	return []*ui.FieldState{ui.SeparatorFieldState("ranking", "Ranking"),
-		ui.BoolFieldState("ranker-enabled", "Rank after actions", r.Enabled == "on", "Send task, action and memory excerpts to the selected account."),
-		ui.SelectFieldState(fieldRankerAccount, "Account", r.AccountID, m.connectionOptions(false), "Use this account only for ranking. No other account is used."),
-		ui.ModelFieldState(fieldRankerModel, "Model", r.Model, nil, "Choose a decision model or a chat model, or enter its exact ID."),
-		modelTypeField(fieldRankerModelType, r.ModelType), cadence, k}
+	account := ui.SelectFieldState(fieldRankerAccount, "Ranking account", r.AccountID, m.accountOptions(r.AccountID),
+		"Ranking uses only this account, not the Memory Agent's. It sends task, action and memory excerpts.")
+	account.Placeholder = "Choose an account"
+	model := ui.ModelFieldState(fieldRankerModel, "Ranking model", r.Model, nil,
+		"A fast decision model or chat model. Choose one from the list or enter its exact ID.")
+	model.Placeholder = "Choose or enter a model ID"
+	// Ranking is a separate job: while an agent works, it picks saved
+	// memories for the next step. It never writes memories.
+	return []*ui.FieldState{ui.SeparatorFieldState("ranking", "Memory ranking"),
+		ui.BoolFieldState("ranker-enabled", "Rank memories", r.Enabled == "on",
+			"While an agent works, add the saved memories that help with its next step."),
+		account, model, modelTypeField(fieldRankerModelType, r.ModelType), cadence, k}
 }
 
 // Preserve unset or inherited values when the user edits a sibling field.

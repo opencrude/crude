@@ -399,7 +399,7 @@ func (r *SubAgentRunner) admitAndLaunch(ctx context.Context, spec agent.SubAgent
 		return nil, tools.ToolResult{Content: "Agent role is disabled in settings."}, fmt.Errorf("%s role is disabled", spec.Category)
 	}
 	identity := ""
-	if spec.Category == CategoryAeron {
+	if spec.Category == CategoryErrand {
 		spec.Name = ttypes.ErrandName
 	} else if strings.TrimSpace(nickname) != "" {
 		var err error
@@ -648,13 +648,13 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	r.session.bindGuidanceCache(a)
 	a.MaxOutputTokens = spec.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(cfg)
-	a.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
-	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
+	a.CompactionAgentProfile = agentProfile + "/" + CategoryErrand
+	if compactionCfg := cfg.GetCategoryConfig(CategoryErrand); compactionCfg.Model != "" {
 		if compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg); compactionErr == nil {
 			a.CompactionProvider = compactionProvider
 			a.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 		} else {
-			r.session.logger.Warn("COMPACT", "aeron_provider_unavailable", "agent_id", spec.ID, "error", compactionErr.Error())
+			r.session.logger.Warn("COMPACT", "errand_provider_unavailable", "agent_id", spec.ID, "error", compactionErr.Error())
 		}
 	}
 	if cfg != nil {
@@ -1149,7 +1149,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	r.session.bindMemoryRanker(live, string(spec.ID))
 	r.session.bindGuidanceCache(live)
 	live.MaxOutputTokens = spec.ModelMaxOutput
-	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
+	if compactionCfg := cfg.GetCategoryConfig(CategoryErrand); compactionCfg.Model != "" {
 		compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg)
 		if compactionErr != nil {
 			return parkResume(agent.RecoveryFailureConfiguration, compactionErr)
@@ -1745,7 +1745,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		}
 		handle.Agent.Provider, handle.Agent.Model = currentProvider, currentProvider.Model
 		handle.Spec.Provider = currentProvider.ID
-		if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
+		if compactionCfg := cfg.GetCategoryConfig(CategoryErrand); compactionCfg.Model != "" {
 			compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg)
 			if compactionErr != nil {
 				return "", compactionErr
@@ -2740,7 +2740,7 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 			switch spec.Category {
 			case agent.CatResearcher:
 				spec.PolicyName = "read-only"
-			case agent.CatCrafter, agent.CatAeron:
+			case agent.CatCrafter, agent.CatErrand:
 				spec.PolicyName = "no-delete"
 			}
 		}

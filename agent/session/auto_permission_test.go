@@ -428,9 +428,9 @@ func TestPermissionReviewerInheritsWorkspaceErrandWithoutBorrowingSessionOverrid
 	settings.AccountID, settings.Model = "", ""
 	s.cfg.Safety.AutoPermission = settings
 	workspaceProfile, _ := activeProfileCfg(s.workspaceCfg)
-	workspaceProfile.Categories[CategoryAeron] = CategoryConfig{AccountID: "account", Model: "errand-model"}
+	workspaceProfile.Categories[CategoryErrand] = CategoryConfig{AccountID: "account", Model: "errand-model"}
 	profile, _ := activeProfileCfg(s.cfg)
-	profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "session-account", Model: "session-override"}
+	profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "session-account", Model: "session-override"}
 	check := func() agent.PermissionReview {
 		return s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, map[string]any{"path": "test.txt"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
 	}
@@ -440,7 +440,7 @@ func TestPermissionReviewerInheritsWorkspaceErrandWithoutBorrowingSessionOverrid
 	if got := <-requests; got != "errand-model" {
 		t.Fatalf("model = %q; want workspace Errand", got)
 	}
-	delete(workspaceProfile.Categories, CategoryAeron)
+	delete(workspaceProfile.Categories, CategoryErrand)
 	if got := check(); got.Decision != "ask" || len(requests) != 0 {
 		t.Fatalf("review without Errand did not stay with the human: %+v", got)
 	}

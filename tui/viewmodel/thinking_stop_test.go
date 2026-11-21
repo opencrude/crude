@@ -30,7 +30,7 @@ func TestStopWithPromotedRawThinkingKeepsOneThoughtAndNoNewPanes(t *testing.T) {
 	app.AddOrchestrator("agent")
 	agent := app.ws.AgentMgr().Get("agent").State
 	app.paintShellFrame()
-	app.handleAgentEvent(types.AgentEventMsg{Type: "turn_started", AgentID: "agent", Data: types.TurnIdentity{Generation: 1, ModelID: "deepseek-v4.1-flash"}})
+	app.handleAgentEvent(types.AgentEventMsg{Type: "turn_started", AgentID: "agent", Data: types.TurnIdentity{Generation: 1, ModelID: "example-model"}})
 	for i := 0; i < 40; i++ {
 		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: strings.Repeat("reasoning word ", 12), Kind: reasoning.Raw}})
 	}

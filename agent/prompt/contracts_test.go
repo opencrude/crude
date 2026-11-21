@@ -14,7 +14,7 @@ func TestEngineeringContractInEveryExecutionMode(t *testing.T) {
 		"solo":         BuildRoot(RootOptions{WorkDir: t.TempDir()}),
 		"orchestrator": BuildRoot(RootOptions{MultiAgent: true, WorkDir: t.TempDir()}),
 	}
-	for _, category := range []string{"researcher", "crafter", "aeron"} {
+	for _, category := range []string{"researcher", "crafter", "errand"} {
 		child, _ := BuildChild(ChildOptions{Category: category, WorkDir: t.TempDir()})
 		prompts[category] = child
 	}
@@ -61,12 +61,12 @@ func TestEngineeringContractInEveryExecutionMode(t *testing.T) {
 			}
 		}
 	}
-	for _, category := range []string{"researcher", "crafter", "aeron"} {
+	for _, category := range []string{"researcher", "crafter", "errand"} {
 		if strings.Contains(prompts[category], "<activity_communication>") {
 			t.Errorf("%s leaf prompt must report to parent", category)
 		}
 	}
-	if !strings.Contains(prompts["researcher"], "Do not edit files.") || strings.Contains(prompts["aeron"], "<planning_contract>") {
+	if !strings.Contains(prompts["researcher"], "Do not edit files.") || strings.Contains(prompts["errand"], "<planning_contract>") {
 		t.Fatal("child category boundaries changed")
 	}
 }
@@ -81,7 +81,7 @@ func TestWholeProjectGuidanceContractInEveryExecutionMode(t *testing.T) {
 		"solo":         BuildRoot(RootOptions{WorkDir: dir, Model: "other-model"}),
 		"orchestrator": BuildRoot(RootOptions{MultiAgent: true, WorkDir: dir, Model: "gpt-6-sol"}),
 	}
-	for _, category := range []string{"researcher", "crafter", "aeron"} {
+	for _, category := range []string{"researcher", "crafter", "errand"} {
 		child, _ := BuildChild(ChildOptions{Category: category, WorkDir: dir, Model: "gpt-6-sol"})
 		prompts[category] = child
 	}
@@ -122,8 +122,8 @@ func TestPlanningAndOperatingModeContracts(t *testing.T) {
 		t.Fatalf("solo XML contract = %q", solo)
 	}
 	researcher, _ := BuildChild(ChildOptions{Category: "researcher", WorkDir: "/tmp/workspace"})
-	aeron, _ := BuildChild(ChildOptions{Category: "aeron", WorkDir: "/tmp/workspace"})
-	if !strings.Contains(researcher, "<planning_contract>") || strings.Contains(aeron, "<planning_contract>") {
+	errand, _ := BuildChild(ChildOptions{Category: "errand", WorkDir: "/tmp/workspace"})
+	if !strings.Contains(researcher, "<planning_contract>") || strings.Contains(errand, "<planning_contract>") {
 		t.Fatal("child planning contract does not match tool availability")
 	}
 }
@@ -181,16 +181,16 @@ func TestCollaborationEventMarksRareRunningAgentBroadcast(t *testing.T) {
 // The workspace-agent slot differs only by role: Errand gets its own contract
 // naming the question tool as its channel to the user; every other root learns
 // that Errand exists and how to reach it. Nothing else changes.
-func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
+func TestWorkspaceAgentContractIsOnlyInErrandRootPrompt(t *testing.T) {
 	plain := BuildRoot(RootOptions{WorkDir: "/workspace"})
-	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
+	errand := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
 	if strings.Contains(plain, "<workspace_agent>") {
 		t.Fatal("an ordinary root prompt carries the workspace-agent contract")
 	}
-	if strings.Contains(aeron, "<workspace_agent_peer>") {
+	if strings.Contains(errand, "<workspace_agent_peer>") {
 		t.Fatal("Errand's root prompt carries the peer note instead of its own contract")
 	}
-	if !strings.Contains(aeron, WorkspaceAgentFor("1.4.0")) || !strings.Contains(aeron, "question tool") {
+	if !strings.Contains(errand, WorkspaceAgentFor("1.4.0")) || !strings.Contains(errand, "question tool") {
 		t.Fatal("Errand's root prompt does not name the question tool as its channel")
 	}
 	if !strings.Contains(plain, WorkspaceAgentPeer) || !strings.Contains(plain, "agent_list") {
@@ -198,17 +198,17 @@ func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
 	}
 	// The slot is the only difference: swapping each role's section yields the
 	// same remaining prompt.
-	if strings.Replace(aeron, WorkspaceAgentFor("1.4.0"), "", 1) != strings.Replace(plain, WorkspaceAgentPeer, "", 1) {
+	if strings.Replace(errand, WorkspaceAgentFor("1.4.0"), "", 1) != strings.Replace(plain, WorkspaceAgentPeer, "", 1) {
 		t.Fatal("the workspace-agent flag changed more than its own section")
 	}
 }
 
 // Errand knows where Crude lives and which build it runs, so it can point the
 // user to the project and mention a newer release without running an update.
-func TestAeronKnowsCrudeProjectAndBuild(t *testing.T) {
-	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
+func TestErrandKnowsCrudeProjectAndBuild(t *testing.T) {
+	errand := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
 	for _, want := range []string{"https://github.com/opencrude/crude", "https://opencrude.github.io", "releases/latest", `<build version="1.4.0"/>`, "Do not run the update yourself"} {
-		if !strings.Contains(aeron, want) {
+		if !strings.Contains(errand, want) {
 			t.Errorf("Errand's prompt lacks %q", want)
 		}
 	}

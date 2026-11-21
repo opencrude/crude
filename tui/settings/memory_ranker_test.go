@@ -33,7 +33,8 @@ func TestMemoryRankingSettingsJourney(t *testing.T) {
 		}
 		c.form.FocusField("ranker-enabled")
 		frame := bufferPlain(paintAccountSurface(t, s, width, 32))
-		if !strings.Contains(frame, "Ranking") || !strings.Contains(frame, "Rank after actions") {
+		if !strings.Contains(frame, "Memory ranking") || !strings.Contains(frame, "Rank memories") || !strings.Contains(frame, "Ranking account") ||
+			!strings.Contains(frame, "Learning and tidying") {
 			t.Fatalf("missing ranking settings at %d: %s", width, frame)
 		}
 		c.draft.SetValue("ranker-enabled", ui.StringValue("on"))
@@ -74,7 +75,7 @@ func TestMemoryRankingSettingsJourney(t *testing.T) {
 }
 
 func TestMemoryRankingAccountCatalogAndManualEntry(t *testing.T) {
-	cfg := newAeronSuggestionSettings()
+	cfg := newErrandSuggestionSettings()
 	cfg.Memory.MemoryCategory = types.CategorySettings{AccountID: "role-account", Model: "extractor"}
 	cfg.Memory.Ranker = types.MemoryRankerSettings{AccountID: "separate", Model: "chosen"}
 	m := New(theme.DefaultDark(), cfg, nil)

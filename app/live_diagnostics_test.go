@@ -70,7 +70,7 @@ func TestLiveDiagnosticsCoreHelper(t *testing.T) {
 		profile.Categories[session.CategoryDefault] = main
 		// The live compaction path must not silently exercise a stronger or
 		// unrelated extraction model than the task model under acceptance.
-		profile.Categories[session.CategoryAeron] = main
+		profile.Categories[session.CategoryErrand] = main
 		cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 		cfg.Memory.AutoRecall, cfg.Memory.AutoExtract, cfg.Memory.Consolidation = "off", "off", "off"
 		// RunCore owns configuration loading. Its sole credential-bearing copy is

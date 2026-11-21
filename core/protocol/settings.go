@@ -128,8 +128,10 @@ type AccountDraft struct {
 	ExtraBody  SecretObject      `json:"extra_body"`
 }
 type AccountChangeRequest struct {
-	ID    string        `json:"id"`
-	After *AccountDraft `json:"after"`
+	ID             string        `json:"id"`
+	After          *AccountDraft `json:"after"`
+	BeforeRevision string        `json:"before_revision,omitempty"`
+	RemovalPreview string        `json:"removal_preview,omitempty"`
 }
 type AccountModelsRequest struct {
 	AccountID string        `json:"account_id"`

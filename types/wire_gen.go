@@ -9316,7 +9316,7 @@ func (z *LSPSettings) MarshalMsg(b []byte) (o []byte, err error) {
 	}
 	o = msgp.AppendString(o, z.CompletionAccept)
 	o = msgp.AppendString(o, z.ProjectCheck)
-	o = msgp.AppendString(o, z.AskAeron)
+	o = msgp.AppendString(o, z.AskErrand)
 	o = msgp.AppendString(o, z.MinSeverity)
 	o = msgp.AppendInt(o, z.UpdateDebounceMS)
 	o = msgp.AppendInt(o, z.ServerThreads)
@@ -9457,9 +9457,9 @@ func (z *LSPSettings) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "ProjectCheck")
 		return
 	}
-	z.AskAeron, bts, err = msgp.ReadStringBytes(bts)
+	z.AskErrand, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
-		err = msgp.WrapError(err, "AskAeron")
+		err = msgp.WrapError(err, "AskErrand")
 		return
 	}
 	z.MinSeverity, bts, err = msgp.ReadStringBytes(bts)
@@ -9547,7 +9547,7 @@ func (z *LSPSettings) Msgsize() (s int) {
 	} else {
 		s += msgp.IntSize
 	}
-	s += msgp.StringPrefixSize + len(z.CompletionAccept) + msgp.StringPrefixSize + len(z.ProjectCheck) + msgp.StringPrefixSize + len(z.AskAeron) + msgp.StringPrefixSize + len(z.MinSeverity) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.MapHeaderSize
+	s += msgp.StringPrefixSize + len(z.CompletionAccept) + msgp.StringPrefixSize + len(z.ProjectCheck) + msgp.StringPrefixSize + len(z.AskErrand) + msgp.StringPrefixSize + len(z.MinSeverity) + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.IntSize + msgp.MapHeaderSize
 	if z.Languages != nil {
 		for za0001, za0002 := range z.Languages {
 			_ = za0002

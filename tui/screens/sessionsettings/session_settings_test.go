@@ -474,7 +474,7 @@ func TestRootPaintsAlignedModelThenProvider(t *testing.T) {
 		"default":    {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 		"researcher": {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 		"crafter":    {Provider: "crof", AccountID: "craft", Model: "glm-5.1-precision"},
-		"aeron":      {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
+		"errand":     {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
 	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "opencode-go", Label: "Work", Connection: provider.DefaultTemplates()["opencode-go"]}, "craft": {ID: "craft", ProviderID: "crof", Label: "Craft"}})

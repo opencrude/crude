@@ -37,7 +37,7 @@ var agentIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
 var agentRoles = []struct {
 	key, label string
 	index      int
-}{{"default", "Main Agent", catMain}, {"researcher", "Researcher", catResearcher}, {"crafter", "Crafter", catCrafter}, {"aeron", "Errand", catAeron}, {"memory", "Memory Agent", catMemory}, {"auto-review", "Auto Review Agent", catAutoReviewPolicy}}
+}{{"default", "Main Agent", catMain}, {"researcher", "Researcher", catResearcher}, {"crafter", "Crafter", catCrafter}, {"errand", "Errand", catErrand}, {"memory", "Memory Agent", catMemory}, {"auto-review", "Auto Review Agent", catAutoReviewPolicy}}
 
 type agentCatalog struct {
 	ui.Base
@@ -130,12 +130,12 @@ func (c *agentCatalog) refreshRows() {
 	}
 	var rows []ui.TableRow
 	query := strings.ToLower(c.filter.Value())
-	add := func(id, name, role, model, description string, enabled bool) {
+	add := func(id, name, role, model, parent, description string, enabled bool) {
+		if model == "" {
+			model = parentModelName(parent)
+		}
 		if query != "" && !strings.Contains(strings.ToLower(name+" "+role+" "+model+" "+description), query) {
 			return
-		}
-		if model == "" {
-			model = "Inherit role"
 		}
 		if !enabled {
 			role += " (disabled)"
@@ -149,10 +149,17 @@ func (c *agentCatalog) refreshRows() {
 			cfg = c.model.memoryAgent
 		} else if role.key == "auto-review" {
 			auto := c.model.autoReviewer
-			add("role/auto-review", role.label, "Built-in", auto.Model, "Reviews eligible root and child permission requests", auto.Enabled == "on")
+			add("role/auto-review", role.label, "Built-in", auto.Model, types.ErrandName, "Reviews eligible root and child permission requests", auto.Enabled == "on")
 			continue
 		}
-		add("role/"+role.key, role.label, "Built-in", cfg.Model, cfg.Description, cfg.Enabled == nil || *cfg.Enabled)
+		parent := types.AgentRoleName("default")
+		switch role.key {
+		case "default":
+			parent = ""
+		case "memory":
+			parent = types.ErrandName
+		}
+		add("role/"+role.key, role.label, "Built-in", cfg.Model, parent, cfg.Description, cfg.Enabled == nil || *cfg.Enabled)
 	}
 	keys := make([]string, 0, len(settings.AgentProfiles))
 	for key := range settings.AgentProfiles {
@@ -161,7 +168,7 @@ func (c *agentCatalog) refreshRows() {
 	slices.Sort(keys)
 	for _, key := range keys {
 		p := settings.AgentProfiles[key]
-		add("profile/"+key, key, p.Category, p.Model, p.Description, p.Enabled == nil || *p.Enabled)
+		add("profile/"+key, key, types.AgentRoleName(p.Category), p.Model, types.AgentRoleName(p.Category), p.Description, p.Enabled == nil || *p.Enabled)
 	}
 	c.table.SetRows(rows)
 	c.rebuildBar()
@@ -254,7 +261,9 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 		c.draft = c.model.buildAutoReviewerForm()
 	case catMemory:
 		c.draft = c.model.buildAgentForm(c.base, false, c.model.rankerFields()...)
-		c.model.configureBackgroundModel(c.draft)
+		// The Memory Agent writes and tidies memories; ranking below has
+		// its own account and model.
+		c.draft.Field("agent").Label = "Learning and tidying"
 	default:
 		c.draft = c.model.buildAgentForm(c.base, c.roleIndex == catMain)
 	}
@@ -272,7 +281,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 			}
 			return nil
 		}
-		fields := []*ui.FieldState{name, ui.SelectFieldState("agent-role", "Role", c.profile.Category, []ui.FormOption{{ID: "researcher", Label: "Researcher", Detail: "Read and investigate"}, {ID: "crafter", Label: "Crafter", Detail: "Implement and test"}, {ID: "aeron", Label: "Errand", Detail: "Focused mechanical work"}}, "Role rules remain a hard limit on tool access.")}
+		fields := []*ui.FieldState{name, ui.SelectFieldState("agent-role", "Role", c.profile.Category, []ui.FormOption{{ID: "researcher", Label: "Researcher", Detail: "Read and investigate"}, {ID: "crafter", Label: "Crafter", Detail: "Implement and test"}, {ID: "errand", Label: "Errand", Detail: "Focused mechanical work"}}, "Role rules remain a hard limit on tool access.")}
 		fields = append(fields, c.draft.Fields()...)
 		fields = append(fields, ui.BoolFieldState("agent-inherit-modalities", "Inherit modalities", c.profile.ModelModalities == nil, "Use the role's media capabilities."))
 		ownership := ui.TextAreaFieldState("agent-file-ownership", "File ownership", strings.Join(c.profile.FileOwnership, "\n"), "Exclusive paths, one per line.")
@@ -280,17 +289,24 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 		fields = append(fields, ownership)
 		c.draft = formModel(fields...)
 	}
-	enabled := c.base.Enabled == nil || *c.base.Enabled
-	availability := ui.BoolFieldState("agent-enabled", "Enabled", enabled, "Allow new runs of this agent.")
+	// The on/off switch is the first row: it decides whether the rest matters.
 	if c.roleIndex != catMain {
-		c.draft.AddField(availability)
+		enabled := c.base.Enabled == nil || *c.base.Enabled
+		help := "Allow new runs of this agent."
+		switch c.roleIndex {
+		case catMemory:
+			help = "Off stops recall, learning, tidying and ranking. Saved memories stay."
+		case catAutoReviewPolicy:
+			help = "Review permission requests with this agent. When it is off, Crude asks you."
+		}
+		c.draft = formModel(append([]*ui.FieldState{ui.BoolFieldState("agent-enabled", "Enabled", enabled, help)}, c.draft.Fields()...)...)
 	}
 	mode := "Role defaults"
 	if len(c.base.AllowedTools) > 0 || len(c.base.DeniedTools) > 0 {
 		mode = "Custom selection"
 	}
-	if c.roleIndex == catAeron {
-		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions, c.base.AccountID) {
+	if c.roleIndex == catErrand {
+		for _, field := range c.model.suggestionFields(c.model.agents.Suggestions) {
 			c.draft.AddField(field)
 		}
 	}
@@ -299,6 +315,9 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 		c.syncCapabilityFields()
 	}
 	c.model.categories[catAgents].Form = c.draft
+	c.model.draftParent = c.parentKind()
+	c.model.syncAgentConnection(catAgents)
+	c.model.syncSuggestionConnection()
 	c.draft.OnChanged(c.fieldChanged)
 	if c.roleIndex != catAutoReviewPolicy {
 		c.model.autofillCapabilities(catAgents)
@@ -311,15 +330,37 @@ func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 	c.rebuildBar()
 	c.owner.focusID(c.form.ID())
 	c.form.FocusFirst()
-	if c.roleIndex == catAeron || c.roleIndex == catMemory {
+	if c.roleIndex == catErrand || c.roleIndex == catMemory {
 		return tea.Batch(c.model.prefetchModels(catAgents), c.model.syncSecondaryAccount())
 	}
 	return c.model.prefetchModels(catAgents)
 }
 
+// parentKind names whose account and model the open agent uses while its
+// own are empty.
+func (c *agentCatalog) parentKind() string {
+	switch {
+	case c.roleIndex < 0:
+		return parentRole
+	case c.roleIndex == catMemory:
+		return parentErrand
+	case c.roleIndex == catAutoReviewPolicy:
+		return parentErrandSaved
+	case c.roleIndex == catMain:
+		return parentNone
+	}
+	return parentMain
+}
+
 func (c *agentCatalog) fieldChanged(id string) {
 	if id == fieldRankerAccount {
 		c.draft.SetValue(fieldRankerModel, ui.StringValue(""))
+	}
+	if id == "agent-role" {
+		c.model.syncAgentConnection(catAgents)
+	}
+	if id == fieldConnection || id == fieldModel || id == fieldSuggestAccount {
+		defer c.model.syncSuggestionConnection()
 	}
 	if strings.HasPrefix(id, fieldModalityPrefix) {
 		c.draft.SetValue("agent-inherit-modalities", ui.StringValue("off"))
@@ -355,7 +396,7 @@ func (c *agentCatalog) setPage(page string) {
 		thirdLabel = "Review"
 	}
 	items := []ui.TabItem{{ID: "model", Label: "Model"}, {ID: "instructions", Label: "Instructions"}, {ID: "tools", Label: thirdLabel}}
-	if c.roleIndex == catAeron {
+	if c.roleIndex == catErrand {
 		items = append(items, ui.TabItem{ID: "suggestions", Label: "Suggestions"})
 	}
 	c.tabs.SetItems(items, page)
@@ -461,7 +502,7 @@ func (c *agentCatalog) apply() bool {
 		enabled := ui.BoolFieldValue(c.draft.Field("agent-enabled"))
 		accountID := c.draft.Field(fieldConnection).Value.String()
 		model := c.draft.Field(fieldModel).Value.String()
-		resolvedAccount, resolvedModel := c.model.backgroundBinding(c.draft)
+		resolvedAccount, resolvedModel := c.model.effectiveConnection(catAgents)
 		if enabled && (resolvedAccount == "" || resolvedModel == "" || c.model.accounts[resolvedAccount].ID == "") {
 			fieldID := fieldConnection
 			if c.model.accounts[resolvedAccount].ID != "" {
@@ -506,7 +547,7 @@ func (c *agentCatalog) apply() bool {
 		c.notice = "Auto Review Agent updated. Save settings to persist these changes."
 		return true
 	}
-	if c.roleIndex == catAeron {
+	if c.roleIndex == catErrand {
 		if id, problem := validateSuggestionsForm(c.draft); id != "" {
 			c.draft.Field(id).Errors = []string{problem}
 			c.setPage("suggestions")
@@ -763,7 +804,7 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 			switch action.Payload {
 			case fieldConnection:
 				result.Cmd = c.model.prefetchModels(catAgents)
-				if c.roleIndex == catAeron {
+				if c.roleIndex == catErrand {
 					result.Cmd = tea.Batch(result.Cmd, c.model.syncSecondaryAccount())
 				}
 			case fieldSuggestAccount, fieldRankerAccount:

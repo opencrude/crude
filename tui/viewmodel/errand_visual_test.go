@@ -20,14 +20,14 @@ import (
 )
 
 // Run sequentially with scripts/tuishot.sh and a prebuilt viewmodel test image
-// (CRUDE_VISUAL_AERON=1). The pointer rests on the file tab and F4 checks its
+// (CRUDE_VISUAL_ERRAND=1). The pointer rests on the file tab and F4 checks its
 // tooltip. F3 releases the fixture provider and F4 checks Errand's modal
 // question over the unchanged main tab. Its own Cancel action closes it with the
 // normal question behavior and F4 checks that it closed. F5 opens Workspace.
 // Clicking its panel header link and F4
 // checks its normal agent tab and composer. F9 checks all four and exits.
-func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
-	if os.Getenv("CRUDE_VISUAL_AERON") != "1" {
+func TestErrandAndTabTooltipVisualAcceptance(t *testing.T) {
+	if os.Getenv("CRUDE_VISUAL_ERRAND") != "1" {
 		t.Skip("dedicated sequential Errand and tooltip capture")
 	}
 	release := make(chan struct{})
@@ -42,7 +42,7 @@ func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
 			case <-r.Context().Done():
 				return
 			}
-			aeronToolReply(w, "question", map[string]any{"questions": []map[string]any{{
+			errandToolReply(w, "question", map[string]any{"questions": []map[string]any{{
 				"header": "Install", "question": "Install the YAML language server for this user only?", "options": []string{"This user", "All users"},
 			}}}, 1)
 			return
@@ -58,15 +58,15 @@ func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
 	shell := newRemoteJourneyShell(t, remoteJourneyRuntime(t, server.URL), root)
 	app := shell.app
 	main := remoteJourneyCreate(t, shell)
-	runAppCommand(t, app, app.ensureWorkspaceAeron())
-	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return app.workspaceAeronAgent() != "" })
+	runAppCommand(t, app, app.ensureWorkspaceErrand())
+	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return app.workspaceErrandAgent() != "" })
 	if _, err := app.openEditorTab(file); err != nil {
 		t.Fatal(err)
 	}
 	app.activateAgentWindowTab(main)
 	app.Input.SetInput("Main session draft stays here.")
-	runAppCommand(t, app, app.taskWorkspaceAeron("<tool_setup_task>Set up YAML</tool_setup_task>", "Set up 1 code intelligence tool: yaml-language-server."))
-	model := &aeronVisualModel{App: app, release: func() { once.Do(func() { close(release) }) }, file: file}
+	runAppCommand(t, app, app.taskWorkspaceErrand("<tool_setup_task>Set up YAML</tool_setup_task>", "Set up 1 code intelligence tool: yaml-language-server."))
+	model := &errandVisualModel{App: app, release: func() { once.Do(func() { close(release) }) }, file: file}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	model.SetProgram(program)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -89,11 +89,11 @@ func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := "AERON_VISUAL_SUCCESS: tooltip, modal question, closed, Errand tab\n"
+	result := "ERRAND_VISUAL_SUCCESS: tooltip, modal question, closed, Errand tab\n"
 	if model.failure != nil || model.phase != 4 {
-		result = fmt.Sprintf("AERON_VISUAL_FAILURE: reached %d/4 boundaries: %v\n", model.phase, model.failure)
+		result = fmt.Sprintf("ERRAND_VISUAL_FAILURE: reached %d/4 boundaries: %v\n", model.phase, model.failure)
 	}
-	if path := os.Getenv("CRUDE_AERON_VISUAL_RESULT"); path != "" {
+	if path := os.Getenv("CRUDE_ERRAND_VISUAL_RESULT"); path != "" {
 		if err := os.WriteFile(path, []byte(result), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -103,7 +103,7 @@ func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
 	}
 }
 
-type aeronVisualModel struct {
+type errandVisualModel struct {
 	*App
 	release func()
 	file    string
@@ -111,9 +111,9 @@ type aeronVisualModel struct {
 	failure error
 }
 
-func (m *aeronVisualModel) Init() tea.Cmd { return nil }
+func (m *errandVisualModel) Init() tea.Cmd { return nil }
 
-func (m *aeronVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m *errandVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := message.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF3:
@@ -130,8 +130,8 @@ func (m *aeronVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			draft := m.Input.Value() == "Main session draft stays here."
 			// Errand never takes the user's tab: it stays minimized and its
 			// tab is not selected.
-			aeron := m.workspaceAeronAgent()
-			kept := m.AgentView.IsHidden(aeron) && m.Win.ActiveTab() != nil && m.Win.ActiveTab().Title != m.agentTabTitle(aeron)
+			errand := m.workspaceErrandAgent()
+			kept := m.AgentView.IsHidden(errand) && m.Win.ActiveTab() != nil && m.Win.ActiveTab().Title != m.agentTabTitle(errand)
 			switch m.phase {
 			case 0:
 				// The painted tooltip, not only its state, must show the path.
@@ -142,7 +142,7 @@ func (m *aeronVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case 2:
 				ok = len(m.agentPrompts) == 0 && !m.overlayHost.IsOpen(ui.OverlayAgentPrompt) && kept && draft
 			case 3:
-				ok = m.AgentView.ActiveID() == aeron && m.ActiveSession == m.ws.SessionsByAgent()[aeron] &&
+				ok = m.AgentView.ActiveID() == errand && m.ActiveSession == m.ws.SessionsByAgent()[errand] &&
 					!strings.Contains(ansi.Strip(m.View().RenderContent()), "Give Errand a task")
 			}
 			if !ok {

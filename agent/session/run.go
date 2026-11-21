@@ -874,7 +874,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if err != nil {
 			return err
 		}
-		compactionCfg = effectiveCfg.GetCategoryConfig(CategoryAeron)
+		compactionCfg = effectiveCfg.GetCategoryConfig(CategoryErrand)
 		compactionProvider, err = effectiveCfg.providerForCategory(compactionCfg)
 		return err
 	}) {
@@ -916,7 +916,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.CompactionProvider = compactionProvider
 	ag.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(effectiveCfg)
-	ag.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
+	ag.CompactionAgentProfile = agentProfile + "/" + CategoryErrand
 	ag.Precompaction = s.precompactionSlot(o.ID)
 	ag.PriorCheckpointTokens = lastCheckpointTokens(s.CompactionRecords(o.ID))
 	ag.AgentID = agent.AgentID(o.ID)
@@ -1184,7 +1184,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if err != nil {
 			return "", err
 		}
-		currentCompactionCfg := current.GetCategoryConfig(CategoryAeron)
+		currentCompactionCfg := current.GetCategoryConfig(CategoryErrand)
 		currentCompactionProvider, err := current.providerForCategory(currentCompactionCfg)
 		if err != nil {
 			return "", err
@@ -1338,7 +1338,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		} else {
 			launchCompaction = s.startTurnEndCompaction(o.ID, requested)
 		}
-	} else if !cancelled && runResult.State == agent.SupervisedRunCompleted && s.isAeronSession() {
+	} else if !cancelled && runResult.State == agent.SupervisedRunCompleted && s.isErrandSession() {
 		// The workspace Errand's loop ended: the model gave its answer with no
 		// further tool calls. Compact now so the permanent agent stays small.
 		launchCompaction = s.startLoopEndCompaction(o.ID)

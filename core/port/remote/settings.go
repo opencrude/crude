@@ -186,7 +186,10 @@ func draft(after provider.Account, before coreprotocol.AccountView, exists bool)
 
 func (w *Workspace) SaveAccountChange(change types.AccountChange) error {
 	before, exists := w.settingsBase().Accounts[change.ID]
-	request := coreprotocol.AccountChangeRequest{ID: change.ID}
+	request := coreprotocol.AccountChangeRequest{ID: change.ID, RemovalPreview: change.RemovalPreview}
+	if change.After == nil && exists {
+		request.BeforeRevision = before.Revision
+	}
 	if change.After != nil {
 		value := draft(*change.After, before, exists)
 		request.After = &value

@@ -57,7 +57,7 @@ func TestPromptHistoryGatewayFindsModelAndReadsOriginalHumanText(t *testing.T) {
 		register(fmt.Sprintf("a-%02d", i), "default")
 	}
 	reviewer := register("z-reviewer", "default")
-	other := register("z-other", "aeron")
+	other := register("z-other", "errand")
 	for _, a := range []collaboration.Agent{reviewer, other} {
 		db, err := sessiondb.OpenAndMigrate(filepath.Join(w.WorkspaceDir, "sessions", a.SessionID+".db"))
 		if err != nil {

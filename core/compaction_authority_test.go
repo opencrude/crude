@@ -82,7 +82,7 @@ func newCompactionAuthorityFixture(t *testing.T, turns []string) *compactionAuth
 		off := false
 		cfg := &session.Config{Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
 			session.CategoryDefault: {AccountID: "test", Model: "model", ModelContextWindow: 200_000, ModelSupportsTools: true},
-			session.CategoryAeron:   {AccountID: "test", Model: "model", ModelContextWindow: 200_000, ModelMaxOutput: 2_048},
+			session.CategoryErrand:  {AccountID: "test", Model: "model", ModelContextWindow: 200_000, ModelMaxOutput: 2_048},
 		}}}}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "Test", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
 		w.SetBackendConfig(cfg, home)
 		f.ws = w

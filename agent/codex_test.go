@@ -18,7 +18,7 @@ import (
 )
 
 func TestGPTProfilesForEveryRole(t *testing.T) {
-	for _, role := range []string{"", CatResearcher, CatCrafter, CatAeron, "custom"} {
+	for _, role := range []string{"", CatResearcher, CatCrafter, CatErrand, "custom"} {
 		for _, model := range []string{"gpt-5.5", "gateway/GPT-5.5", "claude-test"} {
 			t.Run(role+"/"+model, func(t *testing.T) {
 				defs := FilterToolsForModel(tools.AgentTools, nil, nil, role, role != "", model)

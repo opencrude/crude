@@ -293,6 +293,11 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		if !res.Handled {
 			return m.failShellControl(msg, control.Unavailable, "semantic operation was not handled")
 		}
+		// A handled operation changed the window, even when its action then
+		// fails (a refused Save reveals the row to fix): repaint it.
+		if owner.window != nil {
+			owner.window.MarkContentDirty()
+		}
 		if surface := m.settingsSurface(owner.window); surface != nil {
 			if outcome, ok := any(surface).(interface{ ControlActionOutcome(string) error }); ok {
 				if err := outcome.ControlActionOutcome(generic.ExpectedAction); err != nil {
@@ -303,9 +308,6 @@ func (m *App) handleShellControl(msg shellport.ControlRequestMsg) tea.Cmd {
 		}
 		actionCmd := m.applyHostPointerActions(res)
 		cmd := tea.Batch(res.Cmd, actionCmd)
-		if owner.window != nil {
-			owner.window.MarkContentDirty()
-		}
 		if (res.Cmd != nil || actionCmd != nil) && (res.Cmd == nil || actionCmd == nil) && (done.memoryOwner != nil || done.boardOwner != nil || done.pickerOwner != nil || done.snippetOwner != nil || done.reviewOwner != nil || done.actionOwner != nil || done.navOwner != nil || done.inlayOwner != nil || done.completionOwner != nil || done.safetyOwner != nil || owner.body != nil || m.settingsSurface(owner.window) != nil) {
 			work := res.Cmd
 			if work == nil {

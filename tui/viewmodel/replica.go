@@ -28,8 +28,8 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 	}
 	for _, id := range applied.Attached {
 		activate := id == focus
-		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[id])
-		if aeron {
+		errand := workspace.SessionIsErrand(m.ws.SessionsByAgent()[id])
+		if errand {
 			// The workspace agent is permanent background inventory. It must
 			// never replace the launcher or the user's selected tab.
 			activate = false
@@ -93,7 +93,7 @@ func (m *App) applyReplicaChanges(msg shellport.ReplicaChangesMsg) tea.Cmd {
 // minimized the shell stays on the workspace home.
 func (m *App) initialAgentFocus(attached []string) string {
 	candidate := func(id string) bool {
-		return m.ws.AgentMgr().Get(id) != nil && !m.AgentView.IsHidden(id) && !workspace.SessionIsAeron(m.ws.SessionsByAgent()[id])
+		return m.ws.AgentMgr().Get(id) != nil && !m.AgentView.IsHidden(id) && !workspace.SessionIsErrand(m.ws.SessionsByAgent()[id])
 	}
 	if remembered := m.rememberedAgent; remembered != "" && slices.Contains(attached, remembered) && candidate(remembered) {
 		return remembered

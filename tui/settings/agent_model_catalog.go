@@ -15,7 +15,14 @@ func (m *Model) secondaryModelPicker() (*ui.FieldState, string, func([]types.Mod
 			return field, form.Field(fieldRankerAccount).Value.String(), ui.ModelOptions
 		}
 		if field := form.Field(fieldSuggestModel); field != nil {
-			return field, m.suggestionAccountID(), suggestionModelOptions
+			accountID, parent := m.suggestionAccountID(), m.suggestionParent()
+			return field, accountID, func(models []types.ModelEntry) []ui.FormOption {
+				options := ui.ModelOptions(models)
+				if inherited := parent.modelFor(accountID); inherited != "" {
+					options = append([]ui.FormOption{{ID: "", Label: parent.name + "'s model", Detail: inherited}}, options...)
+				}
+				return options
+			}
 		}
 	}
 	return nil, "", nil

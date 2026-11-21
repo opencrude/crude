@@ -37,8 +37,8 @@ func (m *SubAgentManager) Validate(spec SubAgentSpec) error {
 	if spec.Description == "" {
 		return fmt.Errorf("sub-agent description is required")
 	}
-	if spec.Category != CatResearcher && spec.Category != CatCrafter && spec.Category != CatAeron {
-		return fmt.Errorf("invalid category %q: must be researcher, crafter, or aeron", spec.Category)
+	if spec.Category != CatResearcher && spec.Category != CatCrafter && spec.Category != CatErrand {
+		return fmt.Errorf("invalid category %q: must be researcher, crafter, or errand", spec.Category)
 	}
 	return nil
 }

@@ -456,7 +456,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 	st := &ui.ContextMenuState{Title: title}
 	if node != nil {
 		// Errand opens like any agent but is permanent: it has no Terminate.
-		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[node.ID])
+		errand := workspace.SessionIsErrand(m.ws.SessionsByAgent()[node.ID])
 		items := []ui.ContextMenuItem{
 			{Label: "Open agent", Action: func() { m.restoreAgent(node.ID) }},
 			{Label: "Open in window", Action: func() {
@@ -472,7 +472,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 				m.cancelAgentTurn(node.ID)
 			}},
 		}
-		if !aeron {
+		if !errand {
 			items = append(items,
 				ui.ContextMenuItem{Label: "Terminate agent", Action: func() {
 					m.terminateAgent(node.ID)
@@ -693,7 +693,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		})
 	} else if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
-		aeron := workspace.SessionIsAeron(m.ws.SessionsByAgent()[agentID])
+		errand := workspace.SessionIsErrand(m.ws.SessionsByAgent()[agentID])
 		items := []ui.ContextMenuItem{
 			{Label: "Minimize", Action: func() {
 				m.runDetachedAsyncCmd(m.handleAgentTabClose(m.Win.IndexOf(tab.ID)))
@@ -705,7 +705,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				m.cancelAgentTurn(agentID)
 			}},
 		}
-		if !aeron {
+		if !errand {
 			items = append(items, ui.ContextMenuItem{Label: "Terminate agent", Action: func() {
 				m.terminateAgent(agentID)
 			}})

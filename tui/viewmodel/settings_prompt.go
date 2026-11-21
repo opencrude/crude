@@ -68,7 +68,8 @@ func (m *App) showSettingsPrompt(msg settingsui.PromptMsg) {
 	switch msg.Kind {
 	case settingsui.PromptRemoveAccount:
 		spec.Title, spec.Question = "Remove account", "Remove this account?"
-		spec.Detail = fmt.Sprintf("Account %q will be removed. Existing sessions will not be reassigned.", msg.Label)
+		spec.Detail = removeAccountDetail(msg.Label, msg.AccountUses)
+		spec.DetailMaxLines = maxInt(1, m.height-10)
 		spec.Severity = ui.ConfirmPromptDanger
 		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Remove account", ActionID: ui.ConfirmActionYes}, {Label: "Keep account", ActionID: ui.ConfirmActionCancel}}
 	case settingsui.PromptDiscardEditor:
@@ -201,4 +202,15 @@ func (m *App) handleSettingsPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 		ui.MoveConfirmFocus(cw, delta, 2)
 	}
 	return nil
+}
+
+// removeAccountDetail tells people, before they confirm, every setting the
+// removal changes. The same list drives the cleanup (types.AccountUses).
+func removeAccountDetail(label string, uses []string) string {
+	lines := []string{fmt.Sprintf("%q will be removed.", label), "Workspace or session overrides may need a new account."}
+	if len(uses) > 0 {
+		lines = append(lines, "", "Application settings:")
+		lines = append(lines, uses...)
+	}
+	return strings.Join(lines, "\n")
 }

@@ -48,13 +48,13 @@ func (c *Config) SuggestionCompleter() (EditorPredictionCompleter, error) {
 	}
 	settings := c.Agents.Suggestions.Normalized()
 	profile, _ := activeProfileCfg(c)
-	stored := profile.Categories[CategoryAeron]
-	aeron := c.GetCategoryConfig(CategoryAeron)
-	if (stored.Enabled != nil && !*stored.Enabled) || (aeron.Enabled != nil && !*aeron.Enabled) {
+	stored := profile.Categories[CategoryErrand]
+	errand := c.GetCategoryConfig(CategoryErrand)
+	if (stored.Enabled != nil && !*stored.Enabled) || (errand.Enabled != nil && !*errand.Enabled) {
 		return EditorPredictionCompleter{}, errors.New("the Errand agent is turned off in Settings, Agents")
 	}
-	role := CategoryConfig{AccountID: aeron.AccountID, Model: aeron.Model, ServiceTier: aeron.ServiceTier,
-		ModelMaxOutput: aeron.ModelMaxOutput, ModelContextWindow: aeron.ModelContextWindow}
+	role := CategoryConfig{AccountID: errand.AccountID, Model: errand.Model, ServiceTier: errand.ServiceTier,
+		ModelMaxOutput: errand.ModelMaxOutput, ModelContextWindow: errand.ModelContextWindow}
 	if settings.AccountID != "" {
 		role.AccountID, role.Model, role.ModelMaxOutput, role.ModelContextWindow = settings.AccountID, settings.Model, 0, 0
 	} else if settings.Model != "" {
@@ -153,7 +153,7 @@ func (t EditorPredictionCompleter) Bound() bool { return t.provider != nil && t.
 // same destination. Credential refresh belongs to the request path.
 func (t EditorPredictionCompleter) Current() error {
 	if !t.Bound() || t.manager == nil || t.ConnectionIdentity == "" {
-		return errors.New("aeron suggestions have no connection")
+		return errors.New("errand suggestions have no connection")
 	}
 	account, ok := t.manager.Account(t.AccountID)
 	if !ok {

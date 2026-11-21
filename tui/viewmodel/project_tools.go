@@ -250,7 +250,7 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 			// Errand does the work. Crude only records that the user answered,
 			// so the question is not asked again for this project.
 			order := projectToolSetupTask(m.ws.RootPath(), msg.Target.Items(), msg.Selected)
-			task = m.taskWorkspaceAeron(prompt.ToolSetupMessage(order), projectToolSetupDisplay(order))
+			task = m.taskWorkspaceErrand(prompt.ToolSetupMessage(order), projectToolSetupDisplay(order))
 			if m.Feedback != nil {
 				m.Feedback.NotifyInfo("Tool setup was sent to Errand. It shows a prompt when it needs your answer.")
 			}

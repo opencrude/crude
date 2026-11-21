@@ -31,7 +31,7 @@ type InvocationSelection struct {
 	ProviderID   string `json:"provider_id,omitempty"`
 	APIKey       string `json:"api_key,omitempty"`
 	Instructions string `json:"instructions,omitempty"`
-	// MainAgent roots a new session in a built-in role (for example "aeron")
+	// MainAgent roots a new session in a built-in role (for example "errand")
 	// or a named profile, exactly as the session settings page would.
 	MainAgent string `json:"main_agent,omitempty"`
 }

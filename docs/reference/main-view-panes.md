@@ -440,7 +440,7 @@ through the collaboration journal (sender **Crude**, body
 - Errand was not told about this cause (the journal's idempotency key is the
   issue and its detail; a new detail is a new cause);
 - a shell is attached, Errand runs, has no turn and waits for no answer;
-- **When a server has a problem** is **Ask Errand** (`lsp.ask_aeron`).
+- **When a server has a problem** is **Ask Errand** (`lsp.ask_errand`).
 
 At most three notices go out at once. Crude never starts Errand for a notice; the
 shell's Errand ensure stays the one start owner. Errand's contract makes it

@@ -384,7 +384,7 @@ promising it always frees a slot. Test mixed projects, many workspaces, retained
 old generations, low quotas, crashes, restart and thread/memory hints.
 
 AI suggestions and Ask Crude are designed and tracked in
-[Ask Crude and Aeron suggestions](ask-crude-and-aeron-suggestions.md); the
+[Ask Crude and Errand suggestions](ask-crude-and-errand-suggestions.md); the
 rules below still apply. AI suggestions remain separate from deterministic
 completion. Reuse existing
 prediction budget, source snapshot, cancellation and ghost projection owners.

@@ -11,7 +11,7 @@ import (
 // out. Every function tool must opt out and keep its schema unchanged.
 func TestResponsesFunctionToolsOptOutOfStrictSchemas(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"options":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}}}}`)
-	req := &ChatRequest{Model: "gpt-6.2-sol", Messages: []ChatMessage{{Role: "user", Content: TextContent("hi")}}, Tools: []ToolDef{
+	req := &ChatRequest{Model: "example-model", Messages: []ChatMessage{{Role: "user", Content: TextContent("hi")}}, Tools: []ToolDef{
 		{Type: "function", Function: FunctionDef{Name: "question", Description: "ask", Parameters: schema}},
 		{Type: "function", Function: FunctionDef{Name: "multi_tool_use.parallel", Description: "parallel", Parameters: schema}},
 		{Type: "custom", Function: FunctionDef{Name: "apply_patch", Description: "FREEFORM"}, Format: &ToolFormat{Type: "grammar", Syntax: "lark", Definition: "grammar"}},
