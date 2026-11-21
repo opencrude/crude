@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
@@ -18,6 +19,16 @@ import (
 )
 
 func TestConnectedLSPEnableSaveStartsProjectCheckAndOpenSource(t *testing.T) {
+	program := "gopls"
+	if goruntime.GOOS == "windows" {
+		program += ".exe"
+	}
+	// Resolve a catalog-named program so the real assembly keeps its project
+	// coverage rules. The injected runtime handles requests, not this file.
+	executable := filepath.Join(t.TempDir(), program)
+	if err := os.WriteFile(executable, []byte("test provider is injected\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	for _, alreadyOpen := range []bool{false, true} {
 		t.Run(map[bool]string{false: "open-after-save", true: "already-open"}[alreadyOpen], func(t *testing.T) {
 			root := t.TempDir()
@@ -31,6 +42,7 @@ func TestConnectedLSPEnableSaveStartsProjectCheckAndOpenSource(t *testing.T) {
 				w.LSPMgr.SetRuntime(server)
 				s := w.AppDefaults()
 				s.LSP.Enabled = false
+				s.LSP.Languages["go"] = types.LSPLanguageSettings{Enabled: true, Command: executable}
 				w.SetAppDefaults(s)
 				grantSemanticFixture(t, w)
 				w.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
