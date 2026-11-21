@@ -44,12 +44,7 @@ func TestCopiedPromptPartPastesWithItsAttachments(t *testing.T) {
 			app.Input.SetInput("look at " + ref.Label + " and fix it")
 			draft := app.Input.Value()
 			selection := []rune("look at " + ref.Label + " and")
-			copied := ""
-			restore := installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{
-				read:      func(clipboard.Format) []byte { return nil },
-				writeText: func(text string) error { copied = text; return nil },
-			})
-			defer restore()
+			awaitCopy := recordingClipboard(t, app)
 			switch route {
 			case "copy-same-session", "cut-same-session":
 				app.Input.SetSelection(0, len(selection))
@@ -60,19 +55,15 @@ func TestCopiedPromptPartPastesWithItsAttachments(t *testing.T) {
 				_, cmd := app.Update(tea.KeyPressMsg{Code: code, Mod: tea.ModCtrl})
 				runAppCommand(t, app, cmd)
 			default:
-				menu := app.buildInputContextMenu(tea.Mouse{X: -1, Y: -1})
-				for _, item := range menu.Sections[0].Items {
-					if item.Label == "Copy" {
-						item.Action()
-					}
-				}
+				activateMenuItem(t, app.buildInputContextMenu(tea.Mouse{X: -1, Y: -1}), "Copy")
 				selection = []rune(draft)
 				target := workspace.NewSession("target", t.TempDir(), db, stubLogger{})
 				app.ActiveSession = target
 				app.maybeHydrateComposerDraft()
 				app.Input.SetReferenceStore(app.RefStore())
 			}
-			if copied != "" && copied != string(selection) {
+			copied := awaitCopy()
+			if copied != string(selection) {
 				t.Fatalf("system clipboard got %q, want %q", copied, string(selection))
 			}
 			if route == "cut-same-session" {
@@ -84,7 +75,7 @@ func TestCopiedPromptPartPastesWithItsAttachments(t *testing.T) {
 				}
 			}
 			app.Input.SetInput("before ")
-			_, cmd := app.Update(tea.PasteMsg{Content: string(selection)})
+			_, cmd := app.Update(tea.PasteMsg{Content: copied})
 			if cmd == nil {
 				t.Fatal("paste did not schedule attachment reproduction")
 			}
