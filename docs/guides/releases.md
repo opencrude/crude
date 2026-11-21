@@ -95,6 +95,10 @@ Back up your Crude profile before updating. After the update, open **Application
 Settings → Agents → Errand** if you want to choose a separate account or model.
 Errand can otherwise use the Main Agent's settings.
 
+On Linux, Crude now identifies project folders more precisely. If Crude asks
+you to trust a folder again, review the folder before you choose **Trust**.
+This does not change your files or sessions.
+
 ### The Git shell
 
 Agent commands run in one shell. On Windows, Git Bash starts in about 40 ms and
