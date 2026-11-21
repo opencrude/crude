@@ -11,6 +11,16 @@ import (
 	"crude/types"
 )
 
+// steppingClock advances by step at every reading, so a materialization
+// budget runs out after the same number of items on every platform timer.
+func steppingClock(step time.Duration) func() time.Time {
+	now := time.Unix(0, 0)
+	return func() time.Time {
+		now = now.Add(step)
+		return now
+	}
+}
+
 func TestMessageRowsSnapshotGenerationAndStableHeightDelta(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 10)
@@ -161,6 +171,7 @@ func TestLargeTranscriptMaterializesProgressivelyWithinBudget(t *testing.T) {
 	r.SetChatAreaBounds(0, 20)
 	r.SetSize(100, 20)
 	r.MaterializeBudget = time.Millisecond
+	r.MaterializeClock = steppingClock(100 * time.Microsecond)
 	messages := make([]types.ChatMessage, 400)
 	for i := range messages {
 		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant,
@@ -247,6 +258,7 @@ func TestSettleHistoryDrawsRowsThatAWidthReflowLeftBlank(t *testing.T) {
 	r.SetChatAreaBounds(0, 6)
 	r.SetSize(80, 20)
 	r.MaterializeBudget = time.Nanosecond // history draws slower than the first frames
+	r.MaterializeClock = steppingClock(time.Millisecond)
 	messages := make([]types.ChatMessage, 40)
 	for i := range messages {
 		messages[i] = types.ChatMessage{InternalID: fmt.Sprintf("m-%d", i), Role: types.RoleAssistant, Content: fmt.Sprintf("message %d with a needle", i), Time: time.Now()}
