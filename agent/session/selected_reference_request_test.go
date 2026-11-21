@@ -506,7 +506,7 @@ func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 	if result := s.CommitInputAdmission(t.Context(), intent); !result.Accepted() {
 		t.Fatalf("failed preparation did not preserve the locally admitted original: %+v", result)
 	}
-	awaitAttention := func(after time.Time) recoverytypes.Status {
+	awaitAttention := func(afterAttempt int) recoverytypes.Status {
 		t.Helper()
 		deadline := time.After(5 * time.Second)
 		for {
@@ -517,7 +517,7 @@ func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 				}
 				if event.typ == "recovery" {
 					status := event.data.(recoverytypes.Status)
-					if status.State == recoverytypes.NeedsAttention && status.UpdatedAt.After(after) {
+					if status.State == recoverytypes.NeedsAttention && status.Attempt > afterAttempt {
 						return status
 					}
 				}
@@ -526,7 +526,7 @@ func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 			}
 		}
 	}
-	status := awaitAttention(time.Time{})
+	status := awaitAttention(0)
 	if status.Action == "" || !strings.Contains(status.Detail, "image") {
 		t.Fatalf("selected media failure was not actionable: %+v", status)
 	}
@@ -566,7 +566,7 @@ func TestSelectedReferenceCapabilityRepairReusesCapturedPreimage(t *testing.T) {
 	if s.RetryRecoveryFor(o.ID, status.ID, status.Generation) != nil {
 		t.Fatal("exact unrepaired Continue was rejected")
 	}
-	status = awaitAttention(status.UpdatedAt)
+	status = awaitAttention(status.Attempt)
 	capture.mu.Lock()
 	requestCount := len(capture.requests)
 	capture.mu.Unlock()

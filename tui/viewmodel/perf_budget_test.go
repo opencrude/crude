@@ -404,6 +404,9 @@ func TestEditorAgentSwitchWorkBounded(t *testing.T) {
 	}
 	app.handleTabSwitch()
 	app.paintShellFrame()
+	// Materialize in the visible chat before testing steady work while it
+	// is hidden. Hidden panes intentionally do not finish deferred renders.
+	settleHistory(t, app)
 
 	main := filepath.Join(t.TempDir(), "main.go")
 	if err := os.WriteFile(main, []byte("package main\n"), 0o600); err != nil {
