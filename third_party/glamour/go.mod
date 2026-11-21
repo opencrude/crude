@@ -3,7 +3,7 @@ module charm.land/glamour/v2
 go 1.25.8
 
 require (
-	charm.land/lipgloss/v2 v2.0.0
+	charm.land/lipgloss/v2 v2.0.3
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/exp/golden v0.0.0-20250806222409-83e3a29d542f
@@ -13,6 +13,8 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.5
 	golang.org/x/text v0.24.0
 )
+
+replace charm.land/lipgloss/v2 => ../lipgloss
 
 require (
 	github.com/aymanbagabas/go-udiff v0.4.0 // indirect

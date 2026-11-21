@@ -94,6 +94,12 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 // A painter that adds decorations at logical columns (find matches) paints
 // with it, adds them, and then arranges the row with ArrangedLine.
 func PaintLineLogical(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *ui.TokenSet, selStart, selEnd int, rowBg cell.Color) {
+	selection := [...]bidi.ColumnRange{{Start: selStart, End: selEnd}}
+	PaintLineLogicalRanges(buf, x, y, maxW, pl, tokens, selection[:], rowBg)
+}
+
+// PaintLineLogicalRanges allows source selection to skip gaps between cells.
+func PaintLineLogicalRanges(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *ui.TokenSet, selection []bidi.ColumnRange, rowBg cell.Color) {
 	if buf == nil || y < 0 || y >= buf.Height() {
 		return
 	}
@@ -141,7 +147,10 @@ func PaintLineLogical(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tok
 			if pl.TextTide {
 				cellFG, cellAttr = ui.TextTide(cellFG, cellAttr, tokens, pl.TideCenter, col)
 			}
-			if selStart < selEnd && nextCol > selStart && col < selEnd && tokens != nil {
+			for len(selection) > 0 && selection[0].End <= col {
+				selection = selection[1:]
+			}
+			if len(selection) > 0 && nextCol > selection[0].Start && col < selection[0].End && tokens != nil {
 				// Selection preserves readable semantic/syntax ink.
 				cellFG, cellBG = tokens.TextSelectionColors(fg)
 				cellAttr &^= cell.AttrDim | cell.AttrReverse
@@ -155,7 +164,10 @@ func PaintLineLogical(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tok
 	for col < maxW && curX < buf.Width() {
 		cellFG := cell.NoColor
 		cellBG := rowBg
-		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
+		for len(selection) > 0 && selection[0].End <= col {
+			selection = selection[1:]
+		}
+		if len(selection) > 0 && col >= selection[0].Start && col < selection[0].End && tokens != nil {
 			cellFG, cellBG = tokens.TextSelectionColors(cellFG)
 		}
 		curX = buf.WriteLogical(curX, y, " ", cellFG, cellBG, 0)
@@ -163,43 +175,50 @@ func PaintLineLogical(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tok
 	}
 }
 
-// ArrangedLine returns the bidirectional arrangement of a row painted at
-// most maxW columns wide, or nil when it paints as written. A row that
-// shows source text takes the direction of that source paragraph, so every
-// row of a Persian paragraph is right-aligned, including one that starts
-// with an English word; code stays left-to-right. A row without source text
-// is left-to-right with its right-to-left runs arranged in place.
+// ArrangedLine returns the arrangement of a row at most maxW columns wide,
+// or nil when it paints as written. Mapped Markdown derives each display row
+// from its retained paragraph or table cells. Fenced code and unmapped rows
+// keep their own line boundaries.
 func ArrangedLine(pl PaintLine, maxW int) *bidi.Line {
 	if maxW <= 0 || !bidi.Current().Arrange {
 		return nil
 	}
-	dir, needed := bidi.LeftToRight, false
-	var source *rendering.CopyText
-	structured := false
+	if pl.prose != nil {
+		if pl.prose.blockWidth > 0 {
+			maxW = min(maxW, pl.prose.blockWidth+pl.prose.shift)
+		}
+		return pl.prose.arrange(maxW)
+	}
+	if pl.mappedMarkdown {
+		if pl.code {
+			return arrangeSpans(pl, bidi.LeftToRight, maxW)
+		}
+		return nil
+	}
+	dir := bidi.LeftToRight
 	for _, span := range pl.Spans {
-		// The first source span decides; later spans share its paragraph.
-		// A row that shows several source blocks (a table row) keeps its
-		// columns left to right and arranges each run in place.
 		if span.Copy.Valid() {
-			switch {
-			case source == nil:
-				source = span.Copy.Text
-				if source.RTLAt(span.Copy.Start) {
-					dir = bidi.RightToLeft
-				}
-			case span.Copy.Text != source:
-				structured = true
+			if span.Copy.Text.RTLAt(span.Copy.Start) {
+				dir = bidi.RightToLeft
+			}
+			break
+		}
+	}
+	return arrangeSpans(pl, dir, maxW)
+}
+
+func arrangeSpans(pl PaintLine, dir bidi.Direction, width int) *bidi.Line {
+	if dir != bidi.RightToLeft {
+		needed := false
+		for _, span := range pl.Spans {
+			if bidi.NeedsLayout(span.Text) {
+				needed = true
+				break
 			}
 		}
-		if !needed && bidi.NeedsLayout(span.Text) {
-			needed = true
+		if !needed {
+			return nil
 		}
-	}
-	if structured {
-		dir = bidi.LeftToRight
-	}
-	if !needed && dir == bidi.LeftToRight {
-		return nil
 	}
 	var text strings.Builder
 	// Inline code is isolated left to right (UTS #55 section 4.1.4), so
@@ -208,7 +227,7 @@ func ArrangedLine(pl PaintLine, maxW int) *bidi.Line {
 	var code [][2]int
 	var codeText *rendering.CopyText
 	codeIndex := -1
-	for _, span := range TruncatePaintLine(pl, maxW).Spans {
+	for _, span := range TruncatePaintLine(pl, width).Spans {
 		start := text.Len()
 		text.WriteString(span.Text)
 		index := -1
@@ -225,7 +244,7 @@ func ArrangedLine(pl PaintLine, maxW int) *bidi.Line {
 		codeText, codeIndex = span.Copy.Text, index
 	}
 	if len(code) == 0 {
-		return bidi.TextLine(text.String(), dir, maxW, maxW)
+		return bidi.TextLine(text.String(), dir, width, width)
 	}
 	row := text.String()
 	var key strings.Builder
@@ -236,7 +255,7 @@ func ArrangedLine(pl PaintLine, maxW int) *bidi.Line {
 		key.WriteByte(':')
 		key.WriteString(strconv.Itoa(r[1]))
 	}
-	return bidi.CachedLine(key.String(), dir, maxW, maxW, func(dst []bidi.Unit) []bidi.Unit {
+	return bidi.CachedLine(key.String(), dir, width, width, func(dst []bidi.Unit) []bidi.Unit {
 		units := bidi.Clusters(row, dst)
 		offset, next := 0, 0
 		for i := range units {

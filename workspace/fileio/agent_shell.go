@@ -114,6 +114,19 @@ func shellCommand(ctx context.Context, shell command.Shell, line, cwd, tempDir s
 	return c, cleanup, nil
 }
 
+func prepareShellCommand(ctx context.Context, shell command.Shell, line, cwd, tempDir string, login bool, options *CommandOptions) (*exec.Cmd, func(), error) {
+	if options == nil || len(options.DirectArgv) == 0 {
+		return shellCommand(ctx, shell, line, cwd, tempDir, login)
+	}
+	if !filepath.IsAbs(options.DirectArgv[0]) || !filepath.IsAbs(cwd) || options.Environment == nil {
+		return nil, nil, errors.New("direct inspection needs an absolute program, directory and explicit environment")
+	}
+	cmd := setProcessGroupCmd(ctx, options.DirectArgv[0], options.DirectArgv[1:]...)
+	cmd.Dir = cwd
+	cmd.Env = commandEnvironmentWithTemp(options.Environment, tempDir)
+	return cmd, func() {}, nil
+}
+
 func writeCommandScript(tempDir, pattern, content string) (string, error) {
 	file, err := os.CreateTemp(tempDir, pattern)
 	if err != nil {

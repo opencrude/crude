@@ -91,7 +91,7 @@ func executeApplyPatch(ctx context.Context, params map[string]any, ed *fileio.Ed
 	if err != nil {
 		fmt.Fprintf(&summary, "Error: %v\n", err)
 		if len(changes) > 0 {
-			summary.WriteString("Earlier operations committed and remain undoable:\n")
+			summary.WriteString("Earlier operations committed:\n")
 		}
 	} else {
 		summary.WriteString("Success. Updated the following files:\n")

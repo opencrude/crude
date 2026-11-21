@@ -75,21 +75,27 @@ func TestLeftToRightRowsAreUntouched(t *testing.T) {
 	}
 }
 
-func TestTableRowsKeepColumnsLeftToRight(t *testing.T) {
-	first := &rendering.CopyText{Value: "نام"}
-	second := &rendering.CopyText{Value: "مقدار"}
-	row := PaintLine{SourceAware: true, Spans: []RowSpan{
-		{Text: "│ "},
-		{Text: first.Value, Copy: rendering.CopyRange{Text: first, Start: 0, End: len(first.Value)}},
-		{Text: " │ "},
-		{Text: second.Value, Copy: rendering.CopyRange{Text: second, Start: 0, End: len(second.Value)}},
-		{Text: " │"},
-	}}
-	ln := ArrangedLine(row, 20)
-	if ln == nil || ln.RTL() {
-		t.Fatal("a table row with right-to-left cells changed its column order")
+func TestLtrTableKeepsDividersOutsideBidi(t *testing.T) {
+	th := theme.DefaultDark()
+	rows, _ := renderMarkdownRows("| First | Second |\n|---|---|\n| שם│בית | قيمة |", rendering.MakeMdRenderer(50, th), ui.NewTokenSet(th), "m", false)
+	if len(rows) < 3 {
+		t.Fatal("table did not render")
 	}
-	if ln.Visual(0) != 0 {
-		t.Fatal("the table border moved")
+	for _, row := range rows {
+		if !strings.Contains(row.PlainText(), "שם│בית") {
+			continue
+		}
+		before := row.PlainText()
+		border := rendering.VisibleWidth(before[:strings.LastIndex(before, "│")])
+		literal := rendering.VisibleWidth(before[:strings.Index(before, "│")])
+		mapped := ArrangedLine(row, 30)
+		if mapped == nil || mapped.RTL() || mapped.Visual(border) != border {
+			t.Fatalf("LTR table did not keep its border at column %d", border)
+		}
+		if mapped.Visual(literal-1) < literal {
+			t.Fatalf("literal rail in the cell unexpectedly split its bidi paragraph: %q", before)
+		}
+		return
 	}
+	t.Fatal("table did not show both RTL cells")
 }

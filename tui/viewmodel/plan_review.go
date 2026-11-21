@@ -10,7 +10,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/agent/provider"
 	shellport "crude/core/port"
 	"crude/text/anchor"
 	"crude/tui/editor"
@@ -38,6 +37,7 @@ const (
 	actionPlanNewSession = "plan-review.new-session"
 	actionPlanRevise     = "plan-review.revise"
 	actionPlanComment    = "plan-review.comment"
+	actionPlanEvidence   = "plan-review.evidence"
 	actionPlanOpenLatest = "plan-review.open-latest"
 )
 
@@ -46,6 +46,7 @@ const (
 const (
 	planDecisionImplement = "implement"
 	planDecisionSend      = "send"
+	planDecisionCheck     = "check"
 	planChoiceNewSession  = "new_session"
 	planChoiceReview      = "review"
 )
@@ -146,29 +147,42 @@ func (m *App) planReviewChrome(v *mainPaneView, tab window.TabID, ed *editor.Edi
 	}
 	revision := doc.revision
 	pending := revision.PendingComments()
+	extraWidth := 0
+	if len(revision.Evidence) > 0 {
+		extraWidth = 13
+	}
+	setBar := func(label string, role ui.SemanticColor, buttons ...ui.ActionBarButton) {
+		if len(revision.Evidence) > 0 {
+			buttons = append(buttons, ui.ActionBarButton{Label: "Evidence", Action: actionPlanEvidence, Enabled: true, Variant: ui.VariantSecondary})
+		}
+		v.planBar.Set(label, role, ed, buttons...)
+	}
 	switch {
 	// The buttons keep their room first; the message is short so that it
 	// still fits beside all four in an 80-column pane.
 	case revision.Outcome == types.PlanOutcomeReplaced:
-		v.planBar.Set(fmt.Sprintf("Revision %d. Revision %d replaced it.", revision.Number, doc.latest), ui.ColorMuted, ed,
+		setBar(fmt.Sprintf("Revision %d. Revision %d replaced it.", revision.Number, doc.latest), ui.ColorMuted,
 			ui.ActionBarButton{Label: fmt.Sprintf("Open revision %d", doc.latest), Action: actionPlanOpenLatest, Enabled: true, Variant: ui.VariantSecondary})
 	case revision.Outcome == types.PlanOutcomeImplemented:
-		v.planBar.Set(fmt.Sprintf("Revision %d. This session implements it.", revision.Number), ui.ColorMuted, ed)
+		setBar(fmt.Sprintf("Revision %d. This session implements it.", revision.Number), ui.ColorMuted)
 	case revision.Outcome == types.PlanOutcomeNewSession:
-		v.planBar.Set(fmt.Sprintf("Revision %d. A new session implements it.", revision.Number), ui.ColorMuted, ed)
+		setBar(fmt.Sprintf("Revision %d. A new session implements it.", revision.Number), ui.ColorMuted)
+	case revision.NewSessionID != "":
+		setBar("Check that the new session received the plan.", ui.ColorAccent,
+			ui.ActionBarButton{Label: "Check", Action: actionPlanNewSession, Enabled: true, Variant: ui.VariantPrimary})
 	case pending > 0:
-		v.planBar.Set(fmt.Sprintf("Revision %d · %s", revision.Number, countNoun(pending, "comment")), ui.ColorAccent, ed,
+		setBar(fmt.Sprintf("Revision %d · %s", revision.Number, countNoun(pending, "comment")), ui.ColorAccent,
 			ui.ActionBarButton{Label: "Send comments", Action: actionPlanSend, Enabled: true, Variant: ui.VariantPrimary},
 			ui.ActionBarButton{Label: "Comment", Action: actionPlanComment, Enabled: !ed.ReadOnly(), Variant: ui.VariantSecondary})
 	default:
 		buttons := []ui.ActionBarButton{{Label: "Implement", Action: actionPlanImplement, Enabled: true, Variant: ui.VariantPrimary}}
-		if width >= planBarFullWidth {
+		if width >= planBarFullWidth+extraWidth {
 			buttons = append(buttons, ui.ActionBarButton{Label: "New session", Action: actionPlanNewSession, Enabled: true, Variant: ui.VariantSecondary})
 		}
 		buttons = append(buttons,
 			ui.ActionBarButton{Label: "Revise", Action: actionPlanRevise, Enabled: true, Variant: ui.VariantSecondary},
 			ui.ActionBarButton{Label: "Comment", Action: actionPlanComment, Enabled: !ed.ReadOnly(), Variant: ui.VariantSecondary})
-		v.planBar.Set(fmt.Sprintf("Revision %d", revision.Number), ui.ColorAccent, ed, buttons...)
+		setBar(fmt.Sprintf("Revision %d", revision.Number), ui.ColorAccent, buttons...)
 	}
 	return v.planBar
 }
@@ -236,7 +250,7 @@ func (m *App) forgetPlanEditor(ed *editor.Editor) {
 // handlePlanReviewAction carries out a review bar button.
 func (m *App) handlePlanReviewAction(action ui.Action) (tea.Cmd, bool) {
 	switch action.ID {
-	case actionPlanSend, actionPlanImplement, actionPlanNewSession, actionPlanRevise, actionPlanComment, actionPlanOpenLatest:
+	case actionPlanSend, actionPlanImplement, actionPlanNewSession, actionPlanRevise, actionPlanComment, actionPlanEvidence, actionPlanOpenLatest:
 	default:
 		return nil, false
 	}
@@ -246,6 +260,8 @@ func (m *App) handlePlanReviewAction(action ui.Action) (tea.Cmd, bool) {
 		return nil, true // the bar is gone with its plan
 	}
 	switch action.ID {
+	case actionPlanEvidence:
+		return m.planEvidenceMenu(doc.agentID, []types.PlanRevision{doc.revision}), true
 	case actionPlanOpenLatest:
 		return m.openPlanRevision(doc.agentID, doc.latest), true
 	case actionPlanComment:
@@ -601,12 +617,20 @@ func countNoun(count int, noun string) string {
 // ── Settling a revision ─────────────────────────────────────────────────────
 
 type planSettledMsg struct {
-	owner      shellport.Workspace
-	generation uint64
-	agentID    string
-	settle     types.PlanReviewSettle
-	result     types.PlanReviewSettlement
-	err        error
+	owner              shellport.Workspace
+	generation         uint64
+	sequence           uint64
+	agentID            string
+	destinationAgentID string
+	settle             types.PlanReviewSettle
+	err                error
+}
+
+func runPlanReviewSettlement(msg planSettledMsg) tea.Cmd {
+	return func() tea.Msg {
+		_, msg.err = msg.owner.SettlePlanReview(msg.agentID, msg.settle)
+		return msg
+	}
 }
 
 // settlePlanReview sends the user's choice for a revision. The plan text is
@@ -618,7 +642,10 @@ func (m *App) settlePlanReview(agentID string, number int, action types.PlanRevi
 	var save tea.Cmd
 	if review, ok := m.ws.PlanReviewForAgent(agentID); ok {
 		if revision, ok := review.Revision(number); ok {
-			if views := m.documentViews(revision.Path); len(views) > 0 && views[0].Editor.IsOpen() {
+			if action == types.PlanReviewNewSession {
+				settle.DestinationSessionID = revision.NewSessionID
+			}
+			if views := m.documentViews(revision.Path); settle.DestinationSessionID == "" && len(views) > 0 && views[0].Editor.IsOpen() {
 				ed := views[0].Editor
 				settle.Text = ed.Value()
 				if ed.Modified() && !ed.ReadOnly() {
@@ -628,25 +655,35 @@ func (m *App) settlePlanReview(agentID string, number int, action types.PlanRevi
 		}
 	}
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
-	return tea.Batch(save, func() tea.Msg {
-		result, err := owner.SettlePlanReview(agentID, settle)
-		return planSettledMsg{owner: owner, generation: generation, agentID: agentID, settle: settle, result: result, err: err}
-	})
+	msg := planSettledMsg{owner: owner, generation: generation, agentID: agentID, settle: settle}
+	if action == types.PlanReviewNewSession {
+		return tea.Batch(save, m.openPlanDestination(msg))
+	}
+	return tea.Batch(save, runPlanReviewSettlement(msg))
 }
 
 func (m *App) applyPlanSettled(msg planSettledMsg) tea.Cmd {
 	if msg.owner != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
 		return nil
 	}
+	if msg.settle.Action == types.PlanReviewNewSession {
+		if !m.sessionLifecyclePending || msg.sequence != m.sessionLifecycleSequence {
+			return nil
+		}
+		m.sessionLifecyclePending = false
+	}
 	m.planReviewChanged()
 	if msg.err != nil {
 		m.Feedback.NotifyError(sentence(msg.err.Error()))
+		if msg.settle.Action == types.PlanReviewNewSession {
+			m.reofferPlanDecision(msg)
+		}
 		return nil
 	}
 	m.closePlanDecision(msg.agentID)
 	switch msg.settle.Action {
 	case types.PlanReviewNewSession:
-		return m.newSessionWithInput(provider.UserInput{Text: msg.result.Text, DisplayText: msg.result.Display, Origin: provider.OriginHuman})
+		m.AddOrchestrator(msg.destinationAgentID)
 	case types.PlanReviewImplement:
 		// The core sent the message with the settlement.
 		m.Feedback.NotifyInfo("Plan approved. Plan mode is off.")
@@ -654,6 +691,15 @@ func (m *App) applyPlanSettled(msg planSettledMsg) tea.Cmd {
 		m.Feedback.NotifyInfo("Plan feedback sent")
 	}
 	return nil
+}
+
+// The failed choice closed the chat question, not the review.
+func (m *App) reofferPlanDecision(msg planSettledMsg) {
+	if m.ActiveSession != nil && m.ws.SessionsByAgent()[msg.agentID] == m.ActiveSession {
+		if latest, ok := m.latestPlanRevision(msg.agentID); ok && latest.Open() && latest.Number == msg.settle.Revision {
+			m.showPlanDecision(msg.agentID, latest)
+		}
+	}
 }
 
 // ── The plan decision in the chat ───────────────────────────────────────────
@@ -699,14 +745,21 @@ func (m *App) showPlanDecision(agentID string, revision types.PlanRevision) {
 func planDecisionSpec(revision types.PlanRevision) (decision.Spec, string) {
 	pending := revision.PendingComments()
 	spec := decision.Spec{
-		Purpose: "implement_plan", Title: "Implement this plan?", Hint: "To keep planning, decline and reply in the composer.",
+		Purpose: "implement_plan", Title: "Implement this plan?", ReadingLayout: true,
 		Facts:          []decision.Fact{{Label: "Plan", Value: fmt.Sprintf("%s · revision %d", revision.Title, revision.Number)}},
 		Cancel:         decision.Answer{Label: "Keep planning", Shortcut: "n"},
 		SemanticsLabel: "Implement the proposed plan",
 	}
 	review := decision.Answer{ID: planChoiceReview, Label: "Review", Shortcut: "r", Stay: true}
 	mode := planDecisionImplement
-	if pending > 0 {
+	if revision.NewSessionID != "" {
+		mode = planDecisionCheck
+		spec.Title = "Check the new session?"
+		spec.SemanticsLabel = "Check that the new session received the plan"
+		spec.Hint = "Check that the new session received the plan. This does not send it again."
+		spec.Confirm = decision.Answer{Label: "Check", Shortcut: "c"}
+		spec.Alternates = []decision.Answer{review}
+	} else if pending > 0 {
 		mode = planDecisionSend
 		spec.Title = "Send your comments?"
 		spec.Facts = append(spec.Facts, decision.Fact{Label: "Comments", Value: countNoun(pending, "comment") + " not sent. The agent revises the plan."})
@@ -714,8 +767,9 @@ func planDecisionSpec(revision types.PlanRevision) (decision.Spec, string) {
 		spec.Alternates = []decision.Answer{review}
 	} else {
 		spec.Facts = append(spec.Facts,
-			decision.Fact{Label: "Implement", Value: "Plan mode turns off. The agent implements the plan as you see it."},
-			decision.Fact{Label: "Review", Value: "Opens the plan in the editor. Edit it and add comments."})
+			decision.Fact{Label: "Implement", Value: "Turn off Plan mode and implement this revision."},
+			decision.Fact{Label: "New session", Value: "Implement this revision in a new session."},
+			decision.Fact{Label: "Review", Value: "Open the plan to edit or add comments."})
 		spec.Confirm = decision.Answer{Label: "Implement", Shortcut: "y"}
 		spec.Alternates = []decision.Answer{{ID: planChoiceNewSession, Label: "New session", Shortcut: "c"}, review}
 	}
@@ -773,13 +827,16 @@ func (m *App) resolvePlanDecision(agentID, data string, msg decision.ResultMsg) 
 	if mode == planDecisionSend {
 		return m.settlePlanReview(agentID, number, types.PlanReviewFeedback)
 	}
+	if mode == planDecisionCheck {
+		return m.settlePlanReview(agentID, number, types.PlanReviewNewSession)
+	}
 	return m.settlePlanReview(agentID, number, types.PlanReviewImplement)
 }
 
 // planReviewMenuSection is the editor menu's plan section: comment commands
 // first, then the revision's actions, as in the review bar.
 func (m *App) planReviewMenuSection(ed *editor.Editor, doc planDocument) ui.ContextMenuSection {
-	open := doc.revision.Open()
+	open := doc.revision.Open() && doc.revision.NewSessionID == ""
 	label := "Add comment"
 	if _, ok := ed.ReviewCommentAtCaret(); ok {
 		label = "Edit comment"
@@ -790,6 +847,9 @@ func (m *App) planReviewMenuSection(ed *editor.Editor, doc planDocument) ui.Cont
 		{Label: "Previous comment", Detail: "Shift+Alt+F9", Disabled: len(doc.revision.Comments) == 0, Action: func() { m.stepPlanComment(false) }},
 	}
 	agentID, number := doc.agentID, doc.revision.Number
+	if len(doc.revision.Evidence) > 0 {
+		items = append(items, ui.ContextMenuItem{Label: "Review investigation evidence", Action: func() { m.runDetachedAsyncCmd(m.planEvidenceMenu(agentID, []types.PlanRevision{doc.revision})) }})
+	}
 	if open && doc.revision.PendingComments() > 0 {
 		items = append(items, ui.ContextMenuItem{Label: "Send comments", Action: func() {
 			m.runDetachedAsyncCmd(m.settlePlanReview(agentID, number, types.PlanReviewFeedback))

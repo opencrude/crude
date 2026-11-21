@@ -380,7 +380,7 @@ func (m *App) applyAgentEffects(agentID string, effects workspace.AgentEffects) 
 	if prompt := effects.Prompt; prompt != nil {
 		request := agentPromptRequest{agentID: agentID, blockID: prompt.BlockID,
 			question: prompt.Question, operation: prompt.Operation, tool: prompt.Tool,
-			target: prompt.Target, risk: prompt.Risk, reason: prompt.Reason,
+			target: prompt.Target, risk: prompt.Risk, reason: prompt.Reason, investigationPath: prompt.InvestigationPath, directory: prompt.Directory,
 			suggestion: prompt.Suggestion, autoReview: prompt.AutoReview, questionsJSON: prompt.QuestionsJSON}
 		if prompt.IsQuestion {
 			request.kind = agentPromptQuestions

@@ -11642,6 +11642,90 @@ func (z PlanCommentOp) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
+func (z PlanEvidenceRef) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.Digest)
+	o = msgp.AppendString(o, z.Command)
+	o = msgp.AppendString(o, string(z.Status))
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *PlanEvidenceRef) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	var zb0001 uint32
+	zb0001, bts, err = msgp.ReadArrayHeaderBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err)
+		return
+	}
+	if uint64(zb0001)*1 > uint64(len(bts)) {
+		err = msgp.ErrShortBytes
+		return
+	}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.Digest, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Digest")
+		return
+	}
+	z.Command, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Command")
+		return
+	}
+	{
+		var zb0002 string
+		zb0002, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Status")
+			return
+		}
+		z.Status = PlanEvidenceStatus(zb0002)
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z PlanEvidenceRef) Msgsize() (s int) {
+	s = 1 + msgp.StringPrefixSize + len(z.Digest) + msgp.StringPrefixSize + len(z.Command) + msgp.StringPrefixSize + len(string(z.Status))
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
+func (z PlanEvidenceStatus) MarshalMsg(b []byte) (o []byte, err error) {
+	o = msgp.Require(b, z.Msgsize())
+	o = msgp.AppendString(o, string(z))
+	return
+}
+
+// UnmarshalMsg implements msgp.Unmarshaler
+func (z *PlanEvidenceStatus) UnmarshalMsg(bts []byte) (o []byte, err error) {
+	{
+		var zb0001 string
+		zb0001, bts, err = msgp.ReadStringBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err)
+			return
+		}
+		(*z) = PlanEvidenceStatus(zb0001)
+	}
+	o = bts
+	return
+}
+
+// Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
+func (z PlanEvidenceStatus) Msgsize() (s int) {
+	s = msgp.StringPrefixSize + len(string(z))
+	return
+}
+
+// MarshalMsg implements msgp.Marshaler
 func (z PlanOutcome) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
 	o = msgp.AppendString(o, string(z))
@@ -11774,13 +11858,14 @@ func (z PlanReviewAction) Msgsize() (s int) {
 }
 
 // MarshalMsg implements msgp.Marshaler
-func (z PlanReviewSettle) MarshalMsg(b []byte) (o []byte, err error) {
+func (z *PlanReviewSettle) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 3
-	o = append(o, 0x93)
+	// array header, size 4
+	o = append(o, 0x94)
 	o = msgp.AppendInt(o, z.Revision)
 	o = msgp.AppendString(o, string(z.Action))
 	o = msgp.AppendString(o, z.Text)
+	o = msgp.AppendString(o, z.DestinationSessionID)
 	return
 }
 
@@ -11796,8 +11881,8 @@ func (z *PlanReviewSettle) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 3 {
-		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+	if zb0001 != 4 {
+		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
 		return
 	}
 	z.Revision, bts, err = msgp.ReadIntBytes(bts)
@@ -11819,13 +11904,18 @@ func (z *PlanReviewSettle) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Text")
 		return
 	}
+	z.DestinationSessionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "DestinationSessionID")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
-func (z PlanReviewSettle) Msgsize() (s int) {
-	s = 1 + msgp.IntSize + msgp.StringPrefixSize + len(string(z.Action)) + msgp.StringPrefixSize + len(z.Text)
+func (z *PlanReviewSettle) Msgsize() (s int) {
+	s = 1 + msgp.IntSize + msgp.StringPrefixSize + len(string(z.Action)) + msgp.StringPrefixSize + len(z.Text) + msgp.StringPrefixSize + len(z.DestinationSessionID)
 	return
 }
 
@@ -11878,8 +11968,8 @@ func (z PlanReviewSettlement) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *PlanRevision) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 7
-	o = append(o, 0x97)
+	// array header, size 10
+	o = append(o, 0x9a)
 	o = msgp.AppendInt(o, z.Number)
 	o = msgp.AppendUint64(o, z.Generation)
 	o = msgp.AppendString(o, z.Title)
@@ -11898,6 +11988,20 @@ func (z *PlanRevision) MarshalMsg(b []byte) (o []byte, err error) {
 			}
 		}
 	}
+	o = msgp.AppendString(o, z.NewSessionID)
+	if z.Evidence == nil { // allownil: if nil
+		o = msgp.AppendNil(o)
+	} else {
+		o = msgp.AppendArrayHeader(o, uint32(len(z.Evidence)))
+		for za0002 := range z.Evidence {
+			o, err = z.Evidence[za0002].MarshalMsg(o)
+			if err != nil {
+				err = msgp.WrapError(err, "Evidence", za0002)
+				return
+			}
+		}
+	}
+	o = msgp.AppendInt(o, z.EvidenceOmitted)
 	return
 }
 
@@ -11913,8 +12017,8 @@ func (z *PlanRevision) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 7 {
-		err = msgp.ArrayError{Wanted: 7, Got: zb0001}
+	if zb0001 != 10 {
+		err = msgp.ArrayError{Wanted: 10, Got: zb0001}
 		return
 	}
 	z.Number, bts, err = msgp.ReadIntBytes(bts)
@@ -11978,6 +12082,43 @@ func (z *PlanRevision) UnmarshalMsg(bts []byte) (o []byte, err error) {
 			}
 		}
 	}
+	z.NewSessionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "NewSessionID")
+		return
+	}
+	if msgp.IsNil(bts) {
+		bts = bts[1:]
+		z.Evidence = nil
+	} else {
+		var zb0004 uint32
+		zb0004, bts, err = msgp.ReadArrayHeaderBytes(bts)
+		if err != nil {
+			err = msgp.WrapError(err, "Evidence")
+			return
+		}
+		if uint64(zb0004)*1 > uint64(len(bts)) {
+			err = msgp.ErrShortBytes
+			return
+		}
+		if z.Evidence != nil && cap(z.Evidence) >= int(zb0004) {
+			z.Evidence = (z.Evidence)[:zb0004]
+		} else {
+			z.Evidence = make([]PlanEvidenceRef, zb0004)
+		}
+		for za0002 := range z.Evidence {
+			bts, err = z.Evidence[za0002].UnmarshalMsg(bts)
+			if err != nil {
+				err = msgp.WrapError(err, "Evidence", za0002)
+				return
+			}
+		}
+	}
+	z.EvidenceOmitted, bts, err = msgp.ReadIntBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "EvidenceOmitted")
+		return
+	}
 	o = bts
 	return
 }
@@ -11988,6 +12129,11 @@ func (z *PlanRevision) Msgsize() (s int) {
 	for za0001 := range z.Comments {
 		s += z.Comments[za0001].Msgsize()
 	}
+	s += msgp.StringPrefixSize + len(z.NewSessionID) + msgp.ArrayHeaderSize
+	for za0002 := range z.Evidence {
+		s += z.Evidence[za0002].Msgsize()
+	}
+	s += msgp.IntSize
 	return
 }
 

@@ -106,6 +106,7 @@ BENCHTIME=100x run_bench '^BenchmarkMultipleCaret(Workload|Stages)$' ./tui/edito
 run_bench '^Benchmark(EditorOrientation|MinimapRebuild)$' ./tui/editor
 run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./syntax
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
+run_bench '^BenchmarkMixedMarkdown' ./tui/chatprojection
 run_bench '^BenchmarkChatFind' ./tui/screens/shellchat
 run_bench '^BenchmarkDenseFileLinkHit$' ./tui/screens/shellchat
 run_bench '^BenchmarkParseSourceReference$' ./internal/filelink

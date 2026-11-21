@@ -62,6 +62,19 @@ func (w *Workspace) PlanReviewForAgent(agentID string) (types.PlanReview, bool) 
 	return w.view.PlanReviewForAgent(agentID)
 }
 
+func (w *Workspace) ReadPlanEvidence(ctx context.Context, agentID string, revision int, digest string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	var out coreprotocol.AgentPlanEvidenceResult
+	if err := w.call(ctx, coreprotocol.AgentPlanEvidence, coreprotocol.AgentPlanEvidenceRequest{AgentID: agentID, Revision: revision, Digest: digest}, &out); err != nil {
+		return "", err
+	}
+	if out.Error != "" {
+		return "", errors.New(out.Error)
+	}
+	return out.Text, nil
+}
+
 func (w *Workspace) OpenPlanRevision(agentID string, revision int) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
@@ -312,7 +325,11 @@ func (w *Workspace) decide(request coreprotocol.DecisionRequest) bool {
 	}
 	w.commands.push(func(ctx context.Context) {
 		var out coreprotocol.DecisionResult
-		if err := w.call(ctx, coreprotocol.Decide, &request, &out); err != nil {
+		err := w.call(ctx, coreprotocol.Decide, &request, &out)
+		if err == nil && !out.Accepted {
+			err = errors.New("the request no longer accepts this answer")
+		}
+		if err != nil {
 			w.logger.Warn("REMOTE", "decision_failed", "agent", request.AgentID, "error", err.Error())
 			w.reportFailure("Respond to agent", err)
 			w.requestResync()
@@ -344,7 +361,7 @@ func (w *Workspace) RejectQuestion(agentID, blockID, detail string) bool {
 }
 
 func (w *Workspace) ResolveConfirmation(agentID, blockID, choice string) bool {
-	return w.decide(coreprotocol.DecisionRequest{AgentID: agentID, BlockID: blockID, Choice: choice})
+	return w.view.AcceptsConfirmation(agentID, blockID, choice) && w.decide(coreprotocol.DecisionRequest{AgentID: agentID, BlockID: blockID, Choice: choice})
 }
 
 func (w *Workspace) recovery(method, agentID, incidentID string, generation uint64) func() error {

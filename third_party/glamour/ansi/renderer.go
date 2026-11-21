@@ -16,8 +16,11 @@ import (
 // SourceTrace observes semantic text before layout adds margins or wraps it.
 // Mark returns an annotated styled string; MarkCode does the same for the
 // text of an inline code span (Crude). Begin separates logical blocks.
-// Decoration brackets generated padding. Code returns a traced code block and
-// its optional trailing action. It does not parse Markdown or change layout.
+// Pause and Resume bracket generated padding. Code traces a code block and
+// its optional trailing action. Decoration marks fixed runs outside prose.
+// BoxPrefix marks the inline-start gutter of a semantic container.
+// Table hooks retain source order, report direction, and mark existing
+// layout boundaries without parsing the result.
 type SourceTrace interface {
 	Begin(separator string)
 	Mark(styled, text string) string
@@ -25,6 +28,15 @@ type SourceTrace interface {
 	Code(styled, text, language string) string
 	Pause() string
 	Resume() string
+	Decoration(start bool) string
+	BoxPrefix(start, rtl bool) string
+	Direction(text string) (rtl, strong bool)
+	BeginTable()
+	EndTable()
+	BeginTableCell(separator string)
+	EndTableCell() (id int, rtl, strong bool)
+	TableCellBox(id int, styled string) string
+	TableCellContent(styled string) string
 }
 
 // Options is used to configure an ANSIRenderer.
@@ -41,7 +53,8 @@ type Options struct {
 
 // ANSIRenderer renders markdown content as ANSI escaped sequences.
 type ANSIRenderer struct { //nolint: revive
-	context RenderContext
+	context    RenderContext
+	directions map[ast.Node]blockDirection
 }
 
 // NewRenderer returns a new ANSIRenderer with style and options set.
@@ -123,7 +136,9 @@ func (r *ANSIRenderer) renderNode(w util.BufWriter, source []byte, node ast.Node
 			if node.PreviousSibling() == nil {
 				separator = "\n"
 			}
-			r.context.options.Source.Begin(separator)
+			r.context.options.Source.BeginTableCell(separator)
+		case astext.KindTable, astext.KindTableHeader, astext.KindTableRow:
+			// The table owns its semantic text, including empty cells.
 		default:
 			// Goldmark also supplies extension-owned blocks (for example
 			// definition terms). Their boundary is semantic, not a paint gap.
@@ -134,6 +149,24 @@ func (r *ANSIRenderer) renderNode(w util.BufWriter, source []byte, node ast.Node
 	}
 	e := r.NewElement(node, source)
 	if entering { //nolint: nestif
+		if trace := r.context.options.Source; trace != nil {
+			switch node.Kind() {
+			case ast.KindDocument:
+				r.directions = nil
+			case ast.KindBlockquote, ast.KindList:
+				if r.directions == nil {
+					r.directions = make(map[ast.Node]blockDirection)
+				}
+				if _, known := r.directions[node]; !known {
+					scanContainerDirections(node, source, trace, r.directions)
+				}
+				dir := r.directions[node]
+				if dir == noBlockDirection {
+					dir = bs.direction()
+				}
+				e.Renderer.(*BlockElement).direction = dir
+			}
+		}
 		// everything below the Document element gets rendered into a block buffer
 		if bs.Len() > 0 {
 			writeTo = io.Writer(bs.Current().Block)
@@ -155,6 +188,7 @@ func (r *ANSIRenderer) renderNode(w util.BufWriter, source []byte, node ast.Node
 		// if we're finished rendering the entire document,
 		// flush to the real writer
 		if node.Type() == ast.TypeDocument {
+			r.directions = nil
 			writeTo = w
 		}
 

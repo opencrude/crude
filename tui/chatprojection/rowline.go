@@ -38,15 +38,27 @@ type RowSpan struct {
 // background applied at compose/paint time (not stored as ANSI). An empty
 // spacer uses Spans with empty text (see buildPlainBodyLine).
 type PaintLine struct {
-	SourceAware bool // Unattributed spans are layout, not copyable source.
-	Spans       []RowSpan
+	Spans []RowSpan
+	// Only structured text needs per-row layout. Keep its geometry off
+	// ordinary transcript rows, which are retained in potentially huge slices.
+	prose          *proseLine
+	TideCenter     float64 // Crest position supplied by the owning presentation state.
+	SourceAware    bool    // Unattributed spans are layout, not copyable source.
+	code           bool    // Mapped Markdown code, arranged left to right.
+	mappedMarkdown bool    // Source-free Markdown decoration has no bidi paragraph.
 	// PaneBackground fills the whole transcript row, including its margins,
 	// with ColorSubPaneBg. It follows content through wrapping and grouping;
 	// transcript-owned leading spacers never carry it.
 	PaneBackground bool
-	HeaderRule     bool    // Extend the faint message header rule through the chat margins.
-	TextTide       bool    // Paint-only animation, independent of Markdown/source caches.
-	TideCenter     float64 // Crest position supplied by the owning presentation state.
+	HeaderRule     bool // Extend the faint message header rule through the chat margins.
+	TextTide       bool // Paint-only animation, independent of Markdown/source caches.
+}
+
+// setBlockWidth applies during source projection, before rows are shared.
+func (pl PaintLine) setBlockWidth(width int) {
+	if pl.prose != nil {
+		pl.prose.blockWidth = width
+	}
 }
 
 // PlainText returns visible text without styling for selection and width math.

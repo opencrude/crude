@@ -176,4 +176,6 @@ replace modernc.org/memory => ./third_party/modernc-memory
 
 replace charm.land/glamour/v2 => ./third_party/glamour
 
+replace charm.land/lipgloss/v2 => ./third_party/lipgloss
+
 replace github.com/go-text/typesetting => ./third_party/typesetting

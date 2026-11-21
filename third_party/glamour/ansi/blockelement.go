@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 )
@@ -16,6 +17,9 @@ type BlockElement struct {
 	Style   StyleBlock
 	Margin  bool
 	Newline bool
+
+	direction blockDirection
+	marker    string
 }
 
 // Render renders a BlockElement.
@@ -33,14 +37,28 @@ func (e *BlockElement) Finish(w io.Writer, ctx RenderContext) error {
 	bs := ctx.blockStack
 
 	if e.Margin { //nolint: nestif
+		current := bs.Current()
+		value := current.Block.String()
+		if current.marker != "" {
+			// An outside marker belongs on the first line of the item's
+			// actual box, not the separator before a quote or a code block.
+			value = strings.Trim(value, "\n")
+		}
 		s := lipgloss.Wrap(
-			bs.Current().Block.String(),
+			value,
 			int(bs.Width(ctx)), //nolint: gosec
 			" ,.;-+|",
 		)
 
-		mw := NewMarginWriter(ctx, w, bs.Current().Style)
+		mw := NewMarginWriter(ctx, w, current.Style)
+		mw.iw.direction = current.direction
+		mw.iw.first = current.marker
 		defer mw.Close() //nolint:errcheck
+		if s == "" && current.marker != "" {
+			if err := mw.iw.writeIndent(); err != nil {
+				return err
+			}
+		}
 		if _, err := io.WriteString(mw, s); err != nil {
 			return fmt.Errorf("glamour: error writing to writer: %w", err)
 		}

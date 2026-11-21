@@ -3,6 +3,7 @@ package shellchat
 import (
 	"sort"
 
+	"crude/tui/bidi"
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
@@ -197,8 +198,14 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	} else {
 		pl = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: row.Lines[localRow], Role: ui.ColorFg}}}
 	}
+	var selectionBuf [4]bidi.ColumnRange
+	selection := selectionBuf[:0]
 	if source, ok := s.selection.sourceRange(); ok {
-		selStart, selEnd = chatprojection.SourceSelectionCols(pl, source)
+		selection = chatprojection.SourceSelectionRanges(selection, pl, source)
+		// Source ranges never own row padding or chrome.
+		selStart, selEnd = 0, 0
+	} else if selStart < selEnd {
+		selection = append(selection, bidi.ColumnRange{Start: selStart, End: selEnd})
 	}
 	// A divider drag may deliberately retain the old reflow width. Painting
 	// still belongs to today's viewport: clip content/gutters to its real cells.
@@ -222,7 +229,8 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 			}
 			return
 		}
-		chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
+		chatprojection.PaintLineLogicalRanges(buf, lineX, y, layout.ContentMax, pl, tokens, selection, bg)
+		buf.ApplyLine(lineX, y, chatprojection.ArrangedLine(pl, layout.ContentMax))
 		return
 	}
 	bg := cell.NoColor
@@ -230,9 +238,9 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		bg = tokens.Color(ui.ColorSubPaneBg)
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
 	}
-	chatprojection.PaintLineLogical(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
+	chatprojection.PaintLineLogicalRanges(buf, lineX, y, layout.ContentMax, pl, tokens, selection, bg)
 	if s.find.querying() {
-		s.paintFindMatches(buf, lineX, y, layout.ContentMax, index, row, localRow, selStart, selEnd, tokens)
+		s.paintFindMatches(buf, lineX, y, layout.ContentMax, index, row, localRow, selection, tokens)
 	}
 	drawn := pl.VisibleWidth()
 	if drawn > layout.ContentMax {

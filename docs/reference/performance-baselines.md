@@ -27,6 +27,25 @@ and 13 allocations per wheel plus paint in three 200-iteration Linux samples.
 Both use the same 240 B / 15 allocation ceiling. This is a warm pan, not
 cold paragraph analysis or native frame latency.
 
+## Mixed-direction chat documents
+
+`BenchmarkMixedMarkdownLayout` uses an 80-column document with Persian prose,
+English identifiers, quoted text, lists and tables. It measures reflow (parse,
+wrap, bridge, arrange) separately from arranging already-retained rows.
+`BenchmarkMixedMarkdownStreamingBlink` re-renders the active streaming message,
+including its header, incomplete paragraph and cursor. Three Linux/amd64
+samples on the same i7-10750H with Go 1.27.4 and `GOMAXPROCS=2`:
+
+| Stage | Before (`f7209e22`) | After |
+|---|---:|---:|
+| Reflow | 6.75–7.38 ms, 2.10–2.11 MB | 2.87–3.37 ms, 1.11–1.12 MB |
+| Retained arrangement | 44.8–47.6 µs, 156 allocations | 0.63–0.70 µs, zero allocations |
+| Streaming cursor re-render | 71.3–82.2 µs, 128 allocations | 9.1–10.1 µs, 30 allocations |
+
+These are projection costs, not terminal frame latencies. The bench gate
+enforces each stage's allocation ceiling independently. Neither a fast warm
+paint nor a fast cursor tick excuses a cold reflow regression.
+
 ## Aeron suggestions (2026-11-18)
 
 The Performance dashboard lists these **Aeron suggestions** series on
@@ -251,6 +270,33 @@ Three sequential one-second Linux amd64 / Go 1.27.4 runs at GOMAXPROCS=2 measure
 `BenchmarkDenseChatWidthCommit_500HeavyMsgs`, at 0.506–0.535 ms per commit/first
 shell frame. This does not measure terminal scanout. The allocation ceiling and
 benchmark workload are unchanged; mutation/presentation still execute in full.
+
+### Rich paragraphs at the real document width
+
+Using the full document width brought the dense resize fixture through rich
+Markdown instead of the former narrow plain-text path. After compact row
+storage, the unchanged commit benchmark still cost 4.04 MB and about 23,090
+allocations. Profiles located the cost in rebuilding source annotations,
+restyling the same paragraphs, and bridging the wrapped ANSI again.
+
+The renderer now keeps a bounded working set of prepared paragraphs keyed by
+message identity, source, and presentation configuration. A width commit
+calculates fresh line breaks with the same x/ansi wrapper as Glamour, then
+slices the prepared spans, retaining styles, links, and semantic copy ranges.
+The layout uses the full document box and the existing bidi arrangement.
+The cache holds no wrapped rows or previous widths. Structured documents
+such as tables, quotes, and fenced code still use the full Glamour layout.
+Theme, conversation, and terminal-width calibration changes invalidate the
+prepared source.
+
+Three 500 ms runs of the unchanged gate (Linux amd64, Go 1.27.4,
+`GOMAXPROCS=3`) measured 0.831–1.155 ms, 339,363–339,525 B and 1,251–1,256
+allocations per commit, below the 455,000 B / 2,180 ceiling. A temporary
+probe drove the same sidebar gesture in one direction and asserted that
+each release committed a new chat column count. Three runs of 14 first-visit
+widths measured 0.763–0.918 ms, 332,628–332,851 B and 1,217–1,224 allocations
+per commit. This measures cold width layout of already loaded source, not
+first display of a new message or terminal scanout.
 
 ## Dense editing stage isolation (2026-11-13)
 

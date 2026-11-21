@@ -68,6 +68,35 @@ its aggregate deadline during a three-second-old bounded SSH transport test;
 the earlier app run completed in 114 seconds. Grouping retains every discovered
 case and the same per-group deadline. It does not exempt a slow or failing case.
 
+### Plan investigations and mixed-direction Markdown
+
+`TestPlanInvestigationThroughConnectedShell` exercises host consent (including
+YOLO), failing and passing tests, the read-only evidence reader, and approval
+without copying the prototype. `TestMixedTableLinkAndSelectionAfterResize`
+checks the painted table, selection, copy and local file link at two sizes.
+`TestMixedTableNativeCapture` runs the same fixture in a dedicated window:
+compile `./tui/viewmodel` with `go test -c` and pass that binary to the
+visual capture workflow below with `CRUDE_VISUAL_MIXED_TABLE=1` and
+`-test.run ^TestMixedTableNativeCapture$`. F8 records the physical grid and
+click/drag targets in `$CRUDE_VISUAL_PROOF.positions`; drag the English phrase,
+click the table's file link, and use F9 to check the copied text and open file.
+Use the measured grid, not the terminal's requested size. The Linux driver
+sends pointer coordinates relative to the captured client window, not the
+window manager's outer decoration.
+
+`TestPlanInvestigationNativeCapture` (`CRUDE_VISUAL_PLAN_INVESTIGATION=1`) runs
+the investigation journey in a dedicated window with YOLO on. Accept **Open
+in restricted mode** for the disposable fixture if the trust prompt appears. Type the `/plan`
+request and press Enter; answer the host-run question with its shortcut; open
+**Review Investigation Evidence** from the Command Palette and read the failing
+result; then implement from the plan decision. With `CRUDE_CAPTURE_EVIDENCE`
+the fixture writes `consent`, `proposed`, `evidence` and `implemented` as each
+step becomes visible, for `await:` steps. F9 checks that the question was
+asked, the evidence failed then passed, the plan was implemented, and the
+source holds no prototype, and writes `$CRUDE_VISUAL_PROOF`.
+`TestPlanNewSessionConnectedJourney` covers **New session**: the destination
+opens in its own tab and receives the reviewed plan exactly once.
+
 ### Windows race checks with Zig
 
 Use a separate PowerShell session for race checks, after bootstrapping the

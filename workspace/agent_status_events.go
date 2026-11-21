@@ -174,7 +174,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		}
 		if operation == "question" || operation == "questions" {
 			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentQuestion, "Needs answer", true
-		} else if !w.YoloForAgent(evt.AgentID) {
+		} else if operation == ttypes.PlanInvestigationHostOperation || !w.YoloForAgent(evt.AgentID) {
 			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentApproval, "Needs approval", true
 		} else {
 			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentTool, "Working", false

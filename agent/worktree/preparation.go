@@ -32,8 +32,7 @@ func (s *Service) cleanupPreparation(ctx context.Context, c Context) error {
 	if err != nil {
 		return err
 	}
-	c.ArchivedResult = files
-	if err := s.save(c); err != nil {
+	if err := s.saveArchive(&c, files); err != nil {
 		return err
 	}
 	current, err := s.preparationRemnants(ctx, c)

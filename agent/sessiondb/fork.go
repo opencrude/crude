@@ -23,9 +23,9 @@ var forkDroppedTables = []string{
 	"agent_recoveries", "collaboration_admissions", "file_claims", "sub_agent_results", "usage_requests", "session_goal_handover",
 }
 
-// forkDroppedRuntimeKeys are source-owned pending input, drafts and schedules
-// that must not create duplicate work in the fork.
-var forkDroppedRuntimeKeys = []string{"queued_inputs", "composer_draft", "scheduled_loops"}
+// A fork inherits the reviewed evidence, not the source's pending input,
+// command consent, checkout, or receipt for delivery to that session.
+var forkDroppedRuntimeKeys = []string{"queued_inputs", "composer_draft", "scheduled_loops", "plan_investigation", "plan_handoff_receipt"}
 
 // Fork writes a consistent copy of the live session database src to path
 // under identity. The copy keeps the transcript, the model context, plans,

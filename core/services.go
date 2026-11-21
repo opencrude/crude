@@ -395,6 +395,10 @@ func (a *actor) applyService(request coreprotocol.Request, result coreprotocol.R
 			var in coreprotocol.AgentPlanModeRequest
 			if decodeRequest(request, &in) == nil {
 				a.changed([]string{in.AgentID})
+				var settled coreprotocol.BoolResult
+				if !in.Enabled && decode(result.Payload, &settled) == nil && settled.OK {
+					a.enqueuePlanInvestigationCleanup(in.AgentID)
+				}
 			}
 		case coreprotocol.AgentPlanComment:
 			var in coreprotocol.AgentPlanCommentRequest
@@ -405,6 +409,10 @@ func (a *actor) applyService(request coreprotocol.Request, result coreprotocol.R
 			var in coreprotocol.AgentPlanSettleRequest
 			if decodeRequest(request, &in) == nil {
 				a.changed([]string{in.AgentID})
+				var settled coreprotocol.AgentPlanSettleResult
+				if in.Settle.Action != types.PlanReviewFeedback && decode(result.Payload, &settled) == nil && settled.Error == "" {
+					a.enqueuePlanInvestigationCleanup(in.AgentID)
+				}
 			}
 		case coreprotocol.AgentGoal:
 			var in coreprotocol.AgentGoalRequest

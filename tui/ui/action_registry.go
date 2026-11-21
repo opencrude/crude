@@ -683,6 +683,7 @@ var defaultActions = []*ActionDef{
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "alt+;"}}, HintKey: "Alt+;"},
 	{ID: "lsp.signature", Label: "Parameter Information", Description: "inspect the callable signature and active parameter at the editor cursor",
 		Category: "Tools", FocusContext: "editor", Contextual: true, Bindings: []KeyBinding{{Key: "alt+i"}, {Key: "ctrl+shift+space"}}, HintKey: "Alt+I"},
+	{ID: "plan.evidence", Label: "Review Investigation Evidence", Description: "read the tests and results recorded for a plan revision", Category: "Session"},
 	{ID: "plan.review", Label: "Review Plan", Description: "open the session's newest proposed plan to edit it and add comments", Icon: "✎", Category: "Session"},
 	{ID: "plan.send", Label: "Send Plan Comments", Description: "send your comments and edits; the agent revises the plan", Icon: "✉", Category: "Session"},
 	{ID: "plan.implement", Label: "Implement Plan", Description: "turn Plan mode off and implement the plan as you see it", Icon: "▶", Category: "Session"},

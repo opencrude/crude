@@ -46,6 +46,7 @@ type Agents interface {
 	PlanReviewForAgent(agentID string) (types.PlanReview, bool)
 	// OpenPlanRevision, EditPlanComment and SettlePlanReview do I/O. Call
 	// them from commands, never on the UI thread.
+	ReadPlanEvidence(ctx context.Context, agentID string, revision int, digest string) (string, error)
 	OpenPlanRevision(agentID string, revision int) (string, error)
 	EditPlanComment(agentID string, edit types.PlanCommentEdit) error
 	SettlePlanReview(agentID string, settle types.PlanReviewSettle) (types.PlanReviewSettlement, error)

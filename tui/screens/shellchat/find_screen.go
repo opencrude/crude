@@ -1,9 +1,11 @@
 package shellchat
 
 import (
+	"slices"
 	"sort"
 	"time"
 
+	"crude/tui/bidi"
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
@@ -177,7 +179,7 @@ func (s *Screen) revealFind() {
 // paintFindMatches marks the matches on one painted line. It restyles cells the
 // line painter just wrote, so selection and syntax ink stay the single owner of
 // the line and a text selection stays visible over a match.
-func (s *Screen) paintFindMatches(buf *surface.CellBuffer, x, y, maxW, index int, row chatprojection.MessageRow, localRow, selStart, selEnd int, tokens *ui.TokenSet) {
+func (s *Screen) paintFindMatches(buf *surface.CellBuffer, x, y, maxW, index int, row chatprojection.MessageRow, localRow int, selection []bidi.ColumnRange, tokens *ui.TokenSet) {
 	segs := s.find.segments(index, row)
 	i := sort.Search(len(segs), func(k int) bool { return segs[k].line >= localRow })
 	if i == len(segs) || segs[i].line != localRow {
@@ -193,7 +195,7 @@ func (s *Screen) paintFindMatches(buf *surface.CellBuffer, x, y, maxW, index int
 		fill := tokens.FindMatchFill(current)
 		ink := cell.ContrastInk(fill)
 		for col := from; col < to && col < maxW; col++ {
-			if selStart < selEnd && col >= selStart && col < selEnd {
+			if slices.ContainsFunc(selection, func(r bidi.ColumnRange) bool { return col >= r.Start && col < r.End }) {
 				continue
 			}
 			c := buf.Get(x+col, y)

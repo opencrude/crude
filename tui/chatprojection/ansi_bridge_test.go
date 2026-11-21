@@ -268,7 +268,7 @@ func TestMarkdownLinksAndTableRowsMatchGlamourVisibleGeometry(t *testing.T) {
 	const content = "## Sources\n\n[Guide](https://example.test/a/long/document) and **bold text**.\n\n| Library | Status |\n| --- | --- |\n| [Crude](https://example.test/project) | Ready |\n| `renderer` | Checked |"
 	for _, width := range []int{48, 100} {
 		for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
-			raw, err := rendering.MakeMdRenderer(width+20, th).Render(content)
+			raw, err := rendering.MakeMdRenderer(width, th).Render(content)
 			if err != nil {
 				t.Fatal(err)
 			}

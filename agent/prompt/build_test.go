@@ -17,6 +17,15 @@ func TestPlanningLifecyclePolicy(t *testing.T) {
 	}
 }
 
+func TestPlanProposalDoesNotRequireExecutionProgressTool(t *testing.T) {
+	for _, multi := range []bool{true, false} {
+		p := BuildRoot(RootOptions{PlanMode: true, MultiAgent: multi})
+		if !strings.Contains(p, PlanModeContract) || strings.Contains(p, PlanningContract) {
+			t.Fatalf("plan-only turn got conflicting planning contracts: multi=%v", multi)
+		}
+	}
+}
+
 func TestPlanningContractReachesRootAndChildAcrossModels(t *testing.T) {
 	for _, model := range []string{"deepseek", "claude", "gpt", "ollama"} {
 		for _, multi := range []bool{false, true} {

@@ -58,9 +58,9 @@ func (s *Session) StatusRows() []sessiondb.StatusRow {
 
 func planModeRow(enabled bool) (string, string) {
 	if enabled {
-		return "plan_mode_on", "Plan mode on. From the next turn the agent explores read-only, asks what it cannot find out, and proposes a plan; nothing is changed. Use /plan again to leave Plan mode."
+		return "plan_mode_on", "Plan mode on for the next turn. The agent can test changes in a separate checkout before proposing a plan. Use /plan again to leave Plan mode."
 	}
-	return "plan_mode_off", "Plan mode off. From the next turn the agent can change files and run commands again."
+	return "plan_mode_off", "Plan mode off. From the next turn the agent can change project files."
 }
 
 func yoloRow(enabled bool) (string, string) {

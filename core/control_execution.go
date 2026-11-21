@@ -66,7 +66,7 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			return controlFailure(in, control.Invalid, err.Error())
 		}
 		plan, id = input.Plan, input.Plan.ContextID
-		if plan.Digest == "" || plan.SourceDigest == "" || len(plan.Changes) != 0 || plan.DiscardDigest != "" || len(plan.IgnoredPaths) != 0 || plan.HeadCommit != "" {
+		if plan.Digest == "" || plan.SourceDigest == "" || plan.BaselineDigest != "" || len(plan.Changes) != 0 || plan.DiscardDigest != "" || len(plan.IgnoredPaths) != 0 || plan.HeadCommit != "" {
 			return controlFailure(in, control.Invalid, "compact integration review token required")
 		}
 	case "execution.undo", "execution.recover":
@@ -141,6 +141,16 @@ func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.O
 			}
 			if c.LogicalRoot != a.ws.RootPath {
 				return controlFailure(in, control.Denied, "execution belongs to another logical workspace")
+			}
+			if c.Investigation != nil {
+				switch {
+				case in.CommandID == "execution.apply":
+					return controlFailure(in, control.Denied, worktree.ErrInvestigationIntegration.Error())
+				case in.CommandID == "execution.review" && !sourceReview:
+					return controlFailure(in, control.Invalid, "Review this Plan investigation with discard=true. It cannot be applied.")
+				case in.CommandID == "execution.cleanup" && (!cleanup.Discard || cleanup.Digest == ""):
+					return controlFailure(in, control.Invalid, "Review this Plan investigation for discard, then use its discard digest to remove it.")
+				}
 			}
 			actual = c.Owner
 		}

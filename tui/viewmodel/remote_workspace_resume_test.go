@@ -61,7 +61,7 @@ func TestRemoteWorkspacePanelResumeHandsKeyboardToComposer(t *testing.T) {
 	_, cmd = app.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
 	runAppCommand(t, app, cmd)
 	app.forceFrame()
-	if view := ansi.Strip(app.View().RenderContent()); app.Input.Value() != "/" || !strings.Contains(view, "Plan mode: explore read-only") {
+	if view := ansi.Strip(app.View().RenderContent()); app.Input.Value() != "/" || !strings.Contains(view, "Plan mode: investigate") {
 		t.Fatalf("typing / did not open the command list in the resumed composer (draft %q):\n%s", app.Input.Value(), view)
 	}
 }

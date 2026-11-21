@@ -125,6 +125,9 @@ func (s *Service) Resolve(ctx context.Context, id string, docs map[string]Docume
 	return s.resolve(ctx, id, docs)
 }
 func (s *Service) resolve(ctx context.Context, id string, docs map[string]Document) (PlanDelta, error) {
+	if s.contexts[id].Investigation != nil {
+		return PlanDelta{}, ErrInvestigationIntegration
+	}
 	p, err := s.review(ctx, id)
 	if err != nil {
 		return p, err

@@ -177,10 +177,24 @@ func BridgeSourceRows(p rendering.TextProjection, tokens *ui.TokenSet, messageID
 	parser := p.Parser()
 	state := newAnsiBridgeState(tokens)
 	var rows []PaintLine
+	var paragraphs map[*rendering.MarkdownCell]*proseParagraph
+	var prose proseBuilder
 	value := strings.TrimRight(strings.TrimPrefix(p.ANSI, "\n"), "\n")
 	for _, line := range strings.Split(value, "\n") {
 		row := bridgeAnsiRuns(parser.ParseLine(line), state)
 		row.SourceAware = true
+		geometry := parser.MarkdownGeometry()
+		if geometry != nil && len(geometry.Cells) != 0 {
+			prose.paragraph(nil, false)
+			if paragraphs == nil {
+				paragraphs = make(map[*rendering.MarkdownCell]*proseParagraph)
+			}
+			row.prose = buildTableLine(geometry, row.Spans, paragraphs)
+		} else if p.IsMarkdown() {
+			row.prose, row.code = prose.build(row.Spans, geometry)
+			row.mappedMarkdown = true
+		}
+		row.setBlockWidth(p.BlockWidth)
 		if code := parser.CopyAction(); code != nil {
 			if codeActions {
 				row = codeCopyLine(code, messageID)
@@ -189,6 +203,13 @@ func BridgeSourceRows(p rendering.TextProjection, tokens *ui.TokenSet, messageID
 			}
 		}
 		rows = append(rows, row)
+	}
+	prose.finish()
+	for cell, paragraph := range paragraphs {
+		if paragraph != nil {
+			paragraph.hidden(cell.Source.End)
+			paragraph.endCode(-1)
+		}
 	}
 	return rows
 }

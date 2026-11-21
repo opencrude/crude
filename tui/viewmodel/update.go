@@ -379,6 +379,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.applyRemoteWorkspace(msg)
 	case planModeResultMsg:
 		return m, m.applyPlanModeResult(msg)
+	case planEvidenceReadMsg:
+		m.applyPlanEvidenceRead(msg)
+		return m, nil
 	case planRevisionOpenedMsg:
 		return m, m.applyPlanRevisionOpened(msg)
 	case planCommentEditedMsg:

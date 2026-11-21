@@ -1,9 +1,11 @@
 package fileio
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"math"
 	"os"
 )
 
@@ -60,17 +62,23 @@ func ReadRegularNoFollow(ctx context.Context, path string, maxBytes int64) ([]by
 	if opened.Size() > maxBytes {
 		return nil, ErrReadLimit
 	}
-	data, err := io.ReadAll(io.LimitReader(regularContextReader{ctx, f}, maxBytes+1))
-	if err != nil {
+	// The handle already gave us a size. Avoid geometrically growing and
+	// copying a second large evidence image; keep the read limit in force
+	// if the file changes. ReadFrom needs MinRead spare for its EOF probe.
+	var data bytes.Buffer
+	if size := opened.Size(); size > 0 && size <= math.MaxInt-bytes.MinRead {
+		data.Grow(int(size) + bytes.MinRead)
+	}
+	if _, err := data.ReadFrom(io.LimitReader(regularContextReader{ctx, f}, maxBytes+1)); err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > maxBytes {
+	if int64(data.Len()) > maxBytes {
 		return nil, ErrReadLimit
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return data, nil
+	return data.Bytes(), nil
 }
 
 type regularContextReader struct {

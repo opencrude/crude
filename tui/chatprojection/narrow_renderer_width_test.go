@@ -28,7 +28,7 @@ func TestRendererDerivesNarrowWidthsFromActualBounds(t *testing.T) {
 				width, contentW, innerW, wantContent, wantInner,
 			)
 		}
-		if contentW < minimumMarkdownBodyWidth && r.MdRenderer() != nil {
+		if innerW < minimumMarkdownBodyWidth && r.buildRenderContext(&types.ChatMessage{Role: types.RoleAssistant}, false).mdRenderer != nil {
 			t.Fatalf("width=%d content=%d unexpectedly enabled minimum-20 markdown renderer", width, contentW)
 		}
 	}

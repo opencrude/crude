@@ -98,6 +98,17 @@ func (e *LinkElement) renderHrefPart(w io.Writer, ctx RenderContext) error {
 			Prefix: prefix,
 			Style:  ctx.options.Styles.Link,
 		}
+		if ctx.options.Source != nil {
+			// OSC 8 belongs to layout, not to the literal file/URL
+			// that the source map will put on the clipboard.
+			el.Token = href
+			var styled bytes.Buffer
+			if err := el.Render(&styled, ctx); err != nil {
+				return err
+			}
+			_, err := io.WriteString(w, e.hyperlink+styled.String()+e.resetHyperlink)
+			return err
+		}
 		if err := el.Render(w, ctx); err != nil {
 			return err
 		}

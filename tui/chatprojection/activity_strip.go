@@ -182,7 +182,7 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 
 	if status.Phase == types.AgentThinking && source.Thinking != "" && source.ThinkingDisplay.Kind.HasCompactPreview() {
 		if s.md == nil {
-			s.md = rendering.MakeMdRenderer(max(40, width), th)
+			s.md = rendering.MakeMdRenderer(max(20, width), th)
 		}
 		preview := ThinkingPreviewLine(source.Thinking, source.ThinkingDisplay, s.md, tokens)
 		label := "Reasoning ▸ · "

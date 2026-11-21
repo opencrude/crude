@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"crude/agent"
@@ -20,7 +21,7 @@ import (
 const planModeKey = "plan_mode"
 
 // PlanMode reports whether this session's next turn runs in Plan mode: the
-// agent explores read-only and agrees a plan instead of changing anything.
+// agent explores the source and can test a proposal in a separate investigation.
 func (s *Session) PlanMode() bool {
 	return s != nil && s.planMode.Load()
 }
@@ -34,7 +35,9 @@ func (s *Session) SetPlanMode(enabled bool) error {
 	defer s.endSettingsOperation()
 	var err error
 	if enabled {
-		err = sessiondb.SaveRuntimeState(context.Background(), s.db, planModeKey, []byte("on"))
+		if !s.PlanMode() {
+			err = sessiondb.SaveRuntimeState(context.Background(), s.db, planModeKey, []byte(newPlanInvestigationCycle()))
+		}
 	} else {
 		err = sessiondb.DeleteRuntimeState(context.Background(), s.db, planModeKey)
 	}
@@ -68,6 +71,9 @@ func (s *Session) loadPlanMode() error {
 	if err != nil {
 		return err
 	}
+	if _, err := readPlanInvestigations(context.Background(), s.db); err != nil {
+		return err
+	}
 	s.planMode.Store(len(value) != 0)
 	s.lastTurnPlanMode.Store(len(value) != 0)
 	s.goalPlanAccounting = len(value) != 0
@@ -75,15 +81,19 @@ func (s *Session) loadPlanMode() error {
 }
 
 // planModeAllows is the runtime half of Plan mode, applied to the tools a
-// turn offers and again to every call: read-only tools run, commands run
-// only when they are read-only (see planModeCommandRefusal), and progress
-// tracking, the control gateway and anything that writes, deletes, executes
-// or delegates do not.
+// turn offers and again to every call. Scoped investigation operations go
+// through the separate investigation admission path, never ordinary dispatch.
 func planModeAllows(tool string, metadata func(string) (tools.ToolMetadata, bool)) bool {
 	switch tool {
-	case "update_plan", "crude_control", "create_goal", "update_goal":
+	case "update_plan", "crude_control", "create_goal", "update_goal", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt":
 		return false
-	case "exec_command", "write_stdin", "execute_command", "async_execute_command":
+	case "open_plan_investigation", "write_stdin":
+		return true
+	}
+	if strings.HasPrefix(tool, "mcp__") {
+		return false
+	}
+	if planInvestigationFileTool(tool) || planInvestigationCommandTool(tool) {
 		return true
 	}
 	described, known := tools.NativeMetadata(tool)
@@ -105,7 +115,7 @@ func planModeTools(defs []tools.ToolDef, metadata func(string) (tools.ToolMetada
 
 // planModeRefusal explains why a Plan mode call cannot run, or returns nil.
 func planModeRefusal(tool string, params map[string]any, metadata func(string) (tools.ToolMetadata, bool), lg *logger.Logger, syntax command.Syntax) error {
-	if !planModeAllows(tool, metadata) {
+	if !planModeAllows(tool, metadata) || tool == "open_plan_investigation" || planInvestigationFileTool(tool) {
 		return fmt.Errorf("plan mode does not allow %s", tool)
 	}
 	command := getStrParam(params, "command")

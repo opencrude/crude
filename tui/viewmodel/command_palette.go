@@ -462,6 +462,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleComposer()
 		return nil
 
+	case "plan.evidence":
+		return m.browsePlanEvidence()
 	case "plan.review":
 		return m.reviewLatestPlan()
 	case "plan.send":

@@ -38,7 +38,7 @@ func (a *actor) controlDomainRoot(ctx context.Context, in control.Request) (stri
 		}
 		if in.Target.ExecutionID == "" && a.ws.Executions != nil {
 			for _, c := range a.ws.Executions.List() {
-				if slices.Contains(c.Pins, worktree.Owner{AgentID: participant.ID, RunID: run.ID}) {
+				if c.Investigation == nil && slices.Contains(c.Pins, worktree.Owner{AgentID: participant.ID, RunID: run.ID}) {
 					return "", errors.New("caller cannot clear its pinned execution binding")
 				}
 			}
@@ -53,6 +53,9 @@ func (a *actor) controlDomainRoot(ctx context.Context, in control.Request) (stri
 	c, err := a.ws.Executions.Inspect(in.Target.ExecutionID)
 	if err != nil || !c.Ready || c.Removed || c.LogicalRoot != root || !filepath.IsAbs(c.Root) {
 		return "", errors.New("execution unavailable or foreign")
+	}
+	if c.Investigation != nil {
+		return "", errors.New("planning worktrees cannot be used for other commands")
 	}
 	if in.Caller.Kind == control.AgentCaller && !slices.Contains(c.Pins, worktree.Owner{AgentID: in.Caller.AgentID, RunID: in.Caller.RunID}) {
 		return "", errors.New("execution is not pinned to the exact caller run")

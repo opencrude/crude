@@ -42,6 +42,17 @@ type toolParamSchema struct {
 	Required []string `json:"required"`
 }
 
+// PlanInvestigationPolicy asks the session owner whether a command needs
+// consent to run. The dispatcher rechecks scope and consent before launch.
+type PlanInvestigationPolicy struct {
+	HostCommand func(context.Context, string, map[string]any) (*PlanInvestigationHostRequest, error)
+}
+
+type PlanInvestigationHostRequest struct {
+	Directory string
+	Decide    func(string) error
+}
+
 func findToolDef(name string, defs []tools.ToolDef) *tools.ToolFuncDef {
 	for i := range defs {
 		if defs[i].Function.Name == name {
@@ -221,7 +232,7 @@ func isPotentiallyBlocking(name string) bool {
 		return true
 	case "exec_command", "write_stdin", "execute_command", "async_execute_command":
 		return true
-	case "apply_patch", "write_file", "edit_file", "delete_file", "move_file", "copy_file":
+	case "apply_patch", "write_file", "edit_file", "delete_file", "move_file", "copy_file", "open_plan_investigation":
 		return true
 	case "reply", "publish_report":
 		return true
@@ -368,6 +379,11 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 			a.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 		}
+		if a.PlanInvestigation != nil && tc.Function.Name != "write_stdin" {
+			if refused := a.confirmPlanInvestigationHost(ctx, tc, params, cmd, blockID, emit, blockResolveCh); refused != nil {
+				return *refused
+			}
+		}
 		autoAllowed := false
 		reviewNote := ""
 		approvalKeys := a.commandApprovalKeys(tc.Function.Name, params, policy, sr)
@@ -495,6 +511,9 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		if tc.Function.Name == "apply_patch" {
 			blockingData["patch_input"] = getStr(params, "input")
 		}
+		if a.PlanInvestigation != nil {
+			blockingData["plan_investigation_path"] = "true"
+		}
 		emit(AgentEvent{Type: "blocking", Data: blockingData})
 		wait := a.awaitPermission(ctx, blockResolveCh, blockID, func() (bool, *execResult) {
 			allowed, _, denied := a.reviewPermission(ctx, tc, params, safety.RiskProjectWrite, emit)
@@ -519,14 +538,15 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: toolresult.Denied}}, toolError: true}
 		}
 		a.logger.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
-		if resp == "always" && tc.Function.Name == "apply_patch" {
-			emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{"operation": fileOp, "tool": tc.Function.Name, "patch_input": getStr(params, "input")}})
-		} else if resp == "always" {
-			emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
-				"operation": fileOp,
-				"tool":      tc.Function.Name,
-				"target":    filePath,
-			}})
+		// Scoped changes never grant a corresponding ordinary source write.
+		if resp == "always" && a.PlanInvestigation == nil {
+			if tc.Function.Name == "apply_patch" {
+				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{"operation": fileOp, "tool": tc.Function.Name, "patch_input": getStr(params, "input")}})
+			} else {
+				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
+					"operation": fileOp, "tool": tc.Function.Name, "target": filePath,
+				}})
+			}
 		}
 	} else if fileCheck && a.yoloEnabled() {
 		a.logger.Debug("SAFETY", "yolo_skip", "tool", tc.Function.Name, "op", fileOp)
@@ -774,6 +794,57 @@ func (a *Agent) executeToolCall(ctx context.Context, tc provider.ToolCall, emit 
 		failure = panicErr
 	}
 	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed, failure: failure, duration: time.Duration(toolDur) * time.Millisecond}
+}
+
+func (a *Agent) confirmPlanInvestigationHost(
+	ctx context.Context, tc provider.ToolCall, params map[string]any, cmd, blockID string, emit func(AgentEvent), responses <-chan ttypes.BlockResponse,
+) *execResult {
+	refuse := func(message string, state toolresult.State) *execResult {
+		return &execResult{id: tc.ID, name: tc.Function.Name, toolError: true, result: tools.ToolResult{
+			Content: message, AgentHint: prompt.HintDenied, Outcome: toolresult.Outcome{State: state},
+		}}
+	}
+	request, err := a.PlanInvestigation.HostCommand(ctx, tc.Function.Name, params)
+	if err != nil {
+		return refuse(err.Error(), toolresult.Denied)
+	}
+	if request == nil {
+		return nil
+	}
+	if responses == nil {
+		return refuse("A person must allow commands for this investigation.", toolresult.Denied)
+	}
+	// A later per-command safety prompt may use the original call ID.
+	blockID += ":plan-host"
+	drainStaleBlockResponses(responses)
+	emit(AgentEvent{Type: "blocking", Data: map[string]string{
+		"block_id": blockID, "operation": ttypes.PlanInvestigationHostOperation, "tool": tc.Function.Name,
+		"target": cmd, "question": "Allow commands for this investigation?",
+		"reason":     "Commands run on this computer, outside a sandbox. They can access files outside the investigation folder.",
+		"suggestion": "Only allow commands from a project you trust.", "directory": request.Directory,
+	}})
+	response, answered := waitForBlockResponse(ctx, responses, blockID)
+	emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
+	if !answered || ctx.Err() != nil || response.Outcome == ttypes.BlockUserCancelled {
+		return refuse("Investigation command cancelled. No command started.", toolresult.Cancelled)
+	}
+	if response.Outcome != ttypes.BlockAnswered || response.AttributionKind == "agent" || response.AttributionKind == "external" {
+		return refuse("A person must allow commands for this investigation.", toolresult.Denied)
+	}
+	decision := "deny"
+	if response.Value == ttypes.PlanInvestigationHostAllow {
+		decision = "allow"
+	} else if response.Value != "deny" {
+		return refuse("A person must allow commands for this investigation.", toolresult.Denied)
+	}
+	if err := request.Decide(decision); err != nil {
+		return refuse("Could not save the investigation command decision. No command started. "+err.Error(), toolresult.Denied)
+	}
+	emitPermissionDecision(emit, tc, decision)
+	if decision != "allow" {
+		return refuse("The user did not allow commands for this investigation.", toolresult.Denied)
+	}
+	return nil
 }
 
 // commandApprovalKeys returns the session approval keys of a command call.

@@ -382,7 +382,7 @@ func (a *AgentState) handleBlocking(evt AgentEvent, target *Conversation, effect
 	if operation == "questions" || operation == "question" {
 		effects.Prompt = &AgentPrompt{BlockID: a.PendingBlockID, QuestionsJSON: questionsJSON, IsQuestion: true}
 	} else {
-		effects.Prompt = &AgentPrompt{BlockID: a.PendingBlockID, Question: question, Operation: operation, Tool: tool, Target: tgt, Risk: risk, Reason: reason, Suggestion: suggestion, AutoReview: autoReview}
+		effects.Prompt = &AgentPrompt{BlockID: a.PendingBlockID, Question: question, Operation: operation, Tool: tool, Target: tgt, Risk: risk, Reason: reason, Suggestion: suggestion, AutoReview: autoReview, InvestigationPath: data["plan_investigation_path"] == "true", Directory: data["directory"]}
 	}
 
 	a.PendingPermTool = tool

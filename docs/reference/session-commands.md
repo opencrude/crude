@@ -78,14 +78,11 @@ of guessing its capabilities.
   sends the prompt in it. The mode is persisted with the session
   (`session_runtime_state` key `plan_mode`), so resume and fork keep it, and it
   applies from the next turn: a running turn keeps the mode it started with.
-- A Plan mode turn carries `prompt.PlanModeContract` in its system prompt
-  (explore first, settle intent and implementation with `question`, then one
-  decision-complete `<proposed_plan>` block). The runtime enforces the
-  boundary independently of that text: the offered tools are read-only
-  (`planModeAllows`), every call is checked again at execution
-  (`planModeRefusal`), commands must classify as safe, and `update_plan`,
-  `create_goal`, `update_goal`, `agent_start` and `crude_control` are not
-  offered. The agent's policy is `ReadOnlyPolicy` for the turn.
+- A root Plan mode turn carries `prompt.PlanModeContract`. The ordinary source
+  stays read-only. The agent can ask questions and propose a decision-complete
+  `<proposed_plan>`; it cannot switch modes, delegate or run implementation
+  controls. `open_plan_investigation` enables the scoped experiment described
+  below. Tool offering, permissions and dispatch all check the turn's mode.
 - The first turn after Plan mode is turned off receives a context-only notice
   that the mode ended.
 - `<proposed_plan>` renders as a titled **Proposed plan** section; live and
@@ -100,6 +97,41 @@ of guessing its capabilities.
 - The header shows **Plan mode** for the selected session. The footer confirms
   both toggles and retains **Plan · next turn** while enabled; an already
   running turn keeps the policy it started with.
+
+### Investigation worktrees
+
+1. Entering Plan mode allocates no checkout. To test a hypothesis, the main
+   agent opens an investigation. The workspace captures the current working
+   files and accepted document edits, or the current bytes of the source
+   execution already bound to the input. The investigation needs a supported
+   Git repository with a commit. If setup fails, the agent can still plan;
+   it never writes the test into the source as a fallback.
+2. Reads remain source-relative. In the investigation, native writes and patches
+   target the separate checkout; use its returned path to read the experiment.
+   A bounded set of direct inspection commands can run on the source. Before a
+   project command runs, **Allow for this plan** grants host execution for this
+   investigation across review turns. **Do not run** still lets the agent write
+   a test and report that it did not run. YOLO and Auto Review cannot answer
+   this question. Normal command policy still applies after consent. A worktree
+   is **not a sandbox**: test programs have the core host user's permissions.
+3. A command records its input files before launch and its exit and output after
+   settlement. A command that starts is not a passing test. Missing exit status,
+   changed measured inputs or evidence too large to verify cannot establish a
+   pass. Snapshots cover project files, not the entire host or ignored build
+   dependencies. Output is bounded. Larger source changes include readable
+   excerpts and a lossless archive within the evidence limits.
+4. A completed proposal binds immutable results to its exact revision. Select
+   **Evidence** in the plan review or **Review Investigation Evidence** from
+   the palette to read them. The latest 24 command references are retained in
+   the working evidence window; the review reports omissions. Earlier
+   revisions keep their own evidence. Revising a plan keeps the investigation;
+   a fork gets historical evidence, not the worktree or the host-run consent.
+5. **Implement** and **New session** pass the approved revision's verified
+   evidence to the normal implementation turn. Neither selects, copies nor
+   merges the investigation. Turning Plan mode off closes that planning cycle
+   for future turns. A live run, command or parked recovery still retains its
+   checkout. Disposal uses reviewed discard and an archive, not age or force.
+   An uncertain disposition retains the files. See [managed executions](managed-executions.md).
 
 ## Plan review
 
@@ -158,10 +190,19 @@ the user's edits as a diff, and the plan as the user sees it.
   sends `prompt.PlanImplementationRequest`, or `prompt.PlanImplementationEdited`
   with the approved text and diff when the user edited the plan. Approval
   binds that exact revision; a later proposal or comment changes the decision
-  first. **New session** opens a new session (outside Plan mode, in its own
-  tab) whose first message is `prompt.PlanImplementationFreshContext` with the
-  plan as the user sees it, leaving the planning session as it was. The
-  transcript shows a short summary of feedback, not the full prompt.
+  first. **New session** first creates a normal session. Settlement targets
+  that exact destination. Its first durable input contains the plan as
+  reviewed and references to verified copies of the revision’s evidence in the
+  destination; that input and the destination's receipt commit in one
+  transaction. Only accepted input closes the originating review and opens
+  the new session's tab; the source remains in Plan mode. If the source cannot
+  record the result, the review stays bound to that destination: the bar says
+  **Check that the new session received the plan.** and **Check** compares the
+  destination's receipt with the bound input. It never sends the plan again or
+  to another session. A matching receipt closes the review; no receipt means
+  the plan did not arrive, so the choice opens again. While bound, the review
+  takes no comments and no other action. The transcript shows a short summary
+  of feedback, not the full prompt.
 - **Delivery.** Feedback and approval enter the session's durable input
   queue in the same SQLite transaction as the settled record (and, for
   approval, Plan mode off), and Plan mode is published before the queue

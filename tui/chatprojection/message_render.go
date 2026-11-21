@@ -63,10 +63,8 @@ type renderContext struct {
 	// planSuperseded hides repeated plan snapshots by default while preserving
 	// each tool's preparing/doing/done title and expandable content.
 	planSuperseded bool
-	// streamNative holds the pre-bridged native rows for the completed portion
-	// of a streaming assistant message (built once per completed-source change
-	// by the Renderer, never per frame). Set only for the streaming cursor.
-	streamNative []PaintLine
+	streamBody     *streamBodyCache
+	markdownReflow *markdownReflowCache
 }
 
 func (c renderContext) markdownContent(message types.ChatMessage) string {
@@ -89,7 +87,7 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 	rawMessage.Content = ctx.markdownContent(msg)
 	source, markers := attachmentSource(rawMessage)
 	offsets := make(map[rune]attachmentCopyOffset)
-	mapped, isMarkdown := renderMarkdownRows(source, ctx.mdRenderer, ctx.tokens, msg.InternalID, false)
+	mapped, isMarkdown := ctx.markdownReflow.render(source, msg.InternalID, ctx.mdRenderer, ctx.contentWidth, ctx.tokens, false)
 	if isMarkdown {
 		for _, pl := range mapped {
 			if len(markers) == 0 {
@@ -128,6 +126,8 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 	return ml
 }
 
+const collaborationRail = "│ "
+
 func renderCollaborationMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 	if isCommandOutcome(&msg) {
 		return renderCommandOutcome(msg, ctx)
@@ -163,16 +163,18 @@ func renderCollaborationMessage(msg types.ChatMessage, ctx renderContext) messag
 	ml.lines = append(ml.lines, header.PlainText())
 	ml.native = append(ml.native, header)
 
-	mapped, isMarkdown := renderMarkdownRows(ctx.markdownContent(msg), ctx.mdRenderer, ctx.tokens, msg.InternalID, false)
+	mapped, isMarkdown := ctx.markdownReflow.render(ctx.markdownContent(msg), msg.InternalID, ctx.mdRenderer, ctx.contentWidth, ctx.tokens, false)
 	var body []PaintLine
 	if isMarkdown {
 		body = mapped
 	} else {
-		body = buildPlainBodyLines(rendering.WrapText(msg.Content, max(1, ctx.contentWidth-2)))
+		body = buildPlainBodyLines(rendering.WrapText(msg.Content, max(1, ctx.contentWidth)))
 	}
 	for _, line := range body {
-		withRail := PaintLine{SourceAware: line.SourceAware, Spans: []RowSpan{{Text: "│ ", Role: ui.ColorMuted}}}
-		withRail.Spans = append(withRail.Spans, line.Spans...)
+		withRail := line
+		shift := rendering.VisibleWidth(collaborationRail)
+		withRail.prose = line.prose.shifted(shift)
+		withRail.Spans = append([]RowSpan{{Text: collaborationRail, Role: ui.ColorMuted}}, line.Spans...)
 		ml.lines = append(ml.lines, withRail.PlainText())
 		ml.native = append(ml.native, withRail)
 	}
@@ -209,7 +211,7 @@ func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressH
 		ml.lines = append(ml.lines, header.PlainText())
 		ml.native = append(ml.native, header)
 	}
-	mapped, isMarkdown := renderMarkdownRows(ctx.markdownContent(msg), ctx.mdRenderer, ctx.tokens, msg.InternalID, false)
+	mapped, isMarkdown := ctx.markdownReflow.render(ctx.markdownContent(msg), msg.InternalID, ctx.mdRenderer, ctx.contentWidth, ctx.tokens, false)
 	if isMarkdown {
 		for _, pl := range mapped {
 			ml.lines = append(ml.lines, pl.PlainText())
@@ -237,32 +239,19 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 	var bodyNative []PaintLine
 	var isMarkdown bool
 	if ctx.streaming && ctx.isLastMsg {
-		native := ctx.streamNative
-		if native == nil {
-			native = streamingCompletedRows(&msg, ctx.mdRenderer, ctx.tokens, ctx.contentWidth)
+		cache := ctx.streamBody
+		if cache == nil {
+			cache = &streamBodyCache{}
 		}
-		for _, pl := range native {
-			bodyLines = append(bodyLines, pl.PlainText())
-			bodyNative = append(bodyNative, pl)
-		}
-		lastNL := strings.LastIndex(msg.Content, "\n")
-		var lastLineText string
-		if lastNL >= 0 {
-			lastLineText = msg.Content[lastNL+1:]
-		} else {
-			lastLineText = msg.Content
-		}
-		lastLineText = strings.TrimRight(lastLineText, "\n")
-		if lastLineText != "" {
-			for _, pl := range plainSourceLines(lastLineText, ctx.contentWidth) {
-				bodyLines = append(bodyLines, pl.PlainText())
-				bodyNative = append(bodyNative, pl)
-			}
-		}
+		head, tail := cache.project(ctx.markdownContent(msg), msg.InternalID, ctx.mdRenderer, ctx.tokens, ctx.contentWidth)
+		bodyLines = append(bodyLines, head.lines...)
+		bodyLines = append(bodyLines, tail.lines...)
+		bodyNative = append(bodyNative, head.native...)
+		bodyNative = append(bodyNative, tail.native...)
 	} else {
-		bodyNative, isMarkdown = renderMarkdownRows(ctx.markdownContent(msg), ctx.mdRenderer, ctx.tokens, msg.InternalID, true)
+		bodyNative, isMarkdown = ctx.markdownReflow.render(ctx.markdownContent(msg), msg.InternalID, ctx.mdRenderer, ctx.contentWidth, ctx.tokens, true)
 		if !isMarkdown {
-			bodyNative = plainSourceLines(msg.Content, ctx.contentWidth)
+			bodyNative = plainSourceLines(presentPlan(msg.Content, false), ctx.contentWidth)
 		}
 		bodyLines = make([]string, len(bodyNative))
 		for i, line := range bodyNative {
@@ -467,7 +456,7 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 	if md == nil {
 		// Unlike block chat, compact summaries always need Markdown parsing.
 		// Compose at the shared readable minimum, then bound native spans below.
-		md = rendering.MakeMdRenderer(40, ctx.th)
+		md = rendering.MakeMdRenderer(20, ctx.th)
 	}
 	if ctx.disclosure != DisclosureExpanded && !ctx.thinkingBodyOnly {
 		preview := ThinkingPreviewLine(msg.Content, msg.ThinkingDisplay, md, ctx.tokens)

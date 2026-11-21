@@ -19,8 +19,8 @@ type remoteSessionReadyMsg struct {
 	result    *workspace.NewSessionResult
 	sessionID string
 	forked    bool
-	// initial is sent as the new session's first message once it is open.
-	initial provider.UserInput
+	// plan hands a reviewed revision to this exact new session.
+	plan *planSettledMsg
 	// ask places the new session beside the code that Ask Crude asked about.
 	ask *askRequest
 	// aeron marks the workspace's Aeron. It opens minimized and never takes
@@ -44,20 +44,31 @@ func (m *App) sessionLifecycleBusy(start func() tea.Cmd) (busy, kept bool) {
 	return true, false
 }
 
-// newSessionWithInput opens a new session in its own tab and sends input as
-// its first message.
-func (m *App) newSessionWithInput(input provider.UserInput) tea.Cmd {
-	if busy, kept := m.sessionLifecycleBusy(func() tea.Cmd { return m.newSessionWithInput(input) }); busy {
+// openPlanDestination creates a session, or reopens the exact destination of
+// an earlier handoff that still needs confirmation.
+func (m *App) openPlanDestination(plan planSettledMsg) tea.Cmd {
+	if plan.owner != m.ws || plan.generation != m.workspaceSwitchGen.Load() {
+		return nil
+	}
+	if busy, kept := m.sessionLifecycleBusy(func() tea.Cmd { return m.openPlanDestination(plan) }); busy {
 		if !kept {
-			m.Feedback.NotifyInfo("A session is still opening; try again when it is ready")
+			m.Feedback.NotifyInfo("A session is still opening. Try again when it is ready.")
 		}
 		return nil
 	}
 	m.sessionLifecycleSequence++
 	sequence, owner := m.sessionLifecycleSequence, m.ws
+	plan.sequence = sequence
 	m.sessionLifecyclePending = true
 	return func() tea.Msg {
-		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: owner.NewAgentSession(), initial: input}
+		id := plan.settle.DestinationSessionID
+		var result *workspace.NewSessionResult
+		if id == "" {
+			result = owner.NewAgentSession()
+		} else {
+			result = owner.OpenAgentSession(id)
+		}
+		return remoteSessionReadyMsg{owner: owner, sequence: sequence, result: result, sessionID: id, plan: &plan}
 	}
 }
 
@@ -122,6 +133,25 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	if msg.owner != m.ws || msg.sequence != m.sessionLifecycleSequence {
 		return nil
 	}
+	if msg.plan != nil {
+		if !m.sessionLifecyclePending || msg.plan.generation != m.workspaceSwitchGen.Load() {
+			return nil
+		}
+		if msg.result != nil && msg.result.Error == "" {
+			if msg.result.SessionID == "" || msg.result.OrchID == "" ||
+				(msg.sessionID != "" && msg.sessionID != msg.result.SessionID) {
+				m.sessionLifecyclePending = false
+				m.Feedback.NotifyError("Could not identify the new session. Try again from the plan.")
+				m.reofferPlanDecision(*msg.plan)
+				return nil
+			}
+			plan := *msg.plan
+			plan.settle.DestinationSessionID = msg.result.SessionID
+			plan.destinationAgentID = msg.result.OrchID
+			return runPlanReviewSettlement(plan)
+		}
+		m.reofferPlanDecision(*msg.plan)
+	}
 	m.sessionLifecyclePending = false
 	if msg.aeron {
 		cmd := m.applyAeronEnsure(msg.result)
@@ -168,9 +198,6 @@ func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	}
 	if msg.forked {
 		m.Feedback.NotifyInfo("Forked into a new session; the original is unchanged")
-	}
-	if msg.initial.Text != "" {
-		return m.submitFirstInput(msg.result.OrchID, msg.initial)
 	}
 	return nil
 }

@@ -214,7 +214,10 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		return errorTitle(msg.ToolName, target, duration, resultReason(msg))
 	}
 	stage := 1
-	if phase == types.ToolPreviewPreparing {
+	// Argument streaming and an outstanding approval both precede tool_call.
+	// Receiving a complete command string is not evidence of dispatch.
+	launch := msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command" || msg.ToolName == "exec_command"
+	if phase == types.ToolPreviewPreparing || launch && msg.ToolStatus == types.ToolStatusStreaming {
 		stage = 0
 	}
 	if phase == types.ToolPreviewDone || msg.ToolStatus == types.ToolStatusSuccess {

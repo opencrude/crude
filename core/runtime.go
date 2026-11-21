@@ -33,6 +33,7 @@ import (
 	"crude/types/inspect"
 	"crude/workspace"
 	"crude/workspace/document"
+	"crude/workspace/fileio"
 )
 
 // Factory belongs to the application configuration owner. It is invoked once
@@ -1066,12 +1067,18 @@ func (a *actor) changed(ids []string) {
 // reduced publishes one accepted reduction with its effects, so every shell
 // presents exactly what the single semantic reducer decided.
 func (a *actor) reduced(reduction workspace.AgentReduction) {
+	if reduction.Effects.Done != nil || reduction.Effects.Error != nil {
+		a.enqueuePlanInvestigationCleanup(reduction.AgentID)
+	}
 	reduction.ChangedAgents = slices.Clone(reduction.ChangedAgents)
 	a.broadcast(coreprotocol.Change{Agents: slices.Clone(reduction.ChangedAgents), Reductions: []workspace.AgentReduction{reduction}})
 }
 
 func (a *actor) notice(notice workspace.AgentNotice) {
 	a.ws.ApplyAgentNotice(notice)
+	if notice.Type == workspace.NoticeAsyncCommandStatus && len(notice.Commands) > 0 && !slices.ContainsFunc(notice.Commands, func(info fileio.AsyncCmdInfo) bool { return info.Status == fileio.AsyncRunning }) {
+		a.enqueuePlanInvestigationCleanup(notice.AgentID)
+	}
 	a.broadcast(coreprotocol.Change{Notices: []workspace.AgentNotice{notice}})
 }
 
@@ -1381,7 +1388,7 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 		if input.Reject != "" {
 			accepted = a.ws.RejectQuestion(input.AgentID, input.BlockID, input.Reject)
 		} else if input.Choice != "" {
-			if input.Choice != "allow" && input.Choice != "deny" && input.Choice != "always" {
+			if input.Choice != "allow" && input.Choice != "deny" && input.Choice != "always" && input.Choice != types.PlanInvestigationHostAllow {
 				return fault(request, "invalid_decision", "invalid permission choice")
 			}
 			accepted = a.ws.ResolveConfirmation(input.AgentID, input.BlockID, input.Choice)

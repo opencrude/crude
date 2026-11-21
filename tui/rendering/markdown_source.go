@@ -18,6 +18,7 @@ type CopyText struct {
 	Value     string
 	Language  string
 	Code      bool
+	Table     bool
 
 	directions copyDirections
 	// inlineCode holds the byte ranges of the paragraph's inline code
@@ -98,6 +99,8 @@ type markdownTrace struct {
 	current   *copyBuild
 	atoms     []copyAtom
 	separator string
+	cells     []*MarkdownCell
+	cellStart int
 }
 
 const sourcePrefix = "\x1b_"
@@ -107,6 +110,65 @@ func copyMarker(id int) string                  { return sourcePrefix + strconv.
 func (t *markdownTrace) Begin(separator string) { t.current = nil; t.separator = separator }
 func (t *markdownTrace) Pause() string          { return copyMarker(-1) }
 func (t *markdownTrace) Resume() string         { return copyMarker(-2) }
+
+func (t *markdownTrace) Decoration(start bool) string {
+	if start {
+		return geometryMarker("p")
+	}
+	return geometryMarker("q")
+}
+
+func (t *markdownTrace) BoxPrefix(start, rtl bool) string {
+	if !start {
+		return geometryMarker("f")
+	}
+	if rtl {
+		return geometryMarker("r")
+	}
+	return geometryMarker("i")
+}
+
+func (t *markdownTrace) Direction(text string) (rtl, strong bool) {
+	return bidi.StrongDirection(text)
+}
+
+func (t *markdownTrace) BeginTable() {
+	t.Begin("\n")
+	t.block().text.Table = true
+}
+
+func (t *markdownTrace) EndTable() { t.Begin("\n") }
+
+func (t *markdownTrace) BeginTableCell(separator string) {
+	block := t.block()
+	if len(t.cells) > 0 && t.cells[len(t.cells)-1].Source.Text == block.text {
+		block.value.WriteString(separator)
+	}
+	t.cellStart = block.value.Len()
+}
+
+func (t *markdownTrace) EndTableCell() (id int, rtl, strong bool) {
+	block := t.block()
+	end := block.value.Len()
+	rtl, strong = block.text.strongDirection(block.value.String(), t.cellStart, end)
+	t.cells = append(t.cells, &MarkdownCell{
+		Source: CopyRange{Text: block.text, Start: t.cellStart, End: end}, RTL: rtl,
+	})
+	return len(t.cells), rtl, strong
+}
+
+func (t *markdownTrace) TableCellBox(id int, styled string) string {
+	start := geometryMarker("b" + strconv.Itoa(id))
+	end := geometryMarker("e")
+	return start + strings.ReplaceAll(styled, "\n", end+"\n"+start) + end
+}
+
+func (t *markdownTrace) TableCellContent(styled string) string {
+	return geometryMarker("c") + styled + geometryMarker("d")
+}
+
+func geometryMarker(value string) string { return sourcePrefix + ":" + value + sourceEnd }
+
 func (t *markdownTrace) block() *copyBuild {
 	if t.current == nil {
 		t.current = &copyBuild{text: &CopyText{Block: len(t.blocks), Separator: t.separator}}
@@ -251,18 +313,28 @@ func (t *markdownTrace) Code(styled, text, language string) string {
 // TextProjection is a private annotated layout plus its immutable sources.
 // Use its Parser to consume the annotations; they never go to terminal output.
 type TextProjection struct {
-	ANSI  string
-	trace *markdownTrace
+	ANSI       string
+	BlockWidth int
+	trace      *markdownTrace
 }
 
 func (r *MarkdownRenderer) RenderMapped(in string) (TextProjection, error) {
+	return r.RenderParsedMapped(r.Parse(in))
+}
+
+func (r *MarkdownRenderer) RenderParsedMapped(doc MarkdownDocument) (TextProjection, error) {
 	trace := &markdownTrace{}
-	value, err := r.render(in, trace)
+	value, err := r.renderParsed(doc, trace)
 	if err != nil {
 		return TextProjection{}, err
 	}
-	return trace.projection(value), nil
+	p := trace.projection(value)
+	p.BlockWidth = r.options.WordWrap
+	return p, nil
 }
+
+// IsMarkdown distinguishes parsed block boundaries from streaming plain text.
+func (p TextProjection) IsMarkdown() bool { return p.BlockWidth > 0 }
 func (p TextProjection) Parser() *AnsiRunParser {
 	return &AnsiRunParser{copy: &copyParser{trace: p.trace}}
 }

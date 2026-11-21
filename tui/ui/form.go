@@ -39,6 +39,7 @@ type Form struct {
 	chordActions     map[string]string
 	overlayAbove     int
 	overlayBelow     int
+	reading          *FormField
 }
 
 // SetOverlayRoom lets an open dropdown paint into rows the parent owns above
@@ -306,7 +307,7 @@ func (f *Form) TextControlAt(x, y int) Component {
 }
 
 func (f *Form) Measure(_ LayoutContext, cs Constraints) Size {
-	return cs.ClampSize(Size{W: cs.MaxW, H: f.PreferredHeight(cs.MaxH)})
+	return cs.ClampSize(Size{W: cs.MaxW, H: f.PreferredHeightAtWidth(cs.MaxW, cs.MaxH)})
 }
 
 // SetFieldGap configures the inter-field vertical spacing in rows. Use 0
@@ -326,6 +327,14 @@ func (f *Form) Scroll() *ScrollModel { return f.scroll }
 // and do not add to the layout height.
 func (f *Form) PreferredHeight(maxHeight int) int {
 	return min(maxHeight, f.contentHeight())
+}
+
+// PreferredHeightAtWidth includes the rows a reading form wraps at width.
+func (f *Form) PreferredHeightAtWidth(width, maxHeight int) int {
+	if f.reading != nil {
+		return min(maxHeight, f.headerHeight()+f.reading.area.VisualLineCount(max(1, width)))
+	}
+	return f.PreferredHeight(maxHeight)
 }
 
 func (f *Form) headerHeight() int {
@@ -354,6 +363,11 @@ func (f *Form) contentHeight() int {
 
 func (f *Form) Layout(ctx LayoutContext, r Rect) {
 	f.SetBounds(r)
+	if f.reading != nil {
+		header := f.headerHeight()
+		f.reading.Layout(ctx, Rect{Y: header, W: r.W, H: max(0, r.H-header)})
+		return
+	}
 	if f.scroll == nil {
 		f.scroll = NewScrollModel()
 	}

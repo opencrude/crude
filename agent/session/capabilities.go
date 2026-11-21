@@ -96,7 +96,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		for _, text := range session.capabilitySharing.drain(actor.ID) {
 			notices = append(notices, runtimeMessage(text))
 		}
-		if runtime != nil {
+		if runtime != nil && live.PlanInvestigation == nil {
 			prepared, err := runtime.Prepare(ctx, currentActor())
 			if err != nil {
 				session.logger.Warn("CAPABILITY", "prepare_failed", "error", err.Error())
@@ -171,6 +171,16 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		if !runtimeCollaborationToolSelected(actor, tool) {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is excluded by the effective agent selection", tool)
 		}
+		if live.PlanInvestigation != nil {
+			if !planModeAllows(tool, live.ToolMetadata) {
+				return tools.ToolResult{}, fmt.Errorf("plan mode does not allow %s", tool)
+			}
+			// These routes check their exact source/run and investigation paths
+			// before any action. Ordinary source dispatch still has ReadOnlyPolicy.
+			if tool == "open_plan_investigation" || planInvestigationFileTool(tool) || planInvestigationCommandTool(tool) || tool == "write_stdin" {
+				return previousFn(callCtx, tool, params)
+			}
+		}
 		if result, handled, err := session.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {
 			return result, err
 		}
@@ -210,6 +220,11 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			return tools.ToolResult{}, fmt.Errorf("tool %q is denied by the agent policy", tool)
 		}
 		resolveRelativeParamsAtRoot(live.WorkDir, tool, params)
+		if isWriteTool(tool) {
+			if err := session.validateNoInvestigationMutation(writeToolTargets(tool, params)); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
 		if isWriteTool(tool) && actor.ParentID == "" && live.WorkDir != session.WorkDir() {
 			if err := validateExecutionWriteTargets(live.WorkDir, session.TempDir(), writeToolTargets(tool, params)); err != nil {
 				return tools.ToolResult{}, err

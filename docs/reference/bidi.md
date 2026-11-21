@@ -51,7 +51,8 @@ controls becomes a space, so widths never change.
 | Labels (`WriteString`, ANSI lines) | the label | automatic (first strong character), like `dir="auto"` |
 | Composer and text areas | each hard line | automatic; a line without letters keeps the line above (UAX #9 HL1) |
 | Text fields | the value | automatic; masked values are never arranged |
-| Chat rows | the source paragraph of the row's first source span | that paragraph's direction for every wrapped row; code is left-to-right; inline code is a left-to-right isolate; rows without source are left-to-right |
+| Chat Markdown prose | each parsed prose block | resolve the block once; derive every wrapped line from its levels. Inline code is a left-to-right isolate; fenced code stays left-to-right |
+| Chat Markdown tables | the text of each parsed cell | the first strong header character decides column order; a neutral header uses the enclosing block direction, then left-to-right. Each cell keeps its allocated box when the text wraps |
 | Editor | each source line | left-aligned code grid. **By line** (default) isolates prose in its reading direction. **Left to right** uses LTR paragraph order for prose |
 | Embedded terminal | each screen row | left-to-right, like a terminal in implicit mode; see below |
 
@@ -83,6 +84,46 @@ Chat applies the same rule to Markdown: the renderer records each inline
 code span (`SourceTrace.MarkCode`, `CopyText.InlineCode`), and
 `chatprojection.ArrangedLine` isolates it left to right, so `./run.sh --all`
 keeps its `./` inside a Persian or Hebrew sentence.
+
+The source trace identifies prose blocks independently of their display rows.
+Crude resolves each block as one paragraph, including source separators that a
+soft wrap drops. Each display row uses only its slice of those levels. A block
+starts at the reading edge of its actual Markdown box: RTL at the right, LTR at
+the left. There is no extra reserve for a timestamp painted on a different row.
+The unparsed streaming tail stays literal; its hard lines use the same wrapper
+and paragraph resolver. Blinking the streaming cursor does not parse the text
+again.
+
+List and quote gutters belong to their containers, not to each wrapped line.
+An English paragraph or a code fence in a Persian quote does not move the
+quote rail to the left. An ordered marker is an isolated run at inline-start,
+as in [CSS Lists §3](https://drafts.csswg.org/css-lists-3/#markers). Its digits
+and suffix use UAX #9 in the container direction; there is no special reversal
+rule for punctuation. Continuation lines reserve the same marker width.
+Fenced code retains its left-aligned grid *inside* the remaining box.
+This is a Markdown layout policy, not a change to editor alignment or a second
+implementation of the [Unicode Bidirectional Algorithm](https://www.unicode.org/reports/tr9/).
+
+In rendered chat Markdown, Goldmark provides table cells and thematic breaks.
+Glamour gives the columns to Lip Gloss in reading order: the first source
+column of an RTL table is on the right. The first strong header character in
+source order outside inline-code isolates decides the table direction. A neutral header uses the closest
+enclosing Markdown container with a strong prose direction. It falls back to
+left-to-right if there is none. An unrelated paragraph and the table's body
+cells cannot change the column order. Each cell resolves its own paragraph,
+even when a continuation starts with different-direction text. Explicit
+Markdown column alignment still applies.
+Lip Gloss marks the sized cell boxes and the content inside them, including
+empty or wrapped boxes. Crude arranges only the content. Table rules,
+dividers, margins and padding stay outside those paragraphs. A thematic
+break spans its Markdown block and has no copyable text.
+
+Paint, Find, selection, and links use the same column map. Source offsets
+stay in Goldmark order, so a drag across visually reversed columns copies
+the logical table cells with tabs between cells and newlines between rows.
+The renderer discards the private layout records before painting. This
+layout applies to rendered chat only; it does not change the editor,
+composer, embedded terminal, or other text surfaces.
 
 The editor separates alignment, reading order and clipping. The outer row
 is left to right. In **By line**, a prose region has a first-strong isolate;
@@ -278,9 +319,9 @@ Defaults are stored as absent fields and keep inheriting
 range check proven against the whole pinned Unicode table
 (`TestTriggerBlocksCoverUnicode`). Left-to-right text never builds a layout.
 Paragraph layouts are cached per source line (editor), per content revision
-(text areas) and per value (text fields). Chat rows cache the direction of
-each source paragraph and arrange a visible row only when it holds
-right-to-left text.
+(text areas) and per value (text fields). Rendered Markdown shares one
+resolved layout across a paragraph's visible rows. Plain left-to-right
+Markdown needs no bidi layout.
 
 ## Limits
 
@@ -292,9 +333,8 @@ right-to-left text.
   wrong ligature ([Fonts](#fonts)).
 - Embedded terminals show what the shell wrote; a shell or console host can
   break a long right-to-left line itself before Crude arranges its rows.
-- Rows of one chat paragraph are analyzed row by row with the paragraph's
-  direction; weak characters at a row edge can resolve differently from a
-  whole-paragraph analysis.
+- Unparsed chat text, such as an unfinished streaming line, still resolves
+  display rows separately with their source direction.
 - Terminal rows are separate paragraphs; a soft-wrapped right-to-left line
   is arranged per row.
 - Bidi formatting characters in code are honored, not highlighted.

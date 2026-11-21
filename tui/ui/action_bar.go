@@ -30,7 +30,7 @@ type ActionBarButton struct {
 	Enabled  bool
 }
 
-// ActionBar is a horizontal row of buttons for form save/cancel/reset actions.
+// ActionBar presents buttons for form save/cancel/reset actions.
 type ActionBar struct {
 	Base
 	buttons       []actionBarBtn
@@ -52,6 +52,8 @@ type ActionBar struct {
 	ruleFullBleed bool
 	ruleBleedX    int
 	ruleBleedW    int
+	wrap          bool
+	wrapped       bool
 	// labelGen is the keyboard profile generation the shortcut captions were
 	// resolved for; a profile change re-resolves them before measuring.
 	labelGen uint64
@@ -168,6 +170,9 @@ func (ab *ActionBar) SetAlignEnd(v bool) { ab.alignEnd = v }
 // SetShowRule paints a divider on the first row and places buttons below it.
 func (ab *ActionBar) SetShowRule(v bool) { ab.showRule = v }
 
+// SetWrap lets a dock reserve multiple rows instead of eliding decision labels.
+func (ab *ActionBar) SetWrap(v bool) { ab.wrap = v }
+
 // SetRuleFullBleed configures whether the rule may expand beyond the bar's
 // own width when the parent supplies a wider bleed row. Docked bars opt in
 // so the rule spans the whole deck row edge to edge while buttons stay in
@@ -232,6 +237,35 @@ func (ab *ActionBar) PreferredHeight() int {
 		return 2
 	}
 	return 1
+}
+
+// PreferredHeightAtWidth reports the rows required to retain complete labels.
+func (ab *ActionBar) PreferredHeightAtWidth(width int) int {
+	ab.syncShortcutLabels()
+	return ab.PreferredHeight() + max(0, len(ab.wrappedRows(width))-1)
+}
+
+type actionBarRow struct{ start, end, width int }
+
+func (ab *ActionBar) wrappedRows(width int) []actionBarRow {
+	if !ab.wrap || width < 1 || len(ab.buttons) < 2 {
+		return nil
+	}
+	var rows []actionBarRow
+	row := actionBarRow{}
+	for i := range ab.buttons {
+		w := min(width, rendering.VisibleWidth(ab.buttons[i].label)+4)
+		gap := 0
+		if row.end > row.start {
+			gap = ab.gap
+			if row.width+gap+w > width {
+				rows = append(rows, row)
+				row, gap = actionBarRow{start: i}, 0
+			}
+		}
+		row.end, row.width = i+1, row.width+gap+w
+	}
+	return append(rows, row)
 }
 
 // SetExitActions overrides the Tab-out actions (defaults actionbar.exit.*).
@@ -331,17 +365,41 @@ func (ab *ActionBar) Measure(_ LayoutContext, cs Constraints) Size {
 			totalW += ab.gap
 		}
 	}
-	return cs.ClampSize(Size{W: totalW, H: ab.PreferredHeight()})
+	return cs.ClampSize(Size{W: totalW, H: ab.PreferredHeightAtWidth(min(totalW, cs.MaxW))})
 }
 
 func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	ab.syncShortcutLabels()
 	ab.SetBounds(r)
+	ab.wrapped = false
 	if r.Empty() {
 		for i := range ab.buttons {
 			ab.buttons[i].button.Layout(ctx, Rect{})
 		}
 		ab.buttonsStart, ab.buttonsEnd = 0, 0
+		return
+	}
+	if rows := ab.wrappedRows(r.W); len(rows) > 1 && r.H >= ab.PreferredHeight()+len(rows)-1 {
+		ab.wrapped = true
+		y := ab.PreferredHeight() - 1
+		for _, row := range rows {
+			x := 0
+			if ab.alignEnd {
+				x = r.W - row.width
+			}
+			for i := row.start; i < row.end; i++ {
+				b := &ab.buttons[i]
+				label := b.label
+				if rendering.VisibleWidth(label)+4 > r.W {
+					label = b.title
+				}
+				b.button.SetLabel(label)
+				w := min(r.W, rendering.VisibleWidth(b.label)+4)
+				b.button.Layout(ctx, Rect{X: x, Y: y, W: w, H: 1})
+				x += w + ab.gap
+			}
+			y++
+		}
 		return
 	}
 	totalW := 0
@@ -451,7 +509,7 @@ func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 // opposite the buttons. It is dropped entirely — never truncated into a
 // fragment and never pressed against a button — when the row cannot hold it.
 func (ab *ActionBar) paintHint(buf *surface.CellBuffer, originX, originY int, r Rect) {
-	if ab.hint == "" || ab.hintWidth <= 0 || ab.tokens == nil {
+	if ab.wrapped || ab.hint == "" || ab.hintWidth <= 0 || ab.tokens == nil {
 		return
 	}
 	y := 0
@@ -519,8 +577,14 @@ func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
 			}
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		case tea.KeyUp:
+			if ab.focusInAdjacentRow(-1) {
+				return EventResult{Handled: true, Invalidate: InvalidatePaint}
+			}
 			return EventResult{Handled: true, Action: &Action{ID: ab.exitBackward}, Invalidate: InvalidateFocus | InvalidatePaint}
 		case tea.KeyDown:
+			if ab.focusInAdjacentRow(1) {
+				return EventResult{Handled: true, Invalidate: InvalidatePaint}
+			}
 			return EventResult{Handled: true, Action: &Action{ID: ab.exitForward}, Invalidate: InvalidateFocus | InvalidatePaint}
 		}
 		if ab.focused < 0 || ab.focused >= len(ab.buttons) {
@@ -545,6 +609,32 @@ func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
 		return ab.handleButton(index, ctx, evt)
 	}
 	return EventResult{}
+}
+
+func (ab *ActionBar) focusInAdjacentRow(delta int) bool {
+	if !ab.wrapped || ab.focused < 0 || ab.focused >= len(ab.buttons) {
+		return false
+	}
+	bounds := ab.buttons[ab.focused].button.Bounds()
+	best, distance := -1, 2*ab.Bounds().W
+	for i := range ab.buttons {
+		next := ab.buttons[i].button.Bounds()
+		if next.Y != bounds.Y+delta || !ab.buttons[i].enabled {
+			continue
+		}
+		d := 2*next.X + next.W - 2*bounds.X - bounds.W
+		if d < 0 {
+			d = -d
+		}
+		if d < distance {
+			best, distance = i, d
+		}
+	}
+	if best < 0 {
+		return false
+	}
+	ab.focused = best
+	return true
 }
 
 func (ab *ActionBar) buttonAt(x, y int) int {

@@ -35,8 +35,7 @@ type Renderer struct {
 	chatAreaTop    int
 	chatAreaHeight int
 
-	mdRenderer   *rendering.MarkdownRenderer
-	cachedWidth  int
+	mdRenderers  map[int]*rendering.MarkdownRenderer
 	width        int
 	height       int
 	username     string
@@ -53,13 +52,9 @@ type Renderer struct {
 	paneScrollbarW   int
 	nativeCache      map[string][]PaintLine
 	tokens           *ui.TokenSet
-	// Only the active streaming message retains a completed-prefix projection.
-	// Source bytes and renderer identity qualify it across tokens and reflow.
-	streamCache struct {
-		id, source string
-		md         *rendering.MarkdownRenderer
-		rows       []PaintLine
-	}
+	// Only the active message retains its streamed Markdown body.
+	streamCache    streamBodyCache
+	markdownReflow markdownReflowCache
 	// thinkingBodyOnly is enabled for retained PaneThinking projections. The
 	// parent pane owns lifecycle/disclosure chrome; this renderer supplies only
 	// wrapped reasoning body rows and cursor/strike styling.
@@ -154,24 +149,6 @@ func (r *Renderer) invalidateMessageCache(msg *types.ChatMessage) {
 	}
 	msg.CachedLines = nil
 	delete(r.nativeCache, msg.InternalID)
-}
-
-// streamNativeRows returns the bridged native rows for the completed portion
-// of a streaming message, re-bridging only when completed-source length changes.
-func (r *Renderer) streamNativeRows(msg *types.ChatMessage, tokens *ui.TokenSet) []PaintLine {
-	if msg == nil {
-		return nil
-	}
-	end := strings.LastIndex(msg.Content, "\n") + 1
-	md := r.MdRenderer()
-	source := msg.Content[:end]
-	if r.streamCache.id == msg.InternalID && r.streamCache.source == source && r.streamCache.md == md {
-		return r.streamCache.rows
-	}
-	width, _ := r.availableMessageWidths()
-	rows := streamingCompletedRows(msg, md, tokens, width)
-	r.streamCache.id, r.streamCache.source, r.streamCache.md, r.streamCache.rows = msg.InternalID, source, md, rows
-	return rows
 }
 
 // BindScroll attaches the authoritative shellchat ScrollModel for main chat.
@@ -291,7 +268,8 @@ func (r *Renderer) SetTheme(t *theme.Theme) {
 			r.tokens.Rebuild(t)
 		}
 		r.InvalidateAllMessages()
-		r.mdRenderer = nil
+		r.mdRenderers = nil
+		r.markdownReflow = markdownReflowCache{}
 	}
 }
 
@@ -345,11 +323,8 @@ func (r *Renderer) SetSize(w, h int) {
 		for i := range r.sync.Messages {
 			r.sync.Messages[i].CachedLines = nil
 		}
-		r.streamCache.id = ""
-		r.streamCache.source = ""
-		r.streamCache.rows = nil
-		r.streamCache.md = nil
-		r.mdRenderer = nil
+		r.streamCache = streamBodyCache{}
+		r.mdRenderers = nil
 		r.vl.InvalidateHeights()
 		r.vl.InvalidateAll()
 	}
@@ -820,6 +795,7 @@ func (r *Renderer) InvalidateCache() {
 // InvalidateWidthProfile drops every width-derived row, wrap, and virtual-list
 // measurement. Unlike InvalidateCache, this includes completed static messages.
 func (r *Renderer) InvalidateWidthProfile() {
+	r.markdownReflow = markdownReflowCache{}
 	for _, msg := range r.sync.Messages {
 		msg.CachedLines = nil
 		r.vl.InvalidateItem(msg.InternalID)
@@ -846,6 +822,9 @@ func (r *Renderer) SetStreaming(s bool) {
 		break
 	}
 	r.streaming = s
+	if !s {
+		r.streamCache = streamBodyCache{}
+	}
 }
 
 func (r *Renderer) EndStreamingCursor() {
@@ -935,7 +914,10 @@ func (r *Renderer) SourceGeneration() uint64 { return r.sync.SourceGeneration() 
 
 // InvalidateSource releases the cursor binding when a pane is rebound to a
 // different Conversation. The next sync still diffs stable rows normally.
-func (r *Renderer) InvalidateSource() { r.sync.sourceSet = false }
+func (r *Renderer) InvalidateSource() {
+	r.sync.sourceSet = false
+	r.markdownReflow = markdownReflowCache{}
+}
 
 // PresentThinkingPane replaces only a retained frontend row.
 func (r *Renderer) PresentThinkingPane(id, paneID string) {
@@ -1001,9 +983,13 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion, sou
 		return
 	}
 	cursorOwnerID := r.restoreThinkingOriginals()
+	generationChanged := r.sync.SourceGeneration() != sourceGeneration
 	result, ok := r.sync.SyncMessages(messages, sourceVersion, sourceGeneration)
 	if !ok {
 		return
+	}
+	if generationChanged {
+		r.markdownReflow = markdownReflowCache{}
 	}
 	r.applySyncResult(result, cursorOwnerID)
 }
@@ -1042,6 +1028,9 @@ func (r *Renderer) restoreThinkingOriginals() string {
 }
 
 func (r *Renderer) applySyncResult(result SyncResult, cursorOwnerID string) {
+	for _, id := range result.ChangedIDs {
+		delete(r.markdownReflow.entries, id)
+	}
 	if cursorOwnerID != "" && result.PureAppend {
 		if previous := r.sync.MsgByID[cursorOwnerID]; previous != nil {
 			previous.CachedLines = nil
@@ -1065,6 +1054,7 @@ func (r *Renderer) RemoveMessage(idx int) {
 	}
 	msg := r.sync.Messages[idx]
 	delete(r.sync.MsgByID, msg.InternalID)
+	delete(r.markdownReflow.entries, msg.InternalID)
 	r.sync.Messages = append(r.sync.Messages[:idx], r.sync.Messages[idx+1:]...)
 	r.bumpVersion()
 	r.RebuildItems()
@@ -1631,6 +1621,23 @@ func scrollbarFootprint(scrollbars int) int {
 
 func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader bool) renderContext {
 	contentWidth, innerW := r.availableMessageWidths()
+	// Ordinary Markdown owns the full document box; a header timestamp is
+	// on another row. Reserve only chrome that is actually beside this body.
+	var md *rendering.MarkdownRenderer
+	switch msg.Role {
+	case types.RoleUser, types.RoleAssistant, types.RoleAssignment:
+		if !isCommandOutcome(msg) {
+			contentWidth = innerW
+			if msg.Collaboration != nil {
+				contentWidth = max(0, innerW-rendering.VisibleWidth(collaborationRail))
+			}
+			md = r.markdownAtWidth(contentWidth)
+		}
+	case types.RoleThinking:
+		if msg.ThinkingDisplay.Kind.HasCompactPreview() {
+			md = r.markdownAtWidth(contentWidth)
+		}
+	}
 	// Tool result bodies (command output, grep, diffs) cap their height against
 	// the visible chat viewport, not the full terminal height. When the chat
 	// area fills the terminal the two are equal; in a floating/split layout the
@@ -1653,7 +1660,7 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 		streaming:        r.streaming,
 		isLastMsg:        r.isLastMessage(msg),
 		phase:            r.phase,
-		mdRenderer:       r.MdRenderer(),
+		mdRenderer:       md,
 		projectPaths:     r.projectPaths,
 		disclosure:       r.disclosureState(msg),
 		thinkingBodyOnly: r.thinkingBodyOnly,
@@ -1715,8 +1722,11 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 
 	ctx := r.buildRenderContext(origMsg, suppressHeader)
 	ctx.sourceMessage = origMsg
+	if r.sync.MsgByID[origMsg.InternalID] == origMsg {
+		ctx.markdownReflow = &r.markdownReflow
+	}
 	if r.streaming && r.isLastMessage(origMsg) && origMsg.Role == types.RoleAssistant {
-		ctx.streamNative = r.streamNativeRows(origMsg, r.Tokens())
+		ctx.streamBody = &r.streamCache
 	}
 	ml := renderMessageContent(*msg, ctx, suppressHeader)
 
@@ -1844,32 +1854,21 @@ func (r *Renderer) messageIndexOf(target *types.ChatMessage) int {
 	return -1
 }
 
-func (r *Renderer) MdRenderer() *rendering.MarkdownRenderer {
-	return r.makeMdRenderer()
-}
-
-func (r *Renderer) makeMdRenderer() *rendering.MarkdownRenderer {
-	contentWidth, _ := r.availableMessageWidths()
-	// Glamour's shared renderer intentionally has a 20-column readable-body
-	// minimum. Below that policy threshold, use the plain wrapping path so a
-	// narrow chat does not reintroduce a synthetic 20-column composition.
-	const minimumMarkdownContentWidth = 20
-	if contentWidth < minimumMarkdownContentWidth {
-		r.mdRenderer = nil
-		r.cachedWidth = contentWidth
+// Layouts at the current shell geometry (ordinary body, collaboration rail,
+// and compact summary) share their parser by actual available width. Resize
+// or theme replacement drops the set. A narrow body never gains fake cells.
+func (r *Renderer) markdownAtWidth(width int) *rendering.MarkdownRenderer {
+	if width < 20 {
 		return nil
 	}
-	if r.mdRenderer != nil && r.cachedWidth == contentWidth {
-		return r.mdRenderer
+	if md := r.mdRenderers[width]; md != nil {
+		return md
 	}
-	// MakeMdRenderer subtracts four padding columns plus the same 16-column
-	// message chrome. Re-add those fixed columns after deriving the bounded
-	// content width so its word-wrap width equals contentWidth exactly.
-	md := rendering.MakeMdRenderer(contentWidth+4+messageBodyChromeWidth, r.theme)
-	if md != nil {
-		r.mdRenderer = md
-		r.cachedWidth = contentWidth
+	if r.mdRenderers == nil {
+		r.mdRenderers = make(map[int]*rendering.MarkdownRenderer)
 	}
+	md := rendering.MakeMdRenderer(width, r.theme)
+	r.mdRenderers[width] = md
 	return md
 }
 
@@ -1885,10 +1884,7 @@ func (r *Renderer) RebuildItems() {
 }
 
 func (r *Renderer) InvalidateAllMessages() {
-	r.streamCache.id = ""
-	r.streamCache.source = ""
-	r.streamCache.rows = nil
-	r.streamCache.md = nil
+	r.streamCache = streamBodyCache{}
 	r.lazyWidthReflow = false
 	perf.MarkCacheInvalidation()
 	for i := range r.sync.Messages {

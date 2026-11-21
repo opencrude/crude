@@ -123,6 +123,9 @@ type Session struct {
 	planMode     atomic.Bool
 	// lastTurnPlanMode is the mode the latest turn ran in.
 	lastTurnPlanMode atomic.Bool
+	// Scoped edits and command evidence share one lease until settlement.
+	planInvestigationToolMu planInvestigationToolGate
+	planInvestigationTurns  sync.Map // *planInvestigationTurn -> struct{}
 	// planReviewMu serializes file and database changes. Snapshots read the
 	// last committed immutable record without waiting for I/O.
 	planReviewMu sync.Mutex

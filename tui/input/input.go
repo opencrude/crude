@@ -68,7 +68,7 @@ type CmdInfo struct {
 }
 
 var availableCmds = []CmdInfo{
-	{Name: "plan", Label: "plan", Desc: "Plan mode: explore read-only and agree a plan before changing anything", Args: true},
+	{Name: "plan", Label: "plan", Desc: "Plan mode: investigate and review a plan before implementation", Args: true},
 	{Name: "goal", Label: "goal", Desc: "Set or view a goal the agent pursues until a verifier confirms it", Args: true},
 	{Name: "fork", Label: "fork", Desc: "Continue this conversation in a new session; this one stays as it is"},
 	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},

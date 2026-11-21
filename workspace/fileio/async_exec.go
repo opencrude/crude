@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -101,6 +102,79 @@ type ownedCommandTree struct {
 	close func()
 }
 
+// CommandOptions binds an owner's receipt to a process start and settlement.
+// DirectArgv is only for owner-constructed, already validated inspections.
+// It skips shell evaluation and profiles.
+type CommandOptions struct {
+	DirectArgv  []string
+	Environment []string
+	Prepare     func(cwd string, argv []string, shell command.Shell) (func(command.Result) error, error)
+	// StartContext prevents a queued call from starting after its owner
+	// cancels. The process keeps its normal manager ownership after launch.
+	StartContext context.Context
+}
+
+func (opts *CommandOptions) checkStart() error {
+	if opts != nil && opts.StartContext != nil {
+		return opts.StartContext.Err()
+	}
+	return nil
+}
+
+func (opts *CommandOptions) prepare(cmd *exec.Cmd, shell command.Shell) (func(command.Result) error, error) {
+	if opts == nil || opts.Prepare == nil {
+		return nil, nil
+	}
+	return opts.Prepare(cmd.Dir, slices.Clone(cmd.Args), shell)
+}
+
+func (st *asyncCmdState) publishOutcome(ctxErr, waitErr error, complete func(command.Result) error, detached bool) {
+	st.mu.Lock()
+	st.processSettled = true
+	if complete == nil {
+		st.finishOutcome(ctxErr, waitErr)
+		st.mu.Unlock()
+		return
+	}
+	info := st.info
+	st.mu.Unlock()
+	info.ExitCode = -1
+	info.finishOutcome(ctxErr, waitErr)
+	info.computeDuration()
+	result := st.outputExcerpt(info)
+	result.Uncertain = result.Uncertain || detached
+	if result.ExitCode != nil && (info.ExitCode < 0 || info.Uncertain) {
+		result.ExitCode = nil
+		result.Uncertain = true
+	}
+	if err := complete(result); err != nil {
+		if info.Status == AsyncCompleted {
+			info.Status = AsyncFailed
+		}
+		info.Error = errors.Join(errors.New("could not confirm investigation evidence"), err).Error()
+		info.Uncertain = true
+	}
+	st.mu.Lock()
+	// A synchronous command may have been promoted while the receipt settled.
+	info.Handle = st.info.Handle
+	st.info = info
+	st.signalOutput()
+	st.mu.Unlock()
+}
+
+func finishStartFailure(complete func(command.Result) error, line, cwd string, resultErr *error) {
+	if complete != nil {
+		result := command.Result{
+			Command: line, CWD: cwd, Error: (*resultErr).Error(), Uncertain: true,
+			OutputDescriptor: command.OutputDescriptor{Status: command.Failed},
+		}
+		if errors.Is(*resultErr, context.Canceled) {
+			result.Cancelled, result.OutputDescriptor.Status = true, command.Killed
+		}
+		*resultErr = errors.Join(*resultErr, complete(result))
+	}
+}
+
 func uncertainTreeStop(err error) error {
 	if err == nil || errors.Is(err, os.ErrProcessDone) {
 		return nil
@@ -131,12 +205,13 @@ type asyncCmdState struct {
 	readCursor       int
 	tree             *ownedCommandTree
 	settleOnce       sync.Once
+	processSettled   bool
 }
 
 func (st *asyncCmdState) killGroup() {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if st.info.Status != AsyncRunning || st.cmd == nil || st.cmd.Process == nil {
+	if st.processSettled || st.info.Status != AsyncRunning || st.cmd == nil || st.cmd.Process == nil {
 		return
 	}
 	st.cancel()
@@ -164,29 +239,33 @@ func (st *asyncCmdState) settle(err error) error {
 // finishOutcome runs under st.mu after waiting for the owned leader. A request
 // to stop is not evidence that the tree actually stopped.
 func (st *asyncCmdState) finishOutcome(ctxErr, waitErr error) {
-	defer st.signalOutput()
-	st.info.EndedAt = time.Now()
+	st.info.finishOutcome(ctxErr, waitErr)
+	st.signalOutput()
+}
+
+func (info *AsyncCmdInfo) finishOutcome(ctxErr, waitErr error) {
+	info.EndedAt = time.Now()
 	if waitErr == nil {
-		st.info.Status, st.info.ExitCode = AsyncCompleted, 0
+		info.Status, info.ExitCode = AsyncCompleted, 0
 		return
 	}
 	var unverified *CommandTreeUnverifiedError
 	if !errors.As(waitErr, &unverified) {
 		switch ctxErr {
 		case context.Canceled:
-			st.info.Status, st.info.Error = AsyncKilled, "killed"
+			info.Status, info.Error = AsyncKilled, "killed"
 			return
 		case context.DeadlineExceeded:
-			st.info.Status, st.info.Error = AsyncKilled, "timed out"
-			st.info.TimedOut = true
+			info.Status, info.Error = AsyncKilled, "timed out"
+			info.TimedOut = true
 			return
 		}
 	}
-	st.info.Status, st.info.Error = AsyncFailed, waitErr.Error()
-	st.info.Uncertain = unverified != nil
+	info.Status, info.Error = AsyncFailed, waitErr.Error()
+	info.Uncertain = unverified != nil
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
-		st.info.ExitCode = exitErr.ExitCode()
+		info.ExitCode = exitErr.ExitCode()
 	}
 }
 
@@ -393,7 +472,7 @@ func commandEnvironmentWithTemp(existing []string, tempDir string) []string {
 	return append(environment, replacement)
 }
 
-func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds int) (*AsyncCmdInfo, error) {
+func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds int, options ...*CommandOptions) (_ *AsyncCmdInfo, resultErr error) {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
@@ -420,12 +499,25 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, cleanup, err := shellCommand(ctx, shell, command, cwd, tempDir, false)
+	opts := firstCommandOptions(options)
+	c, cleanup, err := prepareShellCommand(ctx, shell, command, cwd, tempDir, false, opts)
 	if err != nil {
 		cancel()
 		releaseReservation()
 		return nil, err
 	}
+	complete, err := opts.prepare(c, shell)
+	if err != nil {
+		cancel()
+		cleanup()
+		releaseReservation()
+		return nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			finishStartFailure(complete, command, c.Dir, &resultErr)
+		}
+	}()
 
 	state := &asyncCmdState{
 		cmd:     c,
@@ -444,6 +536,12 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	c.Stderr = state
 	c.Cancel = func() error { state.killGroup(); return nil }
 
+	if err := opts.checkStart(); err != nil {
+		cancel()
+		cleanup()
+		releaseReservation()
+		return nil, err
+	}
 	if err := c.Start(); err != nil {
 		cancel()
 		cleanup()
@@ -487,11 +585,12 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		defer m.notifySettled(state)
 		defer close(state.done)
 		defer state.cleanup()
-		err := state.settle(tree.wait())
-		state.mu.Lock()
-		defer state.mu.Unlock()
-		state.finishOutcome(ctx.Err(), err)
+		waitErr := tree.wait()
+		err := state.settle(waitErr)
+		state.publishOutcome(ctx.Err(), err, complete, errors.Is(waitErr, exec.ErrWaitDelay))
 		if m.logger != nil {
+			state.mu.Lock()
+			defer state.mu.Unlock()
 			switch state.info.Status {
 			case AsyncKilled:
 				if ctx.Err() == context.Canceled {
@@ -753,17 +852,24 @@ type UntrackedCmd struct {
 }
 
 // StartUntracked runs an agent command line in the manager's agent shell.
-func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds int) (*UntrackedCmd, error) {
-	return m.startUntracked(nil, command, cwd, timeoutSeconds, nil)
+func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds int, options ...*CommandOptions) (*UntrackedCmd, error) {
+	return m.startUntracked(nil, command, cwd, timeoutSeconds, nil, firstCommandOptions(options))
 }
 
 // StartUntrackedIn runs a command line that its caller quoted for shell, such
 // as SystemShell, independently of the agent command shell.
 func (m *AsyncCommandManager) StartUntrackedIn(shell command.Shell, line, cwd string, timeoutSeconds int) (*UntrackedCmd, error) {
-	return m.startUntracked(&shell, line, cwd, timeoutSeconds, nil)
+	return m.startUntracked(&shell, line, cwd, timeoutSeconds, nil, nil)
 }
 
-func (m *AsyncCommandManager) startUntracked(shell *command.Shell, command, cwd string, timeoutSeconds int, interactive *InteractiveOptions) (*UntrackedCmd, error) {
+func firstCommandOptions(options []*CommandOptions) *CommandOptions {
+	if len(options) != 0 {
+		return options[0]
+	}
+	return nil
+}
+
+func (m *AsyncCommandManager) startUntracked(shell *command.Shell, command, cwd string, timeoutSeconds int, interactive *InteractiveOptions, opts *CommandOptions) (_ *UntrackedCmd, resultErr error) {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
@@ -785,11 +891,22 @@ func (m *AsyncCommandManager) startUntracked(shell *command.Shell, command, cwd 
 	}
 
 	login := interactive != nil && interactive.Login
-	c, cleanup, err := shellCommand(ctx, *shell, command, cwd, tempDir, login)
+	c, cleanup, err := prepareShellCommand(ctx, *shell, command, cwd, tempDir, login, opts)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
+	complete, err := opts.prepare(c, *shell)
+	if err != nil {
+		cancel()
+		cleanup()
+		return nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			finishStartFailure(complete, command, c.Dir, &resultErr)
+		}
+	}()
 
 	state := &asyncCmdState{
 		cmd:     c,
@@ -816,6 +933,11 @@ func (m *AsyncCommandManager) startUntracked(shell *command.Shell, command, cwd 
 			state.input, outputDone, startErr = startInteractiveProcess(c, interactive.TTY, state)
 			return startErr
 		}
+	}
+	if err := opts.checkStart(); err != nil {
+		cancel()
+		cleanup()
+		return nil, err
 	}
 	if err := start(); err != nil {
 		cancel()
@@ -861,7 +983,8 @@ func (m *AsyncCommandManager) startUntracked(shell *command.Shell, command, cwd 
 		defer m.notifySettled(state)
 		defer close(state.done)
 		defer state.cleanup()
-		err := state.settle(tree.wait())
+		waitErr := tree.wait()
+		err := state.settle(waitErr)
 		if outputDone != nil {
 			// Closing a PTY after process exit is safe after its final output drains.
 			select {
@@ -871,9 +994,7 @@ func (m *AsyncCommandManager) startUntracked(shell *command.Shell, command, cwd 
 				<-outputDone
 			}
 		}
-		state.mu.Lock()
-		defer state.mu.Unlock()
-		state.finishOutcome(ctx.Err(), err)
+		state.publishOutcome(ctx.Err(), err, complete, errors.Is(waitErr, exec.ErrWaitDelay))
 	}()
 
 	return &UntrackedCmd{state: state, cancel: cancel, logger: lg}, nil

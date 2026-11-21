@@ -243,3 +243,64 @@ func TestPlanDecisionAsksToSendPendingComments(t *testing.T) {
 		t.Fatalf("approval decision = %+v %q", spec, data)
 	}
 }
+
+// New session from the chat decision: the shell creates the destination, the
+// core sends the reviewed plan as its first input, and only that accepted
+// input closes the source review. The new session opens in its own tab and
+// the source stays in Plan mode.
+func TestPlanNewSessionConnectedJourney(t *testing.T) {
+	server := &planReviewServer{replies: []string{
+		"Explored.\n<proposed_plan>\n# Add addition\n\n## Steps\n- Implement and test addition\n</proposed_plan>",
+		"Implemented in a fresh context.",
+	}}
+	httpServer := httptest.NewServer(http.HandlerFunc(server.handler))
+	t.Cleanup(httpServer.Close)
+	runtime := remoteJourneyRuntime(t, httpServer.URL)
+	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
+	app := shell.app
+	id := remoteJourneyCreate(t, shell)
+	until := func(condition func() bool) { t.Helper(); remoteJourneyUntil(t, []remoteJourneyShell{shell}, condition) }
+
+	app.Input.SetInput("/plan Propose a plan to add addition.")
+	app.setFocusInput()
+	_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	runAppCommand(t, app, cmd)
+	until(func() bool {
+		projection := app.activeSessionProjection()
+		return projection != nil && projection.decision != nil && projection.decision.Purpose() == "implement_plan"
+	})
+	app.paintShellFrame()
+	if frame := frameText(app); !strings.Contains(frame, "New session") {
+		t.Fatalf("plan decision does not offer New session:\n%s", frame)
+	}
+	projection := app.activeSessionProjection()
+	runAppCommand(t, app, app.resolveSessionDecision(decision.ResultMsg{Target: projection.decision, Purpose: "implement_plan", Confirmed: true, Choice: planChoiceNewSession}))
+	until(func() bool { active := app.AgentView.ActiveID(); return active != "" && active != id })
+	destination := app.AgentView.ActiveID()
+	until(func() bool { _, ok := server.request(1); return ok })
+	if fresh, _ := server.request(1); !strings.Contains(fresh, "Implement the plan in a fresh context") ||
+		!strings.Contains(fresh, "- Implement and test addition") || strings.Contains(fresh, "Propose a plan to add addition") {
+		t.Fatalf("destination's first request = %q", fresh)
+	}
+	until(func() bool {
+		latest, _ := app.latestPlanRevision(id)
+		return latest.Outcome == types.PlanOutcomeNewSession
+	})
+	latest, _ := app.latestPlanRevision(id)
+	if session := app.ws.SessionsByAgent()[destination]; session == nil || latest.NewSessionID != session.SessionID {
+		t.Fatalf("source review names destination %q, the new tab is %q", latest.NewSessionID, destination)
+	}
+	if !app.ws.PlanModeForAgent(id) || app.ws.PlanModeForAgent(destination) {
+		t.Fatal("New session changed the wrong session's Plan mode")
+	}
+	until(func() bool {
+		app.paintShellFrame()
+		return strings.Contains(frameText(app), "Implemented in a fresh context.")
+	})
+	if _, again := server.request(2); again {
+		t.Fatal("the plan was sent more than once")
+	}
+	if _, source := app.sessionProjectionForAgent(id); source != nil && source.decision != nil && source.decisionAgentID == id {
+		t.Fatal("the settled plan decision is still open in the source")
+	}
+}

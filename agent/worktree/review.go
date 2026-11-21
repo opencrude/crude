@@ -13,6 +13,8 @@ import (
 	"crude/workspace/fileio"
 )
 
+var ErrInvestigationIntegration = errors.New("plan investigations cannot be applied to the project")
+
 func equal(a, b *File) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -68,18 +70,24 @@ func sourceDelta(c Context, current map[string]File) PlanDelta {
 		ordered = append(ordered, p)
 	}
 	sort.Strings(ordered)
-	plan := PlanDelta{ContextID: c.ID, Owner: c.Owner, Changes: []Change{}}
+	plan := PlanDelta{ContextID: c.ID, Owner: c.Owner, BaselineDigest: c.BaselineDigest, Changes: []Change{}}
 	for _, p := range ordered {
 		var before, after *File
 		if f, ok := c.Baseline[p]; ok {
-			f = clone(f)
 			before = &f
 		}
 		if f, ok := current[p]; ok {
-			f = clone(f)
 			after = &f
 		}
 		if !equal(before, after) {
+			if before != nil {
+				file := clone(*before)
+				before = &file
+			}
+			if after != nil {
+				file := clone(*after)
+				after = &file
+			}
 			plan.Changes = append(plan.Changes, Change{Path: p, Before: before, After: after})
 		}
 	}
@@ -93,6 +101,46 @@ func (s *Service) ReviewDiscard(ctx context.Context, id string) (PlanDelta, erro
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.reviewDiscard(ctx, id)
+}
+
+// PrepareInvestigationDiscard saves the first reviewed digest for automatic
+// disposition. A later attempt can recheck this digest, not review more work.
+func (s *Service) PrepareInvestigationDiscard(ctx context.Context, id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.contexts[id]
+	if !ok || c.Investigation == nil {
+		return "", errors.New("plan investigation is not available")
+	}
+	if c.Removed || c.Kept || c.InvestigationDiscardBlocked {
+		return "", nil
+	}
+	if c.InvestigationDiscardDigest != "" {
+		return c.InvestigationDiscardDigest, nil
+	}
+	plan, err := s.reviewDiscard(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	c.InvestigationDiscardDigest = plan.DiscardDigest
+	if err := s.save(c); err != nil {
+		return "", err
+	}
+	return plan.DiscardDigest, nil
+}
+
+func (s *Service) BlockInvestigationDiscard(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.contexts[id]
+	if !ok || c.Investigation == nil {
+		return errors.New("plan investigation is not available")
+	}
+	if c.Removed || c.InvestigationDiscardBlocked {
+		return nil
+	}
+	c.InvestigationDiscardBlocked = true
+	return s.save(c)
 }
 
 func (s *Service) reviewDiscard(ctx context.Context, id string) (PlanDelta, error) {
@@ -191,6 +239,9 @@ func (s *Service) ValidateDestination(ctx context.Context, plan PlanDelta, docum
 	if !ok || c.Owner != plan.Owner || planDigest(plan) != plan.Digest {
 		return errors.New("invalid review plan identity")
 	}
+	if c.Investigation != nil {
+		return ErrInvestigationIntegration
+	}
 	current, err := s.review(ctx, c.ID)
 	if err != nil {
 		return err
@@ -267,12 +318,42 @@ func (s *Service) Apply(ctx context.Context, id string, documents map[string]Doc
 func (s *Service) Pin(id string, owner Owner) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !validOwner(owner) {
-		return errors.New("exact pin owner required")
-	}
 	c, ok := s.contexts[id]
 	if !ok || c.Removed || !c.Ready {
 		return errors.New("context unavailable")
+	}
+	if c.Investigation != nil {
+		return errors.New("plan investigations cannot be selected for ordinary execution")
+	}
+	return s.pin(c, owner)
+}
+
+// PinInvestigation validates the exact planning binding and canonical checkout
+// before adding a run pin. It cannot resurrect a removed or failed artifact.
+func (s *Service) PinInvestigation(ctx context.Context, id string, binding Investigation, source string, owner Owner) (Context, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pinInvestigation(ctx, id, binding, source, owner)
+}
+
+func (s *Service) pinInvestigation(ctx context.Context, id string, binding Investigation, source string, owner Owner) (Context, error) {
+	c, ok := s.contexts[id]
+	if !ok || c.Removed || !c.Ready || c.Mode != Isolated || c.Investigation == nil ||
+		*c.Investigation != binding || c.SourceContextID != source {
+		return Context{}, errors.New("plan investigation checkout is unavailable or belongs to another session")
+	}
+	if err := s.verifyCheckout(ctx, c); err != nil {
+		return Context{}, err
+	}
+	if err := s.pin(c, owner); err != nil {
+		return Context{}, err
+	}
+	return compactContext(s.contexts[id]), nil
+}
+
+func (s *Service) pin(c Context, owner Owner) error {
+	if !validOwner(owner) {
+		return errors.New("exact pin owner required")
 	}
 	for _, p := range c.Pins {
 		if p == owner {
@@ -312,6 +393,9 @@ func (s *Service) Keep(id string, owner Owner, keep ...bool) error {
 		return errors.New("context owner mismatch")
 	}
 	c.Kept = len(keep) == 0 || keep[0]
+	if c.Kept && c.Investigation != nil {
+		c.InvestigationDiscardBlocked = true
+	}
 	return s.save(c)
 }
 
@@ -324,6 +408,9 @@ func (s *Service) RecordIntegration(ctx context.Context, plan PlanDelta, receipt
 	c, ok := s.contexts[plan.ContextID]
 	if !ok || c.Owner != plan.Owner || planDigest(plan) != plan.Digest || receipt.PlanDigest != plan.Digest || receipt.OperationID == "" || receipt.SafetySnapshotID == "" {
 		return errors.New("exact integration and safety receipt required")
+	}
+	if c.Investigation != nil {
+		return ErrInvestigationIntegration
 	}
 	p, err := s.review(ctx, c.ID)
 	if err != nil {
@@ -392,8 +479,21 @@ func (s *Service) Cleanup(ctx context.Context, id string, owner Owner, options .
 	if c.Removed {
 		return nil
 	}
+	if c.Investigation != nil && (option.Check == nil || !option.Discard) {
+		return errors.New("review the Plan investigation for discard, then use execution cleanup with its discard digest")
+	}
+	if option.InvestigationAutomatic && (c.Investigation == nil || c.InvestigationDiscardBlocked || c.InvestigationDiscardDigest == "" || c.InvestigationDiscardDigest != option.Digest) {
+		return errors.New("automatic discard is no longer authorized; review the checkout before cleanup")
+	}
 	if c.Kept || len(c.Pins) > 0 {
 		return errors.New("context retained or pinned")
+	}
+	if c.Investigation != nil {
+		// Recheck durable baseline evidence before any source mutation. A
+		// warm service's verified copy cannot replace missing evidence on disk.
+		if _, _, err := s.readInvestigationBaseline(c); err != nil {
+			return err
+		}
 	}
 	if c.Mode == Shared {
 		c.Removed = true
@@ -472,21 +572,23 @@ func (s *Service) Cleanup(ctx context.Context, id string, owner Owner, options .
 		if err != nil {
 			return err
 		}
-		c.ArchivedResult = archived
-		if err = s.save(c); err != nil {
+		if err = s.saveArchive(&c, archived); err != nil {
 			return err
 		}
-		// Verify durable archive before changing source index or removing bytes.
-		data, err := os.ReadFile(filepath.Join(s.store, c.ID+".json"))
-		if err != nil {
-			return err
-		}
-		var verify Context
-		if err = json.Unmarshal(data, &verify); err != nil {
-			return err
-		}
-		if !equalArchive(verify.ArchivedResult, archived) || !equalArchive(verify.Baseline, c.Baseline) {
-			return errors.New("archive verification failed")
+		if c.Investigation == nil {
+			// Ordinary executions keep their existing inline archive format.
+			// Plan investigations verify the separate file in saveArchive.
+			data, err := os.ReadFile(s.manifestPath(c.ID))
+			if err != nil {
+				return err
+			}
+			var verify Context
+			if err = json.Unmarshal(data, &verify); err != nil {
+				return err
+			}
+			if !equalArchive(verify.ArchivedResult, archived) || !equalArchive(verify.Baseline, c.Baseline) {
+				return errors.New("archive verification failed")
+			}
 		}
 		if len(status) > 0 {
 			archivePaths := make([]string, 0, len(archived))

@@ -544,8 +544,8 @@ func (z *AgentNotice) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *AgentPrompt) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 11
-	o = append(o, 0x9b)
+	// array header, size 13
+	o = append(o, 0x9d)
 	o = msgp.AppendString(o, z.BlockID)
 	o = msgp.AppendString(o, z.Question)
 	o = msgp.AppendString(o, z.Operation)
@@ -554,6 +554,8 @@ func (z *AgentPrompt) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.AppendString(o, z.Risk)
 	o = msgp.AppendString(o, z.Reason)
 	o = msgp.AppendString(o, z.Suggestion)
+	o = msgp.AppendBool(o, z.InvestigationPath)
+	o = msgp.AppendString(o, z.Directory)
 	o = msgp.AppendString(o, z.AutoReview)
 	o = msgp.AppendString(o, z.QuestionsJSON)
 	o = msgp.AppendBool(o, z.IsQuestion)
@@ -572,8 +574,8 @@ func (z *AgentPrompt) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 11 {
-		err = msgp.ArrayError{Wanted: 11, Got: zb0001}
+	if zb0001 != 13 {
+		err = msgp.ArrayError{Wanted: 13, Got: zb0001}
 		return
 	}
 	z.BlockID, bts, err = msgp.ReadStringBytes(bts)
@@ -616,6 +618,16 @@ func (z *AgentPrompt) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "Suggestion")
 		return
 	}
+	z.InvestigationPath, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "InvestigationPath")
+		return
+	}
+	z.Directory, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Directory")
+		return
+	}
 	z.AutoReview, bts, err = msgp.ReadStringBytes(bts)
 	if err != nil {
 		err = msgp.WrapError(err, "AutoReview")
@@ -637,7 +649,7 @@ func (z *AgentPrompt) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *AgentPrompt) Msgsize() (s int) {
-	s = 1 + msgp.StringPrefixSize + len(z.BlockID) + msgp.StringPrefixSize + len(z.Question) + msgp.StringPrefixSize + len(z.Operation) + msgp.StringPrefixSize + len(z.Tool) + msgp.StringPrefixSize + len(z.Target) + msgp.StringPrefixSize + len(z.Risk) + msgp.StringPrefixSize + len(z.Reason) + msgp.StringPrefixSize + len(z.Suggestion) + msgp.StringPrefixSize + len(z.AutoReview) + msgp.StringPrefixSize + len(z.QuestionsJSON) + msgp.BoolSize
+	s = 1 + msgp.StringPrefixSize + len(z.BlockID) + msgp.StringPrefixSize + len(z.Question) + msgp.StringPrefixSize + len(z.Operation) + msgp.StringPrefixSize + len(z.Tool) + msgp.StringPrefixSize + len(z.Target) + msgp.StringPrefixSize + len(z.Risk) + msgp.StringPrefixSize + len(z.Reason) + msgp.StringPrefixSize + len(z.Suggestion) + msgp.BoolSize + msgp.StringPrefixSize + len(z.Directory) + msgp.StringPrefixSize + len(z.AutoReview) + msgp.StringPrefixSize + len(z.QuestionsJSON) + msgp.BoolSize
 	return
 }
 

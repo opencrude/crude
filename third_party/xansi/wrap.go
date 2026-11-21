@@ -294,12 +294,98 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 	if limit < 1 {
 		return s
 	}
+	var out wrapLines
+	wrapInto(m, s, limit, breakpoints, &out)
+	return out.buf.String()
+}
 
+// WrapLineRange is a line's byte interval in the visible text of an ANSI
+// string. Boundary spaces discarded by wrapping are not in either line.
+type WrapLineRange struct{ Start, End int }
+
+// AppendWrapLineRanges uses the same wrap as Wrap but returns byte intervals
+// instead of copying styled strings. The result addresses the input with its
+// ANSI controls removed. Text that the wrapper cannot represent as intervals
+// (e.g. a whitespace grapheme that it normalizes) reports ok=false.
+func AppendWrapLineRanges(dst []WrapLineRange, s string, limit int, breakpoints string) (ranges []WrapLineRange, ok bool) {
+	if limit < 1 {
+		return dst, false
+	}
+	out := wrapLines{offsets: true, ranges: dst}
+	wrapInto(GraphemeWidth, s, limit, breakpoints, &out)
+	out.finish()
+	return out.ranges, !out.invalid
+}
+
+type wrapFragment struct {
+	buf        bytes.Buffer
+	start, end int
+	present    bool
+}
+
+func (f *wrapFragment) append(text string, start, end int, offsets bool) {
+	f.present = true
+	if offsets {
+		if end > start {
+			if f.start == f.end {
+				f.start = start
+			}
+			f.end = end
+		}
+	} else {
+		f.buf.WriteString(text)
+	}
+}
+
+func (f *wrapFragment) reset() {
+	f.buf.Reset()
+	f.present = false
+	f.start, f.end = 0, 0
+}
+
+type wrapLines struct {
+	buf              bytes.Buffer
+	offsets, invalid bool
+	ranges           []WrapLineRange
+	line             WrapLineRange
+}
+
+func (out *wrapLines) add(f *wrapFragment) {
+	if !out.offsets {
+		out.buf.Write(f.buf.Bytes())
+	} else if f.start != f.end {
+		if out.line.Start == out.line.End {
+			out.line.Start = f.start
+		} else if out.line.End != f.start {
+			out.invalid = true
+		}
+		out.line.End = f.end
+	}
+}
+
+func (out *wrapLines) finish() {
+	if out.offsets {
+		out.ranges = append(out.ranges, out.line)
+		out.line.Start = out.line.End
+	} else {
+		out.buf.WriteByte('\n')
+	}
+}
+
+func (out *wrapLines) addToken(text string, start, end int) {
+	if !out.offsets {
+		out.buf.WriteString(text)
+		return
+	}
+	out.add(&wrapFragment{start: start, end: end})
+}
+
+func wrapInto(m Method, s string, limit int, breakpoints string, out *wrapLines) {
 	var (
 		cluster    string
-		buf        bytes.Buffer
-		word       bytes.Buffer
-		space      bytes.Buffer
+		word       wrapFragment
+		space      wrapFragment
+		offset     int
 		spaceWidth int                  // width of the space buffer
 		curWidth   int                  // written width of the line
 		wordLen    int                  // word buffer len without ANSI escape codes
@@ -307,31 +393,31 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 	)
 
 	addSpace := func() {
-		if spaceWidth == 0 && space.Len() == 0 {
+		if spaceWidth == 0 && !space.present {
 			return
 		}
 		curWidth += spaceWidth
-		buf.Write(space.Bytes())
-		space.Reset()
+		out.add(&space)
+		space.reset()
 		spaceWidth = 0
 	}
 
 	addWord := func() {
-		if word.Len() == 0 {
+		if !word.present {
 			return
 		}
 
 		addSpace()
 		curWidth += wordLen
-		buf.Write(word.Bytes())
-		word.Reset()
+		out.add(&word)
+		word.reset()
 		wordLen = 0
 	}
 
 	addNewline := func() {
-		buf.WriteByte('\n')
+		out.finish()
 		curWidth = 0
-		space.Reset()
+		space.reset()
 		spaceWidth = 0
 	}
 
@@ -342,21 +428,29 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 			var width int
 			cluster, width = FirstGraphemeCluster(s[i:], m)
 			i += len(cluster)
+			start := offset
+			offset += len(cluster)
+			if out.offsets && width == 0 {
+				out.invalid = true
+			}
 
-			r, _ := utf8.DecodeRuneInString(cluster)
+			r, runeLen := utf8.DecodeRuneInString(cluster)
 			switch {
 			case r != utf8.RuneError && unicode.IsSpace(r) && r != nbsp: // nbsp is a non-breaking space
 				addWord()
-				space.WriteRune(r)
+				if out.offsets && runeLen != len(cluster) {
+					out.invalid = true
+				}
+				space.append(cluster[:runeLen], start, offset, out.offsets)
 				spaceWidth += width
 			case strings.ContainsAny(cluster, breakpoints):
 				addSpace()
 				if curWidth+wordLen+width > limit {
-					word.WriteString(cluster)
+					word.append(cluster, start, offset, out.offsets)
 					wordLen += width
 				} else {
 					addWord()
-					buf.WriteString(cluster)
+					out.addToken(cluster, start, offset)
 					curWidth += width
 				}
 			default:
@@ -365,7 +459,7 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 					addWord()
 				}
 
-				word.WriteString(cluster)
+				word.append(cluster, start, offset, out.offsets)
 				wordLen += width
 
 				if curWidth+wordLen+spaceWidth > limit {
@@ -384,16 +478,28 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 
 		switch action {
 		case parser.PrintAction, parser.ExecuteAction:
-			switch r := rune(s[i]); {
+			start := offset
+			offset++
+			r := rune(s[i])
+			token := s[i : i+1]
+			if r >= utf8.RuneSelf {
+				// Preserve the renderer's WriteRune behavior for a single
+				// byte that the parser has not classified as UTF-8.
+				token = string(r)
+			}
+			if out.offsets && (len(token) != 1 || (action == parser.ExecuteAction && r != '\n')) {
+				out.invalid = true
+			}
+			switch {
 			case r == '\n':
 				if wordLen == 0 {
 					if curWidth+spaceWidth > limit {
 						curWidth = 0
 					} else {
 						// preserve whitespaces
-						buf.Write(space.Bytes())
+						out.add(&space)
 					}
-					space.Reset()
+					space.reset()
 					spaceWidth = 0
 				}
 
@@ -401,7 +507,7 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 				addNewline()
 			case unicode.IsSpace(r):
 				addWord()
-				space.WriteRune(r)
+				space.append(token, start, offset, out.offsets)
 				spaceWidth++
 			case r == '-':
 				fallthrough
@@ -410,11 +516,11 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 				if curWidth+wordLen >= limit {
 					// We can't fit the breakpoint in the current line, treat
 					// it as part of the word.
-					word.WriteRune(r)
+					word.append(token, start, offset, out.offsets)
 					wordLen++
 				} else {
 					addWord()
-					buf.WriteRune(r)
+					out.addToken(token, start, offset)
 					curWidth++
 				}
 			default:
@@ -422,7 +528,7 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 					addNewline()
 				}
 
-				word.WriteRune(r)
+				word.append(token, start, offset, out.offsets)
 				wordLen++
 
 				if wordLen == limit {
@@ -436,7 +542,7 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 			}
 
 		default:
-			word.WriteByte(s[i])
+			word.append(s[i:i+1], offset, offset, out.offsets)
 		}
 
 		// We manage the UTF8 state separately manually above.
@@ -451,15 +557,14 @@ func wrap(m Method, s string, limit int, breakpoints string) string {
 			curWidth = 0
 		} else {
 			// preserve whitespaces
-			buf.Write(space.Bytes())
+			out.add(&space)
 		}
-		space.Reset()
+		space.reset()
 		spaceWidth = 0
 	}
 
 	addWord()
 
-	return buf.String()
 }
 
 func runeContainsAny(r rune, s string) bool {

@@ -297,12 +297,11 @@ CH=$((HEIGHT / ROWS))
 echo "win=$WIN_ID geom=${WIDTH}x${HEIGHT}+${X}+${Y} cell=${CW}x${CH} grid=${COLS}x${ROWS}"
 [ "$CW" -gt 0 ] && [ "$CH" -gt 0 ] || { echo "ERROR: bad cell size"; exit 1; }
 
-# cell -> ABSOLUTE screen pixel at cell centre. xdotool mousemove uses screen
-# coordinates, so the window origin must be added; otherwise clicks only
-# land when the WM happens to place the window at (0,0) (the historical
-# "clicks silently do nothing on some runs" flake).
-px() { echo $(( X + $1 * CW + CW / 2 )); }
-py() { echo $(( Y + $1 * CH + CH / 2 )); }
+# Use client-relative pixels for pointer input, exactly like the screenshot.
+# Reparenting window managers can include the decoration offset twice in
+# xdotool getwindowgeometry's screen X/Y. Let X translate from WIN_ID itself.
+px() { echo $(( $1 * CW + CW / 2 )); }
+py() { echo $(( $1 * CH + CH / 2 )); }
 
 sleep "$PAINT_WAIT"
 
@@ -413,44 +412,44 @@ for step in "$@"; do
     click:*)
       IFS=',' read -r c r b <<<"${step#click:}"
       b="${b:-1}"
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click --clearmodifiers "$b"
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c")" "$(py "$r")" click --clearmodifiers "$b"
       sleep "$STEP_WAIT"; shot "click-${c}_${r}_${b}" ;;
     doubleclick:*)
       IFS=',' read -r c r <<<"${step#doubleclick:}"
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" click --clearmodifiers --repeat 2 --delay 120 1
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c")" "$(py "$r")" click --clearmodifiers --repeat 2 --delay 120 1
       sleep "$STEP_WAIT"; shot "doubleclick-${c}_${r}" ;;
     move:*)
       IFS=',' read -r c r <<<"${step#move:}"
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c")" "$(py "$r")"
       sleep "$STEP_WAIT"; shot "move-${c}_${r}" ;;
     down:*)
       IFS=',' read -r c r <<<"${step#down:}"
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" mousedown 1
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c")" "$(py "$r")" mousedown 1
       POINTER_DOWN=1
       sleep "$STEP_WAIT"; shot "down-${c}_${r}" ;;
     up:*)
       IFS=',' read -r c r <<<"${step#up:}"
       # --sync waits for motion even when this is the already-held coordinate;
       # do not delay release until an unrelated desktop pointer event arrives.
-      xdotool mousemove "$(px "$c")" "$(py "$r")" mouseup 1
+      xdotool mousemove --window "$WIN_ID" "$(px "$c")" "$(py "$r")" mouseup 1
       POINTER_DOWN=0
       sleep "$STEP_WAIT"; shot "up-${c}_${r}" ;;
     wheel:*)
       IFS=',' read -r c r n <<<"${step#wheel:}"
       btn=5; [ "${n:-1}" -lt 0 ] && { btn=4; n=$(( -n )); }
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c")" "$(py "$r")"
       for _ in $(seq 1 "${n:-1}"); do xdotool click --clearmodifiers "$btn"; sleep 0.05; done
       sleep "$STEP_WAIT"; shot "wheel-${c}_${r}_${btn}" ;;
     wheelburst:*)
       IFS=',' read -r c r n delay <<<"${step#wheelburst:}"
       btn=5; [ "$n" -lt 0 ] && { btn=4; n=$(( -n )); }
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")" || exit 1
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c")" "$(py "$r")" || exit 1
       xdotool click --clearmodifiers --repeat "$n" --delay "$delay" "$btn" || exit 1
       sleep "$STEP_WAIT"; shot "wheelburst-${c}_${r}_${btn}" ;;
     hwheel:*)
       IFS=',' read -r c r n <<<"${step#hwheel:}"
       btn=7; [ "${n:-1}" -lt 0 ] && { btn=6; n=$(( -n )); }
-      xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c")" "$(py "$r")"
       for _ in $(seq 1 "${n:-1}"); do xdotool click --clearmodifiers "$btn"; sleep 0.03; done
       sleep "$STEP_WAIT"; shot "hwheel-${c}_${r}_${btn}" ;;
     drag:*)
@@ -460,10 +459,10 @@ for step in "$@"; do
       xdotool keyup alt+shift+ctrl
       POINTER_MOD="${mod:-}"
       [ -z "$POINTER_MOD" ] || xdotool keydown "$POINTER_MOD"
-      xdotool mousemove --sync "$(px "$c1")" "$(py "$r1")" mousedown 1
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c1")" "$(py "$r1")" mousedown 1
       POINTER_DOWN=1
       sleep 0.25
-      xdotool mousemove --sync "$(px "$c2")" "$(py "$r2")"
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c2")" "$(py "$r2")"
       sleep 0.25; shot "dragheld-${c1}_${r1}-${c2}_${r2}"
       xdotool mouseup 1
       POINTER_DOWN=0
@@ -473,10 +472,10 @@ for step in "$@"; do
     dragburst:*)
       IFS=',' read -r c1 r1 c2 r2 steps <<<"${step#dragburst:}"
       steps="${steps:-100}"
-      xdotool mousemove --sync "$(px "$c1")" "$(py "$r1")" mousedown 1
+      xdotool mousemove --sync --window "$WIN_ID" "$(px "$c1")" "$(py "$r1")" mousedown 1
       for i in $(seq 1 "$steps"); do
         c=$(( c1 + (c2-c1)*i/steps )); r=$(( r1 + (r2-r1)*i/steps ))
-        xdotool mousemove "$(px "$c")" "$(py "$r")"
+        xdotool mousemove --window "$WIN_ID" "$(px "$c")" "$(py "$r")"
       done
       xdotool mouseup 1
       sleep "$STEP_WAIT"; shot "dragburst-${c1}_${r1}-${c2}_${r2}" ;;

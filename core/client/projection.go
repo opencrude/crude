@@ -380,6 +380,11 @@ func (v *WorkspaceView) AgentTurnActive(id string) bool {
 }
 func (v *WorkspaceView) YoloForAgent(id string) bool { return v.agents[id].Yolo }
 
+func (v *WorkspaceView) AcceptsConfirmation(agentID, blockID, choice string) bool {
+	prompt := v.agents[agentID].Prompt
+	return prompt != nil && prompt.AcceptsConfirmation(blockID, choice)
+}
+
 func (v *WorkspaceView) PlanModeForAgent(id string) bool { return v.agents[id].PlanMode }
 
 func (v *WorkspaceView) PlanReviewForAgent(id string) (types.PlanReview, bool) {
@@ -387,6 +392,7 @@ func (v *WorkspaceView) PlanReviewForAgent(id string) (types.PlanReview, bool) {
 		out := types.PlanReview{Revisions: slices.Clone(review.Revisions)}
 		for i := range out.Revisions {
 			out.Revisions[i].Comments = slices.Clone(out.Revisions[i].Comments)
+			out.Revisions[i].Evidence = slices.Clone(out.Revisions[i].Evidence)
 		}
 		return out, true
 	}
