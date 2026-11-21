@@ -61,9 +61,11 @@ func TestConnectedSemanticCancellationJoinsAndReleasesRetainedResults(t *testing
 	}
 	engine := &cancelledSemanticClient{entered: make(chan chan struct{}, 1)}
 	managers := make(chan *workspace.LSPManager, 1)
+	settings := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
 		w.LSPMgr.SetRuntime(cancelledSemanticRuntime{engine})
+		w.SetAppDefaults(types.AppSettings{LSP: settings})
 		managers <- w.LSPMgr
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))

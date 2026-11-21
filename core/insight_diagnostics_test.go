@@ -25,10 +25,12 @@ func TestInsightDiagnosticsTwoWireShellsAndProbeShareExactFact(t *testing.T) {
 	}
 	engine := &semanticLSPClient{version: 40, diagnostics: []types.LSPDiagnostic{{Line: 1, Col: 15, EndLine: 1, EndCol: 22, Severity: types.DiagError, Message: "undefined: missing", Source: "fixture"}}}
 	var service *workspace.LSPManager
+	settings := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
 		service = w.LSPMgr
 		service.SetRuntime(semanticLSPRuntime{engine})
+		w.SetAppDefaults(types.AppSettings{LSP: settings})
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {

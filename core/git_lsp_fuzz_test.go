@@ -270,6 +270,19 @@ type semanticLSPCall struct {
 
 type semanticLSPRuntime struct{ client *semanticLSPClient }
 
+// Keep real launch resolution, but resolve to the test image rather than a
+// server that may not be installed. The injected runtime never executes it.
+func semanticLSPFixtureSettings(t testing.TB) types.LSPSettings {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := types.DefaultLSPSettings()
+	settings.Languages["go"] = types.LSPLanguageSettings{Enabled: true, Command: executable}
+	return settings
+}
+
 func (r semanticLSPRuntime) NewClient(_ types.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
 	r.client.mu.Lock()
 	r.client.admit = admit
@@ -383,6 +396,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		client := &semanticLSPClient{targetURI: targetURI}
 		manager := workspace.NewLSPManager(nil, semanticLSPRuntime{client})
 		defer manager.Close()
+		manager.SetSettings(semanticLSPFixtureSettings(t))
 		manager.SetWorkspaceRoot(root)
 		// The semantic transport fixture opts in explicitly. This is not a
 		// production constructor default or a grant from a session feature flag.
