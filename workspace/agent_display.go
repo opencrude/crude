@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"crude/agent/session"
+	"crude/types"
 )
 
 // AgentDisplayLabel returns a human-readable presentation label for an agent
@@ -11,20 +12,20 @@ import (
 // / tab text when this is empty.
 //
 // Fallback order:
-//  1. node.Label (explicit title, e.g. sub-agent name)
+//  1. the reserved Errand role label, or node.Label for other roles
 //  2. CategoryDisplayName(node.Category) (role/profile name)
 //  3. empty string
 func AgentDisplayLabel(node *AgentNode) string {
 	if node == nil {
 		return ""
 	}
-	if node.Label != "" {
-		return node.Label
+	if name := types.AgentNameForRole(node.Category, node.Label); name != "" {
+		return name
 	}
 	return CategoryDisplayName(node.Category)
 }
 
-// SessionIsAeron reports whether the session's root agent is the Aeron role:
+// SessionIsAeron reports whether the session's root agent is the Errand role:
 // the workspace's errand runner for tool setup and similar jobs.
 func SessionIsAeron(s *Session) bool {
 	return s != nil && s.Settings != nil && s.Settings.Effective.SessionMainAgent == session.CategoryAeron
@@ -41,7 +42,7 @@ func CategoryDisplayName(category string) string {
 	case session.CategoryCrafter:
 		return "Crafter"
 	case session.CategoryAeron:
-		return "Aeron"
+		return types.ErrandName
 	default:
 		return ""
 	}
@@ -52,6 +53,9 @@ func CategoryDisplayName(category string) string {
 // hydrated chat cannot drift from the live projection.
 func SubAgentActivityLabel(name, category, task string) string {
 	label := strings.TrimSpace(name)
+	if category == types.ErrandRoleID {
+		label = ""
+	}
 	if role := CategoryDisplayName(category); role != "" {
 		if label != "" {
 			label += " · " + role
@@ -67,4 +71,16 @@ func SubAgentActivityLabel(name, category, task string) string {
 		}
 	}
 	return label
+}
+
+// agentIdentityLabel projects the owner before status is published. Toasts,
+// prompt chrome and status panels consume the same label as the agent tabs.
+func (w *Workspace) agentIdentityLabel(node *AgentNode) string {
+	if node.Parent == nil && SessionIsAeron(w.SessionForAgent(node.ID)) {
+		return types.ErrandName
+	}
+	if label := AgentDisplayLabel(node); label != "" {
+		return label
+	}
+	return "Main Agent"
 }

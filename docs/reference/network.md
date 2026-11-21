@@ -53,6 +53,13 @@ and measured round trips of at least 250 ms add a static warning mark; unavailab
 connections show a static error mark. Only connection work requests fast ticks;
 healthy and settled attention states keep the existing idle cadence.
 
+A remote attachment adds a remote icon to the wordmark, a quiet tint between the theme background and foreground,
+and a signal icon on the right. The signal reflects the existing round trip:
+three bars below 80 ms, two below 250 ms, and one at 250 ms or above. An
+outline means no current sample, including during reconnect. Switching back to
+a local core removes the tint and both icons. Both controls open the same
+connection details.
+
 Hover/click opens the shared native **Connection to core** popover, also reachable
 through the palette's **Connection Details**. It shows current connection name,
 state, carrier, observed round trip and plain-language guidance, plus safe

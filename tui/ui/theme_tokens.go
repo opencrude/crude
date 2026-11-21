@@ -52,6 +52,7 @@ const (
 	ColorToolTitle
 	ColorToolOperand
 	ColorActivityText // Supporting strip text, more distinct than muted metadata.
+	ColorRemoteHeaderBg
 )
 
 // ControlState is the interactive state matrix used for token resolution.
@@ -165,6 +166,7 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorToolTitle:          rendering.ThemeColorToCell(toolTitle),
 		ColorToolOperand:        rendering.ThemeColorToCell(toolOperand),
 		ColorActivityText:       rendering.ThemeColorToCell(c.Muted).Blend(rendering.ThemeColorToCell(c.Fg), 0.3),
+		ColorRemoteHeaderBg:     rendering.ThemeColorToCell(c.Bg).Blend(rendering.ThemeColorToCell(c.Fg), 0.055),
 	}
 }
 

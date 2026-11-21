@@ -261,7 +261,7 @@ func (s *Session) startTurnEndCompaction(agentID, operationID string) func() {
 	}
 }
 
-// isAeronSession reports whether this is the workspace's permanent Aeron.
+// isAeronSession reports whether this is the workspace's permanent Errand.
 func (s *Session) isAeronSession() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -271,7 +271,7 @@ func (s *Session) isAeronSession() bool {
 // loopEndCompactionMinimumTokens is the least conversation (excluding the
 // fixed system prompt and tools) worth a loop-end checkpoint. A smaller
 // context is already about the size of a checkpoint plus its runtime
-// continuity, so compacting it would not make Aeron smaller.
+// continuity, so compacting it would not make Errand smaller.
 const loopEndCompactionMinimumTokens = 8192
 
 func (s *Session) loopEndCompactionWorthwhile(agentID string) bool {
@@ -290,8 +290,8 @@ func (s *Session) loopEndCompactionWorthwhile(agentID string) bool {
 	return false
 }
 
-// startLoopEndCompaction compacts the workspace Aeron after its agentic loop
-// ends naturally. Aeron is permanent, so each finished loop leaves a small
+// startLoopEndCompaction compacts the workspace Errand after its agentic loop
+// ends naturally. Errand is permanent, so each finished loop leaves a small
 // checkpoint instead of a growing transcript. Like a requested compaction it
 // registers while the finishing turn still owns admission. A compaction that
 // is already registered (a human /compact) makes this one unnecessary.

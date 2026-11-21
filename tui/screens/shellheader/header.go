@@ -19,6 +19,7 @@ import (
 const ScreenID ui.ComponentID = "shellheader"
 
 const ConnectionAction = "connection-health"
+const ConnectionSignalAction = "connection-signal"
 
 // ConnectionState affects only the wordmark's ink and attention mark. The
 // viewmodel derives it from the attached transport, never agent/provider work.
@@ -57,6 +58,7 @@ type Projection struct {
 	// the wordmark (the first left segment) like an IDE title bar.
 	NavSegments []Segment
 	Connection  ConnectionState
+	Remote      bool
 }
 
 type Segment struct {
@@ -125,7 +127,7 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 // SetProjection updates header content for the next paint.
 func (s *Screen) SetProjection(p Projection) bool {
 	old := s.proj
-	changed := old.ModelName != p.ModelName || old.YOLO != p.YOLO || old.StartTime != p.StartTime || old.Usage != p.Usage || old.ViewLabel != p.ViewLabel || old.Width != p.Width || old.Connection != p.Connection ||
+	changed := old.ModelName != p.ModelName || old.YOLO != p.YOLO || old.StartTime != p.StartTime || old.Usage != p.Usage || old.ViewLabel != p.ViewLabel || old.Width != p.Width || old.Connection != p.Connection || old.Remote != p.Remote ||
 		!slices.Equal(old.LeftSegments, p.LeftSegments) || !slices.Equal(old.RightSegments, p.RightSegments) ||
 		!slices.Equal(old.NavSegments, p.NavSegments)
 	if old.Connection != p.Connection {
@@ -158,6 +160,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	}
 	s.frame = ctx.Frame
 	s.hits = s.hits[:0]
+	if s.proj.Remote {
+		buf.FillRect(surface.Rect{X: ox + b.X, Y: oy + b.Y, W: width, H: 1}, cell.Cell{
+			Char: ' ', Width: 1, BG: s.color(ui.ColorRemoteHeaderBg),
+		})
+	}
 	leftRail, rightRail := ui.ShellContentRail(s.tokens, width)
 	innerW := rightRail - leftRail
 	if innerW < 1 {
@@ -271,21 +278,23 @@ func (s *Screen) paintSegmentGroup(buf *surface.CellBuffer, x, y int, segments [
 		}
 		buf.WriteString(x, y, segment.Text, s.color(segment.Role), cell.NoColor, attrs)
 		if segment.Action == ConnectionAction {
+			prefix, suffix, _ := strings.Cut(segment.Text, "Crude")
+			brandX := x + rendering.VisibleWidth(prefix)
 			brandW := rendering.VisibleWidth("Crude")
 			if s.NeedsAnimation() {
 				center := s.tide.Advance(s.frame, brandW, true)
 				for col := range brandW {
-					c := buf.Get(x+col, y)
+					c := buf.Get(brandX+col, y)
 					c.FG, c.Attr = ui.TextTide(c.FG, c.Attr, s.tokens, center, col)
-					buf.Set(x+col, y, c)
+					buf.Set(brandX+col, y, c)
 				}
 			}
 			role := ui.ColorWarning
 			if s.proj.Connection == ConnectionOffline {
 				role = ui.ColorError
 			}
-			if suffix := strings.TrimPrefix(segment.Text, "Crude"); suffix != "" {
-				buf.WriteString(x+brandW, y, suffix, s.color(role), cell.NoColor, 0)
+			if suffix != "" {
+				buf.WriteString(brandX+brandW, y, suffix, s.color(role), cell.NoColor, 0)
 			}
 		}
 		width := rendering.VisibleWidth(segment.Text)

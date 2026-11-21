@@ -176,6 +176,7 @@ type modelSnapshot struct {
 type Model struct {
 	// terminalShells are detected on the core's machine; Auto resolves to the first.
 	terminalShells  []types.TerminalShell
+	agentShells     []types.TerminalShell
 	th              *theme.Theme
 	categories      []Category
 	selected        int
@@ -337,7 +338,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		autoReviewer:        current.Safety.AutoPermission.Normalized(),
 		capabilities:        capability.Normalize(current.Capabilities),
 		capabilityDiscovery: make(map[capability.Kind][]capability.Entry),
-		terminalShells:      slices.Clone(current.TerminalShells),
+		terminalShells:      types.CloneTerminalShells(current.TerminalShells),
+		agentShells:         types.CloneTerminalShells(current.AgentShells),
 	}
 	accountIDs := make([]string, 0, len(m.accounts))
 	for id := range m.accounts {
@@ -368,7 +370,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"], true)},
 		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"], false)},
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
-		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
+		{Name: "Errand", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
 		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: m.buildMemoryForm(current.Memory)},
 		{Name: "Connection", Group: "Network", Description: "Application-wide connection timeouts, pooling, keep-alive, and HTTP protocol behavior.", Form: m.buildNetworkConnectionForm(current.Network)},
 		{Name: "Proxy", Group: "Network", Description: "Environment, direct, or custom HTTP and SOCKS proxy routing with explicit DNS behavior.", Form: m.buildNetworkProxyForm(current.Network)},
@@ -1562,15 +1564,61 @@ func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 		return nil
 	}
 	fields := []*ui.FieldState{
-		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, m.connectionOptions(false), "Explicit reviewer account; never inherits Main Agent."),
-		ui.ModelFieldState(fieldModel, "Model", auto.Model, ui.ModelOptions(m.models[accountModelKey(auto.Provider, auto.AccountID)]),
-			"A decision model or a chat model. Never inherits Main Agent."),
+		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, nil, "Use Errand's account or choose a separate account."),
+		ui.ModelFieldState(fieldModel, "Model", auto.Model, nil, "Use Errand's model or choose a decision or chat model."),
 		modelTypeField(fieldReviewModelType, auto.ModelType),
 		serviceTierSegments(auto.ServiceTier),
 		purpose, instructions,
 	}
 	fields = append(fields, m.autoReviewPolicyFields(auto)...)
-	return formModel(fields...)
+	form := formModel(fields...)
+	m.configureBackgroundModel(form)
+	return form
+}
+
+func (m *Model) errandModel(form *ui.FormModel) (string, string, bool) {
+	if form == nil || form.Field(fieldReviewModelType) == nil && form.Field(fieldRankerAccount) == nil {
+		return "", "", false
+	}
+	if m.agents == nil {
+		return "", "", true
+	}
+	err := m.agents.Categories[types.ErrandRoleID]
+	if form.Field(fieldReviewModelType) == nil {
+		// Memory uses the normal, effective Errand role. Auto Review uses only
+		// the workspace's explicitly selected Errand connection.
+		main := m.agents.Categories["default"]
+		if err.Inherit == types.AgentInheritMain {
+			err.Model = ""
+		}
+		account, model := types.InheritRoleModel(err.AccountID, err.Model, main.AccountID, main.Model)
+		return account, model, true
+	}
+	return err.AccountID, err.Model, true
+}
+
+func (m *Model) backgroundBinding(form *ui.FormModel) (string, string) {
+	account, model, _ := m.errandModel(form)
+	return types.InheritAgentModel(form.Field(fieldConnection).Value.String(), form.Field(fieldModel).Value.String(), account, model)
+}
+
+func (m *Model) configureBackgroundModel(form *ui.FormModel) {
+	account := form.Field(fieldConnection)
+	account.Options = append([]ui.FormOption{{ID: "", Label: "Errand's account"}}, m.connectionOptions(false)...)
+	id, _ := m.backgroundBinding(form)
+	model := form.Field(fieldModel)
+	model.Options = m.agentModelOptions(form, id, m.models[accountModelKey(m.accounts[id].ProviderID, id)])
+	if _, inherited := m.backgroundBinding(form); model.Value.String() == "" && inherited != "" {
+		model.Placeholder = "Errand's model · " + inherited
+	}
+}
+
+func (m *Model) agentModelOptions(form *ui.FormModel, accountID string, models []types.ModelEntry) []ui.FormOption {
+	options := ui.ModelOptions(models)
+	if id, model, ok := m.errandModel(form); ok && accountID == id && model != "" && len(options) != 0 {
+		options = append([]ui.FormOption{{ID: "", Label: "Errand's model", Detail: model}}, options...)
+	}
+	return options
 }
 
 func (m *Model) autoReviewPolicyFields(settings types.AutoPermissionSettings) []*ui.FieldState {
@@ -1884,15 +1932,15 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		return
 	}
 	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldConnection {
-		accountID := m.value(category, fieldConnection)
-		account, ok := m.accounts[accountID]
-		if !ok {
-			return
-		}
+		providerID, accountID := m.resolvedAccount(category)
 		form := m.categories[category].Form
 		if field := form.Field(fieldModel); field != nil {
 			form.SetValue(fieldModel, ui.StringValue(""))
-			field.Options = ui.ModelOptions(m.models[accountModelKey(account.ProviderID, accountID)])
+			field.Options = m.agentModelOptions(form, accountID, m.models[accountModelKey(providerID, accountID)])
+			field.Placeholder = "Choose or enter a model ID"
+			if inheritedAccount, model, ok := m.errandModel(form); ok && accountID == inheritedAccount && model != "" {
+				field.Placeholder = "Errand's model · " + model
+			}
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
 		return
@@ -2109,6 +2157,9 @@ func (m *Model) resolvedAccount(category int) (string, string) {
 		return m.accounts[m.accountID].ProviderID, m.accountID
 	default:
 		id := m.value(category, fieldConnection)
+		if id == "" && category == catAgents {
+			id, _, _ = m.errandModel(m.categories[category].Form)
+		}
 		return m.accounts[id].ProviderID, id
 	}
 }
@@ -2137,7 +2188,7 @@ func (m *Model) prefetchModels(category int) tea.Cmd {
 		return nil
 	}
 	if models, loaded := m.models[accountModelKey(providerID, accountID)]; loaded && len(models) > 0 {
-		field.Options = ui.ModelOptions(models)
+		field.Options = m.agentModelOptions(m.categories[category].Form, accountID, models)
 		m.autofillCapabilities(category)
 		return nil
 	}
@@ -2169,6 +2220,7 @@ func (m *Model) fetchModelsForAccountCmd(providerID, accountID string) tea.Cmd {
 func (m *Model) setModelsForAccount(providerID, accountID string, models []types.ModelEntry) {
 	m.models[accountModelKey(providerID, accountID)] = models
 	m.setSecondaryModels(providerID, accountID, models, "")
+	m.setWebSearchFallbackModels(providerID, accountID, models, "")
 	for index := range m.categories {
 		if !m.isAgentCategory(index) && index != catMemory {
 			continue
@@ -2178,7 +2230,7 @@ func (m *Model) setModelsForAccount(providerID, accountID string, models []types
 			continue
 		}
 		if field := m.categories[index].Form.Field(fieldModel); field != nil {
-			field.Options = ui.ModelOptions(models)
+			field.Options = m.agentModelOptions(m.categories[index].Form, accountID, models)
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
 		if m.isAgentCategory(index) {
@@ -2187,6 +2239,7 @@ func (m *Model) setModelsForAccount(providerID, accountID string, models []types
 	}
 }
 func (m *Model) setModelsErrorForAccount(providerID, accountID, message string) {
+	m.setWebSearchFallbackModels(providerID, accountID, nil, message)
 	m.setSecondaryModels(providerID, accountID, nil, message)
 	for index := range m.categories {
 		if !m.isAgentCategory(index) && index != catMemory {
@@ -2328,6 +2381,8 @@ func (m *Model) rebased(application, effective types.AppSettings, overrides type
 	baseline := NewScoped(m.th, base, m.presets, m.Scope(), application, overrides)
 	draft := types.CloneAppSettings(base)
 	_ = types.ApplySettingsEdits(&draft, pending)
+	// Edits patch persisted fields; the live inventory is observation metadata.
+	draft.TerminalShells, draft.AgentShells = base.TerminalShells, base.AgentShells
 	next := NewScoped(m.th, draft, m.presets, m.Scope(), application, overrides)
 	next.collectedBase, next.layerBase, next.preferencesBase = baseline.collectedBase, baseline.layerBase, baseline.preferencesBase
 	next.selected, next.pane = m.selected, m.pane

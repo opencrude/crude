@@ -62,3 +62,14 @@ func TestTerminalEnvironmentRemainsAuthority(t *testing.T) {
 		}
 	}
 }
+
+func TestErrandBindingCannotRedirectTheReviewer(t *testing.T) {
+	for _, path := range []string{"agents.Categories.aeron.Model", "agents.Categories.aeron.account_id"} {
+		if !control.SettingsAuthority(path) {
+			t.Fatalf("agent could change the reviewer through %s", path)
+		}
+	}
+	if control.SettingsAuthority("agents.Categories.aeron.ThinkingEffort") || control.SettingsAuthority("agents.Categories.default.Model") {
+		t.Fatal("an unrelated setting was treated as the reviewer binding")
+	}
+}

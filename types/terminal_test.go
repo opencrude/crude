@@ -27,9 +27,9 @@ func TestResolveTerminalLaunch(t *testing.T) {
 		{name: "login shell arguments precede shell and user arguments", settings: TerminalSettings{Shell: "git-bash", Args: []string{"-x"}}, shells: testShells, command: `C:\Git\bin\bash.exe`, args: []string{"--login", "-i", "-x"}},
 		{name: "login off keeps the shell's own arguments", settings: TerminalSettings{Shell: "git-bash", LoginShell: "off"}, shells: testShells, command: `C:\Git\bin\bash.exe`, args: []string{"-i"}},
 		{name: "custom command is used verbatim", settings: TerminalSettings{Shell: TerminalShellCustom, Command: "nu", Args: []string{"--login"}}, shells: testShells, command: "nu", args: []string{"--login"}},
-		{name: "custom without a command fails with guidance", settings: TerminalSettings{Shell: TerminalShellCustom}, shells: testShells, err: "Custom without a command"},
+		{name: "custom without a command fails with guidance", settings: TerminalSettings{Shell: TerminalShellCustom}, shells: testShells, err: "Set Command in Settings › Terminal"},
 		{name: "a missing shell is never silently replaced", settings: TerminalSettings{Shell: "zsh"}, shells: testShells, err: `"zsh" is not installed`},
-		{name: "auto with no shells fails with guidance", settings: TerminalSettings{}, err: "no supported shell"},
+		{name: "auto with no shells fails with guidance", settings: TerminalSettings{}, err: "No supported shell"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			command, args, err := ResolveTerminalLaunch(tc.settings, tc.shells)

@@ -1201,7 +1201,7 @@ Press `Alt+\` with one caret and no selection in a writable editor to ask in
 either enabled mode. **As I type** also asks after a short pause in typing.
 
 The editor retains one private suggestion at an exact local revision and byte
-range. Completion uses `SetGhostTextFor` for single-line inserts. Aeron uses
+range. Completion uses `SetGhostTextFor` for single-line inserts. Errand uses
 `SetSuggestion` for multiline inserts, nearby replacements and a marker for
 the next place to edit. The first line shares the inlay source-to-cell
 projection. Extra faded rows are display only. A replacement strikes the
@@ -1219,7 +1219,7 @@ text it would remove. The preview does not change the code.
   while those source lines match. An explicit `Alt+\` request clears the
   remembered dismissal.
 
-An Aeron answer waits while a completion row is chosen or completion shows
+An Errand answer waits while a completion row is chosen or completion shows
 its own inline text. With an unselected list, only an insertion that continues
 the sole row may show. A waiting answer can show when the list closes if
 the editor, source and caret still match. The completion key rules apply first.
@@ -1246,7 +1246,7 @@ The core checks source, sequence and policy before returning a result. It
 keeps a bounded cache and a durable hourly token ledger. Local cancellation
 does not prove remote inference or billing stopped. Missing or incomplete
 usage retains the conservative reservation. The
-[performance dashboard](performance-baselines.md#aeron-suggestions-2026-11-18)
+[performance dashboard](performance-baselines.md#errand-suggestions-2026-11-18)
 separates core request time from shell presentation.
 
 The workspace text index builds a new set of files in the background, then

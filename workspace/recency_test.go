@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"crude/buildinfo"
 )
 
 func TestWorkspaceCatalogBriefBusyPreservesCommittedMetadata(t *testing.T) {
@@ -226,5 +228,43 @@ func TestRecentWorkspacesOrderByAccessNotSessionsOrCatalogReads(t *testing.T) {
 	light := readWorkspaceMetaLight(t.Context(), filepath.Join(db.Dir, "workspace.db"))
 	if light == nil || light.LastAccessed != 200 {
 		t.Fatalf("light metadata lost recency: %+v", light)
+	}
+}
+
+func TestWorkspaceCatalogAbbreviatesHostHomeNotProfileDirectory(t *testing.T) {
+	// Use a temp-owned outside path with a sibling prefix to catch naive prefix
+	// checks that mistake a neighboring directory for the user's home.
+	base := t.TempDir()
+	home := filepath.Join(base, "user")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv(buildinfo.HomeEnv, t.TempDir())
+	inside := filepath.Join(home, "deep", "project")
+	outside := filepath.Join(base, "user-other", "project")
+	for _, root := range []string{inside, outside} {
+		if err := os.MkdirAll(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		db, err := OpenWorkspaceDB(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	infos, err := ListWorkspaceInfosContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]WorkspaceInfo, len(infos))
+	for _, info := range infos {
+		got[info.ProjectDir] = info
+	}
+	if info := got[inside]; info.ID != WorkspaceID(inside) || info.ShortPath() != filepath.Join("~", "deep", "project") || info.ProjectDir != inside {
+		t.Fatalf("home-relative label changed catalog identity: %+v", info)
+	}
+	if info := got[outside]; info.ShortPath() != outside || info.DisplayPath != "" {
+		t.Fatalf("a sibling of the host home was abbreviated: %+v", info)
 	}
 }

@@ -35,6 +35,7 @@
 
 | Date | Decision | From |
 |---|---|---|
+| 2026-11-21 | Rename the workspace helper to **Errand**. Do not give Errands personal names or show old names in notifications. Keep the same workspace helper and saved identity. | User |
 | 2026-11-18 | Add **Ask Crude**: Ctrl+I in the editor (as in VS Code) and an entry in the editor context menu. Give **Aeron** the ability to act as an advanced AI autocomplete. Research how other editors do both, and design for very low latency together with real context. Crude has no semantic code index; it has a fast cross-platform fzf-based search that may be made faster. The UI and UX need a deep understanding of Crude. | User |
 | 2026-11-18 | Use a shortcut with few terminal conflicts; Ctrl+K is fixed across keyboard negotiation. Copy, Select All and other shortcuts must work after a non-Latin layout switch. Batch shell/Python work with the same care. | User |
 | 2026-11-18 | Stop the long implementation for departure. Verify GPT 6.2 and Crude, commit and push a working checkpoint, and leave a handoff. This checkpoint does not accept the unfinished integrated feature. | User |

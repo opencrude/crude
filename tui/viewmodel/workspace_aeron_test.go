@@ -15,7 +15,7 @@ import (
 	"crude/workspace"
 )
 
-// The workspace's Aeron is created once per attachment, never takes the user's
+// The workspace's Errand is created once per attachment, never takes the user's
 // tab, and opens from the header instead of the ordinary Agents collection.
 func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 	app, port := projectToolsTestApp(t, 120, 36)
@@ -34,33 +34,33 @@ func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 	}
 	cmd := app.ensureWorkspaceAeron()
 	if cmd == nil || !app.aeronEnsureInFlight {
-		t.Fatal("the workspace Aeron was not ensured")
+		t.Fatal("the workspace Errand was not ensured")
 	}
 	runAppCommand(t, app, cmd)
 	if len(port.roles) != 1 || port.roles[0] != "aeron" {
-		t.Fatalf("ensure did not ask for the Aeron role: %v", port.roles)
+		t.Fatalf("ensure did not ask for the Errand role: %v", port.roles)
 	}
 	if app.aeronEnsureInFlight || app.aeronEnsureFailed {
 		t.Fatalf("ensure did not settle: inFlight=%v failed=%v", app.aeronEnsureInFlight, app.aeronEnsureFailed)
 	}
 	if app.workspaceAeronAgent() != "aeron-agent" {
-		t.Fatal("the ensured Aeron is not the workspace's agent")
+		t.Fatal("the ensured Errand is not the workspace's agent")
 	}
 	if !app.AgentView.IsHidden("aeron-agent") {
-		t.Fatal("the workspace Aeron took the user's tab")
+		t.Fatal("the workspace Errand took the user's tab")
 	}
 	requireAeronAbsentFromAgentList(t, app)
 	app.setActivity(activityAgents, true)
 	app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	app.paintShellFrame()
 	paint := ansi.Strip(app.View().RenderContent())
-	if !strings.Contains(paint, "Open workspace Aeron") {
-		t.Fatalf("the panel header does not expose workspace Aeron:\n%s", paint)
+	if !strings.Contains(paint, "Open workspace Errand") {
+		t.Fatalf("the panel header does not expose workspace Errand:\n%s", paint)
 	}
 	app.hideWorkspacePanel()
 	openAeronHeader(t, app)
 	if app.AgentView.ActiveID() != "aeron-agent" || app.AgentView.IsHidden("aeron-agent") {
-		t.Fatal("the header did not restore the existing workspace Aeron")
+		t.Fatal("the header did not restore the existing workspace Errand")
 	}
 	if again := app.ensureWorkspaceAeron(); again != nil {
 		t.Fatal("a second ensure would create or resume the agent again")
@@ -73,9 +73,9 @@ func TestWorkspaceAeronIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 func requireAeronAbsentFromAgentList(t *testing.T, app *App) {
 	t.Helper()
 	for _, row := range app.agentSidebarItems() {
-		if row.Label == "Aeron" || row.ID == "aeron:workspace" ||
+		if row.Label == "Errand" || row.ID == "aeron:workspace" ||
 			strings.HasPrefix(row.ID, "agent:") && app.isAeronAgent(strings.TrimPrefix(row.ID, "agent:")) {
-			t.Fatalf("workspace Aeron remains in the ordinary agent list: %+v", row)
+			t.Fatalf("workspace Errand remains in the ordinary agent list: %+v", row)
 		}
 	}
 }
@@ -114,33 +114,33 @@ func TestWorkspaceAeronWaitsForQuietAndRestore(t *testing.T) {
 
 	app.LastInteractionTime = now
 	if cmd := app.workspaceAeronTick(due); cmd != nil {
-		t.Fatal("the workspace Aeron started while the user was working")
+		t.Fatal("the workspace Errand started while the user was working")
 	}
 	app.historyOperation = &historyOperation{}
 	app.LastInteractionTime = now.Add(-aeronEnsureQuietPeriod - time.Second)
 	if cmd := app.workspaceAeronTick(due); cmd != nil {
-		t.Fatal("the workspace Aeron started during a history restore")
+		t.Fatal("the workspace Errand started during a history restore")
 	}
 	app.historyOperation = nil
 	cmd := app.workspaceAeronTick(due)
 	if cmd == nil {
-		t.Fatal("the workspace Aeron did not start after the shell became quiet")
+		t.Fatal("the workspace Errand did not start after the shell became quiet")
 	}
 	runAppCommand(t, app, cmd)
 	if app.workspaceAeronAgent() != "aeron-agent" {
-		t.Fatal("the quiet ensure did not install the workspace Aeron")
+		t.Fatal("the quiet ensure did not install the workspace Errand")
 	}
 }
 
-// Work for Aeron is never dropped because other session work held the core:
-// it waits, Aeron opens when admission is free, and the order is delivered.
+// Work for Errand is never dropped because other session work held the core:
+// it waits, Errand opens when admission is free, and the order is delivered.
 // The user is not asked to send it again and is not told about the wait.
 func TestWorkspaceAeronWorkWaitsThroughBusyAdmission(t *testing.T) {
 	app, port := projectToolsTestApp(t, 120, 36)
 	port.busy = 1
 	cmd := app.taskWorkspaceAeron("<order/>", "Set up 1 code intelligence tool: marksman.")
 	if cmd == nil {
-		t.Fatal("work for Aeron did not start Aeron")
+		t.Fatal("work for Errand did not start Errand")
 	}
 	runAppCommand(t, app, cmd)
 	if len(app.aeronOrders) == 0 || app.aeronEnsureFailed || !app.aeronEnsureScheduled {
@@ -153,7 +153,7 @@ func TestWorkspaceAeronWorkWaitsThroughBusyAdmission(t *testing.T) {
 	app.LastInteractionTime = time.Now()
 	retry := app.workspaceAeronTick(time.Now().Add(aeronEnsureStartupDelay + time.Millisecond))
 	if retry == nil {
-		t.Fatal("waiting work did not retry Aeron")
+		t.Fatal("waiting work did not retry Errand")
 	}
 	runAppCommand(t, app, retry)
 	sent := app.pendingFirstInputs["aeron-agent"][0]
@@ -163,7 +163,7 @@ func TestWorkspaceAeronWorkWaitsThroughBusyAdmission(t *testing.T) {
 }
 
 // A background open that fails is silent and stops; work that cannot reach
-// Aeron is reported once with the next step and is not retried in a loop.
+// Errand is reported once with the next step and is not retried in a loop.
 func TestWorkspaceAeronFailureStopsAndReportsOnlyWork(t *testing.T) {
 	app, _ := projectToolsTestApp(t, 120, 36)
 	app.aeronEnsureInFlight = true
@@ -184,7 +184,7 @@ func TestWorkspaceAeronFailureStopsAndReportsOnlyWork(t *testing.T) {
 	}
 	reported := false
 	for _, notice := range app.ws.Status().Notifications(false) {
-		reported = reported || strings.Contains(notice.Summary, "Aeron needs a model") &&
+		reported = reported || strings.Contains(notice.Summary, "Errand needs a model") &&
 			strings.Contains(notice.Summary, "Choose a model in Settings")
 	}
 	if !reported {

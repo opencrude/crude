@@ -3,14 +3,12 @@ package core
 import (
 	"bytes"
 	"context"
-	"crude/agent/hostshell"
 	"sync"
 	"time"
 
 	"crude/agent/collaboration"
 	"crude/core/protocol"
 	"crude/core/wire"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -30,9 +28,8 @@ type stateSlot struct {
 }
 
 type workspaceStates struct {
-	slots  map[string]*stateSlot // immutable after actor construction
-	wg     sync.WaitGroup
-	shells []types.TerminalShell
+	slots map[string]*stateSlot // immutable after actor construction
+	wg    sync.WaitGroup
 }
 
 func (a *actor) startStateTopics() {
@@ -40,7 +37,6 @@ func (a *actor) startStateTopics() {
 	// resume boundary, without a fabricated publication or a reset on reconnect.
 	a.topic.hub.seq = 1
 	a.states.slots = make(map[string]*stateSlot, len(workspaceStateTopics))
-	a.states.shells = hostshell.Detect() // factory worker, before actor publication
 	for _, topic := range workspaceStateTopics {
 		slot := &stateSlot{wake: make(chan struct{}, 1)}
 		a.states.slots[topic] = slot
@@ -123,9 +119,11 @@ func (a *actor) queueState(topic string) {
 		run = func(context.Context) coreprotocol.WorkspaceState { return coreprotocol.WorkspaceState{Status: &value} }
 	case coreprotocol.TopicSettings:
 		value, defaults := a.captureSettings()
-		value.TerminalShells = append([]types.TerminalShell(nil), a.states.shells...)
+		manager := a.ws.TermMgr
 		run = func(context.Context) coreprotocol.WorkspaceState {
-			return coreprotocol.WorkspaceState{Settings: &value, AgentDefaults: &defaults}
+			observed := value
+			observeSettingsShells(&observed, manager)
+			return coreprotocol.WorkspaceState{Settings: &observed, AgentDefaults: &defaults}
 		}
 	case coreprotocol.TopicLSP:
 		manager := a.ws.LSPMgr
@@ -248,7 +246,13 @@ func (c *Connection) serveStateTopic(ctx context.Context, s corewire.Stream, rea
 	defer stop()
 	var required uint64
 	if err := a.inspect(ctx, func() {
-		if current, _ := slot.hub.latest(); current.body == nil {
+		slot.mu.Lock()
+		idle := slot.wanted == slot.published
+		slot.mu.Unlock()
+		current, _ := slot.hub.latest()
+		// Settings opens/resets are explicit observation boundaries. Reuse any
+		// already scheduled derivation; do not start a second polling path.
+		if idle && (current.body == nil || open.Topic == coreprotocol.TopicSettings) {
 			a.queueState(open.Topic)
 		}
 		slot.mu.Lock()

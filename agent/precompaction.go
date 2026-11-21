@@ -32,7 +32,7 @@ import (
 //     sooner than real data would.
 //   - Explicit: a user-set percent always wins; "off" disables compaction.
 //
-// Preparation starts halfway to the trigger, so a slow or flaky Aeron model has
+// Preparation starts halfway to the trigger, so a slow or flaky Errand model has
 // the second half to finish while the agent keeps working; a ready checkpoint
 // waits for the trigger. The adopted context is the fresh system prompt and
 // tools, the checkpoint of older context, and the recent turns verbatim.

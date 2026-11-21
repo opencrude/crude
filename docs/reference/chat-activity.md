@@ -8,7 +8,7 @@ The canonical conversation is the audit log. The chat renderer projects it into 
 
 Disclosure actions carry their owning agent ID so a background pane or window
 cannot toggle the selected main agent's message. Work that Crude sends to the
-workspace Aeron shows a readable summary, not its structured order:
+workspace Errand shows a readable summary, not its structured order:
 `provider.UserInput.DisplayContent` selects that text for session persistence,
 input-receipt publication, queued rows and steering. A receipt that arrives before
 the provider events must show the same summary as a cold transcript.
@@ -985,7 +985,9 @@ User attachment links retain exact reference IDs and rune source spans alongside
 their send-time labels. Rendering protects those source spans through Markdown
 and wrapping; the same semantic spans paint and hit-test on release. A literal
 `[Pasted Text1]` or `[Pasted IMG1]` without retained attachment metadata is not an
-open target. Drags (including moving away and back), modified selection clicks,
+open target. A clipboard attachment uses its numbered reference name in both
+the composer chip and the preview title. Drags (including moving away and back),
+modified selection clicks,
 foreign-session references and replaced transcript sources cannot activate a
 link. A no-drag release follows the same **Open attachments in** preference as
 composer clicks, Space/Enter and prompt-history attachments (Settings → Interface

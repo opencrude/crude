@@ -24,9 +24,9 @@ type Sessions interface {
 	// operations.
 	NewAgentSession() *workspace.NewSessionResult
 	// NewAgentSessionAs does the same for a session rooted in the named
-	// built-in role or profile, such as the workspace's Aeron.
+	// built-in role or profile, such as the workspace's Errand.
 	NewAgentSessionAs(mainAgent string) *workspace.NewSessionResult
-	// EnsureAeronSession returns the workspace's one Aeron session, reopening
+	// EnsureAeronSession returns the workspace's one Errand session, reopening
 	// the remembered saved session or creating it on first use. It never
 	// starts a turn and never selects the session in a shell.
 	EnsureAeronSession() *workspace.NewSessionResult

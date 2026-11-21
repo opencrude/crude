@@ -65,7 +65,7 @@ func (a *launcherAction) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.Paint
 	label, detail := a.title, a.detail
 	if a.kind == ItemNewSession {
 		label = sparkleFrame(a.owner.frame) + label
-		detail = a.owner.cwd
+		detail = a.owner.cwdDisplay
 	}
 	buf.WriteString(x+2, y+1, rendering.TruncateLine(label, innerW), title, cell.NoColor, cell.AttrBold)
 	hint := rendering.TruncateLine("enter ↵", innerW)

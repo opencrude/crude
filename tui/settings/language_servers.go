@@ -74,8 +74,8 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 			{ID: types.ProjectCheckIdle, Label: "When idle"}, {ID: types.ProjectCheckAlways, Label: "Always"}, {ID: types.ProjectCheckOff, Label: "Off"},
 		}, lsp.ProjectCheckMode(), "Check files that are not open. When idle waits on battery or a busy computer."),
 		ui.SegmentedFieldState("ask-aeron", "When a server has a problem", []ui.FormOption{
-			{ID: "on", Label: "Ask Aeron"}, {ID: "off", Label: "Do nothing"},
-		}, aeronChoice(lsp), "Aeron looks for the cause and asks you before it changes anything."),
+			{ID: "on", Label: "Ask Errand"}, {ID: "off", Label: "Do nothing"},
+		}, aeronChoice(lsp), "Errand looks for the cause and asks you before it changes anything."),
 		ui.BoolFieldState("hover", "Hover documentation", lsp.Hover, "Show symbol documentation under the cursor."),
 		ui.BoolFieldState("goto-definition", "Go to definition", lsp.Definition, "Jump to where a symbol is defined."),
 		ui.BoolFieldState("find-references", "Find references", lsp.References, "List every reference to the symbol."),

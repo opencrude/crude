@@ -218,6 +218,12 @@ func (app *App) openCapabilityManager(view activitybar.View, query, id string) t
 	if view == activityMCP {
 		kind = captypes.KindMCP
 	}
+	return app.openCapabilitySettings(func(body *settingsui.WorkspaceSettingsSurface) ui.EventResult {
+		return body.OpenCapabilities(kind, query, id)
+	})
+}
+
+func (app *App) openCapabilitySettings(open func(*settingsui.WorkspaceSettingsSurface) ui.EventResult) tea.Cmd {
 	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	if window == nil {
 		// Capabilities are application-owned by default: an install belongs to
@@ -231,7 +237,7 @@ func (app *App) openCapabilityManager(view activitybar.View, query, id string) t
 	if body == nil {
 		return nil
 	}
-	result := body.OpenCapabilities(kind, query, id)
+	result := open(body)
 	if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
 		frame.Host().MarkLayout()
 		frame.Host().Layout()

@@ -268,6 +268,17 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 		return work(func(ctx context.Context) (coreprotocol.Value, error) {
 			return wiredList[coreprotocol.WorkspaceInfos](workspace.ListWorkspaceInfosContext(ctx))
 		})
+	case coreprotocol.SavedWorkspaceActivity:
+		if err := decodeRequest(request, &coreprotocol.Empty{}); err != nil {
+			return bad("invalid_request", err.Error())
+		}
+		runtime := a.runtime
+		if runtime == nil {
+			return bad("unavailable", "workspace activity is unavailable")
+		}
+		return work(func(ctx context.Context) (coreprotocol.Value, error) {
+			return wire(runtime.savedWorkspaceActivity(ctx)), ctx.Err()
+		})
 	case coreprotocol.HistoryTimeline, coreprotocol.HistoryFile:
 		if store == nil {
 			return bad("unavailable", "local history unavailable")

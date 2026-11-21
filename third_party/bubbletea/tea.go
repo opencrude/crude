@@ -1552,6 +1552,11 @@ func (p *Program) startRenderer() {
 	p.rendererStop, p.rendererDone = stop, done
 
 	// Start the renderer.
+	if r, ok := p.renderer.(*cursedRenderer); ok {
+		// Sixel preparation cannot write to the terminal. Wake the existing
+		// paced single writer when a crop is ready.
+		r.sixelWake = p.wakeRenderer
+	}
 	p.renderer.start()
 	p.wakeRenderer() // initial render or restored terminal modes
 	go func() {

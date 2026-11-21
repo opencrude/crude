@@ -17,7 +17,7 @@ import (
 )
 
 // F2 opens Workspace. F3 observes the real panel link, never activates it.
-// Ordinary pointer or Tab/Enter opens Aeron. F4 observes its normal composer.
+// Ordinary pointer or Tab/Enter opens Errand. F4 observes its normal composer.
 // F5 restores the original tab; wordmark hover opens version details.
 // F6 observes both distinct identities; F9 exits with the proof.
 func TestAeronPanelAndBuildsVisualAcceptance(t *testing.T) {
@@ -76,10 +76,10 @@ func (m *aeronPanelVisual) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rect, exists := m.screenRectOf(statusoverview.HeaderLinkID)
 			body := ansi.Strip(m.View().RenderContent())
 			m.placed = exists && !rect.Empty() && rect.Y > m.headerScreen.Bounds().Y &&
-				strings.Contains(body, "Open workspace Aeron") && !strings.Contains(body, "Naveen") &&
-				!strings.Contains(rowText(m.App, m.frameTopRow()), "Aeron")
+				strings.Contains(body, "Open workspace Errand") && !strings.Contains(body, "Naveen") &&
+				!strings.Contains(rowText(m.App, m.frameTopRow()), "Errand")
 			m.underlined = m.placed
-			for i := range len("Open workspace Aeron") {
+			for i := range len("Open workspace Errand") {
 				m.underlined = m.underlined && m.mainSurf.Buffer().Get(rect.X+1+i, rect.Y).Attr.Has(cell.AttrUnderline)
 			}
 			return m, nil

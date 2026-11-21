@@ -10,6 +10,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/screens/filepicker"
+	"crude/tui/screens/launcher"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -90,7 +91,7 @@ func newScreen(th *theme.Theme, picker *filepicker.Screen, initial coreprotocol.
 	items := make([]ui.ListItem, 0, len(initial.Workspaces))
 	for _, info := range initial.Workspaces {
 		if info.ProjectDir != "" {
-			items = append(items, ui.ListItem{ID: info.ProjectDir, Label: workspace.WorkspaceDisplayName(info), Detail: info.ProjectDir, Payload: info.ProjectDir})
+			items = append(items, ui.ListItem{ID: info.ProjectDir, Label: workspace.WorkspaceDisplayName(info), Detail: info.ShortPath(), Trailing: launcher.WorkspaceBadges(info.Activity), Payload: info.ProjectDir})
 		}
 	}
 	if len(items) == 0 {

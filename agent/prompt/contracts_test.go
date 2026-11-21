@@ -178,9 +178,9 @@ func TestCollaborationEventMarksRareRunningAgentBroadcast(t *testing.T) {
 	}
 }
 
-// The workspace-agent slot differs only by role: Aeron gets its own contract
+// The workspace-agent slot differs only by role: Errand gets its own contract
 // naming the question tool as its channel to the user; every other root learns
-// that Aeron exists and how to reach it. Nothing else changes.
+// that Errand exists and how to reach it. Nothing else changes.
 func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
 	plain := BuildRoot(RootOptions{WorkDir: "/workspace"})
 	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
@@ -188,13 +188,13 @@ func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
 		t.Fatal("an ordinary root prompt carries the workspace-agent contract")
 	}
 	if strings.Contains(aeron, "<workspace_agent_peer>") {
-		t.Fatal("Aeron's root prompt carries the peer note instead of its own contract")
+		t.Fatal("Errand's root prompt carries the peer note instead of its own contract")
 	}
 	if !strings.Contains(aeron, WorkspaceAgentFor("1.4.0")) || !strings.Contains(aeron, "question tool") {
-		t.Fatal("Aeron's root prompt does not name the question tool as its channel")
+		t.Fatal("Errand's root prompt does not name the question tool as its channel")
 	}
 	if !strings.Contains(plain, WorkspaceAgentPeer) || !strings.Contains(plain, "agent_list") {
-		t.Fatal("an ordinary root prompt does not tell the agent how to reach Aeron")
+		t.Fatal("an ordinary root prompt does not tell the agent how to reach Errand")
 	}
 	// The slot is the only difference: swapping each role's section yields the
 	// same remaining prompt.
@@ -203,16 +203,16 @@ func TestWorkspaceAgentContractIsOnlyInAeronRootPrompt(t *testing.T) {
 	}
 }
 
-// Aeron knows where Crude lives and which build it runs, so it can point the
+// Errand knows where Crude lives and which build it runs, so it can point the
 // user to the project and mention a newer release without running an update.
 func TestAeronKnowsCrudeProjectAndBuild(t *testing.T) {
 	aeron := BuildRoot(RootOptions{WorkDir: "/workspace", WorkspaceAgent: true, CrudeVersion: "1.4.0"})
 	for _, want := range []string{"https://github.com/opencrude/crude", "https://opencrude.github.io", "releases/latest", `<build version="1.4.0"/>`, "Do not run the update yourself"} {
 		if !strings.Contains(aeron, want) {
-			t.Errorf("Aeron's prompt lacks %q", want)
+			t.Errorf("Errand's prompt lacks %q", want)
 		}
 	}
 	if plain := BuildRoot(RootOptions{WorkDir: "/workspace", CrudeVersion: "1.4.0"}); strings.Contains(plain, "<crude_project>") {
-		t.Fatal("an ordinary root carries Aeron's Crude project rules")
+		t.Fatal("an ordinary root carries Errand's Crude project rules")
 	}
 }

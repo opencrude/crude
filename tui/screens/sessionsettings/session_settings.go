@@ -82,7 +82,7 @@ var agentRoles = []struct {
 	{Key: "default", Name: "Main Agent"},
 	{Key: "researcher", Name: "Researcher"},
 	{Key: "crafter", Name: "Crafter"},
-	{Key: "aeron", Name: "Aeron"},
+	{Key: "aeron", Name: "Errand"},
 	{Key: "memory", Name: "Memory Agent"},
 }
 

@@ -195,6 +195,7 @@ func (m *App) releaseAbsorbedViews() {
 		return
 	}
 	for _, id := range m.Win.TakeAbsorbedTabs() {
+		m.releaseImageTab(id)
 		if v := m.EditorState.Views[id]; v != nil {
 			m.closeLinkedView(v)
 		}

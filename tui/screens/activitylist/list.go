@@ -203,7 +203,8 @@ func (s *Screen) applyFilter() {
 			if !item.Selectable() {
 				continue
 			}
-			if fuzzyContains(item.Label, query) || fuzzyContains(item.Detail, query) || fuzzyContains(item.Subtitle, query) {
+			if fuzzyContains(item.Label, query) || fuzzyContains(item.Detail, query) || fuzzyContains(item.Subtitle, query) ||
+				(item.SearchText != "" && fuzzyContains(item.SearchText, query)) {
 				items = append(items, item)
 			}
 		}
@@ -248,6 +249,9 @@ func itemsEquivalent(a, b []ui.ListItem) bool {
 			return false
 		}
 		if x.ID != y.ID || x.Label != y.Label || x.Detail != y.Detail || x.Subtitle != y.Subtitle || x.Icon != y.Icon {
+			return false
+		}
+		if x.Trailing != y.Trailing || x.SearchText != y.SearchText || x.Tooltip != y.Tooltip {
 			return false
 		}
 		if x.Disabled != y.Disabled || x.Header != y.Header || x.Separator != y.Separator || x.Spacer != y.Spacer {
@@ -490,6 +494,7 @@ type sidebarList struct {
 	inner           *ui.VirtualList
 	activateOnClick bool
 	hoverID         string
+	hoverY          int
 	lastClickID     string
 	lastClickAt     time.Time
 }
@@ -606,11 +611,17 @@ func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, row ui.Virt
 		cx += iw
 		remain -= iw
 	}
+	const minResourceLabel = 5
+	badges, badgeW := item.Trailing.Fit(remain - minResourceLabel - ui.TableMinGap)
+	if badgeW > 0 {
+		buf.WriteString(x+w-1-badgeW, y, badges, tokens.Color(ui.ColorMuted), bg, 0)
+		remain -= badgeW + ui.TableMinGap
+	}
 	detail := item.Detail
 	detailW := 0
 	if detail != "" {
 		detailW = rendering.VisibleWidth(detail)
-		if detailW+2 > remain {
+		if detailW+2 > remain || badgeW > 0 && detailW+ui.TableMinGap+minResourceLabel > remain {
 			detail, detailW = "", 0
 		}
 	}
@@ -621,7 +632,7 @@ func (l *sidebarList) paintRow(buf *surface.CellBuffer, x, y, w int, row ui.Virt
 	label := rendering.TruncateVisual(item.Label, max(1, labelBudget), "…")
 	buf.WriteString(cx, y, label, fg, bg, attr)
 	if detailW > 0 {
-		buf.WriteString(x+w-1-detailW, y, detail, detailColor(item, tokens), bg, 0)
+		buf.WriteString(cx+remain-detailW, y, detail, detailColor(item, tokens), bg, 0)
 	}
 }
 
@@ -653,6 +664,7 @@ func detailColor(item ui.ListItem, tokens *ui.TokenSet) cell.Color {
 func (l *sidebarList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	switch evt.Kind {
 	case ui.EventMouseMotion:
+		l.hoverY = ctx.LocalY
 		id := l.hoverAt(ctx.LocalY)
 		if id != l.hoverID {
 			l.hoverID = id
@@ -765,6 +777,22 @@ func (l *sidebarList) hoverAt(localY int) string {
 		return ""
 	}
 	return item.ID
+}
+
+func (l *sidebarList) Tooltip() (string, ui.Rect, bool) {
+	r := l.Bounds()
+	if l.hoverID == "" || l.hoverY < 0 || l.hoverY >= r.H {
+		return "", ui.Rect{}, false
+	}
+	row, ok := l.inner.ItemAtViewportRow(l.hoverY)
+	if !ok || row.ID != l.hoverID || row.Disabled {
+		return "", ui.Rect{}, false
+	}
+	item := row.Payload.(ui.ListItem)
+	firstY := l.inner.ItemStartRow(l.inner.ItemIndexAtRow(l.inner.Scroll().Offset()+l.hoverY)) - l.inner.Scroll().Offset()
+	lastY := min(r.H, firstY+row.Height)
+	firstY = max(firstY, 0)
+	return item.Tooltip, ui.Rect{Y: firstY, W: r.W, H: lastY - firstY}, item.Tooltip != ""
 }
 
 func (l *sidebarList) Semantics() ui.Semantics { return l.inner.Semantics() }

@@ -145,8 +145,35 @@ type WorkspaceInfo struct {
 	ID           string // hash directory name
 	ProjectDir   string // absolute project path (best-effort)
 	ProjectName  string // display name (basename of project dir); never the raw hash
+	DisplayPath  string // display-only path relative to the catalog host's home, when applicable
 	SessionCount int
-	LastAccessed int64 // unix nano of most recent successful shell attachment, 0 if unknown
+	LastAccessed int64             // unix nano of most recent successful shell attachment, 0 if unknown
+	Activity     WorkspaceActivity // optional retained snapshot for detached catalog consumers
+}
+
+// ShortPath is for display only. ProjectDir remains the exact path for opening,
+// searching, or copying a workspace, including on a different host.
+func (info WorkspaceInfo) ShortPath() string {
+	if info.DisplayPath != "" {
+		return info.DisplayPath
+	}
+	return info.ProjectDir
+}
+
+// homeRelativeWorkspacePath runs where the catalog is read, with that host's
+// path rules. The profile's data directory is not the user's display home.
+func homeRelativeWorkspacePath(path, home string) string {
+	if !filepath.IsAbs(path) || !filepath.IsAbs(home) {
+		return ""
+	}
+	rel, err := filepath.Rel(home, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	if rel == "." {
+		return "~"
+	}
+	return "~" + string(filepath.Separator) + rel
 }
 
 // WorkspaceDisplayName returns a human-readable label for a workspace row.
@@ -258,6 +285,7 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 		}
 	}()
 
+	displayHome, _ := os.UserHomeDir()
 	byPath := make(map[string]WorkspaceInfo, len(ids))
 	for result := range results {
 		if ctx.Err() != nil {
@@ -280,6 +308,7 @@ func ListWorkspaceInfosContext(ctx context.Context) ([]WorkspaceInfo, error) {
 		}
 		info.ProjectDir = projectDir
 		info.ProjectName = WorkspaceDisplayName(info)
+		info.DisplayPath = homeRelativeWorkspacePath(projectDir, displayHome)
 		if existing, ok := byPath[projectDir]; !ok || info.LastAccessed > existing.LastAccessed {
 			byPath[projectDir] = info
 		}

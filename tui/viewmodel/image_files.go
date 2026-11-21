@@ -3,14 +3,11 @@ package viewmodel
 import (
 	"context"
 	"fmt"
-	"image"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
-
-	tea "charm.land/bubbletea/v2"
 
 	"crude/core/port"
 	"crude/core/protocol"
@@ -20,13 +17,6 @@ import (
 	"crude/tui/window"
 	"crude/workspace/fileio"
 )
-
-// A file image is a read-only snapshot, not a text document. Each tab owns
-// its own terminal resource: Kitty virtual placement geometry is per image ID.
-type paneImage struct {
-	image    image.Image
-	resource *tea.TerminalImage
-}
 
 func imageTabTitle(path string) string { return "image:" + path }
 
@@ -52,10 +42,25 @@ func (m *App) activeImageView() *imageviewer.Screen {
 	return m.imageView(m.Win.ActiveTab().ID)
 }
 
-// preparePaneImage runs on the same worker as other pane-file opens. Connected
+// preparePaneImage snapshots bytes but never decodes a dormant file. Connected
 // workspaces read from the core; a denied project read is never retried with
 // external authority or against a similarly named client-local file.
-func preparePaneImage(ctx context.Context, files shellport.ClientFiles, path string, external bool) (*paneImage, error) {
+func preparePaneImage(ctx context.Context, files shellport.ClientFiles, path string, external bool, store *paneImageStore, lane chan struct{}) (*paneImageSnapshot, error) {
+	if err := claimPaneImageWork(ctx, lane); err != nil {
+		return nil, err
+	}
+	defer func() { <-lane }()
+	data, err := readPaneImage(ctx, files, path, external)
+	if err != nil {
+		return nil, err
+	}
+	if err := imagepreview.CheckHeader(ctx, data); err != nil {
+		return nil, err
+	}
+	return store.save(ctx, data)
+}
+
+func readPaneImage(ctx context.Context, files shellport.ClientFiles, path string, external bool) ([]byte, error) {
 	var data []byte
 	var err error
 	if files != nil {
@@ -105,14 +110,7 @@ func preparePaneImage(ctx context.Context, files shellport.ClientFiles, path str
 			}
 		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	img, resource, err := imagepreview.Decode(ctx, data)
-	if err != nil {
-		return nil, err
-	}
-	return &paneImage{image: img, resource: resource}, nil
+	return data, err
 }
 
 // clientPathWithinRoot compares core-canonical paths without applying this
@@ -126,9 +124,14 @@ func clientPathWithinRoot(root, candidate string) bool {
 	return candidate == root || strings.HasPrefix(candidate, strings.TrimRight(root, "/")+"/")
 }
 
-// showPaneImage installs the already prepared immutable image in the requested
-// pane. Its viewport and terminal identity belong to this tab, not the path.
-func (m *App) showPaneImage(path string, group window.GroupID, activate bool, prepared *paneImage) bool {
+// showPaneImage claims the exact snapshot and keeps an independent viewport
+// for this tab. The residency owner decodes it only when it is selected.
+func (m *App) showPaneImage(path string, group window.GroupID, activate bool, snapshot *paneImageSnapshot) bool {
+	defer func() {
+		if snapshot.take() {
+			m.discardPaneImageSnapshot(snapshot)
+		}
+	}()
 	if m.Win == nil || !m.Win.HasGroup(group) {
 		return false
 	}
@@ -140,19 +143,21 @@ func (m *App) showPaneImage(path string, group window.GroupID, activate bool, pr
 		}
 		return true
 	}
-	if prepared == nil || prepared.image == nil {
+	if snapshot == nil || snapshot.store != m.imageResidency.store || !snapshot.take() {
 		return false
 	}
 	tab := m.Win.AddTab(group, window.Resource{Kind: window.ResourceDocument, ID: path}, imageTabTitle(path), activate)
 	if tab == nil {
+		m.discardPaneImageSnapshot(snapshot)
 		return false
 	}
 	tab.Icon, tab.DisplayTitle = "▧", filepath.Base(path)
 	p := m.ensureMainPanes()
 	screen := imageviewer.NewWithID(m.Theme, ui.ComponentID(fmt.Sprintf("main-panes/image-%d", tab.ID)))
-	screen.SetImage(prepared.image, prepared.resource)
+	screen.SetImageResidency(nil, nil, paneImageLoading)
 	m.configureImageGraphics(screen)
-	p.views[tab.ID] = &mainPaneView{image: screen}
+	p.views[tab.ID] = &mainPaneView{image: screen, imageState: paneImageViewState{tab: tab.ID, snapshot: snapshot}}
+	m.imageResidency.openTabs++
 	if activate {
 		m.unfocus()
 		m.handleTabSwitch()
@@ -161,9 +166,7 @@ func (m *App) showPaneImage(path string, group window.GroupID, activate bool, pr
 }
 
 func (m *App) closeImageTab(id window.TabID) {
-	if m.mainPanes != nil {
-		delete(m.mainPanes.views, id)
-	}
+	m.releaseImageTab(id)
 	m.Win.CloseTabByID(id)
 	m.handleTabSwitch()
 	if m.Win.TabCount() == 0 && m.AgentView.VisibleCount() == 0 {
@@ -178,7 +181,7 @@ func (m *App) configureImageGraphics(screen *imageviewer.Screen) bool {
 }
 
 // Retarget only paths moved by an explicit successful tree operation. Open
-// snapshots keep their pixels; reopening the new path reads the new file.
+// snapshots keep their bytes; reopening the new path reads the new file.
 func (m *App) retargetImageTabs(oldPath, newPath string, directory bool) {
 	if m.Win == nil {
 		return

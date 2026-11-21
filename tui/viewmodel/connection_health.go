@@ -8,6 +8,7 @@ import (
 
 	"crude/buildinfo"
 	"crude/core/port"
+	"crude/core/remoteconn"
 	"crude/tui/screens/connectionpopover"
 	"crude/tui/screens/shellheader"
 	"crude/tui/ui"
@@ -16,12 +17,16 @@ import (
 
 // This is a responsiveness cue, not a claim about packet loss, bandwidth or the
 // model provider. RTT belongs to the existing transport heartbeat observation.
-const slowCoreRoundTrip = 250 * time.Millisecond
+const (
+	fastCoreRoundTrip = 80 * time.Millisecond
+	slowCoreRoundTrip = 250 * time.Millisecond
+)
 
 type connectionHealth struct {
 	name       string
 	status     shellport.RemoteStatus
 	brand      shellheader.ConnectionState
+	remote     bool
 	tuiBuildID string
 	tuiVersion string
 	tuiStarted time.Time
@@ -35,6 +40,15 @@ func (m *App) connectionHealth() connectionHealth {
 	}
 	if link, ok := m.ws.(shellport.BackendLink); ok {
 		h.status = link.BackendStatus()
+	}
+	switch h.status.Carrier {
+	case "ssh", "tcp", "quic":
+		h.remote = true
+	}
+	// The selection stays attached through reconnect, even when the carrier has
+	// no current sample. A pending workspace switch does not select a new link.
+	if m.remotes != nil && m.remotes.current != "" && m.remotes.current != remoteconn.Local {
+		h.remote = true
 	}
 	switch h.status.State {
 	case "connected":
@@ -52,6 +66,29 @@ func (m *App) connectionHealth() connectionHealth {
 		h.brand = shellheader.ConnectionConnecting
 	}
 	return h
+}
+
+func (h connectionHealth) signal(nerdFont bool) shellheader.Segment {
+	level, role := 0, ui.ColorMuted
+	switch {
+	case h.brand == shellheader.ConnectionOffline:
+		role = ui.ColorError
+	case h.brand == shellheader.ConnectionReconnecting:
+		role = ui.ColorWarning
+	case h.brand == shellheader.ConnectionConnecting || h.status.RTT <= 0:
+		// No current round trip. Do not show a strong signal yet.
+	case h.status.RTT >= slowCoreRoundTrip:
+		level, role = 1, ui.ColorWarning
+	case h.status.RTT >= fastCoreRoundTrip:
+		level = 2
+	default:
+		level, role = 3, ui.ColorSuccess
+	}
+	glyphs := [...]string{"···", "▂··", "▂▄·", "▂▄▆"}
+	if nerdFont {
+		glyphs = [...]string{"\U000f08bf", "\U000f08bc", "\U000f08bd", "\U000f08be"}
+	}
+	return shellheader.Segment{Text: glyphs[level], Role: role, Action: shellheader.ConnectionSignalAction, Priority: -1}
 }
 
 func (h connectionHealth) projection() connectionpopover.Projection {
@@ -134,12 +171,13 @@ type connectionHoverState struct {
 	generation uint64
 	body       *connectionpopover.Screen
 	widget     *ui.WindowFrameWidget
+	action     string
 	anchor     ui.Rect
 	width      int
 	height     int
 }
 
-func (m *App) connectionWordmarkRect() ui.Rect {
+func (m *App) connectionActionRect(action string) ui.Rect {
 	if m.headerScreen == nil || m.rootHost == nil {
 		return ui.Rect{}
 	}
@@ -147,7 +185,7 @@ func (m *App) connectionWordmarkRect() ui.Rect {
 	if !ok || r.Empty() {
 		return ui.Rect{}
 	}
-	local := m.headerScreen.ActionBounds(shellheader.ConnectionAction)
+	local := m.headerScreen.ActionBounds(action)
 	if local.Empty() {
 		return ui.Rect{}
 	}
@@ -194,13 +232,17 @@ func (m *App) routeConnectionHoverMotion(msg tea.MouseMotionMsg) bool {
 		}
 		m.clearConnectionHover()
 	}
-	if anchor := m.connectionWordmarkRect(); anchor.Contains(msg.X, msg.Y) {
-		m.openConnectionHover(anchor)
+	for _, action := range [...]string{shellheader.ConnectionAction, shellheader.ConnectionSignalAction} {
+		if m.connectionActionRect(action).Contains(msg.X, msg.Y) {
+			m.openConnectionHover(action)
+			break
+		}
 	}
 	return false
 }
 
-func (m *App) openConnectionHover(anchor ui.Rect) {
+func (m *App) openConnectionHover(action string) {
+	anchor := m.connectionActionRect(action)
 	if anchor.Empty() || m.width < 24 || m.height-anchor.Y < 9 {
 		return
 	}
@@ -217,7 +259,7 @@ func (m *App) openConnectionHover(anchor ui.Rect) {
 	policy := ui.PopoverPolicy(true)
 	policy.Passive = true
 	m.overlayHost.Open(ui.OverlayConnectionHealth, fw, policy, func() { m.connectionHover = nil })
-	m.connectionHover = &connectionHoverState{owner: m.ws, generation: m.workspaceSwitchGen.Load(), body: body, widget: widget, anchor: anchor, width: m.width, height: m.height}
+	m.connectionHover = &connectionHoverState{owner: m.ws, generation: m.workspaceSwitchGen.Load(), body: body, widget: widget, action: action, anchor: anchor, width: m.width, height: m.height}
 }
 
 func (m *App) syncConnectionHover() {
@@ -225,7 +267,7 @@ func (m *App) syncConnectionHover() {
 	if h == nil {
 		return
 	}
-	anchor := m.connectionWordmarkRect()
+	anchor := m.connectionActionRect(h.action)
 	fw := m.overlayHost.Window(ui.OverlayConnectionHealth)
 	if fw == nil || h.owner != m.ws || h.generation != m.workspaceSwitchGen.Load() || anchor.Empty() ||
 		m.windowManager.TopWindow() != fw || m.width < 24 || m.height-anchor.Y < 9 {

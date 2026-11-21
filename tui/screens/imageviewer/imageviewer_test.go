@@ -408,6 +408,31 @@ func TestDragWheelAndCaptureCancellation(t *testing.T) {
 	}
 }
 
+func TestImageResidencyRestoresTheCurrentViewport(t *testing.T) {
+	s, host := mount(50, 24)
+	img := image.NewNRGBA(image.Rect(0, 0, 80, 80))
+	res := resource(t, img)
+	s.SetImageGraphics(tea.ImageSixel, 8, 16)
+	s.SetImage(img, res)
+	host.Handle(tea.MouseWheelMsg{X: 25, Y: 12, Button: tea.MouseWheelUp})
+	host.Handle(tea.MouseWheelMsg{X: 25, Y: 12, Button: tea.MouseWheelUp})
+	host.Handle(tea.MouseWheelMsg{X: 25, Y: 12, Button: tea.MouseWheelRight})
+	before, placement := text(paint(host, 50, 24)), s.ImagePlacement()
+	if placement.Image == nil || !strings.ContainsRune(before, kitty.Placeholder) {
+		t.Fatal("fixture did not start with native pixels")
+	}
+
+	s.SetImageResidency(nil, nil, "Loading image…")
+	if empty := text(paint(host, 50, 24)); s.ImagePlacement().Image != nil ||
+		strings.ContainsRune(empty, kitty.Placeholder) || !strings.Contains(empty, "Loading image…") {
+		t.Fatal("dropping pixels did not remove the placement and show its empty state")
+	}
+	s.SetImageResidency(img, res, "")
+	if after := text(paint(host, 50, 24)); after != before || s.ImagePlacement() != placement {
+		t.Fatal("the same snapshot returned with a different viewport")
+	}
+}
+
 func TestWheelZoomAnchorsPointerAndIgnoresChrome(t *testing.T) {
 	for _, graphics := range []bool{false, true} {
 		s, host := mount(80, 42)

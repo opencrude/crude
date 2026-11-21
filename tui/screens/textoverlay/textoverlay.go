@@ -87,7 +87,7 @@ func (s *Screen) OpenImage(refID, title string, img image.Image) {
 	s.image.image = img
 }
 
-// SetImageResource installs a terminal-owned immutable PNG prepared off Update.
+// SetImageResource installs a terminal-owned immutable resource prepared off Update.
 // Without confirmed terminal support, the same image keeps its cell preview.
 func (s *Screen) SetImageResource(resource *tea.TerminalImage) { s.image.resource = resource }
 
@@ -96,13 +96,31 @@ func (s *Screen) SetImageGraphics(protocol tea.ImageProtocol, cellWidth, cellHei
 		return false
 	}
 	s.image.graphics, s.image.cellWidth, s.image.cellHeight = protocol, cellWidth, cellHeight
+	if protocol != tea.ImageSixel {
+		s.image.sixelPreview = false
+	}
+	return true
+}
+
+// HasSixelImage reports whether this open preview owns Sixel-ready pixels.
+func (s *Screen) HasSixelImage() bool {
+	return s.IsOpen() && s.image.image != nil && s.image.graphics == tea.ImageSixel && s.image.resource.Supports(tea.ImageSixel)
+}
+
+// SetSixelMotionPreview switches only the image body to its cell preview.
+// The shell invalidates the floating surface on a change.
+func (s *Screen) SetSixelMotionPreview(preview bool) bool {
+	if s.image.graphics != tea.ImageSixel || s.image.sixelPreview == preview {
+		return false
+	}
+	s.image.sixelPreview = preview
 	return true
 }
 
 // ImagePlacement describes the virtual image paired with this body's cells.
 // Position and occlusion remain ordinary compositor responsibilities.
 func (s *Screen) ImagePlacement() tea.ImagePlacement {
-	if !s.IsOpen() || s.image.graphics == tea.ImageNone || s.image.resource == nil || s.image.image == nil {
+	if !s.IsOpen() || s.image.sixelPreview || !s.image.resource.Supports(s.image.graphics) || s.image.image == nil {
 		return tea.ImagePlacement{}
 	}
 	r := s.image.imageRect()
@@ -124,6 +142,7 @@ func (s *Screen) open(refID, title, content string, readOnly bool) {
 	s.busy = false
 	s.image.image = nil
 	s.image.resource = nil
+	s.image.sixelPreview = false
 	s.image.placeholders = nil
 	s.image.placeholderSize = ui.Size{}
 	s.input.area.SetReadOnly(readOnly)
@@ -149,6 +168,7 @@ func (s *Screen) Close() {
 	s.input.area.Clear()
 	s.image.image = nil
 	s.image.resource = nil
+	s.image.sixelPreview = false
 	s.image.placeholders = nil
 	s.image.placeholderSize = ui.Size{}
 }

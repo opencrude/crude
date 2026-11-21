@@ -36,6 +36,17 @@ func builtinFactory(name string) (BuiltinFactory, bool) {
 	return factory, exists
 }
 
+// SetBuiltinFactory binds local dependencies of a registered server to this
+// manager. An alias connection never receives the original's dependencies.
+func (manager *Manager) SetBuiltinFactory(name string, factory BuiltinFactory) {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.builtinOverrides == nil {
+		manager.builtinOverrides = make(map[string]BuiltinFactory)
+	}
+	manager.builtinOverrides[name] = factory
+}
+
 // builtinLookup resolves a built-in setting from the connection's explicit
 // environment, then Crude's secret store, then the core's environment, the
 // same inheritance a local server process gets.
@@ -66,6 +77,13 @@ func (manager *Manager) builtinTransport(config captypes.ConnectionConfig, lifet
 	factory, exists := builtinFactory(config.Command)
 	if !exists {
 		return nil, errors.New("built-in MCP server " + config.Command + " is not part of this Crude build")
+	}
+	if config.ID == config.Command {
+		manager.mu.RLock()
+		if override := manager.builtinOverrides[config.ID]; override != nil {
+			factory = override
+		}
+		manager.mu.RUnlock()
 	}
 	record := func(value string) {
 		manager.mu.Lock()

@@ -909,7 +909,7 @@ func renderManualCompactionMessage(msg types.ChatMessage, ctx renderContext) mes
 	}
 	modelName := msg.ModelID
 	if modelName == "" {
-		modelName = "Aeron"
+		modelName = "Errand"
 	}
 	header := buildAssistantHeader(modelName, false, rendering.FormatTimeLabel(msg.Time), ctx.innerW, false)
 	rows := []PaintLine{{}, header}

@@ -9,7 +9,7 @@ import (
 // The reported failure: Crude restarted a failing server again and again and
 // nothing told anyone. A server that Crude still restarts by itself is not a
 // problem yet; once its restart budget is used up it is, and the workspace
-// Aeron may investigate it. The issue exists on the core, without a shell.
+// Errand may investigate it. The issue exists on the core, without a shell.
 func TestLSPIssuesFollowTheRestartBudget(t *testing.T) {
 	center := NewStatusCenter(nil, nil)
 	restarting := ttypes.LSPServerHealth{ID: "clangd-key", Name: "clangd", Status: "Failed",
@@ -26,7 +26,7 @@ func TestLSPIssuesFollowTheRestartBudget(t *testing.T) {
 		issues[0].Summary != "clangd failed" || issues[0].Detail != failed.Error {
 		t.Fatalf("issues after the budget was used up = %+v", issues)
 	}
-	// Restart by the user or Aeron: the server connects and the issue resolves.
+	// Restart by the user or Errand: the server connects and the issue resolves.
 	syncLSPIssuesFrom(center, []ttypes.LSPServerHealth{{ID: "clangd-key", Name: "clangd", Status: "Connected"}}, ttypes.AssemblyPlan{})
 	if issues := center.Issues(); len(issues) != 1 || issues[0].ResolvedAt.IsZero() {
 		t.Fatalf("a connected server kept its open issue: %+v", issues)
@@ -58,7 +58,7 @@ func TestLSPIssueForAServerThatCannotSeeTheProject(t *testing.T) {
 // Found after a real core restart: the issue text carried the counts ("7 of
 // 13 checked files"). Each file that the closed-file check finished made a
 // new report, so the issue never stayed the same for the settle time and
-// Aeron never heard about it. While Crude checks files, the report and its
+// Errand never heard about it. While Crude checks files, the report and its
 // time do not change.
 func TestLSPIssueStaysTheSameReportWhileCountsChange(t *testing.T) {
 	center := NewStatusCenter(nil, nil)
@@ -91,7 +91,7 @@ func TestLSPIssueForAServerErrorMessage(t *testing.T) {
 // Found live: the user's settings named a command that does not exist (a
 // typing error), and nothing told anyone; the language only showed as
 // missing. A command from the settings that is not installed is a problem
-// for Aeron to investigate. A catalog server that is not installed is a
+// for Errand to investigate. A catalog server that is not installed is a
 // setup choice and raises nothing. The issue resolves when the command is
 // corrected.
 func TestLSPIssueForAMissingCommandFromSettings(t *testing.T) {

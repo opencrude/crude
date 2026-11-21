@@ -260,7 +260,7 @@ func (m *App) observeDesktopStatus(now time.Time) tea.Cmd {
 // desktopNoticeKind classifies one agent's status. A question or approval
 // from any agent needs the user. A stop or a finish is news only for an
 // agent that the user started: a child reports to its parent, and the
-// workspace Aeron works in the background.
+// workspace Errand works in the background.
 func desktopNoticeKind(status ttypes.AgentStatusSnapshot, aeron func() bool) (noticeKind, bool) {
 	if status.Hidden {
 		return 0, false

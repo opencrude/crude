@@ -43,6 +43,7 @@ detail: read the sections that the current checkpoint names.
 
 | Date | Decision | From |
 |---|---|---|
+| 2026-11-21 | Rename the workspace helper to **Errand**. Do not give Errands personal names or show old names in notifications. Keep the same workspace helper and saved identity. | User |
 | 2026-10-29 | Autonomy is the foundation. When a project opens, Crude finds what intelligence is possible, gets and configures the tools, checks that they work and maintains them. There is no hand-written intelligence layer for each language. | User |
 | 2026-10-29 | The quality goal is JetBrains level for measured workflows and languages. Native C and Zig dependencies are acceptable. | User |
 | 2026-10-29 | Ask the user to trust a folder when it opens. Restricted mode still allows editing. Done. | User |

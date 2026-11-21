@@ -22,7 +22,7 @@ type SourceControl interface {
 	// A file that changed since fingerprint was read is left alone.
 	ResolveGitConflict(ctx context.Context, path, fingerprint string, choices []workspace.GitConflictChoice) (string, error)
 	// PrepareCommitMessageWriter captures a writer without performing I/O. A
-	// connected writer resolves the core-owned Aeron configuration in Write.
+	// connected writer resolves the core-owned Errand configuration in Write.
 	PrepareCommitMessageWriter() (CommitMessageWriter, error)
 }
 

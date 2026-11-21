@@ -184,6 +184,8 @@ func (m *App) openLauncher() {
 	if m.launcherScreen == nil {
 		m.launcherScreen = launcher.New(m.Theme)
 		m.launcherScreen.SetFocusHandler(m.rootHost.Focus)
+		m.launcherScreen.SetData(cwd, m.workspaceInfos)
+		m.launcherScreen.SetWorkspaceActivity(m.workspaceActivity.counts)
 	}
 	m.refreshLauncherAsync(cwd)
 	if m.capabilitySnapshot.Generation != 0 || m.capabilitySnapshot.Error != "" {
@@ -211,6 +213,7 @@ type launcherWorkspacesMsg struct {
 // latest kick may apply, so rapid open/close/open cycles never apply a stale
 // listing for a previous directory.
 func (m *App) refreshLauncherAsync(cwd string) {
+	m.bindWorkspaceCatalogOwner()
 	if m.workspaceListCancel != nil {
 		m.workspaceListCancel()
 	}

@@ -712,6 +712,8 @@ func (s *WorkspaceSettingsSurface) pageSubtitle() string {
 
 	case s.capabilitiesOpen() && s.capCatalog.choosing != "":
 		return "Choose " + strings.TrimPrefix(s.capCatalog.choosing, "filter-") + " · Enter applies · Esc returns"
+	case s.capabilitiesOpen() && s.capCatalog.edit == webFallbackEditor:
+		return "Save changes to use them in new searches."
 	case s.capabilitiesOpen() && s.capCatalog.edit != "":
 		noun := map[captypes.Kind]string{captypes.KindSkill: "skill", captypes.KindMCP: "connection"}[s.capCatalog.kind]
 		return "Changes apply when you save this " + mapDefault(noun, "source") + "."
@@ -1732,7 +1734,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		}
 		if next := s.capCatalog.nextOpen; next != nil {
 			s.capCatalog.nextOpen = nil
-			return s.OpenCapabilities(next.kind, next.query, next.id)
+			return s.openCapabilityNavigation(*next)
 		}
 		s.refreshForm()
 		if s.model.nextScope != "" {

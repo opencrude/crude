@@ -133,6 +133,10 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 			if listErr != nil {
 				out.WorkspacesError = listErr.Error()
 			} else {
+				activity := c.runtime.savedWorkspaceActivity(ctx)
+				for i := range infos {
+					infos[i].Activity = activity[infos[i].ID]
+				}
 				out.Workspaces = infos
 			}
 		}

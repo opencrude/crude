@@ -8,7 +8,7 @@ import (
 	"crude/types"
 )
 
-// A session opened as Aeron keeps that role after creation, and creating it
+// A session opened as Errand keeps that role after creation, and creating it
 // changes neither the shared defaults nor another session.
 func TestNewAgentSessionAsRootsSessionInTheRole(t *testing.T) {
 	setTestHome(t)
@@ -30,7 +30,7 @@ func TestNewAgentSessionAsRootsSessionInTheRole(t *testing.T) {
 	}
 	owner := w.SessionsByID[created.SessionID]
 	if owner == nil || !SessionIsAeron(owner) {
-		t.Fatalf("session is not rooted in Aeron: %+v", owner)
+		t.Fatalf("session is not rooted in Errand: %+v", owner)
 	}
 	if got := w.BackendSession(created.SessionID).SettingsSnapshot().SessionMainAgent; got != session.CategoryAeron {
 		t.Fatalf("backend role = %q, want %q", got, session.CategoryAeron)
@@ -40,14 +40,14 @@ func TestNewAgentSessionAsRootsSessionInTheRole(t *testing.T) {
 		t.Fatal(plain.Error)
 	}
 	if SessionIsAeron(w.SessionsByID[plain.SessionID]) {
-		t.Fatal("an ordinary session became Aeron")
+		t.Fatal("an ordinary session became Errand")
 	}
 	if bad := w.NewAgentSessionAs("no-such-role"); bad.Error == "" {
 		t.Fatal("an unknown role was accepted")
 	}
 }
 
-// The workspace keeps exactly one Aeron, and reopening the workspace resumes
+// The workspace keeps exactly one Errand, and reopening the workspace resumes
 // that same saved agent instead of creating another one.
 func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 	setTestHome(t)
@@ -72,15 +72,15 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 		t.Fatal(first.Error)
 	}
 	if !SessionIsAeron(w.SessionsByID[first.SessionID]) {
-		t.Fatalf("ensure did not root the session in Aeron: %+v", w.SessionsByID[first.SessionID])
+		t.Fatalf("ensure did not root the session in Errand: %+v", w.SessionsByID[first.SessionID])
 	}
 	if !w.YoloForAgent(first.OrchID) {
-		t.Fatal("the workspace Aeron did not start in automatic approval mode")
+		t.Fatal("the workspace Errand did not start in automatic approval mode")
 	}
 	if got := w.WorkspaceDB.GetSetting(workspaceAeronSessionKey); got != first.SessionID {
-		t.Fatalf("remembered Aeron = %q, want %q", got, first.SessionID)
+		t.Fatalf("remembered Errand = %q, want %q", got, first.SessionID)
 	}
-	// Other agents find Aeron with agent_list query "aeron": the registry
+	// Other agents find Errand with agent_list query "aeron": the registry
 	// lists the root under its role, not as an ordinary default agent.
 	if w.Collaboration == nil {
 		t.Fatal("test workspace has no collaboration registry")
@@ -97,7 +97,7 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatalf("workspace Aeron %q is not listed with category %q: %+v", first.OrchID, session.CategoryAeron, agents)
+			t.Fatalf("workspace Errand %q is not listed with category %q: %+v", first.OrchID, session.CategoryAeron, agents)
 		}
 	}
 	second := w.EnsureAeronSession()
@@ -111,7 +111,7 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 	// transcript row to keep it alive: it must survive before its first task.
 	w.SetYoloForAgent(first.OrchID, false)
 	if again := w.EnsureAeronSession(); again.Error != "" || w.YoloForAgent(first.OrchID) {
-		t.Fatal("ensuring a live Aeron replaced the user's permission mode")
+		t.Fatal("ensuring a live Errand replaced the user's permission mode")
 	}
 	w.CloseAllSessions()
 	w.Close()
@@ -123,16 +123,16 @@ func TestEnsureAeronSessionIsOneAndReopens(t *testing.T) {
 		t.Fatal(resumed.Error)
 	}
 	if resumed.SessionID != first.SessionID {
-		t.Fatalf("reopen created %q, want saved Aeron %q", resumed.SessionID, first.SessionID)
+		t.Fatalf("reopen created %q, want saved Errand %q", resumed.SessionID, first.SessionID)
 	}
 	if !SessionIsAeron(w.SessionsByID[resumed.SessionID]) {
-		t.Fatal("reopened session lost its Aeron role")
+		t.Fatal("reopened session lost its Errand role")
 	}
 	if w.YoloForAgent(resumed.OrchID) {
-		t.Fatal("reopening Aeron replaced the saved permission mode")
+		t.Fatal("reopening Errand replaced the saved permission mode")
 	}
 	if other := w.EnsureAeronSession(); other.SessionID != resumed.SessionID {
-		t.Fatalf("reopened workspace made a second Aeron: %+v", other)
+		t.Fatalf("reopened workspace made a second Errand: %+v", other)
 	}
 }
 

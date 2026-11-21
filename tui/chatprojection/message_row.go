@@ -15,6 +15,7 @@ type ChatAttachmentOpenPayload struct {
 const ChatToggleActionID = "chat.toggle-details"
 
 const ChatRecoveryRetryActionID = "chat.retry-recovery"
+const ChatWebSearchFallbackActionID = "chat.web-search-fallback"
 
 // ChatAgentOpenActionID opens the sub-agent a "Started agent" row names, as a
 // tab or as a window (payload ChatAgentOpenPayload).

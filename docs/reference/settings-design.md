@@ -105,7 +105,7 @@ Rules:
   **Restricted**, and **Trusted**; application scope shows **Workspace only**.
 - Workspace prediction consent uses these same segments and exact numeric
   input on Code Intelligence (mode and hourly limit); the connection is on
-  **Agents → Aeron → Suggestions**. Application scope replaces both rows with
+  **Agents → Errand → Suggestions**. Application scope replaces both rows with
   read-only **Workspace only** rows; no disabled fake picker, inherited On
   value or synthesized spending default is shown. Scope changes replace both
   mounted row states and their collection baselines together, preserving live

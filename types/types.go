@@ -389,9 +389,10 @@ type AppSettings struct {
 	Safety       SafetySettings              `json:"safety,omitempty"`
 	LocalHistory LocalHistorySettings        `json:"local_history,omitempty"`
 	Terminal     TerminalSettings            `json:"terminal,omitempty"`
-	// TerminalShells are the shells installed on the core's machine. They are
-	// observation metadata for the settings form, never persisted settings.
+	// Shells are observations on the core host, never persisted choices. A local
+	// attachment may supply a different search environment for new terminals.
 	TerminalShells []TerminalShell `json:"-"`
+	AgentShells    []TerminalShell `json:"-"`
 	// Network is application-owned: trust, proxy credentials and client
 	// identities must never be promoted by a project's settings overlay.
 	Network network.Settings `json:"network,omitempty"`
@@ -579,10 +580,9 @@ type MemorySettings struct {
 	RecallLimit int `json:"recall_limit,omitempty"`
 	// ExtractEveryTurns is the extraction cadence. Default 3.
 	ExtractEveryTurns int `json:"extract_every_turns,omitempty"`
-	// MemoryCategory is the memory agent's own configuration: provider,
-	// model, and thinking effort. Empty fields inherit the main agent, so the
-	// memory agent behaves like every other agent. It is set on the session
-	// config and mirrored here for the settings form.
+	// MemoryCategory configures the independent memory agent. Only a missing
+	// account and model follow Errand; its instructions and request settings
+	// remain its own.
 	MemoryCategory CategorySettings `json:"memory_category,omitempty"`
 }
 

@@ -11,9 +11,9 @@ import (
 	"crude/types"
 )
 
-// Aeron's Suggestions tab is built like the Auto Review Agent's connection:
+// Errand's Suggestions tab is built like the Auto Review Agent's connection:
 // an account, a model, a request format, a speed tier, a timeout and an output
-// limit. Empty account and model use Aeron's own. Crude always sends thinking
+// limit. Empty account and model use Errand's own. Crude always sends thinking
 // "none"; it is not a choice.
 const (
 	fieldSuggestAccount  = "suggest-account"
@@ -29,7 +29,7 @@ func suggestionField(id string) bool { return strings.HasPrefix(id, "suggest-") 
 
 func (m *Model) suggestionFields(s types.SuggestionSettings, aeronAccount string) []*ui.FieldState {
 	n := s.Normalized()
-	accounts := append([]ui.FormOption{{ID: "", Label: "Aeron's account"}}, m.connectionOptions(false)...)
+	accounts := append([]ui.FormOption{{ID: "", Label: "Errand's account"}}, m.connectionOptions(false)...)
 	providerID, accountID := m.suggestionAccount(s.AccountID, aeronAccount)
 	var fetched []types.ModelEntry
 	if accountID != "" {
@@ -40,9 +40,9 @@ func (m *Model) suggestionFields(s types.SuggestionSettings, aeronAccount string
 		"Processing tier for Chat suggestion requests. The account's protocol decides which tiers exist.")
 	fields := []*ui.FieldState{
 		ui.SelectFieldState(fieldSuggestAccount, "Account", s.AccountID, accounts,
-			"Where suggestions go. Aeron's account is the default."),
+			"Where suggestions go. Errand's account is the default."),
 		ui.ModelFieldState(fieldSuggestModel, "Model", s.Model, models,
-			"A fast model without thinking. Empty uses Aeron's model. Suggestions feel best under 300 ms."),
+			"A fast model without thinking. Empty uses Errand's model. Suggestions feel best under 300 ms."),
 		ui.SelectFieldState(fieldSuggestFormat, "Request format", n.Format, []ui.FormOption{
 			{ID: types.SuggestionFormatChat, Label: "Chat", Detail: "Inserts and edits near the caret; works with every account"},
 			{ID: types.SuggestionFormatOpenAI, Label: "Completions with suffix", Detail: "Fill-in-the-middle servers; inserts only"},
@@ -56,7 +56,7 @@ func (m *Model) suggestionFields(s types.SuggestionSettings, aeronAccount string
 		ui.NumberFieldState(fieldSuggestOutput, "Output limit", n.MaxOutputTokens, "tokens", "The most text one suggestion may use."),
 	}
 	// Empty values inherit; the select shows what they inherit.
-	fields[0].Placeholder, fields[1].Placeholder, tier.Placeholder = "Aeron's account", "Aeron's model", "Account default"
+	fields[0].Placeholder, fields[1].Placeholder, tier.Placeholder = "Errand's account", "Errand's model", "Account default"
 	for _, field := range fields {
 		field.Validator = func(ui.FieldValue) []string { return nil }
 	}
@@ -90,7 +90,7 @@ func numberRange(low, high int) func(ui.FieldValue) []string {
 }
 
 // suggestionAccount resolves the account that suggestions use: the chosen
-// one, else Aeron's own account on the Model tab.
+// one, else Errand's own account on the Model tab.
 func (m *Model) suggestionAccount(chosen, aeron string) (string, string) {
 	id := chosen
 	if id == "" {
@@ -102,7 +102,7 @@ func (m *Model) suggestionAccount(chosen, aeron string) (string, string) {
 	return "", ""
 }
 
-// suggestionAccountID is the resolved account of the open Aeron draft.
+// suggestionAccountID is the resolved account of the open Errand draft.
 func (m *Model) suggestionAccountID() string {
 	form := m.categories[catAgents].Form
 	if form == nil || form.Field(fieldSuggestAccount) == nil {
@@ -149,9 +149,9 @@ func (m *Model) suggestionTierOptions(accountID, current string) []ui.FormOption
 }
 
 // suggestionModelOptions lists the account's models after the default, so
-// the user can always go back to Aeron's model.
+// the user can always go back to Errand's model.
 func suggestionModelOptions(models []types.ModelEntry) []ui.FormOption {
-	return append([]ui.FormOption{{ID: "", Label: "Aeron's model"}}, ui.ModelOptions(models)...)
+	return append([]ui.FormOption{{ID: "", Label: "Errand's model"}}, ui.ModelOptions(models)...)
 }
 
 // suggestionsFromForm reads the Suggestions tab of a draft.

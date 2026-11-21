@@ -2,10 +2,78 @@ package sixel
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"image"
 	"image/color"
+	"image/draw"
 	"testing"
 )
+
+func TestEncoderDitherMatchesStandardDiffusion(t *testing.T) {
+	bounds := image.Rect(3, 7, 132, 50) // partial last band; nonzero source origin
+	src := image.NewRGBA64(bounds)
+	var sample uint32 = 1
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			sample = sample*1664525 + 1013904223
+			src.SetRGBA64(x, y, color.RGBA64{R: uint16(sample >> 16), G: uint16(sample >> 8), B: uint16(sample), A: 65535})
+		}
+	}
+	palette, dithered, err := newSixelPalette(t.Context(), src, MaxColors, true)
+	if err != nil || !dithered {
+		t.Fatalf("fixture did not use adaptive diffusion: %v", err)
+	}
+	colors := make(color.Palette, len(palette.PaletteColors))
+	for i, c := range palette.PaletteColors {
+		colors[i] = sixelRGB(int(c.Red), int(c.Green), int(c.Blue))
+	}
+	want := image.NewPaletted(bounds, colors)
+	draw.FloydSteinberg.Draw(want, bounds, src, bounds.Min)
+
+	var output bytes.Buffer
+	if err := (&Encoder{Dither: true}).Encode(&output, src); err != nil {
+		t.Fatal(err)
+	}
+	got, err := new(Decoder).Decode(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bounds() != (image.Rectangle{Max: bounds.Size()}) {
+		t.Fatalf("raster dimensions: got %s, want %v", got.Bounds(), bounds.Size())
+	}
+	for y := range bounds.Dy() {
+		for x := range bounds.Dx() {
+			actual := color.NRGBAModel.Convert(got.At(x, y))
+			if expected := want.At(bounds.Min.X+x, bounds.Min.Y+y); actual != expected {
+				t.Fatalf("Sixel pixel %d,%d: got %v, want %v", x, y, actual, expected)
+			}
+		}
+	}
+}
+
+type cancellingSixelSource struct {
+	image.Image
+	cancel context.CancelFunc
+	reads  int
+}
+
+func (s *cancellingSixelSource) At(x, y int) color.Color {
+	s.reads++
+	s.cancel()
+	return s.Image.At(x, y)
+}
+
+func TestEncoderCancelsDuringPaletteConstruction(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pixels := &cancellingSixelSource{Image: image.NewRGBA(image.Rect(0, 0, 100, 100)), cancel: cancel}
+	var output bytes.Buffer
+	err := (&Encoder{Dither: true}).EncodeContext(ctx, &output, pixels)
+	if !errors.Is(err, context.Canceled) || output.Len() != 0 || pixels.reads > pixels.Bounds().Dx() {
+		t.Fatalf("palette kept encoding after cancellation: err=%v, bytes=%d, reads=%d", err, output.Len(), pixels.reads)
+	}
+}
 
 func TestDitherReducesFlatGradientBands(t *testing.T) {
 	img := image.NewRGBA(image.Rect(3, 7, 259, 135))

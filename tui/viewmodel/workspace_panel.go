@@ -38,7 +38,7 @@ func (m *App) statusPanelProjection(view statusoverview.ViewID) statusoverview.P
 		projection.Views[view] = m.statusNotificationItems()
 	default:
 		projection.Views[statusoverview.ViewTabs] = append(m.statusTabItems(), m.workspaceSessionItems()...)
-		projection.HeaderAction, projection.HeaderLabel = workspaceAeronAction, "Open workspace Aeron"
+		projection.HeaderAction, projection.HeaderLabel = workspaceAeronAction, "Open workspace Errand"
 	}
 	return projection
 }

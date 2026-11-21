@@ -49,7 +49,7 @@ func (w *Workspace) configureSuggestions(effective types.AppSettings) {
 		grant: overrides.PredictionGrantID, consented: overrides.PredictionConnectionIdentity}
 	if effective.Prediction.Mode != types.PredictionOff {
 		if w.sessionCfg == nil {
-			policy.completerErr = errors.New("the Aeron connection is not ready")
+			policy.completerErr = errors.New("the Errand connection is not ready")
 		} else {
 			policy.completer, policy.completerErr = w.sessionCfg.SuggestionCompleter()
 		}

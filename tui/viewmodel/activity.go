@@ -16,6 +16,7 @@ import (
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/termdock"
+	settingsui "crude/tui/settings"
 	"crude/tui/ui"
 	captypes "crude/types/capability"
 	"crude/workspace"
@@ -380,6 +381,8 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	switch action.ID {
+	case chatprojection.ChatWebSearchFallbackActionID:
+		return m.openCapabilitySettings((*settingsui.WorkspaceSettingsSurface).OpenWebSearchFallback)
 	case chatprojection.ChatFileOpenActionID:
 		if target, ok := action.Payload.(string); ok {
 			return m.openChatFile(target)

@@ -24,7 +24,6 @@ replace github.com/charmbracelet/ultraviolet => ../ultraviolet
 
 require (
 	github.com/aymanbagabas/go-udiff v0.2.0 // indirect
-	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect

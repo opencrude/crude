@@ -43,7 +43,7 @@ type SessionLifecycleOperation struct {
 	createIfMissing bool
 	// rememberRole makes a created session persist its root role, so resume
 	// restores the same role. rememberAeron records it as the workspace's one
-	// Aeron session.
+	// Errand session.
 	rememberRole  string
 	rememberAeron bool
 	// fork, when set, writes the new saved session from an open one before it
@@ -63,7 +63,7 @@ type SessionLifecycleResult struct {
 	registryErr     error
 	gate            *lifecycleEventGate
 	expectedAgentID string
-	// aeronSessionID is the exact session recorded as the workspace's Aeron.
+	// aeronSessionID is the exact session recorded as the workspace's Errand.
 	aeronSessionID string
 }
 
@@ -302,7 +302,7 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		result.registryErr = op.database.RegisterSession(owner.SessionID, op.root, filepath.Base(op.root), backend.ModelName(), backend.SettingsSnapshot().ProviderID)
 		if op.rememberAeron {
 			if err := op.database.SetSetting(workspaceAeronSessionKey, owner.SessionID); err != nil {
-				result.registryErr = errors.Join(result.registryErr, fmt.Errorf("remember workspace Aeron: %w", err))
+				result.registryErr = errors.Join(result.registryErr, fmt.Errorf("remember workspace Errand: %w", err))
 			}
 			result.aeronSessionID = owner.SessionID
 		}

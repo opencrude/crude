@@ -16,7 +16,7 @@ are not restored.
 | `tui/viewmodel/main_panes.go` | Retained group controls and per-tab views, parent-local geometry, compact presentation, session-family chrome placement |
 | `tui/viewmodel/main_pane_actions.go` | Input policy, group activation, split/move/merge/resize commands, open/move beside, drop targets and preview, owner-bound file picker |
 | `tui/viewmodel/editor_views.go`, `tui/editor/linked_view.go` | File views: one document per path, any number of tabs showing it, linked editors that share one buffer |
-| `tui/viewmodel/image_files.go`, `tui/screens/imageviewer/` | Read-only raster image file tabs, independent viewport state and terminal image placements |
+| `tui/viewmodel/image_files.go`, `tui/viewmodel/image_residency.go`, `tui/screens/imageviewer/` | Read-only raster tabs, snapshot lifetimes, independent viewports and terminal placements |
 | `tui/viewmodel/navigation_history.go` | Go Back / Go Forward places and their restore |
 | `tui/viewmodel/floating_panes.go` | Pane windows: one WM window per floating group, window/group focus agreement, host resolution for focus and geometry |
 | `tui/viewmodel/panel_placement.go` | Workspace surfaces (Git, Problems, Notices, Workspace, Memory, Board) placed in the dock, a main tab or a pane window |
@@ -82,11 +82,30 @@ restored.
 The connected core reads project bytes and explicitly external paths through
 their respective read authorities. The shell never interprets a remote path as
 a local file or retries a denied project read with external authority.
-Reads and bounded decoding run off Update. Inputs are limited to 64 MiB and
-33,554,432 decoded pixels; malformed and oversized files do not enter the text
-editor. A tab retains the image snapshot it opened. Close and open it again to
-see external changes. An explicit file-tree rename retargets the tab; deleting
-the file through the tree closes its image views.
+Reads and bounded decoding run off Update, one image at a time across file
+tabs. Inputs are limited to 64 MiB and 33,554,432 decoded pixels; malformed and
+oversized files do not enter the text editor. An open accepts the original
+compressed bytes into a private client temporary file. Selecting a tab whose
+pixels are not in memory loads that exact snapshot, not the current project
+file. A bad header prevents the tab from opening. A later decoding error
+appears in the viewer and does not retry by reading a different source.
+Close and open a tab again to see external changes. An explicit file-tree
+rename retargets the tab; deleting the file through the tree closes its image
+views. Close, workspace replacement, and shell shutdown release the private
+copies, including unopened results with no remaining owner.
+
+Pixels and native PNG bytes stay resident for selected docked panes and
+pane windows. Background tabs keep their viewport and snapshot; the shell
+keeps up to 64 MiB of their decoded pixels and native PNG bytes for recent
+visits. This is a byte budget, not a limit on tabs. Hidden screens release
+terminal placements; the focused visible image takes the next load slot.
+
+The `TestImageWorkingSetManyTabs` workload opens 24 independent 2048×1024 PNG
+files through the file-tree route. On Windows it retained eight decoded sources
+(one visible) and added about 64.5 MiB of live Go heap after collection. Retaining
+24 results from the same decoder alone used about 193.1 MiB with Kitty and
+192.0 MiB with Sixel. These are shell-heap measurements, not terminal memory or
+native presentation latency.
 
 Kitty- or Sixel-capable terminals paint native pixels with measured cell geometry.
 Kitty is preferred and requires true-colour placeholder identity; Sixel includes
@@ -379,7 +398,7 @@ ownership are all retained. A stray click must never destroy work in flight.
 - Restoring: the Agents panel lists minimized agents with a `minimized`
   detail; activating a row calls `restoreAgent`. `switchToAgentView` unhides
   on its own so every path back works.
-- The workspace Aeron is permanent. Each attachment ensures exactly one after
+- The workspace Errand is permanent. Each attachment ensures exactly one after
   startup settles and a quiet period without user work; it arrives minimized
   and never takes the user's tab by itself. That automatic open is background
   work and never refuses or loses a user action: a New Session, open, fork or
@@ -389,42 +408,42 @@ ownership are all retained. A stray click must never destroy work in flight.
   take seconds (`tui/viewmodel/remote_lifecycle.go` `sessionLifecycleBusy`).
   It is not an ordinary Agents row
   and does not count toward that sidebar badge or the Workspace panel's agent
-  list. **Open workspace Aeron** in the **Workspace panel header**, beside its
+  list. **Open workspace Errand** in the **Workspace panel header**, beside its
   search, opens its existing normal agent tab with the normal chat, composer
   and status bar. Its tab retains the usual window and minimize actions.
-  The application header has no Aeron link. Narrow panels move the link to a
+  The application header has no Errand link. Narrow panels move the link to a
   compact row below search, like Problems. Tab reaches it from search; Enter
   and pointer activation use the same navigation and return focus to the composer.
   Before the core has returned it, opening the panel link waits and opens the tab when it
-  arrives; a failed start opens Aeron's settings. Aeron is permanent, so it has
+  arrives; a failed start opens Errand's settings. Errand is permanent, so it has
   no Terminate action. Reopening the workspace resumes the saved identity even
   before its first task. The core supplies automatic approval only when it
   creates the session; attaching and resuming do not change a saved mode.
-- Aeron's questions and confirmations always use the modal agent prompt
+- Errand's questions and confirmations always use the modal agent prompt
   (`OverlayAgentPrompt`), also while its own tab is visible: it works in the
   background, so the modal is its channel to the user. Other agents keep the
-  in-tab deck when their tab is visible. An Aeron prompt does not open while
-  the user types or clicks: it waits until the user has paused for the Aeron
+  in-tab deck when their tab is visible. An Errand prompt does not open while
+  the user types or clicks: it waits until the user has paused for the Errand
   quiet period (three seconds), so keys meant for other work never answer it.
 
-#### Crude asks Aeron for help
+#### Crude asks Errand for help
 
 The owner of a state raises its problems as StatusCenter issues on the core and
-marks the ones that Aeron may investigate (`IssueSnapshot.Investigate`). Today
+marks the ones that Errand may investigate (`IssueSnapshot.Investigate`). Today
 these are the language-server issues in `workspace/lsp_issues.go`. The
 dispatcher `core/attention.go` runs on the workspace actor after each status
-change, attach and detach. It sends one runtime notice to the workspace Aeron
+change, attach and detach. It sends one runtime notice to the workspace Errand
 through the collaboration journal (sender **Crude**, body
 `prompt.AttentionNotice`) when all of these are true:
 
 - the issue stayed the same for 30 seconds and is still open;
-- Aeron was not told about this cause (the journal's idempotency key is the
+- Errand was not told about this cause (the journal's idempotency key is the
   issue and its detail; a new detail is a new cause);
-- a shell is attached, Aeron runs, has no turn and waits for no answer;
-- **When a server has a problem** is **Ask Aeron** (`lsp.ask_aeron`).
+- a shell is attached, Errand runs, has no turn and waits for no answer;
+- **When a server has a problem** is **Ask Errand** (`lsp.ask_aeron`).
 
-At most three notices go out at once. Crude never starts Aeron for a notice; the
-shell's Aeron ensure stays the one start owner. Aeron's contract makes it
+At most three notices go out at once. Crude never starts Errand for a notice; the
+shell's Errand ensure stays the one start owner. Errand's contract makes it
 investigate with Crude first and ask the user once before it changes anything.
 - Terminating is explicit: `terminateAgent` (tab and Agents-panel context
   menus) still cancels the turn, stops the orchestrator, and drops state.
@@ -523,7 +542,7 @@ second chat surface. Each decision reads the current layout from
 the layout is cached between asks.
 
 - **Which chat.** A pane other than the editor's whose selected tab is a root
-  agent with a composer (never the workspace Aeron): the agent the user
+  agent with a composer (never the workspace Errand): the agent the user
   focused last, then the nearest neighbor (right, below, left, above), then
   the first in layout order. **Ask in a new chat**, or no visible chat, makes
   a new session. Prepared prompts (Explain, Fix) use only an idle chat, so
@@ -676,6 +695,26 @@ wins over prepared disk bytes. See the recorded measurements in
 
 ## Rail, Git and Memory destinations
 
+Recent Workspaces in the rail, Home and the header switcher use the same saved
+catalog and retained activity. Catalog order follows successful workspace access,
+not background changes. Paths beneath the core host's home show `~`; the full
+path still supplies search, navigation, copy and the row's hover detail. The
+attached workspace keeps its own fill in the rail, independent of focus.
+
+Positive counts sit at the right of the workspace name. They report agents with
+active work, open terminal sessions (including idle shells), and shared
+documents with unsaved edits. They do not report running shell jobs, saved
+changes, or a private draft. Narrow rows omit whole badges instead of clipping
+them. Hover in the sidebar or Home shows full paths and exact counts. An
+unavailable observation has no badge and does not establish that a workspace is
+idle or saved.
+
+The shell reads the core's retained actors at most once a second while a recent
+workspace collection is visible. This read does not open a saved workspace or
+read its database. Catalog refresh keeps its existing bounded worker. Activity
+does not reorder or reset a list; results from a previous workspace attachment
+cannot replace the current view.
+
 - Rail destinations are Files, Agents, Recent Workspaces, Skills and MCP; workspace
   switching stays below Agents and remains available without leaving a nested
   workflow. Terminals and Git have no
@@ -685,7 +724,7 @@ wins over prepared disk bytes. See the recorded measurements in
   (`prepareGitChanges`, re-derived only while a Git view is visible). Each
   review is its own main tab (`gitReviews`, keyed by tab, per-instance
   component IDs); never return to a single replaced review screen. Commit
-  messages are drafted by the Aeron role via `Workspace.PrepareCommitMessageWriter`
+  messages are drafted by the Errand role via `Workspace.PrepareCommitMessageWriter`
   (configuration read on the update goroutine, streaming I/O in the background). Workspace Memory is a retained footer panel shared with
   `/memory`/palette, never a second floating overlay or session PanelDeck.
 - Git comparisons are typed main tabs, prepared off the UI goroutine. Index

@@ -109,6 +109,19 @@ func (r Reference) DisplayName() string {
 	return string(r.Kind)
 }
 
+// Caption is the shared name of an attachment chip and its preview. Captured
+// clipboard items use their numbered reference label, not a capture description.
+func (r Reference) Caption() string {
+	switch r.Kind {
+	case KindPastedText, KindPastedTextFile, KindPastedImage:
+		return r.DisplayName()
+	}
+	if title := strings.Join(strings.Fields(r.Title), " "); title != "" {
+		return title
+	}
+	return r.DisplayName()
+}
+
 func (r Reference) AgentText() string {
 	name := r.DisplayName()
 	switch r.Kind {

@@ -132,7 +132,12 @@ func (s *Session) retryTerminalSettlement(checkpoint sessiondb.RecoveryCheckpoin
 	checkpoint.ContextOwnerID, checkpoint.ContextRevision = intent.OwnerID, current.Revision
 	checkpoint.ContextGeneration, checkpoint.ContextReason, checkpoint.ActiveContext = current.Generation, current.Reason, current.Messages
 	run := newRecoveryRunState(checkpoint.PendingInput, &checkpoint)
-	name, parentID, category := s.agentName, "", ""
+	s.mu.Lock()
+	name, parentID, category := s.agentName, "", s.selectedMainAgent
+	s.mu.Unlock()
+	if category == "" {
+		category = CategoryDefault
+	}
 	var handle *agent.SubAgentHandle
 	if intent.Child != nil {
 		var owner childRecoveryOwner

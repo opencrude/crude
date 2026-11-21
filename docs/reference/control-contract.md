@@ -59,10 +59,10 @@ workspace layers. Language-server launch and resource fields
 (`lsp.languages.<id>.command`, arguments, environment, settings, initialization
 options and resource limits) are human-owned: an agent may toggle a configured
 server's `enabled` field but cannot change what runs. The one exception is the
-workspace's Aeron (a session rooted in the `aeron` role): it installs and
+workspace's Errand (a session rooted in the `aeron` role): it installs and
 configures language servers for the user and may write the `lsp.*` paths and
 `terminal.environment` at workspace scope only. Application scope and
-`lsp.ask_aeron` (whether Crude wakes Aeron) stay human-only for Aeron too.
+`lsp.ask_aeron` (whether Crude wakes Errand) stay human-only for Errand too.
 `lsp.restart` (domain, execute) restarts one exact server from the
 `diagnostics.workspace` lsp view, or `all`; its receipt says the restart was
 requested, not that the server connected. `diagnostics.workspace` view

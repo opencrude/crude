@@ -34,7 +34,7 @@ func runCommand(t *testing.T, a *Agent, cmd, answer string) (asked, ran bool, ta
 }
 
 // "Always allow" covered nothing below "destructive": an approved unknown
-// command was asked about again eight seconds later in Aeron's session.
+// command was asked about again eight seconds later in Errand's session.
 func TestAlwaysAllowCoversTheSameCommandsForTheSession(t *testing.T) {
 	a := newPermissionLifecycleAgent(t)
 	a.CommandApprovals = safety.NewPermissionStore()

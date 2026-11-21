@@ -1,8 +1,11 @@
 package workspace
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -175,16 +178,17 @@ func TestTerminalLoginArgumentsRespectAttachingEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SHELL", shell)
+	initialized := []string{"SHELL=" + shell}
 	for _, tc := range []struct {
 		name, choice string
 		env          []string
 		login        bool
 	}{
 		{name: "unknown base keeps login", login: true},
-		{name: "attaching shell is initialized", env: []string{}},
-		{name: "explicit on with attaching shell", choice: "on", env: []string{}, login: true},
+		{name: "attaching shell is initialized", env: initialized},
+		{name: "explicit on with attaching shell", choice: "on", env: initialized, login: true},
 		{name: "explicit off without attaching shell", choice: "off"},
-		{name: "explicit off with attaching shell", choice: "off", env: []string{}},
+		{name: "explicit off with attaching shell", choice: "off", env: initialized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := NewTerminalManager(t.TempDir())
@@ -229,5 +233,125 @@ func TestTerminalEnvironmentEmptyBaseAndKeyCase(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("PATH override left %d entries", count)
+	}
+}
+
+const shellPathFixture = "CRUDE_TEST_TERMINAL_SHELL_PATH"
+
+func TestTerminalShellPathFixtureProcess(t *testing.T) {
+	if os.Getenv(shellPathFixture) == "" {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installation := filepath.Base(filepath.Dir(exe))
+	fmt.Println("STARTED=" + installation)
+	in := bufio.NewScanner(os.Stdin)
+	for in.Scan() {
+		fmt.Println("REPLIED=" + installation)
+	}
+}
+
+func TestTerminalReattachUsesNewShellPathWithoutRebindingExistingPTY(t *testing.T) {
+	name, id := "bash", "bash"
+	if runtime.GOOS == "windows" {
+		name, id = "pwsh.exe", "pwsh"
+	}
+	root := t.TempDir()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyShell := func(version string) string {
+		t.Helper()
+		dir := filepath.Join(root, version)
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		src, err := os.Open(exe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer src.Close()
+		dst, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = io.Copy(dst, src)
+		if err := errors.Join(err, dst.Close()); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	old, updated := copyShell("shell-7.6.7"), copyShell("shell-7.7.0")
+	t.Setenv("PATH", old) // the retained core predates the update
+	t.Setenv("SHELL", "")
+	t.Setenv(shellPathFixture, "1")
+	oldEnv := os.Environ()
+	newEnv := setEnv(slices.Clone(oldEnv), "PATH", updated)
+
+	manager := NewTerminalManager(root)
+	t.Cleanup(manager.CloseAll)
+	sink := &terminalTestSink{events: make(chan struct{}, 1)}
+	manager.SetOutputSink(sink)
+	manager.SetShellEnvironment(oldEnv)
+	settings := ttypes.TerminalSettings{Args: []string{"-test.run=^TestTerminalShellPathFixtureProcess$"}}
+	manager.SetSettings(settings)
+
+	newTerminal := func() string {
+		t.Helper()
+		info, err := manager.Create(TerminalCreateOpts{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.ID
+	}
+	waitOutput := func(id, want string) {
+		t.Helper()
+		deadline := time.NewTimer(8 * time.Second)
+		defer deadline.Stop()
+		var output strings.Builder
+		seen := 0
+		for {
+			sink.mu.Lock()
+			messages := slices.Clone(sink.msgs[seen:])
+			seen = len(sink.msgs)
+			sink.mu.Unlock()
+			for _, message := range messages {
+				if line, ok := message.(TerminalOutputMsg); ok && line.ID == id {
+					output.Write(line.Data)
+				}
+			}
+			if strings.Contains(output.String(), want) {
+				return
+			}
+			select {
+			case <-sink.events:
+			case <-deadline.C:
+				t.Fatalf("terminal %s did not print %q; got %q", id, want, output.String())
+			}
+		}
+	}
+	first := newTerminal()
+	waitOutput(first, "STARTED=shell-7.6.7")
+	manager.SetShellEnvironment(newEnv)
+	waitOutput(newTerminal(), "STARTED=shell-7.7.0")
+	settings.Shell = id
+	manager.SetSettings(settings)
+	waitOutput(newTerminal(), "STARTED=shell-7.7.0")
+	if err := manager.Write(first, []byte("check\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	waitOutput(first, "REPLIED=shell-7.6.7")
+	settings.Shell, settings.Command = ttypes.TerminalShellCustom, strings.TrimSuffix(name, ".exe")
+	manager.SetSettings(settings)
+	waitOutput(newTerminal(), "STARTED=shell-7.7.0")
+	settings.Shell, settings.Command = id, ""
+	manager.SetSettings(settings)
+	manager.SetShellEnvironment([]string{"PATH=" + t.TempDir()})
+	if _, err := manager.Create(TerminalCreateOpts{}); err == nil || !strings.Contains(err.Error(), "Settings › Terminal") || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("missing selected shell did not fail with actionable guidance: %v", err)
 	}
 }

@@ -51,7 +51,7 @@ const (
 	ActionOpenFile = "gitpanel.open-file"
 	ActionReview   = "gitpanel.review" // payload string change key; "" = all
 	ActionCommit   = "gitpanel.commit" // payload CommitRequest
-	// ActionGenerate asks Aeron to draft the message (payload GenerateRequest);
+	// ActionGenerate asks Errand to draft the message (payload GenerateRequest);
 	// ActionStopGenerate cancels a running draft.
 	ActionGenerate     = "gitpanel.generate"
 	ActionStopGenerate = "gitpanel.generate-stop"
@@ -783,7 +783,7 @@ func (panel *Panel) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 		if messageH > 0 {
 			textH := messageH
 			if panel.writing && messageH >= 2 {
-				textH-- // indeterminate ink motion under the draft while Aeron writes
+				textH-- // indeterminate ink motion under the draft while Errand writes
 				panel.writingRule.Layout(ctx, ui.Rect{X: inner.X, Y: y + textH, W: inner.W, H: 1})
 			}
 			panel.messageBox.Layout(ctx, ui.Rect{X: inner.X, Y: y, W: inner.W, H: textH})
@@ -913,7 +913,7 @@ func (panel *Panel) paintStatus(buf *surface.CellBuffer, x, y int) {
 			optional("  ⚠ "+operationVerb(panel.snapshot.Operation, false), ui.ColorWarning)
 		}
 	case panel.writing:
-		write("  · Aeron is writing…", ui.ColorAccent, 0)
+		write("  · Errand is writing…", ui.ColorAccent, 0)
 	case panel.busy != "":
 		write("  · "+panel.busy+"…", ui.ColorAccent, 0)
 	case panel.loading:
@@ -1124,7 +1124,7 @@ type GenerateRequest struct {
 	StageAll bool
 }
 
-// Writing reports whether Aeron is drafting the message.
+// Writing reports whether Errand is drafting the message.
 func (panel *Panel) Writing() bool { return panel.writing }
 
 // NeedsFrame keeps the writing indicator animated.

@@ -134,7 +134,7 @@ type Workspace struct {
 	// TextIndex is the in-memory text index of the project. The core starts
 	// it with the file watch; Find in Files and suggestions read it.
 	TextIndex *textindex.Index
-	// suggestions owns Aeron's editor suggestion requests.
+	// suggestions owns Errand's editor suggestion requests.
 	suggestions *editorPredictionService
 	Executions  *ExecutionService
 
@@ -164,9 +164,9 @@ type Workspace struct {
 	// A session may own more than one orchestrator over its lifetime.
 	SessionsByAgent map[string]*Session
 
-	// aeronSessionID is the workspace's one Aeron session. It is persisted in
+	// aeronSessionID is the workspace's one Errand session. It is persisted in
 	// workspace_metadata so a restart reopens the existing agent instead of
-	// creating another one. The zero value means Aeron has not been created.
+	// creating another one. The zero value means Errand has not been created.
 	aeronSessionID string
 
 	// Agent admission and snapshots share the workspace's serialized owner.

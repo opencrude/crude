@@ -9,7 +9,7 @@ import (
 	"crude/types"
 )
 
-// A problem reaches Aeron once it has stayed the same for attentionRipe, at
+// A problem reaches Errand once it has stayed the same for attentionRipe, at
 // most attentionBatch at a time and never twice for the same cause. A new
 // cause of the same issue is raised again; a resolved one is not.
 func TestAttentionRaisesEachCauseOnceAfterItSettles(t *testing.T) {
@@ -49,7 +49,7 @@ func TestAttentionRaisesEachCauseOnceAfterItSettles(t *testing.T) {
 	}
 }
 
-// Aeron takes a notice only while it waits for work: not during a turn, not
+// Errand takes a notice only while it waits for work: not during a turn, not
 // while it waits for an answer, and not after the user stopped it.
 func TestAttentionWaitsForAnIdleAeron(t *testing.T) {
 	for phase, want := range map[types.AgentPhase]bool{
@@ -61,7 +61,7 @@ func TestAttentionWaitsForAnIdleAeron(t *testing.T) {
 		}
 	}
 	if aeronReady(types.AgentStatusSnapshot{Phase: types.AgentIdle, NeedsAction: true}) {
-		t.Fatal("Aeron took a notice while it waited for the user")
+		t.Fatal("Errand took a notice while it waited for the user")
 	}
 }
 

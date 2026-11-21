@@ -76,7 +76,7 @@ func TestPredictionNativeRowsAndKeyboard(t *testing.T) {
 			host.Layout()
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
-			for _, text := range []string{"Aeron suggestions", "Off", "Hourly limit"} {
+			for _, text := range []string{"Errand suggestions", "Off", "Hourly limit"} {
 				if !strings.Contains(bufferPlain(buf), text) {
 					t.Fatalf("native frame omitted %q:\n%s", text, bufferPlain(buf))
 				}

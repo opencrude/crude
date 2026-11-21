@@ -254,7 +254,7 @@ type IssueSnapshot struct {
 	UpdatedAt  time.Time
 	ResolvedAt time.Time
 	Actions    []StatusAction
-	// Investigate marks a problem that the workspace Aeron may investigate
+	// Investigate marks a problem that the workspace Errand may investigate
 	// on its own. Only the owner that raises the issue sets it.
 	Investigate bool
 }
@@ -293,7 +293,7 @@ type LSPServerHealth struct {
 	Coverage string
 	// Restarts counts this server's unexpected exits in the automatic
 	// restart window. Restarting is true while Crude starts it again by
-	// itself; a failed server that is not restarting needs the user or Aeron.
+	// itself; a failed server that is not restarting needs the user or Errand.
 	Restarts   int
 	Restarting bool
 	// Evidence is a bounded tail of what the server said about its own

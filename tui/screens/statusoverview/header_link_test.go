@@ -16,7 +16,7 @@ import (
 func TestWorkspacePanelLinkMatchesProblems(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		for _, width := range []int{34, 80, 160} {
-			s := NewDocked(th, Projection{Active: ViewTabs, HeaderAction: "workspace-aeron", HeaderLabel: "Open workspace Aeron"})
+			s := NewDocked(th, Projection{Active: ViewTabs, HeaderAction: "workspace-aeron", HeaderLabel: "Open workspace Errand"})
 			host := ui.NewHost(th, s)
 			host.Resize(width, 10)
 			buf := surface.NewCellBuffer(width, 10)
@@ -57,7 +57,7 @@ func TestWorkspacePanelLinkMatchesProblems(t *testing.T) {
 func TestDockedHeaderActionUsesPanelFlow(t *testing.T) {
 	for _, width := range []int{34, 80, 160} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			s := NewDocked(theme.DefaultDark(), Projection{Active: ViewTabs, HeaderAction: "workspace-aeron", HeaderLabel: "Open workspace Aeron"})
+			s := NewDocked(theme.DefaultDark(), Projection{Active: ViewTabs, HeaderAction: "workspace-aeron", HeaderLabel: "Open workspace Errand"})
 			s.SetDockHeaderInset(10)
 			host := ui.NewHost(theme.DefaultDark(), s)
 			s.SetFocusHandler(func(id ui.ComponentID) { host.Focus(id) })

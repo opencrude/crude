@@ -28,6 +28,7 @@ type referenceOverlayState struct {
 	loaded     bool
 	saving     bool
 	readOnly   bool
+	graphics   tea.ImageProtocol
 	agentID    string
 	epoch      uint64
 	ctx        context.Context
@@ -73,9 +74,9 @@ func (m *App) beginReferencePreview(ref sessiondb.Reference, readOnly bool) tea.
 	// Close the old owner before opening new content; closing the old frame
 	// after Open would clear this same retained screen's new value.
 	m.overlayHost.Close(ui.OverlayTextOverlay)
-	screen.OpenReadOnly(ref.ID, ref.DisplayName(), "Loading attachment…")
+	screen.OpenReadOnly(ref.ID, ref.Caption(), "Loading attachment…")
 	m.setMode(ModeTextOverlay)
-	state := &referenceOverlayState{session: m.ActiveSession, store: store, screen: screen, ref: ref, generation: m.workspaceSwitchGen.Load(), readOnly: readOnly, agentID: m.activeAgentTabID(), epoch: screen.OpenEpoch()}
+	state := &referenceOverlayState{session: m.ActiveSession, store: store, screen: screen, ref: ref, generation: m.workspaceSwitchGen.Load(), readOnly: readOnly, graphics: m.terminalImages.protocol(), agentID: m.activeAgentTabID(), epoch: screen.OpenEpoch()}
 	state.ctx, state.cancel = context.WithTimeout(context.Background(), 2*time.Minute)
 	m.referenceOverlay = state
 	return m.clientIOCommand(state.ctx, func(ctx context.Context) tea.Msg {
@@ -106,7 +107,7 @@ func loadReferencePreview(state *referenceOverlayState) referenceContentLoadedMs
 		if err != nil {
 			return referenceContentLoadedMsg{owner: state, err: err}
 		}
-		img, resource, err := imagepreview.Decode(ctx, data)
+		img, resource, err := imagepreview.Decode(ctx, data, state.graphics)
 		return referenceContentLoadedMsg{owner: state, image: img, resource: resource, readOnly: true, err: err}
 	}
 	content, readOnly, err := state.store.ReadReferenceContent(state.ref.ID)
@@ -191,7 +192,7 @@ func (m *App) applyReferenceContent(msg referenceContentLoadedMsg) {
 		state.cancel()
 	}
 	if msg.err != nil {
-		state.screen.OpenReadOnly(state.ref.ID, state.ref.DisplayName(), "Attachment could not be opened.\n"+msg.err.Error())
+		state.screen.OpenReadOnly(state.ref.ID, state.ref.Caption(), "Attachment could not be opened.\n"+msg.err.Error())
 		m.Feedback.NotifyError("Could not open attachment: " + msg.err.Error())
 	} else {
 		current, ok := state.store.GetReference(state.ref.ID)
@@ -202,13 +203,13 @@ func (m *App) applyReferenceContent(msg referenceContentLoadedMsg) {
 		}
 		state.original, state.loaded = msg.content, true
 		if msg.image != nil {
-			state.screen.OpenImage(state.ref.ID, state.ref.DisplayName(), msg.image)
+			state.screen.OpenImage(state.ref.ID, state.ref.Caption(), msg.image)
 			state.screen.SetImageResource(msg.resource)
 			m.configureReferenceGraphics(state.screen)
 		} else if msg.readOnly || state.readOnly {
-			state.screen.OpenReadOnly(state.ref.ID, state.ref.DisplayName(), msg.content)
+			state.screen.OpenReadOnly(state.ref.ID, state.ref.Caption(), msg.content)
 		} else {
-			state.screen.Open(state.ref.ID, state.ref.DisplayName(), msg.content)
+			state.screen.Open(state.ref.ID, state.ref.Caption(), msg.content)
 		}
 	}
 	state.epoch = state.screen.OpenEpoch()

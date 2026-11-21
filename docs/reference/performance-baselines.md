@@ -46,9 +46,9 @@ These are projection costs, not terminal frame latencies. The bench gate
 enforces each stage's allocation ceiling independently. Neither a fast warm
 paint nor a fast cursor tick excuses a cold reflow regression.
 
-## Aeron suggestions (2026-11-18)
+## Errand suggestions (2026-11-18)
 
-The Performance dashboard lists these **Aeron suggestions** series on
+The Performance dashboard lists these **Errand suggestions** series on
 the **Services** tab.
 The core records request stages in microseconds. Thresholds below are in
 milliseconds. When a series has no explicit stall threshold, it uses Critical.
@@ -638,7 +638,7 @@ holds a key press. With find closed the paint path adds one boolean check;
 
 ## Narrow chat margin check (2026-11-04)
 
-The Aeron sidebar page (removed the same day; Aeron now opens as a normal agent
+The Errand sidebar page (removed the same day; Errand now opens as a normal agent
 tab) mounted the existing transcript and question deck. A trial change
 to the shared message margin also enabled rich Markdown in narrow views that
 previously used plain wrapping. That was not a free geometry correction:
@@ -647,7 +647,7 @@ previously used plain wrapping. That was not a free geometry correction:
 two 120-operation runs). CPU and allocation profiles located most of the added
 cost in Glamour and Lip Gloss's byte-at-a-time wrapping.
 
-The margin change was removed, not hidden behind an Aeron mode or a second
+The margin change was removed, not hidden behind an Errand mode or a second
 renderer. Two runs with the established margin measured 0.837–0.854 ms,
 311,305–311,487 bytes and 1,589–1,595 allocations. An isolated upstream-writer
 backport experiment reduced the trial's allocations but still failed the
@@ -881,27 +881,77 @@ in a graphics frame. Frame conflation keeps image descriptors paired with the
 completed cell publication, not the newest unpainted screen state. Existing
 bench-gate ceilings are unchanged.
 
-### Windows Sixel images (2026-11-16)
+### Windows Sixel images (2026-11-21)
 
 `TestSixelRendererWarmFramesAndUnrelatedTextReuseRaster` requires zero
 allocations and zero terminal bytes for a repeated versioned image frame. It
 also verifies that text on another row neither re-encodes nor retransmits the
-image; same-row damage restores the cached raster without reading source pixels.
+image. `TestSixelRendererKeepsDisjointImageOnSharedRows` and
+`TestSixelRendererRestoresRasterAfterTerminalLineErase` distinguish updates
+beside a raster from text erases that actually intersect it.
 Movement reuses a raster when only its screen position changes. Resource/geometry
 handoff remains independent of a stalled terminal writer.
 
-On Windows amd64, Go 1.27.4, i7-9850H, three runs of
-`BenchmarkSixelEncodeVisibleRaster` at three iterations each measured
-142.9–147.4 ms/op and 30.1–41.3 MB/op. This measures cold 1280×640 resampling,
-adaptive palette construction and Sixel encoding of an enlarged small striped
-source, not photographic encoding, terminal presentation or Update latency.
-Conversion runs only at the asynchronous single writer; it is not a claim that
-cold conversion meets the 16 ms presentation budget. Current crops are cached,
-not re-encoded on ordinary frames. The visible-raster cap is 2,097,152 pixels,
-because the encoder stages up to 256 bitplanes as well as the output bitmap.
-Native Windows Terminal file and attachment captures check 160×40 and 80×24;
-visual evidence does not measure key-to-presented-image latency. Existing
-bench-gate ceilings are unchanged.
+The November 16 striped-source baseline was 142.9–147.4 ms/op and
+30.1–41.3 MB/op at 1280×640. A same-host before/after run on Windows amd64,
+Go 1.27.4, i7-9850H used three runs of three iterations each:
+
+| Cold conversion, no terminal I/O | Before | After |
+| --- | --- | --- |
+| 1280×640 enlarged stripes | 122–128 ms, 32.8–41.4 MB/op | 74–82 ms, 4.5 MB/op |
+| 810×560 photo | 443–470 ms, 54.1–60.2 MB/op | 105–122 ms, 8.1–8.2 MB/op |
+| 1530×1360 photo, near the raster cap | 2.05–2.08 s, 224–242 MB/op | 364–438 ms, 23.4 MB/op |
+
+In `third_party/bubbletea`, set `CRUDE_SIXEL_PHOTO` to a photographic JPEG
+and run `go test -run '^$' -bench 'BenchmarkSixel' -benchtime=3x -count=3 -benchmem`.
+The comparison used Windows `Web/Wallpaper/ThemeC/img29.jpg` (3840×2400,
+SHA-256 `7d82931777aff713a5cbaf76988ee9eaa1fcc7d2f6c528bd1da8e685f3d2d209`).
+`BenchmarkSixelEncodePhoto` excludes image loading and PNG preparation. The
+old cold profile was dominated by exhaustive palette search during diffusion
+and sparse scans of full-image colour bitplanes. The encoder now preserves
+adaptive colour and error diffusion with exact candidate pruning and one-band
+staging. The 2,097,152-pixel limit and native Sixel selection are unchanged.
+
+`BenchmarkSixelRendererPhoto` runs the renderer through a counting sink, not
+Windows Terminal. Opening and resizing the typical photo now send the new text
+frame in 0.55–1.22 ms in this harness, with native Sixel bytes available to the
+sink after 88–116 ms including conversion. Previously the first flush included
+conversion (435–475 ms). Warm frames sent zero bytes and allocated nothing;
+an unrelated text edit took 0.29–0.70 ms and sent no Sixel. Moving a cached
+raster took 0.70–1.17 ms at the sink and still sent 494 kB for each new position.
+Encode-only payloads are 491 kB for the typical photo and 1.67 MB near the cap.
+These times separate encoding and writer CPU from ConPTY throughput and emulator
+paint, which are not measured by a counting sink.
+
+`BenchmarkSixelRendererPhoto/SharedRow` used Go's `video-001.jpeg` at 90×28
+cells, 9×20 cell pixels, in three 30-iteration Windows runs. One disjoint changed
+cell fell from 463,446 bytes to 2.1 bytes at the sink. The writer restores
+intersected rasters without re-encoding them, even when a terminal erase extends
+past the changed text.
+
+`TestSixelAttachmentPacedDragThroughTerminalWriter` observed five 80 ms moves
+of the Windows wallpaper at 176×48 cells. Live cell previews sent 113.9–114.0 kB
+per move and no Sixel DCS; open and release each sent a 643.6 kB native raster.
+Send-to-sink was 1.1–2.6 ms. The shell does not delay gesture mutations; release
+or 180 ms of quiet restores the final native placement. This measures the
+writer sink, not the emulator's paint latency.
+
+`TestImageWorkingSetManyTabs` opened 24 distinct 2048×1024 images from the file
+tree. Three Windows runs retained one mounted placement and eight decoded
+images, with 64.4–64.5 MiB live heap growth and 353–396 ms for the batch of opens.
+Retaining all 24 decoder results alone used 192 MiB for Sixel, and 193 MiB for
+Kitty. This is a memory comparison across stages, not a latency speedup. The
+64 MiB allowance caps dormant decoded/native backing, not visible panes or the
+private compressed snapshots retained on disk.
+
+
+`BenchmarkSixelPendingRemovalPhoto` gates the photographic source at its first
+sample and releases it during removal. The gate uses the generic resampler;
+its before value (1.01–2.15 s) measures writer starvation, not ordinary photo
+conversion. Removal took 0.48–0.60 ms after the change. The paced-renderer
+regression requires the removal to reach the sink while the gate is still
+closed and rejects stale Sixel output. Resize and stop/restart tests also fence
+pending work. Existing bench-gate ceilings are unchanged.
 
 ## Protocol v2 terminal hot paths (2026-10-23)
 

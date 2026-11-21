@@ -85,7 +85,9 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 		state.tree = m.Tree.Model
 	}
 	m.workspaceSwitchGen.Add(1)
+	m.cancelWorkspaceActivity()
 	m.cancelAttachmentOpen()
+	m.cancelImageLoad()
 	m.cancelClientIOOperations()
 	m.resetLSPRequestContext()
 	m.gitRefreshGen.Add(1)
@@ -159,6 +161,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.AgentView = NewAgentViewState(m.ws.AgentMgr())
 	m.thinkingPresentations = nil
 	m.thinkingLatch = nil
+	m.resetImageResidency()
 	m.mainPanes = nil
 	m.paneFilePicker = nil
 	if m.sessionProjections != nil {

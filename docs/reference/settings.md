@@ -574,7 +574,7 @@ default; zero Request timeout means Unlimited.
 ### Agents Catalog
 
 Application Settings has one **Agents** catalog for Main Agent, Researcher,
-Crafter, Aeron, **Memory Agent**, **Auto Review Agent**, and reusable named agents. Built-in roles can
+Crafter, Errand, **Memory Agent**, **Auto Review Agent**, and reusable named agents. Built-in roles can
 be edited and reset to shipped defaults but not removed; Main Agent stays
 available as a fallback. Named agents can be added, cloned, edited, disabled,
 re-enabled, reset when shipped, and removed. None of those actions cancels work
@@ -589,7 +589,9 @@ actual multiline editor, not encoded JSON. Tool access offers role defaults or
 explicit checkboxes; role safety ceilings remain in force, unavailable tools
 are disabled, and child reporting stays required.
 
-Aeron's shipped role has the Main Agent's full tool set: it can research,
+Errand is the workspace helper formerly called Aeron. Its role name is its only display name;
+its saved role ID and workspace session ID stay unchanged. It has the Main
+Agent's full tool set: it can research,
 install and configure workspace tools. It has no shipped allow-list, deny-list
 or read-only policy. Explicit user tool choices still apply. Its workspace
 session starts with automatic approval once, at creation; reopening it preserves
@@ -603,9 +605,9 @@ prompt. Memory and permission jobs keep their own no-tools contracts rather
 than inheriting the coding-agent prompt. See
 [model prompts and project guidance](prompt-architecture.md).
 
-Memory Agent uses no tools:
-its model, account, instructions, and availability live in Agents; automatic
-recall/extraction cadence remains on the Memory page. Disabling Memory Agent
+Memory Agent uses no tools. Its account and model follow Errand unless the
+user chooses an override. Instructions and availability remain independent in
+Agents, and recall and extraction cadence remain on the Memory page. Disabling Memory Agent
 stops its automatic jobs and recall without deleting stored memories.
 
 **Agents › Memory Agent › Model** has a **Ranking** section for an optional,
@@ -640,12 +642,13 @@ the OpenAI Decisions API at `decisions` under their API base (shared `input`, na
 `gpt-6-luna`). Protocols with no decision endpoint refuse Decision. Neither job falls back from one type to
 the other when a request fails.
 
-Auto Review Agent is also a no-tools built-in. Its explicit account, model,
-model type, enable switch, additional restrictions, and complete runtime policy live on its
-Model / Instructions / Review tabs in Agents. It cannot inherit the Main
-Agent's connection or change its fixed safety prompt; restrictions can only
-narrow approvals and are limited to 1,024 bytes. Enabling it requires an
-account and model. A tool confirmation offers an `Auto Review…` choice while the
+Auto Review Agent is a separate no-tools built-in. Its model options, enable
+switch, restrictions, and policy live on its Model / Instructions / Review tabs
+in Agents. Its account and model follow
+Errand's configured workspace connection unless the user chooses an override.
+It does not use session overrides or the Main Agent as a reviewer. Restrictions
+can only narrow approvals and are limited to 1,024 bytes. Turning Auto Review on
+is a separate choice. A tool confirmation offers an `Auto Review…` choice while the
 agent is off; it opens this same Agents page instead of answering the request,
 so the user turns on automatic review without hunting through Settings. It is
 not YOLO: the reviewer still asks or denies when unsure. Security → Auto Review
@@ -784,8 +787,9 @@ change it; terminals keep their own shell. See
 [background commands](background-commands.md).
 
 **Auto permissions are an explicit, bounded opt-in.** Settings → Agents →
-Auto Review Agent selects an explicit account and model; blank values never
-silently inherit the main model. Its Review tab owns thinking effort, response
+Auto Review Agent can use Errand's configured workspace account and model.
+Changing that binding is human-only. With no valid connection, the reviewer
+cannot approve the request. Its Review tab owns thinking effort, response
 format, denial handling, per-attempt timeout, initial and retry token budgets,
 retry count/growth, and input bytes. There is no lifetime/per-turn review-count
 cap. Security → Auto
@@ -1043,7 +1047,7 @@ Custom with a command), shell-style arguments, Login shell (Auto, On, Off),
 extra environment variables, Open new terminals (Docked/Floating) and Scrollback
 (1,000–10,000 lines, 10,000 default). Environment values may use VS Code's
 `${env:NAME}` and `${workspaceFolder}` references, for example
-`PATH=${workspaceFolder}/.venv/bin:${env:PATH}`. The workspace Aeron may write
+`PATH=${workspaceFolder}/.venv/bin:${env:PATH}`. The workspace Errand may write
 `terminal.environment` at workspace scope after the user agrees; every other
 agent and every application-scope write stays human-only. A workspace may choose a different shell while still
 inheriting every other terminal field. Auto order, detection and failure rules
@@ -1117,7 +1121,7 @@ cost and capacity and prepares checkpoints in the background (see
 [adaptive context handling](adaptive-context.md#when-to-compact-adaptive-policy-and-background-preparation)).
 An explicit percentage is a provider-context trigger, not a local JSON-size
 threshold. The effective trigger reserves the main model's response and safety
-headroom; the Aeron model budgets each extraction request against its own
+headroom; the Errand model budgets each extraction request against its own
 capacity while preserving the configured reasoning effort. Each category's
 explicit context window belongs to its own connection, not a global model
 override. BTW and child-result notices count before the next request is admitted.
@@ -1268,14 +1272,14 @@ computer is busy and until a new server's memory hint is free. It does not
 restart language servers. See
 [project check](editor.md#project-check-of-closed-files).
 
-**When a server has a problem** (`lsp.ask_aeron`) is **Ask Aeron** (default) or
-**Do nothing**. With Ask Aeron, a language-server problem that Crude finds (a
+**When a server has a problem** (`lsp.ask_aeron`) is **Ask Errand** (default) or
+**Do nothing**. With Ask Errand, a language-server problem that Crude finds (a
 server that used up its restart budget or failed to start, an error message
 from a server, a server whose checked files have errors in at least one in
-five) wakes the workspace Aeron once per cause. Aeron investigates and asks the
+five) wakes the workspace Errand once per cause. Errand investigates and asks the
 user before it changes anything. Only the user changes this field; no agent,
-Aeron included, may write it. See
-[Crude asks Aeron](main-view-panes.md#crude-asks-aeron-for-help).
+Errand included, may write it. See
+[Crude asks Errand](main-view-panes.md#crude-asks-errand-for-help).
 
 The **Suggestions** group on Code Intelligence contains:
 
@@ -1398,16 +1402,16 @@ thin path.
 
 ### Workspace prediction consent
 
-**Code Intelligence → Aeron suggestions** edits the workspace-owned
+**Code Intelligence → Errand suggestions** edits the workspace-owned
 `prediction` category, independently of analysis Trust and session Code
 Intelligence:
 
-- **Aeron suggestions**: Off / When I ask / As I type. Off is the default.
+- **Errand suggestions**: Off / When I ask / As I type. Off is the default.
 - **Hourly limit**: exact whole tokens, up to 1099511627776. The form offers
   200,000 tokens when first turning on; the offered value alone does not store
   a choice while Off. Enabled modes require a positive limit.
 
-To turn suggestions on from the **Aeron** footer menu, choose **When I ask**
+To turn suggestions on from the **Errand** footer menu, choose **When I ask**
 or **As I type**. If suggestions are off, Crude opens the shared confirmation
 dialog: “Turn on suggestions in this workspace?” The dialog says where the
 code goes and that requests count toward the hourly limit. **Cancel** has
@@ -1421,13 +1425,13 @@ Invalid drafts remain visible and cannot become consent through Save.
 Code Intelligence Reset removes prediction and analysis choices independently,
 while preserving the language-server inventory.
 
-The **Agents → Aeron → Suggestions** tab sets the application-level connection
-and limits for suggestions. Choose **Aeron's account** or **Aeron's model**
-to use that part of Aeron's binding. Crude sets thinking to none. Chat uses
+The **Agents → Errand → Suggestions** tab sets the application-level connection
+and limits for suggestions. Choose **Errand's account** or **Errand's model**
+to use that part of Errand's binding. Crude sets thinking to none. Chat uses
 the normal provider client. Fill-in-the-middle uses the selected format and
 endpoint path.
 
-- **Model** lists models from the selected Suggestions account, or from Aeron's
+- **Model** lists models from the selected Suggestions account, or from Errand's
   account on the **Model** tab when no Suggestions account is selected. Crude
   updates the list when either account changes. It fetches a list if the
   resolved account has no models in the shell cache.
@@ -1440,7 +1444,7 @@ endpoint path.
   “Enter a whole number from X to Y.” with the field's limits.
 
 The existing workspace preference transaction binds an enabled choice to a
-stable native root, exact configured Aeron connection and a newly generated grant
+stable native root, exact configured Errand connection and a newly generated grant
 identity. The reserved `prediction_root_identity`,
 `prediction_connection_identity` and `prediction_grant_id` fields cannot be
 supplied through edits. Application/session, entity-snapshot and generic agent
@@ -1464,8 +1468,8 @@ from an application setting, session flag, agent profile, recipe or permission
 reviewer. Application writes are rejected, including container writes and Reset.
 Code Intelligence Reset removes the explicit workspace choice; Language Servers
 Reset does not change it. The first choice removes the stored decision. When a
-folder opens without a decision, Crude asks whether to trust its authors.
-**Open in restricted mode** is focused by default; Esc defers the decision without
+folder opens without a decision, Crude names the folder and explains that trust
+lets project tools run code. **Open in restricted mode** is focused by default; Esc defers the decision without
 storing it. A stored Restricted decision does not prompt on the next open.
 The prompt waits for attachment and other dialogs to finish. Each shell asks once
 per workspace opening; a decision saved in another shell closes its open prompt.
@@ -1585,7 +1589,7 @@ agent probe holds (and vice versa). Diagnostics settle on the server's progress
 reports, not a fixed sleep. Server launch and resource settings (command,
 arguments, environment, settings, initialization options, limits) are
 human-owned: an agent may toggle `lsp.languages.<id>.enabled` through the
-control API but cannot change what runs. The workspace's Aeron, which sets up
+control API but cannot change what runs. The workspace's Errand, which sets up
 language servers for the user, is the one agent that may write these fields.
 It can create a new language entry by setting its exact leaf paths, not just
 edit entries that already exist. Control writes use the same sparse settings-edit

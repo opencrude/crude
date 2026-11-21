@@ -11,7 +11,7 @@ import (
 
 func TestAttachmentChipsHaveDisjointOpenAndRemoveTargets(t *testing.T) {
 	m := NewModel(theme.DefaultDark())
-	refs := []sessiondb.Reference{{ID: "one", Kind: sessiondb.KindPastedText, Label: "[One]", Title: "notes with spaces.txt", Content: "notes"}, {ID: "two", Kind: sessiondb.KindPastedText, Label: "[Two]", Title: "second.txt", Content: "more"}}
+	refs := []sessiondb.Reference{{ID: "one", Kind: sessiondb.KindSelectedFile, Label: "[One]", Title: "notes with spaces.txt", Content: "notes"}, {ID: "two", Kind: sessiondb.KindSelectedFile, Label: "[Two]", Title: "second.txt", Content: "more"}}
 	m.SetReferenceStore(&pasteReferenceStore{references: refs})
 	m.SetInput("[One] [Two]")
 	m.LayoutShell(32, 5)

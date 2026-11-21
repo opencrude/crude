@@ -23,13 +23,13 @@ type remoteSessionReadyMsg struct {
 	plan *planSettledMsg
 	// ask places the new session beside the code that Ask Crude asked about.
 	ask *askRequest
-	// aeron marks the workspace's Aeron. It opens minimized and never takes
+	// aeron marks the workspace's Errand. It opens minimized and never takes
 	// the user's selection; work for it waits in App.aeronOrders, not initial.
 	aeron bool
 }
 
 // sessionLifecycleBusy reports whether a user's session request must wait for
-// the one lifecycle slot. The automatic open of the workspace Aeron is
+// the one lifecycle slot. The automatic open of the workspace Errand is
 // background work and yields: the user's latest request is kept and starts
 // when that open settles. On a slow link the open takes seconds, and a click
 // in that time must not be lost. Any other holder keeps the slot (kept=false).
@@ -113,7 +113,7 @@ func (m *App) forkSessionCommand() tea.Cmd {
 }
 
 // forkSession forks exactly the session the user chose, also when the request
-// waits for the automatic Aeron open and the selection changes meanwhile.
+// waits for the automatic Errand open and the selection changes meanwhile.
 func (m *App) forkSession(id string) tea.Cmd {
 	if busy, kept := m.sessionLifecycleBusy(func() tea.Cmd { return m.forkSession(id) }); busy {
 		if !kept {
@@ -254,7 +254,7 @@ func (m *App) attachRemoteWorkspace(root, resumeID string) tea.Cmd {
 	if m.workspaceSwitchIntent != nil || m.asyncIOStopped.Load() {
 		return nil
 	}
-	if sameWorkspaceRoot(m.ws.RootPath(), root) {
+	if m.workspaceRootMatches(root) {
 		if resumeID != "" {
 			return m.remoteSessionCommand(resumeID)
 		}
@@ -485,7 +485,7 @@ func (m *App) applyRemoteWorkspace(msg remoteWorkspaceReadyMsg) tea.Cmd {
 		return nil
 	}
 	if msg.resumeID != "" {
-		// The resumed session owns the lifecycle slot; the tick ensures Aeron
+		// The resumed session owns the lifecycle slot; the tick ensures Errand
 		// after it settles.
 		return tea.Batch(closeOld, m.remoteSessionCommand(msg.resumeID), m.onboardingCmd())
 	}

@@ -28,10 +28,10 @@ func TestCategoryProvidersKeepDefaultAndAeronCapacities(t *testing.T) {
 		t.Errorf("default provider context = %d, want 64000", got)
 	}
 	if got := aeron.ContextWindow(model); got != 128_000 {
-		t.Errorf("Aeron compaction provider context = %d, want 128000", got)
+		t.Errorf("Errand compaction provider context = %d, want 128000", got)
 	}
 	if got := main.ContextWindow(model); got != 64_000 {
-		t.Errorf("Aeron creation changed default provider context to %d", got)
+		t.Errorf("Errand creation changed default provider context to %d", got)
 	}
 	if got := main.ContextWindow("category-other-capacity-model"); got != provider.LookupContextWindow("category-other-capacity-model") {
 		t.Errorf("default override applied to another model: %d", got)

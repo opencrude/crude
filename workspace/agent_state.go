@@ -527,7 +527,7 @@ func isManualCompactionEvent(evt AgentEvent) bool {
 }
 
 // isSessionCompactionTrigger reports a compaction that is its own session
-// operation after a turn ended: a human /compact, or the workspace Aeron's
+// operation after a turn ended: a human /compact, or the workspace Errand's
 // compaction when its agentic loop ends. Other triggers run inside a turn.
 func isSessionCompactionTrigger(trigger string) bool {
 	return trigger == agent.CompactionTriggerManual || trigger == agent.CompactionTriggerLoopEnd

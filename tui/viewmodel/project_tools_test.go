@@ -75,7 +75,7 @@ func (p *projectToolsTestPort) NewAgentSessionAs(role string) *workspace.NewSess
 }
 
 // EnsureAeronSession follows the same test path: the setup action must reuse
-// the workspace's one Aeron, never create a second identity.
+// the workspace's one Errand, never create a second identity.
 func (p *projectToolsTestPort) EnsureAeronSession() *workspace.NewSessionResult {
 	if p.busy > 0 {
 		p.busy--
@@ -142,7 +142,7 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 				t.Fatal("native review not mounted")
 			}
 			paint := ansi.Strip(app.View().RenderContent())
-			for _, want := range []string{"Set up code intelligence", "fixture-server", "Set up with Aeron", "Not now"} {
+			for _, want := range []string{"Set up code intelligence", "fixture-server", "Set up with Errand", "Not now"} {
 				if !strings.Contains(paint, want) {
 					t.Fatalf("missing %q at %v:\n%s", want, size, paint)
 				}
@@ -168,19 +168,19 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 			app.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 			_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			runAppCommand(t, app, cmd)
-			// Aeron does the work: Crude only records that the user answered and
+			// Errand does the work: Crude only records that the user answered and
 			// installs nothing itself.
 			if len(port.choices) != 2 || len(port.choices[1]) != 0 {
-				t.Fatal("Set up with Aeron made Crude install tools itself", port.choices)
+				t.Fatal("Set up with Errand made Crude install tools itself", port.choices)
 			}
 			if len(port.roles) != 1 || port.roles[0] != "aeron" {
-				t.Fatal("Set up with Aeron did not open the workspace's Aeron", port.roles)
+				t.Fatal("Set up with Errand did not open the workspace's Errand", port.roles)
 			}
 			pending := app.pendingFirstInputs["aeron-agent"][0]
 			order := pending.Text
 			for _, want := range []string{"<set_up>", `package="fixture-server"`, "<leave_alone/>", "lsp.languages.&lt;id&gt;.command"} {
 				if !strings.Contains(order, want) {
-					t.Fatalf("work order for Aeron lacks %q:\n%s", want, order)
+					t.Fatalf("work order for Errand lacks %q:\n%s", want, order)
 				}
 			}
 			// The chat shows the request in plain words, not the XML order.
@@ -188,7 +188,7 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 				t.Fatalf("work order shows %q in the chat", pending.DisplayText)
 			}
 			if app.overlayHost.IsOpen(projectToolsOverlay) {
-				t.Fatal("the setup window stayed open after Set up with Aeron")
+				t.Fatal("the setup window stayed open after Set up with Errand")
 			}
 		})
 	}
@@ -297,16 +297,16 @@ func TestProjectToolsCloseAndUnavailableReview(t *testing.T) {
 			}
 
 			// A tool that Crude cannot download itself is still a real choice:
-			// Aeron finds another way to get it, so the review offers it.
+			// Errand finds another way to get it, so the review offers it.
 			port.preview.Review.Items = []types.ProjectToolCandidate{
 				{ID: "manager", Package: "manager-only", Reason: "Install it yourself, then check again."},
 			}
 			runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
 			if !app.overlayHost.IsOpen(projectToolsOverlay) || len(port.choices) != 0 {
-				t.Fatal("a tool that only Aeron can get was not offered, or a choice was submitted")
+				t.Fatal("a tool that only Errand can get was not offered, or a choice was submitted")
 			}
 			paint := ansi.Strip(app.View().RenderContent())
-			for _, want := range []string{"[x]  manager-only", "Set up with Aeron"} {
+			for _, want := range []string{"[x]  manager-only", "Set up with Errand"} {
 				if !strings.Contains(paint, want) {
 					t.Fatalf("missing %q:\n%s", want, paint)
 				}
@@ -357,9 +357,9 @@ func TestProjectToolsMixedSelectionMountedJourney(t *testing.T) {
 			app.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
 			_, cmd = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 			runAppCommand(t, app, cmd)
-			// Aeron gets the exact selection; Crude records the answer only.
+			// Errand gets the exact selection; Crude records the answer only.
 			if len(port.choices) != 1 || len(port.choices[0]) != 0 || len(port.roles) != 1 {
-				t.Fatalf("Set up with Aeron did not hand the work to Aeron: choices=%v roles=%v", port.choices, port.roles)
+				t.Fatalf("Set up with Errand did not hand the work to Errand: choices=%v roles=%v", port.choices, port.roles)
 			}
 			order := app.pendingFirstInputs["aeron-agent"][0].Text
 			setUp, leaveAlone, ok := strings.Cut(order, "<leave_alone>")

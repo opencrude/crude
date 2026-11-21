@@ -43,7 +43,7 @@ func (s *Session) permissionPolicyChanged() <-chan struct{} {
 // publishPermissionPolicyLocked wakes waiting permission requests when the
 // effective Auto Review settings changed. Requires s.mu.
 func (s *Session) publishPermissionPolicyLocked(before types.AutoPermissionSettings) {
-	if s.cfg == nil || s.cfg.Safety.AutoPermission.Normalized() == before {
+	if s.cfg == nil || s.permissionReviewSettingsLocked() == before {
 		return
 	}
 	s.permissionPolicyMu.Lock()
@@ -61,14 +61,14 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 		ask := agent.PermissionReview{Decision: "ask"}
 		s.mu.Lock()
 		cfg := copyConfig(s.cfg)
-		settings := s.cfg.Safety.AutoPermission.Normalized()
+		settings := s.permissionReviewSettingsLocked()
 		revision := s.permissionReviewRevision.Load()
 		s.mu.Unlock()
 		if settings.Enabled != "on" {
 			return ask
 		}
 		if settings.Model == "" || settings.AccountID == "" {
-			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review is on, but it has no model. Choose its account and model in Settings."}
+			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review needs a connection. Set up Errand or choose an account and model for Auto Review."}
 		}
 		unresolved := func(reason string) agent.PermissionReview {
 			if settings.UnresolvedMode == "deny" {
@@ -108,7 +108,7 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 				return ask
 			}
 			s.mu.Lock()
-			current := s.cfg.Safety.AutoPermission.Normalized()
+			current := s.permissionReviewSettingsLocked()
 			stillCurrent := s.permissionReviewRevision.Load() == revision && current == settings
 			s.mu.Unlock()
 			if !stillCurrent {
@@ -117,7 +117,7 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 			return unresolved("Auto Review did not give a valid answer. Check its model and account in Settings.")
 		}
 		s.mu.Lock()
-		current := s.cfg.Safety.AutoPermission.Normalized()
+		current := s.permissionReviewSettingsLocked()
 		stillCurrent := s.permissionReviewRevision.Load() == revision && current == settings
 		s.mu.Unlock()
 		if !stillCurrent || ctx.Err() != nil {

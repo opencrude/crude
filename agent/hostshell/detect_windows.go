@@ -4,7 +4,6 @@ package hostshell
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -14,24 +13,25 @@ import (
 // detect lists the shells installed on this machine: PowerShell 7 before
 // Windows PowerShell 5.1, which ships with every Windows but is no longer
 // developed, then Command Prompt, Git Bash and WSL.
-func detect() []ttypes.TerminalShell {
+func detect(env SearchEnvironment) []ttypes.TerminalShell {
 	var shells []ttypes.TerminalShell
 	add := func(id, label string, path string, loginArgs, args []string) {
 		if path != "" {
 			shells = append(shells, ttypes.TerminalShell{ID: id, Label: label, Path: path, LoginArgs: loginArgs, Args: args})
 		}
 	}
-	programFiles := []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramW6432"), os.Getenv("ProgramFiles(x86)")}
-	add("pwsh", "PowerShell 7", firstExecutable([]string{"pwsh.exe"}, installedPaths(programFiles, `PowerShell\7\pwsh.exe`, `PowerShell\7-preview\pwsh.exe`)), nil, nil)
-	add("powershell", "Windows PowerShell", firstExecutable([]string{"powershell.exe"}, systemPaths(`WindowsPowerShell\v1.0\powershell.exe`)), nil, nil)
-	add("cmd", "Command Prompt", commandPromptPath(), nil, nil)
-	gitBash := installedPaths(append(programFiles, filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs")), `Git\bin\bash.exe`)
+	programFiles := []string{env.values[searchProgramFiles], env.values[searchProgramW6432], env.values[searchProgramFilesX86]}
+	add("pwsh", "PowerShell 7", env.firstExecutable("pwsh.exe", installedPaths(programFiles, `PowerShell\7\pwsh.exe`, `PowerShell\7-preview\pwsh.exe`)), nil, nil)
+	add("powershell", "Windows PowerShell", env.firstExecutable("powershell.exe", env.systemPaths(`WindowsPowerShell\v1.0\powershell.exe`)), nil, nil)
+	add("cmd", "Command Prompt", env.commandPromptPath(), nil, nil)
+	local := env.values[searchLocalAppData]
+	gitBash := installedPaths(append(programFiles, filepath.Join(local, "Programs")), `Git\bin\bash.exe`)
 	// System32\bash.exe is the WSL launcher, so Git Bash is located from its
 	// installation or git.exe, never from PATH bash. Git for Windows places
 	// its real git.exe in mingw32\bin or mingw64\bin, while the shell wrapper
 	// remains in the installation's bin directory.
 	// https://gitforwindows.org/git-wrapper.html
-	if git, err := exec.LookPath("git.exe"); err == nil {
+	if git := env.LookPath("git.exe"); git != "" {
 		bin := filepath.Dir(git)
 		root := filepath.Dir(bin)
 		if strings.EqualFold(filepath.Base(bin), "bin") &&
@@ -42,25 +42,25 @@ func detect() []ttypes.TerminalShell {
 	}
 	// The Windows installer puts a Git Bash in the user's own profile when the
 	// machine has none. It is private to Crude and needs no PATH entry.
-	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+	if local != "" {
 		gitBash = append(gitBash, filepath.Join(local, "Crude", "git", "bin", "bash.exe"))
 	}
-	add("git-bash", "Git Bash", firstExecutable(nil, gitBash), []string{"--login"}, []string{"-i"})
-	add("wsl", "WSL", firstExecutable(nil, systemPaths("wsl.exe")), nil, nil)
+	add("git-bash", "Git Bash", env.firstExecutable("", gitBash), []string{"--login"}, []string{"-i"})
+	add("wsl", "WSL", env.firstExecutable("", env.systemPaths("wsl.exe")), nil, nil)
 	return shells
 }
 
-func commandPromptPath() string {
-	if path := os.Getenv("ComSpec"); isFile(path) {
+func (e SearchEnvironment) commandPromptPath() string {
+	if path := e.values[searchComSpec]; filepath.IsAbs(path) && isFile(path) {
 		return path
 	}
-	return firstExecutable([]string{"cmd.exe"}, systemPaths("cmd.exe"))
+	return e.firstExecutable("cmd.exe", e.systemPaths("cmd.exe"))
 }
 
 func installedPaths(roots []string, relatives ...string) []string {
 	var out []string
 	for _, root := range roots {
-		if root == "" {
+		if !filepath.IsAbs(root) {
 			continue
 		}
 		for _, relative := range relatives {
@@ -70,9 +70,9 @@ func installedPaths(roots []string, relatives ...string) []string {
 	return out
 }
 
-func systemPaths(relative string) []string {
-	root := os.Getenv("SystemRoot")
-	if root == "" {
+func (e SearchEnvironment) systemPaths(relative string) []string {
+	root := e.values[searchSystemRoot]
+	if !filepath.IsAbs(root) {
 		return nil
 	}
 	return []string{filepath.Join(root, "System32", relative)}
@@ -80,15 +80,37 @@ func systemPaths(relative string) []string {
 
 // firstExecutable prefers PATH (the user's chosen installation, including the
 // Microsoft Store alias for PowerShell) and then well-known install paths.
-func firstExecutable(names, paths []string) string {
-	for _, name := range names {
-		if path, err := exec.LookPath(name); err == nil {
+func (e SearchEnvironment) firstExecutable(name string, paths []string) string {
+	if path := e.LookPath(name); path != "" {
+		return path
+	}
+	for _, path := range paths {
+		if filepath.IsAbs(path) && isFile(path) {
 			return path
 		}
 	}
-	for _, path := range paths {
+	return ""
+}
+
+func (e SearchEnvironment) executable(path string) string {
+	if filepath.Ext(path) != "" {
 		if isFile(path) {
 			return path
+		}
+		return ""
+	}
+	exts := e.values[searchPathExt]
+	if exts == "" {
+		exts = ".COM;.EXE"
+	}
+	for ext := range strings.SplitSeq(exts, ";") {
+		switch strings.ToUpper(strings.TrimPrefix(ext, ".")) {
+		case "COM", "EXE":
+			// A direct PTY launch uses CreateProcess, not file associations
+			// or a command interpreter for script extensions.
+			if candidate := path + "." + strings.TrimPrefix(ext, "."); isFile(candidate) {
+				return candidate
+			}
 		}
 	}
 	return ""

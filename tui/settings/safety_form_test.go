@@ -152,3 +152,37 @@ func TestAutoReviewerCannotEnableWithoutExplicitConnectionOrBypassRestrictionsCa
 		t.Fatal("instructions exceeding the backend cap were accepted")
 	}
 }
+
+func TestBackgroundAgentFormsUseErrandWithoutStoringCopiedDefaults(t *testing.T) {
+	current := modeltypes.AppSettings{
+		Accounts: map[string]provider.Account{"errand": {ID: "errand", ProviderID: "openai", Label: "Errand account"}},
+		Agents: modeltypes.AgentsSettings{Categories: map[string]modeltypes.CategorySettings{
+			"default":               {AccountID: "different", Model: "main-model"},
+			modeltypes.ErrandRoleID: {AccountID: "errand", Model: "errand-test-model"},
+		}},
+	}
+	m := New(theme.DefaultDark(), current, nil)
+	s := NewSurface(theme.DefaultDark(), m)
+	m.SelectCategory(catAgents)
+	c := s.agents
+	for _, key := range []string{"role/memory", "role/auto-review"} {
+		c.begin(key, false)
+		account, model := m.backgroundBinding(c.draft)
+		if account != "errand" || model != "errand-test-model" || !strings.Contains(c.draft.Field(fieldModel).Placeholder, "errand-test-model") {
+			t.Fatalf("%s did not show Errand inheritance: %q / %q", key, account, model)
+		}
+		if key == "role/auto-review" {
+			if ui.BoolFieldValue(c.draft.Field("agent-enabled")) {
+				t.Fatal("Errand enabled Auto Review without consent")
+			}
+			c.draft.SetValue("agent-enabled", ui.StringValue("on"))
+		}
+		if !c.apply() {
+			t.Fatalf("cannot apply %s with inherited binding", key)
+		}
+	}
+	got := m.AppSettings()
+	if got.Safety.AutoPermission.Enabled != "on" || got.Safety.AutoPermission.AccountID != "" || got.Safety.AutoPermission.Model != "" || got.Memory.MemoryCategory.AccountID != "" || got.Memory.MemoryCategory.Model != "" {
+		t.Fatal("settings saved a copy of inherited defaults")
+	}
+}

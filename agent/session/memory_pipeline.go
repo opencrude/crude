@@ -534,8 +534,7 @@ func buildTranscript(turns []memory.HistoryHit) string {
 }
 
 // memoryCompleter builds the one-shot completion function for background
-// jobs: the memory agent's provider/model, which inherits the main agent
-// live unless configured otherwise.
+// jobs. Memory keeps its own request settings; unset account/model follow Errand.
 func (s *Session) memoryCompleter() (func(context.Context, string, string) (string, error), error) {
 	s.mu.Lock()
 	cfg := s.cfg

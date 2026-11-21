@@ -82,3 +82,13 @@ func (w *Workspace) ListSavedWorkspaces(ctx context.Context) ([]workspace.Worksp
 	err := w.call(ctx, coreprotocol.SavedWorkspaces, &coreprotocol.Empty{}, &out)
 	return out, err
 }
+
+func (w *Workspace) ReadWorkspaceActivity(ctx context.Context) (map[string]workspace.WorkspaceActivity, error) {
+	var out coreprotocol.WorkspaceActivities
+	err := w.callCancellable(ctx, coreprotocol.SavedWorkspaceActivity, &coreprotocol.Empty{}, &out)
+	return out, err
+}
+
+// WorkspaceCatalogNamespace is the profile's immutable backend namespace, not
+// the path or workspace ID (both can be identical on disjoint hosts).
+func (w *Workspace) WorkspaceCatalogNamespace() string { return w.namespace }

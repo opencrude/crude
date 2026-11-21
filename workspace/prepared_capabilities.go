@@ -148,6 +148,9 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 		}
 	case "set-secrets":
 		err = service.SetSecrets(ctx, action.Arguments)
+	case captypes.SetWebSearchFallback:
+		err = applyWebSearchFallback(&working, action)
+		persist = err == nil
 	case "save-source":
 		if action.Source == nil || action.Source.ID == "" || action.Source.Location == "" {
 			err = errors.New("source needs an identity and location")
@@ -353,6 +356,10 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 			}
 			published, err = p.commit(ctx, before, working, action.Scope)
 			if err == nil {
+				if action.Operation == captypes.SetWebSearchFallback {
+					service.SetPublishedWebSearchFallback(published.Capabilities.WebSearchFallback)
+					return service.Snapshot(), entries, content, published, nil
+				}
 				effective := published
 				if action.Scope == captypes.ScopeApplication {
 					effective = types.MergeAppWorkspace(published, p.overrides)

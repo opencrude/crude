@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"crude/agent/sessiondb"
+	"crude/types"
 )
 
 // Fork copies this session's conversation into a new saved session id under
@@ -18,9 +19,14 @@ func (s *Session) Fork(dir, id string) error {
 	if s == nil || s.db == nil {
 		return errors.New("this session has no saved history to fork")
 	}
-	name, err := allocateAgentName(s.nameHome)
-	if err != nil {
-		return fmt.Errorf("allocate agent name: %w", err)
+	s.mu.Lock()
+	name := types.AgentNameForRole(s.selectedMainAgent, "")
+	s.mu.Unlock()
+	if name == "" {
+		var err error
+		if name, err = allocateAgentName(s.nameHome); err != nil {
+			return fmt.Errorf("allocate agent name: %w", err)
+		}
 	}
 	// Lock order matches turn admission: runner, then turn, then recovery and
 	// compaction state.

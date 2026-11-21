@@ -321,7 +321,7 @@ func (m *predictionSettingsVisualModel) observe() (bool, error) {
 		if want.draftMode == types.PredictionAsk {
 			label = "When I ask"
 		}
-		if !strings.Contains(paint, "Aeron suggestions") || !strings.Contains(paint, label) {
+		if !strings.Contains(paint, "Errand suggestions") || !strings.Contains(paint, label) {
 			return false, fmt.Errorf("native prediction row does not paint literal AI predictions / %s: form=%+v scroll=%d viewport=%d mode=%+v\n%s",
 				label, form.Bounds(), form.Scroll().Offset(), form.Scroll().Viewport(),
 				form.Field("prediction.mode").Bounds(), paint)
@@ -373,7 +373,7 @@ func runPredictionSettingsVisual(t *testing.T, headless bool, width, height int)
 		cfg.AccountManager = provider.NewAccountManager(cfg.Accounts, nil)
 		binding, err := cfg.SuggestionCompleter()
 		if err != nil || binding.ConnectionIdentity == "" {
-			t.Fatal("fixture could not bind its memory-only Aeron connection")
+			t.Fatal("fixture could not bind its memory-only Errand connection")
 		}
 		connectionIdentity = binding.ConnectionIdentity
 	})

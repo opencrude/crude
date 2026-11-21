@@ -49,12 +49,25 @@ func TestRemoteStoredCredentialsProduceExplicitKeep(t *testing.T) {
 
 func TestRemoteSettingsExposeCoreTerminalShells(t *testing.T) {
 	shells := []types.TerminalShell{{ID: "zsh", Label: "Zsh", Path: "/bin/zsh", LoginArgs: []string{"-l"}}}
+	agentShells := []types.TerminalShell{{ID: "bash", Label: "Bash", Path: "/usr/bin/bash", Args: []string{"-i"}}}
 	w := &Workspace{}
 	w.settings = &settingsReplica{w: w}
-	w.settings.install(settingsSnapshot{fetch: coreprotocol.SettingsFetchResult{TerminalShells: shells}})
+	w.settings.install(settingsSnapshot{fetch: coreprotocol.SettingsFetchResult{TerminalShells: shells, AgentShells: agentShells}})
 	for _, value := range []types.AppSettings{w.AppDefaults(), w.LoadAppSettings()} {
 		if len(value.TerminalShells) != 1 || value.TerminalShells[0].Path != "/bin/zsh" {
 			t.Fatalf("settings form lost the core's shells: %+v", value.TerminalShells)
 		}
+		if len(value.AgentShells) != 1 || value.AgentShells[0].Path != "/usr/bin/bash" {
+			t.Fatalf("agent shell choices were replaced by terminal choices: %+v", value.AgentShells)
+		}
+		raw, err := json.Marshal(value)
+		if err != nil || strings.Contains(string(raw), "/bin/zsh") || strings.Contains(string(raw), "/usr/bin/bash") {
+			t.Fatalf("shell observations entered persisted settings: %v", err)
+		}
+		value.TerminalShells[0].LoginArgs[0] = "changed"
+		value.AgentShells[0].Args[0] = "changed"
+	}
+	if shells[0].LoginArgs[0] != "-l" || agentShells[0].Args[0] != "-i" {
+		t.Fatal("exposed shell metadata aliases the connected snapshot")
 	}
 }

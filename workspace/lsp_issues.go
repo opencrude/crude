@@ -10,7 +10,7 @@ import (
 
 // Language-server issues are derived on the core from the one LSP owner, so
 // they exist without an attached shell and no shell writes them. Each issue
-// that a person or the workspace Aeron can act on is marked Investigate. A
+// that a person or the workspace Errand can act on is marked Investigate. A
 // server that Crude is restarting by itself is not an issue yet: the restart
 // budget decides when it needs help.
 const (
@@ -62,7 +62,7 @@ func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
 		if lspResultsSuspect(server) {
 			// Summary and detail do not carry the counts. The counts change
 			// while Crude checks files; the issue must stay the same report so
-			// that it settles and the workspace Aeron hears about it once.
+			// that it settles and the workspace Errand hears about it once.
 			// diagnostics.workspace shows the current counts.
 			out = append(out, ttypes.IssueSnapshot{
 				ID: lspResultsIssuePrefix + server.ID, Owner: owner, Severity: ttypes.SeverityWarning,
@@ -78,7 +78,7 @@ func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
 // lspResultsSuspect is the one structural rule for a server that cannot see
 // the project: errors in at least one in five of the files it checked. The
 // project's only C header with a missing include is one file of one, so one
-// file counts. The workspace Aeron tells a misconfiguration from errors in
+// file counts. The workspace Errand tells a misconfiguration from errors in
 // the user's code and asks only about the first. The rule applies only to
 // servers whose closed files Crude checks, because a server that reports the
 // project itself sends results only for files with problems.

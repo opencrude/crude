@@ -1060,9 +1060,9 @@ existing half-block body. Color-profile downsampling disables Kitty because it
 would corrupt placeholder identity. Sixel consumes these markers before terminal
 colour conversion and does not need true-colour text output.
 
-`tea.NewTerminalImage` copies bounded PNG bytes, retains the matching immutable
-decoded pixels and assigns an image ID on the off-UI image worker. Each
-independently zoomable pane uses its own ID.
+`tea.NewTerminalImage` assigns an image ID on the off-UI image worker. Kitty
+needs bounded PNG bytes; Sixel uses immutable decoded pixels and does not need
+a PNG. Each independently zoomable pane uses its own ID.
 `tea.View.Images` is the complete desired
 resource/protocol/placement set paired with the completed cell view. Bubble Tea
 snapshots descriptors synchronously but uploads/reconciles only at its single
@@ -1084,28 +1084,51 @@ or timed-out Kitty query does not disable Sixel. Confirmed Kitty remains preferr
 No terminal-name or environment-variable guess enables graphics. Measured cell
 geometry is required for both protocols, including Windows Terminal 1.22+.
 
+Cached Sixel rasters still need a full DCS when their screen position changes.
+For file-image zoom/pan, image-window move/resize and divider drags that change
+an image pane's layout, the shell uses the existing cell preview during motion.
+The input owner updates the viewport or layout on every event; the cell preview
+paints that same current geometry. Only the affected Sixel views omit their
+native placements and markers. Other images, Kitty and frame cadence do not
+switch modes. A held drag keeps its preview even during a pause. Release or
+capture loss settles a drag; 180 ms of quiet settles wheel and key bursts.
+At most one settle wake is outstanding. An
+unmounted image or a replaced attachment is not reopened by the wake.
+
 For Sixel, Bubble Tea derives rectangular runs only from surviving compositor
 markers during the existing synchronous cell snapshot, then substitutes spaces.
-It never resamples pixels on Update. The single writer resamples only the visible
-crop with `x/image/draw`, flattens alpha over the composed surface colour and
-encodes through `x/ansi/sixel`. Its adaptive 256-colour palette uses Go's standard
-Floyd–Steinberg diffusion for opaque images, reducing colour bands without a
-second quantizer or terminal parser. Pixel detail is native, but Sixel cannot
-preserve Kitty's full RGB colour range.
+It never resamples pixels on Update or the terminal writer. The writer submits
+the latest terminal-clipped tiles to one renderer-owned worker and can publish
+the composed text while a cold raster is pending. A confirmed Sixel terminal
+uses decoded pixels directly, without encoding a PNG for Kitty. The worker
+resamples only the visible crop with `x/image/draw`, flattens alpha over the composed surface colour
+and encodes it through `x/ansi/sixel`. Its adaptive 256-colour palette retains
+Floyd–Steinberg diffusion for opaque images. Exact nearest-colour lookup
+discards palette entries that cannot win in a region of colour space, and
+encoding stages one six-pixel band at a time. Pixel detail is native, but
+Sixel cannot preserve Kitty's full RGB colour range.
 
-Encoded crops are cached only for the current publication; movement reuses an
-unchanged raster. Unchanged frames send nothing. Text changes on an image's rows
-restore its cached raster after the text diff, and text scrolling optimization is
-disabled while Sixel cells are present. Removal, movement and occlusion invalidate
-only exact old graphics rectangles in UV's physical-screen history, then repaint
-the latest composed text. The compositor still owns clipping and z-order.
+Only the latest desired immutable raster keys are retained. A key includes the
+resource, crop, fitted geometry and background, not its position on screen.
+Superseding a crop cancels it; a completed current crop wakes the existing paced
+writer without new input. Only that writer can publish graphics. Moving a pane
+reuses its payload if its raster key is unchanged. Unchanged frames send nothing.
+The text writer records the physical spans it writes, erases or shifts. Only
+intersected rasters need restoring; a disjoint text update on the same row does
+not send pixels. Scroll and cursor-overwrite optimizations are disabled during
+this pass so they cannot erase untracked image cells.
+Removal, movement and occlusion invalidate only exact old graphics rectangles
+in UV's physical-screen history, then repaint the latest composed text. The
+compositor still owns clipping and z-order.
 Resize, reset, screen changes and suspend/resume recreate the current graphics.
 Failed writes retain exact possibly transmitted rectangles until a successful
-repaint; failed close does not forget them. Cursor save/restore brackets graphics,
-and the unused final graphics newline is omitted to avoid bottom-edge scrolling.
-Visible Sixel rasters are capped at 2,097,152 pixels to bound the encoder's
-256-bitplane staging memory; larger previews retain the cell fallback. The shared
-297-cell coordinate limit and exact-crop rules still apply.
+repaint; failed close does not forget them. Terminal shutdown or suspend
+cancels preparation, clears owned graphics without waiting for encoding, and
+joins the worker before another terminal lifetime starts. Cursor save/restore
+brackets graphics, and the unused final graphics newline is omitted to avoid
+bottom-edge scrolling. Visible Sixel rasters are capped at 2,097,152 pixels to
+bound preparation and output; larger previews retain the cell fallback. The
+shared 297-cell coordinate limit and exact-crop rules still apply.
 
 ## 10. Key Design Decisions
 

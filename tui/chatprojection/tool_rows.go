@@ -11,6 +11,7 @@ import (
 	"crude/tui/tools"
 	"crude/tui/ui"
 	"crude/types"
+	captypes "crude/types/capability"
 )
 
 func toolRowFrameSensitive(msg types.ChatMessage) bool {
@@ -82,11 +83,26 @@ func buildProjectToolTitleLines(msg types.ChatMessage, phase string, frame, widt
 		}
 		suffix = []RowSpan{{Text: glyph, Role: ui.ColorMuted}}
 	}
+	var lines []PaintLine
 	if disclosure != DisclosureExpanded && !toolRowFrameSensitive(msg) {
-		return wrapCompactToolTitle(header, width, suffix)
+		lines = wrapCompactToolTitle(header, width, suffix)
+	} else {
+		header.Spans = append(header.Spans, suffix...)
+		lines = wrapToolTitle(header, width)
 	}
-	header.Spans = append(header.Spans, suffix...)
-	return wrapToolTitle(header, width)
+	if msg.ToolName == "web_search" && msg.ToolStatus == types.ToolStatusError && msg.ToolOutcome.Code == captypes.WebSearchFallbackAvailable {
+		label := "Set up a search fallback"
+		if rendering.VisibleWidth(label)+2 > width {
+			label = "Search settings"
+		}
+		if rendering.VisibleWidth(label)+2 <= width {
+			lines = append(lines, PaintLine{Spans: []RowSpan{
+				{Text: "│ ", Role: ui.ColorMuted},
+				{Text: label, Role: ui.ColorAccent, Attr: cell.AttrUnderline, Action: &ui.Action{ID: ChatWebSearchFallbackActionID}},
+			}})
+		}
+	}
+	return lines
 }
 
 // Closed results use at most two title rows on the actual terminal grid.

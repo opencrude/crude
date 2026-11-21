@@ -374,20 +374,20 @@ func TestRemoteWorkspaceAeronIsEnsuredAndKeptOutOfAgentList(t *testing.T) {
 	shell.app.LastInteractionTime = time.Now().Add(-aeronEnsureQuietPeriod - time.Second)
 	cmd := shell.app.workspaceAeronTick(time.Now())
 	if cmd == nil {
-		t.Fatal("the workspace Aeron was not due after the shell became quiet")
+		t.Fatal("the workspace Errand was not due after the shell became quiet")
 	}
 	runAppCommand(t, shell.app, cmd)
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return shell.app.workspaceAeronAgent() != "" })
 	id := shell.app.workspaceAeronAgent()
 	if !shell.app.AgentView.IsHidden(id) {
-		t.Fatal("the workspace Aeron took the user's tab")
+		t.Fatal("the workspace Errand took the user's tab")
 	}
 	requireAeronAbsentFromAgentList(t, shell.app)
 	if shell.app.agentStatus(id) != "idle" {
-		t.Fatal("ensuring Aeron unexpectedly started work")
+		t.Fatal("ensuring Errand unexpectedly started work")
 	}
 	if again := shell.app.workspaceAeronTick(time.Now()); again != nil {
-		t.Fatal("a second tick created or resumed the workspace Aeron again")
+		t.Fatal("a second tick created or resumed the workspace Errand again")
 	}
 }
 

@@ -43,7 +43,7 @@ func TestAeronSuggestionSpeedUsesResolvedAccountAndMarksUnavailableChoice(t *tes
 		name, account, saved string
 		options              []ui.FormOption
 	}{
-		{"inherit Aeron's protocol", "", "", []ui.FormOption{{ID: "standard", Label: "Standard"}, {ID: "fast", Label: "Fast"}}},
+		{"inherit Errand's protocol", "", "", []ui.FormOption{{ID: "standard", Label: "Standard"}, {ID: "fast", Label: "Fast"}}},
 		{"explicit protocol without tiers", "separate", "", nil},
 		{"saved tier is not offered", "separate", "fast", []ui.FormOption{{ID: "fast", Label: "Fast (not offered)"}}},
 	} {
@@ -125,7 +125,7 @@ func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
 	request := accountModelsRequest(t, open, "separate")
 	if request.ProviderID != "openai" || request.StandardID != "ollama" || request.BaseURL != "https://suggestions.example.invalid" ||
 		!field.Loading || field.LoadMessage != "Fetching models…" {
-		t.Fatalf("Aeron prefetch = account %q, protocol %q, URL %q; loading=%t %q", request.AccountID, request.StandardID, request.BaseURL, field.Loading, field.LoadMessage)
+		t.Fatalf("Errand prefetch = account %q, protocol %q, URL %q; loading=%t %q", request.AccountID, request.StandardID, request.BaseURL, field.Loading, field.LoadMessage)
 	}
 	const problem = "Cannot load models. Check the connection."
 	m.Update(ModelsErrorMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Error: problem})
@@ -142,10 +142,10 @@ func TestAeronSuggestionsFetchesModelsAndShowsTheAccountError(t *testing.T) {
 			field.Options, field.Value.String(), field.Loading, field.Errors)
 	}
 	if cmd := s.agents.begin("role/aeron", false); cmd != nil {
-		// The Model tab may still fetch Aeron's separate account. The
+		// The Model tab may still fetch Errand's separate account. The
 		// Suggestions model list already arrived and must not fetch again.
 		if _, found := findAccountModelsRequest(cmd, "separate"); found {
-			t.Fatal("reopening Aeron fetched the cached Suggestions account again")
+			t.Fatal("reopening Errand fetched the cached Suggestions account again")
 		}
 	}
 }

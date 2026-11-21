@@ -2,8 +2,6 @@
 package launcher
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -37,8 +35,10 @@ const (
 )
 
 type WorkspaceEntry struct {
-	ID, Name, Path string
-	SessionCount   int
+	ID, Name, Path, DisplayPath string
+	SessionCount                int
+	activity                    workspace.WorkspaceActivity
+	badges                      ui.RowBadges
 }
 type Item struct {
 	Kind      ItemKind
@@ -60,7 +60,7 @@ type Screen struct {
 	ui.Base
 	tokens                    *ui.TokenSet
 	registry                  *ui.ActionRegistry
-	cwd, home                 string
+	cwd, cwdDisplay           string
 	workspaces                []WorkspaceEntry
 	filtered                  []int
 	selected                  int // 0: new session, 1: open workspace, 2+: workspace index + 2
@@ -89,7 +89,6 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th), registry: ui.DefaultRegistry()}
-	s.home, _ = os.UserHomeDir()
 	s.newSession = newLauncherAction(s, NewSessionID, ItemNewSession, " New Session", "")
 	s.openWorkspace = newLauncherAction(s, NewWorkspaceID, ItemOpenFolder, "📁 New Workspace", "Open a folder as a workspace")
 	s.split = ui.NewSplitModel(ui.Horizontal)
@@ -171,7 +170,7 @@ func (s *Screen) SetAnimation(frame int, _ float64) bool {
 }
 func (s *Screen) Loading() bool { return s.loading }
 func (s *Screen) BeginLoad(cwd string) {
-	if !sameWorkspacePath(cwd, s.cwd) {
+	if cwd != s.cwd {
 		s.filterOn = false
 		s.search.field.SetValue("")
 		s.selected = 0
@@ -200,36 +199,38 @@ func (s *Screen) FinishLoad(cwd string, infos []workspace.WorkspaceInfo, err err
 }
 func (s *Screen) SetData(cwd string, infos []workspace.WorkspaceInfo) {
 	selectedPath := s.SelectedWorkspacePath()
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
-		abs = cwd
-	}
-	s.cwd = abs
+	s.cwd, s.cwdDisplay = cwd, cwd
 	s.workspaces = nil
 	for _, w := range infos {
-		if w.ID == workspace.WorkspaceID(abs) || sameWorkspacePath(w.ProjectDir, abs) {
+		if w.ProjectDir == cwd {
+			s.cwdDisplay = w.ShortPath()
 			continue
 		}
-		s.workspaces = append(s.workspaces, WorkspaceEntry{ID: w.ID, Name: workspace.WorkspaceDisplayName(w), Path: w.ProjectDir, SessionCount: w.SessionCount})
+		s.workspaces = append(s.workspaces, WorkspaceEntry{
+			ID: w.ID, Name: workspace.WorkspaceDisplayName(w), Path: w.ProjectDir, DisplayPath: w.ShortPath(), SessionCount: w.SessionCount,
+		})
 	}
 	for i, w := range s.workspaces {
-		if selectedPath != "" && sameWorkspacePath(w.Path, selectedPath) {
+		if selectedPath != "" && w.Path == selectedPath {
 			s.selected = i + 2
 			break
 		}
 	}
 	s.rebuildItems()
 }
-func sameWorkspacePath(a, b string) bool {
-	if a == "" || b == "" {
-		return false
+
+// SetWorkspaceActivity changes badges only. The existing virtual list keeps
+// the same resources, focus, query, and scroll geometry.
+func (s *Screen) SetWorkspaceActivity(activity map[string]workspace.WorkspaceActivity) bool {
+	changed := false
+	for i := range s.workspaces {
+		row := &s.workspaces[i]
+		if summary := activity[row.ID]; row.activity != summary {
+			row.activity, row.badges = summary, WorkspaceBadges(summary)
+			changed = true
+		}
 	}
-	aa, ea := filepath.Abs(a)
-	bb, eb := filepath.Abs(b)
-	if ea != nil || eb != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
-	}
-	return filepath.Clean(aa) == filepath.Clean(bb)
+	return changed
 }
 func (s *Screen) FilterActive() bool { return s.filterOn }
 func (s *Screen) Query() string      { return s.search.field.Value() }
@@ -269,7 +270,8 @@ func (s *Screen) rebuildItems() {
 	query := strings.ToLower(strings.TrimSpace(s.Query()))
 	s.filtered = nil
 	for i, w := range s.workspaces {
-		if query == "" || strings.Contains(strings.ToLower(w.Name), query) || strings.Contains(strings.ToLower(w.Path), query) {
+		if query == "" || strings.Contains(strings.ToLower(w.Name), query) ||
+			strings.Contains(strings.ToLower(w.Path), query) || strings.Contains(strings.ToLower(w.DisplayPath), query) {
 			s.filtered = append(s.filtered, i)
 		}
 	}

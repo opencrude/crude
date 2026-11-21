@@ -19,8 +19,8 @@ const (
 )
 
 // TerminalImage is an immutable PNG resource. Construct it off the Update goroutine
-// and retain it across frames; the terminal writer prepares protocol output only
-// when needed.
+// and retain it across frames. The renderer prepares protocol output only when
+// needed and its single writer owns publication.
 // Its zero value is not a valid resource.
 type TerminalImage struct {
 	id     uint32
@@ -28,12 +28,11 @@ type TerminalImage struct {
 	pixels image.Image
 }
 
-// NewTerminalImage copies PNG data and assigns a random nonzero terminal image ID.
-// It returns nil for empty data, data larger than 64 MiB, or unavailable entropy.
-// The caller supplies a valid, bounded PNG and its decoded pixels. Pixels are
-// retained, not copied, and must remain immutable. Kitty needs only the PNG.
+// NewTerminalImage assigns an immutable image ID and copies any supplied PNG.
+// Kitty needs a bounded PNG; Sixel needs only the decoded pixels. At least one
+// must be present. Supplied pixels are retained, not copied, and must be immutable.
 func NewTerminalImage(pngData []byte, pixels image.Image) *TerminalImage {
-	if len(pngData) == 0 || len(pngData) > maxTerminalImageBytes {
+	if len(pngData) == 0 && pixels == nil || len(pngData) > maxTerminalImageBytes {
 		return nil
 	}
 	var b [4]byte
@@ -71,13 +70,17 @@ type ImagePlacement struct {
 	// Otherwise the origin must be nonnegative and both sizes positive. Values
 	// must fit the protocol's unsigned 32-bit fields. The terminal intersects
 	// the rectangle with the image bounds. Kitty selects it without reupload;
-	// Sixel encodes the visible crop on the terminal writer.
+	// Sixel prepares only the visible crop.
 	SourceX, SourceY, SourceWidth, SourceHeight int
 }
 
+// Supports reports whether this immutable resource can be painted by protocol.
+func (i *TerminalImage) Supports(protocol ImageProtocol) bool {
+	return i != nil && i.id != 0 && (protocol == ImageKitty && i.png != "" || protocol == ImageSixel && i.pixels != nil)
+}
+
 func (p ImagePlacement) valid() bool {
-	if p.Image == nil || p.Image.id == 0 || len(p.Image.png) == 0 || p.Columns <= 0 || p.Rows <= 0 ||
-		(p.Protocol != ImageKitty && p.Protocol != ImageSixel) {
+	if !p.Image.Supports(p.Protocol) || p.Columns <= 0 || p.Rows <= 0 {
 		return false
 	}
 	if p.Protocol == ImageSixel && (p.CellWidth <= 0 || p.CellWidth > 1024 || p.CellHeight <= 0 || p.CellHeight > 1024) {

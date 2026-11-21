@@ -2,15 +2,21 @@ package core
 
 import (
 	"context"
-	"crude/agent/hostshell"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"crude/agent/hostshell"
 	"crude/agent/provider"
 	"crude/agent/session"
+	"crude/core/client"
 	"crude/core/protocol"
+	"crude/core/wire"
 	"crude/network"
 	"crude/types"
 	captypes "crude/types/capability"
@@ -182,4 +188,91 @@ func TestSettingsFetchCarriesCoreHostTerminalShells(t *testing.T) {
 	if want := hostshell.Detect(); len(want) == 0 || !reflect.DeepEqual(out.TerminalShells, want) {
 		t.Fatalf("fetched shells = %+v; want %+v", out.TerminalShells, want)
 	}
+}
+
+func TestSettingsShellDiscoveryTracksLocalAttachOnTheExistingTopic(t *testing.T) {
+	r := failureRuntime(t)
+	root := t.TempDir()
+	hostDir, updateDir := t.TempDir(), t.TempDir()
+	name, pathKey := "bash", "PATH"
+	if runtime.GOOS == "windows" {
+		name, pathKey = "pwsh.exe", "Path"
+	}
+	hostPath, updatePath := filepath.Join(hostDir, name), filepath.Join(updateDir, name)
+	for _, path := range []string{hostPath, updatePath} {
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", hostDir)
+	t.Setenv("SHELL", "")
+	remote := attachingEnvironmentClient(t, r, corewire.CarrierSSH, "settings-core-host")
+	local := attachingEnvironmentClient(t, r, corewire.CarrierLocal, "settings-host-attach")
+	attach := func(c *coreclient.Client, env []string) string {
+		t.Helper()
+		var out coreprotocol.AttachResult
+		if err := c.Call(t.Context(), "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root, Environment: env}, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.WorkspaceID
+	}
+	id := attach(remote, nil)
+	fetch := func(c *coreclient.Client) coreprotocol.SettingsFetchResult {
+		t.Helper()
+		var out coreprotocol.SettingsFetchResult
+		if err := c.Call(t.Context(), id, coreprotocol.SettingsFetch, &coreprotocol.Empty{}, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	requirePath := func(out coreprotocol.SettingsFetchResult, path string) {
+		t.Helper()
+		if len(out.TerminalShells) == 0 || out.TerminalShells[0].Path != path {
+			t.Fatalf("Terminal shell options = %+v; first command must be %q", out.TerminalShells, path)
+		}
+		if len(out.AgentShells) == 0 || out.AgentShells[0].Path != hostPath {
+			t.Fatalf("agent shell options = %+v; launch still uses the core process's shell %q", out.AgentShells, hostPath)
+		}
+	}
+	requirePath(fetch(remote), hostPath)
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	published := make(chan coreprotocol.SettingsFetchResult, 8)
+	sub := remote.Subscribe(ctx, id, coreprotocol.TopicSettings, "", func(_ coreprotocol.TopicHeader, body []byte) error {
+		var state coreprotocol.WorkspaceState
+		if err := coreprotocol.Decode(body, &state); err != nil {
+			return err
+		}
+		if state.Settings != nil {
+			select {
+			case published <- *state.Settings:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	})
+	next := func() coreprotocol.SettingsFetchResult {
+		t.Helper()
+		select {
+		case out := <-published:
+			return out
+		case <-sub.Done():
+			t.Fatal("settings topic closed without the expected observation")
+		case <-ctx.Done():
+			t.Fatal("settings topic did not publish the expected observation")
+		}
+		return coreprotocol.SettingsFetchResult{}
+	}
+	requirePath(next(), hostPath)
+
+	// A local attach supplies a new host environment to this retained
+	// workspace. An already subscribed SSH shell observes the executable
+	// the workspace will use without sending any environment of its own.
+	if got := attach(local, []string{pathKey + "=" + updateDir}); got != id {
+		t.Fatal("local attach replaced the retained workspace")
+	}
+	requirePath(fetch(local), updatePath)
+	requirePath(next(), updatePath)
+	requirePath(fetch(remote), updatePath)
 }

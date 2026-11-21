@@ -695,7 +695,7 @@ func TestDeletedFilesLeaveProblems(t *testing.T) {
 
 // Found after a real core restart: pyright stopped when it was idle, and its
 // issue resolved within seconds although its errors stayed in Problems, so
-// Aeron never heard about them. Results that Crude keeps for a stopped server
+// Errand never heard about them. Results that Crude keeps for a stopped server
 // keep raising the issue until the files change.
 func TestLSPIssueOutlivesAnIdleServerStop(t *testing.T) {
 	m, _, root := probeManager(t)
@@ -771,7 +771,7 @@ func (c *interruptingCheckClient) AwaitDiagnostics(ctx context.Context, path str
 // Found live: a build that wrote files while Crude checked closed files made
 // the first waits end early. Crude counted that as a silent server, gave up
 // on it after two files and marked the rest "did not answer", so the
-// project's C header never reached Problems or Aeron.
+// project's C header never reached Problems or Errand.
 func TestProjectCheckWaitsAgainWhenAnOutsideChangeInterruptsIt(t *testing.T) {
 	m, r, root := probeManager(t)
 	m.SetRuntime(interruptingCheckRuntime{lifecycleRuntime: r, manager: m, root: root})

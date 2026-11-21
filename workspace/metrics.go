@@ -21,7 +21,7 @@ var (
 	projectSearches = metrics.NewLatency(metrics.Meta{Name: "files.search", Group: metrics.GroupFiles, Title: "Find in files",
 		Help: "Project-wide text searches from start to the last result.", Warn: 1_000_000, Crit: 5_000_000})
 
-	// Aeron suggestion stages in the core, one observation per answered
+	// Errand suggestion stages in the core, one observation per answered
 	// request. Reused answers (cache, follow-ups) record only the total.
 	suggestContext = metrics.NewLatency(metrics.Meta{Name: "suggest.context", Group: metrics.GroupSuggest, Title: "Suggestion context",
 		Help: "Collecting code, edits, problems and related code from memory. It never waits for a server.", Warn: 5_000, Crit: 20_000})

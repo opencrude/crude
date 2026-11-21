@@ -21,14 +21,14 @@ import (
 
 // Run sequentially with scripts/tuishot.sh and a prebuilt viewmodel test image
 // (CRUDE_VISUAL_AERON=1). The pointer rests on the file tab and F4 checks its
-// tooltip. F3 releases the fixture provider and F4 checks Aeron's modal
+// tooltip. F3 releases the fixture provider and F4 checks Errand's modal
 // question over the unchanged main tab. Its own Cancel action closes it with the
 // normal question behavior and F4 checks that it closed. F5 opens Workspace.
 // Clicking its panel header link and F4
 // checks its normal agent tab and composer. F9 checks all four and exits.
 func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_AERON") != "1" {
-		t.Skip("dedicated sequential Aeron and tooltip capture")
+		t.Skip("dedicated sequential Errand and tooltip capture")
 	}
 	release := make(chan struct{})
 	var once sync.Once
@@ -89,7 +89,7 @@ func TestAeronAndTabTooltipVisualAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := "AERON_VISUAL_SUCCESS: tooltip, modal question, closed, Aeron tab\n"
+	result := "AERON_VISUAL_SUCCESS: tooltip, modal question, closed, Errand tab\n"
 	if model.failure != nil || model.phase != 4 {
 		result = fmt.Sprintf("AERON_VISUAL_FAILURE: reached %d/4 boundaries: %v\n", model.phase, model.failure)
 	}
@@ -128,7 +128,7 @@ func (m *aeronVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF4:
 			ok := false
 			draft := m.Input.Value() == "Main session draft stays here."
-			// Aeron never takes the user's tab: it stays minimized and its
+			// Errand never takes the user's tab: it stays minimized and its
 			// tab is not selected.
 			aeron := m.workspaceAeronAgent()
 			kept := m.AgentView.IsHidden(aeron) && m.Win.ActiveTab() != nil && m.Win.ActiveTab().Title != m.agentTabTitle(aeron)
@@ -143,7 +143,7 @@ func (m *aeronVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				ok = len(m.agentPrompts) == 0 && !m.overlayHost.IsOpen(ui.OverlayAgentPrompt) && kept && draft
 			case 3:
 				ok = m.AgentView.ActiveID() == aeron && m.ActiveSession == m.ws.SessionsByAgent()[aeron] &&
-					!strings.Contains(ansi.Strip(m.View().RenderContent()), "Give Aeron a task")
+					!strings.Contains(ansi.Strip(m.View().RenderContent()), "Give Errand a task")
 			}
 			if !ok {
 				m.failure = fmt.Errorf("phase %d: required state was not reached (prompt=%v prompts=%d active=%q kept=%v draft=%q)",

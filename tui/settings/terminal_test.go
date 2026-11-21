@@ -47,6 +47,24 @@ func TestTerminalShellChoicesNameAutoAndKeepUnknownSelection(t *testing.T) {
 	if !command.Required || command.Placeholder != "" {
 		t.Fatalf("Custom command required=%t placeholder=%q", command.Required, command.Placeholder)
 	}
+	command.Validate()
+	if !command.HasErrors() {
+		t.Fatal("empty Custom command did not report its own validation error")
+	}
+	form.SetValue(fieldTerminalShell, ui.StringValue("pwsh"))
+	if command.HasErrors() || command.Placeholder != `C:\pwsh.exe` {
+		t.Fatal("Custom validation hid the newly selected shell's help")
+	}
+	surface := NewSurface(theme.DefaultDark(), model)
+	if !surface.UpdateShellInventory(shells[1:], nil) {
+		t.Fatal("removal was not reflected in the terminal picker")
+	}
+	shell := form.Field(fieldTerminalShell)
+	if shell.Value.String() != "pwsh" || !slices.ContainsFunc(shell.Options, func(o ui.FormOption) bool {
+		return o.ID == "pwsh" && o.Label == "pwsh (not installed)"
+	}) || command.Description != "This shell is not installed. Install it or choose another shell." {
+		t.Fatal("an unavailable explicit shell lost its draft, option or guidance")
+	}
 }
 
 func TestTerminalPageFollowsInterfaceInIDEGroup(t *testing.T) {

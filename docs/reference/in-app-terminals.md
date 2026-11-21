@@ -109,9 +109,12 @@ from the effective settings it was given (`Workspace.applySettingsProjection` �
 terminal, and `startTerminalIO` receives an explicit command, arguments and
 environment with no fallback of its own.
 
-`hostshell.Detect` runs on the core's machine (which may be remote over
-`--ssh`) and returns installed shells in **Auto** preference order. Agent
-commands use the same inventory with their own Auto order (see
+`hostshell` searches the core's machine (which may be remote over `--ssh`)
+and returns shells in **Auto** preference order. The executable search and
+the new PTY use the same base environment: the latest same-host attachment
+for this workspace, or the core process if there is none. The shell client
+does not search its own disk. Agent commands use the same discovery rules
+with the core process environment and their own Auto order (see
 [background commands](background-commands.md)):
 
 | Platform | Auto order | Also offered |
@@ -120,17 +123,39 @@ commands use the same inventory with their own Auto order (see
 | macOS | `$SHELL` → zsh → bash → fish → sh | |
 | Linux/other Unix | `$SHELL` → bash → zsh → fish → sh | |
 
-The list travels to the settings form as `SettingsFetchResult.TerminalShells` /
-`AppSettings.TerminalShells` (observation metadata, `json:"-"`, never persisted).
+The typed settings fetch and the Settings topic include `TerminalShells` and
+`AgentShells` as separate observations, never persisted settings. The same
+resolver supplies launch and the preview. Host searches run on the settings
+worker, not on the actor or UI thread, and reuse a short-lived inventory for
+each search environment. Changing the local attachment's search inputs
+invalidates that inventory immediately and publishes current choices to
+connected forms. Opening Settings and saving preferences refresh the existing
+topic; there is no background polling for installations. Open dropdowns keep
+their draft and filter while the options and command help update in place.
+After Save or a page reset, the form rebases on the committed preferences
+with both shell observations still attached; they are not part of any edit.
+
 Auto names its target (`Auto (PowerShell 7)`) and the Command field previews the
-resolved executable. A selected shell that is not installed — for example one
-synced from another machine — stays visible as `zsh (not installed)` and terminal
-creation fails with guidance; it is never silently replaced. Custom requires a
-command. Login shell **On** adds each shell's own login arguments (`-l`, Git Bash
-`--login -i`); user arguments follow. **Auto** (absent) adds them only when the
-core has no environment from an attaching shell; that environment is already
-initialized, and a login profile would rebuild `PATH`. Running terminals keep
-the configuration they started with.
+resolved executable. A selected shell that is not installed, for example a
+choice synced from another machine, stays visible as `zsh (not installed)`.
+Starting a terminal fails with the next step, not a substitute shell. Custom
+requires a command; a command name is looked up on the final PTY `PATH`, and a
+full path pins that installation. Login shell **On** adds each shell's own
+login arguments (`-l`, Git Bash `--login -i`); user arguments follow. **Auto**
+(absent) adds them only when the core has no environment from an attaching
+shell; that environment is already initialized, and a login profile could
+rebuild `PATH`.
+
+A new process sees an executable replaced at the same path. If an upgrade
+changes `PATH` instead, start a new local Crude attachment from the updated
+environment; the retained core does not rewrite its process environment.
+Running terminals keep the executable and environment they started with.
+`TestTerminalReattachUsesNewShellPathWithoutRebindingExistingPTY` exercises
+the PATH change and the retained binding through native PTYs with two
+controlled installation roots.
+`TestSettingsShellDiscoveryTracksLocalAttachOnTheExistingTopic` and
+`TestConnectedSettingsShellDiscoveryKeepsOpenDraftAndSave` exercise the typed
+fetch, peer publication, retained dropdown, and sparse save without reopening.
 
 ### Terminal environment
 
@@ -142,7 +167,7 @@ one the core's own environment is the base, as before. Then the PTY adjustments
 apply, then `terminal.environment`, whose values expand `${env:NAME}` against
 the base (an unknown name is empty) and `${workspaceFolder}` to the workspace
 root, in one pass, as VS Code's `terminal.integrated.env.*` does. Crude does not
-activate environments by language; the workspace Aeron sets
+activate environments by language; the workspace Errand sets
 `terminal.environment` for a project environment when the user agrees. Agent
 commands, language servers and MCP servers still start from the core's
 environment.
@@ -656,8 +681,8 @@ stdout/stderr appears only in the captured tool/background-job channel.
 - **Terminals have their own core lane and settings-owned shells.** Terminal
   create/input/resize/control/rows run on the actor's `terminalLane`, never
   behind document/file/LSP effects on `resourceLane`. The core resolves an
-  ordinary new terminal's shell from effective `TerminalSettings` with
-  `hostshell.Detect` (Auto: PowerShell 7 → Windows PowerShell →
+  ordinary new terminal's shell from effective `TerminalSettings` and the
+  terminal launch environment (Auto: PowerShell 7 → Windows PowerShell →
   cmd; `$SHELL` first on Unix); `startTerminalIO` has no shell fallback. A
   missing selected shell fails with guidance, never a silent substitute. The
   detected list is core-host metadata (`AppSettings.TerminalShells`, `json:"-"`).

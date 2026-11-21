@@ -59,6 +59,12 @@ func (v *WorkspaceView) ListSavedWorkspaces(ctx context.Context) ([]workspace.Wo
 	return out, err
 }
 
+func (v *WorkspaceView) ReadWorkspaceActivity(ctx context.Context) (map[string]workspace.WorkspaceActivity, error) {
+	var out coreprotocol.WorkspaceActivities
+	err := v.Client.CallCancellable(ctx, v.ID, coreprotocol.SavedWorkspaceActivity, &coreprotocol.Empty{}, &out)
+	return out, err
+}
+
 // HistoryService is a transport facade, never a storage owner.
 type HistoryService struct{ view *WorkspaceView }
 

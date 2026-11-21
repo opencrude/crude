@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"encoding/json"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -80,14 +81,18 @@ func (m *App) checkInitialWorkspaceTrust() {
 }
 
 func (m *App) workspaceTrustFrame(prompt *workspaceTrustPrompt) *ui.ComponentWidget {
-	detail := prompt.owner.RootPath() + "\n\nTrusted folders can run project tools, such as language servers. These tools run code from the folder. In restricted mode, you can edit files, but Crude does not run project tools. You can change this later in Workspace settings."
+	var detail []string
+	if path := prompt.owner.RootPath(); path != "" {
+		detail = append(detail, path)
+	}
+	detail = append(detail, "Restricted mode allows editing, but not project tools.", "Change this in Workspace settings.")
 	if prompt.busy {
-		detail += "\n\nSaving your choice…"
+		detail = append(detail, "Saving your choice…")
 	} else if prompt.err != "" {
-		detail += "\n\n" + prompt.err
+		detail = append(detail, prompt.err)
 	}
 	frame := ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
-		Title: "Trust this folder?", Question: "Do you trust the authors of the files in this folder?", Detail: detail,
+		Title: "Trust this folder?", Question: "Trust lets project tools run code.", Detail: strings.Join(detail, "\n"),
 		Severity: ui.ConfirmPromptQuestion, Width: min(70, max(36, m.width-4)), FocusedIndex: 1,
 		Buttons: []ui.ConfirmButtonSpec{{Label: "Trust folder", ActionID: ui.ConfirmActionYes}, {Label: "Open in restricted mode", ActionID: ui.ConfirmActionNo}},
 	})

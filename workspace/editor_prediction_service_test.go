@@ -145,6 +145,9 @@ func TestSuggestionInsertsMultipleLinesAndReusesTheAnswer(t *testing.T) {
 	text := "func total(xs []int) int {\n\t\n}\n"
 	caret := strings.Index(text, "\t\n") + 1
 	f := newSuggestionFixture(t, text, func(input string) string {
+		// Give the model stage measurable work even on hosts with a coarse
+		// clock. This is fixture latency, not a wait for test state.
+		time.Sleep(25 * time.Millisecond)
 		return rewriteOf(input, func(region string) string {
 			return strings.Replace(region, "\t\n", "\tsum := 0\n\tfor _, x := range xs {\n\t\tsum += x\n\t}\n\treturn sum\n", 1)
 		})

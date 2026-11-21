@@ -252,10 +252,10 @@ New Session click did not produce a root agent.
 ### Findings from the workflow lane (2026-11-20)
 
 - **Lost New Session click (L15).** About two seconds after attach, the shell
-  opens the workspace Aeron in the background. That request held the shell's
+  opens the workspace Errand in the background. That request held the shell's
   one session slot for a round trip, and a New Session click in that window was
   dropped without a message. At 750 ms RTT with loss the window is seconds
-  long. The click is now kept and runs when the Aeron reply arrives; a
+  long. The click is now kept and runs when the Errand reply arrives; a
   workspace switch waits instead of failing. A remote-journey regression
   reproduces the drop. After the fix, 6 of 6 cold L15/L16 runs passed on the
   development host and 12 of 12 on the separate host.

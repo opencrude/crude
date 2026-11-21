@@ -36,6 +36,7 @@ type Screen struct {
 	img                   image.Image
 	resource              *tea.TerminalImage
 	graphics              tea.ImageProtocol
+	sixelPreview          bool
 	cellWidth, cellHeight int
 	zoom                  float64 // multiplier of the current fit scale
 	centerX, centerY      float64 // normalized source point at viewport center
@@ -48,6 +49,7 @@ type Screen struct {
 	placeholderID         uint32
 	placeholderRect       ui.Rect
 	placeholderVirtual    ui.Rect
+	emptyStatus           string
 	status                string
 	buttons               [3]*imageButton
 	children              []ui.Component
@@ -87,11 +89,19 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 // Passing nil clears the pane and releases its references. Replacement resets
 // zoom and pan. The caller must not mutate pixels after delivery.
 func (s *Screen) SetImage(img image.Image, resource *tea.TerminalImage) {
-	if img == nil || img.Bounds().Empty() {
-		resource = nil
-	}
-	s.img, s.resource = img, resource
 	s.zoom, s.centerX, s.centerY = 1, .5, .5
+	s.sixelPreview = false
+	s.SetImageResidency(img, resource, "")
+}
+
+// SetImageResidency installs or drops the pixels of the same snapshot. A nil
+// image keeps the pan and zoom anchor, and shows status until pixels return.
+func (s *Screen) SetImageResidency(img image.Image, resource *tea.TerminalImage, status string) {
+	if img == nil || img.Bounds().Empty() {
+		img, resource = nil, nil
+		s.sixelPreview = false
+	}
+	s.img, s.resource, s.emptyStatus = img, resource, status
 	s.CancelPointerCapture()
 	s.refresh()
 }
@@ -105,7 +115,28 @@ func (s *Screen) SetImageGraphics(protocol tea.ImageProtocol, cellWidth, cellHei
 		return false
 	}
 	s.graphics, s.cellWidth, s.cellHeight = protocol, cellWidth, cellHeight
+	if protocol != tea.ImageSixel {
+		s.sixelPreview = false
+	}
 	s.CancelPointerCapture()
+	s.refresh()
+	return true
+}
+
+// SixelMotionGeometry exposes the current virtual image to the shell's
+// presentation policy. It includes the pan offset, unlike ImagePlacement.
+func (s *Screen) SixelMotionGeometry() (ui.Rect, bool) {
+	return s.virtual, s.graphics == tea.ImageSixel && s.resource.Supports(tea.ImageSixel) && !s.visible.Empty()
+}
+
+// SetSixelMotionPreview selects the existing cell painter without changing
+// measured geometry, source identity, zoom or pan. The caller invalidates the
+// mounted surface on a change.
+func (s *Screen) SetSixelMotionPreview(preview bool) bool {
+	if s.graphics != tea.ImageSixel || s.sixelPreview == preview {
+		return false
+	}
+	s.sixelPreview = preview
 	s.refresh()
 	return true
 }
@@ -179,7 +210,7 @@ func (s *Screen) useGraphics() bool {
 // subpixel pan phase, unlike rounding the viewport's source rectangle.
 func (s *Screen) refreshPlacement() {
 	s.placement, s.placementGrid = tea.ImagePlacement{}, ui.Rect{}
-	if s.graphics == tea.ImageNone || s.cellWidth <= 0 || s.cellHeight <= 0 || s.resource.ID() == 0 || s.visible.Empty() {
+	if s.sixelPreview || !s.resource.Supports(s.graphics) || s.cellWidth <= 0 || s.cellHeight <= 0 || s.visible.Empty() {
 		return
 	}
 	if s.graphics == tea.ImageSixel && !tea.SixelSizeSupported(s.visible.W, s.visible.H, s.cellWidth, s.cellHeight) {
@@ -267,7 +298,11 @@ func (s *Screen) refresh() {
 		b.SetDisabled(s.img == nil || s.img.Bounds().Empty())
 	}
 	s.status = "No image"
-	if s.img != nil && !s.img.Bounds().Empty() {
+	if s.img == nil {
+		if s.emptyStatus != "" {
+			s.status = s.emptyStatus
+		}
+	} else {
 		src := s.img.Bounds()
 		s.status = fmt.Sprintf("%d × %d", src.Dx(), src.Dy())
 		if s.scale > 0 {
@@ -281,14 +316,16 @@ func (s *Screen) refresh() {
 			if s.zoom == 1 {
 				s.status += " · Fit"
 			}
-			if !s.useGraphics() {
+			if !s.useGraphics() && !s.sixelPreview {
 				s.status += " · Reduced detail"
 			}
 		}
 	}
 	if !s.useGraphics() || s.visible.Empty() {
-		s.placeholders = nil
-		s.placeholderID = 0
+		if !s.sixelPreview {
+			s.placeholders = nil
+			s.placeholderID = 0
+		}
 		return
 	}
 	id := s.resource.ID()

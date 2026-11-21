@@ -22,6 +22,8 @@ const (
 
 var terminalScrollbackLadder = []int{1000, 2000, 5000}
 
+const terminalCustomCommandHelp = "Enter an executable name on PATH, or enter its full path."
+
 // buildTerminalForm offers the shells detected on the core's machine. Auto
 // names the shell it resolves to, so the choice is never a guess.
 func (m *Model) buildTerminalForm(current types.TerminalSettings) *ui.FormModel {
@@ -41,7 +43,7 @@ func (m *Model) buildTerminalForm(current types.TerminalSettings) *ui.FormModel 
 	form := formModel(
 		ui.SeparatorFieldState("terminal-shell-section", "Shell"),
 		ui.SelectFieldState(fieldTerminalShell, "Shell", current.Shell, terminalShellOptions(current.Shell, m.terminalShells), "The shell new terminals start. Auto prefers PowerShell 7 on Windows and your login shell elsewhere."),
-		ui.TextFieldState(fieldTerminalCommand, "Command", current.Command, "Executable for a Custom shell, found on PATH or given as an absolute path."),
+		ui.TextFieldState(fieldTerminalCommand, "Command", current.Command, terminalCustomCommandHelp),
 		args,
 		ui.SegmentedFieldState(fieldTerminalLogin, "Login shell", []ui.FormOption{
 			{ID: "auto", Label: "Auto"}, {ID: "on", Label: "On"}, {ID: "off", Label: "Off"},
@@ -58,6 +60,39 @@ func (m *Model) buildTerminalForm(current types.TerminalSettings) *ui.FormModel 
 	)
 	m.syncTerminalCommand(form)
 	return form
+}
+
+// UpdateShellInventory updates derived choices and previews in the retained
+// form. It does not rebase editable fields, selection, filters or save state.
+func (s *WorkspaceSettingsSurface) UpdateShellInventory(terminalShells, agentShells []types.TerminalShell) bool {
+	if s == nil || s.model == nil {
+		return false
+	}
+	m := s.model
+	terminalChanged := !slices.EqualFunc(m.terminalShells, terminalShells, types.TerminalShell.Equal)
+	if terminalChanged {
+		m.terminalShells = types.CloneTerminalShells(terminalShells)
+		form := m.categories[catTerminal].Form
+		shell := form.Field(fieldTerminalShell)
+		shell.Options = terminalShellOptions(shell.Value.String(), m.terminalShells)
+		m.syncTerminalCommand(form)
+		if m.selected == catTerminal {
+			s.refreshForm()
+		}
+	}
+	agentChanged := !slices.EqualFunc(m.agentShells, agentShells, types.TerminalShell.Equal)
+	if agentChanged {
+		m.agentShells = types.CloneTerminalShells(agentShells)
+		m.syncAgentShellOptions(m.categories[catMain].Form)
+		m.syncAgentShellOptions(s.agents.draft)
+		switch m.selected {
+		case catAgents:
+			s.agents.syncModel()
+		case catMain:
+			s.refreshForm()
+		}
+	}
+	return terminalChanged || agentChanged
 }
 
 func terminalShellOptions(selected string, shells []types.TerminalShell) []ui.FormOption {
@@ -89,8 +124,18 @@ func (m *Model) syncTerminalCommand(form *ui.FormModel) {
 	shell := form.Field(fieldTerminalShell).Value.String()
 	command.Required = shell == types.TerminalShellCustom
 	command.Placeholder = ""
-	if path, _, err := types.ResolveTerminalLaunch(types.TerminalSettings{Shell: shell}, m.terminalShells); err == nil && shell != types.TerminalShellCustom {
+	command.Description = terminalCustomCommandHelp
+	if command.Required {
+		return
+	}
+	command.Errors = nil // A missing Custom command cannot invalidate a different shell.
+	if path, _, err := types.ResolveTerminalLaunch(types.TerminalSettings{Shell: shell}, m.terminalShells); err == nil {
 		command.Placeholder = path
+		command.Description = "New terminals start " + path
+	} else if shell == types.TerminalShellAuto {
+		command.Description = "No supported shell was found. Install one or choose Custom."
+	} else {
+		command.Description = "This shell is not installed. Install it or choose another shell."
 	}
 }
 

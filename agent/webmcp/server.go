@@ -6,6 +6,7 @@ package webmcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"crude/search"
@@ -18,7 +19,12 @@ type tool struct {
 	name        string
 	description string
 	schema      string
-	run         func(context.Context, *search.Client, map[string]any) (string, error)
+	run         func(context.Context, webClient, map[string]any) (string, error)
+}
+
+type webClient struct {
+	*search.Client
+	modelFallback func() search.ModelFallback
 }
 
 // defaultFetchPage is the paging granularity Crude uses for bounded reads
@@ -35,8 +41,12 @@ var serverTools = []tool{
 			`"query":{"type":"string","description":"What to search for"},` +
 			`"max_results":{"type":"integer","description":"Results to return (1-10; default 6)"}` +
 			`},"required":["query"]}`,
-		run: func(ctx context.Context, client *search.Client, args map[string]any) (string, error) {
-			return client.Search(ctx, stringArg(args, "query"), boundedArg(args, "max_results", 6, 10))
+		run: func(ctx context.Context, client webClient, args map[string]any) (string, error) {
+			var fallback search.ModelFallback
+			if client.modelFallback != nil {
+				fallback = client.modelFallback()
+			}
+			return client.SearchWithModelFallback(ctx, stringArg(args, "query"), boundedArg(args, "max_results", 6, 10), fallback)
 		},
 	},
 	{
@@ -48,7 +58,7 @@ var serverTools = []tool{
 			`"offset":{"type":"integer","description":"First character to return (1-based; default 1)"},` +
 			`"limit":{"type":"integer","description":"Characters to return (default 32768, the same page as read_async_output)"}` +
 			`},"required":["url"]}`,
-		run: func(ctx context.Context, client *search.Client, args map[string]any) (string, error) {
+		run: func(ctx context.Context, client webClient, args map[string]any) (string, error) {
 			limit := intArg(args, "limit")
 			if limit <= 0 {
 				limit = defaultFetchPage
@@ -63,7 +73,7 @@ var serverTools = []tool{
 			`"query":{"type":"string","description":"Search query"},` +
 			`"max_results":{"type":"integer","description":"Papers to return (1-10; default 5)"}` +
 			`},"required":["query"]}`,
-		run: func(ctx context.Context, _ *search.Client, args map[string]any) (string, error) {
+		run: func(ctx context.Context, _ webClient, args map[string]any) (string, error) {
 			return search.ArxivSearch(ctx, stringArg(args, "query"), boundedArg(args, "max_results", 5, 10))
 		},
 	},
@@ -74,7 +84,13 @@ var serverTools = []tool{
 // maxResultBytes is the client's bound on one encoded result; fetched pages
 // are cut to fit it with a continuation offset.
 func New(lookup func(string) string, maxResultBytes int) (*mcp.Server, map[string]captypes.Effect) {
-	client := search.New(lookup)
+	return NewWithModelFallback(lookup, maxResultBytes, nil)
+}
+
+// NewWithModelFallback snapshots the server-owned route as the search starts.
+// The snapshot is not accessible through tool arguments or to other tools.
+func NewWithModelFallback(lookup func(string) string, maxResultBytes int, fallback func() search.ModelFallback) (*mcp.Server, map[string]captypes.Effect) {
+	client := webClient{Client: search.New(lookup), modelFallback: fallback}
 	// Reserve the enclosing MCP and neutral result fields, not just the JSON
 	// string. The ordinary MCP projection applies to built-ins too.
 	client.SetResultBudget(max(1, maxResultBytes-4096))
@@ -101,7 +117,14 @@ func New(lookup func(string) string, maxResultBytes int) (*mcp.Server, map[strin
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				return errorResult(err.Error()), nil
+				if errors.Is(err, context.Canceled) {
+					return nil, err
+				}
+				result := errorResult(err.Error())
+				if _, failed := errors.AsType[*search.ProvidersFailed](err); failed {
+					result.Meta = mcp.Meta{captypes.WebSearchFallbackAvailable: true}
+				}
+				return result, nil
 			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
 		})

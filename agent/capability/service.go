@@ -17,9 +17,13 @@ import (
 	"time"
 
 	"crude/agent/mcpclient"
+	"crude/agent/provider"
 	"crude/agent/skills"
 	"crude/agent/webmcp"
+	"crude/search"
 	captypes "crude/types/capability"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type binding struct {
@@ -35,28 +39,33 @@ func init() {
 }
 
 type Service struct {
-	mu               sync.RWMutex
-	configureMu      sync.Mutex
-	publishMu        sync.Mutex
-	root             string
-	cache            string
-	db               *sql.DB
-	settings         captypes.Settings
-	generation       uint64
-	entries          map[string]captypes.Entry
-	skills           map[string]skills.Skill
-	bindings         map[string]map[string]binding
-	clients          *mcpclient.Manager
-	candidates       map[string]Candidate
-	store            captypes.RegistrationStore
-	closed           bool
-	taskGrants       map[string]map[string]taskGrant
-	launches         map[string]map[string]string
-	runs             map[string]string
-	host             captypes.HostDispatcher
-	hostStates       map[string]map[string]captypes.ConnectionState
-	authority        captypes.RuntimeAuthority
-	executionClients map[string]*mcpclient.Manager
+	mu                sync.RWMutex
+	configureMu       sync.Mutex
+	publishMu         sync.Mutex
+	root              string
+	cache             string
+	db                *sql.DB
+	settings          captypes.Settings
+	generation        uint64
+	entries           map[string]captypes.Entry
+	skills            map[string]skills.Skill
+	bindings          map[string]map[string]binding
+	clients           *mcpclient.Manager
+	candidates        map[string]Candidate
+	store             captypes.RegistrationStore
+	closed            bool
+	taskGrants        map[string]map[string]taskGrant
+	launches          map[string]map[string]string
+	runs              map[string]string
+	host              captypes.HostDispatcher
+	hostStates        map[string]map[string]captypes.ConnectionState
+	authority         captypes.RuntimeAuthority
+	executionClients  map[string]*mcpclient.Manager
+	webFallbackRunner func(context.Context, string, string, string, int) ([]provider.WebSearchSource, error)
+	webFallbackEpoch  uint64
+	// Once bound to an application publisher, an older captured capability
+	// configuration cannot republish or revive a model fallback selection.
+	webFallbackPublished bool
 	// prepared records package preparation identities known to be installed.
 	prepared map[string]bool
 	// recoveryNoticed marks connection outages already reported to an agent.
@@ -64,7 +73,8 @@ type Service struct {
 }
 
 func New(root, cache string, db *sql.DB) (*Service, error) {
-	service := &Service{root: root, cache: cache, db: db, settings: captypes.Normalize(captypes.Settings{}), entries: make(map[string]captypes.Entry), skills: make(map[string]skills.Skill), bindings: make(map[string]map[string]binding), clients: mcpclient.New(root)}
+	service := &Service{root: root, cache: cache, db: db, settings: captypes.Normalize(captypes.Settings{}), entries: make(map[string]captypes.Entry), skills: make(map[string]skills.Skill), bindings: make(map[string]map[string]binding)}
+	service.clients = service.newMCPManager(root)
 	service.clients.SetCredentialDirectory(filepath.Join(filepath.Dir(cache), "credentials"))
 	service.hostStates = make(map[string]map[string]captypes.ConnectionState)
 	service.taskGrants = make(map[string]map[string]taskGrant)
@@ -84,6 +94,72 @@ func New(root, cache string, db *sql.DB) (*Service, error) {
 		}
 	}
 	return service, nil
+}
+
+func (service *Service) newMCPManager(root string) *mcpclient.Manager {
+	clients := mcpclient.New(root)
+	clients.SetBuiltinFactory(captypes.WebConnectionID, func(lookup func(string) string, maxResultBytes int) (*mcp.Server, map[string]captypes.Effect) {
+		return webmcp.NewWithModelFallback(lookup, maxResultBytes, service.webSearchFallback)
+	})
+	return clients
+}
+
+// SetWebSearchFallbackRunner binds the core's account-based provider operation.
+// Only the built-in search handler can use it, after the normal MCP admission.
+func (service *Service) SetWebSearchFallbackRunner(run func(context.Context, string, string, string, int) ([]provider.WebSearchSource, error)) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.webFallbackRunner = run
+	service.webFallbackEpoch++
+}
+
+// SetPublishedWebSearchFallback updates a retained service from the committed
+// application settings. It is a memory-only observation, not a connection
+// test, a configuration scan, or a replay of an old search.
+func (service *Service) SetPublishedWebSearchFallback(value captypes.WebSearchFallback) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.webFallbackPublished = true
+	if !slices.Equal(service.settings.WebSearchFallback, value) {
+		service.settings.WebSearchFallback = slices.Clone(value)
+		service.webFallbackEpoch++
+		service.generation++
+	}
+}
+
+func (service *Service) webSearchFallback() search.ModelFallback {
+	service.mu.RLock()
+	account, model, configured := service.settings.WebSearchFallback.Selection()
+	run, epoch := service.webFallbackRunner, service.webFallbackEpoch
+	service.mu.RUnlock()
+	if !configured || run == nil {
+		return nil
+	}
+	return func(ctx context.Context, query string, limit int) ([]search.SearchResult, string, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, "", err
+		}
+		service.mu.RLock()
+		config := service.settings.Connections[captypes.WebConnectionID]
+		disabled := service.closed || !config.IsBuiltinWeb() || config.Disabled || config.Grants["web_search"].Disabled
+		changed := service.webFallbackEpoch != epoch
+		service.mu.RUnlock()
+		if disabled {
+			return nil, "", context.Canceled
+		}
+		if changed {
+			return nil, "", errors.New("model fallback settings changed. Run a new search to use the new settings")
+		}
+		found, err := run(ctx, account, model, query, limit)
+		if err != nil {
+			return nil, "", err
+		}
+		results := make([]search.SearchResult, 0, len(found))
+		for _, result := range found {
+			results = append(results, search.SearchResult{URL: result.URL, Title: result.Title})
+		}
+		return results, "OpenAI Responses model fallback (" + model + ")", nil
+	}
 }
 
 // SetRegistrationStore binds publication to the authoritative settings owner.
@@ -157,6 +233,11 @@ func (service *Service) configure(ctx context.Context, settings captypes.Setting
 	if service.closed {
 		service.mu.Unlock()
 		return errors.New("capability service is closed")
+	}
+	if service.webFallbackPublished {
+		settings.WebSearchFallback = service.settings.WebSearchFallback
+	} else if !slices.Equal(service.settings.WebSearchFallback, settings.WebSearchFallback) {
+		service.webFallbackEpoch++
 	}
 	service.clients.Configure(settings.Connections)
 	for _, clients := range service.executionClients {

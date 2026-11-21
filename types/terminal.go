@@ -71,6 +71,20 @@ type TerminalShell struct {
 	Args []string `json:"args,omitempty"`
 }
 
+func (s TerminalShell) Equal(other TerminalShell) bool {
+	return s.ID == other.ID && s.Label == other.Label && s.Path == other.Path &&
+		slices.Equal(s.LoginArgs, other.LoginArgs) && slices.Equal(s.Args, other.Args)
+}
+
+func CloneTerminalShells(shells []TerminalShell) []TerminalShell {
+	out := slices.Clone(shells)
+	for i := range out {
+		out[i].LoginArgs = slices.Clone(out[i].LoginArgs)
+		out[i].Args = slices.Clone(out[i].Args)
+	}
+	return out
+}
+
 // NormalizeTerminalSettings fills defaults and clamps bounds.
 func NormalizeTerminalSettings(s TerminalSettings) TerminalSettings {
 	s = CloneTerminalSettings(s)
@@ -159,7 +173,7 @@ func ResolveTerminalLaunch(settings TerminalSettings, shells []TerminalShell) (s
 	settings = NormalizeTerminalSettings(settings)
 	if settings.Shell == TerminalShellCustom {
 		if settings.Command == "" {
-			return "", nil, fmt.Errorf("the terminal shell is set to Custom without a command; set one in Settings › Terminal")
+			return "", nil, fmt.Errorf("could not start the terminal. Custom has no command. Set Command in Settings › Terminal")
 		}
 		return settings.Command, slices.Clone(settings.Args), nil
 	}
@@ -168,11 +182,11 @@ func ResolveTerminalLaunch(settings TerminalSettings, shells []TerminalShell) (s
 	case settings.Shell == TerminalShellAuto && len(shells) > 0:
 		shell = shells[0]
 	case settings.Shell == TerminalShellAuto:
-		return "", nil, fmt.Errorf("no supported shell was found on this machine; choose Custom in Settings › Terminal")
+		return "", nil, fmt.Errorf("could not start the terminal. No supported shell was found. Set a Custom command in Settings › Terminal")
 	default:
 		index := slices.IndexFunc(shells, func(candidate TerminalShell) bool { return candidate.ID == settings.Shell })
 		if index < 0 {
-			return "", nil, fmt.Errorf("terminal shell %q is not installed on this machine; choose another in Settings › Terminal", settings.Shell)
+			return "", nil, fmt.Errorf("could not start the terminal. Shell %q is not installed. Install it, or choose another in Settings › Terminal", settings.Shell)
 		}
 		shell = shells[index]
 	}

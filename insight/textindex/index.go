@@ -1,6 +1,6 @@
 // Package textindex keeps an in-memory text index of one workspace. The core
 // builds it in the background, the file watch keeps it current one file at a
-// time, and Aeron suggestions use it to retrieve related code (Related ranks
+// time, and Errand suggestions use it to retrieve related code (Related ranks
 // 40-line chunks by BM25 over identifiers). Files lists the indexed files in
 // the order of the Find in Files walk; Find in Files itself still reads the
 // disk until the index's coverage is accepted for it.

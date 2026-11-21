@@ -965,6 +965,7 @@ func (m *App) stopAsyncIO() {
 	state.mu.Unlock()
 	state.detachedCommands.Wait()
 	state.clientIOWG.Wait()
+	m.stopImageResidency()
 	for _, cache := range caches {
 		_ = os.RemoveAll(cache)
 	}

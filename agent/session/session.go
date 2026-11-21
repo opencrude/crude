@@ -481,10 +481,14 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 
 	editor = fileio.NewEditor(sessionID, lg)
 
-	name, nameErr := allocateAgentName(homeDir)
-	if nameErr != nil {
-		_ = lg.Close()
-		return nil, fmt.Errorf("allocate agent name: %w", nameErr)
+	name := ttypes.AgentNameForRole(cfg.SelectedAgent, "")
+	if name == "" {
+		var nameErr error
+		name, nameErr = allocateAgentName(homeDir)
+		if nameErr != nil {
+			_ = lg.Close()
+			return nil, fmt.Errorf("allocate agent name: %w", nameErr)
+		}
 	}
 	var dbPath string
 	if sessionDir != "" {
@@ -520,6 +524,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		agentName: name, nameHome: homeDir,
 		ID:                  id,
 		cfg:                 cfg,
+		selectedMainAgent:   cfg.SelectedAgent,
 		provider:            p,
 		exec:                exec,
 		editor:              editor,
@@ -824,7 +829,7 @@ func (s *Session) systemPromptForModelAtRoot(multiAgent, planMode bool, model, r
 		MultiAgent: multiAgent, PlanMode: planMode, WorkDir: root, TempDir: s.TempDir(), Model: model,
 		WorkspaceAgent: workspaceAgent, Shell: shell, CrudeVersion: buildinfo.Version,
 	})
-	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
+	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, ttypes.AgentNameForRole(s.selectedMainAgent, s.agentName), catalog)
 	s.systemPrompts[key] = prompt
 	return prompt
 }
@@ -1130,7 +1135,7 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 		}
 	}()
 	// The registry lists the root under its session's root role, so the
-	// workspace Aeron is found as category "aeron". Read it before orchMu.
+	// workspace Errand is found as category "aeron". Read it before orchMu.
 	s.mu.Lock()
 	rootCategory := s.selectedMainAgent
 	s.mu.Unlock()

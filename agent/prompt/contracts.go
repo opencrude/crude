@@ -42,7 +42,7 @@ const ActivityCommunication = `<activity_communication>
 <rule>reply does not finish the turn. End with a normal response that leads with the result and states unverified limitations. Use short paragraphs or a few bullets; add detail when it supports a decision, risk or requested explanation. Keep useful reasons and next steps, not dense logs or internal bookkeeping.</rule>
 </activity_communication>`
 
-// WorkspaceAgentContract applies only to the workspace's permanent Aeron. The
+// WorkspaceAgentContract applies only to the workspace's permanent Errand. The
 // user does not watch its conversation, so the question tool, which Crude shows
 // as a modal prompt, is its channel to the user. Crude itself tasks it with
 // short notices about problems it found (AttentionNotice).
@@ -59,7 +59,7 @@ const WorkspaceAgentContract = `<workspace_agent>
 <rule>Do not treat a problem that your own current work causes as a new task, and do not ask again about a notice the user already answered.</rule>
 </workspace_agent>`
 
-// crudeProject tells the workspace Aeron where Crude itself lives, so it can
+// crudeProject tells the workspace Errand where Crude itself lives, so it can
 // point the user to the right place and, now and then, mention a new release.
 const crudeProject = `<crude_project>
 <rule>Crude's source, releases and issue tracker are at https://github.com/opencrude/crude. Its website and documentation are at https://opencrude.github.io.</rule>
@@ -69,7 +69,7 @@ const crudeProject = `<crude_project>
 <rule>Remember the version you announced, and a version the user skipped, with the memory tool, so you do not mention it again. A source build (version dev) has no release to compare; do not check for it.</rule>
 %s</crude_project>`
 
-// WorkspaceAgentFor is the workspace Aeron's contract for this Crude build.
+// WorkspaceAgentFor is the workspace Errand's contract for this Crude build.
 func WorkspaceAgentFor(version string) string {
 	build := ""
 	if version = strings.TrimSpace(version); version != "" {
@@ -79,13 +79,13 @@ func WorkspaceAgentFor(version string) string {
 }
 
 // WorkspaceAgentPeer tells every other root agent that the workspace's
-// permanent Aeron exists and how to reach it, so an agent does not search
+// permanent Errand exists and how to reach it, so an agent does not search
 // history or create a second workspace agent to find it. It shares the slot of
-// WorkspaceAgentContract: Aeron gets its own contract, every other root gets
+// WorkspaceAgentContract: Errand gets its own contract, every other root gets
 // this note.
 const WorkspaceAgentPeer = `<workspace_agent_peer>
-<rule>This workspace has one permanent background agent, Aeron. Crude gives it the problems it finds, such as language-server and project-setup problems, and Aeron investigates them.</rule>
-<rule>To give Aeron a task or to see its work, find it with agent_list (query "aeron"), then use agent_send or agent_inspect with its exact ID. Do not search history for it or start another workspace agent.</rule>
+<rule>This workspace has one permanent background agent, Errand. Crude gives it the problems it finds, such as language-server and project-setup problems, and Errand investigates them.</rule>
+<rule>To give Errand a task or to see its work, find it with agent_list (query "errand"), then use agent_send or agent_inspect with its exact ID. Do not search history for it or start another workspace agent.</rule>
 </workspace_agent_peer>`
 
 const EngineeringContract = `<engineering_contract>

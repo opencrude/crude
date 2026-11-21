@@ -1,6 +1,7 @@
 package sixel
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"slices"
@@ -81,7 +82,10 @@ func TestPaletteWithSemiTransparency(t *testing.T) {
 func runTests(t *testing.T, img image.Image, testCases map[string]testCase) {
 	for testName, test := range testCases {
 		t.Run(testName, func(t *testing.T) {
-			palette := newSixelPalette(img, test.maxColors)
+			palette, _, err := newSixelPalette(context.Background(), img, test.maxColors, false)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if len(palette.PaletteColors) != len(test.expectedPalette) {
 				t.Errorf("Expected colors %+v in palette, but got %+v", test.expectedPalette, palette.PaletteColors)
 				return
@@ -99,24 +103,26 @@ func runTests(t *testing.T, img image.Image, testCases map[string]testCase) {
 				}
 			}
 
-			for lookupRawColor, lookupPaletteColor := range palette.colorConvert {
-				paletteIndex, inReverseLookup := palette.paletteIndexes[lookupRawColor]
-				if !inReverseLookup {
-					t.Errorf("Color %+v maps to color %+v in the colorConvert map, but %+v is does not have a corresponding palette index.", lookupRawColor, lookupPaletteColor, lookupPaletteColor)
-					return
-				}
-
-				if paletteIndex >= len(palette.PaletteColors) {
-					t.Errorf("Image color %+v maps to palette index %d, but there are only %d palette colors.", lookupRawColor, paletteIndex, len(palette.PaletteColors))
-					return
-				}
-
-				colorFromPalette := palette.PaletteColors[paletteIndex]
-				if colorFromPalette != lookupPaletteColor {
-					t.Errorf("Image color %+v maps to palette color %+v and palette index %d, but palette index %d is actually palette color %+v", lookupRawColor, lookupPaletteColor, paletteIndex, paletteIndex, colorFromPalette)
-					return
+			bounds := img.Bounds()
+			for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+				for x := bounds.Min.X; x < bounds.Max.X; x++ {
+					c := sixelConvertColor(img.At(x, y).RGBA())
+					i, ok := palette.paletteIndexes[c]
+					if !ok || int(i) >= len(palette.PaletteColors) {
+						t.Fatalf("no valid palette index for %+v", c)
+					}
+					for _, alternative := range palette.PaletteColors {
+						if colorDistance(c, alternative) < colorDistance(c, palette.PaletteColors[i]) {
+							t.Fatalf("palette index %d is not nearest to %+v", i, c)
+						}
+					}
 				}
 			}
 		})
 	}
+}
+
+func colorDistance(a, b sixelColor) int {
+	r, g, bl, al := int(a.Red)-int(b.Red), int(a.Green)-int(b.Green), int(a.Blue)-int(b.Blue), int(a.Alpha)-int(b.Alpha)
+	return r*r + g*g + bl*bl + al*al
 }

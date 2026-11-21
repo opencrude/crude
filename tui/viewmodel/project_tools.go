@@ -53,12 +53,12 @@ type projectToolsDecidedMsg struct {
 	request *projectToolsRequest
 	result  types.ProjectToolSetupResult
 	err     error
-	// quiet means Aeron took the work, so Crude's own record needs no notice.
+	// quiet means Errand took the work, so Crude's own record needs no notice.
 	quiet bool
 }
 
 // projectToolSetupTask turns the user's switches into the work order for
-// Aeron: switched-on tools are set up, the others are left alone.
+// Errand: switched-on tools are set up, the others are left alone.
 func projectToolSetupTask(project string, items []types.ProjectToolCandidate, selected []string) prompt.ToolSetupTask {
 	on := make(map[string]bool, len(selected))
 	for _, id := range selected {
@@ -78,7 +78,7 @@ func projectToolSetupTask(project string, items []types.ProjectToolCandidate, se
 }
 
 // projectToolSetupDisplay is what the chat shows for the work order: the
-// request in plain words, not the structured order that Aeron reads.
+// request in plain words, not the structured order that Errand reads.
 func projectToolSetupDisplay(task prompt.ToolSetupTask) string {
 	names := make([]string, 0, len(task.Setup))
 	for _, item := range task.Setup {
@@ -247,12 +247,12 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 		m.overlayHost.Close(projectToolsOverlay)
 		var task tea.Cmd
 		if len(msg.Selected) > 0 {
-			// Aeron does the work. Crude only records that the user answered,
+			// Errand does the work. Crude only records that the user answered,
 			// so the question is not asked again for this project.
 			order := projectToolSetupTask(m.ws.RootPath(), msg.Target.Items(), msg.Selected)
 			task = m.taskWorkspaceAeron(prompt.ToolSetupMessage(order), projectToolSetupDisplay(order))
 			if m.Feedback != nil {
-				m.Feedback.NotifyInfo("Tool setup was sent to Aeron. It shows a prompt when it needs your answer.")
+				m.Feedback.NotifyInfo("Tool setup was sent to Errand. It shows a prompt when it needs your answer.")
 			}
 		}
 		decide := m.clientIOCommand(request.ctx, func(ctx context.Context) tea.Msg {

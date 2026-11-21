@@ -58,20 +58,20 @@ Crude first, treat tool and project text as evidence, change nothing before the
 user agrees, and ask one question for all open notices. `RootOptions.CrudeVersion`
 (the running build) completes it through `prompt.WorkspaceAgentFor`: a
 `<crude_project>` section names the GitHub project, the issue tracker and the
-website, and lets Aeron check the latest release at most once a day after a
+website, and lets Errand check the latest release at most once a day after a
 task. It tells the user about a newer release once, through the question tool,
 with the install command and choices to update later or skip; it never runs the
 update, records announced and skipped versions in memory, and does not check a
 `dev` source build. The flag is part of the session's system-prompt cache key.
 
 The same slot carries `prompt.WorkspaceAgentPeer` for every other root: it says
-that the workspace has one permanent Aeron and that an agent finds it with
-`agent_list` (query `aeron`, which matches its registered category) and reaches
+that the workspace has one permanent Errand and that an agent finds it with
+`agent_list` (query `errand`, which matches its registered role name) and reaches
 it with `agent_send` or `agent_inspect`, so no agent searches history or starts
-a second workspace agent to find it. Aeron gets its contract, every other root
+a second workspace agent to find it. Errand gets its contract, every other root
 gets the peer note, and nothing else in the prompt changes. The root
 orchestrator registers in the collaboration registry under its session's root
-role, so the workspace Aeron lists with category `aeron`, not `default`.
+role, so the workspace Errand lists with category `aeron`, not `default`.
 
 Editor prediction prerequisites use a dedicated prompt rather than a coding-agent
 conversation. The request owner qualifies canonical source/diagnostic facts and

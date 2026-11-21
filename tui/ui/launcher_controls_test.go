@@ -38,12 +38,12 @@ func TestActionLinkIdleInkIsVisibleOnShellSurface(t *testing.T) {
 func TestActionLinkKeepsUnderlineWithoutFocus(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		for _, ctx := range []PaintContext{{}, {Hovered: true}, {Focused: true}} {
-			link := NewActionLink("link", "Open workspace Aeron", "open")
+			link := NewActionLink("link", "Open workspace Errand", "open")
 			link.SetTokens(NewTokenSet(th))
 			link.Layout(LayoutContext{}, Rect{W: 24, H: 1})
 			buf := surface.NewCellBuffer(24, 1)
 			link.Paint(buf, 0, 0, ctx)
-			for x := 1; x <= len("Open workspace Aeron"); x++ {
+			for x := 1; x <= len("Open workspace Errand"); x++ {
 				if !buf.Get(x, 0).Attr.Has(cell.AttrUnderline) {
 					t.Fatalf("a command link lost its underline: focused=%v hovered=%v column=%d", ctx.Focused, ctx.Hovered, x)
 				}

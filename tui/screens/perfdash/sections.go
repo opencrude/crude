@@ -79,7 +79,7 @@ var curated = map[string][]seriesRef{
 		{processCore, "lsp.diagnostics"}, {processCore, "files.watch"},
 		{processCore, "storage.session"}, {processCore, "lsp.requests"}, {processCore, "lsp.start"}, {processCore, "git.commands"},
 		{processCore, "git.remote"},
-		// Aeron suggestions: what the user sees first, then the core stages.
+		// Errand suggestions: what the user sees first, then the core stages.
 		{processShell, "suggest.visible"}, {processCore, "suggest.total"}, {processCore, "suggest.first_byte"},
 		{processCore, "suggest.model"}, {processCore, "suggest.context"}, {processCore, "suggest.check"},
 		{processCore, "suggest.ledger"}, {processShell, "suggest.outcomes"}, {processShell, "suggest.shown"},

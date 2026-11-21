@@ -12,22 +12,51 @@ import (
 
 // ListItem is a row in a List.
 type ListItem struct {
-	ID        string
-	Label     string
-	Detail    string
-	Subtitle  string // optional secondary text below the label in resource lists
-	Icon      string
-	Disabled  bool // not activatable; skipped by keyboard nav
-	Header    bool // section label; not selectable
-	Separator bool // divider row; not selectable
-	Spacer    bool // empty gap row; not selectable
-	Command   bool // button-like row: activates on a single click, not a double
-	Active    bool // resource currently open; independent of the browsing cursor
-	Depth     int  // optional hierarchy depth for feature-specific row painters
-	TreeLast  bool // final sibling at Depth (feature-specific tree connector)
-	Foldable  bool // row owns a subtree the owner can hide (feature-specific row painters)
-	Folded    bool // the owned subtree is currently hidden
-	Payload   any  // optional feature data (e.g. menu section/item index)
+	ID         string
+	Label      string
+	Detail     string
+	Subtitle   string // optional secondary text below the label in resource lists
+	SearchText string // optional unabridged search text, never painted
+	Tooltip    string // optional full resource label or detail for hover
+	Trailing   RowBadges
+	Icon       string
+	Disabled   bool // not activatable; skipped by keyboard nav
+	Header     bool // section label; not selectable
+	Separator  bool // divider row; not selectable
+	Spacer     bool // empty gap row; not selectable
+	Command    bool // button-like row: activates on a single click, not a double
+	Active     bool // resource currently open; independent of the browsing cursor
+	Depth      int  // optional hierarchy depth for feature-specific row painters
+	TreeLast   bool // final sibling at Depth (feature-specific tree connector)
+	Foldable   bool // row owns a subtree the owner can hide (feature-specific row painters)
+	Folded     bool // the owned subtree is currently hidden
+	Payload    any  // optional feature data (e.g. menu section/item index)
+}
+
+// RowBadges are a small group of whole, non-interactive badges. Their order is
+// also their priority: narrow rows omit badges that cannot fit rather than
+// clipping an icon or its count.
+type RowBadges [3]string
+
+func (badges RowBadges) Fit(width int) (string, int) {
+	if width <= 0 {
+		return "", 0
+	}
+	var parts [len(badges)]string
+	w, count := 0, 0
+	for _, badge := range badges {
+		if badge == "" {
+			continue
+		}
+		delta := rendering.VisibleWidth(badge)
+		if count > 0 {
+			delta++
+		}
+		if w+delta <= width {
+			parts[count], count, w = badge, count+1, w+delta
+		}
+	}
+	return strings.Join(parts[:count], " "), w
 }
 
 // Selectable reports whether the item can receive cursor/activation.
@@ -212,6 +241,17 @@ func (l *List) SelectIndex(idx int) bool {
 // Items returns the items.
 func (l *List) Items() []ListItem { return l.items }
 
+// SetRowBadges changes only a row's presentation. It does not retarget
+// activation, pointer hover, selection, or the scroll window.
+func (l *List) SetRowBadges(index int, badges RowBadges) bool {
+	if index < 0 || index >= len(l.items) || l.items[index].Trailing == badges {
+		return false
+	}
+	l.items[index].Trailing = badges
+	l.measured = false
+	return true
+}
+
 // SelectedIndex returns the selection index.
 func (l *List) SelectedIndex() int { return l.sel.Index() }
 
@@ -390,7 +430,14 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		if prefix != "" {
 			buf.WriteString(x, y, prefix, fg, bg, attr)
 		}
-		paintMenuDetail(buf, x+rendering.VisibleWidth(prefix), y, r.W-rendering.VisibleWidth(prefix), item.Label, item.Detail, fg, muted, bg, attr)
+		prefixW := rendering.VisibleWidth(prefix)
+		available := r.W - prefixW
+		const minLabel = 5
+		if badges, badgeW := item.Trailing.Fit(available - minLabel - TableMinGap); badgeW > 0 {
+			buf.WriteString(x+r.W-badgeW, y, badges, muted, bg, 0)
+			available -= badgeW + TableMinGap
+		}
+		paintMenuDetail(buf, x+prefixW, y, available, item.Label, item.Detail, fg, muted, bg, attr)
 	}
 }
 

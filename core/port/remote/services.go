@@ -106,7 +106,7 @@ func (w *Workspace) ResolveGitConflict(ctx context.Context, path, fingerprint st
 	return w.rpc().ResolveGitConflict(ctx, path, fingerprint, choices)
 }
 
-// commitWriter generates through the core's Aeron role, streaming the draft
+// commitWriter generates through the core's Errand role, streaming the draft
 // as request-scoped progress to this shell only.
 type commitWriter struct {
 	w *Workspace

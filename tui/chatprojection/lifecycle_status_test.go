@@ -123,7 +123,7 @@ func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
 	rows, _, _ := renderer.ExportMessageRows(100)
 	joined := strings.Join(rows[0].Lines, "\n")
 	if len(rows[0].Lines) != 7 || !rows[0].ContextBoundary || rows[0].ContextBoundaryStart != 1 ||
-		!strings.Contains(joined, "Crude Aeron") || !strings.Contains(joined, "Compaction") ||
+		!strings.Contains(joined, "Crude Errand") || !strings.Contains(joined, "Compaction") ||
 		!strings.Contains(joined, "Capturing state") ||
 		!strings.Contains(joined, "■ ■ ● □") || !strings.Contains(joined, "420K") || !strings.Contains(joined, "esc cancel") {
 		t.Fatalf("compaction lifecycle = %q", joined)

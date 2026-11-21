@@ -10,10 +10,10 @@ import (
 // stay in this process: nothing is stored or sent.
 var (
 	suggestVisible = metrics.NewLatency(metrics.Meta{Name: "suggest.visible", Group: metrics.GroupSuggest, Title: "Key to suggestion",
-		Help: "From the key or request to Aeron's change on screen. Under 300 ms feels immediate; reused changes show in the next frame.",
+		Help: "From the key or request to Errand's change on screen. Under 300 ms feels immediate; reused changes show in the next frame.",
 		Warn: 300_000, Crit: 1_000_000, Stall: 10_000_000})
 	suggestShownCount = metrics.NewCounter(metrics.Meta{Name: "suggest.shown", Group: metrics.GroupSuggest, Title: "Suggestions shown", Unit: "items",
-		Help: "Changes that Aeron showed in an editor."})
+		Help: "Changes that Errand showed in an editor."})
 	suggestAcceptedCount = metrics.NewCounter(metrics.Meta{Name: "suggest.accepted", Group: metrics.GroupSuggest, Title: "Suggestions accepted", Unit: "items",
 		Help: "Changes taken with Tab, or partly with Ctrl+Right or Alt+End."})
 	suggestTypedCount = metrics.NewCounter(metrics.Meta{Name: "suggest.typed", Group: metrics.GroupSuggest, Title: "Suggestions typed through", Unit: "items",

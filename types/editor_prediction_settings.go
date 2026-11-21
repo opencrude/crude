@@ -170,9 +170,9 @@ func decodePredictionLeaf(s *WorkspacePredictionSettings, key string, raw json.R
 	return nil
 }
 
-// SuggestionSettings is the application-wide connection for Aeron's editor
+// SuggestionSettings is the application-wide connection for Errand's editor
 // suggestions, on the same base as the Auto Review Agent: an explicit account,
-// model, format and timeout. Empty AccountID and Model use the Aeron role's.
+// model, format and timeout. Empty AccountID and Model use the Errand role's.
 // Crude always sends thinking "none"; it is not a choice.
 type SuggestionSettings struct {
 	AccountID       string `json:"account_id,omitempty"`

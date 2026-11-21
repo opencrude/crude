@@ -126,7 +126,7 @@ func TestSavedWorkspaceAeronIsNotAnOrdinarySession(t *testing.T) {
 	}
 	sessions, err := db.ListSessions()
 	if err != nil || len(sessions) != 1 || sessions[0].ID != "ordinary" {
-		t.Fatalf("saved workspace Aeron leaked into session browsing: %+v %v", sessions, err)
+		t.Fatalf("saved workspace Errand leaked into session browsing: %+v %v", sessions, err)
 	}
 	var count int
 	if err := db.DB.QueryRow("SELECT count(*) FROM workspace_sessions").Scan(&count); err != nil || count != 2 {

@@ -725,7 +725,7 @@ func (p *editorPredictionService) ask(ctx context.Context, owner document.Owner,
 			return nil, ctx.Err()
 		}
 		// Provider errors can contain endpoints or headers; show none of it.
-		return nil, errors.New("the suggestion request failed; check the connection in Settings, Agents, Aeron")
+		return nil, errors.New("the suggestion request failed; check the connection in Settings, Agents, Errand")
 	}
 	if settleErr != nil {
 		return nil, errors.New("suggestion usage could not be recorded")

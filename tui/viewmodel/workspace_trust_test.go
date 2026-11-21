@@ -32,10 +32,14 @@ func TestWorkspaceTrustPromptPaintAndEscGeneration(t *testing.T) {
 		buf := surface.NewCellBuffer(w, h)
 		frame.Host().Paint(buf)
 		text := bufferPlain(buf)
-		for _, want := range []string{"Trust this folder?", "Do you trust the authors of the files in this folder?", "Trust folder", "Open in restricted mode"} {
+		for _, want := range []string{"Trust this folder?", "Trust lets project tools run code.",
+			"Restricted mode allows editing, but not project tools.", "Change this in Workspace settings.", "Trust folder", "Open in restricted mode"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("missing %q at %v:\n%s", want, size, text)
 			}
+		}
+		if h > 11 || strings.Contains(text, "Do you trust the authors") {
+			t.Fatalf("the trust decision is not compact at %v: %d rows\n%s", size, h, text)
 		}
 		if ui.ConfirmButtonIndexFromID(frame.Host().Focused()) != 1 {
 			t.Fatal("restricted choice was not focused")

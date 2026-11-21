@@ -465,3 +465,14 @@ func TestAccountConnectionsCannotBeWorkspaceOverrides(t *testing.T) {
 		t.Fatal("cloned template headers alias application settings")
 	}
 }
+
+func TestWebSearchFallbackRemainsApplicationOwned(t *testing.T) {
+	selection := captypes.WebSearchFallback{"allowed-account", "known-model"}
+	base := AppSettings{Capabilities: captypes.Settings{WebSearchFallback: selection}}
+	for _, key := range []string{"web_search_fallback", "WEB_SEARCH_FALLBACK"} {
+		workspace := WorkspaceOverrides{Capabilities: json.RawMessage(`{"` + key + `":["other-account","other-model"]}`)}
+		if got := MergeAppWorkspace(base, workspace).Capabilities.WebSearchFallback; !reflect.DeepEqual(got, selection) {
+			t.Fatalf("stored workspace field %s changed the fallback: %v", key, got)
+		}
+	}
+}

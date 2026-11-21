@@ -58,7 +58,7 @@ func TestPredictionProductNativeEntryAndAuthority(t *testing.T) {
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Layout()
 			host.Paint(buf)
-			if !strings.Contains(bufferPlain(buf), "Aeron suggestions") {
+			if !strings.Contains(bufferPlain(buf), "Errand suggestions") {
 				t.Fatal("native scrolled prediction row was not painted", bufferPlain(buf))
 			}
 			for _, id := range []string{"prediction.mode", "prediction.hourly_token_limit"} {
@@ -163,7 +163,7 @@ func TestPredictionProductResetOwnsConsentButPreservesNeighbors(t *testing.T) {
 	if !appModel.workspaceOverridesPage(catLSP) {
 		t.Fatal("prediction workspace choices are absent from the Code Intelligence marker")
 	}
-	for _, term := range []string{"Aeron suggestions", "prediction.mode", "Hourly limit"} {
+	for _, term := range []string{"Errand suggestions", "prediction.mode", "Hourly limit"} {
 		m.SetSearchQuery(term)
 		found := false
 		for _, index := range m.visibleCategoryIndices() {

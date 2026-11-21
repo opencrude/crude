@@ -171,7 +171,7 @@ func TestPanelStreamsGeneratedMessageAndRestoresDraftOnFailure(t *testing.T) {
 	panel.AppendWriting("Fix ")
 	panel.AppendWriting("parser")
 	text := repaint(host, 140, 20)
-	if panel.Message() != "Fix parser" || !strings.Contains(text, "Aeron is writing") || !strings.Contains(text, "[ Stop ]") {
+	if panel.Message() != "Fix parser" || !strings.Contains(text, "Errand is writing") || !strings.Contains(text, "[ Stop ]") {
 		t.Fatalf("streaming state message=%q:\n%s", panel.Message(), text)
 	}
 	if result := panel.HandleAction(ui.EventContext{}, ui.Action{ID: ActionCommit}); result.Action != nil {

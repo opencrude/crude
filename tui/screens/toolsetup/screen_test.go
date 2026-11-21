@@ -42,7 +42,7 @@ func paintText(host *ui.Host, width, height int) string {
 }
 
 // Every offered tool is a working choice and starts selected. A tool that
-// Crude cannot download itself stays a choice: Aeron works out how to get it.
+// Crude cannot download itself stays a choice: Errand works out how to get it.
 func TestEveryToolIsARealChoiceAndStartsOn(t *testing.T) {
 	screen := New(theme.DefaultDark(), setupFixture())
 	if got := screen.SelectedIDs(); !slices.Equal(got, []string{"download", "manager"}) {
@@ -57,7 +57,7 @@ func TestEveryToolIsARealChoiceAndStartsOn(t *testing.T) {
 	}
 	toggle("manager")
 	if len(screen.SelectedIDs()) != 0 || screen.actions.ActionEnabled(ActionInstall) {
-		t.Fatal("an empty selection must disable Set up with Aeron")
+		t.Fatal("an empty selection must disable Set up with Errand")
 	}
 	if result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionInstall}); result.Cmd != nil {
 		t.Fatal("an empty selection sent a work order")
@@ -70,7 +70,7 @@ func TestSetUpSendsExactlyTheSelectedTools(t *testing.T) {
 	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionInstall})
 	decision, ok := result.Cmd().(DecisionMsg)
 	if !ok || decision.Target != screen || !slices.Equal(decision.Selected, []string{"manager"}) {
-		t.Fatalf("Set up with Aeron sent %+v", decision)
+		t.Fatalf("Set up with Errand sent %+v", decision)
 	}
 	result = screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionDecline})
 	decision, ok = result.Cmd().(DecisionMsg)
@@ -88,7 +88,7 @@ func TestProjectToolsSelectionAndDetailsUseNativeInput(t *testing.T) {
 		host.Layout()
 		host.Focus(ListID)
 		text := paintText(host, size[0], size[1])
-		for _, want := range []string{"Project: /project", "[x]", "fixture-server", "package-manager-server", "Set up with Aeron", "Not now"} {
+		for _, want := range []string{"Project: /project", "[x]", "fixture-server", "package-manager-server", "Set up with Errand", "Not now"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("missing %q at %v:\n%s", want, size, text)
 			}
@@ -103,16 +103,16 @@ func TestProjectToolsSelectionAndDetailsUseNativeInput(t *testing.T) {
 		if got := screen.SelectedIDs(); !slices.Equal(got, []string{"manager"}) {
 			t.Fatalf("Space did not clear the first tool: %v", got)
 		}
-		// The second row explains that Aeron gets the tool, not the user.
+		// The second row explains that Errand gets the tool, not the user.
 		host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 		text = paintText(host, size[0], size[1])
-		for _, want := range []string{"package-manager-server v2", "fixture registry", "example", "MIT", "Aeron finds another way"} {
+		for _, want := range []string{"package-manager-server v2", "fixture registry", "example", "MIT", "Errand finds another way"} {
 			if !strings.Contains(screen.detail.Value(), want) {
 				t.Fatalf("details omit %q: %s", want, screen.detail.Value())
 			}
 		}
-		if !strings.Contains(text, "Aeron finds") {
-			t.Fatalf("Aeron detail not rendered at %v:\n%s", size, text)
+		if !strings.Contains(text, "Errand finds") {
+			t.Fatalf("Errand detail not rendered at %v:\n%s", size, text)
 		}
 		if strings.Contains(screen.detail.Value(), "Install this tool yourself") {
 			t.Fatal("details still tell the user to install the tool by hand")

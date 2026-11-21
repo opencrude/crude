@@ -39,62 +39,130 @@ func SupportedPath(path string) bool {
 	}
 }
 
+// Decoded contains one immutable source for both native and cell previews.
+// Bytes charges its pixel backing and any copied native PNG, not transient
+// decoder scratch or the original compressed input.
+type Decoded struct {
+	Pixels   image.Image
+	Resource *tea.TerminalImage
+	Bytes    int64
+}
+
+// CheckHeader checks the input and dimensions without allocating the decoded
+// raster. The pixel payload is checked by Prepare when it is needed.
+func CheckHeader(ctx context.Context, data []byte) error {
+	_, err := imageFormat(ctx, data)
+	return err
+}
+
 // Decode validates dimensions before decoding PNG, JPEG, GIF, WebP or BMP bytes.
 // Animated GIFs intentionally use only their first frame. A successful decode
 // returns pixels even when the optional terminal resource cannot be prepared.
 //
-// Original PNG bytes are retained verbatim in the immutable terminal resource.
-// Other formats are encoded to PNG once here, not during painting or resize.
+// A confirmed Sixel terminal uses decoded pixels directly. Kitty (or a pending
+// probe) retains original PNG bytes or normalizes other formats once here.
 // The caller must not change data until Decode returns.
 //
 // Cancellation is checked between codec steps and on memory reads/writes.
 // Codec CPU work between those checks cannot be forcibly interrupted. A
 // cancelled call returns no pixels or resource; callers must still fence stale
 // results with their own owner and generation.
-func Decode(ctx context.Context, data []byte) (image.Image, *tea.TerminalImage, error) {
+func Decode(ctx context.Context, data []byte, protocol tea.ImageProtocol) (image.Image, *tea.TerminalImage, error) {
+	decoded, err := Prepare(ctx, data, protocol)
+	return decoded.Pixels, decoded.Resource, err
+}
+
+// Prepare decodes the same raster as Decode and accounts for its retained bytes.
+func Prepare(ctx context.Context, data []byte, protocol tea.ImageProtocol) (Decoded, error) {
+	format, err := imageFormat(ctx, data)
+	if err != nil {
+		return Decoded{}, err
+	}
+	img, _, err := image.Decode(contextReader{ctx, bytes.NewReader(data)})
+	if ctx.Err() != nil {
+		return Decoded{}, ctx.Err()
+	}
+	if err != nil {
+		return Decoded{}, fmt.Errorf("cannot decode image: %w", err)
+	}
+	decoded := Decoded{Pixels: img, Bytes: pixelBytes(img)}
+	var pngData []byte
+	if protocol != tea.ImageSixel {
+		pngData, err = preparePNG(ctx, img, format, data)
+		if ctx.Err() != nil {
+			return Decoded{}, ctx.Err()
+		}
+		if err != nil {
+			// If PNG preparation fails, keep the cell preview.
+			return decoded, nil
+		}
+	}
+	resource := tea.NewTerminalImage(pngData, img)
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return Decoded{}, err
+	}
+	decoded.Resource = resource
+	if resource.Supports(tea.ImageKitty) {
+		decoded.Bytes += int64(len(pngData))
+	}
+	return decoded, nil
+}
+
+func imageFormat(ctx context.Context, data []byte) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if len(data) > MaxInputBytes {
-		return nil, nil, fmt.Errorf("image exceeds the 64 MiB preview limit; open a smaller image")
+		return "", fmt.Errorf("image exceeds the 64 MiB preview limit; open a smaller image")
 	}
 	config, format, err := image.DecodeConfig(contextReader{ctx, bytes.NewReader(data)})
 	if ctx.Err() != nil {
-		return nil, nil, ctx.Err()
+		return "", ctx.Err()
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot read image header: %w", err)
+		return "", fmt.Errorf("cannot read image header: %w", err)
 	}
 	switch format {
 	case "png", "jpeg", "gif", "webp", "bmp":
 	default:
-		return nil, nil, fmt.Errorf("unsupported image format %q", format)
+		return "", fmt.Errorf("unsupported image format %q", format)
 	}
 	// Divide before comparing to avoid overflow, including on 32-bit systems.
 	if config.Width <= 0 || config.Height <= 0 || config.Width > MaxPixels/config.Height {
-		return nil, nil, fmt.Errorf("image dimensions exceed the preview limit; open a smaller image")
+		return "", fmt.Errorf("image dimensions exceed the preview limit; open a smaller image")
 	}
-	img, _, err := image.Decode(contextReader{ctx, bytes.NewReader(data)})
-	if ctx.Err() != nil {
-		return nil, nil, ctx.Err()
+	return format, nil
+}
+
+func pixelBytes(img image.Image) int64 {
+	// Charge capacity, not visible bounds: JPEG can retain padded rows and
+	// 16-bit PNGs can use twice the backing of 8-bit colour.
+	switch img := img.(type) {
+	case *image.RGBA:
+		return int64(cap(img.Pix))
+	case *image.RGBA64:
+		return int64(cap(img.Pix))
+	case *image.NRGBA:
+		return int64(cap(img.Pix))
+	case *image.NRGBA64:
+		return int64(cap(img.Pix))
+	case *image.Gray:
+		return int64(cap(img.Pix))
+	case *image.Gray16:
+		return int64(cap(img.Pix))
+	case *image.Paletted:
+		// At most 256 palette entries. Include interface and colour backing.
+		return int64(cap(img.Pix)) + int64(cap(img.Palette))*24
+	case *image.YCbCr:
+		return int64(cap(img.Y) + cap(img.Cb) + cap(img.Cr))
+	case *image.NYCbCrA:
+		return pixelBytes(&img.YCbCr) + int64(cap(img.A))
+	case *image.CMYK:
+		return int64(cap(img.Pix))
+	default:
+		// Do not claim that an unknown backing fits the warm cache.
+		return 1 << 60
 	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot decode image: %w", err)
-	}
-	pngData, err := preparePNG(ctx, img, format, data)
-	if ctx.Err() != nil {
-		return nil, nil, ctx.Err()
-	}
-	if err != nil {
-		// Native resources need PNG data; cell previews still work.
-		return img, nil, nil
-	}
-	resource := tea.NewTerminalImage(pngData, img)
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	// NewTerminalImage can return nil (for example, if entropy is unavailable).
-	return img, resource, nil
 }
 
 func preparePNG(ctx context.Context, img image.Image, format string, data []byte) ([]byte, error) {

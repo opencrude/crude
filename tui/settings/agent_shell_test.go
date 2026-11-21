@@ -17,7 +17,7 @@ import (
 // Searching Settings for the field finds the Agents page that holds it. The
 // Main Agent's fields were not searched, so "command shell" found no page.
 func TestSettingsSearchFindsMainAgentFields(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{TerminalShells: []types.TerminalShell{{ID: "cmd", Label: "Command Prompt", Path: `C:\cmd.exe`}}}, nil)
+	m := New(theme.DefaultDark(), types.AppSettings{AgentShells: []types.TerminalShell{{ID: "cmd", Label: "Command Prompt", Path: `C:\cmd.exe`}}}, nil)
 	for _, query := range []string{"command shell", "Concurrent sub-agents", "Longest wait"} {
 		m.SetSearchQuery(query)
 		if visible := m.visibleCategoryIndices(); !slices.Contains(visible, catAgents) {
@@ -40,7 +40,11 @@ func TestMainAgentChoosesTheAgentCommandShell(t *testing.T) {
 		{ID: "git-bash", Label: "Git Bash", Path: `C:\Git\bin\bash.exe`},
 		{ID: "wsl", Label: "WSL", Path: `C:\wsl.exe`},
 	}
-	m := New(theme.DefaultDark(), types.AppSettings{Agents: types.AgentsSettings{Shell: "zsh"}, TerminalShells: shells}, nil)
+	m := New(theme.DefaultDark(), types.AppSettings{
+		Agents:         types.AgentsSettings{Shell: "zsh"},
+		AgentShells:    shells,
+		TerminalShells: []types.TerminalShell{{ID: "fish", Label: "Local terminal Fish", Path: "/opt/terminal/fish"}},
+	}, nil)
 	if m.hasUnsavedPreferences() {
 		t.Fatal("an untouched agent shell reports unsaved changes")
 	}

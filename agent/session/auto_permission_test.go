@@ -256,7 +256,7 @@ func TestPermissionReviewerExactCallBoundary(t *testing.T) {
 		})
 	}
 	// Ordinary text that names secrets, environment variables or credential
-	// files is not a credential. Aeron's session showed every prompt that
+	// files is not a credential. Errand's session showed every prompt that
 	// skipped review was such text: os.environ, self.sshd, lsp_environment.go.
 	for _, tc := range []struct {
 		name, tool string
@@ -401,5 +401,50 @@ func TestPermissionReviewerUsesDecisionModelFromOllamaList(t *testing.T) {
 				t.Fatal("decision review fell back to chat")
 			}
 		})
+	}
+}
+
+func TestPermissionReviewerInheritsWorkspaceErrandWithoutBorrowingSessionOverrides(t *testing.T) {
+	requests := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string
+			Tools []json.RawMessage
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- request.Model
+		if len(request.Tools) != 0 {
+			t.Error("permission review inherited Errand's tools")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"routine edit\"}"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	s, a := newReviewerTestSession(t, server.URL)
+	settings := s.cfg.Safety.AutoPermission
+	settings.AccountID, settings.Model = "", ""
+	s.cfg.Safety.AutoPermission = settings
+	workspaceProfile, _ := activeProfileCfg(s.workspaceCfg)
+	workspaceProfile.Categories[CategoryAeron] = CategoryConfig{AccountID: "account", Model: "errand-model"}
+	profile, _ := activeProfileCfg(s.cfg)
+	profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "session-account", Model: "session-override"}
+	check := func() agent.PermissionReview {
+		return s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, map[string]any{"path": "test.txt"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+	}
+	if got := check(); got.Decision != "allow" {
+		t.Fatalf("configured workspace Errand was not used: %+v", got)
+	}
+	if got := <-requests; got != "errand-model" {
+		t.Fatalf("model = %q; want workspace Errand", got)
+	}
+	delete(workspaceProfile.Categories, CategoryAeron)
+	if got := check(); got.Decision != "ask" || len(requests) != 0 {
+		t.Fatalf("review without Errand did not stay with the human: %+v", got)
+	}
+	if s.cfg.Safety.AutoPermission != settings {
+		t.Fatal("review copied inherited defaults into stored choices")
 	}
 }

@@ -3,6 +3,7 @@ package settings
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/provider"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -537,6 +539,164 @@ func TestCapabilityManagerEscapeReturnsNormalSettingsClose(t *testing.T) {
 	}
 	if _, ok := result.Cmd().(CancelMsg); !ok {
 		t.Fatal("manager Escape bypassed Settings close ownership")
+	}
+}
+
+func TestWebSearchFallbackSettingsChooseExactModelAndSaveOnlyRoute(t *testing.T) {
+	model, root, host := capabilityFixture(t, captypes.KindMCP)
+	snapshot := model.capabilitySnapshot
+	snapshot.Generation++
+	snapshot.Settings = captypes.WithDefaults(snapshot.Settings)
+	web := snapshot.Settings.Connections[captypes.WebConnectionID]
+	snapshot.Entries = append(snapshot.Entries, captypes.Entry{ID: web.ID, Kind: captypes.KindMCP, Name: web.Name, Transport: web.Transport, Installed: true, Origin: captypes.ScopeApplication})
+	model.SetCapabilitySnapshot(snapshot)
+	model.accounts = map[string]provider.Account{
+		"exact-account": {ID: "exact-account", ProviderID: "openai", Label: "Fixture Responses", APIKey: "not-a-real-key",
+			Connection: provider.Template{ProviderURL: "https://api.openai.com/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}},
+		"not-supported": {ID: "not-supported", ProviderID: "custom", Label: "Unsupported Gateway", APIKey: "not-a-real-key",
+			Connection: provider.Template{ProviderURL: "https://gateway.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}},
+	}
+	request := capabilityRequest(t, root.OpenCapabilities(captypes.KindMCP, "", captypes.WebConnectionID))
+	completeCapability(model, root.capCatalog, request, "")
+
+	click := func(buffer *surface.CellBuffer, label string) ui.EventResult {
+		t.Helper()
+		x, y := storeTextPoint(t, buffer, label)
+		return host.Handle(tea.MouseClickMsg{X: x + 2, Y: y, Button: tea.MouseLeft})
+	}
+	paint := func() *surface.CellBuffer { return paintCapabilityStore(host, 130, 36) }
+	buffer := paint()
+	if !strings.Contains(bufferPlain(buffer), "Model fallback  Off") {
+		t.Fatalf("missing Off default:\n%s", bufferPlain(buffer))
+	}
+	if result := click(buffer, "[ Model fallback ]"); result.Cmd != nil || !result.Handled {
+		t.Fatal("opening the fallback with Off selected should not make a request")
+	}
+	paint()
+	catalog := root.capCatalog
+	form := model.capabilityDraft
+	if catalog.edit != webFallbackEditor || form == nil || form.Field(webFallbackAccount).Value.String() != "" || !form.Field(webFallbackModel).Disabled {
+		t.Fatal("app settings did not open the exact built-in fallback control")
+	}
+	if host.Focused() != catalog.form.ID() {
+		t.Fatal("fallback form did not take keyboard focus")
+	}
+	key := func(code rune) ui.EventResult { return host.Handle(tea.KeyPressMsg{Code: code}) }
+	key(tea.KeyEnter)
+	if got := bufferPlain(paint()); !strings.Contains(got, "Fixture Responses") || strings.Contains(got, "Unsupported Gateway") {
+		t.Fatalf("account picker offered the wrong routes:\n%s", got)
+	}
+	key(tea.KeyDown)
+	chosen := key(tea.KeyEnter)
+	if chosen.Cmd == nil {
+		t.Fatal("selecting an account did not start the ordinary model-list request")
+	}
+	load, ok := chosen.Cmd().(FetchModelsMsg)
+	if !ok || load.AccountID != "exact-account" || model.capabilityPending != nil {
+		t.Fatalf("selection made something other than a model-list request: %+v", load)
+	}
+	key(tea.KeyTab)
+	key(tea.KeyEnter)
+	model.Update(ModelsMsg{ProviderID: "openai", AccountID: "exact-account", Generation: load.Generation + 1, Models: []types.ModelEntry{{ID: "stale-model"}}})
+	if strings.Contains(bufferPlain(paint()), "stale-model") {
+		t.Fatal("stale result changed the retained model picker")
+	}
+	model.Update(ModelsMsg{ProviderID: load.ProviderID, AccountID: load.AccountID, Generation: load.Generation, Models: []types.ModelEntry{{ID: "fixture-search-1"}}})
+	if got := bufferPlain(paint()); !strings.Contains(got, "fixture-search-1") {
+		t.Fatalf("discovery did not refresh the open model picker:\n%s", got)
+	}
+	key(tea.KeyEnter)
+	if got := form.Field(webFallbackModel).Value.String(); got != "fixture-search-1" {
+		t.Fatalf("selecting the displayed model chose %q", got)
+	}
+	request = capabilityRequest(t, click(paint(), "[ Save fallback ]"))
+	if action := request.Action; action.ID != "web" || action.Scope != captypes.ScopeApplication || action.Operation != captypes.SetWebSearchFallback ||
+		!slices.Equal(action.WebSearchFallback, captypes.WebSearchFallback{"exact-account", "fixture-search-1"}) ||
+		action.Connection != nil || len(action.Arguments) != 0 || action.Content != "" {
+		t.Fatalf("Save sent more than the exact application route: %+v", action)
+	}
+	snapshot.Generation++
+	snapshot.Settings.WebSearchFallback = request.Action.WebSearchFallback
+	model.applyCapabilityResult(CapabilityResultMsg{Target: model, Sequence: request.Sequence, Snapshot: snapshot})
+	buffer = paint()
+	if catalog.dirty() || !strings.Contains(bufferPlain(buffer), "Model fallback saved.") {
+		t.Fatalf("save acknowledgement did not settle the draft:\n%s", bufferPlain(buffer))
+	}
+	click(buffer, "[ Back ]")
+	if got := bufferPlain(paint()); !strings.Contains(got, "Fixture Responses · fixture-search-1") {
+		t.Fatalf("stored selection not shown from the built-in connection:\n%s", got)
+	}
+
+	request = capabilityRequest(t, root.OpenCapabilities(captypes.KindMCP, "", "docs"))
+	completeCapability(model, catalog, request, "")
+	if got := bufferPlain(paint()); strings.Contains(got, "Model fallback") {
+		t.Fatalf("external server acquired model fallback settings:\n%s", got)
+	}
+	model.SetScope(types.SettingsScopeWorkspace)
+	if result := root.OpenWebSearchFallback(); result.Cmd != nil {
+		t.Fatal("workspace scope tried to load a model for an application-only choice")
+	}
+	if got := bufferPlain(paint()); strings.Contains(got, "[ Save fallback ]") || !strings.Contains(got, "Switch to Application") {
+		t.Fatalf("workspace scope could edit the application fallback:\n%s", got)
+	}
+}
+
+func TestWebSearchFallbackDeepLinkRetainsDirtyAgentEditor(t *testing.T) {
+	model, root, _ := capabilityFixture(t, captypes.KindMCP)
+	snapshot := model.capabilitySnapshot
+	snapshot.Generation++
+	snapshot.Settings = captypes.WithDefaults(snapshot.Settings)
+	model.SetCapabilitySnapshot(snapshot)
+	root.ShowAgentPage("role/default", "Model")
+	draft := root.agents.draft
+	if draft == nil {
+		t.Fatal("agent editor did not open")
+	}
+	draft.SetValue(fieldModel, ui.StringValue("unsaved-agent-model"))
+	root.OpenWebSearchFallback()
+	if root.agents.draft != draft || !root.agents.dirty() || root.agents.confirm != "discard" || model.SelectedCategory() != catAgents {
+		t.Fatal("deep link discarded or replaced an unsaved agent draft")
+	}
+	root.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.discard"})
+	if root.agents.draft != nil || root.capCatalog.edit != webFallbackEditor ||
+		root.capCatalog.id != captypes.WebConnectionID || model.SelectedCategory() != catMCP {
+		t.Fatalf("discard did not resume fallback: draft=%t edit=%q id=%q category=%d",
+			root.agents.draft != nil, root.capCatalog.edit, root.capCatalog.id, model.SelectedCategory())
+	}
+}
+
+func TestWebSearchFallbackSettingsPersistAnAtomicApplicationChoice(t *testing.T) {
+	before := types.AppSettings{Capabilities: captypes.WithDefaults(captypes.Settings{
+		WebSearchFallback: captypes.WebSearchFallback{"original-account", "original-model"},
+	})}
+	after := types.CloneAppSettings(before)
+	after.Capabilities.WebSearchFallback = captypes.WebSearchFallback{"original-account", "explicit-model"}
+	edits := types.SettingsEdits(before, after)
+	if len(edits) != 1 || !slices.Equal(edits[0].Path, []string{"capabilities", "web_search_fallback"}) {
+		t.Fatalf("Save could write unrelated or partial fields: %+v", edits)
+	}
+	latest := types.CloneAppSettings(before)
+	latest.Capabilities.WebSearchFallback = captypes.WebSearchFallback{"another-account", "another-model"}
+	peer := captypes.ConnectionConfig{ID: "docs", Name: "Peer MCP", Transport: "http", URL: "https://docs.example/mcp"}
+	latest.Capabilities.Connections[peer.ID] = peer
+	if err := types.ApplySettingsEdits(&latest, edits); err != nil {
+		t.Fatal(err)
+	}
+	saved := captypes.Clone(latest.Capabilities)
+	if !slices.Equal(latest.Capabilities.WebSearchFallback, after.Capabilities.WebSearchFallback) ||
+		!reflect.DeepEqual(saved.Connections[peer.ID], peer) {
+		t.Fatalf("atomic write changed route or neighboring MCP: route=%+v peer=%+v",
+			saved.WebSearchFallback, saved.Connections[peer.ID])
+	}
+	inherited := types.MergeAppWorkspace(latest, types.WorkspaceOverrides{
+		Capabilities: json.RawMessage(`{"web_search_fallback":["workspace-account","workspace-model"],"connections":{"web":{"disabled":true}}}`),
+	})
+	if !slices.Equal(inherited.Capabilities.WebSearchFallback, after.Capabilities.WebSearchFallback) ||
+		!inherited.Capabilities.Connections["web"].Disabled {
+		t.Fatal("workspace overrides selected a model or bypassed its own disable")
+	}
+	if patch := types.OverridesFromDiff(before, after).Capabilities; len(patch) != 0 {
+		t.Fatalf("application-only route leaked into workspace overrides: %s", patch)
 	}
 }
 
