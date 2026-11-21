@@ -55,7 +55,8 @@ if '--head' in a:
     sys.exit(0)
 source = pathlib.Path(os.environ['FIXTURES']) / url.rsplit('/', 1)[-1]
 if not source.exists(): sys.exit(22)
-shutil.copyfile(source, a[a.index('--output')+1])
+if '--output' in a: shutil.copyfile(source, a[a.index('--output')+1])
+else: sys.stdout.buffer.write(source.read_bytes())
 """)
         curl.chmod(0o755)
         self.env = dict(os.environ, HOME=str(self.home), SHELL="/bin/bash", TMPDIR=str(self.root),
@@ -138,13 +139,20 @@ shutil.copyfile(source, a[a.index('--output')+1])
         self.assertFalse(list(self.window_root.glob(".install.*")))
         return result
 
-    def run_in_pty(self, answers, *args):
-        """Run the installer in a terminal, answering each question in order."""
+    def run_in_pty(self, answers, *args, command=None):
+        """Run the installer in a terminal, answering each question in order.
+
+        The terminal is the controlling terminal, as in a real login, so
+        /dev/tty reaches it even when the installer's input is a pipe.
+        """
+        import fcntl
         import pty
         import select
+        import termios
         master, slave = pty.openpty()
-        process = subprocess.Popen(["bash", str(ROOT / "install.sh"), *args], env=self.env,
-                                   stdin=slave, stdout=slave, stderr=slave, close_fds=True)
+        process = subprocess.Popen(command or ["bash", str(ROOT / "install.sh"), *args], env=self.env,
+                                   stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+                                   start_new_session=True, preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
         os.close(slave)
         output, pending, answered = b"", list(answers), 0
         try:
@@ -558,6 +566,61 @@ shutil.copyfile(source, a[a.index('--output')+1])
         mv.chmod(0o755)
         self.run_installer("--no-gui", success=False)
         self.assertEqual(self.dest.read_bytes(), before)
+
+    # ---- The website command ----------------------------------------------
+    # curl -fsSL https://opencrude.github.io/linux.sh | sh runs site/linux.sh,
+    # which runs the installer of the latest release. Only curl is replaced.
+    SITE_COMMAND = ROOT / "site/linux.sh"
+    LATEST_INSTALLER = "https://github.com/opencrude/crude/releases/latest/download/install.sh"
+
+    def publish_installer(self):
+        shutil.copyfile(ROOT / "install.sh", self.fixtures / "install.sh")
+
+    def run_site_command(self, *args):
+        """Run the website command with no terminal at all, as in a container."""
+        with self.SITE_COMMAND.open("rb") as script:
+            return subprocess.run(["sh", "-s", "--", *args], env=self.env, stdin=script,
+                                  capture_output=True, timeout=60, start_new_session=True)
+
+    def test_site_command_asks_at_the_terminal_when_piped(self):
+        self.archive()
+        self.publish_installer()
+        piped = f"cat {shlex.quote(str(self.SITE_COMMAND))} | sh -s -- --no-gui"
+        code, output = self.run_in_pty(["y"], command=["sh", "-c", piped])
+        self.assertEqual(code, 0, output)
+        self.assertIn("Install anyway? [y/N]", output, "a piped install must still ask at the terminal")
+        self.assertIn("Crude v0.1.0 is ready.", output)
+        self.assertTrue(self.dest.exists())
+        self.assertEqual(self.log.read_text().splitlines()[0], self.LATEST_INSTALLER)
+
+        refused = self.root / "refused"
+        refused.mkdir()
+        self.env["HOME"] = str(refused)
+        code, output = self.run_in_pty(["n"], command=["sh", "-c", piped])
+        self.assertNotEqual(code, 0, output)
+        self.assertIn("you did not accept the warning", output)
+        self.assertFalse((refused / ".local/bin/crude").exists(), "a refusal installs nothing")
+
+    def test_site_command_without_a_terminal_installs_unattended_with_its_options(self):
+        self.archive()
+        self.publish_installer()
+        self.env["LATEST"] = "v9.9.9"  # the options must select v0.1.0
+        result = self.run_site_command("--no-gui", "--version", "v0.1.0")
+        output = result.stdout.decode() + result.stderr.decode()
+        self.assertEqual(result.returncode, 0, output)
+        self.assertIn("active development", output)
+        self.assertNotIn("Install anyway?", output, "nobody is there to answer")
+        self.assertIn("Crude v0.1.0 is ready.", output)
+
+    def test_site_command_download_failure_changes_nothing(self):
+        self.publish_installer()
+        self.env["NETWORK_FAIL"] = "1"
+        result = self.run_site_command()
+        stderr = result.stderr.decode()
+        self.assertNotEqual(result.returncode, 0, stderr)
+        self.assertIn(f"cannot download {self.LATEST_INSTALLER}. Check your network connection, then try again.", stderr)
+        self.assertIn("Nothing was changed.", stderr)
+        self.assertFalse(self.dest.exists())
 
     def test_actual_release_binary_install_and_repeat(self):
         if RELEASE_DIR is None or RELEASE_VERSION is None:

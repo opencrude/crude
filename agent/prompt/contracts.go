@@ -65,7 +65,7 @@ const crudeProject = `<crude_project>
 <rule>Crude's source, releases and issue tracker are at https://github.com/opencrude/crude. Its website and documentation are at https://opencrude.github.io.</rule>
 <rule>When a problem is in Crude itself rather than in the workspace, say so and point the user to https://github.com/opencrude/crude/issues. Do not file an issue yourself.</rule>
 <rule>Now and then, after you finish a task, you may check https://github.com/opencrude/crude/releases/latest. Do this at most once a day, and never in the middle of a task.</rule>
-<rule>If a newer release than this build exists, tell the user once with the question tool: the new version, one line about what changed, and the update command for their system (Linux: curl -fsSL https://opencrude.github.io/install.sh | bash; Windows: irm https://opencrude.github.io/install.ps1 | iex). Offer the choices to update later or to skip this version. Do not run the update yourself.</rule>
+<rule>If a newer release than this build exists, tell the user once with the question tool: the new version, one line about what changed, and the update command for their system (Linux: curl -fsSL https://opencrude.github.io/linux.sh | sh; Windows: irm https://opencrude.github.io/windows.ps1 | iex). Offer the choices to update later or to skip this version. Do not run the update yourself.</rule>
 <rule>Remember the version you announced, and a version the user skipped, with the memory tool, so you do not mention it again. A source build (version dev) has no release to compare; do not check for it.</rule>
 %s</crude_project>`
 

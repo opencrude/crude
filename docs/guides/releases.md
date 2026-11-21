@@ -56,9 +56,14 @@ run it. No compiler, source checkout or elevation is required. Run the same
 command again to update. The latest release is used unless you name a version;
 an explicit version can select a prerelease.
 
-The website install commands fetch these two files from the latest published
-release. Pages also serves copies for older install commands; refresh those
-with a Pages deploy ([website](website.md#install-commands)).
+The website install commands, `curl -fsSL https://opencrude.github.io/linux.sh | sh`
+and `irm https://opencrude.github.io/windows.ps1 | iex`, read these two files
+from the latest published release and run them. A new release needs no Pages
+deploy ([website](website.md#install-commands)).
+
+Run from a file, a failed installation exits with code 1. Run as piped text,
+which has no file, it stops with the error instead, so the PowerShell window
+stays open.
 
 | Action | Linux | Windows |
 |---|---|---|
@@ -384,9 +389,10 @@ The website deploys from the organization site repository
 `opencrude/opencrude.github.io`, which serves the root URL
 <https://opencrude.github.io/>. Its `pages.yml` is `workflow_dispatch` only: a
 push never publishes the website. The job checks out `site/` from this
-repository at the requested ref, copies it with the two installers into the
-published directory, uploads that directory and uses the official Pages actions
-pinned by commit. See the [website guide](website.md).
+repository at the requested ref, copies it into the published directory with
+`linux.sh` and `windows.ps1` also named `install.sh` and `install.ps1`, uploads
+that directory and uses the official Pages actions pinned by commit. See the
+[website guide](website.md).
 
 Before any public launch:
 
