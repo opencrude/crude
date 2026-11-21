@@ -2211,7 +2211,9 @@ shown separately from LSP diagnostics and project-check correctness.
   reports the unavailable highlighting. Chroma regex matching itself is not
   preemptible mid-token; cancellation is checked between tokens. Compact byte
   spans are source-owned; cell colour maps are lazily retained for visible lines
-  in a bounded cache. Geometry/navigation never invokes the lexer.
+  in a bounded cache. The explicit plain-text lexer uses one text span without
+  regex matching and still builds the bracket index. Geometry/navigation never
+  invokes the lexer.
 - Source-code projections expand tabs at tab stops before width, wrapping,
   syntax coloring, and paint. Raw tab cells have no stable terminal geometry.
 - Editor and comparison syntax share `rendering.SourceStyle`; never add a second
