@@ -91,7 +91,8 @@
 ## Retention cost
 
 When snapshot timestamps match, retention keeps the last committed snapshot
-first. Snapshot IDs do not determine which snapshot is newer.
+first. Snapshot IDs do not determine which snapshot is newer. A canceled
+capture does not record a snapshot from a scan shared with other requests.
 
 - Reconciliation and retention are maintenance. They hold the Store/process
   mutation gate that message scopes and every direct file tool's operation

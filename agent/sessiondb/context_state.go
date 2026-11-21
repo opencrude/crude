@@ -201,8 +201,11 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		checkpoint.ContextOwnerID, checkpoint.ContextRevision = p.AgentID, next.Revision
 		checkpoint.ContextGeneration, checkpoint.ContextReason = next.Generation, next.Reason
 		checkpoint.ActiveContext = next.Messages[:len(next.Messages):len(next.Messages)]
-		if p.Mutation.Replace != nil && sameMessageArray(checkpoint.Archive, p.Mutation.Replace.Messages) {
-			// Both lists name the same input. Retain the one immutable copy.
+		archive := checkpoint.Archive
+		if len(archive) != 0 && len(archive) == len(next.Messages) &&
+			((p.Mutation.Replace != nil && sameMessageArray(archive, p.Mutation.Replace.Messages)) ||
+				commonMessagePrefix(archive, next.Messages) == len(archive)) {
+			// Both lists have the same messages. Retain one immutable copy.
 			checkpoint.Archive = checkpoint.ActiveContext
 		}
 		if recorded, err = saveRecoveryCheckpointTx(tx, db, p.SessionID, checkpoint, true); err != nil {

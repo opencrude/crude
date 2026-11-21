@@ -112,7 +112,7 @@ func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Ma
 		return Manifest{}, false, err
 	}
 	defer s.endOperation()
-	request := &captureRequest{opts: opts, done: make(chan struct{})}
+	request := &captureRequest{ctx: ctx, opts: opts, done: make(chan struct{})}
 	s.capturesMu.Lock()
 	s.captures = append(s.captures, request)
 	s.capturesMu.Unlock()
@@ -144,7 +144,9 @@ func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Ma
 			return Manifest{}, false, err
 		}
 		for _, waiting := range group {
-			if err == nil {
+			if cancelled := waiting.ctx.Err(); cancelled != nil {
+				waiting.err = cancelled
+			} else if err == nil {
 				waiting.manifest, waiting.changed, waiting.err = s.recordIfChanged(waiting.opts, entries)
 			} else {
 				waiting.err = err
@@ -156,6 +158,7 @@ func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Ma
 }
 
 type captureRequest struct {
+	ctx      context.Context
 	opts     SnapshotOptions
 	done     chan struct{}
 	manifest Manifest

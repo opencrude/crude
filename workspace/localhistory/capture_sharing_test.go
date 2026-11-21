@@ -2,6 +2,7 @@ package localhistory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -109,8 +110,8 @@ func TestWaitingCapturesShareOneLaterScan(t *testing.T) {
 	if changed != 1 {
 		t.Fatalf("%d requests recorded the change, want exactly one", changed)
 	}
-	if results[0].err == nil && results[0].manifest.ID != id {
-		t.Fatal("the stopped request got a different snapshot")
+	if !errors.Is(results[0].err, context.Canceled) || results[0].changed {
+		t.Fatal("the canceled request recorded a snapshot", results[0].err)
 	}
 	records, err := store.Timeline(-1)
 	if err != nil {
