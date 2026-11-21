@@ -130,7 +130,8 @@ func TestWebSearchProtocolRequests(t *testing.T) {
 				t.Fatalf("sources=%#v, error=%v, requests=%d", sources, err, requests.Load())
 			}
 			observation, ok := p.WebSearchObservation(tt.model)
-			if !ok || !observation.Working || observation.Detail != "" || observation.Results != 2 || observation.Latency <= 0 || observation.At.IsZero() {
+			// A loopback reply can complete within one clock tick.
+			if !ok || !observation.Working || observation.Detail != "" || observation.Results != 2 || observation.Latency < 0 || observation.At.IsZero() {
 				t.Fatalf("observation = %+v, present = %v", observation, ok)
 			}
 		})
