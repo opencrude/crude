@@ -42,6 +42,11 @@ func TestInspectAgentDistinguishesIdleHistoryAndCurrentRunWithoutEffects(t *test
 		t.Fatal(err)
 	}
 	finish(latest)
+	// Distinct runs can have the same wall-clock timestamp on Windows.
+	// Start order, not the opaque run ID, identifies the latest attempt.
+	if _, err := database.Exec(`UPDATE collaboration_runs SET started_at=? WHERE id IN (?,?)`, latest.StartedAt.UnixNano(), old.ID, latest.ID); err != nil {
+		t.Fatal(err)
+	}
 	before, err := store.Agent(t.Context(), root.ID)
 	if err != nil {
 		t.Fatal(err)

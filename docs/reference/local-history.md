@@ -90,6 +90,9 @@
 
 ## Retention cost
 
+When snapshot timestamps match, retention keeps the last committed snapshot
+first. Snapshot IDs do not determine which snapshot is newer.
+
 - Reconciliation and retention are maintenance. They hold the Store/process
   mutation gate that message scopes and every direct file tool's operation
   receipt wait on, so they never run while an agent turn (message scope or

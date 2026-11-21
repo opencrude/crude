@@ -61,7 +61,7 @@ func (store *Store) InspectAgentAttempt(ctx context.Context, id, runID string) (
 		} else {
 			var runID string
 			err := tx.QueryRowContext(ctx, `SELECT id FROM collaboration_runs
-				WHERE agent_id=? ORDER BY started_at DESC,id DESC LIMIT 1`, id).Scan(&runID)
+				WHERE agent_id=? ORDER BY started_at DESC,rowid DESC LIMIT 1`, id).Scan(&runID)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
@@ -175,10 +175,10 @@ func (store *Store) ListRuns(ctx context.Context, agentID, before string, limit 
 			if agentID != "" && anchor.AgentID != agentID {
 				return fmt.Errorf("%w: run history cursor belongs to another agent", ErrNotFound)
 			}
-			query += ` AND (started_at,id)<(?,?)`
-			args = append(args, anchor.StartedAt.UnixNano(), anchor.ID)
+			query += ` AND (started_at,rowid)<(SELECT started_at,rowid FROM collaboration_runs WHERE id=?)`
+			args = append(args, anchor.ID)
 		}
-		rows, err := tx.QueryContext(ctx, query+` ORDER BY started_at DESC,id DESC LIMIT ?`, append(args, limit+1)...)
+		rows, err := tx.QueryContext(ctx, query+` ORDER BY started_at DESC,rowid DESC LIMIT ?`, append(args, limit+1)...)
 		if err != nil {
 			return err
 		}

@@ -223,7 +223,7 @@ CREATE TABLE IF NOT EXISTS history_retention_runs (
 			return err
 		}
 	}
-	_, err = db.Exec(`UPDATE history_snapshots SET kind='startup_reconcile',label='Startup reconciliation' WHERE kind='baseline' AND snapshot_id<>(SELECT snapshot_id FROM history_snapshots WHERE kind='baseline' ORDER BY created_at ASC LIMIT 1)`)
+	_, err = db.Exec(`UPDATE history_snapshots SET kind='startup_reconcile',label='Startup reconciliation' WHERE kind='baseline' AND snapshot_id<>(SELECT snapshot_id FROM history_snapshots WHERE kind='baseline' ORDER BY created_at ASC,rowid ASC LIMIT 1)`)
 	if err != nil {
 		return fmt.Errorf("localhistory: normalize baselines: %w", err)
 	}
@@ -303,7 +303,7 @@ func (s *Store) Timeline(limit int) ([]SnapshotRecord, error) {
 
 func (s *Store) timeline(limit int) ([]SnapshotRecord, error) {
 	query := `SELECT snapshot_id,parent_snapshot_id,created_at,kind,label,logical_bytes
-FROM history_snapshots ORDER BY created_at DESC`
+FROM history_snapshots ORDER BY created_at DESC,rowid DESC`
 	var args []any
 	if limit >= 0 {
 		if limit == 0 || limit > 10000 {
@@ -336,7 +336,7 @@ func (s *Store) FileHistory(path string, limit int) ([]SnapshotRecord, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	rows, err := s.db.Query(`SELECT s.snapshot_id,s.parent_snapshot_id,s.created_at,s.kind,s.label,s.logical_bytes FROM history_snapshots s JOIN history_snapshot_entries e ON e.snapshot_id=s.snapshot_id WHERE e.path=? ORDER BY s.created_at DESC LIMIT ?`, path, limit)
+	rows, err := s.db.Query(`SELECT s.snapshot_id,s.parent_snapshot_id,s.created_at,s.kind,s.label,s.logical_bytes FROM history_snapshots s JOIN history_snapshot_entries e ON e.snapshot_id=s.snapshot_id WHERE e.path=? ORDER BY s.created_at DESC,s.rowid DESC LIMIT ?`, path, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -449,7 +449,7 @@ func TestWebSearchRecordsDeadline(t *testing.T) {
 	if _, err := p.SearchWeb(expired, "", "query", 1); !errors.Is(err, context.DeadlineExceeded) || err.Error() != detail {
 		t.Fatalf("error did not reflect caller deadline: %v", err)
 	}
-	if got, ok := p.WebSearchObservation(""); !ok || got.Working || got.Detail != detail || !got.At.After(first.At) {
+	if got, ok := p.WebSearchObservation(""); !ok || got.Working || got.Detail != detail || got.At.Before(first.At) || got.Latency >= first.Latency {
 		t.Fatalf("caller deadline did not record an observation: %+v, present = %v", got, ok)
 	}
 }
