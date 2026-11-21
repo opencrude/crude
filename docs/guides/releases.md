@@ -87,7 +87,7 @@ download path second, because a network can carry one and fail the other. Each
 source gets three bounded attempts, and the pinned checksum decides what is
 accepted.
 
-### Errand transition in v0.8.1
+### The Errand transition
 
 The installer does not change your Crude data. The new workspace helper starts
 as Errand; its old sessions are left on disk and are not adopted or migrated.

@@ -36,7 +36,7 @@ class GoGroupsTests(unittest.TestCase):
             with self.subTest(race=race):
                 commands = []
                 listing = "\n".join([*names, "BenchmarkNotATest", "ok ignored timing output"])
-                outputs = ["crude/a\ncrude/app\ncrude/core\ncrude/session\ncrude/tui/viewmodel\ncrude/workspace\ncrude/z\n", listing, listing, listing, listing, listing]
+                outputs = ["crude/a\ncrude/app\ncrude/core\ncrude/agent/session\ncrude/tui/viewmodel\ncrude/workspace\ncrude/z\n", listing, listing, listing, listing, listing]
                 with mock.patch.object(test_go.subprocess, "check_output", side_effect=outputs), \
                      mock.patch.object(test_go, "run", side_effect=commands.append):
                     test_go.main(["--race"] if race else [])
