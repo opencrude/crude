@@ -103,6 +103,38 @@
   Saved entries pass the same metadata, timestamp-granule and object checks as
   entries kept in memory; a missing, damaged or older file is ignored.
 
+## Reset disposable test history
+
+On Linux and Windows test machines, skip index conversion if you do not need
+old snapshots, restore points, undo records, or safety evidence. Close all
+shells and stop the core on the machine that owns the workspace with
+`crude --core-stop`. Check `crude --core-status` before removing anything. Use
+the same build and `CRUDE_HOME` as the running core.
+
+On Linux, preview the exact folders and remove them only if they are disposable:
+
+```sh
+crude_home=${CRUDE_HOME:-"$HOME"}
+find "${crude_home}/.crude/workspaces" -mindepth 2 -maxdepth 2 -type d -name local-history -print
+# After checking the list:
+find "${crude_home}/.crude/workspaces" -mindepth 2 -maxdepth 2 -type d -name local-history -exec rm -rf -- {} +
+```
+
+On Windows, use PowerShell:
+
+```powershell
+$homeDir = if ($env:CRUDE_HOME) { $env:CRUDE_HOME } else { $env:USERPROFILE }
+Remove-Item -Path (Join-Path $homeDir '.crude\workspaces\*\local-history') -Recurse -Force -WhatIf
+```
+
+Remove `-WhatIf` only after checking the list. Both examples use the standard
+`.crude` directory name. A beta build uses `.crude-beta`; a source build with
+no `CRUDE_HOME` uses the `.crude-dev` profile inside your home directory. Match
+that profile before running the removal command.
+
+Crude creates a fresh store when each workspace next opens. Do not remove the
+workspace directory itself: it holds data such as sessions and chat history.
+
 ## Retention cost
 
 When snapshot timestamps match, retention keeps the last committed snapshot
