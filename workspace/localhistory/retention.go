@@ -150,35 +150,21 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 	return result, nil
 }
 
-// removeSnapshots deletes unprotected generations in one transaction, then
-// collects unreferenced objects and returns the measured store size.
+// removeSnapshots deletes unprotected generations, one transaction each, so
+// any other store user waits for at most one generation. It then collects
+// unreferenced objects and path names and returns the measured store size.
 func (s *Store) removeSnapshots(ctx context.Context, ids []string, result *PruneResult) (Stats, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Stats{}, err
-	}
 	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history_message_scopes WHERE state='closed' AND (before_snapshot_id=? OR after_snapshot_id=?)`, id, id); err != nil {
-			_ = tx.Rollback()
+		if err := s.removeSnapshot(ctx, id); err != nil {
 			return Stats{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history_restore_events WHERE notified=1 AND (target_snapshot_id=? OR safety_snapshot_id=? OR after_snapshot_id=?)`, id, id, id); err != nil {
-			_ = tx.Rollback()
-			return Stats{}, err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM history_snapshots WHERE snapshot_id=?`, id); err != nil {
-			_ = tx.Rollback()
-			return Stats{}, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return Stats{}, err
-	}
-	for _, id := range ids {
 		_ = os.Remove(filepath.Join(s.root, "manifests", id+".json"))
+		s.forgetVerifiedSnapshots([]string{id})
+		result.RemovedSnapshots++
 	}
-	s.forgetVerifiedSnapshots(ids)
-	result.RemovedSnapshots += len(ids)
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM history_index_paths WHERE path_id NOT IN (SELECT path_id FROM history_snapshot_paths)`); err != nil {
+		return Stats{}, err
+	}
 	if err := s.removeStalePlans(); err != nil {
 		return Stats{}, err
 	}
@@ -188,6 +174,24 @@ func (s *Store) removeSnapshots(ctx context.Context, ids []string, result *Prune
 		return Stats{}, err
 	}
 	return s.stats()
+}
+
+func (s *Store) removeSnapshot(ctx context.Context, id string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM history_message_scopes WHERE state='closed' AND (before_snapshot_id=? OR after_snapshot_id=?)`, id, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM history_restore_events WHERE notified=1 AND (target_snapshot_id=? OR safety_snapshot_id=? OR after_snapshot_id=?)`, id, id, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM history_snapshots WHERE snapshot_id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) removeStalePlans() error {

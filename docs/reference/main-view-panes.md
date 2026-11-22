@@ -242,6 +242,15 @@ editor/chat facts. Workspace status remains workspace-owned.
 | Reorder selected tab inside its group | Palette Move Tab Left/Right in Group |
 | Open File in Pane and all pane operations above | Ctrl+Alt+P Command Palette, registry-backed labels |
 
+While a session the user asked for is opening (including a request that
+waits for the automatic Errand open), the launcher's New Session action shows
+**Starting session** with an activity dot and "Please wait. The session opens
+when it is ready." Another request in that time says that a session is already
+starting; it is never dropped silently. Away from the launcher, a start that
+takes more than a second shows one "Starting the session. Please wait." notice.
+This holds however the user reached the launcher: first start, every agent
+hidden, or a restarted shell.
+
 An empty pane uses native New Session/Open File buttons. The final unsplit,
 tabless main area retains workspace home rather than introducing a second
 launcher. Editor closes retain the dirty-safe Save/Discard/Cancel path.

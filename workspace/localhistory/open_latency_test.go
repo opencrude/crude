@@ -56,7 +56,7 @@ func TestIndexedHistoryOpenDoesNotRewriteEntries(t *testing.T) {
 	}
 	// A committed snapshot row and its entries are one transaction. Reopening
 	// must not replay those immutable entries, even with INSERT OR IGNORE.
-	if _, err := s.db.Exec(`CREATE TRIGGER reject_entry_replay BEFORE INSERT ON history_snapshot_entries BEGIN SELECT RAISE(ABORT, 'replayed indexed history'); END`); err != nil {
+	if _, err := s.db.Exec(`CREATE TRIGGER reject_entry_replay BEFORE INSERT ON history_snapshot_paths BEGIN SELECT RAISE(ABORT, 'replayed indexed history'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {

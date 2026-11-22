@@ -73,9 +73,16 @@ func (m *App) openPlanDestination(plan planSettledMsg) tea.Cmd {
 }
 
 func (m *App) remoteSessionCommand(sessionID string) tea.Cmd {
-	if busy, _ := m.sessionLifecycleBusy(func() tea.Cmd { return m.remoteSessionCommand(sessionID) }); busy {
+	if busy, kept := m.sessionLifecycleBusy(func() tea.Cmd { return m.remoteSessionCommand(sessionID) }); busy {
+		if kept {
+			m.noteSessionRequested()
+		} else {
+			// Never drop a click silently: the open in progress is visible.
+			m.Feedback.NotifyInfo("A session is already starting. Wait until it opens.")
+		}
 		return nil
 	}
+	m.noteSessionRequested()
 	m.sessionLifecycleSequence++
 	sequence, owner := m.sessionLifecycleSequence, m.ws
 	m.sessionLifecyclePending = true
@@ -129,9 +136,41 @@ func (m *App) forkSession(id string) tea.Cmd {
 	}
 }
 
+// noteSessionRequested starts the wait that userSessionStarting reports.
+func (m *App) noteSessionRequested() {
+	if m.sessionRequestedAt.IsZero() {
+		m.sessionRequestedAt = time.Now()
+	}
+}
+
+// userSessionStarting reports a session the user asked for that is still
+// opening, including a request that waits for the automatic Errand open.
+func (m *App) userSessionStarting() bool {
+	return m.sessionLifecyclePending && !m.errandEnsureInFlight || m.sessionLifecycleAfterErrand != nil
+}
+
+// noticeSlowSessionStart tells the user to wait when a requested session takes
+// longer than a moment and the launcher, which shows its own progress, is not
+// visible. The rule covers every entry point: palette, sidebar and panes.
+func (m *App) noticeSlowSessionStart(now time.Time) {
+	if !m.userSessionStarting() {
+		m.sessionRequestedAt = time.Time{}
+		return
+	}
+	if m.sessionRequestedAt.IsZero() || now.Sub(m.sessionRequestedAt) < time.Second ||
+		m.sessionWaitNoticed == m.sessionLifecycleSequence || m.launcherHostVisible() {
+		return
+	}
+	m.sessionWaitNoticed = m.sessionLifecycleSequence
+	m.Feedback.NotifyInfo("Starting the session. Please wait.")
+}
+
 func (m *App) applyRemoteSession(msg remoteSessionReadyMsg) tea.Cmd {
 	if msg.owner != m.ws || msg.sequence != m.sessionLifecycleSequence {
 		return nil
+	}
+	if !msg.errand {
+		m.sessionRequestedAt = time.Time{}
 	}
 	if msg.plan != nil {
 		if !m.sessionLifecyclePending || msg.plan.generation != m.workspaceSwitchGen.Load() {

@@ -124,3 +124,27 @@ func TestHeaderShowsLiveFocusedFileLineCount(t *testing.T) {
 		})
 	}
 }
+
+// Kitty keyboard protocol terminals report numpad keys as separate keys. The
+// real shell entry point must treat numpad Enter as Enter and the Num Lock-off
+// keypad arrows as arrows.
+func TestNumpadEnterAndArrowsActLikeMainKeys(t *testing.T) {
+	app, _ := newRealShellApp(t)
+	_, _ = app.Update(tea.WindowSizeMsg{Width: 160, Height: 30})
+	openEditorTabs(t, app, "main.go")
+	check := func(want string) {
+		t.Helper()
+		app.forceFrame()
+		app.View()
+		r, ok := app.rootHost.ScreenRect(app.headerScreen.ID())
+		if !ok || !strings.Contains(paneJourneyText(app, r), want) {
+			t.Fatalf("header does not show %q: %q", want, paneJourneyText(app, r))
+		}
+	}
+	check("1:1 · 2 lines")
+	_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyKpEnter, Mod: tea.ModNumLock})
+	check("3:1 · 3 lines")
+	_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyKpUp})
+	check("2:1 · 3 lines")
+}

@@ -69,6 +69,7 @@ type Screen struct {
 	focus                     func(ui.ComponentID) bool
 	loading                   bool
 	loadError                 string
+	starting                  bool // a requested session is still opening
 	frame                     int
 	newSession, openWorkspace *launcherAction
 	divider                   *ui.SplitDivider
@@ -163,12 +164,21 @@ func (s *Screen) OwnsFocus(id ui.ComponentID) bool {
 // SetAnimation reports a changed clock-driven presentation, independent of
 // keyboard focus. Settled action ink changes only when its glyph changes.
 func (s *Screen) SetAnimation(frame int, _ float64) bool {
-	changed := frame != s.frame && (s.loading || sparkleFrame(frame) != sparkleFrame(s.frame))
+	changed := frame != s.frame && (s.loading || s.starting && ui.ActivityDot(frame) != ui.ActivityDot(s.frame) || sparkleFrame(frame) != sparkleFrame(s.frame))
 	s.frame = frame
 	s.rule.SetFrame(frame)
 	return changed
 }
 func (s *Screen) Loading() bool { return s.loading }
+
+// SetSessionStarting shows that a requested session is still opening, so a
+// slow core never leaves the New Session action looking idle or broken.
+func (s *Screen) SetSessionStarting(on bool) bool {
+	changed := s.starting != on
+	s.starting = on
+	return changed
+}
+func (s *Screen) SessionStarting() bool { return s.starting }
 func (s *Screen) BeginLoad(cwd string) {
 	if cwd != s.cwd {
 		s.filterOn = false

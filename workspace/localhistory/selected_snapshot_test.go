@@ -441,7 +441,7 @@ func TestSelectedRetainedEvidenceAndPublicationFailuresFailClosed(t *testing.T) 
 					t.Fatal(err)
 				}
 			case "missing indexed entry":
-				if _, err := store.db.Exec(`DELETE FROM history_snapshot_entries WHERE snapshot_id=?`, manifest.ID); err != nil {
+				if _, err := store.db.Exec(`DELETE FROM history_snapshot_paths WHERE snapshot_seq=(SELECT seq FROM history_snapshot_keys WHERE snapshot_id=?)`, manifest.ID); err != nil {
 					t.Fatal(err)
 				}
 			case "missing manifest":

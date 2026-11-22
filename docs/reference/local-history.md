@@ -11,8 +11,23 @@
   or a delete-then-rename fallback. Real permission/write/commit errors propagate
   and still abort tracked turns before provider or tool execution.
 - Startup recovery reads only manifests/plans missing from the SQLite index.
-  Snapshot identity and entries commit atomically; never replay all historical
-  entries on open. LoadManifest/LoadPlan still verify immutable data on use.
+  Snapshot identity and its path index commit atomically; never replay all
+  historical paths on open. LoadManifest/LoadPlan still verify immutable data on
+  use.
+- The content-addressed manifest is the only record of a snapshot's entries
+  (type, mode, hash, size, link targets); its hash proves them. SQLite keeps
+  only which paths each snapshot contains: `history_snapshot_keys` gives each
+  snapshot an integer sequence, `history_index_paths` stores each path name
+  once, and `history_snapshot_paths` is a `WITHOUT ROWID` table keyed by
+  (snapshot, path). Rows are clustered by snapshot, so recording appends one
+  contiguous range and retention deletes one. Do not add an index keyed by
+  path: it scatters every capture and prune over the whole history. File
+  history scans the compact table instead (about 70 ms for 1.1 million rows).
+  The earlier full copy of every entry per snapshot grew one store to 787 MB;
+  deleting 37 snapshots held the store's only connection for 16 to 22 s, and
+  each capture wrote about 10,000 wide rows. The same history now takes
+  12.6 MB, a 10,000-path capture indexes in about 35 ms and each pruned
+  snapshot commits in about 35 ms.
 - `localhistory.Store` owns immutable objects/manifests/plans and SQLite index
   metadata. `workspace.LocalHistoryService` owns watcher lifecycle, settings,
   message scopes, reconciliation, and restore suppression. TUI only calls
@@ -103,6 +118,16 @@ capture does not record a snapshot from a scan shared with other requests.
   restore cancels the maintenance context. Watcher captures also wait while
   agents work; changed paths stay pending and the turn's after-message
   snapshot or the next gap records them.
+- Retention removes each generation in its own transaction and stops between
+  generations when maintenance yields, so another store user waits for at most
+  one generation. Foreground work takes the store from maintenance before its
+  first query: a turn's message scope and the safety copy before a delete both
+  start as work.
+- The serialized workspace owner never queries the history store. A session
+  lifecycle worker reads a resumed session's pending restore notifications;
+  the owner only installs them, and a created or forked session reads nothing.
+  Waiting on the store from the owner froze every request for 8 s while
+  retention held its connection.
 - Retention must stay cheap: re-reading every protected snapshot's content on
   each pass once held the gate for over a minute per pass in a real store.
 - Protected evidence is content-verified once per open Store. Retention keeps

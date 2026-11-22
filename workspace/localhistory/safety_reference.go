@@ -197,25 +197,30 @@ func (s *Store) checkRetainedManifest(ctx context.Context, id string, readObject
 	if indexed.ParentID != manifest.ParentID || indexed.CreatedAt != manifest.CreatedAt || indexed.Kind != manifest.Kind || indexed.Label != manifest.Label {
 		return Manifest{}, errors.New("localhistory: retained snapshot metadata mismatch")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT path,entry_type,mode,hash,size,symlink_target,hardlink_target,special_mode FROM history_snapshot_entries WHERE snapshot_id=?`, id)
+	// The manifest's content hash proves every entry; the index must name
+	// exactly the manifest's paths and its recorded logical size.
+	rows, err := s.db.QueryContext(ctx, `SELECT p.path FROM history_snapshot_keys k
+JOIN history_snapshot_paths e ON e.snapshot_seq=k.seq
+JOIN history_index_paths p ON p.path_id=e.path_id
+WHERE k.snapshot_id=?`, id)
 	if err != nil {
 		return Manifest{}, err
 	}
 	var count int
-	var logical int64
 	for rows.Next() {
 		var path string
-		var entry Entry
-		if err := rows.Scan(&path, &entry.Type, &entry.Mode, &entry.Hash, &entry.Size, &entry.SymlinkTarget, &entry.HardlinkTarget, &entry.SpecialMode); err != nil {
+		if err := rows.Scan(&path); err != nil {
 			_ = rows.Close()
 			return Manifest{}, err
 		}
-		expected, ok := manifest.Entries[path]
-		if !ok || entry != expected {
+		if _, ok := manifest.Entries[path]; !ok {
 			_ = rows.Close()
 			return Manifest{}, errors.New("localhistory: retained snapshot entry mismatch")
 		}
 		count++
+	}
+	var logical int64
+	for _, entry := range manifest.Entries {
 		if entry.Type == EntryFile {
 			logical += entry.Size
 		}

@@ -182,11 +182,14 @@ func TestRetainedSnapshotDamagedEvidenceFailsClosed(t *testing.T) {
 			case "changed metadata":
 				exec(`UPDATE history_snapshots SET label='different' WHERE snapshot_id=?`, safety.ID)
 			case "missing entry":
-				exec(`DELETE FROM history_snapshot_entries WHERE snapshot_id=?`, safety.ID)
+				exec(`DELETE FROM history_snapshot_paths WHERE snapshot_seq=(SELECT seq FROM history_snapshot_keys WHERE snapshot_id=?)`, safety.ID)
 			case "changed entry":
-				exec(`UPDATE history_snapshot_entries SET mode=0 WHERE snapshot_id=?`, safety.ID)
+				exec(`INSERT INTO history_index_paths(path) VALUES('extra')`)
+				exec(`UPDATE history_snapshot_paths SET path_id=(SELECT path_id FROM history_index_paths WHERE path='extra')
+WHERE snapshot_seq=(SELECT seq FROM history_snapshot_keys WHERE snapshot_id=?) AND path_id=(SELECT path_id FROM history_index_paths WHERE path='review.txt')`, safety.ID)
 			case "extra entry":
-				exec(`INSERT INTO history_snapshot_entries(snapshot_id,path,entry_type,mode) VALUES(?,'extra','directory',448)`, safety.ID)
+				exec(`INSERT INTO history_index_paths(path) VALUES('extra')`)
+				exec(`INSERT INTO history_snapshot_paths(snapshot_seq,path_id) SELECT seq,(SELECT path_id FROM history_index_paths WHERE path='extra') FROM history_snapshot_keys WHERE snapshot_id=?`, safety.ID)
 			case "missing manifest", "corrupt manifest":
 				path := filepath.Join(store.root, "manifests", safety.ID+".json")
 				if damage == "missing manifest" {
