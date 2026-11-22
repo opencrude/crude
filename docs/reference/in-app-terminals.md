@@ -89,6 +89,8 @@ while the reader drains final output. Only after EOF and parsing does the
 manager publish exited state. Natural completion and interruption therefore do
 not leave a finished process labelled running. Resize rejects a closing console;
 potentially blocking pseudoconsole close holds neither parser nor resize locks.
+On explicit terminal removal or failed launch, Crude drains the pipe directly
+without a parser. Closing the pipe instead can hang on older Windows versions.
 
 ## Read-only command output
 

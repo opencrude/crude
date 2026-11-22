@@ -282,6 +282,8 @@ not keep writing caller-owned result memory after the caller has returned.
   policy before spawning terminal children, without joining a shell console.
   On child exit, ConPTY closes its pseudoconsole exactly once while the parser
   drains final output; the manager publishes exited state only after EOF.
+  Explicit removal and failed launch drain output directly until EOF and join
+  that drain before releasing the pipe.
   Resize refuses a closing console, and pseudoconsole close never holds a lock
   required by the parser/output consumer.
 - **Session retention has one owner.** `session.Close` prunes an empty session

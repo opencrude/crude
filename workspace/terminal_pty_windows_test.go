@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -107,6 +108,35 @@ func TestConPTYNaturalExitDrainsFinalOutputBeforePublishingExit(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatal("native child exited but ConPTY never published EOF/exit")
+}
+
+func TestConPTYCloseDrainsWithoutAParser(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	// Older Windows waits for the final write to drain before returning from
+	// ClosePseudoConsole. This payload cannot fit in the pipe on its own.
+	finalOutput := bytes.Repeat([]byte("final output\n"), 1<<17)
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		closeConPTYAndDrain(reader, func() {
+			_, err = writer.Write(finalOutput)
+			err = errors.Join(err, writer.Close())
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal("closing the console lost its output pipe:", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("console close did not drain the output pipe")
+	}
 }
 
 func TestBuildWindowsEnvBlockIsDoubleNullTerminated(t *testing.T) {

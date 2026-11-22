@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,7 +30,23 @@ func TestIdleDocumentLeaseRefusesViewsAndRestoresOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u, err := s.beginIdleLease(); err == nil {
+	// The directory watcher can briefly own the document lock. As in the
+	// real stop path, wait only on the typed transient refusal.
+	reserve := func() (func(), error) {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for {
+			release, err := s.beginIdleLease()
+			if !errors.Is(err, types.ErrIdleSettling) {
+				return release, err
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("document operations did not settle:", err)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if u, err := reserve(); err == nil {
 		u()
 		t.Fatal("open document accepted")
 	} else if !strings.Contains(err.Error(), path) {
@@ -38,7 +55,7 @@ func TestIdleDocumentLeaseRefusesViewsAndRestoresOpen(t *testing.T) {
 	if err := s.CloseView(owner, d.ID); err != nil {
 		t.Fatal(err)
 	}
-	u, err := s.beginIdleLease()
+	u, err := reserve()
 	if err != nil {
 		t.Fatal(err)
 	}

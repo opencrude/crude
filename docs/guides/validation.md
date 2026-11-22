@@ -55,10 +55,11 @@ suite growth from creating that recurring failure without raising the deadline
 or excluding tests. Runner regressions independently verify package coverage,
 exactly-once name matching, both modes and immediate propagation of a failure.
 Report an ungrouped timeout as a failure, never as a pass of that command.
-The hosted Linux job has a separate 90-minute limit for setup, benchmarks,
-both suites and fuzzing. A verified run finished the normal suite but reached
-the former 45-minute job limit during the race suite. The per-group limits,
-benchmark ceilings and fuzz budgets are unchanged.
+Hosted Linux verification runs the normal and race suites in the 90-minute
+quality job. Fuzz campaigns have their own 40-minute job and must pass before
+packaging. The v0.8.14 rerun passed both suites but exhausted the combined job
+limit during fuzzing. Per-group limits, benchmark ceilings and fuzz budgets
+are unchanged.
 
 The core, app and workspace suites also use these exact-coverage groups.
 On Windows with Go 1.27.4, core exhausted the shared 180-second timer while

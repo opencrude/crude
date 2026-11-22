@@ -4,6 +4,7 @@ package workspace
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -98,15 +99,21 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 	// the only outstanding handle on each is inside the ConPTY.
 	_ = windows.CloseHandle(ptyInRead)
 	_ = windows.CloseHandle(ptyOutWrite)
+	readPipe := os.NewFile(uintptr(ptyOutRead), "conpty-output")
+	writePipe := os.NewFile(uintptr(ptyInWrite), "conpty-input")
+	started := false
+	defer func() {
+		if !started {
+			_ = writePipe.Close()
+			closeConPTYAndDrain(readPipe, func() { windows.ClosePseudoConsole(hpc) })
+		}
+	}()
 
 	// Build the PROC_THREAD_ATTRIBUTE_LIST with the PSEUDOCONSOLE attribute.
 	// The attribute list is embedded in STARTUPINFOEX so CreateProcess can
 	// attach the child to the pseudo console.
 	attrList, err := windows.NewProcThreadAttributeList(1)
 	if err != nil {
-		windows.ClosePseudoConsole(hpc)
-		_ = windows.CloseHandle(ptyInWrite)
-		_ = windows.CloseHandle(ptyOutRead)
 		return nil, fmt.Errorf("conpty: attribute list: %w", err)
 	}
 	defer attrList.Delete()
@@ -115,9 +122,6 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 	// lpValue, not a pointer to it. Reinterpret the handle bits instead of
 	// converting a uintptr to unsafe.Pointer; it is not a Go pointer.
 	if err := attrList.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, *(*unsafe.Pointer)(unsafe.Pointer(&hpc)), unsafe.Sizeof(hpc)); err != nil {
-		windows.ClosePseudoConsole(hpc)
-		_ = windows.CloseHandle(ptyInWrite)
-		_ = windows.CloseHandle(ptyOutRead)
 		return nil, fmt.Errorf("conpty: set pseudoconsole attribute: %w", err)
 	}
 
@@ -138,9 +142,6 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 	var procInfo windows.ProcessInformation
 	cmdLinePtr, err := windows.UTF16PtrFromString(cmdLine)
 	if err != nil {
-		windows.ClosePseudoConsole(hpc)
-		_ = windows.CloseHandle(ptyInWrite)
-		_ = windows.CloseHandle(ptyOutRead)
 		return nil, fmt.Errorf("conpty: encode command line: %w", err)
 	}
 
@@ -148,18 +149,12 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 	if cwd != "" {
 		cwdPtr, err = windows.UTF16PtrFromString(cwd)
 		if err != nil {
-			windows.ClosePseudoConsole(hpc)
-			_ = windows.CloseHandle(ptyInWrite)
-			_ = windows.CloseHandle(ptyOutRead)
 			return nil, fmt.Errorf("conpty: encode cwd: %w", err)
 		}
 	}
 
 	envBlock, err := buildWindowsEnvBlock(env)
 	if err != nil {
-		windows.ClosePseudoConsole(hpc)
-		_ = windows.CloseHandle(ptyInWrite)
-		_ = windows.CloseHandle(ptyOutRead)
 		return nil, fmt.Errorf("conpty: build env block: %w", err)
 	}
 
@@ -175,9 +170,6 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 		&startupInfo.StartupInfo,
 		&procInfo,
 	); err != nil {
-		windows.ClosePseudoConsole(hpc)
-		_ = windows.CloseHandle(ptyInWrite)
-		_ = windows.CloseHandle(ptyOutRead)
 		return nil, fmt.Errorf("conpty: CreateProcess: %w", err)
 	}
 	tree, err := fileio.OwnWindowsProcessTree(procInfo.Process)
@@ -192,9 +184,6 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 		if tree != nil {
 			_ = tree.Close()
 		}
-		windows.ClosePseudoConsole(hpc)
-		_ = windows.CloseHandle(ptyInWrite)
-		_ = windows.CloseHandle(ptyOutRead)
 		return nil, fmt.Errorf("conpty: own and resume process: %w", err)
 	}
 
@@ -206,12 +195,13 @@ func startTerminalIO(command string, args, env []string, cwd string, cols, rows 
 		hpc:        hpc,
 		procInfo:   procInfo,
 		procHandle: procInfo.Process,
-		readPipe:   os.NewFile(uintptr(ptyOutRead), "conpty-output"),
-		writePipe:  os.NewFile(uintptr(ptyInWrite), "conpty-input"),
+		readPipe:   readPipe,
+		writePipe:  writePipe,
 		tree:       tree,
 		wait:       make(chan waitResult, 1),
 		waitDone:   make(chan struct{}),
 	}
+	started = true
 	go c.waitLoop()
 	return c, nil
 }
@@ -241,6 +231,20 @@ func (c *conpty) closeConsole() {
 		// lock a service Resize might await while owning the parser lock.
 		windows.ClosePseudoConsole(c.hpc)
 	})
+}
+
+// An older ConPTY can block during close unless its output is still consumed.
+// For startup failure or explicit removal there is no parser to wait for, so
+// drain directly. os.File serializes any outstanding Read with this drain.
+func closeConPTYAndDrain(output *os.File, closeConsole func()) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(io.Discard, output)
+	}()
+	closeConsole()
+	<-done
+	_ = output.Close()
 }
 
 func (c *conpty) Read(b []byte) (int, error) {
@@ -281,11 +285,8 @@ func (c *conpty) Close() error {
 		c.closed.Store(true)
 		_ = c.tree.Terminate()
 		_ = c.tree.Close()
-		// os.File coordinates closing with in-flight reads/writes, so a
-		// recycled raw handle can never become another I/O target.
 		_ = c.writePipe.Close()
-		_ = c.readPipe.Close()
-		c.closeConsole()
+		closeConPTYAndDrain(c.readPipe, c.closeConsole)
 		<-c.waitDone
 		_ = windows.CloseHandle(c.procHandle)
 	})
