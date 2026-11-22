@@ -53,6 +53,19 @@ func DiscoverGuidance(ctx context.Context, workDir string, activePaths []string)
 	return set, nil
 }
 
+// Clone returns an independent copy that a later run may reread without
+// changing the snapshot it came from.
+func (set *GuidanceSet) Clone() *GuidanceSet {
+	if set == nil {
+		return nil
+	}
+	clone := &GuidanceSet{root: set.root, visited: make(map[string]bool, len(set.visited)), docs: append([]GuidanceDocument(nil), set.docs...), bytes: set.bytes}
+	for dir, seen := range set.visited {
+		clone.visited[dir] = seen
+	}
+	return clone
+}
+
 func (set *GuidanceSet) Documents() []GuidanceDocument {
 	return append([]GuidanceDocument(nil), set.docs...)
 }

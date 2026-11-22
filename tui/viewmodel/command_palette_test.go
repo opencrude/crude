@@ -435,6 +435,7 @@ func TestPaletteListsGlobalCommandsOnly(t *testing.T) {
 		"remote.connect",
 		"remote.health",
 		"remote.switch",
+		"search.file.open",
 		"search.project.open",
 		"search.project.replace",
 		"settings.open",

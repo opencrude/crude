@@ -20,6 +20,7 @@ type workspaceActivityTestPort struct {
 	shellport.Workspace
 	root, namespace string
 	read            map[string]workspace.WorkspaceActivity
+	readErr         error
 	reads           int
 }
 
@@ -33,6 +34,9 @@ func (p *workspaceActivityTestPort) AttachWorkspace(context.Context, string) (sh
 }
 func (p *workspaceActivityTestPort) ReadWorkspaceActivity(context.Context) (map[string]workspace.WorkspaceActivity, error) {
 	p.reads++
+	if p.readErr != nil {
+		return nil, p.readErr
+	}
 	return p.read, nil
 }
 
@@ -183,5 +187,41 @@ func TestWorkspaceActivityFencesSwitchesAndDoesNotReadWhileHidden(t *testing.T) 
 	seen := app.workspaceSidebarItems()[1]
 	if seen.Trailing[0] != "◈1" || seen.Trailing[1] != "" || seen.Trailing[2] != "" || !seen.Active {
 		t.Fatalf("new owner did not establish its own current row and counts: %+v", seen)
+	}
+}
+
+// A read that times out while the core is busy is not an observation of zero
+// activity. It used to install empty counts, so every badge blinked off until
+// the next completed read.
+func TestWorkspaceActivityKeepsBadgesWhenAReadFails(t *testing.T) {
+	app := newFullTestApp(t)
+	const root = "/srv/user/repo"
+	port := &workspaceActivityTestPort{Workspace: app.ws, root: root,
+		read: map[string]workspace.WorkspaceActivity{"repo": observedActivity(2, 1, 0)}}
+	app.ws = port
+	app.bindWorkspaceCatalogOwner()
+	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: "repo", ProjectDir: root, DisplayPath: "~/repo"}}
+	app.setActivity(activityWorkspaces, true)
+	now := time.Now()
+	app.Update(app.workspaceActivityCmd(now)())
+	if seen := app.workspaceSidebarItems()[1]; seen.Trailing[0] != "◈2" || seen.Trailing[1] != ">_1" {
+		t.Fatalf("first read did not paint the badges: %+v", seen)
+	}
+	port.readErr = context.DeadlineExceeded
+	read := app.workspaceActivityCmd(now.Add(time.Second))
+	if read == nil {
+		t.Fatal("the next poll was not scheduled")
+	}
+	app.Update(read())
+	if seen := app.workspaceSidebarItems()[1]; seen.Trailing[0] != "◈2" || seen.Trailing[1] != ">_1" {
+		t.Fatalf("a failed read erased the badges: %+v", seen)
+	}
+	if app.workspaceActivity.cancel != nil {
+		t.Fatal("a failed read left its slot busy, so the next poll cannot start")
+	}
+	port.readErr, port.read = nil, map[string]workspace.WorkspaceActivity{"repo": observedActivity(0, 0, 0)}
+	app.Update(app.workspaceActivityCmd(now.Add(2 * time.Second))())
+	if seen := app.workspaceSidebarItems()[1]; seen.Trailing != (ui.RowBadges{}) {
+		t.Fatalf("the next completed read did not replace the kept badges: %+v", seen)
 	}
 }

@@ -129,6 +129,11 @@ func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager
 }
 
 func (s *DocumentService) Open(owner document.Owner, path string) (document.Snapshot, error) {
+	return s.OpenPath(owner, path, false)
+}
+
+// OpenPath checks the result of the actual disk read before registering a new document.
+func (s *DocumentService) OpenPath(owner document.Owner, path string, existingOnly bool) (document.Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.idleFenced {
@@ -156,6 +161,9 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 	// this never authorizes creating the missing path or following a new alias.
 	err = fileio.CheckDirectoryNoSymlinks(filepath.Dir(path))
 	missingParent := errors.Is(err, os.ErrNotExist)
+	if existingOnly && missingParent && d == nil {
+		return document.Snapshot{}, os.ErrNotExist
+	}
 	if err != nil && (d == nil || !missingParent) {
 		return document.Snapshot{}, errors.New("document parent must be an existing non-symlink directory")
 	}
@@ -169,6 +177,9 @@ func (s *DocumentService) Open(owner document.Owner, path string) (document.Snap
 		disk, err := readLiveDocument(path)
 		if err != nil {
 			return document.Snapshot{}, err
+		}
+		if existingOnly && !disk.Exists {
+			return document.Snapshot{}, os.ErrNotExist
 		}
 		d = &liveDocument{snapshot: document.Snapshot{ID: path, Path: path, Revision: 1, Text: disk.Text, Saved: bytes.Clone(disk.Text), Encoding: disk.Encoding, SavedEncoding: disk.Encoding, DiskHash: disk.Hash, DiskExists: disk.Exists}, owners: make(map[document.Owner]bool), undo: make(map[document.Owner][]documentUndoUnit), redo: make(map[document.Owner][]documentUndoUnit), requests: make(map[string]documentRequest)}
 		if err := s.persistDocument(d); err != nil {

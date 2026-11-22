@@ -18,6 +18,7 @@ import (
 const ConversationSnapshotVersion = 1
 
 type DisplayMeta struct {
+	ExecutionID     string                       `json:"execution_id,omitempty"`
 	SnapshotVersion int                          `json:"snapshot_version,omitempty"`
 	Snapshots       []ttypes.ConversationMessage `json:"snapshots,omitempty"`
 	ContextOnly     bool                         `json:"context_only,omitempty"`
@@ -331,7 +332,9 @@ func appendPersistedMessageTx(tx *sql.Tx, sessionID string, value persistedMessa
 }
 
 func loadPersistedMessageByInternalIDTx(tx *sql.Tx, internalID string) (persistedMessage, bool, error) {
-	rows, err := tx.Query(`SELECT role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta FROM messages WHERE internal_id=? ORDER BY sequence_num LIMIT 2`, internalID)
+	// Any second match is an identity conflict. Sorting wide payloads by
+	// sequence number required a temporary B-tree even for a unique match.
+	rows, err := tx.Query(`SELECT role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta FROM messages WHERE internal_id=? LIMIT 2`, internalID)
 	if err != nil {
 		return persistedMessage{}, false, err
 	}

@@ -277,6 +277,9 @@ func (p *lostLiveResponse) DocumentOwner() document.Owner { return p.live.Docume
 func (p *lostLiveResponse) OpenDocument(c context.Context, path string) (document.Snapshot, error) {
 	return p.live.OpenDocument(c, path)
 }
+func (p *lostLiveResponse) OpenExistingDocument(c context.Context, path string) (document.Snapshot, error) {
+	return p.live.OpenExistingDocument(c, path)
+}
 func (p *lostLiveResponse) SyncDocument(c context.Context, id string, r uint64) (document.SyncResult, error) {
 	return p.live.SyncDocument(c, id, r)
 }

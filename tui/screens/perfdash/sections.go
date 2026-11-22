@@ -77,7 +77,7 @@ var curated = map[string][]seriesRef{
 	SectionServices: {
 		{processCore, "storage.receipts"}, {processCore, "files.search"}, {processCore, "files.events"},
 		{processCore, "lsp.diagnostics"}, {processCore, "files.watch"},
-		{processCore, "storage.session"}, {processCore, "lsp.requests"}, {processCore, "lsp.start"}, {processCore, "git.commands"},
+		{processCore, "storage.session"}, {processCore, "storage.context.stages"}, {processCore, "lsp.requests"}, {processCore, "lsp.start"}, {processCore, "git.commands"},
 		{processCore, "git.remote"},
 		// Errand suggestions: what the user sees first, then the core stages.
 		{processShell, "suggest.visible"}, {processCore, "suggest.total"}, {processCore, "suggest.first_byte"},

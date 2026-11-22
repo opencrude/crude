@@ -145,6 +145,7 @@ func (c *Conversation) attributeTurn(message *Message) {
 	message.ProviderID = c.turnIdentity.ProviderID
 	message.AccountID = c.turnIdentity.AccountID
 	message.ModelID = c.turnIdentity.ModelID
+	message.ExecutionID = c.turnIdentity.ExecutionID
 }
 
 func (c *Conversation) Messages() []Message {
@@ -460,10 +461,10 @@ func (c *Conversation) AppendReasoning(delta reasoning.Delta) {
 		ThinkingDisplay: display,
 		Time:            time.Now(),
 		ThinkingActive:  true,
-		TurnGeneration:  c.turnIdentity.Generation,
-		AccountID:       c.turnIdentity.AccountID,
-		ProviderID:      c.turnIdentity.ProviderID,
-		ModelID:         c.turnIdentity.ModelID,
+		ExecutionID:     c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
+		AccountID:  c.turnIdentity.AccountID,
+		ProviderID: c.turnIdentity.ProviderID,
+		ModelID:    c.turnIdentity.ModelID,
 	})
 }
 
@@ -477,9 +478,9 @@ func (c *Conversation) EnsureAssistant() {
 	}
 	c.AppendMessage(Message{
 		Role: MessageRoleAssistant, Time: time.Now(),
-		TurnGeneration: c.turnIdentity.Generation,
-		AccountID:      c.turnIdentity.AccountID,
-		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+		ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
+		AccountID:  c.turnIdentity.AccountID,
+		ProviderID: c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 	})
 }
 
@@ -1159,9 +1160,9 @@ func (c *Conversation) MarkError(reason string) {
 	}
 	c.AppendMessage(Message{
 		Role: MessageRoleError, Content: reason, Time: time.Now(),
-		TurnGeneration: c.turnIdentity.Generation,
-		AccountID:      c.turnIdentity.AccountID,
-		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+		ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
+		AccountID:  c.turnIdentity.AccountID,
+		ProviderID: c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 	})
 }
 
@@ -1193,9 +1194,9 @@ func (c *Conversation) Finish(content, reason, boundaryID string) {
 		}
 		c.AppendMessage(Message{
 			Role: MessageRoleAssistant, Content: content, Time: time.Now(),
-			TurnGeneration: c.turnIdentity.Generation,
-			AccountID:      c.turnIdentity.AccountID,
-			ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+			ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
+			AccountID:  c.turnIdentity.AccountID,
+			ProviderID: c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 		})
 		return
 	}
@@ -1217,9 +1218,9 @@ func (c *Conversation) Finish(content, reason, boundaryID string) {
 	}
 	c.AppendMessage(Message{
 		Role: MessageRoleAssistant, Incomplete: true, IncompleteReason: label, Time: time.Now(),
-		TurnGeneration: c.turnIdentity.Generation,
-		AccountID:      c.turnIdentity.AccountID,
-		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+		ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
+		AccountID:  c.turnIdentity.AccountID,
+		ProviderID: c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 	})
 }
 

@@ -73,16 +73,23 @@ func updatePlanTool(ctx context.Context, store *plan.Store, params map[string]an
 	if req.PlanID == "" {
 		return ccrude.ToolResult{}, fmt.Errorf("update_plan: 'plan_id' is required")
 	}
+	// Revisions are host-owned: the owning agent is the plan's only writer,
+	// so its snapshot applies to the current revision. The store still fences
+	// the write, so a racing update fails instead of being lost.
+	if existing, getErr := store.Get(ctx, req.PlanID); getErr == nil {
+		req.Revision = existing.Revision
+	} else if !errors.Is(getErr, plan.ErrNotFound) {
+		return ccrude.ToolResult{}, getErr
+	}
 
 	updatedPlan, _, err := store.Update(ctx, req)
 	if err != nil {
 		var conflict *plan.RevisionConflictError
 		if errors.As(err, &conflict) {
 			return ccrude.ToolResult{Content: mustJSON(map[string]any{
-				"error":             "revision_conflict",
-				"expected_revision": conflict.Current.Revision,
-				"received_revision": conflict.Requested,
-				"current_plan":      conflict.Current,
+				"error":        "plan_changed",
+				"message":      "The plan changed while this update was applied. Compare current_plan with your update and send it again.",
+				"current_plan": conflict.Current,
 			})}, err
 		}
 		return ccrude.ToolResult{Content: mustJSON(map[string]any{
@@ -150,7 +157,6 @@ func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 	req.Replace, _ = params["replace"].(bool)
 	req.Objective = firstStrParam(params, "objective", "goal", "title")
 	req.Explanation = firstStrParam(params, "explanation", "note", "notes")
-	req.Revision = uint64(getIntParam(params, "revision"))
 	req.Status = plan.PlanStatus(firstStrParam(params, "status", "state"))
 
 	rawSteps, ok := firstParam(params, "steps", "todos", "tasks")

@@ -283,3 +283,40 @@ func TestMarkdownDragWithinWrappedTableCellCopiesItsSourceNotNeighbors(t *testin
 		t.Fatalf("released table copy=%q", copied)
 	}
 }
+
+func TestReverseDragIncludesPressedGraphemeInPaintAndClipboard(t *testing.T) {
+	for _, last := range []string{"d", "界", "e\u0301", "👩‍💻"} {
+		t.Run(last, func(t *testing.T) {
+			th := theme.DefaultDark()
+			r := chatprojection.NewRenderer(th)
+			r.SetSize(80, 16)
+			r.SetChatAreaBounds(0, 16)
+			want := "Hello Worl" + last
+			r.AppendMessage(types.ChatMessage{InternalID: "drag", Role: types.RoleAssistant, Content: want})
+			rows, _, _ := r.ExportMessageRows(80)
+			height := len(flattenMessageLines(rows))
+			s, h := newShellChatHost(t, rows, ComposeParams{InnerW: 80, PadLR: th.Spacing.PadLR, Theme: th}, height)
+			buf := surface.NewCellBuffer(80+2*th.Spacing.PadLR, height)
+			h.Paint(buf)
+			y, line := findMarkdownHostLine(t, buf, "Hello Worl")
+			x := rendering.VisibleWidth(line[:strings.Index(line, "Hello Worl")])
+			pressed := x + 10
+			h.Handle(tea.MouseClickMsg{X: pressed, Y: y, Button: tea.MouseLeft})
+			h.Handle(tea.MouseMotionMsg{X: x, Y: y, Button: tea.MouseLeft})
+			if got := s.SelectedText(); got != want {
+				t.Fatalf("backward drag selected %q; want %q", got, want)
+			}
+			h.Paint(buf)
+			_, bg := s.tokens.TextSelectionColors(cell.NoColor)
+			if !buf.Get(pressed, y).BG.Equal(bg) {
+				t.Fatal("pressed grapheme not highlighted")
+			}
+			var copied string
+			s.SetClipboardCopy(func(text string) tea.Cmd { copied = text; return nil })
+			h.Handle(tea.MouseReleaseMsg{X: x, Y: y, Button: tea.MouseLeft})
+			if copied != want {
+				t.Fatalf("clipboard got %q", copied)
+			}
+		})
+	}
+}

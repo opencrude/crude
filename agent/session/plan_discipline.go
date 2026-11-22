@@ -141,7 +141,7 @@ func (d *planDiscipline) finish(p *activity.Plan) string {
 
 func formatPlanBanner(p *activity.Plan) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Current plan (revision %d): %s\n", p.Revision, p.Objective)
+	fmt.Fprintf(&b, "Current plan: %s\n", p.Objective)
 	for _, step := range p.Steps {
 		fmt.Fprintf(&b, "%d. [%s] %s\n", step.Number, step.Status, step.Text)
 	}

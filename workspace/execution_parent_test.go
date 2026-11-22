@@ -29,3 +29,25 @@ func TestParentExecutionDoesNotOverlayLogicalDocuments(t *testing.T) {
 	documentText(t, s.documents, snap.ID, "LOGICAL\ntwo\nthree\n")
 	diskText(t, root, "live.txt", "one\ntwo\nthree\n")
 }
+
+func TestFileCatalogStaysInItsManagedCheckout(t *testing.T) {
+	s, _, root := executionFixture(t)
+	c := executionCreate(t, s)
+	executionPut(t, c.Root, "only-in-worktree.go", "here")
+	catalog, err := CatalogExecutionFiles(t.Context(), s, root, c.ID, BrowserPathRequest{})
+	if err != nil || catalog.Root != c.Root {
+		t.Fatal(catalog.Root, err)
+	}
+	found := false
+	for _, e := range catalog.Entries {
+		if e.Name == "only-in-worktree.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("catalog read the logical checkout")
+	}
+	if _, err := CatalogExecutionFiles(t.Context(), s, root, "unknown", BrowserPathRequest{}); err == nil {
+		t.Fatal("unknown checkout silently changed search roots")
+	}
+}

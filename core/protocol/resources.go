@@ -37,6 +37,7 @@ const (
 )
 
 type DocumentOpenRequest struct {
+	ExistingOnly     bool   `json:"existing_only,omitempty"`
 	WithEditorConfig bool   `json:"with_editor_config,omitempty"`
 	Path             string `json:"path"`
 }

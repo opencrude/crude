@@ -179,6 +179,8 @@ func FuzzDirectSurfaceResize(f *testing.F) {
 			sequence = sequence[:256]
 		}
 		c := NewCompositor(1, 1)
+		delta := benchmarkSnapshot{uv.NewBuffer(1, 1)}
+		var held uv.SnapshotToken
 		for i := 0; i+3 < len(sequence); i += 4 {
 			w, h := int(sequence[i]%81), int(sequence[i+1]%25)
 			c.Resize(w, h)
@@ -197,6 +199,19 @@ func FuzzDirectSurfaceResize(f *testing.F) {
 				c.CurrentSurface().Draw(direct, direct.Bounds())
 				assertCellGrids(t, direct, reference)
 			}
+			// A renderer that keeps its copy applies only changed rows. When
+			// the surface cannot prove the copy, the renderer redraws it.
+			published := c.CurrentSurface().(uv.DeltaSurface)
+			if delta.Bounds() != published.Bounds() {
+				delta = benchmarkSnapshot{uv.NewBuffer(w, h)}
+				held = uv.SnapshotToken{}
+			}
+			if !published.DrawSince(delta, delta.Bounds(), held) {
+				delta.Clear()
+				published.Draw(delta, delta.Bounds())
+			}
+			held = published.SnapshotToken()
+			assertCellGrids(t, uv.ScreenBuffer{RenderBuffer: &uv.RenderBuffer{Buffer: delta.Buffer}}, reference)
 		}
 	})
 }
@@ -260,5 +275,108 @@ func TestArrangedCellsReachTheTerminalWithoutAppliedControls(t *testing.T) {
 	assertCellGrids(t, direct, reference)
 	if !strings.Contains(copied, "\u0645\u06cc\u200c\u0634\u0648\u062f") {
 		t.Fatalf("copy lost the half-space: %+q", copied)
+	}
+}
+
+// An animation frame usually changes one row. A renderer that still holds the
+// previous publication receives only that row; every other state, including a
+// frame in progress, a resize or a malformed changed row, refuses the delta.
+func TestDirectDeltaConvertsOnlyChangedRows(t *testing.T) {
+	paint := func(c *Compositor, status string) {
+		c.BeginFrame()
+		root := c.Root().Buffer()
+		root.Fill(cell.BlankCell(cell.Blue))
+		for y := 0; y < 6; y++ {
+			root.WriteString(0, y, fmt.Sprintf("row %d 界 é", y), cell.White, cell.Blue, 0)
+		}
+		root.WriteString(0, 3, status, cell.Red, cell.Blue, cell.AttrBold)
+		c.Composite()
+		c.PresentSurface()
+	}
+	c := NewCompositor(20, 6)
+	paint(c, "working.")
+	first := c.CurrentSurface().(uv.DeltaSurface)
+	dst := &countedRowScreen{benchmarkSnapshot: benchmarkSnapshot{uv.NewBuffer(20, 6)}}
+	first.Draw(dst, dst.Bounds())
+	held := first.SnapshotToken()
+
+	paint(c, "working..")
+	next := c.CurrentSurface().(uv.DeltaSurface)
+	dst.rows, dst.cells = 0, 0
+	if !next.DrawSince(dst, dst.Bounds(), held) {
+		t.Fatal("renderer holding the previous publication was refused")
+	}
+	if dst.rows != 1 || dst.cells != 0 {
+		t.Fatalf("one changed row converted rows=%d cells=%d", dst.rows, dst.cells)
+	}
+	want := uv.NewScreenBuffer(20, 6)
+	want.Method = ansi.GraphemeWidth
+	next.Draw(want, want.Bounds())
+	assertCellGrids(t, uv.ScreenBuffer{RenderBuffer: &uv.RenderBuffer{Buffer: dst.Buffer}}, want)
+
+	for name, token := range map[string]uv.SnapshotToken{
+		"unknown copy":   {},
+		"older copy":     {Owner: held.Owner, Generation: held.Generation - 1},
+		"current copy":   next.SnapshotToken(),
+		"another source": {Owner: &uv.SnapshotOwner{}, Generation: held.Generation},
+	} {
+		if next.DrawSince(dst, dst.Bounds(), token) {
+			t.Fatalf("%s accepted a delta", name)
+		}
+	}
+	held = next.SnapshotToken()
+	c.BeginFrame() // The back buffer no longer holds the published frame.
+	if c.CurrentSurface().(uv.DeltaSurface).DrawSince(dst, dst.Bounds(), held) {
+		t.Fatal("a frame in progress offered a delta")
+	}
+	c.Composite()
+	c.PresentSurface()
+	held = c.CurrentSurface().(uv.SnapshotSurface).SnapshotToken()
+	c.Resize(21, 6)
+	if c.CurrentSurface().(uv.DeltaSurface).DrawSince(dst, dst.Bounds(), held) {
+		t.Fatal("a resize offered a delta")
+	}
+	c.Resize(20, 6)
+	paint(c, "working.")
+	held = c.CurrentSurface().(uv.SnapshotSurface).SnapshotToken()
+	paint(c, "working..")
+	c.front.Row(3)[0].Width = 0 // orphan in the changed row
+	if c.CurrentSurface().(uv.DeltaSurface).DrawSince(dst, dst.Bounds(), held) {
+		t.Fatal("a malformed changed row bypassed UV normalization")
+	}
+}
+
+// One animated status row on a dense 200×60 screen. The delta converts one
+// row; a full snapshot converts all of them.
+func BenchmarkDirectAnimationFrame(b *testing.B) {
+	for _, delta := range []bool{false, true} {
+		b.Run(fmt.Sprintf("delta=%v", delta), func(b *testing.B) {
+			c := NewCompositor(200, 60)
+			dst := benchmarkSnapshot{uv.NewBuffer(200, 60)}
+			var held uv.SnapshotToken
+			frame := func(i int) {
+				c.BeginFrame()
+				root := c.Root().Buffer()
+				root.Fill(cell.BlankCell(cell.Blue))
+				for y := 0; y < 60; y++ {
+					root.WriteString(0, y, "Dense styled text 界 é ♻️ 🧑‍🌾 sentinel", cell.White, cell.Blue, cell.AttrBold)
+				}
+				root.WriteString(0, 59, strings.Repeat("·", i%40), cell.Red, cell.Blue, 0)
+				c.Composite()
+				c.PresentSurface()
+				surface := c.CurrentSurface().(uv.DeltaSurface)
+				if !delta || !surface.DrawSince(dst, dst.Bounds(), held) {
+					dst.Clear()
+					surface.Draw(dst, dst.Bounds())
+				}
+				held = surface.SnapshotToken()
+			}
+			frame(0)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				frame(i + 1)
+			}
+		})
 	}
 }

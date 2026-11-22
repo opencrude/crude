@@ -174,6 +174,11 @@ func TestPromptHistoryGatewayFindsModelAndReadsOriginalHumanText(t *testing.T) {
 	if rest.NextTextOffset != nil || text.Text+rest.Text != long || rest.TextBytes != int64(len(long)) {
 		t.Fatal("exact original text did not round-trip across pages")
 	}
+	recent := call(map[string]any{"mode": "recent", "agent_id": reviewer.ID}, false)
+	if len(recent.Records) != 3 || recent.Records[0].ID != "steering" || recent.Records[1].ID != "long" || recent.Records[2].ID != "first" {
+		t.Fatalf("recent public human inputs: %+v", recent)
+	}
+	call(map[string]any{"mode": "recent"}, true)
 	first := row(call(map[string]any{"agent_id": got.AgentID}, false))
 	if first.ID != "first" || first.Text != original || len(first.Models) != 1 || first.Models[0].ID != "other-model" {
 		t.Fatalf("wrong first human input: %+v", first)

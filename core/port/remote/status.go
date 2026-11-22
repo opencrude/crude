@@ -23,10 +23,13 @@ type statusSnapshot = coreprotocol.StatusSnapshot
 // replica immediately and are sent to the core in order; the next core
 // snapshot is authoritative.
 type statusReplica struct {
-	w         *Workspace
-	core      statusSnapshot
-	transient []types.NotificationRecord
-	version   uint64
+	w             *Workspace
+	core          statusSnapshot
+	transient     []types.NotificationRecord
+	version       uint64
+	footerVersion uint64
+	unread        int
+	toast         *types.NotificationRecord
 }
 
 var _ shellport.StatusService = (*statusReplica)(nil)
@@ -54,7 +57,7 @@ func (s *statusReplica) install(snapshot statusSnapshot) bool {
 
 // A replacement core starts a new version domain. Preserve private toasts but
 // do not compare its cold snapshot against the previous core's revision.
-func (s *statusReplica) resetRevision() { s.core.Version, s.version = 0, 0 }
+func (s *statusReplica) resetRevision() { s.core.Version, s.version, s.footerVersion = 0, 0, 0 }
 
 func (s *statusReplica) send(mutation coreprotocol.StatusMutation) {
 	s.w.services.push(func(ctx context.Context) {
@@ -99,21 +102,42 @@ func (s *statusReplica) Notifications(includeDismissed bool) []types.Notificatio
 	return out
 }
 
-func (s *statusReplica) UnreadCount() int {
-	count := 0
-	for _, n := range s.Notifications(false) {
-		if !n.Read && !n.Transient {
-			count++
+// The footer needs two facts, not a sorted copy of every notice on every frame.
+// Keep the same tie order as Notifications: newest local insertion first.
+func (s *statusReplica) refreshFooter() {
+	if s.footerVersion == s.version && s.version != 0 {
+		return
+	}
+	s.footerVersion, s.unread, s.toast = s.version, 0, nil
+	visit := func(n *types.NotificationRecord) {
+		if n.Dismissed {
+			return
+		}
+		if n.Transient {
+			if s.toast == nil || n.UpdatedAt.After(s.toast.UpdatedAt) {
+				s.toast = n
+			}
+		} else if !n.Read {
+			s.unread++
 		}
 	}
-	return count
+	for i := len(s.transient) - 1; i >= 0; i-- {
+		visit(&s.transient[i])
+	}
+	for i := range s.core.Notifications {
+		visit(&s.core.Notifications[i])
+	}
+}
+
+func (s *statusReplica) UnreadCount() int {
+	s.refreshFooter()
+	return s.unread
 }
 
 func (s *statusReplica) LatestTransient(now time.Time, maxAge time.Duration) (types.NotificationRecord, bool) {
-	for _, n := range s.Notifications(false) {
-		if n.Transient && now.Sub(n.UpdatedAt) <= maxAge {
-			return n, true
-		}
+	s.refreshFooter()
+	if s.toast != nil && now.Sub(s.toast.UpdatedAt) <= maxAge {
+		return *s.toast, true
 	}
 	return types.NotificationRecord{}, false
 }

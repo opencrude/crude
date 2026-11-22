@@ -104,6 +104,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 		ops = workspace.NewFileOpsService(root, nil, a.ws.Logger)
 	}
 	documents := a.ws.LiveDocuments
+	executions := a.ws.Executions
 	progress := func(text string) {
 		if a.progress != nil {
 			a.progress(request.Owner, coreprotocol.Progress{RequestID: request.ID, Text: text})
@@ -146,7 +147,7 @@ func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (f
 			if _, err := workspaceFilePath(root, root, false); err != nil {
 				return nil, err
 			}
-			return wired(workspace.ScanBrowserPaths(ctx, workspace.BrowserPathRequest{Root: root, DirectoriesOnly: in.DirectoriesOnly, IncludeHidden: in.IncludeHidden}))
+			return wired(workspace.CatalogExecutionFiles(ctx, executions, root, in.ExecutionID, workspace.BrowserPathRequest{Root: root, DirectoriesOnly: in.DirectoriesOnly, IncludeHidden: in.IncludeHidden}))
 		})
 	case coreprotocol.FilesRead:
 		var in coreprotocol.FileReadRequest

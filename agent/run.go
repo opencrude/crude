@@ -221,6 +221,15 @@ func (a *Agent) Run(
 		a.lastArchive = append([]provider.ChatMessage(nil), archiveMsgs...)
 		return append([]provider.ChatMessage(nil), archiveMsgs...)
 	}
+	if update := a.pendingGuidanceUpdate; update != "" {
+		// Guidance changed since this context's epoch began. The system prompt
+		// keeps the epoch's text, so the provider cache stays valid, and the
+		// current guidance arrives as runtime context, as mid-run changes do.
+		a.pendingGuidanceUpdate = ""
+		guidance := provider.NewTextMessage("user", rootprompt.GuidanceProjectionUpdate(update))
+		guidance.Origin, guidance.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
+		appendWire(guidance)
+	}
 	if a.WorkDir != "" || a.AsyncMgr != nil || a.SubAgentMgr != nil || a.ContinuationContext != nil {
 		continuity, err := a.continuityMessage(ctx, false)
 		if err != nil {
@@ -452,6 +461,20 @@ steps:
 			msgs = removeMessagesByInternalID(msgs, runtimeNoticeIDs)
 			archiveMsgs = removeMessagesByInternalID(archiveMsgs, runtimeNoticeIDs)
 		}
+		if a.LiveSettings != nil && a.applyLiveSettings(a.LiveSettings()) {
+			// An extraction or retry delay computed under a different user policy
+			// cannot govern the next request. No provider prefix is changed here.
+			if job := slot.current(); job != nil {
+				slot.discard(job)
+			}
+			planner.clearDeferral()
+			compactionModel := ""
+			if a.CompactionProvider != nil {
+				compactionModel = a.CompactionProvider.Model
+			}
+			l.Info("CTX", "live_settings_changed", "step", step, "compaction_percent", a.ContextCompactionPercent,
+				"retention_tokens", a.CompactionRetentionTokens, "max_output", a.MaxOutputTokens, "compaction_model", compactionModel)
+		}
 		ctxWindow = a.Provider.ContextWindow(a.Model)
 		// A human /compact accepted during this run is honoured here, before
 		// the next request, whatever the automatic policy says.
@@ -572,6 +595,11 @@ steps:
 					}
 				}
 				msgs = next
+				if a.guidance != nil {
+					// A checkpoint starts a new guidance epoch: later runs of this
+					// context keep this system prompt.
+					a.guidance.initialPrompt = system.ContentString()
+				}
 				if !runtimeNoticesAccepted && len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
 					a.RuntimeNoticesAccepted()
 					runtimeNoticesAccepted = true

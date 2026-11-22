@@ -342,7 +342,7 @@ func (e *Editor) Open(path string) error {
 	if err != nil {
 		return err
 	}
-	buffer, err := loadBuffer(abs)
+	buffer, err := loadBuffer(abs, false)
 	if err != nil {
 		return err
 	}

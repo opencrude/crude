@@ -44,8 +44,9 @@ type FilePathRequest struct {
 	NewPath string `json:"new_path,omitempty"`
 }
 type FileCatalogRequest struct {
-	DirectoriesOnly bool `json:"directories_only"`
-	IncludeHidden   bool `json:"include_hidden"`
+	ExecutionID     string `json:"execution_id,omitempty"`
+	DirectoriesOnly bool   `json:"directories_only"`
+	IncludeHidden   bool   `json:"include_hidden"`
 }
 
 // Continuation must echo the digest and offset of the same workspace path.

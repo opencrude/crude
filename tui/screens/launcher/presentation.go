@@ -1,6 +1,9 @@
 package launcher
 
 import (
+	"context"
+	"errors"
+
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -114,4 +117,14 @@ func (e *workspaceEmpty) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintCo
 }
 func (e *workspaceEmpty) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleLabel, Label: "Workspace results", Value: e.owner.loadError}
+}
+
+// LoadErrorText is the user-facing reason a workspace catalog read failed. The
+// launcher and the Workspaces sidebar both show it. A slow read states the
+// problem and the next step instead of "context deadline exceeded".
+func LoadErrorText(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Loading took too long. Try again."
+	}
+	return err.Error()
 }

@@ -424,3 +424,68 @@ func FuzzDirectRendererResizeAndConflation(f *testing.F) {
 		}
 	})
 }
+
+// deltaSurface records which retained copy the renderer names. It applies its
+// one changed cell only when that copy is exactly its previous generation.
+type deltaSurface struct {
+	generationSurface
+	held   []uv.SnapshotToken
+	deltas int
+}
+
+func (s *deltaSurface) DrawSince(dst uv.Screen, _ uv.Rectangle, held uv.SnapshotToken) bool {
+	s.held = append(s.held, held)
+	if held.Owner != &s.owner || held.Generation != s.generation-1 {
+		return false
+	}
+	s.deltas++
+	dst.SetCell(0, 0, s.CellAt(0, 0))
+	return true
+}
+
+// A renderer that holds the producer's previous generation lets the producer
+// update only what changed. Any other copy, size or source redraws fully.
+func TestDirectSnapshotAppliesProducerDeltaOnlyOverItsPreviousGeneration(t *testing.T) {
+	r := newCursedRenderer(io.Discard, nil, 8, 2)
+	src := &deltaSurface{generationSurface: generationSurface{Buffer: uv.NewBuffer(8, 2), generation: 1}}
+	src.SetCell(0, 0, &uv.Cell{Content: "A", Width: 1})
+	src.SetCell(0, 1, &uv.Cell{Content: "x", Width: 1})
+	v := NewViewFromSurface(src)
+	v.AltScreen = true
+	r.render(v)
+	if src.draws != 1 || len(src.held) != 0 {
+		t.Fatalf("first publication draws=%d delta offers=%d", src.draws, len(src.held))
+	}
+	src.generation++
+	src.SetCell(0, 0, &uv.Cell{Content: "B", Width: 1})
+	r.render(v)
+	if src.draws != 1 || src.deltas != 1 || src.held[0] != (uv.SnapshotToken{Owner: &src.owner, Generation: 1}) {
+		t.Fatalf("delta was not offered the held generation: draws=%d held=%v", src.draws, src.held)
+	}
+	if err := r.flush(false); err != nil {
+		t.Fatal(err)
+	}
+	if r.cellbuf.CellAt(0, 0).Content != "B" || r.cellbuf.CellAt(0, 1).Content != "x" {
+		t.Fatal("delta lost the changed or the retained cells")
+	}
+	// A skipped generation means the copy is older than the producer's base.
+	src.generation += 2
+	src.SetCell(0, 0, &uv.Cell{Content: "C", Width: 1})
+	r.render(v)
+	if src.draws != 2 {
+		t.Fatalf("refused delta did not redraw the snapshot: draws=%d", src.draws)
+	}
+	// A string view clears the retained identity; a resize discards the copy.
+	r.render(NewView("intermediate"))
+	src.generation++
+	r.render(v)
+	if src.draws != 3 {
+		t.Fatalf("delta crossed a string publication: draws=%d", src.draws)
+	}
+	resized := &deltaSurface{generationSurface: generationSurface{Buffer: uv.NewBuffer(9, 2), generation: src.generation + 1}}
+	v.Surface = resized
+	r.render(v)
+	if resized.draws != 1 || len(resized.held) != 0 {
+		t.Fatalf("resize offered a delta: draws=%d offers=%d", resized.draws, len(resized.held))
+	}
+}

@@ -702,7 +702,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		PaneGutters:   paneGutters,
 	}
 
-	paint := shellchat.PaintParams{SourceID: snapshot.SourceID, Generation: snapshot.Generation, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }, OnPaneScrollChain: func(ids []string) {
+	paint := shellchat.PaintParams{SourceID: snapshot.SourceID, Generation: snapshot.Generation, BaseGeneration: snapshot.BaseGeneration, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }, OnPaneScrollChain: func(ids []string) {
 		chain := make([]string, 0, len(ids)+1)
 		chain = append(chain, activeAgentID)
 		chain = append(chain, ids...)

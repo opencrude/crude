@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"encoding/xml"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -42,6 +43,32 @@ func TestEnvironmentDescribesTheShellThatRunsCommands(t *testing.T) {
 		if guidance := shellGuidance(tc.shell, true); !strings.Contains(guidance, tc.want) || strings.Contains(guidance, tc.absent) {
 			t.Errorf("%s guidance %q; want %q without %q", tc.shell.ID, guidance, tc.want, tc.absent)
 		}
+	}
+}
+
+func TestGitBashPromptGuidesOnDemandToolCompatibility(t *testing.T) {
+	gitBash := command.Shell{ID: "git-bash", Label: "Git Bash", Path: "bash.exe", Syntax: command.SyntaxPOSIX}
+	child, _ := BuildChild(ChildOptions{Category: "crafter", Shell: gitBash})
+	cases := []struct {
+		name     string
+		guidance string
+		want     bool
+	}{
+		{"Git Bash", shellGuidance(gitBash, true), true},
+		{"Windows POSIX shell", shellGuidance(command.Shell{ID: "sh", Syntax: command.SyntaxPOSIX}, true), false},
+		{"PowerShell", shellGuidance(command.Shell{ID: "pwsh", Syntax: command.SyntaxPowerShell}, true), false},
+		{"Linux Bash", shellGuidance(command.Shell{ID: "bash", Syntax: command.SyntaxPOSIX}, false), false},
+		{"root agent", platformGuidance(t, BuildRoot(RootOptions{Shell: gitBash})), runtime.GOOS == "windows"},
+		{"child agent", platformGuidance(t, child), runtime.GOOS == "windows"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, phrase := range []string{"type -a", "MSYS and Windows-native", "official source", "tool approval rules", "task-local", "before retrying"} {
+				if got := strings.Contains(tc.guidance, phrase); got != tc.want {
+					t.Errorf("guidance %q: contains %q = %t, want %t", tc.guidance, phrase, got, tc.want)
+				}
+			}
+		})
 	}
 }
 

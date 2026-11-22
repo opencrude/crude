@@ -62,6 +62,7 @@ func (c *Compositor) Resize(w, h int) {
 	c.back.Resize(w, h)
 	c.root.Resize(w, h)
 	c.direct.generation++
+	c.direct.base = 0
 }
 
 // Root returns the root surface. All application surfaces should be
@@ -87,6 +88,8 @@ func (c *Compositor) Height() int {
 // frame is simple and correct; the real performance win is avoiding the
 // expensive string build for unchanged layers.
 func (c *Compositor) BeginFrame() {
+	// The back buffer stops holding the previous publication from here on.
+	c.direct.base = 0
 	c.back.Clear()
 	c.damage.Reset()
 	c.root.RemoveAllChildren()
@@ -151,6 +154,9 @@ func (c *Compositor) Present() string {
 
 func (c *Compositor) finishFrame() {
 	c.front, c.back = c.back, c.front
+	// The former front holds the generation just published; it is the base
+	// a renderer may already have copied.
+	c.direct.base = c.direct.generation
 	c.direct.generation++
 	c.root.ClearDirtyTree()
 	c.damage.Reset()

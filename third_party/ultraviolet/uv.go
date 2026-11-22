@@ -50,6 +50,15 @@ type SnapshotSurface interface {
 	SnapshotToken() SnapshotToken
 }
 
+// DeltaSurface updates a destination that already holds the exact previous
+// publication named by held, rewriting only rows that changed since then.
+// It returns false, possibly after partial writes, when it cannot prove what
+// the destination holds; the caller must then clear and Draw the snapshot.
+type DeltaSurface interface {
+	SnapshotSurface
+	DrawSince(dst Screen, area Rectangle, held SnapshotToken) bool
+}
+
 // DrawableFunc is a function that implements the [Drawable] interface.
 type DrawableFunc func(scr Screen, rect Rectangle)
 

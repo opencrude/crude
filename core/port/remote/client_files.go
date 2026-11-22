@@ -43,8 +43,11 @@ func (w *Workspace) BrowseExternalDirectory(ctx context.Context, value string) (
 	return w.browseClientDirectory(ctx, value, true)
 }
 func (w *Workspace) CatalogFiles(ctx context.Context, includeHidden bool) (workspace.BrowserCatalog, error) {
+	return w.CatalogExecutionFiles(ctx, "", includeHidden)
+}
+func (w *Workspace) CatalogExecutionFiles(ctx context.Context, id string, includeHidden bool) (workspace.BrowserCatalog, error) {
 	var out workspace.BrowserCatalog
-	err := w.call(ctx, coreprotocol.FilesCatalog, coreprotocol.FileCatalogRequest{IncludeHidden: includeHidden}, &out)
+	err := w.call(ctx, coreprotocol.FilesCatalog, coreprotocol.FileCatalogRequest{ExecutionID: id, IncludeHidden: includeHidden}, &out)
 	return out, err
 }
 
@@ -62,6 +65,9 @@ func (w *Workspace) CreateWorkspaceFolder(ctx context.Context, parent, name stri
 	return out.Path, err
 }
 func (w *Workspace) readClientFile(ctx context.Context, value string, external bool) ([]byte, error) {
+	return w.ReadClientFileLimit(ctx, value, external, coreprotocol.MaxFileRead)
+}
+func (w *Workspace) ReadClientFileLimit(ctx context.Context, value string, external bool, maxBytes int) ([]byte, error) {
 	w.connMu.Lock()
 	client, id := w.client, w.id
 	w.connMu.Unlock()
@@ -69,7 +75,7 @@ func (w *Workspace) readClientFile(ctx context.Context, value string, external b
 	defer cancel()
 	stop := context.AfterFunc(w.ctx, cancel)
 	defer stop()
-	return client.ReadClientFile(ctx, id, w.CanonicalClientPath(value), external)
+	return client.ReadClientFileLimit(ctx, id, w.CanonicalClientPath(value), external, maxBytes)
 }
 func (w *Workspace) ReadClientFile(ctx context.Context, value string) ([]byte, error) {
 	return w.readClientFile(ctx, value, false)

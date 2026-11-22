@@ -27,7 +27,11 @@ func (c *Connection) serveBulk(ctx context.Context, s corewire.Stream, reader *c
 	stop := context.AfterFunc(ctx, func() { _ = s.Close() })
 	defer stop()
 	fail := func(err error) {
-		if send(s, &coreprotocol.BulkReady{Fault: &coreprotocol.Fault{Code: "bulk_failed", Message: err.Error()}}) == nil {
+		code := "bulk_failed"
+		if (open.Method == coreprotocol.FilesRead || open.Method == coreprotocol.ClientFilesReadExternal) && errors.Is(err, os.ErrNotExist) {
+			code = coreprotocol.FaultFileNotFound
+		}
+		if send(s, &coreprotocol.BulkReady{Fault: &coreprotocol.Fault{Code: code, Message: err.Error()}}) == nil {
 			awaitBulkAck(reader, 0)
 		}
 		_ = s.CloseWrite()

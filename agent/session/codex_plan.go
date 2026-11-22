@@ -21,7 +21,6 @@ func updateCodexPlan(ctx context.Context, store *plan.Store, sessionID string, p
 		Explanation string          `json:"explanation"`
 		Objective   string          `json:"objective"`
 		Status      plan.PlanStatus `json:"status"`
-		Revision    *uint64         `json:"revision"`
 		Replace     bool            `json:"replace"`
 	}
 	data, err := json.Marshal(params)
@@ -49,9 +48,6 @@ func updateCodexPlan(ctx context.Context, store *plan.Store, sessionID string, p
 	}
 	if input.Replace {
 		req.Objective = input.Objective
-	}
-	if input.Revision != nil {
-		req.Revision = *input.Revision
 	}
 	used := map[string]bool{}
 	complete := true

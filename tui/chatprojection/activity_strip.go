@@ -199,16 +199,21 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 			line.Spans = append(line.Spans, span)
 		}
 		s.add(line)
-	} else if source.Active && source.Plan != nil {
+	} else if source.Active && livePlan(source.Plan) {
 		s.add(compactPlanLine(source.Plan))
 		return
 	} else {
 		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
 	}
-	if source.Active && source.Plan != nil {
+	if source.Active && livePlan(source.Plan) {
 		s.add(compactPlanLine(source.Plan))
 	}
 }
+
+// livePlan reports whether the plan describes the work of the running agent.
+// A paused plan waits for the user; a later run that works on something else
+// must not show it as its activity. The plan popover still shows it.
+func livePlan(p *activity.Plan) bool { return p != nil && p.Status != "paused" }
 
 // compactPlanLine keeps full plan detail out of the fixed status band.
 func compactPlanLine(p *activity.Plan) PaintLine {
@@ -225,15 +230,6 @@ func compactPlanLine(p *activity.Plan) PaintLine {
 	label := "Plan ready"
 	if step != nil {
 		label = fmt.Sprintf("%d/%d %s", step.Number, p.Total, stripText(step.Text))
-	} else {
-		switch p.Status {
-		case "paused":
-			label = "Plan paused"
-		case "completed":
-			label = "Plan completed"
-		case "cancelled":
-			label = "Plan cancelled"
-		}
 	}
 	return PaintLine{Spans: []RowSpan{{Text: label, Role: ui.ColorActivityText}}}
 }

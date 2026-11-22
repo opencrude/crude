@@ -19,6 +19,8 @@ type textSelection struct {
 	selecting               bool
 	selAnchorLine           int
 	selAnchorCol            int
+	pressedWidth            int
+	pressedEndSource        chatprojection.CopyAnchor
 	selEndLine              int
 	selEndCol               int
 	selAutoScroll           bool
@@ -35,6 +37,8 @@ func (ts *textSelection) Clear() {
 	ts.selAutoScroll = false
 	ts.selAnchorLine = 0
 	ts.selAnchorCol = 0
+	ts.pressedWidth = 0
+	ts.pressedEndSource = chatprojection.CopyAnchor{}
 	ts.selEndLine = 0
 	ts.selEndCol = 0
 	ts.selMouseY = 0
@@ -59,7 +63,24 @@ func (ts *textSelection) Range() (startLine, startCol, endLine, endCol int) {
 		(ts.selAnchorLine == ts.selEndLine && ts.selAnchorCol <= ts.selEndCol) {
 		return ts.selAnchorLine, ts.selAnchorCol, ts.selEndLine, ts.selEndCol
 	}
-	return ts.selEndLine, ts.selEndCol, ts.selAnchorLine, ts.selAnchorCol
+	return ts.selEndLine, ts.selEndCol, ts.selAnchorLine, ts.projectedAnchor()
+}
+
+func (ts *textSelection) backward() bool {
+	return ts.selEndLine < ts.selAnchorLine || ts.selEndLine == ts.selAnchorLine && ts.selEndCol < ts.selAnchorCol
+}
+
+// All cells of the pressed grapheme hit the same insertion boundary. A
+// click on its continuation is still a click, not a one-column selection.
+func (ts *textSelection) headColumn(line, col int) int {
+	if line == ts.selAnchorLine && col >= ts.selAnchorCol && col < ts.selAnchorCol+ts.pressedWidth {
+		return ts.selAnchorCol
+	}
+	return col
+}
+
+func (ts *textSelection) projectedAnchor() int {
+	return rendering.CharacterDragAnchor(ts.selAnchorCol, ts.selAnchorCol+ts.pressedWidth, ts.backward())
 }
 
 func (ts *textSelection) SelectedText(rows []chatprojection.MessageRow) string {
@@ -167,7 +188,9 @@ func (s *Screen) handleSelectionClick(ctx ui.EventContext, msg tea.MouseClickMsg
 	padLR := s.layout.padLR
 	s.selection.selecting = true
 	s.selection.selAnchorLine = lineIdx
-	s.selection.selAnchorCol = s.logicalColumn(lineIdx, rendering.Max(0, ctx.LocalX-padLR))
+	hit := s.logicalColumn(lineIdx, rendering.Max(0, ctx.LocalX-padLR))
+	start, end := s.pressedUnit(lineIdx, hit)
+	s.selection.selAnchorCol, s.selection.pressedWidth = start, end-start
 	s.selection.selEndLine = lineIdx
 	s.selection.selEndCol = s.selection.selAnchorCol
 	s.selection.selMouseY = ctx.LocalY
@@ -192,7 +215,7 @@ func (s *Screen) handleSelectionMotion(ctx ui.EventContext, msg tea.MouseMotionM
 	lineIdx, ok := s.mouseToGlobalLine(ctx.LocalY)
 	col := rendering.Max(0, ctx.LocalX-padLR)
 	if ok {
-		col = s.logicalColumn(lineIdx, col)
+		col = s.selection.headColumn(lineIdx, s.logicalColumn(lineIdx, col))
 	}
 	if !ok || lineIdx != s.selection.selAnchorLine || col != s.selection.selAnchorCol {
 		s.selection.dragged = true
@@ -234,7 +257,7 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 	lineIdx, ok := s.mouseToGlobalLine(ctx.LocalY)
 	if ok {
 		s.selection.selEndLine = lineIdx
-		s.selection.selEndCol = s.logicalColumn(lineIdx, rendering.Max(0, ctx.LocalX-s.layout.padLR))
+		s.selection.selEndCol = s.selection.headColumn(lineIdx, s.logicalColumn(lineIdx, rendering.Max(0, ctx.LocalX-s.layout.padLR)))
 	}
 	if s.selection.HasActive() {
 		s.captureSelectionSource()
@@ -258,6 +281,14 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 
 	s.selection.Clear()
 	if inlineAction != nil {
+		if inlineAction.ID == chatprojection.ChatFileOpenActionID {
+			index := sort.Search(len(s.paintState.globalStart), func(i int) bool { return s.paintState.globalStart[i] > lineIdx }) - 1
+			if index >= 0 && index < len(s.rows) && s.rows[index].ExecutionID != "" {
+				if value, ok := inlineAction.Payload.(string); ok {
+					inlineAction = &ui.Action{ID: inlineAction.ID, Payload: chatprojection.FileReference{Target: value, ExecutionID: s.rows[index].ExecutionID}}
+				}
+			}
+		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint, Action: inlineAction}
 	}
 	if toggleMsgID != "" {
@@ -346,7 +377,7 @@ func (s *Screen) handleSelectionTick() ui.EventResult {
 		}
 	}
 
-	s.selection.captureSource(s.rows)
+	s.captureSelectionSource()
 	if s.selection.selMouseY <= -1 || s.selection.selMouseY >= viewportH {
 		return ui.EventResult{
 			Handled:    true,
@@ -364,12 +395,6 @@ func selectionTickCmd() tea.Cmd {
 	})
 }
 
-func (s *textSelection) captureSource(rows []chatprojection.MessageRow) {
-	a, aok := chatprojection.AnchorAt(rows, s.selAnchorLine, s.selAnchorCol)
-	b, bok := chatprojection.AnchorAt(rows, s.selEndLine, s.selEndCol)
-	s.anchorSource, s.endSource, s.sourceAnchored = a, b, aok && bok
-}
-
 // Pointer input addresses two rows, not the whole transcript. The projection's
 // retained row starts are also used by painting and bidi hit testing.
 func (s *Screen) captureSelectionSource() {
@@ -384,7 +409,13 @@ func (s *Screen) captureSelectionSource() {
 	ts := &s.selection
 	a, aok := anchor(ts.selAnchorLine, ts.selAnchorCol)
 	b, bok := anchor(ts.selEndLine, ts.selEndCol)
-	ts.anchorSource, ts.endSource, ts.sourceAnchored = a, b, aok && bok
+	trailing := a
+	if ts.pressedWidth > 0 {
+		if e, ok := anchor(ts.selAnchorLine, ts.selAnchorCol+ts.pressedWidth); ok && e.Source == a.Source {
+			trailing = e
+		}
+	}
+	ts.anchorSource, ts.pressedEndSource, ts.endSource, ts.sourceAnchored = a, trailing, b, aok && bok
 }
 func (s *textSelection) reflow(rows []chatprojection.MessageRow) {
 	if !s.selecting || !s.sourceAnchored {
@@ -397,7 +428,14 @@ func (s *textSelection) reflow(rows []chatprojection.MessageRow) {
 		return
 	}
 	s.selAnchorLine, s.selAnchorCol, s.selEndLine, s.selEndCol = a, ac, b, bc
-	s.captureSource(rows)
+	// The new layout can use a different CopyText instance for the same source.
+	s.anchorSource, _ = chatprojection.AnchorAt(rows, a, ac)
+	s.endSource, _ = chatprojection.AnchorAt(rows, b, bc)
+	s.pressedWidth = 0
+	if y, x, ok := chatprojection.LocateAnchor(rows, s.pressedEndSource); ok && y == a {
+		s.pressedWidth = max(0, x-ac)
+		s.pressedEndSource, _ = chatprojection.AnchorAt(rows, y, x)
+	}
 }
 
 // One semantic text owns its logical order even when table layout interleaves
@@ -408,6 +446,58 @@ func (s *textSelection) sourceRange() (rendering.CopyRange, bool) {
 	if !s.selecting || !s.sourceAnchored || a.Source != b.Source || a.Offset == b.Offset {
 		return rendering.CopyRange{}, false
 	}
+	// Table cells and bidi runs need not appear in source order. Choose the
+	// edge by source offsets once both endpoints identify the same source.
+	a = rendering.CharacterDragAnchor(a, s.pressedEndSource, b.Offset < a.Offset)
 	source := rendering.CopyRange{Text: a.Source, Start: min(a.Offset, b.Offset), End: max(a.Offset, b.Offset)}
 	return source, source.Valid()
+}
+
+// pressedUnit finds both edges of the pressed grapheme once, in logical row
+// coordinates. Copied source units expanded by the renderer (such as tabs)
+// stay atomic. Layout padding and EOL carry no trailing source character.
+func (s *Screen) pressedUnit(line, col int) (int, int) {
+	starts := s.paintState.globalStart
+	i := sort.Search(len(starts), func(i int) bool { return starts[i] > line }) - 1
+	if i < 0 || i >= len(s.rows) {
+		return col, col
+	}
+	row := s.rows[i]
+	y := line - starts[i]
+	if y < 0 {
+		return col, col
+	}
+	var pl chatprojection.PaintLine
+	if y < len(row.Native) {
+		pl = row.Native[y]
+	} else if y < len(row.Lines) {
+		pl.Spans = []chatprojection.RowSpan{{Text: rendering.StripAnsi(row.Lines[y])}}
+	}
+	x := 0
+	for _, span := range pl.Spans {
+		w := rendering.VisibleWidth(span.Text)
+		if col >= x+w {
+			x += w
+			continue
+		}
+		if pl.SourceAware && !span.Copy.Valid() {
+			return col, col
+		}
+		if span.Copy.Valid() && span.Copy.End-span.Copy.Start != len(span.Text) {
+			return x, x + w
+		}
+		for text := span.Text; text != ""; {
+			g, n := rendering.FirstGrapheme(text)
+			if g == "" {
+				break
+			}
+			if col < x+n {
+				return x, x + n
+			}
+			x += n
+			text = text[len(g):]
+		}
+		break
+	}
+	return col, col
 }

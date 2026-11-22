@@ -447,7 +447,7 @@ rotating an unrelated plan. Completion reports "Context compacted · Ready to
 continue"; failure and cancellation retain their own settled label. A resumed
 boundary provides the same status until the next turn. The old session
 transcript stays in the archive; the new checkpoint is the active context.
-At the next human turn, the session supplies the current plan revision and
+At the next human turn, the session supplies the current plan ID, status and
 steps in hidden runtime context so the model can assess whether the plan is
 still relevant; the system planning contract calls for prompt updates when
 the user's request changes the work. The plan store remains the authority.
@@ -526,8 +526,12 @@ not change table widths, wrapping, selection text, or the painted transcript.
   remain only in immutable revision history. Both plan tool interfaces expose
   `replace=true` to atomically supersede a changed goal and reset step provenance;
   neither silently appends cancelled steps. Prompts require latest-intent review,
-  updates at milestones and honest closure before the final response. Explicit
+  updates at milestones and honest closure before the final response. Host-owned
   revision fences and transaction rollback preserve history and current activity.
+- The activity strip shows a plan step only while the plan is active. A plan
+  paused at the end of a run (for example while it waits for the user) stays in
+  the plan popover as paused, but it is not the activity of later runs; it used
+  to pin "Plan paused" to every later run of the session.
 - Command safety assessments belong to owner-scoped Notices, not retained
   `AgentState` alerts or live `NeedsAction` status. Only pending permissions and
   questions need input. Completed, cancelled and failed turns keep their own
@@ -624,6 +628,20 @@ The outer terminal and every multiplexer must support OSC 8. SSH transports the
 same standard terminal output; this does not launch a browser on the remote host,
 change tmux settings or guarantee support in a terminal that ignores OSC 8.
 
+A plain transcript click shows the shared **Open Link** confirmation. The site
+and address come from the link metadata, not its painted label. **Cancel** has
+focus. **Open link** hands the original HTTP or HTTPS address to the shell
+computer’s browser outside Update. HTTP shows an unencrypted-connection warning.
+Mail links, credential-bearing addresses and SSH logins offer **Copy link**
+instead. Copy is never truncated. This consent path does not relax the stricter
+URL rules for automated actions or authentication.
+
+A drag selects text without opening a prompt. In the editor an ordinary click
+places the caret; Ctrl+click on a URL asks the same question, while Ctrl+click
+on a symbol still navigates to its definition. OSC 8 remains available to
+terminals that support it, but the Crude gesture does not depend on terminal
+configuration or a multiplexer forwarding OSC 8.
+
 ### Native file links
 
 Relative file paths in prose and inline code also use the normal underlined link
@@ -636,13 +654,31 @@ walks the project or guesses a shortened destination.
 
 File links stay inside Crude; neither terminal output path emits them as OSC 8
 actions. A no-drag release uses the same retained spans and bidi column mapping
-as selection. Modified clicks, drags and replaced sources do not open a file.
+as selection. A backward drag includes the entire pressed grapheme, just as
+in the editor; returning to that cell does not select another character.
+Modified clicks, drags and replaced sources do not open a file.
 Hit testing uses the retained row-start index, not a transcript scan.
-The shell resolves relative paths against the selected core's workspace root,
-then uses the existing asynchronous pane/document opener. Open unsaved documents
-remain authoritative. Workspace, pane and open-request fences discard late
-results. Missing files use ordinary open-failure feedback; links never create
-files, run commands or launch a desktop app.
+The shell resolves relative paths on the producing turn's core and checkout,
+off the Update goroutine. An exact match opens: the path exists, it is an open
+named buffer, or a complete workspace catalog has exactly one file with that
+component-exact path suffix. A bare filename must also be unique; a different
+directory prefix is never silently discarded. Any
+other reference opens Go to File (the Find in Files window in its file-name
+mode) with the reference as its query; nothing else changes until the user
+chooses a row, and the chosen file opens at the cited line and column. The
+checked opener (`openSourceLocationChecked`) is the last fence: it opens only
+an open named buffer or an existing file, so a link never creates a document,
+even briefly, and a file removed after the choice is reported instead of an
+empty editor. Open unsaved documents remain authoritative. Workspace, request
+and pane fences discard late results. Links never create files, run commands or
+launch a desktop app.
+
+Open Go to File with **Ctrl+Alt+Y** or the command palette. It uses the same window, list, filters
+(`Aa`, `ab`, `.*` apply to paths), preview and open path as Find in Files, and
+`ProjectSearchOptions.NamesOnly` keeps the search from reading file contents.
+Hover or use the arrow keys to preview a file without creating a tab.
+Wide windows show the excerpt beside the list; narrow windows show it below.
+It keeps its own query; the Find in Files draft is not replaced.
 
 The compact composer footer keeps the newline and attachment hints. Prompt
 history and Find in chat retain their shortcuts and searchable commands, without
@@ -970,6 +1006,16 @@ the retained renderer sync key is the tuple **(source version, source
 generation)**. Renderer `Version()` is a separate local render generation for row
 structure, geometry, disclosure, theme and animation changes. Neither raw source
 revision nor source-generation equality alone authorizes skipping paint.
+
+An export's `ChangedIndices` and `StructureChanged` describe changes from
+exactly one earlier export, named by `MessageRowsSnapshot.BaseGeneration`.
+`shellchat.Screen` applies that delta only when the generation it installed
+last is that base. A screen that missed an export (its tab was hidden while the
+agent streamed, or one frame exported twice and installed the second snapshot)
+rebuilds its item heights from the rows, which is integer work. Applying a
+delta across a gap kept the old height of a reply that grew while unseen: the
+reply stopped at its old last row and the rest of the viewport stayed blank
+until an unrelated structure change.
 
 Message comparisons include display/attribution metadata (model, provider,
 account, thinking, tool facts and canonical outcome), not only stable ID and text.

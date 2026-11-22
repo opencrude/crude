@@ -6,10 +6,12 @@ import (
 	"crude/text/search"
 	"fmt"
 	"io/fs"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -24,6 +26,8 @@ type ProjectSearchOptions struct {
 	Regex         bool
 	WholeWord     bool
 	IncludeHidden bool
+	// NamesOnly matches file paths only (Go to File): contents are not read.
+	NamesOnly bool `json:"NamesOnly,omitempty"`
 }
 
 // ProjectSearchMatch is one selectable Find in Files result.
@@ -107,6 +111,9 @@ func SearchProject(ctx context.Context, root, query string, opts ProjectSearchOp
 			return nil
 		}
 		file := ProjectFile{Path: path, Rel: filepath.ToSlash(rel)}
+		if opts.NamesOnly {
+			return search.file(ctx, file)
+		}
 		info, statErr := entry.Info()
 		if statErr != nil || info.Size() > maxProjectSearchFileSize {
 			file.Large = true
@@ -137,7 +144,7 @@ func SearchProjectFiles(ctx context.Context, files []ProjectFile, query string, 
 			return nil, err
 		}
 		file := files[i]
-		if file.Text == nil && !file.Large && !file.Binary && !file.Unreadable {
+		if file.Text == nil && !file.Large && !file.Binary && !file.Unreadable && !opts.NamesOnly {
 			file.Text, file.Binary, file.Unreadable = readProjectFile(file.Path)
 		}
 		if err := search.file(ctx, file); err != nil {
@@ -208,6 +215,27 @@ func newProjectSearch(query string, opts ProjectSearchOptions) (*projectSearch, 
 func (s *projectSearch) file(ctx context.Context, file ProjectFile) error {
 	path, rel := file.Path, file.Rel
 	pathPositions, pathScore, nameMatched := projectSearchMatch(rel, s.fuzzy, s.re)
+	if s.opts.NamesOnly {
+		if s.opts.WholeWord {
+			hits := s.matcher.FindAll(rel, 1)
+			nameMatched = len(hits) > 0
+			if nameMatched {
+				pathScore = 9000
+				pathPositions = nil
+				start := utf8.RuneCountInString(rel[:hits[0].Start])
+				for n := range utf8.RuneCountInString(rel[hits[0].Start:hits[0].End]) {
+					pathPositions = append(pathPositions, start+n)
+				}
+			}
+		}
+		if nameMatched {
+			s.suggestions = append(s.suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
+			if len(s.suggestions) >= 2*maxProjectSearchResults {
+				s.suggestions = s.finish()
+			}
+		}
+		return nil
+	}
 	if file.Large || file.Binary || file.Unreadable || file.Text == nil {
 		if nameMatched && len(s.suggestions) < maxProjectSearchResults {
 			s.suggestions = append(s.suggestions, filenameProjectSearchMatch(path, rel, pathPositions, pathScore))
@@ -303,9 +331,27 @@ func (s *projectSearch) file(ctx context.Context, file ProjectFile) error {
 	return stopProjectSearchIfFull(s.results)
 }
 
+// FilePathMatchClass compares slash-normalized names without guessing about
+// case or filesystem identity. A basename alone does not prove a directory suffix.
+func FilePathMatchClass(rel, query string) int {
+	if rel == query || strings.HasSuffix(rel, "/"+query) {
+		return 0
+	}
+	if path.Base(rel) == path.Base(query) {
+		return 1
+	}
+	return 2
+}
+
 func (s *projectSearch) finish() []ProjectSearchMatch {
 	results := append(s.results, s.suggestions...)
 	sort.SliceStable(results, func(i, j int) bool {
+		if s.opts.NamesOnly {
+			a, b := FilePathMatchClass(results[i].RelativePath, s.query), FilePathMatchClass(results[j].RelativePath, s.query)
+			if a != b {
+				return a < b
+			}
+		}
 		iExact, jExact := !results[i].NameOnly && !results[i].FuzzyOnly, !results[j].NameOnly && !results[j].FuzzyOnly
 		if iExact != jExact {
 			return iExact

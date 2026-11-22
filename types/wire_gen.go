@@ -3435,8 +3435,9 @@ func (z *CompletionSnippet) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ConversationMessage) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 61
-	o = append(o, 0xdc, 0x0, 0x3d)
+	// array header, size 62
+	o = append(o, 0xdc, 0x0, 0x3e)
+	o = msgp.AppendString(o, z.ExecutionID)
 	o = msgp.AppendString(o, z.InternalID)
 	o = msgp.AppendString(o, z.Role)
 	o, err = z.Origin.MarshalMsg(o)
@@ -3559,8 +3560,13 @@ func (z *ConversationMessage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 61 {
-		err = msgp.ArrayError{Wanted: 61, Got: zb0001}
+	if zb0001 != 62 {
+		err = msgp.ArrayError{Wanted: 62, Got: zb0001}
+		return
+	}
+	z.ExecutionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ExecutionID")
 		return
 	}
 	z.InternalID, bts, err = msgp.ReadStringBytes(bts)
@@ -3940,7 +3946,7 @@ func (z *ConversationMessage) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ConversationMessage) Msgsize() (s int) {
-	s = 3 + msgp.StringPrefixSize + len(z.InternalID) + msgp.StringPrefixSize + len(z.Role) + z.Origin.Msgsize() + msgp.StringPrefixSize + len(z.Content) + msgp.ArrayHeaderSize
+	s = 3 + msgp.StringPrefixSize + len(z.ExecutionID) + msgp.StringPrefixSize + len(z.InternalID) + msgp.StringPrefixSize + len(z.Role) + z.Origin.Msgsize() + msgp.StringPrefixSize + len(z.Content) + msgp.ArrayHeaderSize
 	for za0001 := range z.ReferenceLabels {
 		s += msgp.StringPrefixSize + len(z.ReferenceLabels[za0001])
 	}
@@ -14341,8 +14347,9 @@ func (z *ThemeSettings) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *TurnIdentity) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 5
+	o = append(o, 0x95)
+	o = msgp.AppendString(o, z.ExecutionID)
 	o = msgp.AppendUint64(o, z.Generation)
 	o = msgp.AppendString(o, z.ProviderID)
 	o = msgp.AppendString(o, z.AccountID)
@@ -14362,8 +14369,13 @@ func (z *TurnIdentity) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+		return
+	}
+	z.ExecutionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ExecutionID")
 		return
 	}
 	z.Generation, bts, err = msgp.ReadUint64Bytes(bts)
@@ -14392,7 +14404,7 @@ func (z *TurnIdentity) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *TurnIdentity) Msgsize() (s int) {
-	s = 1 + msgp.Uint64Size + msgp.StringPrefixSize + len(z.ProviderID) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.ModelID)
+	s = 1 + msgp.StringPrefixSize + len(z.ExecutionID) + msgp.Uint64Size + msgp.StringPrefixSize + len(z.ProviderID) + msgp.StringPrefixSize + len(z.AccountID) + msgp.StringPrefixSize + len(z.ModelID)
 	return
 }
 

@@ -174,7 +174,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 				}
 				meta.Snapshots = []ttypes.ConversationMessage{{
 					InternalID: "reply:" + toolResultKey(message), Role: role, Content: message.Content.String(), Time: now,
-					TurnGeneration: meta.TurnGeneration, ProviderID: meta.ProviderID, AccountID: meta.AccountID, ModelID: meta.ModelID,
+					ExecutionID: meta.ExecutionID, TurnGeneration: meta.TurnGeneration, ProviderID: meta.ProviderID, AccountID: meta.AccountID, ModelID: meta.ModelID,
 				}}
 			}
 			break
@@ -285,6 +285,7 @@ func applyTurnIdentity(snapshot *ttypes.ConversationMessage, meta sessiondb.Disp
 	snapshot.ProviderID = meta.ProviderID
 	snapshot.AccountID = meta.AccountID
 	snapshot.ModelID = meta.ModelID
+	snapshot.ExecutionID = meta.ExecutionID
 }
 
 func applyCanonicalToolOperands(snapshot *ttypes.ConversationMessage, rawArgs string) {

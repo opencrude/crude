@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -26,6 +27,7 @@ type promptHistoryQuery struct {
 	AfterAgentID string          `json:"after_agent_id,omitempty"`
 	PromptID     string          `json:"prompt_id,omitempty"`
 	TextOffset   int64           `json:"text_offset,omitempty"`
+	Before       int64           `json:"before,omitempty"`
 }
 
 type promptHistorySource struct {
@@ -72,7 +74,7 @@ func inspectPromptHistory(ctx context.Context, pages *inspect.Store, owner strin
 	if q.Page.View != "" || q.Page.Filter != "" {
 		return inspect.Page{}, errors.New("use model, agent_id or category in arguments; page only controls delivery")
 	}
-	if q.Page.SnapshotID != "" && (q.AgentID != "" || q.Category != "" || q.Model != "" || q.Mode != "" || q.AfterAgentID != "" || q.PromptID != "" || q.TextOffset != 0) {
+	if q.Page.SnapshotID != "" && (q.AgentID != "" || q.Category != "" || q.Model != "" || q.Mode != "" || q.AfterAgentID != "" || q.PromptID != "" || q.TextOffset != 0 || q.Before != 0) {
 		return inspect.Page{}, errors.New("send only the returned next page to continue this observation")
 	}
 	if q.Page.SnapshotID == "" {
@@ -86,6 +88,13 @@ func inspectPromptHistory(ctx context.Context, pages *inspect.Store, owner strin
 }
 
 func normalizePromptHistory(q *promptHistoryQuery) error {
+	if q.Mode == "recent" {
+		if q.AgentID == "" || q.Before < 0 || q.Model != "" || q.Category != "" || q.AfterAgentID != "" || q.PromptID != "" || q.TextOffset != 0 {
+			return errors.New("recent requires one agent_id and an optional before cursor")
+		}
+	} else if q.Before != 0 {
+		return errors.New("use before only with recent")
+	}
 	for _, value := range []string{q.AgentID, q.Category, q.Model, q.Mode, q.AfterAgentID, q.PromptID} {
 		if len(value) > 256 || strings.ContainsAny(value, "\x00\n\r") {
 			return errors.New("history selectors must contain at most 256 bytes and no line breaks")
@@ -107,7 +116,7 @@ func normalizePromptHistory(q *promptHistoryQuery) error {
 			q.Mode = "first_for_model"
 		}
 	}
-	if q.Mode != "first" && (q.Mode != "first_for_model" || q.Model == "") {
+	if q.Mode != "recent" && q.Mode != "first" && (q.Mode != "first_for_model" || q.Model == "") {
 		return errors.New("use first, or first_for_model with a model name")
 	}
 	return nil
@@ -148,6 +157,34 @@ func collectPromptHistory(ctx context.Context, journal *collaboration.Store, dir
 	}
 	for _, a := range agents {
 		source.AgentsChecked++
+		if q.Mode == "recent" {
+			db, closeDB, err := session.OpenAgentTranscript(ctx, journal, directory, a)
+			if err != nil {
+				return out, err
+			}
+			defer closeDB() // recent is scoped to exactly one agent
+			ids, next, err := sessiondb.RecentPromptIDs(ctx, db, a.ID, transcriptOwner(a), q.Before, batch)
+			if err != nil {
+				return out, err
+			}
+			for _, id := range ids {
+				exact := q
+				exact.PromptID = id
+				p, err := promptFromTranscript(ctx, db, journal, a, exact, textBytes)
+				if err != nil {
+					return out, err
+				}
+				if p != nil {
+					out.Records = append(out.Records, inspectionRecord("human_prompt", p.ID, p))
+				}
+			}
+			if next != 0 {
+				nextQuery := q
+				nextQuery.Before = next
+				source.NextScan = &nextQuery
+			}
+			continue
+		}
 		readCtx, finish := ctx, func() {}
 		if q.AgentID == "" {
 			// One busy transcript cannot consume the whole workspace scan.
@@ -188,11 +225,18 @@ func readAgentPrompt(ctx context.Context, journal *collaboration.Store, director
 		return nil, fmt.Errorf("the agent transcript is unavailable: %w", err)
 	}
 	defer closeDB()
-	transcriptOwner := a.ID
+	return promptFromTranscript(ctx, db, journal, a, q, textBytes)
+}
+
+func transcriptOwner(a collaboration.Agent) string {
 	if a.ParentID == "" {
-		transcriptOwner = a.SessionID
+		return a.SessionID
 	}
-	prompt, err := sessiondb.InspectHistoricalPrompt(ctx, db, a.SessionID, a.ID, transcriptOwner, sessiondb.HistoricalPromptQuery{PromptID: q.PromptID, Model: q.Model, FirstForModel: q.Mode == "first_for_model", Offset: q.TextOffset, MaxBytes: textBytes})
+	return a.ID
+}
+
+func promptFromTranscript(ctx context.Context, db *sql.DB, journal *collaboration.Store, a collaboration.Agent, q promptHistoryQuery, textBytes int) (*promptHistoryRecord, error) {
+	prompt, err := sessiondb.InspectHistoricalPrompt(ctx, db, a.SessionID, a.ID, transcriptOwner(a), sessiondb.HistoricalPromptQuery{PromptID: q.PromptID, Model: q.Model, FirstForModel: q.Mode == "first_for_model", Offset: q.TextOffset, MaxBytes: textBytes})
 	if err != nil || prompt == nil {
 		return nil, err
 	}

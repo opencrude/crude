@@ -23,6 +23,9 @@ BenchmarkWriteStringLeftToRight 0 0
 BenchmarkWriteStringRightToLeft 16 0
 BenchmarkFlattenZOrder_Nested 2300 8
 BenchmarkFullRender_80x24 12000 6
+# 200x60 frame with one animated row: full snapshot vs changed-row delta.
+BenchmarkDirectAnimationFrame/delta=false 240 3
+BenchmarkDirectAnimationFrame/delta=true 140 2
 BenchmarkGenerateANSI_80x24 9000 2
 BenchmarkEditorPaint_80x24 5200 760
 BenchmarkEditorPaint_120x40 9600 1380
@@ -85,8 +88,17 @@ BenchmarkSearchProjectDense/rare windows 19700000 8500
 BenchmarkSearchProjectDense/suggestions windows 20900000 24100
 BenchmarkProjectSearchSelection/10 windows 67000 870
 BenchmarkProjectSearchSelection/1000 windows 62000 800
+BenchmarkTextTidePaint 12 0
 # Scenario benches (tui/viewmodel): steady-state work budgets.
 BenchmarkIdleTick_200Msgs 15000 325
+# Real Update+View per clock tick. IdleTick calls handleTick directly and
+# missed 1.2 MB/9,590 allocs per tick from Trust reads in message dispatch.
+BenchmarkIdlePresentedFrame 6800 176
+BenchmarkAnimatedPresentedFrame 6800 176
+BenchmarkTickHiddenNotices 560 18
+BenchmarkDenseNoticeFooterReads 0 0
+BenchmarkTickPreferenceReads 0 0
+BenchmarkDenseRecoverySnapshot 2120000 36
 BenchmarkTabRederive_80Msgs 14000 300
 BenchmarkPointerMotionCoalesced 12000 52
 BenchmarkAgentSwitchWarm_80Msgs 15000 315

@@ -145,7 +145,11 @@ func (m *App) desktopNoticeSettings() ttypes.DesktopNotificationSettings {
 // desktopNotifies reports whether this shell can notify and the user wants it.
 func (m *App) desktopNotifies() bool {
 	d := &m.desktop
-	return d.sink != nil && d.readyKnown && d.readyErr == nil && m.desktopNoticeSettings().Active()
+	if d.sink == nil || !d.readyKnown || d.readyErr != nil || m.ws == nil {
+		return false
+	}
+	_, active := m.ws.DesktopPresencePreferences()
+	return active
 }
 
 // away reports whether news arriving now is unseen: nobody is present here
@@ -172,7 +176,8 @@ func (m *App) observeDesktopPresence(now time.Time, active bool) {
 	if active || d.lastActive.IsZero() {
 		d.lastActive = now
 	}
-	idle := now.Sub(d.lastActive) >= time.Duration(m.desktopNoticeSettings().AwayMinutesOrDefault())*time.Minute
+	awayMinutes, _ := m.ws.DesktopPresencePreferences()
+	idle := now.Sub(d.lastActive) >= time.Duration(awayMinutes)*time.Minute
 	present := !m.terminalBlurred && !idle
 	if !d.localKnown || present != d.localPresent {
 		wasKnown := d.localKnown

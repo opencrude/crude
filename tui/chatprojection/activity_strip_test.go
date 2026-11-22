@@ -292,6 +292,32 @@ func TestCompactPlanStatusIsOnlyCurrentOrdinalAndTask(t *testing.T) {
 	}
 }
 
+// A plan paused at the end of one run (waiting for the user) is not the
+// activity of later runs. It used to pin "Plan paused" to the status strip of
+// every later run in the session until the model touched the plan again.
+func TestPausedPlanDoesNotOwnLaterRunStatus(t *testing.T) {
+	th := theme.DefaultDark()
+	paused := &activity.Plan{ID: "p", Revision: 4, Status: "paused", Total: 2, Completed: 1,
+		Steps:   []activity.Step{{Number: 1, Status: "completed", Text: "Done"}, {Number: 2, Status: "blocked", Text: "Wait for the user"}},
+		Current: []activity.Step{{Number: 2, Status: "blocked", Text: "Wait for the user"}}}
+	var strip ActivityStrip
+	strip.Update(types.AgentActivityView{Active: true, Plan: paused,
+		Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
+	for _, frame := range []int{0, 6100, 18000} {
+		if got := strip.Line(frame).PlainText(); strings.Contains(got, "Plan") || strings.Contains(got, "Wait for the user") {
+			t.Fatalf("frame %d shows the paused plan as run activity: %q", frame, got)
+		}
+	}
+	resumed := *paused
+	resumed.Status, resumed.Revision = "active", 5
+	resumed.Current = []activity.Step{{Number: 2, Status: "in_progress", Text: "Wait for the user"}}
+	strip.Update(types.AgentActivityView{Active: true, Plan: &resumed,
+		Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
+	if got := strip.Line(0).PlainText(); !strings.Contains(got, "2/2 Wait for the user") {
+		t.Fatalf("resumed plan is not shown: %q", got)
+	}
+}
+
 func TestAttentionAndInterruptionOutrankPlanEvenWithStaleActiveFlag(t *testing.T) {
 	th := theme.DefaultDark()
 	for _, active := range []bool{false, true} {

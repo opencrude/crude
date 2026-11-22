@@ -261,3 +261,28 @@ func TestAnalysisPreparedGrantStaysWithCapturedRootAndStorage(t *testing.T) {
 		t.Fatal("preference I/O mutated the live workspace before its owning publication")
 	}
 }
+
+// UI ticks read Trust through EffectiveAnalysisSettings. It must agree with
+// the complete merge in every state, including a grant for another folder.
+func TestEffectiveAnalysisSettingsMatchesTheCompleteMerge(t *testing.T) {
+	w, _ := analysisPreferenceFixture(t)
+	check := func(state string) {
+		t.Helper()
+		if got, want := w.EffectiveAnalysisSettings(), w.EffectiveAppSettings().Analysis; got != want {
+			t.Fatalf("%s: analysis read %+v, complete merge %+v", state, got, want)
+		}
+	}
+	check("undecided")
+	applyAnalysisPreference(t, w, grantAnalysisEdit())
+	check("trusted")
+	if !w.EffectiveAnalysisSettings().Trusted() {
+		t.Fatal("trusted folder read as untrusted")
+	}
+	w.analysisRootIdentity = "another-folder"
+	check("trusted elsewhere")
+	if w.EffectiveAnalysisSettings().Trusted() {
+		t.Fatal("a grant for another folder was honored")
+	}
+	applyAnalysisPreference(t, w, types.SettingEdit{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"restricted"`)})
+	check("restricted")
+}

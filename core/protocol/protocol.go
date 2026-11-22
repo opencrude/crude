@@ -5,6 +5,7 @@ package coreprotocol
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 	"time"
 
@@ -61,6 +62,12 @@ type Fault struct {
 }
 
 func (f *Fault) Error() string { return f.Code + ": " + f.Message }
+
+const FaultFileNotFound = "file_not_found"
+
+// Is preserves the distinction between an absent file and an unreadable file
+// for both document opens and verified file transfers.
+func (f *Fault) Is(target error) bool { return target == fs.ErrNotExist && f.Code == FaultFileNotFound }
 
 // FaultDocumentConflict reports that a document's file changed on disk while
 // its text was unsaved. The document stays unchanged; a reload resolves it.

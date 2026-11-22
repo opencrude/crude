@@ -48,7 +48,7 @@ func TestSetMessagesAppliesStableHeightDeltaWithoutListRebuild(t *testing.T) {
 	s.SetMessages(rows, PaintParams{Generation: 1, StructureChanged: true})
 	revision := s.list.StructureRevision()
 	rows[1] = chatprojection.MessageRow{ID: "b", Lines: []string{"updated"}}
-	s.SetMessages(rows, PaintParams{Generation: 2, ChangedIndices: []int{1}})
+	s.SetMessages(rows, PaintParams{Generation: 2, BaseGeneration: 1, ChangedIndices: []int{1}})
 	if s.list.StructureRevision() != revision {
 		t.Fatal("stable-height delta rebuilt prefix index")
 	}
@@ -123,6 +123,7 @@ func TestSetMessagesSourceSwitchAndDeltaPaintLatestSnapshot(t *testing.T) {
 	}
 	updated := append([]chatprojection.MessageRow(nil), second...)
 	updated[0] = chatprojection.MessageRow{ID: "shared", Lines: []string{"latest delta"}}
+	paint.BaseGeneration = paint.Generation
 	paint.Generation++
 	paint.ChangedIndices = []int{0}
 	revision = s.list.StructureRevision()

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,31 @@ func TestGitServiceLinkedWorktreeKeepsDistinctIndex(t *testing.T) {
 		t.Fatalf("linked snapshot=%#v err=%v", snapshot, err)
 	}
 	assertGitChange(t, snapshot.Changes, "file.txt", GitAreaWorking)
+	// A refresh reuses immutable history, not operation state, and the
+	// returned history belongs to the caller. The main checkout's marker
+	// must not describe the linked worktree.
+	snapshot.RecentCommits[0].Subject = "caller edit"
+	mainMarker := filepath.Join(root, ".git", "MERGE_HEAD")
+	if err := os.WriteFile(mainMarker, []byte(snapshot.Head+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := service.Snapshot(t.Context()); err != nil || again.Operation != "" || len(again.RecentCommits) != 1 || again.RecentCommits[0].Subject != "base" {
+		t.Fatalf("linked worktree inherited foreign state: %+v, %v", again, err)
+	}
+	if err := os.Remove(mainMarker); err != nil {
+		t.Fatal(err)
+	}
+	linkedDir := strings.TrimSpace(git(linked, "rev-parse", "--absolute-git-dir"))
+	linkedMarker := filepath.Join(linkedDir, "CHERRY_PICK_HEAD")
+	if err := os.WriteFile(linkedMarker, []byte(snapshot.Head+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if op, err := service.operation(t.Context()); err != nil || op != GitOperationCherryPick {
+		t.Fatalf("linked operation = %q, %v", op, err)
+	}
+	if err := os.Remove(linkedMarker); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Stage(t.Context(), "file.txt"); err != nil {
 		t.Fatal(err)
 	}

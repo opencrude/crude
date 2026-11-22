@@ -607,6 +607,10 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "search.project.open":
 		m.toggleFindInFiles()
 
+	case "search.file.open":
+		_, cmd := m.toggleGoToFile()
+		return cmd
+
 	case "search.project.replace":
 		m.toggleReplaceInFiles()
 

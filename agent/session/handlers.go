@@ -363,7 +363,7 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 			if override.AccountID != "" {
 				pin = override.AccountID
 			}
-			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit, AccountID: pin, ServiceTier: override.ServiceTier, AllowedTools: slices.Clone(override.AllowedTools), DeniedTools: slices.Clone(override.DeniedTools), SkillModes: maps.Clone(override.SkillModes)}
+			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit, ContextCompactionPercent: cloneIntPtr(override.ContextCompactionPercent), ContextRetentionTokens: cloneIntPtr(override.ContextRetentionTokens), AccountID: pin, ServiceTier: override.ServiceTier, AllowedTools: slices.Clone(override.AllowedTools), DeniedTools: slices.Clone(override.DeniedTools), SkillModes: maps.Clone(override.SkillModes)}
 			continue
 		}
 		selectionChanged := override.AccountID != "" && override.AccountID != current.AccountID || override.Model != "" && override.Model != current.Model

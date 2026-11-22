@@ -109,6 +109,9 @@ func (m *App) navigateAt(msg editor.NavigateAtMsg) tea.Cmd {
 	if m.EditorState.Editor != msg.Editor {
 		return nil
 	}
+	if msg.URL != "" {
+		return m.openWebLink(msg.URL)
+	}
 	m.recordNavigationOrigin()
 	kind := types.LSPNavigationDefinition
 	if msg.Implementation {

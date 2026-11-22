@@ -34,6 +34,9 @@ const (
 )
 
 type SubAgentSpec struct {
+	// SettingsRole is the category or named profile selected at launch. It is
+	// a settings identity, not the child nickname, model or permission scope.
+	SettingsRole   string  `json:"settings_role,omitempty"`
 	ID             AgentID `json:"id"`
 	Name           string  `json:"name"`
 	Category       string  `json:"category"`

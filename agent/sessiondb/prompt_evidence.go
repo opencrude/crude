@@ -47,6 +47,33 @@ type HistoricalPromptQuery struct {
 	MaxBytes      int
 }
 
+// RecentPromptIDs pages through the same public human transcript as the exact
+// text reader. Use the message row ID as a keyset cursor, not a text offset.
+func RecentPromptIDs(ctx context.Context, db *sql.DB, agent, transcript string, before int64, limit int) ([]string, int64, error) {
+	if before < 0 || limit < 1 || limit > 32 {
+		return nil, 0, errors.New("invalid prompt page")
+	}
+	rows, err := db.QueryContext(ctx, `SELECT m.id, m.internal_id FROM messages m WHERE `+humanPromptRows+
+		` AND m.internal_id != '' AND (?=0 OR m.id<?) ORDER BY m.id DESC LIMIT ?`, agent, transcript, before, before, limit+1)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var ids []string
+	var last int64
+	for rows.Next() {
+		if len(ids) == limit {
+			return ids, last, nil
+		}
+		var id string
+		if err := rows.Scan(&last, &id); err != nil {
+			return nil, 0, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, 0, rows.Err()
+}
+
 // InspectHistoricalPrompt selects the first human input, the first human-led
 // turn with a matching recorded model, or one exact message by ID. An agent
 // alias, configured model, assignment, background request, or nearby timestamp

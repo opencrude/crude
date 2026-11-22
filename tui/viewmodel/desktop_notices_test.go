@@ -38,6 +38,10 @@ type presenceWorkspace struct {
 func (w *presenceWorkspace) ReportPresence(present, notifies bool) {
 	w.reports = append(w.reports, presenceReport{present, notifies})
 }
+func (w *presenceWorkspace) DesktopPresencePreferences() (int, bool) {
+	s := w.settings.UI.DesktopNotifications
+	return s.AwayMinutesOrDefault(), s.Active()
+}
 func (w *presenceWorkspace) LoadAppSettings() ttypes.AppSettings { return w.settings }
 
 type noticeHarness struct {

@@ -83,12 +83,21 @@ FIM adapters use explicit prefix/suffix fields and never choose a chat fallback
 themselves. The current builders are prerequisites, not an enabled editor service.
 
 The stable environment projection names the resolved agent command shell in
-`<shell>` and describes only that shell's syntax in `<platform_guidance>`:
+`<shell>` and describes that shell's syntax and runtime in `<platform_guidance>`:
 bash for Git Bash, PowerShell for PowerShell 7 or 5.1, cmd.exe for Command
 Prompt. It never describes cmd.exe while another shell runs commands. The shell
 is part of the root prompt cache key, so a settings change rebuilds the prompt.
-It also includes the exact session-owned
-`temporary_directory`, also exported to command processes as `CRUDE_TEMP_DIR`.
+On Windows, the Git Bash guidance tells agents to check which tool and helper
+executables that shell resolves before treating a failure as a task error. It
+prefers compatible installed tools and otherwise calls for a verified package
+that matches the runtime and architecture, under the normal approval rules.
+Use a task-local path rather than replacing another installation or changing
+system `PATH`. For example, use an MSYS2 `sshpass` with Git Bash's MSYS OpenSSH,
+not a Win32 `sshpass` build designed for Windows OpenSSH. This is on-demand
+guidance, not a requirement to install `sshpass` or any other tool at setup.
+
+The projection also includes the exact session-owned `temporary_directory`,
+which is exported to command processes as `CRUDE_TEMP_DIR`.
 The canonical tool contract tells agents to redirect noisy transient output there
 and inspect bounded ranges rather than injecting whole logs into model context.
 `read_async_output` enforces 32 KiB default / 64 KiB maximum pages with raw byte
@@ -384,6 +393,27 @@ The accepted system/conversation prefix remains unchanged within the turn;
 updates append as hidden runtime context. Compaction uses one current snapshot,
 not both the startup and current copies.
 
+### Guidance epochs
+
+The prefix also stays unchanged across turns. A root context keeps the guidance
+its system prompt was built with (its epoch) until the session starts again or
+a checkpoint replaces the context. This is how Codex and Claude Code treat
+`AGENTS.md` and `CLAUDE.md`: project instructions load when a context starts or
+is compacted, and a later change is appended as a message, because any change to
+the system prompt makes the provider re-read the whole history without cache.
+Before this rule, an `AGENTS.md` edit rebuilt the system prompt at the next run
+start; sessions re-sent up to 413k tokens uncached for a 4-character edit.
+
+The session stores the epoch (`agent.GuidanceEpoch`) of each finished root run
+with the context generation current at its end, and gives it to the next run of
+that generation. The run rereads every known scope. When the digest changed, the
+system prompt keeps the epoch's text and the current complete guidance arrives
+once as a context-only `GuidanceProjectionUpdate`, as a mid-run change does.
+A checkpoint (in-run, background-prepared or manual) uses the current guidance
+for its request and starts a new epoch with it. A base-prompt change (settings
+such as Plan mode, multi-agent or the shell) still rebuilds the prompt, and the
+next request misses the cache.
+
 These boundary checks are not a filesystem transaction covering external
 writers during a running tool call. A guidance mutation and other calls in the
 same admitted batch use the pre-batch rules; the post-batch update governs the
@@ -421,10 +451,19 @@ as cancelled entries. Immutable revision events retain prior snapshots.
 Both generic and native Codex `update_plan` expose `replace=true`: supply a new
 objective and complete nonempty steps (`steps` generically, `plan` natively) to
 atomically supersede the goal within the same plan ID. Replacement resets step
-provenance and records `plan_replaced`; validation, revision, storage or commit
-failure leaves the old goal, history and activity view unchanged. Generic updates
-require the current revision; native updates may omit it to use the current owner
-revision but reject any supplied stale revision. Native plans expose explicit
+provenance and records `plan_replaced`; validation, storage or commit failure
+leaves the old goal, history and activity view unchanged.
+
+Revisions are host-owned, as in Codex `update_plan` and Claude Code `TodoWrite`,
+which take a full snapshot and no version. The owning agent is the only writer of
+its plan, so neither tool interface accepts a revision: the handler applies the
+update to the current revision and the store still fences the write, so a racing
+update returns `plan_changed` with the current plan instead of being lost. Turn
+context, drift and reconcile notices show the plan without a revision number. A
+model that lost the revision across compaction used to receive a conflict and
+had to call `get_plan` before it could continue. Creating a second plan while one
+is open fails with the open plan's ID and the two ways forward (update it, with
+`replace=true` for a new goal, or close it). Native plans expose explicit
 active/paused/completed/cancelled lifecycle states and all generic step statuses.
 An empty native snapshot cancels existing work by default; it never implies
 success. Fully completed native step snapshots retain their declarative completion

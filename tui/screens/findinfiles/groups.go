@@ -75,6 +75,12 @@ func buildGroups(results []fileio.ProjectSearchMatch) []resultGroup {
 func (s *Screen) rebuildRows() {
 	s.rowsGeneration++
 	s.rows = s.rows[:0]
+	if s.mode == ModeFiles {
+		for i := range s.results {
+			s.rows = append(s.rows, displayRow{kind: rowMatch, result: i})
+		}
+		return
+	}
 	for gi, g := range s.groups {
 		if len(g.rows) == 0 {
 			continue
@@ -97,6 +103,7 @@ func (s *Screen) setResults(results []fileio.ProjectSearchMatch) {
 		s.previewSrc = nil
 	}
 	s.results = results
+	s.previewNotice = ""
 	s.collapsed = make(map[string]bool)
 	s.groups = buildGroups(results)
 	s.rebuildRows()
@@ -272,6 +279,14 @@ func (s *Screen) paintResultRow(buf *surface.CellBuffer, x, y, width int, item u
 	}
 
 	r := s.results[row.result]
+	if s.mode == ModeFiles {
+		cx := x
+		if icon := s.icons.ResolveIcon(baseName(r.RelativePath), false, false, false).Icon; icon != "" {
+			cx = writeClipped(buf, cx, xMax, y, icon+" ", fg, bg, 0)
+		}
+		writeHighlightedClipped(buf, cx, xMax, y, r.RelativePath, r.PathMatches, fg, matchFG, bg, 0, matchAttr)
+		return
+	}
 	if r.NameOnly {
 		text, positions := nameOnlyRowText(r)
 		cx := writeClipped(buf, x, xMax, y, "      ", muted, bg, 0)

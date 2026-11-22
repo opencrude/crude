@@ -26,6 +26,7 @@ type ResourceView struct {
 	CPUComplete    bool
 	System         metrics.SystemUsage
 	Disk           *metrics.DiskUsage
+	diskExpected   bool // the data-directory sampler belongs to the core host
 }
 
 // SameHost requires positive machine/boot provenance, never hostname or PID.
@@ -88,6 +89,7 @@ func resourceView(label string, sources []resourceSource) ResourceView {
 	var children []ResourceProcess
 	for _, src := range sources {
 		r := src.snapshot.Resources
+		v.diskExpected = v.diskExpected || src.process == ProcessCore || r.Disk != nil
 		v.System = r.System
 		if r.Disk != nil {
 			v.Disk = r.Disk
@@ -203,7 +205,7 @@ func ResourceFindings(d Data) []Finding {
 		if sev := MemorySeverity(v.System); sev >= SeverityWarn {
 			out = append(out, Finding{Severity: sev, Title: "Memory is running out", Section: SectionResources, Detail: fmt.Sprintf("%s: %s of %s available; the system swaps and every process slows", v.Label, FormatBytes(float64(v.System.MemoryAvailable)), FormatBytes(float64(v.System.MemoryTotal)))})
 		}
-		if !v.MemoryComplete || !v.CPUComplete || MemorySeverity(v.System) == SeverityUnknown || v.System.CPU < 0 || DiskSeverity(v.Disk) == SeverityUnknown {
+		if !v.MemoryComplete || !v.CPUComplete || MemorySeverity(v.System) == SeverityUnknown || v.System.CPU < 0 || (v.diskExpected && DiskSeverity(v.Disk) == SeverityUnknown) {
 			out = append(out, Finding{Severity: SeverityUnknown, Title: v.Label + " resource coverage incomplete", Section: SectionResources, Detail: "unavailable, warming-up or incomplete memory, CPU or disk samples are unknown, not zero or healthy"})
 		}
 	}

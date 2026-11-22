@@ -83,8 +83,8 @@ func shellName(shell command.Shell) string {
 	return "unknown"
 }
 
-// shellGuidance describes the command language of the shell that actually runs
-// the agent's commands. It never names another shell's syntax as the rule.
+// shellGuidance describes the syntax and runtime of the shell that actually
+// runs the agent's commands.
 func shellGuidance(shell command.Shell, windows bool) string {
 	if shell.Unavailable != "" {
 		return "Commands cannot run: " + shell.Unavailable + " Tell the user; do not retry commands until the shell is fixed."
@@ -106,7 +106,11 @@ func shellGuidance(shell command.Shell, windows bool) string {
 		return text + paths
 	}
 	if windows {
-		return "Commands run in " + shell.Label + ": write bash as on Linux. The command reaches bash byte for byte, so quotes, pipes, $(...), here-documents and multi-line scripts work. GNU tools (grep, sed, awk, find, head, xargs) and Windows programs on PATH both run. Write paths as C:/Users/name, which bash and the file tools both accept. Git Bash converts arguments that look like POSIX paths, such as /d, when it starts a Windows program; put MSYS_NO_PATHCONV=1 before that command when the conversion is wrong." + paths
+		text := "Commands run in " + shell.Label + ": write bash as on Linux. The command reaches bash byte for byte, so quotes, pipes, $(...), here-documents and multi-line scripts work. GNU tools (grep, sed, awk, find, head, xargs) and Windows programs on PATH both run. Write paths as C:/Users/name, which bash and the file tools both accept. Git Bash converts arguments that look like POSIX paths, such as /d, when it starts a Windows program; put MSYS_NO_PATHCONV=1 before that command when the conversion is wrong."
+		if shell.ID == "git-bash" {
+			text += " If a tool is missing or fails where it uses a terminal, pipe, or helper, run type -a on the tool and its helpers in this shell. Git Bash can find both MSYS and Windows-native builds. Prefer a compatible set that is already installed. If you need another build, find the package for the required runtime and architecture from its official source. Verify its checksum or signature and follow the tool approval rules before installing. Prefer a task-local path. Leave other installs and the system PATH alone. Test the tool in this shell before retrying."
+		}
+		return text + paths
 	}
 	return ""
 }

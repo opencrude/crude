@@ -1,6 +1,13 @@
 package editor
 
-import tea "charm.land/bubbletea/v2"
+import (
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"mvdan.cc/xurls/v2"
+
+	"crude/tui/cell"
+)
 
 // Code links: as in established IDEs, holding Ctrl over a symbol underlines
 // it, and Ctrl+click goes to its definition. Ctrl+Alt+click goes to its
@@ -13,11 +20,13 @@ import tea "charm.land/bubbletea/v2"
 type NavigateAtMsg struct {
 	Editor         *Editor
 	Implementation bool
+	URL            string
 }
 
 // codeLink is the source range underlined while Ctrl is held over it.
 type codeLink struct {
 	line, start, end int // source visual columns [start, end)
+	url              string
 }
 
 // codeLinkModifier reports whether a pointer event asks for a code link.
@@ -43,6 +52,32 @@ func (e *Editor) wordAt(pos Position) (codeLink, bool) {
 	return codeLink{line: pos.Line, start: start.Col, end: end.Col}, true
 }
 
+// linkAt gives an explicit URL precedence over the identifier under Ctrl. Use
+// xurls for source punctuation and the same scheme validation as the transcript.
+func (e *Editor) linkAt(pos Position, mod tea.KeyMod) (codeLink, bool) {
+	if mod == tea.ModCtrl {
+		line := e.LineText(pos.Line)
+		if strings.Contains(line, ":") {
+			offset := VisualColToByteOffset(line, pos.Col, e.TabWidth())
+			for _, loc := range xurls.Strict().FindAllStringIndex(line, -1) {
+				if loc[0] > offset {
+					break
+				}
+				if offset < loc[1] {
+					url := line[loc[0]:loc[1]]
+					if l := cell.NewLink(url, ""); l != nil && !l.File() {
+						return codeLink{line: pos.Line,
+							start: ByteOffsetToVisualCol(line, loc[0], e.TabWidth()),
+							end:   ByteOffsetToVisualCol(line, loc[1], e.TabWidth()), url: url,
+						}, true
+					}
+				}
+			}
+		}
+	}
+	return e.wordAt(pos)
+}
+
 // updateCodeLink tracks the Ctrl+hover underline. It reports whether the
 // underline changed, so the pane repaints only then.
 func (e *Editor) updateCodeLink(x, y int, mod tea.KeyMod) bool {
@@ -50,7 +85,7 @@ func (e *Editor) updateCodeLink(x, y int, mod tea.KeyMod) bool {
 	if codeLinkModifier(mod) && !e.IsMouseDragging() && !e.IsScrollbarDragging() && y >= 0 && y < e.bodyHeight() &&
 		x >= e.gutterWidth() && !e.inlineInsertionAt(x, y) {
 		if pos, ok := e.mouseToPosition(x, y); ok {
-			if link, ok := e.wordAt(pos); ok {
+			if link, ok := e.linkAt(pos, mod); ok {
 				next = &link
 			}
 		}
@@ -82,7 +117,7 @@ func (e *Editor) handleCodeLinkClick(msg tea.MouseClickMsg) (tea.Cmd, bool) {
 	if !ok {
 		return nil, false
 	}
-	link, ok := e.wordAt(pos)
+	link, ok := e.linkAt(pos, msg.Mod)
 	if !ok {
 		return nil, false
 	}
@@ -92,5 +127,5 @@ func (e *Editor) handleCodeLinkClick(msg tea.MouseClickMsg) (tea.Cmd, bool) {
 	e.link = &link
 	e.clickCount = 0
 	implementation := msg.Mod.Contains(tea.ModAlt)
-	return func() tea.Msg { return NavigateAtMsg{Editor: e, Implementation: implementation} }, true
+	return func() tea.Msg { return NavigateAtMsg{Editor: e, Implementation: implementation, URL: link.url} }, true
 }

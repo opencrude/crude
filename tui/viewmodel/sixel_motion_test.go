@@ -283,14 +283,22 @@ func TestSixelAttachmentPacedDragThroughTerminalWriter(t *testing.T) {
 	dcs := []byte("\x1bP0;1q")
 	await := func(until func(pacedSixelWrite) bool) pacedSixelWrite {
 		t.Helper()
+		var received, longest int
+		var first, last string
 		for {
 			select {
 			case write := <-sink.out:
+				received++
+				longest = max(longest, len(write.data))
+				last = fmt.Sprintf("%q", write.data[:min(70, len(write.data))])
+				if received == 1 {
+					first = last
+				}
 				if until(write) {
 					return write
 				}
 			case <-ctx.Done():
-				t.Fatal("waiting for the Sixel writer:", ctx.Err())
+				t.Fatalf("waiting for Sixel writer: %v; writes=%d largest=%d first=%s last=%s", ctx.Err(), received, longest, first, last)
 			}
 		}
 	}

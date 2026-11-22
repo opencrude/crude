@@ -2,8 +2,10 @@ package fileio
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -135,5 +137,61 @@ func TestProjectSearchRegexZeroWidthMultilineAndWhitespace(t *testing.T) {
 		if err != nil || len(edits) != 1 || edits[0].Count != tc.count || edits[0].NewContent != tc.want {
 			t.Fatalf("%q: %+v err=%v", tc.query, edits, err)
 		}
+	}
+}
+
+// Go to File matches paths only. A file whose contents mention the query is
+// not a result, and file contents are never read.
+func TestSearchProjectNamesOnlyMatchesPathsOnly(t *testing.T) {
+	root := t.TempDir()
+	for name, text := range map[string]string{
+		"core/client/files.go":      "package client\n",
+		"core/port/remote/files.go": "package remote\n",
+		"notes/mentions.md":         "see core/client/files.go and files.go\n",
+	} {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results, err := SearchProject(context.Background(), root, "files.go", ProjectSearchOptions{NamesOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, match := range results {
+		if !match.NameOnly || match.Line != 0 || match.LineText != "" {
+			t.Fatalf("names-only search returned a content match: %+v", match)
+		}
+		paths = append(paths, match.RelativePath)
+	}
+	if len(paths) != 2 || !slices.Contains(paths, "core/client/files.go") || !slices.Contains(paths, "core/port/remote/files.go") {
+		t.Fatalf("names-only search = %v", paths)
+	}
+}
+
+func TestFileNameSearchFiltersAndLateExactMatch(t *testing.T) {
+	files := []ProjectFile{{Rel: "Foo.go"}, {Rel: "foo-bar.go"}, {Rel: "myfoo.go"}}
+	for _, tc := range []struct {
+		q    string
+		opts ProjectSearchOptions
+		n    int
+	}{{"foo", ProjectSearchOptions{NamesOnly: true, WholeWord: true}, 2}, {"foo", ProjectSearchOptions{NamesOnly: true, WholeWord: true, CaseSensitive: true}, 1}, {"^Foo", ProjectSearchOptions{NamesOnly: true, Regex: true, CaseSensitive: true}, 1}} {
+		got, err := SearchProjectFiles(t.Context(), files, tc.q, tc.opts)
+		if err != nil || len(got) != tc.n {
+			t.Fatalf("%s %+v: got %d, err=%v", tc.q, tc.opts, len(got), err)
+		}
+	}
+	files = nil
+	for i := 0; i < 2*maxProjectSearchResults; i++ {
+		files = append(files, ProjectFile{Rel: fmt.Sprintf("000%d/foooo.go", i)})
+	}
+	files = append(files, ProjectFile{Rel: "z/foo.go"})
+	hits, err := SearchProjectFiles(t.Context(), files, "foo.go", ProjectSearchOptions{NamesOnly: true})
+	if err != nil || len(hits) != maxProjectSearchResults || hits[0].RelativePath != "z/foo.go" {
+		t.Fatal("exact match after fuzzy limit was lost", err)
 	}
 }

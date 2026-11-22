@@ -24,7 +24,7 @@ func (m *App) applyWorkspaceListing(msg launcherWorkspacesMsg) {
 		m.workspaceListCancel = nil
 	}
 	if msg.Err != nil {
-		m.workspaceListError = msg.Err.Error()
+		m.workspaceListError = launcher.LoadErrorText(msg.Err)
 	} else {
 		m.workspaceInfos = append([]workspace.WorkspaceInfo(nil), msg.Infos...)
 	}

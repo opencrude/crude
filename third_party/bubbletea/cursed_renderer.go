@@ -654,19 +654,28 @@ func (s *cursedRenderer) render(v View) {
 		if versioned, ok := v.Surface.(uv.SnapshotSurface); ok {
 			token = versioned.SnapshotToken()
 		}
+		sized := s.directbuf.RenderBuffer != nil && s.directbuf.Width() == w && s.directbuf.Height() == h
 		if token.Owner == nil || token.Generation == 0 || token != s.snapshotToken ||
-			!imagePlacementsEqual(v.Images, s.view.Images) ||
-			s.directbuf.RenderBuffer == nil || s.directbuf.Width() != w || s.directbuf.Height() != h {
+			!imagePlacementsEqual(v.Images, s.view.Images) || !sized {
 			if s.directbuf.RenderBuffer == nil {
 				s.directbuf = uv.NewScreenBuffer(w, h)
-			} else {
+			} else if !sized {
 				s.directbuf.Resize(w, h)
 			}
 			s.directbuf.Method = ansi.GraphemeWidth
-			s.directbuf.Clear()
 			// Copy every new completed generation. A repeated publication reuses
-			// these detached cells, never the producer's mutable buffer.
-			v.Surface.Draw(snapshotScreen{s.directbuf.Buffer}, s.directbuf.Bounds())
+			// these detached cells, never the producer's mutable buffer. When
+			// they hold the producer's previous generation, only changed rows
+			// are copied; anything unproven redraws the whole snapshot.
+			delta, ok := v.Surface.(uv.DeltaSurface)
+			// Sixel extraction replaces marker cells with blanks in directbuf.
+			// Such a buffer is not the exact prior producer generation, even
+			// when its token matches. Redraw before extracting the next tiles.
+			if !ok || !sized || len(s.view.sixels) != 0 || token.Owner == nil || token == s.snapshotToken ||
+				!delta.DrawSince(snapshotScreen{s.directbuf.Buffer}, s.directbuf.Bounds(), s.snapshotToken) {
+				s.directbuf.Clear()
+				v.Surface.Draw(snapshotScreen{s.directbuf.Buffer}, s.directbuf.Bounds())
+			}
 			v.sixels = snapshotSixelTiles(s.directbuf.Buffer, v.Images)
 			s.surfaceFrame++
 		} else {

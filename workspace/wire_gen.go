@@ -1358,8 +1358,9 @@ func (z *BoardSnapshot) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *BrowserCatalog) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 5
-	o = append(o, 0x95)
+	// array header, size 6
+	o = append(o, 0x96)
+	o = msgp.AppendString(o, z.Root)
 	if z.Entries == nil { // allownil: if nil
 		o = msgp.AppendNil(o)
 	} else {
@@ -1391,8 +1392,13 @@ func (z *BrowserCatalog) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 5 {
-		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
+	if zb0001 != 6 {
+		err = msgp.ArrayError{Wanted: 6, Got: zb0001}
+		return
+	}
+	z.Root, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "Root")
 		return
 	}
 	if msgp.IsNil(bts) {
@@ -1448,7 +1454,7 @@ func (z *BrowserCatalog) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *BrowserCatalog) Msgsize() (s int) {
-	s = 1 + msgp.ArrayHeaderSize
+	s = 1 + msgp.StringPrefixSize + len(z.Root) + msgp.ArrayHeaderSize
 	for za0001 := range z.Entries {
 		s += z.Entries[za0001].Msgsize()
 	}

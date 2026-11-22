@@ -158,3 +158,30 @@ func BenchmarkIdlePresentedFrame(b *testing.B) {
 		app.View()
 	}
 }
+
+// An animated frame: a dense transcript with one clock-driven recovery row,
+// advanced by the 16 ms streaming clock. It measures Update plus the frame
+// that reaches the renderer, which is the work every animation pays per frame.
+func BenchmarkAnimatedPresentedFrame(b *testing.B) {
+	app := newFullTestApp(b)
+	wsOf(app).Logger = stubLogger{}
+	app.Update(tea.WindowSizeMsg{Width: 160, Height: 48})
+	app.AddOrchestrator("animated-bench")
+	for _, msg := range seedBudgetSession(200, 0) {
+		app.appendActiveMessage(msg)
+	}
+	app.appendActiveMessage(types.ChatMessage{InternalID: "status", Role: types.RoleStatus, Recovery: &recovery.Status{ID: "status", State: recovery.Recovering, RetryAt: time.Now().Add(time.Hour), Summary: "Retrying provider"}})
+	app.paintShellFrame()
+	settleHistory(b, app)
+	app.View()
+	start := time.Now()
+	frame := 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		frame++
+		app.Update(types.TickMsg(start.Add(time.Duration(frame) * 16 * time.Millisecond)))
+		app.View()
+	}
+	b.ReportMetric(float64(app.rootHost.LastPaintStats().Cells), "cells/frame")
+}

@@ -384,8 +384,16 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	case chatprojection.ChatWebSearchMethodsActionID:
 		return m.openCapabilitySettings((*settingsui.WorkspaceSettingsSurface).OpenWebSearchMethods)
 	case chatprojection.ChatFileOpenActionID:
+		if ref, ok := action.Payload.(chatprojection.FileReference); ok {
+			return m.openExecutionChatFile(ref)
+		}
 		if target, ok := action.Payload.(string); ok {
 			return m.openChatFile(target)
+		}
+		return nil
+	case chatprojection.ChatWebOpenActionID:
+		if target, ok := action.Payload.(string); ok {
+			return m.openWebLink(target)
 		}
 		return nil
 	case imageviewer.CloseAction:

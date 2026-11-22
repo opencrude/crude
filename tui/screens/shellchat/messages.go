@@ -15,8 +15,11 @@ type PaintParams struct {
 	// SourceID scopes Generation to one retained chatprojection.Renderer.
 	// A source switch always rebuilds the shared VirtualList, even when the
 	// incoming renderer has the same local generation and row count.
-	SourceID          uint64
-	Generation        uint64
+	SourceID   uint64
+	Generation uint64
+	// BaseGeneration is the export ChangedIndices/StructureChanged describe
+	// changes from. The delta applies only on top of exactly that export.
+	BaseGeneration    uint64
 	ChangedIndices    []int
 	StructureChanged  bool
 	Compose           ComposeParams
@@ -81,7 +84,10 @@ func (s *Screen) installMessages(rows []chatprojection.MessageRow, paint PaintPa
 		s.paintState = messagePaintState{compose: paint.Compose, paneLineMap: paint.PaneLineMap, globalStart: starts, hasSel: hasSel, selSL: selSL, selSC: selSC, selEL: selEL, selEC: selEC}
 		return false
 	}
-	if !sourceChanged && paint.Generation != 0 && s.rowsGeneration != 0 && !paint.StructureChanged && oldLen == len(rows) {
+	// The delta describes changes from exactly BaseGeneration. A screen that
+	// installed another export (it was hidden, or a frame exported twice)
+	// missed height changes and rebuilds below; offsets are integer work.
+	if !sourceChanged && paint.Generation != 0 && s.rowsGeneration != 0 && s.rowsGeneration == paint.BaseGeneration && !paint.StructureChanged && oldLen == len(rows) {
 		hasSel := paint.HasSelection || s.selection.HasActive()
 		selSL, selSC, selEL, selEC := paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol
 		if hasSel && !paint.HasSelection && s.selection.HasActive() {

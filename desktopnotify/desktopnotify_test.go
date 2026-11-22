@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"crude/internal/hostenv"
 )
 
 type fakeBackend struct {
@@ -30,12 +32,14 @@ func (f *fakeBackend) show(n Notification) error {
 	f.shown = append(f.shown, n)
 	return nil
 }
+
 func (f *fakeBackend) withdraw(key string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.withdrawn = append(f.withdrawn, key)
 	return nil
 }
+
 func (f *fakeBackend) close() { f.mu.Lock(); f.closed = true; f.mu.Unlock() }
 
 func (f *fakeBackend) snapshot() ([]Notification, []string, bool) {
@@ -194,12 +198,12 @@ func TestCleanText(t *testing.T) {
 func TestRemoteSession(t *testing.T) {
 	env := map[string]string{}
 	getenv := func(key string) string { return env[key] }
-	if remoteSession(getenv) {
+	if hostenv.SSHSession(getenv) {
 		t.Fatal("a local session counts as remote")
 	}
 	for _, key := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"} {
 		env = map[string]string{key: "x"}
-		if !remoteSession(getenv) {
+		if !hostenv.SSHSession(getenv) {
 			t.Fatalf("%s does not mark an SSH session", key)
 		}
 	}

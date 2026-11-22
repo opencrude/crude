@@ -16,6 +16,7 @@ import (
 	"crude/workspace/localhistory"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/storage/filesystem"
 )
 
 // Repository operations that stop for conflicts. Each has its own abort and
@@ -38,15 +39,14 @@ type GitSyncResult struct {
 // answers credential prompts; it explains how to configure them instead.
 var ErrGitAuthentication = errors.New("the remote needs credentials Crude cannot supply interactively")
 
-func (s *GitSnapshot) readOperation(ctx context.Context) {
-	if s.RepositoryRoot == "" {
+func (s *GitSnapshot) readOperation(repo *git.Repository) {
+	store, ok := repo.Storer.(*filesystem.Storage)
+	if !ok {
 		return
 	}
-	out, err := exec.CommandContext(ctx, "git", "-C", s.RepositoryRoot, "rev-parse", "--absolute-git-dir").Output()
-	if err != nil {
-		return
-	}
-	dir := strings.TrimSpace(string(out))
+	// openGitRepository already resolved this checkout's private gitdir,
+	// including for a linked worktree. Do not launch Git to resolve it again.
+	dir := store.Filesystem().Root()
 	exists := func(name string) bool {
 		_, err := os.Stat(filepath.Join(dir, name))
 		return err == nil
@@ -418,14 +418,17 @@ func (s *GitService) operation(ctx context.Context) (string, error) {
 	if s == nil {
 		return "", errors.New("git service is unavailable")
 	}
-	repo, root, err := s.open()
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	repo, _, err := s.open()
 	if err != nil {
 		return "", err
 	}
-	closeGitRepository(repo)
-	snapshot := GitSnapshot{RepositoryRoot: root}
-	snapshot.readOperation(ctx)
-	return snapshot.Operation, nil
+	defer closeGitRepository(repo)
+	var snapshot GitSnapshot
+	snapshot.readOperation(repo)
+	return snapshot.Operation, ctx.Err()
 }
 
 // ConflictFile reads and parses one conflicted working file.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,49 +31,105 @@ var ErrGitNotInstalled = errors.New("git is not installed or not on PATH; instal
 // at root, keyed by repository-relative slash path. It takes no optional
 // index lock, so it never races a user's concurrent Git command.
 func ReadGitStatus(ctx context.Context, root string) (git.Status, error) {
-	out, err := gitStdout(ctx, root, nil, "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	return readGitStatus(ctx, root, nil)
+}
+
+// Porcelain v2 returns branch metadata and all pathname records in one Git
+// process. A plain status read does not request the upstream graph walk.
+func readGitStatus(ctx context.Context, root string, branch *GitSnapshot) (git.Status, error) {
+	args := []string{"--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=all"}
+	if branch != nil {
+		args = append(args, "--branch", "--ahead-behind")
+	}
+	out, err := gitStdout(ctx, root, nil, args...)
 	if err != nil {
 		return nil, err
 	}
-	return parseGitStatusZ(out)
+	return parseGitStatusZ(out, branch)
 }
 
-// parseGitStatusZ decodes `status --porcelain=v1 -z`: "XY path\0", with the
-// rename/copy source in the following field.
-func parseGitStatusZ(out []byte) (git.Status, error) {
+// Paths may contain spaces, line breaks, and invalid UTF-8. Split only the
+// documented metadata fields, never split the name on whitespace.
+func parseGitStatusZ(out []byte, branch *GitSnapshot) (git.Status, error) {
 	status := make(git.Status)
-	fields := bytes.Split(out, []byte{0})
-	for i := 0; i < len(fields); i++ {
-		entry := fields[i]
-		if len(entry) == 0 {
-			continue
+	for len(out) > 0 {
+		var row []byte
+		var ok bool
+		row, out, ok = bytes.Cut(out, []byte{0})
+		if !ok || len(row) < 3 || row[1] != ' ' {
+			return nil, errors.New("incomplete Git status record")
 		}
-		if len(entry) < 4 || entry[2] != ' ' {
-			return nil, fmt.Errorf("read Git status: unexpected entry %q", entry)
-		}
-		x, y := entry[0], entry[1]
-		file := &git.FileStatus{Staging: gitStatusCode(x), Worktree: gitStatusCode(y)}
-		if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
-			i++
-			if i >= len(fields) || len(fields[i]) == 0 {
-				return nil, fmt.Errorf("read Git status: rename of %q has no source", entry[3:])
+		switch row[0] {
+		case '#':
+			if branch != nil {
+				key, value, _ := strings.Cut(string(row[2:]), " ")
+				switch key {
+				case "branch.oid":
+					if value != "(initial)" {
+						branch.Head = value
+					}
+				case "branch.head":
+					branch.Branch = value
+				case "branch.upstream":
+					branch.Upstream = value
+				case "branch.ab":
+					a, b, ok := strings.Cut(value, " ")
+					ahead, e1 := strconv.Atoi(a)
+					behind, e2 := strconv.Atoi(b)
+					if !ok || e1 != nil || e2 != nil || ahead < 0 || behind > 0 {
+						return nil, errors.New("invalid Git tracking counts")
+					}
+					branch.Ahead, branch.Behind = ahead, -behind
+				}
 			}
-			file.Extra = string(fields[i])
-		}
-		if x == '!' {
+			continue
+		case '?':
+			status[string(row[2:])] = &git.FileStatus{Staging: git.Untracked, Worktree: git.Untracked}
+			continue
+		case '!':
 			continue
 		}
-		if gitStatusUnmerged(x, y) {
+		fields := 9
+		switch row[0] {
+		case '1':
+		case '2':
+			fields = 10
+		case 'u':
+			fields = 11
+		default:
+			return nil, fmt.Errorf("unknown Git status record %q", row[0])
+		}
+		parts := bytes.SplitN(row, []byte{' '}, fields)
+		if len(parts) != fields || len(parts[1]) != 2 || len(parts[fields-1]) == 0 {
+			return nil, errors.New("invalid Git status record")
+		}
+		file := &git.FileStatus{Staging: gitStatusCode(parts[1][0]), Worktree: gitStatusCode(parts[1][1])}
+		if row[0] == 'u' {
 			file.Staging, file.Worktree = git.UpdatedButUnmerged, git.UpdatedButUnmerged
 		}
-		status[string(entry[3:])] = file
+		if row[0] == '2' {
+			var source []byte
+			source, out, ok = bytes.Cut(out, []byte{0})
+			if !ok || len(source) == 0 {
+				return nil, errors.New("missing source in Git rename")
+			}
+			file.Extra = string(source)
+		}
+		status[string(parts[fields-1])] = file
+	}
+	if branch != nil {
+		if branch.Head == "" {
+			branch.Branch = "No commits"
+		} else if branch.Branch == "(detached)" {
+			branch.Branch = "detached@" + shortGitHash(branch.Head)
+		}
 	}
 	return status, nil
 }
 
 func gitStatusCode(code byte) git.StatusCode {
 	switch code {
-	case ' ':
+	case '.':
 		return git.Unmodified
 	case '?':
 		return git.Untracked
@@ -89,11 +146,6 @@ func gitStatusCode(code byte) git.StatusCode {
 	default: // M, T (type change), and any future modification code.
 		return git.Modified
 	}
-}
-
-// gitStatusUnmerged recognizes every unmerged XY pair Git documents.
-func gitStatusUnmerged(x, y byte) bool {
-	return x == 'U' || y == 'U' || x == 'A' && y == 'A' || x == 'D' && y == 'D'
 }
 
 // gitCheckoutText returns blob in the working-tree form Git would check out

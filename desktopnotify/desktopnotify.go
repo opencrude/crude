@@ -20,6 +20,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"crude/internal/hostenv"
 )
 
 // Identity names the application to the desktop.
@@ -144,18 +146,11 @@ type Center struct {
 // the first Ready event tells the caller whether this desktop can notify.
 func Start(id Identity) *Center {
 	return start(id, func(id Identity, activated func(string)) (backend, error) {
-		if remoteSession(os.Getenv) {
+		if hostenv.SSHSession(os.Getenv) {
 			return nil, ErrRemoteSession
 		}
 		return openBackend(id, activated)
 	})
-}
-
-// remoteSession reports an SSH login. OpenSSH sets these variables on every
-// platform; a notification from such a process would reach the screen of
-// the computer it runs on, or nobody.
-func remoteSession(getenv func(string) string) bool {
-	return getenv("SSH_CONNECTION") != "" || getenv("SSH_CLIENT") != "" || getenv("SSH_TTY") != ""
 }
 
 func start(id Identity, open opener) *Center {

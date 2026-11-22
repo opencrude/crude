@@ -59,7 +59,12 @@ func TextTide(ink cell.Color, attr cell.Attrs, tokens *TokenSet, center float64,
 	if tokens == nil {
 		return ink, attr
 	}
-	weight := math.Max(0, 1-math.Abs(float64(column)-center)/tideRadius)
+	distance := math.Abs(float64(column) - center)
+	// Outside the crest neither foreground nor emphasis changes.
+	if distance >= tideRadius {
+		return ink, attr
+	}
+	weight := 1 - distance/tideRadius
 	weight = weight * weight * (3 - 2*weight)
 	light := tokens.Color(ColorAccent2).Blend(tokens.Color(ColorFg), 0.15)
 	if weight > 0.7 {

@@ -6,6 +6,8 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/rendering"
 )
 
 type pointerUnit uint8
@@ -87,10 +89,7 @@ func (e *Editor) projectPointerSelection() {
 		// bounds on every projection: reversing or returning to the pressed
 		// unit must not accumulate an extra character. Shift gestures retain
 		// their collapsed caret anchor, as does a press at an empty line/EOL.
-		e.selAnchor = e.drag.start
-		if positionBefore(pos, e.drag.start) {
-			e.selAnchor = e.drag.end
-		}
+		e.selAnchor = rendering.CharacterDragAnchor(e.drag.start, e.drag.end, positionBefore(pos, e.drag.start))
 		e.selEnd = pos
 	} else {
 		start, end := e.pointerUnitRange(e.drag.kind, pos)

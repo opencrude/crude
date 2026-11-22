@@ -100,6 +100,15 @@ func (l *local) LoadAppSettings() types.AppSettings {
 	return l.ws.LoadAppSettings()
 }
 
+func (l *local) AnalysisSettings() types.WorkspaceAnalysisSettings {
+	return l.ws.EffectiveAnalysisSettings()
+}
+
+func (l *local) DesktopPresencePreferences() (int, bool) {
+	s := l.ws.EffectiveAppSettings().UI.DesktopNotifications
+	return s.AwayMinutesOrDefault(), s.Active()
+}
+
 func (l *local) AppDefaults() types.AppSettings {
 	return l.ws.AppDefaults()
 }
@@ -421,4 +430,8 @@ func (l *local) DeleteMemoryEpisode(ctx context.Context, id string) error {
 
 func (l *local) CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error) {
 	return l.ws.CorrectMemory(ctx, replacement)
+}
+
+func (l *local) CatalogExecutionFiles(ctx context.Context, id string, hidden bool) (workspace.BrowserCatalog, error) {
+	return workspace.CatalogExecutionFiles(ctx, l.ws.Executions, l.ws.RootPath, id, workspace.BrowserPathRequest{IncludeHidden: hidden})
 }

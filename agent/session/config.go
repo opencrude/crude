@@ -231,12 +231,18 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 		if cat.ServiceTier != "" {
 			resolved.ServiceTier = cat.ServiceTier
 		}
-		resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
+		resolved = mergeCategoryConfig(resolved, inheritedRoleChoices(cat))
 		c.resolveCategoryDefaults(&resolved)
 		return resolved
 	}
 	c.resolveCategoryDefaults(&cat)
 	return cat
+}
+
+// Connection inheritance and explicit local choices are independent. Never
+// discard a user's compaction percent or retention just because a model follows its parent.
+func inheritedRoleChoices(cat CategoryConfig) CategoryConfig {
+	return CategoryConfig{ContextCompactionPercent: cat.ContextCompactionPercent, ContextRetentionTokens: cat.ContextRetentionTokens, AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes}
 }
 
 // selectedMainCategory derives the selected root from its live role/profile,
@@ -247,7 +253,7 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 	main := prof.Categories[CategoryDefault]
 	if main.Inherit == InheritWorkspace && c.workspaceMain != nil {
 		override := main
-		main = *c.workspaceMain
+		main = mergeCategoryConfig(*c.workspaceMain, inheritedRoleChoices(override))
 		if override.AccountID != "" {
 			main.AccountID = override.AccountID
 		}
@@ -286,6 +292,7 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 		selected = *c.workspaceMain
 	}
 	if roleConfig.Inherit == InheritMain || (roleConfig.Inherit == InheritWorkspace && c.workspaceMain != nil) {
+		selected = mergeCategoryConfig(selected, inheritedRoleChoices(roleConfig))
 		if roleConfig.AccountID != "" {
 			selected.AccountID = roleConfig.AccountID
 		}
@@ -410,7 +417,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 				resolved.ServiceTier = cat.ServiceTier
 			}
 			c.resolveCategoryDefaults(&resolved)
-			resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
+			resolved = mergeCategoryConfig(resolved, inheritedRoleChoices(cat))
 			return resolved
 		case cat.Inherit == InheritMain:
 			main := c.GetActiveDefaultCategory()
@@ -418,7 +425,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 			if cat.ServiceTier != "" {
 				main.ServiceTier = cat.ServiceTier
 			}
-			main = mergeCategoryConfig(main, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
+			main = mergeCategoryConfig(main, inheritedRoleChoices(cat))
 			return main
 		}
 		inheritsAccount := cat.AccountID == ""

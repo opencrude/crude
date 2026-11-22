@@ -113,6 +113,11 @@ type Session struct {
 	contextRevision   uint64
 	contextGeneration uint64
 	contextReason     string
+	// guidanceEpoch is the project guidance the root context's system prompt
+	// carries in guidanceEpochGeneration. A later run of the same generation
+	// keeps that prompt and receives guidance changes as appended context.
+	guidanceEpoch           *agent.GuidanceEpoch
+	guidanceEpochGeneration uint64
 
 	recoveredSubAgentMessages map[string][]sessiondb.MessageWithMeta
 	recoveredTurnGenerations  map[string]uint64

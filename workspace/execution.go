@@ -246,3 +246,23 @@ func (s *ExecutionService) Integrations() ([]IntegrationStatus, error) {
 	}
 	return result, rows.Err()
 }
+
+// CatalogExecutionFiles resolves a retained checkout through its owner. Never
+// redirect a removed checkout to a similarly named logical-workspace file.
+func CatalogExecutionFiles(ctx context.Context, service *ExecutionService, logicalRoot, id string, req BrowserPathRequest) (BrowserCatalog, error) {
+	req.Root = logicalRoot
+	if id != "" {
+		if service == nil {
+			return BrowserCatalog{}, errors.New("checkout unavailable")
+		}
+		c, err := service.InspectSummary(id)
+		if err != nil || c.Investigation != nil || c.Removed || !c.Ready || c.LogicalRoot != logicalRoot || !filepath.IsAbs(c.Root) {
+			return BrowserCatalog{}, errors.New("checkout unavailable")
+		}
+		if err := fileio.CheckDirectoryNoSymlinks(c.Root); err != nil {
+			return BrowserCatalog{}, err
+		}
+		req.Root = c.Root
+	}
+	return ScanBrowserPaths(ctx, req)
+}

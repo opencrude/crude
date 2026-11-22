@@ -127,3 +127,15 @@ func TestPressureFindingsKeepBothHostOwners(t *testing.T) {
 		t.Fatalf("lost owner-specific pressure: %+v", findings)
 	}
 }
+
+func TestMissingDiskIsAttributedOnlyToItsOwner(t *testing.T) {
+	shell, core := resourceSnapshot("shell", 10, 100), resourceSnapshot("core", 20, 100)
+	findings := ResourceFindings(Data{Shell: shell, Core: &core})
+	if len(findings) != 1 || findings[0].Title != "Core resource coverage incomplete" {
+		t.Fatalf("only the core collects the data-folder disk sample: %+v", findings)
+	}
+	shell.Resources.System.CPU = -1
+	if len(ResourceFindings(Data{Shell: shell, Core: &core})) != 2 {
+		t.Fatal("missing shell CPU was hidden")
+	}
+}

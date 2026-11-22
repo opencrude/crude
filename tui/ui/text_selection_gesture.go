@@ -29,10 +29,7 @@ func (g textSelectionGesture) project(start, end int) (anchor, head int) {
 		return g.start, start
 	}
 	if g.unit == textSelectionCharacter {
-		if start < g.start {
-			return g.end, start
-		}
-		return g.start, start
+		return rendering.CharacterDragAnchor(g.start, g.end, start < g.start), start
 	}
 	if start < g.start {
 		return g.end, start

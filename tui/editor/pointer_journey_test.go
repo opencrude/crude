@@ -344,3 +344,24 @@ func BenchmarkPointerScrollMutation(b *testing.B) {
 		})
 	}
 }
+
+func TestEditorURLNeedsCtrlAndUsesSourceCoordinates(t *testing.T) {
+	const url = "https://example.org/docs?q=go"
+	ed := newPointerTestEditor(t, "\t界 \""+url+"\"", 85, 5)
+	x := ed.gutterWidth() + ByteOffsetToVisualCol(ed.LineText(0), len("\t界 \"https://ex"), ed.TabWidth())
+	ev := tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft}
+	ed.HandleEvent(ev)
+	if ed.cursor.Col != x-ed.gutterWidth() {
+		t.Fatal("plain click did not place caret")
+	}
+	ed.HandleEvent(tea.MouseReleaseMsg{X: x, Y: 0, Button: tea.MouseLeft})
+	ev.Mod = tea.ModCtrl
+	cmd := ed.HandleEvent(ev)
+	if cmd == nil {
+		t.Fatal("Ctrl+click did not follow URL")
+	}
+	msg, ok := cmd().(NavigateAtMsg)
+	if !ok || msg.URL != url {
+		t.Fatalf("wrong destination: %#v", msg.URL)
+	}
+}

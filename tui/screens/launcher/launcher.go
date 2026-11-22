@@ -191,7 +191,7 @@ func (s *Screen) FinishLoad(cwd string, infos []workspace.WorkspaceInfo, err err
 	s.loading = false
 	s.rule.SetActive(false)
 	if err != nil {
-		s.loadError = err.Error()
+		s.loadError = LoadErrorText(err)
 		return
 	}
 	s.loadError = ""

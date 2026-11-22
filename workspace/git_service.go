@@ -8,15 +8,14 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 // GitChangeArea identifies the source-control section that owns a change.
@@ -86,6 +85,11 @@ type GitService struct {
 	// sourceID is stable for this service; sequence is protected by gate.
 	sourceID string
 	sequence uint64
+	// Under gate: only commit objects are immutable. Status, refs and
+	// in-progress operations must still be read on every snapshot. History
+	// is reused by HEAD.
+	historyHead string
+	history     []GitCommitSummary
 	// remote serializes network operations (fetch, pull, push) separately from
 	// gate, so background fetches never hold status reads behind the network.
 	remote chan struct{}
@@ -141,19 +145,20 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 		return GitSnapshot{}, err
 	}
 	defer closeGitRepository(repo)
-	status, err := ReadGitStatus(ctx, root)
+	snapshot := GitSnapshot{RepositoryRoot: root}
+	status, err := readGitStatus(ctx, root, &snapshot)
 	if err != nil {
 		return GitSnapshot{}, err
 	}
 
-	snapshot := GitSnapshot{RepositoryRoot: root}
-	snapshot.readHead(repo)
-	snapshot.readTracking(ctx)
 	snapshot.Changes = projectGitChanges(root, status)
-	snapshot.RecentCommits = recentGitCommits(repo, 8)
+	snapshot.RecentCommits = s.recentCommits(repo, snapshot.Head)
 	snapshot.Branches = gitBranches(repo, snapshot.Branch)
 	snapshot.Remotes = gitRemotes(repo)
-	snapshot.readOperation(ctx)
+	snapshot.readOperation(repo)
+	if err := ctx.Err(); err != nil {
+		return GitSnapshot{}, err
+	}
 	return s.sequenceSnapshot(snapshot), nil
 }
 
@@ -162,19 +167,6 @@ func (s *GitService) sequenceSnapshot(snapshot GitSnapshot) GitSnapshot {
 	s.sequence++
 	snapshot.SourceID, snapshot.Sequence = s.sourceID, s.sequence
 	return snapshot
-}
-
-func (s *GitSnapshot) readTracking(ctx context.Context) {
-	if s.Upstream == "" || s.RepositoryRoot == "" {
-		return
-	}
-	cmd := exec.CommandContext(ctx, "git", "-C", s.RepositoryRoot,
-		"rev-list", "--left-right", "--count", "HEAD...@{upstream}")
-	out, err := cmd.Output()
-	if err != nil {
-		return
-	}
-	s.Ahead, s.Behind = parseAheadBehind(string(out))
 }
 
 // closeGitRepository releases go-git's retained object and packfile handles.
@@ -317,6 +309,8 @@ func (s *GitService) mutate(ctx context.Context, args ...string) error {
 	return s.run(ctx, args...)
 }
 
+// readHead fills the branch identity. It returns the local reference that
+// @{upstream} resolves to, or "" when the remote's fetch refspecs do not map it.
 func (s *GitSnapshot) readHead(repo *git.Repository) {
 	head, err := repo.Head()
 	if err != nil {
@@ -338,11 +332,11 @@ func (s *GitSnapshot) readHead(repo *git.Repository) {
 	if branch == nil || branch.Merge == "" {
 		return
 	}
-	if branch.Remote != "" && branch.Remote != "." {
-		s.Upstream = branch.Remote + "/" + branch.Merge.Short()
-	} else {
+	if branch.Remote == "" || branch.Remote == "." {
 		s.Upstream = branch.Merge.Short()
+		return
 	}
+	s.Upstream = branch.Remote + "/" + branch.Merge.Short()
 }
 
 func projectGitChanges(root string, status git.Status) []GitChange {
@@ -410,33 +404,39 @@ func gitStatusText(status git.StatusCode) (string, string) {
 	}
 }
 
-func recentGitCommits(repo *git.Repository, limit int) []GitCommitSummary {
-	if limit <= 0 {
+func (s *GitService) recentCommits(repo *git.Repository, head string) []GitCommitSummary {
+	if head == "" {
 		return nil
 	}
-	head, err := repo.Head()
-	if err != nil {
-		return nil
+	if head == s.historyHead {
+		return slices.Clone(s.history)
 	}
-	iter, err := repo.Log(&git.LogOptions{From: head.Hash(), Order: git.LogOrderCommitterTime})
+	const limit = 8
+	iter, err := repo.Log(&git.LogOptions{From: plumbing.NewHash(head), Order: git.LogOrderCommitterTime})
 	if err != nil {
 		return nil
 	}
 	defer iter.Close()
 	out := make([]GitCommitSummary, 0, limit)
-	_ = iter.ForEach(func(commit *object.Commit) error {
-		if len(out) >= limit {
-			return plumbing.ErrObjectNotFound
+	for len(out) < limit {
+		commit, err := iter.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			// A shallow fetch or object read can leave a partial walk.
+			// Display what was read, but retry even if HEAD does not move.
+			return out
 		}
 		subject := strings.TrimSpace(strings.SplitN(commit.Message, "\n", 2)[0])
 		hash := commit.Hash.String()
 		out = append(out, GitCommitSummary{
-			Hash: hash, ShortHash: shortGitHash(hash), Subject: subject,
+			Hash: hash, ShortHash: shortGitHash(hash), Subject: strings.Clone(subject),
 			Author: commit.Author.Name, When: commit.Author.When,
 		})
-		return nil
-	})
-	return out
+	}
+	s.historyHead, s.history = head, out
+	return slices.Clone(out)
 }
 
 // gitBranches lists local branches first (current pinned top), then
@@ -484,14 +484,4 @@ func shortGitHash(hash string) string {
 		return hash[:8]
 	}
 	return hash
-}
-
-func parseAheadBehind(text string) (ahead, behind int) {
-	fields := strings.Fields(text)
-	if len(fields) != 2 {
-		return 0, 0
-	}
-	ahead, _ = strconv.Atoi(fields[0])
-	behind, _ = strconv.Atoi(fields[1])
-	return ahead, behind
 }

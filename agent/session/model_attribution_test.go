@@ -1,11 +1,16 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -204,5 +209,88 @@ func assertPersistedAssistantModels(t *testing.T, messages []sessiondb.MessageWi
 		if got[index] != want[index] {
 			t.Fatalf("persisted assistant models = %v, want %v", got, want)
 		}
+	}
+}
+
+// Save through the session Settings owner while the first request is still in
+// flight. Inspect the next real wire request, not only the saved form.
+func TestRunningTurnReadsSessionCompactionWithoutRewritingPrefix(t *testing.T) {
+	type payload struct {
+		Messages []json.RawMessage `json:"messages"`
+		Tools    json.RawMessage   `json:"tools"`
+	}
+	requests := make(chan payload, 4)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p payload
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- p
+		w.Header().Set("Content-Type", "text/event-stream")
+		if calls.Add(1) == 1 {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-release:
+			}
+			fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"plan-1","type":"function","function":{"name":"get_plan","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
+			return
+		}
+		writeAdaptiveCompactionSSE(t, w, "done")
+	}))
+	defer server.Close()
+	sess, err := NewWithSessionDir("live-percent", modelAttributionConfig(server.URL, "live-percent-model"), t.TempDir(), filepath.Join(t.TempDir(), "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sess.Close()
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	sender := newMockEventSender()
+	o, err := sess.NewOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.SubmitInput(provider.PlainInput("Read the plan")) {
+		t.Fatal("input not admitted")
+	}
+	next := func() payload {
+		select {
+		case p := <-requests:
+			return p
+		case <-time.After(8 * time.Second):
+			t.Fatal("no provider request")
+			return payload{}
+		}
+	}
+	first := next()
+	settings := sess.SettingsSnapshot()
+	if settings.SessionOverrides == nil {
+		settings.SessionOverrides = map[string]ttypes.CategorySettings{}
+	}
+	c := settings.SessionOverrides[CategoryDefault]
+	v := 90
+	c.Inherit = InheritWorkspace
+	c.ContextCompactionPercent = &v
+	settings.SessionOverrides[CategoryDefault] = c
+	if err := sess.HandleSettingsSave(settings); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	second := next()
+	waitTurnDone(t, sender, o.ID)
+	if len(second.Messages) <= len(first.Messages) || !reflect.DeepEqual(first.Messages, second.Messages[:len(first.Messages)]) || !bytes.Equal(first.Tools, second.Tools) {
+		t.Fatal("passive Settings save changed the provider prefix")
+	}
+	data, err := os.ReadFile(filepath.Join(sess.logger.SessionDir(), "session.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte("live_settings_changed step=1 compaction_percent=90")) {
+		t.Fatal("the running turn did not apply the 90% choice on its next step")
 	}
 }

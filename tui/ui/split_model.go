@@ -98,6 +98,16 @@ func (m *SplitModel) Clone() *SplitModel {
 	return &copy
 }
 
+// SetDirection changes the split axis across responsive layouts. A size
+// measured on the old axis is no longer a valid divider position.
+func (m *SplitModel) SetDirection(d Direction) {
+	if m.dir != d {
+		m.CancelDrag()
+		m.dir = d
+		m.first = -1
+	}
+}
+
 // Dir reports the split axis.
 func (m *SplitModel) Dir() Direction {
 	if m == nil {

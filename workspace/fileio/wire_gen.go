@@ -455,12 +455,13 @@ func (z *ProjectSearchMatch) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z *ProjectSearchOptions) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 4
-	o = append(o, 0x94)
+	// array header, size 5
+	o = append(o, 0x95)
 	o = msgp.AppendBool(o, z.CaseSensitive)
 	o = msgp.AppendBool(o, z.Regex)
 	o = msgp.AppendBool(o, z.WholeWord)
 	o = msgp.AppendBool(o, z.IncludeHidden)
+	o = msgp.AppendBool(o, z.NamesOnly)
 	return
 }
 
@@ -476,8 +477,8 @@ func (z *ProjectSearchOptions) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 4 {
-		err = msgp.ArrayError{Wanted: 4, Got: zb0001}
+	if zb0001 != 5 {
+		err = msgp.ArrayError{Wanted: 5, Got: zb0001}
 		return
 	}
 	z.CaseSensitive, bts, err = msgp.ReadBoolBytes(bts)
@@ -500,12 +501,17 @@ func (z *ProjectSearchOptions) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.WrapError(err, "IncludeHidden")
 		return
 	}
+	z.NamesOnly, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "NamesOnly")
+		return
+	}
 	o = bts
 	return
 }
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z *ProjectSearchOptions) Msgsize() (s int) {
-	s = 1 + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
+	s = 1 + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize + msgp.BoolSize
 	return
 }

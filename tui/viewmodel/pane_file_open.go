@@ -74,6 +74,12 @@ func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
 }
 
 func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group window.GroupID) tea.Cmd {
+	return m.openPaneFilesChecked(ctx, paths, group, false)
+}
+
+// openPaneFilesChecked opens paths; with existing set, a path opens only if
+// it is an open named buffer or an existing file, and no document is created.
+func (m *App) openPaneFilesChecked(ctx context.Context, paths []string, group window.GroupID, existing bool) tea.Cmd {
 	m.paneFileOpenSeq++ // An empty request also cancels an earlier pending open.
 	if len(paths) == 0 || m.Win == nil || m.BufferMgr == nil || !m.Win.HasGroup(group) {
 		return nil
@@ -138,7 +144,7 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 				continue
 			}
 			if connected {
-				s, err := msg.refs.open(ctx, path)
+				s, err := msg.refs.open(ctx, path, existing)
 				file := paneFilePrepared{path: documentEditorKey(s), requested: path, err: err, snapshot: &s}
 				if config := s.OpenConfig; config != nil {
 					file.configRead, file.configPath, file.config = true, config.Path, config.Choices
@@ -161,7 +167,7 @@ func (m *App) openPaneFilesContext(ctx context.Context, paths []string, group wi
 				// not read an already open document from disk, even privately.
 				file.existing = msg.manager.Get(file.path) != nil
 				if !file.existing {
-					file.buffer, file.err = prepared.OpenFile(file.path)
+					file.buffer, file.err = prepared.OpenPath(file.path, existing)
 				}
 			}
 			msg.files = append(msg.files, file)
