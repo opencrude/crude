@@ -57,6 +57,15 @@ jobs:
         run: make test-lsp
       - name: Full race suite
         run: . scripts/libghostty_env.sh && python scripts/test_go.py --race
+  linux-fuzz:
+    name: Linux native protocol fuzz
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-native
       - name: Bounded native protocol fuzz campaigns
         env:
           CRUDE_TEMP_DIR: ${{ runner.temp }}
@@ -78,7 +87,7 @@ jobs:
         shell: pwsh
         run: |
           . ./scripts/libghostty_env.ps1
-          go test ./workspace/fileio ./agent/skills ./workspace ./core ./app ./agent/sessiondb -count=1 -timeout=90s -run 'Test(CheckDirectoryNoSymlinks|WindowsShortDirectory|WindowsShortPath|DocumentServiceWindowsShortPath|CanonicalConversationSnapshotRoundTripsEveryField|CreateDoesNotOverwriteAuthoredWork|ControlExecutionSelectionExactSessionAndRevision|TerminalOperationsDoNotWaitBehindDocumentLane|DetachedCorePTYInterruptsNativeForegroundCommand|ConPTYStandardConsoleHandles|ConPTYNaturalExitDrainsFinalOutputBeforePublishingExit|WindowsInteractiveConsoleStreamsAreCaptured|SettingsMixedScopesExplicitChoicesRestartAndRepair)$'
+          go test ./workspace/fileio ./agent/skills ./workspace ./core ./app ./agent/sessiondb -count=1 -timeout=90s -run 'Test(CheckDirectoryNoSymlinks|WindowsShortDirectory|WindowsShortPath|DocumentServiceWindowsShortPath|CanonicalConversationSnapshotRoundTripsEveryField|CreateDoesNotOverwriteAuthoredWork|ControlExecutionSelectionExactSessionAndRevision|TerminalOperationsDoNotWaitBehindDocumentLane|DetachedCorePTYInterruptsNativeForegroundCommand|ConPTYStandardConsoleHandles|ConPTYNaturalExitDrainsFinalOutputBeforePublishingExit|ConPTYCloseDrainsWithoutAParser|WindowsInteractiveConsoleStreamsAreCaptured|SettingsMixedScopesExplicitChoicesRestartAndRepair)$'
           if ($LASTEXITCODE -ne 0) { throw 'Windows regression preflight failed' }
       - name: Native build
         shell: pwsh
