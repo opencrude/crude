@@ -317,3 +317,29 @@ func TestDocumentServiceSyncEveryGroupedRevisionAndCloseViews(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOpenExistingDoesNotRegisterMissingFile(t *testing.T) {
+	s, initial, a, b := documentFixture(t, "existing")
+	path := filepath.Join(filepath.Dir(initial.Path), "empty.go")
+	if _, err := s.OpenPath(a, path, true); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing open: %v", err)
+	}
+	if _, err := s.Snapshot(path); err == nil {
+		t.Fatal("missing path acquired a document")
+	}
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := s.OpenPath(a, path, true)
+	if err != nil || !empty.DiskExists || len(empty.Text) != 0 {
+		t.Fatalf("zero-byte open: %+v %v", empty, err)
+	}
+	documentEdit(t, s, a, empty.ID, "draft", empty.Revision, 0, 0, "draft")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := s.OpenPath(b, path, true)
+	if err != nil || string(retained.Text) != "draft" {
+		t.Fatalf("missing named draft was lost: %+v %v", retained, err)
+	}
+}

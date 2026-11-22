@@ -11,12 +11,103 @@ automatic calibration spent over 12 minutes in semantic editing, then over eight
 minutes in multi-caret preparation on Linux. Fixed sampling keeps the same timed
 stages, dense sources and allocation ceilings. Other workloads retain duration
 calibration, including the amortization of pooled scratch storage.
+
 The warm single-row-change and tab-derivation scenarios finish history
 materialization before their timers, as the idle scenario already does. A fixed
 sample count otherwise exposes startup work that a long calibrated run merely
 amortizes; cold/width-change workloads remain separate gates.
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
+
+## Smoothness targets and acceptance
+
+Use a ThinkPad T470-class dual-core/four-thread mobile CPU, 8 GiB RAM, an SSD
+and a local terminal as the low-end reference. Test at 80×24 and 160×40 with
+200 retained messages, an active tool label and a streaming embedded terminal.
+Input and source updates must never wait for an animation tick. Present the
+latest available state within one 16 ms interval; target p95 ≤16 ms from
+input admission to paint and no UI-thread stall over 32 ms. Check input,
+Update, paint, handoff and terminal flush separately. Idle heartbeat stays
+at least 2 Hz. Do not delay source events, skip damage or silence metrics to
+meet a target. These are acceptance targets, not a guarantee about provider
+response time, terminal emulator, scheduler or untested hardware.
+
+For each improvement, record three runs before and after at the same size and
+workload. Tighten the allocation ceilings when all three have headroom. Use
+actual reference hardware for latency and dropped-frame claims; GOMAXPROCS=2
+on a faster processor is a useful contention test, not T470 certification.
+
+## Per-tick allocation and frame handoff (2026-11-22, second pass)
+
+The panel still showed "UI froze" on `types.TickMsg`, 21 ms GC pauses and
+35 ms frame handoffs after the first pass. The local-port Update + View benchmark exposed a separate allocation hotspot:
+Trust reads cloned all settings and the language catalog. Connected shells use
+the remote settings projection, so this benchmark does not attribute the live
+40 ms paint stall or the process-wide GC maximum to those reads.
+
+| Benchmark (i7-9850H, 160×48, 200 messages) | Before | After |
+|---|---|---|
+| `BenchmarkIdlePresentedFrame` (Update + View per tick) | 1.22 ms, 1.23 MB, 9,590 allocs | 0.17 ms, 5.6 KB, 146 allocs |
+| `BenchmarkAnimatedPresentedFrame` (16 ms clock, one recovery row) | 1.22 ms, 1.23 MB, 9,590 allocs | 0.17 ms, 5.6 KB, 146 allocs |
+| `BenchmarkDirectAnimationFrame` 200×60, one changed row | 0.31 ms (full snapshot) | 0.20 ms (changed rows only) |
+
+- `Workspace.EffectiveAnalysisSettings` reads Trust from the workspace overlay
+  and root binding only. It shares `boundAnalysis` and
+  `types.WorkspaceAnalysisChoice` with the complete merge, and a test proves
+  both reads agree in every Trust state.
+- The renderer snapshot copies only rows that changed since the generation it
+  holds (`uv.DeltaSurface`). Any other state (unknown copy, resize, frame in
+  progress, malformed row) redraws the full snapshot.
+- `BenchmarkIdleTick_200Msgs` calls `handleTick` directly and could not see
+  dispatch cost. The two presented-frame benchmarks run the real Update and
+  View and are now in the bench gate.
+- The tick rate did not change. The 16 ms streaming clock and 400 ms idle
+  clock are as before.
+- The Performance panel retains the original thresholds, maxima, core work
+  and shell round-trip evidence. The samples are not paired across processes.
+- `git status --porcelain=v2 --branch` returns working-tree state and exact
+  upstream counts together. A snapshot no longer needs a separate `rev-list`
+  or a second authority for tracking refs. Ten warm reads of the repository
+  (9,832 index entries, 160 changes) took 93–106 ms, median 100 ms. These are
+  service measurements, not shell round-trip times. Status still reads disk.
+- The tide paint benchmark on this machine at GOMAXPROCS=2 measured
+  12.5–14.8 μs before and 7.6–7.8 μs after skipping blends outside the crest.
+  Three 250 ms samples establish local cost, not actual T470 latency.
+
+## Windows shell and core investigation (2026-11-22)
+
+The native shell archive showed an 8 ms UI-update p99 on both compared builds
+but maxima of 473 ms and 1.18 s. One live five-minute window attributed the
+longest update (174 ms) to a tick. These aggregates do not identify which
+function caused any individual stall.
+
+| Repeatable workload | Before | After |
+|---|---|---|
+| Read the connected footer count and toast, 153 retained notices | 96 KiB and two allocations per frame | No allocations; expiry still uses the current time |
+| Refresh tick with 153 notices and the panel closed | 507 KiB, 984 allocations | 400 bytes, 13 allocations |
+| Prepare a recovery snapshot of 2,000 messages (before SQLite) | 6.06 MB, 4,027 allocations | 1.89 MB, 24 allocations |
+
+The connected shell derives footer facts from the installed status revision.
+Hidden workspace panels no longer rebuild their rows on the one-second refresh;
+opening a panel projects the latest data. Trust and desktop presence read the
+effective settings without constructing a Settings form. Before the change,
+three such form reads with 12 accounts allocated about 990 kB and took 1.24–1.27 ms.
+The replacement reads allocated zero bytes in all three samples.
+
+On the 9,832-file development checkout with normal Git settings, seven warm
+`GitService.Snapshot` reads had a median of 264 ms before the change and 169 ms
+after. Fresh worktree status, refs, upstream counts and operation markers still
+require work. Only a successful walk of immutable commit history is reused
+by HEAD hash, and the already-open worktree supplies its private Git directory.
+These are local samples, not a latency guarantee.
+
+**Performance → Services → Context publication stages** separates transaction
+start (including connection wait), preparation/writes before commit, and the
+commit itself. The existing session-write total and warning thresholds remain.
+A steady-state SQLite recovery checkpoint took about 2.5 ms here; this does
+not reproduce the 385 ms live outlier. The disk-coverage finding applies to
+the core host that measures the data folder; a missing shell CPU or memory
+sample is still reported. Provider first-output time remains a separate measure.
 
 ## Mixed-direction editor pan
 

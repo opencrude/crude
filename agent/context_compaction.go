@@ -116,7 +116,7 @@ func (a *Agent) contextCompactor(targetWindow int) *Agent {
 	compactor.SubAgentMgr = a.SubAgentMgr
 	compactor.ContinuationContext = a.ContinuationContext
 	compactor.LatestHumanTurnState = a.LatestHumanTurnState
-	compactor.guidance = a.guidance
+	compactor.guidance = a.guidance.checkpointEpoch()
 	compactor.GuidanceCacheLoad = a.GuidanceCacheLoad
 	compactor.GuidanceCacheStore = a.GuidanceCacheStore
 	compactor.reportPublished = a.reportPublished

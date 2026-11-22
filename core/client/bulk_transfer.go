@@ -130,12 +130,17 @@ func receiveBulk(reader *corewire.Reader, size int64) ([]byte, string, error) {
 // ReadClientFile returns only a fully verified immutable transfer. External
 // authority is explicit; a project read never falls back to the external path.
 func (c *Client) ReadClientFile(ctx context.Context, workspaceID, path string, external bool) ([]byte, error) {
+	return c.ReadClientFileLimit(ctx, workspaceID, path, external, coreprotocol.MaxFileRead)
+}
+
+// ReadClientFileLimit refuses an oversized transfer before allocating the payload.
+func (c *Client) ReadClientFileLimit(ctx context.Context, workspaceID, path string, external bool, limit int) ([]byte, error) {
 	method := coreprotocol.FilesRead
 	if external {
 		method = coreprotocol.ClientFilesReadExternal
 	}
 	var out coreprotocol.FileChunk
-	data, _, err := c.DownloadBulk(ctx, workspaceID, method, &coreprotocol.FilePathRequest{Path: path}, &out, coreprotocol.MaxFileRead)
+	data, _, err := c.DownloadBulk(ctx, workspaceID, method, &coreprotocol.FilePathRequest{Path: path}, &out, int64(limit))
 	if err != nil {
 		return nil, err
 	}

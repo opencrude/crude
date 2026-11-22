@@ -40,14 +40,15 @@ func TestHumanTurnReceivesCanonicalPlanAfterCompaction(t *testing.T) {
 		t.Fatalf("bad plan context: %q", text)
 	}
 	var snapshot struct {
-		ID       string          `json:"id"`
-		Revision uint64          `json:"revision"`
-		Steps    []plan.PlanStep `json:"steps"`
+		ID    string          `json:"id"`
+		Steps []plan.PlanStep `json:"steps"`
 	}
 	if err := json.Unmarshal([]byte(text[start:start+end]), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ID != "current" || snapshot.Revision != 1 || len(snapshot.Steps) != 2 || snapshot.Steps[1].ID != "verify" {
+	// Revisions are host-owned; a revision number in context only invited the
+	// model to send a stale one.
+	if snapshot.ID != "current" || strings.Contains(text, `"revision"`) || len(snapshot.Steps) != 2 || snapshot.Steps[1].ID != "verify" {
 		t.Fatalf("stale or incomplete plan after compaction: %+v", snapshot)
 	}
 	_, _, err = store.Update(ctx, plan.UpdateRequest{PlanID: "current", Revision: 1, Status: plan.StatusCancelled})

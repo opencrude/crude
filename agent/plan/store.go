@@ -139,7 +139,7 @@ func (s *Store) create(ctx context.Context, req UpdateRequest) (Plan, ChangeSet,
 			`SELECT id FROM plans WHERE session_id = ? AND status IN ('active','paused') LIMIT 1`, s.sessionID).Scan(&activeID)
 		switch {
 		case err == nil:
-			return Plan{}, ChangeSet{}, fmt.Errorf("plan %q is already active; complete or cancel it before creating another", activeID)
+			return Plan{}, ChangeSet{}, fmt.Errorf("plan %q is still open; update it with that plan_id (set replace=true for a new goal), or complete or cancel it before creating another", activeID)
 		case !errors.Is(err, sql.ErrNoRows):
 			return Plan{}, ChangeSet{}, fmt.Errorf("plan create: check active: %w", err)
 		}

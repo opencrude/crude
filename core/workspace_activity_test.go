@@ -1,8 +1,10 @@
 package core
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"crude/core/client"
@@ -96,6 +98,32 @@ func TestSavedWorkspaceActivityObservesDetachedWorkWithoutOpeningColdProjects(t 
 		t.Fatalf("saved text still reported dirty: %+v", saved)
 	}
 	resourceTopicCall(t, author, authorID, coreprotocol.TerminalClose, &coreprotocol.TerminalIDRequest{ID: terminal.ID}, nil)
+	inspectDeletionActor(t, a, func() { a.ws.AgentMgr.Remove("running") })
+	read(0, 0, 0)
+
+	// A long step on the actor (a busy turn, a slow publication) used to drop
+	// the workspace from the overview, so its badges blinked off. The busy
+	// actor now reports its last sample.
+	inspectDeletionActor(t, a, func() {
+		running := workspace.NewAgentState("running", nil, a.ws.Logger)
+		running.Running = true
+		a.ws.AgentMgr.AddOrchestrator("running", running)
+	})
+	read(1, 0, 0)
+	release, busy := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	// A failed read must not leave the actor blocked for runtime cleanup.
+	t.Cleanup(unblock)
+	go func() {
+		_ = a.inspect(context.Background(), func() {
+			close(busy)
+			<-release
+		})
+	}()
+	<-busy
+	read(1, 0, 0)
+	unblock()
 	inspectDeletionActor(t, a, func() { a.ws.AgentMgr.Remove("running") })
 	read(0, 0, 0)
 }

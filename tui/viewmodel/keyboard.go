@@ -97,7 +97,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.terminalOwnsKeys() {
 				switch match.ID {
-				case "palette.open", "terminal.new", "terminal.toggle", "terminal.picker", "workspace.panel.hide":
+				case "search.file.open", "palette.open", "terminal.new", "terminal.toggle", "terminal.picker", "workspace.panel.hide":
 				default:
 					match = nil
 				}
@@ -114,6 +114,8 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					return m.toggleCommandPalette()
 				case "search.project.open":
 					return m.toggleFindInFiles()
+				case "search.file.open":
+					return m.toggleGoToFile()
 				case "search.project.replace":
 					return m.toggleReplaceInFiles()
 				case "composer.toggle":

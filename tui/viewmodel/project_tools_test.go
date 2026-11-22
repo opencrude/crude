@@ -87,6 +87,9 @@ func (p *projectToolsTestPort) EnsureErrandSession() *workspace.NewSessionResult
 	return p.NewAgentSessionAs("errand")
 }
 
+func (p *projectToolsTestPort) AnalysisSettings() types.WorkspaceAnalysisSettings {
+	return p.settings.Analysis
+}
 func (p *projectToolsTestPort) LoadAppSettings() types.AppSettings { return p.settings }
 func (p *projectToolsTestPort) ReviewProjectTools(ctx context.Context, selection types.ProjectToolSetupRequest) (types.ProjectToolSetupReview, error) {
 	if err := ctx.Err(); err != nil {

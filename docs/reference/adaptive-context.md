@@ -368,6 +368,15 @@ Responses delta uploads and inline-image replay recovery are specified in
 - **Explicit.** A user percentage is a boundary: past it the next request
   waits for a checkpoint, unless a checkpoint that could not get below it
   deferred the next attempt (see below). `0` disables automatic compaction.
+- **Live choice.** Before every step the root run reads the session's current
+  passive settings (`agent.LiveSettings`): compaction percentage, retention,
+  maximum output and the Errand compaction connection. They change no system
+  prompt, tool list or history bytes, so a change in Settings while a turn
+  works applies at its next step without invalidating the cached prefix. The provider
+  still decides the actual cache hit. Manual compaction and capacity protection
+  remain separate from the economic rule. Connection and tool-list changes
+  use their own request or attempt boundaries. A child follows its launch role's passive settings, including named profile
+  overrides. This does not change its tool permissions or file ownership.
 - **Preparation leads.** Background preparation starts halfway to the trigger
   (a quarter of the excess once three quarters of the quality floor is
   reached, halfway in tokens for capacity and explicit percentages) and runs while the agent keeps working, at most one job per
@@ -515,7 +524,9 @@ Responses delta uploads and inline-image replay recovery are specified in
 - In-run automatic compaction rebuilds the continuation system message from the
   current guidance render. Guidance updates admitted during the run live in
   runtime messages that the checkpoint replaces; never continue on the run's
-  initial render.
+  initial render. The checkpoint starts a new guidance epoch: later runs of the
+  context keep its system prompt and receive guidance changes as appended
+  context ([guidance epochs](prompt-architecture.md#guidance-epochs)).
 - Async continuity uses exact owner data: handle, command, cwd, PID, start time,
   running/terminal status, terminal exit only when known, total output bytes,
   and the last observed byte cursor. Taking a continuity snapshot must not read

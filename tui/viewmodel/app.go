@@ -91,6 +91,7 @@ type App struct {
 	settingsLSPHealth         []roottypes.LSPServerHealth
 	workspacePanelLastVersion uint64
 	workspacePanelLastSecond  int64
+	workspacePanelVisible     workspacePanelVisibility
 	workspaceSessions         workspaceSessionCache
 	Win                       *window.Window
 	BufferMgr                 *editor.BufferManager
@@ -244,6 +245,7 @@ type App struct {
 	paneFilePicker  *paneFilePickerOwner
 	untitledSave    *untitledSaveOwner
 	editorReload    *editorReloadPrompt
+	webLink         *webLinkPrompt
 	diskConflict    *diskConflictPrompt
 	// diskNotices is the policy state of disk-change notices.
 	diskNotices     diskNotices
@@ -348,6 +350,9 @@ type App struct {
 	findInFilesRequest     uint64
 	findInFilesGen         int
 	projectSearchDraft     projectSearchDraft
+	filePreview            *fileSearchPreview
+	goToFileLanding        goToFileLanding // cited position of a chat reference
+	chatFileSeq            uint64          // latest chat file reference request
 	projectReplace         *projectReplaceReview
 	memoryBrowser          *memorybrowser.Screen
 	boardBrowser           *boardbrowser.Screen

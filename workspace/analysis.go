@@ -38,16 +38,22 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 // not a pathname hash or an application/session grant.
 func boundWorkspaceSettings(defaults types.AppSettings, overrides types.WorkspaceOverrides, observedRoot string) types.AppSettings {
 	effective := types.MergeAppWorkspace(defaults, overrides)
-	if effective.Analysis.Trusted() &&
-		(observedRoot == "" || overrides.AnalysisRootIdentity == "" || observedRoot != overrides.AnalysisRootIdentity) {
-		effective.Analysis = types.DefaultWorkspaceAnalysisSettings()
-	}
+	effective.Analysis = boundAnalysis(effective.Analysis, overrides, observedRoot)
 	if effective.Prediction.Mode != types.PredictionOff &&
 		(observedRoot == "" || overrides.PredictionRootIdentity != observedRoot ||
 			overrides.PredictionConnectionIdentity == "" || overrides.PredictionGrantID == "") {
 		effective.Prediction = types.DefaultWorkspacePredictionSettings()
 	}
 	return effective
+}
+
+// boundAnalysis keeps Trust only for the folder it was granted to.
+func boundAnalysis(analysis types.WorkspaceAnalysisSettings, overrides types.WorkspaceOverrides, observedRoot string) types.WorkspaceAnalysisSettings {
+	if analysis.Trusted() &&
+		(observedRoot == "" || overrides.AnalysisRootIdentity == "" || observedRoot != overrides.AnalysisRootIdentity) {
+		return types.DefaultWorkspaceAnalysisSettings()
+	}
+	return analysis
 }
 
 func (w *Workspace) publishAnalysisPolicy() {

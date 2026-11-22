@@ -257,7 +257,8 @@ func TestCompactorKeepsGuidanceDiscoveredDuringTheTurn(t *testing.T) {
 	p.Model = "dynamic-guidance-compaction"
 	p.SetContextWindow(128_000)
 	a := newTestAgent(t, p, p.Model)
-	a.WorkDir = dir
+	// Production compaction always runs on a separate compactor agent.
+	a.WorkDir, a.CompactionProvider = dir, p
 	rootPrompt, err := a.loadProjectGuidance(context.Background(), "system")
 	if err != nil {
 		t.Fatal(err)
@@ -390,6 +391,81 @@ func TestRunGuidanceRereadsPreserveCachePrefix(t *testing.T) {
 		rootprompt.BuildRoot(rootprompt.RootOptions{WorkDir: dir}), nil, nil, "", nil)
 	if requests != 3 || executed != 2 {
 		t.Fatalf("legitimate reread was blocked: requests=%d executed=%d", requests, executed)
+	}
+}
+
+// An AGENTS.md edit between runs used to rebuild the system prompt at the next
+// run start, so the provider re-read the whole history without cache. Like
+// Codex and Claude Code, a context keeps the guidance it started with and
+// receives the change once as appended runtime context; only a new context
+// generation (session start or compaction) loads it into the system prompt.
+func TestNextRunKeepsGuidanceEpochAndAppendsChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(path, []byte("original-rule"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var requests []provider.ChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		requests = append(requests, request)
+		writeChatSSE(w, "Done.", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "guidance-epoch-model"
+	base := rootprompt.BuildRoot(rootprompt.RootOptions{WorkDir: dir})
+	run := func(epoch *GuidanceEpoch, history []provider.ChatMessage, text string) (*GuidanceEpoch, []provider.ChatMessage) {
+		a := newTestAgent(t, p, p.Model)
+		a.WorkDir, a.GuidanceEpoch = dir, epoch
+		out := a.Run(t.Context(), append(history, provider.NewTextMessage("user", text)), base, nil, nil, "", nil)
+		return a.GuidanceSnapshot(), out[1:]
+	}
+	epoch, history := run(nil, nil, "first")
+	if err := os.WriteFile(path, []byte("current-rule"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	epoch, history = run(epoch, history, "second")
+	updates := 0
+	for _, message := range history {
+		if strings.Contains(message.ContentString(), "<loaded_project_guidance ") {
+			updates++
+			if !strings.Contains(message.ContentString(), "current-rule") || message.EffectiveVisibility() != provider.VisibilityContextOnly ||
+				message.EffectiveOrigin() != provider.OriginRuntimeContext {
+				t.Fatalf("guidance change is not current runtime context: %+v", message)
+			}
+		}
+	}
+	if updates != 1 {
+		t.Fatalf("guidance updates in history=%d, want one", updates)
+	}
+	_, _ = run(epoch, history, "third")
+	_, _ = run(nil, nil, "new context generation")
+	if len(requests) != 4 {
+		t.Fatalf("requests=%d, want 4", len(requests))
+	}
+	system := requests[0].Messages[0].ContentString()
+	if !strings.Contains(system, "original-rule") {
+		t.Fatal("first run did not load the guidance into the system prompt")
+	}
+	for i, request := range requests[1:3] {
+		if request.Messages[0].ContentString() != system {
+			t.Fatalf("run %d rewrote the cached system prompt after an AGENTS.md edit", i+2)
+		}
+		projections := 0
+		for _, message := range request.Messages[1:] {
+			projections += strings.Count(message.ContentString(), "<loaded_project_guidance ")
+		}
+		if projections != 1 {
+			t.Fatalf("run %d sent %d guidance updates, want the one change", i+2, projections)
+		}
+	}
+	if got := requests[3].Messages[0].ContentString(); !strings.Contains(got, "current-rule") || strings.Contains(got, "original-rule") {
+		t.Fatal("a new context generation must load the current guidance into the system prompt")
 	}
 }
 

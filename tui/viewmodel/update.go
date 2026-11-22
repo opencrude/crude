@@ -123,6 +123,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	command = tea.Batch(command, m.drainAutomaticSignatureHelp())
 	m.syncCodeActions()
 	m.syncNavigation()
+	if m.findInFiles != nil || m.filePreview != nil {
+		command = tea.Batch(command, m.syncFileSearchPreview())
+	}
 	m.releaseAbsorbedViews()
 	m.syncNavigationHistory()
 	command = tea.Batch(command, m.syncCompletion())
@@ -168,6 +171,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if prompt := m.editorReload; prompt != nil {
 			if handled, cmd := m.confirmModalInput(editorReloadOverlay, key, false, prompt.activate); handled {
+				return m, cmd
+			}
+		}
+		if prompt := m.webLink; prompt != nil {
+			if handled, cmd := m.confirmModalInput(webLinkOverlay, key, false, prompt.activate); handled {
 				return m, cmd
 			}
 		}
@@ -809,7 +817,6 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	m.Input.SetSpinFrame(spinFrame)
 	m.refreshSessionBackgroundJobs(now)
 	m.drainLSPDiagnostics()
-	m.syncStatusOverview()
 	m.syncWorkspacePanels()
 	m.tickTerminalCursors(now)
 	if fw := m.windowManager.Focused(); fw != nil && !m.terminalBlurred {
@@ -1064,6 +1071,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.requestGitSnapshot(time.Now())
 	case findinfiles.SearchRequestMsg:
 		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
+			if c := m.goToFileLanding.catalog; c != nil && msg.Options.NamesOnly {
+				cmds = append(cmds, m.rankGoToFiles(msg, c))
+				break
+			}
 			m.findInFilesRequest = m.ws.StartProjectSearch(msg.Query, msg.Options)
 			m.findInFilesGen = msg.Generation
 			m.markProjectSearchDirty()
@@ -1340,6 +1351,19 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				m.addFileReference(path)
 			}
 		}
+	case catalogSearchRows:
+		if m.findInFiles == msg.request.Screen && m.findInFiles.AcceptsSearch(msg.request.Screen, msg.request.Generation) {
+			m.findInFiles.ApplySearchResults(msg.request.Generation, msg.rows, msg.err, 0)
+			m.markProjectSearchDirty()
+		}
+	case fileSearchPreviewResult:
+		m.applyFileSearchPreview(msg)
+	case executionChatCatalogMsg:
+		cmds = append(cmds, m.applyExecutionChatCatalog(msg.lookup))
+	case chatFileResolvedMsg:
+		cmds = append(cmds, m.applyChatFileResolved(msg))
+	case webLinkOpenedMsg:
+		m.applyWebLinkOpened(msg)
 	case paneFilesOpenedMsg:
 		cmds = append(cmds, m.applyPaneFilesOpened(msg))
 	case filepickerscreen.CancelMsg:
@@ -2098,6 +2122,9 @@ func (m *App) handleTabSwitch() {
 		return
 	}
 	if activeTab.Resource.Kind == window.ResourceGitReview || activeTab.Resource.Kind == window.ResourceLocalDiff || activeTab.Resource.Kind == window.ResourcePanel {
+		if activeTab.Resource.Kind == window.ResourcePanel {
+			m.syncWorkspacePanels()
+		}
 		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}

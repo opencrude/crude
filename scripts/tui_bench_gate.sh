@@ -67,9 +67,28 @@ run_bench() {
   if [[ -n "${BENCH_EVIDENCE:-}" ]]; then
     printf '\nbenchmark_expression: %s\nbenchmark_duration: %s\n%s\n' "$1" "${BENCHTIME:-1s}" "$out" >> "$BENCH_EVIDENCE"
   fi
-  # Parse "BenchmarkName-N  count  ns/op  B/op  allocs/op"
-  # fields: 1=name 2=count 3=ns 4=ns/op 5=B 6=B/op 7=allocs 8=allocs/op
-  while read -r name _ _ _ b _ alloc _; do
+  # Sub-benchmark names can contain '='. Custom metrics can precede B/op;
+  # identify the two allocation values by unit rather than field number.
+  local rows
+  rows="$(awk '/^Benchmark[^[:space:]]+-[0-9]+[[:space:]]+[0-9]+/ {
+    b = a = "-"
+    for (i=3; i<=NF; i++) {
+      if ($i == "B/op") b = $(i-1)
+      if ($i == "allocs/op") a = $(i-1)
+    }
+    print $1, b, a
+  }' <<< "$out")"
+  if [[ -z "$rows" ]]; then
+    echo "FAIL: no benchmark results for $1"
+    fail=1
+    return
+  fi
+  while read -r name b alloc; do
+    if [[ ! "$b" =~ ^[0-9]+$ || ! "$alloc" =~ ^[0-9]+$ ]]; then
+      echo "FAIL: missing allocation metrics for $name"
+      fail=1
+      continue
+    fi
     # strip -N suffix for ceiling lookup
     base="${name%-*}"
     ceils="$(ceiling "$base")"
@@ -84,11 +103,22 @@ run_bench() {
     else
       echo "OK: $base ${b}B ${alloc} allocs (ceiling ${maxB}B/${maxAlloc})"
     fi
-  done < <(echo "$out" | grep -E '^Benchmark[A-Za-z0-9_/]+-[0-9]+[[:space:]]+[0-9]+')
+  done <<< "$rows"
 }
+
+if (( $# )); then
+  if [[ "$1" != "--only" || $# -lt 3 ]]; then
+    echo "Usage: $0 [--only BENCHMARK_REGEX PACKAGE ...]" >&2
+    exit 2
+  fi
+  shift
+  run_bench "$@"
+  exit "$fail"
+fi
 
 echo "== TUI bench regression gate ($BENCH_GOOS) =="
 run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANSI)' ./tui/ui ./tui/surface ./tui/compositor
+run_bench '^BenchmarkDirectAnimationFrame$' ./tui/compositor
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench '^BenchmarkBuffer(DirtyCheckLargeFile|SavepointManualRoundTripLargeFile)$' ./tui/editor
 run_bench '^BenchmarkSyntax(LongPythonViewport|DocumentPreparation|MapInlineDecorations)$' ./tui/editor
@@ -106,6 +136,7 @@ BENCHTIME=100x run_bench '^BenchmarkMultipleCaret(Workload|Stages)$' ./tui/edito
 run_bench '^Benchmark(EditorOrientation|MinimapRebuild)$' ./tui/editor
 run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./syntax
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
+run_bench '^BenchmarkTextTidePaint$' ./tui/chatprojection
 run_bench '^BenchmarkMixedMarkdown' ./tui/chatprojection
 run_bench '^BenchmarkChatFind' ./tui/screens/shellchat
 run_bench '^BenchmarkDenseFileLinkHit$' ./tui/screens/shellchat
@@ -119,12 +150,14 @@ run_bench '^BenchmarkDense(Syntax)?DiffPaint$' ./tui/screens/diffview
 run_bench '^BenchmarkGitDiffLongLine(Paint|FarRightPaint)$' ./tui/screens/gitdiff
 run_bench '^BenchmarkOpenIndexedHistory$' ./workspace/localhistory
 run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./agent/sessiondb
+run_bench '^BenchmarkDenseRecoverySnapshot$' ./agent/session
+run_bench '^Benchmark(DenseNoticeFooterReads|TickPreferenceReads)$' ./core/port/remote
 run_bench '^Benchmark(CheckpointAppend_560Msgs|RecoveryCheckpoint_(560|2000)Msgs)$' ./agent/sessiondb
 run_bench '^BenchmarkSessionDatabaseStartup$' ./agent/sessiondb
 run_bench '^BenchmarkEstimateMultipartImage$' ./agent/provider
 run_bench '^Benchmark(ProjectInsightsCached10kDiagnostics|UsageSummaryCached1000Requests)$' ./workspace
 # Scenario benches: steady-state work budgets (see scripts/perf_ceilings.txt).
-run_bench 'Benchmark(IdleTick|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel
+run_bench 'Benchmark(IdleTick|IdlePresentedFrame|AnimatedPresentedFrame|TickHiddenNotices|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel
 run_bench '^BenchmarkMainPane$' ./tui/viewmodel
 
 if [[ $fail -ne 0 ]]; then

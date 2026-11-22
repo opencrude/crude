@@ -56,6 +56,18 @@ func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
 	return effective
 }
 
+// EffectiveAnalysisSettings is EffectiveAppSettings().Analysis without
+// merging every other setting: UI ticks read Trust, and the full merge clones
+// the language catalog.
+func (w *Workspace) EffectiveAnalysisSettings() ttypes.WorkspaceAnalysisSettings {
+	overrides := w.LoadWorkspaceOverrides()
+	analysis := boundAnalysis(ttypes.WorkspaceAnalysisChoice(overrides), overrides, w.analysisRootIdentity)
+	if analysis.Trusted() && w.LSPMgr != nil {
+		analysis = w.LSPMgr.AnalysisPolicy()
+	}
+	return analysis
+}
+
 // LoadWorkspaceOverrides detaches the committed sparse overlay from the DB's
 // immutable memory projection. It performs no storage I/O or writer locking.
 // Saves store only explicit choices; the stored overlay is used as is,

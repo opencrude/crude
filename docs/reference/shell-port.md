@@ -197,6 +197,11 @@ Sessions is the session registry, lifecycle and per-session settings surface.
 
 Settings loads, previews and persists application and workspace settings.
 
+The connected shell reads `AnalysisSettings` and `DesktopPresencePreferences`
+from the same installed effective snapshot as the Settings form. A clock tick
+does not need a copy of the model catalog, accounts, or shell inventory to check
+trust or report presence. Neither read changes trust, settings, or the election.
+
 | Member | Sites | TUI | RPC-able as-is | coreprotocol |
 |--------|------:|-----|----------------|--------------|
 | `LoadAppSettings` | 15 | reads | yes | settings.fetch (replica: WorkspaceView.LoadAppSettings) |

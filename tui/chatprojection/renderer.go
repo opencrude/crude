@@ -117,8 +117,13 @@ type MessageRowsSnapshot struct {
 	// SourceID identifies the retained Renderer that produced this snapshot.
 	// Generation is renderer-local, so two session projections can both emit
 	// generation one and still require the shared shell chat to replace rows.
-	SourceID         uint64
-	Generation       uint64
+	SourceID   uint64
+	Generation uint64
+	// BaseGeneration is the export that ChangedIndices and StructureChanged
+	// are relative to. A consumer that did not install exactly that
+	// generation (a hidden tab, or a frame that exported twice) missed
+	// changes and must rebuild from Rows instead of applying the delta.
+	BaseGeneration   uint64
 	ChangedIndices   []int
 	StructureChanged bool
 }
@@ -1241,13 +1246,14 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 			copy(paneMap[start:end], item.PaneLines)
 		}
 	}
+	base := r.exportSnapshot.Generation
 	r.exportGeneration++
 	r.exportRevision = r.vl.Revision()
 	r.exportWidth = width
 	r.exportScrollbarW = r.ScrollbarWidth()
 	r.exportScrollY = r.effectiveScrollY()
 	r.exportViewportH = r.vl.ViewportHeight()
-	r.exportSnapshot = MessageRowsSnapshot{Rows: rows, PaneLineMap: paneMap, ContentHeight: r.vl.TotalHeight(), SourceID: r.sourceID, Generation: r.exportGeneration, ChangedIndices: changedIndices, StructureChanged: structureChanged}
+	r.exportSnapshot = MessageRowsSnapshot{Rows: rows, PaneLineMap: paneMap, ContentHeight: r.vl.TotalHeight(), SourceID: r.sourceID, Generation: r.exportGeneration, BaseGeneration: base, ChangedIndices: changedIndices, StructureChanged: structureChanged}
 	if r.lazyWidthReflow {
 		remaining := false
 		for i := 0; i < r.vl.ItemCount(); i++ {
@@ -1262,6 +1268,7 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 }
 
 func (r *Renderer) messageRow(item *renderItem) MessageRow {
+	var executionID string
 	subPaneID := ""
 	contextBoundary := false
 	toggleLine := -1
@@ -1273,6 +1280,7 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 		leafToggles = group.leafRows
 	} else if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
 		subPaneID = msg.SubPaneID
+		executionID = msg.ExecutionID
 		contextBoundary = msg.LifecyclePhase == "history_restored" || isManualCompaction(*msg) && !settledCompaction(*msg)
 		if r.hasDisclosure(msg) {
 			toggleLine = 0
@@ -1304,7 +1312,7 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 	if len(item.Rendered) == 0 {
 		version = 0
 	}
-	return MessageRow{
+	return MessageRow{ExecutionID: executionID,
 		ID:                   item.ID,
 		Version:              version,
 		Lines:                lines,

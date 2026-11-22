@@ -102,6 +102,19 @@ func (w *Workspace) AppDefaults() types.AppSettings {
 	return value
 }
 
+func (w *Workspace) AnalysisSettings() types.WorkspaceAnalysisSettings {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	return types.NormalizeWorkspaceAnalysis(w.settings.current.fetch.Effective.Analysis)
+}
+
+func (w *Workspace) DesktopPresencePreferences() (int, bool) {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	s := w.settings.current.fetch.Effective.UI.DesktopNotifications
+	return s.AwayMinutesOrDefault(), s.Active()
+}
+
 func (w *Workspace) LoadAppSettings() types.AppSettings {
 	w.settingsMu.RLock()
 	defer w.settingsMu.RUnlock()

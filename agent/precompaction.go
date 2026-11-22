@@ -568,7 +568,7 @@ func (a *Agent) compactorFor(useMain bool, window, targetTokens int, tailHasHuma
 		compactor.AgentID, compactor.TurnGeneration, compactor.Depth, compactor.ParentID = a.AgentID, a.TurnGeneration, a.Depth, a.ParentID
 		compactor.WorkDir, compactor.AsyncMgr, compactor.SubAgentMgr = a.WorkDir, a.AsyncMgr, a.SubAgentMgr
 		compactor.ContinuationContext, compactor.LatestHumanTurnState = a.ContinuationContext, a.LatestHumanTurnState
-		compactor.guidance, compactor.MaxRetries, compactor.FilteredTools = a.guidance, a.MaxRetries, a.FilteredTools
+		compactor.guidance, compactor.MaxRetries, compactor.FilteredTools = a.guidance.checkpointEpoch(), a.MaxRetries, a.FilteredTools
 		compactor.testHTTPClient, compactor.compactionRetryDelay = a.testHTTPClient, a.compactionRetryDelay
 		compactor.CompactionTargetModel, compactor.CompactionTargetWindow = a.Model, window
 		compactor.CompactionRetentionTokens, compactor.MaxOutputTokens = a.CompactionRetentionTokens, a.MaxOutputTokens

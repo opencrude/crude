@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -266,5 +267,20 @@ func BenchmarkLauncherDenseFrame(b *testing.B) {
 	b.StopTimer()
 	if revision != s.list.list.StructureRevision() {
 		b.Fatal("idle frames rebuilt the workspace index")
+	}
+}
+
+// A catalog read that runs out of time shows the problem and the next step,
+// not Go's "context deadline exceeded".
+func TestLoadTimeoutIsUserLanguage(t *testing.T) {
+	s := New(theme.DefaultDark())
+	s.BeginLoad("/projects/current")
+	s.FinishLoad("/projects/current", nil, fmt.Errorf("list saved workspaces: %w", context.DeadlineExceeded))
+	if s.loadError != "Loading took too long. Try again." {
+		t.Fatalf("timeout text = %q", s.loadError)
+	}
+	s.FinishLoad("/projects/current", nil, errors.New("read workspace directory: permission denied"))
+	if s.loadError != "read workspace directory: permission denied" {
+		t.Fatalf("other failures keep their reason: %q", s.loadError)
 	}
 }

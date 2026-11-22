@@ -1006,7 +1006,10 @@ new publication reads current source cells; there is no pointer-only frame cache
 The compositor advances an owner-scoped snapshot generation only when publishing
 or resizing its completed grid. Repeated handoffs of that exact generation reuse
 Bubble Tea's detached copy; different producers, new generations, geometry and
-string/surface transitions always resnapshot. This avoids copying the whole grid
+string/surface transitions always resnapshot. Consecutive same-owner frames
+may compare rows of the former and current front buffers before converting
+them. Sixel extraction mutates the detached marker cells: that buffer cannot
+serve as the base for a row delta. This avoids copying the whole grid
 on coalesced presentation opportunities without dropping source mutations. A
 fresh renderer after suspend/reset marks all retained rows damaged once, even
 when they equal the last producer snapshot.

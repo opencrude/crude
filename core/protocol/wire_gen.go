@@ -5810,8 +5810,9 @@ func (z *DocumentEditRequest) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z DocumentOpenRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 2
-	o = append(o, 0x92)
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendBool(o, z.ExistingOnly)
 	o = msgp.AppendBool(o, z.WithEditorConfig)
 	o = msgp.AppendString(o, z.Path)
 	return
@@ -5829,8 +5830,13 @@ func (z *DocumentOpenRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 2 {
-		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.ExistingOnly, bts, err = msgp.ReadBoolBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ExistingOnly")
 		return
 	}
 	z.WithEditorConfig, bts, err = msgp.ReadBoolBytes(bts)
@@ -5849,7 +5855,7 @@ func (z *DocumentOpenRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z DocumentOpenRequest) Msgsize() (s int) {
-	s = 1 + msgp.BoolSize + msgp.StringPrefixSize + len(z.Path)
+	s = 1 + msgp.BoolSize + msgp.BoolSize + msgp.StringPrefixSize + len(z.Path)
 	return
 }
 
@@ -6823,8 +6829,9 @@ func (z Fault) Msgsize() (s int) {
 // MarshalMsg implements msgp.Marshaler
 func (z FileCatalogRequest) MarshalMsg(b []byte) (o []byte, err error) {
 	o = msgp.Require(b, z.Msgsize())
-	// array header, size 2
-	o = append(o, 0x92)
+	// array header, size 3
+	o = append(o, 0x93)
+	o = msgp.AppendString(o, z.ExecutionID)
 	o = msgp.AppendBool(o, z.DirectoriesOnly)
 	o = msgp.AppendBool(o, z.IncludeHidden)
 	return
@@ -6842,8 +6849,13 @@ func (z *FileCatalogRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 		err = msgp.ErrShortBytes
 		return
 	}
-	if zb0001 != 2 {
-		err = msgp.ArrayError{Wanted: 2, Got: zb0001}
+	if zb0001 != 3 {
+		err = msgp.ArrayError{Wanted: 3, Got: zb0001}
+		return
+	}
+	z.ExecutionID, bts, err = msgp.ReadStringBytes(bts)
+	if err != nil {
+		err = msgp.WrapError(err, "ExecutionID")
 		return
 	}
 	z.DirectoriesOnly, bts, err = msgp.ReadBoolBytes(bts)
@@ -6862,7 +6874,7 @@ func (z *FileCatalogRequest) UnmarshalMsg(bts []byte) (o []byte, err error) {
 
 // Msgsize returns an upper bound estimate of the number of bytes occupied by the serialized message
 func (z FileCatalogRequest) Msgsize() (s int) {
-	s = 1 + msgp.BoolSize + msgp.BoolSize
+	s = 1 + msgp.StringPrefixSize + len(z.ExecutionID) + msgp.BoolSize + msgp.BoolSize
 	return
 }
 

@@ -11,6 +11,10 @@ type Settings interface {
 	// LoadAppSettings returns the effective settings for this workspace:
 	// application defaults overlaid with workspace overrides.
 	LoadAppSettings() types.AppSettings
+	// These passive reads use the same effective settings owner, without
+	// materializing an entire settings form on the UI clock.
+	AnalysisSettings() types.WorkspaceAnalysisSettings
+	DesktopPresencePreferences() (awayMinutes int, notificationsActive bool)
 	// AppDefaults returns the application-layer settings (no workspace overlay).
 	AppDefaults() types.AppSettings
 	// LoadWorkspaceOverrides reads the sparse workspace overlay from workspace.db.

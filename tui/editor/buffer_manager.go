@@ -178,10 +178,10 @@ func (b *Buffer) ApplyDisk(data []byte, encoding textencoding.Encoding, hash [sh
 	b.AcceptSave(b.buf.Revision(), hash, data)
 }
 
-func loadBuffer(path string) (*Buffer, error) {
+func loadBuffer(path string, existingOnly bool) (*Buffer, error) {
 	raw, err := os.ReadFile(path)
 	exists := err == nil
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && (existingOnly || !os.IsNotExist(err)) {
 		return nil, err
 	}
 	text, encoding, err := textencoding.DecodeText(raw)
@@ -245,7 +245,10 @@ func NewBufferManager() *BufferManager {
 // OpenFile loads a file from disk into a Buffer and registers it. If the
 // buffer already exists (file already open in another tab/view), it returns
 // the existing buffer, with no reload and no duplicate.
-func (m *BufferManager) OpenFile(path string) (*Buffer, error) {
+func (m *BufferManager) OpenFile(path string) (*Buffer, error) { return m.OpenPath(path, false) }
+
+// OpenPath reuses an existing buffer. With existingOnly, a missing file cannot create a buffer.
+func (m *BufferManager) OpenPath(path string, existingOnly bool) (*Buffer, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -258,7 +261,7 @@ func (m *BufferManager) OpenFile(path string) (*Buffer, error) {
 	}
 	m.mu.RUnlock()
 
-	buf, err := loadBuffer(abs)
+	buf, err := loadBuffer(abs, existingOnly)
 	if err != nil {
 		return nil, err
 	}

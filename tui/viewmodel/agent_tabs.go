@@ -485,7 +485,7 @@ func (m *App) syncAgentWindowTabs() {
 			m.Win.FocusGroup(preserveGroup)
 		}
 		if tab := m.Win.TabByTitle(title); tab != nil {
-			newIcon := m.agentTabIcon(id)
+			newIcon := agentTabIcon(view.State)
 			if tab.Icon != newIcon {
 				m.Win.SetTabIconByIndex(m.Win.IndexOf(tab.ID), newIcon)
 			}
@@ -563,18 +563,10 @@ func (m *App) activeAgentTabID() string {
 	return ""
 }
 
-// agentTabIcon returns the status icon for an agent's window tab.
-func (m *App) agentTabIcon(id string) string {
-	if id == "" {
-		return "■"
-	}
-	view, ok := m.agentTabView(id)
-	if !ok || view.State == "" {
-		return "●"
-	}
-	status := view.State
+// Reuse the tab view already projected by this reconciliation.
+func agentTabIcon(status string) string {
 	switch {
-	case status == "running":
+	case status == "" || status == "running":
 		return "●"
 	case status == "completed":
 		return "✓"
@@ -585,15 +577,6 @@ func (m *App) agentTabIcon(id string) string {
 	default:
 		return "■"
 	}
-}
-
-func (m *App) agentTabView(id string) (workspace.TabView, bool) {
-	for _, view := range m.AgentTabViews() {
-		if view.ID == id {
-			return view, true
-		}
-	}
-	return workspace.TabView{}, false
 }
 
 // purgeAgentTabs closes all agent window tabs in a single pass.

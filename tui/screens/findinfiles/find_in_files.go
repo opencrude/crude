@@ -40,11 +40,16 @@ type Mode int
 const (
 	ModeFind Mode = iota
 	ModeReplace
+	// ModeFiles is Go to File: the same window fuzzy-finds file paths only.
+	ModeFiles
 )
 
 func (m Mode) Title() string {
-	if m == ModeReplace {
+	switch m {
+	case ModeReplace:
 		return "Replace in Files"
+	case ModeFiles:
+		return "Go to File"
 	}
 	return "Find in Files"
 }
@@ -115,6 +120,7 @@ type Screen struct {
 	notice         string
 	duration       time.Duration
 	generation     int
+	previewNotice  string
 	previewSrc     *editor.Editor
 	caseSensitive  bool
 	wholeWord      bool
@@ -213,9 +219,43 @@ func (s *Screen) Regex() bool                          { return s.regex }
 func (s *Screen) WholeWord() bool                      { return s.wholeWord }
 func (s *Screen) Options() fileio.ProjectSearchOptions { return s.searchOptions() }
 func (s *Screen) SelectQuery()                         { s.queryField.field.Edit().SelectAll(); s.FocusQuery() }
-func (s *Screen) SetMode(mode Mode)                    { s.mode = mode; s.rebuildReplaceActions(); s.sync() }
-func (s *Screen) SetReplacing(busy bool)               { s.replacing = busy; s.sync() }
-func (s *Screen) Replacing() bool                      { return s.replacing }
+func (s *Screen) SetMode(mode Mode) {
+	s.mode = mode
+	placeholder := "Search file names and contents"
+	if mode == ModeFiles {
+		placeholder = "Search file names and paths"
+	}
+	s.queryField.field.SetPlaceholder(placeholder)
+	s.rebuildReplaceActions()
+	s.sync()
+}
+
+func (s *Screen) SelectedFilePath() string {
+	if s.mode == ModeFiles && s.selected >= 0 && s.selected < len(s.results) {
+		return s.results[s.selected].Path
+	}
+	return ""
+}
+
+func (s *Screen) SetFilePreview(text string, first, line, column int, notice string) {
+	if s.previewSrc != nil {
+		s.previewSrc.Close()
+		s.previewSrc = nil
+	}
+	s.previewNotice = notice
+	if notice != "" {
+		return
+	}
+	ed := editor.NewPreview(s.th, s.SelectedFilePath(), text, first)
+	local := max(0, line-first)
+	col := editor.RuneIndexToVisualColumn(ed.TabWidth(), ed.LineText(local), column-1)
+	ed.SetCursorPosition(local, col)
+	ed.SetLandingRange(local, col, col+1)
+	ed.ScrollToCursor()
+	s.previewSrc = ed
+}
+func (s *Screen) SetReplacing(busy bool) { s.replacing = busy; s.sync() }
+func (s *Screen) Replacing() bool        { return s.replacing }
 
 // SetSearchDebounce configures the shared query-field debounce interval.
 func (s *Screen) SetSearchDebounce(delay time.Duration) { s.queryField.field.SetDebounce(delay) }
@@ -330,10 +370,12 @@ func (s *Screen) SetNotice(text string) {
 }
 
 func (s *Screen) searchOptions() fileio.ProjectSearchOptions {
+	// Go to File keeps the same filters; they apply to file paths only.
 	return fileio.ProjectSearchOptions{
 		CaseSensitive: s.caseSensitive,
 		WholeWord:     s.wholeWord,
 		Regex:         s.regex,
+		NamesOnly:     s.mode == ModeFiles,
 	}
 }
 
@@ -372,6 +414,7 @@ func (s *Screen) HandleSearchDebounced(msg ui.SearchDebouncedMsg) tea.Cmd {
 }
 
 func (s *Screen) rebuildPreview() {
+	s.previewNotice = ""
 	if s.previewSrc != nil {
 		s.previewSrc.Close()
 	}
@@ -523,6 +566,17 @@ func (s *Screen) syncStatus() {
 	s.status.SetColorRole(ui.ColorMuted)
 	if s.Query() == "" {
 		s.status.SetText(filepath.Base(s.root))
+		return
+	}
+	if s.mode == ModeFiles {
+		switch n := len(s.results); n {
+		case 0:
+			s.status.SetText(fmt.Sprintf("No file matches %q. Try a shorter name.", s.Query()))
+		case 1:
+			s.status.SetText("1 file")
+		default:
+			s.status.SetText(fmt.Sprintf("%d files", n))
+		}
 		return
 	}
 	files := make(map[string]struct{})
@@ -712,32 +766,33 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 
 	s.listY0 = row
 	available := max(0, r.H-s.listY0-1)
-	if s.split != nil {
-		s.split.SetMinSizes(4, 3)
-		s.split.SetMaxFirst(max(4, available-3-1))
+	// A file chooser shows the preview beside the paths when both remain readable.
+	horizontal := s.mode == ModeFiles && r.W >= 96
+	axis, space, minFirst, minSecond := ui.Vertical, available, 4, 3
+	if horizontal {
+		axis, space, minFirst, minSecond = ui.Horizontal, r.W, 32, 36
 	}
-	divH, previewH := 1, 0
-	if s.split != nil {
-		s.resultH, divH, previewH = s.split.Resolve(available)
-	} else {
-		s.resultH = max(1, available*42/100)
-		previewH = max(0, available-s.resultH-1)
+	s.split.SetDirection(axis)
+	s.split.SetMinSizes(minFirst, minSecond)
+	s.split.SetMaxFirst(max(minFirst, space-minSecond-1))
+	first, divider, second := s.split.Resolve(space)
+	list, div, preview := ui.Rect{Y: row, W: r.W, H: first}, ui.Rect{Y: row + first, W: r.W, H: divider}, ui.Rect{Y: row + first + divider, W: r.W, H: second}
+	if horizontal {
+		list = ui.Rect{Y: row, W: first, H: available}
+		div = ui.Rect{X: first, Y: row, W: divider, H: available}
+		preview = ui.Rect{X: first + divider, Y: row, W: second, H: available}
 	}
-	if s.resultH < 1 {
-		s.resultH = min(4, max(1, available))
+	s.resultH = list.H
+	bar := 0
+	if s.scrollbar.NeededForViewport(list.H) {
+		bar = min(ui.ScrollbarWidth, list.W)
 	}
-	previewStart := s.listY0 + s.resultH + divH
-	barW := 0
-	if s.scrollbar.NeededForViewport(s.resultH) {
-		barW = min(ui.ScrollbarWidth, r.W)
-	}
-	s.list.Layout(ctx, ui.Rect{X: 0, Y: s.listY0, W: max(1, r.W-barW), H: s.resultH})
-	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-barW), Y: s.listY0, W: barW, H: s.resultH})
-	if s.divider != nil {
-		s.divider.SetCurrentFirst(s.resultH)
-		s.divider.Layout(ctx, ui.Rect{X: 0, Y: s.listY0 + s.resultH, W: r.W, H: max(0, divH)})
-	}
-	s.preview.Layout(ctx, ui.Rect{X: 0, Y: previewStart, W: r.W, H: max(0, previewH)})
+	list.W -= bar
+	s.list.Layout(ctx, list)
+	s.scrollbar.Layout(ctx, ui.Rect{X: list.W, Y: list.Y, W: bar, H: list.H})
+	s.divider.SetCurrentFirst(first)
+	s.divider.Layout(ctx, div)
+	s.preview.Layout(ctx, preview)
 	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
 }
 
@@ -878,7 +933,7 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		switch key.Code {
 		case tea.KeyEsc:
-			if q.field.Edit().HasSelection() {
+			if q.owner.mode != ModeFiles && q.field.Edit().HasSelection() {
 				return q.applyFilter(ctx, evt)
 			}
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: q.owner} }}
@@ -1043,6 +1098,17 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 	}
 	result := l.list.Handle(ctx, evt)
+	if l.owner.mode == ModeFiles {
+		if evt.Kind == ui.EventMouseMotion && evt.MouseMotion.Button == tea.MouseNone {
+			if item, ok := l.list.ItemAtViewportRow(ctx.LocalY); ok {
+				l.owner.selectRow(item.Payload.(displayRow).result)
+			}
+		}
+		if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
+			l.owner.selectRow(l.list.SelectedIndex())
+		}
+		return result
+	}
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
 		index := l.list.SelectedIndex()
 		if row, ok := l.owner.rowAt(index); ok && row.kind == rowHeader {
@@ -1101,6 +1167,8 @@ func (p *previewPane) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.
 	}
 	ed := p.owner.previewSrc
 	if ed == nil {
+		writeClipped(buf, originX+r.X, originX+r.X+r.W, originY+r.Y, p.owner.previewNotice,
+			p.owner.tokens.Color(ui.ColorMuted), p.owner.tokens.Color(ui.ColorPopupBg), 0)
 		return
 	}
 	w, h := r.W, r.H

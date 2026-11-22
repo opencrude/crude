@@ -1,13 +1,16 @@
 package viewmodel
 
 import (
-	"path/filepath"
+	"context"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/editor"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
+	"crude/tui/window"
 	"crude/tui/wm"
+	"crude/workspace"
 	"crude/workspace/fileio"
 )
 
@@ -21,12 +24,41 @@ func overlayForProjectSearch(mode findinfiles.Mode) ui.OverlayID {
 	return ui.OverlayFindInFiles
 }
 
+// toggleGoToFile is the Go to File command.
+func (m *App) toggleGoToFile() (tea.Model, tea.Cmd) {
+	model, cmd := m.toggleProjectSearch(findinfiles.ModeFiles)
+	m.goToFileLanding = goToFileLanding{}
+	return model, cmd
+}
+
 func (m *App) toggleFindInFiles() (tea.Model, tea.Cmd) {
 	return m.toggleProjectSearch(findinfiles.ModeFind)
 }
 
 func (m *App) toggleReplaceInFiles() (tea.Model, tea.Cmd) {
 	return m.toggleProjectSearch(findinfiles.ModeReplace)
+}
+
+// openGoToFile opens Go to File seeded with query. A landing line (one-based,
+// zero for none) places every opened result at the cited line and column.
+func (m *App) openGoToFile(query string, line, column int) tea.Cmd {
+	_, cmd := m.toggleProjectSearch(findinfiles.ModeFiles)
+	m.goToFileLanding = goToFileLanding{line: line, column: column, group: m.Win.ActiveGroup()}
+	if m.findInFiles == nil {
+		return cmd
+	}
+	m.findInFiles.SetOptions(false, false, false)
+	m.findInFiles.SetQuery(query)
+	m.findInFiles.SelectQuery()
+	return tea.Batch(cmd, m.findInFiles.ScheduleSearch())
+}
+
+// goToFileLanding is the cited position Go to File results open at.
+type goToFileLanding struct {
+	catalog      *workspace.BrowserCatalog
+	external     bool
+	line, column int
+	group        window.GroupID
 }
 
 func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
@@ -43,16 +75,25 @@ func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
 	if fw := m.focusedPopup(); fw != nil {
 		inside = fw.ID == findInFilesWindowID || fw.ID == replaceInFilesWindowID
 	}
+	if search != nil && (search.Mode() == findinfiles.ModeFiles) != (mode == findinfiles.ModeFiles) {
+		// Go to File and Find in Files keep separate queries: close the other
+		// one through its normal lifecycle, which keeps the Find draft.
+		m.closeFindInFiles()
+		search = m.findInFiles
+	}
 	if search == nil {
 		search = findinfiles.New(m.Theme)
 		search.Open(root)
 		search.SetQuery(m.projectSearchDraft.query)
+		if mode == findinfiles.ModeFiles {
+			search.SetQuery("")
+		}
 		search.SetReplacement(m.projectSearchDraft.replacement)
 		opts := m.projectSearchDraft.options
 		search.SetOptions(opts.CaseSensitive, opts.WholeWord, opts.Regex)
 	}
 	seeded := false
-	if !inside && m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.HasSelection() {
+	if mode != findinfiles.ModeFiles && !inside && m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.HasSelection() {
 		query, regex := selectedSearchQuery(m.EditorState.Editor.SelectedText(), search.Regex())
 		search.SetQuery(query)
 		search.SetOptions(search.CaseSensitive(), search.WholeWord(), regex)
@@ -110,7 +151,11 @@ func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
 		if m.findInFiles != searchCopy {
 			return
 		}
-		m.projectSearchDraft = projectSearchDraft{query: searchCopy.Query(), replacement: searchCopy.Replacement(), options: searchCopy.Options()}
+		if searchCopy.Mode() != findinfiles.ModeFiles {
+			m.projectSearchDraft = projectSearchDraft{query: searchCopy.Query(), replacement: searchCopy.Replacement(), options: searchCopy.Options()}
+		}
+		m.goToFileLanding = goToFileLanding{}
+		m.retireFileSearchPreview()
 		m.ws.CancelProjectSearch()
 		m.findInFilesRequest = 0
 		m.findInFilesGen = 0
@@ -152,24 +197,53 @@ func (m *App) markProjectSearchDirty() {
 }
 
 func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
+	// Closing the window ends its landing; a chat reference's cited place
+	// applies to the file name results it offered.
+	landing := m.goToFileLanding
 	m.closeFindInFiles()
-	path, err := filepath.Abs(match.Path)
-	if err != nil {
-		m.Feedback.NotifyError("Cannot open " + match.RelativePath)
+	match.Path = m.chatFilePath(match.Path)
+	group := m.Win.ActiveGroup()
+	if landing.group != 0 {
+		group = landing.group
+	}
+	if !m.Win.HasGroup(group) {
 		return nil
 	}
-	match.Path = filepath.Clean(path)
-	// A result opens in the pane the user works in, even when another pane
-	// already shows the file.
-	group := m.Win.ActiveGroup()
 	m.unfocus()
-	cmd := m.openPaneFiles([]string{match.Path}, group)
+	cmd := m.openPaneFilesChecked(context.Background(), []string{match.Path}, group, true)
 	if cmd == nil {
 		return nil
 	}
 	return func() tea.Msg {
 		message := cmd().(paneFilesOpenedMsg)
+		// The worker resolves the core host's actual document identity. On a
+		// Windows core it can have backslashes even if search returned slashes.
+		if len(message.files) == 1 && message.files[0].err == nil {
+			match.Path = message.files[0].path
+		}
 		message.landing = &match
+		if match.NameOnly && landing.line > 0 {
+			message.filePosition = &editor.Position{Line: landing.line - 1, Col: max(0, landing.column-1)}
+		}
 		return message
 	}
+}
+
+type catalogSearchRows struct {
+	request findinfiles.SearchRequestMsg
+	rows    []fileio.ProjectSearchMatch
+	err     error
+}
+
+func (m *App) rankGoToFiles(request findinfiles.SearchRequestMsg, catalog *workspace.BrowserCatalog) tea.Cmd {
+	return m.clientIOCommand(context.Background(), func(ctx context.Context) tea.Msg {
+		files := make([]fileio.ProjectFile, 0, len(catalog.Entries))
+		for _, entry := range catalog.Entries {
+			if !entry.IsDir {
+				files = append(files, fileio.ProjectFile{Path: entry.Path, Rel: entry.Relative})
+			}
+		}
+		rows, err := fileio.SearchProjectFiles(ctx, files, request.Query, request.Options)
+		return catalogSearchRows{request, rows, err}
+	})
 }

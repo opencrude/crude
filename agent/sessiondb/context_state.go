@@ -72,7 +72,8 @@ func (e *ContextRevisionConflictError) Error() string {
 // PublishContext is the single SQLite transaction owner for current context,
 // recovery, local collaboration receipts, and compaction publication.
 func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
-	defer sessionWrites.Since("publish context", time.Now())
+	start := time.Now()
+	defer sessionWrites.Since("publish context", start)
 	if db == nil || p.SessionID == "" || p.AgentID == "" {
 		return ContextState{}, errors.New("sessiondb: invalid context publication")
 	}
@@ -80,6 +81,8 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		return ContextState{}, errors.New("sessiondb: context publication cannot append and replace together")
 	}
 	tx, err := db.Begin()
+	began := time.Now()
+	publicationStages.Observe("Start transaction", began.Sub(start))
 	if err != nil {
 		return ContextState{}, err
 	}
@@ -225,7 +228,11 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 			return ContextState{}, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	commitStart := time.Now()
+	publicationStages.Observe("Prepare and write", commitStart.Sub(began))
+	err = tx.Commit()
+	publicationStages.Since("Commit", commitStart)
+	if err != nil {
 		return ContextState{}, err
 	}
 	rememberContext(cacheKey, contextCacheEntry{revision: next.Revision, updatedAt: updatedAt, list: write.result})

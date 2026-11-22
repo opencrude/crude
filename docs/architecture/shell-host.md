@@ -335,7 +335,10 @@ boundaries, not evidence that all high-rate paths are incremental.
 
 `App.View()` returns `tea.View.Surface`, a drawable borrowing the completed
 compositor front grid until the next BeginFrame/Resize. Bubble Tea synchronously
-snapshots it before another Update may mutate buffers. UV `RenderBuffer.Replace`
+snapshots it before another Update may mutate buffers. For an immediately
+preceding, unmodified detached generation, only changed rows need conversion.
+An intervening resize, different producer, or consumed Sixel markers require a
+full snapshot. UV `RenderBuffer.Replace`
 compares the complete latest grid with the last flushed grid and marks changed
 row spans, preserving pending damage across skipped/coalesced frames. UV alone
 emits terminal escape output. Width, continuation cells, colors and attributes

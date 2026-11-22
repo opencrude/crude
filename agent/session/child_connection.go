@@ -198,7 +198,7 @@ func (r *SubAgentRunner) requestBoundary(handle *agent.SubAgentHandle, state *re
 			}
 		}
 		if r.sender != nil {
-			r.sender.SendAgentEventWithID("connection_changed", ttypes.TurnIdentity{
+			r.sender.SendAgentEventWithID("connection_changed", ttypes.TurnIdentity{ExecutionID: spec.ExecutionID,
 				Generation: live.TurnGeneration, ProviderID: p.ID, AccountID: spec.AccountID, ModelID: p.Model,
 			}, string(spec.ID))
 		}

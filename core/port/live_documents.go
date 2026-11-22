@@ -15,6 +15,7 @@ import (
 type LiveDocuments interface {
 	DocumentOwner() document.Owner
 	OpenDocument(context.Context, string) (document.Snapshot, error)
+	OpenExistingDocument(context.Context, string) (document.Snapshot, error)
 	SyncDocument(context.Context, string, uint64) (document.SyncResult, error)
 	EditDocument(context.Context, document.Change) (document.Receipt, error)
 	UndoDocument(context.Context, string, string, uint64, bool) (document.Receipt, error)

@@ -11,6 +11,7 @@ import (
 // BrowserCatalog is the neutral path snapshot shared by the file-tree picker
 // and the workspace-folder picker. It contains metadata only.
 type BrowserCatalog struct {
+	Root      string
 	Entries   []pathwalk.Entry
 	Visited   int
 	Skipped   int
@@ -43,7 +44,7 @@ func ScanBrowserPaths(ctx context.Context, req BrowserPathRequest) (BrowserCatal
 		SkipDir:         defaultBrowserSkipDir,
 	})
 	return BrowserCatalog{
-		Entries: cat.Entries, Visited: cat.Visited, Skipped: cat.Skipped,
+		Root: req.Root, Entries: cat.Entries, Visited: cat.Visited, Skipped: cat.Skipped,
 		Errors: cat.Errors, Truncated: cat.Truncated,
 	}, err
 }

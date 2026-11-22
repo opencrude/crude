@@ -713,7 +713,14 @@ The shell reads the core's retained actors at most once a second while a recent
 workspace collection is visible. This read does not open a saved workspace or
 read its database. Catalog refresh keeps its existing bounded worker. Activity
 does not reorder or reset a list; results from a previous workspace attachment
-cannot replace the current view.
+cannot replace the current view. A read that does not complete (for example a
+timeout while the core is busy) keeps the badges of the last completed read; it
+is not an observation of zero activity. An actor that is busy with a long step
+reports the last activity it sampled, so its badges do not blink off.
+
+A catalog read that runs out of time shows "Loading took too long. Try again."
+on Home and in the rail, never Go's deadline text. The catalog opens every saved
+workspace database, so its cost grows with the number of saved workspaces.
 
 - Rail destinations are Files, Agents, Recent Workspaces, Skills and MCP; workspace
   switching stays below Agents and remains available without leaving a nested

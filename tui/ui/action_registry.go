@@ -388,6 +388,20 @@ var defaultActions = []*ActionDef{
 		HintKey: "Ctrl+Alt+F",
 	},
 	{
+		ID:          "search.file.open",
+		Label:       "Go to File",
+		Description: "find a file by its name or path",
+		Icon:        "↗",
+		Category:    "File",
+		Bindings: []KeyBinding{
+			{Key: "ctrl+alt+y"},
+			{Key: "ctrl+alt+Y"},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'y'},
+			{Mod: tea.ModCtrl | tea.ModAlt, Code: 'Y'},
+		},
+		HintKey: "Ctrl+Alt+Y",
+	},
+	{
 		ID:          "search.project.replace",
 		Label:       "Replace in Files",
 		Description: "find and replace across the project",

@@ -70,7 +70,7 @@ type liveDocumentRefs struct {
 	counts map[string]int
 }
 
-func (r *liveDocumentRefs) open(ctx context.Context, path string) (document.Snapshot, error) {
+func (r *liveDocumentRefs) open(ctx context.Context, path string, existingOnly bool) (document.Snapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var s document.Snapshot
@@ -81,6 +81,8 @@ func (r *liveDocumentRefs) open(ctx context.Context, path string) (document.Snap
 			return document.Snapshot{}, errors.New("unnamed documents are unavailable")
 		}
 		s, err = untitled.OpenUntitledDocument(ctx, path)
+	} else if existingOnly {
+		s, err = r.live.OpenExistingDocument(ctx, path)
 	} else {
 		s, err = r.live.OpenDocument(ctx, path)
 	}

@@ -43,35 +43,42 @@ func (m *App) statusPanelProjection(view statusoverview.ViewID) statusoverview.P
 	return projection
 }
 
+type workspacePanelVisibility struct{ workspace, notices, problems bool }
+
 func (m *App) syncWorkspacePanels() {
 	if m.termDock == nil {
 		return
+	}
+	visible := workspacePanelVisibility{
+		workspace: m.panelShown(termdock.PanelWorkspace),
+		notices:   m.panelShown(termdock.PanelNotices),
+		problems:  m.panelShown(termdock.PanelProblems),
 	}
 	version := m.ws.LSPMgr().Version()
 	if m.ws.Status() != nil {
 		version += m.ws.Status().Version()
 	}
 	second := time.Now().Unix()
-	if version == m.workspacePanelLastVersion && second == m.workspacePanelLastSecond {
+	if version == m.workspacePanelLastVersion && second == m.workspacePanelLastSecond && visible == m.workspacePanelVisible {
 		return
 	}
-	m.workspacePanelLastVersion, m.workspacePanelLastSecond = version, second
+	m.workspacePanelLastVersion, m.workspacePanelLastSecond, m.workspacePanelVisible = version, second, visible
 	m.syncOpenTabStats()
-	if m.panelShown(termdock.PanelWorkspace) {
+	if visible.workspace {
 		m.refreshWorkspaceSessions(false)
+		m.syncStatusPanel(termdock.PanelWorkspace, statusoverview.ViewTabs)
 	}
-	if m.problemsScreen != nil {
+	if visible.notices {
+		m.syncStatusPanel(termdock.PanelNotices, statusoverview.ViewNotifications)
+	}
+	if visible.problems && m.problemsScreen != nil {
 		m.problemsScreen.SetModel(m.problemsModel())
 	}
-	for panelID, view := range map[string]statusoverview.ViewID{
-		termdock.PanelWorkspace: statusoverview.ViewTabs,
-		termdock.PanelNotices:   statusoverview.ViewNotifications,
-	} {
-		if content := m.termDock.Panel(panelID); content != nil {
-			if screen, ok := content.(*statusoverview.Surface); ok {
-				screen.SetProjection(m.statusPanelProjection(view))
-			}
-		}
+}
+
+func (m *App) syncStatusPanel(id string, view statusoverview.ViewID) {
+	if screen, ok := m.termDock.Panel(id).(*statusoverview.Surface); ok {
+		screen.SetProjection(m.statusPanelProjection(view))
 	}
 }
 
@@ -86,8 +93,6 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 	if panelID == termdock.PanelWorkspace {
 		m.refreshWorkspaceSessions(true)
 	}
-	m.workspacePanelLastVersion, m.workspacePanelLastSecond = 0, 0
-	m.syncWorkspacePanels()
 	if panelID == termdock.PanelTerminal && m.termDock.Empty() {
 		if terminals := m.terminalInfos(); len(terminals) > 0 {
 			m.focusTerminal(m.adoptRetainedTerminals(terminals))
@@ -112,9 +117,10 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 					m.ws.Status().MarkRead(notice.ID, true)
 				}
 			}
-			m.syncWorkspacePanels()
 		}
 	}
+	m.workspacePanelLastSecond = 0
+	m.syncWorkspacePanels()
 }
 
 func defaultWorkspacePanelHeight(panelID string) int {

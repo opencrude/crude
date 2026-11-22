@@ -28,8 +28,14 @@ func (w *Workspace) DocumentOwner() document.Owner {
 	return document.Owner{ClientID: owner.ClientID, Epoch: owner.Epoch}
 }
 func (w *Workspace) OpenDocument(ctx context.Context, path string) (document.Snapshot, error) {
+	return w.openDocument(ctx, path, false)
+}
+func (w *Workspace) OpenExistingDocument(ctx context.Context, path string) (document.Snapshot, error) {
+	return w.openDocument(ctx, path, true)
+}
+func (w *Workspace) openDocument(ctx context.Context, path string, existingOnly bool) (document.Snapshot, error) {
 	var out document.Snapshot
-	err := w.call(ctx, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path, WithEditorConfig: true}, &out)
+	err := w.call(ctx, coreprotocol.DocumentOpen, coreprotocol.DocumentOpenRequest{Path: path, WithEditorConfig: true, ExistingOnly: existingOnly}, &out)
 	if err == nil {
 		w.registerDocumentTopic(out.ID, path)
 	}
@@ -185,7 +191,7 @@ func (w *Workspace) startDocumentTopicLocked(client *coreclient.Client, id, path
 			var snapshot document.Snapshot
 			_, workspaceID := w.conn()
 			method := coreprotocol.DocumentOpen
-			var input coreprotocol.Value = &coreprotocol.DocumentOpenRequest{Path: path}
+			var input coreprotocol.Value = &coreprotocol.DocumentOpenRequest{Path: path, ExistingOnly: true}
 			if document.IsUntitledID(id) {
 				method, input = coreprotocol.DocumentOpenUntitled, &coreprotocol.DocumentReadRequest{ID: id}
 			}

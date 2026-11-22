@@ -77,8 +77,9 @@ uses ConPTY; Windows runtime behavior requires Windows verification beyond
 cross-compilation. Existing command tools remain available. Requests for
 escalation and interactive input pass through the permission system.
 
-GPT `update_plan` uses the upstream step/status snapshot schema. The adapter
-writes the existing declarative plan store; IDs/revisions are host-owned and
+GPT `update_plan` uses the upstream step/status snapshot schema without a
+revision field. The adapter writes the existing declarative plan store;
+IDs/revisions are host-owned and
 removed steps remain cancelled in the audit record. The model does not have to
 invent Crude-specific plan IDs to follow its upstream guide.
 

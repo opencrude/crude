@@ -309,6 +309,13 @@ func NormalizeLSP(s LSPSettings) LSPSettings {
 	return s
 }
 
+// WorkspaceAnalysisChoice is the merged analysis setting. Trust never inherits
+// from application preferences, even a forged or accidentally populated
+// application projection, so it needs only the workspace overlay.
+func WorkspaceAnalysisChoice(ws WorkspaceOverrides) WorkspaceAnalysisSettings {
+	return workspaceAnalysisChoice(ws.Analysis)
+}
+
 // MergeAppWorkspace returns application settings with workspace overrides
 // applied field by field. Any leaf the workspace does not name inherits from
 // the application layer, so later app-level edits keep flowing through.
@@ -319,9 +326,7 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	applySparse(&out.Theme, ws.Theme)
 	applySparse(&out.Editor, ws.Editor)
 	applySparse(&out.LSP, ws.LSP)
-	// Trust never inherits from application preferences, even a forged or
-	// accidentally populated application projection.
-	out.Analysis = workspaceAnalysisChoice(ws.Analysis)
+	out.Analysis = WorkspaceAnalysisChoice(ws)
 	out.Prediction = DefaultWorkspacePredictionSettings()
 	if choice, err := DecodeWorkspacePredictionSettings(ws.Prediction); err == nil {
 		out.Prediction = choice

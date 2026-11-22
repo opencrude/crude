@@ -639,6 +639,10 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 }
 
 type actor struct {
+	// activity is the last activity this actor's goroutine sampled for the
+	// workspace overview. A read that finds the actor busy reports it instead
+	// of dropping the workspace, so badges do not blink off during long steps.
+	activity atomic.Pointer[workspace.WorkspaceActivity]
 	// statusVersion is the status-center version last announced to shells.
 	statusVersion uint64
 	lspVersion    uint64

@@ -1,6 +1,7 @@
 package compositor
 
 import (
+	"slices"
 	"unicode/utf8"
 
 	"crude/tui/bidi"
@@ -23,19 +24,26 @@ func (c *Compositor) CurrentSurface() uv.Surface {
 	if cap(c.direct.row) < c.width {
 		c.direct.row = make([]uv.Cell, c.width)
 	}
-	return cellSurface{buffer: c.front, row: c.direct.row[:c.width], token: uv.SnapshotToken{Owner: &c.direct.owner, Generation: c.direct.generation}}
+	return cellSurface{buffer: c.front, previous: c.back, base: c.direct.base,
+		row: c.direct.row[:c.width], token: uv.SnapshotToken{Owner: &c.direct.owner, Generation: c.direct.generation}}
 }
 
 type directCells struct {
 	row        []uv.Cell
 	owner      uv.SnapshotOwner
 	generation uint64
+	// base names the generation whose cells the back buffer still holds, or
+	// zero once BeginFrame or Resize changed them.
+	base uint64
 }
 
 type cellSurface struct {
 	buffer *surface.CellBuffer
-	row    []uv.Cell
-	token  uv.SnapshotToken
+	// previous holds generation base, the publication before token.
+	previous *surface.CellBuffer
+	base     uint64
+	row      []uv.Cell
+	token    uv.SnapshotToken
 }
 
 func (s cellSurface) SnapshotToken() uv.SnapshotToken { return s.token }
@@ -58,41 +66,14 @@ func (s cellSurface) Draw(dst uv.Screen, area uv.Rectangle) {
 	rowOK = rowOK && area.Min.X == 0 && clip.Min.X == 0 &&
 		clip.Max.X == s.buffer.Width() && clip.Max.X == dst.Bounds().Max.X &&
 		len(s.row) == s.buffer.Width()
-	var previous cell.Cell
-	var style uv.Style
+	var conv directConverter
 	var out uv.Cell
-	haveStyle := false
 	for y := clip.Min.Y; y < clip.Max.Y && y-area.Min.Y < s.buffer.Height(); y++ {
 		row := s.buffer.Row(y - area.Min.Y)
 		// A complete, well-formed row can replace old graphemes atomically.
 		// Malformed or cropped rows retain UV's individual SetCell semantics.
 		if rowOK && completeCellRow(row) {
-			for x := 0; x < len(row); {
-				c := row[x]
-				if !haveStyle || c.FG != previous.FG || c.BG != previous.BG || c.Attr != previous.Attr {
-					style = directStyle(c)
-					previous, haveStyle = c, true
-				}
-				s.row[x] = uv.Cell{Content: terminalText(&c), Width: int(c.Width), Style: style, Link: directLink(c.Link)}
-				if c.Width == 1 {
-					// Filled backgrounds often occupy most of a row. Convert the
-					// run once, then bulk-copy UV values rather than reconstructing
-					// the same large cell at every column.
-					end := x + 1
-					for end < len(row) && row[end] == c {
-						end++
-					}
-					for n := 1; n < end-x; n *= 2 {
-						copy(s.row[x+n:end], s.row[x:x+n])
-					}
-					x = end
-					continue
-				}
-				end := x + int(c.Width)
-				for x++; x < end; x++ {
-					s.row[x] = uv.Cell{}
-				}
-			}
+			conv.row(s.row, row)
 			rows.SetCellRow(y, s.row)
 			continue
 		}
@@ -101,12 +82,79 @@ func (s cellSurface) Draw(dst uv.Screen, area uv.Rectangle) {
 			if c.Width == 0 {
 				continue
 			}
-			if !haveStyle || c.FG != previous.FG || c.BG != previous.BG || c.Attr != previous.Attr {
-				style = directStyle(c)
-				previous, haveStyle = c, true
-			}
-			out = uv.Cell{Content: terminalText(&c), Width: int(c.Width), Style: style, Link: directLink(c.Link)}
+			out = uv.Cell{Content: terminalText(&c), Width: int(c.Width), Style: conv.style(c), Link: directLink(c.Link)}
 			dst.SetCell(x, y, &out)
+		}
+	}
+}
+
+// DrawSince converts only rows that differ from the previous publication.
+// The renderer names the generation it holds; anything other than exactly
+// this surface's base, a full-width row screen or complete changed rows is
+// refused so the renderer redraws the whole snapshot.
+func (s cellSurface) DrawSince(dst uv.Screen, area uv.Rectangle, held uv.SnapshotToken) bool {
+	if s.previous == nil || s.base == 0 || held.Owner != s.token.Owner || held.Generation != s.base {
+		return false
+	}
+	rows, ok := dst.(cellRowScreen)
+	w, h := s.buffer.Width(), s.buffer.Height()
+	if !ok || area != uv.Rect(0, 0, w, h) || dst.Bounds() != area || len(s.row) != w ||
+		s.previous.Width() != w || s.previous.Height() != h {
+		return false
+	}
+	var conv directConverter
+	for y := 0; y < h; y++ {
+		row := s.buffer.Row(y)
+		if slices.Equal(row, s.previous.Row(y)) {
+			continue
+		}
+		if !completeCellRow(row) {
+			return false
+		}
+		conv.row(s.row, row)
+		rows.SetCellRow(y, s.row)
+	}
+	return true
+}
+
+// directConverter turns producer cells into UV cells, reusing the last style
+// conversion across runs of equal colors and attributes.
+type directConverter struct {
+	previous  cell.Cell
+	converted uv.Style
+	valid     bool
+}
+
+func (d *directConverter) style(c cell.Cell) uv.Style {
+	if !d.valid || c.FG != d.previous.FG || c.BG != d.previous.BG || c.Attr != d.previous.Attr {
+		d.converted = directStyle(c)
+		d.previous, d.valid = c, true
+	}
+	return d.converted
+}
+
+// row converts one complete, well-formed source row into out.
+func (d *directConverter) row(out []uv.Cell, row []cell.Cell) {
+	for x := 0; x < len(row); {
+		c := row[x]
+		out[x] = uv.Cell{Content: terminalText(&c), Width: int(c.Width), Style: d.style(c), Link: directLink(c.Link)}
+		if c.Width == 1 {
+			// Filled backgrounds often occupy most of a row. Convert the
+			// run once, then bulk-copy UV values rather than reconstructing
+			// the same large cell at every column.
+			end := x + 1
+			for end < len(row) && row[end] == c {
+				end++
+			}
+			for n := 1; n < end-x; n *= 2 {
+				copy(out[x+n:end], out[x:x+n])
+			}
+			x = end
+			continue
+		}
+		end := x + int(c.Width)
+		for x++; x < end; x++ {
+			out[x] = uv.Cell{}
 		}
 	}
 }

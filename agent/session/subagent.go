@@ -322,6 +322,10 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		}
 	}
 
+	spec.SettingsRole = category
+	if profileName != "" {
+		spec.SettingsRole = "profile/" + profileName
+	}
 	profileInstructions := r.resolveProfile(profileName, category, &spec)
 	connection, err := parseConnectionRequest(params)
 	if err != nil {
@@ -662,6 +666,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 	a.ContextCompactionPercent = agent.CompactionPercentSetting(spec.ContextCompactionPercent)
 	a.CompactionRetentionTokens = agent.RetentionSetting(spec.ContextRetentionTokens)
+	r.bindChildLiveSettings(a, cfg, spec)
 	a.AgentID = spec.ID
 	a.TurnGeneration = 1
 	a.Depth = spec.Depth
@@ -1160,6 +1165,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	live.CommandPolicy = safety.CommandPolicyFromSettings(cfg.Safety)
 	live.ContextCompactionPercent = agent.CompactionPercentSetting(spec.ContextCompactionPercent)
 	live.CompactionRetentionTokens = agent.RetentionSetting(spec.ContextRetentionTokens)
+	r.bindChildLiveSettings(live, cfg, spec)
 	live.AgentID, live.TurnGeneration = spec.ID, parentCheckpoint.Status.Generation
 	live.Depth, live.ParentID, live.Policy = spec.Depth, spec.ParentID, spec.Policy
 	r.session.bindAgentPermissionPolicy(live)
@@ -1368,7 +1374,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			"parent_id":      string(handle.Spec.ParentID),
 			"parent_tool_id": handle.Spec.ParentToolCallID,
 		}, string(handle.Spec.ID))
-		r.sender.SendAgentEventWithID("turn_started", ttypes.TurnIdentity{
+		r.sender.SendAgentEventWithID("turn_started", ttypes.TurnIdentity{ExecutionID: handle.Spec.ExecutionID,
 			Generation: 1,
 			ProviderID: handle.Spec.Provider,
 			AccountID:  handle.Spec.AccountID,
@@ -2038,6 +2044,7 @@ func childTerminalPublication(
 		turnIdentity.ProviderID = handle.Spec.Provider
 		turnIdentity.AccountID = handle.Spec.AccountID
 		turnIdentity.ModelID = handle.Spec.Model
+		turnIdentity.ExecutionID = handle.Spec.ExecutionID
 	}
 	assignmentSeen := len(existing) > 0
 	baseSystemSkipped := false
@@ -2074,6 +2081,7 @@ func childTerminalPublication(
 					meta.RunID = runID
 				}
 			}
+			meta.ExecutionID = turnIdentity.ExecutionID
 			meta.TurnGeneration = turnIdentity.Generation
 			meta.ProviderID, meta.AccountID, meta.ModelID = turnIdentity.ProviderID, turnIdentity.AccountID, turnIdentity.ModelID
 		}

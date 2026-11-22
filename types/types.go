@@ -20,6 +20,7 @@ import (
 // a lifecycle field here automatically includes it in JSON persistence; TUI
 // rendering caches and selection state deliberately live elsewhere.
 type ConversationMessage struct {
+	ExecutionID     string                             `json:"execution_id,omitempty"`
 	InternalID      string                             `json:"internal_id,omitempty"`
 	Role            string                             `json:"role"`
 	Origin          provider.MessageOrigin             `json:"origin,omitempty"`
@@ -89,10 +90,11 @@ type ConversationMessage struct {
 // starts. Settings affect later turns; they never rewrite this identity on
 // messages already produced by an admitted turn.
 type TurnIdentity struct {
-	Generation uint64
-	ProviderID string
-	AccountID  string
-	ModelID    string
+	ExecutionID string
+	Generation  uint64
+	ProviderID  string
+	AccountID   string
+	ModelID     string
 }
 
 const (
@@ -1065,6 +1067,7 @@ type CompactResultMsg struct {
 }
 
 type ChatMessage struct {
+	ExecutionID     string
 	InternalID      string
 	Role            string
 	Origin          provider.MessageOrigin

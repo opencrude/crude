@@ -152,7 +152,7 @@ func (m *App) requestProjectTools(selection types.ProjectToolSetupRequest, origi
 	if m.ws == nil || m.projectTools.request != nil {
 		return nil
 	}
-	if !m.ws.LoadAppSettings().Analysis.Trusted() {
+	if !m.ws.AnalysisSettings().Trusted() {
 		if selection.Explicit && m.Feedback != nil {
 			m.Feedback.NotifyInfo("Trust this folder before setting up project tools.")
 		}
@@ -280,7 +280,7 @@ func (m *App) handleProjectToolsMessage(msg tea.Msg) (bool, tea.Cmd) {
 			m.closeProjectTools()
 			*state = projectToolsState{workspace: m.ws, generation: m.workspaceSwitchGen.Load()}
 		}
-		if state.request != nil || m.ws == nil || m.ws.LSPMgr() == nil || !m.ws.LoadAppSettings().Analysis.Trusted() ||
+		if state.request != nil || m.ws == nil || m.ws.LSPMgr() == nil || !m.ws.AnalysisSettings().Trusted() ||
 			m.width == 0 || m.height == 0 || m.overlayHost == nil || len(m.overlayHost.All()) != 0 ||
 			m.workspaceAttachPending || m.sessionLifecyclePending {
 			return false, nil

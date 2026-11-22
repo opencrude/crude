@@ -227,7 +227,7 @@ func TestGitHunkStageKeepsRepositoryLineEndings(t *testing.T) {
 }
 
 func TestParseGitStatusZ(t *testing.T) {
-	status, err := parseGitStatusZ([]byte("R  new.go\x00old.go\x00 M a b.txt\x00?? dir/u.txt\x00UU c.go\x00AA d.go\x00!! ignored\x00"))
+	status, err := parseGitStatusZ([]byte("2 R. N... 100644 100644 100644 a b R100 new.go\x00old.go\x001 .M N... 100644 100644 100644 a b a b.txt\x00? dir/u.txt\x00u UU N... 0 0 0 0 a b c c.go\x00u AA N... 0 0 0 0 a b c d.go\x00! ignored\x00"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestParseGitStatusZ(t *testing.T) {
 	if _, ok := status["ignored"]; ok || len(status) != 5 {
 		t.Fatalf("status = %#v", status)
 	}
-	if _, err := parseGitStatusZ([]byte("R  new.go\x00")); err == nil {
+	if _, err := parseGitStatusZ([]byte("2 R. N... 0 0 0 a b R100 new.go\x00"), nil); err == nil {
 		t.Fatal("rename without source accepted")
 	}
 }

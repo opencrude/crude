@@ -127,6 +127,37 @@ For the whole repository in the same session, use
 `python scripts/test_go.py --race`. The shared runner limits concurrent package
 binaries and keeps the same exhaustive groups on both native platforms.
 
+### Windows antivirus quarantines a Go build
+
+Bitdefender can quarantine an executable that Go just built, as a "potentially
+unwanted application" named `Generic.Application.CoinMiner.1.<id>`. This is a
+false positive. It is not caused by Go's `crypto` packages, so do not remove or
+replace dependencies to avoid it. The
+[Go FAQ](https://go.dev/doc/faq#virus) describes the same class of problem.
+
+Evidence from 2026-11-22 (Bitdefender quarantine records and probes):
+
+- Three `go run` helpers that linked `crude/workspace` were quarantined from the
+  Go build cache 98–128 s after each build. Each detection had a different ID.
+  Go keeps `go run` executables in the build cache; test binaries are deleted
+  when their run ends.
+- No `crude.exe` build and no test binary was quarantined, although they link
+  the same packages.
+- These probes were not quarantined: standard-library cryptography only (TLS,
+  X.509, ECDSA, RSA, AES-GCM, SHA-2, SHA-3, ML-KEM); only the extra primitives
+  that `crude/workspace` links (secp256k1, RIPEMD-160, Argon2, BLAKE2b, Keccak,
+  CPUID and WMI CPU queries); and a rebuild of the quarantined helper.
+
+To stop the interruptions, add an antivirus exception for the folder that
+`go env GOCACHE` reports (normally `%LOCALAPPDATA%\go-build`). Test binaries
+are built under `go env GOTMPDIR`, or `%TEMP%` when it is empty. To cover them
+without excluding all of `%TEMP%`, create a dedicated folder, set
+`go env -w GOTMPDIR=<folder>` and add an exception for that folder too. In
+Bitdefender, use **Protection → Antivirus → Open → Settings → Manage
+exceptions → Add an exception**, and enable the on-access and on-demand scans
+for the exception. Report the detection to the antivirus vendor as a false
+positive.
+
 ### When a test fails only under `-race`
 
 The race detector slows every goroutine several times, so it exposes ordering

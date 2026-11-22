@@ -38,11 +38,9 @@ func TestPlanningAdaptersReplaceCleanGoalAndPreserveHistory(t *testing.T) {
 			first := decode(result.Content)
 			replacement := params("New goal", "New work")
 			replacement["replace"] = true
+			// Revisions are host-owned: a stale model value is ignored and
+			// cannot strand the replacement.
 			replacement["revision"] = 0
-			if _, err := s.executePlanTool(t.Context(), "update_plan", replacement); err == nil {
-				t.Fatal("stale replacement succeeded")
-			}
-			replacement["revision"] = float64(first.Revision) // JSON tool transport number
 			result, err = s.executePlanTool(t.Context(), "update_plan", replacement)
 			if err != nil {
 				t.Fatal(err)
@@ -132,27 +130,54 @@ func TestExecutePlanTool_GetReturnsActive(t *testing.T) {
 	}
 }
 
-func TestExecutePlanTool_RevisionConflictReturnsPlan(t *testing.T) {
+// Revisions are host-owned. A model that lost track of the revision (after
+// compaction, or from a stale checkpoint) used to receive a conflict and had
+// to call get_plan before it could recover. The owning agent is the plan's only
+// writer, so its update applies to the current revision.
+func TestExecutePlanTool_UpdateNeedsNoModelRevision(t *testing.T) {
 	s := newTestSessionForPlan(t)
-	_, _ = s.executePlanTool(context.Background(), "update_plan", map[string]any{
-		"plan_id": "plan-1", "objective": "O", "status": "active",
-		"steps": []any{map[string]any{"id": "a", "description": "A", "status": "pending"}},
-	})
-	// Revision 99 does not match current revision 1 -> structured tool error
-	// carrying the canonical plan.
+	steps := []any{map[string]any{"id": "a", "description": "A", "status": "pending"}}
+	if _, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id": "plan-1", "objective": "O", "status": "active", "steps": steps,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, params := range []map[string]any{
+		{"plan_id": "plan-1", "objective": "O2", "steps": steps},
+		{"plan_id": "plan-1", "revision": 99, "objective": "O3", "steps": steps},
+	} {
+		result, err := s.executePlanTool(context.Background(), "update_plan", params)
+		if err != nil {
+			t.Fatalf("update %v failed: %v, result=%s", params, err, result.Content)
+		}
+		var updated plan.Plan
+		if err := json.Unmarshal([]byte(result.Content), &updated); err != nil {
+			t.Fatal(err)
+		}
+		if updated.Objective != params["objective"] {
+			t.Fatalf("objective = %q, want %q", updated.Objective, params["objective"])
+		}
+	}
+	if current, err := s.plans.Load().Get(context.Background(), "plan-1"); err != nil || current.Revision != 3 {
+		t.Fatalf("plan = %+v, %v; want revision 3", current, err)
+	}
+}
+
+// A second plan while one is open names the open plan and the exact fix, so
+// the model does not have to discover the plan ID with another call.
+func TestExecutePlanTool_SecondOpenPlanNamesTheOpenPlan(t *testing.T) {
+	s := newTestSessionForPlan(t)
+	steps := []any{map[string]any{"id": "a", "description": "A", "status": "pending"}}
+	if _, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id": "first", "objective": "O", "steps": steps,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	result, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
-		"plan_id": "plan-1", "revision": 99, "objective": "O2", "status": "active",
-		"steps": []any{map[string]any{"id": "a", "description": "A", "status": "pending"}},
+		"plan_id": "second", "objective": "P", "steps": steps,
 	})
-	if err == nil {
-		t.Fatal("expected revision conflict error")
-	}
-	var response map[string]any
-	if err := json.Unmarshal([]byte(result.Content), &response); err != nil {
-		t.Fatalf("conflict response not JSON: %v", err)
-	}
-	if response["error"] != "revision_conflict" || response["current_plan"] == nil {
-		t.Errorf("conflict response = %#v", response)
+	if err == nil || !containsString(result.Content, `\"first\"`) || !containsString(result.Content, "replace=true") {
+		t.Fatalf("second open plan: err=%v content=%s", err, result.Content)
 	}
 }
 

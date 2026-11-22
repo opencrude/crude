@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"crude/core/projectpath"
@@ -105,7 +106,10 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			return bad(err)
 		}
 		return func(ctx context.Context) coreprotocol.Response {
-			value, err := docs.Open(owner, input.Path)
+			value, err := docs.OpenPath(owner, input.Path, input.ExistingOnly)
+			if input.ExistingOnly && errors.Is(err, os.ErrNotExist) {
+				return fault(request, coreprotocol.FaultFileNotFound, "The file no longer exists.")
+			}
 			if err == nil && input.WithEditorConfig {
 				path, choices, readErr := docs.EditorConfig(ctx, owner, value.ID)
 				config := &document.OpenConfiguration{Path: path, Choices: choices}

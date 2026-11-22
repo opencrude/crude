@@ -36,6 +36,9 @@ type workspaceActivityResultMsg struct {
 	generation uint64
 	seq        uint64
 	counts     map[string]workspace.WorkspaceActivity
+	// failed reports a read that did not complete (for example a timeout
+	// while the core was busy). It is not an observation of zero activity.
+	failed bool
 }
 
 func (m *App) cancelWorkspaceActivity() {
@@ -79,9 +82,8 @@ func (m *App) workspaceActivityCmd(now time.Time) tea.Cmd {
 	return m.clientIOCommand(ctx, func(ctx context.Context) tea.Msg {
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		if counts, err := reader.ReadWorkspaceActivity(ctx); err == nil {
-			result.counts = counts
-		}
+		counts, err := reader.ReadWorkspaceActivity(ctx)
+		result.counts, result.failed = counts, err != nil
 		return result
 	})
 }
@@ -95,8 +97,12 @@ func (m *App) applyWorkspaceActivityResult(msg workspaceActivityResultMsg) {
 	s.cancel()
 	s.cancel = nil
 	if !m.workspaceActivityVisible() {
-		msg.counts = nil
+		msg.counts, msg.failed = nil, false
 		s.due = time.Time{}
+	}
+	if msg.failed {
+		// Keep the badges of the last completed read; the next poll retries.
+		return
 	}
 	if !maps.Equal(msg.counts, s.counts) {
 		m.installWorkspaceActivity(msg.counts)

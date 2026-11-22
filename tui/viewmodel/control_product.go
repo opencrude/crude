@@ -218,6 +218,20 @@ func (m *App) handleProductControl(msg shellport.ControlRequestMsg) (tea.Cmd, bo
 		return m.awaitShellControl(msg, func() tea.Msg { return productJobStopped{err: run()} }, nil), true
 	case "editor.actions", "editor.action", "editor.indentation":
 		return m.handleEditorActionControl(msg)
+	case "project.go_to_file":
+		var in struct {
+			Query string `json:"query"`
+		}
+		if err := decodeShellInput(r.Input, &in); err != nil {
+			return invalid(err)
+		}
+		cmd := m.openGoToFile(in.Query, 0, 0)
+		if m.findInFiles == nil {
+			return fail(control.Unavailable, "file search unavailable")
+		}
+		result.State = control.Admitted
+		m.forceFrame()
+		return tea.Batch(cmd, m.replyShellControl(msg, result)), true
 	case "editor.find", "project.search_open":
 		var in struct {
 			Replace *bool `json:"replace"`

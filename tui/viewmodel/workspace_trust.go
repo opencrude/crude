@@ -41,7 +41,7 @@ func (m *App) openWorkspaceTrustPrompt() tea.Cmd {
 	if !m.canOpenWorkspaceTrustPrompt() {
 		return nil
 	}
-	m.showWorkspaceTrustPrompt(m.ws.LoadAppSettings().Analysis.DecisionNeeded())
+	m.showWorkspaceTrustPrompt(m.ws.AnalysisSettings().DecisionNeeded())
 	return nil
 }
 
@@ -60,7 +60,7 @@ func (m *App) maybeOpenWorkspaceTrustPrompt() {
 	state := &m.onboarding.trust
 	if m.canOpenWorkspaceTrustPrompt() && len(m.pendingOperationIssues) == 0 &&
 		(state.askedOwner != m.ws || state.askedGen != m.workspaceSwitchGen.Load()) &&
-		m.ws.LoadAppSettings().Analysis.DecisionNeeded() {
+		m.ws.AnalysisSettings().DecisionNeeded() {
 		m.showWorkspaceTrustPrompt(true)
 	}
 }
@@ -139,7 +139,7 @@ func (m *App) handleWorkspaceTrustMessage(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		return true, nil
 	case types.TickMsg:
-		if p := state.prompt; p != nil && p.undecided && !p.busy && p.owner == m.ws && p.generation == m.workspaceSwitchGen.Load() && !m.ws.LoadAppSettings().Analysis.DecisionNeeded() {
+		if p := state.prompt; p != nil && p.undecided && !p.busy && p.owner == m.ws && p.generation == m.workspaceSwitchGen.Load() && !m.ws.AnalysisSettings().DecisionNeeded() {
 			m.overlayHost.Close(ui.OverlayWorkspaceTrust)
 		}
 		m.maybeOpenWorkspaceTrustPrompt()

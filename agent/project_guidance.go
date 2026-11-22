@@ -23,6 +23,40 @@ type projectGuidance struct {
 	digest        string
 	basePrompt    string
 	initialPrompt string
+	// supersedes is the epoch prompt a checkpoint replaced; requests built
+	// from it receive the checkpoint's prompt.
+	supersedes string
+}
+
+// GuidanceEpoch is the project guidance that one context generation started
+// with. Codex and Claude Code load project instructions when a context starts
+// or is compacted and send later changes as appended messages, because any
+// change to the system prompt makes the provider re-read the whole history
+// without cache. The session keeps the epoch of a finished run and gives it to
+// the next run of the same context generation.
+type GuidanceEpoch struct{ guidance projectGuidance }
+
+// checkpointEpoch is the guidance a checkpoint is made with and starts its
+// context with: the current complete guidance, including guidance admitted as
+// messages that the checkpoint replaces.
+func (g *projectGuidance) checkpointEpoch() *projectGuidance {
+	if g == nil {
+		return nil
+	}
+	next := *g
+	next.initialPrompt, next.supersedes = g.basePrompt+"\n\n"+g.rendered, g.initialPrompt
+	return &next
+}
+
+// GuidanceSnapshot returns the guidance epoch this agent ended with, or nil
+// when it read no project guidance.
+func (a *Agent) GuidanceSnapshot() *GuidanceEpoch {
+	if a.guidance == nil || a.guidance.set == nil {
+		return nil
+	}
+	g := *a.guidance
+	g.set = a.guidance.set.Clone()
+	return &GuidanceEpoch{guidance: g}
 }
 
 func (a *Agent) loadProjectGuidance(ctx context.Context, systemPrompt string) (string, error) {
@@ -30,8 +64,11 @@ func (a *Agent) loadProjectGuidance(ctx context.Context, systemPrompt string) (s
 		return systemPrompt, nil
 	}
 	if a.guidance != nil {
-		if systemPrompt == a.guidance.basePrompt || systemPrompt == a.guidance.initialPrompt {
-			return a.guidance.basePrompt + "\n\n" + a.guidance.rendered, nil
+		// Guidance admitted later in this context travels as appended
+		// messages; the system prompt stays the epoch's.
+		if systemPrompt == a.guidance.basePrompt || systemPrompt == a.guidance.initialPrompt ||
+			(a.guidance.supersedes != "" && systemPrompt == a.guidance.supersedes) {
+			return a.guidance.initialPrompt, nil
 		}
 		rendered, err := a.renderProjectGuidance(ctx, a.guidance.set, systemPrompt)
 		if err != nil {
@@ -40,6 +77,26 @@ func (a *Agent) loadProjectGuidance(ctx context.Context, systemPrompt string) (s
 		a.guidance = &projectGuidance{set: a.guidance.set, digest: a.guidance.digest, basePrompt: systemPrompt, rendered: rendered,
 			initialPrompt: systemPrompt + "\n\n" + rendered}
 		return a.guidance.initialPrompt, nil
+	}
+	if epoch := a.GuidanceEpoch; epoch != nil && epoch.guidance.set != nil &&
+		(systemPrompt == epoch.guidance.basePrompt || systemPrompt == epoch.guidance.initialPrompt) {
+		g := epoch.guidance
+		g.set = epoch.guidance.set.Clone()
+		// Rereading every known scope finds edited, created and deleted files.
+		changed, err := g.set.AddPaths(ctx, append([]string{a.WorkDir}, a.GuidancePaths...))
+		if err != nil {
+			return "", err
+		}
+		if changed {
+			rendered, err := a.renderProjectGuidance(ctx, g.set, g.basePrompt)
+			if err != nil {
+				return "", err
+			}
+			g.rendered, g.digest = rendered, g.set.Digest()
+			a.pendingGuidanceUpdate = rendered
+		}
+		a.guidance = &g
+		return g.initialPrompt, nil
 	}
 	set, err := rootprompt.DiscoverGuidance(ctx, a.WorkDir, a.GuidancePaths)
 	if err != nil {

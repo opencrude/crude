@@ -881,10 +881,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return
 	}
 	turnIdentity := ttypes.TurnIdentity{
-		Generation: turnGeneration,
-		ProviderID: turnProvider.ID,
-		AccountID:  turnProvider.AccountID,
-		ModelID:    turnProvider.Model,
+		ExecutionID: sourceExecutionID,
+		Generation:  turnGeneration,
+		ProviderID:  turnProvider.ID,
+		AccountID:   turnProvider.AccountID,
+		ModelID:     turnProvider.Model,
 	}
 	eventSource := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
 	// Plan mode is fixed for the whole turn; a toggle applies from the next one.
@@ -940,8 +941,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		recoveryState.snapshotTools(archive, active, inFlight)
 		return persistRecoveryBoundary(ctx, supervisor)
 	}
-	ag.ContextCompactionPercent = agent.CompactionPercentSetting(activeCfg.ContextCompactionPercent)
-	ag.CompactionRetentionTokens = agent.RetentionSetting(activeCfg.ContextRetentionTokens)
+	ag.ContextCompactionPercent, ag.CompactionRetentionTokens = rootCompactionChoice(activeCfg)
+	// The session's current settings, not the run-start copy, decide each
+	// step's passive settings: the user can change them while this run works.
+	// The compaction connection is rebuilt only when its category changed.
+	stepConfig := effectiveCfg // refreshed with tools under the same request-boundary fence
+	bindCurrentSettings := func(cfg *Config) {
+		s.bindLiveModelSettings(ag, cfg, func() (*Config, CategoryConfig) { return stepConfig, stepConfig.GetActiveDefaultCategory() })
+	}
+	bindCurrentSettings(effectiveCfg)
 	// The provider-reported size of the last request seeds the projection of
 	// the first one: local estimates can be off by half for dense content. The
 	// new human turn is already admitted after that request's final reply.
@@ -986,6 +994,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.delegationMu.Lock()
 		defer s.delegationMu.Unlock()
 		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
+		stepConfig = current
 		defs, notices := configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
 		if planMode {
 			category := current.GetActiveDefaultCategory()
@@ -1194,14 +1203,20 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		ag.MaxOutputTokens = category.ModelMaxOutput
 		ag.CompactionProvider = currentCompactionProvider
 		ag.CompactionMaxOutput = currentCompactionCfg.ModelMaxOutput
-		ag.ContextCompactionPercent = agent.CompactionPercentSetting(category.ContextCompactionPercent)
-		ag.CompactionRetentionTokens = agent.RetentionSetting(category.ContextRetentionTokens)
+		bindCurrentSettings(current)
+		ag.ContextCompactionPercent, ag.CompactionRetentionTokens = rootCompactionChoice(category)
 		turnIdentity = ttypes.TurnIdentity{
-			Generation: turnGeneration, ProviderID: currentProvider.ID,
+			ExecutionID: sourceExecutionID,
+			Generation:  turnGeneration, ProviderID: currentProvider.ID,
 			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,
 		}
 		return s.systemPromptForModelAtRoot(current.IsMultiAgentEnabled(), planMode, ag.Model, ag.WorkDir), nil
 	}
+	s.msgsMu.Lock()
+	if s.guidanceEpoch != nil && s.guidanceEpochGeneration == s.contextGeneration {
+		ag.GuidanceEpoch = s.guidanceEpoch
+	}
+	s.msgsMu.Unlock()
 	runResult := ag.RunSupervised(
 		historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages,
 		agent.SupervisedRunOptions{
@@ -1229,6 +1244,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
 	activeContext := runResult.Active
 	s.msgsMu.Lock()
+	// The run's system prompt belongs to the context generation current at its
+	// end: a checkpoint adopted during the run already started a new epoch.
+	s.guidanceEpoch, s.guidanceEpochGeneration = ag.GuidanceSnapshot(), s.contextGeneration
 	committed := append([]provider.ChatMessage(nil), s.activeContext...)
 	if retainsContextSource(committed, activeContext) {
 		activeContext = committed
@@ -1726,6 +1744,7 @@ func (s *Session) finalizeTurnLocked(
 			dm.ProviderID = turnIdentity.ProviderID
 			dm.AccountID = turnIdentity.AccountID
 			dm.ModelID = turnIdentity.ModelID
+			dm.ExecutionID = turnIdentity.ExecutionID
 		}
 		if m.Role != "system" {
 			dm = canonicalizeDisplayMeta(m, dm, rawToolArgs[toolResultKey(m)], len(s.msgs)+i, createdAt)
@@ -2239,4 +2258,9 @@ func inputMessage(message provider.ChatMessage, input provider.UserInput) provid
 		message.Visibility = provider.VisibilityContextOnly
 	}
 	return message
+}
+
+// rootCompactionChoice is the root agent's compaction choice in its category.
+func rootCompactionChoice(category CategoryConfig) (percent, retention int) {
+	return agent.CompactionPercentSetting(category.ContextCompactionPercent), agent.RetentionSetting(category.ContextRetentionTokens)
 }

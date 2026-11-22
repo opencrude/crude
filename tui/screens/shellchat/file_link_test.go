@@ -96,3 +96,14 @@ func BenchmarkDenseFileLinkHit(b *testing.B) {
 		})
 	}
 }
+
+func TestWideLinkContinuationClickIsNotASelection(t *testing.T) {
+	action := &ui.Action{ID: chatprojection.ChatWebOpenActionID, Payload: "https://example.test"}
+	s, h := newShellChatHost(t, []chatprojection.MessageRow{{ID: "wide", Lines: []string{"界"}, Native: []chatprojection.PaintLine{{Spans: []chatprojection.RowSpan{{Text: "界", Action: action}}}}}}, ComposeParams{InnerW: 40, Theme: theme.DefaultDark()}, 1)
+	x := s.layout.padLR + 1
+	h.Handle(tea.MouseClickMsg{X: x, Button: tea.MouseLeft})
+	r := h.Handle(tea.MouseReleaseMsg{X: x, Button: tea.MouseLeft})
+	if r.Action != action || s.IsSelecting() || s.SelectedText() != "" {
+		t.Fatal("clicking the second cell of a link must activate it without selecting")
+	}
+}

@@ -41,7 +41,8 @@ type ChatTogglePayload struct {
 // Height = len(Lines); RowPainter paints Lines[localRow] after compose/selection.
 // Native is parallel to Lines; shellchat paints those structured cells.
 type MessageRow struct {
-	ID string
+	ExecutionID string
+	ID          string
 	// Version identifies the render that produced Lines and Native. It
 	// changes whenever either is replaced and never repeats within one
 	// Renderer, so a consumer that derives data from the lines (text find)

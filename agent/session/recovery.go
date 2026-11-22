@@ -75,38 +75,27 @@ func (s *recoveryRunState) snapshot(archive, active []provider.ChatMessage) {
 	// every stable message identity already observed. Provider request projection
 	// may omit local display/reference/provenance fields from those prefix messages;
 	// never let that lossy wire copy replace the exact transcript-compatible bytes.
-	canonicalArchive := make(map[string]provider.ChatMessage, len(s.archive))
-	for _, message := range s.archive {
-		if message.InternalID != "" {
-			canonicalArchive[message.InternalID] = message
-		}
-	}
-	canonicalActive := make(map[string]provider.ChatMessage, len(s.active))
-	for _, message := range s.active {
-		if message.InternalID != "" {
-			canonicalActive[message.InternalID] = message
-		}
-	}
-	archive = retainCanonicalMessages(archive, canonicalArchive)
-	active = canonicalContextMessages(retainCanonicalMessages(active, canonicalActive))
+	archive = retainCanonicalMessages(archive, s.archive, false)
+	active = retainCanonicalMessages(active, s.active, true)
 	changed := !reflect.DeepEqual(s.archive, archive) || !reflect.DeepEqual(s.active, active)
-	s.archive = append([]provider.ChatMessage(nil), archive...)
-	s.active = append([]provider.ChatMessage(nil), active...)
+	s.archive, s.active = archive, active
 	// A completed round retires only its exact in-flight evidence. Unrelated
 	// snapshots (including panic/attention) must retain unfinished leaf results.
-	completed := make(map[string]bool)
-	for _, message := range active {
-		if message.Role == "tool" {
-			completed[message.ToolCallID] = true
+	if len(s.inFlightTools) != 0 {
+		completed := make(map[string]bool)
+		for i := range active {
+			if active[i].Role == "tool" {
+				completed[active[i].ToolCallID] = true
+			}
 		}
-	}
-	remaining := s.inFlightTools[:0]
-	for _, message := range s.inFlightTools {
-		if !completed[message.ToolCallID] {
-			remaining = append(remaining, message)
+		remaining := s.inFlightTools[:0]
+		for _, message := range s.inFlightTools {
+			if !completed[message.ToolCallID] {
+				remaining = append(remaining, message)
+			}
 		}
+		s.inFlightTools = remaining
 	}
-	s.inFlightTools = remaining
 	if changed {
 		s.sourceRevision++
 	}
@@ -120,11 +109,22 @@ func (s *recoveryRunState) snapshotTools(archive, active, inFlight []provider.Ch
 	s.mu.Unlock()
 }
 
-func retainCanonicalMessages(messages []provider.ChatMessage, canonical map[string]provider.ChatMessage) []provider.ChatMessage {
+// Only the result needs a new message array. Index the accepted source instead
+// of allocating another large ChatMessage for every key in both lists.
+func retainCanonicalMessages(messages, previous []provider.ChatMessage, active bool) []provider.ChatMessage {
+	index := make(map[string]int, len(previous))
+	for i := range previous {
+		if id := previous[i].InternalID; id != "" {
+			index[id] = i
+		}
+	}
 	result := append([]provider.ChatMessage(nil), messages...)
-	for i, message := range result {
-		if source, ok := canonical[message.InternalID]; ok {
-			result[i] = source
+	for i := range result {
+		if pos, ok := index[result[i].InternalID]; ok {
+			result[i] = previous[pos]
+		}
+		if active {
+			result[i] = canonicalContextMessage(result[i])
 		}
 	}
 	return result

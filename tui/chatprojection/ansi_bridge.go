@@ -108,6 +108,8 @@ func ansiRunToSpan(r rendering.AnsiRun, st ansiBridgeState) RowSpan {
 	span := RowSpan{Text: r.Text, Attr: r.Attr, Link: r.Link, Copy: r.Copy}
 	if r.Link.File() {
 		span.Action = &ui.Action{ID: ChatFileOpenActionID, Payload: r.Link.Target()}
+	} else if target := r.Link.Target(); target != "" {
+		span.Action = &ui.Action{ID: ChatWebOpenActionID, Payload: target}
 	}
 	if !r.FG.IsDefault() {
 		if role, ok := st.fgRoles[r.FG]; ok {

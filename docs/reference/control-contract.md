@@ -456,3 +456,10 @@ coverage, uninterrupted active-run survival across a crash, arbitrary-length
 conversation reliability or a promise of correct reasoning from every future
 model response. The extended journey explicitly requests compaction; it does not
 establish every automatic-compaction threshold or every provider failure mode.
+
+### Reading recent human prompts
+
+`history.prompts` with `mode: recent` and an exact `agent_id` reads public human
+inputs and steering newest first. Follow `next` within a page and then
+`source.next_scan` for older inputs. Use the returned prompt ID for full text.
+It does not read hidden context or attribute a steering message to a model.

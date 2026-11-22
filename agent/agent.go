@@ -97,8 +97,11 @@ type Agent struct {
 	ParentID                AgentID
 	WorkDir                 string
 	GuidancePaths           []string
-	MaxRetries              int
-	MaxOutputTokens         int
+	// GuidanceEpoch, when its base prompt matches the run's, keeps the system
+	// prompt of an earlier run of the same context generation.
+	GuidanceEpoch   *GuidanceEpoch
+	MaxRetries      int
+	MaxOutputTokens int
 	// ContextCompactionPercent is the user's compaction choice: 0 lets Crude
 	// decide from cost and capacity (the default), 1-100 compacts at that
 	// fullness of the window, and CompactionOff disables automatic compaction.
@@ -125,6 +128,10 @@ type Agent struct {
 	// BeforeFinish runs once per run when the model gives a final answer.
 	// Returned notices are appended and the run takes one more step.
 	BeforeFinish func() []provider.ChatMessage
+	// LiveSettings, when set, reads the owner's current passive settings
+	// before each step. They change no cached request prefix, so a change made
+	// while a run works applies at its next step without a cache miss.
+	LiveSettings func() LiveSettings
 	// RequestBoundary lets the owner apply a pending connection change (account,
 	// model, thinking effort) strictly between requests, before the step reads
 	// the provider. It reports whether the connection changed.
@@ -183,6 +190,9 @@ type Agent struct {
 	reportPublished     bool
 	preserveReportState bool
 	guidance            *projectGuidance
+	// pendingGuidanceUpdate is guidance that changed since the epoch's system
+	// prompt; the run appends it once as runtime context.
+	pendingGuidanceUpdate string
 
 	runFailure      error
 	runFailureKind  RecoveryFailureKind
@@ -313,4 +323,28 @@ func IsToolError(content string) bool {
 		}
 	}
 	return false
+}
+
+// LiveSettings are the user's settings a run applies between steps: they
+// change no system prompt, tool list or history bytes. Model, account,
+// thinking effort, tools and instructions are not here; they change the
+// cached prefix and apply at the next run or attempt.
+type LiveSettings struct {
+	CompactionPercent   int // as ContextCompactionPercent
+	RetentionTokens     int // as CompactionRetentionTokens
+	MaxOutputTokens     int
+	CompactionProvider  *provider.Provider
+	CompactionMaxOutput int
+}
+
+// applyLiveSettings adopts the owner's current passive settings and reports
+// whether any of them changed.
+func (a *Agent) applyLiveSettings(live LiveSettings) bool {
+	changed := live.CompactionPercent != a.ContextCompactionPercent || live.RetentionTokens != a.CompactionRetentionTokens ||
+		live.MaxOutputTokens != a.MaxOutputTokens || live.CompactionProvider != a.CompactionProvider ||
+		live.CompactionMaxOutput != a.CompactionMaxOutput
+	a.ContextCompactionPercent, a.CompactionRetentionTokens = live.CompactionPercent, live.RetentionTokens
+	a.MaxOutputTokens = live.MaxOutputTokens
+	a.CompactionProvider, a.CompactionMaxOutput = live.CompactionProvider, live.CompactionMaxOutput
+	return changed
 }

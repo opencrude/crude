@@ -487,9 +487,15 @@ func (c *StatusCenter) Notifications(includeDismissed bool) []ttypes.Notificatio
 }
 
 func (c *StatusCenter) UnreadCount() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	count := 0
-	for _, n := range c.Notifications(false) {
-		if !n.Read && !n.Transient {
+	for i := range c.notifications {
+		n := &c.notifications[i]
+		if !n.Dismissed && !n.Read && !n.Transient {
 			count++
 		}
 	}
@@ -506,9 +512,15 @@ func (c *StatusCenter) LatestUnread(minSeverity ttypes.StatusSeverity) (ttypes.N
 }
 
 func (c *StatusCenter) LatestTransient(now time.Time, maxAge time.Duration) (ttypes.NotificationRecord, bool) {
-	for _, n := range c.Notifications(false) {
-		if n.Transient && now.Sub(n.UpdatedAt) <= maxAge {
-			return n, true
+	if c == nil {
+		return ttypes.NotificationRecord{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for i := len(c.notifications) - 1; i >= 0; i-- {
+		n := &c.notifications[i]
+		if !n.Dismissed && n.Transient && now.Sub(n.UpdatedAt) <= maxAge {
+			return *n, true
 		}
 	}
 	return ttypes.NotificationRecord{}, false

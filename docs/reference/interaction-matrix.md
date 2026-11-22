@@ -26,6 +26,7 @@ Crude.
 |--------|-------------------|-------|
 | Command palette | Ctrl+Alt+P | Not Ctrl+P; tmux Shift issue. The single discovery surface for global commands and their shortcuts; there is no Help window. |
 | Find in Files | Ctrl+Alt+F | Not Ctrl+Shift+F under tmux 3.4 |
+| Go to File | Ctrl+Alt+Y | File-name mode of the Find in Files window; not Ctrl+Shift+N (new window in Windows Terminal) |
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 8-col activity rail (outer gutter plus padding before the panel left border) stays |
 | Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U, Ctrl+Alt+G | Files and Agents are rail destinations; Terminals and Git are bottom-dock destinations (footer pills). Rail and panel bodies expose destination-aware context menus |
