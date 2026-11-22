@@ -9,7 +9,6 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/types"
 )
 
 const selScrollInterval = 60 * time.Millisecond
@@ -391,7 +390,7 @@ func (s *Screen) handleSelectionTick() ui.EventResult {
 
 func selectionTickCmd() tea.Cmd {
 	return tea.Tick(selScrollInterval, func(t time.Time) tea.Msg {
-		return types.SelectionTickMsg(t)
+		return SelectionTickMsg(t)
 	})
 }
 
@@ -417,38 +416,38 @@ func (s *Screen) captureSelectionSource() {
 	}
 	ts.anchorSource, ts.pressedEndSource, ts.endSource, ts.sourceAnchored = a, trailing, b, aok && bok
 }
-func (s *textSelection) reflow(rows []chatprojection.MessageRow) {
-	if !s.selecting || !s.sourceAnchored {
+func (ts *textSelection) reflow(rows []chatprojection.MessageRow) {
+	if !ts.selecting || !ts.sourceAnchored {
 		return
 	}
-	a, ac, aok := chatprojection.LocateAnchor(rows, s.anchorSource)
-	b, bc, bok := chatprojection.LocateAnchor(rows, s.endSource)
+	a, ac, aok := chatprojection.LocateAnchor(rows, ts.anchorSource)
+	b, bc, bok := chatprojection.LocateAnchor(rows, ts.endSource)
 	if !aok || !bok {
-		s.Clear()
+		ts.Clear()
 		return
 	}
-	s.selAnchorLine, s.selAnchorCol, s.selEndLine, s.selEndCol = a, ac, b, bc
+	ts.selAnchorLine, ts.selAnchorCol, ts.selEndLine, ts.selEndCol = a, ac, b, bc
 	// The new layout can use a different CopyText instance for the same source.
-	s.anchorSource, _ = chatprojection.AnchorAt(rows, a, ac)
-	s.endSource, _ = chatprojection.AnchorAt(rows, b, bc)
-	s.pressedWidth = 0
-	if y, x, ok := chatprojection.LocateAnchor(rows, s.pressedEndSource); ok && y == a {
-		s.pressedWidth = max(0, x-ac)
-		s.pressedEndSource, _ = chatprojection.AnchorAt(rows, y, x)
+	ts.anchorSource, _ = chatprojection.AnchorAt(rows, a, ac)
+	ts.endSource, _ = chatprojection.AnchorAt(rows, b, bc)
+	ts.pressedWidth = 0
+	if y, x, ok := chatprojection.LocateAnchor(rows, ts.pressedEndSource); ok && y == a {
+		ts.pressedWidth = max(0, x-ac)
+		ts.pressedEndSource, _ = chatprojection.AnchorAt(rows, y, x)
 	}
 }
 
 // One semantic text owns its logical order even when table layout interleaves
 // neighboring cells between its wrapped rows. Copy and highlight use this same
 // range; mixed-source selections still collect the selected mapped runs.
-func (s *textSelection) sourceRange() (rendering.CopyRange, bool) {
-	a, b := s.anchorSource, s.endSource
-	if !s.selecting || !s.sourceAnchored || a.Source != b.Source || a.Offset == b.Offset {
+func (ts *textSelection) sourceRange() (rendering.CopyRange, bool) {
+	a, b := ts.anchorSource, ts.endSource
+	if !ts.selecting || !ts.sourceAnchored || a.Source != b.Source || a.Offset == b.Offset {
 		return rendering.CopyRange{}, false
 	}
 	// Table cells and bidi runs need not appear in source order. Choose the
 	// edge by source offsets once both endpoints identify the same source.
-	a = rendering.CharacterDragAnchor(a, s.pressedEndSource, b.Offset < a.Offset)
+	a = rendering.CharacterDragAnchor(a, ts.pressedEndSource, b.Offset < a.Offset)
 	source := rendering.CopyRange{Text: a.Source, Start: min(a.Offset, b.Offset), End: max(a.Offset, b.Offset)}
 	return source, source.Valid()
 }

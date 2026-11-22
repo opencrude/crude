@@ -61,7 +61,7 @@ func TestEscClearsSelectionBeforeClosing(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("second Esc did not request close")
 	}
-	if _, ok := cmd().(EditorCloseMsg); !ok {
+	if _, ok := cmd().(CloseMsg); !ok {
 		t.Fatal("second Esc is not the close request")
 	}
 }

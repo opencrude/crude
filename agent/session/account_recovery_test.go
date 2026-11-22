@@ -8,7 +8,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestResumeUnpinnedHistoryNeedsExplicitConnectionEvenAfterWorkspaceUpdate(t *testing.T) {
@@ -40,17 +40,17 @@ func TestResumeUnpinnedHistoryNeedsExplicitConnectionEvenAfterWorkspaceUpdate(t 
 	if resumed.ConnectionIssue() == nil {
 		t.Fatal("ordinary save silently selected another connection")
 	}
-	settings := types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}}
+	settings := setting.App{Accounts: cfg.Accounts, Agents: setting.Agents{Categories: map[string]setting.Category{CategoryDefault: {AccountID: "personal", Model: "m"}}}}
 	resumed.UpdateWorkspaceDefaults(settings)
 	if resumed.provider != nil || resumed.ConnectionIssue() == nil || resumed.SettingsSnapshot().AccountID != "removed-account" {
 		t.Fatalf("workspace account update rebound old session: provider=%v issue=%v settings=%+v", resumed.provider, resumed.ConnectionIssue(), resumed.SettingsSnapshot())
 	}
 	chosen := resumed.SettingsSnapshot()
-	chosen.SessionOverrides = map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}
+	chosen.SessionOverrides = map[string]setting.Category{CategoryDefault: {AccountID: "personal", Model: "m"}}
 	if err := resumed.HandleSettingsSave(chosen); err != nil {
 		t.Fatalf("explicit recovery: %v", err)
 	}
-	meta, err := sessiondb.GetMeta(resumed.DB())
+	meta, err := sessiondb.LoadMeta(resumed.DB())
 	if err != nil || meta.AccountID != "personal" || resumed.provider == nil || resumed.ConnectionIssue() != nil {
 		t.Fatalf("recovered connection not durable: meta=%+v provider=%v issue=%v err=%v", meta, resumed.provider, resumed.ConnectionIssue(), err)
 	}
@@ -96,23 +96,23 @@ func TestResumeRemovedAccountRetainsHistoryAndRecoversByExplicitSelection(t *tes
 	if before.AccountID != "work" || resumed.provider != nil {
 		t.Fatalf("session silently rebound: provider=%q account=%q bound=%v", before.ProviderID, before.AccountID, resumed.provider != nil)
 	}
-	if _, err := resumed.cfg.providerForCategory(resumed.cfg.GetActiveDefaultCategory()); !errors.Is(err, ErrAccountRequired) || !strings.Contains(err.Error(), "Choose another account") || strings.Contains(err.Error(), `"work"`) {
+	if _, err := resumed.cfg.providerForCategory(resumed.cfg.ActiveDefaultCategory()); !errors.Is(err, ErrAccountRequired) || !strings.Contains(err.Error(), "Choose another account") || strings.Contains(err.Error(), `"work"`) {
 		t.Fatalf("missing account constructed a provider: %v", err)
 	}
-	meta, err := sessiondb.GetMeta(resumed.DB())
+	meta, err := sessiondb.LoadMeta(resumed.DB())
 	if err != nil || meta.Provider != "openrouter" || meta.AccountID != "work" {
 		t.Fatalf("resume changed durable connection: %+v err=%v", meta, err)
 	}
 	// A deliberate settings save, unlike changed workspace defaults, is allowed
 	// to select a replacement and restore ability to construct the provider.
-	before.SessionOverrides = map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}
+	before.SessionOverrides = map[string]setting.Category{CategoryDefault: {AccountID: "personal", Model: "m"}}
 	if err := resumed.HandleSettingsSave(before); err != nil {
 		t.Fatalf("explicit replacement: %v", err)
 	}
 	if resumed.provider == nil || resumed.provider.AccountID != "personal" {
 		t.Fatalf("replacement not bound: %+v", resumed.provider)
 	}
-	meta, err = sessiondb.GetMeta(resumed.DB())
+	meta, err = sessiondb.LoadMeta(resumed.DB())
 	if err != nil || meta.AccountID != "personal" || meta.Provider != "openrouter" || meta.ID != id {
 		t.Fatalf("replacement metadata: %+v err=%v", meta, err)
 	}
@@ -128,11 +128,11 @@ func TestResumeRemovedAccountRetainsHistoryAndRecoversByExplicitSelection(t *tes
 	// A further explicit cross-provider switch must update both pieces of
 	// authoritative session metadata or a future resume reverts the provider.
 	switchSettings := again.SettingsSnapshot()
-	switchSettings.SessionOverrides = map[string]types.CategorySettings{CategoryDefault: {AccountID: "other", Model: "m"}}
+	switchSettings.SessionOverrides = map[string]setting.Category{CategoryDefault: {AccountID: "other", Model: "m"}}
 	if err := again.HandleSettingsSave(switchSettings); err != nil {
 		t.Fatalf("explicit provider switch: %v", err)
 	}
-	meta, err = sessiondb.GetMeta(again.DB())
+	meta, err = sessiondb.LoadMeta(again.DB())
 	if err != nil || meta.Provider != "anthropic" || meta.AccountID != "other" {
 		t.Fatalf("cross-provider switch metadata: %+v err=%v", meta, err)
 	}
@@ -166,7 +166,7 @@ func TestResumeIgnoresWorkspaceMainAgentAccountChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resumed.Close()
-	main := resumed.cfg.GetActiveDefaultCategory()
+	main := resumed.cfg.ActiveDefaultCategory()
 	if main.AccountID != "work" || resumed.provider == nil || resumed.provider.AccountID != "work" {
 		t.Fatalf("default switch redirected connection: %+v bound=%+v", main, resumed.provider)
 	}

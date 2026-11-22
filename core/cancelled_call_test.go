@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -26,14 +27,14 @@ type cancelledSemanticClient struct {
 	stops   atomic.Int32
 }
 
-func (c *cancelledSemanticClient) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+func (c *cancelledSemanticClient) RequestSignatureHelp(ctx context.Context, _ string, _, _ int, trigger insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
 	c.calls.Add(1)
 	retired := make(chan struct{})
 	c.entered <- retired
 	<-ctx.Done()
 	c.retired.Add(1)
 	close(retired)
-	return types.LSPSignatureHelp{}, ctx.Err()
+	return insight.LSPSignatureHelp{}, ctx.Err()
 }
 
 func (c *cancelledSemanticClient) Stop() error {
@@ -43,7 +44,7 @@ func (c *cancelledSemanticClient) Stop() error {
 
 type cancelledSemanticRuntime struct{ client *cancelledSemanticClient }
 
-func (r cancelledSemanticRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r cancelledSemanticRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	(semanticLSPRuntime{&r.client.semanticLSPClient}).NewClient(spec, root, admit)
 	return r.client
 }
@@ -63,9 +64,9 @@ func TestConnectedSemanticCancellationJoinsAndReleasesRetainedResults(t *testing
 	managers := make(chan *workspace.LSPManager, 1)
 	settings := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		w := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		w.LSPMgr.SetRuntime(cancelledSemanticRuntime{engine})
-		w.SetAppDefaults(types.AppSettings{LSP: settings})
+		w.SetAppDefaults(setting.App{LSP: settings})
 		managers <- w.LSPMgr
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -86,7 +87,7 @@ func TestConnectedSemanticCancellationJoinsAndReleasesRetainedResults(t *testing
 	}
 	manager := <-managers
 	if err := client.Call(ctx, attached.WorkspaceID, coreprotocol.WorkspaceOverridesSet,
-		&coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{
+		&coreprotocol.WorkspacePreferencesRequest{Edits: []setting.Edit{{
 			Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`),
 		}}}, nil); err != nil {
 		t.Fatal(err)

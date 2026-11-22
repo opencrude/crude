@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
 	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -240,7 +240,7 @@ func (m *smartIndentVisualModel) observeSmartIndent(phase int) error {
 		}
 		state := ed.DocumentState()
 		syntax, _ := ed.InsightStatus()
-		if syntax != types.InsightCurrent || state.PendingEdits != 0 || state.InFlight || state.UndoPending || state.HistoryQueued {
+		if syntax != insight.Current || state.PendingEdits != 0 || state.InFlight || state.UndoPending || state.HistoryQueued {
 			return fmt.Errorf("source/analysis/history not settled")
 		}
 		if ed.Value() != wants[phase] || v.Input.Value() != "Private editor draft." || v.focusTarget() != FocusEditor {

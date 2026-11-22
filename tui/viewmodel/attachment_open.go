@@ -13,9 +13,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -114,7 +114,7 @@ func (m *App) openHistoricalAttachment(key string) tea.Cmd {
 func (m *App) openAttachment(id string, reveal bool) tea.Cmd {
 	destination := m.attachmentDestination()
 	if reveal {
-		destination = types.AttachmentOpenFileManager
+		destination = setting.AttachmentOpenFileManager
 	}
 	return m.openAttachmentIn(id, destination)
 }
@@ -126,19 +126,19 @@ func (m *App) openAttachmentIn(id, destination string) tea.Cmd {
 	if store == nil {
 		return nil
 	}
-	ref, ok := store.GetReference(id)
+	ref, ok := store.Reference(id)
 	if !ok || !ref.Active() || m.ActiveSession == nil || ref.SessionID != m.ActiveSession.SessionID {
 		return nil
 	}
 	// Asked code opens at its place in the source; only Reveal leaves Crude.
-	if start, _, lines := ref.CodeLines(); lines && destination != types.AttachmentOpenFileManager {
+	if start, _, lines := ref.CodeLines(); lines && destination != setting.AttachmentOpenFileManager {
 		return m.openSourceLocation(ref.FilePath, start, 1)
 	}
 	return m.openReferenceIn(ref, false, destination)
 }
 
 func (m *App) openReferenceIn(ref sessiondb.Reference, readOnly bool, destination string) tea.Cmd {
-	if destination == types.AttachmentOpenCrude {
+	if destination == setting.AttachmentOpenCrude {
 		m.cancelAttachmentOpen()
 		return m.beginReferencePreview(ref, readOnly)
 	}
@@ -217,7 +217,7 @@ func (m *App) applyAttachmentPrepared(msg attachmentPreparedMsg) tea.Cmd {
 	if msg.imported && msg.ref.Active() && msg.ref.SessionID == state.session.SessionID {
 		state.store.AddExisting(msg.ref)
 	}
-	current, ok := state.store.GetReference(msg.ref.ID)
+	current, ok := state.store.Reference(msg.ref.ID)
 	if !ok || !current.Active() || current != msg.ref || current.SessionID != state.session.SessionID {
 		m.applyAttachmentOpened(attachmentOpenedMsg{owner: state, err: fmt.Errorf("attachment changed while opening; open it again")})
 		return nil
@@ -232,10 +232,10 @@ func (m *App) applyAttachmentPrepared(msg attachmentPreparedMsg) tea.Cmd {
 	return m.clientIOCommand(state.ctx, func(ctx context.Context) tea.Msg {
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		if current, ok := state.store.GetReference(msg.ref.ID); !ok || current != msg.ref {
+		if current, ok := state.store.Reference(msg.ref.ID); !ok || current != msg.ref {
 			return attachmentOpenedMsg{owner: state, err: fmt.Errorf("attachment changed before opening; open it again")}
 		}
-		err := launch(ctx, msg.path, state.destination == types.AttachmentOpenFileManager)
+		err := launch(ctx, msg.path, state.destination == setting.AttachmentOpenFileManager)
 		return attachmentOpenedMsg{owner: state, copied: msg.copied, err: err}
 	})
 }

@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"crude/network"
-	"crude/retry"
+	"crude/internal/network"
+	"crude/internal/retry"
 )
 
 // DialSettings is the user-tunable transport configuration for one provider.

@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 

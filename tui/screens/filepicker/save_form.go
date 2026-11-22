@@ -1,7 +1,7 @@
 package filepicker
 
 import (
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 )

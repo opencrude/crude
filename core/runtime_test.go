@@ -14,8 +14,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -54,8 +54,8 @@ func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
 	var creations atomic.Int32
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
 		creations.Add(1)
-		ws := workspace.NewWorkspace(root, "test-model", "tester", types.Settings{}, coreTestLogger{})
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		ws := workspace.NewWorkspace(root, "test-model", "tester", setting.Settings{}, coreTestLogger{})
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		agents := session.DefaultAgentsConfig()
 		off := false
 		profile := agents.Profiles["default"]
@@ -353,7 +353,7 @@ func TestFactoryIODoesNotHoldRegistryLock(t *testing.T) {
 func TestActorRejectsQueuedDetachedOwnerAndStaleDecision(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "test", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "test", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)

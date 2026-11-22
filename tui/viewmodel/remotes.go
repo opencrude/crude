@@ -8,11 +8,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
 	"crude/core/remoteconn"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	remotesscreen "crude/tui/screens/remotes"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )

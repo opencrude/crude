@@ -140,8 +140,8 @@ func (st *Store) SessionTurnHeads(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// GetSessionSummary returns one session's summary; found=false when absent.
-func (st *Store) GetSessionSummary(
+// SessionSummary returns one session's summary; found=false when absent.
+func (st *Store) SessionSummary(
 	ctx context.Context, sessionID string,
 ) (SessionSummary, bool, error) {
 	row := st.db.QueryRowContext(ctx, `

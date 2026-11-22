@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // A thinking pane whose body starts or stops overflowing gains or loses its
@@ -26,16 +26,16 @@ func TestPaneScrollbarDoesNotReflowTranscript(t *testing.T) {
 		return []SubPaneLine{{Text: "thinking", PaneInfo: PaneLineInfo{PaneID: "pane-1"}}}
 	})
 	now := time.Unix(1, 0)
-	messages := make([]types.ChatMessage, 0, 13)
+	messages := make([]conversation.ChatMessage, 0, 13)
 	for i := range 12 {
-		messages = append(messages, types.ChatMessage{
+		messages = append(messages, conversation.ChatMessage{
 			InternalID: "m-" + string(rune('a'+i)),
-			Role:       types.RoleAssistant,
+			Role:       conversation.RoleAssistant,
 			Content:    strings.Repeat("a sentence that wraps across the narrow chat column ", 3),
 			Time:       now,
 		})
 	}
-	messages = append(messages, types.ChatMessage{InternalID: "pane", Role: types.RoleThinking, SubPaneID: "pane-1", Time: now})
+	messages = append(messages, conversation.ChatMessage{InternalID: "pane", Role: conversation.RoleThinking, SubPaneID: "pane-1", Time: now})
 	r.SyncMessages(messages, 1, 0)
 	before := r.ExportMessageRowsSnapshot(56)
 	if r.ScrollbarWidth() != ui.ScrollbarWidth {
@@ -78,13 +78,13 @@ func TestWhitespaceReplyDoesNotSplitActivity(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(100, 30)
 	r.SetChatAreaBounds(0, 30)
-	read := func(id string) types.ChatMessage {
-		return types.ChatMessage{InternalID: id, Role: types.RoleTool, ToolName: "read_file", ToolArgs: id + ".go",
-			ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone, Content: "package fixture"}
+	read := func(id string) conversation.ChatMessage {
+		return conversation.ChatMessage{InternalID: id, Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: id + ".go",
+			ToolStatus: conversation.ToolStatusSuccess, ToolPreviewPhase: conversation.ToolPreviewDone, Content: "package fixture"}
 	}
-	r.SyncMessages([]types.ChatMessage{
+	r.SyncMessages([]conversation.ChatMessage{
 		read("a"),
-		{InternalID: "gap", Role: types.RoleAssistant, Content: "\n\n"},
+		{InternalID: "gap", Role: conversation.RoleAssistant, Content: "\n\n"},
 		read("b"),
 	}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)

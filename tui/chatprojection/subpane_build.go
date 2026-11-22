@@ -6,7 +6,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -161,11 +161,11 @@ func subAgentDisplayStatus(status string) (string, bool) {
 
 // BuildSubPaneToolLines uses this renderer's workspace root and the same
 // semantic titles as ordinary tool leaves.
-func (r *Renderer) BuildSubPaneToolLines(messages []*types.ChatMessage, width, frame int) ([]SubPaneLine, bool) {
+func (r *Renderer) BuildSubPaneToolLines(messages []*conversation.ChatMessage, width, frame int) ([]SubPaneLine, bool) {
 	var lines []SubPaneLine
 	active := false
 	for _, msg := range messages {
-		if msg.Role != types.RoleTool || msg.ToolName == "" {
+		if msg.Role != conversation.RoleTool || msg.ToolName == "" {
 			continue
 		}
 		active = active || toolRowFrameSensitive(*msg)

@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -15,7 +16,7 @@ import (
 func TestBackgroundCommandStatusCanonicalAcrossShellsAndReconnect(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		ws.SessionsByAgent["agent"] = &workspace.Session{SessionID: "session", AgentID: "agent"}
 		ws.RegisterAgentRoot("agent")
 		return ws, nil
@@ -107,7 +108,7 @@ func TestBackgroundCommandStatusCanonicalAcrossShellsAndReconnect(t *testing.T) 
 func TestServiceNoticeFeedbackCanonicalAcrossShells(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		ws.SessionsByAgent["agent"] = &workspace.Session{SessionID: "session", AgentID: "agent"}
 		ws.RegisterAgentRoot("agent")
 		return ws, nil
@@ -142,7 +143,7 @@ func TestServiceNoticeFeedbackCanonicalAcrossShells(t *testing.T) {
 		{Type: workspace.NoticeResponseContinuationUnavailable, AgentID: "agent", Reason: "response_not_stored"},
 	}
 	for i := range notices {
-		notices[i].Identity = types.RuntimeEventIdentity{EventID: notices[i].Type, OwnerID: "session", AgentID: "agent", RuntimeEpoch: 1, Generation: 1, Sequence: uint64(i + 1)}
+		notices[i].Identity = conversation.RuntimeEventIdentity{EventID: notices[i].Type, OwnerID: "session", AgentID: "agent", RuntimeEpoch: 1, Generation: 1, Sequence: uint64(i + 1)}
 	}
 	publish := func(count int) {
 		t.Helper()

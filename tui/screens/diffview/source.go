@@ -2,7 +2,7 @@ package diffview
 
 import (
 	"context"
-	"crude/text/search"
+	"crude/text/textsearch"
 	"crude/tui/rendering"
 	"iter"
 	"sort"

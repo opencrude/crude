@@ -14,7 +14,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/webmcp"
-	"crude/network"
+	"crude/internal/network"
 	captypes "crude/types/capability"
 )
 

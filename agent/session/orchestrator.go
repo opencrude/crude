@@ -8,13 +8,13 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 type Orchestrator struct {
 	ID             string
 	session        *Session
-	BlockResolveCh chan ttypes.BlockResponse
+	BlockResolveCh chan conversation.BlockResponse
 	closing        atomic.Bool
 	stopCh         chan struct{}
 	sender         EventSender
@@ -143,7 +143,7 @@ func NewOrchestrator(id string, s *Session) *Orchestrator {
 		ID:             id,
 		turnGeneration: generation,
 		session:        s,
-		BlockResolveCh: make(chan ttypes.BlockResponse, 8),
+		BlockResolveCh: make(chan conversation.BlockResponse, 8),
 		stopCh:         make(chan struct{}),
 		inputCh:        make(chan turnRequest, 1),
 	}
@@ -247,7 +247,8 @@ func (o *Orchestrator) cancelCollaborationRun(runID string, expectedVersion, app
 	return nil
 }
 
-func (o *Orchestrator) ResolveBlock(response ttypes.BlockResponse) bool {
+// ResolveBlock hands a block response to the waiting turn and reports whether it was accepted.
+func (o *Orchestrator) ResolveBlock(response conversation.BlockResponse) bool {
 	if o == nil || response.RequestID == "" || o.closing.Load() {
 		return false
 	}

@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 
@@ -115,7 +115,7 @@ func TestReferenceBridgeChunkedMediaAndIsolation(t *testing.T) {
 	}
 	projection := value.(*coreprotocol.ReferenceListResult)
 	projection.References[0].Reference.Label = "client mutation"
-	actual, _ := store.GetReference(view.Reference.ID)
+	actual, _ := store.Reference(view.Reference.ID)
 	if actual.Label == "client mutation" {
 		t.Fatal("projection mutates core")
 	}

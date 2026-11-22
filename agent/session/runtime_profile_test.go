@@ -23,7 +23,7 @@ func TestGetOrCreateOverride(t *testing.T) {
 	base := DefaultConfig()
 	rp := NewRuntimeProfile(base)
 
-	oo := rp.GetOrCreateOverride("orch-1")
+	oo := rp.EnsureOverride("orch-1")
 	if oo == nil {
 		t.Fatal("expected non-nil override")
 	}
@@ -32,7 +32,7 @@ func TestGetOrCreateOverride(t *testing.T) {
 	}
 
 	// Calling again should return the same pointer.
-	oo2 := rp.GetOrCreateOverride("orch-1")
+	oo2 := rp.EnsureOverride("orch-1")
 	if oo != oo2 {
 		t.Error("expected same pointer for same orchestrator")
 	}
@@ -45,7 +45,7 @@ func TestSetAndGetOverride(t *testing.T) {
 	// Set a model override for the default category.
 	rp.SetOrchestratorModel("orch-1", "gpt-4")
 
-	oo := rp.GetOverride("orch-1")
+	oo := rp.Override("orch-1")
 	if oo == nil {
 		t.Fatal("expected override")
 	}
@@ -62,7 +62,7 @@ func TestRemoveOverride(t *testing.T) {
 	base := DefaultConfig()
 	rp := NewRuntimeProfile(base)
 
-	rp.GetOrCreateOverride("orch-1")
+	rp.EnsureOverride("orch-1")
 	rp.SetOrchestratorModel("orch-1", "gpt-4")
 
 	if !rp.HasOverride("orch-1") {
@@ -79,7 +79,7 @@ func TestGetEffectiveConfigNoOverrides(t *testing.T) {
 	base := DefaultConfig()
 	rp := NewRuntimeProfile(base)
 
-	cfg := rp.GetEffectiveConfig("orch-nonexistent")
+	cfg := rp.EffectiveConfig("orch-nonexistent")
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
@@ -94,17 +94,17 @@ func TestGetEffectiveConfigWithModelOverride(t *testing.T) {
 
 	rp.SetOrchestratorModel("orch-1", "gpt-4-turbo")
 
-	cfg := rp.GetEffectiveConfig("orch-1")
-	mainCat := cfg.GetActiveDefaultCategory()
+	cfg := rp.EffectiveConfig("orch-1")
+	mainCat := cfg.ActiveDefaultCategory()
 	if mainCat.Model != "gpt-4-turbo" {
 		t.Errorf("expected model 'gpt-4-turbo', got %q", mainCat.Model)
 	}
-	if mainCat.AccountID != base.GetActiveDefaultCategory().AccountID {
+	if mainCat.AccountID != base.ActiveDefaultCategory().AccountID {
 		t.Errorf("model override changed selected account: %q", mainCat.AccountID)
 	}
 
 	// Verify base config was not modified.
-	baseMain := base.GetActiveDefaultCategory()
+	baseMain := base.ActiveDefaultCategory()
 	if baseMain.Model == "gpt-4-turbo" {
 		t.Error("base config should NOT have the overridden model")
 	}
@@ -117,14 +117,14 @@ func TestMultipleOrchestratorsIndependent(t *testing.T) {
 	rp.SetOrchestratorModel("orch-1", "gpt-4")
 	rp.SetOrchestratorModel("orch-2", "claude-3")
 
-	cfg1 := rp.GetEffectiveConfig("orch-1")
-	cfg2 := rp.GetEffectiveConfig("orch-2")
+	cfg1 := rp.EffectiveConfig("orch-1")
+	cfg2 := rp.EffectiveConfig("orch-2")
 
-	if cfg1.GetActiveDefaultCategory().Model != "gpt-4" {
-		t.Errorf("orch-1 expected 'gpt-4', got %q", cfg1.GetActiveDefaultCategory().Model)
+	if cfg1.ActiveDefaultCategory().Model != "gpt-4" {
+		t.Errorf("orch-1 expected 'gpt-4', got %q", cfg1.ActiveDefaultCategory().Model)
 	}
-	if cfg2.GetActiveDefaultCategory().Model != "claude-3" {
-		t.Errorf("orch-2 expected 'claude-3', got %q", cfg2.GetActiveDefaultCategory().Model)
+	if cfg2.ActiveDefaultCategory().Model != "claude-3" {
+		t.Errorf("orch-2 expected 'claude-3', got %q", cfg2.ActiveDefaultCategory().Model)
 	}
 }
 
@@ -139,7 +139,7 @@ func TestSnapshotOverrides(t *testing.T) {
 
 	rp.SetOrchestratorModel("orch-1", "gpt-4")
 	multi := true
-	oo := rp.GetOrCreateOverride("orch-1")
+	oo := rp.EnsureOverride("orch-1")
 	oo.MultiAgent = &multi
 
 	snap := rp.SnapshotOverrides("orch-1")
@@ -193,8 +193,8 @@ func TestSetCategoryOverride(t *testing.T) {
 	cat := CategoryConfig{Model: "custom-model", AccountID: "account"}
 	rp.SetCategoryOverride("orch-1", CategoryResearcher, cat)
 
-	cfg := rp.GetEffectiveConfig("orch-1")
-	researcherCat := cfg.GetCategoryConfig(CategoryResearcher)
+	cfg := rp.EffectiveConfig("orch-1")
+	researcherCat := cfg.CategoryConfig(CategoryResearcher)
 	if researcherCat.Model != "custom-model" {
 		t.Errorf("expected researcher model 'custom-model', got %q", researcherCat.Model)
 	}
@@ -215,7 +215,7 @@ func TestClearCategoryOverride(t *testing.T) {
 	rp.SetCategoryOverride("orch-1", CategoryResearcher, CategoryConfig{})
 
 	// The override map entry should be gone.
-	oo := rp.GetOverride("orch-1")
+	oo := rp.Override("orch-1")
 	if _, exists := oo.CategoryOverrides[CategoryResearcher]; exists {
 		t.Error("expected category override to be cleared")
 	}
@@ -258,8 +258,8 @@ func TestAllOrchestratorIDs(t *testing.T) {
 	base := DefaultConfig()
 	rp := NewRuntimeProfile(base)
 
-	rp.GetOrCreateOverride("orch-1")
-	rp.GetOrCreateOverride("orch-2")
+	rp.EnsureOverride("orch-1")
+	rp.EnsureOverride("orch-2")
 
 	ids := rp.AllOrchestratorIDs()
 	if len(ids) != 2 {
@@ -289,14 +289,14 @@ func TestGetEffectiveConfigPreservesBaseAfterOverride(t *testing.T) {
 	rp.SetOrchestratorModel("orch-1", "custom-model")
 
 	// Get effective config for orch-1.
-	cfg1 := rp.GetEffectiveConfig("orch-1")
-	if cfg1.GetActiveDefaultCategory().Model != "custom-model" {
+	cfg1 := rp.EffectiveConfig("orch-1")
+	if cfg1.ActiveDefaultCategory().Model != "custom-model" {
 		t.Error("orch-1 should use custom model")
 	}
 
 	// Get effective config for nonexistent orchestrator should use base.
-	cfg2 := rp.GetEffectiveConfig("orch-nonexistent")
-	if cfg2.GetActiveDefaultCategory().Model == "custom-model" {
+	cfg2 := rp.EffectiveConfig("orch-nonexistent")
+	if cfg2.ActiveDefaultCategory().Model == "custom-model" {
 		t.Error("nonexistent orchestrator should not have custom model")
 	}
 }

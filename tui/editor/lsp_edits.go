@@ -7,10 +7,10 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"crude/lsp/completion"
-	"crude/lsp/edit"
+	"crude/lsp/lspcompletion"
+	"crude/lsp/lspedit"
 	"crude/text/snippet"
-	model "crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -56,7 +56,7 @@ func (e *Editor) lspVisualPosition(line, col int) (Position, error) {
 // against their own source lines, then atomically positions and selects it.
 // Editor.Diagnostics/NextError already return visual coordinates; use the visual
 // cursor/selection APIs for those instead.
-func (e *Editor) SetLSPDiagnosticPosition(d LSPDiagnostic) error {
+func (e *Editor) SetLSPDiagnosticPosition(d insight.LSPDiagnostic) error {
 	if d.EndLine < d.Line || d.EndLine == d.Line && d.EndCol < d.Col {
 		return fmt.Errorf("LSP diagnostic: reversed range")
 	}
@@ -76,7 +76,7 @@ func (e *Editor) SetLSPDiagnosticPosition(d LSPDiagnostic) error {
 // SetLSPNavigationRange validates both raw UTF-16 endpoints before moving the
 // caret. The cue is not an editable selection: typing at a destination must not
 // replace the symbol or span a provider returned.
-func (e *Editor) SetLSPNavigationRange(r model.LSPNavigationRange) error {
+func (e *Editor) SetLSPNavigationRange(r insight.LSPNavigationRange) error {
 	if r.End.Line < r.Start.Line || r.End.Line == r.Start.Line && r.End.Character < r.Start.Character {
 		return fmt.Errorf("LSP navigation: reversed range")
 	}
@@ -107,7 +107,7 @@ type completionEdit struct {
 // then commits one undo group and one notification. It never writes to disk.
 // InsertText and NewText carry expanded text; the optional initial snippet plan
 // must match exactly. Additional edits remain literal, in original coordinates.
-func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
+func (e *Editor) ApplyCompletion(item insight.CompletionItem) error {
 	if state := e.DocumentState(); state.UndoPending || state.HistoryQueued || state.Conflict != nil || e.HoldsDocumentInput() {
 		return ErrDocumentPending // these ranges describe the pre-undo snapshot
 	}
@@ -117,7 +117,7 @@ func (e *Editor) ApplyCompletion(item model.CompletionItem) error {
 // ApplyHeldCompletion applies a suggestion as the guarded edit of h. Input that
 // arrived after the acceptance key stays queued behind it. Its canonical command
 // commits at the hold's revision or leaves this view; it is never rebased.
-func (e *Editor) ApplyHeldCompletion(h DocumentHold, item model.CompletionItem) error {
+func (e *Editor) ApplyHeldCompletion(h DocumentHold, item insight.CompletionItem) error {
 	p := e.documentProjection
 	if p == nil || h.projection != p || p.hold == nil || p.hold.sequence != h.sequence || p.hold.applied ||
 		p.snapshot.Revision != p.hold.revision || len(p.pending) != 0 || p.inflight != nil || p.undoPending || p.conflict != nil {
@@ -135,7 +135,7 @@ func (e *Editor) ApplyHeldCompletion(h DocumentHold, item model.CompletionItem) 
 	return nil
 }
 
-func (e *Editor) applyCompletion(item model.CompletionItem) error {
+func (e *Editor) applyCompletion(item insight.CompletionItem) error {
 	if e.HasMultipleCarets() {
 		return fmt.Errorf("press Esc to use one caret before accepting a suggestion")
 	}
@@ -264,7 +264,7 @@ func (e *Editor) applyCompletion(item model.CompletionItem) error {
 	return nil
 }
 
-func validateCompletionEdit(text string, wire model.LSPTextEdit) (completionEdit, error) {
+func validateCompletionEdit(text string, wire insight.LSPTextEdit) (completionEdit, error) {
 	start, err := lspEditOffset(text, wire.Line, wire.Col)
 	if err != nil {
 		return completionEdit{}, err

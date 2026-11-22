@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,8 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspedit"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
@@ -22,7 +22,7 @@ type reviewedFixture struct {
 	store     *localhistory.Store
 	files     *FileOpsService
 	owner     document.Owner
-	source    types.InsightSource
+	source    insight.Source
 	path      string
 }
 
@@ -58,8 +58,8 @@ func newReviewedFixture(t *testing.T) reviewedFixture {
 
 func (f reviewedFixture) prepare(t *testing.T, check func() error) ReviewedEditPreview {
 	t.Helper()
-	p, err := f.documents.prepareReviewedEdit(t.Context(), f.owner, "Rename", "", types.InsightBoundary{Source: f.source},
-		[]lspedit.DocumentEdit{{URI: fileuri.FromPath(f.path), Edits: []types.LSPTextEdit{
+	p, err := f.documents.prepareReviewedEdit(t.Context(), f.owner, "Rename", "", insight.Boundary{Source: f.source},
+		[]lspedit.DocumentEdit{{URI: fileuri.FromPath(f.path), Edits: []insight.LSPTextEdit{
 			{Line: 0, Col: 4, EndLine: 0, EndCol: 7, NewText: "new"},
 			{Line: 1, EndLine: 1, EndCol: 3, NewText: "new"},
 		}}}, check)

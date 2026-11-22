@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 func newMutationEditor(t *testing.T, id string) *Editor {

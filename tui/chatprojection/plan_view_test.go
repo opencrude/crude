@@ -8,7 +8,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestBuildPlanViewRows_RendersStepCard(t *testing.T) {
@@ -54,12 +54,12 @@ func TestPlanProjectionCoalescesSamePlanAcrossTools(t *testing.T) {
 	r.SetChatAreaBounds(0, 20)
 	first := `{"id":"plan-123","revision":1,"objective":"Fix persistence","status":"active","steps":[{"id":"a","description":"Old step body","status":"pending"}]}`
 	latest := `{"id":"plan-123","revision":2,"objective":"Fix persistence","status":"active","steps":[{"id":"a","description":"Latest step body","status":"in_progress"}]}`
-	r.AppendMessage(types.ChatMessage{InternalID: "p1", Role: types.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: first})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "p1", Role: conversation.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: first})
 	initial, _, _ := r.ExportMessageRows(100)
 	if !strings.Contains(strings.Join(initial[0].Lines, "\n"), "Old step body") {
 		t.Fatal("initial plan did not open expanded")
 	}
-	r.AppendMessage(types.ChatMessage{InternalID: "p2", Role: types.RoleTool, ToolName: "get_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: latest})
+	r.AppendMessage(conversation.ChatMessage{InternalID: "p2", Role: conversation.RoleTool, ToolName: "get_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: latest})
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 2 {
 		t.Fatalf("rows = %+v", rows)
@@ -426,7 +426,7 @@ func TestPlanRendererLiveAndHydratedMessagesMatch(t *testing.T) {
 		{"id":"a","description":"Done","status":"completed"},
 		{"id":"b","description":"Stopped","status":"cancelled","reason":"deferred"}
 	]}`
-	message := types.ChatMessage{InternalID: "plan", Role: types.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: content}
+	message := conversation.ChatMessage{InternalID: "plan", Role: conversation.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: content}
 	live := chatprojection.NewRenderer(theme.DefaultDark())
 	live.SetSize(100, 30)
 	live.SetChatAreaBounds(0, 20)
@@ -436,7 +436,7 @@ func TestPlanRendererLiveAndHydratedMessagesMatch(t *testing.T) {
 	hydrated := chatprojection.NewRenderer(theme.DefaultDark())
 	hydrated.SetSize(100, 30)
 	hydrated.SetChatAreaBounds(0, 20)
-	hydrated.SyncMessages([]types.ChatMessage{message}, 1, 0)
+	hydrated.SyncMessages([]conversation.ChatMessage{message}, 1, 0)
 	hydratedRows, _, _ := hydrated.ExportMessageRows(100)
 
 	if fmt.Sprint(liveRows) != fmt.Sprint(hydratedRows) {

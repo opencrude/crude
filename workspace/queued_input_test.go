@@ -10,8 +10,8 @@ import (
 
 func TestQueuedInputShowsOnePendingRowAndAdmitsInPlace(t *testing.T) {
 	w := newIngressWorkspace(t)
-	intent := &InputAdmissionIntent{SessionID: "session", AgentID: "root", InputID: "queued-1", DraftRevision: 3}
-	result := InputAdmissionResult{Status: InputAdmissionQueued, Receipt: session.InputAdmissionReceipt{
+	intent := &session.InputAdmissionIntent{SessionID: "session", AgentID: "root", InputID: "queued-1", DraftRevision: 3}
+	result := session.InputAdmissionResult{Status: InputAdmissionQueued, Receipt: session.InputAdmissionReceipt{
 		SessionID: "session", AgentID: "root", InputID: "queued-1", DraftRevision: 3, AcceptedAt: time.Now()}}
 	if !w.ApplyAgentInputAdmission(intent, result, provider.PlainInput("after compaction"), nil) {
 		t.Fatal("queued receipt was not accepted")

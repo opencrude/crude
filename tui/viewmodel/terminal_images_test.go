@@ -15,8 +15,8 @@ import (
 
 	"crude/agent/sessiondb"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
 )
 
 func TestTerminalImageOwnerSwitchRemovesResourcesAndRejectsDecode(t *testing.T) {
@@ -100,7 +100,7 @@ func TestTerminalImageRenderedAttachmentJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app.appendActiveMessage(types.ChatMessage{InternalID: "graphics-post", Role: types.RoleUser, Content: ref.Label,
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "graphics-post", Role: conversation.RoleUser, Content: ref.Label,
 		Attachments: []attachment.Target{{Start: 0, End: len([]rune(ref.Label)), ReferenceID: ref.ID, Label: ref.Label}}})
 	clickTranscriptAttachment(t, app, ref.Label)
 	view := app.View()

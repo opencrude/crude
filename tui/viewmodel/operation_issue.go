@@ -4,13 +4,13 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/operationissue"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 type operationIssueOwner struct {
@@ -26,14 +26,14 @@ type repairConfigLoadedMsg struct {
 }
 
 func (m *App) showOperationFailure(title, detail string) {
-	m.presentOperationIssue(types.OperationIssue{
+	m.presentOperationIssue(statuscenter.OperationIssue{
 		Title: title, Summary: "The operation could not finish. Crude is still available.", Detail: detail,
-		Guidance: "Review the error above. Check the relevant settings or storage access, then try the operation again. No retry runs automatically.", Target: types.RepairSettings,
+		Guidance: "Review the error above. Check the relevant settings or storage access, then try the operation again. No retry runs automatically.", Target: statuscenter.RepairSettings,
 	})
 }
 
-func (m *App) presentOperationIssue(issue types.OperationIssue) {
-	m.notifyStatus(types.SeverityError, "operation", issue.Title, strings.Join([]string{issue.Summary, issue.Detail, issue.Guidance, issue.Path}, "\n\n"), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.ws.RootPath()})
+func (m *App) presentOperationIssue(issue statuscenter.OperationIssue) {
+	m.notifyStatus(statuscenter.SeverityError, "operation", issue.Title, strings.Join([]string{issue.Summary, issue.Detail, issue.Guidance, issue.Path}, "\n\n"), statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: m.ws.RootPath()})
 	m.pendingOperationIssues = append(m.pendingOperationIssues, issue)
 	m.showNextOperationIssue()
 }
@@ -46,18 +46,18 @@ func (m *App) showNextOperationIssue() {
 	m.pendingOperationIssues = m.pendingOperationIssues[1:]
 	label := "Open Settings"
 	switch issue.Target {
-	case types.RepairAccounts:
+	case statuscenter.RepairAccounts:
 		label = "Review accounts"
 		if len(m.ws.AllAccounts()) == 0 {
 			label = "Add account"
 		}
-	case types.RepairMainAgent:
+	case statuscenter.RepairMainAgent:
 		label = "Open Main Agent"
-	case types.RepairSessionAccount:
+	case statuscenter.RepairSessionAccount:
 		label = "Choose account"
-	case types.RepairNetwork:
+	case statuscenter.RepairNetwork:
 		label = "Network settings"
-	case types.RepairConfigFile:
+	case statuscenter.RepairConfigFile:
 		label = "Edit config file"
 	}
 	screen := operationissue.New(m.Theme, issue, label)
@@ -92,16 +92,16 @@ func (m *App) handleOperationIssueAction(msg operationissue.ActionMsg) tea.Cmd {
 		return nil
 	}
 	switch issue.Target {
-	case types.RepairAccounts:
+	case statuscenter.RepairAccounts:
 		m.openApplicationAccounts()
-	case types.RepairMainAgent:
+	case statuscenter.RepairMainAgent:
 		return m.openApplicationMainAgent()
-	case types.RepairSessionAccount:
+	case statuscenter.RepairSessionAccount:
 		if m.ActiveSession != nil && m.ws.BackendSession(m.ActiveSession.SessionID) != nil && len(m.ws.AllAccounts()) > 0 {
 			return m.openSessionAccountPicker()
 		}
 		m.openApplicationAccounts()
-	case types.RepairNetwork:
+	case statuscenter.RepairNetwork:
 		m.openApplicationSettings()
 		if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 			if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
@@ -112,7 +112,7 @@ func (m *App) handleOperationIssueAction(msg operationissue.ActionMsg) tea.Cmd {
 				}
 			}
 		}
-	case types.RepairConfigFile:
+	case statuscenter.RepairConfigFile:
 		if _, remote := m.ws.(shellport.ClientFiles); remote {
 			cmd, err := m.openEditorTab(issue.Path)
 			if err != nil {

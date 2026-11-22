@@ -92,6 +92,11 @@ documents to read before changing each area.
   Windows/Linux notifications, presence election across shells, what is news
   and when a message is shown, replaced or withdrawn.
 
+### Reference: code layout
+
+- [Code layout and naming](reference/code-layout.md): where Go code goes, how
+  packages, files and exported names are named, and the gates that enforce it.
+
 ### Reference — interface
 
 - [Settings design language](reference/settings-design.md) — the one page

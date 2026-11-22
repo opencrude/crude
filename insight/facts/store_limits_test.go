@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"crude/insight/facts"
-	"crude/types"
+	"crude/types/insight"
 )
 
 func TestFactByteBudgetRejectsWithoutEvictionOrFalseEmpty(t *testing.T) {
@@ -28,7 +28,7 @@ func TestFactByteBudgetRejectsWithoutEvictionOrFalseEmpty(t *testing.T) {
 		p.Diagnostics[0].Message = message
 		a, err := s.Publish(p)
 		if errors.Is(err, facts.ErrLimit) {
-			if a.ID != "" || a.State != types.InsightLimited || !a.Limited {
+			if a.ID != "" || a.State != insight.Limited || !a.Limited {
 				t.Fatalf("byte limit manufactured a clean observation: %+v", a)
 			}
 			break
@@ -49,7 +49,7 @@ func TestFactByteBudgetRejectsWithoutEvictionOrFalseEmpty(t *testing.T) {
 	if !s.InvalidateAll("Context changed.") || s.Version() <= v {
 		t.Fatal("context invalidation did not advance source generation")
 	}
-	if a, ok := s.SnapshotPath("/project/0.go"); !ok || a.ID != first.ID || a.State != types.InsightStale {
+	if a, ok := s.SnapshotPath("/project/0.go"); !ok || a.ID != first.ID || a.State != insight.Stale {
 		t.Fatal("stale source lookup lost original publication")
 	}
 	v = s.Version()

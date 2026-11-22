@@ -9,8 +9,8 @@ import (
 	"os"
 	"unicode/utf8"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/workspace/fileio"
 )
 
@@ -20,21 +20,21 @@ func (s *ReferenceStore) ReadReferenceMedia(ctx context.Context, expected sessio
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	current, ok := s.GetReference(expected.ID)
+	current, ok := s.Reference(expected.ID)
 	if !ok || !current.Active() || current != expected || current.SessionID != s.sessionID {
 		return nil, fmt.Errorf("attachment changed or belongs to another session")
 	}
 	if current.FilePath == "" {
 		return nil, fmt.Errorf("attachment has no captured media")
 	}
-	data, err := history.ReadAttachment(current.FilePath)
+	data, err := prompthistory.ReadAttachment(current.FilePath)
 	if err != nil {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	current, ok = s.GetReference(expected.ID)
+	current, ok = s.Reference(expected.ID)
 	if !ok || current != expected {
 		return nil, fmt.Errorf("attachment changed while reading")
 	}
@@ -65,7 +65,7 @@ func (s *ReferenceStore) ReadReferenceContent(id string) (content string, readOn
 		}
 		return ref.Content, true, nil
 	case sessiondb.KindPastedTextFile:
-		data, err := history.ReadAttachment(ref.FilePath)
+		data, err := prompthistory.ReadAttachment(ref.FilePath)
 		if err != nil {
 			return "", false, fmt.Errorf("read reference %q: %w", id, err)
 		}
@@ -136,7 +136,7 @@ func (s *ReferenceStore) SaveReferenceContent(expected sessiondb.Reference, orig
 		unlock := fileio.LockFileMutation(current.FilePath)
 		defer unlock()
 
-		oldBytes, err := history.ReadAttachment(current.FilePath)
+		oldBytes, err := prompthistory.ReadAttachment(current.FilePath)
 		if err != nil {
 			return fmt.Errorf("read reference %q before save: %w", current.ID, err)
 		}
@@ -152,7 +152,7 @@ func (s *ReferenceStore) SaveReferenceContent(expected sessiondb.Reference, orig
 		}
 		newBytes := []byte(content)
 		if err := fileio.WriteAtomicChecked(current.FilePath, newBytes, info.Mode().Perm(), func() error {
-			actual, readErr := history.ReadAttachment(current.FilePath)
+			actual, readErr := prompthistory.ReadAttachment(current.FilePath)
 			if readErr != nil {
 				return readErr
 			}
@@ -219,7 +219,7 @@ func updateReferenceContentPrecondition(db *sql.DB, expected sessiondb.Reference
 }
 
 func restoreReferenceFile(path string, original, replacement []byte, perm os.FileMode) error {
-	actual, err := history.ReadAttachment(path)
+	actual, err := prompthistory.ReadAttachment(path)
 	if err != nil {
 		return err
 	}
@@ -230,7 +230,7 @@ func restoreReferenceFile(path string, original, replacement []byte, perm os.Fil
 		return errors.New("backing file changed again; refusing to overwrite it")
 	}
 	return fileio.WriteAtomicChecked(path, original, perm, func() error {
-		current, readErr := history.ReadAttachment(path)
+		current, readErr := prompthistory.ReadAttachment(path)
 		if readErr != nil {
 			return readErr
 		}

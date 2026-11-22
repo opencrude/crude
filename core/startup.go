@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"crude/core/coreprotocol"
 	"crude/core/projectpath"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -16,8 +17,8 @@ import (
 // metadata; neither method creates a project workspace.
 type StartupOwner interface {
 	StartupSnapshot(context.Context) (coreprotocol.StartupSnapshot, error)
-	SaveStartup(context.Context, []types.SettingEdit) (types.OnboardingSettings, error)
-	ReadStartupSettings(context.Context) (types.AppSettings, error)
+	SaveStartup(context.Context, []setting.Edit) (setting.Onboarding, error)
+	ReadStartupSettings(context.Context) (setting.App, error)
 }
 
 func (r *Runtime) SetStartupOwner(owner StartupOwner) error {
@@ -124,7 +125,7 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 		} else {
 			out.Root, out.FolderKind = location.Path, location.Kind
 			if location.Warning != "" {
-				out.Issues = append(out.Issues, types.OperationIssue{Title: "Personal folder settings need attention", Summary: "Some personal folder locations could not be read.", Detail: location.Warning, Guidance: "Project folders stay available. Check the personal folder settings on this computer."})
+				out.Issues = append(out.Issues, statuscenter.OperationIssue{Title: "Personal folder settings need attention", Summary: "Some personal folder locations could not be read.", Detail: location.Warning, Guidance: "Project folders stay available. Check the personal folder settings on this computer."})
 			}
 		}
 		// Established project launches need no previous-workspace scan.
@@ -203,8 +204,8 @@ func (c *Connection) startupCall(ctx context.Context, request coreprotocol.Reque
 	return fault(request, "unknown_method", "unknown startup operation")
 }
 
-func validateStartupEdits(edits []types.SettingEdit) error {
-	if err := types.ValidateSettingEdits(types.AppSettings{}, edits); err != nil {
+func validateStartupEdits(edits []setting.Edit) error {
+	if err := setting.ValidateEdits(setting.App{}, edits); err != nil {
 		return err
 	}
 	for _, edit := range edits {

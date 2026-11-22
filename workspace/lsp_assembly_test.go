@@ -16,7 +16,8 @@ import (
 	"crude/agent/toolstore"
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
-	model "crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -154,7 +155,7 @@ func writeTree(t *testing.T, path, text string) {
 	createFile(t, path, text)
 }
 
-func awaitAssembly(t *testing.T, m *LSPManager, ready func(model.AssemblyPlan) bool) model.AssemblyPlan {
+func awaitAssembly(t *testing.T, m *LSPManager, ready func(insight.AssemblyPlan) bool) insight.AssemblyPlan {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
@@ -164,16 +165,16 @@ func awaitAssembly(t *testing.T, m *LSPManager, ready func(model.AssemblyPlan) b
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("assembly did not settle: %+v", m.Assembly())
-	return model.AssemblyPlan{}
+	return insight.AssemblyPlan{}
 }
 
-func assemblyLanguage(plan model.AssemblyPlan, id string) (model.AssemblyLanguage, bool) {
+func assemblyLanguage(plan insight.AssemblyPlan, id string) (insight.AssemblyLanguage, bool) {
 	for _, language := range plan.Languages {
 		if language.ID == id {
 			return language, true
 		}
 	}
-	return model.AssemblyLanguage{}, false
+	return insight.AssemblyLanguage{}, false
 }
 
 // A language that exists only in a catalog pack runs through every stage
@@ -219,9 +220,9 @@ func TestFixtureLanguageRunsThroughEveryStage(t *testing.T) {
 	trustAnalysis(t, m, root)
 	m.RefreshAssembly()
 
-	awaitAssembly(t, m, func(p model.AssemblyPlan) bool {
+	awaitAssembly(t, m, func(p insight.AssemblyPlan) bool {
 		language, ok := assemblyLanguage(p, "fixturelang")
-		return p.State == model.AssemblyReady && ok && language.Status == model.ToolMissing
+		return p.State == insight.AssemblyReady && ok && language.Status == insight.ToolMissing
 	})
 	setup := NewProjectToolSetupOwner(w, store)
 	defer setup.Close()
@@ -240,13 +241,13 @@ func TestFixtureLanguageRunsThroughEveryStage(t *testing.T) {
 	if err != nil || len(result.Items) != 1 || !result.Items[0].Installed || result.Items[0].Evaluation != toolEvaluationPassed {
 		t.Fatalf("acquire/evaluate: %+v %v", result, err)
 	}
-	plan := awaitAssembly(t, m, func(p model.AssemblyPlan) bool {
+	plan := awaitAssembly(t, m, func(p insight.AssemblyPlan) bool {
 		language, ok := assemblyLanguage(p, "fixturelang")
-		return p.State == model.AssemblyReady && ok && language.Status == model.ToolReady
+		return p.State == insight.AssemblyReady && ok && language.Status == insight.ToolReady
 	})
 	language, ok := assemblyLanguage(plan, "fixturelang")
-	if !ok || language.Status != model.ToolReady || language.Scope != model.CoverageProject ||
-		language.Files != 2 || language.Root != root || language.Source != model.ToolSourceStore {
+	if !ok || language.Status != insight.ToolReady || language.Scope != insight.CoverageProject ||
+		language.Files != 2 || language.Root != root || language.Source != insight.ToolSourceStore {
 		t.Fatalf("fixture language plan = %+v (found %v)", language, ok)
 	}
 
@@ -271,7 +272,7 @@ func TestFixtureLanguageRunsThroughEveryStage(t *testing.T) {
 		t.Fatalf("project diagnostic required opening %d documents", openedDocuments)
 	}
 	missing, ok := assemblyLanguage(plan, "fixturemissing")
-	if !ok || missing.Status != model.ToolMissing || !strings.Contains(plan.Message, "Install the missing servers") {
+	if !ok || missing.Status != insight.ToolMissing || !strings.Contains(plan.Message, "Install the missing servers") {
 		t.Fatalf("partial project support was hidden: %+v", plan)
 	}
 	roots, err := os.ReadFile(trace)
@@ -287,7 +288,7 @@ func TestFixtureLanguageRunsThroughEveryStage(t *testing.T) {
 	}
 	var project bool
 	for _, health := range m.ServerHealthSnapshots() {
-		project = project || health.Scope == model.CoverageProject && strings.Contains(health.Coverage, "whole project")
+		project = project || health.Scope == insight.CoverageProject && strings.Contains(health.Coverage, "whole project")
 	}
 	if !project {
 		t.Fatalf("coverage does not state the whole-project check: %+v", m.ServerHealthSnapshots())
@@ -316,19 +317,19 @@ func TestMissingServerIsNamedAndNotLaunched(t *testing.T) {
 	path := filepath.Join(root, "notes.fxm")
 	createFile(t, path, "text\n")
 	m.RefreshAssembly()
-	plan := awaitAssembly(t, m, func(p model.AssemblyPlan) bool {
+	plan := awaitAssembly(t, m, func(p insight.AssemblyPlan) bool {
 		_, ok := assemblyLanguage(p, "fixturemissing")
-		return p.State == model.AssemblyReady && ok
+		return p.State == insight.AssemblyReady && ok
 	})
 	language, _ := assemblyLanguage(plan, "fixturemissing")
-	if language.Status != model.ToolMissing || !strings.Contains(language.Reason, "crude-fixture-server-that-is-not-installed") {
+	if language.Status != insight.ToolMissing || !strings.Contains(language.Reason, "crude-fixture-server-that-is-not-installed") {
 		t.Fatalf("missing server plan = %+v", language)
 	}
 	if !strings.Contains(plan.Message, "Install the missing servers") {
 		t.Fatalf("plan message = %q", plan.Message)
 	}
 	editorSource(t, m, path, "text\nmore text\n")
-	if got := m.ProjectInsights().Language; got.State != model.LanguageNoServer || !strings.Contains(got.Message, "not installed") {
+	if got := m.ProjectInsights().Language; got.State != insight.LanguageNoServer || !strings.Contains(got.Message, "not installed") {
 		t.Fatalf("status = %+v", got)
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -346,7 +347,7 @@ func TestDiscoveryCountsLanguagesAndPicksShallowSample(t *testing.T) {
 	writeTree(t, filepath.Join(root, "top.fxl"), "")
 	writeTree(t, filepath.Join(root, ".hidden", "b.fxl"), "")
 	writeTree(t, filepath.Join(root, "readme.unknownext"), "")
-	found := discoverProjectLanguages(context.Background(), root, model.DefaultLSPSettings())
+	found := discoverProjectLanguages(context.Background(), root, setting.DefaultLSP())
 	language := found.languages["fixturelang"]
 	if language == nil || language.files != 2 || language.sample != filepath.Join(root, "top.fxl") {
 		t.Fatalf("discovery = %+v", language)
@@ -359,8 +360,8 @@ func TestDiscoveryCountsLanguagesAndPicksShallowSample(t *testing.T) {
 // One server for two languages at one root is one process: per-language
 // root markers choose the root, they are not part of the server identity.
 func TestOneServerForTwoLanguagesSharesOneProcess(t *testing.T) {
-	a := model.LSPServerSpec{LanguageID: "first", Command: "shared-ls", RootMarkers: []string{"a.mod", "a.work"}, WorkspaceRootMarkers: []string{"a.work"}}
-	b := model.LSPServerSpec{LanguageID: "second", Command: "shared-ls"}
+	a := setting.LSPServerSpec{LanguageID: "first", Command: "shared-ls", RootMarkers: []string{"a.mod", "a.work"}, WorkspaceRootMarkers: []string{"a.work"}}
+	b := setting.LSPServerSpec{LanguageID: "second", Command: "shared-ls"}
 	if lspServerKey("file:///p", a) != lspServerKey("file:///p", b) {
 		t.Fatal("root markers split one server into two processes")
 	}

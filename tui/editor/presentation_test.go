@@ -3,7 +3,8 @@ package editor
 import (
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestPresentationWhitespaceIsPaintOnlyAndCached(t *testing.T) {
 	selected := e.SelectedText()
 	revision := e.Revision()
 	for _, mode := range []string{"all", "boundary", "none", "boundary"} {
-		e.SetPresentation(types.EditorSettings{LineNumbers: true, RenderWhitespace: mode})
+		e.SetPresentation(setting.Editor{LineNumbers: true, RenderWhitespace: mode})
 		b := paintEditor(e, 80, 8)
 		x := e.GutterWidth()
 		for col, want := range map[int]rune{0: '→', 1: ' ', 2: ' ', 3: ' ', 4: '·', 8: '·', 12: '·', 13: '→', 14: ' ', 15: ' '} {
@@ -36,7 +37,7 @@ func TestPresentationWhitespaceIsPaintOnlyAndCached(t *testing.T) {
 		}
 	}
 	e.SetQuery("foo")
-	e.SetPresentation(types.EditorSettings{LineNumbers: true, RenderWhitespace: "all"})
+	e.SetPresentation(setting.Editor{LineNumbers: true, RenderWhitespace: "all"})
 	if e.Search().Matches[0].Start.Col != 5 {
 		t.Fatal("markers entered search geometry")
 	}
@@ -46,7 +47,7 @@ func TestPresentationThemeAndPaletteDoNotRestartSourceAnalysis(t *testing.T) {
 	paintEditor(e, 80, 10)
 	parsed, revision, generation := e.syntaxDocument, e.syntaxRevision, e.syntaxGeneration
 	for _, name := range []string{"dracula", "github", "monokai", "solarized", "catppuccin"} {
-		e.SetPresentation(types.EditorSettings{LineNumbers: true, SyntaxTheme: name})
+		e.SetPresentation(setting.Editor{LineNumbers: true, SyntaxTheme: name})
 		paintEditor(e, 80, 10)
 		if e.syntaxDocument != parsed || e.syntaxRevision != revision || e.syntaxGeneration != generation || e.syntaxJob != nil {
 			t.Fatal("palette change reparsed source", name)
@@ -63,7 +64,7 @@ func BenchmarkPresentationWhitespacePaint(b *testing.B) {
 		b.Run(mode, func(b *testing.B) {
 			e := NewPreview(theme.DefaultDark(), "plain.txt", strings.Repeat("\twide 界 é internal spaces \t \n", 10000), 1)
 			defer e.Close()
-			e.SetPresentation(types.EditorSettings{LineNumbers: true, RenderWhitespace: mode})
+			e.SetPresentation(setting.Editor{LineNumbers: true, RenderWhitespace: mode})
 			paintEditor(e, 120, 40)
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -76,9 +77,9 @@ func BenchmarkPresentationWhitespacePaint(b *testing.B) {
 
 func TestPresentationKeepsInlaysLiteralAndDiagnosticLaneVisible(t *testing.T) {
 	e := newInlayTestEditor(t, "\tfoo ")
-	installTestInlays(t, e, types.LSPInlayHint{Index: 0, Position: types.LSPInlayPosition{Line: 0, Character: 1}, SourceByte: 1, Label: "hint text", PaddingRight: true})
-	e.SetDiagnostics(testDiagnosticFacts(e, []LSPDiagnostic{{Line: 0, Col: 1, EndLine: 0, EndCol: 4, Severity: DiagError, Message: "source error"}}))
-	e.SetPresentation(types.EditorSettings{LineNumbers: false, RenderWhitespace: "all"})
+	installTestInlays(t, e, insight.LSPInlayHint{Index: 0, Position: insight.LSPInlayPosition{Line: 0, Character: 1}, SourceByte: 1, Label: "hint text", PaddingRight: true})
+	e.SetDiagnostics(testDiagnosticFacts(e, []insight.LSPDiagnostic{{Line: 0, Col: 1, EndLine: 0, EndCol: 4, Severity: DiagError, Message: "source error"}}))
+	e.SetPresentation(setting.Editor{LineNumbers: false, RenderWhitespace: "all"})
 	b := renderTestInlays(e, 80, 8, false)
 	x := e.GutterWidth()
 	if e.gutterGeometry().numberW != 0 || b.Get(0, 0).Content != ui.DiagnosticGlyph(DiagError) {

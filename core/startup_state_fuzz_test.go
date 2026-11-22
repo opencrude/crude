@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/setting"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -15,9 +16,8 @@ import (
 
 	"crude/app"
 	"crude/core"
-	"crude/core/protocol"
-	"crude/network"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/internal/network"
 	"crude/workspace"
 )
 
@@ -86,7 +86,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 		}
 		owner, observer := newOwner(), newOwner()
 		r, err := core.New(func(root string) (*workspace.Workspace, error) {
-			return workspace.NewWorkspace(root, "", "startup-fuzzer", types.Settings{}, startupFuzzLogger{}), nil
+			return workspace.NewWorkspace(root, "", "startup-fuzzer", setting.Settings{}, startupFuzzLogger{}), nil
 		}, filepath.Join(home, "receipts.db"))
 		if err != nil {
 			t.Fatal(err)
@@ -160,7 +160,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 					t.Fatalf("sparse config lost choices or unrelated fields: got %s want %#v: %v", raw, wantConfig, err)
 				}
 			}
-			var choices types.OnboardingSettings
+			var choices setting.Onboarding
 			if values, ok := wantConfig["onboarding"].(map[string]any); ok {
 				choices.IntroductionCompleted, _ = values["introduction_completed"].(bool)
 				choices.AISetupReminderHidden, _ = values["ai_setup_reminder_hidden"].(bool)
@@ -201,7 +201,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 		var target coreprotocol.AttachResult
 		targetSaved, targetAttached := false, false
 		var deleted workspace.DeletedWorkspace
-		savedDir := filepath.Join(workspaceRoot, workspace.WorkspaceID(roots[1]))
+		savedDir := filepath.Join(workspaceRoot, workspace.ID(roots[1]))
 		for i, action := range sequence[:min(len(sequence), 8)] {
 			t.Logf("action %d: %d", i, action)
 			switch action % 12 {
@@ -211,7 +211,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 					field = "ai_setup_reminder_hidden"
 				}
 				value := action&16 == 0
-				edit := types.SettingEdit{Path: []string{"onboarding", field}}
+				edit := setting.Edit{Path: []string{"onboarding", field}}
 				if action%12 != 2 {
 					edit.After = json.RawMessage(fmt.Sprint(value))
 				}
@@ -221,7 +221,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 				} else if malformed {
 					code = "startup_failed"
 				}
-				call("", coreprotocol.StartupSave, &coreprotocol.StartupSaveRequest{Edits: []types.SettingEdit{edit}}, nil, code)
+				call("", coreprotocol.StartupSave, &coreprotocol.StartupSaveRequest{Edits: []setting.Edit{edit}}, nil, code)
 				if code == "" {
 					configExists = true
 					values, ok := wantConfig["onboarding"].(map[string]any)
@@ -239,8 +239,8 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 					}
 				}
 			case 3:
-				edits := []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`9`)}, {Path: []string{"onboarding", "introduction_completed"}, After: json.RawMessage(`"wrong type"`)}, {Path: []string{"onboarding", "unknown"}, After: json.RawMessage(`true`)}}
-				call("", coreprotocol.StartupSave, &coreprotocol.StartupSaveRequest{Edits: []types.SettingEdit{edits[int(action/12)%len(edits)]}}, nil, "invalid_request")
+				edits := []setting.Edit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`9`)}, {Path: []string{"onboarding", "introduction_completed"}, After: json.RawMessage(`"wrong type"`)}, {Path: []string{"onboarding", "unknown"}, After: json.RawMessage(`true`)}}
+				call("", coreprotocol.StartupSave, &coreprotocol.StartupSaveRequest{Edits: []setting.Edit{edits[int(action/12)%len(edits)]}}, nil, "invalid_request")
 			case 4:
 				var opened coreprotocol.AttachResult
 				call("", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: roots[1]}, &opened, "")
@@ -251,7 +251,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 			case 5:
 				invalid := []string{home, filepath.Join(projects, "missing"), filepath.Join(roots[1], "project.txt")}[int(action/12)%3]
 				call("", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: invalid}, nil, "project_folder_required")
-				if _, err := os.Stat(filepath.Join(workspaceRoot, workspace.WorkspaceID(invalid))); !os.IsNotExist(err) {
+				if _, err := os.Stat(filepath.Join(workspaceRoot, workspace.ID(invalid))); !os.IsNotExist(err) {
 					t.Fatal("refused path constructed saved workspace storage")
 				}
 			case 6:
@@ -263,8 +263,8 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 				if !targetSaved || deleted.RecoveryPath != "" {
 					break
 				}
-				var plan workspace.WorkspaceDeletion
-				call(current.WorkspaceID, coreprotocol.WorkspaceDeletePreview, &coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.WorkspaceID(roots[1]), ProjectDir: roots[1]}, &plan, "")
+				var plan workspace.Deletion
+				call(current.WorkspaceID, coreprotocol.WorkspaceDeletePreview, &coreprotocol.WorkspaceDeletePreviewRequest{ID: workspace.ID(roots[1]), ProjectDir: roots[1]}, &plan, "")
 				if targetAttached {
 					if plan.Issue == nil || plan.Token != "" {
 						t.Fatal("attached target admitted deletion")
@@ -281,7 +281,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 				var result coreprotocol.WorkspaceDeletionResult
 				call(current.WorkspaceID, coreprotocol.WorkspaceDelete, &coreprotocol.WorkspaceDeleteRequest{Token: plan.Token}, &result, "")
 				deleted, targetSaved = result.Deleted, false
-				if deleted.ID != workspace.WorkspaceID(roots[1]) || deleted.ProjectDir != roots[1] || deleted.RecoveryPath == "" {
+				if deleted.ID != workspace.ID(roots[1]) || deleted.ProjectDir != roots[1] || deleted.RecoveryPath == "" {
 					t.Fatal("delete lost saved/recovery identity")
 				}
 				after, err := os.ReadFile(filepath.Join(deleted.RecoveryPath, "data", "workspace.db"))
@@ -323,7 +323,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 					t.Fatalf("saved catalog contains deleted or missing workspace: %+v", infos)
 				}
 				for _, info := range infos {
-					if info.ID != workspace.WorkspaceID(info.ProjectDir) || info.ProjectDir != roots[0] && (info.ProjectDir != roots[1] || !targetSaved) {
+					if info.ID != workspace.ID(info.ProjectDir) || info.ProjectDir != roots[0] && (info.ProjectDir != roots[1] || !targetSaved) {
 						t.Fatalf("saved catalog reported a foreign project identity: %+v", info)
 					}
 				}
@@ -338,7 +338,7 @@ func FuzzCoreStartupWorkspaces(f *testing.F) {
 				if raw, err := os.ReadFile(filepath.Join(root, "project.txt")); err != nil || string(raw) != "project content\n" {
 					t.Fatal("saved-workspace lifecycle changed project files")
 				}
-				path := filepath.Join(workspaceRoot, workspace.WorkspaceID(root), "workspace.db")
+				path := filepath.Join(workspaceRoot, workspace.ID(root), "workspace.db")
 				if slot == 0 || targetSaved {
 					startupFuzzDatabase(t, path, root)
 				} else if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {

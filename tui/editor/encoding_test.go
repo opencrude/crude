@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crude/tui/theme"
 )
 

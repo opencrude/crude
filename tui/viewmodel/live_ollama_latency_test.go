@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"context"
-	"crude/agent"
+	"crude/agent/turnloop"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,13 +12,12 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	ttypes "crude/types"
 	"crude/workspace"
 )
 
 type latencyEventSender struct {
 	ctx    context.Context
-	events chan ttypes.AgentEventMsg
+	events chan AgentEventMsg
 }
 
 func (s *latencyEventSender) SendAgentEvent(typ string, data any) {
@@ -27,7 +26,7 @@ func (s *latencyEventSender) SendAgentEvent(typ string, data any) {
 
 func (s *latencyEventSender) SendAgentEventWithID(typ string, data any, id string) {
 	select {
-	case s.events <- ttypes.AgentEventMsg{Type: typ, Data: data, AgentID: id}:
+	case s.events <- AgentEventMsg{Type: typ, Data: data, AgentID: id}:
 	case <-s.ctx.Done():
 	}
 }
@@ -83,7 +82,7 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
-	sender := &latencyEventSender{ctx: ctx, events: make(chan ttypes.AgentEventMsg, 4096)}
+	sender := &latencyEventSender{ctx: ctx, events: make(chan AgentEventMsg, 4096)}
 	defer wsOf(app).CloseAllSessions()
 	defer cancel()
 	orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
@@ -120,7 +119,7 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 			finished = event.Type == "done"
 		case <-tick.C:
 			update = time.Now()
-			app.handleTick(ttypes.TickMsg(update))
+			app.handleTick(TickMsg(update))
 		case <-ctx.Done():
 			t.Fatal("live provider deadline expired")
 		}
@@ -141,6 +140,6 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 	}
 }
 
-func (s *latencyEventSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *latencyEventSender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

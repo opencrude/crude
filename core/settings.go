@@ -15,9 +15,9 @@ import (
 	"crude/agent/hostshell"
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -123,7 +123,7 @@ func publicCapabilityFields(path []string, fields map[string]json.RawMessage) {
 			delete(fields, key)
 			continue
 		}
-		if types.ValidateSettingEdits(captypes.Settings{}, []types.SettingEdit{{Path: append(slices.Clone(path), key), After: value}}) != nil {
+		if setting.ValidateEdits(captypes.Settings{}, []setting.Edit{{Path: append(slices.Clone(path), key), After: value}}) != nil {
 			delete(fields, key)
 			continue
 		}
@@ -136,10 +136,10 @@ func publicCapabilityFields(path []string, fields map[string]json.RawMessage) {
 	}
 }
 
-func publicApp(value types.AppSettings) types.AppSettings {
+func publicApp(value setting.App) setting.App {
 	// Detach nested maps before any projection transformation.
 	raw, _ := json.Marshal(value)
-	var out types.AppSettings
+	var out setting.App
 	_ = json.Unmarshal(raw, &out)
 	out.Accounts = nil
 	out.Network.ProxyURL = publicURL(out.Network.ProxyURL)
@@ -147,17 +147,17 @@ func publicApp(value types.AppSettings) types.AppSettings {
 	return out
 }
 
-func publicSession(value types.Settings) coreprotocol.SessionSettingsDTO {
+func publicSession(value setting.Settings) coreprotocol.SessionSettingsDTO {
 	main, overrides, multi := value.SessionMainAgent, value.SessionOverrides, value.SessionMultiAgent
 	raw, _ := json.Marshal(value)
-	var out types.Settings
+	var out setting.Settings
 	_ = json.Unmarshal(raw, &out)
 	out.APIKey, out.ProviderAPIKey = "", ""
 	out.ProviderURL = publicURL(out.ProviderURL)
 	out.Capabilities = publicCapabilities(out.Capabilities)
 	// Category keys are excluded from JSON by the domain contract.
 	raw, _ = json.Marshal(overrides)
-	var detachedOverrides map[string]types.CategorySettings
+	var detachedOverrides map[string]setting.Category
 	_ = json.Unmarshal(raw, &detachedOverrides)
 	if multi != nil {
 		copy := *multi
@@ -177,7 +177,7 @@ func publicSession(value types.Settings) coreprotocol.SessionSettingsDTO {
 }
 
 func publicSessionSet(value session.SettingsSnapshotSet) coreprotocol.SessionSettingsResult {
-	return coreprotocol.SessionSettingsResult{Revision: value.Revision, Effective: publicSession(value.Effective), Base: publicSession(value.Base), Overrides: publicSession(types.Settings{SessionOverrides: value.Overrides}).Overrides}
+	return coreprotocol.SessionSettingsResult{Revision: value.Revision, Effective: publicSession(value.Effective), Base: publicSession(value.Base), Overrides: publicSession(setting.Settings{SessionOverrides: value.Overrides}).Overrides}
 }
 
 func publicAccount(value provider.Account) coreprotocol.AccountView {
@@ -240,7 +240,7 @@ func resolveAccount(draft coreprotocol.AccountDraft, before provider.Account) (p
 // captureSettings captures a detached public settings projection on the actor.
 // It performs no storage, shell discovery or other host I/O. Workers add
 // shell observations for both bootstrap reads and the settings topic.
-func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, types.AgentsSettings) {
+func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, setting.Agents) {
 	app := a.ws.AppDefaults()
 	overrides := a.ws.LoadWorkspaceOverrides()
 	// The workspace has already qualified trust and prediction consent against
@@ -266,7 +266,7 @@ func (a *actor) captureSettings() (coreprotocol.SettingsFetchResult, types.Agent
 		out.ConnectionSecretFields[id] = coreprotocol.ConnectionSecretPresence{Args: len(conn.Args) != 0, Environment: len(conn.Environment) != 0,
 			Headers: len(conn.Headers) != 0, SecretRefs: len(conn.SecretRefs) != 0, CredentialRef: conn.CredentialRef != ""}
 	}
-	defaults := types.CloneAppSettings(types.AppSettings{Agents: a.ws.WorkspaceAgentDefaults()}).Agents
+	defaults := setting.CloneApp(setting.App{Agents: a.ws.WorkspaceAgentDefaults()}).Agents
 	return out, defaults
 }
 
@@ -316,7 +316,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			return bad("invalid_request", err.Error())
 		}
 		before, exists := a.ws.AllAccounts()[in.AccountID]
-		var operation func() ([]types.ModelEntry, error)
+		var operation func() ([]setting.ModelEntry, error)
 		if in.Draft == nil {
 			if !exists {
 				return bad("account_missing", "selected account is unavailable")

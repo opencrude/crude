@@ -1,6 +1,8 @@
 package workspace
 
-import "crude/types"
+import (
+	"crude/types/conversation"
+)
 
 // AgentEffects describes notifications produced by one event reduction. Changed
 // flags distinguish an explicit reset from an event that leaves a value alone.
@@ -44,8 +46,8 @@ func (p AgentPrompt) AcceptsConfirmation(blockID, choice string) bool {
 	if p.IsQuestion || p.BlockID != blockID || blockID == "" {
 		return false
 	}
-	if p.Operation == types.PlanInvestigationHostOperation {
-		return choice == types.PlanInvestigationHostAllow || choice == "deny"
+	if p.Operation == conversation.PlanInvestigationHostOperation {
+		return choice == conversation.PlanInvestigationHostAllow || choice == "deny"
 	}
 	return choice == "allow" || (choice == "always" && !p.InvestigationPath) || choice == "deny"
 }

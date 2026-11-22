@@ -37,7 +37,7 @@ func openTestDB(t *testing.T) *sql.DB {
 func TestAttachEnablesFTS5(t *testing.T) {
 	st := openTestStore(t)
 	if !st.FTSEnabled() {
-		fault, _ := st.GetMeta(context.Background(), MetaFTSFault)
+		fault, _ := st.Meta(context.Background(), MetaFTSFault)
 		t.Fatalf("FTS5 unavailable: %s", fault)
 	}
 }

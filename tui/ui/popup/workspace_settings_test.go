@@ -4,18 +4,18 @@ import (
 	"testing"
 
 	"crude/agent/provider"
-	"crude/tui/settings"
+	"crude/tui/screens/settingspages"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestSignInResultUpdatesOpenModel(t *testing.T) {
 	th := theme.DefaultDark()
-	ws := NewWorkspaceSettings(th, ttypes.AppSettings{
+	ws := NewWorkspaceSettings(th, setting.App{
 
 		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
-	}, []ttypes.ProviderPreset{{ID: "chatgpt", Name: "Codex", StandardID: "codex"}})
+	}, []setting.ProviderPreset{{ID: "chatgpt", Name: "Codex", StandardID: "codex"}})
 
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", ws.Component(), ws, true, 90, 24)
 	ws.SetFocusHandler(frame.Focus)
@@ -25,7 +25,7 @@ func TestSignInResultUpdatesOpenModel(t *testing.T) {
 
 	model := ws.ModelForTest()
 	ws.ShowAccounts()
-	ws.Component().(*settings.WorkspaceSettingsSurface).HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+	ws.Component().(*settingspages.WorkspaceSettingsSurface).HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 	host.MarkLayout()
 	host.Layout()
 
@@ -35,7 +35,7 @@ func TestSignInResultUpdatesOpenModel(t *testing.T) {
 
 	// Dispatch exactly as viewmodel.forwardEventToWindowContent does.
 	id, generation := model.SignInRequest()
-	frame.Dispatch(settings.ChatGPTSignInResultMsg{AccountID: id, Generation: generation,
+	frame.Dispatch(settingspages.ChatGPTSignInResultMsg{AccountID: id, Generation: generation,
 		Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"},
 	})
 
@@ -48,10 +48,10 @@ func TestSignInResultUpdatesOpenModel(t *testing.T) {
 // stays independent even while the account editor receives async OAuth data.
 func TestAccountSignInKeepsSelectedTemplateIndependent(t *testing.T) {
 	th := theme.DefaultDark()
-	ws := NewWorkspaceSettings(th, ttypes.AppSettings{
+	ws := NewWorkspaceSettings(th, setting.App{
 
 		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}, "work": {ID: "work", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode", Connection: provider.DefaultTemplates()["opencode-go"]}},
-	}, []ttypes.ProviderPreset{
+	}, []setting.ProviderPreset{
 		{ID: "opencode-go", Name: "OpenCode Go", BaseURL: "https://opencode.ai/zen/go/v1", StandardID: "openai"},
 		{ID: "chatgpt", Name: "Codex", StandardID: "codex"},
 	})
@@ -65,11 +65,11 @@ func TestAccountSignInKeepsSelectedTemplateIndependent(t *testing.T) {
 	model := ws.ModelForTest()
 	model.SelectAccountForTest("personal")
 	ws.ShowAccounts()
-	ws.Component().(*settings.WorkspaceSettingsSurface).HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+	ws.Component().(*settingspages.WorkspaceSettingsSurface).HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 
 	// Sign in (rebuilds only the retained account editor).
 	id, generation := model.SignInRequest()
-	frame.Dispatch(settings.ChatGPTSignInResultMsg{AccountID: id, Generation: generation,
+	frame.Dispatch(settingspages.ChatGPTSignInResultMsg{AccountID: id, Generation: generation,
 		Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"},
 	})
 	if ws.ModelForTest() != model {

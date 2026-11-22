@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 // Normalize a long line and 128 provider ranges against the actual source.
@@ -20,7 +20,7 @@ func BenchmarkHighlightNormalizationLongLine(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	response := types.LSPHighlightResponse{WireVersion: 1, JSON: raw}
+	response := insight.LSPHighlightResponse{WireVersion: 1, JSON: raw}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

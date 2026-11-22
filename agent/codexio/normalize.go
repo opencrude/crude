@@ -1,6 +1,7 @@
 // Copyright 2025 OpenAI
 // SPDX-License-Identifier: Apache-2.0
 // Ported for Crude from codex-rs/apply-patch/src/file_update.rs at aa380897f67b.
+
 package codexio
 
 import "strings"

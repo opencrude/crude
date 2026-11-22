@@ -11,11 +11,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/gitmerge"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"crude/workspace/localhistory"
 )
@@ -254,9 +254,9 @@ func TestGitPushRejectedForMissingCommitsTellsTheUserToPull(t *testing.T) {
 	if !strings.Contains(plain, "Pull ↓1") {
 		t.Fatalf("Pull does not show the commit that the push needs first:\n%s", plain)
 	}
-	var notice *types.NotificationRecord
+	var notice *statuscenter.NotificationRecord
 	for _, record := range app.ws.Status().Notifications(false) {
-		if record.Severity == types.SeverityError && strings.HasPrefix(record.Summary, "Push failed.") {
+		if record.Severity == statuscenter.SeverityError && strings.HasPrefix(record.Summary, "Push failed.") {
 			notice = &record
 		}
 	}

@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/conversation"
 )
 
 const loopUsage = "/loop <interval> <prompt> schedules a recurring task. /loop shows schedules; /loop pause, resume or clear <id> manages one."
@@ -49,7 +49,7 @@ func (m *App) loopCommand(agentID, argument string) tea.Cmd {
 	argument = strings.TrimSpace(argument)
 	if argument == "" {
 		goal, exists := m.ws.GoalForAgent(agentID)
-		m.openSessionInfo("Scheduled loops", loopDetails(m.ws.LoopsForAgent(agentID), m.ws.PlanModeForAgent(agentID), exists && goal.Status == types.GoalActive))
+		m.openSessionInfo("Scheduled loops", loopDetails(m.ws.LoopsForAgent(agentID), m.ws.PlanModeForAgent(agentID), exists && goal.Status == conversation.GoalActive))
 		return nil
 	}
 	verb, rest := argument, ""
@@ -93,7 +93,7 @@ func (m *App) applyLoopActionResult(msg loopActionResultMsg) {
 	}
 }
 
-func loopDetails(loops []types.Loop, planMode, goalActive bool) string {
+func loopDetails(loops []conversation.Loop, planMode, goalActive bool) string {
 	if len(loops) == 0 {
 		return "No scheduled loops.\n\n" + loopUsage + "\n\nLoops run in the retained core, respect session permissions, and expire after seven days."
 	}

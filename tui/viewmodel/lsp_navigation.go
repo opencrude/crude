@@ -9,12 +9,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/navigation"
 	"crude/tui/ui"
 	"crude/tui/window"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -24,7 +24,7 @@ const navigationOverlay = ui.OverlayNavigation
 type navigationState struct {
 	workspace            shellport.Workspace
 	editor               *editor.Editor
-	source               types.InsightSource
+	source               insight.Source
 	selection            codeActionSelection
 	path, kind           string
 	group                window.GroupID // the pane that asked; the target opens there
@@ -35,7 +35,7 @@ type navigationState struct {
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	deadline             time.Time
-	result               *types.LSPNavigation
+	result               *insight.LSPNavigation
 	shown, reading       bool
 	landing              bool
 	// direct is a Ctrl+click navigation: no chooser opens unless the answer
@@ -47,14 +47,14 @@ type navigationState struct {
 
 type navigationResultMsg struct {
 	owner  *navigationState
-	result types.LSPNavigation
+	result insight.LSPNavigation
 	err    error
 }
 
 type navigationTargetMsg struct {
 	owner   *navigationState
 	index   int
-	landing types.LSPNavigationLanding
+	landing insight.LSPNavigationLanding
 	err     error
 }
 
@@ -62,7 +62,7 @@ type navigationTargetMsg struct {
 // file-open owner. A retired result cannot create a tab or move the old editor.
 type paneNavigation struct {
 	owner   *navigationState
-	landing types.LSPNavigationLanding
+	landing insight.LSPNavigationLanding
 	hash    string // computed off Update from the actually opened snapshot
 }
 
@@ -78,13 +78,13 @@ func (m *App) closeNavigation() {
 
 func navigationTitle(kind string) string {
 	switch kind {
-	case types.LSPNavigationDefinition:
+	case insight.LSPNavigationDefinition:
 		return "Go to definition"
-	case types.LSPNavigationTypeDefinition:
+	case insight.LSPNavigationTypeDefinition:
 		return "Go to type definition"
-	case types.LSPNavigationImplementation:
+	case insight.LSPNavigationImplementation:
 		return "Go to implementation"
-	case types.LSPNavigationReferences:
+	case insight.LSPNavigationReferences:
 		return "Find references"
 	default:
 		return "Navigation"
@@ -113,9 +113,9 @@ func (m *App) navigateAt(msg editor.NavigateAtMsg) tea.Cmd {
 		return m.openWebLink(msg.URL)
 	}
 	m.recordNavigationOrigin()
-	kind := types.LSPNavigationDefinition
+	kind := insight.LSPNavigationDefinition
 	if msg.Implementation {
-		kind = types.LSPNavigationImplementation
+		kind = insight.LSPNavigationImplementation
 	}
 	return m.startNavigation(kind, true)
 }
@@ -156,7 +156,7 @@ func (m *App) startNavigation(kind string, direct bool) tea.Cmd {
 	return func() tea.Msg {
 		request, stop := context.WithTimeout(s.ctx, workspace.ManualLSPRequestTimeout)
 		defer stop()
-		result, err := port.RequestLSPNavigation(request, source, kind, line, col, kind == types.LSPNavigationReferences)
+		result, err := port.RequestLSPNavigation(request, source, kind, line, col, kind == insight.LSPNavigationReferences)
 		return navigationResultMsg{owner: s, result: result, err: err}
 	}
 }
@@ -275,7 +275,7 @@ func (m *App) handleNavigationResult(msg navigationResultMsg) {
 		return
 	}
 	if msg.result.Kind != s.kind || msg.result.Line != s.line || msg.result.Col != s.col ||
-		msg.result.IncludeDeclaration != (s.kind == types.LSPNavigationReferences) {
+		msg.result.IncludeDeclaration != (s.kind == insight.LSPNavigationReferences) {
 		m.failNavigation(s, "The answer does not match this search. Search again.")
 		return
 	}
@@ -325,14 +325,14 @@ func (m *App) syncNavigation() {
 	s.shown, s.deadline = true, time.Time{}
 	s.screen.SetResult(*s.result)
 	targets := s.result.Targets
-	single := s.kind != types.LSPNavigationReferences && len(targets) == 1 &&
+	single := s.kind != insight.LSPNavigationReferences && len(targets) == 1 &&
 		targets[0].Path != "" && targets[0].UnavailableReason == "" && !targets[0].External
 	if s.direct && !s.popup {
 		switch {
-		case single && s.kind == types.LSPNavigationDefinition && targets[0].Path == s.path && navigationRangeContains(targets[0].Selection, s.line, s.col):
+		case single && s.kind == insight.LSPNavigationDefinition && targets[0].Path == s.path && navigationRangeContains(targets[0].Selection, s.line, s.col):
 			// Ctrl+click on a declaration shows its uses, as established
 			// editors do; going to the place already shown does nothing.
-			m.runDetachedAsyncCmd(m.startNavigation(types.LSPNavigationReferences, true))
+			m.runDetachedAsyncCmd(m.startNavigation(insight.LSPNavigationReferences, true))
 			return
 		case len(targets) == 0:
 			m.closeNavigation()
@@ -351,21 +351,21 @@ func (m *App) syncNavigation() {
 }
 
 // navigationRangeContains reports whether an LSP position is inside r.
-func navigationRangeContains(r types.LSPNavigationRange, line, col int) bool {
-	before := func(a, b types.LSPNavigationPosition) bool {
+func navigationRangeContains(r insight.LSPNavigationRange, line, col int) bool {
+	before := func(a, b insight.LSPNavigationPosition) bool {
 		return a.Line < b.Line || a.Line == b.Line && a.Character <= b.Character
 	}
-	at := types.LSPNavigationPosition{Line: line, Character: col}
+	at := insight.LSPNavigationPosition{Line: line, Character: col}
 	return before(r.Start, at) && before(at, r.End)
 }
 
 func navigationEmptyText(kind string) string {
 	switch kind {
-	case types.LSPNavigationImplementation:
+	case insight.LSPNavigationImplementation:
 		return "No implementation found."
-	case types.LSPNavigationReferences:
+	case insight.LSPNavigationReferences:
 		return "No references found."
-	case types.LSPNavigationTypeDefinition:
+	case insight.LSPNavigationTypeDefinition:
 		return "No type definition found."
 	default:
 		return "No definition found."
@@ -444,8 +444,8 @@ func (m *App) handleNavigationTarget(msg navigationTargetMsg) tea.Cmd {
 	}
 }
 
-func navigationOpenedSource(s document.Snapshot) types.InsightSource {
-	return types.InsightSource{Kind: "canonical", WorkspaceGeneration: s.AnalysisGeneration,
+func navigationOpenedSource(s document.Snapshot) insight.Source {
+	return insight.Source{Kind: "canonical", WorkspaceGeneration: s.AnalysisGeneration,
 		DocumentID: s.ID, Lifetime: s.AnalysisLifetime, Path: s.Path, Revision: s.Revision}
 }
 

@@ -7,9 +7,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	"crude/desktopnotify"
-	ttypes "crude/types"
+	"crude/core/shellport"
+	"crude/tui/desktopnotify"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -31,7 +32,7 @@ type presenceReport struct{ present, notifies bool }
 // and serves a chosen notification setting.
 type presenceWorkspace struct {
 	shellport.Workspace
-	settings ttypes.AppSettings
+	settings setting.App
 	reports  []presenceReport
 }
 
@@ -42,7 +43,7 @@ func (w *presenceWorkspace) DesktopPresencePreferences() (int, bool) {
 	s := w.settings.UI.DesktopNotifications
 	return s.AwayMinutesOrDefault(), s.Active()
 }
-func (w *presenceWorkspace) LoadAppSettings() ttypes.AppSettings { return w.settings }
+func (w *presenceWorkspace) LoadAppSettings() setting.App { return w.settings }
 
 type noticeHarness struct {
 	t      *testing.T
@@ -89,8 +90,8 @@ func (h *noticeHarness) elect(present, notify bool) tea.Cmd {
 
 func (h *noticeHarness) observe() tea.Cmd { return h.app.observeDesktopStatus(h.now) }
 
-func (h *noticeHarness) setAgent(id, label string, phase ttypes.AgentPhase, needsAction bool, turn uint64) tea.Cmd {
-	h.status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{Kind: ttypes.ResourceAgent, ID: id}, Label: label, Phase: phase, NeedsAction: needsAction, TurnGeneration: turn})
+func (h *noticeHarness) setAgent(id, label string, phase statuscenter.AgentPhase, needsAction bool, turn uint64) tea.Cmd {
+	h.status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: id}, Label: label, Phase: phase, NeedsAction: needsAction, TurnGeneration: turn})
 	return h.observe()
 }
 
@@ -111,7 +112,7 @@ func (h *noticeHarness) lastShown() desktopnotify.Notification {
 func TestDesktopNoticeAwayUserGetsOneMessageForAQuestion(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, true)
-	if cmd := h.setAgent("a1", "Ivan", ttypes.AgentQuestion, true, 1); cmd == nil {
+	if cmd := h.setAgent("a1", "Ivan", statuscenter.AgentQuestion, true, 1); cmd == nil {
 		t.Fatal("a question for an away user must start the settle timer")
 	}
 	if len(h.sink.shown) != 0 {
@@ -136,7 +137,7 @@ func TestDesktopNoticeNeverAnnouncesWhatTheUserSaw(t *testing.T) {
 	h := newNoticeHarness(t)
 	// The user is present in another shell when the question arrives.
 	h.elect(true, false)
-	h.setAgent("a1", "Ivan", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentQuestion, true, 1)
 	// Later the user leaves every shell and this one is elected.
 	h.elect(false, true)
 	h.settle()
@@ -148,7 +149,7 @@ func TestDesktopNoticeNeverAnnouncesWhatTheUserSaw(t *testing.T) {
 func TestDesktopNoticeBaselineIsNotNews(t *testing.T) {
 	app := newTestApp(t)
 	status := app.ws.Status().(*workspace.StatusCenter)
-	status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{Kind: ttypes.ResourceAgent, ID: "old"}, Label: "Old", Phase: ttypes.AgentQuestion, NeedsAction: true})
+	status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "old"}, Label: "Old", Phase: statuscenter.AgentQuestion, NeedsAction: true})
 	ws := &presenceWorkspace{Workspace: app.ws}
 	app.ws = ws
 	sink := &recordingNotifier{events: make(chan desktopnotify.Event, 1)}
@@ -167,7 +168,7 @@ func TestDesktopNoticeBaselineIsNotNews(t *testing.T) {
 func TestDesktopNoticeOnlyTheElectedShellNotifies(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, false)
-	h.setAgent("a1", "Ivan", ttypes.AgentApproval, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentApproval, true, 1)
 	h.settle()
 	if len(h.sink.shown) != 0 {
 		t.Fatal("a shell that the core did not elect showed a message")
@@ -184,7 +185,7 @@ func TestDesktopNoticeOnlyTheElectedShellNotifies(t *testing.T) {
 func TestDesktopNoticeWithdrawsWhenTheUserReturnsOrTheAgentStopsWaiting(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, true)
-	h.setAgent("a1", "Ivan", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentQuestion, true, 1)
 	h.settle()
 	key := h.lastShown().Key
 	h.focus()
@@ -197,13 +198,13 @@ func TestDesktopNoticeWithdrawsWhenTheUserReturnsOrTheAgentStopsWaiting(t *testi
 
 	h.blur()
 	h.elect(false, true)
-	h.setAgent("a2", "Olga", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a2", "Olga", statuscenter.AgentQuestion, true, 1)
 	h.settle()
 	if got := h.lastShown().Title; got != "Olga needs your answer" {
 		t.Fatalf("title = %q; the question that the user saw must not return", got)
 	}
 	// The question is answered in another shell.
-	h.setAgent("a2", "Olga", ttypes.AgentTool, false, 1)
+	h.setAgent("a2", "Olga", statuscenter.AgentTool, false, 1)
 	if got := h.sink.withdrawn[len(h.sink.withdrawn)-1]; got != key {
 		t.Fatalf("withdrawn = %v after the answer", h.sink.withdrawn)
 	}
@@ -212,8 +213,8 @@ func TestDesktopNoticeWithdrawsWhenTheUserReturnsOrTheAgentStopsWaiting(t *testi
 func TestDesktopNoticeQuestionAnsweredAtOnceMakesNoMessage(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, true)
-	h.setAgent("a1", "Ivan", ttypes.AgentApproval, true, 1)
-	h.setAgent("a1", "Ivan", ttypes.AgentTool, false, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentApproval, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentTool, false, 1)
 	h.settle()
 	if len(h.sink.shown) != 0 {
 		t.Fatalf("a request approved at once made a message: %+v", h.sink.shown)
@@ -223,8 +224,8 @@ func TestDesktopNoticeQuestionAnsweredAtOnceMakesNoMessage(t *testing.T) {
 func TestDesktopNoticeBurstMakesOneMessageAndLaterNewsIsQuiet(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, true)
-	h.setAgent("a1", "Ivan", ttypes.AgentCompleted, false, 1)
-	h.setAgent("a2", "Olga", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentCompleted, false, 1)
+	h.setAgent("a2", "Olga", statuscenter.AgentQuestion, true, 1)
 	h.settle()
 	if len(h.sink.shown) != 1 {
 		t.Fatalf("a burst made %d messages", len(h.sink.shown))
@@ -238,7 +239,7 @@ func TestDesktopNoticeBurstMakesOneMessageAndLaterNewsIsQuiet(t *testing.T) {
 	}
 	// Ten seconds later another agent finishes: same message, no banner.
 	h.now = h.now.Add(10 * time.Second)
-	h.setAgent("a3", "Petr", ttypes.AgentCompleted, false, 1)
+	h.setAgent("a3", "Petr", statuscenter.AgentCompleted, false, 1)
 	h.settle()
 	second := h.lastShown()
 	if second.Key != first.Key || !second.Quiet || !strings.Contains(second.Body, "Petr finished") {
@@ -246,14 +247,14 @@ func TestDesktopNoticeBurstMakesOneMessageAndLaterNewsIsQuiet(t *testing.T) {
 	}
 	// A second request for the user within the cooldown is not urgent news:
 	// the banner already asked for the user.
-	h.setAgent("a5", "Rita", ttypes.AgentApproval, true, 1)
+	h.setAgent("a5", "Rita", statuscenter.AgentApproval, true, 1)
 	h.settle()
 	if got := h.lastShown(); !got.Quiet || !strings.Contains(got.Body, "Rita needs your approval") {
 		t.Fatalf("update = %+v, want a quiet update that lists Rita", got)
 	}
 	// After the cooldown, news gets a banner again.
 	h.now = h.now.Add(desktopNoticeCooldown)
-	h.setAgent("a6", "Lev", ttypes.AgentCompleted, false, 1)
+	h.setAgent("a6", "Lev", statuscenter.AgentCompleted, false, 1)
 	h.settle()
 	if got := h.lastShown(); got.Quiet {
 		t.Fatalf("news after the cooldown must get a banner: %+v", got)
@@ -263,13 +264,13 @@ func TestDesktopNoticeBurstMakesOneMessageAndLaterNewsIsQuiet(t *testing.T) {
 func TestDesktopNoticeMoreUrgentNewsInterruptsTheCooldown(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, true)
-	h.setAgent("a1", "Ivan", ttypes.AgentCompleted, false, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentCompleted, false, 1)
 	h.settle()
 	if h.lastShown().Quiet {
 		t.Fatal("the first message must be a banner")
 	}
 	h.now = h.now.Add(5 * time.Second)
-	h.setAgent("a2", "Olga", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a2", "Olga", statuscenter.AgentQuestion, true, 1)
 	h.settle()
 	got := h.lastShown()
 	if got.Quiet || got.Title != "1 agent needs you, 1 finished" {
@@ -301,12 +302,12 @@ func TestDesktopNoticeKindSwitchesSkipUnwantedNews(t *testing.T) {
 	off := false
 	h.ws.settings.UI.DesktopNotifications.Finished = &off
 	h.elect(false, true)
-	h.setAgent("a1", "Ivan", ttypes.AgentCompleted, false, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentCompleted, false, 1)
 	h.settle()
 	if len(h.sink.shown) != 0 {
 		t.Fatalf("finished work was announced with Finished work off: %+v", h.sink.shown)
 	}
-	h.setAgent("a2", "Olga", ttypes.AgentNeedsAttention, false, 1)
+	h.setAgent("a2", "Olga", statuscenter.AgentNeedsAttention, false, 1)
 	h.settle()
 	if got := h.lastShown().Title; got != "Olga stopped" {
 		t.Fatalf("title = %q", got)
@@ -325,16 +326,16 @@ func TestDesktopNoticeKindSwitchesSkipUnwantedNews(t *testing.T) {
 func notErrand() bool { return false }
 
 func TestDesktopNoticeChildAndErrandNewsStaysQuiet(t *testing.T) {
-	if kind, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "c", ParentID: "p"}, Phase: ttypes.AgentCompleted}, notErrand); ok {
+	if kind, ok := desktopNoticeKind(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "c", ParentID: "p"}, Phase: statuscenter.AgentCompleted}, notErrand); ok {
 		t.Fatalf("a child's finish is news: %v", kind)
 	}
-	if _, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "a"}, Phase: ttypes.AgentFailed}, func() bool { return true }); ok {
+	if _, ok := desktopNoticeKind(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "a"}, Phase: statuscenter.AgentFailed}, func() bool { return true }); ok {
 		t.Fatal("the workspace Errand's stop is news")
 	}
-	if kind, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "c", ParentID: "p"}, Phase: ttypes.AgentApproval, NeedsAction: true}, notErrand); !ok || kind != noticeApproval {
+	if kind, ok := desktopNoticeKind(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "c", ParentID: "p"}, Phase: statuscenter.AgentApproval, NeedsAction: true}, notErrand); !ok || kind != noticeApproval {
 		t.Fatalf("a child's approval request must reach the user: %v %v", kind, ok)
 	}
-	if _, ok := desktopNoticeKind(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "a"}, Phase: ttypes.AgentCancelled}, notErrand); ok {
+	if _, ok := desktopNoticeKind(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "a"}, Phase: statuscenter.AgentCancelled}, notErrand); ok {
 		t.Fatal("a run that the user cancelled is news")
 	}
 }
@@ -344,14 +345,14 @@ func TestDesktopNoticeIdleFocusedTerminalCountsAsAway(t *testing.T) {
 	h.focus()
 	start := h.now
 	// A tick before the idle limit keeps the user present.
-	h.app.observeDesktopPresence(start.Add(time.Duration(ttypes.DesktopNotificationAwayDefault)*time.Minute-time.Second), false)
+	h.app.observeDesktopPresence(start.Add(time.Duration(setting.DesktopNotificationAwayDefault)*time.Minute-time.Second), false)
 	if last := h.ws.reports[len(h.ws.reports)-1]; !last.present {
 		t.Fatal("a focused terminal is present until the idle limit")
 	}
 	// A question arrives two minutes after the last input; the user is gone.
 	h.now = start.Add(2 * time.Minute)
-	h.setAgent("a1", "Ivan", ttypes.AgentQuestion, true, 1)
-	h.now = start.Add(time.Duration(ttypes.DesktopNotificationAwayDefault)*time.Minute + time.Second)
+	h.setAgent("a1", "Ivan", statuscenter.AgentQuestion, true, 1)
+	h.now = start.Add(time.Duration(setting.DesktopNotificationAwayDefault)*time.Minute + time.Second)
 	h.app.observeDesktopPresence(h.now, false)
 	if last := h.ws.reports[len(h.ws.reports)-1]; last.present {
 		t.Fatal("an idle terminal must report away")
@@ -366,7 +367,7 @@ func TestDesktopNoticeIdleFocusedTerminalCountsAsAway(t *testing.T) {
 func TestDesktopNoticeClickOpensTheAgentAndWithdraws(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, true)
-	h.setAgent("a1", "Ivan", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentQuestion, true, 1)
 	h.settle()
 	key := h.lastShown().Key
 	h.app.applyDesktopNoticeEvent(desktopNoticeEventMsg{sink: h.sink, event: desktopnotify.Event{Kind: desktopnotify.Activated, Key: key}, ok: true})
@@ -382,7 +383,7 @@ func TestDesktopNoticeClickOpensTheAgentAndWithdraws(t *testing.T) {
 func TestDesktopNoticeWorkspaceSwitchWithdrawsAndStartsOver(t *testing.T) {
 	h := newNoticeHarness(t)
 	h.elect(false, true)
-	h.setAgent("a1", "Ivan", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentQuestion, true, 1)
 	h.settle()
 	key := h.lastShown().Key
 	h.app.resetDesktopNotices()
@@ -434,7 +435,7 @@ func TestDesktopNoticeFollowsSoundAndAwaySettings(t *testing.T) {
 	h.focus()
 	start := h.now
 	h.now = start.Add(30 * time.Second)
-	h.setAgent("a1", "Ivan", ttypes.AgentQuestion, true, 1)
+	h.setAgent("a1", "Ivan", statuscenter.AgentQuestion, true, 1)
 	// One minute without input is away with "Away after" set to 1 minute.
 	h.now = start.Add(time.Minute + time.Second)
 	h.app.observeDesktopPresence(h.now, false)
@@ -464,7 +465,7 @@ func TestDesktopNoticeUsesErrandRoleForAQuestion(t *testing.T) {
 	h.elect(false, true)
 	w := shellport.Unwrap(h.ws.Workspace)
 	parent := w.AgentMgr.AddOrchestrator("parent", nil)
-	child := w.AgentMgr.AddSubAgent("errand-child", parent.ID, "RetainedPersonalName", "model", ttypes.ErrandRoleID, nil)
+	child := w.AgentMgr.AddSubAgent("errand-child", parent.ID, "RetainedPersonalName", "model", setting.ErrandRoleID, nil)
 	w.ApplyAgentStatusEvent(workspace.AgentEvent{AgentID: child.ID, Type: "blocking", Data: map[string]any{"operation": "question"}})
 	if h.observe() == nil {
 		t.Fatal("Errand's question did not reach the desktop notification owner")

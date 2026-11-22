@@ -1,21 +1,21 @@
 package chatprojection
 
 import (
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 )
 
 type commandOrigin struct {
 	index   int
-	message *types.ChatMessage
+	message *conversation.ChatMessage
 }
 
 type commandSettlement struct {
 	index   int
-	message *types.ChatMessage
+	message *conversation.ChatMessage
 }
 
-func commandStart(message *types.ChatMessage) bool {
+func commandStart(message *conversation.ChatMessage) bool {
 	switch message.ToolName {
 	case "execute_command", "async_execute_command", "exec_command":
 		return message.ToolOutcome.ID != ""
@@ -23,7 +23,7 @@ func commandStart(message *types.ChatMessage) bool {
 	return false
 }
 
-func settlementID(message *types.ChatMessage) string {
+func settlementID(message *conversation.ChatMessage) string {
 	if !isCommandOutcome(message) || message.Collaboration.Command == nil {
 		return ""
 	}
@@ -34,7 +34,7 @@ func settlementID(message *types.ChatMessage) string {
 // indexCommandEvidence runs only on a source change. It widens the incremental
 // rebuild to an originating row when a later exact settlement changes that row.
 // The canonical audit and journal messages are never rewritten or acknowledged.
-func (r *Renderer) indexCommandEvidence(canonical []*types.ChatMessage, from int, changed map[string]bool) int {
+func (r *Renderer) indexCommandEvidence(canonical []*conversation.ChatMessage, from int, changed map[string]bool) int {
 	if r.commandOrigins == nil || from == 0 {
 		r.commandOrigins = make(map[string]commandOrigin)
 		r.commandSettlements = make(map[string]commandSettlement)
@@ -55,7 +55,7 @@ func (r *Renderer) indexCommandEvidence(canonical []*types.ChatMessage, from int
 	}
 	for index := from; index < len(canonical); index++ {
 		message := canonical[index]
-		leaves := []*types.ChatMessage{message}
+		leaves := []*conversation.ChatMessage{message}
 		if message.ToolName == "multi_tool_use.parallel" {
 			batch, ok := r.activityBatches[message.InternalID]
 			if !ok || changed[message.InternalID] {
@@ -90,13 +90,13 @@ func (r *Renderer) indexCommandEvidence(canonical []*types.ChatMessage, from int
 	return from
 }
 
-func (r *Renderer) projectCommandEvidence(message *types.ChatMessage) *types.ChatMessage {
+func (r *Renderer) projectCommandEvidence(message *conversation.ChatMessage) *conversation.ChatMessage {
 	if commandStart(message) {
 		if settlement, ok := r.commandSettlements[message.ToolOutcome.ID]; ok {
 			// A presentation-only copy keeps the originating identity, operands,
 			// permission decision and initial result available on expansion.
 			projected := *message
-			projected.Role = types.RoleUser
+			projected.Role = conversation.RoleUser
 			projected.Collaboration = settlement.message.Collaboration
 			return &projected
 		}

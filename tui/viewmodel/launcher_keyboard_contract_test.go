@@ -9,11 +9,11 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
-	wm "crude/tui/wm"
+	"crude/tui/wm"
 	"crude/workspace"
 )
 
-func setupLauncherRoutingApp(t *testing.T, workspaces []workspace.WorkspaceInfo) (*App, *launcher.Screen) {
+func setupLauncherRoutingApp(t *testing.T, workspaces []workspace.Info) (*App, *launcher.Screen) {
 	t.Helper()
 	app := newTestAppWithLauncher(t)
 	app.width = 100
@@ -42,7 +42,7 @@ func setupLauncherRoutingApp(t *testing.T, workspaces []workspace.WorkspaceInfo)
 // launcher Host and global ActionRegistry chords while the welcome screen is active.
 func TestLauncherViewmodelKeyboardContractTable(t *testing.T) {
 	t.Run("routes_down_to_launcher_host", func(t *testing.T) {
-		app, screen := setupLauncherRoutingApp(t, []workspace.WorkspaceInfo{
+		app, screen := setupLauncherRoutingApp(t, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		})
 		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -73,7 +73,7 @@ func TestLauncherViewmodelKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("esc_filter_clear_then_launcher_stays", func(t *testing.T) {
-		app, screen := setupLauncherRoutingApp(t, []workspace.WorkspaceInfo{
+		app, screen := setupLauncherRoutingApp(t, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		})
 		app.dispatchKeyPress(tea.KeyPressMsg{Code: '/', Text: "/"})
@@ -88,7 +88,7 @@ func TestLauncherViewmodelKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("ctrl_c_does_not_dismiss_launcher", func(t *testing.T) {
-		app, screen := setupLauncherRoutingApp(t, []workspace.WorkspaceInfo{
+		app, screen := setupLauncherRoutingApp(t, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		})
 		app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -118,7 +118,7 @@ func TestLauncherViewmodelKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("min_size_hidden_launcher_does_not_consume_keys", func(t *testing.T) {
-		app, screen := setupLauncherRoutingApp(t, []workspace.WorkspaceInfo{
+		app, screen := setupLauncherRoutingApp(t, []workspace.Info{
 			{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
 		})
 		app.ChatAreaHeight = 2 // below renderLauncher minimum of 3
@@ -133,9 +133,9 @@ func TestLauncherViewmodelKeyboardContractTable(t *testing.T) {
 	})
 
 	t.Run("long_workspace_list_scroll_via_viewmodel", func(t *testing.T) {
-		workspaces := make([]workspace.WorkspaceInfo, 25)
+		workspaces := make([]workspace.Info, 25)
 		for i := range workspaces {
-			workspaces[i] = workspace.WorkspaceInfo{
+			workspaces[i] = workspace.Info{
 				ProjectName: fmt.Sprintf("ws-%02d", i),
 				ProjectDir:  fmt.Sprintf("/tmp/ws-%02d", i),
 			}

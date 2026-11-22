@@ -2,7 +2,8 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func TestSoleCompletionRespectsEnterOnlyPreference(t *testing.T) {
 	row := lowProfileEntry("sole", "printValue", "a")
 	row.Insertion.TextEdit.NewText = "renderValue()"
 	app, port := automaticCompletionAfterTyping(t, row)
-	settings := types.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	settings.CompletionAccept = "enter"
 	port.service.settings = &settings
 	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyTab})
@@ -74,7 +75,7 @@ func TestSoleCompletionEnterAndStaleResultsNeverAccept(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			row := lowProfileEntry("sole", "printValue", "a")
 			row.Insertion.TextEdit.NewText = "render()"
-			rows := []types.LSPCompletionEntry{row}
+			rows := []insight.LSPCompletionEntry{row}
 			if mode == "many" {
 				other := row
 				other.ID = "other"

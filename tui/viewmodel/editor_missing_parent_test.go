@@ -13,7 +13,7 @@ import (
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -31,7 +31,7 @@ func seedMissingDocumentParent(t *testing.T, root string) {
 	if err := os.WriteFile(path, []byte("retained source"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	seed := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
+	seed := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, nil)
 	_, err := seed.LiveDocuments.Open(document.Owner{ClientID: "seed", Epoch: 1}, path)
 	seed.Close()
 	if err != nil {

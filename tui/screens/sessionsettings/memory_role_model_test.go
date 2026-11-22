@@ -7,7 +7,7 @@ import (
 	"crude/agent/session"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // memoryAgentCfg is the shape a real config carries: an active profile whose
@@ -27,9 +27,9 @@ func memoryAgentCfg() *session.Config {
 				}},
 			},
 		},
-		Memory: types.MemorySettings{
+		Memory: setting.Memory{
 			AutoRecall: "on", AutoExtract: "on", Consolidation: "on",
-			MemoryCategory: types.CategorySettings{
+			MemoryCategory: setting.Category{
 				Provider: "ollama-cloud", AccountID: "memory",
 				Model:                    "memory-agent-model",
 				ThinkingEffort:           "high",
@@ -42,7 +42,7 @@ func memoryAgentCfg() *session.Config {
 // applyOverrides mirrors the manual-override branch of
 // session.configWithSessionOverrides so a test can resolve what the backend
 // would use after a deck save.
-func applyOverrides(base *session.Config, overrides map[string]types.CategorySettings) *session.Config {
+func applyOverrides(base *session.Config, overrides map[string]setting.Category) *session.Config {
 	out := *base
 	out.Agents.Profiles = make(map[string]session.ProfileConfig, len(base.Agents.Profiles))
 	for name, prof := range base.Agents.Profiles {
@@ -87,7 +87,7 @@ func applyOverrides(base *session.Config, overrides map[string]types.CategorySet
 	return &out
 }
 
-func openSettingsDeck(t *testing.T, st types.Settings) *Screen {
+func openSettingsDeck(t *testing.T, st setting.Settings) *Screen {
 	t.Helper()
 	screen := New(theme.DefaultDark(), cloneSettings(st), st, nil)
 	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory", Connection: provider.DefaultTemplates()["ollama-cloud"]}})
@@ -109,7 +109,7 @@ func TestMemoryAgentRoleShowsItsOwnModel(t *testing.T) {
 	cfg := memoryAgentCfg()
 	st := session.ConfigToSettings(cfg)
 
-	if got := cfg.GetMemoryCategory().Model; got != "memory-agent-model" {
+	if got := cfg.MemoryCategory().Model; got != "memory-agent-model" {
 		t.Fatalf("backend memory category = %q, want memory-agent-model", got)
 	}
 
@@ -151,7 +151,7 @@ func TestMemoryAgentRoleApplyPreservesModel(t *testing.T) {
 		t.Fatalf("ToSettings Memory.MemoryCategory.Model = %q, want memory-agent-model", got)
 	}
 
-	resolved := applyOverrides(cfg, out.SessionOverrides).GetMemoryCategory()
+	resolved := applyOverrides(cfg, out.SessionOverrides).MemoryCategory()
 	if resolved.Model != "memory-agent-model" || resolved.AccountID != "memory" {
 		t.Fatalf("after save backend resolves account=%q model=%q, want memory/memory-agent-model",
 			resolved.AccountID, resolved.Model)
@@ -178,7 +178,7 @@ func TestMemoryAgentRoleExplicitModelOverrides(t *testing.T) {
 		t.Fatalf("Memory.MemoryCategory.Model = %q, want chosen-memory-model", got)
 	}
 
-	resolved := applyOverrides(cfg, out.SessionOverrides).GetMemoryCategory()
+	resolved := applyOverrides(cfg, out.SessionOverrides).MemoryCategory()
 	if resolved.Model != "chosen-memory-model" {
 		t.Fatalf("after save backend resolves %q, want chosen-memory-model", resolved.Model)
 	}
@@ -208,7 +208,7 @@ func TestMemoryAgentRoleResetRestoresWorkspaceSetting(t *testing.T) {
 			if got := out.Memory.MemoryCategory.Model; got != "memory-agent-model" {
 				t.Fatalf("%s Memory.MemoryCategory.Model = %q, want memory-agent-model", tc.name, got)
 			}
-			resolved := applyOverrides(cfg, out.SessionOverrides).GetMemoryCategory()
+			resolved := applyOverrides(cfg, out.SessionOverrides).MemoryCategory()
 			if resolved.Model != "memory-agent-model" {
 				t.Fatalf("%s: backend resolves %q, want memory-agent-model", tc.name, resolved.Model)
 			}
@@ -230,7 +230,7 @@ func TestMemoryAgentRoleInheritMainStillWorks(t *testing.T) {
 		t.Fatalf("SessionOverrides[memory].Inherit = %q, want %q", got, InheritMainMarker)
 	}
 
-	resolved := applyOverrides(cfg, out.SessionOverrides).GetMemoryCategory()
+	resolved := applyOverrides(cfg, out.SessionOverrides).MemoryCategory()
 	if resolved.Model != "main-agent-model" {
 		t.Fatalf("inherit-main resolved memory model = %q, want main-agent-model", resolved.Model)
 	}

@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -40,7 +40,7 @@ const (
 type tile struct {
 	label string
 	value string
-	sev   Severity
+	sev   perfdata.Severity
 }
 
 // block is one laid-out piece of the scrollable body. y is in content rows.
@@ -48,9 +48,9 @@ type block struct {
 	kind     blockKind
 	y, h     int
 	text     string
-	sev      Severity
+	sev      perfdata.Severity
 	tiles    []tile
-	findings []Finding
+	findings []perfdata.Finding
 	cards    []card
 	cardW    int
 	table    tableBlockData
@@ -385,7 +385,7 @@ func (p *painter) set(x, y int, ch rune, fg, bg cell.Color) {
 	p.buf.Set(x, y, cell.NewCell(ch, fg, bg, 0))
 }
 
-func (p *painter) sevColor(sev Severity) cell.Color {
+func (p *painter) sevColor(sev perfdata.Severity) cell.Color {
 	switch sev {
 	case SeverityCrit:
 		return p.tokens.Color(ui.ColorError)
@@ -397,7 +397,7 @@ func (p *painter) sevColor(sev Severity) cell.Color {
 	return p.tokens.Color(ui.ColorAccent)
 }
 
-func (p *painter) sevGlyph(sev Severity) string {
+func (p *painter) sevGlyph(sev perfdata.Severity) string {
 	switch sev {
 	case SeverityCrit:
 		return "✕"
@@ -709,7 +709,7 @@ func (b *body) paintTable(p *painter, blk *block, x, y, w int) {
 	}
 }
 
-func (p *painter) sevOrFg(sev Severity) cell.Color {
+func (p *painter) sevOrFg(sev perfdata.Severity) cell.Color {
 	if sev == SeverityOK {
 		return p.tokens.Color(ui.ColorFg)
 	}

@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/wire"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
 )
 
 // RemoteInstallRequiredError is an immutable, single-use consent challenge for

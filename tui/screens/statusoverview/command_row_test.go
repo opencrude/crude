@@ -9,7 +9,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestDockedCommandRowDoesNotDisclose(t *testing.T) {
@@ -62,7 +62,7 @@ func TestDockedCommandRowDoesNotDisclose(t *testing.T) {
 func TestDockedItemActionsAreCommandRows(t *testing.T) {
 	projection := testProjection()
 	projection.Views[ViewTabs] = append([]Item{{ID: "lsp:lua", Label: "lua-language-server", Lines: []DetailLine{{Label: "Error", Value: "not installed"}},
-		Actions: []ttypes.StatusAction{{ID: "lsp:restart", Label: "Retry", Enabled: true}, {ID: "lsp:hidden", Label: "Hidden", Enabled: false}}}}, projection.Views[ViewTabs]...)
+		Actions: []statuscenter.Action{{ID: "lsp:restart", Label: "Retry", Enabled: true}, {ID: "lsp:hidden", Label: "Hidden", Enabled: false}}}}, projection.Views[ViewTabs]...)
 	screen := NewDocked(theme.DefaultDark(), projection)
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	host.Resize(80, 16)

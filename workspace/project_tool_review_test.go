@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"crude/insight/catalog"
-	"crude/types"
+	"crude/types/insight"
 )
 
 func reviewCatalog(t *testing.T, source, file, bin, license string) *catalog.Catalog {
@@ -31,13 +31,13 @@ func reviewCatalog(t *testing.T, source, file, bin, license string) *catalog.Cat
 func TestProjectToolReview(t *testing.T) {
 	c := reviewCatalog(t, "pkg:github/owner/repo@v1", "tool.zip", "bin/serve", "MIT")
 	targets := []string{"linux_x64_gnu"}
-	plan := types.AssemblyPlan{State: types.AssemblyReady, Generation: 9, Languages: []types.AssemblyLanguage{
-		{ID: "b", ServerID: "server-b", Status: types.ToolMissing, Package: "fixture", Command: "serve"},
-		{ID: "a", ServerID: "server-a", Status: types.ToolMissing, Package: "fixture", Command: "serve"},
-		{ID: "c", ServerID: "other", Status: types.ToolMissing, Package: "unknown", Command: "other"},
-		{ID: "d", Status: types.ToolReady},
+	plan := insight.AssemblyPlan{State: insight.AssemblyReady, Generation: 9, Languages: []insight.AssemblyLanguage{
+		{ID: "b", ServerID: "server-b", Status: insight.ToolMissing, Package: "fixture", Command: "serve"},
+		{ID: "a", ServerID: "server-a", Status: insight.ToolMissing, Package: "fixture", Command: "serve"},
+		{ID: "c", ServerID: "other", Status: insight.ToolMissing, Package: "unknown", Command: "other"},
+		{ID: "d", Status: insight.ToolReady},
 	}}
-	build := func(p types.AssemblyPlan, cat *catalog.Catalog, root string) types.ProjectToolReview {
+	build := func(p insight.AssemblyPlan, cat *catalog.Catalog, root string) insight.ProjectToolReview {
 		t.Helper()
 		r, err := buildProjectToolReview("project", root, p, cat, targets)
 		if err != nil {
@@ -49,7 +49,7 @@ func TestProjectToolReview(t *testing.T) {
 	if len(got.Items) != 2 || got.Token == "" {
 		t.Fatalf("review: %+v", got)
 	}
-	var installed, unsupported types.ProjectToolCandidate
+	var installed, unsupported insight.ProjectToolCandidate
 	for _, item := range got.Items {
 		if item.Installable {
 			installed = item
@@ -65,19 +65,19 @@ func TestProjectToolReview(t *testing.T) {
 	if !strings.Contains(unsupported.Reason, "Install it yourself") || unsupported.Package != "unknown" {
 		t.Fatalf("unsupported: %+v", unsupported)
 	}
-	reordered := types.CloneAssemblyPlan(plan)
+	reordered := insight.CloneAssemblyPlan(plan)
 	reordered.Languages[0], reordered.Languages[2] = reordered.Languages[2], reordered.Languages[0]
 	if other := build(reordered, c, "root"); !reflect.DeepEqual(got, other) {
 		t.Fatalf("order changed review: %+v", other)
 	}
-	clone := types.CloneProjectToolReview(got)
+	clone := insight.CloneProjectToolReview(got)
 	clone.Items[0].Languages[0] = "changed"
 	if reflect.DeepEqual(got, clone) {
 		t.Fatal("clone aliases original")
 	}
-	changedPlan := types.CloneAssemblyPlan(plan)
+	changedPlan := insight.CloneAssemblyPlan(plan)
 	changedPlan.Generation++
-	for _, changed := range []types.ProjectToolReview{
+	for _, changed := range []insight.ProjectToolReview{
 		build(plan, c, "other"), build(changedPlan, c, "root"),
 		build(plan, reviewCatalog(t, "pkg:github/owner/repo@v2", "tool.zip", "bin/serve", "MIT"), "root"),
 		build(plan, reviewCatalog(t, "pkg:github/owner/repo@v1", "other.zip", "bin/serve", "MIT"), "root"),
@@ -88,7 +88,7 @@ func TestProjectToolReview(t *testing.T) {
 			t.Fatal("changed preimage has same token")
 		}
 	}
-	for _, bad := range []types.AssemblyPlan{{}, {State: types.AssemblyReady, Limited: true}} {
+	for _, bad := range []insight.AssemblyPlan{{}, {State: insight.AssemblyReady, Limited: true}} {
 		if _, err := buildProjectToolReview("project", "root", bad, c, targets); err == nil {
 			t.Fatalf("accepted incomplete plan %+v", bad)
 		}
@@ -99,7 +99,7 @@ func TestProjectToolReview(t *testing.T) {
 	if _, err := buildProjectToolReview("project", "", plan, c, targets); err == nil {
 		t.Fatal("accepted empty root")
 	}
-	empty := build(types.AssemblyPlan{State: types.AssemblyReady}, c, "root")
+	empty := build(insight.AssemblyPlan{State: insight.AssemblyReady}, c, "root")
 	if len(empty.Items) != 0 || empty.Token == "" {
 		t.Fatalf("empty review: %+v", empty)
 	}
@@ -117,8 +117,8 @@ func TestProjectToolReviewNamesPackageManagerPrerequisites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := types.AssemblyPlan{State: types.AssemblyReady, Generation: 10, Languages: []types.AssemblyLanguage{{
-		ID: "fixture", ServerID: "fixture", Status: types.ToolMissing,
+	plan := insight.AssemblyPlan{State: insight.AssemblyReady, Generation: 10, Languages: []insight.AssemblyLanguage{{
+		ID: "fixture", ServerID: "fixture", Status: insight.ToolMissing,
 		Package: "pyright", Command: "pyright-langserver",
 	}}}
 	review, err := buildProjectToolReview("project", "root", plan, c, catalog.CurrentTargets())
@@ -134,10 +134,10 @@ func TestProjectToolReviewNamesPackageManagerPrerequisites(t *testing.T) {
 }
 
 func TestProjectToolReviewTracksPackageManagerRecipeChanges(t *testing.T) {
-	plan := types.AssemblyPlan{State: types.AssemblyReady, Generation: 8, Languages: []types.AssemblyLanguage{{
-		ID: "fixture", ServerID: "fixture", Status: types.ToolMissing, Package: "fixture", Command: "serve",
+	plan := insight.AssemblyPlan{State: insight.AssemblyReady, Generation: 8, Languages: []insight.AssemblyLanguage{{
+		ID: "fixture", ServerID: "fixture", Status: insight.ToolMissing, Package: "fixture", Command: "serve",
 	}}}
-	build := func(source, program string) types.ProjectToolReview {
+	build := func(source, program string) insight.ProjectToolReview {
 		t.Helper()
 		doc := catalog.Document{Format: 1, Packages: []catalog.PackageRecord{{
 			Name: "fixture", Source: catalog.PackageSourceRecord{ID: source},
@@ -158,7 +158,7 @@ func TestProjectToolReviewTracksPackageManagerRecipeChanges(t *testing.T) {
 		return review
 	}
 	first := build("pkg:pypi/fixture@1.0?extra=one", "pypi:serve")
-	for _, changed := range []types.ProjectToolReview{
+	for _, changed := range []insight.ProjectToolReview{
 		build("pkg:pypi/fixture@1.0?extra=two", "pypi:serve"),
 		build("pkg:pypi/fixture@1.0?extra=one", "pypi:other"),
 	} {

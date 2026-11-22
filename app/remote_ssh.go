@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/core/remoteconn"
-	"crude/core/wire"
+	"crude/core/shellport/remote"
+	"crude/internal/buildinfo"
 )
 
 // remoteSSHDialer always authenticates a new session with system SSH and

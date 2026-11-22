@@ -1,11 +1,10 @@
-// Package cell provides cell-level primitives for terminal rendering.
-//
 // The CharPool and StylePool types provide internment for frequently-used
 // characters and style combinations. They are currently not used by the
 // V1 compositor (which generates ANSI strings directly), but are designed
 // for future optimization where cell metadata can be packed into compact
 // integer IDs referencing pool entries, reducing per-cell memory from ~20
 // bytes to ~8 bytes.
+
 package cell
 
 // ---------------------------------------------------------------------------

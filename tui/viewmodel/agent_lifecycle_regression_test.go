@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
+	"crude/agent/turnloop"
 	"crude/tui/chatprojection"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -20,21 +21,21 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 				wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": {SessionID: "root", AgentID: "root"}}
 				app.AddOrchestrator("root")
 				if owner == "child" {
-					pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+					pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 					app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 				}
 				state := app.ws.AgentMgr().Get(owner).State
 				sequence := uint64(0)
-				deliver := func(kind string, data any) agent.AgentEvent {
+				deliver := func(kind string, data any) turnloop.AgentEvent {
 					sequence++
-					event := agent.AgentEvent{Type: kind, Data: data, AgentID: owner, Identity: types.RuntimeEventIdentity{
+					event := turnloop.AgentEvent{Type: kind, Data: data, AgentID: owner, Identity: conversation.RuntimeEventIdentity{
 						EventID: fmt.Sprintf("%s-%d", owner, sequence), OwnerID: owner, AgentID: owner,
 						RunID: "exact-run", RuntimeEpoch: 1, Generation: 1, Sequence: sequence,
 					}}
 					_, _ = app.Update(event)
 					return event
 				}
-				deliver("turn_started", types.TurnIdentity{Generation: 1, AccountID: "account", ProviderID: "provider", ModelID: "model"})
+				deliver("turn_started", conversation.TurnIdentity{Generation: 1, AccountID: "account", ProviderID: "provider", ModelID: "model"})
 				deliver("tool_call", map[string]any{"tool_id": "tool", "internal_id": "call", "name": "read_file", "args": `{"path":"evidence.txt"}`})
 				state.BeginCancellation()
 				if phase == "terminal" {
@@ -45,9 +46,9 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 				}
 				deliver("tool_result", map[string]any{"tool_id": "tool", "internal_id": "call", "name": "read_file", "result": "late exact tool evidence"})
 				last := deliver("stream_token", "late exact stream evidence")
-				wantPhase := types.AgentCancelling
+				wantPhase := statuscenter.AgentCancelling
 				if phase == "terminal" {
-					wantPhase = types.AgentCancelled
+					wantPhase = statuscenter.AgentCancelled
 				}
 				assertStatus := func() {
 					t.Helper()
@@ -80,9 +81,9 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 				if state.Messages.Version() != version {
 					t.Fatal("duplicate/foreign semantic envelope changed stopped evidence")
 				}
-				next := agent.AgentEvent{Type: "turn_started", AgentID: owner,
-					Data:     types.TurnIdentity{Generation: 2, AccountID: "account", ProviderID: "provider", ModelID: "model"},
-					Identity: types.RuntimeEventIdentity{EventID: owner + "-next", OwnerID: owner, AgentID: owner, RunID: "next-run", RuntimeEpoch: 1, Generation: 2, Sequence: sequence + 1},
+				next := turnloop.AgentEvent{Type: "turn_started", AgentID: owner,
+					Data:     conversation.TurnIdentity{Generation: 2, AccountID: "account", ProviderID: "provider", ModelID: "model"},
+					Identity: conversation.RuntimeEventIdentity{EventID: owner + "-next", OwnerID: owner, AgentID: owner, RunID: "next-run", RuntimeEpoch: 1, Generation: 2, Sequence: sequence + 1},
 				}
 				_, _ = app.Update(next)
 				next.Type, next.Data = "phase", map[string]any{"name": "waiting_provider"}
@@ -107,7 +108,7 @@ func TestSubAgentTerminalStatusIsNamedRoleAwareAndForcesCachedFooterFrame(t *tes
 			app := newFullTestApp(t)
 			app.width, app.height = 120, 30
 			app.AddOrchestrator("root")
-			pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+			pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 			app.ws.AgentMgr().AddSubAgent("child", "root", "Samuel sub Rebecca", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 			app.framePresented, app.frameGate.deferred, app.frameGate.due = true, true, false
 			app.handleSubAgentCompleted(workspace.AgentEvent{Type: "sub_agent_completed", Data: map[string]string{
@@ -133,7 +134,7 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	app.AddOrchestrator(
 		"root")
 
-	childPane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	childPane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	app.subPaneProjections.Get("child", workspace.PaneAgent)
 	child := app.ws.AgentMgr().AddSubAgent(
 		"child", "root", "Researcher", "child-model", "researcher",
@@ -199,7 +200,7 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 
 	app.cleanupAgent("root")
 
-	app.handleAgentEvent(types.AgentEventMsg{
+	app.handleAgentEvent(AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "late-child",
 		Data: map[string]string{
@@ -227,7 +228,7 @@ func TestRetryEventReachesCanonicalTranscript(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	for _, attempt := range []int{1, 2} {
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "retry", Data: map[string]any{"attempt": attempt, "limit": 6, "backoff": float64(3), "reason": "Provider temporarily unavailable"}})
+		app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "retry", Data: map[string]any{"attempt": attempt, "limit": 6, "backoff": float64(3), "reason": "Provider temporarily unavailable"}})
 	}
 	messages := app.ws.AgentMgr().Get("root").State.Messages.Messages()
 	count := 0
@@ -249,7 +250,7 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 	app.AddOrchestrator("root")
 	baselineActive := testActiveAgentCount(app)
 	baselineIdle := testIdleAgentCount(app)
-	app.handleAgentEvent(types.AgentEventMsg{
+	app.handleAgentEvent(AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "child",
 		Data: map[string]string{
@@ -260,7 +261,7 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 		t.Fatalf("active count before completion=%d, want %d", got, baselineActive+1)
 	}
 
-	app.handleAgentEvent(types.AgentEventMsg{
+	app.handleAgentEvent(AgentEventMsg{
 		Type:    "sub_agent_completed",
 		AgentID: "child",
 		Data: map[string]string{
@@ -282,7 +283,7 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 	app.AddOrchestrator("root")
 	root := app.ws.AgentMgr().Get("root").State.Messages
 	root.UpdateToolCall("spawn-1", "tool-1", "agent_start", "category: researcher")
-	app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "category": "researcher", "task": "Inspect recovery", "parent_id": "root", "parent_tool_id": "spawn-1",
 	}})
 	parent := root.Messages()
@@ -292,7 +293,7 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 	if pane := app.ws.PaneMgr().Get("child"); pane == nil || pane.Title != "Lily · Researcher" {
 		t.Fatalf("running subpane title omitted the agent type: %+v", pane)
 	}
-	app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "status": "failed_error",
 	}})
 	pane := app.ws.PaneMgr().Get("child")
@@ -315,7 +316,7 @@ func TestParallelSubAgentStartsLinkToTheirOwnParentCalls(t *testing.T) {
 	for _, start := range []struct{ id, name, call string }{
 		{"child-two", "Jane", "second"}, {"child-one", "Lily", "first"},
 	} {
-		app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_started", AgentID: start.id, Data: map[string]string{
+		app.handleAgentEvent(AgentEventMsg{Type: "sub_agent_started", AgentID: start.id, Data: map[string]string{
 			"agent_id": start.id, "agent_name": start.name, "parent_id": "root", "parent_tool_id": start.call,
 		}})
 	}
@@ -329,7 +330,7 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	const assignment = "# Assignment\n- Description: inspect lifecycle"
-	app.handleAgentEvent(types.AgentEventMsg{
+	app.handleAgentEvent(AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "child",
 		Data: map[string]string{
@@ -344,9 +345,9 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 		t.Fatal("opening the live child did not create its tab")
 	}
 	pane := app.ws.PaneMgr().Get("child")
-	projection := app.subPaneProjections.GetExisting("child")
+	projection := app.subPaneProjections.Existing("child")
 
-	app.handleAgentEvent(types.AgentEventMsg{
+	app.handleAgentEvent(AgentEventMsg{
 		Type:    "sub_agent_completed",
 		AgentID: "child",
 		Data: map[string]string{
@@ -360,7 +361,7 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 	if app.Win.TabByTitle(app.agentTabTitle("child")) != nil {
 		t.Fatal("completed child tab remained surfaced instead of archiving")
 	}
-	if app.ws.PaneMgr().Get("child") != pane || app.subPaneProjections.GetExisting("child") != projection {
+	if app.ws.PaneMgr().Get("child") != pane || app.subPaneProjections.Existing("child") != projection {
 		t.Fatal("completion discarded the retained review surface")
 	}
 	foundClosedReview := false
@@ -397,7 +398,7 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 func TestCompletingActiveChildSelectsVisibleRootAndPromptTarget(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
 	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "researcher", childState)
 	app.switchToAgentView("child")
@@ -418,7 +419,7 @@ func TestUsagePaneFollowsRequestRevisionsWithoutDoubleCounting(t *testing.T) {
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": workspace.NewSession("session", "", nil, nil)}
 	app.AddOrchestrator("root")
 	emit := func(prompt, completion any, reported int64) {
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "usage", Data: map[string]any{
+		app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "usage", Data: map[string]any{
 			"request_id": "request", "reported_at": reported, "prompt": prompt, "completion": completion,
 		}})
 	}
@@ -438,13 +439,13 @@ func TestDangerousBackgroundAgentAlertIsVisibleWithoutChangingSelection(t *testi
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
 	app.AddOrchestrator("root")
-	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("child", workspace.PaneAgent, "child")
 	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
 	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "crafter", childState)
 	app.MinimizeAgent("child")
 	path := openEditorTabs(t, app, "main.go")[0]
 
-	app.handleAgentEvent(types.AgentEventMsg{
+	app.handleAgentEvent(AgentEventMsg{
 		Type: "safety_alert", AgentID: "child",
 		Data: map[string]any{"risk": "blocked", "reason": "Blocked disk write"},
 	})

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"crude/insight/governor"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -26,7 +26,7 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 		w.LSPMgr.RefreshAssembly()
 	}
 	overrides := w.LoadWorkspaceOverrides()
-	if types.MergeAppWorkspace(w.AppDefaults(), overrides).Analysis.Trusted() {
+	if setting.MergeAppWorkspace(w.AppDefaults(), overrides).Analysis.Trusted() {
 		if identityErr != nil {
 			return fmt.Errorf("could not check this folder; project tools will not run: %w", identityErr)
 		}
@@ -36,22 +36,22 @@ func (w *Workspace) InitializeAnalysisRuntime(g *governor.Governor, workspaceID,
 
 // boundWorkspaceSettings derives from committed choices and an owned observation,
 // not a pathname hash or an application/session grant.
-func boundWorkspaceSettings(defaults types.AppSettings, overrides types.WorkspaceOverrides, observedRoot string) types.AppSettings {
-	effective := types.MergeAppWorkspace(defaults, overrides)
+func boundWorkspaceSettings(defaults setting.App, overrides setting.WorkspaceOverrides, observedRoot string) setting.App {
+	effective := setting.MergeAppWorkspace(defaults, overrides)
 	effective.Analysis = boundAnalysis(effective.Analysis, overrides, observedRoot)
-	if effective.Prediction.Mode != types.PredictionOff &&
+	if effective.Prediction.Mode != setting.PredictionOff &&
 		(observedRoot == "" || overrides.PredictionRootIdentity != observedRoot ||
 			overrides.PredictionConnectionIdentity == "" || overrides.PredictionGrantID == "") {
-		effective.Prediction = types.DefaultWorkspacePredictionSettings()
+		effective.Prediction = setting.DefaultWorkspacePrediction()
 	}
 	return effective
 }
 
 // boundAnalysis keeps Trust only for the folder it was granted to.
-func boundAnalysis(analysis types.WorkspaceAnalysisSettings, overrides types.WorkspaceOverrides, observedRoot string) types.WorkspaceAnalysisSettings {
+func boundAnalysis(analysis setting.WorkspaceAnalysis, overrides setting.WorkspaceOverrides, observedRoot string) setting.WorkspaceAnalysis {
 	if analysis.Trusted() &&
 		(observedRoot == "" || overrides.AnalysisRootIdentity == "" || observedRoot != overrides.AnalysisRootIdentity) {
-		return types.DefaultWorkspaceAnalysisSettings()
+		return setting.DefaultWorkspaceAnalysis()
 	}
 	return analysis
 }
@@ -65,8 +65,8 @@ func (w *Workspace) publishAnalysisPolicy() {
 	w.LSPMgr.SetAnalysisPolicy(policy, overrides.AnalysisRootIdentity)
 }
 
-func analysisEdits(edits []types.SettingEdit) []types.SettingEdit {
-	var result []types.SettingEdit
+func analysisEdits(edits []setting.Edit) []setting.Edit {
+	var result []setting.Edit
 	for _, edit := range edits {
 		if len(edit.Path) != 0 && edit.Path[0] == "analysis" {
 			result = append(result, edit)
@@ -78,16 +78,16 @@ func analysisEdits(edits []types.SettingEdit) []types.SettingEdit {
 // prepareAnalysisBinding observes a new native binding only for an explicit
 // workspace Trust grant. Unrelated saves must never rebind an old grant after
 // same-path replacement. Returned I/O runs on the preference worker.
-func prepareAnalysisBinding(root string, edits []types.SettingEdit) (string, bool, error) {
+func prepareAnalysisBinding(root string, edits []setting.Edit) (string, bool, error) {
 	choices := analysisEdits(edits)
 	if len(choices) == 0 {
 		return "", false, nil
 	}
-	var draft types.WorkspaceOverrides
-	if err := types.ApplySettingsEdits(&draft, choices); err != nil {
+	var draft setting.WorkspaceOverrides
+	if err := setting.ApplyEdits(&draft, choices); err != nil {
 		return "", true, err
 	}
-	if !types.MergeAppWorkspace(types.AppSettings{}, draft).Analysis.Trusted() {
+	if !setting.MergeAppWorkspace(setting.App{}, draft).Analysis.Trusted() {
 		return "", true, nil
 	}
 	identity, err := fileio.DirectoryIdentity(root)

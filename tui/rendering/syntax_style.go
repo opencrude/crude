@@ -1,14 +1,15 @@
 package rendering
 
 import (
-	"crude/syntax"
+	"crude/insight/syntax"
+	"crude/types/syntaxdata"
 
 	"github.com/alecthomas/chroma/v2"
 )
 
 // SyntaxToken uses the shared source palette without making native analysis
 // depend on Chroma, theme generations or terminal rendering.
-func SyntaxToken(kind syntax.Kind) chroma.TokenType {
+func SyntaxToken(kind syntaxdata.Kind) chroma.TokenType {
 	switch kind {
 	case syntax.Keyword:
 		return chroma.Keyword

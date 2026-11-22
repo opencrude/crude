@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )

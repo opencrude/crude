@@ -8,16 +8,16 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestInvocationTypedCoreJourney(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "saved-model", "tester", types.Settings{}, coreTestLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		w := workspace.NewWorkspace(root, "saved-model", "tester", setting.Settings{}, coreTestLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		agents := session.DefaultAgentsConfig()
 		p := agents.Profiles["default"]
 		p.Categories["default"] = session.CategoryConfig{AccountID: "saved", Model: "saved-model"}
@@ -39,7 +39,7 @@ func TestInvocationTypedCoreJourney(t *testing.T) {
 	if err := coreprotocol.Decode(attach.Payload, &attached); err != nil {
 		t.Fatal(err)
 	}
-	created := callCore(t, c, "create", attached.WorkspaceID, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{Selection: coreprotocol.InvocationSelection{AccountID: "saved", Model: "selected-model", APIKey: "write-only-key", Instructions: "extra"}})
+	created := callCore(t, c, "create", attached.WorkspaceID, coreprotocol.NewSession, coreprotocol.InvocationSessionRequest{Selection: workspace.InvocationSelection{AccountID: "saved", Model: "selected-model", APIKey: "write-only-key", Instructions: "extra"}})
 	var identity workspace.NewSessionResult
 	if err := coreprotocol.Decode(created.Payload, &identity); err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func TestInvocationTypedCoreJourney(t *testing.T) {
 		t.Fatal("typed selector ignored")
 	}
 	callCore(t, c, "warm", attached.WorkspaceID, coreprotocol.OpenSession, coreprotocol.InvocationSessionRequest{SessionID: identity.SessionID})
-	raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.InvocationSessionRequest{SessionID: identity.SessionID, Selection: coreprotocol.InvocationSelection{Model: "other"}}))
+	raw, _ := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.InvocationSessionRequest{SessionID: identity.SessionID, Selection: workspace.InvocationSelection{Model: "other"}}))
 	refused := c.Call(t.Context(), coreprotocol.Request{ID: "incompatible", Owner: c.Owner, WorkspaceID: attached.WorkspaceID, Method: coreprotocol.OpenSession, Payload: raw})
 	if refused.Error == nil {
 		t.Fatal("live selection mutated peer backend")

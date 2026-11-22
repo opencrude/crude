@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 	recoverytypes "crude/types/recovery"
 )
@@ -25,7 +25,7 @@ func TestChildReportTaskAllowlistMatchesPromptSchemaAndExecution(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			spec := agent.SubAgentSpec{ID: agent.AgentID(child.ID), ParentID: agent.AgentID(parent.ID), Category: category, AllowedTools: []string{"read_file"}}
+			spec := turnloop.SubAgentSpec{ID: turnloop.AgentID(child.ID), ParentID: turnloop.AgentID(parent.ID), Category: category, AllowedTools: []string{"read_file"}}
 			constrainConfiguredTools(&spec, []string{"read_file"}, []string{"delete_file"})
 			if err := validateChildReportPermission(spec); err != nil {
 				t.Fatal(err)
@@ -33,10 +33,10 @@ func TestChildReportTaskAllowlistMatchesPromptSchemaAndExecution(t *testing.T) {
 			if slices.Contains(spec.DeniedTools, "publish_report") {
 				t.Fatal("task allowlist denied mandatory reporting")
 			}
-			live := agent.NewAgent(provider.FromPreset("openai-chat", "key", ""), "test", s.logger)
+			live := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", ""), "test", s.logger)
 			live.AgentID, live.ParentID, live.Depth = spec.ID, spec.ParentID, 1
-			live.Policy = agent.ComposePolicy(safety.DefaultPolicy(), "default", category)
-			live.FilteredTools = agent.FilterTools(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, category, true)
+			live.Policy = turnloop.ComposePolicy(safety.DefaultPolicy(), "default", category)
+			live.FilteredTools = turnloop.FilterTools(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, category, true)
 			live.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 				t.Error("report escaped collaboration owner")
 				return tools.ToolResult{}, nil
@@ -80,16 +80,16 @@ func TestUnavailableReportParksWithoutProviderOrReminderLoop(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
-	live := agent.NewAgent(provider.FromPreset("openai-chat", "key", "http://127.0.0.1:9"), "test", s.logger)
+	live := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", "http://127.0.0.1:9"), "test", s.logger)
 	live.Depth = 1
-	live.FilteredTools = agent.FilterTools(tools.AgentTools, []string{"read_file"}, nil, "crafter", true)
-	supervisor := agent.NewSupervisor("child", 1, nil)
+	live.FilteredTools = turnloop.FilterTools(tools.AgentTools, []string{"read_file"}, nil, "crafter", true)
+	supervisor := turnloop.NewSupervisor("child", 1, nil)
 	supervisor.Persist = func(status recoverytypes.Status) error { return nil }
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	result := live.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "assignment")}, "system", nil, nil, "child", nil,
-		agent.SupervisedRunOptions{Supervisor: supervisor, OnAttention: func(f agent.RecoveryFailure) agent.AttentionDisposition { return agent.AttentionParkAttempt }})
-	if result.State != agent.SupervisedRunParked || result.Failure.Kind != agent.RecoveryFailureConfiguration || !strings.Contains(result.Failure.Cause.Error(), "publish_report") {
+		turnloop.SupervisedRunOptions{Supervisor: supervisor, OnAttention: func(f turnloop.RecoveryFailure) turnloop.AttentionDisposition { return turnloop.AttentionParkAttempt }})
+	if result.State != turnloop.SupervisedRunParked || result.Failure.Kind != turnloop.RecoveryFailureConfiguration || !strings.Contains(result.Failure.Cause.Error(), "publish_report") {
 		t.Fatalf("unavailable report entered retry loop: %+v", result)
 	}
 }
@@ -98,14 +98,14 @@ func TestModelNativeToolSelectionMatchesRuntimeDispatch(t *testing.T) {
 	for _, denied := range []bool{false, true} {
 		t.Run(map[bool]string{false: "allowed", true: "denied"}[denied], func(t *testing.T) {
 			s, _, _, child := collaborationContractFixture(t)
-			live := agent.NewAgent(provider.FromPreset("openai-chat", "key", ""), "gpt-5", s.logger)
+			live := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", ""), "gpt-5", s.logger)
 			live.Policy = safety.DefaultPolicy()
 			allowed := []string{"execute_command", "write_file", "edit_file"}
 			var deny []string
 			if denied {
 				deny = []string{"execute_command", "write_file", "edit_file"}
 			}
-			live.FilteredTools = agent.FilterToolsForModel(tools.AgentTools, allowed, deny, CategoryCrafter, true, live.Model)
+			live.FilteredTools = turnloop.FilterToolsForModel(tools.AgentTools, allowed, deny, CategoryCrafter, true, live.Model)
 			calls := 0
 			live.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 				calls++
@@ -129,10 +129,10 @@ func TestModelNativeToolSelectionMatchesRuntimeDispatch(t *testing.T) {
 // channel: children were handed artifact IDs they could not read and reported
 // themselves blocked. An explicit deny of an optional coordination tool wins.
 func TestNarrowedChildKeepsCoordinationTools(t *testing.T) {
-	spec := agent.SubAgentSpec{Category: CategoryResearcher, AllowedTools: []string{"web_search", "web_fetch", "publish_report"}, DeniedTools: []string{"agent_send"}}
+	spec := turnloop.SubAgentSpec{Category: CategoryResearcher, AllowedTools: []string{"web_search", "web_fetch", "publish_report"}, DeniedTools: []string{"agent_send"}}
 	constrainConfiguredTools(&spec, []string{"web_search", "web_fetch"}, nil)
 	keepChildCoordinationTools(&spec)
-	offered := agent.FilterTools(append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...), spec.AllowedTools, spec.DeniedTools, spec.Category, true)
+	offered := turnloop.FilterTools(append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...), spec.AllowedTools, spec.DeniedTools, spec.Category, true)
 	has := func(name string) bool {
 		return slices.ContainsFunc(offered, func(d tools.ToolDef) bool { return d.Function.Name == name })
 	}

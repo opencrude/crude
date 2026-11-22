@@ -3,8 +3,8 @@ package core
 import (
 	"bytes"
 	"context"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/localhistory"
 	"os"
@@ -125,7 +125,7 @@ func TestFilesChunksBoundedAndImmutable(t *testing.T) {
 }
 func TestFilesBridgeMutationsAndCapturedOwner(t *testing.T) {
 	root := t.TempDir()
-	ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	a := &actor{ws: ws}
 	for _, method := range []string{coreprotocol.FilesCreateFolder, coreprotocol.FilesCreate} {
@@ -173,7 +173,7 @@ func TestFilesBridgeMutationsAndCapturedOwner(t *testing.T) {
 }
 func TestFilesHistoryCaptureAndStalePreview(t *testing.T) {
 	root := t.TempDir()
-	ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	store, err := localhistory.Open(filepath.Join(t.TempDir(), "history"), root)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestFilesHistoryCaptureAndStalePreview(t *testing.T) {
 
 func TestFilesSearchCancellationDoesNotInvalidateNeighbor(t *testing.T) {
 	root := t.TempDir()
-	ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	if err := os.WriteFile(filepath.Join(root, "needle.txt"), []byte("needle in text"), 0600); err != nil {
 		t.Fatal(err)

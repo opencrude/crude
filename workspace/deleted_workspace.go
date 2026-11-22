@@ -15,20 +15,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace/fileio"
 )
 
-// WorkspaceDeletion is an immutable preview of one saved workspace, not its
+// Deletion is an immutable preview of one saved workspace, not its
 // project directory. Deletion moves the complete saved data into recovery
 // storage. No session, history object, or project file is unlinked.
-type WorkspaceDeletion struct {
+type Deletion struct {
 	// Token names a connection-owned core preview. Local adapters keep the
 	// private directory preimage instead; neither is a caller-authored plan.
 	Token                string `json:"token,omitempty"`
 	ID, Name, ProjectDir string
 	SessionCount         int
-	Issue                *types.OperationIssue `json:"issue,omitempty"`
+	Issue                *statuscenter.OperationIssue `json:"issue,omitempty"`
 	source               string
 	identity             os.FileInfo
 	stamp                [32]byte
@@ -43,21 +43,22 @@ type DeletedWorkspace struct {
 	RecoveryPath string    `json:"recovery_path"`
 }
 
-func PreviewWorkspaceDeletion(ctx context.Context, id, projectDir, currentProject string) (WorkspaceDeletion, error) {
-	var plan WorkspaceDeletion
+// PreviewWorkspaceDeletion checks a saved workspace and reports what deleting it removes.
+func PreviewWorkspaceDeletion(ctx context.Context, id, projectDir, currentProject string) (Deletion, error) {
+	var plan Deletion
 	unlock, err := lockWorkspaceStorage(ctx, true)
 	if err != nil {
 		return plan, err
 	}
 	defer unlock()
 	decoded, err := hex.DecodeString(id)
-	if err != nil || len(decoded) != 8 || id != WorkspaceID(projectDir) {
+	if err != nil || len(decoded) != 8 || id != ID(projectDir) {
 		return plan, errors.New("workspace identity does not match its project")
 	}
 	if canonicalizePath(projectDir) == canonicalizePath(currentProject) {
 		return plan, errors.New("the current workspace cannot be deleted")
 	}
-	root, err := WorkspaceRoot()
+	root, err := Root()
 	if err != nil {
 		return plan, err
 	}
@@ -80,14 +81,14 @@ func PreviewWorkspaceDeletion(ctx context.Context, id, projectDir, currentProjec
 	if err != nil {
 		return plan, err
 	}
-	return WorkspaceDeletion{ID: id, Name: WorkspaceDisplayName(*info), ProjectDir: projectDir, SessionCount: info.SessionCount, source: source, identity: identity, stamp: stamp, used: new(atomic.Bool)}, nil
+	return Deletion{ID: id, Name: DisplayName(*info), ProjectDir: projectDir, SessionCount: info.SessionCount, source: source, identity: identity, stamp: stamp, used: new(atomic.Bool)}, nil
 }
 
 // DeleteSavedWorkspace commits exactly the previewed directory identity. The
 // recovery manifest is durable before the atomic rename, and an error before
 // that rename leaves the source untouched. Later writes are preserved as part
 // of the same directory rather than overwritten with a stale snapshot.
-func DeleteSavedWorkspace(ctx context.Context, plan WorkspaceDeletion) (DeletedWorkspace, error) {
+func DeleteSavedWorkspace(ctx context.Context, plan Deletion) (DeletedWorkspace, error) {
 	var deleted DeletedWorkspace
 	releaseStorage, err := lockWorkspaceStorage(ctx, true)
 	if err != nil {
@@ -166,11 +167,11 @@ func RestoreDeletedWorkspace(ctx context.Context, deleted DeletedWorkspace) erro
 		return err
 	}
 	defer unlock()
-	root, err := WorkspaceRoot()
+	root, err := Root()
 	if err != nil {
 		return err
 	}
-	if deleted.ID != WorkspaceID(deleted.ProjectDir) {
+	if deleted.ID != ID(deleted.ProjectDir) {
 		return errors.New("invalid recovery identity")
 	}
 	recoveryRoot := filepath.Join(filepath.Dir(root), "deleted-workspaces")

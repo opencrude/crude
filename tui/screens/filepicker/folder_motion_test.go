@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 	"crude/tui/filetree"
 	"crude/tui/surface"
 	"crude/tui/ui"
@@ -164,7 +164,7 @@ func TestFolderPickerEscapeLadderAndQueuedSearchClear(t *testing.T) {
 	screen, host := pickerHost(t, ModeFolder)
 	search := commandMessage[SearchMsg](t, host.Handle(tea.KeyPressMsg{Code: 's', Text: "s"}))
 	screen.BeginPathSearch(search.Query)
-	screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: pathwalk.Entry{Name: "src", Path: pickerPath("src"), IsDir: true}}})
+	screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: fastwalk.Entry{Name: "src", Path: pickerPath("src"), IsDir: true}}})
 	clear := commandMessage[SearchMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc}))
 	if clear.Query != "" || search.ValidFor(screen) || !clear.ValidFor(screen) {
 		t.Fatalf("search Escape fences wrong: search=%#v clear=%#v", search, clear)
@@ -195,7 +195,7 @@ func TestFolderPickerRootFailureAndCancelRestoreSelectedProjection(t *testing.T)
 		screen, host := pickerHost(t, ModeFolder)
 		search := commandMessage[SearchMsg](t, host.Handle(tea.KeyPressMsg{Code: 's', Text: "s"}))
 		screen.BeginPathSearch(search.Query)
-		screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: pathwalk.Entry{Name: "src", Path: pickerPath("src"), IsDir: true}}})
+		screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: fastwalk.Entry{Name: "src", Path: pickerPath("src"), IsDir: true}}})
 		nav := commandMessage[NavigateMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
 		if !screen.BeginAsyncDirectoryLoadFor(nav.Path, nav.Intent()) {
 			t.Fatal("navigation not admitted")
@@ -264,7 +264,7 @@ func TestFolderPickerHiddenPolicyAndSearchMatchingSurviveNavigation(t *testing.T
 	}
 	search := commandMessage[SearchMsg](t, host.Handle(tea.KeyPressMsg{Code: 'n', Text: "n"}))
 	screen.BeginPathSearch(search.Query)
-	screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: pathwalk.Entry{Name: ".nested", Path: pickerPath("src/.nested"), IsDir: true}}})
+	screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: fastwalk.Entry{Name: ".nested", Path: pickerPath("src/.nested"), IsDir: true}}})
 	if screen.FocusedPath() != pickerPath("src/.nested") {
 		t.Fatal("search did not select matching hidden folder")
 	}

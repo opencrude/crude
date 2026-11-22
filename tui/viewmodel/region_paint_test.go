@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"crude/core/port"
-	"crude/terminalvt"
+	"crude/core/shellport"
+	"crude/internal/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/filetree"
@@ -21,7 +21,7 @@ import (
 	"crude/tui/screens/shellterm"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -248,7 +248,7 @@ func TestRegionFrameRandomProductEquivalence(t *testing.T) {
 		case 0, 1:
 			app.Update(regionTerminalFrame(service, info, n))
 		case 2:
-			app.Update(types.TickMsg(time.Now()))
+			app.Update(TickMsg(time.Now()))
 		case 3:
 			app.Update(tea.MouseMotionMsg{X: rng.Intn(app.width), Y: rng.Intn(app.height)})
 		case 4:
@@ -267,7 +267,7 @@ func TestRegionFrameRandomProductEquivalence(t *testing.T) {
 		case 7:
 			app.applyThemePreset([]string{"dark", "light"}[rng.Intn(2)])
 		case 8:
-			app.appendActiveMessage(types.ChatMessage{Role: types.RoleAssistant, Content: fmt.Sprintf("streamed message %d 界", n), InternalID: fmt.Sprint(n)})
+			app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: fmt.Sprintf("streamed message %d 界", n), InternalID: fmt.Sprint(n)})
 			app.rootHost.MarkPaint() // same publication boundary as agent Update
 		}
 		view := app.View()
@@ -277,7 +277,7 @@ func TestRegionFrameRandomProductEquivalence(t *testing.T) {
 
 func TestRegionClockDoesNotPaintFileTree(t *testing.T) {
 	app, _, _ := regionTerminalFixture(t, 0)
-	app.Update(types.TickMsg(time.Now()))
+	app.Update(TickMsg(time.Now()))
 	view := app.View()
 	stats := app.rootHost.LastPaintStats()
 	if stats.Full || stats.Cells >= app.width*app.height {
@@ -291,13 +291,13 @@ func TestRegionClockRetainsShellWithTrustPromptOpen(t *testing.T) {
 	wsOf(app).Logger = stubLogger{}
 	wsOf(app).StartTime = time.Time{}
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	app.Update(types.TickMsg(time.Now()))
+	app.Update(TickMsg(time.Now()))
 	if !app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 		t.Fatal("undecided workspace did not open its trust prompt")
 	}
 	app.View()
 	for range 4 {
-		app.Update(types.TickMsg(time.Now()))
+		app.Update(TickMsg(time.Now()))
 		view := app.View()
 		if stats := app.rootHost.LastPaintStats(); stats.Full || stats.Cells >= app.width*app.height {
 			t.Fatalf("idle clock repainted entire shell behind trust prompt: %+v", stats)

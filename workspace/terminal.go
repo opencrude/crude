@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"crude/agent/hostshell"
+	"crude/types/setting"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +19,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	ttypes "crude/types"
 	"crude/workspace/fileio"
 )
 
@@ -149,7 +149,7 @@ type TerminalManager struct {
 	outputSink MessageSink
 	root       string
 	host       HostInfo
-	settings   ttypes.TerminalSettings
+	settings   setting.Terminal
 	// shellEnvironment is the sole retained base for this workspace's new
 	// terminals. Nil means no same-host shell has supplied one. Never expose it
 	// through Settings, Host, inventory, persistence or diagnostics.
@@ -344,7 +344,7 @@ func NewTerminalManager(rootPath string) *TerminalManager {
 		items:    make(map[string]*terminalSession),
 		root:     rootPath,
 		host:     DetectHost(),
-		settings: ttypes.NormalizeTerminalSettings(ttypes.TerminalSettings{}),
+		settings: setting.NormalizeTerminal(setting.Terminal{}),
 	}
 }
 
@@ -372,12 +372,12 @@ func (m *TerminalManager) SetOutputSink(sink MessageSink) {
 
 // SetSettings selects the shell, environment and scrollback for terminals
 // created afterwards; running terminals keep what they started with.
-func (m *TerminalManager) SetSettings(settings ttypes.TerminalSettings) {
+func (m *TerminalManager) SetSettings(settings setting.Terminal) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
-	m.settings = ttypes.NormalizeTerminalSettings(settings)
+	m.settings = setting.NormalizeTerminal(settings)
 	m.mu.Unlock()
 }
 
@@ -400,7 +400,7 @@ func (m *TerminalManager) SetShellEnvironment(env []string) {
 
 // DetectShells observes the host executables available to new terminals, using
 // the same launch environment as CreatePrepared. Call it off the UI and actor.
-func (m *TerminalManager) DetectShells() []ttypes.TerminalShell {
+func (m *TerminalManager) DetectShells() []setting.TerminalShell {
 	if m == nil {
 		return hostshell.Detect()
 	}
@@ -410,7 +410,7 @@ func (m *TerminalManager) DetectShells() []ttypes.TerminalShell {
 	return m.detectShells(base)
 }
 
-func (m *TerminalManager) detectShells(base *terminalShellEnvironment) []ttypes.TerminalShell {
+func (m *TerminalManager) detectShells(base *terminalShellEnvironment) []setting.TerminalShell {
 	if base == nil {
 		return hostshell.Detect()
 	}
@@ -418,13 +418,13 @@ func (m *TerminalManager) detectShells(base *terminalShellEnvironment) []ttypes.
 }
 
 // Settings returns the configuration new terminals start with.
-func (m *TerminalManager) Settings() ttypes.TerminalSettings {
+func (m *TerminalManager) Settings() setting.Terminal {
 	if m == nil {
-		return ttypes.NormalizeTerminalSettings(ttypes.TerminalSettings{})
+		return setting.NormalizeTerminal(setting.Terminal{})
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return ttypes.CloneTerminalSettings(m.settings)
+	return setting.CloneTerminal(m.settings)
 }
 
 // Host returns the detected outer terminal / multiplexer.
@@ -500,7 +500,7 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 		title = "Terminal"
 	}
 	m.mu.Lock()
-	settings := ttypes.CloneTerminalSettings(m.settings)
+	settings := setting.CloneTerminal(m.settings)
 	attached := m.shellEnvironment
 	m.mu.Unlock()
 	var base []string
@@ -517,17 +517,17 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 	command, args := opts.Command, opts.Args
 	interactive := command == ""
 	if interactive {
-		var shells []ttypes.TerminalShell
-		if settings.Shell != ttypes.TerminalShellCustom {
+		var shells []setting.TerminalShell
+		if settings.Shell != setting.TerminalShellCustom {
 			shells = m.detectShells(attached)
 		}
 		var err error
-		if command, args, err = ttypes.ResolveTerminalLaunch(settings, shells); err != nil {
+		if command, args, err = setting.ResolveTerminalLaunch(settings, shells); err != nil {
 			return TerminalInfo{}, err
 		}
 	}
 	env := terminalEnviron(base, settings.Environment, m.root)
-	if interactive && settings.Shell == ttypes.TerminalShellCustom && filepath.Base(command) == command {
+	if interactive && settings.Shell == setting.TerminalShellCustom && filepath.Base(command) == command {
 		// Both exec.Command and CreateProcess otherwise search the parent's
 		// PATH for a name before applying an explicit child environment.
 		path := hostshell.SearchEnvironmentFrom(env).LookPath(command)

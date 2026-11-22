@@ -7,20 +7,20 @@ import (
 	"slices"
 	"time"
 
-	"crude/lsp/inlay"
-	"crude/types"
+	"crude/lsp/lspinlay"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
 // InspectLSPInlayHint selects only a retained original object. Resolve is an
 // explicit tooltip-only observation; no caller-authored hint, command, text edit
 // or label location can become an action through this route.
-func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owner, id, digest string, index int, resolve bool) (types.LSPInlayInspection, error) {
+func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owner, id, digest string, index int, resolve bool) (insight.LSPInlayInspection, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
-		return types.LSPInlayInspection{}, errors.New("inlay source authority is unavailable")
+		return insight.LSPInlayInspection{}, errors.New("inlay source authority is unavailable")
 	}
 	if id == "" || len(id) > 128 || len(digest) != 64 || index < 0 || index >= lspinlay.MaxHints {
-		return types.LSPInlayInspection{}, errors.New("invalid inlay set or row identity")
+		return insight.LSPInlayInspection{}, errors.New("invalid inlay set or row identity")
 	}
 	s := w.LiveDocuments
 	s.mu.Lock()
@@ -35,7 +35,7 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 	}
 	if entry == nil || index >= len(entry.items) || entry.check == nil {
 		s.mu.Unlock()
-		return types.LSPInlayInspection{}, errors.New("the exact original inlay set or row is unavailable")
+		return insight.LSPInlayInspection{}, errors.New("the exact original inlay set or row is unavailable")
 	}
 	text, err := s.readOnlyLSPSourceLocked(owner, entry.source)
 	// Resolve runs outside the document lock, so both text and raw original
@@ -45,22 +45,22 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 	view, check, lifetime := cloneInlaySet(entry.view), entry.check, entry.ctx
 	s.mu.Unlock()
 	if err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
 	requestCtx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(lifetime, cancel)
 	defer cancel()
 	defer stop()
 	if err := lifetime.Err(); err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
 	if err := requestCtx.Err(); err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
 	if err := check(); err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
-	out := types.LSPInlayInspection{SetID: id, Digest: digest, Index: index,
+	out := insight.LSPInlayInspection{SetID: id, Digest: digest, Index: index,
 		Boundary: view.Boundary, WireVersion: view.WireVersion, Range: view.Range,
 		Hint: cloneInlayHint(view.Hints[index]), OriginalJSON: original,
 		ResolveState: "not-requested", Detail: "Read-only original evidence. Commands, edits and label locations are not executed."}
@@ -70,18 +70,18 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 		} else {
 			response, err := w.LSPMgr.ResolveInlayHint(requestCtx, view.Boundary, view.WireVersion, original)
 			if err != nil {
-				return types.LSPInlayInspection{}, err
+				return insight.LSPInlayInspection{}, err
 			}
 			if response.Unsupported {
-				return types.LSPInlayInspection{}, errors.New("the original provider no longer advertises tooltip resolution")
+				return insight.LSPInlayInspection{}, errors.New("the original provider no longer advertises tooltip resolution")
 			}
 			hint, err := lspinlay.Resolve(original, response.JSON)
 			if err != nil {
-				return types.LSPInlayInspection{}, err
+				return insight.LSPInlayInspection{}, err
 			}
 			out.Hint, err = inlayHintSummary(string(text), index, hint)
 			if err != nil {
-				return types.LSPInlayInspection{}, err
+				return insight.LSPInlayInspection{}, err
 			}
 			out.ResolvedJSON, out.ResolveState = bytes.Clone(response.JSON), "resolved-tooltips"
 		}
@@ -89,19 +89,19 @@ func (w *Workspace) InspectLSPInlayHint(ctx context.Context, owner document.Owne
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.inlayViews[key] != entry || time.Now().After(entry.expires) {
-		return types.LSPInlayInspection{}, errors.New("the original inlay view was replaced or expired")
+		return insight.LSPInlayInspection{}, errors.New("the original inlay view was replaced or expired")
 	}
 	if _, err := s.readOnlyLSPSourceLocked(owner, entry.source); err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
 	if err := check(); err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
 	if err := entry.ctx.Err(); err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
 	if err := requestCtx.Err(); err != nil {
-		return types.LSPInlayInspection{}, err
+		return insight.LSPInlayInspection{}, err
 	}
 	out.Boundary.Context.UnknownInputs = slices.Clone(out.Boundary.Context.UnknownInputs)
 	return out, nil

@@ -4,7 +4,7 @@
 # Enforces the documentation rules from docs/README.md:
 #   1. kebab-case filenames under docs/
 #   2. a "> Status:" header in every markdown document
-#   3. relative .md links resolve to existing files
+#   3. Markdown links resolve to existing files and headings (scripts/md_links.py)
 #   4. doc references in code (Go comments, shell scripts, workflow YAML,
 #      vendored go.mod comments) point at existing files under docs/
 #   5. no orphan docs: every file under docs/ is indexed in docs/README.md
@@ -54,25 +54,11 @@ if [[ $fail -eq 0 ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3) Links: relative .md links must resolve
+# 3) Links: every first-party Markdown link resolves to a file and, with a
+# fragment, to a heading or explicit anchor (what the Markdown LSP reports).
 # ---------------------------------------------------------------------------
-link_targets="$(grep -rhoE '\]\([^)#]+\.(md|json)\)' docs --include='*.md' \
-  | sed -E 's/^\]\(//; s/\)$//' | sort -u)"
-broken=0
-while IFS= read -r target; do
-  [[ -z "$target" ]] && continue
-  # resolve each link relative to the directory of the file that contains it
-  while IFS=$'\t' read -r doc rel; do
-    dir="$(dirname "$doc")"
-    resolved="$ROOT/$dir/$rel"
-    if [[ ! -f "$resolved" ]]; then
-      fail_msg "broken link in $doc: ($rel)"
-      broken=1
-    fi
-  done < <(grep -rF "($target)" docs --include='*.md' -l 2>/dev/null | while IFS= read -r d; do printf '%s\t%s\n' "$d" "$target"; done)
-done <<< "$link_targets"
-if [[ $broken -eq 0 ]]; then
-  echo "OK: all relative links resolve"
+if ! python3 scripts/md_links.py; then
+  fail=1
 fi
 
 # ---------------------------------------------------------------------------

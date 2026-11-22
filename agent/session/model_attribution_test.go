@@ -16,7 +16,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 )
 
 func TestModelSwitchAppliesToNextRequestWithoutRelabelingActiveTurn(t *testing.T) {
@@ -66,7 +67,7 @@ func TestModelSwitchAppliesToNextRequestWithoutRelabelingActiveTurn(t *testing.T
 	settings := sess.SettingsSnapshot()
 	settings.Model = "model-b"
 	settings.ProviderID = "openrouter"
-	settings.SessionOverrides = map[string]ttypes.CategorySettings{
+	settings.SessionOverrides = map[string]setting.Category{
 		CategoryDefault: {Provider: "openrouter", Model: "model-b", APIStandard: "openai"},
 	}
 	if err := sess.HandleSettingsSave(settings); err != nil {
@@ -137,14 +138,14 @@ func waitRequestedModel(t *testing.T, models <-chan string) string {
 	}
 }
 
-func waitTurnDone(t *testing.T, sender *mockEventSender, agentID string, timeout ...time.Duration) ttypes.TurnIdentity {
+func waitTurnDone(t *testing.T, sender *mockEventSender, agentID string, timeout ...time.Duration) conversation.TurnIdentity {
 	t.Helper()
 	budget := 5 * time.Second
 	if len(timeout) > 0 {
 		budget = timeout[0]
 	}
 	deadline := time.After(budget)
-	var identity ttypes.TurnIdentity
+	var identity conversation.TurnIdentity
 	var lastRecovery any
 	for {
 		select {
@@ -153,7 +154,7 @@ func waitTurnDone(t *testing.T, sender *mockEventSender, agentID string, timeout
 				continue
 			}
 			if event.typ == "turn_started" {
-				identity, _ = event.data.(ttypes.TurnIdentity)
+				identity, _ = event.data.(conversation.TurnIdentity)
 			}
 			if event.typ == "recovery" {
 				lastRecovery = event.data
@@ -163,7 +164,7 @@ func waitTurnDone(t *testing.T, sender *mockEventSender, agentID string, timeout
 			}
 		case <-deadline:
 			t.Fatalf("turn did not complete; last recovery: %+v", lastRecovery)
-			return ttypes.TurnIdentity{}
+			return conversation.TurnIdentity{}
 		}
 	}
 }
@@ -270,7 +271,7 @@ func TestRunningTurnReadsSessionCompactionWithoutRewritingPrefix(t *testing.T) {
 	first := next()
 	settings := sess.SettingsSnapshot()
 	if settings.SessionOverrides == nil {
-		settings.SessionOverrides = map[string]ttypes.CategorySettings{}
+		settings.SessionOverrides = map[string]setting.Category{}
 	}
 	c := settings.SessionOverrides[CategoryDefault]
 	v := 90

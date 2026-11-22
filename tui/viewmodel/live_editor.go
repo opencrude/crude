@@ -2,7 +2,9 @@ package viewmodel
 
 import (
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"errors"
 	"fmt"
 	"slices"
@@ -13,11 +15,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"math/rand/v2"
 
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -288,7 +289,7 @@ func (m *App) captureLiveEditorCommands(observed map[*editor.Editor]liveEditorOb
 		reloadPrompt := m.editorReload != nil && m.editorReload.editor.Primary() == ed.Primary()
 		// A file that changed on disk waits for the user's choice: autosave
 		// would only fail again.
-		if !reloadPrompt && !state.reload && !ed.DiskConflict() && ed.FilePath() != "" && m.editorSettings.AutoSave == types.AutoSaveAfterDelay && !state.due.IsZero() && !time.Now().Before(state.due) && m.DirtyPromptPath != ed.FilePath() {
+		if !reloadPrompt && !state.reload && !ed.DiskConflict() && ed.FilePath() != "" && m.editorSettings.AutoSave == setting.AutoSaveAfterDelay && !state.due.IsZero() && !time.Now().Before(state.due) && m.DirtyPromptPath != ed.FilePath() {
 			state.save, state.reason = true, workspace.DocumentSaveAfterDelay
 			state.due = time.Time{}
 		}
@@ -568,7 +569,7 @@ func (m *App) liveEditorFailure(state *liveEditorState, err error) {
 			return
 		}
 	}
-	m.presentOperationIssue(types.OperationIssue{Title: "Changes not applied", Summary: "Your text stays in the editor.", Detail: err.Error(), Guidance: "Copy your text if you need it. Then close the file and open it again."})
+	m.presentOperationIssue(statuscenter.OperationIssue{Title: "Changes not applied", Summary: "Your text stays in the editor.", Detail: err.Error(), Guidance: "Copy your text if you need it. Then close the file and open it again."})
 }
 
 func (m *App) applyLiveEditorResult(msg liveEditorResult) {

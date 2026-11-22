@@ -218,7 +218,7 @@ func geminiTestHistory(withItems bool) []ChatMessage {
 		},
 	}
 	if withItems {
-		assistant.ProviderItems = []ProviderItem{{Standard: "gemini", Type: geminiContentItem, Data: json.RawMessage(
+		assistant.ProviderItems = []Item{{Standard: "gemini", Type: geminiContentItem, Data: json.RawMessage(
 			`{"parts":[{"text":"Checking."},{"functionCall":{"id":"call_1","name":"read_file","args":{"path":"a.go"}},"thoughtSignature":"c2ln"},{"functionCall":{"name":"multi_tool_use_parallel","args":{"tool_uses":[]}}}]}`)}}
 	}
 	return []ChatMessage{

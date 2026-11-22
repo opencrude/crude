@@ -1,8 +1,8 @@
 package viewmodel
 
 import (
-	"crude/tui/settings"
-	"crude/tui/ui"
+	"crude/tui/screens/settingspages"
+	"crude/tui/theme"
 )
 
 type LayoutInfo struct {
@@ -27,13 +27,13 @@ type LayoutInfo struct {
 // settings form seeds its rows with the effective (persisted) values, so the
 // preview message already carries the full frame; adding would double every
 // untouched side on each edit.
-func (m *App) frameInsets() ui.Insets {
+func (m *App) frameInsets() theme.Insets {
 	if m == nil || m.Theme == nil {
-		return ui.Insets{}
+		return theme.Insets{}
 	}
 	if m.frameOverlay != nil {
 		ov := *m.frameOverlay
-		return ui.Insets{
+		return theme.Insets{
 			Top:    clampFramePad(ov.Top),
 			Right:  clampFramePad(ov.Right),
 			Bottom: clampFramePad(ov.Bottom),
@@ -41,7 +41,7 @@ func (m *App) frameInsets() ui.Insets {
 		}
 	}
 	insets := m.Theme.Spacing.Frame
-	return ui.Insets{
+	return theme.Insets{
 		Top:    clampFramePad(insets.Top),
 		Right:  clampFramePad(insets.Right),
 		Bottom: clampFramePad(insets.Bottom),
@@ -53,7 +53,7 @@ func (m *App) frameInsets() ui.Insets {
 // preview. The message carries the complete save-faithful frame (the settings
 // model resolves blank fields to what save would produce), so the overlay
 // wholesale replaces the persisted frame until save or cancel.
-func (m *App) applyFramePreview(frame settings.FramePreviewMsg) {
+func (m *App) applyFramePreview(frame settingspages.FramePreviewMsg) {
 	if m == nil {
 		return
 	}
@@ -62,7 +62,7 @@ func (m *App) applyFramePreview(frame settings.FramePreviewMsg) {
 		m.frameOverlay = nil
 		return
 	}
-	m.frameOverlay = &ui.Insets{
+	m.frameOverlay = &theme.Insets{
 		Top:    clampFramePad(derefPad(frame.Top)),
 		Right:  clampFramePad(derefPad(frame.Right)),
 		Bottom: clampFramePad(derefPad(frame.Bottom)),

@@ -1,7 +1,6 @@
-// Package filetree provides the file tree sidebar widget.
-//
 // This file implements the core tree data model: TreeNode, FileTreeModel,
 // lazy directory loading, expand/collapse, filtering, and sorting.
+
 package filetree
 
 import (
@@ -138,7 +137,7 @@ type ModelOptions struct {
 //
 // This is O(git_statuses * depth) and scales to very large repos because it
 // never walks unloaded subtrees; it uses the git resolver's complete map.
-func (m *FileTreeModel) recomputeAggregateStatuses() {
+func (m *Model) recomputeAggregateStatuses() {
 	if m.Root == nil {
 		return
 	}
@@ -204,7 +203,7 @@ func (m *FileTreeModel) recomputeAggregateStatuses() {
 // SetDiagnostics updates the per-file diagnostic counts for the given path
 // and recomputes aggregates for all affected ancestor directories.
 // This method is safe for concurrent calls (it acquires the model's write lock).
-func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int) {
+func (m *Model) SetDiagnostics(path string, errors, warnings, hints int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -230,7 +229,7 @@ func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int)
 // ClearDiagnostics removes all per-file diagnostic counts and recomputes the
 // loaded tree aggregates. It is used when the LSP manager is restarted or the
 // workspace changes so stale diagnostics do not survive the clean slate.
-func (m *FileTreeModel) ClearDiagnostics() {
+func (m *Model) ClearDiagnostics() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.diagnosticResolver = make(map[string]DiagCounts)
@@ -240,7 +239,7 @@ func (m *FileTreeModel) ClearDiagnostics() {
 // ensureDiagnosticsNode recursively loads parent directories until the
 // given file path has a node in m.nodes.  It does NOT expand any directory
 // The directory stays collapsed even though its children are loaded.
-func (m *FileTreeModel) ensureDiagnosticsNode(fp string) {
+func (m *Model) ensureDiagnosticsNode(fp string) {
 	parentPath := filepath.Dir(fp)
 	if parentPath == fp || parentPath == "." {
 		return // at filesystem root, can't go higher
@@ -259,7 +258,7 @@ func (m *FileTreeModel) ensureDiagnosticsNode(fp string) {
 // recomputeAggregateDiagnostics recomputes DiagnosticCount/DiagErrors/
 // DiagWarnings/DiagHints for every loaded directory node by scanning the
 // per-file diagnostic counts and propagating them up to root.
-func (m *FileTreeModel) recomputeAggregateDiagnostics() {
+func (m *Model) recomputeAggregateDiagnostics() {
 	// Clear all existing aggregate diagnostic counts.
 	var clearDiag func(n *TreeNode)
 	clearDiag = func(n *TreeNode) {
@@ -298,7 +297,7 @@ func (m *FileTreeModel) recomputeAggregateDiagnostics() {
 	}
 }
 
-func (m *FileTreeModel) containsPath(path string) bool {
+func (m *Model) containsPath(path string) bool {
 	rel, err := filepath.Rel(m.rootPath, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
@@ -317,13 +316,13 @@ func (n *TreeNode) HasChildren() bool {
 // FileTreeModel
 // ---------------------------------------------------------------------------
 
-// FileTreeModel is the core data model for the file tree.
+// Model is the core data model for the file tree.
 //
 // It maintains a tree of TreeNode instances rooted at the workspace root,
 // provides O(1) path-based lookup, lazy directory loading, expand/collapse
 // operations, filtering, sorting, and a flattened visible-nodes list for
 // efficient cursor navigation.
-type FileTreeModel struct {
+type Model struct {
 	// Root is the root node of the tree (represents the workspace root dir).
 	Root *TreeNode
 
@@ -441,14 +440,14 @@ type FileTreeModel struct {
 //
 // It initialises the icon resolver, attempts to create a git status resolver,
 // loads the root directory, and builds the initial visible-nodes list.
-func NewFileTreeModel(rootPath string) *FileTreeModel {
+func NewFileTreeModel(rootPath string) *Model {
 	return NewFileTreeModelWithOptions(rootPath, ModelOptions{EnableGit: true, InitialLoad: true})
 }
 
 // NewFileTreeModelWithOptions creates a tree with explicit service and loading
 // behavior. InitialLoad=false performs no filesystem reads, which is required
 // before a picker is mounted on the UI thread.
-func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *FileTreeModel {
+func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *Model {
 	// Resolve to an absolute path.
 	absPath := filepath.Clean(rootPath)
 	if !options.NoLocalIO {
@@ -457,7 +456,7 @@ func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *FileTre
 		}
 	}
 
-	m := &FileTreeModel{
+	m := &Model{
 		rootPath:           absPath,
 		noLocalIO:          options.NoLocalIO,
 		nodes:              make(map[string]*TreeNode),
@@ -511,7 +510,7 @@ func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *FileTre
 // NewPickerFileTreeModel creates a tree projection with no filesystem I/O and
 // no Git, diagnostics, or watcher services. Directory results are applied by
 // SetDirectoryEntries after workspace-owned asynchronous reads complete.
-func NewPickerFileTreeModel(rootPath string, directoriesOnly bool) *FileTreeModel {
+func NewPickerFileTreeModel(rootPath string, directoriesOnly bool) *Model {
 	return NewFileTreeModelWithOptions(rootPath, ModelOptions{
 		DirectoriesOnly: directoriesOnly,
 		InitialLoad:     false,
@@ -526,7 +525,7 @@ func NewPickerFileTreeModel(rootPath string, directoriesOnly bool) *FileTreeMode
 // its Children slice. It is the core of the lazy-loading mechanism.
 //
 // If the node is not a directory, this is a no-op.
-func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
+func (m *Model) loadDirectory(node *TreeNode) error {
 	if m.noLocalIO {
 		return fmt.Errorf("remote tree requires asynchronous directory installation")
 	}
@@ -642,7 +641,7 @@ func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
 
 // SetDirectoryLoader installs an asynchronous, cancellable directory request.
 // The callback is never invoked while the model lock is held.
-func (m *FileTreeModel) SetDirectoryLoader(fn func(context.Context, string) tea.Cmd) {
+func (m *Model) SetDirectoryLoader(fn func(context.Context, string) tea.Cmd) {
 	if m == nil {
 		return
 	}
@@ -653,7 +652,7 @@ func (m *FileTreeModel) SetDirectoryLoader(fn func(context.Context, string) tea.
 
 // SetFileSelectedHandler adapts file activation for a parent projection such
 // as Attach Files. A nil handler preserves the persistent sidebar behavior.
-func (m *FileTreeModel) SetFileSelectedHandler(fn func(string) tea.Cmd) {
+func (m *Model) SetFileSelectedHandler(fn func(string) tea.Cmd) {
 	if m == nil {
 		return
 	}
@@ -664,7 +663,7 @@ func (m *FileTreeModel) SetFileSelectedHandler(fn func(string) tea.Cmd) {
 
 // MarkDirectoryLoading marks one loaded directory as awaiting an asynchronous
 // child listing. It does not perform I/O.
-func (m *FileTreeModel) MarkDirectoryLoading(path string) bool {
+func (m *Model) MarkDirectoryLoading(path string) bool {
 	if m == nil {
 		return false
 	}
@@ -685,7 +684,7 @@ func (m *FileTreeModel) MarkDirectoryLoading(path string) bool {
 
 // SetDirectoryEntries applies an asynchronous listing to an existing node.
 // Existing child nodes are reused so expansion and selection survive refreshes.
-func (m *FileTreeModel) SetDirectoryEntries(path string, entries []DirectoryEntry) bool {
+func (m *Model) SetDirectoryEntries(path string, entries []DirectoryEntry) bool {
 	if m == nil {
 		return false
 	}
@@ -753,7 +752,7 @@ func (m *FileTreeModel) SetDirectoryEntries(path string, entries []DirectoryEntr
 
 // SetDirectoryLoadError clears the loading state after a failed asynchronous
 // listing while preserving the previous children for an already-loaded node.
-func (m *FileTreeModel) SetDirectoryLoadError(path string) bool {
+func (m *Model) SetDirectoryLoadError(path string) bool {
 	if m == nil {
 		return false
 	}
@@ -770,7 +769,7 @@ func (m *FileTreeModel) SetDirectoryLoadError(path string) bool {
 
 // SetSelectionMarks updates picker multi-selection indicators without changing
 // the tree cursor selection.
-func (m *FileTreeModel) SetSelectionMarks(paths map[string]bool) {
+func (m *Model) SetSelectionMarks(paths map[string]bool) {
 	if m == nil {
 		return
 	}
@@ -783,7 +782,7 @@ func (m *FileTreeModel) SetSelectionMarks(paths map[string]bool) {
 
 // removeNodeIndex removes node and all loaded descendants from the path index.
 // The caller must hold m.mu.
-func (m *FileTreeModel) removeNodeIndex(node *TreeNode) {
+func (m *Model) removeNodeIndex(node *TreeNode) {
 	if node == nil {
 		return
 	}
@@ -797,7 +796,7 @@ func (m *FileTreeModel) removeNodeIndex(node *TreeNode) {
 
 // sortChildren sorts a slice of TreeNode pointers according to the model's
 // current sort mode.
-func (m *FileTreeModel) sortChildren(children []*TreeNode) {
+func (m *Model) sortChildren(children []*TreeNode) {
 	sort.Slice(children, func(i, j int) bool {
 		a, b := children[i], children[j]
 
@@ -827,7 +826,7 @@ func (m *FileTreeModel) sortChildren(children []*TreeNode) {
 
 // ToggleExpand expands a collapsed directory (loading children if needed) or
 // collapses an expanded directory. Non-directory nodes are ignored.
-func (m *FileTreeModel) ToggleExpand(path string) tea.Cmd {
+func (m *Model) ToggleExpand(path string) tea.Cmd {
 	m.mu.Lock()
 	node, ok := m.nodes[path]
 	if !ok || !node.IsDir {
@@ -867,7 +866,7 @@ func (m *FileTreeModel) ToggleExpand(path string) tea.Cmd {
 
 // Expand expands a specific directory node. Non-directory nodes are ignored.
 // If children have not been loaded yet, they are loaded first.
-func (m *FileTreeModel) Expand(path string) tea.Cmd {
+func (m *Model) Expand(path string) tea.Cmd {
 	m.mu.Lock()
 	node, ok := m.nodes[path]
 	if !ok || !node.IsDir || node.IsExpanded {
@@ -898,7 +897,7 @@ func (m *FileTreeModel) Expand(path string) tea.Cmd {
 }
 
 // Collapse collapses a specific directory node.
-func (m *FileTreeModel) Collapse(path string) {
+func (m *Model) Collapse(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -914,7 +913,7 @@ func (m *FileTreeModel) Collapse(path string) {
 // ExpandAll expands every directory node in the tree.
 // WARNING: For large trees this may read the entire file system. Use with
 // caution on repositories with many files.
-func (m *FileTreeModel) ExpandAll() {
+func (m *Model) ExpandAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -922,7 +921,7 @@ func (m *FileTreeModel) ExpandAll() {
 	m.rebuildVisibleNodes()
 }
 
-func (m *FileTreeModel) expandAllRecursive(node *TreeNode) {
+func (m *Model) expandAllRecursive(node *TreeNode) {
 	if !node.IsDir {
 		return
 	}
@@ -940,7 +939,7 @@ func (m *FileTreeModel) expandAllRecursive(node *TreeNode) {
 
 // CollapseAll collapses every directory node, leaving the workspace root
 // expanded so its children remain the explorer's top-level rows.
-func (m *FileTreeModel) CollapseAll() {
+func (m *Model) CollapseAll() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -948,7 +947,7 @@ func (m *FileTreeModel) CollapseAll() {
 	m.rebuildVisibleNodes()
 }
 
-func (m *FileTreeModel) collapseAllRecursive(node *TreeNode) {
+func (m *Model) collapseAllRecursive(node *TreeNode) {
 	if !node.IsDir {
 		return
 	}
@@ -966,7 +965,7 @@ func (m *FileTreeModel) collapseAllRecursive(node *TreeNode) {
 
 // Select sets the currently selected path. If the path is not visible (or
 // does not exist), the cursor is moved to the first visible node.
-func (m *FileTreeModel) Select(path string) {
+func (m *Model) Select(path string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -990,7 +989,7 @@ func (m *FileTreeModel) Select(path string) {
 
 // SelectVisible selects and scrolls to an existing visible row without changing
 // selection when the path is absent.
-func (m *FileTreeModel) SelectVisible(path string) bool {
+func (m *Model) SelectVisible(path string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if i := m.visibleIndexLocked(path); i >= 0 {
@@ -1002,7 +1001,7 @@ func (m *FileTreeModel) SelectVisible(path string) bool {
 }
 
 // MoveUp moves the cursor up by one visible item.
-func (m *FileTreeModel) MoveUp() {
+func (m *Model) MoveUp() {
 	m.mu.Lock()
 	m.clampCursorLocked()
 	if m.cursorIndex > 0 {
@@ -1013,7 +1012,7 @@ func (m *FileTreeModel) MoveUp() {
 }
 
 // MoveDown moves the cursor down by one visible item.
-func (m *FileTreeModel) MoveDown() {
+func (m *Model) MoveDown() {
 	m.mu.Lock()
 	if m.selectionCleared {
 		m.setCursorIndexLocked(0)
@@ -1031,7 +1030,7 @@ func (m *FileTreeModel) MoveDown() {
 
 // SelectedNode returns the currently selected TreeNode, or nil if the tree
 // is empty or the selection is invalid.
-func (m *FileTreeModel) SelectedNode() *TreeNode {
+func (m *Model) SelectedNode() *TreeNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1043,7 +1042,7 @@ func (m *FileTreeModel) SelectedNode() *TreeNode {
 
 // ClearSelection explicitly removes the row cursor until actual navigation or
 // selection. Structural rebuilds alone must not select another row.
-func (m *FileTreeModel) ClearSelection() {
+func (m *Model) ClearSelection() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.selectionCleared = true
@@ -1060,7 +1059,7 @@ func (m *FileTreeModel) ClearSelection() {
 // It walks the tree depth-first, descending only into expanded directories.
 // Filtered nodes are excluded unless they have children that match the
 // filter. Hidden nodes are excluded when showHidden is false.
-func (m *FileTreeModel) rebuildVisibleNodes() {
+func (m *Model) rebuildVisibleNodes() {
 	m.visibleNodes = m.visibleNodes[:0] // reuse backing array
 	m.maxVisibleDepth = 0
 	if m.Root != nil {
@@ -1092,7 +1091,7 @@ func (m *FileTreeModel) rebuildVisibleNodes() {
 //
 // Centralising this at the projection boundary prevents future mutation paths
 // from having to remember a separate cursor clamp. The caller must hold m.mu.
-func (m *FileTreeModel) reconcileSelectionLocked() {
+func (m *Model) reconcileSelectionLocked() {
 	if m.selectionCleared {
 		m.selectedPath = ""
 		m.cursorIndex = -1
@@ -1134,7 +1133,7 @@ func (m *FileTreeModel) reconcileSelectionLocked() {
 	m.clampViewportLocked()
 }
 
-func (m *FileTreeModel) visibleIndexLocked(path string) int {
+func (m *Model) visibleIndexLocked(path string) int {
 	if path == "" {
 		return -1
 	}
@@ -1149,7 +1148,7 @@ func (m *FileTreeModel) visibleIndexLocked(path string) int {
 // clampCursorLocked is the defensive navigation boundary. Rebuilds already
 // reconcile path-aware selection, but movement must remain safe even if a new
 // mutation path is added without doing so.
-func (m *FileTreeModel) clampCursorLocked() {
+func (m *Model) clampCursorLocked() {
 	m.selectionCleared = false
 	if len(m.visibleNodes) == 0 {
 		m.cursorIndex = 0
@@ -1166,12 +1165,12 @@ func (m *FileTreeModel) clampCursorLocked() {
 	m.selectedPath = m.visibleNodes[m.cursorIndex].Path
 }
 
-func (m *FileTreeModel) setCursorIndexLocked(i int) {
+func (m *Model) setCursorIndexLocked(i int) {
 	m.cursorIndex = i
 	m.clampCursorLocked()
 }
 
-func (m *FileTreeModel) clampViewportLocked() {
+func (m *Model) clampViewportLocked() {
 	if len(m.visibleNodes) == 0 {
 		m.scrollOffset = 0
 		return
@@ -1193,7 +1192,7 @@ func (m *FileTreeModel) clampViewportLocked() {
 	m.clampScrollRangeLocked(vh)
 }
 
-func (m *FileTreeModel) clampScrollRangeLocked(vh int) {
+func (m *Model) clampScrollRangeLocked(vh int) {
 	if vh <= 0 {
 		vh = 10
 	}
@@ -1213,7 +1212,7 @@ func (m *FileTreeModel) clampScrollRangeLocked(vh int) {
 // The workspace root stays in the model for git/diagnostic aggregation and
 // path operations, but it is not a painted row: the explorer search hint
 // names the workspace instead.
-func (m *FileTreeModel) unfilteredWalk(node *TreeNode) {
+func (m *Model) unfilteredWalk(node *TreeNode) {
 	if node.Hidden && !m.showHidden {
 		return
 	}
@@ -1234,7 +1233,7 @@ func (m *FileTreeModel) unfilteredWalk(node *TreeNode) {
 // maps built by applyFilterState: a node shows when it matched, an ancestor
 // matched, or its subtree contains a match. The workspace root is omitted
 // from the painted list the same way as in unfilteredWalk.
-func (m *FileTreeModel) filteredWalk(node *TreeNode, ancestorMatched bool) {
+func (m *Model) filteredWalk(node *TreeNode, ancestorMatched bool) {
 	if node == nil || (node.Hidden && !m.showHidden) {
 		return
 	}
@@ -1262,7 +1261,7 @@ const filterLoadBudget = 512
 // and auto-expands every directory whose subtree contains a match, recording
 // previously-collapsed ones so an empty pattern restores them.
 // Must be called with m.mu held.
-func (m *FileTreeModel) applyFilterState() {
+func (m *Model) applyFilterState() {
 	pattern := m.filterPattern()
 	if pattern == "" {
 		for _, path := range m.filterAutoExpanded {
@@ -1286,7 +1285,7 @@ func (m *FileTreeModel) applyFilterState() {
 // lazily loading unloaded directories while budget lasts. Returns true when
 // the subtree (including node itself) contains a match. The root node never
 // self-matches; matching the workspace name would defeat the filter.
-func (m *FileTreeModel) computeFilterMatches(node *TreeNode, pattern string, budget *int) bool {
+func (m *Model) computeFilterMatches(node *TreeNode, pattern string, budget *int) bool {
 	if node == nil || (node.Hidden && !m.showHidden) {
 		return false
 	}
@@ -1316,7 +1315,7 @@ func (m *FileTreeModel) computeFilterMatches(node *TreeNode, pattern string, bud
 
 // autoExpandFilterMatches expands every directory whose subtree matched so
 // filtered rows are reachable, recording directories that were collapsed.
-func (m *FileTreeModel) autoExpandFilterMatches(node *TreeNode) {
+func (m *Model) autoExpandFilterMatches(node *TreeNode) {
 	if node == nil || !node.IsDir || (node.Hidden && !m.showHidden) {
 		return
 	}
@@ -1336,7 +1335,7 @@ func (m *FileTreeModel) autoExpandFilterMatches(node *TreeNode) {
 // Filtering
 // ---------------------------------------------------------------------------
 
-func (m *FileTreeModel) filterPattern() string {
+func (m *Model) filterPattern() string {
 	if m.filterEd == nil {
 		return ""
 	}
@@ -1350,7 +1349,7 @@ func (m *FileTreeModel) filterPattern() string {
 // matched, or if any descendant matches. Ancestor directories of matches are
 // auto-expanded (and restored when the filter clears). When the filter is
 // empty, all (non-hidden, visible) nodes are shown.
-func (m *FileTreeModel) SetFilter(pattern string) {
+func (m *Model) SetFilter(pattern string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1386,7 +1385,7 @@ func (m *FileTreeModel) SetFilter(pattern string) {
 // FilterMatchPositions returns the rune positions in the node name matched by
 // the active fuzzy filter, or nil when the node did not match (or no filter
 // is active). The returned slice must not be modified.
-func (m *FileTreeModel) FilterMatchPositions(path string) []int {
+func (m *Model) FilterMatchPositions(path string) []int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.filterMatchPos == nil {
@@ -1396,7 +1395,7 @@ func (m *FileTreeModel) FilterMatchPositions(path string) []int {
 }
 
 // Filter returns the current filter pattern.
-func (m *FileTreeModel) Filter() string {
+func (m *Model) Filter() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.filterPattern()
@@ -1404,7 +1403,7 @@ func (m *FileTreeModel) Filter() string {
 
 // SetShowHidden controls whether dot-files (names starting with ".") are
 // visible in the tree. Rebuilds the visible nodes list on change.
-func (m *FileTreeModel) SetShowHidden(show bool) {
+func (m *Model) SetShowHidden(show bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1419,7 +1418,7 @@ func (m *FileTreeModel) SetShowHidden(show bool) {
 }
 
 // ShowHidden returns whether dot-files are currently shown.
-func (m *FileTreeModel) ShowHidden() bool {
+func (m *Model) ShowHidden() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.showHidden
@@ -1430,7 +1429,7 @@ func (m *FileTreeModel) ShowHidden() bool {
 // ---------------------------------------------------------------------------
 
 // SetSortBy changes the sort mode and re-sorts all loaded children.
-func (m *FileTreeModel) SetSortBy(sort SortOption) {
+func (m *Model) SetSortBy(sort SortOption) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1446,14 +1445,14 @@ func (m *FileTreeModel) SetSortBy(sort SortOption) {
 }
 
 // SortBy returns the current sort mode.
-func (m *FileTreeModel) SortBy() SortOption {
+func (m *Model) SortBy() SortOption {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.sortBy
 }
 
 // resortAll recursively re-sorts children of every node.
-func (m *FileTreeModel) resortAll(node *TreeNode) {
+func (m *Model) resortAll(node *TreeNode) {
 	if node == nil || !node.IsDir {
 		return
 	}
@@ -1476,7 +1475,7 @@ func (m *FileTreeModel) resortAll(node *TreeNode) {
 //   - FileDeleted: removes the entry from the parent's children and rebuilds.
 //   - FileModified: refreshes the node's mod time and optionally its git status.
 //   - FileRenamed: removes the old entry and adds the new one.
-func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
+func (m *Model) ProcessWatcherEvent(evt FileChangeEvent) {
 	m.mu.Lock()
 	m.applyMutationLocked(evt)
 	onFileChanged := m.onFileChanged
@@ -1508,7 +1507,7 @@ func (m *FileTreeModel) ProcessWatcherEvent(evt FileChangeEvent) {
 // synchronously publishing back through EventBus would re-enter that same
 // update loop. A later fsnotify event remains responsible for notifying
 // external consumers such as the LSP.
-func (m *FileTreeModel) ApplyLocalMutation(evt FileChangeEvent) {
+func (m *Model) ApplyLocalMutation(evt FileChangeEvent) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.applyMutationLocked(evt)
@@ -1516,7 +1515,7 @@ func (m *FileTreeModel) ApplyLocalMutation(evt FileChangeEvent) {
 
 // applyMutationLocked applies the tree-state portion shared by local
 // mutations and background watcher events. The caller must hold m.mu.
-func (m *FileTreeModel) applyMutationLocked(evt FileChangeEvent) {
+func (m *Model) applyMutationLocked(evt FileChangeEvent) {
 	switch evt.Type {
 	case FileCreated:
 		m.handleFileCreated(evt.Path)
@@ -1530,7 +1529,7 @@ func (m *FileTreeModel) applyMutationLocked(evt FileChangeEvent) {
 }
 
 // SetOnFileChanged sets the callback invoked when a file changes on disk.
-func (m *FileTreeModel) SetOnFileChanged(fn func(filePath string, changeType int)) {
+func (m *Model) SetOnFileChanged(fn func(filePath string, changeType int)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onFileChanged = fn
@@ -1538,13 +1537,13 @@ func (m *FileTreeModel) SetOnFileChanged(fn func(filePath string, changeType int
 
 // SetOnGitChanged sets the callback used only to schedule a Git refresh on the
 // Bubble Tea event loop. Repository watcher goroutines never mutate tree rows.
-func (m *FileTreeModel) SetOnGitChanged(fn func()) {
+func (m *Model) SetOnGitChanged(fn func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.onGitChanged = fn
 }
 
-func (m *FileTreeModel) handleFileCreated(path string) {
+func (m *Model) handleFileCreated(path string) {
 	parentPath := filepath.Dir(path)
 	parentNode, ok := m.nodes[parentPath]
 	if !ok || !parentNode.IsDir {
@@ -1557,7 +1556,7 @@ func (m *FileTreeModel) handleFileCreated(path string) {
 	m.rebuildVisibleNodes()
 }
 
-func (m *FileTreeModel) handleFileDeleted(path string) {
+func (m *Model) handleFileDeleted(path string) {
 	node, ok := m.nodes[path]
 	if !ok {
 		return
@@ -1577,7 +1576,7 @@ func (m *FileTreeModel) handleFileDeleted(path string) {
 	m.rebuildVisibleNodes()
 }
 
-func (m *FileTreeModel) handleFileModified(path string) {
+func (m *Model) handleFileModified(path string) {
 	node, ok := m.nodes[path]
 	if !ok {
 		return
@@ -1600,7 +1599,7 @@ func (m *FileTreeModel) handleFileModified(path string) {
 	m.recomputeAggregateStatuses()
 }
 
-func (m *FileTreeModel) handleFileRenamed(oldPath, newPath string) {
+func (m *Model) handleFileRenamed(oldPath, newPath string) {
 	node, ok := m.nodes[oldPath]
 	if !ok {
 		// Old path not tracked: treat it as a create.
@@ -1625,7 +1624,7 @@ func (m *FileTreeModel) handleFileRenamed(oldPath, newPath string) {
 // reapplyFilterAfterMutationLocked lets created/deleted rows join or leave an
 // active fuzzy result set. Rebuilding from stale match maps can otherwise
 // produce a valid cursor over an out-of-date projection.
-func (m *FileTreeModel) reapplyFilterAfterMutationLocked() {
+func (m *Model) reapplyFilterAfterMutationLocked() {
 	if m.filterPattern() != "" {
 		m.applyFilterState()
 	}
@@ -1637,7 +1636,7 @@ func (m *FileTreeModel) reapplyFilterAfterMutationLocked() {
 
 // VisibleNodes returns the current flattened list of visible nodes as a
 // snapshot. The caller must not modify the returned slice.
-func (m *FileTreeModel) VisibleNodes() []*TreeNode {
+func (m *Model) VisibleNodes() []*TreeNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]*TreeNode(nil), m.visibleNodes...)
@@ -1646,7 +1645,7 @@ func (m *FileTreeModel) VisibleNodes() []*TreeNode {
 // ViewportAncestor is the deepest offscreen directory shared by every painted
 // row. When the viewport spans root branches, return the first row's offscreen
 // parent for the normal breadcrumb, but mark it non-shared so guides stay full.
-func (m *FileTreeModel) ViewportAncestor(rows int) (*TreeNode, bool) {
+func (m *Model) ViewportAncestor(rows int) (*TreeNode, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.scrollOffset <= 0 || m.scrollOffset >= len(m.visibleNodes) || rows <= 0 {
@@ -1678,7 +1677,7 @@ func (m *FileTreeModel) ViewportAncestor(rows int) (*TreeNode, bool) {
 
 // MaxVisibleDepth is cached with the structural projection. It never scans
 // nodes during a paint or changes when only focus/scroll state moves.
-func (m *FileTreeModel) MaxVisibleDepth() int {
+func (m *Model) MaxVisibleDepth() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.maxVisibleDepth
@@ -1687,7 +1686,7 @@ func (m *FileTreeModel) MaxVisibleDepth() int {
 // VisibleRows returns the paths of currently visible nodes in
 // display order. Convenience for callers that need a list of strings
 // (e.g. the right-click context menu resolving a click Y to a path).
-func (m *FileTreeModel) VisibleRows() []string {
+func (m *Model) VisibleRows() []string {
 	nodes := m.VisibleNodes()
 	out := make([]string, 0, len(nodes))
 	for _, n := range nodes {
@@ -1701,7 +1700,7 @@ func (m *FileTreeModel) VisibleRows() []string {
 
 // IsDir reports whether the given path is a known directory in the
 // tree. Returns false for unknown paths.
-func (m *FileTreeModel) IsDir(path string) bool {
+func (m *Model) IsDir(path string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	n, ok := m.nodes[path]
@@ -1713,7 +1712,7 @@ func (m *FileTreeModel) IsDir(path string) bool {
 
 // ParentDir returns the parent directory of the given path, or "" for a
 // path without one. Tree paths are native, so a Windows path splits at '\'.
-func (m *FileTreeModel) ParentDir(path string) string {
+func (m *Model) ParentDir(path string) string {
 	if path == "" {
 		return ""
 	}
@@ -1727,7 +1726,7 @@ func (m *FileTreeModel) ParentDir(path string) string {
 // ExpandToPath expands (lazily loading as needed) every ancestor of the
 // given path, rebuilds the visible rows, and moves the selection to the path
 // so it is revealed and highlighted. Returns true if the path is now visible.
-func (m *FileTreeModel) ExpandToPath(path string) bool {
+func (m *Model) ExpandToPath(path string) bool {
 	if path == "" {
 		return false
 	}
@@ -1784,14 +1783,14 @@ func (m *FileTreeModel) ExpandToPath(path string) bool {
 
 // NodeByPath looks up a TreeNode by its absolute path. Returns nil if not
 // found.
-func (m *FileTreeModel) NodeByPath(path string) *TreeNode {
+func (m *Model) NodeByPath(path string) *TreeNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.nodes[path]
 }
 
 // CursorIndex returns the current cursor position in the visible nodes list.
-func (m *FileTreeModel) CursorIndex() int {
+func (m *Model) CursorIndex() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.cursorIndex
@@ -1799,14 +1798,14 @@ func (m *FileTreeModel) CursorIndex() int {
 
 // SetCursorIndex sets the cursor position. The index is clamped to the valid
 // range [0, len(visibleNodes)-1].
-func (m *FileTreeModel) SetCursorIndex(i int) {
+func (m *Model) SetCursorIndex(i int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.setCursorIndexLocked(i)
 }
 
 // RootPath returns the absolute path of the workspace root.
-func (m *FileTreeModel) RootPath() string {
+func (m *Model) RootPath() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.rootPath
@@ -1814,7 +1813,7 @@ func (m *FileTreeModel) RootPath() string {
 
 // WorkspaceLabel is the workspace folder name used by the explorer search
 // hint. Empty when the root has no usable name.
-func (m *FileTreeModel) WorkspaceLabel() string {
+func (m *Model) WorkspaceLabel() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.Root == nil {
@@ -1828,21 +1827,21 @@ func (m *FileTreeModel) WorkspaceLabel() string {
 }
 
 // IconResolver returns the model's icon resolver.
-func (m *FileTreeModel) IconResolver() *IconResolver {
+func (m *Model) IconResolver() *IconResolver {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.iconResolver
 }
 
 // Watcher returns the file system watcher (may be nil).
-func (m *FileTreeModel) Watcher() *Watcher {
+func (m *Model) Watcher() *Watcher {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.watcher
 }
 
 // GitResolver returns the git status resolver (may be nil).
-func (m *FileTreeModel) GitResolver() *GitStatusResolver {
+func (m *Model) GitResolver() *GitStatusResolver {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.gitResolver
@@ -1850,7 +1849,7 @@ func (m *FileTreeModel) GitResolver() *GitStatusResolver {
 
 // StartWatcher creates and starts a file system watcher for the tree's root
 // path. Events are delivered to ProcessWatcherEvent in a background goroutine.
-func (m *FileTreeModel) StartWatcher() error {
+func (m *Model) StartWatcher() error {
 	m.mu.RLock()
 	if m.noLocalIO {
 		m.mu.RUnlock()
@@ -1913,7 +1912,7 @@ func (m *FileTreeModel) StartWatcher() error {
 }
 
 // StopWatcher stops the file system watcher if one is active.
-func (m *FileTreeModel) StopWatcher() {
+func (m *Model) StopWatcher() {
 	m.mu.Lock()
 	w := m.watcher
 	stopGit := m.gitWatcherStop

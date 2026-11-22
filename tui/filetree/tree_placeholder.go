@@ -10,7 +10,7 @@ import (
 // whose root listing is being prepared asynchronously. It performs no
 // filesystem I/O, so a project switch can return control to the event loop
 // before a large or remote root directory has been read.
-func NewPlaceholderFileTreeModel(rootPath string) *FileTreeModel {
+func NewPlaceholderFileTreeModel(rootPath string) *Model {
 	absPath, err := filepath.Abs(rootPath)
 	if err != nil {
 		absPath = rootPath
@@ -23,7 +23,7 @@ func NewPlaceholderFileTreeModel(rootPath string) *FileTreeModel {
 		IsExpanded: true,
 		Loading:    true,
 	}
-	return &FileTreeModel{
+	return &Model{
 		rootPath:           absPath,
 		Root:               root,
 		nodes:              map[string]*TreeNode{absPath: root},

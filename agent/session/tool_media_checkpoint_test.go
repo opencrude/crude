@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -112,7 +112,7 @@ func testToolMediaCheckpoint(t *testing.T, native, child bool) {
 		ContextRevision: state.Revision, ContextGeneration: 1, ContextReason: "test",
 	})
 	status := recoverytypes.Status{ID: "media-incident", AgentID: owner, Generation: 1}
-	a := agent.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "checkpoint-media", s.logger)
+	a := turnloop.NewAgent(provider.FromPreset("openai-chat", "key", server.URL), "checkpoint-media", s.logger)
 	a.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.ParallelTool())
 	a.ContextArchive, a.FrozenPrefix = state.Messages, state.Messages
 	release := make(chan struct{})

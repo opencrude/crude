@@ -52,7 +52,7 @@ left by abrupt termination proves only that the process started; it does not
 identify a failure cause. This is crash evidence, not session-data recovery or
 a guarantee against hardware data loss.
 
-`go test ./crashlog -count=1` runs subprocess crashes for both roles: unwinding
+`go test ./internal/crashlog -count=1` runs subprocess crashes for both roles: unwinding
 panic, unrelated worker panic, unrecoverable runtime fatal error, recovered TUI
 Update and command panics, and exit before cleanup. It checks actual disk bytes,
 private permissions and clean-run cleanup. Race runs keep each installation in

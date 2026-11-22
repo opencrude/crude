@@ -12,8 +12,8 @@ import (
 	"crude/agent/mcpclient"
 	"crude/agent/provider"
 	"crude/agent/skills"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 	"sync"
 )
@@ -23,24 +23,25 @@ import (
 // fields; publication belongs to the caller's apply phase.
 type PreparedCapabilities struct {
 	service             *capability.Service
-	defaults, effective types.AppSettings
-	overrides           types.WorkspaceOverrides
+	defaults, effective setting.App
+	overrides           setting.WorkspaceOverrides
 	root                string
-	commit              func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error)
+	commit              func(context.Context, setting.App, setting.App, captypes.Scope) (setting.App, error)
 }
 
-func (w *Workspace) PrepareCapabilities(commit func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error)) (*PreparedCapabilities, error) {
+// PrepareCapabilities prepares a capability settings change and checks it before commit.
+func (w *Workspace) PrepareCapabilities(commit func(context.Context, setting.App, setting.App, captypes.Scope) (setting.App, error)) (*PreparedCapabilities, error) {
 	if w.Capabilities == nil {
 		return nil, errors.New("capability service is unavailable")
 	}
-	clone := func(v types.AppSettings) types.AppSettings {
+	clone := func(v setting.App) setting.App {
 		raw, _ := json.Marshal(v)
-		var out types.AppSettings
+		var out setting.App
 		_ = json.Unmarshal(raw, &out)
 		// JSON omits empty capability maps. Re-establish the same normalized
 		// contract as AppDefaults/FileConfigToAppSettings before retaining a
 		// private preimage; nil maps must not fabricate a concurrent edit.
-		types.ApplyAppDefaults(&out)
+		setting.ApplyAppDefaults(&out)
 		return out
 	}
 	return &PreparedCapabilities{service: w.Capabilities, defaults: clone(w.AppDefaults()), effective: clone(w.LoadAppSettings()), overrides: w.LoadWorkspaceOverrides(), root: w.RootPath, commit: commit}, nil
@@ -62,24 +63,24 @@ func (p *PreparedCapabilities) Preview(ctx context.Context, action captypes.Acti
 }
 
 // PrepareAction detaches every nested operand before launching a worker.
-func (p *PreparedCapabilities) PrepareAction(action captypes.Action) func(context.Context) (captypes.Snapshot, []captypes.Entry, string, types.AppSettings, error) {
+func (p *PreparedCapabilities) PrepareAction(action captypes.Action) func(context.Context) (captypes.Snapshot, []captypes.Entry, string, setting.App, error) {
 	raw, _ := json.Marshal(action)
 	_ = json.Unmarshal(raw, &action)
 	var once sync.Once
 	var snapshot captypes.Snapshot
 	var entries []captypes.Entry
 	var content string
-	var published types.AppSettings
+	var published setting.App
 	var err error
-	return func(ctx context.Context) (captypes.Snapshot, []captypes.Entry, string, types.AppSettings, error) {
+	return func(ctx context.Context) (captypes.Snapshot, []captypes.Entry, string, setting.App, error) {
 		once.Do(func() { snapshot, entries, content, published, err = p.action(ctx, action) })
 		return snapshot, entries, content, published, err
 	}
 }
-func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Action) (captypes.Snapshot, []captypes.Entry, string, types.AppSettings, error) {
+func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Action) (captypes.Snapshot, []captypes.Entry, string, setting.App, error) {
 	service := p.service
 	if err := ctx.Err(); err != nil {
-		return captypes.Snapshot{}, nil, "", types.AppSettings{}, err
+		return captypes.Snapshot{}, nil, "", setting.App{}, err
 	}
 	working := p.effective
 	if action.Scope == captypes.ScopeApplication {
@@ -349,7 +350,7 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 	default:
 		err = fmt.Errorf("unsupported capability operation %q", action.Operation)
 	}
-	var published types.AppSettings
+	var published setting.App
 	if err == nil && persist {
 		if p.commit == nil {
 			err = errors.New("capability persistence is unavailable")
@@ -368,7 +369,7 @@ func (p *PreparedCapabilities) action(ctx context.Context, action captypes.Actio
 				}
 				effective := published
 				if action.Scope == captypes.ScopeApplication {
-					effective = types.MergeAppWorkspace(published, p.overrides)
+					effective = setting.MergeAppWorkspace(published, p.overrides)
 				}
 				err = service.Configure(ctx, effective.Capabilities)
 			}
@@ -406,7 +407,7 @@ func (w *Workspace) PrepareSkillActivation(agentID, id, arguments string) (func(
 		return nil, errors.New("owning agent or capability service unavailable")
 	}
 	backend, service := frontend.backend, w.Capabilities
-	category := backend.RuntimeProfile().GetEffectiveConfig(agentID).GetActiveDefaultCategory()
+	category := backend.RuntimeProfile().EffectiveConfig(agentID).ActiveDefaultCategory()
 	actor := captypes.RuntimeActor{ID: agentID, SessionID: backend.SessionID(), Effects: []captypes.Effect{captypes.EffectRead, captypes.EffectCommunication}, SkillModes: category.SkillModes, AllowedTools: category.AllowedTools, DeniedTools: category.DeniedTools, SessionDisabled: backend.DisabledCapabilities()}
 	raw, _ := json.Marshal(actor)
 	_ = json.Unmarshal(raw, &actor)
@@ -431,30 +432,30 @@ func (w *Workspace) PrepareSkillActivation(agentID, id, arguments string) (func(
 
 // PrepareCapabilityOverlayCommit changes only explicit capability fields in
 // the latest stored overlay, preserving every other section.
-func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(context.Context, types.AppSettings, types.AppSettings, captypes.Scope) (types.AppSettings, error) {
+func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(context.Context, setting.App, setting.App, captypes.Scope) (setting.App, error) {
 	db, defaults := w.WorkspaceDB, w.AppDefaults()
-	return func(ctx context.Context, before, after types.AppSettings, scope captypes.Scope) (types.AppSettings, error) {
+	return func(ctx context.Context, before, after setting.App, scope captypes.Scope) (setting.App, error) {
 		if scope != captypes.ScopeWorkspace || db == nil {
-			return types.AppSettings{}, errors.New("workspace capability persistence unavailable")
+			return setting.App{}, errors.New("workspace capability persistence unavailable")
 		}
 		if action.Kind != "" && action.Kind != captypes.KindSkill && action.Kind != captypes.KindMCP && action.Kind != "source" {
-			return types.AppSettings{}, errors.New("unsupported capability settings kind")
+			return setting.App{}, errors.New("unsupported capability settings kind")
 		}
 		db.settingsWriteMu.Lock()
 		defer db.settingsWriteMu.Unlock()
 		tx, err := db.DB.BeginTx(ctx, nil)
 		if err != nil {
-			return types.AppSettings{}, err
+			return setting.App{}, err
 		}
 		defer func() { _ = tx.Rollback() }()
 		current, err := loadWorkspaceOverridesTx(ctx, tx, defaults)
 		if err != nil {
-			return types.AppSettings{}, err
+			return setting.App{}, err
 		}
-		edits := types.SettingsEdits(before.Capabilities, after.Capabilities)
+		edits := setting.Edits(before.Capabilities, after.Capabilities)
 		for _, edit := range edits {
 			if len(edit.Path) > 0 && edit.Path[0] == "project_tool_decisions" {
-				return types.AppSettings{}, errors.New("project tool decisions require the workspace setup transaction")
+				return setting.App{}, errors.New("project tool decisions require the workspace setup transaction")
 			}
 		}
 		storedCapabilities := append(json.RawMessage(nil), current.Capabilities...)
@@ -466,34 +467,34 @@ func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(
 			collection = "sources"
 		}
 		if action.Operation == "reset-inherited" {
-			edits = []types.SettingEdit{{Path: []string{collection, action.ID}}}
+			edits = []setting.Edit{{Path: []string{collection, action.ID}}}
 		}
 		if action.Operation == "enable" || action.Operation == "disable" {
 			value, _ := json.Marshal(action.Operation == "disable")
-			edits = []types.SettingEdit{{Path: []string{collection, action.ID, "disabled"}, After: value}}
+			edits = []setting.Edit{{Path: []string{collection, action.ID, "disabled"}, After: value}}
 		}
 		if action.Operation == "reset-inherited" {
-			current.Capabilities, err = types.PatchStoredSettings(current.Capabilities, edits)
+			current.Capabilities, err = setting.PatchStored(current.Capabilities, edits)
 		} else {
 			current.Capabilities, err = patchCapabilityOverrides(current.Capabilities, edits)
 		}
 		if err != nil {
-			return types.AppSettings{}, err
+			return setting.App{}, err
 		}
-		raw, err := types.MarshalWorkspaceOverridesPreservingToolDecisions(current, storedCapabilities)
+		raw, err := setting.MarshalWorkspaceOverridesPreservingToolDecisions(current, storedCapabilities)
 		if err != nil {
-			return types.AppSettings{}, err
+			return setting.App{}, err
 		}
 		if err := json.Unmarshal(raw, &current); err != nil {
-			return types.AppSettings{}, err
+			return setting.App{}, err
 		}
-		effective := types.MergeAppWorkspace(defaults, current)
+		effective := setting.MergeAppWorkspace(defaults, current)
 		_, err = tx.ExecContext(ctx, `INSERT INTO workspace_metadata(key,value,updated_at) VALUES(?,?,unixepoch()*1000000000) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, workspaceSettingsKey, string(raw))
 		if err != nil {
-			return types.AppSettings{}, err
+			return setting.App{}, err
 		}
 		if err = tx.Commit(); err != nil {
-			return types.AppSettings{}, err
+			return setting.App{}, err
 		}
 		db.publishSettingsRow(string(raw))
 		return effective, nil
@@ -502,11 +503,11 @@ func (w *Workspace) PrepareCapabilityOverlayCommit(action captypes.Action) func(
 
 // Removing a registered entity hides its inherited definition. Removing an
 // override (Reset inherited) instead deletes the stored entry.
-func patchCapabilityOverrides(raw json.RawMessage, edits []types.SettingEdit) (json.RawMessage, error) {
+func patchCapabilityOverrides(raw json.RawMessage, edits []setting.Edit) (json.RawMessage, error) {
 	for i := range edits {
 		if len(edits[i].Path) == 2 && edits[i].After == nil {
 			edits[i].After = json.RawMessage("null")
 		}
 	}
-	return types.PatchStoredSettings(raw, edits)
+	return setting.PatchStored(raw, edits)
 }

@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/agent/session"
+	"crude/types/conversation"
 	"crude/types/reasoning"
+	"crude/types/statuscenter"
 )
 
 func newIngressWorkspace(t *testing.T) *Workspace {
@@ -22,7 +24,7 @@ func newIngressWorkspace(t *testing.T) *Workspace {
 }
 
 func ingressEnvelope(agentID, ownerID, kind string, sequence uint64, data any) AgentEvent {
-	return AgentEvent{AgentID: agentID, Type: kind, Data: data, Identity: types.RuntimeEventIdentity{
+	return AgentEvent{AgentID: agentID, Type: kind, Data: data, Identity: conversation.RuntimeEventIdentity{
 		EventID: fmt.Sprintf("%s-%d", agentID, sequence), OwnerID: ownerID, AgentID: agentID,
 		RunID: "run-" + agentID, RuntimeEpoch: 1, Generation: 1, Sequence: sequence,
 	}}
@@ -32,7 +34,7 @@ func TestAgentIngressAdvancesRootAndChildWithoutShell(t *testing.T) {
 	w := newIngressWorkspace(t)
 	root := w.AgentMgr.Get("root")
 	for _, event := range []AgentEvent{
-		ingressEnvelope("root", "session", "turn_started", 1, types.TurnIdentity{Generation: 1, ModelID: "model"}),
+		ingressEnvelope("root", "session", "turn_started", 1, conversation.TurnIdentity{Generation: 1, ModelID: "model"}),
 		ingressEnvelope("root", "session", "tool_call", 2, map[string]any{"tool_id": "launch", "internal_id": "launch-row", "name": "agent_start", "args": `{"category":"crafter"}`}),
 		{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{"agent_id": "child", "parent_id": "root", "agent_name": "Child", "category": "crafter", "prompt": "bounded assignment", "parent_tool_id": "launch"}},
 		ingressEnvelope("child", "child", "thinking", 1, reasoning.Delta{Text: "reasoned once", Kind: reasoning.Raw}),
@@ -63,7 +65,7 @@ func TestAgentIngressAdvancesRootAndChildWithoutShell(t *testing.T) {
 		t.Fatal("headless completion did not settle child")
 	}
 	status, ok := w.Status.Agent("child")
-	if !ok || status.Phase != types.AgentCompleted || status.Ref.SessionID != "session" {
+	if !ok || status.Phase != statuscenter.AgentCompleted || status.Ref.SessionID != "session" {
 		t.Fatalf("completion lost retained shared status: %+v", status)
 	}
 }
@@ -100,7 +102,7 @@ func TestAgentIngressRejectsInvalidOwnersBeforeMutation(t *testing.T) {
 
 func TestAgentIngressDuplicateAndLateTerminalEvidence(t *testing.T) {
 	w := newIngressWorkspace(t)
-	w.ApplyAgentEvent(ingressEnvelope("root", "session", "turn_started", 1, types.TurnIdentity{Generation: 1, ModelID: "model"}))
+	w.ApplyAgentEvent(ingressEnvelope("root", "session", "turn_started", 1, conversation.TurnIdentity{Generation: 1, ModelID: "model"}))
 	w.ApplyAgentEvent(ingressEnvelope("root", "session", "stream_token", 2, "before"))
 	w.ApplyAgentEvent(ingressEnvelope("root", "session", "done", 3, map[string]any{"reason": "cancelled"}))
 	late := ingressEnvelope("root", "session", "stream_token", 4, " after")
@@ -113,7 +115,7 @@ func TestAgentIngressDuplicateAndLateTerminalEvidence(t *testing.T) {
 	}
 	state := w.AgentMgr.Get("root").State
 	status, _ := w.Status.Agent("root")
-	if state.IsActive() || status.Phase != types.AgentCancelled {
+	if state.IsActive() || status.Phase != statuscenter.AgentCancelled {
 		t.Fatal("late evidence reactivated terminal runtime")
 	}
 	var body string
@@ -153,8 +155,8 @@ func TestAgentIngressRetainsExactPromptForObservers(t *testing.T) {
 
 func TestAgentIngressInputReceiptPublishesOnce(t *testing.T) {
 	w := newIngressWorkspace(t)
-	intent := &InputAdmissionIntent{SessionID: "session", AgentID: "root", InputID: "input", DraftRevision: 7, OwnerEpoch: 1, TurnGeneration: 1}
-	result := InputAdmissionResult{Status: InputAdmissionAccepted, Receipt: InputAdmissionReceipt{
+	intent := &session.InputAdmissionIntent{SessionID: "session", AgentID: "root", InputID: "input", DraftRevision: 7, OwnerEpoch: 1, TurnGeneration: 1}
+	result := session.InputAdmissionResult{Status: InputAdmissionAccepted, Receipt: session.InputAdmissionReceipt{
 		SessionID: "session", AgentID: "root", InputID: "input", DraftRevision: 7, OwnerEpoch: 1, TurnGeneration: 1, ContextRevision: 1, AcceptedAt: time.Now(),
 	}}
 	input := provider.UserInput{Text: "<tool_setup_task>accepted full order</tool_setup_task>",
@@ -193,9 +195,9 @@ func TestAgentIngressCompletedChildRetainsLateUsageAndClassification(t *testing.
 	}
 	w.ApplyAgentEvent(ingressEnvelope("child", "child", "reasoning_classified", 4, reasoning.InferredSummary))
 	child := w.AgentMgr.Get("child").State
-	summary, _ := w.UsageSummary("root", types.UsageSession)
+	summary, _ := w.UsageSummary("root", statuscenter.UsageSession)
 	status, _ := w.Status.Agent("child")
-	if summary.Output.Value != 20 || w.PaneMgr.Get("child").TokenCount != 110 || status.Phase != types.AgentCancelled || child.IsActive() {
+	if summary.Output.Value != 20 || w.PaneMgr.Get("child").TokenCount != 110 || status.Phase != statuscenter.AgentCancelled || child.IsActive() {
 		t.Fatalf("late revision lost accounting or revived lifecycle: usage=%+v status=%+v", summary, status)
 	}
 	if got := child.Messages.Messages()[0].ThinkingDisplay.Kind; got != reasoning.InferredSummary {
@@ -207,14 +209,14 @@ func TestManualCompactionAfterTerminalTurnKeepsIndependentLifecycle(t *testing.T
 	for _, reason := range []string{"completed", "cancelled"} {
 		t.Run(reason, func(t *testing.T) {
 			w := newIngressWorkspace(t)
-			w.ApplyAgentEvent(ingressEnvelope("root", "session", "turn_started", 1, types.TurnIdentity{Generation: 1, ModelID: "model"}))
+			w.ApplyAgentEvent(ingressEnvelope("root", "session", "turn_started", 1, conversation.TurnIdentity{Generation: 1, ModelID: "model"}))
 			w.ApplyAgentEvent(ingressEnvelope("root", "session", "done", 2, map[string]any{"reason": reason}))
 			state := w.AgentMgr.Get("root").State
 			data := map[string]any{"request_id": "manual-after-turn", "trigger": "manual", "stage_count": 4, "stage_label": "Capturing intent"}
 			w.ApplyAgentEvent(AgentEvent{AgentID: "root", Type: "context_compaction_started", Data: data})
 			w.ApplyAgentEvent(AgentEvent{AgentID: "root", Type: "context_compaction_stage", Data: data})
 			status, _ := w.Status.Agent("root")
-			if state.ActiveCompaction.Phase != "compaction_extracting" || !state.IsActive() || status.Phase != types.AgentCompacting {
+			if state.ActiveCompaction.Phase != "compaction_extracting" || !state.IsActive() || status.Phase != statuscenter.AgentCompacting {
 				t.Fatalf("real terminal fence hid new compaction: active=%+v status=%+v", state.ActiveCompaction, status)
 			}
 			// The independent operation must not reopen animation for old accepted
@@ -225,7 +227,7 @@ func TestManualCompactionAfterTerminalTurnKeepsIndependentLifecycle(t *testing.T
 			}
 			w.ApplyAgentEvent(AgentEvent{AgentID: "root", Type: "context_compacted", Data: data})
 			status, _ = w.Status.Agent("root")
-			if state.ActiveCompaction.Phase != "" || state.IsActive() || status.Phase != types.AgentCompactionResult {
+			if state.ActiveCompaction.Phase != "" || state.IsActive() || status.Phase != statuscenter.AgentCompactionResult {
 				t.Fatalf("manual operation did not settle: active=%+v status=%+v", state.ActiveCompaction, status)
 			}
 			for _, kind := range []string{"context_compaction_started", "context_compaction_stage"} {

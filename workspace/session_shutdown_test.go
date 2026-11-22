@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/setting"
 )
 
 type shutdownRegistryLogger struct {
@@ -21,9 +21,9 @@ func (l *shutdownRegistryLogger) Error(_, msg string, _ ...any) {
 func TestCloseAllSessionsSyncsFinalMetadataWithoutReadingClosedDB(t *testing.T) {
 	setTestHome(t)
 	log := &shutdownRegistryLogger{}
-	w := NewWorkspace(t.TempDir(), "history-model", "tester", types.Settings{}, log)
+	w := NewWorkspace(t.TempDir(), "history-model", "tester", setting.Settings{}, log)
 	t.Cleanup(w.Close)
-	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	w.SetBackendConfig(historyE2EConfig("http://127.0.0.1:1"), t.TempDir())
 	w.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
 	created := w.NewAgentSession()

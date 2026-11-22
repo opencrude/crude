@@ -7,12 +7,12 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/core/protocol"
-	"crude/history"
+	"crude/agent/prompthistory"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 
-func historyView(e history.Entry) coreprotocol.HistoryEntry {
+func historyView(e prompthistory.Entry) coreprotocol.HistoryEntry {
 	out := coreprotocol.HistoryEntry{ID: e.ID, Text: e.Text, Count: e.Count, FirstSeen: e.FirstSeen, LastSeen: e.LastSeen}
 	for _, item := range e.Attachments {
 		out.Attachments = append(out.Attachments, coreprotocol.HistoryAttachment{Start: item.Start, End: item.End, Reference: referenceView(item.Reference), Unavailable: item.Unavailable})
@@ -50,7 +50,7 @@ func (a *actor) prepareHistory(request coreprotocol.Request) func(context.Contex
 	}
 }
 
-func runHistoryCommand(h *history.Store, path string, store workspace.SessionReferences, method string, in coreprotocol.HistoryCommand) (coreprotocol.Value, error) {
+func runHistoryCommand(h *prompthistory.Store, path string, store workspace.SessionReferences, method string, in coreprotocol.HistoryCommand) (coreprotocol.Value, error) {
 	referenceCommandMu.Lock()
 	defer referenceCommandMu.Unlock()
 	list := func() coreprotocol.HistoryListResult {
@@ -71,9 +71,9 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 			return nil, errors.New("invalid history prompt")
 		}
 		runes, end := []rune(in.Text), 0
-		var attachments []history.Attachment
+		var attachments []prompthistory.Attachment
 		for _, item := range in.Attachments {
-			ref, ok := store.GetReference(item.Reference.Reference.ID)
+			ref, ok := store.Reference(item.Reference.Reference.ID)
 			if !ok || !ref.Active() || ref.SessionID != in.SessionID || item.Reference.Revision == "" || item.Reference.Revision != entityRevision(ref) || item.Unavailable {
 				return nil, errors.New("history attachment is stale or belongs to another session")
 			}
@@ -82,11 +82,11 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 			}
 			end = item.End
 			if ref.FilePath != "" {
-				if _, err := history.ReadAttachment(ref.FilePath); err != nil {
+				if _, err := prompthistory.ReadAttachment(ref.FilePath); err != nil {
 					return nil, err
 				}
 			}
-			attachments = append(attachments, history.Attachment{Start: item.Start, End: item.End, Reference: ref})
+			attachments = append(attachments, prompthistory.Attachment{Start: item.Start, End: item.End, Reference: ref})
 		}
 		h.Record(in.Text, time.Now(), attachments...)
 		if err := h.Save(path); err != nil {
@@ -94,7 +94,7 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 		}
 		return wire(list()), nil
 	}
-	var entry history.Entry
+	var entry prompthistory.Entry
 	for _, e := range h.Entries() {
 		if e.ID == in.EntryID {
 			entry = e
@@ -128,7 +128,7 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 		}
 		out := coreprotocol.HistoryRestoreResult{Text: text, ReferenceIDs: ids}
 		for _, id := range ids {
-			ref, _ := store.GetReference(id)
+			ref, _ := store.Reference(id)
 			out.References = append(out.References, referenceView(ref))
 		}
 		return wire(out), nil
@@ -141,7 +141,7 @@ func runHistoryCommand(h *history.Store, path string, store workspace.SessionRef
 		if attachment.Unavailable || attachment.Reference.FilePath == "" {
 			return nil, errors.New("history media is unavailable")
 		}
-		data, err := history.ReadAttachment(attachment.Reference.FilePath)
+		data, err := prompthistory.ReadAttachment(attachment.Reference.FilePath)
 		if err != nil {
 			return nil, err
 		}

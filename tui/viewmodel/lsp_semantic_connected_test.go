@@ -15,7 +15,8 @@ import (
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -31,16 +32,16 @@ type semanticConnectedClient struct {
 	engine *semanticConnectedRuntime
 }
 
-func (r *semanticConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *semanticConnectedRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	return &semanticConnectedClient{r.renameConnectedRuntime.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
-func (c *semanticConnectedClient) RequestSemanticTokens(_ context.Context, path, mode, previous string, _ types.LSPSemanticRange) (types.LSPSemanticResponse, error) {
+func (c *semanticConnectedClient) RequestSemanticTokens(_ context.Context, path, mode, previous string, _ insight.LSPSemanticRange) (insight.LSPSemanticResponse, error) {
 	r := c.engine
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	d := c.docs[path]
 	r.calls = append(r.calls, semanticConnectedCall{mode, d.text, previous})
-	out := types.LSPSemanticResponse{WireVersion: d.version, Support: types.LSPSemanticSupport{Types: []string{"function"}, Full: true, Delta: true}}
+	out := insight.LSPSemanticResponse{WireVersion: d.version, Support: insight.LSPSemanticSupport{Types: []string{"function"}, Full: true, Delta: true}}
 	switch mode {
 	case "full":
 		out.JSON = []byte(`{"resultId":"stable","data":[2,4,5,0,0]}`)
@@ -67,10 +68,10 @@ func TestConnectedSemanticColorsSurviveThemeSharedEditsAndPeerFocus(t *testing.T
 		owned = w
 		w.LSPMgr.SetRuntime(engine)
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect = false
 		settings.LSP.AutoComplete = false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
 		w.SetAppDefaults(settings)
 		grantSemanticFixture(t, w)
 	})
@@ -78,7 +79,7 @@ func TestConnectedSemanticColorsSurviveThemeSharedEditsAndPeerFocus(t *testing.T
 	eds := []*editor.Editor{liveTestOpen(t, shells[0].app, path), liveTestOpen(t, shells[1].app, path)}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
+	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
 		t.Fatal(err)
 	}
 	ink := func(i int) cell.Color {

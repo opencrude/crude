@@ -16,8 +16,8 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 const (
@@ -49,11 +49,11 @@ const (
 
 type SaveMsg struct {
 	Target   *Screen
-	Settings types.Settings
+	Settings setting.Settings
 }
 type SaveAsWorkspaceMsg struct {
 	Target   *Screen
-	Settings types.Settings
+	Settings setting.Settings
 }
 type CancelMsg struct{ Target *Screen }
 type ResetMsg struct{ Target *Screen }
@@ -98,16 +98,16 @@ type Screen struct {
 	form      *ui.Form
 	actions   *ui.ActionBar
 
-	base      types.Settings
-	effective types.Settings
-	localBase types.SessionPreferences
+	base      setting.Settings
+	effective setting.Settings
+	localBase setting.SessionPreferences
 	// workspaceCodeIntel is the workspace LSP switch a session without its
 	// own code-intelligence override follows.
 	workspaceCodeIntel bool
-	overrides          map[string]types.CategorySettings
+	overrides          map[string]setting.Category
 	accounts           map[string]provider.Account
 	fetchGeneration    map[string]uint64
-	models             map[string][]types.ModelEntry
+	models             map[string][]setting.ModelEntry
 	snapshot           *snapshot
 	modelFilter        *ui.FilterField
 	modelList          *ui.List
@@ -117,11 +117,12 @@ type Screen struct {
 }
 
 type snapshot struct {
-	effective types.Settings
-	overrides map[string]types.CategorySettings
+	effective setting.Settings
+	overrides map[string]setting.Category
 }
 
-func New(th *theme.Theme, effective, base types.Settings, overrides map[string]types.CategorySettings) *Screen {
+// New builds the session settings screen from the base and effective settings.
+func New(th *theme.Theme, effective, base setting.Settings, overrides map[string]setting.Category) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
@@ -129,10 +130,10 @@ func New(th *theme.Theme, effective, base types.Settings, overrides map[string]t
 		Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th),
 		base: cloneSettings(base), effective: cloneSettings(effective),
 		overrides: copyCategoryMap(overrides), accounts: make(map[string]provider.Account), fetchGeneration: make(map[string]uint64),
-		models: make(map[string][]types.ModelEntry),
+		models: make(map[string][]setting.ModelEntry),
 	}
 	s.form = ui.NewDockedForm(FormID, nil, "", "", s.tokens)
-	s.localBase = types.SessionPreferencesOf(s.effective)
+	s.localBase = setting.SessionPreferencesOf(s.effective)
 	s.localBase.Overrides = copyCategoryMap(overrides)
 	s.modelFilter = ui.NewFilterField(FilterID, s.tokens)
 	s.modelFilter.SetPrompt(ui.SearchGlyphEnd(s.tokens))
@@ -173,7 +174,7 @@ func (s *Screen) accountLabel(id string) string {
 	if id == "" {
 		return "No account selected"
 	}
-	return types.AccountName(s.accounts, id)
+	return setting.AccountName(s.accounts, id)
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -589,8 +590,8 @@ func (s *Screen) openRoot() {
 	limit.Numeric, limit.Unit = true, "agents"
 	limit.Validator = func(v ui.FieldValue) []string {
 		value, err := strconv.Atoi(strings.TrimSpace(v.String()))
-		if err != nil || value < 1 || value > types.MaxConcurrentSubAgents {
-			return []string{fmt.Sprintf("Enter 1 to %d.", types.MaxConcurrentSubAgents)}
+		if err != nil || value < 1 || value > setting.MaxConcurrentSubAgents {
+			return []string{fmt.Sprintf("Enter 1 to %d.", setting.MaxConcurrentSubAgents)}
 		}
 		return nil
 	}
@@ -735,7 +736,7 @@ func (s *Screen) openRole(role string) {
 			return nil
 		}
 		parsed, err := strconv.Atoi(trimmed)
-		if err != nil || parsed < types.MinContextRetentionTokens || parsed > types.MaxContextRetentionTokens {
+		if err != nil || parsed < setting.MinContextRetentionTokens || parsed > setting.MaxContextRetentionTokens {
 			return []string{"Leave blank for Auto, or enter 1,000–200,000."}
 		}
 		return nil
@@ -1061,7 +1062,8 @@ func (s *Screen) openSelect(fieldID string) tea.Cmd {
 	return nil
 }
 
-func (s *Screen) ApplyModelsForAccount(providerID, accountID string, generation uint64, models []types.ModelEntry) {
+// ApplyModelsForAccount stores a model list when its fetch generation is still current.
+func (s *Screen) ApplyModelsForAccount(providerID, accountID string, generation uint64, models []setting.ModelEntry) {
 	if a, ok := s.accounts[accountID]; !ok || a.ProviderID != providerID || generation == 0 || s.fetchGeneration[sessionModelKey(providerID, accountID)] != generation {
 		return
 	}
@@ -1149,7 +1151,7 @@ func (s *Screen) applyRootForm() {
 	}
 	if field := s.formModel.Field(fieldMaxSubAgents); field != nil {
 		if value, err := strconv.Atoi(strings.TrimSpace(field.Value.String())); err == nil && value >= 1 &&
-			value <= types.MaxConcurrentSubAgents && value != s.maxSubAgents() {
+			value <= setting.MaxConcurrentSubAgents && value != s.maxSubAgents() {
 			s.effective.SessionMaxSubAgents = &value
 			field.Inherited, field.InheritedFrom = false, ""
 		}
@@ -1297,7 +1299,7 @@ func (s *Screen) applyRoleForm() {
 	cfg.ContextRetentionTokens = nil
 	if text := strings.TrimSpace(s.formModel.Field(fieldContextRetention).Value.String()); text != "" {
 		retention, err := strconv.Atoi(text)
-		if err != nil || retention < types.MinContextRetentionTokens || retention > types.MaxContextRetentionTokens {
+		if err != nil || retention < setting.MinContextRetentionTokens || retention > setting.MaxContextRetentionTokens {
 			return
 		}
 		cfg.ContextRetentionTokens = &retention
@@ -1327,7 +1329,7 @@ func (s *Screen) applyRoleForm() {
 	if !s.formModel.Field(fieldContextRetention).Value.Equal(s.formModel.Field(fieldContextRetention).Initial) {
 		override.ContextRetentionTokens = cloneIntPtr(cfg.ContextRetentionTokens)
 	}
-	if len(types.SettingsEdits(types.CategorySettings{}, override)) != 0 {
+	if len(setting.Edits(setting.Category{}, override)) != 0 {
 		s.overrides[key] = override
 	} else {
 		delete(s.overrides, key)
@@ -1385,7 +1387,7 @@ func (s *Screen) inheritMain(role string) {
 	}
 	delete(s.overrides, role)
 	setCategory(&s.effective, role, inheritCategory("main"))
-	s.overrides[role] = types.CategorySettings{Inherit: "main"}
+	s.overrides[role] = setting.Category{Inherit: "main"}
 }
 
 // inheritWorkspace removes a role's local choices to follow its own parent.
@@ -1396,11 +1398,12 @@ func (s *Screen) inheritWorkspace(role string) {
 	s.resetRole(role)
 }
 
-func inheritCategory(inherit string) types.CategorySettings {
-	return types.CategorySettings{Inherit: inherit}
+func inheritCategory(inherit string) setting.Category {
+	return setting.Category{Inherit: inherit}
 }
 
-func (s *Screen) ToSettings() types.Settings {
+// ToSettings folds the edited form into the settings that the session saves.
+func (s *Screen) ToSettings() setting.Settings {
 	s.applyRootForm()
 	settings := cloneSettings(s.effective)
 	settings.Agents.Enabled = s.effective.Agents.Enabled
@@ -1426,9 +1429,9 @@ func (s *Screen) ToSettings() types.Settings {
 	}
 	settings.APIKey, settings.ProviderAPIKey = "", ""
 	settings.SessionOverrides = copyCategoryMap(s.overrides)
-	settings.SessionEdits = types.SettingsEdits(s.localBase, types.SessionPreferencesOf(settings))
+	settings.SessionEdits = setting.Edits(s.localBase, setting.SessionPreferencesOf(settings))
 	if settings.SessionEdits == nil {
-		settings.SessionEdits = []types.SettingEdit{}
+		settings.SessionEdits = []setting.Edit{}
 	}
 	return settings
 }
@@ -1445,9 +1448,10 @@ func (s *Screen) RestoreSnapshot() {
 	s.openRoot()
 }
 
-func (s *Screen) ResetToWorkspace(base types.Settings) {
-	s.base, s.effective, s.overrides = cloneSettings(base), cloneSettings(base), make(map[string]types.CategorySettings)
-	s.localBase = types.SessionPreferencesOf(s.effective)
+// ResetToWorkspace drops every per-session override and returns to the workspace values.
+func (s *Screen) ResetToWorkspace(base setting.Settings) {
+	s.base, s.effective, s.overrides = cloneSettings(base), cloneSettings(base), make(map[string]setting.Category)
+	s.localBase = setting.SessionPreferencesOf(s.effective)
 	s.localBase.Overrides = copyCategoryMap(s.overrides)
 	s.effective.SessionMultiAgent = nil
 	s.effective.SessionCodeIntelligence = nil
@@ -1455,9 +1459,10 @@ func (s *Screen) ResetToWorkspace(base types.Settings) {
 	s.openRoot()
 }
 
-func (s *Screen) SetInheritance(effective, base types.Settings, overrides map[string]types.CategorySettings) {
+// SetInheritance replaces the base, effective and override settings that the form shows.
+func (s *Screen) SetInheritance(effective, base setting.Settings, overrides map[string]setting.Category) {
 	s.base, s.effective, s.overrides = cloneSettings(base), cloneSettings(effective), copyCategoryMap(overrides)
-	s.localBase = types.SessionPreferencesOf(s.effective)
+	s.localBase = setting.SessionPreferencesOf(s.effective)
 	s.localBase.Overrides = copyCategoryMap(overrides)
 	s.openRoot()
 }
@@ -1481,17 +1486,17 @@ const memoryRole = "memory"
 // base is the workspace baseline (concrete, no markers), so a workspace marker
 // always terminates at a real value; it must never be the same settings object
 // as the one carrying the marker.
-func categoryFor(settings, base types.Settings, role string) types.CategorySettings {
+func categoryFor(settings, base setting.Settings, role string) setting.Category {
 	if name, ok := strings.CutPrefix(role, "profile/"); ok {
 		profile, exists := settings.Agents.AgentProfiles[name]
 		if !exists {
-			return types.CategorySettings{}
+			return setting.Category{}
 		}
 		parent := profile.Category
 		switch parent {
 		case "researcher", "crafter", "errand", memoryRole:
 		default:
-			return types.CategorySettings{}
+			return setting.Category{}
 		}
 		cfg := categoryFor(settings, base, parent)
 		if profile.AccountID != "" {
@@ -1521,7 +1526,7 @@ func categoryFor(settings, base types.Settings, role string) types.CategorySetti
 			}
 			return cfg
 		}
-		return types.CategorySettings{
+		return setting.Category{
 			Provider: settings.ProviderID, AccountID: settings.AccountID, Model: settings.Model,
 			ThinkingEffort: settings.ThinkingEffort,
 		}
@@ -1595,14 +1600,14 @@ func (s *Screen) refreshNamedAgent(role string) {
 		profile.ContextRetentionTokens = cloneIntPtr(override.ContextRetentionTokens)
 	}
 	if s.effective.Agents.AgentProfiles == nil {
-		s.effective.Agents.AgentProfiles = make(map[string]types.AgentProfileSettings)
+		s.effective.Agents.AgentProfiles = make(map[string]setting.AgentProfile)
 	}
 	s.effective.Agents.AgentProfiles[name] = profile
 }
 
-func setCategory(settings *types.Settings, role string, cfg types.CategorySettings) {
+func setCategory(settings *setting.Settings, role string, cfg setting.Category) {
 	if settings.Agents.Categories == nil {
-		settings.Agents.Categories = make(map[string]types.CategorySettings)
+		settings.Agents.Categories = make(map[string]setting.Category)
 	}
 	settings.Agents.Categories[role] = cfg
 }
@@ -1610,14 +1615,14 @@ func setCategory(settings *types.Settings, role string, cfg types.CategorySettin
 // clearCategory removes a role's session-level category so the role resolves
 // through its own workspace-level source again. Used by the memory agent, whose
 // workspace setting is Memory.MemoryCategory rather than the main agent.
-func clearCategory(settings *types.Settings, role string) {
+func clearCategory(settings *setting.Settings, role string) {
 	if settings.Agents.Categories != nil {
 		delete(settings.Agents.Categories, role)
 	}
 }
 
-func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
-	dst := make(map[string]types.CategorySettings, len(src))
+func copyCategoryMap(src map[string]setting.Category) map[string]setting.Category {
+	dst := make(map[string]setting.Category, len(src))
 	for key, value := range src {
 		value.AllowedTools = slices.Clone(value.AllowedTools)
 		value.DeniedTools = slices.Clone(value.DeniedTools)
@@ -1629,10 +1634,10 @@ func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.Cat
 	return dst
 }
 
-func cloneSettings(src types.Settings) types.Settings {
+func cloneSettings(src setting.Settings) setting.Settings {
 	dst := src
 	dst.Capabilities = captypes.Clone(src.Capabilities)
-	dst.Agents.AgentProfiles = types.CloneAgentProfiles(src.Agents.AgentProfiles)
+	dst.Agents.AgentProfiles = setting.CloneAgentProfiles(src.Agents.AgentProfiles)
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
 	dst.SessionMultiAgent = cloneBoolPtr(src.SessionMultiAgent)

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/text/diff"
-	"crude/text/encoding"
+	"crude/text/textdiff"
+	"crude/text/textencoding"
 	"crude/workspace/document"
 )
 

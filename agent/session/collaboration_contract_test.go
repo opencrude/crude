@@ -15,11 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
+	"crude/types/setting"
 )
 
 func collaborationContractFixture(t *testing.T) (*Session, *collaboration.Store, collaboration.Agent, collaboration.Agent) {
@@ -182,8 +183,8 @@ func TestCollaborationInterimCannotSatisfyFinalReportContract(t *testing.T) {
 	runner := NewSubAgentRunner(s, 1)
 	t.Cleanup(runner.SessionCancel)
 	s.subAgentSup = runner
-	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: agent.AgentID(child.ID), ParentID: agent.AgentID(parent.ID), Name: child.Name, Category: "crafter"},
-		Agent: &agent.Agent{Ctx: t.Context()}, StartedAt: time.Now()}
+	handle := &turnloop.SubAgentHandle{Spec: turnloop.SubAgentSpec{ID: turnloop.AgentID(child.ID), ParentID: turnloop.AgentID(parent.ID), Name: child.Name, Category: "crafter"},
+		Agent: &turnloop.Agent{Ctx: t.Context()}, StartedAt: time.Now()}
 	handle.SetRunIdentity(run.ID, run.Version)
 	if err := runner.Manager().Register(handle); err != nil {
 		t.Fatal(err)
@@ -195,7 +196,7 @@ func TestCollaborationInterimCannotSatisfyFinalReportContract(t *testing.T) {
 	}
 	handle.SetTermReason("missing_final_report")
 	result := runner.buildSubAgentResult(handle, nil)
-	if handle.ReportDone() || result.Status != agent.SubAgentFailedPolicy {
+	if handle.ReportDone() || result.Status != turnloop.SubAgentFailedPolicy {
 		t.Fatalf("interim satisfied final: ReportDone=%t status=%s", handle.ReportDone(), result.Status)
 	}
 }
@@ -373,9 +374,9 @@ func TestAgentStartSelectsExactConfiguredProfileAndRejectsInvalidSelections(t *t
 	a := cfg.Accounts["account"]
 	a.Connection = template
 	cfg.Accounts["account"] = a
-	cfg.Agents.AgentProfiles["configured"] = AgentProfileConfig{Category: "crafter", Model: "profile-model", AccountID: "account", Instructions: "Use exact profile evidence."}
+	cfg.Agents.AgentProfiles["configured"] = setting.AgentProfile{Category: "crafter", Model: "profile-model", AccountID: "account", Instructions: "Use exact profile evidence."}
 	off := false
-	cfg.Agents.AgentProfiles["disabled"] = AgentProfileConfig{Category: "crafter", Enabled: &off}
+	cfg.Agents.AgentProfiles["disabled"] = setting.AgentProfile{Category: "crafter", Enabled: &off}
 	s, err := NewWithSessionDir("profile-contract", cfg, home, home)
 	if err != nil {
 		t.Fatal(err)
@@ -417,8 +418,8 @@ func TestAgentStartSelectsExactConfiguredProfileAndRejectsInvalidSelections(t *t
 		t.Fatal(err)
 	}
 	runner.Wait()
-	completed, ok := runner.Manager().GetCompleted(agent.AgentID(started.AgentID))
-	if !ok || completed.Status != agent.SubAgentCompleted {
+	completed, ok := runner.Manager().Completed(turnloop.AgentID(started.AgentID))
+	if !ok || completed.Status != turnloop.SubAgentCompleted {
 		t.Fatalf("configured profile did not complete: %+v", completed)
 	}
 	snapshot := s.CompletedSubAgentSnapshots()
@@ -623,8 +624,8 @@ func TestCollaborationRecoversSettledChildAdmissionWithoutRelaunch(t *testing.T)
 	if err := store.DetachAgent(t.Context(), childID, "old-child", child.RuntimeEpoch); err != nil {
 		t.Fatal(err)
 	}
-	runner.Manager().HydrateCompleted(agent.SubAgentResult{
-		AgentID: childID, SessionID: childID, Name: child.Name, Category: "crafter", Status: agent.SubAgentCancelled,
+	runner.Manager().HydrateCompleted(turnloop.SubAgentResult{
+		AgentID: childID, SessionID: childID, Name: child.Name, Category: "crafter", Status: turnloop.SubAgentCancelled,
 	})
 	if err := s.recoverChildCollaborators(t.Context(), parentID); err != nil {
 		t.Fatal(err)

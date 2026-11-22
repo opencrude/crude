@@ -203,15 +203,15 @@ not multi-tenant isolation.
 
 | Concern | Owners to inspect |
 |---|---|
-| CLI/core lifetime and SSH selection | `app/cli.go`, `app/shell_client.go`, `app/core_host.go`, `core/wire/ssh.go` |
-| Typed boundary and receipts | `core/protocol/`, `core/server.go`, `core/runtime.go`, `core/client/client.go`, `core/port/remote/` |
-| Live editor admission and replicas | `core/port/live_documents.go`, `tui/viewmodel/live_editor.go`, `tui/editor/shared_document.go` |
+| CLI/core lifetime and SSH selection | `app/cli.go`, `app/shell_client.go`, `app/core_host.go`, `core/corewire/ssh.go` |
+| Typed boundary and receipts | `core/coreprotocol/`, `core/server.go`, `core/runtime.go`, `core/coreclient/client.go`, `core/shellport/remote/` |
+| Live editor admission and replicas | `core/shellport/live_documents.go`, `tui/viewmodel/live_editor.go`, `tui/editor/shared_document.go` |
 | Durable text/undo/rename and watching | `workspace/documents.go`, `workspace/document_state.go`, `workspace/document_delta.go`, `workspace/document_files.go`, `workspace/document_watch.go`, `core/file_watch.go` |
-| Private drafts and decisions | `clientstate/`, `tui/viewmodel/editor_recovery.go`, `tui/viewmodel/editor_conflict.go` |
+| Private drafts and decisions | `internal/clientstate/`, `tui/viewmodel/editor_recovery.go`, `tui/viewmodel/editor_conflict.go` |
 | Files and client desktop effects | `core/client_files.go`, `core/project_replace.go`, `tui/viewmodel/client_files.go`, `tui/viewmodel/attachment_desktop.go` |
-| Invocation secrecy | `core/invocation.go`, `workspace/invocation.go`, `core/protocol/invocation.go` |
-| Bulk reads/uploads | `core/bulk_transfer.go`, `core/client/bulk_transfer.go`, `core/protocol/bulk_transfer.go` |
-| Cohort and safe handover | `internal/wiregen/`, `buildinfo/cohort_gen.go`, `app/core_handover.go`, `app/core_handover_unix.go`, `app/core_handover_windows.go` |
+| Invocation secrecy | `core/invocation.go`, `workspace/invocation.go`, `core/coreprotocol/invocation.go` |
+| Bulk reads/uploads | `core/bulk_transfer.go`, `core/coreclient/bulk_transfer.go`, `core/coreprotocol/bulk_transfer.go` |
+| Cohort and safe handover | `tools/wiregen/`, `internal/buildinfo/cohort_gen.go`, `app/core_handover.go`, `app/core_handover_unix.go`, `app/core_handover_windows.go` |
 
 Large files, reference content and media use method-specific credit-controlled
 bulk streams in either direction, not JSON response payloads, response tokens or

@@ -1,12 +1,13 @@
 package editor
 
 import (
+	"crude/types/insight"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func newTestEditorWithDiagnostics(t *testing.T, content string, diags []LSPDiagnostic) *Editor {
+func newTestEditorWithDiagnostics(t *testing.T, content string, diags []insight.LSPDiagnostic) *Editor {
 	t.Helper()
 	ed := editorWithTheme()
 	if content != "" {
@@ -19,7 +20,7 @@ func newTestEditorWithDiagnostics(t *testing.T, content string, diags []LSPDiagn
 }
 
 func TestDiagnostics_ReturnsCopy(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "x\n", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "x\n", []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: DiagError, Message: "e1"},
 	})
 	got := ed.Diagnostics()
@@ -30,7 +31,7 @@ func TestDiagnostics_ReturnsCopy(t *testing.T) {
 }
 
 func TestFirstError_SkipsWarnings(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "abc\ndef\n", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "abc\ndef\n", []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: DiagWarning, Message: "w"},
 		{Line: 1, Col: 2, EndLine: 1, EndCol: 2, Severity: DiagError, Message: "e"},
 	})
@@ -42,14 +43,14 @@ func TestFirstError_SkipsWarnings(t *testing.T) {
 }
 
 func TestFirstError_Empty(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "x", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "x", []insight.LSPDiagnostic{
 		{Line: 0, Severity: DiagWarning},
 	})
 	assert.Nil(t, ed.FirstError())
 }
 
 func TestNextError_FindsFollowing(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: DiagError, Message: "e0"},
 		{Line: 2, Col: 0, EndLine: 2, EndCol: 0, Severity: DiagError, Message: "e2"},
 	})
@@ -60,14 +61,14 @@ func TestNextError_FindsFollowing(t *testing.T) {
 }
 
 func TestNextError_NoneAfterCursor(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "a\nb\n", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "a\nb\n", []insight.LSPDiagnostic{
 		{Line: 0, Severity: DiagError, Message: "e0"},
 	})
 	assert.Nil(t, ed.NextError(99, 0))
 }
 
 func TestPrevError_FindsPreceding(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: DiagError, Message: "e0"},
 		{Line: 2, Col: 0, EndLine: 2, EndCol: 0, Severity: DiagError, Message: "e2"},
 	})
@@ -78,14 +79,14 @@ func TestPrevError_FindsPreceding(t *testing.T) {
 }
 
 func TestPrevError_NoneBeforeCursor(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "a\n", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "a\n", []insight.LSPDiagnostic{
 		{Line: 0, Severity: DiagError},
 	})
 	assert.Nil(t, ed.PrevError(0, 0))
 }
 
 func TestNextError_SkipsWarnings(t *testing.T) {
-	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []LSPDiagnostic{
+	ed := newTestEditorWithDiagnostics(t, "a\nb\nc\n", []insight.LSPDiagnostic{
 		{Line: 1, Col: 0, EndLine: 1, EndCol: 0, Severity: DiagWarning, Message: "w1"},
 		{Line: 2, Col: 0, EndLine: 2, EndCol: 0, Severity: DiagError, Message: "e2"},
 	})

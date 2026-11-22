@@ -3,7 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 	"errors"
 	"fmt"
 	"io"
@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"time"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/history"
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/workspace"
 )
 
@@ -145,12 +145,12 @@ func RunCore(opts CoreOptions) error {
 		_ = runtime.Close()
 		return err
 	}
-	prompts, err := history.LoadFile(history.DefaultPath())
+	prompts, err := prompthistory.LoadFile(prompthistory.DefaultPath())
 	if err != nil {
 		lg.Warn("CORE", "history_load_failed", "error", err.Error())
-		prompts = history.New()
+		prompts = prompthistory.New()
 	}
-	if err := runtime.SetPromptHistory(prompts, history.DefaultPath()); err != nil {
+	if err := runtime.SetPromptHistory(prompts, prompthistory.DefaultPath()); err != nil {
 		lg.Warn("CORE", "history_install_failed", "error", err.Error())
 	}
 	runtime.SetLifetimePolicy(opts.Server, opts.Grace, cancel)
@@ -248,7 +248,7 @@ func RunCore(opts CoreOptions) error {
 	lg.Info("CORE", "stopping")
 	closeErr := runtime.Close()
 	if prompts.Len() > 0 {
-		if err := prompts.Save(history.DefaultPath()); err != nil {
+		if err := prompts.Save(prompthistory.DefaultPath()); err != nil {
 			lg.Warn("CORE", "history_save_failed", "error", err.Error())
 		}
 	}
@@ -547,7 +547,7 @@ func (a *App) newWorkspace(root string, lg workspace.Logger) (*workspace.Workspa
 	a.configMu.Lock()
 	fc := a.fc
 	a.configMu.Unlock()
-	initialModel := FileConfigToSession(fc).GetActiveDefaultCategory().Model
+	initialModel := FileConfigToSession(fc).ActiveDefaultCategory().Model
 	ws := workspace.NewWorkspace(root, initialModel, session.ResolveUsername(), a.initialSettingsFrom(fc), lg)
 	// Construction currently provides these services eagerly. Do not admit a
 	// partially initialized workspace if a constructor ever fails silently.

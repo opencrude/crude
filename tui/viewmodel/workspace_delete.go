@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/launcher"
 	"crude/tui/theme"
@@ -25,7 +25,7 @@ type workspaceDeletePrompt struct {
 	ui.Base
 	screen         *launcher.Screen
 	generation     uint64
-	plan           workspace.WorkspaceDeletion
+	plan           workspace.Deletion
 	deleted        workspace.DeletedWorkspace
 	busy           bool
 	entry          launcher.WorkspaceEntry
@@ -43,7 +43,7 @@ type workspaceDeleteIntent struct {
 }
 type workspaceDeletePreviewMsg struct {
 	target *workspaceDeletePrompt
-	plan   workspace.WorkspaceDeletion
+	plan   workspace.Deletion
 	err    error
 }
 type workspaceDeleteResultMsg struct {

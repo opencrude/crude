@@ -2,8 +2,8 @@ package viewmodel
 
 import (
 	"context"
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/tui/editor"
 	"crude/workspace"
 	"errors"

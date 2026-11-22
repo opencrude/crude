@@ -11,9 +11,9 @@ import (
 
 	"crude/agent/provider"
 	"crude/core"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 
 	"github.com/charmbracelet/x/ansi"
@@ -25,22 +25,22 @@ func TestConnectedSettingsAccountKeepAndFailedPreferenceDraft(t *testing.T) {
 	var commits atomic.Int32
 	const secret = "acceptance-private-account-key"
 	runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{})
-		ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, noopLogger{})
+		ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": {
 			ID: "one", ProviderID: "openai", Label: "Original", APIKey: secret,
 			Connection: provider.DefaultTemplates()["openai"],
 		}}})
 		baseline := ws.AppDefaults()
-		ws.OnAppAccountCommit = func(change types.AccountChange) (types.AppSettings, error) {
+		ws.OnAppAccountCommit = func(change setting.AccountChange) (setting.App, error) {
 			if change.Before.APIKey != secret || change.After.APIKey != secret {
-				return types.AppSettings{}, errors.New("stored credential was not kept")
+				return setting.App{}, errors.New("stored credential was not kept")
 			}
 			commits.Add(1)
 			baseline.Accounts = map[string]provider.Account{"one": *change.After}
 			return baseline, nil
 		}
-		ws.OnAppPreferencesCommit = func([]types.SettingEdit) (types.AppSettings, error) {
-			return types.AppSettings{}, errors.New("durable acceptance write failed")
+		ws.OnAppPreferencesCommit = func([]setting.Edit) (setting.App, error) {
+			return setting.App{}, errors.New("durable acceptance write failed")
 		}
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -127,11 +127,11 @@ func TestConnectedPreferenceSaveWaitsForAppliedTopic(t *testing.T) {
 		t.Run(map[bool]string{false: "apply", true: "detach"}[closeAttachment], func(t *testing.T) {
 			committed := make(chan struct{})
 			runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
-				ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{})
-				ws.SetAppDefaults(types.AppSettings{Theme: types.ThemeSettings{Preset: "dark"}})
-				ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+				ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, noopLogger{})
+				ws.SetAppDefaults(setting.App{Theme: setting.Theme{Preset: "dark"}})
+				ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 					after := ws.AppDefaults()
-					err := types.ApplySettingsEdits(&after, edits)
+					err := setting.ApplyEdits(&after, edits)
 					close(committed)
 					return after, err
 				}

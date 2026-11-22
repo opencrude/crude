@@ -12,12 +12,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/protocol"
-	"crude/third_party/pathwalk"
+	"crude/core/coreprotocol"
+	"crude/third_party/fastwalk"
 	"crude/tui/cell"
 	"crude/tui/screens/filepicker"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -25,7 +26,7 @@ type fakeStartup struct {
 	browse  func(context.Context, coreprotocol.StartupBrowseRequest) (coreprotocol.StartupBrowseResult, error)
 	catalog func(context.Context, string, bool) (workspace.BrowserCatalog, error)
 	inspect func(context.Context, string) (coreprotocol.StartupSnapshot, error)
-	save    func(context.Context, []types.SettingEdit) (types.OnboardingSettings, error)
+	save    func(context.Context, []setting.Edit) (setting.Onboarding, error)
 	create  func(context.Context, string, string) (string, error)
 }
 
@@ -53,11 +54,11 @@ func (f *fakeStartup) Inspect(ctx context.Context, root string) (coreprotocol.St
 	}
 	return coreprotocol.StartupSnapshot{Root: root}, nil
 }
-func (f *fakeStartup) Save(ctx context.Context, edits []types.SettingEdit) (types.OnboardingSettings, error) {
+func (f *fakeStartup) Save(ctx context.Context, edits []setting.Edit) (setting.Onboarding, error) {
 	if f.save != nil {
 		return f.save(ctx, edits)
 	}
-	return types.OnboardingSettings{IntroductionCompleted: true}, nil
+	return setting.Onboarding{IntroductionCompleted: true}, nil
 }
 
 func fixturePath(path string) string {
@@ -213,10 +214,10 @@ func TestSelectionEmptyStateAndUnfocusedQuitRemainReadable(t *testing.T) {
 	}
 }
 func TestIntroductionMouseAndAsyncSaveFailure(t *testing.T) {
-	var saved []types.SettingEdit
-	f := &fakeStartup{save: func(_ context.Context, e []types.SettingEdit) (types.OnboardingSettings, error) {
+	var saved []setting.Edit
+	f := &fakeStartup{save: func(_ context.Context, e []setting.Edit) (setting.Onboarding, error) {
 		saved = e
-		return types.OnboardingSettings{}, errors.New("read-only settings")
+		return setting.Onboarding{}, errors.New("read-only settings")
 	}}
 	m := fixture(t, f, true)
 	click(t, m, goID)
@@ -237,13 +238,13 @@ func TestIntroductionMouseAndAsyncSaveFailure(t *testing.T) {
 func TestIntroductionSaveDoesNotBlockUpdate(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	f := &fakeStartup{save: func(ctx context.Context, _ []types.SettingEdit) (types.OnboardingSettings, error) {
+	f := &fakeStartup{save: func(ctx context.Context, _ []setting.Edit) (setting.Onboarding, error) {
 		close(started)
 		select {
 		case <-release:
 		case <-ctx.Done():
 		}
-		return types.OnboardingSettings{}, ctx.Err()
+		return setting.Onboarding{}, ctx.Err()
 	}}
 	m := fixture(t, f, true)
 	_, cmd := m.Update(key(tea.KeyEnter))
@@ -268,7 +269,7 @@ func TestSearchEscClearCancelsAndRejectsLateResult(t *testing.T) {
 	var catalogRoot string
 	f := &fakeStartup{catalog: func(_ context.Context, root string, _ bool) (workspace.BrowserCatalog, error) {
 		catalogRoot = root
-		return workspace.BrowserCatalog{Entries: []pathwalk.Entry{{Name: "nested", Relative: "nested", Path: filepath.Join(root, "nested"), IsDir: true}}}, nil
+		return workspace.BrowserCatalog{Entries: []fastwalk.Entry{{Name: "nested", Relative: "nested", Path: filepath.Join(root, "nested"), IsDir: true}}}, nil
 	}}
 	m := fixture(t, f, false)
 	send(t, m, key(tea.KeyEnter))
@@ -365,7 +366,7 @@ func TestProjectSelectionInspectsExactPath(t *testing.T) {
 }
 func TestPreviousWorkspaceNativeListKeyboard(t *testing.T) {
 	f := &fakeStartup{}
-	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
+	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Workspaces: []workspace.Info{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
 	t.Cleanup(m.Close)
 	if !strings.Contains(paintText(m), "Previous project") {
 		t.Fatal("native recent row absent")
@@ -529,12 +530,12 @@ func TestSearchClearCancelsRunningCatalog(t *testing.T) {
 
 func TestFastQuitStillJoinsIntroductionSaveAttempt(t *testing.T) {
 	var calls int
-	f := &fakeStartup{save: func(ctx context.Context, _ []types.SettingEdit) (types.OnboardingSettings, error) {
+	f := &fakeStartup{save: func(ctx context.Context, _ []setting.Edit) (setting.Onboarding, error) {
 		calls++
 		if ctx.Err() != nil {
 			t.Fatalf("normal quit cancelled accepted save: %v", ctx.Err())
 		}
-		return types.OnboardingSettings{IntroductionCompleted: true}, nil
+		return setting.Onboarding{IntroductionCompleted: true}, nil
 	}}
 	m := fixture(t, f, true)
 	// Leave both accepted Tea commands queued, then quit immediately.
@@ -550,10 +551,10 @@ func TestFastQuitStillJoinsIntroductionSaveAttempt(t *testing.T) {
 
 func TestCloseBoundsUncooperativeIntroductionSave(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
-	f := &fakeStartup{save: func(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
+	f := &fakeStartup{save: func(context.Context, []setting.Edit) (setting.Onboarding, error) {
 		close(started)
 		<-release
-		return types.OnboardingSettings{}, errors.New("late failure")
+		return setting.Onboarding{}, errors.New("late failure")
 	}}
 	// A short parent deadline stands in for the 20-second request deadline;
 	// the save context inherits it, which is the bound Close must honor.
@@ -589,10 +590,10 @@ func TestSelectedProjectRetainsLateIntroductionSaveFailure(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	defer releaseOnce.Do(func() { close(release) })
-	f := &fakeStartup{save: func(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
+	f := &fakeStartup{save: func(context.Context, []setting.Edit) (setting.Onboarding, error) {
 		close(started)
 		<-release
-		return types.OnboardingSettings{}, errors.New("read-only settings after selection")
+		return setting.Onboarding{}, errors.New("read-only settings after selection")
 	}}
 	m := fixture(t, f, true)
 	_, cmd := m.Update(key(tea.KeyEnter))
@@ -629,8 +630,8 @@ func TestSelectedProjectRetainsLateIntroductionSaveFailure(t *testing.T) {
 }
 
 func TestEarlyIntroductionSaveIssueIsNotDuplicatedAtClose(t *testing.T) {
-	m := fixture(t, &fakeStartup{save: func(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
-		return types.OnboardingSettings{}, errors.New("read-only settings")
+	m := fixture(t, &fakeStartup{save: func(context.Context, []setting.Edit) (setting.Onboarding, error) {
+		return setting.Onboarding{}, errors.New("read-only settings")
 	}}, true)
 	send(t, m, key(tea.KeyEnter))
 	if !strings.Contains(paintText(m), "read-only settings") {
@@ -645,12 +646,12 @@ func TestEarlyIntroductionSaveIssueIsNotDuplicatedAtClose(t *testing.T) {
 func TestSnapshotIssuesRemainVisibleAndSurviveSelection(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
-			issue := types.OperationIssue{Title: "Configuration needs repair", Path: "/profile/config.json", Detail: "invalid character at line 7", Summary: "Crude could not read the saved application configuration.", Target: types.RepairConfigFile}
-			later := types.OperationIssue{Title: "Profile state is not available", Detail: "saved workspace state is unreadable"}
+			issue := statuscenter.OperationIssue{Title: "Configuration needs repair", Path: "/profile/config.json", Detail: "invalid character at line 7", Summary: "Crude could not read the saved application configuration.", Target: statuscenter.RepairConfigFile}
+			later := statuscenter.OperationIssue{Title: "Profile state is not available", Detail: "saved workspace state is unreadable"}
 			f := &fakeStartup{inspect: func(_ context.Context, root string) (coreprotocol.StartupSnapshot, error) {
-				return coreprotocol.StartupSnapshot{Root: root, Issues: []types.OperationIssue{issue, later}}, nil
+				return coreprotocol.StartupSnapshot{Root: root, Issues: []statuscenter.OperationIssue{issue, later}}, nil
 			}}
-			m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Issues: []types.OperationIssue{issue}, Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
+			m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Issues: []statuscenter.OperationIssue{issue}, Workspaces: []workspace.Info{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
 			t.Cleanup(m.Close)
 			send(t, m, tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 			for _, picker := range []bool{false, true} {
@@ -677,7 +678,7 @@ func TestSnapshotIssuesRemainVisibleAndSurviveSelection(t *testing.T) {
 }
 
 func TestLongStartupIssueScrollKeepsActionsAndPreviousRows(t *testing.T) {
-	m := NewModel(context.Background(), &fakeStartup{}, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Issues: []types.OperationIssue{{Title: "Configuration needs repair", Path: "/profile/config.json", Detail: strings.Repeat("Long error evidence. ", 100) + "END OF ERROR"}}, Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
+	m := NewModel(context.Background(), &fakeStartup{}, coreprotocol.StartupSnapshot{Root: fixturePath("/home/demo"), FolderKind: "home", Issues: []statuscenter.OperationIssue{{Title: "Configuration needs repair", Path: "/profile/config.json", Detail: strings.Repeat("Long error evidence. ", 100) + "END OF ERROR"}}, Workspaces: []workspace.Info{{ProjectName: "Previous project", ProjectDir: fixturePath("/previous/project")}}})
 	t.Cleanup(m.Close)
 	text := paintText(m)
 	if strings.Contains(text, "END OF ERROR") || !strings.Contains(text, "Previous project") || !strings.Contains(text, "Open Workspace") || !strings.Contains(text, "Quit") {
@@ -726,7 +727,7 @@ func TestPreviousTopLevelOpensInspectedLocationAndReopensThere(t *testing.T) {
 		browsed = append(browsed, r.Path)
 		return coreprotocol.StartupBrowseResult{Path: r.Path, NextOffset: -1}, nil
 	}}
-	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/launch/home"), FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Downloads", ProjectDir: fixturePath("/saved/Downloads")}}})
+	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/launch/home"), FolderKind: "home", Workspaces: []workspace.Info{{ProjectName: "Downloads", ProjectDir: fixturePath("/saved/Downloads")}}})
 	t.Cleanup(m.Close)
 	send(t, m, key(tea.KeyTab))
 	send(t, m, key(tea.KeyEnter))
@@ -747,7 +748,7 @@ func TestPreviousPathFailureKeepsOtherRowsUsable(t *testing.T) {
 		}
 		return coreprotocol.StartupSnapshot{Root: root}, nil
 	}}
-	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/launch/home"), FolderKind: "home", Workspaces: []workspace.WorkspaceInfo{{ProjectName: "Missing", ProjectDir: fixturePath("/missing")}, {ProjectName: "Good project", ProjectDir: fixturePath("/good/project")}}})
+	m := NewModel(context.Background(), f, coreprotocol.StartupSnapshot{Root: fixturePath("/launch/home"), FolderKind: "home", Workspaces: []workspace.Info{{ProjectName: "Missing", ProjectDir: fixturePath("/missing")}, {ProjectName: "Good project", ProjectDir: fixturePath("/good/project")}}})
 	t.Cleanup(m.Close)
 	send(t, m, key(tea.KeyTab))
 	send(t, m, key(tea.KeyEnter))

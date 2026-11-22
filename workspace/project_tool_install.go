@@ -10,7 +10,7 @@ import (
 
 	"crude/agent/toolstore"
 	"crude/insight/catalog"
-	"crude/types"
+	"crude/types/insight"
 )
 
 type projectToolInstaller interface {
@@ -51,24 +51,24 @@ func (e *projectToolAuthorityError) Unwrap() error { return e.cause }
 // decision bound to this review token, project and selection, and fence replay.
 // This worker does not mark usage or start a server. Those later effects need
 // their own current admission.
-func installReviewedProjectTools(ctx context.Context, installer projectToolInstaller, authority projectToolEffectAuthority, review types.ProjectToolReview, approvedIDs []string, approvalID, projectID string, limits projectToolInstallLimits) ([]projectToolInstallResult, error) {
+func installReviewedProjectTools(ctx context.Context, installer projectToolInstaller, authority projectToolEffectAuthority, review insight.ProjectToolReview, approvedIDs []string, approvalID, projectID string, limits projectToolInstallLimits) ([]projectToolInstallResult, error) {
 	return installReviewedProjectToolsWithCatalog(ctx, installer, authority, review, approvedIDs, approvalID, projectID, limits, catalog.Current(), catalog.CurrentTargets())
 }
 
-func installReviewedProjectToolsWithCatalog(ctx context.Context, installer projectToolInstaller, authority projectToolEffectAuthority, review types.ProjectToolReview, approvedIDs []string, approvalID, projectID string, limits projectToolInstallLimits, c *catalog.Catalog, targets []string) ([]projectToolInstallResult, error) {
+func installReviewedProjectToolsWithCatalog(ctx context.Context, installer projectToolInstaller, authority projectToolEffectAuthority, review insight.ProjectToolReview, approvedIDs []string, approvalID, projectID string, limits projectToolInstallLimits, c *catalog.Catalog, targets []string) ([]projectToolInstallResult, error) {
 	if installer == nil || authority == nil || c == nil || strings.TrimSpace(approvalID) == "" || strings.TrimSpace(projectID) == "" || projectID != review.Project || strings.TrimSpace(review.RootIdentity) == "" {
 		return nil, errors.New("a matching project and approval are required")
 	}
 	if limits.MaxDownloadBytes <= 0 || limits.MaxExtractedBytes <= 0 || limits.MaxEntries < 0 {
 		return nil, errors.New("valid download and extraction budgets are required")
 	}
-	copyReview := types.CloneProjectToolReview(review)
+	copyReview := insight.CloneProjectToolReview(review)
 	token := copyReview.Token
 	copyReview.Token = ""
 	if token == "" || reviewHash(copyReview) != token {
 		return nil, errors.New("the tool review changed; review it again")
 	}
-	items := make(map[string]types.ProjectToolCandidate, len(review.Items))
+	items := make(map[string]insight.ProjectToolCandidate, len(review.Items))
 	for _, item := range review.Items {
 		id := item.ID
 		item.ID = ""
@@ -84,7 +84,7 @@ func installReviewedProjectToolsWithCatalog(ctx context.Context, installer proje
 	if len(approvedIDs) == 0 {
 		return nil, errors.New("select at least one tool")
 	}
-	selected := make([]types.ProjectToolCandidate, 0, len(approvedIDs))
+	selected := make([]insight.ProjectToolCandidate, 0, len(approvedIDs))
 	seen := make(map[string]bool, len(approvedIDs))
 	for _, id := range approvedIDs {
 		item, ok := items[id]

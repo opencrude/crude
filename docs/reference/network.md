@@ -22,7 +22,7 @@ credentials are masked and refuse clipboard commands. They are not encrypted
 inside that file. Certificate/private-key bytes are never persisted in settings;
 only their paths and exact destination hostname are stored.
 
-`network/` owns outbound HTTP transport and scalar settings. Remote-core carriers
+`internal/network/` owns outbound HTTP transport and scalar settings. Remote-core carriers
 have the separate mandatory pinned TLS 1.3/strict SSH trust boundary below; HTTP
 proxy or certificate settings cannot weaken core authentication. `app/` owns
 persistence and publishes its validated immutable default snapshot. Account connections retain their own
@@ -187,7 +187,7 @@ connections and MCP OAuth. Local callback listeners are not outbound clients.
 Model-catalog refresh captures new policy per request; successful refresh cadence
 is independent of its capped failure-retry schedule.
 
-`network/` tests real HTTP/HTTPS forwarding and CONNECT, all SOCKS handshakes and
+`internal/network/` tests real HTTP/HTTPS forwarding and CONNECT, all SOCKS handshakes and
 DNS variants, cancellation, redaction, custom trust, mTLS redirect/proxy isolation,
 leaf-pin isolation, TLS minimums and HTTP/2. Provider integration tests exercise
 saved proxy changes, immutable in-flight policy, custom CA use and fail-closed
@@ -196,7 +196,7 @@ ownership. Cross-compilation is not a claim of native-platform acceptance.
 
 ## Transport invariants, timeouts and stalled connections
 
-- `network/` owns the shared outbound HTTP transport for providers, OAuth,
+- `internal/network/` owns the shared outbound HTTP transport for providers, OAuth,
   catalogs, web tools, capability downloads and MCP HTTP/OAuth. Network settings
   are application-only Connection / Proxy / Certificates pages; Remote access
   separately administers host admission. Workspaces

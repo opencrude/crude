@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/activitybar"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -25,7 +25,7 @@ func TestRuntimeCapabilityObservationUpdatesRetainedSettingsAndSidebar(t *testin
 			app := newFullTestApp(t)
 			app.width, app.height = size.width, size.height
 			app.EditorState.ActiveView = "editor-hides-launcher"
-			app.openSettings(types.SettingsScopeWorkspace)
+			app.openSettings(setting.ScopeWorkspace)
 			app.openCapabilityManager(activitybar.ViewSkills, "", "")
 
 			snapshot := capabilityVisibilitySnapshot(2, "agent:live-review", "Live review", captypes.ScopeWorkspace)
@@ -55,7 +55,7 @@ func TestRuntimeCapabilityObservationUpdatesRetainedSettingsAndSidebar(t *testin
 				t.Fatal("Settings-open passive observation was not scheduled while launcher was hidden")
 			}
 
-			app.openSettings(types.SettingsScopeApplication)
+			app.openSettings(setting.ScopeApplication)
 			app.openCapabilityManager(activitybar.ViewSkills, "", "")
 			if application := paintCapabilitySettings(t, app); strings.Contains(application, "Live review") {
 				t.Fatalf("workspace registration leaked into Application Settings at %dx%d:\n%s", size.width, size.height, application)
@@ -71,7 +71,7 @@ func TestRuntimeCapabilityObservationWithActiveAgentAndNoLauncherScreen(t *testi
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	projectDir := t.TempDir()
-	app.ws = shellport.Local(workspace.NewWorkspace(projectDir, "test-model", "tester", types.Settings{}, stubLogger{}))
+	app.ws = shellport.Local(workspace.NewWorkspace(projectDir, "test-model", "tester", setting.Settings{}, stubLogger{}))
 	skillDir := filepath.Join(projectDir, "agent-review")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestRuntimeCapabilityObservationWithActiveAgentAndNoLauncherScreen(t *testi
 		t.Fatal("real workspace capability service did not publish the registration")
 	}
 
-	app.openSettings(types.SettingsScopeWorkspace)
+	app.openSettings(setting.ScopeWorkspace)
 	app.openCapabilityManager(activitybar.ViewSkills, "", "")
 	app.launcherScreen = nil // AddOrchestrator removes the home screen while an agent is active.
 	if !app.capabilityObservationVisible() {
@@ -128,7 +128,7 @@ func TestRuntimeCapabilityObservationRejectsForeignWorkspaceWithoutReplacingSett
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	app.applyObservedCapabilitySnapshot(capabilityVisibilitySnapshot(2, "local:kept", "Kept skill", captypes.ScopeWorkspace), nil, false)
-	app.openSettings(types.SettingsScopeWorkspace)
+	app.openSettings(setting.ScopeWorkspace)
 	app.openCapabilityManager(activitybar.ViewSkills, "", "")
 	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 
@@ -157,7 +157,7 @@ func TestRuntimeCapabilityObservationRejectsStaleSequence(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	app.applyObservedCapabilitySnapshot(capabilityVisibilitySnapshot(4, "local:kept", "Kept skill", captypes.ScopeWorkspace), nil, false)
-	app.openSettings(types.SettingsScopeWorkspace)
+	app.openSettings(setting.ScopeWorkspace)
 	app.openCapabilityManager(activitybar.ViewSkills, "", "")
 
 	app.launcherCapabilitySequence = 9

@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"crude/insight/textindex"
-	"crude/metrics"
-	"crude/types"
+	"crude/internal/metrics"
+	"crude/types/insight"
 )
 
 var (
@@ -41,7 +41,7 @@ var (
 )
 
 // observeSuggestionStages records one answered suggestion request.
-func observeSuggestionStages(stages types.EditorPredictionStages, total time.Duration, reused bool) {
+func observeSuggestionStages(stages insight.EditorPredictionStages, total time.Duration, reused bool) {
 	us := func(v int64) time.Duration { return time.Duration(v) * time.Microsecond }
 	suggestTotal.Observe(total)
 	if reused {

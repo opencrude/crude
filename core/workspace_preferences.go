@@ -3,8 +3,8 @@ package core
 import (
 	"context"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -18,13 +18,13 @@ func (a *actor) prepareWorkspacePreferences(request coreprotocol.Request) (func(
 	if err := decodeRequest(request, &input); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, nil, true
 	}
-	if err := types.ValidateSettingEdits(types.AppSettings{}, input.Edits); err != nil {
+	if err := setting.ValidateEdits(setting.App{}, input.Edits); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, nil, true
 	}
-	if err := types.ValidateAnalysisSettingEdits(types.SettingsScopeWorkspace, input.Edits); err != nil {
+	if err := setting.ValidateAnalysisEdits(setting.ScopeWorkspace, input.Edits); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, nil, true
 	}
-	if err := types.ValidatePredictionSettingEdits(types.SettingsScopeWorkspace, input.Edits); err != nil {
+	if err := setting.ValidatePredictionEdits(setting.ScopeWorkspace, input.Edits); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, nil, true
 	}
 	for _, edit := range input.Edits {
@@ -34,7 +34,7 @@ func (a *actor) prepareWorkspacePreferences(request coreprotocol.Request) (func(
 			}, nil, true
 		}
 	}
-	run := a.ws.PreparePreferencesSave(types.SettingsScopeWorkspace, input.Edits)
+	run := a.ws.PreparePreferencesSave(setting.ScopeWorkspace, input.Edits)
 	var retained workspace.PreferencesSaveResult
 	work := func(ctx context.Context) coreprotocol.Response {
 		if err := ctx.Err(); err != nil {

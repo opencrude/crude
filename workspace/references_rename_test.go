@@ -24,7 +24,7 @@ func TestReferenceStoreRenameReference(t *testing.T) {
 	if !ok || label != "[api spec]" {
 		t.Fatalf("rename = %q ok=%v, want [api spec]", label, ok)
 	}
-	got, _ := s.GetReference(refA.ID)
+	got, _ := s.Reference(refA.ID)
 	if got.Label != "[api spec]" || got.DisplayName() != "[api spec]" {
 		t.Fatalf("stored label = %q", got.Label)
 	}
@@ -38,7 +38,7 @@ func TestReferenceStoreRenameReference(t *testing.T) {
 			break
 		}
 	}
-	siblingLabel, _ := s.GetReference(siblingID)
+	siblingLabel, _ := s.Reference(siblingID)
 	label, ok = s.RenameReference(refA.ID, siblingLabel.Label)
 	if !ok || label == siblingLabel.Label {
 		t.Fatalf("collision rename = %q ok=%v, want unique suffixed label ≠ %q", label, ok, siblingLabel.Label)

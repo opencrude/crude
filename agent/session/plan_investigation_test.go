@@ -20,9 +20,9 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/worktree"
-	"crude/logger"
-	"crude/types"
+	"crude/internal/logger"
 	"crude/types/control"
+	"crude/types/conversation"
 	recoverytypes "crude/types/recovery"
 	"crude/workspace/fileio"
 )
@@ -420,10 +420,10 @@ func TestPlanInvestigationApprovalWhileTerminalPinWriteIsPending(t *testing.T) {
 		awaitExecutionAdmission(t, reconciled)
 	}()
 	awaitExecutionAdmission(t, entered)
-	out, err := s.SettlePlanReview(types.PlanReviewSettle{
-		Revision: revision.Number, Text: plan, Action: types.PlanReviewImplement,
+	out, err := s.SettlePlanReview(conversation.PlanReviewSettle{
+		Revision: revision.Number, Text: plan, Action: conversation.PlanReviewImplement,
 	})
-	if err != nil || s.PlanMode() || latestReview(t, s).Outcome != types.PlanOutcomeImplemented {
+	if err != nil || s.PlanMode() || latestReview(t, s).Outcome != conversation.PlanOutcomeImplemented {
 		t.Fatalf("pending terminal pin write blocked approval: %v", err)
 	}
 	if !strings.Contains(out.Text, revision.Evidence[0].Digest) || strings.Contains(out.Text, c.Root) {

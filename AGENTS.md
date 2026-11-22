@@ -154,8 +154,8 @@ sufficient.
 - Run focused tests, affected packages, race paths, build, lint, docs and bench
   gates, and the full suite when feasible; cross-compile cross-platform code.
   See [validation](docs/guides/validation.md).
-- After production-source edits, run `go run ./internal/wiregen` in the native
-  cgo environment. Review the generated diff and run `go run ./internal/wiregen
+- After production-source edits, run `go run ./tools/wiregen` in the native
+  cgo environment. Review the generated diff and run `go run ./tools/wiregen
   -check` before handoff or release. Never edit generated output by hand.
 - Use the repository visual capture workflow for UI acceptance at desktop and
   constrained sizes: `scripts/tuishot.sh` on Linux, `scripts/tuishot.ps1` on
@@ -173,23 +173,29 @@ sufficient.
 app/        IDE shell: CLI, app config, core spawning, workspace catalog.
             No session, agent or orchestrator knowledge.
 core/       Per-user core: retained workspace actors, serialized ingress,
-            receipts. Shells attach over typed RPC (core/protocol, core/wire).
-agent/      Agent turn loop plus its model, tool, memory, plan, safety and
-            collaboration packages.
-lsp/        Language-server transport and passive result normalization.
-text/       Text derivation: diff, search, encoding, indentation, snippets.
+            receipts. Shells attach over typed RPC (core/coreprotocol,
+            core/corewire).
 workspace/  Per-project state machine: sessions, agents, documents, LSP,
             files, terminals, Git, Local History. Never imports crude/tui.
-tui/        Renderer and input router. Holds a core/port.Workspace, calls its
-            methods, renders events. Owns no domain persistence.
-types/      Neutral contracts shared by every layer.
+agent/      Group: the turn loop (agent/turnloop), sessions, providers,
+            prompts, tools, memory, plans, safety and collaboration.
+tui/        Renderer and input router. Holds a core/shellport.Workspace,
+            calls its methods, renders events. Owns no domain persistence.
+insight/    Group: code-intelligence data, project facts, native syntax.
+lsp/        Group: language-server transport and result normalization.
+text/       Group: text derivation (diff, search, encoding, indentation).
+types/      Group: neutral contracts by subject (setting, conversation,
+            insight, statuscenter, ...), shared by every layer.
+internal/   Group: shared support with no product rules (buildinfo, logger,
+            metrics, network, retry, terminalvt, ...).
+tools/      Group: development programs (wiregen, namesgate, layoutcheck).
 ```
 
 - **TUI → workspace** is method calls; **workspace → TUI** is the event bus. No
   callbacks between layers. Presentation-neutral contracts live in `types/` or
   workspace view data. Swapping Bubble Tea for a web UI must leave
   `workspace/` and `app/` unchanged.
-- Every CLI shell attaches to the user's core through `core/port/remote`;
+- Every CLI shell attaches to the user's core through `core/shellport/remote`;
   closing a shell detaches it and never stops sessions. Never attach two Apps to
   one mutable Workspace.
 - The shell (`App`) owns selected session, agent, focus and tab visibility; the
@@ -200,6 +206,13 @@ types/      Neutral contracts shared by every layer.
   `PanelDeck`.
 
 Package ownership is in the [code map](docs/architecture/code-map.md).
+
+**Where code goes and how it is named** is fixed by
+[code layout](docs/reference/code-layout.md) and enforced by
+`make conventions` (layout gate, golangci-lint naming rules, doc comments on
+new exported names). Run `make hooks` once per clone so `git push` runs the
+same gate. Fix a reported error with the rule section it links to; never add
+an `allow.txt` exception without a reason a reviewer can check.
 
 ## Rules that apply to every change
 
@@ -223,7 +236,7 @@ Package ownership is in the [code map](docs/architecture/code-map.md).
   `internal/testhome`.
 - **Never print raw JSON tool arguments** in any title or status;
   `tools.SummarizeArgs` is the single operand authority.
-- **Automatic retries** go through `retry/` (five-minute per-wait ceiling);
+- **Automatic retries** go through `internal/retry` (five-minute per-wait ceiling);
   replay safety stays with the operation owner.
 
 ## Topic map
@@ -265,7 +278,8 @@ most often broken there.
 | Unicode width, ANSI | [terminal width](docs/reference/terminal-width.md) | One shared width profile |
 | Right-to-left, bidi text | [bidi](docs/reference/bidi.md) | Paint logically, then `ApplyLine`; models stay logical |
 | Performance work | [performance baselines](docs/reference/performance-baselines.md) | Benchmark first; never raise a ceiling to land |
-| Performance dashboard, `metrics/` | [performance baselines](docs/reference/performance-baselines.md#performance-dashboard-and-dense-session-freezes-2026-10-22) | An observation never allocates or does I/O; snapshot only while visible |
+| Performance dashboard, `internal/metrics` | [performance baselines](docs/reference/performance-baselines.md#performance-dashboard-and-dense-session-freezes-2026-10-22) | An observation never allocates or does I/O; snapshot only while visible |
+| Folders, packages, file and identifier names | [code layout](docs/reference/code-layout.md) | Group folders hold no Go files; names never repeat their package |
 | Gates, tests, visual capture | [validation](docs/guides/validation.md), [Windows capture](docs/guides/windows-visual-capture.md) | Never two captures at once; close the window |
 | Website, GitHub Pages | [website](docs/guides/website.md) | `site/` is plain HTML, CSS and JS; relative URLs only; Pages deploys only by explicit dispatch |
 
@@ -277,7 +291,7 @@ Treat a plan as remaining work, not as a description of current behavior.
 ```bash
 go build ./...
 go test ./<affected>/... && make test
-golangci-lint run ./...
+make conventions
 make design-audit docs-check bench-gate
 ```
 

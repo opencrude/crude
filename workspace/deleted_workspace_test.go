@@ -44,7 +44,7 @@ func TestSavedWorkspaceDeleteAndUndoPreserveEveryByte(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir())
+	plan, err := PreviewWorkspaceDeletion(t.Context(), ID(project), project, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,13 +88,13 @@ func TestSavedWorkspaceDeleteAndUndoPreserveEveryByte(t *testing.T) {
 
 func TestSavedWorkspaceDeletionRejectsChangesAndCurrentWorkspace(t *testing.T) {
 	project, saved := savedWorkspaceFixture(t)
-	if _, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, project); err == nil {
+	if _, err := PreviewWorkspaceDeletion(t.Context(), ID(project), project, project); err == nil {
 		t.Fatal("current workspace accepted")
 	}
 	if _, err := PreviewWorkspaceDeletion(t.Context(), "../escape", project, t.TempDir()); err == nil {
 		t.Fatal("path traversal accepted")
 	}
-	plan, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir())
+	plan, err := PreviewWorkspaceDeletion(t.Context(), ID(project), project, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestSavedWorkspaceDeletionRejectsChangesAndCurrentWorkspace(t *testing.T) {
 
 func TestWorkspaceUndoNeverOverwritesReplacement(t *testing.T) {
 	project, saved := savedWorkspaceFixture(t)
-	plan, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir())
+	plan, err := PreviewWorkspaceDeletion(t.Context(), ID(project), project, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestWorkspaceUndoNeverOverwritesReplacement(t *testing.T) {
 
 func TestSavedWorkspaceDeletionStillRejectsNewSQLiteWALWork(t *testing.T) {
 	project, saved := savedWorkspaceFixture(t)
-	plan, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir())
+	plan, err := PreviewWorkspaceDeletion(t.Context(), ID(project), project, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestWorkspaceDeleteRefusesSymlinkStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsymlink.Create(t, backup, saved)
-	if _, err := PreviewWorkspaceDeletion(t.Context(), WorkspaceID(project), project, t.TempDir()); err == nil {
+	if _, err := PreviewWorkspaceDeletion(t.Context(), ID(project), project, t.TempDir()); err == nil {
 		t.Fatal("symlink storage accepted")
 	}
 }

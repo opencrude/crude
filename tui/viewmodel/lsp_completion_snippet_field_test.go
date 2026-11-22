@@ -7,13 +7,13 @@ import (
 	"crude/text/snippet"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
 // acknowledgeCompletionEdit gives the editor the canonical receipt of its
 // pending local edit, as the connected document owner does.
-func acknowledgeCompletionEdit(t *testing.T, ed *editor.Editor, before uint64) types.InsightSource {
+func acknowledgeCompletionEdit(t *testing.T, ed *editor.Editor, before uint64) insight.Source {
 	t.Helper()
 	change, err := ed.CaptureDocumentEdits(document.Owner{ClientID: "typing-test", Epoch: 1}, "typed", "")
 	if err != nil {
@@ -32,7 +32,7 @@ func acknowledgeCompletionEdit(t *testing.T, ed *editor.Editor, before uint64) t
 // argumentFieldJourney accepts a function suggestion with one argument field,
 // types "n" over the field's default and answers the automatic request with
 // entries. It returns after the suggestions for the typed argument are shown.
-func argumentFieldJourney(t *testing.T, entries ...types.LSPCompletionEntry) (*App, *editor.Editor) {
+func argumentFieldJourney(t *testing.T, entries ...insight.LSPCompletionEntry) (*App, *editor.Editor) {
 	t.Helper()
 	text, plan, err := snippet.Parse("print(${1:value})$0")
 	if err != nil {
@@ -71,9 +71,9 @@ func argumentFieldJourney(t *testing.T, entries ...types.LSPCompletionEntry) (*A
 	return app, ed
 }
 
-func argumentEntry(id, label, sortText string) types.LSPCompletionEntry {
-	return types.LSPCompletionEntry{ID: id, Insertion: types.CompletionItem{Label: label,
-		TextEdit: &types.LSPTextEdit{Line: 0, Col: 6, EndLine: 0, EndCol: 7, NewText: label}},
+func argumentEntry(id, label, sortText string) insight.LSPCompletionEntry {
+	return insight.LSPCompletionEntry{ID: id, Insertion: insight.CompletionItem{Label: label,
+		TextEdit: &insight.LSPTextEdit{Line: 0, Col: 6, EndLine: 0, EndCol: 7, NewText: label}},
 		Prefix: "n", FilterText: label, SortText: sortText}
 }
 
@@ -100,7 +100,7 @@ func TestSuggestionsWorkInsideAnAcceptedArgumentList(t *testing.T) {
 // With a real choice nothing is chosen for the user. Tab still moves to the
 // next field, and a row the user chose is accepted without ending the snippet.
 func TestTabPrefersAChosenRowThenTheNextField(t *testing.T) {
-	entries := []types.LSPCompletionEntry{argumentEntry("name", "name", "a"), argumentEntry("number", "number", "b")}
+	entries := []insight.LSPCompletionEntry{argumentEntry("name", "name", "a"), argumentEntry("number", "number", "b")}
 	t.Run("no choice", func(t *testing.T) {
 		app, ed := argumentFieldJourney(t, entries...)
 		if app.completion.screen == nil || !app.overlayHost.IsOpen(ui.OverlayCompletion) {
@@ -139,7 +139,7 @@ func TestTabPrefersAChosenRowThenTheNextField(t *testing.T) {
 // Multiple keys queued behind a chosen completion must replay inside the same
 // snippet field, in order, before Tab moves to the final stop.
 func TestTypingAfterHeldCompletionKeepsTheArgumentField(t *testing.T) {
-	entries := []types.LSPCompletionEntry{argumentEntry("name", "name", "a"), argumentEntry("number", "number", "b")}
+	entries := []insight.LSPCompletionEntry{argumentEntry("name", "name", "a"), argumentEntry("number", "number", "b")}
 	app, ed := argumentFieldJourney(t, entries...)
 	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyDown})
 	completionTestKey(t, app, tea.KeyPressMsg{Code: tea.KeyDown})

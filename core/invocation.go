@@ -2,7 +2,7 @@ package core
 
 import (
 	"crude/agent/session"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 	"errors"
 )

@@ -14,10 +14,10 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 )
 
 // Enter through the real mounted settings form and framed core. These tests
@@ -108,14 +108,14 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 				}
 			}
 			navigate("Code Intelligence")
-			if one.app.ws.LoadAppSettings().Prediction.Mode != types.PredictionOff {
+			if one.app.ws.LoadAppSettings().Prediction.Mode != setting.PredictionOff {
 				t.Fatal("opening settings acquired source-egress consent")
 			}
 			modeID := string(ui.NewID(settingsui.WorkspaceSettingsFormID, "prediction.mode"))
 			deny(modeID, ui.ControlOperation{Verb: "select", ItemID: "ask"})
 			focus("prediction.mode")
 			key(tea.KeyPressMsg{Code: tea.KeyRight})
-			if choice := body().Model().AppSettings().Prediction; choice.Mode != types.PredictionAsk || choice.HourlyTokenLimit != types.DefaultPredictionHourlyTokens {
+			if choice := body().Model().AppSettings().Prediction; choice.Mode != setting.PredictionAsk || choice.HourlyTokenLimit != setting.DefaultPredictionHourlyTokens {
 				t.Fatal("native mode key did not collect the offered hourly limit", choice)
 			}
 			// Set the hourly limit to zero through native keys, then check refusal.
@@ -125,7 +125,7 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 			// The invalid enable is still a visible draft, never a normalized Off
 			// save or a server-side partial grant.
 			rejected := body().HandleAction(ui.EventContext{}, ui.Action{ID: "settings.save"})
-			if rejected.Cmd != nil || one.app.ws.LoadAppSettings().Prediction.Mode != types.PredictionOff {
+			if rejected.Cmd != nil || one.app.ws.LoadAppSettings().Prediction.Mode != setting.PredictionOff {
 				t.Fatal("enabled zero-cap draft reached persistence")
 			}
 			// Return to mode before traversing, including the extra
@@ -137,7 +137,7 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 			for _, r := range "4200" {
 				key(tea.KeyPressMsg{Code: r, Text: string(r)})
 			}
-			if choice := body().Model().AppSettings().Prediction; choice.Mode != types.PredictionAsk || choice.HourlyTokenLimit != 4200 {
+			if choice := body().Model().AppSettings().Prediction; choice.Mode != setting.PredictionAsk || choice.HourlyTokenLimit != 4200 {
 				t.Fatal("native cap input did not reach the exact preference draft", choice)
 			}
 			if painted := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(painted, "4200") || !strings.Contains(painted, "Hourly limit") {
@@ -148,13 +148,13 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 			}
 			save()
 			remoteJourneyUntil(t, shells, func() bool {
-				return two.app.ws.LoadAppSettings().Prediction.Mode == types.PredictionAsk
+				return two.app.ws.LoadAppSettings().Prediction.Mode == setting.PredictionAsk
 			})
 			grant := one.app.ws.LoadWorkspaceOverrides()
 			if grant.PredictionRootIdentity == "" || grant.PredictionConnectionIdentity == "" || grant.PredictionGrantID == "" ||
 				two.app.ws.LoadAppSettings().Prediction.HourlyTokenLimit != 4200 ||
-				one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided ||
-				one.app.ws.AppDefaults().Prediction.Mode != types.PredictionOff {
+				one.app.ws.LoadAppSettings().Analysis.Trust != setting.AnalysisUndecided ||
+				one.app.ws.AppDefaults().Prediction.Mode != setting.PredictionOff {
 				t.Fatal("native Save lost the exact root/connection grant, peer projection or authority independence")
 			}
 			focus("prediction.mode")
@@ -162,7 +162,7 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 			navigate("Editor")
 			deny(string(settingsui.WorkspaceSettingsSaveID), ui.ControlOperation{Verb: "activate"})
 			deny(string(settingsui.WorkspaceSettingsResetID), ui.ControlOperation{Verb: "activate"})
-			if one.app.ws.LoadAppSettings().Prediction.Mode != types.PredictionAsk {
+			if one.app.ws.LoadAppSettings().Prediction.Mode != setting.PredictionAsk {
 				t.Fatal("generic off-page Save changed committed source-egress consent")
 			}
 			navigate("Code Intelligence")
@@ -171,11 +171,11 @@ func TestConnectedPredictionConsentNativeSaveAndHumanOnlyControls(t *testing.T) 
 			key(tea.KeyPressMsg{Code: tea.KeyLeft})
 			save()
 			remoteJourneyUntil(t, shells, func() bool {
-				return two.app.ws.LoadAppSettings().Prediction.Mode == types.PredictionOff
+				return two.app.ws.LoadAppSettings().Prediction.Mode == setting.PredictionOff
 			})
 			revoked := one.app.ws.LoadWorkspaceOverrides()
 			if revoked.PredictionRootIdentity != "" || revoked.PredictionConnectionIdentity != "" || revoked.PredictionGrantID != "" ||
-				one.app.ws.LoadAppSettings().Analysis.Trust != types.AnalysisUndecided || calls.Load() != 0 {
+				one.app.ws.LoadAppSettings().Analysis.Trust != setting.AnalysisUndecided || calls.Load() != 0 {
 				t.Fatal("native revocation retained a grant, changed Trust or probed a provider", calls.Load())
 			}
 		})

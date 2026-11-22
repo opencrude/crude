@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 func TestDiagnosticDetailExactPublicationLifecycle(t *testing.T) {
@@ -32,7 +32,7 @@ func TestDiagnosticDetailExactPublicationLifecycle(t *testing.T) {
 				ed.SetDiagnostics(facts)
 			case "stale":
 				facts := ed.DiagnosticFacts()
-				facts.State = types.InsightStale
+				facts.State = insight.Stale
 				ed.SetDiagnostics(facts)
 			case "hidden":
 				ed.SetDiagnosticsVisible(false)
@@ -111,7 +111,7 @@ func TestDiagnosticDetailReadOnlySelectionAndFirstResize(t *testing.T) {
 func TestDiagnosticHoverIsPassiveLiteralAndReusesTheSamePublication(t *testing.T) {
 	app, _ := signatureTestApp(t, 100)
 	ed := app.EditorState.Editor
-	ed.SetDiagnostics(editorDiagnosticFacts(ed, []editor.LSPDiagnostic{
+	ed.SetDiagnostics(editorDiagnosticFacts(ed, []insight.LSPDiagnostic{
 		{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagHint, Message: "HINT_ORIGINAL"},
 		{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagError, Message: "ERROR_ORIGINAL\x1b]52;c;not-clipboard\a"},
 	}))
@@ -161,7 +161,7 @@ func TestDiagnosticHoverNativeWheelAndExplicitReadingDoNotFallThrough(t *testing
 	app, _ := signatureTestApp(t, 100)
 	ed := app.EditorState.Editor
 	message := strings.Repeat("Original hover evidence.\n", 30) + "HOVER_ORIGINAL_TAIL"
-	ed.SetDiagnostics(editorDiagnosticFacts(ed, []editor.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagError, Message: message}}))
+	ed.SetDiagnostics(editorDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagError, Message: message}}))
 	app.paintShellFrame()
 	r, _ := app.screenRectOf(app.editorScreen.ID())
 	cx, cy := ed.CursorScreenPosition(r.X, r.Y)
@@ -226,7 +226,7 @@ func TestDiagnosticDetailNativeMenuUsesClickedSourceWithoutConsumingSelection(t 
 		t.Fatal(err)
 	}
 	ed.SetCursorPosition(1, 10)
-	ed.SetDiagnostics(editorDiagnosticFacts(ed, []editor.LSPDiagnostic{{Line: 1, Col: 0, EndLine: 1, EndCol: 12, Severity: editor.DiagError, Source: "independent-source", Code: "independent-code", Message: "CLICKED_SOURCE_DIAGNOSTIC"}}))
+	ed.SetDiagnostics(editorDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 1, Col: 0, EndLine: 1, EndCol: 12, Severity: editor.DiagError, Source: "independent-source", Code: "independent-code", Message: "CLICKED_SOURCE_DIAGNOSTIC"}}))
 	app.paintShellFrame()
 	r, _ := app.screenRectOf(app.editorScreen.ID())
 	cx, cy := ed.CursorScreenPosition(r.X, r.Y)
@@ -276,7 +276,7 @@ func TestDiagnosticDetailNativeMenuUsesClickedSourceWithoutConsumingSelection(t 
 func TestDiagnosticDetailRejectsAReplacedPublicationWhileNativeMenuRemainsOpen(t *testing.T) {
 	app, _ := signatureTestApp(t, 100)
 	ed := app.EditorState.Editor
-	ed.SetDiagnostics(editorDiagnosticFacts(ed, []editor.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagError, Message: "OLD_ORIGINAL"}}))
+	ed.SetDiagnostics(editorDiagnosticFacts(ed, []insight.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 12, Severity: editor.DiagError, Message: "OLD_ORIGINAL"}}))
 	app.paintShellFrame()
 	r, _ := app.screenRectOf(app.editorScreen.ID())
 	cx, cy := ed.CursorScreenPosition(r.X, r.Y)

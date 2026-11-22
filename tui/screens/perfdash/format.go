@@ -1,7 +1,7 @@
 package perfdash
 
 import (
-	"crude/perfdata"
+	"crude/internal/perfdata"
 	"time"
 )
 

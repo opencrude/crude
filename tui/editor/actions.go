@@ -7,7 +7,7 @@ import (
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/text/indent"
+	"crude/text/indentation"
 	"crude/tui/ui"
 )
 

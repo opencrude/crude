@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/internal/wiretest"
+	"crude/core/wiretest"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"crude/agent/provider"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/types/control"
 
 	tea "charm.land/bubbletea/v2"

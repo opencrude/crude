@@ -8,7 +8,7 @@ import (
 
 	"crude/tui/bidi"
 	"crude/tui/termview"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // Right-to-left text has one owner per decision (docs/reference/bidi.md):
@@ -40,16 +40,16 @@ type hostBidi struct {
 
 // applyTextDirectionSettings publishes the right-to-left preferences and
 // asks the host terminal for explicit BiDi mode when Crude arranges text.
-func (m *App) applyTextDirectionSettings(settings types.AppSettings) {
+func (m *App) applyTextDirectionSettings(settings setting.App) {
 	choice := settings.UI.RightToLeftOrDefault()
-	hostArranges := m.hostBidi.permanent || choice == types.RightToLeftAuto && m.hostBidi.reorders
-	crude := choice != types.RightToLeftTerminal && !hostArranges
-	bidi.SetPresentation(bidi.Presentation{Arrange: crude, Join: crude && choice != types.RightToLeftUnjoined})
-	bidi.SetVisualCaret(settings.UI.CaretMovementOrDefault() == types.CaretMovementVisual)
+	hostArranges := m.hostBidi.permanent || choice == setting.RightToLeftAuto && m.hostBidi.reorders
+	crude := choice != setting.RightToLeftTerminal && !hostArranges
+	bidi.SetPresentation(bidi.Presentation{Arrange: crude, Join: crude && choice != setting.RightToLeftUnjoined})
+	bidi.SetVisualCaret(settings.UI.CaretMovementOrDefault() == setting.CaretMovementVisual)
 	switch settings.Terminal.RightToLeftOrDefault() {
-	case types.TerminalRightToLeftAll:
+	case setting.TerminalRightToLeftAll:
 		termview.SetArrangement(termview.ArrangeAll)
-	case types.TerminalRightToLeftOff:
+	case setting.TerminalRightToLeftOff:
 		termview.SetArrangement(termview.ArrangeNone)
 	default:
 		termview.SetArrangement(termview.ArrangeShell)

@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/tui/screens/filepicker"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -20,7 +20,7 @@ func keyboardChooser(t *testing.T, count int) *Model {
 	initial := coreprotocol.StartupSnapshot{Root: root, FolderKind: "home"}
 	for i := 0; i < count; i++ {
 		name := string(rune('A' + i))
-		initial.Workspaces = append(initial.Workspaces, workspace.WorkspaceInfo{ProjectName: name, ProjectDir: filepath.Join(root, name)})
+		initial.Workspaces = append(initial.Workspaces, workspace.Info{ProjectName: name, ProjectDir: filepath.Join(root, name)})
 	}
 	m := NewModel(context.Background(), &fakeStartup{}, initial)
 	t.Cleanup(m.Close)

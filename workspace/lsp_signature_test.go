@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 type signatureGateClient struct {
@@ -18,14 +19,14 @@ type signatureGateClient struct {
 	calls   atomic.Int64
 }
 
-func (c *signatureGateClient) RequestSignatureHelp(context.Context, string, int, int, types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+func (c *signatureGateClient) RequestSignatureHelp(context.Context, string, int, int, insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
 	c.calls.Add(1)
 	if c.entered != nil {
 		close(c.entered)
 		<-c.release
 	}
-	return types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0,
-		Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}, nil
+	return insight.LSPSignatureHelp{Signatures: []insight.LSPSignature{{Label: "call(value int)", ActiveParameter: 0,
+		Parameters: []insight.LSPSignatureParameter{{Label: "value int"}}}}}, nil
 }
 
 func TestSignatureManagerRequiresQualifiedBoundaryAndLiveRequest(t *testing.T) {
@@ -54,10 +55,10 @@ func TestSignatureManagerRequiresQualifiedBoundaryAndLiveRequest(t *testing.T) {
 				cancel()
 			} else {
 				manager.mu.Lock()
-				manager.documents[source.Path].boundary = types.InsightBoundary{}
+				manager.documents[source.Path].boundary = insight.Boundary{}
 				manager.mu.Unlock()
 			}
-			help, err := manager.RequestSignatureHelp(ctx, source.Path, 0, 0, types.LSPSignatureContext{})
+			help, err := manager.RequestSignatureHelp(ctx, source.Path, 0, 0, insight.LSPSignatureContext{})
 			if err == nil || len(help.Signatures) != 0 || client.calls.Load() != 0 {
 				t.Fatal("unqualified or cancelled request probed/accepted provider evidence", help, err, client.calls.Load())
 			}
@@ -70,7 +71,7 @@ func TestSignatureManagerRequiresQualifiedBoundaryAndLiveRequest(t *testing.T) {
 
 type signatureGateRuntime struct{ client *signatureGateClient }
 
-func (r signatureGateRuntime) NewClient(types.LSPServerSpec, string, func() error) LSPClient {
+func (r signatureGateRuntime) NewClient(setting.LSPServerSpec, string, func() error) LSPClient {
 	return r.client
 }
 
@@ -86,14 +87,14 @@ func TestSignatureManagerRetainsSourceAndRejectsContextChange(t *testing.T) {
 			source := editorSource(t, manager, filepath.Join(root, "main.go"), "package main\nvar x = call(1)\n")
 			awaitLSP(t, func() bool { return manager.ServerReady() })
 			type result struct {
-				help types.LSPSignatureHelp
+				help insight.LSPSignatureHelp
 				err  error
 			}
 			done := make(chan result, 1)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			go func() {
-				help, err := manager.RequestSignatureHelp(ctx, source.Path, 1, 13, types.LSPSignatureContext{})
+				help, err := manager.RequestSignatureHelp(ctx, source.Path, 1, 13, insight.LSPSignatureContext{})
 				done <- result{help, err}
 			}()
 			select {
@@ -134,7 +135,7 @@ func TestSignatureOldServerIntentCannotReachReplacement(t *testing.T) {
 	awaitLSP(t, func() bool { return manager.AssistanceCapabilities(source.Path).Producer.InstanceID != "" })
 	old := manager.AssistanceCapabilities(source.Path).Producer
 	old.InstanceID = "retired-instance"
-	result, err := manager.RequestSignatureHelp(t.Context(), source.Path, 1, 13, types.LSPSignatureContext{Producer: old, TriggerKind: 3, IsRetrigger: true})
+	result, err := manager.RequestSignatureHelp(t.Context(), source.Path, 1, 13, insight.LSPSignatureContext{Producer: old, TriggerKind: 3, IsRetrigger: true})
 	if err == nil || len(result.Signatures) != 0 || client.calls.Load() != 0 {
 		t.Fatal("retired-server context reached the replacement", result, err)
 	}

@@ -4,9 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/provider"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/types/setting"
 )
 
 func TestNamedAgentSpeedFollowsProfileAndSessionOverrides(t *testing.T) {
@@ -15,19 +15,19 @@ func TestNamedAgentSpeedFollowsProfileAndSessionOverrides(t *testing.T) {
 	profile := cfg.Agents.Profiles["default"]
 	profile.Categories[CategoryResearcher] = CategoryConfig{AccountID: "account", Model: "role", ServiceTier: "standard"}
 	cfg.Agents.Profiles["default"] = profile
-	cfg.Agents.AgentProfiles["reviewer"] = AgentProfileConfig{
+	cfg.Agents.AgentProfiles["reviewer"] = setting.AgentProfile{
 		Category: CategoryResearcher, Model: "reviewer", ServiceTier: "fast",
 	}
-	cfg.Agents.AgentProfiles["other"] = AgentProfileConfig{Category: CategoryResearcher, Model: "other"}
+	cfg.Agents.AgentProfiles["other"] = setting.AgentProfile{Category: CategoryResearcher, Model: "other"}
 
 	s, err := NewWithSessionDir("", cfg, home, home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertTier := func(s *Session, want string, wantFast types.FastMode) {
+	assertTier := func(s *Session, want string, wantFast setting.FastMode) {
 		t.Helper()
-		current := s.RuntimeProfile().GetEffectiveConfig("root")
-		root := current.GetActiveDefaultCategory()
+		current := s.RuntimeProfile().EffectiveConfig("root")
+		root := current.ActiveDefaultCategory()
 		p, err := current.providerForCategory(root)
 		if err != nil {
 			t.Fatal(err)
@@ -39,7 +39,7 @@ func TestNamedAgentSpeedFollowsProfileAndSessionOverrides(t *testing.T) {
 			t.Fatalf("fast indicator = %q, want %q", got, wantFast)
 		}
 		runner := &SubAgentRunner{effectiveCfg: current}
-		child := agent.SubAgentSpec{}
+		child := turnloop.SubAgentSpec{}
 		runner.resolveProfile("reviewer", CategoryResearcher, &child)
 		if child.ServiceTier != root.ServiceTier {
 			t.Fatalf("named child tier = %q, root tier = %q", child.ServiceTier, root.ServiceTier)
@@ -61,14 +61,14 @@ func TestNamedAgentSpeedFollowsProfileAndSessionOverrides(t *testing.T) {
 	if err := s.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	assertTier(s, "fast", types.FastModeOn)
+	assertTier(s, "fast", setting.FastModeOn)
 
 	settings = s.SettingsSnapshot()
-	settings.SessionOverrides["profile/reviewer"] = types.CategorySettings{ServiceTier: "standard"}
+	settings.SessionOverrides["profile/reviewer"] = setting.Category{ServiceTier: "standard"}
 	if err := s.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	assertTier(s, "default", types.FastModeOff)
+	assertTier(s, "default", setting.FastModeOff)
 	if cfg.Agents.AgentProfiles["reviewer"].ServiceTier != "fast" {
 		t.Fatal("session edit mutated the workspace profile")
 	}
@@ -81,21 +81,21 @@ func TestNamedAgentSpeedFollowsProfileAndSessionOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer resumed.Close()
-	assertTier(resumed, "default", types.FastModeOff)
+	assertTier(resumed, "default", setting.FastModeOff)
 
 	settings = resumed.SettingsSnapshot()
 	delete(settings.SessionOverrides, "profile/reviewer")
 	if err := resumed.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	assertTier(resumed, "fast", types.FastModeOn)
+	assertTier(resumed, "fast", setting.FastModeOn)
 
 	settings = resumed.SettingsSnapshot()
-	settings.SessionOverrides["profile/reviewer"] = types.CategorySettings{AccountID: "missing"}
+	settings.SessionOverrides["profile/reviewer"] = setting.Category{AccountID: "missing"}
 	if err := resumed.HandleSettingsSave(settings); err == nil {
 		t.Fatal("named-agent edit accepted an unavailable account")
 	}
-	assertTier(resumed, "fast", types.FastModeOn)
+	assertTier(resumed, "fast", setting.FastModeOn)
 }
 
 func TestInheritedRoleSessionSpeedCanBeOverridden(t *testing.T) {
@@ -111,11 +111,11 @@ func TestInheritedRoleSessionSpeedCanBeOverridden(t *testing.T) {
 	}
 	defer s.Close()
 	settings := s.SettingsSnapshot()
-	settings.SessionOverrides[CategoryResearcher] = types.CategorySettings{Inherit: "main", ServiceTier: "fast"}
+	settings.SessionOverrides[CategoryResearcher] = setting.Category{Inherit: "main", ServiceTier: "fast"}
 	if err := s.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	resolved := s.RuntimeProfile().GetEffectiveConfig("root").GetCategoryConfig(CategoryResearcher)
+	resolved := s.RuntimeProfile().EffectiveConfig("root").CategoryConfig(CategoryResearcher)
 	if resolved.ServiceTier != "fast" || resolved.Model != main.Model {
 		t.Fatalf("speed override replaced main inheritance or was ignored: %+v", resolved)
 	}
@@ -130,7 +130,7 @@ func TestSelectedRootInheritsRoleSpeedOverride(t *testing.T) {
 			main.ServiceTier = "standard"
 			profile.Categories[CategoryDefault] = main
 			cfg.Agents.Profiles["default"] = profile
-			cfg.Agents.AgentProfiles["reviewer"] = AgentProfileConfig{Category: CategoryResearcher}
+			cfg.Agents.AgentProfiles["reviewer"] = setting.AgentProfile{Category: CategoryResearcher}
 			s, err := NewWithSessionDir("", cfg, t.TempDir(), t.TempDir())
 			if err != nil {
 				t.Fatal(err)
@@ -138,18 +138,18 @@ func TestSelectedRootInheritsRoleSpeedOverride(t *testing.T) {
 			defer s.Close()
 			settings := s.SettingsSnapshot()
 			settings.SessionMainAgent = selected
-			settings.SessionOverrides[CategoryResearcher] = types.CategorySettings{Inherit: "main", ServiceTier: "fast"}
+			settings.SessionOverrides[CategoryResearcher] = setting.Category{Inherit: "main", ServiceTier: "fast"}
 			if err := s.HandleSettingsSave(settings); err != nil {
 				t.Fatal(err)
 			}
-			current := s.RuntimeProfile().GetEffectiveConfig("root")
-			root := current.GetActiveDefaultCategory()
+			current := s.RuntimeProfile().EffectiveConfig("root")
+			root := current.ActiveDefaultCategory()
 			provider, err := current.providerForCategory(root)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if root.Model != main.Model || provider.ProtocolSettings().ServiceTier != "fast" ||
-				s.SettingsSnapshot().FastMode != types.FastModeOn {
+				s.SettingsSnapshot().FastMode != setting.FastModeOn {
 				t.Fatalf("selected %s lost its role's tier: root=%+v tier=%q status=%q",
 					selected, root, provider.ProtocolSettings().ServiceTier, s.SettingsSnapshot().FastMode)
 			}
@@ -164,8 +164,8 @@ func TestRunningSessionTracksNamedAgentCatalogChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	app := types.AppSettings{Accounts: cfg.Accounts, Agents: s.SettingsSnapshots().Base.Agents}
-	app.Agents.AgentProfiles = map[string]types.AgentProfileSettings{
+	app := setting.App{Accounts: cfg.Accounts, Agents: s.SettingsSnapshots().Base.Agents}
+	app.Agents.AgentProfiles = map[string]setting.AgentProfile{
 		"manual": {Category: CategoryResearcher, Model: "named-model", ServiceTier: "fast"},
 	}
 	s.UpdateWorkspaceDefaults(app)
@@ -173,11 +173,11 @@ func TestRunningSessionTracksNamedAgentCatalogChanges(t *testing.T) {
 		t.Fatalf("existing session did not receive the added agent: %+v", got)
 	}
 	settings := s.SettingsSnapshot()
-	settings.SessionOverrides["profile/manual"] = types.CategorySettings{ServiceTier: "standard"}
+	settings.SessionOverrides["profile/manual"] = setting.Category{ServiceTier: "standard"}
 	if err := s.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	app.Agents.AgentProfiles["manual"] = types.AgentProfileSettings{Category: CategoryResearcher, Model: "updated-model", ServiceTier: "fast"}
+	app.Agents.AgentProfiles["manual"] = setting.AgentProfile{Category: CategoryResearcher, Model: "updated-model", ServiceTier: "fast"}
 	s.UpdateWorkspaceDefaults(app)
 	got := s.SettingsSnapshots().Effective.Agents.AgentProfiles["manual"]
 	if got.Model != "updated-model" || got.ServiceTier != "standard" {
@@ -193,8 +193,8 @@ func TestRunningSessionTracksNamedAgentCatalogChanges(t *testing.T) {
 func TestMemoryAgentSpeedAlonePreservesItsInheritedModel(t *testing.T) {
 	cfg := testConfig()
 	cfg.Memory.MemoryCategory.ServiceTier = "fast"
-	memory := cfg.GetMemoryCategory()
-	if memory.ServiceTier != "fast" || memory.Model != cfg.GetActiveDefaultCategory().Model || memory.AccountID != cfg.GetActiveDefaultCategory().AccountID {
+	memory := cfg.MemoryCategory()
+	if memory.ServiceTier != "fast" || memory.Model != cfg.ActiveDefaultCategory().Model || memory.AccountID != cfg.ActiveDefaultCategory().AccountID {
 		t.Fatalf("memory speed-only setting lost its inheritance: %+v", memory)
 	}
 	p, err := cfg.providerForCategory(memory)
@@ -210,13 +210,13 @@ func TestMemoryAgentSpeedAlonePreservesItsInheritedModel(t *testing.T) {
 	}
 	defer s.Close()
 	settings := s.SettingsSnapshot()
-	settings.SessionOverrides[CategoryMemory] = types.CategorySettings{ServiceTier: "fast"}
+	settings.SessionOverrides[CategoryMemory] = setting.Category{ServiceTier: "fast"}
 	if err := s.HandleSettingsSave(settings); err != nil {
 		t.Fatal(err)
 	}
-	current := s.RuntimeProfile().GetEffectiveConfig("root")
-	memory = current.GetMemoryCategory()
-	if memory.ServiceTier != "fast" || memory.Model != current.GetActiveDefaultCategory().Model || memory.AccountID != current.GetActiveDefaultCategory().AccountID {
+	current := s.RuntimeProfile().EffectiveConfig("root")
+	memory = current.MemoryCategory()
+	if memory.ServiceTier != "fast" || memory.Model != current.ActiveDefaultCategory().Model || memory.AccountID != current.ActiveDefaultCategory().AccountID {
 		t.Fatalf("memory session override lost its inherited connection: %+v", memory)
 	}
 }

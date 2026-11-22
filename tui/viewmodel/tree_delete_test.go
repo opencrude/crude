@@ -12,9 +12,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/cell"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 	"crude/workspace/localhistory"
@@ -99,7 +99,7 @@ func TestConnectedTreeDeleteSavedClaudeFolder(t *testing.T) {
 	}
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LocalHistory = types.LocalHistorySettings{Enabled: "on"}
+		settings.LocalHistory = setting.LocalHistory{Enabled: "on"}
 		w.SetAppDefaults(settings)
 	})
 	app := newRemoteJourneyShell(t, runtime, root).app
@@ -215,7 +215,7 @@ func checkConnectedTreeDeleteHiddenFolder(t *testing.T, root string) {
 	}
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LocalHistory = types.LocalHistorySettings{Enabled: "on"}
+		settings.LocalHistory = setting.LocalHistory{Enabled: "on"}
 		w.SetAppDefaults(settings)
 	})
 	shell := newRemoteJourneyShell(t, runtime, root)
@@ -317,7 +317,7 @@ func TestConnectedTreeDeleteSafetyFailureKeepsFolder(t *testing.T) {
 	}
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LocalHistory = types.LocalHistorySettings{Enabled: "on"}
+		settings.LocalHistory = setting.LocalHistory{Enabled: "on"}
 		w.SetAppDefaults(settings)
 	})
 	shell := newRemoteJourneyShell(t, runtime, root)

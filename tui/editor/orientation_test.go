@@ -3,7 +3,7 @@ package editor
 import (
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/setting"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,7 +16,7 @@ func TestMinimapPreferencePaintAndPointerUseOneScrollModel(t *testing.T) {
 	width := e.scrollbarColWidth()
 	e.SetSelection(0, 4, 0, 9)
 	revision := e.Revision()
-	e.SetPresentation(types.EditorSettings{LineNumbers: true, TabSize: 4, Minimap: true})
+	e.SetPresentation(setting.Editor{LineNumbers: true, TabSize: 4, Minimap: true})
 	b := paintEditor(e, 100, 20)
 	if e.scrollbarColWidth() <= width {
 		t.Fatal("Minimap preference has no visible consumer")
@@ -62,7 +62,7 @@ func BenchmarkEditorOrientation(b *testing.B) {
 			b.Run(fmt.Sprintf("%d/%t", lines, enabled), func(b *testing.B) {
 				e := NewPreview(theme.DefaultDark(), "dense.txt", strings.Repeat("    word alpha 界 é internal spaces\n", lines), 1)
 				defer e.Close()
-				e.SetPresentation(types.EditorSettings{LineNumbers: true, Minimap: enabled, IndentGuides: enabled, TabSize: 4})
+				e.SetPresentation(setting.Editor{LineNumbers: true, Minimap: enabled, IndentGuides: enabled, TabSize: 4})
 				paintEditor(e, 120, 40)
 				settleSyntax(b, e)
 				paintEditor(e, 120, 40) // isolate projection from the separately gated source worker
@@ -81,7 +81,7 @@ func TestOrientationGuidesAndMinimapPreserveSourceAndGeometry(t *testing.T) {
 	e := loadEditorText(t, "guides.txt", source)
 	e.SetSelection(0, 6, 0, 11)
 	revision := e.Revision()
-	settings := types.EditorSettings{LineNumbers: true, TabSize: 4, IndentSize: 2, IndentGuides: true, Minimap: true}
+	settings := setting.Editor{LineNumbers: true, TabSize: 4, IndentSize: 2, IndentGuides: true, Minimap: true}
 	e.SetPresentation(settings)
 	peer := e.NewLinkedView()
 	defer peer.Close()
@@ -105,7 +105,7 @@ func TestOrientationGuidesAndMinimapPreserveSourceAndGeometry(t *testing.T) {
 	if e.mini.image != image || e.mini.samples != count {
 		t.Fatal("theme/focus repainted source geometry")
 	}
-	e.SetPresentation(types.EditorSettings{LineNumbers: true, TabSize: 8, IndentSize: 4, IndentGuides: true, Minimap: true, RenderWhitespace: "all"})
+	e.SetPresentation(setting.Editor{LineNumbers: true, TabSize: 8, IndentSize: 4, IndentGuides: true, Minimap: true, RenderWhitespace: "all"})
 	b = paintEditor(e, 100, 12)
 	if b.Get(x, 0).Char != '╎' || b.Get(x+4, 0).Char != '╎' || b.Get(x+8, 0).Char != '╎' || b.Get(x+9, 0).Char != '·' || e.SelectedText() != "alpha" {
 		t.Fatal("guides and whitespace did not share tab/source columns")
@@ -126,7 +126,7 @@ func TestOrientationGuidesAndMinimapPreserveSourceAndGeometry(t *testing.T) {
 }
 func TestMinimapWorkIsBoundedAndIndependentOfScrolling(t *testing.T) {
 	e := loadEditorText(t, "dense.txt", strings.Repeat("    word 界é\n", 20000))
-	e.SetPresentation(types.EditorSettings{LineNumbers: true, Minimap: true, TabSize: 4})
+	e.SetPresentation(setting.Editor{LineNumbers: true, Minimap: true, TabSize: 4})
 	paintEditor(e, 120, 40)
 	count, image := e.mini.samples, e.mini.image
 	if count > 160 || len(image.Cells) > 8*40 {
@@ -195,7 +195,7 @@ func BenchmarkMinimapRebuild(b *testing.B) {
 		b.Run(fmt.Sprint(lines), func(b *testing.B) {
 			e := NewPreview(theme.DefaultDark(), "dense.txt", strings.Repeat("    word alpha 界 é internal spaces\n", lines), 1)
 			defer e.Close()
-			e.SetPresentation(types.EditorSettings{LineNumbers: true, Minimap: true, IndentGuides: true, TabSize: 4})
+			e.SetPresentation(setting.Editor{LineNumbers: true, Minimap: true, IndentGuides: true, TabSize: 4})
 			paintEditor(e, 120, 40)
 			settleSyntax(b, e)
 			paintEditor(e, 120, 40) // isolate projection from the separately gated source worker
@@ -266,7 +266,7 @@ func TestByteGeometryUsesTheSameUnicodeBoundaries(t *testing.T) {
 func TestIndentGuidesContinueThroughBlankLines(t *testing.T) {
 	source := "func f() {\n\tif x {\n\t\ta()\n\n\t\tb()\n\n\t}\n\n\tc()\n}\n\nfunc g() {\n\n\td()\n}\n"
 	e := loadEditorText(t, "blank.go", source)
-	e.SetPresentation(types.EditorSettings{LineNumbers: true, TabSize: 4, IndentGuides: true})
+	e.SetPresentation(setting.Editor{LineNumbers: true, TabSize: 4, IndentGuides: true})
 	b := paintEditor(e, 80, 20)
 	x := e.GutterWidth()
 	guides := func(y int) string {
@@ -310,7 +310,7 @@ func TestIndentGuidesOffSideBlankLineTakesTheLevelBelow(t *testing.T) {
 		name, want string
 	}{{"guides.py", "."}, {"guides.c", "|"}} {
 		e := loadEditorText(t, tc.name, source)
-		e.SetPresentation(types.EditorSettings{LineNumbers: true, TabSize: 4, IndentSize: 4, IndentGuides: true})
+		e.SetPresentation(setting.Editor{LineNumbers: true, TabSize: 4, IndentSize: 4, IndentGuides: true})
 		b := paintEditor(e, 80, 10)
 		got := "."
 		if b.Get(e.GutterWidth(), 2).Char == '╎' {

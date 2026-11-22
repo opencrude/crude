@@ -11,15 +11,16 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func idleRuntime(t *testing.T) (*Runtime, *actor, *actor) {
 	t.Helper()
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +166,7 @@ func TestExplicitStopAcceptsIdleShell(t *testing.T) {
 		t.Skip("bash is required")
 	}
 	r, a, _ := idleRuntime(t)
-	a.ws.TermMgr.SetSettings(types.TerminalSettings{Shell: types.TerminalShellCustom, Command: bash, Args: []string{"--norc", "--noprofile", "-i"}})
+	a.ws.TermMgr.SetSettings(setting.Terminal{Shell: setting.TerminalShellCustom, Command: bash, Args: []string{"--norc", "--noprofile", "-i"}})
 	if _, err := a.ws.Terminals.Create(workspace.TerminalCreateOpts{Cols: 80, Rows: 24}); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +191,7 @@ func TestExplicitStopWaitsForSettlingOperation(t *testing.T) {
 		attempts++
 		release, err := r.reserveIdle(t.Context(), workspace.IdleExplicitStop)
 		if attempts == 1 {
-			if !errors.Is(err, types.ErrIdleSettling) {
+			if !errors.Is(err, conversation.ErrIdleSettling) {
 				t.Fatalf("busy operation was not observed: %v", err)
 			}
 			if e := a.inspect(t.Context(), func() { a.inFlight = 0 }); e != nil {

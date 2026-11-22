@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/inspect"
 	"encoding/json"
 )
@@ -51,8 +51,8 @@ func TestCrudeControlProjectionIsReadable(t *testing.T) {
 	if !IsStructuredTool("crude_control") || !IsStructuredTool("crude_commands") {
 		t.Fatal("control tools are not routed through structured projection")
 	}
-	title := BuildToolTitle(types.ChatMessage{Role: types.RoleTool, ToolName: "crude_control", ToolArgs: input, ToolInput: input, ToolStatus: types.ToolStatusSuccess,
-		Content: `{"request_id":"control-1","operation_id":"control-1","state":"applied","revision":7,"output":{"applied":true}}`}, types.ToolPreviewDone)
+	title := BuildToolTitle(conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "crude_control", ToolArgs: input, ToolInput: input, ToolStatus: conversation.ToolStatusSuccess,
+		Content: `{"request_id":"control-1","operation_id":"control-1","state":"applied","revision":7,"output":{"applied":true}}`}, conversation.ToolPreviewDone)
 	if title.Operand != "settings.set" || strings.Contains(title.Text(), "{") || !strings.Contains(title.Metadata, "Applied") {
 		t.Fatalf("control title: %+v", title)
 	}

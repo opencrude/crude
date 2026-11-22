@@ -14,8 +14,9 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -55,8 +56,8 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 	}))
 	t.Cleanup(server.Close)
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "model", "tester", types.Settings{}, coreTestLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
+		w := workspace.NewWorkspace(root, "model", "tester", setting.Settings{}, coreTestLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}, Memory: setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
 		off := false
 		cfg := &session.Config{Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
 			session.CategoryDefault: {AccountID: "test", Model: "model", ModelContextWindow: 200_000, ModelSupportsTools: true},
@@ -124,7 +125,7 @@ func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testin
 	if first.Error != nil {
 		t.Fatal(first.Error)
 	}
-	var result types.CompactResultMsg
+	var result conversation.CompactResultMsg
 	if err := coreprotocol.Decode(first.Payload, &result); err != nil || result.Error != "" {
 		t.Fatalf("compaction result=%+v err=%v", result, err)
 	}

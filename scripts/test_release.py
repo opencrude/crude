@@ -61,7 +61,7 @@ class ReleaseTests(unittest.TestCase):
             notice = archive.extractfile("licenses/SYNTAX-QUERIES-NOTICE")
             assert notice is not None
             self.assertEqual(notice.read(),
-                             (release.ROOT / "syntax/queries/NOTICE").read_bytes())
+                             (release.ROOT / "insight/syntax/queries/NOTICE").read_bytes())
             codex = archive.extractfile("licenses/CODEX-NOTICE")
             assert codex is not None
             self.assertEqual(codex.read(), (release.ROOT / "agent/codexio/NOTICE").read_bytes())
@@ -72,7 +72,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("licenses/dependency/LICENSE", names)
             self.assertIn("fonts/CrudeRTL-Regular.ttf", names)
             self.assertEqual(archive.read("licenses/SYNTAX-QUERIES-NOTICE"),
-                             (release.ROOT / "syntax/queries/NOTICE").read_bytes())
+                             (release.ROOT / "insight/syntax/queries/NOTICE").read_bytes())
             self.assertEqual(archive.read("licenses/CODEX-NOTICE"),
                              (release.ROOT / "agent/codexio/NOTICE").read_bytes())
         release.combine(self.args)

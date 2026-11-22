@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crypto/rand"
 	"errors"
 	"os"

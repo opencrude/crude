@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/safety"
+	"crude/agent/turnloop"
 )
 
 func TestCapabilityChangeDoesNotReuseGenericAlwaysReadApproval(t *testing.T) {
@@ -25,7 +25,7 @@ func TestCapabilityChangeDoesNotReuseGenericAlwaysReadApproval(t *testing.T) {
 		"block_id": "exact-grant-change", "operation": string(safety.OpRead),
 		"tool": "capability_activate", "target": target, "question": "Approve exact schemas?",
 	}
-	orchestrator.handleBlockingEvent(data, agent.AgentEvent{Type: "blocking", Data: data}, sender)
+	orchestrator.handleBlockingEvent(data, turnloop.AgentEvent{Type: "blocking", Data: data}, sender)
 	event := <-sender.ch
 	if event.typ != "blocking" {
 		t.Fatalf("generic Always permission approved another capability change: %s", event.typ)

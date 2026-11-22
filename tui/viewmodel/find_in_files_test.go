@@ -10,7 +10,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/editor"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/logger"
-	"crude/text/encoding"
+	"crude/internal/logger"
+	"crude/text/textencoding"
 )
 
 // Editor performs exact, receipt-prepared file mutations for one session.

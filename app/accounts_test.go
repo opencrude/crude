@@ -8,7 +8,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -144,7 +144,7 @@ func TestAppSettingsSaveAfterRotationAndReconnect(t *testing.T) {
 		t.Fatalf("preferences save replayed account data: %+v", got.Accounts)
 	}
 	oldTwo := fc.Accounts["two"]
-	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "two", ProviderID: "chatgpt", Before: &oldTwo, After: &account}); err != nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: "two", ProviderID: "chatgpt", Before: &oldTwo, After: &account}); err != nil {
 		t.Fatalf("explicit account rename: %v", err)
 	}
 	if got := LoadFileConfig().Accounts["two"].Label; got != "Renamed" {
@@ -161,7 +161,7 @@ func TestAppSettingsSaveAfterRotationAndReconnect(t *testing.T) {
 	before := reconnect.Accounts["one"]
 	one := reconnect.Accounts["one"]
 	one.APIKey, one.OAuth = "intentional-key", nil
-	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "one", ProviderID: "chatgpt", Before: &before, After: &one}); err != nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: "one", ProviderID: "chatgpt", Before: &before, After: &one}); err != nil {
 		t.Fatalf("user reconnect rejected: %v", err)
 	}
 	if got := a.accounts.Snapshot()["one"]; got.APIKey != "intentional-key" || got.OAuth != nil {
@@ -179,7 +179,7 @@ func TestAppSettingsSaveAfterRotationAndReconnect(t *testing.T) {
 	old := stale.Accounts["one"]
 	changed := old
 	changed.Label = "Trying to overwrite"
-	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "one", ProviderID: "chatgpt", Before: &old, After: &changed}); err != nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: "one", ProviderID: "chatgpt", Before: &old, After: &changed}); err != nil {
 		t.Fatal("label edit was blocked by an unrelated reconnect", err)
 	}
 	if err := ws.SaveAppSettings(stale); err != nil {
@@ -205,7 +205,7 @@ func TestConfirmedAccountWritesDoNotSaveStalePreferenceDrafts(t *testing.T) {
 	a.configureWorkspace(ws)
 	stale := ws.AppDefaults()
 	team := provider.Account{ID: "team", ProviderID: "openrouter", Label: "Team", APIKey: "team-secret", Connection: provider.DefaultTemplates()["openrouter"]}
-	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "team", ProviderID: "openrouter", After: &team}); err != nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: "team", ProviderID: "openrouter", After: &team}); err != nil {
 		t.Fatalf("add second provider account: %v", err)
 	}
 	if saved := LoadFileConfig(); len(saved.Accounts) != 2 {
@@ -224,14 +224,14 @@ func TestConfirmedAccountWritesDoNotSaveStalePreferenceDrafts(t *testing.T) {
 		t.Fatal(err)
 	}
 	duplicate := provider.Account{ID: "duplicate", ProviderID: "openrouter", Label: "team", APIKey: "different", Connection: provider.DefaultTemplates()["openrouter"]}
-	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: duplicate.ID, ProviderID: duplicate.ProviderID, After: &duplicate}); err == nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: duplicate.ID, ProviderID: duplicate.ProviderID, After: &duplicate}); err == nil {
 		t.Fatal("duplicate account name was accepted")
 	}
 	after, err := os.ReadFile(ConfigPath())
 	if err != nil || string(after) != string(before) {
 		t.Fatal("failed duplicate write changed config bytes", err)
 	}
-	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "team", ProviderID: "openrouter", Before: &team}); err != nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: "team", ProviderID: "openrouter", Before: &team}); err != nil {
 		t.Fatal(err)
 	}
 	if saved := LoadFileConfig(); len(saved.Accounts) != 1 || saved.Accounts["personal"].APIKey != "personal-secret" {

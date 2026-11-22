@@ -19,12 +19,12 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
 	captypes "crude/types/capability"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -150,8 +150,8 @@ func TestCapabilityHostFramedTwoShellModelJourney(t *testing.T) {
 	cfg := &session.Config{Agents: agents, Capabilities: settings, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
 	var ws *workspace.Workspace
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
-		ws = workspace.NewWorkspace(root, "", "test", types.Settings{Capabilities: settings}, coreTestLogger{})
-		ws.SetAppDefaults(types.AppSettings{Capabilities: settings})
+		ws = workspace.NewWorkspace(root, "", "test", setting.Settings{Capabilities: settings}, coreTestLogger{})
+		ws.SetAppDefaults(setting.App{Capabilities: settings})
 		ws.SetBackendConfig(cfg, t.TempDir())
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))

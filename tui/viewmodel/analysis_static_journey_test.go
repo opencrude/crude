@@ -17,8 +17,9 @@ import (
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -60,7 +61,7 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	if err := os.WriteFile(path, []byte("package main\nvar Answer = 42\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	server := &immediateTreeDiagRuntime{filePath: path, diags: []workspace.LSPDiagnostic{{Severity: workspace.DiagError, Message: "must never be published"}}}
+	server := &immediateTreeDiagRuntime{filePath: path, diags: []insight.LSPDiagnostic{{Severity: workspace.DiagError, Message: "must never be published"}}}
 	authority := make(chan *workspace.LSPManager, 1)
 	runtime := remoteJourneyRuntime(t, endpoint.URL, func(w *workspace.Workspace) {
 		w.LSPMgr.SetRuntime(server)
@@ -102,7 +103,7 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	ed := liveTestOpen(t, one.app, path)
 	remoteJourneyUntil(t, shells, func() bool {
 		state, _ := ed.InsightStatus()
-		return state == types.InsightCurrent
+		return state == insight.Current
 	})
 	ed.SetCursorPosition(1, len("var Answer"))
 	one.app.setFocusEditor()
@@ -111,14 +112,14 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	liveTestSync(t, one.app)
 	remoteJourneyUntil(t, shells, func() bool {
 		state, _ := ed.InsightStatus()
-		return state == types.InsightCurrent && ed.Value() == "package main\nvar Answerx = 42\n"
+		return state == insight.Current && ed.Value() == "package main\nvar Answerx = 42\n"
 	})
 	if paint := ansi.Strip(one.app.View().RenderContent()); !strings.Contains(paint, "Answerx = 42") {
 		t.Fatalf("static-only source editing/syntax did not render:\n%s", paint)
 	}
 	_, cmd = one.app.Update(statusoverview.NavigateMsg{Action: "lsp:start-all"})
 	runAppCommand(t, one.app, cmd)
-	if manager.EditorEnabled() || manager.ServerReady() || manager.AnalysisPolicy().Trust != types.AnalysisUndecided {
+	if manager.EditorEnabled() || manager.ServerReady() || manager.AnalysisPolicy().Trust != setting.AnalysisUndecided {
 		t.Fatal("opening source or explicit Start supplied semantic execution authority")
 	}
 	_, header, _ := one.app.activeHeaderContext()
@@ -158,7 +159,7 @@ func TestConnectedAnalysisStaticOnlyKeepsEditingAndRejectsSessionProbe(t *testin
 	server.mu.Lock()
 	created := len(server.rootURIs)
 	server.mu.Unlock()
-	if created != 0 || len(manager.AllDiagnostics()) != 0 || manager.AnalysisPolicy().Trust != types.AnalysisUndecided {
+	if created != 0 || len(manager.AllDiagnostics()) != 0 || manager.AnalysisPolicy().Trust != setting.AnalysisUndecided {
 		t.Fatalf("Static only constructed %d providers or acquired semantic authority", created)
 	}
 	if ed.Value() != "package main\nvar Answerx = 42\n" {

@@ -8,7 +8,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 func TestNavigationOnlyStartupUsesBanner(t *testing.T) {
@@ -206,7 +206,7 @@ func TestChooserKeepsNarrowWidthsIntact(t *testing.T) {
 func TestChooserBannerSurvivesRecoveryIssues(t *testing.T) {
 	m := fixture(t, &fakeStartup{}, false)
 	send(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m.addIssues(types.OperationIssue{Title: "Configuration needs repair", Detail: "accounts need repair"})
+	m.addIssues(statuscenter.OperationIssue{Title: "Configuration needs repair", Detail: "accounts need repair"})
 	renderStartup(m)
 	if !strings.ContainsRune(bannerLineText(m, 0), '█') {
 		t.Fatal("issues removed the banner")

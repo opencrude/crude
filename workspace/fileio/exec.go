@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/logger"
-	"crude/text/encoding"
+	"crude/internal/logger"
+	"crude/text/textencoding"
 
 	"github.com/charmbracelet/x/ansi"
 )

@@ -8,10 +8,10 @@ import (
 	"slices"
 	"strings"
 
-	"crude/agent"
 	"crude/agent/collaboration"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"crude/workspace"
 )
@@ -297,7 +297,7 @@ func (a *actor) controlDomainClaims(ctx context.Context, in control.Request, pat
 	if err != nil || participant.CurrentRunID != in.Caller.RunID {
 		return nil, collaboration.ErrStale
 	}
-	id := agent.AgentID(participant.ID)
+	id := turnloop.AgentID(participant.ID)
 	acquire := func() error {
 		_, err := store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{AgentID: participant.ID, RunID: in.Caller.RunID, RequestID: in.ID, Paths: paths})
 		return err

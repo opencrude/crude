@@ -7,18 +7,19 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 func TestLSPIdleReasonsExplainLazyStartupAndPolicy(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
-	if got := m.ProjectInsights(); got.Language.State != types.LanguageIdle || !strings.Contains(got.Language.Message, "Open a source file") {
+	if got := m.ProjectInsights(); got.Language.State != insight.LanguageIdle || !strings.Contains(got.Language.Message, "Open a source file") {
 		t.Fatalf("enabled unused workspace reason=%+v", got)
 	}
-	settings := types.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	settings.Enabled = false
 	m.SetSettings(settings)
-	if got := m.ProjectInsights(); got.Language.State != types.LanguageOff {
+	if got := m.ProjectInsights(); got.Language.State != insight.LanguageOff {
 		t.Fatalf("disabled reason=%+v", got)
 	}
 	path := filepath.Join(root, "main.go")
@@ -28,23 +29,23 @@ func TestLSPIdleReasonsExplainLazyStartupAndPolicy(t *testing.T) {
 	}
 	settings.Enabled, settings.StartOnOpen = true, false
 	m.SetSettings(settings)
-	if got := m.ProjectInsights(); got.Language.State != types.LanguageIdle || got.Language.Action != types.LanguageActionStartServers {
+	if got := m.ProjectInsights(); got.Language.State != insight.LanguageIdle || got.Language.Action != insight.LanguageActionStartServers {
 		t.Fatalf("manual startup reason=%+v", got)
 	}
 	m.StartForWorkspace(root)
 	awaitLSP(t, m.ServerReady)
-	if got := m.ProjectInsights(); got.Language.State != types.LanguageReady || got.Language.Label != "" {
+	if got := m.ProjectInsights(); got.Language.State != insight.LanguageReady || got.Language.Label != "" {
 		t.Fatalf("connected server retained idle explanation=%+v", got)
 	}
 	m.Stop()
-	if got := m.ProjectInsights(); got.Language.State != types.LanguageOff {
+	if got := m.ProjectInsights(); got.Language.State != insight.LanguageOff {
 		t.Fatalf("paused reason=%+v", got)
 	}
 }
 
 func TestLSPSettingsEnableStartsAlreadyOpenDocumentWithoutReopen(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
-	settings := types.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	settings.Enabled = false
 	m.SetSettings(settings)
 	path := filepath.Join(root, "main.go")
@@ -64,7 +65,7 @@ func TestLSPIdleResumeWithoutDocumentsRefreshesReason(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
 	m.Stop()
 	m.StartForWorkspace(root)
-	if got := m.ProjectInsights(); got.Language.State != types.LanguageIdle {
+	if got := m.ProjectInsights(); got.Language.State != insight.LanguageIdle {
 		t.Fatalf("resume retained paused reason=%+v", got)
 	}
 	if len(runtime.snapshot()) != 0 {
@@ -75,7 +76,7 @@ func TestLSPIdleResumeWithoutDocumentsRefreshesReason(t *testing.T) {
 func TestLSPUnsupportedDocumentExplainsNoMatchingServer(t *testing.T) {
 	m, runtime, root := lifecycleManager(t)
 	editorSource(t, m, filepath.Join(root, "notes.unknownext"), "No language owns this file type.\n")
-	if got := m.ProjectInsights(); got.Language.State != types.LanguageNoServer || !strings.Contains(got.Language.Message, "Language servers settings") {
+	if got := m.ProjectInsights(); got.Language.State != insight.LanguageNoServer || !strings.Contains(got.Language.Message, "Language servers settings") {
 		t.Fatalf("unmatched source reason=%+v", got)
 	}
 	if len(runtime.snapshot()) != 0 {
@@ -105,17 +106,17 @@ func assertLSPBroadcast(t *testing.T, m *LSPManager, mutate func()) {
 func TestLSPChangedDiagnosticsClearAndStop(t *testing.T) {
 	m, client, snapshot := diagnosticFixture(t)
 	assertLSPBroadcast(t, m, func() {
-		client.emit(client.publication(snapshot.Path, []LSPDiagnostic{{Severity: DiagError, Message: "bad"}}))
+		client.emit(client.publication(snapshot.Path, []insight.LSPDiagnostic{{Severity: DiagError, Message: "bad"}}))
 	})
 	if m.ProjectInsights().Errors != 1 {
 		t.Fatal("diagnostic absent from projection")
 	}
 	assertLSPBroadcast(t, m, func() { m.InvalidateFile(snapshot.Path) })
-	if batch, ok := m.FileDiagnostics(snapshot.Path); !ok || batch.State != types.InsightStale || m.ProjectInsights().Errors != 0 {
+	if batch, ok := m.FileDiagnostics(snapshot.Path); !ok || batch.State != insight.Stale || m.ProjectInsights().Errors != 0 {
 		t.Fatal("diagnostic retirement lost provenance or retained current counts")
 	}
 	assertLSPBroadcast(t, m, m.Stop)
-	if m.ProjectInsights().Language.State != types.LanguageOff {
+	if m.ProjectInsights().Language.State != insight.LanguageOff {
 		t.Fatal("stop not projected")
 	}
 }
@@ -177,8 +178,8 @@ type idleSymbolsClient struct{ LSPClient }
 
 func (idleSymbolsClient) Stop() error { return nil }
 
-func (idleSymbolsClient) RequestDocumentSymbols(context.Context, string) []LSPSymbol {
-	return []LSPSymbol{{Name: "visibleSymbol"}}
+func (idleSymbolsClient) RequestDocumentSymbols(context.Context, string) []insight.LSPSymbol {
+	return []insight.LSPSymbol{{Name: "visibleSymbol"}}
 }
 
 func TestLSPChangedSymbolsAndInvalidation(t *testing.T) {

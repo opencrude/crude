@@ -8,8 +8,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
 )
 
 func TestAttachmentSourceSpansSurviveMarkdownAndWrapping(t *testing.T) {
@@ -25,7 +25,7 @@ func TestAttachmentSourceSpansSurviveMarkdownAndWrapping(t *testing.T) {
 				start := len([]rune(text[:strings.LastIndex(text, label)]))
 				target := attachment.Target{Start: start, End: start + len([]rune(label)), Label: label, ReferenceID: "exact-id"}
 				th := theme.DefaultDark()
-				msg := types.ChatMessage{InternalID: "source", Role: types.RoleUser, Content: text, Attachments: []attachment.Target{target}}
+				msg := conversation.ChatMessage{InternalID: "source", Role: conversation.RoleUser, Content: text, Attachments: []attachment.Target{target}}
 				rendered := renderUserMessage(msg, renderContext{contentWidth: width, mdRenderer: rendering.MakeMdRenderer(width, th), tokens: ui.NewTokenSet(th)}, true)
 				var actionText strings.Builder
 				for _, row := range rendered.native {
@@ -55,7 +55,7 @@ func TestAttachmentSourceSpansSurviveMarkdownAndWrapping(t *testing.T) {
 }
 
 func TestLiteralAttachmentLabelsHaveNoInlineActions(t *testing.T) {
-	msg := types.ChatMessage{Role: types.RoleUser, Content: "[Pasted Text1] [Pasted IMG1] literal prose"}
+	msg := conversation.ChatMessage{Role: conversation.RoleUser, Content: "[Pasted Text1] [Pasted IMG1] literal prose"}
 	for _, row := range renderUserMessage(msg, renderContext{contentWidth: 80}, true).native {
 		for _, span := range row.Spans {
 			if span.Action != nil {

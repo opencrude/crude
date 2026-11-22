@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"crude/agent/memory"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/cell"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
@@ -20,7 +20,7 @@ import (
 	"crude/workspace"
 )
 
-func memoryBrowserTestStore(t *testing.T) *workspace.WorkspaceDB {
+func memoryBrowserTestStore(t *testing.T) *workspace.DB {
 	t.Helper()
 	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "memory.db"))
 	if err != nil {
@@ -33,10 +33,10 @@ func memoryBrowserTestStore(t *testing.T) *workspace.WorkspaceDB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
-	return &workspace.WorkspaceDB{DB: database, Memory: store}
+	return &workspace.DB{DB: database, Memory: store}
 }
 
-func memoryBrowserTestRecord(t *testing.T, database *workspace.WorkspaceDB, title string) memory.Record {
+func memoryBrowserTestRecord(t *testing.T, database *workspace.DB, title string) memory.Record {
 	t.Helper()
 	record, err := database.Memory.Remember(context.Background(), memory.Record{
 		Title: title, Kind: memory.KindFact, Content: "Supported workspace fact", AppliesWhen: "In the memory browser",

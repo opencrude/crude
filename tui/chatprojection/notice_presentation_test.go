@@ -8,7 +8,8 @@ import (
 	"crude/tui/cell"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/statuscenter"
 )
 
 func TestErrorAndYoloNoticesShareReadableBoundedRows(t *testing.T) {
@@ -17,16 +18,16 @@ func TestErrorAndYoloNoticesShareReadableBoundedRows(t *testing.T) {
 		for _, width := range []int{1, 12, 40, 80, 160} {
 			ctx := renderContext{th: th, tokens: ui.NewTokenSet(th), innerW: width, contentWidth: max(1, width-16)}
 			for _, test := range []struct {
-				message types.ChatMessage
+				message conversation.ChatMessage
 				role    ui.SemanticColor
 			}{
-				{types.ChatMessage{Role: types.RoleError, Content: diagnostic}, ui.ColorError},
-				{types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: "yolo_enabled", Content: "Commands and file changes can run without confirmation."}, ui.ColorWarning},
-				{types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: "yolo_disabled", Content: "Tool approval prompts are restored for this session."}, ui.ColorSuccess},
+				{conversation.ChatMessage{Role: conversation.RoleError, Content: diagnostic}, ui.ColorError},
+				{conversation.ChatMessage{Role: conversation.RoleStatus, LifecyclePhase: "yolo_enabled", Content: "Commands and file changes can run without confirmation."}, ui.ColorWarning},
+				{conversation.ChatMessage{Role: conversation.RoleStatus, LifecyclePhase: "yolo_disabled", Content: "Tool approval prompts are restored for this session."}, ui.ColorSuccess},
 			} {
 				test.message.Time = time.Now()
 				rows := renderMessageContent(test.message, ctx, false)
-				if test.message.Role == types.RoleError {
+				if test.message.Role == conversation.RoleError {
 					expandedCtx := ctx
 					expandedCtx.disclosure = DisclosureExpanded
 					rows = renderMessageContent(test.message, expandedCtx, false)
@@ -73,7 +74,7 @@ func TestErrorAndYoloNoticesShareReadableBoundedRows(t *testing.T) {
 func TestFailedActivityStripDoesNotRepeatTheDiagnostic(t *testing.T) {
 	th := theme.DefaultDark()
 	var strip ActivityStrip
-	strip.Update(types.AgentActivityView{Status: types.AgentStatusSnapshot{Phase: types.AgentFailed, Detail: "sync C:\\history: Access is denied."}}, 80, th, ui.NewTokenSet(th))
+	strip.Update(statuscenter.AgentActivityView{Status: statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentFailed, Detail: "sync C:\\history: Access is denied."}}, 80, th, ui.NewTokenSet(th))
 	line := strip.Line(1000)
 	if line.PlainText() != "Turn failed · details in transcript" || line.TextTide {
 		t.Fatalf("failure strip repeats/animates a diagnostic: %+v", line)

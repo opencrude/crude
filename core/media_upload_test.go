@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 

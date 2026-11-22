@@ -3,6 +3,8 @@ package viewmodel
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -19,8 +21,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
 	"crude/workspace"
 )
 
@@ -72,15 +73,15 @@ type navigationVisualModel struct {
 	tracePath       string
 	pids            []int
 	transcript      strings.Builder
-	invocation      types.InsightSource
+	invocation      insight.Source
 	invokeLine      int
 	invokeCol       int
-	lastResult      types.LSPNavigation
+	lastResult      insight.LSPNavigation
 	lastResultErr   error
-	firstBoundary   types.InsightBoundary
-	barrierBoundary types.InsightBoundary
-	implementation  types.LSPNavigation
-	second          types.LSPNavigationTarget
+	firstBoundary   insight.Boundary
+	barrierBoundary insight.Boundary
+	implementation  insight.LSPNavigation
+	second          insight.LSPNavigationTarget
 }
 
 type navigationVisualDone struct {
@@ -117,9 +118,9 @@ func runNavigationVisual(t *testing.T, headless bool, width, height int) {
 	tracePath := filepath.Join(home, "gopls-navigation-rpc.log")
 	coreRuntime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: executable, Args: []string{"serve", "-rpc.trace", "-logfile=" + tracePath},
 			RootMarkers: []string{"go.mod"},
 			Environment: map[string]string{
@@ -270,8 +271,8 @@ func (m *navigationVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if ed := m.EditorState.Editor; ed != nil {
 				m.invocation, _ = ed.CurrentInsightSource()
 				m.invokeLine, m.invokeCol = ed.LSPCursorPosition()
-				m.lastResult, m.lastResultErr = types.LSPNavigation{}, nil
-				m.barrierBoundary = types.InsightBoundary{}
+				m.lastResult, m.lastResultErr = insight.LSPNavigation{}, nil
+				m.barrierBoundary = insight.Boundary{}
 			}
 		}
 	}
@@ -405,9 +406,9 @@ func (m *navigationVisualModel) navigationQualification(kind, sourceName string,
 		r := m.lastResult
 		b := r.Boundary
 		owner, generation := v.ws.LSPMgr().ContextCursor()
-		if m.lastResultErr != nil || r.Kind != kind || r.Answer != types.LSPNavigationTargets ||
+		if m.lastResultErr != nil || r.Kind != kind || r.Answer != insight.LSPNavigationTargets ||
 			r.Line != line || r.Col != col || m.invokeLine != line || m.invokeCol != col ||
-			r.IncludeDeclaration != (kind == types.LSPNavigationReferences) || r.WireVersion <= 0 ||
+			r.IncludeDeclaration != (kind == insight.LSPNavigationReferences) || r.WireVersion <= 0 ||
 			b.Source != m.invocation || b.Source.Kind != "canonical" || b.Source.DocumentID == "" || b.Source.Lifetime == "" ||
 			b.Source.Path != filepath.Join(m.root, sourceName) || b.Source.WorkspaceGeneration != owner ||
 			b.Context.Root != m.root || b.Context.ID == "" || b.Context.Generation > generation ||
@@ -426,29 +427,29 @@ func (m *navigationVisualModel) navigationQualification(kind, sourceName string,
 	})
 }
 
-func navigationVisualRange(line, start, end int) types.LSPNavigationRange {
-	return types.LSPNavigationRange{
-		Start: types.LSPNavigationPosition{Line: line, Character: start},
-		End:   types.LSPNavigationPosition{Line: line, Character: end},
+func navigationVisualRange(line, start, end int) insight.LSPNavigationRange {
+	return insight.LSPNavigationRange{
+		Start: insight.LSPNavigationPosition{Line: line, Character: start},
+		End:   insight.LSPNavigationPosition{Line: line, Character: end},
 	}
 }
 
 func (m *navigationVisualModel) navigationTargets(kind string) error {
-	expected := map[string]types.LSPNavigationRange{}
+	expected := map[string]insight.LSPNavigationRange{}
 	switch kind {
-	case types.LSPNavigationTypeDefinition:
+	case insight.LSPNavigationTypeDefinition:
 		expected["contract.go"] = navigationVisualRange(2, 5, 12)
-	case types.LSPNavigationImplementation:
+	case insight.LSPNavigationImplementation:
 		expected["alpha.go"] = navigationVisualRange(2, 5, 10)
 		expected["beta.go"] = navigationVisualRange(2, 5, 9)
-	case types.LSPNavigationDefinition:
+	case insight.LSPNavigationDefinition:
 		expected["helper.go"] = navigationVisualRange(2, 5, 11)
-	case types.LSPNavigationReferences:
+	case insight.LSPNavigationReferences:
 		expected["alpha.go"] = navigationVisualRange(3, 37, 43)
 		expected["beta.go"] = navigationVisualRange(3, 36, 42)
 		expected["helper.go"] = navigationVisualRange(2, 5, 11)
 	}
-	var observed types.LSPNavigation
+	var observed insight.LSPNavigation
 	if err := m.check(func(*controlVisualModel) error {
 		observed = m.lastResult
 		if len(m.lastResult.Targets) != len(expected) {
@@ -478,7 +479,7 @@ func (m *navigationVisualModel) navigationTargets(kind string) error {
 
 // Independently inspect the ORIGINAL installed server's trace, not lspnav's
 // normalized answer. This guards LocationLink flag/range/origin preservation.
-func (m *navigationVisualModel) navigationOriginalResponse(observed types.LSPNavigation) error {
+func (m *navigationVisualModel) navigationOriginalResponse(observed insight.LSPNavigation) error {
 	f, err := os.Open(m.tracePath)
 	if err != nil {
 		return err
@@ -495,8 +496,8 @@ func (m *navigationVisualModel) navigationOriginalResponse(observed types.LSPNav
 		return fmt.Errorf("fixture RPC trace exceeded 1 MiB observer bound")
 	}
 	method := map[string]string{
-		types.LSPNavigationDefinition: "definition", types.LSPNavigationTypeDefinition: "typeDefinition",
-		types.LSPNavigationImplementation: "implementation", types.LSPNavigationReferences: "references",
+		insight.LSPNavigationDefinition: "definition", insight.LSPNavigationTypeDefinition: "typeDefinition",
+		insight.LSPNavigationImplementation: "implementation", insight.LSPNavigationReferences: "references",
 	}[observed.Kind]
 	trace := string(data)
 	index := strings.LastIndex(trace, "response 'textDocument/"+method+" -")
@@ -512,12 +513,12 @@ func (m *navigationVisualModel) navigationOriginalResponse(observed types.LSPNav
 		return fmt.Errorf("decode original gopls %s trace: %w", method, err)
 	}
 	var rows []struct {
-		URI                  string                    `json:"uri"`
-		Range                types.LSPNavigationRange  `json:"range"`
-		TargetURI            string                    `json:"targetUri"`
-		TargetRange          types.LSPNavigationRange  `json:"targetRange"`
-		TargetSelectionRange types.LSPNavigationRange  `json:"targetSelectionRange"`
-		Origin               *types.LSPNavigationRange `json:"originSelectionRange"`
+		URI                  string                      `json:"uri"`
+		Range                insight.LSPNavigationRange  `json:"range"`
+		TargetURI            string                      `json:"targetUri"`
+		TargetRange          insight.LSPNavigationRange  `json:"targetRange"`
+		TargetSelectionRange insight.LSPNavigationRange  `json:"targetSelectionRange"`
+		Origin               *insight.LSPNavigationRange `json:"originSelectionRange"`
 	}
 	if err := json.Unmarshal(raw, &rows); err != nil || len(rows) != len(observed.Targets) {
 		return fmt.Errorf("original gopls %s targets differ: raw=%s err=%v", method, raw, err)
@@ -594,16 +595,16 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 		if err := m.navigationLanding("contract.go", 2, 5); err != nil {
 			return err
 		}
-		if err := m.navigationQualification(types.LSPNavigationTypeDefinition, "caller.go", 5, 8); err != nil {
+		if err := m.navigationQualification(insight.LSPNavigationTypeDefinition, "caller.go", 5, 8); err != nil {
 			return err
 		}
-		if err := m.navigationTargets(types.LSPNavigationTypeDefinition); err != nil {
+		if err := m.navigationTargets(insight.LSPNavigationTypeDefinition); err != nil {
 			return err
 		}
 	case 2, 4, 6, 9:
-		kind, sourceName, line, col := types.LSPNavigationImplementation, "contract.go", 2, 5
+		kind, sourceName, line, col := insight.LSPNavigationImplementation, "contract.go", 2, 5
 		if phase == 9 {
-			kind, sourceName = types.LSPNavigationReferences, "helper.go"
+			kind, sourceName = insight.LSPNavigationReferences, "helper.go"
 		}
 		label = strings.ToUpper(kind) + "_LIST"
 		if err := m.await(func(v *controlVisualModel) error {
@@ -629,7 +630,7 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 		if err := m.navigationTargets(kind); err != nil {
 			return err
 		}
-		if kind == types.LSPNavigationImplementation {
+		if kind == insight.LSPNavigationImplementation {
 			if err := m.check(func(*controlVisualModel) error {
 				m.implementation = m.lastResult
 				m.second = m.lastResult.Targets[1]
@@ -665,10 +666,10 @@ func (m *navigationVisualModel) observeNavigation(phase int) error {
 		if sourceName == "alpha.go" {
 			col = 37
 		}
-		if err := m.navigationQualification(types.LSPNavigationDefinition, sourceName, 3, col); err != nil {
+		if err := m.navigationQualification(insight.LSPNavigationDefinition, sourceName, 3, col); err != nil {
 			return err
 		}
-		if err := m.navigationTargets(types.LSPNavigationDefinition); err != nil {
+		if err := m.navigationTargets(insight.LSPNavigationDefinition); err != nil {
 			return err
 		}
 	default:

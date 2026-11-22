@@ -1,7 +1,8 @@
 package editor
 
 import (
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/insight"
 	"crypto/sha256"
 	"fmt"
 	"reflect"
@@ -11,7 +12,6 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace/document"
 )
 
@@ -31,7 +31,7 @@ func TestDiagnosticGutterAndOverlapShowHighestSeverity(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/reversed=%t", tc.name, reversed), func(t *testing.T) {
 				ed := loadEditorText(t, "severity.txt", "abcdefghij\n")
 				ed.SetCursorPosition(1, 0)
-				diags := []LSPDiagnostic{
+				diags := []insight.LSPDiagnostic{
 					{Line: 0, Col: 0, EndCol: 6, Severity: tc.severity},
 					{Line: 0, Col: 2, EndCol: 10, Severity: tc.lesser},
 				}
@@ -62,7 +62,7 @@ func TestDiagnosticGutterAndOverlapShowHighestSeverity(t *testing.T) {
 func TestTypingPreservesDiagnosticPaintOnUnchangedSourceOnly(t *testing.T) {
 	ed := loadEditorText(t, "diagnostic.go", "package main\nvar value = 1\nvar bad = missing\n")
 	ed.SetCursorPosition(1, len("var value"))
-	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError, Message: "undefined: missing"}})
+	setTestDiagnostics(ed, []insight.LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError, Message: "undefined: missing"}})
 	before := paintEditor(ed, 80, 10)
 	ed.InsertRune('x')
 	after := paintEditor(ed, 80, 10)
@@ -82,7 +82,7 @@ func TestTypingPreservesDiagnosticPaintOnUnchangedSourceOnly(t *testing.T) {
 
 func TestLaterDiagnosticBatchCannotBlankUnchangedInkWhileSourceAdvances(t *testing.T) {
 	ed := loadEditorText(t, "diagnostic.go", "var value = 1\nvar bad = missing\n")
-	diags := []LSPDiagnostic{{Line: 1, Col: 10, EndLine: 1, EndCol: 17, Severity: DiagError, Message: "undefined: missing"}}
+	diags := []insight.LSPDiagnostic{{Line: 1, Col: 10, EndLine: 1, EndCol: 17, Severity: DiagError, Message: "undefined: missing"}}
 	setTestDiagnostics(ed, diags)
 	ed.SetCursorPosition(0, 9)
 	before := paintEditor(ed, 80, 8).Get(ed.gutterWidth()+10, 1)
@@ -102,7 +102,7 @@ func TestLaterDiagnosticBatchCannotBlankUnchangedInkWhileSourceAdvances(t *testi
 	later := testDiagnosticFacts(ed, diags) // a different batch for revision 42
 	ed.InsertRune('y')
 	acknowledge("second")
-	later.State = types.InsightStale // publication 42 arrives after source 43
+	later.State = insight.Stale // publication 42 arrives after source 43
 	ed.SetDiagnostics(later)
 	after := paintEditor(ed, 80, 8).Get(ed.gutterWidth()+10, 1)
 	if !before.Equal(after) {
@@ -120,7 +120,7 @@ func TestLaterDiagnosticBatchCannotBlankUnchangedInkWhileSourceAdvances(t *testi
 
 func TestDiagnosticPaintMapsLineChangesAndClearsOnPublication(t *testing.T) {
 	ed := loadEditorText(t, "mapped.go", "package main\nvar bad = missing\n")
-	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 1, Col: 10, EndLine: 1, EndCol: 17, Severity: DiagError}})
+	setTestDiagnostics(ed, []insight.LSPDiagnostic{{Line: 1, Col: 10, EndLine: 1, EndCol: 17, Severity: DiagError}})
 	ed.SetCursorPosition(0, 0)
 	ed.InsertRune('\n')
 	if len(ed.lineDiagnostics(2)) != 1 || len(ed.lineDiagnostics(1)) != 0 {
@@ -133,7 +133,7 @@ func TestDiagnosticPaintMapsLineChangesAndClearsOnPublication(t *testing.T) {
 	if len(ed.lineDiagnostics(2)) != 0 {
 		t.Fatal("empty new publication retained provisional underline")
 	}
-	setTestDiagnostics(ed, []LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError}})
+	setTestDiagnostics(ed, []insight.LSPDiagnostic{{Line: 2, Col: 10, EndLine: 2, EndCol: 17, Severity: DiagError}})
 	ed.ApplyDisk([]byte("package replacement\n"), textencoding.UTF8, sha256.Sum256([]byte("package replacement\n")))
 	if len(ed.lineDiagnostics(2)) != 0 {
 		t.Fatal("replacement retained unrelated diagnostic paint")
@@ -144,8 +144,8 @@ func TestLSPDiagnosticsUTF16ColumnsReachVisualCharacter(t *testing.T) {
 	ed := loadEditorText(t, "unicode.txt", "\t界é😀abc\r\nab\t界é😀XYZ\r\n")
 	// First line: tab=4, 界=2, é=1, 😀=2, so UTF-16 6 is visual 9.
 	// Second line: ab+tab=4, then 界é😀=5, X=1: UTF-16 9 is visual 10.
-	wire := []LSPDiagnostic{{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: DiagError}}
-	want := LSPDiagnostic{Line: 0, Col: 9, EndLine: 1, EndCol: 10, Severity: DiagError}
+	wire := []insight.LSPDiagnostic{{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: DiagError}}
+	want := insight.LSPDiagnostic{Line: 0, Col: 9, EndLine: 1, EndCol: 10, Severity: DiagError}
 	for range 3 {
 		setTestDiagnostics(ed, wire)
 		if got := ed.Diagnostics(); len(got) != 1 || got[0] != want {
@@ -174,9 +174,9 @@ func TestLSPDiagnosticsUTF16ColumnsReachVisualCharacter(t *testing.T) {
 
 func TestLSPDiagnosticMultilinePaintHasBoundedExpansion(t *testing.T) {
 	ed := loadEditorText(t, "bounded.txt", strings.Repeat("abc\n", 20_000))
-	diags := make([]LSPDiagnostic, 100)
+	diags := make([]insight.LSPDiagnostic, 100)
 	for i := range diags {
-		diags[i] = LSPDiagnostic{Line: i, Col: 1, EndLine: int(^uint(0) >> 1), EndCol: 1, Severity: DiagError}
+		diags[i] = insight.LSPDiagnostic{Line: i, Col: 1, EndLine: int(^uint(0) >> 1), EndCol: 1, Severity: DiagError}
 	}
 	setTestDiagnostics(ed, diags)
 	total := 0
@@ -193,7 +193,7 @@ func TestLSPDiagnosticMultilinePaintHasBoundedExpansion(t *testing.T) {
 
 func TestLSPDiagnosticsCannotHoverOrPaintOldTextAfterEditAndUndo(t *testing.T) {
 	ed := opsEditor(t, "main.go", "bad")
-	diagnostics := []LSPDiagnostic{{Line: 0, EndLine: 0, EndCol: 3, Severity: DiagError, Message: "old source error"}}
+	diagnostics := []insight.LSPDiagnostic{{Line: 0, EndLine: 0, EndCol: 3, Severity: DiagError, Message: "old source error"}}
 	setTestDiagnostics(ed, diagnostics)
 	old := ed.DiagnosticFacts()
 	if len(ed.DiagnosticsAt(0, 0)) != 1 || len(ed.lineDiagnostics(0)) != 1 {
@@ -241,7 +241,7 @@ func TestLSPDiagnosticsCannotHoverOrPaintOldTextAfterEditAndUndo(t *testing.T) {
 
 func TestMouseDiagnosticHoverStaysWithinExactDiagnosticSet(t *testing.T) {
 	e := newInlayTestEditor(t, "abcdefghijklmnop")
-	setTestDiagnostics(e, []LSPDiagnostic{
+	setTestDiagnostics(e, []insight.LSPDiagnostic{
 		{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "error"},
 		{Line: 0, Col: 5, EndCol: 8, Severity: DiagWarning, Message: "warning"},
 		{Line: 0, Col: 13, EndCol: 16, Severity: DiagHint, Message: "hint"},
@@ -269,9 +269,9 @@ func TestMouseDiagnosticHoverStaysWithinExactDiagnosticSet(t *testing.T) {
 // every diagnostic on each cell. Include a dense publication in the benchmark.
 func BenchmarkDiagnosticHoverWithinSpan(b *testing.B) {
 	e := newInlayTestEditor(b, "abcdefghijklmnop")
-	ds := make([]LSPDiagnostic, 1000)
+	ds := make([]insight.LSPDiagnostic, 1000)
 	for i := range ds {
-		ds[i] = LSPDiagnostic{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "diagnostic"}
+		ds[i] = insight.LSPDiagnostic{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "diagnostic"}
 	}
 	e.SetDiagnostics(testDiagnosticFacts(e, ds))
 	renderTestInlays(e, 40, 8, false)
@@ -286,7 +286,7 @@ func BenchmarkDiagnosticHoverWithinSpan(b *testing.B) {
 
 func TestDiagnosticHoverAnchorWhenSpanStartsOffscreen(t *testing.T) {
 	e := newInlayTestEditor(t, "abcdefghijklmnop")
-	setTestDiagnostics(e, []LSPDiagnostic{{Line: 0, Col: 1, EndCol: 15, Severity: DiagInfo, Message: "info"}})
+	setTestDiagnostics(e, []insight.LSPDiagnostic{{Line: 0, Col: 1, EndCol: 15, Severity: DiagInfo, Message: "info"}})
 	renderTestInlays(e, 40, 8, false)
 	e.scrollX = 5
 	x := e.gutterWidth()
@@ -303,9 +303,9 @@ func TestDiagnosticHoverAnchorWhenSpanStartsOffscreen(t *testing.T) {
 
 func BenchmarkDiagnosticHoverPrevious(b *testing.B) {
 	e := newInlayTestEditor(b, "abcdefghijklmnop")
-	ds := make([]LSPDiagnostic, 1000)
+	ds := make([]insight.LSPDiagnostic, 1000)
 	for i := range ds {
-		ds[i] = LSPDiagnostic{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "diagnostic"}
+		ds[i] = insight.LSPDiagnostic{Line: 0, Col: 2, EndCol: 12, Severity: DiagError, Message: "diagnostic"}
 	}
 	e.SetDiagnostics(testDiagnosticFacts(e, ds))
 	renderTestInlays(e, 40, 8, false)

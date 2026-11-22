@@ -12,7 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -102,7 +103,7 @@ func TestFastCommandConnectedShellsAndRequests(t *testing.T) {
 	remoteJourneyUntil(t, shells, func() bool {
 		for _, shell := range shells {
 			owner := shell.app.ws.SessionForAgent(id)
-			if owner == nil || owner.Settings.Effective.FastMode != types.FastModeOn {
+			if owner == nil || owner.Settings.Effective.FastMode != setting.FastModeOn {
 				return false
 			}
 		}
@@ -122,7 +123,7 @@ func TestFastCommandConnectedShellsAndRequests(t *testing.T) {
 	shells = append(shells, three)
 	remoteJourneyUntil(t, shells, func() bool {
 		owner := three.app.ws.SessionForAgent(id)
-		return three.app.AgentView.ActiveID() == id && owner != nil && owner.Settings.Effective.FastMode == types.FastModeOn
+		return three.app.AgentView.ActiveID() == id && owner != nil && owner.Settings.Effective.FastMode == setting.FastModeOn
 	})
 	three.app.paintShellFrame()
 	if row := rowText(three.app, 0); !strings.Contains(row, "test-model fast") {
@@ -137,11 +138,11 @@ func TestFastCommandConnectedShellsAndRequests(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatal("enabled request was not sent")
 	}
-	remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted })
+	remoteJourneyUntil(t, shells, func() bool { return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted })
 	send(one, "/fast")
 	remoteJourneyUntil(t, shells, func() bool {
 		for _, shell := range shells {
-			if shell.app.ws.SessionForAgent(id).Settings.Effective.FastMode != types.FastModeOff {
+			if shell.app.ws.SessionForAgent(id).Settings.Effective.FastMode != setting.FastModeOff {
 				return false
 			}
 		}
@@ -171,7 +172,7 @@ func TestFastCommandUnsupportedConnectionIsNotPresentedAsFast(t *testing.T) {
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
 	one.app.paintShellFrame()
-	if got := one.app.ws.SessionForAgent(id).Settings.Effective.FastMode; got != types.FastModeUnsupported {
+	if got := one.app.ws.SessionForAgent(id).Settings.Effective.FastMode; got != setting.FastModeUnsupported {
 		t.Fatalf("unsupported selection = %q", got)
 	}
 	header, footer := rowText(one.app, 0), rowText(one.app, one.app.height-1)
@@ -195,7 +196,7 @@ func TestMissingFastConnectionIsNotGuessedUnsupported(t *testing.T) {
 	id := addBackendTestOrchestrator(t, app)
 	app.width, app.height = 120, 32
 	app.switchToAgentView(id)
-	app.ws.SessionForAgent(id).Settings.Effective.FastMode = types.FastModeUnavailable
+	app.ws.SessionForAgent(id).Settings.Effective.FastMode = setting.FastModeUnavailable
 	app.paintShellFrame()
 	header, footer := rowText(app, 0), rowText(app, app.height-1)
 	if strings.Contains(header, "test-model fast") || !strings.Contains(footer, "Fast unavailable") || strings.Contains(footer, "unsupported") {
@@ -216,7 +217,7 @@ func TestFastIndicatorStaysWithItsRootSession(t *testing.T) {
 			app.ws.Status().Dismiss(n.ID)
 		}
 	}
-	pane := app.ws.PaneMgr().GetOrCreate("fast-child", workspace.PaneAgent, "child")
+	pane := app.ws.PaneMgr().Ensure("fast-child", workspace.PaneAgent, "child")
 	child := workspace.NewAgentState("fast-child", pane.Messages, app.ws.Logger())
 	app.ws.AgentMgr().AddSubAgent("fast-child", first, "Child", "child-model", "researcher", child)
 	for _, agentID := range []string{second, "fast-child"} {

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 )
 
 func TestWorkspaceCatalogBriefBusyPreservesCommittedMetadata(t *testing.T) {
@@ -43,7 +43,7 @@ func TestWorkspaceCatalogBriefBusyPreservesCommittedMetadata(t *testing.T) {
 	defer func() { _, _ = writer.Exec("ROLLBACK") }()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	read := make(chan *WorkspaceInfo, 1)
+	read := make(chan *Info, 1)
 	go func() { read <- readWorkspaceMetaBounded(ctx, path, 150*time.Millisecond) }()
 	select {
 	case info := <-read:
@@ -170,9 +170,9 @@ func TestWorkspaceCatalogEscapesProfilePathWithoutWriting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, read := range []func() *WorkspaceInfo{
-				func() *WorkspaceInfo { return readWorkspaceMeta(t.Context(), path) },
-				func() *WorkspaceInfo { return readWorkspaceMetaLight(t.Context(), path) },
+			for _, read := range []func() *Info{
+				func() *Info { return readWorkspaceMeta(t.Context(), path) },
+				func() *Info { return readWorkspaceMetaLight(t.Context(), path) },
 			} {
 				info := read()
 				if info == nil || info.ProjectDir != canonicalizePath(project) || info.LastAccessed != 123 {
@@ -205,7 +205,7 @@ func TestRecentWorkspacesOrderByAccessNotSessionsOrCatalogReads(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	for _, step := range []struct {
-		db *WorkspaceDB
+		db *DB
 		at int64
 	}{{da, 100}, {db, 200}, {da, 300}, {da, 50}} {
 		if err := step.db.RecordAccess(t.Context(), time.Unix(0, step.at)); err != nil {
@@ -257,11 +257,11 @@ func TestWorkspaceCatalogAbbreviatesHostHomeNotProfileDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := make(map[string]WorkspaceInfo, len(infos))
+	got := make(map[string]Info, len(infos))
 	for _, info := range infos {
 		got[info.ProjectDir] = info
 	}
-	if info := got[inside]; info.ID != WorkspaceID(inside) || info.ShortPath() != filepath.Join("~", "deep", "project") || info.ProjectDir != inside {
+	if info := got[inside]; info.ID != ID(inside) || info.ShortPath() != filepath.Join("~", "deep", "project") || info.ProjectDir != inside {
 		t.Fatalf("home-relative label changed catalog identity: %+v", info)
 	}
 	if info := got[outside]; info.ShortPath() != outside || info.DisplayPath != "" {

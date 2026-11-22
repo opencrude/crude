@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 	"crude/tui/filetree"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -129,7 +129,7 @@ func TestOpenFileSearchAndDirectoryIntentsRetainOwnerFences(t *testing.T) {
 	if !search.ValidFor(screen) || search.ValidFor(New(nil)) || !screen.BeginPathSearch(search.Query) {
 		t.Fatal("search lost exact owner")
 	}
-	if !screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: pathwalk.Entry{Path: pickerPath("nested/b.txt"), Name: "b.txt", Relative: "nested/b.txt"}}}) {
+	if !screen.ApplyPathSearch(search.Query, []filetree.PathMatch{{Entry: fastwalk.Entry{Path: pickerPath("nested/b.txt"), Name: "b.txt", Relative: "nested/b.txt"}}}) {
 		t.Fatal("search result not applied")
 	}
 	// The result projection includes ancestor rows; focus the matched file itself.

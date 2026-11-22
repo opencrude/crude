@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
-	"crude/metrics"
+	"crude/internal/buildinfo"
+	"crude/internal/metrics"
 )
 
 func waitDataUsage(t *testing.T, u *DataUsage) *metrics.DiskUsage {
@@ -54,11 +54,11 @@ func TestDataUsageMeasuresPartsWorkspacesAndDeletedProjects(t *testing.T) {
 		}
 		_ = db.Close()
 	}
-	keptDir := filepath.Join(dataDir, "workspaces", WorkspaceID(kept))
+	keptDir := filepath.Join(dataDir, "workspaces", ID(kept))
 	write(filepath.Join(keptDir, "sessions", "a.db"), 6000)
 	write(filepath.Join(keptDir, "local-history", "objects", "x"), 3000)
 	write(filepath.Join(keptDir, "executions", "wt", "file"), 2000)
-	write(filepath.Join(dataDir, "workspaces", WorkspaceID(gone), "sessions", "b.db"), 1000)
+	write(filepath.Join(dataDir, "workspaces", ID(gone), "sessions", "b.db"), 1000)
 	write(filepath.Join(dataDir, "backups", "old.db"), 500)
 	write(filepath.Join(dataDir, "config.json"), 10)
 	if err := os.RemoveAll(gone); err != nil {

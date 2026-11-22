@@ -8,9 +8,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/text/search"
+	"crude/text/textsearch"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // rankCompletions is a display projection of one acknowledged result set. It
@@ -27,13 +27,13 @@ import (
 //     suggestions. A row whose edit does not cover that word (empty prefix)
 //     must still match it: after "strings.To", "const" would only append
 //     nonsense, so it is not offered.
-func rankCompletions(rows []types.LSPCompletionEntry, typed string) []types.LSPCompletionEntry {
+func rankCompletions(rows []insight.LSPCompletionEntry, typed string) []insight.LSPCompletionEntry {
 	type ranked struct {
-		row         types.LSPCompletionEntry
+		row         insight.LSPCompletionEntry
 		tier, score int
 	}
 	out := make([]ranked, 0, len(rows))
-	seen := make(map[[3]string][]types.CompletionItem, len(rows))
+	seen := make(map[[3]string][]insight.CompletionItem, len(rows))
 	for _, row := range rows {
 		_, score, matches := textsearch.Fuzzy(row.FilterText, row.Prefix, false)
 		if !matches {
@@ -49,7 +49,7 @@ func rankCompletions(rows []types.LSPCompletionEntry, typed string) []types.LSPC
 			continue
 		}
 		key := [3]string{row.Insertion.Label, row.Documentation.Detail, insertion}
-		if slices.ContainsFunc(seen[key], func(prior types.CompletionItem) bool {
+		if slices.ContainsFunc(seen[key], func(prior insight.CompletionItem) bool {
 			return reflect.DeepEqual(prior, row.Insertion)
 		}) {
 			continue
@@ -70,7 +70,7 @@ func rankCompletions(rows []types.LSPCompletionEntry, typed string) []types.LSPC
 		return cmp.Or(cmp.Compare(a.tier, b.tier), cmp.Compare(a.row.SortText, b.row.SortText),
 			cmp.Compare(b.score, a.score), cmp.Compare(len(a.row.Insertion.Label), len(b.row.Insertion.Label)))
 	})
-	result := make([]types.LSPCompletionEntry, len(out))
+	result := make([]insight.LSPCompletionEntry, len(out))
 	for i, r := range out {
 		result[i] = r.row
 	}
@@ -79,7 +79,7 @@ func rankCompletions(rows []types.LSPCompletionEntry, typed string) []types.LSPC
 
 // completionInsertText is the text the primary edit inserts, by the same
 // rule as lspcompletion.PrimaryEdit.
-func completionInsertText(item types.CompletionItem) string {
+func completionInsertText(item insight.CompletionItem) string {
 	switch {
 	case item.TextEdit != nil:
 		return item.TextEdit.NewText
@@ -96,7 +96,7 @@ func completionInsertText(item types.CompletionItem) string {
 // snippet fields, no other edits such as an import), so the editor may insert
 // it itself; otherwise the inline text is a preview and Tab accepts the row
 // through the normal path.
-func completionGhostSuffix(row types.LSPCompletionEntry, line, col int) (suffix string, literal, ok bool) {
+func completionGhostSuffix(row insight.LSPCompletionEntry, line, col int) (suffix string, literal, ok bool) {
 	item := row.Insertion
 	if row.Prefix == "" {
 		return "", false, false
@@ -110,7 +110,7 @@ func completionGhostSuffix(row types.LSPCompletionEntry, line, col int) (suffix 
 	}
 	suffix = text[len(row.Prefix):]
 	literal = item.Snippet == nil && len(item.AdditionalTextEdits) == 0
-	return suffix, literal, types.ValidEditorPredictionInsertion(suffix)
+	return suffix, literal, insight.ValidEditorPredictionInsertion(suffix)
 }
 
 // obviousCompletion is the best row that continues the typed text exactly
@@ -120,8 +120,8 @@ func completionGhostSuffix(row types.LSPCompletionEntry, line, col int) (suffix 
 // ToLower), or equal names with different original edits, are a real choice, so
 // none is shown inline. Names are compared, not inserted text, because a server
 // may add call syntax (ToUpper()).
-func obviousCompletion(rows []types.LSPCompletionEntry) (types.LSPCompletionEntry, bool) {
-	var best types.LSPCompletionEntry
+func obviousCompletion(rows []insight.LSPCompletionEntry) (insight.LSPCompletionEntry, bool) {
+	var best insight.LSPCompletionEntry
 	var names []string
 	for _, row := range rows {
 		if row.Prefix == "" || !strings.HasPrefix(completionInsertText(row.Insertion), row.Prefix) {
@@ -133,19 +133,19 @@ func obviousCompletion(rows []types.LSPCompletionEntry) (types.LSPCompletionEntr
 		names = append(names, completionName(row))
 	}
 	if len(names) == 0 {
-		return types.LSPCompletionEntry{}, false
+		return insight.LSPCompletionEntry{}, false
 	}
 	top := completionName(best)
 	for i, name := range names {
 		if !strings.HasPrefix(name, top) || i > 0 && name == top {
-			return types.LSPCompletionEntry{}, false
+			return insight.LSPCompletionEntry{}, false
 		}
 	}
 	return best, true
 }
 
 // completionName is the text a row is matched by.
-func completionName(row types.LSPCompletionEntry) string {
+func completionName(row insight.LSPCompletionEntry) string {
 	if row.FilterText != "" {
 		return row.FilterText
 	}
@@ -153,7 +153,7 @@ func completionName(row types.LSPCompletionEntry) string {
 }
 
 // offerCompletionGhost shows the obvious suggestion as faded text at the caret.
-func (m *App) offerCompletionGhost(s *completionState, rows []types.LSPCompletionEntry) bool {
+func (m *App) offerCompletionGhost(s *completionState, rows []insight.LSPCompletionEntry) bool {
 	ed := s.editor
 	if !s.automatic || m.ws.LSPMgr().Settings().CompletionAcceptance() == "enter" {
 		return false

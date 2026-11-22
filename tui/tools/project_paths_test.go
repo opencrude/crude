@@ -3,7 +3,7 @@ package tools
 import (
 	"testing"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestProjectPathsRelativeAcrossPlatforms(t *testing.T) {
@@ -60,13 +60,13 @@ func TestProjectPathsOnlyFormatsPathOperands(t *testing.T) {
 		{"unknown_tool", "", "", "/home/me/project/private", "/home/me/project/private"},
 	} {
 		t.Run(tc.name+"/"+tc.operand, func(t *testing.T) {
-			msg := types.ChatMessage{ToolName: tc.name, ToolInput: tc.input, ToolScope: tc.scope}
+			msg := conversation.ChatMessage{ToolName: tc.name, ToolInput: tc.input, ToolScope: tc.scope}
 			if got := p.ToolOperand(&msg, tc.operand); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
-	streaming := types.ChatMessage{ToolName: "lsp", ToolProgressLabel: "/home/me/project/src/a.go"}
+	streaming := conversation.ChatMessage{ToolName: "lsp", ToolProgressLabel: "/home/me/project/src/a.go"}
 	if got := p.ToolOperand(&streaming, streaming.ToolProgressLabel); got != "src/a.go" {
 		t.Fatalf("streaming LSP path = %q", got)
 	}
@@ -74,7 +74,7 @@ func TestProjectPathsOnlyFormatsPathOperands(t *testing.T) {
 
 func TestProjectPathSimpleOperandDoesNotAllocate(t *testing.T) {
 	p := NewProjectPaths("/home/me/project")
-	msg := types.ChatMessage{ToolName: "read_file"}
+	msg := conversation.ChatMessage{ToolName: "read_file"}
 	if allocs := testing.AllocsPerRun(100, func() {
 		if got := p.ToolOperand(&msg, "/home/me/project/src/main.go"); got != "src/main.go" {
 			t.Fatal(got)
@@ -86,7 +86,7 @@ func TestProjectPathSimpleOperandDoesNotAllocate(t *testing.T) {
 
 func BenchmarkProjectPathSimpleOperand(b *testing.B) {
 	p := NewProjectPaths("/home/me/project")
-	msg := types.ChatMessage{ToolName: "read_file"}
+	msg := conversation.ChatMessage{ToolName: "read_file"}
 	b.ReportAllocs()
 	for b.Loop() {
 		_ = p.ToolOperand(&msg, "/home/me/project/src/main.go")

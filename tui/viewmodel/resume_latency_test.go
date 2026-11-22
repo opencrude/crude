@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"crude/internal/fileuri"
+	"crude/types/conversation"
 	"database/sql"
 	"os"
 	"strings"
@@ -10,7 +11,6 @@ import (
 
 	"crude/agent/sessiondb"
 	"crude/tui/tools"
-	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -35,7 +35,7 @@ func TestResumeLatencyArchive(t *testing.T) {
 	views := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(messages))
 	var files, rows, longestPath int
 	for _, view := range views {
-		if view.Role != ttypes.RoleTool {
+		if view.Role != conversation.RoleTool {
 			continue
 		}
 		for _, file := range tools.ParseUnifiedDiffStruct(view.Content) {
@@ -49,26 +49,26 @@ func TestResumeLatencyArchive(t *testing.T) {
 	app.AddOrchestrator("root")
 	enableIdleTicks(t, app)
 	start = time.Now()
-	app.handleAppMessages(ttypes.HistoryMessagesMsg(views))
+	app.handleAppMessages(HistoryMessagesMsg(views))
 	t.Logf("hydrate: %s, %d rows", time.Since(start), len(views))
 	start = time.Now()
 	app.paintShellFrame()
 	t.Logf("first paint: %s", time.Since(start))
 	start = time.Now()
 	for range 10 {
-		app.handleTick(ttypes.TickMsg(time.Now()))
+		app.handleTick(TickMsg(time.Now()))
 		app.paintShellFrame()
 	}
 	t.Logf("ten settled frames: %s", time.Since(start))
 	for _, phase := range []string{"preparing", "waiting_provider"} {
 		start = time.Now()
-		app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": phase, "progress": 100, "provider": "ollama"}})
+		app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": phase, "progress": 100, "provider": "ollama"}})
 		app.paintShellFrame()
 		t.Logf("%s update + paint: %s", phase, time.Since(start))
 	}
 	start = time.Now()
 	for range 200 {
-		app.handleTick(ttypes.TickMsg(time.Now()))
+		app.handleTick(TickMsg(time.Now()))
 		app.paintShellFrame()
 	}
 	t.Logf("200 provider-wait frames: %s", time.Since(start))
@@ -79,16 +79,16 @@ func TestProviderWaitWithLargeDiffRemainsResponsive(t *testing.T) {
 	app.AddOrchestrator("root")
 	enableIdleTicks(t, app)
 	raw := "--- a/main.go\n+++ b/main.go\n@@ -0,0 +1,3000 @@\n" + strings.Repeat("+var number = 123456789 // wrapped source code\n", 3000)
-	app.handleAppMessages(ttypes.HistoryMessagesMsg{{Role: ttypes.RoleTool, ToolName: "edit_file", ToolStatus: "success", Content: raw}})
+	app.handleAppMessages(HistoryMessagesMsg{{Role: conversation.RoleTool, ToolName: "edit_file", ToolStatus: "success", Content: raw}})
 	start := time.Now()
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "waiting_provider", "progress": 100, "provider": "ollama"}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "waiting_provider", "progress": 100, "provider": "ollama"}})
 	app.paintShellFrame()
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("provider-wait first frame froze on completed diff: %s", elapsed)
 	}
 	for range 20 {
 		start = time.Now()
-		app.handleTick(ttypes.TickMsg(time.Now()))
+		app.handleTick(TickMsg(time.Now()))
 		app.paintShellFrame()
 		if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
 			t.Fatalf("provider-wait tick froze: %s", elapsed)
@@ -110,8 +110,8 @@ func BenchmarkResumeHydration(b *testing.B) {
 		conversation := workspace.NewConversation()
 		app.ws.PaneMgr().Get("root").Messages = conversation
 		app.ws.AgentMgr().Get("root").State.Messages = conversation
-		app.subPaneProjections.GetExisting("root").renderer.SyncMessages(nil, 0, 0)
+		app.subPaneProjections.Existing("root").renderer.SyncMessages(nil, 0, 0)
 		b.StartTimer()
-		app.handleAppMessages(ttypes.HistoryMessagesMsg(messages))
+		app.handleAppMessages(HistoryMessagesMsg(messages))
 	}
 }

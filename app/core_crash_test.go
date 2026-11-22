@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
-	"crude/retry"
+	"crude/internal/buildinfo"
+	"crude/internal/retry"
 )
 
 // TestMain's production CLI route runs Main, not a simulated recorder. Only the

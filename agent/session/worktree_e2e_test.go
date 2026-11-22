@@ -17,11 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
+	"crude/types/setting"
 )
 
 // This adapter supplies accepted document bytes exactly as the workspace owner
@@ -161,8 +162,8 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryCrafter] = CategoryConfig{AccountID: "account", Model: "worktree-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
-	cfg.Agents.AgentProfiles = map[string]AgentProfileConfig{}
-	cfg.Agents.AgentProfiles["native"] = AgentProfileConfig{Category: CategoryCrafter, AccountID: "account", Model: "gpt-5.3-codex"}
+	cfg.Agents.AgentProfiles = map[string]setting.AgentProfile{}
+	cfg.Agents.AgentProfiles["native"] = setting.AgentProfile{Category: CategoryCrafter, AccountID: "account", Model: "gpt-5.3-codex"}
 	if runtime.GOOS == "windows" {
 		cfg.Agents.Shell = "cmd" // the test commands are cmd.exe command lines
 	}
@@ -189,7 +190,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 	if _, err := s.registerCollaborator(t.Context(), "worktree-parent", "Parent", s.sessionID, "", CategoryDefault, s.db); err != nil {
 		t.Fatal(err)
 	}
-	var handles []*agent.SubAgentHandle
+	var handles []*turnloop.SubAgentHandle
 	for _, marker := range []string{"FIRST_CHILD", "SECOND_CHILD"} {
 		params := map[string]any{"category": CategoryCrafter, "description": marker, "instructions": "Perform the fixture sequence", "file_ownership": []string{"overlap.txt"}}
 		if marker == "SECOND_CHILD" {
@@ -206,7 +207,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 		if err := json.Unmarshal([]byte(result.Content), &identity); err != nil {
 			t.Fatal(err)
 		}
-		handle, ok := r.mgr.GetActive(agent.AgentID(identity.AgentID))
+		handle, ok := r.mgr.Active(turnloop.AgentID(identity.AgentID))
 		if !ok {
 			t.Fatal("child missing from manager")
 		}
@@ -263,7 +264,7 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 				if !strings.Contains(message.ContentString(), "outside the execution checkout") {
 					t.Fatalf("absolute escape was not rejected: %s", message.ContentString())
 				}
-			} else if message.ToolError || agent.IsToolError(message.ContentString()) {
+			} else if message.ToolError || turnloop.IsToolError(message.ContentString()) {
 				t.Fatalf("unexpected failure for %s: %s", message.ToolCallID, message.ContentString())
 			}
 		}

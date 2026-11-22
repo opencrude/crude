@@ -6,24 +6,24 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
 func TestRedundantStopNoticesAreNeutralToRowsHeadersAndGrouping(t *testing.T) {
-	for _, notice := range []types.ChatMessage{
-		{InternalID: "stop", Role: types.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: "stop"},
-		{InternalID: "incident", Role: types.RoleStatus, Recovery: &recovery.Status{ID: "incident", State: recovery.Cancelled, Detail: "retained cancelled incident"}},
+	for _, notice := range []conversation.ChatMessage{
+		{InternalID: "stop", Role: conversation.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: "stop"},
+		{InternalID: "incident", Role: conversation.RoleStatus, Recovery: &recovery.Status{ID: "incident", State: recovery.Cancelled, Detail: "retained cancelled incident"}},
 	} {
-		for _, content := range [][]types.ChatMessage{
-			{{InternalID: "a", Role: types.RoleAssistant, Content: "Accepted partial findings", TurnGeneration: 1}, {InternalID: "b", Role: types.RoleAssistant, Content: "More accepted findings", TurnGeneration: 1}},
-			{{InternalID: "a", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: types.ToolStatusSuccess}, {InternalID: "b", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "b.go", ToolStatus: types.ToolStatusSuccess}},
+		for _, content := range [][]conversation.ChatMessage{
+			{{InternalID: "a", Role: conversation.RoleAssistant, Content: "Accepted partial findings", TurnGeneration: 1}, {InternalID: "b", Role: conversation.RoleAssistant, Content: "More accepted findings", TurnGeneration: 1}},
+			{{InternalID: "a", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: conversation.ToolStatusSuccess}, {InternalID: "b", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "b.go", ToolStatus: conversation.ToolStatusSuccess}},
 		} {
 			baseline := newActivityRenderer()
 			baseline.SyncMessages(content, 1, 0)
 			want := baseline.ExportMessageRowsSnapshot(100)
 			r := newActivityRenderer()
-			r.SyncMessages([]types.ChatMessage{content[0], notice, content[1]}, 1, 0)
+			r.SyncMessages([]conversation.ChatMessage{content[0], notice, content[1]}, 1, 0)
 			got := r.ExportMessageRowsSnapshot(100)
 			if got.ContentHeight != want.ContentHeight || !reflect.DeepEqual(got.Rows, want.Rows) {
 				t.Fatalf("notice %s changed visible adjacency/spacing: got %+v want %+v", notice.InternalID, got, want)
@@ -44,7 +44,7 @@ func TestStopFilteringKeepsRecoveryEvidenceAndExactActions(t *testing.T) {
 			}
 			r := newActivityRenderer()
 			// A stale generic phase cannot hide a real actionable/resumed incident.
-			r.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, LifecyclePhase: "stopped", Recovery: &status}}, 1, 0)
+			r.SyncMessages([]conversation.ChatMessage{{InternalID: status.ID, Role: conversation.RoleStatus, LifecyclePhase: "stopped", Recovery: &status}}, 1, 0)
 			r.ToggleDisclosure(status.ID)
 			got := r.ExportMessageRowsSnapshot(100)
 			if state == recovery.Cancelled {
@@ -77,15 +77,15 @@ func TestStopFilteringKeepsRecoveryEvidenceAndExactActions(t *testing.T) {
 }
 
 func TestStopFilteringDoesNotHideCancelledToolsErrorsOrContextBoundaries(t *testing.T) {
-	for _, message := range []types.ChatMessage{
-		{InternalID: "cancelled-tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: types.ToolStatusCancelled, Content: "Retained partial output"},
-		{InternalID: "error", Role: types.RoleError, Content: "Actual failure"},
-		{InternalID: "failed", Role: types.RoleStatus, LifecyclePhase: "failed", Content: "Failure reason"},
-		{InternalID: "compaction", Role: types.RoleStatus, LifecycleOperationID: "compact", LifecyclePhase: "compaction_cancelled"},
-		{InternalID: "history", Role: types.RoleStatus, LifecycleOperationID: "history", LifecyclePhase: "history_restored"},
+	for _, message := range []conversation.ChatMessage{
+		{InternalID: "cancelled-tool", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: conversation.ToolStatusCancelled, Content: "Retained partial output"},
+		{InternalID: "error", Role: conversation.RoleError, Content: "Actual failure"},
+		{InternalID: "failed", Role: conversation.RoleStatus, LifecyclePhase: "failed", Content: "Failure reason"},
+		{InternalID: "compaction", Role: conversation.RoleStatus, LifecycleOperationID: "compact", LifecyclePhase: "compaction_cancelled"},
+		{InternalID: "history", Role: conversation.RoleStatus, LifecycleOperationID: "history", LifecyclePhase: "history_restored"},
 	} {
 		r := newActivityRenderer()
-		r.SyncMessages([]types.ChatMessage{message}, 1, 0)
+		r.SyncMessages([]conversation.ChatMessage{message}, 1, 0)
 		got := r.ExportMessageRowsSnapshot(100)
 		if len(got.Rows) != 1 || got.ContentHeight == 0 || got.Rows[0].ID != message.InternalID {
 			t.Fatalf("stop filter erased non-generic evidence: %+v", message)

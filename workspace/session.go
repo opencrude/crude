@@ -9,8 +9,9 @@ import (
 
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 // Session pairs one workspace conversation with its backend execution owner and
@@ -60,7 +61,7 @@ type Session struct {
 	usageRecords map[string]sessiondb.UsageRecord
 	usageMu      sync.RWMutex
 	usageVersion uint64
-	usageCache   map[usageCacheKey]types.UsageSummary
+	usageCache   map[usageCacheKey]statuscenter.UsageSummary
 
 	// ── Backend session (owned by this frontend session)
 	//
@@ -92,7 +93,7 @@ func NewSession(sessionID, sessionDir string, db *sql.DB, lg Logger) *Session {
 		RefStore:     NewReferenceStore(sessionID, sessionDir, db),
 		CreatedAt:    time.Now(),
 		usageRecords: make(map[string]sessiondb.UsageRecord),
-		usageCache:   make(map[usageCacheKey]types.UsageSummary),
+		usageCache:   make(map[usageCacheKey]statuscenter.UsageSummary),
 	}
 	_ = lg // logger is used by AgentState, not Session itself
 	return s
@@ -106,7 +107,7 @@ func NewReplicaSession(sessionID string, refs SessionReferences) *Session {
 		SessionID:    sessionID,
 		RefStore:     refs,
 		usageRecords: make(map[string]sessiondb.UsageRecord),
-		usageCache:   make(map[usageCacheKey]types.UsageSummary),
+		usageCache:   make(map[usageCacheKey]statuscenter.UsageSummary),
 	}
 }
 
@@ -123,12 +124,13 @@ func (s *Session) attachBackend(backend *session.Session) {
 // SessionSettingsState is presentation-neutral settings state for one
 // conversation. Effective is the result of applying Overrides to Base.
 type SessionSettingsState struct {
-	Effective types.Settings
-	Base      types.Settings
-	Overrides map[string]types.CategorySettings
+	Effective setting.Settings
+	Base      setting.Settings
+	Overrides map[string]setting.Category
 }
 
-func NewSessionSettingsState(effective, base types.Settings, overrides map[string]types.CategorySettings) *SessionSettingsState {
+// NewSessionSettingsState returns copies of the session settings and overrides.
+func NewSessionSettingsState(effective, base setting.Settings, overrides map[string]setting.Category) *SessionSettingsState {
 	return &SessionSettingsState{
 		Effective: cloneSettings(effective),
 		Base:      cloneSettings(base),
@@ -136,17 +138,17 @@ func NewSessionSettingsState(effective, base types.Settings, overrides map[strin
 	}
 }
 
-func cloneSettings(src types.Settings) types.Settings {
+func cloneSettings(src setting.Settings) setting.Settings {
 	dst := src
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
-	dst.Agents.AgentProfiles = types.CloneAgentProfiles(src.Agents.AgentProfiles)
+	dst.Agents.AgentProfiles = setting.CloneAgentProfiles(src.Agents.AgentProfiles)
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
 	dst.SessionEdits = slices.Clone(src.SessionEdits)
 	dst.Capabilities = captypes.Clone(src.Capabilities)
 	dst.Memory.MemoryCategory = cloneCategorySettings(src.Memory.MemoryCategory)
 	dst.Safety.CommandRules = slices.Clone(src.Safety.CommandRules)
 	dst.LocalHistory.ExtraIgnorePatterns = slices.Clone(src.LocalHistory.ExtraIgnorePatterns)
-	dst.LSP = types.CloneLSPSettings(src.LSP)
+	dst.LSP = setting.CloneLSP(src.LSP)
 	if src.SessionMultiAgent != nil {
 		value := *src.SessionMultiAgent
 		dst.SessionMultiAgent = &value
@@ -166,18 +168,18 @@ func cloneSettings(src types.Settings) types.Settings {
 	return dst
 }
 
-func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
+func copyCategoryMap(src map[string]setting.Category) map[string]setting.Category {
 	if src == nil {
 		return nil
 	}
-	dst := make(map[string]types.CategorySettings, len(src))
+	dst := make(map[string]setting.Category, len(src))
 	for key, value := range src {
 		dst[key] = cloneCategorySettings(value)
 	}
 	return dst
 }
 
-func cloneCategorySettings(value types.CategorySettings) types.CategorySettings {
+func cloneCategorySettings(value setting.Category) setting.Category {
 	value.AllowedTools = slices.Clone(value.AllowedTools)
 	value.DeniedTools = slices.Clone(value.DeniedTools)
 	value.SkillModes = maps.Clone(value.SkillModes)

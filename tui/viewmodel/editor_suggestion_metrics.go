@@ -3,7 +3,7 @@ package viewmodel
 import (
 	"time"
 
-	"crude/metrics"
+	"crude/internal/metrics"
 )
 
 // Shell-side suggestion measurements for the performance dashboard. They

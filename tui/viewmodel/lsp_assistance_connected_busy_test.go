@@ -9,9 +9,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -27,10 +28,10 @@ type holdingCompletionClient struct {
 	owner *holdingCompletionRuntime
 }
 
-func (r *holdingCompletionRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *holdingCompletionRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	return &holdingCompletionClient{typingCompletionClient: r.base.NewClient(spec, root, admit).(*typingCompletionClient), owner: r}
 }
-func (c *holdingCompletionClient) RequestCompletions(ctx context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
+func (c *holdingCompletionClient) RequestCompletions(ctx context.Context, path string, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
 	c.owner.entered <- struct{}{}
 	<-c.owner.gate // Deliberately ignore cancellation until the provider returns.
 	return c.typingCompletionClient.RequestCompletions(ctx, path, line, col, trigger)
@@ -67,7 +68,7 @@ func TestConnectedCompletionBusyRecoveryAcceptsAndUndoes(t *testing.T) {
 		workers.Add(1)
 		go func(n uint64) {
 			defer workers.Done()
-			_, _ = w.RequestLSPCompletions(t.Context(), owner, source, "held-completion", n, 0, 2, types.LSPCompletionContext{})
+			_, _ = w.RequestLSPCompletions(t.Context(), owner, source, "held-completion", n, 0, 2, insight.LSPCompletionContext{})
 		}(sequence)
 		waitHeldAssistance(t, engine.entered, "completion")
 	}
@@ -121,7 +122,7 @@ func TestConnectedInlayBusyRecoveryPaintsAndPreservesUndo(t *testing.T) {
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(gate) }) }
 	defer func() { unblock(); workers.Wait() }()
-	span := types.LSPInlayRange{Start: types.LSPInlayPosition{Line: 0}, End: types.LSPInlayPosition{Line: 2, Character: 13}}
+	span := insight.LSPInlayRange{Start: insight.LSPInlayPosition{Line: 0}, End: insight.LSPInlayPosition{Line: 2, Character: 13}}
 	for sequence := uint64(1); sequence <= 16; sequence++ {
 		workers.Add(1)
 		go func(n uint64) {

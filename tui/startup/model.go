@@ -15,10 +15,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/client"
-	"crude/core/port"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/core/projectpath"
-	"crude/core/protocol"
+	"crude/core/shellport"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/filetree"
@@ -26,7 +26,8 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 const requestTimeout = 20 * time.Second
@@ -37,7 +38,7 @@ var errSaveUnanswered = errors.New("could not save settings: no response after 2
 // Selection retains recovery context across the detached startup boundary.
 type Selection struct {
 	Root   string
-	Issues []types.OperationIssue
+	Issues []statuscenter.OperationIssue
 }
 
 // Run returns a freshly inspected project root, or an empty root on Quit.
@@ -126,7 +127,7 @@ type Model struct {
 	surf          *surface.Surface
 	picker        *filepicker.Screen
 	result        string
-	issues        []types.OperationIssue
+	issues        []statuscenter.OperationIssue
 	browseRoot    string
 	closed        bool
 	pagePath      string
@@ -165,8 +166,8 @@ func tick() tea.Cmd {
 func (m *Model) Result() string { return m.result }
 
 // Issues returns detached recovery context. Call Close first for late save results.
-func (m *Model) Issues() []types.OperationIssue {
-	return append([]types.OperationIssue(nil), m.issues...)
+func (m *Model) Issues() []statuscenter.OperationIssue {
+	return append([]statuscenter.OperationIssue(nil), m.issues...)
 }
 
 func (m *Model) finish() Selection {
@@ -174,7 +175,7 @@ func (m *Model) finish() Selection {
 	return Selection{Root: m.Result(), Issues: m.Issues()}
 }
 
-func (m *Model) addIssues(issues ...types.OperationIssue) {
+func (m *Model) addIssues(issues ...statuscenter.OperationIssue) {
 	for _, issue := range issues {
 		duplicate := false
 		for _, existing := range m.issues {
@@ -192,11 +193,11 @@ func (m *Model) addIssues(issues ...types.OperationIssue) {
 
 func (m *Model) saved(v savedMsg) {
 	if v.err != nil {
-		m.addIssues(types.OperationIssue{
+		m.addIssues(statuscenter.OperationIssue{
 			Title:   "Introduction choice was not saved",
 			Summary: "The introduction can appear again when you start Crude.",
 			Detail:  v.err.Error(), Guidance: "Check application settings before you start Crude again.",
-			Target: types.RepairSettings, Path: "onboarding.introduction_completed",
+			Target: statuscenter.RepairSettings, Path: "onboarding.introduction_completed",
 		})
 	}
 }
@@ -505,7 +506,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.saveCmd = func() tea.Msg {
 				once.Do(func() {
 					defer cancel()
-					_, saveErr = m.service.Save(ctx, []types.SettingEdit{{Path: []string{"onboarding", "introduction_completed"}, After: json.RawMessage("true")}})
+					_, saveErr = m.service.Save(ctx, []setting.Edit{{Path: []string{"onboarding", "introduction_completed"}, After: json.RawMessage("true")}})
 				})
 				return savedMsg{saveErr}
 			}

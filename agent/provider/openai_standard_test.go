@@ -89,7 +89,7 @@ func TestOpenAIStandardEncodesOnlyWireMessageFields(t *testing.T) {
 					Index: 7, ID: "call_1", Type: "function",
 					Function: FunctionCall{Name: "read_file", Arguments: `{"path":"a.go"}`},
 				}},
-				ProviderItems: []ProviderItem{
+				ProviderItems: []Item{
 					{Standard: "openai", Type: "reasoning.encrypted", Data: detail},
 					{Standard: "anthropic", Type: "thinking", Data: json.RawMessage(`{"type":"thinking"}`)},
 				},
@@ -387,9 +387,9 @@ func TestOpenAIStandardMergesFragmentedReasoningDetailsOnReplay(t *testing.T) {
 
 func TestCanonicalizeProviderItemsCollapsesReasoningFragments(t *testing.T) {
 	const fragments = 37884
-	items := make([]ProviderItem, 0, fragments)
+	items := make([]Item, 0, fragments)
 	for index := 0; index < fragments; index++ {
-		items = append(items, ProviderItem{
+		items = append(items, Item{
 			Standard: "openai",
 			Type:     "openai.reasoning_detail",
 			Data:     json.RawMessage(`{"type":"reasoning.text","text":"word","index":0}`),

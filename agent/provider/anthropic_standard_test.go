@@ -20,7 +20,7 @@ func TestAnthropicRequestEncoding(t *testing.T) {
 			{
 				Role:    "assistant",
 				Content: TextContent(""),
-				ProviderItems: []ProviderItem{{
+				ProviderItems: []Item{{
 					Standard: "anthropic", Type: "thinking", Data: thinking,
 				}},
 				ToolCalls: []ToolCall{{
@@ -272,7 +272,7 @@ func TestAnthropicStreamDecoderUsageThinkingAndTool(t *testing.T) {
 
 	var usage TokenUsage
 	var reasoning string
-	var providerItems []ProviderItem
+	var providerItems []Item
 	var toolDeltas []ToolCallDelta
 	var finish string
 	var done bool

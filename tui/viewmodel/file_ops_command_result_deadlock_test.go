@@ -11,7 +11,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/findinfiles"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -247,7 +247,7 @@ func assertPathExists(t *testing.T, path string, wantDir bool) {
 	}
 }
 
-func assertTreeContainsPath(t *testing.T, model *filetree.FileTreeModel, path string, want bool) {
+func assertTreeContainsPath(t *testing.T, model *filetree.Model, path string, want bool) {
 	t.Helper()
 
 	if got := model.NodeByPath(path) != nil; got != want {

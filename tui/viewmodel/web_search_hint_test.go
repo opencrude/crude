@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"crude/tui/ui"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/conversation"
 	"crude/types/toolresult"
 )
 
@@ -14,14 +14,14 @@ func TestWebSearchOutageHintOpensSearchMethods(t *testing.T) {
 	app := newTranscriptAttachmentApp(t)
 	app.capabilitySnapshot = captypes.Snapshot{Settings: captypes.WithDefaults(captypes.Settings{})}
 	const label = "Set up search methods"
-	failed := types.ChatMessage{InternalID: "offline-search", Role: types.RoleTool, ToolName: "web_search", ToolStatus: types.ToolStatusError,
+	failed := conversation.ChatMessage{InternalID: "offline-search", Role: conversation.RoleTool, ToolName: "web_search", ToolStatus: conversation.ToolStatusError,
 		Content: "Search providers did not respond."}
-	app.hydrateActiveMessages([]types.ChatMessage{failed})
+	app.hydrateActiveMessages([]conversation.ChatMessage{failed})
 	if strings.Contains(app.View().RenderContent(), label) {
 		t.Fatal("an ordinary tool error made an unverified setup suggestion")
 	}
 	failed.ToolOutcome = toolresult.Outcome{State: toolresult.Failed, Code: captypes.WebSearchOutage}
-	app.hydrateActiveMessages([]types.ChatMessage{failed})
+	app.hydrateActiveMessages([]conversation.ChatMessage{failed})
 	clickTranscriptAttachment(t, app, label)
 	if !app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
 		t.Fatal("click did not open Settings")

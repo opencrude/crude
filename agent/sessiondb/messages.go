@@ -10,23 +10,23 @@ import (
 	"unicode/utf8"
 
 	"crude/agent/provider"
-	ttypes "crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
 const ConversationSnapshotVersion = 1
 
 type DisplayMeta struct {
-	ExecutionID     string                       `json:"execution_id,omitempty"`
-	SnapshotVersion int                          `json:"snapshot_version,omitempty"`
-	Snapshots       []ttypes.ConversationMessage `json:"snapshots,omitempty"`
-	ContextOnly     bool                         `json:"context_only,omitempty"`
-	RunID           string                       `json:"run_id,omitempty"`
-	TurnGeneration  uint64                       `json:"turn_generation,omitempty"`
-	ProviderID      string                       `json:"provider_id,omitempty"`
-	AccountID       string                       `json:"account_id,omitempty"`
-	ModelID         string                       `json:"model_id,omitempty"`
+	ExecutionID     string                 `json:"execution_id,omitempty"`
+	SnapshotVersion int                    `json:"snapshot_version,omitempty"`
+	Snapshots       []conversation.Message `json:"snapshots,omitempty"`
+	ContextOnly     bool                   `json:"context_only,omitempty"`
+	RunID           string                 `json:"run_id,omitempty"`
+	TurnGeneration  uint64                 `json:"turn_generation,omitempty"`
+	ProviderID      string                 `json:"provider_id,omitempty"`
+	AccountID       string                 `json:"account_id,omitempty"`
+	ModelID         string                 `json:"model_id,omitempty"`
 
 	// Writer inputs that session canonicalization projects into Snapshots;
 	// hydration reads only Snapshots. DisplayRole also marks assignment and

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // recordStatusRow is the one place a change the user made to the session
@@ -72,7 +72,7 @@ func yoloRow(enabled bool) (string, string) {
 
 // goalTransitionRow is the transcript line for a goal change, or "".
 // Accounting-only updates (time, tokens) have none.
-func goalTransitionRow(before, after *types.Goal) string {
+func goalTransitionRow(before, after *conversation.Goal) string {
 	switch {
 	case after == nil && before == nil:
 		return ""
@@ -82,19 +82,19 @@ func goalTransitionRow(before, after *types.Goal) string {
 		return "Goal set: " + after.Objective
 	case before.Objective != after.Objective:
 		return "Goal updated: " + after.Objective
-	case after.Status == types.GoalComplete && before.Status != types.GoalComplete:
+	case after.Status == conversation.GoalComplete && before.Status != conversation.GoalComplete:
 		return "Goal complete. " + after.Reason
-	case after.Status == types.GoalPaused && before.Status != types.GoalPaused:
+	case after.Status == conversation.GoalPaused && before.Status != conversation.GoalPaused:
 		return "Goal paused. " + after.Reason
-	case after.Status == types.GoalBlocked && before.Status != types.GoalBlocked:
+	case after.Status == conversation.GoalBlocked && before.Status != conversation.GoalBlocked:
 		return "Goal blocked: " + after.Reason
-	case after.Status == types.GoalBudgetLimited && before.Status != types.GoalBudgetLimited:
+	case after.Status == conversation.GoalBudgetLimited && before.Status != conversation.GoalBudgetLimited:
 		return "Goal stopped: " + after.Reason + " Set a new goal with /goal or clear it."
 	case after.Verifying && !before.Verifying:
 		return "Checking the goal: an independent verifier is reviewing the work."
-	case before.Verifying && !after.Verifying && after.Status == types.GoalActive:
+	case before.Verifying && !after.Verifying && after.Status == conversation.GoalActive:
 		return "Goal not complete yet. " + strings.TrimPrefix(after.Reason, "Not yet: ")
-	case after.Status == types.GoalActive && (before.Status != types.GoalActive || before.Waiting && !after.Waiting):
+	case after.Status == conversation.GoalActive && (before.Status != conversation.GoalActive || before.Waiting && !after.Waiting):
 		return "Goal resumed."
 	}
 	return ""

@@ -4,13 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/editor"
+	"crude/text/textdiff"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
 
 func TestScreenProjectsExactHunkAsReadOnlyDiff(t *testing.T) {
-	screen := New(theme.DefaultDark(), editor.GitHunk{
+	screen := New(theme.DefaultDark(), textdiff.Hunk{
 		OldStart: 4, NewStart: 4,
 		OldLines: []string{"old\n", "gone"}, NewLines: []string{"new\n"},
 	}, "HEAD")

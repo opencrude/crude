@@ -17,10 +17,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -41,12 +42,12 @@ type actionConnectedClient struct {
 	runtime *actionConnectedRuntime
 }
 
-func (r *actionConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *actionConnectedRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	base := r.renameConnectedRuntime.NewClient(spec, root, admit).(*renameConnectedClient)
 	return &actionConnectedClient{renameConnectedClient: base, runtime: r}
 }
 
-func (c *actionConnectedClient) RequestCodeActions(_ context.Context, path string, line, col, endLine, endCol int) (types.LSPCodeActionResponse, error) {
+func (c *actionConnectedClient) RequestCodeActions(_ context.Context, path string, line, col, endLine, endCol int) (insight.LSPCodeActionResponse, error) {
 	r := c.runtime
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -54,10 +55,10 @@ func (c *actionConnectedClient) RequestCodeActions(_ context.Context, path strin
 	r.span = [4]int{line, col, endLine, endCol}
 	d := c.docs[path]
 	if path != r.main || d.text != renameConnectedMain {
-		return types.LSPCodeActionResponse{}, fmt.Errorf("unexpected action source %q", path)
+		return insight.LSPCodeActionResponse{}, fmt.Errorf("unexpected action source %q", path)
 	}
 	uri := strconv.Quote(fileuri.FromPath(path))
-	return types.LSPCodeActionResponse{JSON: []byte(strings.ReplaceAll(r.actions, "$MAIN", uri)),
+	return insight.LSPCodeActionResponse{JSON: []byte(strings.ReplaceAll(r.actions, "$MAIN", uri)),
 		WireVersion: d.version, DiagnosticsDetail: "fixture has no diagnostic adjunct"}, nil
 }
 
@@ -83,9 +84,9 @@ func newActionConnectedFixture(t *testing.T, raw string) (renameConnectedFixture
 		owned = w
 		w.LSPMgr.SetRuntime(engine)
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: executable, RootMarkers: []string{"go.mod"},
 		}}
 		w.SetAppDefaults(settings)
@@ -97,7 +98,7 @@ func newActionConnectedFixture(t *testing.T, raw string) (renameConnectedFixture
 		engine: &engine.renameConnectedRuntime, main: a, peer: b}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, view, err := owned.LSPMgr.ProbeHover(ctx, engine.main, types.LSPSourcePosition{Line: 3, Column: 1}); err != nil || view.Source.Kind != "canonical" {
+	if _, view, err := owned.LSPMgr.ProbeHover(ctx, engine.main, insight.LSPSourcePosition{Line: 3, Column: 1}); err != nil || view.Source.Kind != "canonical" {
 		t.Fatal("canonical action source not synchronized", view, err)
 	}
 	remoteJourneyUntil(t, f.shells, func() bool {

@@ -18,8 +18,9 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/inlay"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -30,7 +31,7 @@ const inlayConnectedAnswer = `[` + inlayConnectedOriginal + `,{"position":{"line
 type inlayConnectedCall struct {
 	path, text string
 	wire       int
-	span       types.LSPInlayRange
+	span       insight.LSPInlayRange
 }
 
 type inlayConnectedRuntime struct {
@@ -50,12 +51,12 @@ type inlayConnectedClient struct {
 	engine *inlayConnectedRuntime
 }
 
-func (r *inlayConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *inlayConnectedRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	base := r.renameConnectedRuntime.NewClient(spec, root, admit).(*renameConnectedClient)
 	return &inlayConnectedClient{renameConnectedClient: base, engine: r}
 }
 
-func (c *inlayConnectedClient) RequestInlayHints(_ context.Context, path string, span types.LSPInlayRange) (types.LSPInlayResponse, error) {
+func (c *inlayConnectedClient) RequestInlayHints(_ context.Context, path string, span insight.LSPInlayRange) (insight.LSPInlayResponse, error) {
 	r := c.engine
 	r.mu.Lock()
 	doc := c.docs[path]
@@ -73,10 +74,10 @@ func (c *inlayConnectedClient) RequestInlayHints(_ context.Context, path string,
 	if unsupported {
 		raw = nil
 	}
-	return types.LSPInlayResponse{JSON: raw, WireVersion: doc.version, Unsupported: unsupported, ResolveSupported: resolve && !unsupported}, nil
+	return insight.LSPInlayResponse{JSON: raw, WireVersion: doc.version, Unsupported: unsupported, ResolveSupported: resolve && !unsupported}, nil
 }
 
-func (c *inlayConnectedClient) ResolveInlayHint(ctx context.Context, path string, wire int, original []byte) (types.LSPInlayResponse, error) {
+func (c *inlayConnectedClient) ResolveInlayHint(ctx context.Context, path string, wire int, original []byte) (insight.LSPInlayResponse, error) {
 	r := c.engine
 	r.mu.Lock()
 	r.resolves++
@@ -103,7 +104,7 @@ func (c *inlayConnectedClient) ResolveInlayHint(ctx context.Context, path string
 		}
 	}
 	raw := strings.TrimSuffix(string(original), "}") + `,"tooltip":{"kind":"plaintext","value":"literal tooltip only"}}`
-	return types.LSPInlayResponse{JSON: []byte(raw), WireVersion: wire, ResolveSupported: true}, nil
+	return insight.LSPInlayResponse{JSON: []byte(raw), WireVersion: wire, ResolveSupported: true}, nil
 }
 
 type inlayConnectedFixture struct {
@@ -134,9 +135,9 @@ func newInlayConnectedFixture(t *testing.T, enabled bool, answer string) inlayCo
 		owned = w
 		w.LSPMgr.SetRuntime(engine)
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete, settings.LSP.InlayHints = false, false, enabled
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: executable, RootMarkers: []string{"go.mod"},
 		}}
 		w.SetAppDefaults(settings)
@@ -147,7 +148,7 @@ func newInlayConnectedFixture(t *testing.T, enabled bool, answer string) inlayCo
 	f := inlayConnectedFixture{runtime, []remoteJourneyShell{one, two}, owned, engine, a, b}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, source, err := owned.LSPMgr.ProbeHover(ctx, engine.main, types.LSPSourcePosition{Line: 1, Column: 1}); err != nil || source.Source.Kind != "canonical" {
+	if _, source, err := owned.LSPMgr.ProbeHover(ctx, engine.main, insight.LSPSourcePosition{Line: 1, Column: 1}); err != nil || source.Source.Kind != "canonical" {
 		t.Fatal("inlay fixture source did not synchronize", source, err)
 	}
 	one.app.setFocusEditor()
@@ -245,7 +246,7 @@ func TestConnectedInlayDefaultOffAndTwoShellViewLocalShowHide(t *testing.T) {
 	}
 	for _, call := range actual {
 		if call.path != f.engine.main || call.text != inlayConnectedSource || call.wire <= 0 ||
-			call.span.Start != (types.LSPInlayPosition{}) || call.span.End != (types.LSPInlayPosition{Line: 3}) {
+			call.span.Start != (insight.LSPInlayPosition{}) || call.span.End != (insight.LSPInlayPosition{Line: 3}) {
 			t.Fatal("visible range request lost synchronized source/wire/EOF anchors", call)
 		}
 	}
@@ -359,7 +360,7 @@ func TestConnectedInlaySettingsEpochRevokesAndNoRestartForViewGate(t *testing.T)
 	// Even if the two Boolean snapshots coalesce, the epoch must revoke old
 	// originals and old painted hints without restarting the producer.
 	if detail, err := one.app.ws.(interface {
-		InspectLSPInlayHint(context.Context, string, string, int, bool) (types.LSPInlayInspection, error)
+		InspectLSPInlayHint(context.Context, string, string, int, bool) (insight.LSPInlayInspection, error)
 	}).InspectLSPInlayHint(t.Context(), old.ID, old.Digest, 0, true); err == nil || detail.SetID != "" {
 		t.Fatal("disable/re-enable restored old original-object authority")
 	}

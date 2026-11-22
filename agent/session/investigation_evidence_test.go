@@ -17,9 +17,9 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/worktree"
-	"crude/logger"
-	"crude/types"
+	"crude/internal/logger"
 	"crude/types/command"
+	"crude/types/conversation"
 )
 
 func investigationEvidenceCheckout(t *testing.T, s *Session, service ExecutionService, source string) (worktree.Context, string) {
@@ -58,7 +58,7 @@ func startEvidenceFixtureCommand(t *testing.T, s *Session, c worktree.Context, g
 	return finish
 }
 
-func readEvidenceFixture(t *testing.T, s *Session, revision int, ref types.PlanEvidenceRef) string {
+func readEvidenceFixture(t *testing.T, s *Session, revision int, ref conversation.PlanEvidenceRef) string {
 	t.Helper()
 	text, err := s.ReadPlanEvidence(revision, ref.Digest)
 	if err != nil || evidenceDigest([]byte(text)) != ref.Digest {
@@ -91,7 +91,7 @@ func TestInvestigationEvidenceBindsExactRecordAndSurvivesFork(t *testing.T) {
 		t.Fatal(err)
 	}
 	pending := latestReview(t, s).Evidence
-	if len(pending) != 1 || pending[0].Status != types.PlanEvidenceInconclusive {
+	if len(pending) != 1 || pending[0].Status != conversation.PlanEvidenceInconclusive {
 		t.Fatalf("prepared command without exit fact: %+v", pending)
 	}
 	first := readEvidenceFixture(t, s, 1, pending[0])
@@ -116,7 +116,7 @@ func TestInvestigationEvidenceBindsExactRecordAndSurvivesFork(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := latestReview(t, s)
-	if len(revision.Evidence) != 1 || revision.Evidence[0].Status != types.PlanEvidencePassed {
+	if len(revision.Evidence) != 1 || revision.Evidence[0].Status != conversation.PlanEvidencePassed {
 		t.Fatalf("verified exit and unchanged measured input: %+v", revision.Evidence)
 	}
 	ref := revision.Evidence[0]
@@ -162,9 +162,9 @@ func TestInvestigationEvidenceBindsExactRecordAndSurvivesFork(t *testing.T) {
 	}
 
 	destination, sender := reviewSessionFixture(t)
-	settle := types.PlanReviewSettle{Revision: 3, Text: plan + "\n\nApproved edits.", Action: types.PlanReviewNewSession,
+	settle := conversation.PlanReviewSettle{Revision: 3, Text: plan + "\n\nApproved edits.", Action: conversation.PlanReviewNewSession,
 		DestinationSessionID: destination.sessionID}
-	send := func() (types.PlanReviewSettlement, error) {
+	send := func() (conversation.PlanReviewSettlement, error) {
 		return s.SettlePlanReviewForAgent(t.Context(), "", settle, provider.UserInput{}, destination)
 	}
 	destinationPath := filepath.Join(destination.SessionDir(), "plan-evidence", ref.Digest+".md")
@@ -215,7 +215,7 @@ func TestInvestigationEvidenceBindsExactRecordAndSurvivesFork(t *testing.T) {
 	}
 	assertPlanFile(t, destinationPath, text)
 	nextCycle, err := s.planInvestigationCycle(t.Context())
-	if err != nil || !s.PlanMode() || nextCycle == "" || nextCycle == cycle || latestReview(t, s).Outcome != types.PlanOutcomeNewSession {
+	if err != nil || !s.PlanMode() || nextCycle == "" || nextCycle == cycle || latestReview(t, s).Outcome != conversation.PlanOutcomeNewSession {
 		t.Fatalf("fresh handoff did not close just the approved cycle: %q, %v", nextCycle, err)
 	}
 	destAgent := destination.liveOrchestrator().ID
@@ -293,9 +293,9 @@ func TestInvestigationEvidenceBoundsAndDistinguishesInconclusiveResults(t *testi
 	if len(refs) != maxEvidenceCommands || revision.EvidenceOmitted != 3 {
 		t.Fatalf("unbounded projection or missing omission: %+v", revision)
 	}
-	if refs[0].Status != types.PlanEvidenceInterrupted ||
-		refs[len(refs)-2].Status != types.PlanEvidenceFailed ||
-		refs[len(refs)-1].Status != types.PlanEvidenceInconclusive {
+	if refs[0].Status != conversation.PlanEvidenceInterrupted ||
+		refs[len(refs)-2].Status != conversation.PlanEvidenceFailed ||
+		refs[len(refs)-1].Status != conversation.PlanEvidenceInconclusive {
 		t.Fatalf("command statuses: %+v", refs)
 	}
 	failed := readEvidenceFixture(t, s, 1, refs[len(refs)-2])
@@ -346,7 +346,7 @@ func TestInvestigationEvidenceReachesInSessionImplementationInput(t *testing.T) 
 	if len(revision.Evidence) != 1 {
 		t.Fatalf("approval revision evidence: %+v", revision)
 	}
-	settle := types.PlanReviewSettle{Revision: 1, Text: plan, Action: types.PlanReviewImplement}
+	settle := conversation.PlanReviewSettle{Revision: 1, Text: plan, Action: conversation.PlanReviewImplement}
 	if !s.planInvestigationToolMu.TryLock() {
 		t.Fatal("investigation operation unexpectedly active")
 	}
@@ -356,7 +356,7 @@ func TestInvestigationEvidenceReachesInSessionImplementationInput(t *testing.T) 
 		t.Fatalf("approval overtook command settlement: %v", busyErr)
 	}
 	out, err := s.SettlePlanReview(settle)
-	if err != nil || s.PlanMode() || latestReview(t, s).Outcome != types.PlanOutcomeImplemented {
+	if err != nil || s.PlanMode() || latestReview(t, s).Outcome != conversation.PlanOutcomeImplemented {
 		t.Fatalf("implementation did not close exact approval: %v", err)
 	}
 	if !strings.Contains(out.Text, revision.Evidence[0].Digest) || strings.Contains(out.Text, c.Root) {

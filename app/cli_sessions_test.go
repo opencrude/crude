@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"crude/agent/sessiondb"
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 	"crude/workspace"
 )
 

@@ -217,8 +217,8 @@ func TestExtractionCommitAtomicityAndLateCorrection(t *testing.T) {
 		t.Fatal("partial extraction was reported as committed")
 	}
 	count, _ := store.CountByStatus(t.Context(), StatusActive)
-	watermark, _ := store.GetMeta(t.Context(), "extract:extract")
-	_, summaryExists, _ := store.GetSessionSummary(t.Context(), "extract")
+	watermark, _ := store.Meta(t.Context(), "extract:extract")
+	_, summaryExists, _ := store.SessionSummary(t.Context(), "extract")
 	if count != 0 || watermark != "" || summaryExists {
 		t.Fatalf("failed extraction marked unsaved turns processed: count=%d watermark=%q summary=%v", count, watermark, summaryExists)
 	}

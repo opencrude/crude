@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
@@ -13,7 +13,7 @@ type ConversationDelta struct {
 	BaseRevision, Revision uint64
 	Reset                  bool
 	Order                  []string
-	Upserts                []Message
+	Upserts                []conversation.Message
 	Removed                []string
 	Appends                []ConversationTextAppend
 }
@@ -45,11 +45,11 @@ type conversationChange struct {
 	textOffset int
 }
 
-func (c *Conversation) changed(message *Message) {
+func (c *Conversation) changed(message *conversation.Message) {
 	c.pendingChange.ids = append(c.pendingChange.ids, message.InternalID)
 }
 
-func (c *Conversation) commitChange(message *Message) {
+func (c *Conversation) commitChange(message *conversation.Message) {
 	if message != nil {
 		c.changed(message)
 	}
@@ -67,7 +67,7 @@ func (c *Conversation) recordChange(change conversationChange) {
 	c.changeJournal[c.version%conversationJournalLimit] = change
 }
 
-func (c *Conversation) commitText(message *Message, offset int) {
+func (c *Conversation) commitText(message *conversation.Message, offset int) {
 	c.pendingChange.textID, c.pendingChange.textOffset = message.InternalID, offset
 	c.commitChange(nil)
 }
@@ -144,7 +144,7 @@ func (c *Conversation) ChangesSince(revision uint64) ConversationDelta {
 		if message == nil {
 			delta.Removed = append(delta.Removed, record.id)
 		} else if record.upsert {
-			delta.Upserts = append(delta.Upserts, ttypes.CloneConversationMessage(*message))
+			delta.Upserts = append(delta.Upserts, conversation.CloneMessage(*message))
 		} else {
 			delta.Appends = append(delta.Appends, ConversationTextAppend{
 				InternalID: record.id, Offset: uint64(record.offset), Text: message.Content[record.offset:], ThinkingDisplay: message.ThinkingDisplay,

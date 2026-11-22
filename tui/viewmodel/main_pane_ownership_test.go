@@ -17,7 +17,6 @@ import (
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
 	"crude/tui/window"
-	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -167,7 +166,7 @@ func TestMainPaneOwnershipVisibleBackgroundPermissionKeepsEditor(t *testing.T) {
 	app.Win.SwitchTo(app.Win.IndexOf(app.Win.TabByTitle(app.agentTabTitle(alpha)).ID))
 	app.focusMainGroup(right)
 	_ = app.View()
-	_, _ = app.Update(ttypes.AgentMsg{AgentID: "child-a", Type: "blocking", Data: map[string]string{"block_id": "background-exact", "tool": "apply_patch", "question": "Allow background exact owner?"}})
+	_, _ = app.Update(AgentMsg{AgentID: "child-a", Type: "blocking", Data: map[string]string{"block_id": "background-exact", "tool": "apply_patch", "question": "Allow background exact owner?"}})
 	app.forceFrame()
 	_ = app.View()
 	if app.Win.ActiveTab().ID != doc || app.focusTarget() != FocusEditor || app.overlayHost.IsOpen(ui.OverlayAgentPrompt) || app.mainPanes.groups[left].deck.Empty() || app.Input.Value() != "PERMISSION_DRAFT_MARKER" {
@@ -322,11 +321,11 @@ func TestMainPaneOwnershipDenseIdlePreviewAndDividerWork(t *testing.T) {
 	app := paneOwnershipDense(t)
 	left := app.Win.GroupIDs()[0]
 	v := app.mainPanes.groups[left].view
-	renderer := app.subPaneProjections.GetExisting("dense-first").renderer
+	renderer := app.subPaneProjections.Existing("dense-first").renderer
 	generation := renderer.ExportMessageRowsSnapshot(v.reflowInnerW).Generation
 	base := perf.Snapshot()
 	for range 5 {
-		_, _ = app.Update(ttypes.TickMsg(time.Now()))
+		_, _ = app.Update(TickMsg(time.Now()))
 		app.forceFrame()
 		_ = app.View()
 	}
@@ -415,7 +414,7 @@ func TestMainPaneOwnershipKeyboardNewSessionAndCancelledPicker(t *testing.T) {
 func TestMainPaneOwnershipPreviewKeepsDenseRowsWarm(t *testing.T) {
 	app := paneOwnershipDense(t)
 	left := app.Win.GroupIDs()[0]
-	renderer := app.subPaneProjections.GetExisting("dense-first").renderer
+	renderer := app.subPaneProjections.Existing("dense-first").renderer
 	v := app.mainPanes.groups[left].view
 	generation := renderer.ExportMessageRowsSnapshot(v.reflowInnerW).Generation
 	body := app.mainPanes.groups[left].body

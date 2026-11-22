@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 const (
@@ -47,7 +47,7 @@ type parser struct {
 // Parse resolves defaults before expanding any occurrence, so a reference before
 // its definition gets the same value and subtree. Expansion is acyclic, bounded
 // and detached. No unsupported item produces a partially usable plan.
-func Parse(source string) (string, *types.CompletionSnippet, error) {
+func Parse(source string) (string, *insight.CompletionSnippet, error) {
 	return parse(source, nil)
 }
 
@@ -56,11 +56,11 @@ func Parse(source string) (string, *types.CompletionSnippet, error) {
 // the same transformed definition, so linked occurrences and nested ranges stay
 // consistent. The callback must not insert non-whitespace; this is not a second
 // snippet grammar or a way to authorize other provider constructs.
-func ParseWithLeadingWhitespace(source string, transform func(int, string) (string, error)) (string, *types.CompletionSnippet, error) {
+func ParseWithLeadingWhitespace(source string, transform func(int, string) (string, error)) (string, *insight.CompletionSnippet, error) {
 	return parse(source, transform)
 }
 
-func parse(source string, transform func(int, string) (string, error)) (string, *types.CompletionSnippet, error) {
+func parse(source string, transform func(int, string) (string, error)) (string, *insight.CompletionSnippet, error) {
 	if len(source) > MaxSourceBytes {
 		return "", nil, ErrLimit
 	}
@@ -122,12 +122,12 @@ func parse(source string, transform func(int, string) (string, error)) (string, 
 		if len(e.occurrences) == MaxOccurrences {
 			return "", nil, ErrLimit
 		}
-		e.occurrences = append(e.occurrences, types.CompletionOccurrence{
+		e.occurrences = append(e.occurrences, insight.CompletionOccurrence{
 			Stop: 0, StartByte: e.text.Len(), EndByte: e.text.Len(), Parent: -1,
 		})
 	}
 	text := e.text.String()
-	plan := &types.CompletionSnippet{TextSHA256: textDigest(text), Occurrences: e.occurrences}
+	plan := &insight.CompletionSnippet{TextSHA256: textDigest(text), Occurrences: e.occurrences}
 	if err := Validate(text, plan); err != nil {
 		return "", nil, err
 	}
@@ -309,7 +309,7 @@ type expansion struct {
 	text        strings.Builder
 	defs        map[int]node
 	visiting    map[int]bool
-	occurrences []types.CompletionOccurrence
+	occurrences []insight.CompletionOccurrence
 	choiceBytes int
 	zero        bool
 }
@@ -349,7 +349,7 @@ func (e *expansion) emit(nodes []node, parent, depth int) error {
 			choices[i] = value
 		}
 		index := len(e.occurrences)
-		e.occurrences = append(e.occurrences, types.CompletionOccurrence{
+		e.occurrences = append(e.occurrences, insight.CompletionOccurrence{
 			Stop: n.stop, StartByte: e.text.Len(), Parent: parent, Choices: choices,
 		})
 		e.zero = e.zero || n.stop == 0
@@ -372,7 +372,7 @@ func (e *expansion) emit(nodes []node, parent, depth int) error {
 // laminar source-preorder tree with consistent numeric values and acyclic stop
 // dependencies. Byte offsets must be UTF-8 boundaries; grapheme landing safety
 // is the editor's separate responsibility after insertion joins adjacent text.
-func Validate(text string, plan *types.CompletionSnippet) error {
+func Validate(text string, plan *insight.CompletionSnippet) error {
 	if plan == nil || len(plan.Occurrences) == 0 || len(plan.Occurrences) > MaxOccurrences ||
 		len(text) > MaxExpandedBytes {
 		return ErrLimit

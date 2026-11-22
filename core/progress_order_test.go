@@ -3,8 +3,8 @@ package core
 import (
 	"bytes"
 	"context"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"testing"
 	"time"
 )

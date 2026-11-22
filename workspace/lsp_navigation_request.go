@@ -7,15 +7,16 @@ import (
 	"path/filepath"
 	"slices"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
-func navigationGate(kind string) (func(types.LSPSettings) bool, error) {
+func navigationGate(kind string) (func(setting.LSP) bool, error) {
 	switch kind {
-	case types.LSPNavigationDefinition, types.LSPNavigationTypeDefinition, types.LSPNavigationImplementation:
-		return func(s types.LSPSettings) bool { return s.Definition }, nil
-	case types.LSPNavigationReferences:
-		return func(s types.LSPSettings) bool { return s.References }, nil
+	case insight.LSPNavigationDefinition, insight.LSPNavigationTypeDefinition, insight.LSPNavigationImplementation:
+		return func(s setting.LSP) bool { return s.Definition }, nil
+	case insight.LSPNavigationReferences:
+		return func(s setting.LSP) bool { return s.References }, nil
 	default:
 		return nil, errors.New("unknown navigation kind")
 	}
@@ -24,31 +25,31 @@ func navigationGate(kind string) (func(types.LSPSettings) bool, error) {
 // RequestNavigation uses the existing synchronized producer. Definition-family
 // and reference preferences remain separate; an editor-off probe is admitted by
 // probe(), never by silently enabling the editor's master switch.
-func (m *LSPManager) RequestNavigation(ctx context.Context, path, kind string, line, col int, includeDeclaration bool) (types.LSPNavigation, error) {
+func (m *LSPManager) RequestNavigation(ctx context.Context, path, kind string, line, col int, includeDeclaration bool) (insight.LSPNavigation, error) {
 	gate, err := navigationGate(kind)
 	if err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	if !m.featureOn(gate) {
-		return types.LSPNavigation{}, errors.New("navigation is off or blocked in Code Intelligence settings")
+		return insight.LSPNavigation{}, errors.New("navigation is off or blocked in Code Intelligence settings")
 	}
 	return m.navigationRequest(ctx, path, kind, line, col, includeDeclaration)
 }
 
-func (m *LSPManager) navigationRequest(ctx context.Context, path, kind string, line, col int, includeDeclaration bool) (types.LSPNavigation, error) {
+func (m *LSPManager) navigationRequest(ctx context.Context, path, kind string, line, col int, includeDeclaration bool) (insight.LSPNavigation, error) {
 	ctx, stop := context.WithTimeout(ctx, ManualLSPRequestTimeout)
 	defer stop()
 	gate, err := navigationGate(kind)
 	if err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
-	if includeDeclaration && kind != types.LSPNavigationReferences {
-		return types.LSPNavigation{}, errors.New("includeDeclaration applies only to references")
+	if includeDeclaration && kind != insight.LSPNavigationReferences {
+		return insight.LSPNavigation{}, errors.New("includeDeclaration applies only to references")
 	}
 	if err := ctx.Err(); err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
-	var out types.LSPNavigation
+	var out insight.LSPNavigation
 	err = m.trackInflight(func() error {
 		if err := m.awaitSynchronized(ctx, path); err != nil {
 			return err
@@ -60,7 +61,7 @@ func (m *LSPManager) navigationRequest(ctx context.Context, path, kind string, l
 		}
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(path)]
-		var boundary types.InsightBoundary
+		var boundary insight.Boundary
 		wire, text := 0, ""
 		root := m.workspaceRoot
 		if doc != nil && doc.opened && !doc.syncPending && gate(m.settings) {
@@ -103,7 +104,7 @@ func (m *LSPManager) navigationRequest(ctx context.Context, path, kind string, l
 		return requestCtx.Err()
 	})
 	if err != nil {
-		return types.LSPNavigation{}, err
+		return insight.LSPNavigation{}, err
 	}
 	return out, nil
 }
@@ -111,7 +112,7 @@ func (m *LSPManager) navigationRequest(ctx context.Context, path, kind string, l
 // navigationFence is memory-only and safe under DocumentService.mu. A target
 // selection may observe current bytes only while its invoking source, producer,
 // feature preference and context still identify the original answer.
-func (m *LSPManager) navigationFence(boundary types.InsightBoundary, wire int, kind string) (func() error, error) {
+func (m *LSPManager) navigationFence(boundary insight.Boundary, wire int, kind string) (func() error, error) {
 	gate, err := navigationGate(kind)
 	if err != nil {
 		return nil, err
@@ -120,7 +121,7 @@ func (m *LSPManager) navigationFence(boundary types.InsightBoundary, wire int, k
 }
 
 // semanticFence is the shared exact-source, producer and policy lifetime guard.
-func (m *LSPManager) semanticFence(boundary types.InsightBoundary, wire int, gate func(types.LSPSettings) bool, operation string) (func() error, error) {
+func (m *LSPManager) semanticFence(boundary insight.Boundary, wire int, gate func(setting.LSP) bool, operation string) (func() error, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	doc := m.documents[filepath.Clean(boundary.Source.Path)]
@@ -155,12 +156,12 @@ func (m *LSPManager) semanticFence(boundary types.InsightBoundary, wire int, gat
 
 // ProbeNavigation shares the same protocol, normalization and negative-result
 // fencing as the editor. Probe() owns source acquisition, Trust and lifetime.
-func (m *LSPManager) ProbeNavigation(ctx context.Context, path, kind string, position types.LSPSourcePosition, includeDeclaration bool) (result types.LSPNavigation, view LSPProbeView, err error) {
+func (m *LSPManager) ProbeNavigation(ctx context.Context, path, kind string, position insight.LSPSourcePosition, includeDeclaration bool) (result insight.LSPNavigation, view insight.LSPProbeView, err error) {
 	gate, err := navigationGate(kind)
 	if err != nil {
 		return result, view, err
 	}
-	view, err = m.probe(ctx, path, gate, "Navigation", func(ctx context.Context, _ LSPClient, path string, view LSPProbeView) error {
+	view, err = m.probe(ctx, path, gate, "Navigation", func(ctx context.Context, _ LSPClient, path string, view insight.LSPProbeView) error {
 		line, col, err := position.Resolve(view.SourceText)
 		if err != nil {
 			return err
@@ -169,7 +170,7 @@ func (m *LSPManager) ProbeNavigation(ctx context.Context, path, kind string, pos
 		return err
 	})
 	if err != nil {
-		return types.LSPNavigation{}, view, err
+		return insight.LSPNavigation{}, view, err
 	}
 	return result, view, nil
 }

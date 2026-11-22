@@ -10,7 +10,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func accountRoutingConfig() *Config {
@@ -42,14 +42,14 @@ func TestInheritedAccountFollowsDefaultChangeAndResume(t *testing.T) {
 	main.AccountID = "personal"
 	profile.Categories[CategoryDefault] = main
 	cfg.Agents.Profiles["default"] = profile
-	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}})
-	if got := s.cfg.GetActiveDefaultCategory().AccountID; got != "personal" {
+	s.UpdateWorkspaceDefaults(setting.App{Accounts: cfg.Accounts, Agents: setting.Agents{Categories: map[string]setting.Category{CategoryDefault: {AccountID: "personal", Model: "m"}}}})
+	if got := s.cfg.ActiveDefaultCategory().AccountID; got != "personal" {
 		t.Fatalf("live session redirected to %q", got)
 	}
 	if err := s.ResetSessionSettings(); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.cfg.GetActiveDefaultCategory().AccountID; got != "personal" {
+	if got := s.cfg.ActiveDefaultCategory().AccountID; got != "personal" {
 		t.Fatalf("reset redirected session to %q", got)
 	}
 	if err := s.AppendWorkspaceHistoryEvent("account-pin", "account pin"); err != nil {
@@ -60,10 +60,10 @@ func TestInheritedAccountFollowsDefaultChangeAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := resumed.cfg.GetActiveDefaultCategory().AccountID; got != "personal" {
+	if got := resumed.cfg.ActiveDefaultCategory().AccountID; got != "personal" {
 		t.Fatalf("resume redirected to %q", got)
 	}
-	meta, err := sessiondb.GetMeta(resumed.DB())
+	meta, err := sessiondb.LoadMeta(resumed.DB())
 	if err != nil || meta.AccountID != "personal" || meta.ID != oldID {
 		t.Fatalf("durable pin %+v err=%v", meta, err)
 	}
@@ -72,7 +72,7 @@ func TestInheritedAccountFollowsDefaultChangeAndResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := fresh.cfg.GetActiveDefaultCategory().AccountID; got != "personal" {
+	if got := fresh.cfg.ActiveDefaultCategory().AccountID; got != "personal" {
 		t.Fatalf("new session ignored Main Agent selection: %q", got)
 	}
 	fresh.Close()
@@ -108,7 +108,7 @@ func TestAccountRemovedResumesWithoutBindingOrFallback(t *testing.T) {
 	if resumed.provider != nil {
 		t.Fatal("resumed missing account unexpectedly bound a provider")
 	}
-	main := resumed.cfg.GetActiveDefaultCategory()
+	main := resumed.cfg.ActiveDefaultCategory()
 	if main.AccountID != "work" {
 		t.Fatalf("lost pinned connection: %+v", main)
 	}
@@ -130,7 +130,7 @@ func TestAccountProfileDoesNotSerializeSecrets(t *testing.T) {
 		t.Fatalf("serialized roles: %s", data)
 	}
 	for _, tc := range []struct{ role, key string }{{CategoryDefault, "secret-work"}, {CategoryCrafter, "secret-personal"}} {
-		cat := cfg.GetCategoryConfig(tc.role)
+		cat := cfg.CategoryConfig(tc.role)
 		p, err := cfg.providerForCategory(cat)
 		if err != nil {
 			t.Fatal(err)
@@ -151,7 +151,7 @@ func TestSaveRejectsRoleAccountMismatchWithoutPersistence(t *testing.T) {
 	defer sess.Close()
 	before := sess.SettingsSnapshot()
 	changes := before
-	changes.SessionOverrides = map[string]types.CategorySettings{
+	changes.SessionOverrides = map[string]setting.Category{
 		CategoryDefault: {AccountID: "work", Model: "m"},
 		CategoryCrafter: {AccountID: "missing", Model: "m"},
 	}
@@ -208,7 +208,7 @@ func TestTransportSettingsFollowTemplateAndAccountEditsAndResume(t *testing.T) {
 			want = override
 		}
 		cfg.Accounts["work"] = account
-		s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: ConfigToSettings(cfg).Agents})
+		s.UpdateWorkspaceDefaults(setting.App{Accounts: cfg.Accounts, Agents: ConfigToSettings(cfg).Agents})
 		if s.provider == nil || s.provider.DialSettings() != want {
 			t.Fatalf("live account override=%t was not applied to requests: %+v", useOverride, s.provider)
 		}
@@ -231,7 +231,7 @@ func TestTransportSettingsFollowTemplateAndAccountEditsAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	current = resumed
-	if resumed.provider == nil || resumed.provider.DialSettings() != *template.Dialer || resumed.cfg.GetActiveDefaultCategory().AccountID != "work" {
+	if resumed.provider == nil || resumed.provider.DialSettings() != *template.Dialer || resumed.cfg.ActiveDefaultCategory().AccountID != "work" {
 		t.Fatalf("resume lost pinned account or live transport settings: %+v", resumed.provider)
 	}
 }

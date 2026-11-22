@@ -93,29 +93,30 @@ func New(root, cache string, db *sql.DB) (*Service, error) {
 	return service, nil
 }
 
-func (service *Service) newMCPManager(root string) *mcpclient.Manager {
+func (s *Service) newMCPManager(root string) *mcpclient.Manager {
 	clients := mcpclient.New(root)
 	clients.SetBuiltinFactory(captypes.WebConnectionID, func(lookup func(string) string, maxResultBytes int) (*mcp.Server, map[string]captypes.Effect) {
-		return webmcp.NewWithSearchMethods(lookup, maxResultBytes, service.webSearchMethods)
+		return webmcp.NewWithSearchMethods(lookup, maxResultBytes, s.webSearchMethods)
 	})
 	return clients
 }
 
 // SetRegistrationStore binds publication to the authoritative settings owner.
 // Installations must not create a second settings registry inside this service.
-func (service *Service) SetRegistrationStore(store captypes.RegistrationStore) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	service.store = store
+func (s *Service) SetRegistrationStore(store captypes.RegistrationStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.store = store
 }
 
-func (service *Service) Configure(ctx context.Context, settings captypes.Settings) error {
-	service.configureMu.Lock()
-	defer service.configureMu.Unlock()
-	return service.configure(ctx, settings)
+// Configure applies new capability settings and rebuilds the catalog entries.
+func (s *Service) Configure(ctx context.Context, settings captypes.Settings) error {
+	s.configureMu.Lock()
+	defer s.configureMu.Unlock()
+	return s.configure(ctx, settings)
 }
 
-func (service *Service) configure(ctx context.Context, settings captypes.Settings) error {
+func (s *Service) configure(ctx context.Context, settings captypes.Settings) error {
 	settings = captypes.Normalize(settings)
 	entries := make(map[string]captypes.Entry)
 	loaded := make(map[string]skills.Skill)
@@ -129,7 +130,7 @@ func (service *Service) configure(ctx context.Context, settings captypes.Setting
 		}
 		path := config.Path
 		if !filepath.IsAbs(path) {
-			path = filepath.Join(service.root, path)
+			path = filepath.Join(s.root, path)
 		}
 		skill, err := skills.Inspect(path)
 		if err != nil {
@@ -168,44 +169,45 @@ func (service *Service) configure(ctx context.Context, settings captypes.Setting
 		}
 		entries[id] = entry
 	}
-	service.mu.Lock()
-	if service.closed {
-		service.mu.Unlock()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
 		return errors.New("capability service is closed")
 	}
-	if service.webRoutesPublished {
-		settings.WebSearchRoutes = service.settings.WebSearchRoutes
+	if s.webRoutesPublished {
+		settings.WebSearchRoutes = s.settings.WebSearchRoutes
 	}
-	service.clients.Configure(settings.Connections)
-	for _, clients := range service.executionClients {
+	s.clients.Configure(settings.Connections)
+	for _, clients := range s.executionClients {
 		clients.Configure(settings.Connections)
 	}
 	// Settings publication is a revocation boundary for task authority. Durable
 	// installs/grants survive; in-memory review must use the new exact policy.
-	service.hostStates = make(map[string]map[string]captypes.ConnectionState)
-	service.taskGrants = make(map[string]map[string]taskGrant)
-	service.launches = make(map[string]map[string]string)
-	service.settings, service.entries, service.skills = settings, entries, loaded
-	service.generation++
-	service.mu.Unlock()
+	s.hostStates = make(map[string]map[string]captypes.ConnectionState)
+	s.taskGrants = make(map[string]map[string]taskGrant)
+	s.launches = make(map[string]map[string]string)
+	s.settings, s.entries, s.skills = settings, entries, loaded
+	s.generation++
+	s.mu.Unlock()
 	return nil
 }
 
-func (service *Service) Snapshot() captypes.Snapshot {
-	snapshot := service.snapshot()
-	snapshot.WebSearch = service.webSearchObservations(snapshot.Settings.WebSearchRoutes)
+// Snapshot returns the entries, connections and settings with current web search observations.
+func (s *Service) Snapshot() captypes.Snapshot {
+	snapshot := s.snapshot()
+	snapshot.WebSearch = s.webSearchObservations(snapshot.Settings.WebSearchRoutes)
 	return snapshot
 }
 
-func (service *Service) snapshot() captypes.Snapshot {
-	service.mu.RLock()
-	defer service.mu.RUnlock()
-	snapshot := captypes.Snapshot{Generation: service.generation, Settings: captypes.Clone(service.settings), Connections: service.clients.States(), StoredSecrets: service.clients.SecretNames()}
+func (s *Service) snapshot() captypes.Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	snapshot := captypes.Snapshot{Generation: s.generation, Settings: captypes.Clone(s.settings), Connections: s.clients.States(), StoredSecrets: s.clients.SecretNames()}
 	states := make(map[string]captypes.ConnectionState)
 	for _, state := range snapshot.Connections {
 		states[state.ID] = state
 	}
-	for id, entry := range service.entries {
+	for id, entry := range s.entries {
 		if entry.Kind == captypes.KindMCP && entry.State == "not started" {
 			if state, exists := states[id]; exists {
 				entry.State, entry.Reason = state.State, state.Error
@@ -213,9 +215,9 @@ func (service *Service) snapshot() captypes.Snapshot {
 		}
 		snapshot.Entries = append(snapshot.Entries, entry)
 	}
-	for agentID, bindings := range service.bindings {
+	for agentID, bindings := range s.bindings {
 		for id, binding := range bindings {
-			snapshot.Bindings = append(snapshot.Bindings, captypes.AgentBinding{AgentID: agentID, ID: id, Kind: service.entries[id].Kind, Version: binding.Version, Digest: binding.Digest})
+			snapshot.Bindings = append(snapshot.Bindings, captypes.AgentBinding{AgentID: agentID, ID: id, Kind: s.entries[id].Kind, Version: binding.Version, Digest: binding.Digest})
 		}
 	}
 	sort.Slice(snapshot.Bindings, func(first, second int) bool {
@@ -228,28 +230,29 @@ func (service *Service) snapshot() captypes.Snapshot {
 	return snapshot
 }
 
-func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (captypes.RuntimeSnapshot, error) {
+// Prepare starts the actor's hosts, recovers its connections and returns the run snapshot.
+func (s *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (captypes.RuntimeSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return captypes.RuntimeSnapshot{}, err
 	}
-	if err := service.validateRuntime(ctx, actor); err != nil {
+	if err := s.validateRuntime(ctx, actor); err != nil {
 		return captypes.RuntimeSnapshot{}, err
 	}
-	if err := service.prepareHosts(ctx, actor); err != nil {
+	if err := s.prepareHosts(ctx, actor); err != nil {
 		return captypes.RuntimeSnapshot{}, err
 	}
-	recoveryNotices := service.recoverConnections(ctx, actor)
-	snapshot := service.actorSnapshot(actor)
-	service.mu.Lock()
+	recoveryNotices := s.recoverConnections(ctx, actor)
+	snapshot := s.actorSnapshot(actor)
+	s.mu.Lock()
 	var retired *mcpclient.Manager
-	if prior := service.runs[actorKey(actor)]; prior != taskKey(actor) {
-		delete(service.taskGrants, prior)
-		delete(service.launches, prior)
-		retired = service.executionClients[prior]
-		delete(service.executionClients, prior)
+	if prior := s.runs[actorKey(actor)]; prior != taskKey(actor) {
+		delete(s.taskGrants, prior)
+		delete(s.launches, prior)
+		retired = s.executionClients[prior]
+		delete(s.executionClients, prior)
 	}
-	service.runs[actorKey(actor)] = taskKey(actor)
-	service.mu.Unlock()
+	s.runs[actorKey(actor)] = taskKey(actor)
+	s.mu.Unlock()
 	if retired != nil {
 		retired.Close()
 	}
@@ -260,11 +263,11 @@ func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor
 			continue
 		}
 		if connection.Cached {
-			if err := service.actorClients(actor).Refresh(ctx, connection.ID); err != nil {
+			if err := s.actorClients(actor).Refresh(ctx, connection.ID); err != nil {
 				prepared.Notices = append(prepared.Notices, "MCP discovery needs attention: "+connection.ID+": "+err.Error())
 				continue
 			}
-			for _, current := range service.actorClients(actor).States() {
+			for _, current := range s.actorClients(actor).States() {
 				if current.ID == connection.ID {
 					connection = current
 					break
@@ -272,7 +275,7 @@ func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor
 			}
 		}
 		for _, tool := range connection.Tools {
-			if grant, ok := service.taskAccess(actor, snapshot.Settings.Connections[connection.ID], tool.OriginalName); ok && !grant.Disabled && grant.Fingerprint == tool.Fingerprint {
+			if grant, ok := s.taskAccess(actor, snapshot.Settings.Connections[connection.ID], tool.OriginalName); ok && !grant.Disabled && grant.Fingerprint == tool.Fingerprint {
 				tool.Selected, tool.Effect, tool.Scope, tool.Reason = true, grant.Effect, grant.Scope, ""
 			}
 			if !tool.Selected || !actorAllows(actor, tool.Name, tool.Effect) {
@@ -293,11 +296,11 @@ func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor
 // dropped after working, so a restarted server or a network blip costs the
 // agent nothing but the tools' brief absence. Each connection backs off on its
 // own; a notice is returned only for connections that used to work.
-func (service *Service) recoverConnections(ctx context.Context, actor captypes.RuntimeActor) []string {
-	service.mu.RLock()
-	configs := captypes.Clone(service.settings).Connections
-	service.mu.RUnlock()
-	clients := service.localActorClients(actor)
+func (s *Service) recoverConnections(ctx context.Context, actor captypes.RuntimeActor) []string {
+	s.mu.RLock()
+	configs := captypes.Clone(s.settings).Connections
+	s.mu.RUnlock()
+	clients := s.localActorClients(actor)
 	states := make(map[string]captypes.ConnectionState)
 	for _, state := range clients.States() {
 		states[state.ID] = state
@@ -310,18 +313,18 @@ func (service *Service) recoverConnections(ctx context.Context, actor captypes.R
 	var notices []string
 	notice := func(id, text string) {
 		key := actorKey(actor) + "\x00" + id
-		service.mu.Lock()
-		defer service.mu.Unlock()
-		if service.recoveryNoticed == nil {
-			service.recoveryNoticed = make(map[string]bool)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.recoveryNoticed == nil {
+			s.recoveryNoticed = make(map[string]bool)
 		}
 		if text == "" {
-			delete(service.recoveryNoticed, key)
+			delete(s.recoveryNoticed, key)
 			return
 		}
 		// One notice per outage: every notice enters the agent's context.
-		if !service.recoveryNoticed[key] {
-			service.recoveryNoticed[key] = true
+		if !s.recoveryNoticed[key] {
+			s.recoveryNoticed[key] = true
 			notices = append(notices, text)
 		}
 	}
@@ -378,20 +381,20 @@ func hasDurableGrant(config captypes.ConnectionConfig) bool {
 // SetSecrets stores (or, with empty values, removes) secrets in Crude's
 // application secret store. Connections that read them reconnect so the new
 // values take effect on the next request.
-func (service *Service) SetSecrets(ctx context.Context, values map[string]string) error {
+func (s *Service) SetSecrets(ctx context.Context, values map[string]string) error {
 	if len(values) == 0 {
 		return errors.New("no secrets to store")
 	}
-	if err := service.clients.SetSecrets(values); err != nil {
+	if err := s.clients.SetSecrets(values); err != nil {
 		return err
 	}
-	service.mu.RLock()
-	settings := captypes.Clone(service.settings)
-	managers := []*mcpclient.Manager{service.clients}
-	for _, clients := range service.executionClients {
+	s.mu.RLock()
+	settings := captypes.Clone(s.settings)
+	managers := []*mcpclient.Manager{s.clients}
+	for _, clients := range s.executionClients {
 		managers = append(managers, clients)
 	}
-	service.mu.RUnlock()
+	s.mu.RUnlock()
 	for id, config := range settings.Connections {
 		uses := config.IsBuiltin()
 		for _, reference := range config.SecretRefs {
@@ -422,11 +425,12 @@ func actorAllows(actor captypes.RuntimeActor, name string, effect captypes.Effec
 	return slices.Contains(actor.Effects, effect)
 }
 
-func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snapshot captypes.RuntimeSnapshot, name string, params map[string]any) (captypes.Result, error) {
+// Execute runs one capability tool call, such as search, activation or a resource read.
+func (s *Service) Execute(ctx context.Context, actor captypes.RuntimeActor, snapshot captypes.RuntimeSnapshot, name string, params map[string]any) (captypes.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return captypes.Result{}, err
 	}
-	if err := service.validateRuntime(ctx, actor); err != nil {
+	if err := s.validateRuntime(ctx, actor); err != nil {
 		return captypes.Result{}, err
 	}
 	switch name {
@@ -442,7 +446,7 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		} else if value, ok := params["limit"].(int); ok {
 			limit = value
 		}
-		entries, err := service.Search(ctx, query, captypes.Kind(kind), limit, true)
+		entries, err := s.Search(ctx, query, captypes.Kind(kind), limit, true)
 		if err != nil && len(entries) == 0 {
 			return captypes.Result{}, err
 		}
@@ -486,7 +490,7 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		if scope != captypes.ScopeApplication && scope != captypes.ScopeWorkspace {
 			return captypes.Result{}, errors.New("capability_activate scope must be application or workspace")
 		}
-		return service.activate(ctx, actor, id, false, scope, environment)
+		return s.activate(ctx, actor, id, false, scope, environment)
 	case "mcp_request_access":
 		if !actorAllows(actor, name, captypes.EffectRead) {
 			return captypes.Result{}, errors.New("MCP access requests are denied for this agent")
@@ -498,7 +502,7 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		if actor.DisabledForSession(id) {
 			return captypes.Result{}, captypes.ErrSessionDisabled(id)
 		}
-		return service.activateAccess(ctx, actor, id, params["grants"])
+		return s.activateAccess(ctx, actor, id, params["grants"])
 	case "mcp_read_resource":
 		if !actorAllows(actor, name, captypes.EffectRead) {
 			return captypes.Result{}, errors.New("resource reads are denied for this agent")
@@ -508,7 +512,7 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		if actor.DisabledForSession(id) {
 			return captypes.Result{}, captypes.ErrSessionDisabled(id)
 		}
-		return service.actorClients(actor).ReadResource(ctx, id, uri)
+		return s.actorClients(actor).ReadResource(ctx, id, uri)
 	case "mcp_get_prompt":
 		if !actorAllows(actor, name, captypes.EffectRead) {
 			return captypes.Result{}, errors.New("prompt reads are denied for this agent")
@@ -524,7 +528,7 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 				arguments[key], _ = value.(string)
 			}
 		}
-		return service.actorClients(actor).GetPrompt(ctx, id, prompt, arguments)
+		return s.actorClients(actor).GetPrompt(ctx, id, prompt, arguments)
 	}
 	for _, tool := range snapshot.Tools {
 		if tool.Name != name {
@@ -539,10 +543,10 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		if snapshot.RunID != actor.RunID || snapshot.TurnGeneration != actor.TurnGeneration {
 			return captypes.Result{}, errors.New("dynamic request belongs to an expired run")
 		}
-		service.mu.RLock()
-		config := captypes.Clone(service.settings).Connections[tool.ConnectionID]
-		currentRun := service.runs[actorKey(actor)]
-		service.mu.RUnlock()
+		s.mu.RLock()
+		config := captypes.Clone(s.settings).Connections[tool.ConnectionID]
+		currentRun := s.runs[actorKey(actor)]
+		s.mu.RUnlock()
 		if currentRun != taskKey(actor) {
 			return captypes.Result{}, errors.New("dynamic request run was revoked or replaced")
 		}
@@ -550,17 +554,17 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 			return captypes.Result{}, errors.New("MCP connection is disabled")
 		}
 		if config.Source != "" {
-			service.mu.RLock()
-			source, exists := service.settings.Sources[config.Source]
-			service.mu.RUnlock()
+			s.mu.RLock()
+			source, exists := s.settings.Sources[config.Source]
+			s.mu.RUnlock()
 			if !exists || source.Disabled || !source.Trusted {
 				return captypes.Result{}, errors.New("MCP source is unavailable or untrusted")
 			}
 		}
-		if grant, ok := service.taskAccess(actor, config, tool.OriginalName); ok {
-			return service.actorClients(actor).CallAuthorized(ctx, tool, params, config, grant)
+		if grant, ok := s.taskAccess(actor, config, tool.OriginalName); ok {
+			return s.actorClients(actor).CallAuthorized(ctx, tool, params, config, grant)
 		}
-		return service.actorClients(actor).Call(ctx, tool, params)
+		return s.actorClients(actor).Call(ctx, tool, params)
 	}
 	return captypes.Result{}, errors.New("dynamic tool was not part of this request snapshot")
 }
@@ -569,20 +573,21 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 // the product default: an installation belongs to the user, not to one project,
 // so deleting a workspace can never destroy it. Callers that genuinely want a
 // workspace-owned binding use ActivateScoped with ScopeWorkspace.
-func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool) (captypes.Result, error) {
-	return service.ActivateScoped(ctx, actor, id, manual, captypes.ScopeApplication)
+func (s *Service) Activate(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool) (captypes.Result, error) {
+	return s.ActivateScoped(ctx, actor, id, manual, captypes.ScopeApplication)
 }
 
-func (service *Service) ActivateScoped(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool, scope captypes.Scope) (captypes.Result, error) {
-	return service.activate(ctx, actor, id, manual, scope, nil)
+// ActivateScoped activates an entry for an actor at an explicit application or workspace scope.
+func (s *Service) ActivateScoped(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool, scope captypes.Scope) (captypes.Result, error) {
+	return s.activate(ctx, actor, id, manual, scope, nil)
 }
 
-func (service *Service) activate(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool, scope captypes.Scope, environment map[string]string) (captypes.Result, error) {
+func (s *Service) activate(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool, scope captypes.Scope, environment map[string]string) (captypes.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return captypes.Result{}, err
 	}
 	if !manual {
-		if err := service.validateRuntime(ctx, actor); err != nil {
+		if err := s.validateRuntime(ctx, actor); err != nil {
 			return captypes.Result{}, err
 		}
 	}
@@ -595,15 +600,15 @@ func (service *Service) activate(ctx context.Context, actor captypes.RuntimeActo
 	if scope != captypes.ScopeApplication && scope != captypes.ScopeWorkspace {
 		return captypes.Result{}, errors.New("capability binding must be application or workspace")
 	}
-	service.mu.RLock()
-	entry, exists := service.entries[id]
-	skill, isSkill := service.skills[id]
-	settings := captypes.Clone(service.settings)
-	service.mu.RUnlock()
+	s.mu.RLock()
+	entry, exists := s.entries[id]
+	skill, isSkill := s.skills[id]
+	settings := captypes.Clone(s.settings)
+	s.mu.RUnlock()
 	if !exists {
-		service.mu.RLock()
-		_, discovered := service.candidates[id]
-		service.mu.RUnlock()
+		s.mu.RLock()
+		_, discovered := s.candidates[id]
+		s.mu.RUnlock()
 		if !discovered {
 			return captypes.Result{}, fmt.Errorf("capability %q is not an installed or discovered exact ID; use capability_search and pass the returned ID unchanged, not its name or path", id)
 		}
@@ -611,7 +616,7 @@ func (service *Service) activate(ctx context.Context, actor captypes.RuntimeActo
 		if !manual && (settings.Acquisition.Mode == "manual" || settings.Acquisition.Mode == "disabled") {
 			return captypes.Result{}, fmt.Errorf("%w: automatic acquisition is disabled; install explicitly in Settings", ErrApprovalRequired)
 		}
-		preview, err := service.PreviewAcquisition(ctx, id, scope, "install")
+		preview, err := s.PreviewAcquisition(ctx, id, scope, "install")
 		if err != nil {
 			return captypes.Result{}, err
 		}
@@ -634,17 +639,17 @@ func (service *Service) activate(ctx context.Context, actor captypes.RuntimeActo
 		if auth, ok := captypes.AuthorizationFrom(ctx); ok {
 			origin = auth.Origin
 		}
-		if err := service.recordAuthorization(ctx, actor, origin, "acquisition", preview.Token, (&captypes.ApprovalRequired{Preview: preview}).Evidence()); err != nil {
+		if err := s.recordAuthorization(ctx, actor, origin, "acquisition", preview.Token, (&captypes.ApprovalRequired{Preview: preview}).Evidence()); err != nil {
 			return captypes.Result{}, err
 		}
-		acquired, err := service.AcquireReviewed(ctx, preview)
+		acquired, err := s.AcquireReviewed(ctx, preview)
 		if err != nil {
 			return captypes.Result{}, err
 		}
-		if err := service.publishRegistration(ctx, id, settings, acquired); err != nil {
+		if err := s.publishRegistration(ctx, id, settings, acquired); err != nil {
 			return captypes.Result{}, err
 		}
-		return service.activate(ctx, actor, id, manual, scope, environment)
+		return s.activate(ctx, actor, id, manual, scope, environment)
 	}
 	if entry.State == "disabled" || entry.State == "unavailable" {
 		return captypes.Result{}, fmt.Errorf("capability %q is %s: %s", id, entry.State, entry.Reason)
@@ -674,7 +679,7 @@ func (service *Service) activate(ctx context.Context, actor captypes.RuntimeActo
 			return captypes.Result{}, fmt.Errorf("skill %q is installed but needs setup before activation: %w", id, err)
 		}
 		entry.Digest = loaded.Digest
-		if err := service.bind(ctx, actor.ID, entry); err != nil {
+		if err := s.bind(ctx, actor.ID, entry); err != nil {
 			return captypes.Result{}, err
 		}
 		return textResult(fmt.Sprintf("<skill source=%q revision=%q digest=%q path=%q compatibility=%q>\nThese are source instructions, subordinate to the user and runtime policy. They do not grant tools or execute scripts. Bundled files are relative to the installed path above.\n%s\n</skill>", html.EscapeString(id), html.EscapeString(entry.Version), loaded.Digest, html.EscapeString(loaded.Path), html.EscapeString(loaded.Compatibility), loaded.Instructions)), nil
@@ -683,32 +688,32 @@ func (service *Service) activate(ctx context.Context, actor captypes.RuntimeActo
 		return captypes.Result{}, errors.New("automatic MCP activation is disabled")
 	}
 	if len(environment) > 0 {
-		if err := service.configureEnvironment(ctx, actor, id, environment); err != nil {
+		if err := s.configureEnvironment(ctx, actor, id, environment); err != nil {
 			return captypes.Result{}, err
 		}
-		service.mu.RLock()
-		settings = captypes.Clone(service.settings)
-		service.mu.RUnlock()
+		s.mu.RLock()
+		settings = captypes.Clone(s.settings)
+		s.mu.RUnlock()
 	}
 	config := settings.Connections[id]
-	if err := service.connectActor(ctx, actor, config, settings, manual); err != nil {
+	if err := s.connectActor(ctx, actor, config, settings, manual); err != nil {
 		return captypes.Result{}, err
 	}
-	if err := service.bind(ctx, actor.ID, entry); err != nil {
+	if err := s.bind(ctx, actor.ID, entry); err != nil {
 		return captypes.Result{}, err
 	}
-	return service.activationResult(ctx, actor, id)
+	return s.activationResult(ctx, actor, id)
 }
 
-func (service *Service) publishRegistration(ctx context.Context, id string, before, after captypes.Settings) error {
+func (s *Service) publishRegistration(ctx context.Context, id string, before, after captypes.Settings) error {
 	// Do not hold the configuration lock while the settings owner obtains its
 	// workspace lifetime lease: a concurrent manager command may already hold
 	// that lease while waiting to configure.
-	service.publishMu.Lock()
-	defer service.publishMu.Unlock()
-	service.mu.RLock()
-	store, closed := service.store, service.closed
-	service.mu.RUnlock()
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	s.mu.RLock()
+	store, closed := s.store, s.closed
+	s.mu.RUnlock()
 	if store == nil || closed {
 		return errors.New("capability registration persistence is unavailable; installation was not published")
 	}
@@ -716,14 +721,15 @@ func (service *Service) publishRegistration(ctx context.Context, id string, befo
 	if err != nil {
 		return err
 	}
-	return service.Configure(ctx, persisted)
+	return s.Configure(ctx, persisted)
 }
 
-func (service *Service) InspectSkill(ctx context.Context, id string) (skills.Skill, error) {
-	service.mu.RLock()
-	skill, exists := service.skills[id]
-	entry := service.entries[id]
-	service.mu.RUnlock()
+// InspectSkill loads a skill and rejects a managed artifact that differs from its digest.
+func (s *Service) InspectSkill(ctx context.Context, id string) (skills.Skill, error) {
+	s.mu.RLock()
+	skill, exists := s.skills[id]
+	entry := s.entries[id]
+	s.mu.RUnlock()
 	if !exists {
 		return skills.Skill{}, errors.New("skill is unavailable")
 	}
@@ -734,22 +740,22 @@ func (service *Service) InspectSkill(ctx context.Context, id string) (skills.Ski
 	return loaded, err
 }
 
-func (service *Service) bind(ctx context.Context, actorID string, entry captypes.Entry) error {
+func (s *Service) bind(ctx context.Context, actorID string, entry captypes.Entry) error {
 	if actorID == "" {
 		return errors.New("activation needs a stable agent identity")
 	}
-	if service.db != nil {
-		if _, err := service.db.ExecContext(ctx, `INSERT INTO capability_bindings(agent_id, capability_id, version, digest) VALUES(?,?,?,?)
+	if s.db != nil {
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO capability_bindings(agent_id, capability_id, version, digest) VALUES(?,?,?,?)
 			ON CONFLICT(agent_id, capability_id) DO UPDATE SET version=excluded.version,digest=excluded.digest`, actorID, entry.ID, entry.Version, entry.Digest); err != nil {
 			return err
 		}
 	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	if service.bindings[actorID] == nil {
-		service.bindings[actorID] = make(map[string]binding)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bindings[actorID] == nil {
+		s.bindings[actorID] = make(map[string]binding)
 	}
-	service.bindings[actorID][entry.ID] = binding{ID: entry.ID, Version: entry.Version, Digest: entry.Digest}
+	s.bindings[actorID][entry.ID] = binding{ID: entry.ID, Version: entry.Version, Digest: entry.Digest}
 	return nil
 }
 
@@ -757,35 +763,53 @@ func textResult(text string) captypes.Result {
 	return captypes.Result{Content: []captypes.Content{{Type: "text", Text: text}}}
 }
 
-func (service *Service) Connect(ctx context.Context, id string) error {
-	return service.clients.Connect(ctx, id)
-}
-func (service *Service) Disconnect(id string) error { return service.clients.Disconnect(id) }
-func (service *Service) Refresh(ctx context.Context, id string) error {
-	return service.clients.Refresh(ctx, id)
-}
-func (service *Service) Test(ctx context.Context, config captypes.ConnectionConfig) (captypes.ConnectionState, error) {
-	return service.clients.Test(ctx, config)
-}
-func (service *Service) SignIn(ctx context.Context, id string) error {
-	return service.clients.SignIn(ctx, id)
-}
-func (service *Service) SignOut(id string) error { return service.clients.SignOut(id) }
-func (service *Service) SubmitAuthorization(id, callback string) error {
-	return service.clients.SubmitAuthorization(id, callback)
-}
-func (service *Service) ReadResource(ctx context.Context, id, uri string) (captypes.Result, error) {
-	return service.clients.ReadResource(ctx, id, uri)
-}
-func (service *Service) GetPrompt(ctx context.Context, id, name string, arguments map[string]string) (captypes.Result, error) {
-	return service.clients.GetPrompt(ctx, id, name, arguments)
+// Connect starts the MCP connection with the given id.
+func (s *Service) Connect(ctx context.Context, id string) error {
+	return s.clients.Connect(ctx, id)
 }
 
-func (service *Service) SkillFile(ctx context.Context, id, relative string) (string, error) {
+// Disconnect stops the connection and drops its client state.
+func (s *Service) Disconnect(id string) error { return s.clients.Disconnect(id) }
+
+// Refresh restarts the connection and reads its tools again.
+func (s *Service) Refresh(ctx context.Context, id string) error {
+	return s.clients.Refresh(ctx, id)
+}
+
+// Test tries a connection config and returns the state it reaches.
+func (s *Service) Test(ctx context.Context, config captypes.ConnectionConfig) (captypes.ConnectionState, error) {
+	return s.clients.Test(ctx, config)
+}
+
+// SignIn starts the OAuth sign-in flow for a connection.
+func (s *Service) SignIn(ctx context.Context, id string) error {
+	return s.clients.SignIn(ctx, id)
+}
+
+// SignOut removes the stored credential of a connection.
+func (s *Service) SignOut(id string) error { return s.clients.SignOut(id) }
+
+// SubmitAuthorization completes a pending browser sign-in with the callback address.
+func (s *Service) SubmitAuthorization(id, callback string) error {
+	return s.clients.SubmitAuthorization(id, callback)
+}
+
+// ReadResource returns one resource of a connected MCP server.
+func (s *Service) ReadResource(ctx context.Context, id, uri string) (captypes.Result, error) {
+	return s.clients.ReadResource(ctx, id, uri)
+}
+
+// GetPrompt returns one prompt of a connected MCP server, filled with the given arguments.
+func (s *Service) GetPrompt(ctx context.Context, id, name string, arguments map[string]string) (captypes.Result, error) {
+	return s.clients.GetPrompt(ctx, id, name, arguments)
+}
+
+// SkillFile returns one bundled file of a skill as text.
+func (s *Service) SkillFile(ctx context.Context, id, relative string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	skill, err := service.InspectSkill(ctx, id)
+	skill, err := s.InspectSkill(ctx, id)
 	if err != nil {
 		return "", err
 	}
@@ -793,19 +817,21 @@ func (service *Service) SkillFile(ctx context.Context, id, relative string) (str
 	return string(data), err
 }
 
-func (service *Service) SkillFiles(ctx context.Context, id string) ([]string, error) {
-	skill, err := service.InspectSkill(ctx, id)
+// SkillFiles lists the files that a skill bundles.
+func (s *Service) SkillFiles(ctx context.Context, id string) ([]string, error) {
+	skill, err := s.InspectSkill(ctx, id)
 	return slices.Clone(skill.Files), err
 }
 
-func (service *Service) SkillPath(ctx context.Context, id, relative string) (string, error) {
-	skill, err := service.InspectSkill(ctx, id)
+// SkillPath resolves a skill file for the editor and refuses managed artifacts.
+func (s *Service) SkillPath(ctx context.Context, id, relative string) (string, error) {
+	skill, err := s.InspectSkill(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	service.mu.RLock()
-	managed := service.entries[id].Managed
-	service.mu.RUnlock()
+	s.mu.RLock()
+	managed := s.entries[id].Managed
+	s.mu.RUnlock()
 	if managed {
 		return "", errors.New("managed artifacts are immutable; make a local copy before opening in the editor")
 	}
@@ -815,12 +841,13 @@ func (service *Service) SkillPath(ctx context.Context, id, relative string) (str
 	return filepath.Join(skill.Path, filepath.FromSlash(relative)), nil
 }
 
-func (service *Service) Search(ctx context.Context, query string, kind captypes.Kind, limit int, external bool) ([]captypes.Entry, error) {
+// Search ranks the catalog entries that match a query, and can ask external sources too.
+func (s *Service) Search(ctx context.Context, query string, kind captypes.Kind, limit int, external bool) ([]captypes.Entry, error) {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	snapshot := service.snapshot()
+	snapshot := s.snapshot()
 	entries := make([]captypes.Entry, 0)
 	for _, entry := range snapshot.Entries {
 		if kind != "" && entry.Kind != kind {
@@ -832,7 +859,7 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 	if !external || len(entries) > 0 {
 		return entries, nil
 	}
-	discovered, err := service.discover(ctx, snapshot.Settings.Sources, query, kind, limit-len(entries))
+	discovered, err := s.discover(ctx, snapshot.Settings.Sources, query, kind, limit-len(entries))
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		seen[entry.ID] = struct{}{}
@@ -849,20 +876,21 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 	return entries, err
 }
 
-func (service *Service) Discover(ctx context.Context, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
+// Discover searches the configured sources for entries that match a query.
+func (s *Service) Discover(ctx context.Context, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	return service.discover(ctx, service.snapshot().Settings.Sources, strings.ToLower(strings.TrimSpace(query)), kind, limit)
+	return s.discover(ctx, s.snapshot().Settings.Sources, strings.ToLower(strings.TrimSpace(query)), kind, limit)
 }
 
 // DiscoverSource searches exactly one enabled source, without an all-source
 // result budget hiding matches from the selected catalog.
-func (service *Service) DiscoverSource(ctx context.Context, query string, kind captypes.Kind, limit int, sourceID string) ([]captypes.Entry, error) {
+func (s *Service) DiscoverSource(ctx context.Context, query string, kind captypes.Kind, limit int, sourceID string) ([]captypes.Entry, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
-	source, exists := service.snapshot().Settings.Sources[sourceID]
+	source, exists := s.snapshot().Settings.Sources[sourceID]
 	if !exists {
 		return nil, fmt.Errorf("capability source %q is unknown", sourceID)
 	}
@@ -873,10 +901,10 @@ func (service *Service) DiscoverSource(ctx context.Context, query string, kind c
 		kind == captypes.KindSkill && source.Kind == "registry" {
 		return nil, fmt.Errorf("capability source %q does not provide %s entries", sourceID, kind)
 	}
-	return service.discover(ctx, map[string]captypes.SourceConfig{sourceID: source}, strings.ToLower(strings.TrimSpace(query)), kind, limit)
+	return s.discover(ctx, map[string]captypes.SourceConfig{sourceID: source}, strings.ToLower(strings.TrimSpace(query)), kind, limit)
 }
 
-func (service *Service) discover(ctx context.Context, sources map[string]captypes.SourceConfig, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
+func (s *Service) discover(ctx context.Context, sources map[string]captypes.SourceConfig, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
 	matcher := newCapabilityQuery(query)
 	var groups [][]captypes.Entry
 	var sourceErrors []error
@@ -898,7 +926,7 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 			continue
 		}
 		if source.Kind != "local" {
-			remote, err := service.discoverRemote(ctx, source, query, kind, limit)
+			remote, err := s.discoverRemote(ctx, source, query, kind, limit)
 			if err != nil {
 				sourceErrors = append(sourceErrors, fmt.Errorf("source %q: %w", source.Name, err))
 			}
@@ -912,7 +940,7 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 		}
 		location := source.Location
 		if !filepath.IsAbs(location) {
-			location = filepath.Join(service.root, location)
+			location = filepath.Join(s.root, location)
 		}
 		children, err := os.ReadDir(location)
 		if err != nil {
@@ -936,14 +964,14 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 		}
 		local = rankCapabilityEntries(local, matcher, limit)
 		if len(local) > 0 {
-			service.mu.Lock()
-			if service.candidates == nil {
-				service.candidates = make(map[string]Candidate)
+			s.mu.Lock()
+			if s.candidates == nil {
+				s.candidates = make(map[string]Candidate)
 			}
 			for _, entry := range local {
-				service.candidates[entry.ID] = Candidate{Entry: entry}
+				s.candidates[entry.ID] = Candidate{Entry: entry}
 			}
-			service.mu.Unlock()
+			s.mu.Unlock()
 			groups = append(groups, local)
 		}
 	}
@@ -978,17 +1006,18 @@ func interleaveDiscovery(groups [][]captypes.Entry, limit int) []captypes.Entry 
 	return entries
 }
 
-func (service *Service) Close() {
-	service.mu.Lock()
-	service.closed = true
-	clients := service.executionClients
-	service.executionClients = make(map[string]*mcpclient.Manager)
-	service.hostStates = make(map[string]map[string]captypes.ConnectionState)
-	service.taskGrants = make(map[string]map[string]taskGrant)
-	service.launches = make(map[string]map[string]string)
-	service.runs = make(map[string]string)
-	service.mu.Unlock()
-	service.clients.Close()
+// Close marks the service closed and stops every connection it owns.
+func (s *Service) Close() {
+	s.mu.Lock()
+	s.closed = true
+	clients := s.executionClients
+	s.executionClients = make(map[string]*mcpclient.Manager)
+	s.hostStates = make(map[string]map[string]captypes.ConnectionState)
+	s.taskGrants = make(map[string]map[string]taskGrant)
+	s.launches = make(map[string]map[string]string)
+	s.runs = make(map[string]string)
+	s.mu.Unlock()
+	s.clients.Close()
 	for _, client := range clients {
 		client.Close()
 	}

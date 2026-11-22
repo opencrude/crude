@@ -16,8 +16,9 @@ type GitDiscardPreview struct {
 	Comparison GitComparison
 }
 
-func (workspace *Workspace) PreviewGitDiscard(ctx context.Context, change GitChange) (GitDiscardPreview, error) {
-	return PreviewGitDiscardAt(ctx, workspace.Git, workspace.LocalHistory, change)
+// PreviewGitDiscard previews the recovery point for one tracked working-tree change.
+func (w *Workspace) PreviewGitDiscard(ctx context.Context, change GitChange) (GitDiscardPreview, error) {
+	return PreviewGitDiscardAt(ctx, w.Git, w.LocalHistory, change)
 }
 
 func PreviewGitDiscardAt(ctx context.Context, git *GitService, store *localhistory.Store, change GitChange) (GitDiscardPreview, error) {
@@ -37,8 +38,9 @@ func PreviewGitDiscardAt(ctx context.Context, git *GitService, store *localhisto
 	return GitDiscardPreview{Comparison: comparison}, nil
 }
 
-func (workspace *Workspace) DiscardGitReviewed(ctx context.Context, preview GitDiscardPreview) (string, error) {
-	return DiscardGitReviewedAt(ctx, workspace.Git, workspace.LocalHistory, workspace.LiveDocuments, preview)
+// DiscardGitReviewed discards a reviewed change and returns its safety snapshot id.
+func (w *Workspace) DiscardGitReviewed(ctx context.Context, preview GitDiscardPreview) (string, error) {
+	return DiscardGitReviewedAt(ctx, w.Git, w.LocalHistory, w.LiveDocuments, preview)
 }
 
 func DiscardGitReviewedAt(ctx context.Context, git *GitService, store *localhistory.Store, documents *DocumentService, preview GitDiscardPreview) (string, error) {

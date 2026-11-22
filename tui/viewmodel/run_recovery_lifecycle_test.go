@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/agent"
+	"crude/agent/turnloop"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +13,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/provider"
-	"crude/types"
 	"crude/types/reasoning"
 	"crude/types/recovery"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -32,7 +33,7 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 				const draft = "Keep this next instruction."
 				app.Input.SetInput(draft)
 				emit := func(typ string, data any) {
-					_, _ = app.Update(types.AgentMsg{Type: typ, AgentID: "owner", Data: data})
+					_, _ = app.Update(AgentMsg{Type: typ, AgentID: "owner", Data: data})
 				}
 				status := recovery.Status{
 					ID: "incident", AgentID: "owner", Generation: 1, State: initial,
@@ -54,19 +55,19 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 				status.Summary, status.UpdatedAt = "Retrying unfinished run", time.Now()
 				emit("recovery", status)
 				app.paintShellFrame()
-				if phase := app.ws.AgentActivity("owner").Status.Phase; phase != types.AgentPreparing {
+				if phase := app.ws.AgentActivity("owner").Status.Phase; phase != statuscenter.AgentPreparing {
 					t.Fatalf("acknowledged retry still claims cooldown: %s", phase)
 				}
 				for _, event := range []struct {
 					typ   string
 					data  any
-					phase types.AgentPhase
+					phase statuscenter.AgentPhase
 					text  string
 				}{
-					{"phase", map[string]any{"name": "waiting_provider", "provider": "Test Provider", "request_id": "new-request"}, types.AgentWaiting, "Waiting for Test Provider"},
-					{"thinking", reasoning.Delta{Text: "Checking the resumed work", Kind: reasoning.Summary, BlockID: "resumed-thought"}, types.AgentThinking, "Checking the resumed work"},
-					{"stream_token", "Accepted resumed response", types.AgentResponding, "Receiving response"},
-					{"tool_call", map[string]any{"name": "read_async_output", "tool_id": "resumed-tool", "args": `{"handle":"owned-command"}`}, types.AgentTool, "Running read_async_output"},
+					{"phase", map[string]any{"name": "waiting_provider", "provider": "Test Provider", "request_id": "new-request"}, statuscenter.AgentWaiting, "Waiting for Test Provider"},
+					{"thinking", reasoning.Delta{Text: "Checking the resumed work", Kind: reasoning.Summary, BlockID: "resumed-thought"}, statuscenter.AgentThinking, "Checking the resumed work"},
+					{"stream_token", "Accepted resumed response", statuscenter.AgentResponding, "Receiving response"},
+					{"tool_call", map[string]any{"name": "read_async_output", "tool_id": "resumed-tool", "args": `{"handle":"owned-command"}`}, statuscenter.AgentTool, "Running read_async_output"},
 				} {
 					emit(event.typ, event.data)
 					for frame := 0; frame < 3; frame++ {
@@ -78,7 +79,7 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 							app.switchToAgentView("owner")
 						}
 						if frame > 0 {
-							_, _ = app.Update(types.TickMsg(time.Now()))
+							_, _ = app.Update(TickMsg(time.Now()))
 						}
 						app.paintShellFrame()
 						snapshot, _ := app.ws.Status().Agent("owner")
@@ -113,9 +114,9 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 				status.State, status.UpdatedAt = recovery.Recovered, time.Now()
 				emit("recovery", status)
 				emit("done", map[string]any{"reason": "completed"})
-				_, _ = app.Update(types.TickMsg(time.Now()))
+				_, _ = app.Update(TickMsg(time.Now()))
 				app.paintShellFrame()
-				if app.ws.AgentActivity("owner").Status.Phase != types.AgentCompleted {
+				if app.ws.AgentActivity("owner").Status.Phase != statuscenter.AgentCompleted {
 					t.Fatal("recovery completion did not settle the activity")
 				}
 			})
@@ -126,18 +127,18 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 func TestRecoveryActivityHonorsExplicitStopWhileIncidentIsPending(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("owner")
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
 		ID: "incident", AgentID: "owner", Generation: 1, State: recovery.Recovering,
 		RetryAt: time.Now().Add(time.Minute),
 	}})
 	app.ws.AgentMgr().Get("owner").State.BeginCancellation()
 	app.syncAgentStatusInventory()
-	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
+	_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
 		ID: "incident", AgentID: "owner", Generation: 1, State: recovery.NeedsAttention,
 		Summary: "This queued event must not undo Stop", UpdatedAt: time.Now(),
 	}})
 	snapshot, _ := app.ws.Status().Agent("owner")
-	if snapshot.Phase != types.AgentCancelling || snapshot.NeedsAction {
+	if snapshot.Phase != statuscenter.AgentCancelling || snapshot.NeedsAction {
 		t.Fatalf("rejected queued recovery changed live status: %+v", snapshot)
 	}
 	for _, issue := range app.ws.Status().Issues() {
@@ -147,7 +148,7 @@ func TestRecoveryActivityHonorsExplicitStopWhileIncidentIsPending(t *testing.T) 
 	}
 	app.paintShellFrame()
 	view := app.ws.AgentActivity("owner")
-	if view.Status.Phase != types.AgentCancelling || view.Active {
+	if view.Status.Phase != statuscenter.AgentCancelling || view.Active {
 		t.Fatalf("pending incident hid Stop: %+v", view)
 	}
 	if got := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1); !strings.Contains(got, "Stopping") || strings.Contains(got, "Recovering") {
@@ -156,7 +157,7 @@ func TestRecoveryActivityHonorsExplicitStopWhileIncidentIsPending(t *testing.T) 
 }
 
 type recoveryJourneySender struct {
-	events chan types.AgentMsg
+	events chan AgentMsg
 }
 
 func (s *recoveryJourneySender) SendAgentEvent(typ string, data any) {
@@ -164,7 +165,7 @@ func (s *recoveryJourneySender) SendAgentEvent(typ string, data any) {
 }
 
 func (s *recoveryJourneySender) SendAgentEventWithID(typ string, data any, id string) {
-	s.events <- types.AgentMsg{Type: typ, Data: data, AgentID: id}
+	s.events <- AgentMsg{Type: typ, Data: data, AgentID: id}
 }
 
 func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
@@ -207,7 +208,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
 			wsOf(app).SessionsByID = make(map[string]*workspace.Session)
 			wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
-			wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+			wsOf(app).SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 			cfg := testAccountConfig()
 			account := cfg.Accounts["test"]
 			template := account.Connection
@@ -222,7 +223,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			// CloseAgent releases the orchestrator, not its session's log/database.
 			// Join the backend before TempDir's Windows cleanup removes those files.
 			defer wsOf(app).CloseAllSessions()
-			sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
+			sender := &recoveryJourneySender{events: make(chan AgentMsg, 512)}
 			orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 			if err != nil {
 				t.Fatal(err)
@@ -239,7 +240,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			app.Input.SetInput(draft)
 			app.Input.SetCursorFlat(7)
 			runAppCommand(t, app, submit)
-			waitFor := func(typ string) types.AgentMsg {
+			waitFor := func(typ string) AgentMsg {
 				t.Helper()
 				timeout := time.NewTimer(8 * time.Second)
 				defer timeout.Stop()
@@ -255,7 +256,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 						}
 					case <-timeout.C:
 						t.Fatalf("missing owner event %s; requests=%d", typ, requests.Load())
-						return types.AgentMsg{}
+						return AgentMsg{}
 					}
 				}
 			}
@@ -268,7 +269,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 					t.Fatalf("authentication failure did not end the turn with its reason: %+v", incident)
 				}
 				deadline := time.Now().Add(2 * time.Second)
-				for app.ws.AgentActivity(orch.ID).Status.Phase != types.AgentFailed && time.Now().Before(deadline) {
+				for app.ws.AgentActivity(orch.ID).Status.Phase != statuscenter.AgentFailed && time.Now().Before(deadline) {
 					select {
 					case event := <-sender.events:
 						if event.AgentID == "" {
@@ -278,7 +279,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 					case <-time.After(10 * time.Millisecond):
 					}
 				}
-				_, _ = app.Update(types.TickMsg(time.Now()))
+				_, _ = app.Update(TickMsg(time.Now()))
 				app.paintShellFrame()
 				var transcript strings.Builder
 				for row := app.chatRect.Y; row < app.chatRect.Y+app.chatRect.H; row++ {
@@ -304,12 +305,12 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 				}
 			}
 			waitFor("stream_token")
-			_, _ = app.Update(types.TickMsg(time.Now()))
+			_, _ = app.Update(TickMsg(time.Now()))
 			app.paintShellFrame()
 			snapshot, _ := app.ws.Status().Agent(orch.ID)
 			view := app.ws.AgentActivity(orch.ID)
 			line := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
-			if snapshot.Phase != types.AgentResponding || view.Status.Phase != types.AgentResponding || !strings.Contains(line, "Receiving response") {
+			if snapshot.Phase != statuscenter.AgentResponding || view.Status.Phase != statuscenter.AgentResponding || !strings.Contains(line, "Receiving response") {
 				t.Fatalf("real resumed output still shows recovery: snapshot=%+v activity=%+v strip=%q", snapshot, view.Status, line)
 			}
 			resumed := false
@@ -328,9 +329,9 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			}
 			finish <- struct{}{}
 			waitFor("done")
-			_, _ = app.Update(types.TickMsg(time.Now()))
+			_, _ = app.Update(TickMsg(time.Now()))
 			app.paintShellFrame()
-			if view := app.ws.AgentActivity(orch.ID); view.Active || view.Status.Phase != types.AgentCompleted || view.Recovery.State != recovery.Recovered {
+			if view := app.ws.AgentActivity(orch.ID); view.Active || view.Status.Phase != statuscenter.AgentCompleted || view.Recovery.State != recovery.Recovered {
 				t.Fatalf("real completion did not settle recovery: %+v", view)
 			}
 			var transcript strings.Builder
@@ -345,7 +346,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 	}
 }
 
-func (s *recoveryJourneySender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *recoveryJourneySender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }
 
@@ -369,7 +370,7 @@ func TestParkedRecoveryEnterSendsNewMessage(t *testing.T) {
 		t.Run(string(state), func(t *testing.T) {
 			app := newFullTestApp(t)
 			app.AddOrchestrator("owner")
-			_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
+			_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
 				ID: "incident", AgentID: "owner", Generation: 1, State: state, UpdatedAt: time.Now(),
 			}})
 			app.Input.SetInput("please go on")
@@ -385,7 +386,7 @@ func TestParkedRecoveryEnterSendsNewMessage(t *testing.T) {
 		app.AddOrchestrator("root")
 		app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", workspace.NewAgentState("child", nil, nil))
 		app.switchToAgentView("child")
-		_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "child", Data: recovery.Status{
+		_ = app.handleAgentEvent(AgentEventMsg{Type: "recovery", AgentID: "child", Data: recovery.Status{
 			ID: "incident", AgentID: "child", Generation: 1, State: recovery.Interrupted, UpdatedAt: time.Now(),
 		}})
 		app.Input.SetInput("child draft")

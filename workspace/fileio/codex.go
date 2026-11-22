@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"crude/agent/codexio"
-	"crude/text/encoding"
+	"crude/text/textencoding"
 )
 
 // CodexChange describes a committed path image, including commits preceding a

@@ -2,7 +2,7 @@ package session
 
 import (
 	"context"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -18,7 +18,7 @@ import (
 	"unicode/utf8"
 
 	"crude/agent/collaboration"
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 )
 
 // SQLite owns the durable sequence across processes. Queue this process's
@@ -184,7 +184,7 @@ func permuteBelow(value, size *big.Int, key []byte, tier int) *big.Int {
 func (s *Session) AgentName() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return ttypes.AgentNameForRole(s.selectedMainAgent, s.agentName)
+	return setting.AgentNameForRole(s.selectedMainAgent, s.agentName)
 }
 
 // validChildName accepts a name a parent gives its child: a short human name in

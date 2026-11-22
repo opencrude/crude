@@ -3,8 +3,8 @@ package editor
 import (
 	"errors"
 
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/types/insight"
 )
 
 type editorInlineLine struct {
@@ -17,7 +17,7 @@ type editorInlineLine struct {
 // The editor owns only a source-to-cell projection. The canonical coordinator
 // owns provider/context evidence and originals; the shell owns request lifetime.
 type editorInlayProjection struct {
-	source   types.InsightSource
+	source   insight.Source
 	buffer   *PieceTable
 	revision uint64
 	lines    map[int]*editorInlineLine
@@ -29,15 +29,15 @@ type editorInlayProjection struct {
 // caret, selection, history or savepoint. A valid UTF-16 position inside a source
 // grapheme is unrenderable here: it is refused, never clamped to another anchor.
 // The shell must already have checked the provider/context and its request owner.
-func (e *Editor) SetInlayHints(set types.LSPInlaySet) error {
+func (e *Editor) SetInlayHints(set insight.LSPInlaySet) error {
 	if !e.MatchesInsightSource(set.Boundary.Source) || len(set.Hints) > inlineMaxInsertions {
 		return errors.New("inlay hints do not identify this acknowledged editor source")
 	}
-	if set.Answer != types.LSPInlayHints && len(set.Hints) != 0 {
+	if set.Answer != insight.LSPInlayHints && len(set.Hints) != 0 {
 		return errors.New("negative inlay evidence contains labels")
 	}
-	if set.Answer != types.LSPInlayHints && set.Answer != types.LSPInlayNull &&
-		set.Answer != types.LSPInlayEmpty && set.Answer != types.LSPInlayUnsupported {
+	if set.Answer != insight.LSPInlayHints && set.Answer != insight.LSPInlayNull &&
+		set.Answer != insight.LSPInlayEmpty && set.Answer != insight.LSPInlayUnsupported {
 		return errors.New("unknown inlay answer")
 	}
 	e.buf.ensureCache()
@@ -161,7 +161,7 @@ func (e *Editor) inlineInsertionAt(x, y int) bool {
 
 // prepareInlayProjection is shared by initial installation and geometry changes.
 // The exact source and original label identities are retained, never re-requested.
-func (e *Editor) prepareInlayProjection(source types.InsightSource, byLine map[int][]InlineInsertion) (*editorInlayProjection, error) {
+func (e *Editor) prepareInlayProjection(source insight.Source, byLine map[int][]InlineInsertion) (*editorInlayProjection, error) {
 	next := &editorInlayProjection{source: source, buffer: e.buf, revision: e.Revision(), lines: make(map[int]*editorInlineLine)}
 	for line, insertions := range byLine {
 		raw, _ := e.buf.lineView(line)

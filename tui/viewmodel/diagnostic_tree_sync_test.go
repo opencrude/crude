@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/filetree"
 	"crude/tui/screens/problems"
-	"crude/types"
+	"crude/types/insight"
 )
 
 func problemRowCounts(model problems.Model) (errors, warnings int) {
@@ -30,21 +30,21 @@ func TestFileTreeMarkersMatchProblemsPanel(t *testing.T) {
 	app.Tree = NewTreeState(filetree.NewFileTreeModel(root), 30)
 	unopened := filepath.Join(root, "unopened.txt")
 	older := filepath.Join(root, "older.txt")
-	service.facts = map[string]types.InsightDiagnostics{
+	service.facts = map[string]insight.Diagnostics{
 		unopened: {
-			ID: "project-fact", Binding: "unversioned", State: types.InsightProvisional, WireVersion: 1,
-			Boundary: types.InsightBoundary{Source: types.InsightSource{DocumentID: "unopened:" + unopened, Path: unopened,
-				Kind: types.InsightSourceDisk, Revision: 1, Lifetime: "producer", WorkspaceGeneration: "fixture-generation"}},
-			Diagnostics: []types.LSPDiagnostic{
-				{Line: 2, Col: 4, EndLine: 2, EndCol: 9, Severity: types.DiagError, Message: "undefined: helper"},
-				{Line: 5, Col: 0, EndLine: 5, EndCol: 3, Severity: types.DiagWarning, Message: "unused"},
+			ID: "project-fact", Binding: "unversioned", State: insight.Provisional, WireVersion: 1,
+			Boundary: insight.Boundary{Source: insight.Source{DocumentID: "unopened:" + unopened, Path: unopened,
+				Kind: insight.SourceDisk, Revision: 1, Lifetime: "producer", WorkspaceGeneration: "fixture-generation"}},
+			Diagnostics: []insight.LSPDiagnostic{
+				{Line: 2, Col: 4, EndLine: 2, EndCol: 9, Severity: insight.DiagError, Message: "undefined: helper"},
+				{Line: 5, Col: 0, EndLine: 5, EndCol: 3, Severity: insight.DiagWarning, Message: "unused"},
 			},
 		},
 		older: {
-			ID: "older-fact", Binding: "exact-version", State: types.InsightStale, WireVersion: 1,
-			Boundary: types.InsightBoundary{Source: types.InsightSource{DocumentID: "older:" + older, Path: older,
-				Kind: types.InsightSourceCanonical, Revision: 1, Lifetime: "producer", WorkspaceGeneration: "fixture-generation"}},
-			Diagnostics: []types.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 1, Severity: types.DiagError, Message: "old error"}},
+			ID: "older-fact", Binding: "exact-version", State: insight.Stale, WireVersion: 1,
+			Boundary: insight.Boundary{Source: insight.Source{DocumentID: "older:" + older, Path: older,
+				Kind: insight.SourceCanonical, Revision: 1, Lifetime: "producer", WorkspaceGeneration: "fixture-generation"}},
+			Diagnostics: []insight.LSPDiagnostic{{Line: 0, Col: 0, EndLine: 0, EndCol: 1, Severity: insight.DiagError, Message: "old error"}},
 		},
 	}
 	service.version++

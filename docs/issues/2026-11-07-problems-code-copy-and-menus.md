@@ -53,7 +53,7 @@
   byte-identical to the fenced source, and prose after the fence still paints.
 - Problems rows sort errors before warnings, the language row opens Language
   settings, and Ctrl+C copies the selected item.
-- `go run ./internal/wiregen` was required: the previous commit left the
+- `go run ./tools/wiregen` was required: the previous commit left the
   protocol cohort stale, so `make bench-gate` could not pass at that commit.
   With the regenerated cohort and schema, `make bench-gate` passes.
 

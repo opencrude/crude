@@ -2,19 +2,19 @@ package viewmodel
 
 import (
 	"crude/tui/screens/decision"
+	"crude/types/setting"
 	"testing"
 	"time"
 
 	"crude/tui/screens/question"
-	"crude/types"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
 
 func TestSessionDeckIsRetainedPerSession(t *testing.T) {
 	app := newFullTestApp(t)
-	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 
 	selectDeckSession(t, app, first, "first-agent")
 	app.openSessionSettings()
@@ -42,8 +42,8 @@ func TestSessionDeckIsRetainedPerSession(t *testing.T) {
 
 func TestConfirmationAndYoloResultsTargetOwningProjection(t *testing.T) {
 	app := newFullTestApp(t)
-	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 
 	selectDeckSession(t, app, first, "first-agent")
 	firstProjection := app.activeSessionProjection()
@@ -72,8 +72,8 @@ func TestConfirmationAndYoloResultsTargetOwningProjection(t *testing.T) {
 
 func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T) {
 	app := newFullTestApp(t)
-	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 	selectDeckSession(t, app, first, "first-agent")
 	firstProjection := app.activeSessionProjection()
 	prompt := openTestAgentPrompt(t, app, firstProjection, agentPromptRequest{kind: agentPromptQuestions, agentID: "first-agent", questionsJSON: `[{"question":"Continue?","options":["yes","no"]}]`})
@@ -99,7 +99,7 @@ func TestSessionDeckReservesNativeRegionBelowMessages(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
 	app.launcherScreen = nil
-	selectDeckSession(t, app, &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}, "agent")
+	selectDeckSession(t, app, &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}, "agent")
 	app.openSessionSettings()
 	_ = app.computeContentLayout()
 
@@ -116,8 +116,8 @@ func TestSessionDeckReservesNativeRegionBelowMessages(t *testing.T) {
 
 func TestSettingsProjectionLookupTargetsInactiveSession(t *testing.T) {
 	app := newFullTestApp(t)
-	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 	firstProjection := app.sessionProjections.Get(first)
 	app.sessionProjections.Get(second)
 	selectDeckSession(t, app, second, "second-agent")
@@ -130,8 +130,8 @@ func TestSettingsProjectionLookupTargetsInactiveSession(t *testing.T) {
 
 func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testing.T) {
 	app := newFullTestApp(t)
-	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
+	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	app.ws.SessionsByAgent()["first-agent"] = first
 
@@ -158,7 +158,7 @@ func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testin
 
 func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 	app := newFullTestApp(t)
-	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	app.ws.SessionsByAgent()["agent"] = session
 	selectDeckSession(t, app, session, "agent")
@@ -179,7 +179,7 @@ func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 
 func TestBackgroundJobsDoesNotRetainFocusAfterBlockingPanelCloses(t *testing.T) {
 	app := newFullTestApp(t)
-	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil)}
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"agent": session}
 	selectDeckSession(t, app, session, "agent")
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)

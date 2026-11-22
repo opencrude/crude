@@ -1,9 +1,3 @@
-// Package plan owns the presentation-neutral planning domain for a session.
-//
-// A plan is a revisioned, declarative snapshot that models can create, edit,
-// reorder, skip, reopen, pause, resume, and cancel in one atomic update. Both
-// the main agent and sub-agents share the same Service implementation. The
-// package must never import crude/tui; the TUI consumes a neutral PlanView.
 package plan
 
 import (
@@ -12,18 +6,22 @@ import (
 	"time"
 )
 
-// PlanStatus is the lifecycle state of a plan.
-type PlanStatus string
+// Status is the lifecycle state of a plan.
+type Status string
 
 const (
-	StatusActive    PlanStatus = "active"
-	StatusPaused    PlanStatus = "paused"
-	StatusCompleted PlanStatus = "completed"
-	StatusCancelled PlanStatus = "cancelled"
+	// StatusActive marks a plan that is running now.
+	StatusActive Status = "active"
+	// StatusPaused marks a plan that is paused.
+	StatusPaused Status = "paused"
+	// StatusCompleted marks a plan whose work is done.
+	StatusCompleted Status = "completed"
+	// StatusCancelled marks a plan that was cancelled.
+	StatusCancelled Status = "cancelled"
 )
 
 // Valid reports whether s is a known plan status.
-func (s PlanStatus) Valid() bool {
+func (s Status) Valid() bool {
 	switch s {
 	case StatusActive, StatusPaused, StatusCompleted, StatusCancelled:
 		return true
@@ -62,16 +60,16 @@ type Plan struct {
 	ID          string     `json:"id"`
 	Revision    uint64     `json:"revision"`
 	Objective   string     `json:"objective"`
-	Status      PlanStatus `json:"status"`
+	Status      Status     `json:"status"`
 	Explanation string     `json:"explanation,omitempty"`
-	Steps       []PlanStep `json:"steps"`
+	Steps       []Step     `json:"steps"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	ClosedAt    *time.Time `json:"closed_at,omitempty"`
 }
 
-// PlanStep is one ordered step within a plan.
-type PlanStep struct {
+// Step is one ordered step within a plan.
+type Step struct {
 	ID          string     `json:"id"`
 	Description string     `json:"description"`
 	Status      StepStatus `json:"status"`
@@ -91,9 +89,9 @@ type UpdateRequest struct {
 	PlanID      string
 	Revision    uint64
 	Objective   string
-	Status      PlanStatus
+	Status      Status
 	Explanation string
-	Steps       []PlanStep
+	Steps       []Step
 }
 
 // ChangeSet summarizes what an Update committed so the caller can report
@@ -103,18 +101,18 @@ type ChangeSet struct {
 	Revision uint64 `json:"revision"`
 }
 
-// PlanSummary is the compact list projection used by List.
-type PlanSummary struct {
-	ID        string     `json:"id"`
-	Objective string     `json:"objective"`
-	Status    PlanStatus `json:"status"`
-	Revision  uint64     `json:"revision"`
-	UpdatedAt time.Time  `json:"updated_at"`
+// Summary is the compact list projection used by List.
+type Summary struct {
+	ID        string    `json:"id"`
+	Objective string    `json:"objective"`
+	Status    Status    `json:"status"`
+	Revision  uint64    `json:"revision"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// PlanEvent is one durable revision event. Payload is the canonical plan
+// Event is one durable revision event. Payload is the canonical plan
 // snapshot committed at that revision.
-type PlanEvent struct {
+type Event struct {
 	Revision  uint64    `json:"revision"`
 	Type      string    `json:"type"`
 	Payload   Plan      `json:"plan"`
@@ -141,5 +139,5 @@ type Service interface {
 	Update(context.Context, UpdateRequest) (Plan, ChangeSet, error)
 	Get(context.Context, string) (Plan, error)
 	Active(context.Context, string) (*Plan, error)
-	List(context.Context, string) ([]PlanSummary, error)
+	List(context.Context, string) ([]Summary, error)
 }

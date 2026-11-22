@@ -1,7 +1,7 @@
 package workspace
 
 import (
-	"crude/history"
+	"crude/agent/prompthistory"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -35,14 +35,14 @@ type SessionReferences interface {
 	ReadReferenceContent(id string) (content string, readOnly bool, err error)
 	SaveReferenceContent(expected sessiondb.Reference, original, content string) error
 	CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error)
-	RestorePrompt(entry history.Entry) (string, []string, error)
+	RestorePrompt(entry prompthistory.Entry) (string, []string, error)
 	ImportReference(old sessiondb.Reference) (sessiondb.Reference, error)
 	// ImportReferenceFrom copies an attachment that source owns, for a prompt
 	// copied in one session and pasted in another.
 	ImportReferenceFrom(source SessionReferences, old sessiondb.Reference) (sessiondb.Reference, error)
 	DeleteReference(id string) error
 	RenameReference(id, label string) (string, bool)
-	GetReference(id string) (sessiondb.Reference, bool)
+	Reference(id string) (sessiondb.Reference, bool)
 	ListReferences() []sessiondb.Reference
 	AddExisting(ref sessiondb.Reference)
 }
@@ -154,7 +154,7 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 // RestorePrompt imports history attachments into this session's namespace.
 // Call off the UI thread. Validate the entire draft before creating references;
 // a missing attachment must never degrade into an apparently valid text prompt.
-func (s *ReferenceStore) RestorePrompt(entry history.Entry) (string, []string, error) {
+func (s *ReferenceStore) RestorePrompt(entry prompthistory.Entry) (string, []string, error) {
 	runes := []rune(entry.Text)
 	end := 0
 	for _, attachment := range entry.Attachments {
@@ -227,7 +227,7 @@ func (s *ReferenceStore) RestorePrompt(entry history.Entry) (string, []string, e
 func (s *ReferenceStore) ImportReference(old sessiondb.Reference) (sessiondb.Reference, error) {
 	path := old.FilePath
 	if path != "" {
-		data, err := history.ReadAttachment(path)
+		data, err := prompthistory.ReadAttachment(path)
 		if err != nil {
 			return sessiondb.Reference{}, err
 		}
@@ -243,7 +243,7 @@ func (s *ReferenceStore) ImportReference(old sessiondb.Reference) (sessiondb.Ref
 // session. A reference that left source keeps its copied snapshot.
 func (s *ReferenceStore) ImportReferenceFrom(source SessionReferences, old sessiondb.Reference) (sessiondb.Reference, error) {
 	if source != nil {
-		if current, ok := source.GetReference(old.ID); ok && current.Active() {
+		if current, ok := source.Reference(old.ID); ok && current.Active() {
 			old = current
 		}
 	}
@@ -332,7 +332,8 @@ func normalizeReferenceLabel(label string) string {
 	return label
 }
 
-func (s *ReferenceStore) GetReference(id string) (sessiondb.Reference, bool) {
+// Reference returns the reference with the given id.
+func (s *ReferenceStore) Reference(id string) (sessiondb.Reference, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ref, ok := s.refs[id]

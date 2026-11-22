@@ -251,7 +251,7 @@ One generic owner, no language branch:
   with rest equal to the work, nearest files first, Linguist vendored paths
   skipped. When idle it also waits on battery power, while CPU, memory or I/O
   pressure is at least 10% (systemd's default), or, for a server that is not
-  running, until its memory hint is free (`sysload/`). Setting **Check closed
+  running, until its memory hint is free (`internal/sysload/`). Setting **Check closed
   files** (When idle / Always / Off); Problems shows progress and why it waits. Contract: [editor reference](../reference/editor.md#closed-files-disk-views-and-restarts).
 
 Evidence: workspace regressions for the open-file resend, retained disk-view
@@ -852,10 +852,10 @@ it. Current capabilities and safeguards are described in
 | Symptom | Cause in the code today |
 |---|---|
 | No semantic completion, outline or navigation until a server is installed and running | `requestCompletion` in `tui/viewmodel/lsp_completion.go` needs a connected server. **Detect servers** does not install executables ([settings](../reference/settings.md)). Chroma already highlights many files without a server. |
-| No coverage-qualified whole-project diagnostic counts | Current editor diagnostics are tied to the LSP manager's tracked documents; `ProjectInsights` in `types/lsp.go` is a server snapshot, not proof that every project unit was checked. |
-| Background analysis can overwhelm the machine | Server memory and thread settings are hints, not limits (`tui/settings/language_servers.go`). Process-tree containment and pressure management remain open. |
+| No coverage-qualified whole-project diagnostic counts | Current editor diagnostics are tied to the LSP manager's tracked documents; `ProjectInsights` in `types/insight/lsp.go` is a server snapshot, not proof that every project unit was checked. |
+| Background analysis can overwhelm the machine | Server memory and thread settings are hints, not limits (`tui/screens/settingspages/language_servers.go`). Process-tree containment and pressure management remain open. |
 | Project configuration needs manual work | Flags, targets, include paths, interpreters, dependencies and severity policies are not consistently derived from the actual build. |
-| Semantic coverage is limited | `types/language_servers.go` contains twelve built-in server entries plus custom configuration; a syntax grammar alone does not provide semantics. |
+| Semantic coverage is limited | `types/setting/language_servers.go` contains twelve built-in server entries plus custom configuration; a syntax grammar alone does not provide semantics. |
 | Severity tuning is per tool | Each tool has its own suppression syntax. Crude has one minimum-severity filter. |
 | Popups do not feel like a complete IDE | Parameter assistance, symbol documentation, selected-completion documentation and diagnostic readers now use mounted source anchoring. Inline prediction and broader semantic workflows remain open. |
 | Errand never helps manual editing | Errand drafts commit messages and compaction, nothing in the editor. |
@@ -1760,7 +1760,7 @@ CSS, HTML and JSON CMD shims as ready, while all three actual runtime starts and
 the JSON diagnostic probe failed with a missing-executable message.
 
 Inventory and startup now share the analyzer environment policy, the program
-resolver in `lsp/client/lsp_program.go` and Powernap's native executable lookup.
+resolver in `lsp/lspclient/lsp_program.go` and Powernap's native executable lookup.
 Existing catalog package recipes identify installed npm packages; the package
 method data names their manifest. The resolver reads the installed bin map (or
 catalog `node:` path), starts native Node with the script and original arguments,

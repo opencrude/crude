@@ -156,7 +156,7 @@ func TestSourceCRLFContentAndExactTerminatorDeletion(t *testing.T) {
 	}
 	start := Position{Col: 1}
 	end := pt.nextPosition(start)
-	if got := pt.GetText(start, end); got != "\r\n" {
+	if got := pt.Text(start, end); got != "\r\n" {
 		t.Fatalf("line transition source=%q want full CRLF", got)
 	}
 	if got := pt.previousPosition(end); got != start {
@@ -171,7 +171,7 @@ func TestSourceCRLFContentAndExactTerminatorDeletion(t *testing.T) {
 func TestSourceVisualEditsPreserveExactClusters(t *testing.T) {
 	pt := NewPieceTable()
 	pt.ReplaceAll("a\te\u0301🇺🇳👩‍💻👍🏽中Z")
-	if got := pt.GetText(Position{Col: 4}, Position{Col: 11}); got != "e\u0301🇺🇳👩‍💻👍🏽" {
+	if got := pt.Text(Position{Col: 4}, Position{Col: 11}); got != "e\u0301🇺🇳👩‍💻👍🏽" {
 		t.Fatalf("source selection=%q", got)
 	}
 	_, _ = pt.Insert(Position{Col: 3}, []byte("X")) // Floor inside tab.

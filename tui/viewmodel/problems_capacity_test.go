@@ -4,7 +4,7 @@ import (
 	"crude/tui/screens/problems"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"testing"
 )
 
@@ -15,8 +15,8 @@ func TestProblemsPreservesWaitingWithoutSettingsAction(t *testing.T) {
 	facts.Diagnostics = nil
 	service.facts[ed.FilePath()] = facts
 	const message = "Waiting for a language server. Stop an unused server."
-	service.insights = types.ProjectInsights{DiagnosticsObserved: 1, Language: types.LanguageServiceStatus{
-		State: types.LanguageStarting, Label: "Waiting to start", Message: message,
+	service.insights = insight.ProjectInsights{DiagnosticsObserved: 1, Language: insight.LanguageServiceStatus{
+		State: insight.LanguageStarting, Label: "Waiting to start", Message: message,
 	}}
 	app.drainLSPDiagnostics()
 	model := app.problemsModel()

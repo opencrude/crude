@@ -9,7 +9,7 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -65,7 +65,7 @@ func TestCompactNativeRowPaintGutterAlignment(t *testing.T) {
 }
 
 func TestCompactNativeSelectionPlainText(t *testing.T) {
-	lines, _ := chatprojection.NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*types.ChatMessage{{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolPreviewPhase: "done", ToolStatus: "success"}}, 30, 0)
+	lines, _ := chatprojection.NewRenderer(theme.DefaultDark()).BuildSubPaneToolLines([]*conversation.ChatMessage{{Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolPreviewPhase: "done", ToolStatus: "success"}}, 30, 0)
 	tool := lines[0]
 
 	rows := []chatprojection.MessageRow{{

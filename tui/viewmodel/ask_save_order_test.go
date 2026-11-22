@@ -15,7 +15,7 @@ import (
 
 	"crude/agent/sessiondb"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 const (
@@ -295,7 +295,7 @@ func (j *askOrderJourney) userMessages(agentID string) []string {
 
 func (j *askOrderJourney) hasErrorNotice() bool {
 	for _, notice := range j.shell.app.ws.Status().Notifications(false) {
-		if notice.Severity == types.SeverityError && notice.Summary == askOrderNotice {
+		if notice.Severity == statuscenter.SeverityError && notice.Summary == askOrderNotice {
 			return true
 		}
 	}

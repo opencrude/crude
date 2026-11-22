@@ -13,6 +13,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/ui"
+	"crude/types/insight"
 )
 
 // Native scripts/tuishot.ps1 fixture. F2/F3/F4 publish short, expanded and
@@ -62,10 +63,10 @@ func (m *diagnosticPresentationVisualModel) Init() tea.Cmd { return tickCmd() }
 
 func (m *diagnosticPresentationVisualModel) publish(key rune) {
 	message := `"scsc" is not defined`
-	diags := []editor.LSPDiagnostic{{Line: 0, EndCol: 4, Severity: editor.DiagError, Source: "Pyright", Code: "reportUndefinedVariable"}}
+	diags := []insight.LSPDiagnostic{{Line: 0, EndCol: 4, Severity: editor.DiagError, Source: "Pyright", Code: "reportUndefinedVariable"}}
 	switch key {
 	case tea.KeyF2:
-		diags = append(diags, editor.LSPDiagnostic{Line: 0, EndCol: 4, Severity: editor.DiagWarning,
+		diags = append(diags, insight.LSPDiagnostic{Line: 0, EndCol: 4, Severity: editor.DiagWarning,
 			Message: "Expression value is unused", Source: "Pyright", Code: "reportUnusedExpression"})
 	case tea.KeyF3:
 		diags[0].Code = "reportArgumentType"

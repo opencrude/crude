@@ -14,11 +14,11 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/launcher"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/shellfooter"
-	settingsui "crude/tui/settings"
 	"crude/tui/ui"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -48,18 +48,18 @@ type capabilitySnapshotMsg struct {
 	err        error
 }
 
-func (app *App) capabilitySnapshotCmd() tea.Cmd {
-	owner, generation := app.ws, app.workspaceSwitchGen.Load()
+func (m *App) capabilitySnapshotCmd() tea.Cmd {
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	if owner == nil {
 		return nil
 	}
-	if app.capabilitySnapshotCancel != nil {
-		app.capabilitySnapshotCancel()
+	if m.capabilitySnapshotCancel != nil {
+		m.capabilitySnapshotCancel()
 	}
-	app.capabilitySnapshotSequence++
-	sequence := app.capabilitySnapshotSequence
+	m.capabilitySnapshotSequence++
+	sequence := m.capabilitySnapshotSequence
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	app.capabilitySnapshotCancel = cancel
+	m.capabilitySnapshotCancel = cancel
 	return func() tea.Msg {
 		defer cancel()
 		snapshot, err := owner.CapabilitySnapshot(ctx)
@@ -67,50 +67,50 @@ func (app *App) capabilitySnapshotCmd() tea.Cmd {
 	}
 }
 
-func (app *App) applyCapabilitySnapshot(message capabilitySnapshotMsg) {
-	if message.generation != app.workspaceSwitchGen.Load() || message.sequence != app.capabilitySnapshotSequence {
+func (m *App) applyCapabilitySnapshot(message capabilitySnapshotMsg) {
+	if message.generation != m.workspaceSwitchGen.Load() || message.sequence != m.capabilitySnapshotSequence {
 		return
 	}
-	app.capabilitySnapshotCancel = nil
+	m.capabilitySnapshotCancel = nil
 	// An explicit refresh supersedes periodic observations already in flight.
-	if app.launcherCapabilityCancel != nil {
-		app.launcherCapabilityCancel()
-		app.launcherCapabilityCancel = nil
+	if m.launcherCapabilityCancel != nil {
+		m.launcherCapabilityCancel()
+		m.launcherCapabilityCancel = nil
 	}
-	app.launcherCapabilitySequence++
-	app.applyObservedCapabilitySnapshot(message.snapshot, message.err, true)
+	m.launcherCapabilitySequence++
+	m.applyObservedCapabilitySnapshot(message.snapshot, message.err, true)
 }
 
-func (app *App) applyObservedCapabilitySnapshot(snapshot captypes.Snapshot, err error, projectLauncher bool) {
+func (m *App) applyObservedCapabilitySnapshot(snapshot captypes.Snapshot, err error, projectLauncher bool) {
 	if err != nil {
 		if snapshot.Generation == 0 {
-			snapshot = app.capabilitySnapshot
+			snapshot = m.capabilitySnapshot
 		}
 		snapshot.Error = err.Error()
 	} else if snapshot.Generation == 0 {
 		return
 	}
-	if snapshot.Generation < app.capabilitySnapshot.Generation {
+	if snapshot.Generation < m.capabilitySnapshot.Generation {
 		return
 	}
-	if reflect.DeepEqual(snapshot, app.capabilitySnapshot) {
+	if reflect.DeepEqual(snapshot, m.capabilitySnapshot) {
 		// A new home screen still needs the retained snapshot even when shared
 		// runtime state did not change while the previous home was unmounted.
 		if projectLauncher {
-			app.projectLauncherCapabilities(snapshot)
+			m.projectLauncherCapabilities(snapshot)
 		}
 		return
 	}
-	app.capabilitySnapshot = snapshot
-	if app.capabilityPicker != nil {
-		app.capabilityPicker.screen.SetSnapshot(snapshot)
-		app.invalidateCapabilityPicker()
+	m.capabilitySnapshot = snapshot
+	if m.capabilityPicker != nil {
+		m.capabilityPicker.screen.SetSnapshot(snapshot)
+		m.invalidateCapabilityPicker()
 	}
-	app.refreshActivityList()
-	if app.activityBar != nil {
+	m.refreshActivityList()
+	if m.activityBar != nil {
 		for _, kind := range []captypes.Kind{captypes.KindSkill, captypes.KindMCP} {
 			count := 0
-			for _, entry := range app.capabilitySnapshot.Entries {
+			for _, entry := range m.capabilitySnapshot.Entries {
 				if entry.Kind == kind && (entry.State == "failed" || entry.State == "unavailable" || entry.State == "needs sign-in") {
 					count++
 				}
@@ -119,15 +119,15 @@ func (app *App) applyObservedCapabilitySnapshot(snapshot captypes.Snapshot, err 
 			if kind == captypes.KindMCP {
 				view = activityMCP
 			}
-			app.activityBar.SetBadge(view, count)
+			m.activityBar.SetBadge(view, count)
 		}
 	}
-	if projectLauncher && app.launcherScreen != nil {
-		app.projectLauncherCapabilities(app.capabilitySnapshot)
+	if projectLauncher && m.launcherScreen != nil {
+		m.projectLauncherCapabilities(m.capabilitySnapshot)
 	}
-	if window := app.overlayHost.Window(ui.OverlayWorkspaceSettings); window != nil {
-		if body := app.settingsSurface(window); body != nil {
-			body.Model().SetCapabilitySnapshot(app.capabilitySnapshot)
+	if window := m.overlayHost.Window(ui.OverlayWorkspaceSettings); window != nil {
+		if body := m.settingsSurface(window); body != nil {
+			body.Model().SetCapabilitySnapshot(m.capabilitySnapshot)
 			if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
 				frame.Host().MarkLayout()
 			}
@@ -136,19 +136,19 @@ func (app *App) applyObservedCapabilitySnapshot(snapshot captypes.Snapshot, err 
 	}
 }
 
-func (app *App) projectLauncherCapabilities(snapshot captypes.Snapshot) {
-	if app.launcherScreen == nil {
+func (m *App) projectLauncherCapabilities(snapshot captypes.Snapshot) {
+	if m.launcherScreen == nil {
 		return
 	}
 	bindings := make([]captypes.AgentBinding, 0, len(snapshot.Bindings))
 	for _, binding := range snapshot.Bindings {
-		if app.ws.AgentTurnActive(binding.AgentID) {
+		if m.ws.AgentTurnActive(binding.AgentID) {
 			bindings = append(bindings, binding)
 		}
 	}
 	snapshot.Bindings = bindings
-	app.launcherScreen.SetCapabilities(snapshot)
-	app.rootHost.MarkLayout()
+	m.launcherScreen.SetCapabilities(snapshot)
+	m.rootHost.MarkLayout()
 }
 
 type launcherCapabilitiesMsg struct {
@@ -158,18 +158,18 @@ type launcherCapabilitiesMsg struct {
 	err                 error
 }
 
-func (app *App) launcherCapabilitiesCmd(now time.Time) tea.Cmd {
+func (m *App) launcherCapabilitiesCmd(now time.Time) tea.Cmd {
 	// Settings and capability sidebars also observe this workspace. An active
 	// agent removes the launcher screen; only its optional projection depends
 	// on that screen, never scheduling the shared runtime observation.
-	if app.ws == nil || app.launcherCapabilityCancel != nil || now.Sub(app.launcherCapabilityAt) < 2*time.Second {
+	if m.ws == nil || m.launcherCapabilityCancel != nil || now.Sub(m.launcherCapabilityAt) < 2*time.Second {
 		return nil
 	}
-	app.launcherCapabilityAt = now
-	app.launcherCapabilitySequence++
+	m.launcherCapabilityAt = now
+	m.launcherCapabilitySequence++
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	app.launcherCapabilityCancel = cancel
-	owner, screen, generation, sequence := app.ws, app.launcherScreen, app.workspaceSwitchGen.Load(), app.launcherCapabilitySequence
+	m.launcherCapabilityCancel = cancel
+	owner, screen, generation, sequence := m.ws, m.launcherScreen, m.workspaceSwitchGen.Load(), m.launcherCapabilitySequence
 	return func() tea.Msg {
 		defer cancel()
 		snapshot, err := owner.CapabilityRuntimeSnapshot(ctx)
@@ -177,31 +177,31 @@ func (app *App) launcherCapabilitiesCmd(now time.Time) tea.Cmd {
 	}
 }
 
-func (app *App) capabilityObservationVisible() bool {
-	if app.launcherHostVisible() || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil || app.capabilityPicker != nil {
+func (m *App) capabilityObservationVisible() bool {
+	if m.launcherHostVisible() || m.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil || m.capabilityPicker != nil {
 		return true
 	}
-	return app.Tree != nil && app.Tree.Visible && (app.activityView == activitySkills || app.activityView == activityMCP)
+	return m.Tree != nil && m.Tree.Visible && (m.activityView == activitySkills || m.activityView == activityMCP)
 }
 
-func (app *App) applyLauncherCapabilities(msg launcherCapabilitiesMsg) {
-	if msg.workspace != app.workspaceSwitchGen.Load() || msg.sequence != app.launcherCapabilitySequence {
+func (m *App) applyLauncherCapabilities(msg launcherCapabilitiesMsg) {
+	if msg.workspace != m.workspaceSwitchGen.Load() || msg.sequence != m.launcherCapabilitySequence {
 		return
 	}
-	app.launcherCapabilityCancel = nil
+	m.launcherCapabilityCancel = nil
 	if msg.snapshot.Generation == 0 && msg.err == nil {
 		return
 	}
-	app.applyObservedCapabilitySnapshot(msg.snapshot, msg.err, msg.screen == app.launcherScreen)
+	m.applyObservedCapabilitySnapshot(msg.snapshot, msg.err, msg.screen == m.launcherScreen)
 }
 
-func (app *App) capabilitySidebarItems(view activitybar.View) []ui.ListItem {
+func (m *App) capabilitySidebarItems(view activitybar.View) []ui.ListItem {
 	kind := captypes.KindSkill
 	if view == activityMCP {
 		kind = captypes.KindMCP
 	}
 	items := []ui.ListItem{{ID: "capability.manage", Label: "Manage " + view.Label(), Command: true}}
-	for _, entry := range app.capabilitySnapshot.Entries {
+	for _, entry := range m.capabilitySnapshot.Entries {
 		if entry.Kind != kind {
 			continue
 		}
@@ -213,27 +213,27 @@ func (app *App) capabilitySidebarItems(view activitybar.View) []ui.ListItem {
 	return items
 }
 
-func (app *App) openCapabilityManager(view activitybar.View, query, id string) tea.Cmd {
+func (m *App) openCapabilityManager(view activitybar.View, query, id string) tea.Cmd {
 	kind := captypes.KindSkill
 	if view == activityMCP {
 		kind = captypes.KindMCP
 	}
-	return app.openCapabilitySettings(func(body *settingsui.WorkspaceSettingsSurface) ui.EventResult {
+	return m.openCapabilitySettings(func(body *settingsui.WorkspaceSettingsSurface) ui.EventResult {
 		return body.OpenCapabilities(kind, query, id)
 	})
 }
 
-func (app *App) openCapabilitySettings(open func(*settingsui.WorkspaceSettingsSurface) ui.EventResult) tea.Cmd {
-	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
+func (m *App) openCapabilitySettings(open func(*settingsui.WorkspaceSettingsSurface) ui.EventResult) tea.Cmd {
+	window := m.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	if window == nil {
 		// Capabilities are application-owned by default: an install belongs to
 		// the user, not to one project, so removing a workspace cannot destroy
 		// it. The Application/Workspace footer toggle remains the explicit way
 		// to bind an installation to the current workspace.
-		app.openSettings(types.SettingsScopeApplication)
-		window = app.overlayHost.Window(ui.OverlayWorkspaceSettings)
+		m.openSettings(setting.ScopeApplication)
+		window = m.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	}
-	body := app.settingsSurface(window)
+	body := m.settingsSurface(window)
 	if body == nil {
 		return nil
 	}
@@ -244,28 +244,28 @@ func (app *App) openCapabilitySettings(open func(*settingsui.WorkspaceSettingsSu
 		body.FocusForm()
 	}
 	window.MarkContentDirty()
-	return tea.Batch(result.Cmd, app.capabilitySnapshotCmd())
+	return tea.Batch(result.Cmd, m.capabilitySnapshotCmd())
 }
 
-func (app *App) capabilityRequestCmd(message settingsui.CapabilityRequestMsg) tea.Cmd {
-	generation := app.workspaceSwitchGen.Load()
-	result := settingsui.CapabilityResultMsg{Target: message.Target, Action: message.Action, Snapshot: app.capabilitySnapshot, Sequence: message.Sequence, WorkspaceGeneration: generation}
-	if operation, exists := app.capabilityOperations[message.Supersedes]; message.Supersedes != 0 && exists && operation.target == message.Target {
+func (m *App) capabilityRequestCmd(message settingsui.CapabilityRequestMsg) tea.Cmd {
+	generation := m.workspaceSwitchGen.Load()
+	result := settingsui.CapabilityResultMsg{Target: message.Target, Action: message.Action, Snapshot: m.capabilitySnapshot, Sequence: message.Sequence, WorkspaceGeneration: generation}
+	if operation, exists := m.capabilityOperations[message.Supersedes]; message.Supersedes != 0 && exists && operation.target == message.Target {
 		operation.cancel()
-		delete(app.capabilityOperations, message.Supersedes)
+		delete(m.capabilityOperations, message.Supersedes)
 	}
 	if message.Action.Operation == "cancel" {
 		sequence, _ := strconv.ParseUint(message.Action.Arguments["sequence"], 10, 64)
-		if operation, exists := app.capabilityOperations[sequence]; exists && operation.target == message.Target {
+		if operation, exists := m.capabilityOperations[sequence]; exists && operation.target == message.Target {
 			operation.cancel()
-			delete(app.capabilityOperations, sequence)
+			delete(m.capabilityOperations, sequence)
 		}
 		result.Content = "Cancellation requested for this operation; shared acquisitions may finish for other users."
 		return func() tea.Msg { return result }
 	}
 	if message.Action.Operation == "stage-context" {
-		owner, draft := app.ActiveSession, app.Input.Value()
-		agentID := app.activeAgentTabID()
+		owner, draft := m.ActiveSession, m.Input.Value()
+		agentID := m.activeAgentTabID()
 		var response captypes.Result
 		if owner == nil || owner.RefStore == nil || agentID == "" || json.Unmarshal([]byte(message.Action.Content), &response) != nil || response.IsError || response.Unknown || len(message.Action.Content) > 1<<20 {
 			result.Err = fmt.Errorf("select an owning agent and fetch a successful bounded preview first")
@@ -292,93 +292,93 @@ func (app *App) capabilityRequestCmd(message settingsui.CapabilityRequestMsg) te
 			return capabilityContextMsg{generation: generation, owner: owner, agentID: agentID, draft: draft, reference: reference, result: result}
 		}
 	}
-	owner := app.ws
+	owner := m.ws
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	if app.capabilityOperations == nil {
-		app.capabilityOperations = make(map[uint64]capabilityOperation)
+	if m.capabilityOperations == nil {
+		m.capabilityOperations = make(map[uint64]capabilityOperation)
 	}
-	app.capabilityOperations[message.Sequence] = capabilityOperation{target: message.Target, cancel: cancel}
+	m.capabilityOperations[message.Sequence] = capabilityOperation{target: message.Target, cancel: cancel}
 	command := func() tea.Msg {
 		defer cancel()
 		snapshot, entries, content, err := owner.CapabilityAction(ctx, message.Action)
 		return settingsui.CapabilityResultMsg{Target: message.Target, Action: message.Action, Snapshot: snapshot, Entries: entries, Content: content, Err: err, Sequence: message.Sequence, WorkspaceGeneration: generation}
 	}
 	if message.Action.Operation == "sign-in" || message.Action.Operation == "connect" {
-		return tea.Batch(command, app.capabilityPollCmd(generation, message.Sequence))
+		return tea.Batch(command, m.capabilityPollCmd(generation, message.Sequence))
 	}
 	return command
 }
 
-func (app *App) capabilityPollCmd(generation, sequence uint64) tea.Cmd {
+func (m *App) capabilityPollCmd(generation, sequence uint64) tea.Cmd {
 	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg { return capabilityPollMsg{generation: generation, sequence: sequence} })
 }
 
-func (app *App) cancelCapabilityOperations() {
-	if app.launcherCapabilityCancel != nil {
-		app.launcherCapabilityCancel()
-		app.launcherCapabilityCancel = nil
+func (m *App) cancelCapabilityOperations() {
+	if m.launcherCapabilityCancel != nil {
+		m.launcherCapabilityCancel()
+		m.launcherCapabilityCancel = nil
 	}
-	app.launcherCapabilitySequence++
-	app.launcherCapabilityAt = time.Time{}
-	if app.capabilitySnapshotCancel != nil {
-		app.capabilitySnapshotCancel()
-		app.capabilitySnapshotCancel = nil
+	m.launcherCapabilitySequence++
+	m.launcherCapabilityAt = time.Time{}
+	if m.capabilitySnapshotCancel != nil {
+		m.capabilitySnapshotCancel()
+		m.capabilitySnapshotCancel = nil
 	}
-	app.capabilitySnapshotSequence++
-	for sequence, operation := range app.capabilityOperations {
+	m.capabilitySnapshotSequence++
+	for sequence, operation := range m.capabilityOperations {
 		operation.cancel()
-		delete(app.capabilityOperations, sequence)
+		delete(m.capabilityOperations, sequence)
 	}
 }
 
-func (app *App) applyCapabilityResult(message settingsui.CapabilityResultMsg) tea.Cmd {
-	if operation, exists := app.capabilityOperations[message.Sequence]; exists && operation.target == message.Target {
+func (m *App) applyCapabilityResult(message settingsui.CapabilityResultMsg) tea.Cmd {
+	if operation, exists := m.capabilityOperations[message.Sequence]; exists && operation.target == message.Target {
 		operation.cancel()
-		delete(app.capabilityOperations, message.Sequence)
+		delete(m.capabilityOperations, message.Sequence)
 	}
-	if message.WorkspaceGeneration != app.workspaceSwitchGen.Load() {
+	if message.WorkspaceGeneration != m.workspaceSwitchGen.Load() {
 		return nil
 	}
-	if message.Snapshot.Generation != 0 && message.Snapshot.Generation >= app.capabilitySnapshot.Generation {
+	if message.Snapshot.Generation != 0 && message.Snapshot.Generation >= m.capabilitySnapshot.Generation {
 		// An accepted operation supersedes older explicit reads as well as polls.
-		if app.capabilitySnapshotCancel != nil {
-			app.capabilitySnapshotCancel()
+		if m.capabilitySnapshotCancel != nil {
+			m.capabilitySnapshotCancel()
 		}
-		app.capabilitySnapshotSequence++
-		app.applyCapabilitySnapshot(capabilitySnapshotMsg{generation: message.WorkspaceGeneration, sequence: app.capabilitySnapshotSequence, snapshot: message.Snapshot})
+		m.capabilitySnapshotSequence++
+		m.applyCapabilitySnapshot(capabilitySnapshotMsg{generation: message.WorkspaceGeneration, sequence: m.capabilitySnapshotSequence, snapshot: message.Snapshot})
 	}
-	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
+	window := m.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	if window != nil {
-		if body := app.settingsSurface(window); body != nil && body.Model() == message.Target {
+		if body := m.settingsSurface(window); body != nil && body.Model() == message.Target {
 			_, command := body.Model().Update(message)
 			body.SetModel(body.Model())
 			if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
 				frame.Host().MarkLayout()
 			}
 			window.MarkContentDirty()
-			app.refreshActivityList()
+			m.refreshActivityList()
 			if message.Err == nil && message.Action.Operation == "open-file" {
-				open, err := app.openEditorTab(message.Content)
+				open, err := m.openEditorTab(message.Content)
 				if err != nil {
-					app.Feedback.NotifyError(err.Error())
+					m.Feedback.NotifyError(err.Error())
 				}
 				return tea.Batch(command, open)
 			}
 			return command
 		}
 	}
-	app.refreshActivityList()
+	m.refreshActivityList()
 	return nil
 }
 
 // applyCapabilitySearchTick lets the exact settings model that armed a live
 // search decide whether its quiet period still names the current query.
-func (app *App) applyCapabilitySearchTick(message settingsui.CapabilitySearchTickMsg) tea.Cmd {
-	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
+func (m *App) applyCapabilitySearchTick(message settingsui.CapabilitySearchTickMsg) tea.Cmd {
+	window := m.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	if window == nil {
 		return nil
 	}
-	body := app.settingsSurface(window)
+	body := m.settingsSurface(window)
 	if body == nil || body.Model() != message.Target {
 		return nil
 	}
@@ -390,17 +390,17 @@ func (app *App) applyCapabilitySearchTick(message settingsui.CapabilitySearchTic
 	return command
 }
 
-func (app *App) openNavigationMenu() {
+func (m *App) openNavigationMenu() {
 	items := make([]ui.ContextMenuItem, 0, 5)
 	for _, view := range activitybar.Views() {
 		selected := view
-		items = append(items, ui.ContextMenuItem{Label: view.Label(), Action: func() { app.startSourceControlMutation(app.toggleActivity(selected)) }})
+		items = append(items, ui.ContextMenuItem{Label: view.Label(), Action: func() { m.startSourceControlMutation(m.toggleActivity(selected)) }})
 	}
-	app.openContextMenuState(tea.Mouse{X: app.frameLeftCol() + activitybar.Width, Y: app.shellTopRow()}, &ui.ContextMenuState{Title: "Navigation", Sections: []ui.ContextMenuSection{{Items: items}}})
+	m.openContextMenuState(tea.Mouse{X: m.frameLeftCol() + activitybar.Width, Y: m.shellTopRow()}, &ui.ContextMenuState{Title: "Navigation", Sections: []ui.ContextMenuSection{{Items: items}}})
 }
 
-func (app *App) openFooterMenu() {
-	segments := app.footerStatusSegments()
+func (m *App) openFooterMenu() {
+	segments := m.footerStatusSegments()
 	items := make([]ui.ContextMenuItem, 0, len(segments))
 	for _, segment := range segments {
 		if segment.Action == "" {
@@ -410,27 +410,27 @@ func (app *App) openFooterMenu() {
 		// lose a destination or acquire different toggle/refresh behavior.
 		message := shellfooter.ActionMsg{Action: segment.Action, TargetID: segment.TargetID}
 		items = append(items, ui.ContextMenuItem{Label: segment.Text, Action: func() {
-			app.runDetachedAsyncCmd(func() tea.Msg { return message })
+			m.runDetachedAsyncCmd(func() tea.Msg { return message })
 		}})
 	}
 	menu := &ui.ContextMenuState{Title: "Views", Sections: []ui.ContextMenuSection{{Items: items}}}
-	if anchor, ok := app.footerSegmentRect("footer-more"); ok {
-		app.openMenuFor(anchor, menu)
+	if anchor, ok := m.footerSegmentRect("footer-more"); ok {
+		m.openMenuFor(anchor, menu)
 		return
 	}
-	app.openContextMenuState(tea.Mouse{X: max(0, app.width-20), Y: max(0, app.height-app.chromeBottomRows()-len(items)-2)}, menu)
+	m.openContextMenuState(tea.Mouse{X: max(0, m.width-20), Y: max(0, m.height-m.chromeBottomRows()-len(items)-2)}, menu)
 }
 
 // footerSegmentRect is the screen rect of the footer item for action.
-func (app *App) footerSegmentRect(action string) (ui.Rect, bool) {
-	if app.rootHost == nil || app.footerScreen == nil {
+func (m *App) footerSegmentRect(action string) (ui.Rect, bool) {
+	if m.rootHost == nil || m.footerScreen == nil {
 		return ui.Rect{}, false
 	}
-	footer, ok := app.rootHost.ScreenRect(shellfooter.ScreenID)
+	footer, ok := m.rootHost.ScreenRect(shellfooter.ScreenID)
 	if !ok || footer.Empty() {
 		return ui.Rect{}, false
 	}
-	segment, ok := app.footerScreen.SegmentBounds(action)
+	segment, ok := m.footerScreen.SegmentBounds(action)
 	if !ok {
 		return ui.Rect{}, false
 	}

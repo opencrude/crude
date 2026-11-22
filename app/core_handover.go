@@ -14,10 +14,10 @@ import (
 	"strings"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/retry"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/buildinfo"
+	"crude/internal/retry"
 
 	"github.com/gofrs/flock"
 )

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // LoopsForAgent returns the main agent's session-owned schedules.
-func (w *Workspace) LoopsForAgent(agentID string) []types.Loop {
+func (w *Workspace) LoopsForAgent(agentID string) []conversation.Loop {
 	if node := w.AgentMgr.Get(agentID); node == nil || node.Parent != nil {
 		return nil
 	}

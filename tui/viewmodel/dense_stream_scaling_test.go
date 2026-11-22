@@ -7,26 +7,26 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // denseStreamHistory resembles a long-running agent session: request rounds of
 // command results (JSON envelopes the activity grouping must classify), file
 // reads, edits and prose answers.
-func denseStreamHistory(rounds int) []types.ChatMessage {
+func denseStreamHistory(rounds int) []conversation.ChatMessage {
 	output := strings.Repeat("ok  \tcrude/pkg\t0.42s\n", 40)
-	messages := make([]types.ChatMessage, 0, rounds*6)
+	messages := make([]conversation.ChatMessage, 0, rounds*6)
 	for round := range rounds {
 		roundID := fmt.Sprint("round-", round)
 		messages = append(messages,
-			types.ChatMessage{InternalID: fmt.Sprint("u", round), Role: types.RoleUser, Content: "continue the investigation"},
-			types.ChatMessage{InternalID: fmt.Sprint("c", round), Role: types.RoleTool, ToolName: "exec_command", ToolStatus: types.ToolStatusSuccess, ToolRoundID: roundID,
+			conversation.ChatMessage{InternalID: fmt.Sprint("u", round), Role: conversation.RoleUser, Content: "continue the investigation"},
+			conversation.ChatMessage{InternalID: fmt.Sprint("c", round), Role: conversation.RoleTool, ToolName: "exec_command", ToolStatus: conversation.ToolStatusSuccess, ToolRoundID: roundID,
 				ToolArgs: "go test ./...", Content: fmt.Sprintf(`{"exit_code":0,"output":%q}`, output)},
-			types.ChatMessage{InternalID: fmt.Sprint("r", round), Role: types.RoleTool, ToolName: "read_file", ToolStatus: types.ToolStatusSuccess, ToolRoundID: roundID,
+			conversation.ChatMessage{InternalID: fmt.Sprint("r", round), Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: conversation.ToolStatusSuccess, ToolRoundID: roundID,
 				ToolArgs: "main.go", Content: strings.Repeat("func main() {}\n", 60)},
-			types.ChatMessage{InternalID: fmt.Sprint("e", round), Role: types.RoleTool, ToolName: "edit_file", ToolStatus: types.ToolStatusSuccess, ToolRoundID: roundID,
+			conversation.ChatMessage{InternalID: fmt.Sprint("e", round), Role: conversation.RoleTool, ToolName: "edit_file", ToolStatus: conversation.ToolStatusSuccess, ToolRoundID: roundID,
 				ToolArgs: "main.go", Content: "Replaced 1 occurrence"},
-			types.ChatMessage{InternalID: fmt.Sprint("a", round), Role: types.RoleAssistant, Content: "Updated the handler and the tests pass."},
+			conversation.ChatMessage{InternalID: fmt.Sprint("a", round), Role: conversation.RoleAssistant, Content: "Updated the handler and the tests pass."},
 		)
 	}
 	return messages
@@ -40,12 +40,12 @@ func streamTokenAllocs(t *testing.T, rounds int) float64 {
 	app.width, app.height = 160, 48
 	app.AddOrchestrator("root")
 	enableIdleTicks(t, app)
-	app.handleAppMessages(types.HistoryMessagesMsg(denseStreamHistory(rounds)))
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "turn_started", Data: types.TurnIdentity{Generation: 7}})
+	app.handleAppMessages(HistoryMessagesMsg(denseStreamHistory(rounds)))
+	app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "turn_started", Data: conversation.TurnIdentity{Generation: 7}})
 	app.paintShellFrame()
 	for i := range 30 {
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "stream_token", Data: fmt.Sprintf("warm%d ", i)})
-		app.handleTick(types.TickMsg(time.Now()))
+		app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "stream_token", Data: fmt.Sprintf("warm%d ", i)})
+		app.handleTick(TickMsg(time.Now()))
 		app.paintShellFrame()
 	}
 	// Offscreen history materializes within a fixed per-frame budget; that is
@@ -55,7 +55,7 @@ func streamTokenAllocs(t *testing.T, rounds int) float64 {
 		if i > 5000 {
 			t.Fatal("offscreen materialization never settled")
 		}
-		app.handleTick(types.TickMsg(time.Now()))
+		app.handleTick(TickMsg(time.Now()))
 		app.paintShellFrame()
 	}
 	const tokens = 40
@@ -63,7 +63,7 @@ func streamTokenAllocs(t *testing.T, rounds int) float64 {
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 	for i := range tokens {
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "stream_token", Data: fmt.Sprintf("word%d ", i)})
+		app.handleAgentEvent(AgentEventMsg{AgentID: "root", Type: "stream_token", Data: fmt.Sprintf("word%d ", i)})
 		app.paintShellFrame()
 	}
 	runtime.ReadMemStats(&after)

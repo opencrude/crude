@@ -10,8 +10,8 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/clientstate"
-	"crude/core/port"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/wm"

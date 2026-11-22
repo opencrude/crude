@@ -14,7 +14,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/inlay"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // The fake port observes cancellation but deliberately completes late with an
@@ -22,11 +22,11 @@ import (
 type holdingInspectPort struct {
 	*retryInlayPort
 	entered, cancelled, release chan struct{}
-	late                        types.LSPInlayInspection
+	late                        insight.LSPInlayInspection
 	once                        sync.Once
 }
 
-func (p *holdingInspectPort) InspectLSPInlayHint(ctx context.Context, _, _ string, _ int, _ bool) (types.LSPInlayInspection, error) {
+func (p *holdingInspectPort) InspectLSPInlayHint(ctx context.Context, _, _ string, _ int, _ bool) (insight.LSPInlayInspection, error) {
 	close(p.entered)
 	<-ctx.Done()
 	close(p.cancelled)
@@ -58,7 +58,7 @@ func holdingInlayInspection(t *testing.T) (*App, *editor.Editor, *inlayInspector
 		t.Fatal("wrong inspection intent")
 	}
 	set := reader.request.result
-	port.late = types.LSPInlayInspection{SetID: set.ID, Digest: set.Digest, Index: intent.Index,
+	port.late = insight.LSPInlayInspection{SetID: set.ID, Digest: set.Digest, Index: intent.Index,
 		Boundary: set.Boundary, WireVersion: set.WireVersion, Range: set.Range, Hint: set.Hints[0],
 		OriginalJSON: []byte(`{"label":"hint"}`), ResolveState: "not-requested"}
 	command := app.inspectInlayHintCmd(intent)

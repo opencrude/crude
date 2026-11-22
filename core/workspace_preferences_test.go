@@ -5,18 +5,18 @@ import (
 	"encoding/json"
 	"testing"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestWorkspacePreferencesWorkerPersistsBeforeActorPublishes(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(types.AppSettings{})
+	ws.SetAppDefaults(setting.App{})
 	a := &actor{ws: ws}
-	request := coreprotocol.WorkspacePreferencesRequest{Edits: types.SettingsEdits(ws.LoadWorkspaceOverrides(), types.WorkspaceOverrides{LSP: json.RawMessage(`{"enabled":false}`)})}
+	request := coreprotocol.WorkspacePreferencesRequest{Edits: setting.Edits(ws.LoadWorkspaceOverrides(), setting.WorkspaceOverrides{LSP: json.RawMessage(`{"enabled":false}`)})}
 	payload, err := coreprotocol.Marshal(coreprotocol.Ptr(request))
 	if err != nil {
 		t.Fatal(err)

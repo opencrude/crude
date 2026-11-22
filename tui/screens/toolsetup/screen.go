@@ -12,7 +12,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 const (
@@ -39,7 +39,7 @@ type CloseMsg struct{ Target *Screen }
 type Screen struct {
 	ui.Base
 	project   string
-	items     []types.ProjectToolCandidate
+	items     []insight.ProjectToolCandidate
 	byID      map[string]int
 	selected  map[string]bool
 	list      *candidateList
@@ -50,14 +50,15 @@ type Screen struct {
 	actions   *ui.ActionBar
 }
 
-func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
+// New builds the tool setup screen for a reviewed project tool list.
+func New(th *theme.Theme, review insight.ProjectToolReview) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
 	s := &Screen{Base: ui.NewBase(ScreenID), project: review.Project, byID: make(map[string]int), selected: make(map[string]bool)}
 	for i, item := range review.Items {
-		s.items = append(s.items, types.CloneProjectToolCandidate(item))
+		s.items = append(s.items, insight.CloneProjectToolCandidate(item))
 		if _, duplicate := s.byID[item.ID]; duplicate || item.ID == "" {
 			s.byID[item.ID] = -1
 		} else {
@@ -96,7 +97,7 @@ func New(th *theme.Theme, review types.ProjectToolReview) *Screen {
 	return s
 }
 
-func (s *Screen) selectable(item types.ProjectToolCandidate) bool {
+func (s *Screen) selectable(item insight.ProjectToolCandidate) bool {
 	return s.byID[item.ID] >= 0
 }
 
@@ -125,10 +126,10 @@ func (s *Screen) SelectedIDs() []string {
 }
 
 // Items returns the tools this screen offers.
-func (s *Screen) Items() []types.ProjectToolCandidate {
-	items := make([]types.ProjectToolCandidate, len(s.items))
+func (s *Screen) Items() []insight.ProjectToolCandidate {
+	items := make([]insight.ProjectToolCandidate, len(s.items))
 	for i, item := range s.items {
-		items[i] = types.CloneProjectToolCandidate(item)
+		items[i] = insight.CloneProjectToolCandidate(item)
 	}
 	return items
 }

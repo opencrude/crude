@@ -9,8 +9,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/text/encoding"
-	"crude/types"
+	"crude/text/textencoding"
+	"crude/types/setting"
 )
 
 func TestConnectedEncodingMenuSaveReloadAndUndo(t *testing.T) {
@@ -52,7 +52,7 @@ func TestConnectedEncodingMenuSaveReloadAndUndo(t *testing.T) {
 		return ed.DocumentState().PendingEdits == 0 && !app.liveEditors[ed].busy && !app.liveEditors[ed].sync
 	})
 	draft := ed.Value()
-	app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, AutoSaveDelay: 100000})
+	app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveAfterDelay, AutoSaveDelay: 100000})
 	app.liveEditors[ed].due = time.Now().Add(-time.Second)
 	app.confirmEditorReload(ed)
 	if app.editorReload == nil {

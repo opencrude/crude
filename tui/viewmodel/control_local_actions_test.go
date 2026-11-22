@@ -8,8 +8,8 @@ import (
 
 	"crude/agent/memory"
 	"crude/core"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"

@@ -2,15 +2,15 @@ package core
 
 import (
 	"context"
-	"crude/core/client"
-	"crude/core/wire"
+	"crude/core/coreclient"
+	"crude/core/corewire"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace/document"
 )
 

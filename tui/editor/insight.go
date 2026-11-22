@@ -3,9 +3,9 @@ package editor
 import (
 	"sort"
 
-	"crude/syntax"
+	"crude/insight/syntax"
 	"crude/tui/rendering"
-	"crude/types"
+	"crude/types/insight"
 
 	"github.com/alecthomas/chroma/v2"
 )
@@ -14,13 +14,13 @@ import (
 // The independent text stream may lag it; projection waits for the exact source.
 // Stale or future insight never changes text, undo, diagnostics or cursor state.
 // Linked views share the publication.
-func (e *Editor) InstallDocumentInsight(view types.DocumentInsight) bool {
+func (e *Editor) InstallDocumentInsight(view insight.DocumentInsight) bool {
 	installed := false
 	e.eachView(func(v *Editor) { installed = v.installDocumentInsight(view) || installed })
 	return installed
 }
 
-func (e *Editor) installDocumentInsight(view types.DocumentInsight) bool {
+func (e *Editor) installDocumentInsight(view insight.DocumentInsight) bool {
 	p := e.documentProjection
 	if !e.open || p == nil || view.DocumentID != p.snapshot.ID || view.Generation == "" || view.Version == 0 ||
 		view.Revision < p.snapshot.Revision {
@@ -48,27 +48,27 @@ func (e *Editor) canonicalSyntaxSource() bool {
 // InsightStatus is coverage-qualified syntax status, not a diagnostic count.
 // A private draft is explicitly provisional even if the last shared result was
 // current. Reading status never starts work or performs I/O.
-func (e *Editor) InsightStatus() (types.InsightState, string) {
+func (e *Editor) InsightStatus() (insight.State, string) {
 	if e.documentProjection == nil {
 		return "", ""
 	}
 	if !e.canonicalSyntaxSource() {
 		if _, supported := syntax.LanguageForPath(e.filePath); supported {
-			return types.InsightProvisional, "Provisional syntax for unacknowledged local text"
+			return insight.Provisional, "Provisional syntax for unacknowledged local text"
 		}
 	}
 	view := e.canonicalInsight
 	if view == nil || view.Revision != e.documentProjection.snapshot.Revision || view.Path != e.filePath {
-		return types.InsightPending, "Waiting for shared syntax"
+		return insight.Pending, "Waiting for shared syntax"
 	}
 	return view.State, view.Detail
 }
 
 // canonicalViewCurrent returns the shared syntax publication for exactly the
 // acknowledged revision, if it has arrived.
-func (e *Editor) canonicalViewCurrent() (*types.DocumentInsight, bool) {
+func (e *Editor) canonicalViewCurrent() (*insight.DocumentInsight, bool) {
 	view, p := e.canonicalInsight, e.documentProjection
-	if view == nil || p == nil || view.State != types.InsightCurrent || view.Syntax == nil ||
+	if view == nil || p == nil || view.State != insight.Current || view.Syntax == nil ||
 		view.Path != e.filePath || view.Revision != p.snapshot.Revision || view.Syntax.Revision != view.Revision {
 		return nil, false
 	}

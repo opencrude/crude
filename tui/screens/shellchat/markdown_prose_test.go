@@ -12,14 +12,14 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestMarkdownProseUsesParagraphLevelsAfterResize(t *testing.T) {
 	th := theme.DefaultDark()
 	r := chatprojection.NewRenderer(th)
 	body := "שלום abcdefghijklm ! Example"
-	r.SyncMessages([]types.ChatMessage{{InternalID: "prose", Role: types.RoleAssistant, Content: body}}, 1, 1)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "prose", Role: conversation.RoleAssistant, Content: body}}, 1, 1)
 	s := New(th)
 	host := ui.NewHost(th, s)
 	for _, width := range []int{24, 54, 24} {
@@ -39,7 +39,7 @@ func TestMarkdownProseKeepsHeadingBadgeAndIsolatesListMarker(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		const body = "## שלום Header\n\n12. שלום List\n\n> שלום Quote\n>\n> ```go\n> x := \"שלום\"\n> ```\n\n# שלום Badge"
 		r := chatprojection.NewRenderer(th)
-		r.SyncMessages([]types.ChatMessage{{InternalID: "decorations", Role: types.RoleAssistant, Content: body}}, 1, 1)
+		r.SyncMessages([]conversation.ChatMessage{{InternalID: "decorations", Role: conversation.RoleAssistant, Content: body}}, 1, 1)
 		s := New(th)
 		buffer := paintMarkdownHost(r, s, ui.NewHost(th, s), th, 66)
 		for _, tt := range []struct{ word, want string }{
@@ -68,7 +68,7 @@ func TestMarkdownQuoteKeepsOneRailAcrossMixedContentAndResize(t *testing.T) {
 	const body = "> `source` שלום Rail\n>\n> English (text)!\n>\n> > Inner left.\n>\n> שלום Middle\n>\n> > שלום Nested\n>\n> ```go\n> x := \"שלום\"\n> ```"
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		r := chatprojection.NewRenderer(th)
-		r.SyncMessages([]types.ChatMessage{{InternalID: "quote", Role: types.RoleAssistant, Content: body}}, 1, 1)
+		r.SyncMessages([]conversation.ChatMessage{{InternalID: "quote", Role: conversation.RoleAssistant, Content: body}}, 1, 1)
 		s := New(th)
 		host := ui.NewHost(th, s)
 		for _, width := range []int{32, 60, 32} {
@@ -110,7 +110,7 @@ func TestMarkdownListsKeepMarkerSideAndHangingIndentAfterResize(t *testing.T) {
 `
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		r := chatprojection.NewRenderer(th)
-		r.SyncMessages([]types.ChatMessage{{InternalID: "list", Role: types.RoleAssistant, Content: body}}, 1, 1)
+		r.SyncMessages([]conversation.ChatMessage{{InternalID: "list", Role: conversation.RoleAssistant, Content: body}}, 1, 1)
 		s := New(th)
 		host := ui.NewHost(th, s)
 		for _, width := range []int{24, 54, 24} {
@@ -154,7 +154,7 @@ func TestMarkdownListsKeepMarkerSideAndHangingIndentAfterResize(t *testing.T) {
 func TestMarkdownLTRListDoesNotFlipForRTLItem(t *testing.T) {
 	th := theme.DefaultDark()
 	r := chatprojection.NewRenderer(th)
-	r.SyncMessages([]types.ChatMessage{{InternalID: "list", Role: types.RoleAssistant, Content: "- [x] First\n- [ ] שלום Last"}}, 1, 1)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "list", Role: conversation.RoleAssistant, Content: "- [x] First\n- [ ] שלום Last"}}, 1, 1)
 	s := New(th)
 	buffer := paintMarkdownHost(r, s, ui.NewHost(th, s), th, 66)
 	_, first := findMarkdownHostLine(t, buffer, "First")
@@ -192,7 +192,7 @@ func TestMarkdownNeutralTableHeaderUsesEnclosingDirection(t *testing.T) {
 `
 	th := theme.DefaultDark()
 	r := chatprojection.NewRenderer(th)
-	r.SyncMessages([]types.ChatMessage{{InternalID: "neutral-header", Role: types.RoleAssistant, Content: body}}, 1, 1)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "neutral-header", Role: conversation.RoleAssistant, Content: body}}, 1, 1)
 	s := New(th)
 	host := ui.NewHost(th, s)
 	buffer := paintMarkdownHost(r, s, host, th, 78)

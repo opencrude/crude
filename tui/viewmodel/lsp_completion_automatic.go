@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // Typing intent is view-local, not a completion over speculative source. One
@@ -17,10 +17,10 @@ import (
 // input owner or source lifetime replaces it; there is no retry queue.
 type completionIntent struct {
 	editor               *editor.Editor
-	source               types.InsightSource
+	source               insight.Source
 	revision, generation uint64
 	feature              uint64
-	trigger              types.LSPCompletionContext
+	trigger              insight.LSPCompletionContext
 	character            string
 	requiresTrigger      bool
 	line, col            int
@@ -59,7 +59,7 @@ func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 	if !settings.AutoComplete || !enabled || !caps.Completion && caps.Producer.InstanceID != "" {
 		return
 	}
-	trigger := types.LSPCompletionContext{Producer: caps.Producer, TriggerKind: types.LSPCompletionInvoked}
+	trigger := insight.LSPCompletionContext{Producer: caps.Producer, TriggerKind: insight.LSPCompletionInvoked}
 	character := key.Text != "" && slices.Contains(caps.CompletionTriggers, key.Text)
 	raw := ed.LineText(ed.CursorLine())
 	off := editor.VisualColToByteOffset(raw, ed.CursorCol(), ed.TabWidth())
@@ -72,9 +72,9 @@ func (m *App) onEditorTyping(ed *editor.Editor, key tea.KeyPressMsg) {
 		return
 	}
 	if character {
-		trigger.TriggerKind, trigger.TriggerCharacter = types.LSPCompletionTriggerCharacter, key.Text
-	} else if keep && m.completion != nil && (m.completion.set != nil && m.completion.set.Incomplete || m.completion.set == nil && m.completion.trigger.TriggerKind == types.LSPCompletionTriggerIncomplete) {
-		trigger.TriggerKind = types.LSPCompletionTriggerIncomplete
+		trigger.TriggerKind, trigger.TriggerCharacter = insight.LSPCompletionTriggerCharacter, key.Text
+	} else if keep && m.completion != nil && (m.completion.set != nil && m.completion.set.Incomplete || m.completion.set == nil && m.completion.trigger.TriggerKind == insight.LSPCompletionTriggerIncomplete) {
+		trigger.TriggerKind = insight.LSPCompletionTriggerIncomplete
 	}
 	source, _ := ed.CurrentInsightSource()
 	if source.DocumentID == "" || source.Lifetime == "" || source.WorkspaceGeneration == "" {
@@ -139,7 +139,7 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	// capability. Bind the first observed server only at actual admission.
 	trigger.Producer = caps.Producer
 	if intent.character != "" && slices.Contains(caps.CompletionTriggers, intent.character) {
-		trigger.TriggerKind, trigger.TriggerCharacter = types.LSPCompletionTriggerCharacter, intent.character
+		trigger.TriggerKind, trigger.TriggerCharacter = insight.LSPCompletionTriggerCharacter, intent.character
 	} else if intent.requiresTrigger {
 		m.cancelCompletionIntent()
 		return nil

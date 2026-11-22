@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"crude/syntax"
+	"crude/insight/syntax"
 	"crude/tui/ui"
 )
 

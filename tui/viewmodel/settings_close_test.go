@@ -7,12 +7,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 func selectSettingsCategory(t *testing.T, body *settingsui.WorkspaceSettingsSurface, label string) {
@@ -242,7 +242,7 @@ func TestSettingsCloseXWorkspaceDeepPage(t *testing.T) {
 	parent := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	body := app.settingsSurface(parent)
 	body.OpenCapabilities(captypes.KindMCP, "", "docs")
-	if body.Model().Scope() != types.SettingsScopeWorkspace {
+	if body.Model().Scope() != setting.ScopeWorkspace {
 		t.Fatal("fixture changed Settings scope")
 	}
 	x, y := parent.Position()

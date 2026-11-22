@@ -16,7 +16,7 @@ import (
 
 // WorkspaceBadges is the same compact presentation in each recent-workspace
 // collection. Unknown and zero counts have no badge.
-func WorkspaceBadges(summary workspace.WorkspaceActivity) ui.RowBadges {
+func WorkspaceBadges(summary workspace.Activity) ui.RowBadges {
 	var badges ui.RowBadges
 	for i, value := range [3]workspace.ActivityCount{summary.Agents, summary.Terminals, summary.Unsaved} {
 		if value.Observed && value.Value > 0 {
@@ -32,7 +32,7 @@ func WorkspaceBadges(summary workspace.WorkspaceActivity) ui.RowBadges {
 
 // WorkspaceTooltip disambiguates shortened paths and names the exact counts.
 // A cold or busy workspace makes no cleanliness or inactivity claim.
-func WorkspaceTooltip(path string, summary workspace.WorkspaceActivity) string {
+func WorkspaceTooltip(path string, summary workspace.Activity) string {
 	var lines [5]string
 	lines[0] = path
 	n := 1

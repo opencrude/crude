@@ -9,10 +9,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/imagepreview"
 	"crude/tui/window"
+	"crude/types/insight"
 )
 
 func (m *App) editorTabTitle(path string) string {
@@ -112,7 +113,7 @@ func (m *App) activateEditorTab(path string) {
 // range, scrolls it into view, and refreshes the hover tooltip. The
 // caller supplies raw UTF-16 coordinates from the LSP cache, never the visual
 // values returned by Editor.NextError/Diagnostics.
-func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
+func (m *App) jumpToDiagnostic(filePath string, d insight.LSPDiagnostic) {
 	if filePath == "" {
 		return
 	}
@@ -199,7 +200,7 @@ func (m *App) gotoFirstDiagnostic() {
 // given list (sorted by line then col, as LSP publishes them). The
 // returned pointer aliases the input slice; it is safe to dereference
 // before the next mutation.
-func firstErrorOf(diags []editor.LSPDiagnostic) *editor.LSPDiagnostic {
+func firstErrorOf(diags []insight.LSPDiagnostic) *insight.LSPDiagnostic {
 	for i := range diags {
 		if diags[i].Severity == editor.DiagError {
 			return &diags[i]

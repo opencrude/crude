@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/ui"
 	"crude/workspace"
 )

@@ -3,9 +3,10 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/cell"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"fmt"
 	"os"
@@ -37,7 +38,7 @@ func TestEditorPresentationSettingsReachOpenLinkedAndNewViews(t *testing.T) {
 			}
 			app := shells[0].app
 			ed := app.EditorState.Editor
-			remoteJourneyUntil(t, shells, func() bool { state, _ := ed.InsightStatus(); return state == types.InsightCurrent })
+			remoteJourneyUntil(t, shells, func() bool { state, _ := ed.InsightStatus(); return state == insight.Current })
 			app.View()
 			ed.SetSelection(1, 8, 1, 12)
 			selection := ed.SelectedText()
@@ -128,8 +129,8 @@ func TestEditorPresentationSettingsReachOpenLinkedAndNewViews(t *testing.T) {
 			if next.GutterWidth() != ed.GutterWidth() {
 				t.Fatal("new view ignored saved line-number preference")
 			}
-			edits := []types.SettingEdit{{Path: []string{"editor", "line_numbers"}}, {Path: []string{"editor", "syntax_theme"}}, {Path: []string{"editor", "render_whitespace"}}}
-			runAppCommand(t, app, app.saveSettingsShortcut(types.SettingsScopeWorkspace, edits, "Editor settings reset.", nil, 0))
+			edits := []setting.Edit{{Path: []string{"editor", "line_numbers"}}, {Path: []string{"editor", "syntax_theme"}}, {Path: []string{"editor", "render_whitespace"}}}
+			runAppCommand(t, app, app.saveSettingsShortcut(setting.ScopeWorkspace, edits, "Editor settings reset.", nil, 0))
 			remoteJourneyUntil(t, shells, func() bool {
 				return shells[1].app.editorSettings.LineNumbers && shells[1].app.editorSettings.RenderWhitespace == "none"
 			})

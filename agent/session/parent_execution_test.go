@@ -1,7 +1,7 @@
 package session
 
 import (
-	"crude/agent"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
 	"crude/types/control"
 	"fmt"
@@ -44,7 +44,7 @@ func TestChildPreparationBindsParentCheckoutAndOwnControlTarget(t *testing.T) {
 	r := &SubAgentRunner{session: s}
 	target := &control.Target{WorkspaceID: "workspace", SessionID: "logical-session", ExecutionID: a.ID, Shell: &control.ShellOwner{ClientID: "shell", Epoch: 7}}
 	for _, mode := range []worktree.Mode{worktree.Shared, worktree.Isolated} {
-		spec := agent.SubAgentSpec{ID: "child", Isolation: string(mode), ControlTarget: target, FileOwnership: []string{"foo"}}
+		spec := turnloop.SubAgentSpec{ID: "child", Isolation: string(mode), ControlTarget: target, FileOwnership: []string{"foo"}}
 		if err := r.prepareChildExecution(t.Context(), &spec, "child-run-"+string(mode)); err != nil {
 			t.Fatal(err)
 		}
@@ -70,12 +70,12 @@ func TestChildPreparationBindsParentCheckoutAndOwnControlTarget(t *testing.T) {
 	if s.WorkDir() != root {
 		t.Fatal("logical session globally rebound")
 	}
-	bad := agent.SubAgentSpec{ID: "bad", Isolation: "shared", ControlTarget: &control.Target{ExecutionID: "unknown"}}
+	bad := turnloop.SubAgentSpec{ID: "bad", Isolation: "shared", ControlTarget: &control.Target{ExecutionID: "unknown"}}
 	if err := r.prepareChildExecution(t.Context(), &bad, "bad-run"); err == nil {
 		t.Fatal("unknown source launched")
 	}
 	for i, claim := range []string{filepath.Join(root, "foo"), filepath.Join(a.Root, "foo"), filepath.Join("..", "outside")} {
-		bad := agent.SubAgentSpec{ID: agent.AgentID(fmt.Sprintf("outside-%d", i)), Isolation: "worktree", FileOwnership: []string{claim}}
+		bad := turnloop.SubAgentSpec{ID: turnloop.AgentID(fmt.Sprintf("outside-%d", i)), Isolation: "worktree", FileOwnership: []string{claim}}
 		if err := r.prepareChildExecution(t.Context(), &bad, fmt.Sprintf("outside-run-%d", i)); err == nil {
 			t.Fatalf("isolated child accepted external claim %q", claim)
 		}

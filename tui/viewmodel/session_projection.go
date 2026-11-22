@@ -7,10 +7,10 @@ import (
 	"crude/tui/screens/composer"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/sessionsettings"
-	textoverlay "crude/tui/screens/textoverlay"
+	"crude/tui/screens/textoverlay"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -239,14 +239,14 @@ func (m *App) refreshAllSessionSettingsProjections() {
 	}
 }
 
-func sessionSettingsSnapshot(session *workspace.Session) (effective, base types.Settings) {
+func sessionSettingsSnapshot(session *workspace.Session) (effective, base setting.Settings) {
 	if session == nil || session.Settings == nil {
 		return
 	}
 	return session.Settings.Effective, session.Settings.Base
 }
 
-func sessionSettingsOverrides(session *workspace.Session) map[string]types.CategorySettings {
+func sessionSettingsOverrides(session *workspace.Session) map[string]setting.Category {
 	if session == nil || session.Settings == nil {
 		return nil
 	}

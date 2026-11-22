@@ -6,14 +6,14 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestSessionSettingsMutationBridge(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	cfg := &session.Config{Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "openai", APIKey: "secret", Connection: provider.Template{Name: "test", AuthType: provider.AuthBearer, APIStandard: "openai", ProviderURL: "https://example.com"}}}, Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {Categories: map[string]session.CategoryConfig{"default": {AccountID: "one", Model: "initial"}, "crafter": {AccountID: "one", Model: "crafter-model"}}}}}}
 	owner, err := ws.CreateSession(cfg, t.TempDir())
@@ -26,11 +26,11 @@ func TestSessionSettingsMutationBridge(t *testing.T) {
 	disabled := false
 	dto := publicSession(initial.Effective)
 	dto.MainAgent, dto.MultiAgent = "crafter", &disabled
-	dto.Overrides = map[string]types.CategorySettings{"default": {AccountID: "one", Model: "saved"}, "root/crafter": {AccountID: "one", DeniedTools: []string{"execute_command"}}}
+	dto.Overrides = map[string]setting.Category{"default": {AccountID: "one", Model: "saved"}, "root/crafter": {AccountID: "one", DeniedTools: []string{"execute_command"}}}
 	prepare := func(method string) (func(context.Context) coreprotocol.Response, func(coreprotocol.Response)) {
 		t.Helper()
-		local := types.SessionPreferences{MainAgent: dto.MainAgent, Overrides: dto.Overrides, MultiAgent: dto.MultiAgent}
-		raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.SessionSettingsMutationRequest{SessionID: owner.SessionID, Edits: types.SettingsEdits(types.SessionPreferencesOf(initial.Effective), local)}))
+		local := setting.SessionPreferences{MainAgent: dto.MainAgent, Overrides: dto.Overrides, MultiAgent: dto.MultiAgent}
+		raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.SessionSettingsMutationRequest{SessionID: owner.SessionID, Edits: setting.Edits(setting.SessionPreferencesOf(initial.Effective), local)}))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -70,8 +70,9 @@ const (
 	ViewRemotes
 )
 
-func (view View) ID() string {
-	switch view {
+// ID returns the stable identifier of a sidebar view.
+func (v View) ID() string {
+	switch v {
 	case ViewAgents:
 		return "agents"
 	case ViewWorkspaces:
@@ -206,12 +207,13 @@ func (s *Screen) Active() View { return s.active }
 
 func (s *Screen) SetActive(v View) { s.active = v }
 
-func (screen *Screen) SetOrder(ids []string) {
-	screen.order = nil
+// SetOrder sets the rail order and keeps the workspace switching views pinned.
+func (s *Screen) SetOrder(ids []string) {
+	s.order = nil
 	for _, id := range ids {
 		for _, view := range Views() {
 			if view.ID() == id {
-				screen.order = append(screen.order, view)
+				s.order = append(s.order, view)
 				break
 			}
 		}
@@ -221,11 +223,11 @@ func (screen *Screen) SetOrder(ids []string) {
 	// Agents (or Files when Agents is unpinned), independently of optional
 	// shortcut preferences: Files / Agents / Recent Workspaces / Remotes /
 	// Skills / MCP.
-	screen.order = slices.DeleteFunc(screen.order, func(view View) bool {
+	s.order = slices.DeleteFunc(s.order, func(view View) bool {
 		return view == ViewWorkspaces || view == ViewRemotes
 	})
 	insert := 0
-	for i, view := range screen.order {
+	for i, view := range s.order {
 		if view == ViewFiles && insert == 0 {
 			insert = i + 1
 		}
@@ -234,16 +236,17 @@ func (screen *Screen) SetOrder(ids []string) {
 			break
 		}
 	}
-	screen.order = slices.Insert(screen.order, insert, ViewWorkspaces, ViewRemotes)
-	screen.hover = -1
+	s.order = slices.Insert(s.order, insert, ViewWorkspaces, ViewRemotes)
+	s.hover = -1
 }
 
-func (screen *Screen) ViewAt(localY int) (View, bool) {
-	index := screen.hitTarget(localY)
-	if index < 0 || index >= len(screen.order) {
+// ViewAt returns the view at a local row of the rail.
+func (s *Screen) ViewAt(localY int) (View, bool) {
+	index := s.hitTarget(localY)
+	if index < 0 || index >= len(s.order) {
 		return ViewFiles, false
 	}
-	return screen.order[index], true
+	return s.order[index], true
 }
 
 // SetPanelOpen reports whether the sidebar panel for the active view is
@@ -477,7 +480,7 @@ func visibleViewCount(height int) int {
 	return visibleCount(height, len(views))
 }
 
-func (screen *Screen) visibleCount(height int) int { return visibleCount(height, len(screen.order)) }
+func (s *Screen) visibleCount(height int) int { return visibleCount(height, len(s.order)) }
 
 func visibleCount(height, total int) int {
 	available := max(0, height/RowStride-1)

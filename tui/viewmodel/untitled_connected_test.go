@@ -1,7 +1,8 @@
 package viewmodel
 
 import (
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/setting"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -12,10 +13,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/clientstate"
-	"crude/core/port"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace/document"
 )
 
@@ -29,7 +29,7 @@ func TestConnectedDoubleClickCreatesIndependentEditableUntitledBuffers(t *testin
 	app := shell.app
 	original := liveTestOpen(t, app, existing)
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return app.liveEditors[original].topicReady })
-	app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, AutoSaveDelay: 1})
+	app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveAfterDelay, AutoSaveDelay: 1})
 
 	doubleClick := func() {
 		t.Helper()
@@ -128,7 +128,7 @@ func TestConnectedUntitledSaveUsesFileWindowAndPreservesText(t *testing.T) {
 	liveTestOpen(t, app, existing)
 	runAppCommand(t, app, app.createPaneUntitled(app.Win.ActiveGroup()))
 	ed := app.EditorState.Editor
-	app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, AutoSaveDelay: 250})
+	app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveAfterDelay, AutoSaveDelay: 250})
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return app.liveEditors[ed].topicReady })
 	_, cmd := app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	runAppCommand(t, app, cmd)
@@ -272,7 +272,7 @@ func TestConnectedUntitledOverwriteReviewCancelAndReplace(t *testing.T) {
 	if ed.DocumentState().DocumentID != id || ed.FilePath() != target {
 		t.Fatal("undo/redo changed the saved document identity")
 	}
-	app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, AutoSaveDelay: 250})
+	app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveAfterDelay, AutoSaveDelay: 250})
 	ed.SetCursorPosition(0, 0)
 	_, cmd = app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 	runAppCommand(t, app, cmd)
@@ -310,7 +310,7 @@ func TestConnectedUntitledEncodingChoiceReachesDiskAndAutosave(t *testing.T) {
 	if err != nil || decodeErr != nil || string(text) != "café 😀\n" || encoding != textencoding.UTF16LE {
 		t.Fatalf("encoding selection did not reach disk: %x %v %v", raw, err, decodeErr)
 	}
-	app.applyEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveTerminalFocusLoss})
+	app.applyEditorSettings(setting.Editor{AutoSave: setting.AutoSaveTerminalFocusLoss})
 	_, cmd = app.Update(tea.PasteMsg{Content: "x"})
 	runAppCommand(t, app, cmd)
 	_, cmd = app.Update(tea.BlurMsg{})
@@ -419,7 +419,7 @@ func TestConnectedUntitledLinkedViewsAndCloseCancel(t *testing.T) {
 }
 
 func TestConnectedUntitledIgnoresAllAutosaveModesAndReopens(t *testing.T) {
-	for _, mode := range []types.AutoSaveMode{types.AutoSaveAfterDelay, types.AutoSaveEditorFocusChange, types.AutoSaveTerminalFocusLoss} {
+	for _, mode := range []setting.AutoSaveMode{setting.AutoSaveAfterDelay, setting.AutoSaveEditorFocusChange, setting.AutoSaveTerminalFocusLoss} {
 		t.Run(string(mode), func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "original.txt")
@@ -434,23 +434,23 @@ func TestConnectedUntitledIgnoresAllAutosaveModesAndReopens(t *testing.T) {
 			ed := app.EditorState.Editor
 			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return app.liveEditors[ed].topicReady })
 			id := ed.DocumentState().DocumentID
-			app.applyEditorSettings(types.EditorSettings{AutoSave: mode, AutoSaveDelay: 1})
+			app.applyEditorSettings(setting.Editor{AutoSave: mode, AutoSaveDelay: 1})
 			_, cmd := app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 			runAppCommand(t, app, cmd)
 			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
 				return ed.DocumentState().PendingEdits == 0 && !app.liveEditors[ed].sync
 			})
 			switch mode {
-			case types.AutoSaveAfterDelay:
+			case setting.AutoSaveAfterDelay:
 				time.Sleep(5 * time.Millisecond)
 				runAppCommand(t, app, app.drainLiveEditorCommands())
-			case types.AutoSaveEditorFocusChange:
+			case setting.AutoSaveEditorFocusChange:
 				_, cmd = app.Update(tea.KeyPressMsg{Code: '[', Mod: tea.ModCtrl})
 				runAppCommand(t, app, cmd)
 				if app.EditorState.Editor == ed {
 					t.Fatal("focus-change check did not leave the unnamed editor")
 				}
-			case types.AutoSaveTerminalFocusLoss:
+			case setting.AutoSaveTerminalFocusLoss:
 				_, cmd = app.Update(tea.BlurMsg{})
 				runAppCommand(t, app, cmd)
 			}
@@ -519,7 +519,7 @@ func TestConnectedUntitledPaneMemoryRestoresDraftAndSelection(t *testing.T) {
 }
 
 func TestConnectedFirstSaveEnablesFocusAutosave(t *testing.T) {
-	for _, mode := range []types.AutoSaveMode{types.AutoSaveEditorFocusChange, types.AutoSaveTerminalFocusLoss} {
+	for _, mode := range []setting.AutoSaveMode{setting.AutoSaveEditorFocusChange, setting.AutoSaveTerminalFocusLoss} {
 		t.Run(string(mode), func(t *testing.T) {
 			root := t.TempDir()
 			existing := filepath.Join(root, "existing.txt")
@@ -532,7 +532,7 @@ func TestConnectedFirstSaveEnablesFocusAutosave(t *testing.T) {
 			runAppCommand(t, app, app.createPaneUntitled(app.Win.ActiveGroup()))
 			ed := app.EditorState.Editor
 			remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return app.liveEditors[ed].topicReady })
-			app.applyEditorSettings(types.EditorSettings{AutoSave: mode})
+			app.applyEditorSettings(setting.Editor{AutoSave: mode})
 			_, cmd := app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 			runAppCommand(t, app, cmd)
 			_, cmd = app.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
@@ -551,7 +551,7 @@ func TestConnectedFirstSaveEnablesFocusAutosave(t *testing.T) {
 			if !ed.Modified() {
 				t.Fatal("the second edit did not make the saved file dirty")
 			}
-			if mode == types.AutoSaveEditorFocusChange {
+			if mode == setting.AutoSaveEditorFocusChange {
 				_, cmd = app.Update(tea.KeyPressMsg{Code: '[', Mod: tea.ModCtrl})
 				runAppCommand(t, app, cmd)
 				if app.EditorState.Editor == ed {

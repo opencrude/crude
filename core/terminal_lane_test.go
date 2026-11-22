@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/terminalvt"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/internal/terminalvt"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -22,7 +22,7 @@ func TestTerminalOperationsDoNotWaitBehindDocumentLane(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	root := t.TempDir()
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)

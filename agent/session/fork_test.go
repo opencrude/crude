@@ -12,7 +12,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 // A fork continues the same conversation as a new saved session: its first

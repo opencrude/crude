@@ -10,7 +10,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 // Scenario benches for the work-budget system. Leaf paint benches
@@ -37,7 +37,7 @@ func BenchmarkIdleTick_200Msgs(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		app.handleTick(ttypes.TickMsg(time.Now()))
+		app.handleTick(TickMsg(time.Now()))
 		app.paintShellFrame()
 	}
 }
@@ -77,8 +77,8 @@ func BenchmarkAgentSwitchWarm_80Msgs(b *testing.B) {
 	for _, msg := range seedBudgetSession(80, 2) {
 		app.appendAgentMessage("second", msg)
 	}
-	app.appendAgentMessage("first", ttypes.ChatMessage{InternalID: "a", Role: ttypes.RoleAssistant, Content: bodyA})
-	app.appendAgentMessage("second", ttypes.ChatMessage{InternalID: "b", Role: ttypes.RoleAssistant, Content: bodyB})
+	app.appendAgentMessage("first", conversation.ChatMessage{InternalID: "a", Role: conversation.RoleAssistant, Content: bodyA})
+	app.appendAgentMessage("second", conversation.ChatMessage{InternalID: "b", Role: conversation.RoleAssistant, Content: bodyB})
 	app.switchToAgentView("second")
 	app.syncAgentMessages("second", false)
 	app.paintShellFrame()
@@ -176,7 +176,7 @@ func benchmarkDenseChatSingleRowChange(b *testing.B, count int) {
 	for _, msg := range seedBudgetSession(count, 2) {
 		app.appendActiveMessage(msg)
 	}
-	animated := ttypes.ChatMessage{InternalID: "animated-tail", Role: ttypes.RoleAssistant, Content: "animated stable body", Time: time.Now()}
+	animated := conversation.ChatMessage{InternalID: "animated-tail", Role: conversation.RoleAssistant, Content: "animated stable body", Time: time.Now()}
 	app.appendActiveMessage(animated)
 	app.handleTabSwitch()
 	_ = app.View()
@@ -200,7 +200,7 @@ func BenchmarkDenseChatWidthCommit_500HeavyMsgs(b *testing.B) {
 	app.AddOrchestrator("root")
 	body := strings.Repeat("A heavyweight markdown paragraph with `inline code`, unicode 界, and wrapping content for resize.\n", 12)
 	for i := 0; i < 500; i++ {
-		app.appendActiveMessage(ttypes.ChatMessage{InternalID: fmt.Sprintf("heavy-%d", i), Role: ttypes.RoleAssistant, Content: body, Time: time.Now()})
+		app.appendActiveMessage(conversation.ChatMessage{InternalID: fmt.Sprintf("heavy-%d", i), Role: conversation.RoleAssistant, Content: body, Time: time.Now()})
 	}
 	tree := filetree.NewFileTreeModel(b.TempDir())
 	app.Tree = NewTreeState(tree, 30)

@@ -6,14 +6,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/screens/decision"
 	"crude/tui/screens/problems"
 	"crude/tui/screens/question"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -25,7 +24,7 @@ func questionDockJourneyApp(t *testing.T) (*App, *agentPromptState) {
 	selectDeckSession(t, app, &workspace.Session{SessionID: "question-family"}, "agent")
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 160, Height: 50})
 	app.Input.SetInput("private composer draft\n  keep its whitespace")
-	_, cmd := app.Update(types.AgentMsg(types.AgentEventMsg{AgentID: "agent", Type: "blocking", Data: map[string]any{
+	_, cmd := app.Update(AgentMsg(AgentEventMsg{AgentID: "agent", Type: "blocking", Data: map[string]any{
 		"block_id": "question-navigation", "operation": "questions", "tool": "question",
 		"questions_json": `[{"header":"Navigation","question":"Which release should we prepare?"}]`,
 	}}))

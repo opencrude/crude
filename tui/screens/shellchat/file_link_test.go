@@ -10,7 +10,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestFileReferenceClickAndSelectionUsePaintedCells(t *testing.T) {
@@ -21,7 +21,7 @@ func TestFileReferenceClickAndSelectionUsePaintedCells(t *testing.T) {
 				renderer := chatprojection.NewRenderer(th)
 				renderer.SetSize(width, 20)
 				renderer.SetChatAreaBounds(0, 20)
-				renderer.AppendMessage(types.ChatMessage{InternalID: "reply", Role: types.RoleAssistant,
+				renderer.AppendMessage(conversation.ChatMessage{InternalID: "reply", Role: conversation.RoleAssistant,
 					Content: prefix + "`src/main.go:12:3`"})
 				rows, _, height := renderer.ExportMessageRows(width)
 				screen := New(th)

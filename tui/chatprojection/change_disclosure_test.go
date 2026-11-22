@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestChangesOpenByDefaultLiveAndHydrated(t *testing.T) {
@@ -16,12 +16,12 @@ func TestChangesOpenByDefaultLiveAndHydrated(t *testing.T) {
 				if name == "update_plan" || name == "get_plan" {
 					content = `{"id":"plan-1","revision":1,"objective":"Ship changes","status":"active","steps":[{"id":"first","description":"visible_marker()","status":"in_progress"},{"id":"last","description":"last_step_marker","status":"pending"}]}`
 				}
-				msg := types.ChatMessage{InternalID: "change", Role: types.RoleTool, ToolName: name, ToolArgs: "file.go", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone, Content: content}
+				msg := conversation.ChatMessage{InternalID: "change", Role: conversation.RoleTool, ToolName: name, ToolArgs: "file.go", ToolStatus: conversation.ToolStatusSuccess, ToolPreviewPhase: conversation.ToolPreviewDone, Content: content}
 				live := newActivityRenderer()
-				live.AppendMessage(types.ChatMessage{InternalID: msg.InternalID, Role: msg.Role, ToolName: name, ToolStatus: types.ToolStatusCalling})
-				live.SyncMessages([]types.ChatMessage{msg}, 2, 0)
+				live.AppendMessage(conversation.ChatMessage{InternalID: msg.InternalID, Role: msg.Role, ToolName: name, ToolStatus: conversation.ToolStatusCalling})
+				live.SyncMessages([]conversation.ChatMessage{msg}, 2, 0)
 				cold := newActivityRenderer()
-				cold.SyncMessages([]types.ChatMessage{msg}, 2, 0)
+				cold.SyncMessages([]conversation.ChatMessage{msg}, 2, 0)
 				liveRows, _, _ := live.ExportMessageRows(width)
 				coldRows, _, _ := cold.ExportMessageRows(width)
 				plain := strings.Join(liveRows[0].Lines, "\n")
@@ -34,7 +34,7 @@ func TestChangesOpenByDefaultLiveAndHydrated(t *testing.T) {
 				if (name == "update_plan" || name == "get_plan") && !strings.Contains(plain, "last_step_marker") {
 					t.Fatalf("default plan lost a step:\n%s", plain)
 				}
-				pane, _ := cold.BuildSubPaneToolLines([]*types.ChatMessage{&msg}, width, 0)
+				pane, _ := cold.BuildSubPaneToolLines([]*conversation.ChatMessage{&msg}, width, 0)
 				var paneText strings.Builder
 				for _, line := range pane {
 					paneText.WriteString(line.PlainText())
@@ -44,7 +44,7 @@ func TestChangesOpenByDefaultLiveAndHydrated(t *testing.T) {
 					t.Fatalf("compact agent pane hid the change:\n%s", paneText.String())
 				}
 				live.ToggleDisclosure(msg.InternalID)
-				live.SyncMessages([]types.ChatMessage{msg}, 3, 0)
+				live.SyncMessages([]conversation.ChatMessage{msg}, 3, 0)
 				closed, _, _ := live.ExportMessageRows(width)
 				plain = strings.Join(closed[0].Lines, "\n")
 				if strings.Contains(plain, "visible_marker()") || !strings.Contains(plain, "▸") {

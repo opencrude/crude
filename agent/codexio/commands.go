@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Tool descriptions and parameter guides copied from Codex shell_spec.rs at
 // aa380897f67b91e1a47d530d7286d497b6726d3f; Go representation added for Crude.
+
 package codexio
 
 import "encoding/json"

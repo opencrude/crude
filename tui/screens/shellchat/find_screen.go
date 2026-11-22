@@ -13,7 +13,7 @@ import (
 	"crude/tui/ui"
 )
 
-// The find window is the shell's one find design (see tui/ui/findreplace_frame.go);
+// The find window is the shell's one find design (see tui/ui/find_replace_frame.go);
 // a chat owns the search, not the chrome. The Screen exposes the live result so
 // the window can show the same counter and toggles an editor does.
 

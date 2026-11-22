@@ -5,16 +5,16 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // A session opened as Errand keeps that role after creation, and creating it
 // changes neither the shared defaults nor another session.
 func TestNewAgentSessionAsRootsSessionInTheRole(t *testing.T) {
 	setTestHome(t)
-	w := NewWorkspace(t.TempDir(), "history-model", "tester", types.Settings{}, nopLogger{})
+	w := NewWorkspace(t.TempDir(), "history-model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(w.Close)
-	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := historyE2EConfig("http://127.0.0.1:1")
 	prof := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	if _, ok := prof.Categories[session.CategoryErrand]; !ok {
@@ -53,8 +53,8 @@ func TestEnsureErrandSessionIsOneAndReopens(t *testing.T) {
 	setTestHome(t)
 	root := t.TempDir()
 	makeWorkspace := func() *Workspace {
-		w := NewWorkspace(root, "history-model", "tester", types.Settings{}, nopLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		w := NewWorkspace(root, "history-model", "tester", setting.Settings{}, nopLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		cfg := historyE2EConfig("http://127.0.0.1:1")
 		prof := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 		if _, ok := prof.Categories[session.CategoryErrand]; !ok {
@@ -77,7 +77,7 @@ func TestEnsureErrandSessionIsOneAndReopens(t *testing.T) {
 	if !w.YoloForAgent(first.OrchID) {
 		t.Fatal("the workspace Errand did not start in automatic approval mode")
 	}
-	if got := w.WorkspaceDB.GetSetting(workspaceErrandSessionKey); got != first.SessionID {
+	if got := w.WorkspaceDB.Setting(workspaceErrandSessionKey); got != first.SessionID {
 		t.Fatalf("remembered Errand = %q, want %q", got, first.SessionID)
 	}
 	// Other agents find Errand with agent_list query "errand": the registry

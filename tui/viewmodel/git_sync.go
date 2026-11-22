@@ -10,13 +10,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/gitmerge"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	types "crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -90,15 +90,15 @@ func (m *App) applyGitRemoteResult(msg sourceControlResultMsg) tea.Cmd {
 			return nil
 		}
 		if errors.Is(msg.err, context.Canceled) {
-			m.finishGitOperation(msg.gen, types.OperationCancelled, "")
+			m.finishGitOperation(msg.gen, statuscenter.OperationCancelled, "")
 			if m.Feedback != nil {
 				m.Feedback.NotifyInfo(msg.remoteLabel + " stopped")
 			}
 			return m.refreshSourceControl()
 		}
 		summary, detail := gitRemoteFailureText(msg.remoteLabel, msg.err)
-		m.finishGitOperation(msg.gen, types.OperationFailed, detail)
-		m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityError, Summary: summary, Detail: detail})
+		m.finishGitOperation(msg.gen, statuscenter.OperationFailed, detail)
+		m.ws.Status().SetIssue(statuscenter.IssueSnapshot{ID: "git", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceGit, ID: m.ws.RootPath()}, Severity: statuscenter.SeverityError, Summary: summary, Detail: detail})
 		// The panel keeps the failure through the refresh below, until the
 		// next remote command starts or succeeds.
 		m.gitPanel.SetRemoteError(summary)
@@ -110,7 +110,7 @@ func (m *App) applyGitRemoteResult(msg sourceControlResultMsg) tea.Cmd {
 		}
 		return m.refreshSourceControl()
 	}
-	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
+	m.finishGitOperation(msg.gen, statuscenter.OperationSucceeded, "")
 	m.ws.Status().ResolveIssue("git")
 	m.gitPanel.SetRemoteError("")
 	m.gitSnapshotAt = time.Now()

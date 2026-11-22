@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -40,12 +41,12 @@ func TestLiveLSPDiagnosticsRecoverAfterWatchGap(t *testing.T) {
 	}
 	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
-		settings := types.DefaultLSPSettings()
+		w := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
+		settings := setting.DefaultLSP()
 		language := settings.Languages["go"]
 		language.Command = server
 		settings.Languages["go"] = language
-		w.SetAppDefaults(types.AppSettings{LSP: settings, LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		w.SetAppDefaults(setting.App{LSP: settings, LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
@@ -65,11 +66,11 @@ func TestLiveLSPDiagnosticsRecoverAfterWatchGap(t *testing.T) {
 	}
 	var granted coreprotocol.WorkspacePreferencesResult
 	wire.call(t, attached.WorkspaceID, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{
-		Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`)}},
+		Edits: []setting.Edit{{Path: []string{"analysis", "trust"}, After: []byte(`"trusted"`)}},
 	}, &granted)
 	manager := a.ws.LSPMgr
 	watchAwait(t, "assembled project producer", func() bool {
-		return manager.Assembly().State == types.AssemblyReady && len(manager.ProjectProducers()) > 0
+		return manager.Assembly().State == insight.AssemblyReady && len(manager.ProjectProducers()) > 0
 	})
 
 	// Replace only this fixture's observer to control a native directory race.

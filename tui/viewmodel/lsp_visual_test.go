@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/problems"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
@@ -100,9 +101,9 @@ func runLSPVisual(t *testing.T, headless bool, width, height int) {
 	}
 	coreRuntime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: gopls, Args: []string{"serve"}, RootMarkers: []string{"go.mod"},
 			Settings:    map[string]any{"gopls": map[string]any{"usePlaceholders": true}},
 			Environment: map[string]string{"HOME": home, "GOROOT": strings.TrimSpace(string(goroot)), "GOPATH": filepath.Join(home, "go"), "GOCACHE": filepath.Join(home, "cache"), "GOENV": "off", "GOPROXY": "off", "GOSUMDB": "off", "GOTOOLCHAIN": "local"},
@@ -327,7 +328,7 @@ func (m *lspVisualModel) journeyLSP(key, phase int) error {
 		}
 		err = m.await(func(v *controlVisualModel) error {
 			diags := diagnosticList(v.ws.LSPMgr(), m.path)
-			if len(diags) != 1 || diags[0].Message != "undefined: missing" || diags[0].Line != 2 || diags[0].Col != 24 || diags[0].Severity != types.DiagError || diags[0].Source != "compiler" {
+			if len(diags) != 1 || diags[0].Message != "undefined: missing" || diags[0].Line != 2 || diags[0].Col != 24 || diags[0].Severity != insight.DiagError || diags[0].Source != "compiler" {
 				return fmt.Errorf("real compiler diagnostics not installed: %+v", diags)
 			}
 			if got := v.EditorState.Editor.Diagnostics(); len(got) != 1 || got[0].Message != "undefined: missing" {

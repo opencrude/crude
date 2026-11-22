@@ -34,9 +34,9 @@ server documentation says it reports problems for files that are not open.
 
 ## Sources
 
-`internal/catalogimport` generates `insight/catalog/catalog.json`. It is a
+`tools/catalogimport` generates `insight/catalog/catalog.json`. It is a
 development tool and never runs in the product. Its inputs are pinned in
-`internal/catalogimport/pins.json`:
+`tools/catalogimport/pins.json`:
 
 - The mason registry release file `registry.json.zip`, checked against its
   SHA-256. It supplies packages, licenses and release assets.
@@ -152,7 +152,7 @@ protocol check is not feature evidence or a compatibility guarantee.
 
 ## Names gate
 
-`go run ./internal/namesgate` (part of `make design-audit`, and the test
+`go run ./tools/namesgate` (part of `make design-audit`, and the test
 `TestRepositoryNamesNoCatalogLanguage`) checks product Go syntax against the
 built-in catalog. Distinctive extensions, dotted file names and root markers,
 and server, command, package and binary names longer than three characters are
@@ -162,7 +162,7 @@ context also check all catalog names, including language IDs, Linguist names,
 short names, bare filenames and interpreters. Identifier operands in these
 branches are checked case-insensitively. A switch on `id` in a function with a
 language-related type in its signature is checked too. Test files,
-`insight/catalog`, `internal/catalogimport`, `internal/wiregen` and
+`insight/catalog`, `tools/catalogimport`, `tools/wiregen` and
 `third_party` are not scanned.
 
 This is a syntactic heuristic, not proof of the exit criterion. It cannot
@@ -173,9 +173,9 @@ identifiers. An unrelated use of a catalog name may also need review. In
 particular, an unambiguous-looking name may have another meaning, and a bare
 `"go"` outside a recognized branch is not checked. Review remains necessary.
 
-`internal/namesgate/allow.txt` lists reviewed exceptions, one name in one file
+`tools/namesgate/allow.txt` lists reviewed exceptions, one name in one file
 per line, each with its reason. The linked native grammar bindings in
-`syntax/registry.go` are explicitly excepted; the exception does not exempt the
+`insight/syntax/registry.go` are explicitly excepted; the exception does not exempt the
 package or other names. Other exceptions include Crude's own `.json` records,
 safety and privacy rules, and the path heuristic in `jsonrepair`. An exception
 that no longer matches fails the gate. The path-and-name scope covers every

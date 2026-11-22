@@ -8,8 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/agent/provider"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/agent/session"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/types/control"
 	"crude/workspace"
 )
@@ -76,7 +77,7 @@ func (m *App) handleComposerProduct(msg shellport.ControlRequestMsg) (tea.Cmd, b
 		if store == nil {
 			return fail(control.Unavailable, "session reference owner unavailable")
 		}
-		ref, ok := store.GetReference(in.ID)
+		ref, ok := store.Reference(in.ID)
 		if !ok {
 			return fail(control.Unavailable, "reference not owned by this session")
 		}
@@ -118,15 +119,15 @@ func (m *App) submitControlComposer(r control.Request) tea.Cmd {
 	epoch, revision, generation := m.Input.DraftEpoch(), m.Input.DraftRevision(), m.workspaceSwitchGen.Load()
 	request := coreprotocol.ControlInputRequest{ControlRequestID: r.ID, SessionID: frontend.SessionID, AgentID: r.Target.ResourceID,
 		DraftEpoch: epoch, DraftRevision: revision, Text: m.Input.Value(), ReferenceIDs: m.Input.SnapshotReferenceIDs()}
-	intent := &workspace.InputAdmissionIntent{SessionID: frontend.SessionID, AgentID: request.AgentID, DraftRevision: revision}
+	intent := &session.InputAdmissionIntent{SessionID: frontend.SessionID, AgentID: request.AgentID, DraftRevision: revision}
 	if m.pendingInputAdmissions == nil {
-		m.pendingInputAdmissions = make(map[*workspace.InputAdmissionIntent]struct{})
+		m.pendingInputAdmissions = make(map[*session.InputAdmissionIntent]struct{})
 	}
 	m.pendingInputAdmissions[intent] = struct{}{}
 	value := provider.InputFromControl(request.Text, request.ReferenceIDs, provider.ControlInputProvenance{ControlRequestID: r.ID, Caller: r.Caller})
 	return func() tea.Msg {
 		out, err := service.SubmitControlInput(context.Background(), request)
-		result := workspace.InputAdmissionResult{Status: out.Status, Receipt: out.Receipt, Err: err}
+		result := session.InputAdmissionResult{Status: out.Status, Receipt: out.Receipt, Err: err}
 		if err != nil {
 			result.Status = workspace.InputAdmissionRejected
 		}

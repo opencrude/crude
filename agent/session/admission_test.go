@@ -197,7 +197,7 @@ func TestAcceptedTurnCannotRollBackLateControlContext(t *testing.T) {
 	sender := newMockEventSender()
 	o := NewOrchestrator("root", s)
 	o.sender = sender
-	s.runtimeProfile.GetOrCreateOverride(o.ID)
+	s.runtimeProfile.EnsureOverride(o.ID)
 	s.orchestrators[o.ID] = o
 	intent, err := s.PrepareInputAdmission(o.ID, provider.PlainInput("follow-up after Stop"), 1)
 	if err != nil {
@@ -314,7 +314,7 @@ func TestAdmittedInputMirrorsItsOwningTurnBeforeCompletion(t *testing.T) {
 	if err != nil || len(rows) != 4 || rows[0].Turn != 1 || rows[1].Turn != 1 || rows[2].Turn != 2 || rows[3].Turn != 2 || rows[0].Meta.TurnGeneration != 1 || rows[2].Meta.TurnGeneration != 2 {
 		t.Fatalf("durable messages have different turn owners: %+v error=%v", rows, err)
 	}
-	meta, err := sessiondb.GetMeta(s.db)
+	meta, err := sessiondb.LoadMeta(s.db)
 	if err != nil || meta.FirstPrompt.String != "first request" || meta.LastPrompt.String != "second request" || meta.TurnCount != 2 {
 		t.Fatalf("prompt metadata did not follow admission: %+v error=%v", meta, err)
 	}

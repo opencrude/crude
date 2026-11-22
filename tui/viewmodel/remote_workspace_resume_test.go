@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/screens/termdock"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // A session resumed from the Workspace panel after a core restart takes the
@@ -34,7 +34,7 @@ func TestRemoteWorkspacePanelResumeHandsKeyboardToComposer(t *testing.T) {
 	_, cmd := one.app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	runAppCommand(t, one.app, cmd)
 	remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool {
-		return one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	sessionID := one.app.ActiveSession.SessionID
 	one.app.StopAsyncIO()

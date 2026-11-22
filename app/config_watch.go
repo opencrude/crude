@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
 
-	"crude/types"
+	"crude/tui/viewmodel"
 )
 
 const configWatchDebounce = 150 * time.Millisecond
@@ -22,7 +22,7 @@ func WatchConfig(send func(tea.Msg)) (stop func(), err error) {
 			preset = cfg.Theme.Preset
 		}
 		if send != nil {
-			send(types.ConfigReloadedMsg{ThemePreset: preset})
+			send(viewmodel.ConfigReloadedMsg{ThemePreset: preset})
 		}
 	})
 }

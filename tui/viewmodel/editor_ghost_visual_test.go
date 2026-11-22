@@ -13,10 +13,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -286,7 +285,7 @@ func runEditorGhostVisual(t *testing.T, headless bool, width, height int) {
 				}
 				// A real periodic tick may open first-use overlays. Exercise it
 				// at every phase rather than depending on scheduler timing.
-				program.Send(types.TickMsg(time.Now()))
+				program.Send(TickMsg(time.Now()))
 				program.Send(tea.KeyPressMsg{Code: tea.KeyF4})
 				select {
 				case <-m.settled:

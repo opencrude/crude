@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 var (

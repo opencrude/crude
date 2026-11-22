@@ -3,7 +3,7 @@ package tools
 import (
 	"strings"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // ProjectPaths formats title operands against the workspace root supplied by
@@ -131,7 +131,7 @@ func (p *ProjectPaths) Relative(value string) string {
 
 // ToolOperand applies path formatting only where the tool schema identifies a
 // path. Commands, queries, result bodies and other arbitrary text are literal.
-func (p *ProjectPaths) ToolOperand(msg *types.ChatMessage, operand string) string {
+func (p *ProjectPaths) ToolOperand(msg *conversation.ChatMessage, operand string) string {
 	if p == nil || msg == nil || operand == "" {
 		return operand
 	}

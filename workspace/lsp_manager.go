@@ -3,6 +3,9 @@ package workspace
 import (
 	"context"
 	"crude/insight/facts"
+	"crude/types/insight"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -12,8 +15,7 @@ import (
 
 	"crude/agent/toolstore"
 	"crude/insight/governor"
-	"crude/sysload"
-	ttypes "crude/types"
+	"crude/internal/sysload"
 )
 
 // LSPManager is the sole workspace owner of server and open-document lifetimes.
@@ -21,7 +23,7 @@ import (
 // serialized worker; merely enabling intelligence never opens sources. The
 // assembly service (lsp_assembly.go) lists file names to plan the project.
 type LSPManager struct {
-	analysisSettings      ttypes.WorkspaceAnalysisSettings
+	analysisSettings      setting.WorkspaceAnalysis
 	analysisRootIdentity  string
 	analysisBlocked       string
 	analysisGovernor      *governor.Governor
@@ -57,13 +59,13 @@ type LSPManager struct {
 	documentSend           sync.Mutex
 	states                 map[string]*lspClientState
 	documents              map[string]*lspDocument
-	projects               map[string]ttypes.LSPProjectProducer // by server key
+	projects               map[string]insight.LSPProjectProducer // by server key
 	projectWatchUnreliable bool
 	// Assembly (lsp_assembly.go): the published plan, the cached project
 	// listing, and the tool locations the plan resolved.
 	toolStore                   *toolstore.Store
 	assemblyActive              bool
-	assembly                    ttypes.AssemblyPlan
+	assembly                    insight.AssemblyPlan
 	assemblyRequested           uint64
 	assemblyCancel              context.CancelFunc
 	assemblyWG                  sync.WaitGroup
@@ -75,15 +77,15 @@ type LSPManager struct {
 	toolMissing                 map[assemblyToolKey]string // server and command -> user reason
 	updateTimers                map[string]*time.Timer
 	runtime                     LSPRuntime
-	settings                    ttypes.LSPSettings
+	settings                    setting.LSP
 	logger                      Logger
 	workspaceRoot               string
 	activeFilePath              string
 	activeRootURI               string
 	activeConnected             bool
 	activeError                 string
-	activeStatus                LSPStatus
-	language                    ttypes.LanguageServiceStatus
+	activeStatus                insight.LSPStatus
+	language                    insight.LanguageServiceStatus
 	paused, manualStart, closed bool
 	workerRunning               bool
 	wake                        chan struct{}
@@ -92,7 +94,7 @@ type LSPManager struct {
 	settingsGeneration          uint64
 	inlayGeneration             uint64
 	completionGeneration        uint64
-	docSymbols                  map[string][]LSPSymbol
+	docSymbols                  map[string][]insight.LSPSymbol
 	symbolCount                 int
 	symbolsCached               bool
 	syncing                     bool
@@ -104,7 +106,8 @@ type LSPManager struct {
 	crashes map[string][]time.Time
 }
 
-func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) {
+// Status returns the connection state, status and last error of the active language server.
+func (m *LSPManager) Status() (connected bool, status insight.LSPStatus, errMsg string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.activeConnected, m.activeStatus, m.activeError
@@ -252,21 +255,21 @@ func (m *LSPManager) Version() uint64 {
 }
 
 // ProjectInsights combines lifecycle health with qualified, observed facts.
-func (m *LSPManager) ProjectInsights() ProjectInsights {
+func (m *LSPManager) ProjectInsights() insight.ProjectInsights {
 	m.mu.Lock()
 	watchUnreliable := m.projectWatchUnreliable
-	ins := ProjectInsights{ServerName: m.activeServerNameLocked(), ServerReady: m.activeStatus == LSPConnected && !m.isFailedLocked() && !m.syncing,
+	ins := insight.ProjectInsights{ServerName: m.activeServerNameLocked(), ServerReady: m.activeStatus == LSPConnected && !m.isFailedLocked() && !m.syncing,
 		ServerBusy: m.inflight > 0, ServerStarting: m.activeStatus == LSPStarting || m.activeFileWaitingLocked(), ServerSyncing: m.syncing,
 		ServerFailed: m.isFailedLocked(), ServerError: m.activeError, Language: m.language, SymbolsCount: m.symbolCount}
 	if !ins.ServerFailed {
 		ins.ServerError = ""
 	}
-	settings := ttypes.LSPSettings{Diagnostics: m.settings.Diagnostics, MinSeverity: m.settings.MinSeverity}
+	settings := setting.LSP{Diagnostics: m.settings.Diagnostics, MinSeverity: m.settings.MinSeverity}
 	sources := m.sources
 	check := m.check
 	unchecked := len(m.checkResults)
 	m.mu.Unlock()
-	summary := ProjectInsights{}
+	summary := insight.ProjectInsights{}
 	if sources != nil && sources.Insight != nil {
 		summary = sources.Insight.diagnosticSummaryFor(settings)
 	} else {
@@ -299,7 +302,7 @@ func (m *LSPManager) ProjectDiagnosticCounts() (int, int, int) {
 // results describe files, not the process: Problems shows them, so the issues
 // that they raise must stay too. Such results are Crude's checks of closed
 // files, so their scope is open files.
-func (m *LSPManager) retainedResultHealth() []ttypes.LSPServerHealth {
+func (m *LSPManager) retainedResultHealth() []statuscenter.LSPServerHealth {
 	if m == nil {
 		return nil
 	}
@@ -308,34 +311,35 @@ func (m *LSPManager) retainedResultHealth() []ttypes.LSPServerHealth {
 	if m.sources == nil || m.sources.Insight == nil {
 		return nil
 	}
-	var out []ttypes.LSPServerHealth
+	var out []statuscenter.LSPServerHealth
 	for id, count := range m.sources.Insight.diagnostics.ContextSummaries() {
 		if _, running := m.states[id]; running || count.Provider == "" {
 			continue
 		}
-		out = append(out, ttypes.LSPServerHealth{
+		out = append(out, statuscenter.LSPServerHealth{
 			ID: id, Name: filepath.Base(count.Provider), Command: count.Provider, Status: "Stopped",
 			FilesTracked: count.FilesTracked, FilesAffected: count.FilesAffected,
 			Errors: count.Errors, Warnings: count.Warnings, Information: count.Information, Hints: count.Hints,
-			LastDiagnostics: count.LastDiagnostics, Scope: ttypes.CoverageOpenFiles,
+			LastDiagnostics: count.LastDiagnostics, Scope: insight.CoverageOpenFiles,
 		})
 	}
 	return out
 }
 
-func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
+// ServerHealthSnapshots returns the health of every language server.
+func (m *LSPManager) ServerHealthSnapshots() []statuscenter.LSPServerHealth {
 	if m == nil {
 		return nil
 	}
 	m.mu.Lock()
-	out := make([]ttypes.LSPServerHealth, 0, len(m.states))
+	out := make([]statuscenter.LSPServerHealth, 0, len(m.states))
 	var counts map[string]facts.ContextSummary
 	if m.sources != nil && m.sources.Insight != nil {
 		counts = m.sources.Insight.diagnostics.ContextSummaries()
 	}
 	now := time.Now()
 	for id, state := range m.states {
-		health := ttypes.LSPServerHealth{
+		health := statuscenter.LSPServerHealth{
 			ID: id, Name: filepath.Base(state.cmd), Command: state.cmd, RootURI: state.rootURI,
 			Status: lspStatusLabel(state.status), Error: state.err,
 			Connected: state.status == LSPConnected,
@@ -368,9 +372,9 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 		}
 		// Coverage: what this producer checks. A project producer reports
 		// files that are not open; any other server checks open files only.
-		health.Scope, health.Coverage = ttypes.CoverageOpenFiles, openFilesCoverage(m.settings)
-		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == ttypes.CoverageProject || state.reportsProject {
-			health.Scope, health.Coverage = ttypes.CoverageProject, "Checks the whole project, including files that are not open."
+		health.Scope, health.Coverage = insight.CoverageOpenFiles, openFilesCoverage(m.settings)
+		if _, project := m.projects[id]; project && state.spec.DiagnosticScope == insight.CoverageProject || state.reportsProject {
+			health.Scope, health.Coverage = insight.CoverageProject, "Checks the whole project, including files that are not open."
 			if m.projectWatchUnreliable {
 				health.Coverage = "Project file observation is incomplete; results may be out of date."
 			}
@@ -393,7 +397,7 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 	return out
 }
 
-func lspStatusLabel(status LSPStatus) string {
+func lspStatusLabel(status insight.LSPStatus) string {
 	switch status {
 	case LSPStarting:
 		return "Starting"
@@ -472,28 +476,28 @@ func (m *LSPManager) trackInflight(fn func() error) error {
 	return fn()
 }
 
-func (m *LSPManager) featureOn(pred func(ttypes.LSPSettings) bool) bool {
+func (m *LSPManager) featureOn(pred func(setting.LSP) bool) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.analysisErrorLocked() == nil && m.settings.Enabled && pred(m.settings)
 }
 
 func (m *LSPManager) ShowDiagnosticsInEditor() bool {
-	return m.featureOn(func(s ttypes.LSPSettings) bool { return s.Diagnostics && s.DiagInEditor })
+	return m.featureOn(func(s setting.LSP) bool { return s.Diagnostics && s.DiagInEditor })
 }
 
 func (m *LSPManager) ShowDiagnosticsInTree() bool {
-	return m.featureOn(func(s ttypes.LSPSettings) bool { return s.Diagnostics && s.DiagInTree })
+	return m.featureOn(func(s setting.LSP) bool { return s.Diagnostics && s.DiagInTree })
 }
 
 func (m *LSPManager) ShowDiagnosticsInStatus() bool {
-	return m.featureOn(func(s ttypes.LSPSettings) bool { return s.Diagnostics && s.DiagInStatus })
+	return m.featureOn(func(s setting.LSP) bool { return s.Diagnostics && s.DiagInStatus })
 }
 
 // RequestDocumentSymbols routes a "document symbols" request to the right
 // client and caches the result for the document outline panel.
-func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string) []LSPSymbol {
-	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Outline }) {
+func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string) []insight.LSPSymbol {
+	if !m.featureOn(func(s setting.LSP) bool { return s.Outline }) {
 		return nil
 	}
 	path := filepath.Clean(filePath)
@@ -504,7 +508,7 @@ func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string
 		revision = owner.revision
 	}
 	m.mu.Unlock()
-	var out []LSPSymbol
+	var out []insight.LSPSymbol
 	_ = m.trackInflight(func() error {
 		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
 		defer cancel()
@@ -538,7 +542,7 @@ func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string
 // DocumentSymbols returns the cached document outline for a file, if any.
 // Callers should not assume the cache is fresh; refresh via
 // RequestDocumentSymbols when the file's content has changed materially.
-func (m *LSPManager) DocumentSymbols(filePath string) []LSPSymbol {
+func (m *LSPManager) DocumentSymbols(filePath string) []insight.LSPSymbol {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.docSymbols[filepath.Clean(filePath)]
@@ -547,10 +551,10 @@ func (m *LSPManager) DocumentSymbols(filePath string) []LSPSymbol {
 // AllDocumentSymbols returns the cached outlines for every file. Used by the
 // workspace symbols fuzzy search so we can search across the whole project
 // without hitting the LSP server again.
-func (m *LSPManager) AllDocumentSymbols() map[string][]LSPSymbol {
+func (m *LSPManager) AllDocumentSymbols() map[string][]insight.LSPSymbol {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := make(map[string][]LSPSymbol, len(m.docSymbols))
+	out := make(map[string][]insight.LSPSymbol, len(m.docSymbols))
 	for k, v := range m.docSymbols {
 		out[k] = v
 	}
@@ -559,7 +563,7 @@ func (m *LSPManager) AllDocumentSymbols() map[string][]LSPSymbol {
 
 // RequestHover routes a hover request to the right client.
 func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, col int) (string, error) {
-	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Hover }) {
+	if !m.featureOn(func(s setting.LSP) bool { return s.Hover }) {
 		return "", nil
 	}
 	var (
@@ -585,11 +589,11 @@ func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, co
 
 // RequestSignatureHelp uses the same exact synchronized source and provider
 // lifetime as other explicit editor requests. It never starts an extra server.
-func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line, col int, trigger ttypes.LSPSignatureContext) (ttypes.LSPSignatureHelp, error) {
-	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Enabled }) {
-		return ttypes.LSPSignatureHelp{}, fmt.Errorf("parameter information unavailable: language intelligence is off or blocked")
+func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line, col int, trigger insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
+	if !m.featureOn(func(s setting.LSP) bool { return s.Enabled }) {
+		return insight.LSPSignatureHelp{}, fmt.Errorf("parameter information unavailable: language intelligence is off or blocked")
 	}
-	var out ttypes.LSPSignatureHelp
+	var out insight.LSPSignatureHelp
 	err := m.trackInflight(func() error {
 		client, requestCtx, valid, cancel := m.requestClient(ctx, path)
 		defer cancel()
@@ -598,7 +602,7 @@ func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line
 		}
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(path)]
-		var boundary ttypes.InsightBoundary
+		var boundary insight.Boundary
 		if doc != nil && doc.opened && !doc.syncPending {
 			boundary = doc.boundary
 			boundary.Context.UnknownInputs = append([]string(nil), boundary.Context.UnknownInputs...)
@@ -617,14 +621,14 @@ func (m *LSPManager) RequestSignatureHelp(ctx context.Context, path string, line
 		var requestErr error
 		out, requestErr = client.RequestSignatureHelp(requestCtx, path, line, col, trigger)
 		if err := requestCtx.Err(); err != nil {
-			out = ttypes.LSPSignatureHelp{}
+			out = insight.LSPSignatureHelp{}
 			return err
 		}
 		m.mu.Lock()
 		sameContext := generation == m.contextGeneration
 		m.mu.Unlock()
 		if !valid() || !sameContext {
-			out = ttypes.LSPSignatureHelp{}
+			out = insight.LSPSignatureHelp{}
 			return fmt.Errorf("LSP source or context changed during parameter information")
 		}
 		out.Boundary = boundary
@@ -645,11 +649,11 @@ func (m *LSPManager) ContextCursor() (string, uint64) {
 }
 
 // RequestRename routes a rename request to the right client.
-func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (ttypes.LSPRenameEdit, error) {
-	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Rename }) {
-		return ttypes.LSPRenameEdit{}, fmt.Errorf("rename unavailable: language intelligence is off or blocked")
+func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (insight.LSPRenameEdit, error) {
+	if !m.featureOn(func(s setting.LSP) bool { return s.Rename }) {
+		return insight.LSPRenameEdit{}, fmt.Errorf("rename unavailable: language intelligence is off or blocked")
 	}
-	var out ttypes.LSPRenameEdit
+	var out insight.LSPRenameEdit
 	err := m.trackInflight(func() error {
 		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
 		defer cancel()
@@ -658,7 +662,7 @@ func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, c
 		}
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(filePath)]
-		var boundary ttypes.InsightBoundary
+		var boundary insight.Boundary
 		wireVersion := 0
 		if doc != nil && doc.opened && !doc.syncPending {
 			boundary, wireVersion = doc.boundary, doc.wireVersion
@@ -675,11 +679,11 @@ func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, c
 		sameContext := generation == m.contextGeneration
 		m.mu.Unlock()
 		if !valid() || !sameContext || requestCtx.Err() != nil {
-			out = ttypes.LSPRenameEdit{}
+			out = insight.LSPRenameEdit{}
 			return fmt.Errorf("LSP source or context changed during rename")
 		}
 		if requestErr == nil && out.WireVersion != wireVersion {
-			out = ttypes.LSPRenameEdit{}
+			out = insight.LSPRenameEdit{}
 			return fmt.Errorf("rename response does not identify the synchronized wire source")
 		}
 		out.Boundary = boundary

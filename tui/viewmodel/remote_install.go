@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	remotesscreen "crude/tui/screens/remotes"
 	"crude/tui/ui"
 	"crude/tui/wm"

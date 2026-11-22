@@ -11,7 +11,7 @@ import (
 
 	"crude/agent/toolstore"
 	"crude/insight/catalog"
-	"crude/types"
+	"crude/types/insight"
 )
 
 type installFake struct {
@@ -62,7 +62,7 @@ func (f *installAuthorityFake) AdmitPublication(ctx context.Context, id string) 
 	return ctx.Err()
 }
 
-func installFixture(t *testing.T) (*catalog.Catalog, types.ProjectToolReview, []string) {
+func installFixture(t *testing.T) (*catalog.Catalog, insight.ProjectToolReview, []string) {
 	t.Helper()
 	doc := catalog.Document{Format: 1}
 	for _, name := range []string{"alpha", "beta"} {
@@ -80,10 +80,10 @@ func installFixture(t *testing.T) (*catalog.Catalog, types.ProjectToolReview, []
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := types.AssemblyPlan{State: types.AssemblyReady, Generation: 3, Languages: []types.AssemblyLanguage{
-		{ID: "a", ServerID: "a", Status: types.ToolMissing, Package: "alpha", Command: "serve"},
-		{ID: "b", ServerID: "b", Status: types.ToolMissing, Package: "beta", Command: "serve"},
-		{ID: "c", ServerID: "c", Status: types.ToolMissing, Package: "unknown", Command: "serve"},
+	plan := insight.AssemblyPlan{State: insight.AssemblyReady, Generation: 3, Languages: []insight.AssemblyLanguage{
+		{ID: "a", ServerID: "a", Status: insight.ToolMissing, Package: "alpha", Command: "serve"},
+		{ID: "b", ServerID: "b", Status: insight.ToolMissing, Package: "beta", Command: "serve"},
+		{ID: "c", ServerID: "c", Status: insight.ToolMissing, Package: "unknown", Command: "serve"},
 	}}
 	r, err := buildProjectToolReview("project", "root", plan, c, []string{"linux_x64_gnu"})
 	if err != nil {
@@ -102,7 +102,7 @@ func TestReviewedProjectInstall(t *testing.T) {
 	c, review, ids := installFixture(t)
 	limits := projectToolInstallLimits{100, 200, 3}
 	authority := &installAuthorityFake{}
-	run := func(ctx context.Context, f *installFake, r types.ProjectToolReview, ids []string, approval, project string) ([]projectToolInstallResult, error) {
+	run := func(ctx context.Context, f *installFake, r insight.ProjectToolReview, ids []string, approval, project string) ([]projectToolInstallResult, error) {
 		return installReviewedProjectToolsWithCatalog(ctx, f, authority, r, ids, approval, project, limits, c, []string{"linux_x64_gnu"})
 	}
 	f := &installFake{}
@@ -110,14 +110,14 @@ func TestReviewedProjectInstall(t *testing.T) {
 	if err != nil || len(results) != 1 || !results[0].Attempted || len(f.requests) != 1 || len(f.uses) != 0 {
 		t.Fatalf("install: %+v, %v, %+v", results, err, f)
 	}
-	item := func() types.ProjectToolCandidate {
+	item := func() insight.ProjectToolCandidate {
 		for _, item := range review.Items {
 			if item.ID == ids[0] {
 				return item
 			}
 		}
 		t.Fatal("missing fixture")
-		return types.ProjectToolCandidate{}
+		return insight.ProjectToolCandidate{}
 	}()
 	want := toolstore.Request{Package: item.Package, Version: item.Version, Source: item.Source, URL: item.URL, Archive: item.Archive, Bin: item.Bin, Command: item.Command, Licenses: item.Licenses, InstalledBy: "user", Approval: "approval", MaxDownloadBytes: 100, MaxExtractedBytes: 200, MaxEntries: 3}
 	got := f.requests[0]
@@ -135,9 +135,9 @@ func TestReviewedProjectInstall(t *testing.T) {
 			unsupported = item.ID
 		}
 	}
-	tampered := types.CloneProjectToolReview(review)
+	tampered := insight.CloneProjectToolReview(review)
 	tampered.Items[0].URL = "https://example.com/evil"
-	forged := types.CloneProjectToolReview(review)
+	forged := insight.CloneProjectToolReview(review)
 	for i := range forged.Items {
 		if forged.Items[i].ID == ids[0] {
 			forged.Items[i].URL = "https://example.com/evil"
@@ -153,12 +153,12 @@ func TestReviewedProjectInstall(t *testing.T) {
 	_, original, originalIDs := installFixture(t)
 	for _, tc := range []struct {
 		name, approval, project string
-		review                  types.ProjectToolReview
+		review                  insight.ProjectToolReview
 		ids                     []string
 	}{
 		{"tamper", "approval", "project", tampered, originalIDs},
 		{"forged hashes", "approval", "project", forged, ids},
-		{"token", "approval", "project", types.ProjectToolReview{Project: "project", RootIdentity: "root", Token: "bad"}, originalIDs},
+		{"token", "approval", "project", insight.ProjectToolReview{Project: "project", RootIdentity: "root", Token: "bad"}, originalIDs},
 		{"duplicate", "approval", "project", original, []string{originalIDs[0], originalIDs[0]}},
 		{"unknown", "approval", "project", original, []string{"unknown"}},
 		{"unsupported", "approval", "project", original, []string{unsupported}},

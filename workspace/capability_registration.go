@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	ttypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 // capabilityRegistrationStore publishes service-initiated workspace
@@ -19,7 +19,7 @@ import (
 // SwitchProject cannot write through a replacement WorkspaceDB.
 type capabilityRegistrationStore struct {
 	workspace *Workspace
-	db        *WorkspaceDB
+	db        *DB
 	root      string
 	mu        sync.Mutex
 }
@@ -83,7 +83,7 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 		return captypes.Settings{}, err
 	}
 	storedCapabilities := append(json.RawMessage(nil), overrides.Capabilities...)
-	current := ttypes.MergeAppWorkspace(defaults, overrides)
+	current := setting.MergeAppWorkspace(defaults, overrides)
 	current.Capabilities = captypes.Normalize(current.Capabilities)
 	updatedCapabilities, err := captypes.ApplyRegistration(current.Capabilities, change, current.Capabilities)
 	if err != nil {
@@ -91,11 +91,11 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 	}
 	current.Capabilities = updatedCapabilities
 	merged := captypes.Clone(current.Capabilities)
-	overrides.Capabilities, err = patchCapabilityOverrides(overrides.Capabilities, ttypes.SettingsEdits(ttypes.MergeAppWorkspace(defaults, overrides).Capabilities, current.Capabilities))
+	overrides.Capabilities, err = patchCapabilityOverrides(overrides.Capabilities, setting.Edits(setting.MergeAppWorkspace(defaults, overrides).Capabilities, current.Capabilities))
 	if err != nil {
 		return captypes.Settings{}, err
 	}
-	encoded, err := ttypes.MarshalWorkspaceOverridesPreservingToolDecisions(overrides, storedCapabilities)
+	encoded, err := setting.MarshalWorkspaceOverridesPreservingToolDecisions(overrides, storedCapabilities)
 	if err != nil {
 		return captypes.Settings{}, fmt.Errorf("encode capability registration settings: %w", err)
 	}
@@ -137,7 +137,7 @@ func (store *capabilityRegistrationStore) commitApplication(ctx context.Context,
 	}
 	// The runtime is configured with the effective layer, so a workspace's own
 	// overlay must not disappear just because this install was application-wide.
-	effective := ttypes.MergeAppWorkspace(store.workspace.AppDefaults(), store.workspace.LoadWorkspaceOverrides())
+	effective := setting.MergeAppWorkspace(store.workspace.AppDefaults(), store.workspace.LoadWorkspaceOverrides())
 	return captypes.Normalize(effective.Capabilities), nil
 }
 
@@ -180,19 +180,19 @@ func selectedRegistration(id string, settings captypes.Settings) (captypes.Kind,
 	return captypes.KindMCP, captypes.SkillConfig{}, connection, nil
 }
 
-func loadWorkspaceOverridesTx(ctx context.Context, tx *sql.Tx, defaults ttypes.AppSettings) (ttypes.WorkspaceOverrides, error) {
+func loadWorkspaceOverridesTx(ctx context.Context, tx *sql.Tx, defaults setting.App) (setting.WorkspaceOverrides, error) {
 	raw, err := settingValueTx(ctx, tx, workspaceSettingsKey)
 	if err != nil {
-		return ttypes.WorkspaceOverrides{}, fmt.Errorf("load workspace capability settings: %w", err)
+		return setting.WorkspaceOverrides{}, fmt.Errorf("load workspace capability settings: %w", err)
 	}
 	if raw != "" {
-		var overrides ttypes.WorkspaceOverrides
+		var overrides setting.WorkspaceOverrides
 		if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
-			return ttypes.WorkspaceOverrides{}, fmt.Errorf("decode workspace capability settings: %w", err)
+			return setting.WorkspaceOverrides{}, fmt.Errorf("decode workspace capability settings: %w", err)
 		}
 		return overrides, nil
 	}
-	return ttypes.WorkspaceOverrides{}, nil
+	return setting.WorkspaceOverrides{}, nil
 }
 
 func settingValueTx(ctx context.Context, tx *sql.Tx, key string) (string, error) {

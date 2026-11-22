@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func newActivityRenderer() *Renderer {
@@ -18,16 +18,16 @@ func newActivityRenderer() *Renderer {
 
 func TestActivityProjectionSettledExpandAndBoundaries(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
-		{InternalID: "user", Role: types.RoleUser, Content: "Fix it"},
-		{InternalID: "progress", Role: types.RoleAssistant, Content: "Inspecting the code."},
-		{InternalID: "think", Role: types.RoleThinking, Content: "reason", ThinkingDuration: 2 * time.Second},
-		{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "main.go", Content: "contents", ToolStatus: "success"},
-		{InternalID: "cmd", Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "go test", ToolCommand: "go test ./...", Content: "PASS", ToolStatus: "success"},
-		{InternalID: "edit", Role: types.RoleTool, ToolName: "edit_file", ToolArgs: "main.go", Content: "Replaced 1 occurrence", ToolStatus: "success"},
-		{InternalID: "progress2", Role: types.RoleAssistant, Content: "Running checks."},
-		{InternalID: "fail", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "error", Content: "command failed"},
-		{InternalID: "write", Role: types.RoleTool, ToolName: "write_file", ToolStatus: "success", Content: "Written 1 lines"},
+	messages := []conversation.ChatMessage{
+		{InternalID: "user", Role: conversation.RoleUser, Content: "Fix it"},
+		{InternalID: "progress", Role: conversation.RoleAssistant, Content: "Inspecting the code."},
+		{InternalID: "think", Role: conversation.RoleThinking, Content: "reason", ThinkingDuration: 2 * time.Second},
+		{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "main.go", Content: "contents", ToolStatus: "success"},
+		{InternalID: "cmd", Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "go test", ToolCommand: "go test ./...", Content: "PASS", ToolStatus: "success"},
+		{InternalID: "edit", Role: conversation.RoleTool, ToolName: "edit_file", ToolArgs: "main.go", Content: "Replaced 1 occurrence", ToolStatus: "success"},
+		{InternalID: "progress2", Role: conversation.RoleAssistant, Content: "Running checks."},
+		{InternalID: "fail", Role: conversation.RoleTool, ToolName: "execute_command", ToolStatus: "error", Content: "command failed"},
+		{InternalID: "write", Role: conversation.RoleTool, ToolName: "write_file", ToolStatus: "success", Content: "Written 1 lines"},
 	}
 	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
@@ -70,10 +70,10 @@ func TestActivityProjectionSettledExpandAndBoundaries(t *testing.T) {
 
 func TestActivityProjectionParallelRunningTreeClosesAtCorrectBranch(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
-		{InternalID: "one", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: "calling"},
-		{InternalID: "two", Role: types.RoleTool, ToolName: "grep_files", ToolArgs: `"symbol" in tui/`, ToolStatus: "calling"},
-		{InternalID: "three", Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: "calling"},
+	messages := []conversation.ChatMessage{
+		{InternalID: "one", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: "calling"},
+		{InternalID: "two", Role: conversation.RoleTool, ToolName: "grep_files", ToolArgs: `"symbol" in tui/`, ToolStatus: "calling"},
+		{InternalID: "three", Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: "calling"},
 	}
 	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
@@ -92,9 +92,9 @@ func TestActivityProjectionParallelRunningTreeClosesAtCorrectBranch(t *testing.T
 
 func TestActivityProjectionRetainsLastTreeUntilNewGroupStarts(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
-		{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: "calling"},
-		{InternalID: "cmd", Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: "calling"},
+	messages := []conversation.ChatMessage{
+		{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: "calling"},
+		{InternalID: "cmd", Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: "calling"},
 	}
 	r.SyncMessages(messages, 1, 0)
 	messages[0].ToolStatus, messages[1].ToolStatus = "success", "success"
@@ -104,13 +104,13 @@ func TestActivityProjectionRetainsLastTreeUntilNewGroupStarts(t *testing.T) {
 	if len(rows) != 1 || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "└─ ● Ran go test ./...") {
 		t.Fatalf("settlement removed tree: %+v", rows)
 	}
-	messages = append(messages, types.ChatMessage{InternalID: "progress", Role: types.RoleAssistant, Content: "Now verifying."})
+	messages = append(messages, conversation.ChatMessage{InternalID: "progress", Role: conversation.RoleAssistant, Content: "Now verifying."})
 	r.SyncMessages(messages, 3, 0)
 	rows, _, _ = r.ExportMessageRows(100)
 	if len(rows) != 2 || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "└─ ● Ran go test ./...") {
 		t.Fatalf("progress removed tree before another group: %+v", rows)
 	}
-	messages = append(messages, types.ChatMessage{InternalID: "new", Role: types.RoleTool, ToolName: "grep_files", ToolArgs: "needle", ToolStatus: "calling"})
+	messages = append(messages, conversation.ChatMessage{InternalID: "new", Role: conversation.RoleTool, ToolName: "grep_files", ToolArgs: "needle", ToolStatus: "calling"})
 	r.SyncMessages(messages, 4, 0)
 	rows, _, _ = r.ExportMessageRows(100)
 	if len(rows) != 3 || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "└─") || rows[2].ID != "new" {
@@ -126,12 +126,12 @@ func TestActivityProjectionRetainsLastTreeUntilNewGroupStarts(t *testing.T) {
 
 func TestActivityProjectionKeepsSuccessfulCallDuringPreviewDwell(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
-		{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: "success", Content: "file"},
-		{InternalID: "cmd", Role: types.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./...", ToolStatus: "calling", ToolPreviewPhase: types.ToolPreviewPreparing},
+	messages := []conversation.ChatMessage{
+		{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "a.go", ToolStatus: "success", Content: "file"},
+		{InternalID: "cmd", Role: conversation.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./...", ToolStatus: "calling", ToolPreviewPhase: conversation.ToolPreviewPreparing},
 	}
 	r.SyncMessages(messages, 1, 0)
-	messages[1].ToolStatus, messages[1].ToolPreviewPhase, messages[1].Content = "success", types.ToolPreviewPreparing, "PASS"
+	messages[1].ToolStatus, messages[1].ToolPreviewPhase, messages[1].Content = "success", conversation.ToolPreviewPreparing, "PASS"
 	r.SyncMessages(messages, 2, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 || rows[0].ID != "activity:read" || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "└─ ● Ran go test ./...") {
@@ -141,16 +141,16 @@ func TestActivityProjectionKeepsSuccessfulCallDuringPreviewDwell(t *testing.T) {
 
 func TestActivityProjectionSkipsEmptyAssistantEnvelopesButKeepsRepliesAndFailures(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
-		{InternalID: "progress", Role: types.RoleAssistant, Content: "Checking."},
-		{InternalID: "empty-a", Role: types.RoleAssistant},
-		{InternalID: "read-a", Role: types.RoleTool, ToolName: "read_file", Content: "one", ToolStatus: "success"},
-		{InternalID: "thought", Role: types.RoleThinking, Content: "reason"},
-		{InternalID: "empty-b", Role: types.RoleAssistant},
-		{InternalID: "read-b", Role: types.RoleTool, ToolName: "read_file", Content: "two", ToolStatus: "success"},
-		{InternalID: "reply:real", Role: types.RoleAssistant, Content: "A real progress update."},
-		{InternalID: "empty-c", Role: types.RoleAssistant},
-		{InternalID: "fail", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "error", Content: "Error: missing"},
+	messages := []conversation.ChatMessage{
+		{InternalID: "progress", Role: conversation.RoleAssistant, Content: "Checking."},
+		{InternalID: "empty-a", Role: conversation.RoleAssistant},
+		{InternalID: "read-a", Role: conversation.RoleTool, ToolName: "read_file", Content: "one", ToolStatus: "success"},
+		{InternalID: "thought", Role: conversation.RoleThinking, Content: "reason"},
+		{InternalID: "empty-b", Role: conversation.RoleAssistant},
+		{InternalID: "read-b", Role: conversation.RoleTool, ToolName: "read_file", Content: "two", ToolStatus: "success"},
+		{InternalID: "reply:real", Role: conversation.RoleAssistant, Content: "A real progress update."},
+		{InternalID: "empty-c", Role: conversation.RoleAssistant},
+		{InternalID: "fail", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: "error", Content: "Error: missing"},
 	}
 	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
@@ -169,9 +169,9 @@ func TestActivityTreeCommandPreviewWrapsAndLeafExpands(t *testing.T) {
 	r.SetSize(42, 30)
 	r.SetChatAreaBounds(0, 28)
 	command := "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
-	messages := []types.ChatMessage{
-		{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", Content: "file", ToolStatus: "success"},
-		{InternalID: "cmd", Role: types.RoleTool, ToolName: "execute_command", ToolCommand: command, ToolStatus: "calling"},
+	messages := []conversation.ChatMessage{
+		{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", Content: "file", ToolStatus: "success"},
+		{InternalID: "cmd", Role: conversation.RoleTool, ToolName: "execute_command", ToolCommand: command, ToolStatus: "calling"},
 	}
 	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(42)
@@ -206,9 +206,9 @@ func TestActivityTreeCommandPreviewWrapsAndLeafExpands(t *testing.T) {
 
 func TestActivityProjectionSingleRunningCallAndFailureBoundary(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
-		{InternalID: "a", Role: types.RoleAssistant, Content: "Checking."},
-		{InternalID: "cmd", Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: "calling", ToolPreviewPhase: "preparing"},
+	messages := []conversation.ChatMessage{
+		{InternalID: "a", Role: conversation.RoleAssistant, Content: "Checking."},
+		{InternalID: "cmd", Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "go test ./...", ToolStatus: "calling", ToolPreviewPhase: "preparing"},
 	}
 	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
@@ -225,10 +225,10 @@ func TestActivityProjectionSingleRunningCallAndFailureBoundary(t *testing.T) {
 
 func TestActivityProjectionActiveThinkingAndEditWriteKeepOriginalRows(t *testing.T) {
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "thinking", Role: types.RoleThinking, ThinkingActive: true, Content: "reasoning"},
-		{InternalID: "edit", Role: types.RoleTool, ToolName: "edit_file", ToolArgs: "x.go", Content: "Replaced 1 occurrence", ToolStatus: "success"},
-		{InternalID: "write", Role: types.RoleTool, ToolName: "write_file", ToolArgs: "y.go", Content: "Written 1 lines", ToolStatus: "success"},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "thinking", Role: conversation.RoleThinking, ThinkingActive: true, Content: "reasoning"},
+		{InternalID: "edit", Role: conversation.RoleTool, ToolName: "edit_file", ToolArgs: "x.go", Content: "Replaced 1 occurrence", ToolStatus: "success"},
+		{InternalID: "write", Role: conversation.RoleTool, ToolName: "write_file", ToolArgs: "y.go", Content: "Written 1 lines", ToolStatus: "success"},
 	}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 3 || rows[0].ID != "thinking" || rows[1].ID != "edit" || rows[2].ID != "write" ||
@@ -245,9 +245,9 @@ func TestActivityProjectionUnknownAndChildFailureStayVisible(t *testing.T) {
 		{name: "unexpected_tool", content: "ok"},
 	} {
 		r := newActivityRenderer()
-		r.SyncMessages([]types.ChatMessage{
-			{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", Content: "ok", ToolStatus: "success"},
-			{InternalID: "failure", Role: types.RoleTool, ToolName: c.name, Content: c.content, ToolStatus: "success"},
+		r.SyncMessages([]conversation.ChatMessage{
+			{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", Content: "ok", ToolStatus: "success"},
+			{InternalID: "failure", Role: conversation.RoleTool, ToolName: c.name, Content: c.content, ToolStatus: "success"},
 		}, 1, 0)
 		rows, _, _ := r.ExportMessageRows(100)
 		if len(rows) != 2 || rows[1].ID != "failure" {
@@ -268,9 +268,9 @@ func TestActivityProjectionRealAsyncResultsClassifiedHonestly(t *testing.T) {
 		{"agent_wait", `{"id":"run-failed","agent_id":"agent-1","state":"failed","version":2,"outcome":"provider failed"}`, false},
 	} {
 		r := newActivityRenderer()
-		r.SyncMessages([]types.ChatMessage{
-			{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", Content: "ok", ToolStatus: "success"},
-			{InternalID: "result", Role: types.RoleTool, ToolName: c.name, Content: c.content, ToolStatus: "success"},
+		r.SyncMessages([]conversation.ChatMessage{
+			{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", Content: "ok", ToolStatus: "success"},
+			{InternalID: "result", Role: conversation.RoleTool, ToolName: c.name, Content: c.content, ToolStatus: "success"},
 		}, 1, 0)
 		rows, _, _ := r.ExportMessageRows(100)
 		if (len(rows) == 1) != c.grouped {
@@ -281,16 +281,16 @@ func TestActivityProjectionRealAsyncResultsClassifiedHonestly(t *testing.T) {
 
 func TestActivityProjectionGroupingInvalidatesOnAppendAndSourceRemoval(t *testing.T) {
 	r := newActivityRenderer()
-	messages := []types.ChatMessage{
-		{InternalID: "read", Role: types.RoleTool, ToolName: "read_file", Content: "one", ToolStatus: "success"},
-		{InternalID: "cmd", Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "go test", Content: "PASS", ToolStatus: "success"},
+	messages := []conversation.ChatMessage{
+		{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", Content: "one", ToolStatus: "success"},
+		{InternalID: "cmd", Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "go test", Content: "PASS", ToolStatus: "success"},
 	}
 	r.SyncMessages(messages, 1, 0)
 	first := r.ExportMessageRowsSnapshot(100)
 	if len(first.Rows) != 1 || first.Rows[0].ID != "activity:read" || !strings.Contains(strings.Join(first.Rows[0].Lines, "\n"), "Ran 1 command") {
 		t.Fatalf("initial summary: %+v", first.Rows)
 	}
-	messages = append(messages, types.ChatMessage{InternalID: "third", Role: types.RoleTool, ToolName: "read_file", Content: "two", ToolStatus: "success"})
+	messages = append(messages, conversation.ChatMessage{InternalID: "third", Role: conversation.RoleTool, ToolName: "read_file", Content: "two", ToolStatus: "success"})
 	r.SyncMessages(messages, 2, 0)
 	second := r.ExportMessageRowsSnapshot(100)
 	if len(second.Rows) != 1 || !strings.Contains(strings.Join(second.Rows[0].Lines, "\n"), "Read 2 files") || second.Generation == first.Generation {
@@ -310,7 +310,7 @@ func TestActivityProjectionGroupingInvalidatesOnAppendAndSourceRemoval(t *testin
 
 func TestActivityProjectionSingleSettledToolKeepsItsExistingRow(t *testing.T) {
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{{InternalID: "one", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "one.go", Content: "contents", ToolStatus: "success"}}, 1, 0)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "one", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "one.go", Content: "contents", ToolStatus: "success"}}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 || rows[0].ID != "one" || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "Read one.go") {
 		t.Fatalf("single completed tool should retain its ordinary informative row: %+v", rows)
@@ -318,10 +318,10 @@ func TestActivityProjectionSingleSettledToolKeepsItsExistingRow(t *testing.T) {
 }
 
 func TestActivityProjectionLiveAndRecoveredShareShape(t *testing.T) {
-	base := []types.ChatMessage{
-		{InternalID: "a", Role: types.RoleAssistant, Content: "Looking."},
-		{InternalID: "one", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "one.go", ToolStatus: "success", Content: "one"},
-		{InternalID: "two", Role: types.RoleTool, ToolName: "execute_command", ToolArgs: "go test", ToolStatus: "calling", ToolPreviewPhase: "streaming", Content: "running"},
+	base := []conversation.ChatMessage{
+		{InternalID: "a", Role: conversation.RoleAssistant, Content: "Looking."},
+		{InternalID: "one", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "one.go", ToolStatus: "success", Content: "one"},
+		{InternalID: "two", Role: conversation.RoleTool, ToolName: "execute_command", ToolArgs: "go test", ToolStatus: "calling", ToolPreviewPhase: "streaming", Content: "running"},
 	}
 	live, resumed := newActivityRenderer(), newActivityRenderer()
 	live.SyncMessages(base[:2], 1, 0)

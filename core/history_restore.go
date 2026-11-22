@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 	"crude/workspace/localhistory"
 )

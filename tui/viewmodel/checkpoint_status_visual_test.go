@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/ui"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -23,7 +24,7 @@ func TestCheckpointStatusVisualAcceptance(t *testing.T) {
 	app.AddOrchestrator("root")
 	node := ws.AgentMgr.Get("root")
 	node.Model, node.Label = "gpt-6.1-sol", "Main Agent"
-	node.State.Messages.AppendMessage(workspace.Message{
+	node.State.Messages.AppendMessage(conversation.Message{
 		Role: workspace.MessageRoleAssistant, Content: "Background context preparation does not block agent work. Its explanation belongs in agent details, not the telemetry header.",
 	})
 	app.syncAgentMessages(node.ID, false)

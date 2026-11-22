@@ -8,15 +8,15 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
 func TestLiveFinishAndHydratedStopPreserveContentWithoutTranscriptNotice(t *testing.T) {
-	conversation := workspace.NewConversation()
-	conversation.AppendMessage(workspace.Message{InternalID: "partial", Role: types.RoleAssistant, Content: "Accepted partial investigation"})
-	conversation.Finish("", "cancelled", "stop")
-	live, version := chatMessagesFromConversation(conversation)
+	transcript := workspace.NewConversation()
+	transcript.AppendMessage(conversation.Message{InternalID: "partial", Role: conversation.RoleAssistant, Content: "Accepted partial investigation"})
+	transcript.Finish("", "cancelled", "stop")
+	live, version := chatMessagesFromConversation(transcript)
 	if len(live) != 2 || live[1].LifecyclePhase != "stopped" || live[1].LifecycleOperationID != "stop" {
 		t.Fatalf("real Finish path did not retain its canonical boundary: %+v", live)
 	}
@@ -24,13 +24,13 @@ func TestLiveFinishAndHydratedStopPreserveContentWithoutTranscriptNotice(t *test
 	// for OriginTurnStopped, passed through the real resume display converter.
 	views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 		Msg: provider.ChatMessage{Role: "user", Origin: provider.OriginTurnStopped},
-		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{{
-			InternalID: "stop", Role: types.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: "stop", Time: live[1].Time,
+		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{
+			InternalID: "stop", Role: conversation.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: "stop", Time: live[1].Time,
 		}}},
 	}})
-	hydrated := append(append([]types.ChatMessage(nil), live[:1]...), ChatMessagesFromViews(views)...)
+	hydrated := append(append([]conversation.ChatMessage(nil), live[:1]...), ChatMessagesFromViews(views)...)
 	var first chatprojection.MessageRowsSnapshot
-	for i, messages := range [][]types.ChatMessage{live, hydrated} {
+	for i, messages := range [][]conversation.ChatMessage{live, hydrated} {
 		r := chatprojection.NewRenderer(theme.DefaultDark())
 		r.SetSize(100, 30)
 		r.SetChatAreaBounds(0, 30)

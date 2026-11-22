@@ -6,9 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -107,9 +107,9 @@ func (m *App) activateWorkspaceTrust(choice int) tea.Cmd {
 	if prompt == nil || prompt.busy || prompt.owner != m.ws || prompt.generation != m.workspaceSwitchGen.Load() || choice < 0 || choice > 1 {
 		return nil
 	}
-	value := types.AnalysisRestricted
+	value := setting.AnalysisRestricted
 	if choice == 0 {
-		value = types.AnalysisTrusted
+		value = setting.AnalysisTrusted
 	}
 	if frame, ok := m.overlayHost.Window(ui.OverlayWorkspaceTrust).Content.(*ui.ComponentWidget); ok {
 		ui.SetConfirmFocus(frame, choice)
@@ -117,7 +117,7 @@ func (m *App) activateWorkspaceTrust(choice int) tea.Cmd {
 	prompt.busy, prompt.err = true, ""
 	m.refreshConfirmModal(ui.OverlayWorkspaceTrust, m.workspaceTrustFrame(prompt))
 	raw, _ := json.Marshal(value)
-	run := prompt.owner.PreparePreferencesSave(types.SettingsScopeWorkspace, []types.SettingEdit{{Path: []string{"analysis", "trust"}, After: raw}})
+	run := prompt.owner.PreparePreferencesSave(setting.ScopeWorkspace, []setting.Edit{{Path: []string{"analysis", "trust"}, After: raw}})
 	return func() tea.Msg { return workspaceTrustSavedMsg{prompt: prompt, result: run()} }
 }
 
@@ -138,7 +138,7 @@ func (m *App) handleWorkspaceTrustMessage(msg tea.Msg) (bool, tea.Cmd) {
 			m.overlayHost.Close(ui.OverlayWorkspaceTrust)
 		}
 		return true, nil
-	case types.TickMsg:
+	case TickMsg:
 		if p := state.prompt; p != nil && p.undecided && !p.busy && p.owner == m.ws && p.generation == m.workspaceSwitchGen.Load() && !m.ws.AnalysisSettings().DecisionNeeded() {
 			m.overlayHost.Close(ui.OverlayWorkspaceTrust)
 		}

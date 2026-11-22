@@ -5,14 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 )
 
 // BrowserCatalog is the neutral path snapshot shared by the file-tree picker
 // and the workspace-folder picker. It contains metadata only.
 type BrowserCatalog struct {
 	Root      string
-	Entries   []pathwalk.Entry
+	Entries   []fastwalk.Entry
 	Visited   int
 	Skipped   int
 	Errors    int
@@ -33,12 +33,12 @@ type BrowserPathRequest struct {
 // intentionally separate from the agent grep/glob tools and never reads file
 // contents.
 func ScanBrowserPaths(ctx context.Context, req BrowserPathRequest) (BrowserCatalog, error) {
-	cat, err := pathwalk.Scan(ctx, pathwalk.Request{
+	cat, err := fastwalk.Scan(ctx, fastwalk.Request{
 		Root:            req.Root,
 		DirectoriesOnly: req.DirectoriesOnly,
 		IncludeHidden:   req.IncludeHidden,
 		MaxDepth:        req.MaxDepth,
-		MaxWorkers:      pathwalk.DefaultWorkers,
+		MaxWorkers:      fastwalk.DefaultWorkers,
 		MaxEntries:      req.MaxEntries,
 		MaxPathBytes:    req.MaxPathBytes,
 		SkipDir:         defaultBrowserSkipDir,

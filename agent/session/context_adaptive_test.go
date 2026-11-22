@@ -14,7 +14,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 type adaptiveCompactionProbe struct {
@@ -124,11 +124,11 @@ func newAdaptiveCompactionSession(t *testing.T, serverURL string, capacity int, 
 	template := cfg.Accounts["account"].Connection
 	template.ProviderURL = serverURL
 	cfg.Accounts["account"] = func(a provider.Account) provider.Account { a.Connection = template; return a }(cfg.Accounts["account"])
-	main, err := cfg.providerForCategory(cfg.GetActiveDefaultCategory())
+	main, err := cfg.providerForCategory(cfg.ActiveDefaultCategory())
 	if err != nil {
 		t.Fatal(err)
 	}
-	errand, err := cfg.providerForCategory(cfg.GetCategoryConfig(CategoryErrand))
+	errand, err := cfg.providerForCategory(cfg.CategoryConfig(CategoryErrand))
 	if err != nil {
 		t.Fatal(err)
 	}

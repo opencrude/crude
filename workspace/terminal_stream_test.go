@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"crude/internal/terminalvt"
 	"crude/internal/testterminal"
-	"crude/terminalvt"
 )
 
 func TestTerminalDirectSubscriptionConflatesWithoutActor(t *testing.T) {

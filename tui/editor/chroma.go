@@ -11,8 +11,9 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 
-	"crude/syntax"
+	"crude/insight/syntax"
 	"crude/tui/rendering"
+	"crude/types/syntaxdata"
 )
 
 // Syntax is source-sized work, never frame-sized work. Only two documents lex
@@ -26,8 +27,8 @@ type syntaxSpan struct {
 }
 
 type syntaxDocument struct {
-	selections []syntax.Range
-	brackets   []syntax.Bracket
+	selections []syntaxdata.Range
+	brackets   []syntaxdata.Bracket
 	text       string
 	lines      []int
 	spans      []syntaxSpan
@@ -427,7 +428,7 @@ func syntaxSource(ctx context.Context, source textSnapshot) (*syntaxDocument, er
 	return document, ctx.Err()
 }
 
-func nativeSyntax(ctx context.Context, language syntax.LanguageID, source textSnapshot) (*syntaxDocument, error) {
+func nativeSyntax(ctx context.Context, language syntaxdata.LanguageID, source textSnapshot) (*syntaxDocument, error) {
 	document, err := syntaxSource(ctx, source)
 	if err != nil {
 		return nil, err

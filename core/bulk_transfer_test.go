@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"crude/agent/sessiondb"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -23,7 +23,7 @@ func bulkRuntimeClient(t *testing.T) (*Runtime, *coreclient.Client, string, stri
 	setCoreTestHome(t, t.TempDir())
 	root := t.TempDir()
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "bulk-test", types.Settings{}, coreTestLogger{})
+		ws := workspace.NewWorkspace(root, "", "bulk-test", setting.Settings{}, coreTestLogger{})
 		ws.Sessions = append(ws.Sessions, &workspace.Session{SessionID: "bulk-session", RefStore: workspace.NewReferenceStore("bulk-session", t.TempDir(), nil)})
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))

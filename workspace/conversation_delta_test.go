@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
 func TestConversationPendingInputSurvivesWireResetAndDelta(t *testing.T) {
 	source, replica := NewConversation(), NewConversation()
-	source.AppendPendingSteering(Message{InternalID: "queued-input", Role: MessageRoleUser, Content: "wait for compaction"})
+	source.AppendPendingSteering(conversation.Message{InternalID: "queued-input", Role: MessageRoleUser, Content: "wait for compaction"})
 	apply := func(revision uint64) {
 		t.Helper()
 		data, err := json.Marshal(source.ChangesSince(revision))
@@ -42,7 +43,7 @@ func TestConversationPendingInputSurvivesWireResetAndDelta(t *testing.T) {
 // full export. Inputs use real mutation entry points, not journal helpers.
 func TestConversationDeltaMutationJourney(t *testing.T) {
 	c := NewConversation()
-	records := map[string]Message{}
+	records := map[string]conversation.Message{}
 	var order []string
 	var revision uint64
 	check := func(structural bool) {
@@ -55,7 +56,7 @@ func TestConversationDeltaMutationJourney(t *testing.T) {
 			t.Fatalf("order presence=%v, want %v", d.Order != nil, structural)
 		}
 		if d.Reset {
-			records = map[string]Message{}
+			records = map[string]conversation.Message{}
 		}
 		for _, id := range d.Removed {
 			delete(records, id)
@@ -75,7 +76,7 @@ func TestConversationDeltaMutationJourney(t *testing.T) {
 		if d.Order != nil {
 			order = d.Order
 		}
-		got := make([]Message, len(order))
+		got := make([]conversation.Message, len(order))
 		for i, id := range order {
 			got[i] = records[id]
 		}
@@ -87,7 +88,7 @@ func TestConversationDeltaMutationJourney(t *testing.T) {
 		}
 		revision = d.Revision
 	}
-	c.AppendMessage(Message{InternalID: "human", Role: MessageRoleUser, Content: "work"})
+	c.AppendMessage(conversation.Message{InternalID: "human", Role: MessageRoleUser, Content: "work"})
 	check(true)
 	c.EnsureAssistant()
 	check(true)
@@ -108,7 +109,7 @@ func TestConversationDeltaMutationJourney(t *testing.T) {
 	c.AppendThinking("next")
 	check(true)
 	// Starting a new thought also settles any older active thought.
-	c.AppendMessage(Message{Role: MessageRoleUser, Content: "between"})
+	c.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "between"})
 	check(true)
 	c.AppendThinking("fresh")
 	check(true)
@@ -116,9 +117,9 @@ func TestConversationDeltaMutationJourney(t *testing.T) {
 	check(true)
 	c.UpdateTurnStatus(TurnStatus{Phase: "preparing", Progress: 20})
 	check(false)
-	first := c.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "first"})
+	first := c.AppendPendingSteering(conversation.Message{Role: MessageRoleUser, Content: "first"})
 	check(true)
-	second := c.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "second"})
+	second := c.AppendPendingSteering(conversation.Message{Role: MessageRoleUser, Content: "second"})
 	check(true)
 	c.ConsumePendingSteering(first)
 	check(true)
@@ -173,7 +174,7 @@ func TestConversationDeltaReadersAndDetachedValues(t *testing.T) {
 	c := NewConversation()
 	c.AppendMessage(ownedMessageFixture())
 	base := c.Version()
-	c.AppendMessage(Message{InternalID: "assistant", Role: MessageRoleAssistant, Content: "old"})
+	c.AppendMessage(conversation.Message{InternalID: "assistant", Role: MessageRoleAssistant, Content: "old"})
 	c.AppendToken(" new")
 	first, second := c.ChangesSince(base), c.ChangesSince(base)
 	if !reflect.DeepEqual(first, second) || len(first.Upserts) != 1 || first.Upserts[0].Content != "old new" {
@@ -232,7 +233,7 @@ func TestConversationDeltaJournalGapAndEmptyOrder(t *testing.T) {
 func BenchmarkConversationDeltaDenseUpdate(b *testing.B) {
 	c := NewConversation()
 	for i := 0; i < 10000; i++ {
-		c.AppendMessage(Message{Role: MessageRoleUser, Content: "dense accepted transcript"})
+		c.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "dense accepted transcript"})
 	}
 	c.UpdateToolCall("tool", "internal", "read_file", "file")
 	b.ReportAllocs()
@@ -250,7 +251,7 @@ func BenchmarkConversationDeltaDenseUpdate(b *testing.B) {
 func TestConversationDeltaDenseStreamAllocations(t *testing.T) {
 	c := NewConversation()
 	for i := 0; i < 10000; i++ {
-		c.AppendMessage(Message{Role: MessageRoleUser, Content: "dense accepted transcript"})
+		c.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "dense accepted transcript"})
 	}
 	c.EnsureAssistant()
 	allocs := testing.AllocsPerRun(100, func() {

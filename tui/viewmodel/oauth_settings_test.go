@@ -8,11 +8,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/provider"
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
 	"crude/tui/ui/popup"
 	"crude/tui/wm"
-	coretypes "crude/types"
+	"crude/types/setting"
 )
 
 // TestChatGPTSignInResultUpdatesOpenSettingsWindow verifies the app-level
@@ -24,11 +24,11 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
 	// Seed an account so the Application Accounts page shows OAuth status.
-	wsOf(app).SetAppDefaults(coretypes.AppSettings{
+	wsOf(app).SetAppDefaults(setting.App{
 
 		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	})
-	app.openSettings(coretypes.SettingsScopeApplication)
+	app.openSettings(setting.ScopeApplication)
 
 	fw := app.windowManager.Window("workspace-settings")
 	if fw == nil {
@@ -65,7 +65,7 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	if app.ws.LoadAppSettings().Accounts["personal"].OAuth != nil {
 		t.Fatal("sign-in persisted before confirming the account editor")
 	}
-	wsOf(app).OnAppAccountChange = func(change coretypes.AccountChange) error {
+	wsOf(app).OnAppAccountChange = func(change setting.AccountChange) error {
 		settings := app.ws.LoadAppSettings()
 		settings.Accounts[change.ID] = *change.After
 		wsOf(app).SetAppDefaults(settings)
@@ -87,14 +87,14 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
-	wsOf(app).SetAppDefaults(coretypes.AppSettings{
+	wsOf(app).SetAppDefaults(setting.App{
 
 		Accounts: map[string]provider.Account{
 			"opencode": {ID: "opencode", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode", Connection: provider.DefaultTemplates()["opencode-go"]},
 			"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]},
 		},
 	})
-	app.openSettings(coretypes.SettingsScopeApplication)
+	app.openSettings(setting.ScopeApplication)
 
 	fw := app.windowManager.Window("workspace-settings")
 	if fw == nil {
@@ -115,7 +115,7 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("unexpected cmd: %v", cmd)
 	}
-	wsOf(app).OnAppAccountChange = func(change coretypes.AccountChange) error {
+	wsOf(app).OnAppAccountChange = func(change setting.AccountChange) error {
 		settings := app.ws.LoadAppSettings()
 		settings.Accounts[change.ID] = *change.After
 		wsOf(app).SetAppDefaults(settings)
@@ -127,7 +127,7 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 
 	// Save via the app Update (the same path the Save button uses).
 	_, cmd = app.Update(settingsui.SaveMsg{
-		Scope: coretypes.SettingsScopeApplication,
+		Scope: setting.ScopeApplication,
 		Edits: ws.ModelForTest().Edits(),
 	})
 	if cmd != nil {
@@ -177,7 +177,7 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
 	app.width, app.height = 160, 40
-	wsOf(app).SetAppDefaults(coretypes.AppSettings{})
+	wsOf(app).SetAppDefaults(setting.App{})
 	app.openApplicationSettings()
 	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
 	if fw == nil {
@@ -217,8 +217,8 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
-	wsOf(app).SetAppDefaults(coretypes.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}}})
-	app.openSettings(coretypes.SettingsScopeApplication)
+	wsOf(app).SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}}})
+	app.openSettings(setting.ScopeApplication)
 	fw := app.windowManager.Window("workspace-settings")
 	model := settingsWidgetForTest(t, fw).ModelForTest()
 	model.SelectAccounts()
@@ -226,7 +226,7 @@ func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
 	surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 	id, generation := model.SignInRequest()
 	_, _ = app.Update(settingsui.ChatGPTSignInResultMsg{AccountID: id, Generation: generation, Creds: &provider.OAuthCredentials{AccessToken: "staged"}})
-	wsOf(app).OnAppAccountChange = func(coretypes.AccountChange) error { return errors.New("disk unavailable") }
+	wsOf(app).OnAppAccountChange = func(setting.AccountChange) error { return errors.New("disk unavailable") }
 	change := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}).Cmd().(settingsui.AccountChangeMsg)
 	_, save := app.Update(change)
 	_, _ = app.Update(save())

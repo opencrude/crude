@@ -32,7 +32,7 @@ func TestGeminiInteractionsStreamAssemblesSteps(t *testing.T) {
 	var reasoningText strings.Builder
 	arguments := map[int]string{}
 	ids := map[int]string{}
-	var items []ProviderItem
+	var items []Item
 	var last StreamUpdate
 	for _, event := range events {
 		update, err := decoder.Decode(event)
@@ -89,7 +89,7 @@ func TestGeminiInteractionsStreamAssemblesSteps(t *testing.T) {
 
 func TestGeminiInteractionsEncodeReplaysStepsStatelessly(t *testing.T) {
 	history := geminiTestHistory(false)
-	history[2].ProviderItems = []ProviderItem{
+	history[2].ProviderItems = []Item{
 		{Standard: "gemini-interactions", Type: "thought", Data: json.RawMessage(`{"signature":"c2ln","type":"thought"}`)},
 		{Standard: "gemini-interactions", Type: "model_output", Data: json.RawMessage(`{"content":[{"text":"Checking.","type":"text"}],"type":"model_output"}`)},
 		{Standard: "gemini-interactions", Type: "function_call", Data: json.RawMessage(`{"arguments":{"path":"a.go"},"id":"call_1","name":"read_file","type":"function_call"}`)},
@@ -204,7 +204,7 @@ func TestGeminiInteractionsPrivacyRevisionAndReplayShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	history := []ChatMessage{NewTextMessage("user", "hi"), {Role: "assistant", Content: TextContent("hello"), ProviderItems: []ProviderItem{
+	history := []ChatMessage{NewTextMessage("user", "hi"), {Role: "assistant", Content: TextContent("hello"), ProviderItems: []Item{
 		{Standard: "gemini-interactions", Type: "thought", Data: json.RawMessage(`{"type":"thought","summary":[{"type":"text","text":"unsigned"}]}`)},
 		{Standard: "gemini-interactions", Type: "model_output", Data: json.RawMessage(`{"type":"model_output","id":"step_9","content":[{"type":"text","text":"hello","id":"c_1"}]}`)},
 	}}, NewTextMessage("user", "again")}

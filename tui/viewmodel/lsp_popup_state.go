@@ -1,12 +1,12 @@
 package viewmodel
 
 import (
-	"crude/tui/editor"
+	"crude/types/insight"
 )
 
 // OutlineRow is one row in the outline popup list.
 type OutlineRow struct {
-	Sym   editor.LSPSymbol
+	Sym   insight.LSPSymbol
 	Depth int
 }
 

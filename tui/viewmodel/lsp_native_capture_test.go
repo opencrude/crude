@@ -14,7 +14,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -54,9 +55,9 @@ func TestLSPInteractionNativeCapture(t *testing.T) {
 	}
 	runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoComplete, settings.LSP.AutoDetect = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: server, RootMarkers: []string{"go.mod"},
 		}}
 		w.SetAppDefaults(settings)
@@ -124,7 +125,7 @@ type nativeLSPCapture struct {
 	*App
 	kind    string
 	phase   int
-	target  types.LSPNavigationTarget
+	target  insight.LSPNavigationTarget
 	failure error
 	frames  strings.Builder
 }

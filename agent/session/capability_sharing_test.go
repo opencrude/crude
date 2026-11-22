@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/provider"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 )
 
@@ -20,15 +20,15 @@ func (sharingRuntime) Execute(_ context.Context, _ captypes.RuntimeActor, _ capt
 	return captypes.Result{Content: []captypes.Content{{Type: "text", Text: "ok " + tool}}}, nil
 }
 
-func sharingAgentFor(t *testing.T, s *Session, actor captypes.RuntimeActor, name string) *agent.Agent {
+func sharingAgentFor(t *testing.T, s *Session, actor captypes.RuntimeActor, name string) *turnloop.Agent {
 	t.Helper()
 	p := provider.FromPreset("openai-chat", "key", "http://127.0.0.1:0")
-	live := agent.NewAgent(p, "model", nil)
+	live := turnloop.NewAgent(p, "model", nil)
 	s.bindAgentRuntime(t.Context(), live, actor, name)
 	return live
 }
 
-func sharedNotices(live *agent.Agent) string {
+func sharedNotices(live *turnloop.Agent) string {
 	_, notices := live.PrepareStep()
 	var texts []string
 	for _, notice := range notices {
@@ -42,7 +42,7 @@ func sharedNotices(live *agent.Agent) string {
 // searching for and installing another.
 func TestActivatedCapabilityIsSharedWithParentAndChildren(t *testing.T) {
 	s := newTestSessionForPlan(t)
-	s.SetCapabilities(sharingRuntime{}, agent.NewFileOwnership())
+	s.SetCapabilities(sharingRuntime{}, turnloop.NewFileOwnership())
 	root := sharingAgentFor(t, s, captypes.RuntimeActor{ID: "root", SessionID: "s"}, "Ada")
 	child := sharingAgentFor(t, s, captypes.RuntimeActor{ID: "child", ParentID: "root", SessionID: "s"}, "Naoki")
 	sibling := sharingAgentFor(t, s, captypes.RuntimeActor{ID: "sibling", ParentID: "root", SessionID: "s"}, "Lily")

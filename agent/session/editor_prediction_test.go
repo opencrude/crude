@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func suggestionConfig(endpoint string) *Config {
@@ -48,7 +48,7 @@ func TestSuggestionCompleterUsesErrandAndSendsNoThinking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if completer.Model != "errand-model" || completer.AccountID != "errand-account" || completer.MaxOutputTokens != 100 || completer.Format != ttypes.SuggestionFormatChat {
+	if completer.Model != "errand-model" || completer.AccountID != "errand-account" || completer.MaxOutputTokens != 100 || completer.Format != setting.SuggestionFormatChat {
 		t.Fatalf("completer = %+v", completer)
 	}
 	stream, err := completer.Stream(t.Context(), "system", "input")
@@ -80,7 +80,7 @@ func TestSuggestionCompleterUsesErrandAndSendsNoThinking(t *testing.T) {
 		t.Fatalf("Errand's own thinking level leaked into a suggestion: %s", suggestionJSON(body))
 	}
 
-	cfg.Agents.Suggestions = ttypes.SuggestionSettings{AccountID: "fast-account", Model: "fast-model", TimeoutSeconds: 3}
+	cfg.Agents.Suggestions = setting.Suggestion{AccountID: "fast-account", Model: "fast-model", TimeoutSeconds: 3}
 	fast, err := cfg.SuggestionCompleter()
 	if err != nil {
 		t.Fatal(err)
@@ -95,11 +95,11 @@ func TestSuggestionCompleterUsesErrandAndSendsNoThinking(t *testing.T) {
 
 func TestSuggestionCompleterRefusalsAreUserText(t *testing.T) {
 	cfg := suggestionConfig("http://127.0.0.1:1")
-	cfg.Agents.Suggestions = ttypes.SuggestionSettings{Format: ttypes.SuggestionFormatDeepSeek}
+	cfg.Agents.Suggestions = setting.Suggestion{Format: setting.SuggestionFormatDeepSeek}
 	if _, err := cfg.SuggestionCompleter(); err == nil || !strings.Contains(err.Error(), "endpoint path") {
 		t.Fatalf("missing FIM endpoint: %v", err)
 	}
-	cfg.Agents.Suggestions = ttypes.SuggestionSettings{AccountID: "missing", Model: "m"}
+	cfg.Agents.Suggestions = setting.Suggestion{AccountID: "missing", Model: "m"}
 	if _, err := cfg.SuggestionCompleter(); err == nil || strings.Contains(err.Error(), "127.0.0.1") {
 		t.Fatalf("missing account: %v", err)
 	}

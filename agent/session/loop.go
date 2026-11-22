@@ -16,7 +16,7 @@ import (
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 
 // Loops returns detached state. Times are core-owned; presentation never
 // advances a schedule or creates work.
-func (s *Session) Loops() []types.Loop {
+func (s *Session) Loops() []conversation.Loop {
 	if s == nil {
 		return nil
 	}
@@ -38,7 +38,7 @@ func (s *Session) Loops() []types.Loop {
 	return slices.Clone(s.loops)
 }
 
-func (s *Session) saveLoopsLocked(next []types.Loop) error {
+func (s *Session) saveLoopsLocked(next []conversation.Loop) error {
 	raw, err := json.Marshal(next)
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func (s *Session) loadLoops() error {
 	if err != nil || len(raw) == 0 {
 		return err
 	}
-	var loops []types.Loop
+	var loops []conversation.Loop
 	if err := json.Unmarshal(raw, &loops); err != nil {
 		return fmt.Errorf("restore scheduled loops: %w", err)
 	}
@@ -99,17 +99,17 @@ func (s *Session) publishLoops(row string) {
 // CreateLoop schedules an explicit user prompt immediately and then at the
 // requested fixed interval. A bounded lifetime prevents forgotten background
 // work from spending indefinitely.
-func (s *Session) CreateLoop(interval time.Duration, task string) (types.Loop, error) {
+func (s *Session) CreateLoop(interval time.Duration, task string) (conversation.Loop, error) {
 	task = strings.TrimSpace(task)
 	if interval < time.Minute || interval > loopLifetime {
-		return types.Loop{}, errors.New("loop interval must be between 1 minute and 7 days")
+		return conversation.Loop{}, errors.New("loop interval must be between 1 minute and 7 days")
 	}
 	if task == "" || utf8.RuneCountInString(task) > loopTaskLimit {
-		return types.Loop{}, errors.New("a loop needs a prompt of at most 4000 characters")
+		return conversation.Loop{}, errors.New("a loop needs a prompt of at most 4000 characters")
 	}
 	release, ok := s.beginIdleWork()
 	if !ok {
-		return types.Loop{}, errors.New("the session is closing or being retired")
+		return conversation.Loop{}, errors.New("the session is closing or being retired")
 	}
 	defer release()
 	s.loopOpMu.Lock()
@@ -117,31 +117,31 @@ func (s *Session) CreateLoop(interval time.Duration, task string) (types.Loop, e
 	s.loopMu.Lock()
 	if atomic.LoadInt32(&s.closing) != 0 || len(s.loops) >= loopLimit {
 		s.loopMu.Unlock()
-		return types.Loop{}, errors.New("the session is closing or already has 10 loops")
+		return conversation.Loop{}, errors.New("the session is closing or already has 10 loops")
 	}
 	var id string
 	for {
 		bytes := make([]byte, 4)
 		if _, err := rand.Read(bytes); err != nil {
 			s.loopMu.Unlock()
-			return types.Loop{}, err
+			return conversation.Loop{}, err
 		}
 		id = hex.EncodeToString(bytes)
-		if !slices.ContainsFunc(s.loops, func(loop types.Loop) bool { return loop.ID == id }) {
+		if !slices.ContainsFunc(s.loops, func(loop conversation.Loop) bool { return loop.ID == id }) {
 			break
 		}
 	}
 	now := time.Now()
-	loop := types.Loop{ID: id, Prompt: task, Interval: interval, NextAt: now, ExpiresAt: now.Add(loopLifetime)}
+	loop := conversation.Loop{ID: id, Prompt: task, Interval: interval, NextAt: now, ExpiresAt: now.Add(loopLifetime)}
 	next := append(slices.Clone(s.loops), loop)
 	if err := s.invalidateGoalHandover("A new scheduled loop was accepted."); err != nil {
 		s.loopMu.Unlock()
-		return types.Loop{}, err
+		return conversation.Loop{}, err
 	}
 	err := s.saveLoopsLocked(next)
 	s.loopMu.Unlock()
 	if err != nil {
-		return types.Loop{}, err
+		return conversation.Loop{}, err
 	}
 	s.publishLoops(fmt.Sprintf("Loop %s scheduled every %s: %s", loop.ID, loop.Interval, loop.Prompt))
 	return loop, nil
@@ -159,7 +159,7 @@ func (s *Session) ChangeLoop(action, id string) error {
 	defer s.loopOpMu.Unlock()
 	s.loopMu.Lock()
 	next := slices.Clone(s.loops)
-	index := slices.IndexFunc(next, func(loop types.Loop) bool { return loop.ID == id })
+	index := slices.IndexFunc(next, func(loop conversation.Loop) bool { return loop.ID == id })
 	if index < 0 {
 		s.loopMu.Unlock()
 		return errors.New("loop not found; use /loop to inspect its exact ID")
@@ -257,7 +257,7 @@ func (s *Session) startLoopTurn(o *Orchestrator, now time.Time) bool {
 		s.loopMu.Unlock()
 		return false
 	}
-	if goal, present := s.Goal(); present && goal.Status == types.GoalActive {
+	if goal, present := s.Goal(); present && goal.Status == conversation.GoalActive {
 		s.loopMu.Unlock()
 		return false
 	}
@@ -322,7 +322,7 @@ func (s *Session) loopTurnEnd(input provider.UserInput, stopped, failed, parked 
 	defer s.loopOpMu.Unlock()
 	s.loopMu.Lock()
 	next := slices.Clone(s.loops)
-	index := slices.IndexFunc(next, func(loop types.Loop) bool { return loop.ID == id })
+	index := slices.IndexFunc(next, func(loop conversation.Loop) bool { return loop.ID == id })
 	if index < 0 || next[index].Paused {
 		s.loopMu.Unlock()
 		return

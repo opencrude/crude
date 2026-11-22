@@ -5,39 +5,40 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 func TestLanguageStatusOwnerStates(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		setup  func(*LSPManager, string)
-		state  types.LanguageServiceState
+		state  insight.LanguageServiceState
 		label  string
-		action types.LanguageServiceAction
+		action insight.LanguageServiceAction
 	}{
-		{"restricted", func(m *LSPManager, _ string) { m.analysisSettings = types.WorkspaceAnalysisSettings{} }, types.LanguageRestricted, "Restricted mode", types.LanguageActionTrustFolder},
+		{"restricted", func(m *LSPManager, _ string) { m.analysisSettings = setting.WorkspaceAnalysis{} }, insight.LanguageRestricted, "Restricted mode", insight.LanguageActionTrustFolder},
 		{"blocked", func(m *LSPManager, _ string) {
 			m.analysisBlocked = "Language servers could not start. This folder changed. Trust this folder again."
-		}, types.LanguageFailed, "Language server failed", types.LanguageActionTrustFolder},
-		{"governor", func(m *LSPManager, _ string) { m.analysisGovernor = nil }, types.LanguageFailed, "Language server failed", types.LanguageActionNone},
-		{"disabled", func(m *LSPManager, _ string) { m.settings.Enabled = false }, types.LanguageOff, "Language servers off", types.LanguageActionOpenSettings},
-		{"stopped", func(m *LSPManager, _ string) { m.paused = true }, types.LanguageOff, "Language servers stopped", types.LanguageActionStartServers},
-		{"idle", func(m *LSPManager, _ string) {}, types.LanguageIdle, "", types.LanguageActionNone},
+		}, insight.LanguageFailed, "Language server failed", insight.LanguageActionTrustFolder},
+		{"governor", func(m *LSPManager, _ string) { m.analysisGovernor = nil }, insight.LanguageFailed, "Language server failed", insight.LanguageActionNone},
+		{"disabled", func(m *LSPManager, _ string) { m.settings.Enabled = false }, insight.LanguageOff, "Language servers off", insight.LanguageActionOpenSettings},
+		{"stopped", func(m *LSPManager, _ string) { m.paused = true }, insight.LanguageOff, "Language servers stopped", insight.LanguageActionStartServers},
+		{"idle", func(m *LSPManager, _ string) {}, insight.LanguageIdle, "", insight.LanguageActionNone},
 		{"no server", func(m *LSPManager, root string) {
 			m.activeFilePath = filepath.Join(root, "notes.unknownext")
 			m.documents[m.activeFilePath] = &lspDocument{}
-		}, types.LanguageNoServer, "", types.LanguageActionOpenSettings},
-		{"starting", func(m *LSPManager, _ string) { m.activeStatus = LSPStarting }, types.LanguageStarting, "Checking…", types.LanguageActionNone},
-		{"ready", func(m *LSPManager, _ string) { m.activeStatus = LSPConnected }, types.LanguageReady, "", types.LanguageActionNone},
-		{"failed", func(m *LSPManager, _ string) { m.activeStatus = LSPFailed; m.activeError = "not found" }, types.LanguageFailed, "Language server failed", types.LanguageActionRestartServer},
+		}, insight.LanguageNoServer, "", insight.LanguageActionOpenSettings},
+		{"starting", func(m *LSPManager, _ string) { m.activeStatus = LSPStarting }, insight.LanguageStarting, "Checking…", insight.LanguageActionNone},
+		{"ready", func(m *LSPManager, _ string) { m.activeStatus = LSPConnected }, insight.LanguageReady, "", insight.LanguageActionNone},
+		{"failed", func(m *LSPManager, _ string) { m.activeStatus = LSPFailed; m.activeError = "not found" }, insight.LanguageFailed, "Language server failed", insight.LanguageActionRestartServer},
 		{"large", func(m *LSPManager, _ string) {
 			m.activeStatus = LSPIdle
 			m.activeError = "Document exceeds the configured LSP size limit."
 			m.activeFilePath = "large-source"
 			m.settings.MaxDocumentBytes = 4
 			m.documents[m.activeFilePath] = &lspDocument{text: "12345"}
-		}, types.LanguageFailed, "Language server failed", types.LanguageActionOpenSettings},
+		}, insight.LanguageFailed, "Language server failed", insight.LanguageActionOpenSettings},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, _, root := lifecycleManager(t)
@@ -81,14 +82,14 @@ func TestWaitingLanguageServerIsNotReportedAsLargeOrFailed(t *testing.T) {
 		return false
 	})
 	view := m.ProjectInsights()
-	if view.ServerFailed || view.Language.State != types.LanguageStarting ||
+	if view.ServerFailed || view.Language.State != insight.LanguageStarting ||
 		view.Language.Label != "Waiting to start" || !strings.Contains(view.Language.Message, "limit") ||
 		strings.Contains(view.Language.Message, "too large") {
 		t.Fatalf("process capacity was misreported as a file or server failure: %+v", view)
 	}
 	// The message names the limit that is in the way and the control that changes it.
 	if !strings.Contains(view.Language.Message, "limit of 1 language server.") || !strings.Contains(view.Language.Message, "Running servers") ||
-		view.Language.Action != types.LanguageActionOpenSettings {
+		view.Language.Action != insight.LanguageActionOpenSettings {
 		t.Fatalf("the workspace limit is not named with its setting: %+v", view.Language)
 	}
 	for _, server := range m.ServerHealthSnapshots() {
@@ -98,7 +99,7 @@ func TestWaitingLanguageServerIsNotReportedAsLargeOrFailed(t *testing.T) {
 	}
 	closeEditor(t, m, first)
 	awaitLSP(t, func() bool { return m.ServerReady() })
-	if view := m.ProjectInsights(); view.ServerFailed || view.Language.State != types.LanguageReady {
+	if view := m.ProjectInsights(); view.ServerFailed || view.Language.State != insight.LanguageReady {
 		t.Fatalf("released capacity did not clear the waiting explanation: %+v", view)
 	}
 }
@@ -119,7 +120,7 @@ func TestDefaultLimitsRunOneServerForEachOpenLanguage(t *testing.T) {
 			t.Fatalf("a language of an ordinary project waits for a server: %+v", server)
 		}
 	}
-	if view := m.ProjectInsights(); view.Language.State != types.LanguageReady {
+	if view := m.ProjectInsights(); view.Language.State != insight.LanguageReady {
 		t.Fatalf("the active file has no running language server: %+v", view.Language)
 	}
 }
@@ -141,7 +142,7 @@ func TestWaitingBehindOtherWorkspacesDoesNotBlameThisWorkspaceLimit(t *testing.T
 	}
 	lease.Release()
 	awaitLSP(t, func() bool { return m.ServerReady() })
-	if status := m.ProjectInsights().Language; status.State != types.LanguageReady {
+	if status := m.ProjectInsights().Language; status.State != insight.LanguageReady {
 		t.Fatalf("released capacity did not start the server: %+v", status)
 	}
 }

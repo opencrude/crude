@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // incrementalTranscript mutates a transcript the way live turns do: appended
@@ -16,7 +16,7 @@ import (
 // of transient status rows and parallel batches.
 type incrementalTranscript struct {
 	rng      *rand.Rand
-	messages []types.ChatMessage
+	messages []conversation.ChatMessage
 	next     int
 	round    int
 }
@@ -26,47 +26,47 @@ func (s *incrementalTranscript) id() string {
 	return fmt.Sprintf("m%d", s.next)
 }
 
-func (s *incrementalTranscript) step() (changed []types.ChatMessage, removed []string, structural bool) {
+func (s *incrementalTranscript) step() (changed []conversation.ChatMessage, removed []string, structural bool) {
 	tools := []string{"read_file", "grep_files", "execute_command", "edit_file", "check_async_command", "web_fetch"}
 	switch op := s.rng.Intn(10); {
 	case op == 0:
 		s.round++
-		message := types.ChatMessage{InternalID: s.id(), Role: types.RoleUser, Content: "next request"}
+		message := conversation.ChatMessage{InternalID: s.id(), Role: conversation.RoleUser, Content: "next request"}
 		s.messages = append(s.messages, message)
-		return []types.ChatMessage{message}, nil, true
+		return []conversation.ChatMessage{message}, nil, true
 	case op <= 3:
 		if s.rng.Intn(3) == 0 {
 			s.round++
 		}
-		status := types.ToolStatusSuccess
+		status := conversation.ToolStatusSuccess
 		if s.rng.Intn(4) == 0 {
-			status = types.ToolStatusCalling
+			status = conversation.ToolStatusCalling
 		}
 		content := "ok"
 		if s.rng.Intn(6) == 0 {
 			content = "Error: failed"
 		}
-		message := types.ChatMessage{InternalID: s.id(), Role: types.RoleTool, ToolName: tools[s.rng.Intn(len(tools))],
+		message := conversation.ChatMessage{InternalID: s.id(), Role: conversation.RoleTool, ToolName: tools[s.rng.Intn(len(tools))],
 			ToolStatus: status, Content: content, ToolRoundID: fmt.Sprint("round-", s.round), ToolArgs: "x"}
 		s.messages = append(s.messages, message)
-		return []types.ChatMessage{message}, nil, true
+		return []conversation.ChatMessage{message}, nil, true
 	case op == 4:
-		message := types.ChatMessage{InternalID: s.id(), Role: types.RoleThinking, Content: "reasoning", ThinkingDuration: time.Second}
+		message := conversation.ChatMessage{InternalID: s.id(), Role: conversation.RoleThinking, Content: "reasoning", ThinkingDuration: time.Second}
 		s.messages = append(s.messages, message)
-		return []types.ChatMessage{message}, nil, true
+		return []conversation.ChatMessage{message}, nil, true
 	case op == 5:
-		message := types.ChatMessage{InternalID: s.id(), Role: types.RoleAssistant, Content: "partial"}
+		message := conversation.ChatMessage{InternalID: s.id(), Role: conversation.RoleAssistant, Content: "partial"}
 		s.messages = append(s.messages, message)
-		return []types.ChatMessage{message}, nil, true
+		return []conversation.ChatMessage{message}, nil, true
 	case op == 6:
-		message := types.ChatMessage{InternalID: s.id(), Role: types.RoleStatus, LifecyclePhase: "waiting_provider"}
+		message := conversation.ChatMessage{InternalID: s.id(), Role: conversation.RoleStatus, LifecyclePhase: "waiting_provider"}
 		s.messages = append(s.messages, message)
-		return []types.ChatMessage{message}, nil, true
+		return []conversation.ChatMessage{message}, nil, true
 	case op == 7 && len(s.messages) > 0:
 		// Remove transient status rows wherever they are.
 		kept := s.messages[:0]
 		for _, message := range s.messages {
-			if message.Role == types.RoleStatus {
+			if message.Role == conversation.RoleStatus {
 				removed = append(removed, message.InternalID)
 				continue
 			}
@@ -75,11 +75,11 @@ func (s *incrementalTranscript) step() (changed []types.ChatMessage, removed []s
 		s.messages = kept
 		return nil, removed, len(removed) > 0
 	case op == 8:
-		message := types.ChatMessage{InternalID: s.id(), Role: types.RoleTool, ToolName: "multi_tool_use.parallel", ToolStatus: types.ToolStatusSuccess,
+		message := conversation.ChatMessage{InternalID: s.id(), Role: conversation.RoleTool, ToolName: "multi_tool_use.parallel", ToolStatus: conversation.ToolStatusSuccess,
 			ToolInput: `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"a"}},{"recipient_name":"functions.grep_files","parameters":{"pattern":"b"}}]}`,
 			Content:   `{"results":[{"recipient_name":"functions.read_file","result":"a"},{"recipient_name":"functions.grep_files","result":"b"}]}`}
 		s.messages = append(s.messages, message)
-		return []types.ChatMessage{message}, nil, true
+		return []conversation.ChatMessage{message}, nil, true
 	default:
 		if len(s.messages) == 0 {
 			return nil, nil, false
@@ -91,15 +91,15 @@ func (s *incrementalTranscript) step() (changed []types.ChatMessage, removed []s
 		}
 		message := &s.messages[index]
 		switch message.Role {
-		case types.RoleTool:
-			message.ToolStatus = types.ToolStatusSuccess
+		case conversation.RoleTool:
+			message.ToolStatus = conversation.ToolStatusSuccess
 			message.Content += " more"
-		case types.RoleAssistant, types.RoleThinking:
+		case conversation.RoleAssistant, conversation.RoleThinking:
 			message.Content += " more"
 		default:
 			return nil, nil, false
 		}
-		return []types.ChatMessage{*message}, nil, false
+		return []conversation.ChatMessage{*message}, nil, false
 	}
 }
 
@@ -117,7 +117,7 @@ func activitySignature(r *Renderer) string {
 				b.WriteString(member.InternalID + ",")
 			}
 			b.WriteString("]" + group.label)
-		} else if message, ok := item.Data.(*types.ChatMessage); ok {
+		} else if message, ok := item.Data.(*conversation.ChatMessage); ok {
 			b.WriteString("{" + message.Content + "}")
 		}
 		b.WriteString("\n")
@@ -169,12 +169,12 @@ func TestIncrementalActivityItemsMatchCompleteRebuild(t *testing.T) {
 // exactly and must leave the projection untouched for a complete sync.
 func TestSyncChangesRefusesInexactDelta(t *testing.T) {
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{{InternalID: "a", Role: types.RoleUser, Content: "hi"}}, 1, 1)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "a", Role: conversation.RoleUser, Content: "hi"}}, 1, 1)
 	before := activitySignature(r)
-	if r.SyncChanges([]types.ChatMessage{{InternalID: "b", Role: types.RoleAssistant, Content: "new"}}, nil, nil, 2, 1) {
+	if r.SyncChanges([]conversation.ChatMessage{{InternalID: "b", Role: conversation.RoleAssistant, Content: "new"}}, nil, nil, 2, 1) {
 		t.Fatal("accepted a new row without ordered membership")
 	}
-	if r.SyncChanges([]types.ChatMessage{{InternalID: "a", Role: types.RoleUser, Content: "x"}}, nil, nil, 2, 2) {
+	if r.SyncChanges([]conversation.ChatMessage{{InternalID: "a", Role: conversation.RoleUser, Content: "x"}}, nil, nil, 2, 2) {
 		t.Fatal("accepted a delta from another source generation")
 	}
 	if got := activitySignature(r); got != before || r.SourceVersion() != 1 {

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/imagepreview"
 	"crude/tui/screens/imageviewer"
 	"crude/tui/ui"

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"crude/agent/safety"
+	"crude/types/command"
 	"crude/workspace/fileio"
 )
 
@@ -18,7 +19,7 @@ func TestNativeCommandSessionContinuesOnSameManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var first fileio.InteractiveResult
+	var first command.Result
 	if err := json.Unmarshal([]byte(result.Content), &first); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +30,7 @@ func TestNativeCommandSessionContinuesOnSameManager(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var last fileio.InteractiveResult
+	var last command.Result
 	if err := json.Unmarshal([]byte(result.Content), &last); err != nil {
 		t.Fatal(err)
 	}

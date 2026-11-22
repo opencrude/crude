@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"crude/agent/memory"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 
 	gogit "github.com/go-git/go-git/v5"
@@ -28,7 +28,7 @@ func TestGitServiceFacadeWireAndReviewedMutation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("reviewed bytes\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	ws.Git = workspace.NewGitService(root)
 	actor := &actor{ws: ws}
@@ -81,7 +81,7 @@ func TestGitServiceFacadeWireAndReviewedMutation(t *testing.T) {
 }
 
 func TestServiceDispatcherClosedAndValidation(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	a := &actor{ws: ws}
 	// Retain the constructor-owned persistence for cleanup, but explicitly
@@ -128,7 +128,7 @@ func TestServiceDispatcherClosedAndValidation(t *testing.T) {
 }
 
 func TestMemoryServiceCapturedStoreCASAndAudit(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	ctx := context.Background()
 	first, err := ws.WorkspaceDB.Memory.Remember(ctx, memory.Record{Kind: memory.KindFact, Title: "Service audit", Content: "Exact original assertion"})

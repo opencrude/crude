@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 )
 
 var ErrTerminalControl = errors.New("terminal control lease is missing or stale")

@@ -10,7 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/ui"

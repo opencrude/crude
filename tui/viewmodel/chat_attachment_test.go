@@ -13,19 +13,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/history"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func newTranscriptAttachmentApp(t *testing.T) *App {
 	t.Helper()
 	app := newFullTestApp(t)
-	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
+	setAttachmentDestination(t, app, setting.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 120, 36
 	app.AddOrchestrator("attachment-owner")
@@ -44,7 +45,7 @@ func clickTranscriptAttachment(t *testing.T, app *App, label string) {
 	runAppCommand(t, app, release)
 }
 
-func retainedAttachmentRows(t *testing.T, ref sessiondb.Reference, text string) []workspace.ChatMessageView {
+func retainedAttachmentRows(t *testing.T, ref sessiondb.Reference, text string) []conversation.Message {
 	t.Helper()
 	dir := t.TempDir()
 	db := sessiondb.OpenAndMigrateAt(dir)
@@ -54,7 +55,7 @@ func retainedAttachmentRows(t *testing.T, ref sessiondb.Reference, text string) 
 	input := provider.NewTextMessage("user", text)
 	input.InternalID = "historical-input"
 	input.Origin = provider.OriginHuman
-	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayContent: text, ReferenceLabels: []string{ref.DisplayName()}, Snapshots: []types.ConversationMessage{{InternalID: input.InternalID, Role: types.RoleUser, Origin: provider.OriginHuman, Content: text, ReferenceLabels: []string{ref.DisplayName()}}}}
+	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayContent: text, ReferenceLabels: []string{ref.DisplayName()}, Snapshots: []conversation.Message{{InternalID: input.InternalID, Role: conversation.RoleUser, Origin: provider.OriginHuman, Content: text, ReferenceLabels: []string{ref.DisplayName()}}}}
 	if err := sessiondb.AppendMessageWithMeta(db, "attachment-owner", input, 1, meta); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestPostedAttachmentDragLiteralForeignAndStaleOwners(t *testing.T) {
 				ref.SessionID = "foreign-session"
 				app.RefStore().AddExisting(ref)
 			}
-			app.appendActiveMessage(types.ChatMessage{InternalID: "negative", Role: types.RoleUser, Content: text, Attachments: targets})
+			app.appendActiveMessage(conversation.ChatMessage{InternalID: "negative", Role: conversation.RoleUser, Content: text, Attachments: targets})
 			x, y := attachmentTranscriptPoint(t, app, ref.Label)
 			mod := tea.KeyMod(0)
 			if scenario == "shift-selection" {
@@ -212,7 +213,7 @@ func TestPostedFileBackedPastedTextIsReadOnlyNativeContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app.appendActiveMessage(types.ChatMessage{InternalID: "file-post", Role: types.RoleUser, Content: ref.Label, Attachments: []attachment.Target{{Start: 0, End: len([]rune(ref.Label)), ReferenceID: ref.ID, Label: ref.Label}}})
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "file-post", Role: conversation.RoleUser, Content: ref.Label, Attachments: []attachment.Target{{Start: 0, End: len([]rune(ref.Label)), ReferenceID: ref.ID, Label: ref.Label}}})
 	clickTranscriptAttachment(t, app, ref.Label)
 	if screen := app.sessionTextOverlay(); !screen.ReadOnly() || screen.Value() != content {
 		t.Fatal("file-backed sent text opened externally, truncated or editable")
@@ -233,7 +234,7 @@ func TestPostedImageNativePreviewPreservesActualBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app.appendActiveMessage(types.ChatMessage{InternalID: "image-post", Role: types.RoleUser, Content: ref.Label, Attachments: []attachment.Target{{Start: 0, End: len([]rune(ref.Label)), ReferenceID: ref.ID, Label: ref.Label}}})
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "image-post", Role: conversation.RoleUser, Content: ref.Label, Attachments: []attachment.Target{{Start: 0, End: len([]rune(ref.Label)), ReferenceID: ref.ID, Label: ref.Label}}})
 	clickTranscriptAttachment(t, app, ref.Label)
 	if screen := app.sessionTextOverlay(); !screen.ReadOnly() || screen.RefID() != ref.ID || screen.Value() != "" {
 		t.Fatal("image did not open native image body")
@@ -249,9 +250,9 @@ func TestPostedImageNativePreviewPreservesActualBytes(t *testing.T) {
 
 func TestPromptHistoryInlineAttachmentUsesSameReadOnlyViewer(t *testing.T) {
 	app := newTranscriptAttachmentApp(t)
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	ref := sessiondb.Reference{ID: "actual-old-id", SessionID: "old-session", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", Content: "history snapshot content"}
-	app.Prompts.Record(ref.Label, time.Now(), history.Attachment{Start: 0, End: len(ref.Label), Reference: ref})
+	app.Prompts.Record(ref.Label, time.Now(), prompthistory.Attachment{Start: 0, End: len(ref.Label), Reference: ref})
 	entry := app.Prompts.Entries()[0]
 	app.renderPromptHistory()
 	command := app.openHistoricalAttachment(entry.ID + ":0")
@@ -287,7 +288,7 @@ func attachmentTranscriptPoint(t *testing.T, app *App, label string) (int, int) 
 
 func TestPostedAttachmentRenderedClickOpensNativePreview(t *testing.T) {
 	app := newFullTestApp(t)
-	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
+	setAttachmentDestination(t, app, setting.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 120, 36
 	app.AddOrchestrator("attachment-owner")
@@ -298,7 +299,7 @@ func TestPostedAttachmentRenderedClickOpensNativePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := app.ws.AgentMgr().Get("attachment-owner").State
-	state.Messages.AppendMessage(workspace.Message{InternalID: "posted-attachment", Role: types.RoleUser,
+	state.Messages.AppendMessage(conversation.Message{InternalID: "posted-attachment", Role: conversation.RoleUser,
 		Content: "Inspect " + ref.DisplayName(), ReferenceLabels: []string{ref.DisplayName()}, Attachments: attachment.Locate("Inspect "+ref.DisplayName(), []attachment.Target{{ReferenceID: ref.ID, Label: ref.DisplayName()}})})
 	app.syncAgentMessages("attachment-owner", false)
 	x, y := attachmentTranscriptPoint(t, app, ref.DisplayName())

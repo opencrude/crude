@@ -2,9 +2,10 @@ package core
 
 import (
 	"context"
-	"crude/core/port"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"reflect"
 	"testing"
@@ -12,7 +13,7 @@ import (
 
 func TestLSPDiagnosticConsumersIndependentAndClears(t *testing.T) {
 	var one, two shellport.LSPDiagnosticConsumer
-	s := shellport.LSPDiagnosticSnapshot{Generation: "workspace-1", Version: 1, Diagnostics: map[string]types.InsightDiagnostics{"a.go": {ID: "fact-1", Diagnostics: []types.LSPDiagnostic{{Message: "bad", Severity: 1}}}}}
+	s := shellport.LSPDiagnosticSnapshot{Generation: "workspace-1", Version: 1, Diagnostics: map[string]insight.Diagnostics{"a.go": {ID: "fact-1", Diagnostics: []insight.LSPDiagnostic{{Message: "bad", Severity: 1}}}}}
 	for _, c := range []*shellport.LSPDiagnosticConsumer{&one, &two} {
 		if got := c.Consume(s); got["a.go"].Diagnostics[0].Message != "bad" || got["a.go"].ID != "fact-1" {
 			t.Fatal(got)
@@ -35,7 +36,7 @@ func TestLSPTypedRenameRequiresCoreReviewInsteadOfRawShellEdits(t *testing.T) {
 	if _, ok := a.prepareLSP(coreprotocol.Request{Method: "lsp.rename"}); ok {
 		t.Fatal("retired raw edit route is still admitted")
 	}
-	in := coreprotocol.RenamePreviewRequest{Source: types.InsightSource{DocumentID: "doc", Revision: 7, Kind: "canonical", Path: "/project/a.go"}, Line: 3, Col: 5, NewName: "renamed"}
+	in := coreprotocol.RenamePreviewRequest{Source: insight.Source{DocumentID: "doc", Revision: 7, Kind: "canonical", Path: "/project/a.go"}, Line: 3, Col: 5, NewName: "renamed"}
 	raw := mustTestPayload(in)
 	var decoded coreprotocol.RenamePreviewRequest
 	if err := coreprotocol.Decode(raw, &decoded); err != nil || !reflect.DeepEqual(decoded, in) {
@@ -79,7 +80,7 @@ func TestLSPPrepareWorkerCaptureAndCancellation(t *testing.T) {
 func TestLSPSnapshotSettingsDetached(t *testing.T) {
 	manager := workspace.NewLSPManager(nil)
 	t.Cleanup(manager.Close)
-	manager.SetSettings(types.LSPSettings{Languages: map[string]types.LSPLanguageSettings{"go": {Command: "test", Args: []string{"serve"}}}})
+	manager.SetSettings(setting.LSP{Languages: map[string]setting.LSPLanguage{"go": {Command: "test", Args: []string{"serve"}}}})
 	s := lspSnapshot(manager)
 	s.Settings.Languages["go"].Args[0] = "changed"
 	if manager.Settings().Languages["go"].Args[0] != "serve" {

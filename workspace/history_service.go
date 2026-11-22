@@ -15,7 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"crude/agent/session"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
 )
@@ -42,7 +42,7 @@ type LocalHistoryService struct {
 
 	mu         sync.Mutex
 	activityMu sync.RWMutex
-	settings   ttypes.LocalHistorySettings
+	settings   setting.LocalHistory
 	bus        *EventBus
 	cancel     context.CancelFunc
 	done       chan struct{}
@@ -81,9 +81,10 @@ func NewLocalHistoryService(root string, store *localhistory.Store, logger Logge
 
 func (s *LocalHistoryService) SetEventBus(bus *EventBus) { s.mu.Lock(); s.bus = bus; s.mu.Unlock() }
 
-func (s *LocalHistoryService) UpdateSettings(settings ttypes.LocalHistorySettings) {
-	effective := ttypes.AppSettings{LocalHistory: settings}
-	ttypes.ApplyAppDefaults(&effective)
+// UpdateSettings applies new local history settings and restarts the capture worker.
+func (s *LocalHistoryService) UpdateSettings(settings setting.LocalHistory) {
+	effective := setting.App{LocalHistory: settings}
+	setting.ApplyAppDefaults(&effective)
 	settings = effective.LocalHistory
 	s.mu.Lock()
 	s.settings = settings
@@ -161,7 +162,7 @@ func (s *LocalHistoryService) KeepBeforeDelete(ctx context.Context, rel string) 
 	return nil
 }
 
-func historyOptions(settings ttypes.LocalHistorySettings, kind, label, parent string) localhistory.SnapshotOptions {
+func historyOptions(settings setting.LocalHistory, kind, label, parent string) localhistory.SnapshotOptions {
 	return localhistory.SnapshotOptions{
 		Kind: kind, Label: label, ParentID: parent,
 		DisableGitIgnore:    !settings.UseGitIgnoreValue(),
@@ -170,7 +171,7 @@ func historyOptions(settings ttypes.LocalHistorySettings, kind, label, parent st
 	}
 }
 
-func (s *LocalHistoryService) run(ctx context.Context, done chan struct{}, generation uint64, settings ttypes.LocalHistorySettings) {
+func (s *LocalHistoryService) run(ctx context.Context, done chan struct{}, generation uint64, settings setting.LocalHistory) {
 	defer close(done)
 	records, timelineErr := s.store.Timeline(1)
 	if timelineErr != nil {
@@ -368,7 +369,7 @@ func (s *LocalHistoryService) setError(generation uint64, err error) {
 	}
 }
 
-func (s *LocalHistoryService) prune(ctx context.Context, settings ttypes.LocalHistorySettings) error {
+func (s *LocalHistoryService) prune(ctx context.Context, settings setting.LocalHistory) error {
 	_, err := s.store.Prune(ctx, localhistory.RetentionPolicy{
 		KeepHours: settings.RetentionKeepHours, KeepDaily: settings.RetentionKeepDaily,
 		MaxSnapshots: settings.RetentionMaxSnapshots, BudgetBytes: int64(settings.StorageBudgetMB) * 1024 * 1024,
@@ -468,7 +469,7 @@ func (s *LocalHistoryService) EndMessage(ctx context.Context, sessionID, message
 	return s.closeScope(ctx, key)
 }
 
-func (s *LocalHistoryService) openScope(ctx context.Context, settings ttypes.LocalHistorySettings, sessionID, messageID string) error {
+func (s *LocalHistoryService) openScope(ctx context.Context, settings setting.LocalHistory, sessionID, messageID string) error {
 	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "before_message", "Before message "+messageID, ""))
 	if err != nil {
 		return err
@@ -551,7 +552,7 @@ func (s *LocalHistoryService) BeginContinuation(ctx context.Context, sessionID, 
 	return nil
 }
 
-func (s *LocalHistoryService) ensureContinuationScope(ctx context.Context, settings ttypes.LocalHistorySettings, key, sessionID, messageID string) error {
+func (s *LocalHistoryService) ensureContinuationScope(ctx context.Context, settings setting.LocalHistory, key, sessionID, messageID string) error {
 	if !settings.EnabledValue() {
 		return nil
 	}

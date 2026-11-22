@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"crude/agent/tools"
+	"crude/types/command"
 	"crude/workspace/fileio"
 )
 
@@ -30,21 +31,21 @@ func TestCommandFormattersDirectModelToRetainedContent(t *testing.T) {
 			t.Fatalf("failed status %q lacks %q", failed, want)
 		}
 	}
-	page := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "build", Status: fileio.AsyncRunning, TotalBytes: 900}, SinceByte: 0, NextByte: 100, HasMore: true, Output: "chunk"})
+	page := FormatCommandPage(fileio.OutputPage{Descriptor: command.OutputDescriptor{Handle: "build", Status: fileio.AsyncRunning, TotalBytes: 900}, SinceByte: 0, NextByte: 100, HasMore: true, Output: "chunk"})
 	for _, want := range []string{`"since_byte":0`, `"next_byte":100`, "since_byte=100", "do not rerun", "chunk"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("page %q lacks %q", page, want)
 		}
 	}
-	emptyRunning := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "build", Status: fileio.AsyncRunning}})
-	emptyFinished := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "build", Status: fileio.AsyncCompleted}})
+	emptyRunning := FormatCommandPage(fileio.OutputPage{Descriptor: command.OutputDescriptor{Handle: "build", Status: fileio.AsyncRunning}})
+	emptyFinished := FormatCommandPage(fileio.OutputPage{Descriptor: command.OutputDescriptor{Handle: "build", Status: fileio.AsyncCompleted}})
 	if !strings.Contains(emptyRunning, "No new bytes yet") || !strings.Contains(emptyRunning, "still running") {
 		t.Fatalf("running empty page=%q", emptyRunning)
 	}
 	if !strings.Contains(emptyFinished, "Output is complete") || strings.Contains(emptyFinished, "still running") {
 		t.Fatalf("finished empty page=%q", emptyFinished)
 	}
-	binary := FormatCommandPage(fileio.OutputPage{Descriptor: fileio.OutputDescriptor{Handle: "binary", Status: fileio.AsyncCompleted, TotalBytes: 1}, SinceByte: 0, NextByte: 1, OutputEncoding: "base64", Output: "/w=="})
+	binary := FormatCommandPage(fileio.OutputPage{Descriptor: command.OutputDescriptor{Handle: "binary", Status: fileio.AsyncCompleted, TotalBytes: 1}, SinceByte: 0, NextByte: 1, OutputEncoding: "base64", Output: "/w=="})
 	for _, want := range []string{`"output_encoding":"base64"`, "Decode this returned page", "continue from next byte", "/w=="} {
 		if !strings.Contains(binary, want) {
 			t.Fatalf("binary page %q lacks %q", binary, want)

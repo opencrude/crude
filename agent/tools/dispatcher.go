@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"crude/agent/docconv"
 	"crude/agent/prompt"
 	"crude/agent/provider"
-	"crude/docconv"
-	"crude/logger"
-	"crude/text/encoding"
+	"crude/internal/logger"
+	"crude/text/textencoding"
 	"crude/text/unidiff"
 	"crude/types/toolresult"
 	"crude/workspace/fileio"
@@ -70,7 +70,8 @@ func readFileHint(err error, path string) (result ToolResult) {
 	return ToolResult{Content: msg, AgentHint: prompt.HintNearbyEntries(dir, candidates)}
 }
 
-func GetStrArg(args map[string]any, key string, defaultVal string) string {
+// StrArg reads a string argument and falls back to the default when it is missing.
+func StrArg(args map[string]any, key string, defaultVal string) string {
 	if v, ok := args[key]; ok {
 		if s, ok := v.(string); ok {
 			return s
@@ -80,7 +81,8 @@ func GetStrArg(args map[string]any, key string, defaultVal string) string {
 	return defaultVal
 }
 
-func GetIntArgAny(args map[string]any, key string, defaultVal int) int {
+// IntArgAny reads an integer argument from a number or a numeric string.
+func IntArgAny(args map[string]any, key string, defaultVal int) int {
 	if v, ok := args[key]; ok {
 		switch val := v.(type) {
 		case float64:
@@ -101,7 +103,8 @@ func GetIntArgAny(args map[string]any, key string, defaultVal int) int {
 	return defaultVal
 }
 
-func GetBoolArgAny(args map[string]any, key string, defaultVal bool) bool {
+// BoolArgAny reads a boolean argument from a bool or a recognised string.
+func BoolArgAny(args map[string]any, key string, defaultVal bool) bool {
 	if v, ok := args[key]; ok {
 		switch val := v.(type) {
 		case bool:
@@ -118,7 +121,8 @@ func GetBoolArgAny(args map[string]any, key string, defaultVal bool) bool {
 	return defaultVal
 }
 
-func GetFloatArgAny(args map[string]any, key string, defaultVal float64) float64 {
+// FloatArgAny reads a float argument from a number or a numeric string.
+func FloatArgAny(args map[string]any, key string, defaultVal float64) float64 {
 	if v, ok := args[key]; ok {
 		switch val := v.(type) {
 		case float64:
@@ -182,10 +186,10 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		result = executeApplyPatch(ctx, params, ed, opts)
 
 	case "read_file":
-		path := GetStrArg(params, "path", "")
-		encoded := GetBoolArgAny(params, "encoded", false)
-		offset := GetIntArgAny(params, "offset", 0)
-		limit := GetIntArgAny(params, "limit", 0)
+		path := StrArg(params, "path", "")
+		encoded := BoolArgAny(params, "encoded", false)
+		offset := IntArgAny(params, "offset", 0)
+		limit := IntArgAny(params, "limit", 0)
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "encoded", encoded, "offset", offset, "limit", limit)
 
 		// Capability gate: recognised media attachments go through the
@@ -238,8 +242,8 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "write_file":
-		content := GetStrArg(params, "content", "")
-		path := GetStrArg(params, "path", "")
+		content := StrArg(params, "content", "")
+		path := StrArg(params, "path", "")
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "content_len", len(content))
 		if content != "" && len([]rune(content)) > 200 {
 			lg.Debug("DISPATCH", "content_preview", "first_80", string([]rune(content)[:80])+"…")
@@ -269,9 +273,9 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "edit_file":
-		path := GetStrArg(params, "path", "")
-		oldString := GetStrArg(params, "old_string", "")
-		newString := GetStrArg(params, "new_string", "")
+		path := StrArg(params, "path", "")
+		oldString := StrArg(params, "old_string", "")
+		newString := StrArg(params, "new_string", "")
 		if oldString == newString {
 			result = noChangeEditResult(oldString, newString)
 			break
@@ -315,7 +319,7 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "delete_file":
-		path := GetStrArg(params, "path", "")
+		path := StrArg(params, "path", "")
 		lg.Info("TOOL", "call", "tool", tool, "path", path)
 		if ed != nil {
 			if err := ed.DeleteTracked(path, mutationPreparer(opts)); err != nil {
@@ -342,8 +346,8 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "move_file":
-		source := GetStrArg(params, "source", "")
-		dest := GetStrArg(params, "destination", "")
+		source := StrArg(params, "source", "")
+		dest := StrArg(params, "destination", "")
 		lg.Info("TOOL", "call", "tool", tool, "source", source, "destination", dest)
 		if ed != nil {
 			if err := ed.MoveTracked(source, dest, mutationPreparer(opts)); err != nil {
@@ -376,8 +380,8 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "source", source, "destination", dest, "latency_ms", time.Since(start).Milliseconds())
 
 	case "copy_file":
-		source := GetStrArg(params, "source", "")
-		dest := GetStrArg(params, "destination", "")
+		source := StrArg(params, "source", "")
+		dest := StrArg(params, "destination", "")
 		lg.Info("TOOL", "call", "tool", tool, "source", source, "destination", dest)
 		if ed != nil {
 			if err := ed.CopyTracked(source, dest, mutationPreparer(opts)); err != nil {
@@ -426,8 +430,8 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "source", source, "destination", dest, "latency_ms", time.Since(start).Milliseconds())
 
 	case "list_directory":
-		path := GetStrArg(params, "path", "")
-		recursive := GetBoolArgAny(params, "recursive", false)
+		path := StrArg(params, "path", "")
+		recursive := BoolArgAny(params, "recursive", false)
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "recursive", recursive)
 		if recursive {
 			result = ToolResult{Content: listDirectoryRecursive(path, exec)}
@@ -447,9 +451,9 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "path", path, "latency_ms", time.Since(start).Milliseconds())
 
 	case "glob_files":
-		pattern := GetStrArg(params, "pattern", "")
-		baseDir := GetStrArg(params, "base_dir", ".")
-		includeHidden := GetBoolArgAny(params, "include_hidden", false)
+		pattern := StrArg(params, "pattern", "")
+		baseDir := StrArg(params, "base_dir", ".")
+		includeHidden := BoolArgAny(params, "include_hidden", false)
 		lg.Info("TOOL", "call", "tool", tool, "pattern", pattern, "base_dir", baseDir, "include_hidden", includeHidden)
 		matches, err := exec.GlobFiles(baseDir, pattern, includeHidden)
 		if err != nil {
@@ -458,9 +462,9 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 			break
 		}
 		if len(matches) == 0 {
-			result = ToolResult{Content: fmt.Sprintf("No files matching %q under %s", pattern, displayPath(GetStrArg(params, "_display_root", ""), baseDir))}
+			result = ToolResult{Content: fmt.Sprintf("No files matching %q under %s", pattern, displayPath(StrArg(params, "_display_root", ""), baseDir))}
 		} else {
-			displayRoot := GetStrArg(params, "_display_root", "")
+			displayRoot := StrArg(params, "_display_root", "")
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "%d file(s) matching %q under %s:\n", len(matches), pattern, displayPath(displayRoot, baseDir))
 			for _, m := range matches {
@@ -472,10 +476,10 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "matches", len(matches), "latency_ms", time.Since(start).Milliseconds())
 
 	case "grep_files":
-		pattern := GetStrArg(params, "pattern", "")
-		searchPath := GetStrArg(params, "path", ".")
-		recursive := GetBoolArgAny(params, "recursive", true)
-		includeHidden := GetBoolArgAny(params, "include_hidden", false)
+		pattern := StrArg(params, "pattern", "")
+		searchPath := StrArg(params, "path", ".")
+		recursive := BoolArgAny(params, "recursive", true)
+		includeHidden := BoolArgAny(params, "include_hidden", false)
 		lg.Info("TOOL", "call", "tool", tool, "pattern", pattern, "path", searchPath, "recursive", recursive, "include_hidden", includeHidden)
 		matches, err := exec.GrepFiles(pattern, searchPath, recursive, includeHidden)
 		if err != nil {
@@ -484,9 +488,9 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 			break
 		}
 		if len(matches) == 0 {
-			result = ToolResult{Content: fmt.Sprintf("No matches for %q in %s", pattern, displayPath(GetStrArg(params, "_display_root", ""), searchPath))}
+			result = ToolResult{Content: fmt.Sprintf("No matches for %q in %s", pattern, displayPath(StrArg(params, "_display_root", ""), searchPath))}
 		} else {
-			displayRoot := GetStrArg(params, "_display_root", "")
+			displayRoot := StrArg(params, "_display_root", "")
 			var sb strings.Builder
 			fmt.Fprintf(&sb, "%d match(es) for %q in %s:\n", len(matches), pattern, displayPath(displayRoot, searchPath))
 			if len(matches) >= fileio.MaxGrepResults {
@@ -500,7 +504,7 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		lg.Info("TOOL", "result", "tool", tool, "matches", len(matches), "latency_ms", time.Since(start).Milliseconds())
 
 	case "reply":
-		content := GetStrArg(params, "content", "")
+		content := StrArg(params, "content", "")
 		lg.Info("TOOL", "call", "tool", tool, "content_len", len(content))
 		result = ToolResult{Content: content}
 		lg.Info("TOOL", "result", "tool", tool, "content_len", len(content), "latency_ms", time.Since(start).Milliseconds())
@@ -576,9 +580,9 @@ func tryDocRead(path string, offset, limit int, lg *logger.Logger) (string, bool
 func formatWriteResult(path string, lines int, oldContent, newContent string) ToolResult {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Written %d lines to %s\n", lines, path)
-	diffText, additions, removals := diff.GenerateDiff(oldContent, newContent, path)
+	diffText, additions, removals := unidiff.GenerateDiff(oldContent, newContent, path)
 	diffText = strings.TrimSpace(diffText)
-	if !diff.IsEmptyDiff(diffText) {
+	if !unidiff.IsEmptyDiff(diffText) {
 		sb.WriteString("\n```diff\n")
 		sb.WriteString(diffText)
 		sb.WriteString("\n```\n")
@@ -593,9 +597,9 @@ func formatEditResult(path string, count int, oldContent, newContent string) Too
 	} else {
 		fmt.Fprintf(&sb, "Replaced %d occurrences in %s\n", count, path)
 	}
-	diffText, additions, removals := diff.GenerateDiff(oldContent, newContent, path)
+	diffText, additions, removals := unidiff.GenerateDiff(oldContent, newContent, path)
 	diffText = strings.TrimSpace(diffText)
-	if !diff.IsEmptyDiff(diffText) {
+	if !unidiff.IsEmptyDiff(diffText) {
 		sb.WriteString("\n```diff\n")
 		sb.WriteString(diffText)
 		sb.WriteString("\n```\n")

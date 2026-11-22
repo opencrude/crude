@@ -3,7 +3,8 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/insight"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -20,8 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspedit"
 	"crude/workspace/document"
 	"crude/workspace/localhistory"
 )
@@ -42,7 +42,7 @@ type ReviewedEditPreview struct {
 	// Evidence retains action provenance for the immutable journal. Ordinary
 	// review UI renders Text, not hashes, wire metadata or internal identities.
 	Evidence string
-	Boundary types.InsightBoundary
+	Boundary insight.Boundary
 	Files    []ReviewedEditFile
 	// Message and URL are set only for a command action with no source edit.
 	// They are presentation evidence; the command has already run exactly once.
@@ -51,7 +51,7 @@ type ReviewedEditPreview struct {
 
 type ReviewedEditFile struct {
 	Path, BeforeSHA256, AfterSHA256 string
-	Source                          types.InsightSource
+	Source                          insight.Source
 	Mode                            uint32
 	BeforeBytes, AfterBytes         int
 	Created                         bool
@@ -125,7 +125,7 @@ func cloneReviewedPreview(p ReviewedEditPreview) ReviewedEditPreview {
 	return p
 }
 
-func (s *DocumentService) validateReviewedSourceLocked(owner document.Owner, source types.InsightSource) error {
+func (s *DocumentService) validateReviewedSourceLocked(owner document.Owner, source insight.Source) error {
 	if s.closed || s.idleFenced {
 		return context.Canceled
 	}
@@ -148,7 +148,7 @@ func (s *DocumentService) validateReviewedSourceLocked(owner document.Owner, sou
 // prepareReviewedEdit runs on a resource worker. The language coordinator owns
 // boundary and check; no shell can provide a signed semantic fact or substitute
 // file contents at Apply. Only explicit inert text edits are accepted here.
-func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner document.Owner, label, summary string, boundary types.InsightBoundary, targets []lspedit.DocumentEdit, check func() error) (ReviewedEditPreview, error) {
+func (s *DocumentService) prepareReviewedEdit(ctx context.Context, owner document.Owner, label, summary string, boundary insight.Boundary, targets []lspedit.DocumentEdit, check func() error) (ReviewedEditPreview, error) {
 	if err := ctx.Err(); err != nil {
 		return ReviewedEditPreview{}, err
 	}

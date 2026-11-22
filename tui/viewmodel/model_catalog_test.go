@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"crude/agent/provider"
-	settingsui "crude/tui/settings"
-	"crude/types"
+	settingsui "crude/tui/screens/settingspages"
+	"crude/types/setting"
 )
 
 // The model catalog lives in the core, so a catalog update refetches the
@@ -17,11 +17,11 @@ func TestCatalogUpdateIsSilentAndRefreshesExistingAgentDraft(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
 	modelID := "catalog-ui-" + t.TempDir()
-	wsOf(app).SetAppDefaults(types.AppSettings{
+	wsOf(app).SetAppDefaults(setting.App{
 		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "test", Connection: provider.Template{ProviderURL: "https://example.test/v1", APIStandard: "openai"}}},
-		Agents:   types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: modelID}}},
+		Agents:   setting.Agents{Categories: map[string]setting.Category{"default": {AccountID: "work", Model: modelID}}},
 	})
-	app.openSettings(types.SettingsScopeApplication)
+	app.openSettings(setting.ScopeApplication)
 	fw := app.windowManager.Window("workspace-settings")
 	widget := settingsWidgetForTest(t, fw)
 	root := widget.Component().(*settingsui.WorkspaceSettingsSurface)
@@ -29,12 +29,12 @@ func TestCatalogUpdateIsSilentAndRefreshesExistingAgentDraft(t *testing.T) {
 	if !ok {
 		t.Fatal("opening the agent editor did not prefetch its models")
 	}
-	_, _ = app.Update(settingsui.ModelsMsg{ProviderID: open.ProviderID, AccountID: open.AccountID, Generation: open.Generation, Models: []types.ModelEntry{{ID: modelID}}})
+	_, _ = app.Update(settingsui.ModelsMsg{ProviderID: open.ProviderID, AccountID: open.AccountID, Generation: open.Generation, Models: []setting.ModelEntry{{ID: modelID}}})
 	model := widget.ModelForTest()
 	category := model.SelectedCategory()
 	model.SetValueForTest(category, "agent-instructions", "Keep this unsaved draft")
 	before := app.ws.LoadAppSettings()
-	_, command := app.Update(types.ModelCatalogUpdatedMsg{Generation: 1})
+	_, command := app.Update(setting.ModelCatalogUpdatedMsg{Generation: 1})
 	if command == nil {
 		t.Fatal("catalog update did not refetch the loaded account through the core")
 	}
@@ -42,7 +42,7 @@ func TestCatalogUpdateIsSilentAndRefreshesExistingAgentDraft(t *testing.T) {
 	if !ok || refetch.AccountID != "work" {
 		t.Fatalf("catalog update issued %#v, want a silent model refetch", refetch)
 	}
-	_, _ = app.Update(settingsui.ModelsMsg{ProviderID: refetch.ProviderID, AccountID: refetch.AccountID, Generation: refetch.Generation, Models: []types.ModelEntry{
+	_, _ = app.Update(settingsui.ModelsMsg{ProviderID: refetch.ProviderID, AccountID: refetch.AccountID, Generation: refetch.Generation, Models: []setting.ModelEntry{
 		{ID: modelID, ContextWindow: 128000, Modalities: []string{provider.ModalityImage}, ModalitySupport: map[string]bool{provider.ModalityImage: true}},
 	}})
 	if widget.ModelForTest() != model || model.ValueForTest(category, "agent-instructions") != "Keep this unsaved draft" || model.ValueForTest(category, "modality-image") != "yes" {

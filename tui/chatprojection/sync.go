@@ -1,4 +1,3 @@
-// Package chatprojection holds workspace→TUI chat message projection and rendering.
 package chatprojection
 
 import (
@@ -8,14 +7,14 @@ import (
 	"strconv"
 	"strings"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // MessageSync projects workspace-owned chat rows into a retained TUI store.
 // Stable IDs preserve render caches; structural diffs drive virtlist updates.
 type MessageSync struct {
-	Messages         []*types.ChatMessage
-	MsgByID          map[string]*types.ChatMessage
+	Messages         []*conversation.ChatMessage
+	MsgByID          map[string]*conversation.ChatMessage
 	version          uint64
 	sourceVersion    uint64
 	sourceGeneration uint64
@@ -25,7 +24,7 @@ type MessageSync struct {
 
 // NewMessageSync creates an empty projection store.
 func NewMessageSync() *MessageSync {
-	return &MessageSync{MsgByID: make(map[string]*types.ChatMessage)}
+	return &MessageSync{MsgByID: make(map[string]*conversation.ChatMessage)}
 }
 
 // BumpVersion increments the render-generation counter.
@@ -51,7 +50,7 @@ type SyncResult struct {
 // SyncMessages updates the retained projection from workspace-owned data.
 // Returns a SyncResult when the source generation/version tuple changes.
 // Caller applies virtlist AppendItem / InvalidateItem / RebuildItems.
-func (s *MessageSync) SyncMessages(messages []types.ChatMessage, sourceVersion, sourceGeneration uint64) (SyncResult, bool) {
+func (s *MessageSync) SyncMessages(messages []conversation.ChatMessage, sourceVersion, sourceGeneration uint64) (SyncResult, bool) {
 	if s.sourceSet && sourceVersion == s.sourceVersion && sourceGeneration == s.sourceGeneration {
 		return SyncResult{}, false
 	}
@@ -59,8 +58,8 @@ func (s *MessageSync) SyncMessages(messages []types.ChatMessage, sourceVersion, 
 	previous := s.MsgByID
 	previousMessages := s.Messages
 	previousLen := len(previousMessages)
-	next := make([]*types.ChatMessage, 0, len(messages))
-	nextByID := make(map[string]*types.ChatMessage, len(messages)*2)
+	next := make([]*conversation.ChatMessage, 0, len(messages))
+	nextByID := make(map[string]*conversation.ChatMessage, len(messages)*2)
 	changedIDs := make([]string, 0)
 	structureChanged := len(messages) < previousLen
 	pureAppend := len(messages) >= previousLen
@@ -127,7 +126,7 @@ func (s *MessageSync) trackMessageID(id string) {
 	}
 }
 
-func sameMessageData(current, incoming *types.ChatMessage) bool {
+func sameMessageData(current, incoming *conversation.ChatMessage) bool {
 	return current.InternalID == incoming.InternalID &&
 		current.Role == incoming.Role &&
 		current.Origin == incoming.Origin &&
@@ -197,7 +196,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 // never to the bodies of unchanged rows. It returns false without mutating
 // anything when the delta cannot be applied exactly; the caller then performs
 // a complete SyncMessages.
-func (s *MessageSync) ApplyChanges(changed []types.ChatMessage, removed, order []string, sourceVersion, sourceGeneration uint64) (SyncResult, bool) {
+func (s *MessageSync) ApplyChanges(changed []conversation.ChatMessage, removed, order []string, sourceVersion, sourceGeneration uint64) (SyncResult, bool) {
 	if !s.sourceSet || sourceGeneration != s.sourceGeneration || sourceVersion <= s.sourceVersion {
 		return SyncResult{}, false
 	}
@@ -300,7 +299,7 @@ func (s *MessageSync) ApplyChanges(changed []types.ChatMessage, removed, order [
 				}
 			}
 		}
-		next := append(s.Messages[:prefix:prefix], make([]*types.ChatMessage, 0, len(order)-prefix)...)
+		next := append(s.Messages[:prefix:prefix], make([]*conversation.ChatMessage, 0, len(order)-prefix)...)
 		for _, id := range order[prefix:] {
 			next = append(next, s.MsgByID[id])
 		}

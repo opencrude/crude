@@ -6,9 +6,9 @@ import (
 	"errors"
 	"time"
 
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/terminalvt"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/terminalvt"
 	"crude/workspace"
 )
 

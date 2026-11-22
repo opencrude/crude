@@ -2,7 +2,7 @@
 
 > Status: Current — protocol v2 carriers, retained sessions, typed commands and pushed replicas.
 
-Normal `crude` startup uses `app.ConnectCore` and `core/port/remote.Attach`.
+Normal `crude` startup uses `app.ConnectCore` and `core/shellport/remote.Attach`.
 The per-user core owns runtime workspaces/sessions, configuration/accounts,
 catalogs and prompt history; independently rendered shells detach without stopping
 peer execution. `--core [--server] [--core-grace d]`, `--core-status`,
@@ -112,7 +112,7 @@ the ordered effect lane; unknown methods never opt themselves into a read path.
 This does not bypass the shared 16-job admission bound or process governor.
 
 `lsp.selection_formatting` returns a detached, source-qualified edit plan through
-`core/protocol/formatting.go`. It never writes text or disk. The requesting shell
+`core/coreprotocol/formatting.go`. It never writes text or disk. The requesting shell
 fences its private selection and applies the plan through ordinary document edits;
 there is no second canonical formatting writer or raw caller-supplied LSP route.
 
@@ -236,14 +236,14 @@ mutable Workspace.
   references. Core actors now own semantic ingress/ticks; connected shells install
   immutable deltas on Update and present accepted effects without reducing again.
   `workspace/` must not import Bubble Tea or TUI rendering.
-- `lsp/client/` owns the nonvisual LSP transport. Workspace installs its default
+- `lsp/lspclient/` owns the nonvisual LSP transport. Workspace installs its default
   runtime without TUI construction. Shared documents own didOpen/didChange/save;
   exact per-client views release only their own LSP interest. Detach never stops a
   peer's language server or replaces canonical text with shell-provided bytes.
 - The new `core/` path owns retained workspace actors, atomic snapshot/subscription
   admission, bounded resource workers, durable mutation receipts and private framed
   client transport. `coreclient.WorkspaceView` is a detached read mirror, never a
-  fake Workspace containing runtime services. `core/port/remote` is the only CLI
+  fake Workspace containing runtime services. `core/shellport/remote` is the only CLI
   runtime path; `shellport.Local` remains core/test infrastructure. Read
   `docs/reference/core-client-protocol.md` before extending it. `--ssh` selects a
   strictly host-key-verified system-SSH connection to the fixed stdio bridge;
@@ -312,7 +312,7 @@ primitive bytes. Runtime paths use slash directory separators in the fingerprint
 on every host; native path separators do not change wire identity.
 
 The build cohort is a full 64-hex SHA-256 of platform-independent production
-source, not the native image ID. `internal/wiregen/` includes all platform/tag
+source, not the native image ID. `tools/wiregen/` includes all platform/tag
 alternatives, checked-in local forks, embedded assets, prompt templates, module
 manifests, generated codecs and native dependency pins; it does not hash local
 native archives or executable bytes. Supported builds use the canonical cgo/native
@@ -322,8 +322,8 @@ checked-out cohort inputs stable across hosts without treating binary data as
 text. This establishes source equality, not user authentication or proof that an
 arbitrary binary was built correctly.
 
-Regenerate explicitly with `go run ./internal/wiregen` after production-source
-changes. `go run ./internal/wiregen -check` verifies the cohort without writing or
+Regenerate explicitly with `go run ./tools/wiregen` after production-source
+changes. `go run ./tools/wiregen -check` verifies the cohort without writing or
 regenerating anything. Make build/test/benchmark targets, `scripts/build.sh` and
 `scripts/release.py` invoke that check; arbitrary direct `go build` does not run
 generators or establish freshness. `app.BuildID` / `buildinfo.ExecutableID` identify
@@ -458,7 +458,7 @@ generation, never broadcast or automatically written to a system clipboard.
 
 ## Typed methods
 
-The exact request/result definitions live in `core/protocol/*.go`; dispatch is
+The exact request/result definitions live in `core/coreprotocol/*.go`; dispatch is
 closed and typed, not arbitrary method invocation. Current families are:
 
 | Family | Operations |
@@ -734,7 +734,7 @@ shell can use different file overrides while editing the same canonical bytes.
 
 
 The independent `insight` document topic pushes bounded
-`types.DocumentInsight` snapshots derived from those canonical revisions.
+`insight.DocumentInsight` snapshots derived from those canonical revisions.
 Its service generation and version order analysis, not text or author history.
 An insight ACK cannot delay document admission, text-topic ACKs or peer analysis.
 Close/reopen and workspace/attachment fences use the same exact-open token.

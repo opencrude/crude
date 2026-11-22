@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 )
 
 type assignmentEventSender struct {
@@ -47,7 +47,7 @@ func TestChildAssignmentDisplayUsesTypedFields(t *testing.T) {
 		{"emphasis in description stays literal", "Audit *all* parsers", "Report", "Audit *all* parsers\n\nReport"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := childAssignmentDisplay(agent.SubAgentSpec{Description: tc.description, Instructions: tc.instructions}); got != tc.want {
+			if got := childAssignmentDisplay(turnloop.SubAgentSpec{Description: tc.description, Instructions: tc.instructions}); got != tc.want {
 				t.Fatalf("display = %q; want %q", got, tc.want)
 			}
 		})
@@ -147,6 +147,6 @@ func TestChildAssignmentChatShowsAuthoredTextNotProviderEnvelope(t *testing.T) {
 	}
 }
 
-func (s *assignmentEventSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *assignmentEventSender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

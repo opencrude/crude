@@ -13,7 +13,7 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 
 	_ "modernc.org/sqlite"
 )

@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
@@ -54,7 +55,7 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	owner, err := json.Marshal(map[string]any{"spec": agent.SubAgentSpec{
+	owner, err := json.Marshal(map[string]any{"spec": turnloop.SubAgentSpec{
 		ID: "pending-child", Name: "Kept Child", Category: "crafter", ParentID: "root",
 		ParentTurn: 1, Depth: 1, Model: "child-model", AccountID: "test-account",
 	}})
@@ -95,8 +96,8 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 		provider.NewTextMessage("assistant", "Completed report."),
 	}
 	if _, err := sessiondb.ReplaceMessagesWithMeta(childDB, "child", messages, []int{1, 1}, []sessiondb.DisplayMeta{
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "assignment", Snapshots: []types.ConversationMessage{{Role: "assignment", Content: messages[0].Content.String()}}},
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "assistant", Snapshots: []types.ConversationMessage{{Role: "assistant", Content: messages[1].Content.String()}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "assignment", Snapshots: []conversation.Message{{Role: "assignment", Content: messages[0].Content.String()}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "assistant", Snapshots: []conversation.Message{{Role: "assistant", Content: messages[1].Content.String()}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 	t.Cleanup(ws.Status.Close)
 	manager.AddOrchestrator("root", NewAgentState("root", NewConversation(), nopLogger{}))
 	ws.HydrateSession(frontend.SessionID)
-	if usage, ok := ws.UsageSummary("root", types.UsageSession); !ok || usage.InputTotal.Value != 110 || usage.Output.Value != 29 || usage.CacheRead.Value != 2 {
+	if usage, ok := ws.UsageSummary("root", statuscenter.UsageSession); !ok || usage.InputTotal.Value != 110 || usage.Output.Value != 29 || usage.CacheRead.Value != 2 {
 		t.Fatalf("hydrated request usage = %#v ok=%v", usage, ok)
 	}
 
@@ -143,7 +144,7 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 		t.Fatalf("hydrated IDs = %v", ids)
 	}
 	ws.SyncAgentStatusInventory()
-	for id, phase := range map[string]types.AgentPhase{"cancelled": types.AgentCancelled, "failed_timeout": types.AgentFailed} {
+	for id, phase := range map[string]statuscenter.AgentPhase{"cancelled": statuscenter.AgentCancelled, "failed_timeout": statuscenter.AgentFailed} {
 		status, ok := ws.Status.Agent(id)
 		if !ok || status.Phase != phase || status.Ref.SessionID != "parent" || !status.ReadOnly {
 			t.Fatalf("cold terminal outcome changed: id=%s status=%+v", id, status)

@@ -11,7 +11,7 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -234,7 +234,7 @@ func TestHydratedCompactToolSnapshotKeepsCollaborationIdentity(t *testing.T) {
 	} {
 		views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 			Msg: provider.ChatMessage{Role: "tool", ToolCallID: "call"},
-			Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{
+			Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{
 				Role: "tool", ToolName: tc.name, ToolArgs: tc.input, ToolStatus: "success", ToolPreviewPhase: "done",
 			}}},
 		}})
@@ -265,7 +265,7 @@ func TestLiveAndHydratedParallelAgentIdentitiesAreIdentical(t *testing.T) {
 	live[0].ToolDuration = 0
 	views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 		Msg: provider.ChatMessage{Role: "tool", ToolCallID: "call"},
-		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{
+		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{
 			InternalID: "batch", Role: "tool", ToolID: "call", ToolName: "multi_tool_use.parallel", ToolInput: input,
 			ToolArgs: "2 tools", Content: result, ToolStatus: "success", ToolPreviewPhase: "done",
 		}}},
@@ -354,7 +354,7 @@ func TestLiveAndHydratedCollaborationOutcomeRows(t *testing.T) {
 // and a failure so grouping cannot cross any of them.
 func TestLiveAndHydratedActivityGroupsAreIdentical(t *testing.T) {
 	conv := workspace.NewConversation()
-	conv.AppendMessage(workspace.Message{InternalID: "progress", Role: "assistant", Content: "Checking the workspace.", Time: time.Unix(1, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "progress", Role: "assistant", Content: "Checking the workspace.", Time: time.Unix(1, 0)})
 	for i, c := range []projectionCase{
 		{tool: "read_file", rawArgs: `path: one.go`, content: "package one"},
 		{tool: "execute_command", rawArgs: `command: go test ./...`, operands: map[string]any{"command": "go test ./..."}, content: "PASS"},
@@ -369,15 +369,15 @@ func TestLiveAndHydratedActivityGroupsAreIdentical(t *testing.T) {
 			break
 		}
 	}
-	conv.AppendMessage(workspace.Message{InternalID: "edit", Role: "tool", ToolName: "edit_file", ToolStatus: "success", ToolPreviewPhase: "done", ToolArgs: "main.go", Content: "Replaced 1 occurrence", Time: time.Unix(4, 0)})
-	conv.AppendMessage(workspace.Message{InternalID: "reply:progress-2", Role: "assistant", Content: "Running final checks.", Time: time.Unix(5, 0)})
-	conv.AppendMessage(workspace.Message{InternalID: "failure", Role: "tool", ToolName: "execute_command", ToolStatus: "error", ToolPreviewPhase: "error", ToolArgs: "go test ./...", Content: "Command failed: exit 1", Time: time.Unix(6, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "edit", Role: "tool", ToolName: "edit_file", ToolStatus: "success", ToolPreviewPhase: "done", ToolArgs: "main.go", Content: "Replaced 1 occurrence", Time: time.Unix(4, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "reply:progress-2", Role: "assistant", Content: "Running final checks.", Time: time.Unix(5, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "failure", Role: "tool", ToolName: "execute_command", ToolStatus: "error", ToolPreviewPhase: "error", ToolArgs: "go test ./...", Content: "Command failed: exit 1", Time: time.Unix(6, 0)})
 	live, _ := chatMessagesFromConversation(conv)
 	// The persisted transcript uses the same canonical facts with durable
 	// tool-result metadata. Row identity, text, disclosure, and order must agree.
 	var history []sessiondb.MessageWithMeta
 	for _, message := range conv.Messages() {
-		snapshot := ctypes.ConversationMessage(message)
+		snapshot := conversation.Message(message)
 		if snapshot.Role == "tool" && snapshot.ToolName != "edit_file" && snapshot.InternalID != "failure" {
 			snapshot.ToolArgs = ""
 			switch snapshot.ToolName {
@@ -387,7 +387,7 @@ func TestLiveAndHydratedActivityGroupsAreIdentical(t *testing.T) {
 				snapshot.ToolArgs = "command: go test ./..."
 			}
 		}
-		history = append(history, sessiondb.MessageWithMeta{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{snapshot}}})
+		history = append(history, sessiondb.MessageWithMeta{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{snapshot}}})
 	}
 	hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(history))
 	lr, hr := newParityRenderer(), newParityRenderer()
@@ -458,7 +458,7 @@ func exportRows(t *testing.T, r *chatprojection.Renderer, expanded bool) []chatp
 
 // liveToolMessages drives the conversation the way agent events do and returns
 // the projections the viewmodel publishes for it.
-func liveToolMessages(t *testing.T, toolID string, c projectionCase) []ctypes.ChatMessage {
+func liveToolMessages(t *testing.T, toolID string, c projectionCase) []conversation.ChatMessage {
 	t.Helper()
 	conv := workspace.NewConversation()
 	internalID := "live-1"
@@ -493,13 +493,13 @@ func liveToolMessages(t *testing.T, toolID string, c projectionCase) []ctypes.Ch
 // hydratedViews reproduces what a resumed session reads back: the canonical tool
 // snapshot the session persists, with the raw argument summary it stores and the
 // operands applyCanonicalToolOperands derives.
-func hydratedViews(t *testing.T, toolID string, c projectionCase) []workspace.ChatMessageView {
+func hydratedViews(t *testing.T, toolID string, c projectionCase) []conversation.Message {
 	t.Helper()
 	status, phase := "success", "done"
 	if c.isError {
 		status, phase = "error", "error"
 	}
-	snapshot := ctypes.ConversationMessage{
+	snapshot := conversation.Message{
 		InternalID: "persisted-0", Role: "tool", ToolID: toolID,
 		ToolName: c.tool, ToolArgs: c.rawArgs,
 		ToolStatus: status, ToolPreviewPhase: phase,
@@ -522,7 +522,7 @@ func hydratedViews(t *testing.T, toolID string, c projectionCase) []workspace.Ch
 		Msg: provider.ChatMessage{Role: "tool", ToolCallID: toolID},
 		Meta: sessiondb.DisplayMeta{
 			SnapshotVersion: sessiondb.ConversationSnapshotVersion,
-			Snapshots:       []ctypes.ConversationMessage{snapshot},
+			Snapshots:       []conversation.Message{snapshot},
 		},
 	}})
 	if len(views) != 1 {

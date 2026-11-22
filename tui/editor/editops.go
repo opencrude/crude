@@ -163,7 +163,7 @@ func (e *Editor) runeBeforeCursor() rune {
 	if start.Line != e.cursor.Line {
 		return 0
 	}
-	text := e.buf.GetText(start, e.cursor)
+	text := e.buf.Text(start, e.cursor)
 	if text == "" {
 		return 0
 	}

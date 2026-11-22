@@ -16,12 +16,13 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/buildinfo"
-	"crude/core/protocol"
-	"crude/retry"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/internal/buildinfo"
+	"crude/internal/retry"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/handover"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -95,8 +96,8 @@ func TestCoreRestartNaturalCheckpointColdSuccessorAndOneContinuation(t *testing.
 	}}
 	root, home := t.TempDir(), t.TempDir()
 	factory := func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "checkpoint", types.Settings{}, coreTestLogger{})
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		ws := workspace.NewWorkspace(root, "", "checkpoint", setting.Settings{}, coreTestLogger{})
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		ws.SetBackendConfig(cfg, home)
 		return ws, nil
 	}
@@ -307,7 +308,7 @@ func TestCoreRestartNaturalCheckpointColdSuccessorAndOneContinuation(t *testing.
 		t.Fatal(err)
 	}
 	callCore(t, next, "observe-repeat-permit", nextWS, coreprotocol.CoreRestartContinue, consume)
-	if shown, _ := reopened.Goal(); shown.Status != types.GoalPaused {
+	if shown, _ := reopened.Goal(); shown.Status != conversation.GoalPaused {
 		t.Fatal("repeat permit overwrote the newer user pause")
 	}
 	finishSecond.Do(func() { close(releaseSecond) })

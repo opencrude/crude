@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	"crude/agent/sessiondb"
-	types "crude/types"
+	"crude/types/insight"
+	"crude/types/statuscenter"
 )
 
 func BenchmarkProjectInsightsCached10kDiagnostics(b *testing.B) {
@@ -23,22 +24,22 @@ func diagnosticSummaryFixture(b testing.TB) *LSPManager {
 	docs := NewDocumentService(b.TempDir(), nil, manager)
 	b.Cleanup(manager.Close)
 	b.Cleanup(docs.Close)
-	diagnostics := make([]LSPDiagnostic, 100)
+	diagnostics := make([]insight.LSPDiagnostic, 100)
 	for index := range diagnostics {
-		diagnostics[index] = LSPDiagnostic{Line: index, EndLine: index, Severity: 1 + index%4, Message: fmt.Sprintf("issue-%d", index)}
+		diagnostics[index] = insight.LSPDiagnostic{Line: index, EndLine: index, Severity: 1 + index%4, Message: fmt.Sprintf("issue-%d", index)}
 	}
 	for file := range 100 {
 		path := fmt.Sprintf("file-%d.go", file)
-		boundary := types.InsightBoundary{
-			Source:   types.InsightSource{WorkspaceGeneration: docs.Insight.generation, DocumentID: path, Path: path, Lifetime: "fixture", Revision: 1, Kind: "canonical"},
-			Context:  types.InsightContext{ID: "fixture", Root: "project", Generation: 1, UnknownInputs: []string{"Incomplete build graph"}},
-			Producer: types.InsightProducer{InstanceID: "fixture", Provider: "fixture", ToolIdentity: "fixture"},
+		boundary := insight.Boundary{
+			Source:   insight.Source{WorkspaceGeneration: docs.Insight.generation, DocumentID: path, Path: path, Lifetime: "fixture", Revision: 1, Kind: "canonical"},
+			Context:  insight.Context{ID: "fixture", Root: "project", Generation: 1, UnknownInputs: []string{"Incomplete build graph"}},
+			Producer: insight.Producer{InstanceID: "fixture", Provider: "fixture", ToolIdentity: "fixture"},
 		}
 		if err := docs.Insight.diagnostics.Observe(boundary); err != nil {
 			b.Fatal(err)
 		}
 		v := 7
-		if _, err := docs.Insight.diagnostics.Publish(types.InsightDiagnosticPublication{Boundary: boundary, Sequence: 1, WireVersion: 7, ReportedVersion: &v, Diagnostics: diagnostics}); err != nil {
+		if _, err := docs.Insight.diagnostics.Publish(insight.DiagnosticPublication{Boundary: boundary, Sequence: 1, WireVersion: 7, ReportedVersion: &v, Diagnostics: diagnostics}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -68,12 +69,12 @@ func BenchmarkUsageSummaryCached1000Requests(b *testing.B) {
 	}
 	workspace := &Workspace{AgentMgr: NewAgentManager(), SessionsByAgent: map[string]*Session{"root": session}}
 	workspace.AgentMgr.AddOrchestrator("root", NewAgentState("root", nil, nil))
-	if _, ok := workspace.UsageSummary("root", types.UsageThisAgent); !ok {
+	if _, ok := workspace.UsageSummary("root", statuscenter.UsageThisAgent); !ok {
 		b.Fatal("usage fixture did not summarize")
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_, _ = workspace.UsageSummary("root", types.UsageThisAgent)
+		_, _ = workspace.UsageSummary("root", statuscenter.UsageThisAgent)
 	}
 }

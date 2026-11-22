@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -31,7 +31,7 @@ func TestChildTerminalPublicationCommitsContextTranscriptAndRecoveryTogether(t *
 	if err := sessiondb.CreateSessionRow(db, "child"); err != nil {
 		t.Fatal(err)
 	}
-	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{
+	handle := &turnloop.SubAgentHandle{Spec: turnloop.SubAgentSpec{
 		ID: "child", Provider: "provider", AccountID: "account", Model: "model",
 	}}
 	assignment := provider.NewTextMessage("user", "keep the original assignment")
@@ -239,13 +239,13 @@ func TestChildRuntimeReceiptImmediatelyPreparesCompactionFromExactSource(t *test
 	case <-time.After(5 * time.Second):
 		t.Fatal("real child provider request did not start")
 	}
-	handle, exists := runner.Manager().GetActive(agent.AgentID(identity.AgentID))
+	handle, exists := runner.Manager().Active(turnloop.AgentID(identity.AgentID))
 	if !exists {
 		t.Fatal("actual child handle is unavailable")
 	}
 	prepared := make(chan error, 1)
 	original := handle.Agent.PrepareCompaction
-	handle.Agent.PrepareCompaction = func(source agent.CompactionSource) error {
+	handle.Agent.PrepareCompaction = func(source turnloop.CompactionSource) error {
 		before, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, identity.AgentID)
 		if err == nil && !found {
 			err = errors.New("child receipt source is unavailable")
@@ -538,7 +538,7 @@ func TestChildParkedStopPreservesNewerContextAndPassiveResume(t *testing.T) {
 	}
 	t.Cleanup(resumed.Close)
 	snapshots := resumed.CompletedSubAgentSnapshots()
-	if len(snapshots) != 1 || snapshots[0].Result.AgentID != agent.AgentID(f.childID) || snapshots[0].Result.Status != agent.SubAgentCancelled || !reflect.DeepEqual(after, snapshots[0].Messages) {
+	if len(snapshots) != 1 || snapshots[0].Result.AgentID != turnloop.AgentID(f.childID) || snapshots[0].Result.Status != turnloop.SubAgentCancelled || !reflect.DeepEqual(after, snapshots[0].Messages) {
 		t.Fatalf("passive resume changed the child review evidence: %+v", snapshots)
 	}
 	if len(resumed.PendingSubAgentSnapshots()) != 0 || resumed.SubAgentRunner().Running() || resumed.SubAgentRunner().Manager().ActiveCount() != 0 || f.requests.Load() != 0 || f.effects.Load() != 0 {
@@ -738,7 +738,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			t.Setenv("USERPROFILE", home)
 			var requests, effects, acknowledgements atomic.Int32
 			entered, release := make(chan struct{}), make(chan struct{})
-			var handle *agent.SubAgentHandle
+			var handle *turnloop.SubAgentHandle
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				switch requests.Add(1) {
@@ -825,7 +825,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 				t.Fatal("real child provider request did not start")
 			}
 			var exists bool
-			handle, exists = runner.Manager().GetActive(agent.AgentID(identity.AgentID))
+			handle, exists = runner.Manager().Active(turnloop.AgentID(identity.AgentID))
 			if !exists {
 				t.Fatal("real child handle is unavailable")
 			}
@@ -877,7 +877,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			}
 			if failure == "parent-result-restart" {
 				captured, err := terminalIntent(checkpoint)
-				if err != nil || captured == nil || captured.Child == nil || captured.Child.Status != agent.SubAgentCompleted || captured.Child.ReportID == "" || captured.Run.RunID != runID || !captured.Stopped {
+				if err != nil || captured == nil || captured.Child == nil || captured.Child.Status != turnloop.SubAgentCompleted || captured.Child.ReportID == "" || captured.Run.RunID != runID || !captured.Stopped {
 					t.Fatalf("child restart has no typed captured terminal provenance: intent=%+v err=%v", captured, err)
 				}
 				path := s.dbPath
@@ -921,7 +921,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			}
 			waitSessionSupervisedJourney(t, "child persistence-only settlement", runner.Wait)
 			completed := s.CompletedSubAgentSnapshots()
-			if len(completed) != 1 || completed[0].Result.Status != agent.SubAgentCompleted || completed[0].Result.ReportID == "" || requests.Load() != 3 || effects.Load() != 1 || acknowledgements.Load() != 2 {
+			if len(completed) != 1 || completed[0].Result.Status != turnloop.SubAgentCompleted || completed[0].Result.ReportID == "" || requests.Load() != 3 || effects.Load() != 1 || acknowledgements.Load() != 2 {
 				t.Fatalf("checked child finalization lost its result or replayed work: results=%+v requests=%d effects=%d acknowledgements=%d", completed, requests.Load(), effects.Load(), acknowledgements.Load())
 			}
 			if len(completed[0].Messages) != len(before)+1 || !reflect.DeepEqual(before, completed[0].Messages[:len(before)]) || completed[0].Messages[len(before)].Msg.EffectiveOrigin() != provider.OriginTurnStopped {
@@ -1068,7 +1068,7 @@ accepted:
 	var releaseCheckpoint chan struct{}
 	var expectedSteering provider.ChatMessage
 	if lateSteering {
-		handle, exists := runner.Manager().GetActive(agent.AgentID(identity.AgentID))
+		handle, exists := runner.Manager().Active(turnloop.AgentID(identity.AgentID))
 		if !exists {
 			t.Fatal("actual child handle is unavailable")
 		}
@@ -1099,7 +1099,7 @@ accepted:
 		case <-time.After(5 * time.Second):
 			t.Fatal("real stopped child did not publish its captured boundary")
 		}
-		handle, _ := runner.Manager().GetActive(agent.AgentID(identity.AgentID))
+		handle, _ := runner.Manager().Active(turnloop.AgentID(identity.AgentID))
 		runID, _ := handle.RunIdentity()
 		published, err := store.Publish(t.Context(), collaboration.PublishRequest{
 			SenderID: "human", SenderName: "Human", Origin: collaboration.OriginHuman,
@@ -1166,7 +1166,7 @@ accepted:
 		}
 	}
 	before := s.CompletedSubAgentSnapshots()
-	if len(before) != 1 || before[0].Result.Status != agent.SubAgentCancelled {
+	if len(before) != 1 || before[0].Result.Status != turnloop.SubAgentCancelled {
 		t.Fatalf("real active Stop did not retain a cancelled review: %+v", before)
 	}
 	partials, stops := 0, 0

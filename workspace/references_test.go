@@ -334,7 +334,7 @@ func TestReferenceStore_ListReferences_FiltersDeleted(t *testing.T) {
 	}
 
 	// Verify deleted ref still in map but not active
-	got, ok := store.GetReference(ref2.ID)
+	got, ok := store.Reference(ref2.ID)
 	if !ok {
 		t.Error("deleted ref should still be in map")
 	}

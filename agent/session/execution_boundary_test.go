@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
 )
 
@@ -37,7 +37,7 @@ func TestManagedChildNativeWritesCannotEscapeCheckout(t *testing.T) {
 				t.Fatal(err)
 			}
 			r := NewSubAgentRunner(s, 1)
-			spec := agent.SubAgentSpec{ID: "child", Name: "Child", Isolation: string(worktree.Isolated), ExecutionRoot: checkout, Policy: safety.DefaultPolicy()}
+			spec := turnloop.SubAgentSpec{ID: "child", Name: "Child", Isolation: string(worktree.Isolated), ExecutionRoot: checkout, Policy: safety.DefaultPolicy()}
 			if scoped {
 				spec.FileOwnership = []string{logical, checkout}
 				if err := r.FileOwnership().PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
@@ -141,7 +141,7 @@ func TestManagedClaimUpdatesUseTargetCheckoutAndRejectSharedPaths(t *testing.T) 
 		if _, _, err := s.executeClaimsTool(ctx, parent.ID, "agent_update_claims", params); err == nil || !strings.Contains(err.Error(), "execution checkout") {
 			t.Fatalf("shared claim accepted: %v", err)
 		}
-		if !s.FileOwnership().WriteScopeAllows(agent.AgentID(child.ID), filepath.Join(checkout, "owned")) || s.FileOwnership().WriteScopeAllows(agent.AgentID(child.ID), filepath.Join(logical, "victim")) {
+		if !s.FileOwnership().WriteScopeAllows(turnloop.AgentID(child.ID), filepath.Join(checkout, "owned")) || s.FileOwnership().WriteScopeAllows(turnloop.AgentID(child.ID), filepath.Join(logical, "victim")) {
 			t.Fatal("failed repair changed ownership projection")
 		}
 		remaining, err := store.Claims(t.Context(), child.ID, true)

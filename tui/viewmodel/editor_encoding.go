@@ -4,7 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"time"
 
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/workspace"

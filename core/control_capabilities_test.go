@@ -10,10 +10,10 @@ import (
 
 	"crude/agent/capability"
 	"crude/agent/provider"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -32,9 +32,9 @@ func runCapabilityControl(t *testing.T, a *actor, id, command string, input any)
 }
 
 func TestControlCapabilitiesManageSecretsAndConnectionsWithoutRevealingValues(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
-	app := types.AppSettings{}
+	app := setting.App{}
 	app.Capabilities = captypes.WithDefaults(app.Capabilities)
 	ws.SetAppDefaults(app)
 	service, err := capability.New(ws.RootPath, filepath.Join(t.TempDir(), "artifacts"), nil)
@@ -45,9 +45,9 @@ func TestControlCapabilitiesManageSecretsAndConnectionsWithoutRevealingValues(t 
 	if err := service.Configure(context.Background(), ws.LoadAppSettings().Capabilities); err != nil {
 		t.Fatal(err)
 	}
-	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+	ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 		next := ws.AppDefaults()
-		err := types.ApplySettingsEdits(&next, edits)
+		err := setting.ApplyEdits(&next, edits)
 		return next, err
 	}
 	a := &actor{ws: ws}
@@ -106,9 +106,9 @@ func TestControlCapabilitiesManageSecretsAndConnectionsWithoutRevealingValues(t 
 }
 
 func TestControlCapabilitiesManageSearchMethods(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
-	app := types.AppSettings{Accounts: map[string]provider.Account{
+	app := setting.App{Accounts: map[string]provider.Account{
 		"example-account": {ID: "example-account", Label: "Example account", APIKey: "fixture-key", ProviderID: "ollama-cloud", Connection: provider.Template{APIStandard: "ollama", ProviderURL: "https://ollama.example/api"}},
 		"chat":            {ID: "chat", Label: "Chat", APIKey: "fixture-key", ProviderID: "custom", Connection: provider.Template{APIStandard: "openai", ProviderURL: "https://chat.example/v1"}},
 	}}
@@ -122,9 +122,9 @@ func TestControlCapabilitiesManageSearchMethods(t *testing.T) {
 	if err := service.Configure(context.Background(), ws.LoadAppSettings().Capabilities); err != nil {
 		t.Fatal(err)
 	}
-	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+	ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 		next := ws.AppDefaults()
-		err := types.ApplySettingsEdits(&next, edits)
+		err := setting.ApplyEdits(&next, edits)
 		return next, err
 	}
 	a := &actor{ws: ws}

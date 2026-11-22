@@ -4,7 +4,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // Transient editor aids share chrome and dismissal. Their request owners keep
@@ -27,7 +27,7 @@ func (m *App) newEditorPopover(id ui.OverlayID, title string, body ui.Component,
 // request owners already retain this information in their invocation state.
 type editorPopoverAnchor struct {
 	editor               *editor.Editor
-	source               types.InsightSource
+	source               insight.Source
 	selection            codeActionSelection
 	generation, revision uint64
 	width, height        int

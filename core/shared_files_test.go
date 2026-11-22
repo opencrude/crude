@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 	"crude/workspace/document"
 )

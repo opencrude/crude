@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"crude/agent"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 	"crude/workspace/fileio"
 )
@@ -24,7 +24,7 @@ import (
 //
 // prepared reports whether the caller may launch now; otherwise outcome is the
 // tool result to return.
-func (s *Session) prepareCapabilityPackage(ctx context.Context, live *agent.Agent, request captypes.PreparationRequired) (prepared bool, outcome tools.ToolResult, err error) {
+func (s *Session) prepareCapabilityPackage(ctx context.Context, live *turnloop.Agent, request captypes.PreparationRequired) (prepared bool, outcome tools.ToolResult, err error) {
 	manager := live.AsyncMgr
 	if manager == nil {
 		return false, tools.ToolResult{}, errors.New("MCP package preparation needs this agent's background command system")

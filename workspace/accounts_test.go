@@ -10,7 +10,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // This journey uses real workspace/session persistence rather than testing the
@@ -18,7 +18,7 @@ import (
 func TestAccountSelectionSurvivesMainAgentSwitchAndResume(t *testing.T) {
 	setTestHome(t)
 	home, root := t.TempDir(), t.TempDir()
-	w := NewWorkspace(root, "test-model", "tester", types.Settings{}, &testLogger{})
+	w := NewWorkspace(root, "test-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(w.Close)
 	accounts := map[string]provider.Account{
 		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key", Connection: provider.DefaultTemplates()["openai"]},
@@ -35,7 +35,7 @@ func TestAccountSelectionSurvivesMainAgentSwitchAndResume(t *testing.T) {
 	profile.Categories[session.CategoryDefault] = main
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	w.SetBackendConfig(cfg, home)
-	w.SetAppDefaults(types.AppSettings{Accounts: accounts, LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(setting.App{Accounts: accounts, LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	first, err := w.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestAccountSelectionSurvivesMainAgentSwitchAndResume(t *testing.T) {
 	}
 	settings := first.backend.SettingsSnapshot()
 	settings.AccountID = "work"
-	settings.SessionOverrides = map[string]types.CategorySettings{session.CategoryDefault: {AccountID: "work", Model: "test-model"}}
+	settings.SessionOverrides = map[string]setting.Category{session.CategoryDefault: {AccountID: "work", Model: "test-model"}}
 	if err := w.HandleSettingsSaveForSession(first.SessionID, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -110,9 +110,9 @@ func TestTwoConcurrentSessionsUseIndependentAccounts(t *testing.T) {
 	}
 	cfg.Accounts = accounts
 	cfg.AccountManager = provider.NewAccountManager(accounts, nil)
-	w := NewWorkspace(root, "history-model", "tester", types.Settings{}, &testLogger{})
+	w := NewWorkspace(root, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(w.Close)
-	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	for _, id := range []string{"personal", "work"} {
 		profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 		main := profile.Categories[session.CategoryDefault]

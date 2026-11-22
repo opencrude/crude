@@ -18,16 +18,17 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/clientstate"
 	"crude/core"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
 	"crude/tui/editor"
 	"crude/tui/screens/navigation"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -63,7 +64,7 @@ type navigationConnectedClient struct {
 	startGate   <-chan struct{}
 }
 
-func (r *navigationConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *navigationConnectedRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	base := r.renameConnectedRuntime.NewClient(spec, root, admit).(*renameConnectedClient)
 	r.mu.Lock()
 	start := r.restartStart
@@ -89,7 +90,7 @@ func (c *navigationConnectedClient) Start(ctx context.Context) error {
 	return c.renameConnectedClient.Start(ctx)
 }
 
-func (c *navigationConnectedClient) RequestNavigation(_ context.Context, path, kind string, line, col int, includeDeclaration bool) (types.LSPNavigationResponse, error) {
+func (c *navigationConnectedClient) RequestNavigation(_ context.Context, path, kind string, line, col int, includeDeclaration bool) (insight.LSPNavigationResponse, error) {
 	r := c.runtime
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -102,7 +103,7 @@ func (c *navigationConnectedClient) RequestNavigation(_ context.Context, path, k
 		return strconv.Quote(fileuri.FromPath(path))
 	}
 	raw := strings.NewReplacer("$MAIN", uri(r.main), "$TARGET", uri(r.target), "$EXTERNAL", uri(r.external)).Replace(r.answer)
-	return types.LSPNavigationResponse{Kind: kind, WireVersion: d.version, JSON: []byte(raw), Unsupported: r.unsupported}, r.err
+	return insight.LSPNavigationResponse{Kind: kind, WireVersion: d.version, JSON: []byte(raw), Unsupported: r.unsupported}, r.err
 }
 
 func (c *navigationConnectedClient) NotifyWatchedFilesChanged(context.Context, string, int) {
@@ -164,15 +165,15 @@ func newNavigationConnectedFixtureTarget(t *testing.T, answer, targetText, targe
 			owned = w
 			w.LSPMgr.SetRuntime(engine)
 			settings := w.AppDefaults()
-			settings.LSP = types.DefaultLSPSettings()
+			settings.LSP = setting.DefaultLSP()
 			settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-			settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+			settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 				Enabled: true, Command: executable, RootMarkers: []string{"go.mod"},
 			}}
 			if targetStart != nil {
 				// LanguageID alone is not a process key: distinct arguments model
 				// the real Rust server rather than sharing the Go fixture process.
-				settings.LSP.Languages["rust"] = types.LSPLanguageSettings{Enabled: true, Command: executable, Args: []string{"--fixture-rust"}, RootMarkers: []string{"go.mod"}}
+				settings.LSP.Languages["rust"] = setting.LSPLanguage{Enabled: true, Command: executable, Args: []string{"--fixture-rust"}, RootMarkers: []string{"go.mod"}}
 			}
 			w.SetAppDefaults(settings)
 			grantSemanticFixture(t, w)
@@ -200,7 +201,7 @@ func (f navigationConnectedFixture) synchronize(t *testing.T, path string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, view, err := f.ws.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 1, Column: 1}); err != nil || view.Source.Kind != "canonical" {
+	if _, view, err := f.ws.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 1, Column: 1}); err != nil || view.Source.Kind != "canonical" {
 		t.Fatal("navigation fixture canonical synchronization failed", view, err)
 	}
 }
@@ -254,10 +255,10 @@ func TestConnectedNavigationFourKeysAndCodeContextActions(t *testing.T) {
 		kind, label string
 		code        rune
 	}{
-		{types.LSPNavigationDefinition, "Go to definition", '.'},
-		{types.LSPNavigationReferences, "Find references", ';'},
-		{types.LSPNavigationTypeDefinition, "Go to type definition", 't'},
-		{types.LSPNavigationImplementation, "Go to implementation", 'm'},
+		{insight.LSPNavigationDefinition, "Go to definition", '.'},
+		{insight.LSPNavigationReferences, "Find references", ';'},
+		{insight.LSPNavigationTypeDefinition, "Go to type definition", 't'},
+		{insight.LSPNavigationImplementation, "Go to implementation", 'm'},
 	} {
 		t.Run(entry.kind, func(t *testing.T) {
 			for _, contextAction := range []bool{false, true} {
@@ -294,7 +295,7 @@ func TestConnectedNavigationFourKeysAndCodeContextActions(t *testing.T) {
 				call := f.engine.navigationCalls[len(f.engine.navigationCalls)-1]
 				f.engine.mu.Unlock()
 				if call.kind != entry.kind || call.path != f.engine.main || call.line != 2 || call.col != 4 ||
-					call.version <= 0 || call.text != renameConnectedMain || call.includeDeclaration != (entry.kind == types.LSPNavigationReferences) {
+					call.version <= 0 || call.text != renameConnectedMain || call.includeDeclaration != (entry.kind == insight.LSPNavigationReferences) {
 					t.Fatalf("entry lost its exact source/provider invocation: %+v", call)
 				}
 				f.key(t, tea.KeyPressMsg{Code: tea.KeyEsc})

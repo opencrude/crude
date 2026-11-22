@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"

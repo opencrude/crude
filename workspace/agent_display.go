@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // AgentDisplayLabel returns a human-readable presentation label for an agent
@@ -19,7 +19,7 @@ func AgentDisplayLabel(node *AgentNode) string {
 	if node == nil {
 		return ""
 	}
-	if name := types.AgentNameForRole(node.Category, node.Label); name != "" {
+	if name := setting.AgentNameForRole(node.Category, node.Label); name != "" {
 		return name
 	}
 	return CategoryDisplayName(node.Category)
@@ -42,7 +42,7 @@ func CategoryDisplayName(category string) string {
 	case session.CategoryCrafter:
 		return "Crafter"
 	case session.CategoryErrand:
-		return types.ErrandName
+		return setting.ErrandName
 	default:
 		return ""
 	}
@@ -53,7 +53,7 @@ func CategoryDisplayName(category string) string {
 // hydrated chat cannot drift from the live projection.
 func SubAgentActivityLabel(name, category, task string) string {
 	label := strings.TrimSpace(name)
-	if category == types.ErrandRoleID {
+	if category == setting.ErrandRoleID {
 		label = ""
 	}
 	if role := CategoryDisplayName(category); role != "" {
@@ -77,7 +77,7 @@ func SubAgentActivityLabel(name, category, task string) string {
 // prompt chrome and status panels consume the same label as the agent tabs.
 func (w *Workspace) agentIdentityLabel(node *AgentNode) string {
 	if node.Parent == nil && SessionIsErrand(w.SessionForAgent(node.ID)) {
-		return types.ErrandName
+		return setting.ErrandName
 	}
 	if label := AgentDisplayLabel(node); label != "" {
 		return label

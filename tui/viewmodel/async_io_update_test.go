@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/clipboard"
+	"crude/internal/clipboard"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
 	"crude/workspace"

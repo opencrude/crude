@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -88,7 +88,7 @@ func (s *sessionSupervisedJourneySender) SendAgentEventWithID(typ string, data a
 	s.mockEventSender.SendAgentEventWithID(typ, data, id)
 }
 
-func (s *sessionSupervisedJourneySender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *sessionSupervisedJourneySender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }
 
@@ -592,8 +592,8 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 		}
 	}
 	if outcome == "complete" && owner == "child" {
-		result, found := runner.Manager().GetCompleted(agent.AgentID(ownerID))
-		if !found || result.Status != agent.SubAgentCompleted || result.ReportID == "" || result.ReportRevision != 1 {
+		result, found := runner.Manager().Completed(turnloop.AgentID(ownerID))
+		if !found || result.Status != turnloop.SubAgentCompleted || result.ReportID == "" || result.ReportRevision != 1 {
 			t.Fatalf("actual child did not finish with its real final report: %+v", result)
 		}
 		artifact, err := store.Artifact(ctx, result.ReportID, result.ReportRevision)

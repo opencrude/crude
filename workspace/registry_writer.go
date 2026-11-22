@@ -3,7 +3,7 @@ package workspace
 import "sync"
 
 type registryCostWriter struct {
-	db     *WorkspaceDB
+	db     *DB
 	logger Logger
 	mu     sync.Mutex
 	latest map[string]float64
@@ -13,7 +13,7 @@ type registryCostWriter struct {
 	once   sync.Once
 }
 
-func newRegistryCostWriter(db *WorkspaceDB, logger Logger) *registryCostWriter {
+func newRegistryCostWriter(db *DB, logger Logger) *registryCostWriter {
 	if db == nil {
 		return nil
 	}

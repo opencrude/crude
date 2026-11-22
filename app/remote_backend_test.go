@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/port/remote"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/core/remoteconn"
+	"crude/core/shellport"
+	"crude/core/shellport/remote"
 )
 
 func TestRemoteBackendFailedTestNeverSaves(t *testing.T) {

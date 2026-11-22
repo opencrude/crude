@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"crude/insight/textindex"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -12,12 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/collaboration"
 	"crude/agent/session"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
+	"crude/insight/textindex"
 	captypes "crude/types/capability"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace/localhistory"
 )
 
@@ -76,7 +77,7 @@ type Workspace struct {
 	// WorkspaceDB is the workspace-level database. Stores workspace
 	// settings, session registry, and project metadata. Created in
 	// NewWorkspace from the project directory's hash-based path.
-	WorkspaceDB *WorkspaceDB
+	WorkspaceDB *DB
 
 	// WorkspaceDir is the dedicated folder for this workspace.
 	// Layout: ~/.crude/workspaces/<hash>/
@@ -123,7 +124,7 @@ type Workspace struct {
 	Git              *GitService
 	Capabilities     *capability.Service
 	Collaboration    *collaboration.Store
-	FileOwnership    *agent.FileOwnership
+	FileOwnership    *turnloop.FileOwnership
 	capabilityMu     sync.RWMutex
 	collaborationErr error
 	instanceID       string
@@ -184,7 +185,7 @@ type Workspace struct {
 
 	// appDefaults is the application-layer settings snapshot supplied by
 	// app/ from ~/.crude/config.json. Workspace overrides layer on top.
-	appDefaults ttypes.AppSettings
+	appDefaults setting.App
 	// The factory worker and successful preference publications install this
 	// observation. Actor reads never inspect the filesystem to derive settings.
 	analysisRootIdentity string
@@ -198,14 +199,14 @@ type Workspace struct {
 
 	// OnAppSettingsSave persists application-layer settings to config.json.
 	// Workspace overrides are stored separately in workspace.db.
-	OnAppSettingsSave func(s ttypes.AppSettings) (ttypes.AppSettings, error)
+	OnAppSettingsSave func(s setting.App) (setting.App, error)
 	// OnAppAccountChange persists one application account without writing other
 	// settings drafts. The app layer owns the config file and account manager.
-	OnAppAccountChange func(change ttypes.AccountChange) error
+	OnAppAccountChange func(change setting.AccountChange) error
 	// Core commits return an immutable durable snapshot. Only the serialized
 	// workspace owner publishes it; workers must never call SetAppDefaults.
-	OnAppAccountCommit     func(ttypes.AccountChange) (ttypes.AppSettings, error)
-	OnAppPreferencesCommit func(edits []ttypes.SettingEdit) (ttypes.AppSettings, error)
+	OnAppAccountCommit     func(setting.AccountChange) (setting.App, error)
+	OnAppPreferencesCommit func(edits []setting.Edit) (setting.App, error)
 	// OnAppCapabilityRegistration persists one service-initiated application
 	// capability registration. The app layer owns config.json, so it applies the
 	// shared registration owner under its config lock rather than replacing
@@ -224,7 +225,7 @@ type Workspace struct {
 
 	// InitialSettings is the neutral settings snapshot supplied by the app
 	// layer. The TUI may use it to initialize its presentation state.
-	InitialSettings ttypes.Settings
+	InitialSettings setting.Settings
 
 	// Username is the resolved username (for message attribution).
 	Username string
@@ -239,7 +240,7 @@ type Workspace struct {
 	registryErr    error
 	persistenceMu  sync.Mutex
 	workspaceDBErr error
-	startupIssues  []ttypes.OperationIssue
+	startupIssues  []statuscenter.OperationIssue
 }
 
 // SetEventBus connects workspace services to the workspace-to-frontend event path.
@@ -277,7 +278,7 @@ func NewWorkspace(
 	rootPath string,
 	modelName string,
 	username string,
-	initial ttypes.Settings,
+	initial setting.Settings,
 	lg Logger,
 ) *Workspace {
 	if rootPath == "" {
@@ -289,7 +290,7 @@ func NewWorkspace(
 
 	// Initialize workspace-level persistence. Each workspace gets a
 	// dedicated folder and database based on the project directory hash.
-	wsDir, wsErr := WorkspaceDir(rootPath)
+	wsDir, wsErr := Dir(rootPath)
 	if wsErr != nil {
 		lg.Warn("WORKSPACE", "dir_create_failed", "error", wsErr.Error())
 	}
@@ -299,7 +300,7 @@ func NewWorkspace(
 	}
 	errandSessionID := ""
 	if wsDB != nil {
-		errandSessionID = wsDB.GetSetting(workspaceErrandSessionKey)
+		errandSessionID = wsDB.Setting(workspaceErrandSessionKey)
 	}
 	historyStore, historyErr := openLocalHistory(rootPath, wsDir)
 	if historyErr != nil {
@@ -333,7 +334,7 @@ func NewWorkspace(
 		Collaboration:      collaborationStore,
 		collaborationErr:   collaborationErr,
 		instanceID:         instanceID,
-		FileOwnership:      agent.NewFileOwnership(),
+		FileOwnership:      turnloop.NewFileOwnership(),
 		Documents:          NewDocumentSaveService(),
 		TermMgr:            NewTerminalManager(rootPath),
 		Status:             NewStatusCenter(workspaceSQLDB(wsDB), lg),
@@ -406,7 +407,7 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 	oldErrandSessionID := w.errandSessionID
 	w.WorkspaceDB = db
 	w.workspaceDBErr = nil
-	w.errandSessionID = db.GetSetting(workspaceErrandSessionKey)
+	w.errandSessionID = db.Setting(workspaceErrandSessionKey)
 	collaborationStore, collaborationErr := collaboration.Attach(
 		db.DB, canonicalizePath(w.RootPath), filepath.Join(w.WorkspaceDir, "collaboration-locks"),
 	)
@@ -698,7 +699,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	// Prepare all target persistence before touching current project state.
 	// WorkspaceDir and OpenWorkspaceDB perform creation/migration, so success
 	// here proves the replacement can persist state.
-	wsDir, err := WorkspaceDir(abs)
+	wsDir, err := Dir(abs)
 	if err != nil {
 		return fmt.Errorf("switch project: prepare workspace directory for %q: %w", abs, err)
 	}
@@ -747,7 +748,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		w.Capabilities.Close()
 	}
 	w.Capabilities = nil
-	w.FileOwnership = agent.NewFileOwnership()
+	w.FileOwnership = turnloop.NewFileOwnership()
 	w.closeSuggestions()
 	if w.LiveDocuments != nil {
 		w.LiveDocuments.Close()
@@ -857,7 +858,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	return nil
 }
 
-func workspaceSQLDB(db *WorkspaceDB) *sql.DB {
+func workspaceSQLDB(db *DB) *sql.DB {
 	if db == nil {
 		return nil
 	}
@@ -890,7 +891,7 @@ func validateProjectDirectory(path string) error {
 
 // LoadAppSettings returns the effective settings for this workspace:
 // application defaults overlaid with workspace overrides.
-func (w *Workspace) LoadAppSettings() ttypes.AppSettings {
+func (w *Workspace) LoadAppSettings() setting.App {
 	return w.EffectiveAppSettings()
 }
 
@@ -941,4 +942,13 @@ func (w *Workspace) openAgentSessionOperation(id string) *NewSessionResult {
 		return &NewSessionResult{Error: err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired), NeedsModel: errors.Is(err, session.ErrModelRequired)}
 	}
 	return w.ApplyAgentSession(op.Run(context.Background()))
+}
+
+// Logger is the structured log sink the workspace writes to; the app
+// injects it so the workspace never opens log files itself.
+type Logger interface {
+	Info(tag, msg string, pairs ...any)
+	Warn(tag, msg string, pairs ...any)
+	Error(tag, msg string, pairs ...any)
+	Debug(tag, msg string, pairs ...any)
 }

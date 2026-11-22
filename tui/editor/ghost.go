@@ -11,7 +11,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -73,7 +73,7 @@ func (e *Editor) SetGhostText(revision uint64, anchor int, text string) error {
 // may sit at the caret of an active snippet field: accepting it is an ordinary
 // edit of that field, and the next Tab moves to the next field.
 func (e *Editor) SetGhostTextFor(owner string, revision uint64, anchor int, text string) error {
-	if !types.ValidEditorPredictionInsertion(text) {
+	if !insight.ValidEditorPredictionInsertion(text) {
 		return errors.New("prediction does not identify a usable insertion caret")
 	}
 	return e.SetSuggestion(owner, revision, Suggestion{Start: anchor, End: anchor, Text: text})
@@ -102,16 +102,16 @@ func (e *Editor) SetSuggestion(owner string, revision uint64, s Suggestion) erro
 		caretAt: caretStart, anchor: s.End, start: s.Start, text: s.Text, owner: owner}
 	switch {
 	case s.Marker != "":
-		if s.Text != "" || s.Start != s.End || s.JumpTo < 0 || s.JumpTo > size || !types.ValidEditorPredictionInsertion(s.Marker) {
+		if s.Text != "" || s.Start != s.End || s.JumpTo < 0 || s.JumpTo > size || !insight.ValidEditorPredictionInsertion(s.Marker) {
 			return errors.New("prediction marker must be a label without text")
 		}
 		g.label, g.marker, g.jumpTo = s.Marker, true, s.JumpTo
 	case s.Start == s.End:
-		if s.Start != caretStart || s.Text == "" || !types.ValidEditorPredictionText(s.Text) {
+		if s.Start != caretStart || s.Text == "" || !insight.ValidEditorPredictionText(s.Text) {
 			return errors.New("prediction anchor is not this exact source boundary")
 		}
 	default:
-		if !types.ValidEditorPredictionText(s.Text) {
+		if !insight.ValidEditorPredictionText(s.Text) {
 			return errors.New("prediction replacement is not literal text")
 		}
 	}
@@ -168,7 +168,7 @@ func ghostDisplay(text string, tabWidth int) (string, []string, int) {
 	label := expand(lines[0])
 	var rows []string
 	for _, line := range lines[1:] {
-		if len(rows) == types.EditorPredictionShownLines {
+		if len(rows) == insight.EditorPredictionShownLines {
 			break
 		}
 		rows = append(rows, expand(line))
@@ -226,7 +226,7 @@ func (e *Editor) SourceSlice(start, end int) string {
 	if e.buf == nil || start >= end {
 		return ""
 	}
-	return e.buf.GetText(e.buf.positionAtOffset(start), e.buf.positionAtOffset(end))
+	return e.buf.Text(e.buf.positionAtOffset(start), e.buf.positionAtOffset(end))
 }
 
 // GhostOwner names the producer of the current candidate ("" when none).

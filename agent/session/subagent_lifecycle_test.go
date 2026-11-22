@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
+	"crude/types/setting"
 )
 
 func TestChildResultProjectionPreservesPersistedLists(t *testing.T) {
@@ -23,9 +24,9 @@ func TestChildResultProjectionPreservesPersistedLists(t *testing.T) {
 		{name: "populated", items: []string{"first", "second"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result := agent.SubAgentResult{
+			result := turnloop.SubAgentResult{
 				AgentID: "child-result", Name: "Child", Category: "crafter", SessionID: "child-result",
-				Status: agent.SubAgentCompleted, SummaryGist: "Exact retained result", ReportID: "final-artifact", ReportRevision: 3,
+				Status: turnloop.SubAgentCompleted, SummaryGist: "Exact retained result", ReportID: "final-artifact", ReportRevision: 3,
 				LogPath: "child.log", FilesRead: tc.items, FilesWritten: tc.items, Errors: tc.items,
 				PromptTokens: 123, CompTokens: 45, CostUSD: 0.75, DurationMs: 678,
 			}
@@ -56,9 +57,9 @@ func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	handle := &agent.SubAgentHandle{
+	handle := &turnloop.SubAgentHandle{
 		DB: db, SessionID: "child",
-		Spec: agent.SubAgentSpec{ID: "child", Provider: "ollama-cloud", Model: "glm-5.3-flash:cloud"},
+		Spec: turnloop.SubAgentSpec{ID: "child", Provider: "ollama-cloud", Model: "glm-5.3-flash:cloud"},
 	}
 	assistantTool := provider.ChatMessage{Role: "assistant", ToolCalls: []provider.ToolCall{{
 		ID: "call-1", Function: provider.FunctionCall{Name: "execute_command", Arguments: `{"command":"go test ./..."}`},
@@ -128,35 +129,35 @@ func TestEverySubAgentTerminalPathPublishesOneEventAndResult(t *testing.T) {
 	t.Cleanup(runner.SessionCancel)
 	sender := newMockEventSender()
 	runner.SetSender(sender)
-	handle := &agent.SubAgentHandle{
+	handle := &turnloop.SubAgentHandle{
 		DB: childDB, SessionID: "crashed-child",
-		Spec: agent.SubAgentSpec{
-			ID: "crashed-child", Name: "crashed child", Category: agent.CatResearcher,
+		Spec: turnloop.SubAgentSpec{
+			ID: "crashed-child", Name: "crashed child", Category: turnloop.CatResearcher,
 		},
-		ResultCh: make(chan agent.SubAgentResult, 1),
+		ResultCh: make(chan turnloop.SubAgentResult, 1),
 		Cancel:   func() {},
 	}
 	if err := runner.Manager().Register(handle); err != nil {
 		t.Fatal(err)
 	}
-	result := agent.SubAgentResult{
+	result := turnloop.SubAgentResult{
 		AgentID: handle.Spec.ID, Name: handle.Spec.Name, Category: handle.Spec.Category,
 		SessionID: handle.SessionID,
-		Status:    agent.SubAgentCrashed, Errors: []string{"panic"},
+		Status:    turnloop.SubAgentCrashed, Errors: []string{"panic"},
 	}
 
 	if err := runner.finalizeSubAgent(handle, result, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := <-handle.ResultCh; got.Status != agent.SubAgentCrashed {
+	if got := <-handle.ResultCh; got.Status != turnloop.SubAgentCrashed {
 		t.Fatalf("result channel status = %q", got.Status)
 	}
 	event := <-sender.ch
 	if event.typ != "sub_agent_completed" || event.agentID != string(handle.Spec.ID) {
 		t.Fatalf("terminal event = %#v", event)
 	}
-	if _, ok := runner.Manager().GetActive(handle.Spec.ID); ok {
+	if _, ok := runner.Manager().Active(handle.Spec.ID); ok {
 		t.Fatal("terminal child remained active")
 	}
 }
@@ -199,10 +200,10 @@ func TestSubAgentDatabaseIsScopedUnderParentSession(t *testing.T) {
 }
 
 func TestDeriveSubAgentNameWhenModelOmitsName(t *testing.T) {
-	if got := deriveSubAgentName(agent.CatResearcher, "Survey git state and identify logical commit groups"); got != "survey-git-state" {
+	if got := deriveSubAgentName(turnloop.CatResearcher, "Survey git state and identify logical commit groups"); got != "survey-git-state" {
 		t.Fatalf("derived name = %q", got)
 	}
-	if got := deriveSubAgentName(agent.CatCrafter, "***"); got != "crafter-agent" {
+	if got := deriveSubAgentName(turnloop.CatCrafter, "***"); got != "crafter-agent" {
 		t.Fatalf("fallback name = %q", got)
 	}
 }
@@ -216,12 +217,12 @@ func TestNamedSubAgentProfileCanDisableAutomaticCompaction(t *testing.T) {
 	profile.Categories[CategoryResearcher] = researcher
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	if cfg.Agents.AgentProfiles == nil {
-		cfg.Agents.AgentProfiles = make(map[string]AgentProfileConfig)
+		cfg.Agents.AgentProfiles = make(map[string]setting.AgentProfile)
 	}
-	cfg.Agents.AgentProfiles["no-compact"] = AgentProfileConfig{ContextCompactionPercent: &disabled}
+	cfg.Agents.AgentProfiles["no-compact"] = setting.AgentProfile{ContextCompactionPercent: &disabled}
 	runner := NewSubAgentRunner(&Session{cfg: cfg}, 1)
 	t.Cleanup(runner.SessionCancel)
-	spec := agent.SubAgentSpec{Name: "no-compact", Category: agent.CatResearcher}
+	spec := turnloop.SubAgentSpec{Name: "no-compact", Category: turnloop.CatResearcher}
 	runner.resolveProfile(spec.Name, spec.Category, &spec)
 	runner.applyCategoryDefaults(&spec)
 	if spec.ContextCompactionPercent == nil || *spec.ContextCompactionPercent != 0 {

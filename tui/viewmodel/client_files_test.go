@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/core/port"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/workspace"
 )
@@ -14,14 +15,14 @@ type fakeClientFiles struct {
 	shellport.Workspace
 	reads   int
 	root    string
-	entries []shellport.ClientDirectoryEntry
+	entries []coreprotocol.ClientDirectoryEntry
 }
 
 func (f *fakeClientFiles) RootPath() string { return f.root }
-func (f *fakeClientFiles) BrowseDirectory(context.Context, string) ([]shellport.ClientDirectoryEntry, error) {
+func (f *fakeClientFiles) BrowseDirectory(context.Context, string) ([]coreprotocol.ClientDirectoryEntry, error) {
 	return f.entries, nil
 }
-func (f *fakeClientFiles) BrowseExternalDirectory(ctx context.Context, path string) ([]shellport.ClientDirectoryEntry, error) {
+func (f *fakeClientFiles) BrowseExternalDirectory(ctx context.Context, path string) ([]coreprotocol.ClientDirectoryEntry, error) {
 	return f.BrowseDirectory(ctx, path)
 }
 func (f *fakeClientFiles) CatalogFiles(context.Context, bool) (workspace.BrowserCatalog, error) {
@@ -34,7 +35,7 @@ func (f *fakeClientFiles) ReadClientFile(context.Context, string) ([]byte, error
 func (f *fakeClientFiles) ReadExternalClientFile(ctx context.Context, path string) ([]byte, error) {
 	return f.ReadClientFile(ctx, path)
 }
-func (f *fakeClientFiles) ListSavedWorkspaces(context.Context) ([]workspace.WorkspaceInfo, error) {
+func (f *fakeClientFiles) ListSavedWorkspaces(context.Context) ([]workspace.Info, error) {
 	return nil, nil
 }
 func (f *fakeClientFiles) CanonicalClientPath(path string) string { return path }
@@ -42,7 +43,7 @@ func (f *fakeClientFiles) CanonicalClientPath(path string) string { return path 
 func TestClientFileTreeNonlocalAndStale(t *testing.T) {
 	m := newTestApp(t)
 	root := filepath.Join(t.TempDir(), "does-not-exist")
-	port := &fakeClientFiles{Workspace: m.ws, root: root, entries: []shellport.ClientDirectoryEntry{{Name: "remote.go", Path: filepath.Join(root, "remote.go")}}}
+	port := &fakeClientFiles{Workspace: m.ws, root: root, entries: []coreprotocol.ClientDirectoryEntry{{Name: "remote.go", Path: filepath.Join(root, "remote.go")}}}
 	m.ws = port
 	model := newClientFileTree(m)
 	m.Tree = NewTreeState(model, 30)
@@ -56,7 +57,7 @@ func TestClientFileTreeNonlocalAndStale(t *testing.T) {
 	if len(model.VisibleNodes()) != 1 {
 		t.Fatalf("remote file missing: %v", model.VisibleRows())
 	}
-	port.entries = []shellport.ClientDirectoryEntry{{Name: "wrong.go", Path: filepath.Join(root, "wrong.go")}}
+	port.entries = []coreprotocol.ClientDirectoryEntry{{Name: "wrong.go", Path: filepath.Join(root, "wrong.go")}}
 	stale := m.beginClientFileTreeLoad()().(clientTreeDirectoryMsg)
 	m.workspaceSwitchGen.Add(1)
 	m.applyClientTreeDirectory(stale)
@@ -81,7 +82,7 @@ func TestClientRenameNeverFallsBackToShellFileReads(t *testing.T) {
 func TestClientPickerBrowsesNonlocalDirectory(t *testing.T) {
 	m := newTestApp(t)
 	root := filepath.Join(t.TempDir(), "remote-picker-only")
-	m.ws = &fakeClientFiles{Workspace: m.ws, root: root, entries: []shellport.ClientDirectoryEntry{{Name: "code.go", Path: filepath.Join(root, "code.go")}}}
+	m.ws = &fakeClientFiles{Workspace: m.ws, root: root, entries: []coreprotocol.ClientDirectoryEntry{{Name: "code.go", Path: filepath.Join(root, "code.go")}}}
 	picker := filepickerscreen.New(m.Theme)
 	picker.Open(root, filepickerscreen.ModeOpenFile, nil)
 	m.FilePicker = picker

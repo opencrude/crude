@@ -3,8 +3,8 @@ package perfdash
 import (
 	"slices"
 
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 )
 
 // Dashboard tabs.

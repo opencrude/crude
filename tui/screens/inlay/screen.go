@@ -18,7 +18,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 const (
@@ -60,13 +60,13 @@ type Screen struct {
 	detailScrollbar *ui.ScrollbarControl
 	text            *reader
 	actions         *ui.ActionBar
-	result          types.LSPInlaySet
+	result          insight.LSPInlaySet
 	hasResult       bool
 	selected        int // retained result ordinal
 	rowEpoch        uint64
 	busy            bool
 	inspected       bool
-	hint            types.LSPInlayHint
+	hint            insight.LSPInlayHint
 	state           string
 	textWidth       int
 	widthGeneration uint64
@@ -116,12 +116,12 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 
 func (s *Screen) clearInspection() {
 	s.inspected = false
-	s.hint = types.LSPInlayHint{}
+	s.hint = insight.LSPInlayHint{}
 	s.state = ""
 }
 
 func (s *Screen) reset() {
-	s.result = types.LSPInlaySet{}
+	s.result = insight.LSPInlaySet{}
 	s.hasResult, s.selected, s.busy = false, -1, false
 	s.rowEpoch++
 	s.clearInspection()
@@ -142,7 +142,8 @@ func (s *Screen) SetError() {
 	s.rebuildActions()
 }
 
-func (s *Screen) SetResult(result types.LSPInlaySet) {
+// SetResult shows the hints of a result, or an error when the result is invalid.
+func (s *Screen) SetResult(result insight.LSPInlaySet) {
 	if !validResult(result) {
 		s.SetError()
 		return
@@ -168,7 +169,7 @@ func (s *Screen) SetResult(result types.LSPInlaySet) {
 		s.list.SetItems(items)
 	} else {
 		message := "No inlay hints in the visible lines."
-		if result.Answer == types.LSPInlayUnsupported {
+		if result.Answer == insight.LSPInlayUnsupported {
 			message = "This language server does not support inlay hints."
 		}
 		s.setText(message)
@@ -179,7 +180,7 @@ func (s *Screen) SetResult(result types.LSPInlaySet) {
 // SetInspection refuses cross-row, stale, malformed and changed-geometry input.
 // Raw JSON is validated, but never shown or retained by this reading surface.
 // Possession of display identities grants no authority.
-func (s *Screen) SetInspection(in types.LSPInlayInspection) {
+func (s *Screen) SetInspection(in insight.LSPInlayInspection) {
 	if !s.hasResult || s.selected < 0 || in.SetID != s.result.ID ||
 		in.Digest != s.result.Digest || in.Index != s.result.Hints[s.selected].Index ||
 		in.WireVersion != s.result.WireVersion || in.Range != s.result.Range ||
@@ -232,7 +233,7 @@ func (s *Screen) setText(value string) {
 	s.text.SetScrollOffset(0)
 }
 
-func kindText(h types.LSPInlayHint) string {
+func kindText(h insight.LSPInlayHint) string {
 	if !h.HasKind {
 		return ""
 	}
@@ -482,7 +483,7 @@ func (r *reader) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
 	return r.TextArea.Handle(ctx, event)
 }
 
-func cloneHint(h types.LSPInlayHint) types.LSPInlayHint {
+func cloneHint(h insight.LSPInlayHint) insight.LSPInlayHint {
 	h.Parts = slices.Clone(h.Parts)
 	for i := range h.Parts {
 		if h.Parts[i].Location != nil {
@@ -493,13 +494,13 @@ func cloneHint(h types.LSPInlayHint) types.LSPInlayHint {
 	return h
 }
 
-func sameBoundary(a, b types.InsightBoundary) bool {
+func sameBoundary(a, b insight.Boundary) bool {
 	return a.Source == b.Source && a.Producer == b.Producer && a.Context.ID == b.Context.ID &&
 		a.Context.Root == b.Context.Root && a.Context.Generation == b.Context.Generation &&
 		slices.Equal(a.Context.UnknownInputs, b.Context.UnknownInputs)
 }
 
-func sameGeometry(a, b types.LSPInlayHint) bool {
+func sameGeometry(a, b insight.LSPInlayHint) bool {
 	if a.Index != b.Index || a.SourceByte != b.SourceByte || a.Position != b.Position ||
 		a.Label != b.Label || a.LabelIsParts != b.LabelIsParts || a.Kind != b.Kind ||
 		a.HasKind != b.HasKind || a.PaddingLeft != b.PaddingLeft || a.PaddingRight != b.PaddingRight ||
@@ -534,7 +535,7 @@ func (b *budget) text(values ...string) bool {
 	return true
 }
 
-func (b *budget) boundary(v types.InsightBoundary) bool {
+func (b *budget) boundary(v insight.Boundary) bool {
 	if len(v.Context.UnknownInputs) > maxHints || !b.text(v.Source.WorkspaceGeneration,
 		v.Source.DocumentID, v.Source.Path, v.Source.Lifetime, v.Source.Kind, v.Context.ID,
 		v.Context.Root, v.Producer.InstanceID, v.Producer.Provider, v.Producer.ToolIdentity) {
@@ -543,14 +544,14 @@ func (b *budget) boundary(v types.InsightBoundary) bool {
 	return b.text(v.Context.UnknownInputs...)
 }
 
-func validPosition(p types.LSPInlayPosition) bool { return p.Line >= 0 && p.Character >= 0 }
+func validPosition(p insight.LSPInlayPosition) bool { return p.Line >= 0 && p.Character >= 0 }
 
-func validRange(r types.LSPInlayRange) bool {
+func validRange(r insight.LSPInlayRange) bool {
 	return validPosition(r.Start) && validPosition(r.End) &&
 		(r.Start.Line < r.End.Line || r.Start.Line == r.End.Line && r.Start.Character <= r.End.Character)
 }
 
-func (b *budget) markup(m types.LSPInlayMarkup) bool {
+func (b *budget) markup(m insight.LSPInlayMarkup) bool {
 	if !b.text(m.Form, m.Kind, m.Value) {
 		return false
 	}
@@ -561,7 +562,7 @@ func (b *budget) markup(m types.LSPInlayMarkup) bool {
 		m.Form == "markup" && (m.Kind == "plaintext" || m.Kind == "markdown")
 }
 
-func (b *budget) hint(h types.LSPInlayHint) bool {
+func (b *budget) hint(h insight.LSPInlayHint) bool {
 	if h.Index < 0 || h.SourceByte < 0 || !validPosition(h.Position) || len(h.Label) > 4096 ||
 		len(h.Parts) > maxParts || !b.text(h.Label) || !b.markup(h.Tooltip) ||
 		h.LabelIsParts != (len(h.Parts) > 0) {
@@ -578,13 +579,13 @@ func (b *budget) hint(h types.LSPInlayHint) bool {
 	return !h.LabelIsParts || label.String() == h.Label
 }
 
-func validResult(r types.LSPInlaySet) bool {
+func validResult(r insight.LSPInlaySet) bool {
 	switch r.Answer {
-	case types.LSPInlayHints:
+	case insight.LSPInlayHints:
 		if len(r.Hints) == 0 || r.ID == "" || r.Digest == "" {
 			return false
 		}
-	case types.LSPInlayNull, types.LSPInlayEmpty, types.LSPInlayUnsupported:
+	case insight.LSPInlayNull, insight.LSPInlayEmpty, insight.LSPInlayUnsupported:
 		if len(r.Hints) != 0 {
 			return false
 		}
@@ -617,7 +618,7 @@ func validRaw(raw []byte, required bool) bool {
 	return len(trimmed) > 0 && trimmed[0] == '{' && json.Valid(trimmed)
 }
 
-func validInspection(in types.LSPInlayInspection) bool {
+func validInspection(in insight.LSPInlayInspection) bool {
 	var b budget
 	return b.text(in.SetID, in.Digest, in.ResolveState, in.Detail) && b.boundary(in.Boundary) &&
 		b.hint(in.Hint) && in.Hint.Index == in.Index &&

@@ -11,9 +11,9 @@ import (
 
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -49,14 +49,14 @@ func FuzzCoreCapabilities(f *testing.F) {
 			if _, err := ws.CapabilitySnapshot(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
-				next := types.CloneAppSettings(app)
-				if err := types.ApplySettingsEdits(&next, edits); err != nil {
+			ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
+				next := setting.CloneApp(app)
+				if err := setting.ApplyEdits(&next, edits); err != nil {
 					return next, err
 				}
 				app = next
 				commits++
-				return types.CloneAppSettings(app), nil
+				return setting.CloneApp(app), nil
 			}
 		})
 		w := newResourceWire(t, r, "capability-owner")

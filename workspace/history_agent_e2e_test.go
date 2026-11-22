@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crude/agent"
+	"crude/agent/turnloop"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,8 +17,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	ttypes "crude/types"
 	"crude/types/recovery"
+	"crude/types/setting"
 	"crude/workspace/document"
 	"crude/workspace/localhistory"
 )
@@ -110,9 +110,9 @@ func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
 		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
 	defer server.Close()
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}})
 	if _, err := ws.LiveDocuments.Open(document.Owner{ClientID: "brief-shell", Epoch: 1}, "source.txt"); err != nil {
 		t.Fatal(err)
 	}
@@ -188,9 +188,9 @@ func TestAgentUndoProductionPathPreservesExternalPreimage(t *testing.T) {
 	defer server.Close()
 
 	cfg := historyE2EConfig(server.URL)
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
 	frontend, err := ws.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
@@ -284,9 +284,9 @@ func TestAgentUndoProductionPathGuardsPostToolExternalOverwrite(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := historyE2EConfig(server.URL)
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
 	frontend, err := ws.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
@@ -332,7 +332,7 @@ func TestHistoryStartFailurePausesBeforeProviderExecution(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
 	if err != nil {
@@ -381,14 +381,14 @@ func TestEnabledHistoryStoreOpenFailureBlocksProviderAndTools(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	project := t.TempDir()
-	owner := NewWorkspace(project, "history-model", "owner", ttypes.Settings{}, &testLogger{})
+	owner := NewWorkspace(project, "history-model", "owner", setting.Settings{}, &testLogger{})
 	t.Cleanup(owner.Close)
-	blocked := NewWorkspace(project, "history-model", "blocked", ttypes.Settings{}, &testLogger{})
+	blocked := NewWorkspace(project, "history-model", "blocked", setting.Settings{}, &testLogger{})
 	t.Cleanup(blocked.Close)
 	if blocked.HistoryService != nil || blocked.localHistoryErr == nil {
 		t.Fatal("second workspace did not preserve Local History open failure")
 	}
-	blocked.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on"}})
+	blocked.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on"}})
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -443,7 +443,7 @@ func TestDisabledHistoryTurnStillExcludesRestore(t *testing.T) {
 	if err := os.WriteFile(path, []byte("target"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	target, err := ws.LocalHistory.Snapshot(context.Background(), localhistory.SnapshotOptions{})
 	if err != nil {
@@ -456,7 +456,7 @@ func TestDisabledHistoryTurnStillExcludesRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	providerStarted := make(chan struct{})
 	releaseProvider := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -533,9 +533,9 @@ func TestAgentUndoTracksInsideAndOutsideFilesystemMutations(t *testing.T) {
 		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 	}))
 	defer server.Close()
-	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
 	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
 	if err != nil {
 		t.Fatal(err)
@@ -603,6 +603,6 @@ func TestAgentUndoTracksInsideAndOutsideFilesystemMutations(t *testing.T) {
 	}
 }
 
-func (s *historyE2ESender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *historyE2ESender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

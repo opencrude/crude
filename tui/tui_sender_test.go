@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	ttypes "crude/types"
+	"crude/tui/viewmodel"
 	"crude/types/reasoning"
 )
 
@@ -19,7 +19,7 @@ func TestTUIEventSenderEnqueuesWhileDeliveryBlockedAndPreservesOrder(t *testing.
 	var releaseOnce sync.Once
 
 	pump := newProgramMessagePump(func(msg tea.Msg) {
-		event, ok := msg.(ttypes.AgentMsg)
+		event, ok := msg.(viewmodel.AgentMsg)
 		if !ok {
 			t.Errorf("delivered message type = %T, want types.AgentMsg", msg)
 			return
@@ -146,11 +146,11 @@ func TestProgramMessagePumpCoalescesOnlyBackpressuredAdjacentDeltas(t *testing.T
 	}
 	<-started
 	for _, text := range []string{"one", " two", " three"} {
-		if !pump.enqueue(ttypes.AgentMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: text}}) {
+		if !pump.enqueue(viewmodel.AgentMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: text}}) {
 			t.Fatal("failed to enqueue thinking delta")
 		}
 	}
-	if !pump.enqueue(ttypes.AgentMsg{Type: "done", AgentID: "agent", Data: map[string]any{"reason": "cancelled"}}) {
+	if !pump.enqueue(viewmodel.AgentMsg{Type: "done", AgentID: "agent", Data: map[string]any{"reason": "cancelled"}}) {
 		t.Fatal("failed to enqueue terminal event")
 	}
 	close(release)
@@ -158,11 +158,11 @@ func TestProgramMessagePumpCoalescesOnlyBackpressuredAdjacentDeltas(t *testing.T
 	if got := <-delivered; got != "block" {
 		t.Fatalf("first delivery=%v, want block", got)
 	}
-	merged, ok := (<-delivered).(ttypes.AgentMsg)
+	merged, ok := (<-delivered).(viewmodel.AgentMsg)
 	if !ok || merged.Type != "thinking" || merged.Data != (reasoning.Delta{Text: "one two three"}) {
 		t.Fatalf("merged delivery=%#v", merged)
 	}
-	done, ok := (<-delivered).(ttypes.AgentMsg)
+	done, ok := (<-delivered).(viewmodel.AgentMsg)
 	if !ok || done.Type != "done" {
 		t.Fatalf("terminal delivery=%#v", done)
 	}

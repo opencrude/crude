@@ -13,7 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/text/diff"
+	"crude/text/textdiff"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/screens/diffview"

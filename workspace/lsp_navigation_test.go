@@ -3,6 +3,8 @@ package workspace
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -15,7 +17,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/types"
 	"crude/workspace/document"
 )
 
@@ -40,14 +41,14 @@ type navigationCall struct {
 	includeDeclaration bool
 }
 
-func (c *navigationClient) RequestNavigation(_ context.Context, path, kind string, line, col int, include bool) (types.LSPNavigationResponse, error) {
+func (c *navigationClient) RequestNavigation(_ context.Context, path, kind string, line, col int, include bool) (insight.LSPNavigationResponse, error) {
 	c.mu.Lock()
 	wire := c.versions[path]
 	c.mu.Unlock()
 	c.navMu.Lock()
 	c.requests = append(c.requests, navigationCall{path, kind, line, col, include})
-	response := types.LSPNavigationResponse{
-		Boundary: types.InsightBoundary{Source: types.InsightSource{Path: "forged-provider-path"}},
+	response := insight.LSPNavigationResponse{
+		Boundary: insight.Boundary{Source: insight.Source{Path: "forged-provider-path"}},
 		Kind:     kind, WireVersion: wire + c.wireDelta, JSON: []byte(c.raw), Unsupported: c.unsupported,
 	}
 	if c.wrongKind {
@@ -66,7 +67,7 @@ func (c *navigationClient) RequestNavigation(_ context.Context, path, kind strin
 
 type navigationRuntime struct{ client *navigationClient }
 
-func (r navigationRuntime) NewClient(_ types.LSPServerSpec, _ string, admission func() error) LSPClient {
+func (r navigationRuntime) NewClient(_ setting.LSPServerSpec, _ string, admission func() error) LSPClient {
 	r.client.startAdmission = admission
 	return r.client
 }
@@ -75,7 +76,7 @@ type navigationFixture struct {
 	w      *Workspace
 	client *navigationClient
 	owner  document.Owner
-	source types.InsightSource
+	source insight.Source
 	path   string
 	disk   string
 }
@@ -121,12 +122,12 @@ func navigationLocation(uri string) string {
 	return fmt.Sprintf(`{"uri":%q,"range":{"start":{"line":0,"character":1},"end":{"line":0,"character":3}}}`, uri)
 }
 
-func navigationTestRange(line, start, end int) types.LSPNavigationRange {
-	return types.LSPNavigationRange{Start: types.LSPNavigationPosition{Line: line, Character: start},
-		End: types.LSPNavigationPosition{Line: line, Character: end}}
+func navigationTestRange(line, start, end int) insight.LSPNavigationRange {
+	return insight.LSPNavigationRange{Start: insight.LSPNavigationPosition{Line: line, Character: start},
+		End: insight.LSPNavigationPosition{Line: line, Character: end}}
 }
 
-func (f *navigationFixture) request(t *testing.T, raw, kind string, include bool) types.LSPNavigation {
+func (f *navigationFixture) request(t *testing.T, raw, kind string, include bool) insight.LSPNavigation {
 	t.Helper()
 	f.client.navMu.Lock()
 	f.client.raw = raw
@@ -138,7 +139,7 @@ func (f *navigationFixture) request(t *testing.T, raw, kind string, include bool
 	return result
 }
 
-func (f *navigationFixture) inspect(ctx context.Context, result types.LSPNavigation, target types.LSPNavigationTarget) (types.LSPNavigationLanding, error) {
+func (f *navigationFixture) inspect(ctx context.Context, result insight.LSPNavigation, target insight.LSPNavigationTarget) (insight.LSPNavigationLanding, error) {
 	return f.w.InspectLSPNavigationTarget(ctx, f.owner, result.Boundary, result.WireVersion, result.Kind, target)
 }
 
@@ -212,7 +213,7 @@ func TestNavigationDefinitionFamilyAndReferencesHaveSeparateSettings(t *testing.
 			f.client.navMu.Unlock()
 			result, err := f.w.RequestLSPNavigation(t.Context(), f.owner, f.source, kind, 0, 3, false)
 			if want && (err != nil || result.Answer != "empty") ||
-				!want && (err == nil || !reflect.DeepEqual(result, types.LSPNavigation{})) {
+				!want && (err == nil || !reflect.DeepEqual(result, insight.LSPNavigation{})) {
 				t.Fatalf("settings %s, kind %s: %+v %v", enabled, kind, result, err)
 			}
 			f.client.navMu.Lock()
@@ -237,7 +238,7 @@ func TestNavigationStrictSourcePositionAndAdmissionReturnNoPayload(t *testing.T)
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := f.w.RequestLSPNavigation(t.Context(), f.owner, f.source, "definition", tc.line, tc.col, false)
-			if err == nil || !reflect.DeepEqual(out, types.LSPNavigation{}) {
+			if err == nil || !reflect.DeepEqual(out, insight.LSPNavigation{}) {
 				t.Fatal("invalid source coordinate returned evidence", out, err)
 			}
 		})
@@ -274,7 +275,7 @@ func TestNavigationStrictSourcePositionAndAdmissionReturnNoPayload(t *testing.T)
 				defer stop()
 			}
 			result, err := f.w.RequestLSPNavigation(ctx, owner, source, kind, 0, 3, include)
-			if err == nil || !reflect.DeepEqual(result, types.LSPNavigation{}) {
+			if err == nil || !reflect.DeepEqual(result, insight.LSPNavigation{}) {
 				t.Fatal("inadmissible source returned evidence", result, err)
 			}
 		})
@@ -312,7 +313,7 @@ func TestNavigationProviderFailuresHaveNoPartialResults(t *testing.T) {
 				f.client.raw = fmt.Sprintf(`[{"targetUri":%q,"targetRange":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"targetSelectionRange":{"start":{"line":0,"character":1},"end":{"line":0,"character":3}},"originSelectionRange":{"start":{"line":0,"character":%d},"end":{"line":0,"character":%d}}}]`, navigationTestURI(f.path), col, col)
 			}
 			result, err := f.w.RequestLSPNavigation(t.Context(), f.owner, f.source, "definition", 0, 3, false)
-			if err == nil || !reflect.DeepEqual(result, types.LSPNavigation{}) {
+			if err == nil || !reflect.DeepEqual(result, insight.LSPNavigation{}) {
 				t.Fatal("provider failure leaked qualified/partial evidence", result, err)
 			}
 		})
@@ -359,7 +360,7 @@ func TestNavigationListNeverReadsTargetsAndSelectionEnforcesURI(t *testing.T) {
 				t.Fatal("listing inspected file content instead of preserving an explicit selected-file candidate", result)
 			}
 			landing, err := f.inspect(t.Context(), result, result.Targets[0])
-			if err == nil || !reflect.DeepEqual(landing, types.LSPNavigationLanding{}) {
+			if err == nil || !reflect.DeepEqual(landing, insight.LSPNavigationLanding{}) {
 				t.Fatal("missing/invalid/special selected target returned payload", landing, err)
 			}
 		})
@@ -371,7 +372,7 @@ func TestNavigationListNeverReadsTargetsAndSelectionEnforcesURI(t *testing.T) {
 		}
 		target := result.Targets[0]
 		target.Path, target.External, target.UnavailableReason = f.path, false, ""
-		if landing, err := f.inspect(t.Context(), result, target); err == nil || !reflect.DeepEqual(landing, types.LSPNavigationLanding{}) {
+		if landing, err := f.inspect(t.Context(), result, target); err == nil || !reflect.DeepEqual(landing, insight.LSPNavigationLanding{}) {
 			t.Fatal("caller presentation fields overrode URI policy", landing, err)
 		}
 	}
@@ -499,7 +500,7 @@ func TestNavigationSelectedDiskTargetRangesAndBoundedPreview(t *testing.T) {
 				origin := navigationTestRange(0, 2, 3)
 				row.Origin = &origin
 			}
-			if got, err := f.inspect(t.Context(), result, row); err == nil || !reflect.DeepEqual(got, types.LSPNavigationLanding{}) {
+			if got, err := f.inspect(t.Context(), result, row); err == nil || !reflect.DeepEqual(got, insight.LSPNavigationLanding{}) {
 				t.Fatal("invalid selected range returned payload", got, err)
 			}
 		})
@@ -558,9 +559,9 @@ func TestNavigationSelectedUnsafeFilesReturnNoPayload(t *testing.T) {
 					t.Skip("current principal can read mode-000 files")
 				}
 			}
-			row := types.LSPNavigationTarget{URI: navigationTestURI(path), Range: navigationTestRange(0, 1, 3), Selection: navigationTestRange(0, 1, 3)}
+			row := insight.LSPNavigationTarget{URI: navigationTestURI(path), Range: navigationTestRange(0, 1, 3), Selection: navigationTestRange(0, 1, 3)}
 			landing, err := f.inspect(t.Context(), result, row)
-			if err == nil || !reflect.DeepEqual(landing, types.LSPNavigationLanding{}) {
+			if err == nil || !reflect.DeepEqual(landing, insight.LSPNavigationLanding{}) {
 				t.Fatal("unsafe selected file returned bytes", landing, err)
 			}
 		})
@@ -625,7 +626,7 @@ func TestNavigationLateAnswersAndSelectedLandingRejectStaleSource(t *testing.T) 
 				// Retain a real completed answer too: explicit inspection must
 				// reject its stale source even when a late RPC is also rejected.
 				previous := f.request(t, raw, "definition", false)
-				selected := types.LSPNavigationTarget{URI: navigationTestURI(f.path),
+				selected := insight.LSPNavigationTarget{URI: navigationTestURI(f.path),
 					Range: navigationTestRange(0, 1, 3), Selection: navigationTestRange(0, 1, 3)}
 				entered, release := make(chan struct{}, 1), make(chan struct{})
 				var once sync.Once
@@ -637,7 +638,7 @@ func TestNavigationLateAnswersAndSelectedLandingRejectStaleSource(t *testing.T) 
 				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 				type outcome struct {
-					value types.LSPNavigation
+					value insight.LSPNavigation
 					err   error
 				}
 				done := make(chan outcome, 1)
@@ -662,7 +663,7 @@ func TestNavigationLateAnswersAndSelectedLandingRejectStaleSource(t *testing.T) 
 				case <-time.After(5 * time.Second):
 					t.Fatal("released request did not retire")
 				}
-				if got.err == nil || !reflect.DeepEqual(got.value, types.LSPNavigation{}) {
+				if got.err == nil || !reflect.DeepEqual(got.value, insight.LSPNavigation{}) {
 					t.Fatal("late provider returned stale evidence", got)
 				}
 				inspectCtx := t.Context()
@@ -670,7 +671,7 @@ func TestNavigationLateAnswersAndSelectedLandingRejectStaleSource(t *testing.T) 
 					inspectCtx = ctx
 				}
 				if landing, err := f.inspect(inspectCtx, previous, selected); err == nil ||
-					!reflect.DeepEqual(landing, types.LSPNavigationLanding{}) {
+					!reflect.DeepEqual(landing, insight.LSPNavigationLanding{}) {
 					t.Fatal("explicit selection returned cancelled/stale payload", landing, err)
 				}
 			})

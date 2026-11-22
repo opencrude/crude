@@ -13,7 +13,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/perf"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 // Work-budget tests: a CPU-hammering regression in this TUI is almost never a
@@ -31,12 +31,12 @@ import (
 // design, never cached) so the budget tests keep their count FIXED across
 // sizes and count them separately (perf.StatusRenders); only the
 // glamour-class re-render work is budgeted.
-func seedBudgetSession(count, statusCount int) []ttypes.ChatMessage {
+func seedBudgetSession(count, statusCount int) []conversation.ChatMessage {
 	const paragraph = "The renderer keeps a per-message line cache so idle frames do not " +
 		"re-run glamour markdown or word wrapping. This paragraph is long enough to wrap " +
 		"across the 80-column test viewport several times, mirroring real assistant output."
 	const code = "```go\nfunc cached(msg *ChatMessage) []string {\n\treturn msg.CachedLines\n}\n```"
-	msgs := make([]ttypes.ChatMessage, 0, count)
+	msgs := make([]conversation.ChatMessage, 0, count)
 	statusAt := map[int]bool{}
 	if statusCount > 0 {
 		step := count / statusCount
@@ -50,23 +50,23 @@ func seedBudgetSession(count, statusCount int) []ttypes.ChatMessage {
 	for i := range count {
 		switch {
 		case statusAt[i]:
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleStatus, Content: "agent turn started", Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleStatus, Content: "agent turn started", Time: time.Now()})
 		case i%10 == 0 || i%10 == 5:
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleUser, Content: "question " + fmt.Sprint(i), Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleUser, Content: "question " + fmt.Sprint(i), Time: time.Now()})
 		case i%10 == 2 || i%10 == 7:
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: paragraph, Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleAssistant, Content: paragraph, Time: time.Now()})
 		case i%10 == 3:
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleThinking, Content: "considering the cache layout", Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleThinking, Content: "considering the cache layout", Time: time.Now()})
 		case i%10 == 4:
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleTool, ToolName: "grep", ToolStatus: "done", Content: "3 matches in 2 files", Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "grep", ToolStatus: "done", Content: "3 matches in 2 files", Time: time.Now()})
 		case i%10 == 6:
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: code + "\n\n" + paragraph, Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleAssistant, Content: code + "\n\n" + paragraph, Time: time.Now()})
 		case i%10 == 8:
 			// One large assistant body per twenty messages, standing in for
 			// the session's heavyweight messages.
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: strings.Repeat(paragraph+"\n\n", 3) + code, Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleAssistant, Content: strings.Repeat(paragraph+"\n\n", 3) + code, Time: time.Now()})
 		case i%10 == 9:
-			msgs = append(msgs, ttypes.ChatMessage{Role: ttypes.RoleTool, ToolName: "read", ToolStatus: "done", Content: strings.Repeat("line of output\n", 8), Time: time.Now()})
+			msgs = append(msgs, conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "read", ToolStatus: "done", Content: strings.Repeat("line of output\n", 8), Time: time.Now()})
 		}
 	}
 	for i := range msgs {
@@ -75,9 +75,9 @@ func seedBudgetSession(count, statusCount int) []ttypes.ChatMessage {
 	// Real sessions end on assistant output, and the trailing assistant
 	// message is the per-tick InvalidateCache's favorite victim: pin the
 	// final row to the heavyweight shape so that path stays exercised.
-	if len(msgs) > 0 && msgs[len(msgs)-1].Role != ttypes.RoleStatus {
-		msgs[len(msgs)-1] = ttypes.ChatMessage{
-			Role:       ttypes.RoleAssistant,
+	if len(msgs) > 0 && msgs[len(msgs)-1].Role != conversation.RoleStatus {
+		msgs[len(msgs)-1] = conversation.ChatMessage{
+			Role:       conversation.RoleAssistant,
 			Content:    strings.Repeat(paragraph+"\n\n", 3) + code,
 			Time:       time.Now(),
 			InternalID: fmt.Sprintf("seed-%d", len(msgs)),
@@ -105,7 +105,7 @@ func idleWindowWork(t *testing.T, app *App, ticks int) perf.Stats {
 	settleHistory(t, app)
 	base := perf.Snapshot()
 	for range ticks {
-		app.handleTick(ttypes.TickMsg(time.Now()))
+		app.handleTick(TickMsg(time.Now()))
 		app.paintShellFrame()
 	}
 	return perf.Snapshot().Sub(base)
@@ -172,17 +172,17 @@ func TestIdleTicksStayWithinWorkBudget(t *testing.T) {
 // nilCacheExempt reports whether a message may legitimately hold no cached
 // render lines at frame end: status rows (never cached), the streaming
 // cursor, pending btw notes, and mid-flight rows (live stream).
-func nilCacheExempt(msg *ttypes.ChatMessage, streaming bool, isLast bool) bool {
-	if msg.Role == ttypes.RoleStatus || msg.PendingSteering {
+func nilCacheExempt(msg *conversation.ChatMessage, streaming bool, isLast bool) bool {
+	if msg.Role == conversation.RoleStatus || msg.PendingSteering {
 		return true
 	}
-	if isLast && streaming && (msg.Role == ttypes.RoleAssistant || (msg.Role == ttypes.RoleThinking && msg.ThinkingActive)) {
+	if isLast && streaming && (msg.Role == conversation.RoleAssistant || (msg.Role == conversation.RoleThinking && msg.ThinkingActive)) {
 		return true
 	}
-	if msg.Role == ttypes.RoleTool && msg.ToolStatus == "streaming" {
+	if msg.Role == conversation.RoleTool && msg.ToolStatus == "streaming" {
 		return true
 	}
-	if msg.Role == ttypes.RoleThinking && msg.ThinkingActive {
+	if msg.Role == conversation.RoleThinking && msg.ThinkingActive {
 		return true
 	}
 	return false
@@ -206,7 +206,7 @@ func TestRenderCachePersistsAfterIdleWindow(t *testing.T) {
 	app.paintShellFrame()
 	_ = idleWindowWork(t, app, pumpTicks)
 
-	project := app.subPaneProjections.GetExisting("root")
+	project := app.subPaneProjections.Existing("root")
 	if project == nil || project.renderer == nil {
 		t.Fatal("active projection missing")
 	}
@@ -242,11 +242,11 @@ func TestHydrationRendersOnceThenStaysWarm(t *testing.T) {
 	// Two mid-flight rows with real body volume, as a session interrupted
 	// mid-turn would have persisted them: a tool still streaming output and
 	// an active thinking block mid-reasoning.
-	msgs[30].Role = ttypes.RoleTool
+	msgs[30].Role = conversation.RoleTool
 	msgs[30].ToolName = "bash"
 	msgs[30].ToolStatus = "streaming"
 	msgs[30].Content = strings.Repeat("live tool output line\n", 40)
-	msgs[60].Role = ttypes.RoleThinking
+	msgs[60].Role = conversation.RoleThinking
 	msgs[60].ThinkingActive = true
 	msgs[60].Content = strings.Repeat("weighing cache eviction options against session size ", 60)
 	// Hydration routes through the same append path, so (as on the live path)
@@ -254,13 +254,13 @@ func TestHydrationRendersOnceThenStaysWarm(t *testing.T) {
 	// removes it. Pin a heavyweight assistant body second-to-last so that,
 	// once the status row is gone, the session ends on the exact shape the
 	// guarded trailing-assistant drop in InvalidateCache hunts for.
-	msgs[len(msgs)-1] = ttypes.ChatMessage{
-		Role:       ttypes.RoleAssistant,
+	msgs[len(msgs)-1] = conversation.ChatMessage{
+		Role:       conversation.RoleAssistant,
 		Content:    strings.Repeat(tailParagraph+"\n\n", 10),
 		Time:       time.Now(),
 		InternalID: "seed-tail",
 	}
-	app.Update(ttypes.HistoryMessagesMsg(msgs))
+	app.Update(HistoryMessagesMsg(msgs))
 	clearTurnTail(t, app)
 
 	work := idleWindowWork(t, app, pumpTicks)
@@ -278,7 +278,7 @@ func TestHydrationRendersOnceThenStaysWarm(t *testing.T) {
 // drainChurnReport lists the non-exempt retained rows that hold no render
 // cache at frame end (the rows a per-tick loop keeps re-dirtying).
 func drainChurnReport(app *App) string {
-	project := app.subPaneProjections.GetExisting("root")
+	project := app.subPaneProjections.Existing("root")
 	if project == nil || project.renderer == nil {
 		return "(no projection)"
 	}
@@ -318,12 +318,12 @@ func TestAgentToAgentSwitchKeepsBothProjectionsWarm(t *testing.T) {
 	t.Cleanup(perf.DisableProbe)
 	app := newFullTestApp(t)
 	app.AddOrchestrator("first")
-	app.appendAgentMessage("first", ttypes.ChatMessage{InternalID: "first-body", Role: ttypes.RoleAssistant, Content: strings.Repeat("first cached body ", 20), Time: time.Now()})
+	app.appendAgentMessage("first", conversation.ChatMessage{InternalID: "first-body", Role: conversation.RoleAssistant, Content: strings.Repeat("first cached body ", 20), Time: time.Now()})
 	app.switchToAgentView("first")
 	app.syncAgentMessages("first", false)
 	app.paintShellFrame()
 	app.AddOrchestrator("second")
-	app.appendAgentMessage("second", ttypes.ChatMessage{InternalID: "second-body", Role: ttypes.RoleAssistant, Content: strings.Repeat("second cached body ", 20), Time: time.Now()})
+	app.appendAgentMessage("second", conversation.ChatMessage{InternalID: "second-body", Role: conversation.RoleAssistant, Content: strings.Repeat("second cached body ", 20), Time: time.Now()})
 	app.switchToAgentView("second")
 	app.syncAgentMessages("second", false)
 	app.paintShellFrame()

@@ -8,8 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/agent"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
 	"crude/types/recovery"
 	"crude/workspace"
 )
@@ -53,7 +53,7 @@ type streamCompletionVisualModel struct {
 func (m *streamCompletionVisualModel) Init() tea.Cmd { return tickCmd() }
 
 func (m *streamCompletionVisualModel) emit(kind string, data any) tea.Cmd {
-	_, cmd := m.App.Update(agent.AgentEvent{AgentID: "stream-owner", Type: kind, Data: data})
+	_, cmd := m.App.Update(turnloop.AgentEvent{AgentID: "stream-owner", Type: kind, Data: data})
 	return cmd
 }
 
@@ -64,7 +64,7 @@ func (m *streamCompletionVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.status.ID != "" {
 				return m, nil
 			}
-			m.emit("turn_started", types.TurnIdentity{Generation: 1, ModelID: "test-model"})
+			m.emit("turn_started", conversation.TurnIdentity{Generation: 1, ModelID: "test-model"})
 			m.status = recovery.Status{ID: "stream-incident", AgentID: "stream-owner", Generation: 1,
 				State: recovery.Recovering, StartedAt: time.Now(), UpdatedAt: time.Now(), Summary: "Retrying unfinished run"}
 			m.emit("recovery", m.status)
@@ -79,7 +79,7 @@ func (m *streamCompletionVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.emit("done", map[string]any{"reason": "completed", "content": streamParityAnswer})
 			var answers []string
 			for _, message := range m.ws.AgentMgr().Get("stream-owner").State.Messages.Messages() {
-				if message.Role == types.RoleAssistant && message.TurnGeneration == 1 {
+				if message.Role == conversation.RoleAssistant && message.TurnGeneration == 1 {
 					answers = append(answers, message.Content)
 				}
 			}

@@ -17,9 +17,9 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -69,8 +69,8 @@ func TestInvocationProviderWireKeepsPolicyAndEphemeralAuth(t *testing.T) {
 	agents.Profiles["default"] = p
 	cfg := &session.Config{Accounts: accounts, Agents: agents}
 	runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "saved-model", "tester", types.Settings{}, nil)
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		ws := workspace.NewWorkspace(root, "saved-model", "tester", setting.Settings{}, nil)
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		ws.SetBackendConfig(cfg, home)
 		return ws, nil
 	}, filepath.Join(home, "receipts.db"))
@@ -118,7 +118,7 @@ func TestInvocationProviderWireKeepsPolicyAndEphemeralAuth(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("actual invocation provider POST did not arrive")
 	}
-	if cfg.GetActiveDefaultCategory().Model != "saved-model" || accounts["saved"].APIKey != "saved-key" || len(accounts) != 1 {
+	if cfg.ActiveDefaultCategory().Model != "saved-model" || accounts["saved"].APIKey != "saved-key" || len(accounts) != 1 {
 		t.Fatal("invocation mutated shared defaults/accounts")
 	}
 	// Release Windows' exclusive journal lock before auditing persisted bytes.

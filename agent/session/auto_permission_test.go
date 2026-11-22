@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/safety"
-	"crude/types"
+	"crude/agent/turnloop"
+	"crude/types/setting"
 )
 
 func TestPermissionReviewerTransportHasNoLifetimeCallCap(t *testing.T) {
@@ -39,8 +39,8 @@ func TestPermissionReviewerTransportHasNoLifetimeCallCap(t *testing.T) {
 	defer server.Close()
 	s, a := newReviewerTestSession(t, server.URL)
 	review := s.permissionReviewer(a)
-	events := []agent.AgentEvent{}
-	emit := func(evt agent.AgentEvent) { events = append(events, evt) }
+	events := []turnloop.AgentEvent{}
+	emit := func(evt turnloop.AgentEvent) { events = append(events, evt) }
 	params := map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}
 	if got := review(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, params, safety.RiskProjectWrite, emit); got.Decision != "allow" {
 		t.Fatalf("review=%+v", got)
@@ -77,7 +77,7 @@ func TestPermissionReviewerSendsConfiguredFastTier(t *testing.T) {
 	s, a := newReviewerTestSession(t, server.URL)
 	s.cfg.Safety.AutoPermission.ServiceTier = "fast"
 	result := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}},
-		map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+		map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 	if result.Decision != "allow" {
 		t.Fatalf("review failed: %+v", result)
 	}
@@ -86,13 +86,13 @@ func TestPermissionReviewerSendsConfiguredFastTier(t *testing.T) {
 	}
 }
 
-func newReviewerTestSession(t *testing.T, url string) (*Session, *agent.Agent) {
+func newReviewerTestSession(t *testing.T, url string) (*Session, *turnloop.Agent) {
 	t.Helper()
 	cfg := modelAttributionConfig(url, "main-model")
-	cfg.Safety.AutoPermission = types.AutoPermissionSettings{
+	cfg.Safety.AutoPermission = setting.AutoPermission{
 		Enabled: "on", Provider: "openrouter", AccountID: "account", Model: "review-model", DenyMode: "deny",
-		ThinkingEffort: "low", ResponseFormat: types.AutoPermissionFormatPrompt, TimeoutSeconds: 8,
-		MaxOutputTokens: 96, MaxAttempts: 1, RetryTokenGrowth: types.AutoPermissionGrowthFixed, MaxRetryOutputTokens: 96,
+		ThinkingEffort: "low", ResponseFormat: setting.AutoPermissionFormatPrompt, TimeoutSeconds: 8,
+		MaxOutputTokens: 96, MaxAttempts: 1, RetryTokenGrowth: setting.AutoPermissionGrowthFixed, MaxRetryOutputTokens: 96,
 		MaxInputBytes: 64 << 10,
 	}
 	s, err := NewWithSessionDir("review", cfg, t.TempDir(), t.TempDir())
@@ -101,7 +101,7 @@ func newReviewerTestSession(t *testing.T, url string) (*Session, *agent.Agent) {
 	}
 	t.Cleanup(s.Close)
 	s.SetWorkDir(t.TempDir())
-	return s, &agent.Agent{AgentID: "parent", TurnGeneration: 1}
+	return s, &turnloop.Agent{AgentID: "parent", TurnGeneration: 1}
 }
 
 func TestPermissionReviewerUsesConfiguredRecovery(t *testing.T) {
@@ -134,13 +134,13 @@ func TestPermissionReviewerUsesConfiguredRecovery(t *testing.T) {
 	defer server.Close()
 
 	s, a := newReviewerTestSession(t, server.URL)
-	s.cfg.Safety.AutoPermission.ResponseFormat = types.AutoPermissionFormatAuto
+	s.cfg.Safety.AutoPermission.ResponseFormat = setting.AutoPermissionFormatAuto
 	s.cfg.Safety.AutoPermission.MaxAttempts = 3
-	s.cfg.Safety.AutoPermission.RetryTokenGrowth = types.AutoPermissionGrowth4x
+	s.cfg.Safety.AutoPermission.RetryTokenGrowth = setting.AutoPermissionGrowth4x
 	s.cfg.Safety.AutoPermission.MaxRetryOutputTokens = 1024
 	got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, map[string]any{
 		"path": "main.go", "old_string": "old", "new_string": "new",
-	}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+	}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 	if got.Decision != "allow" || calls.Load() != 3 {
 		t.Fatalf("recovered review=%+v calls=%d", got, calls.Load())
 	}
@@ -173,7 +173,7 @@ func TestPermissionReviewerFailsToHuman(t *testing.T) {
 			}))
 			defer server.Close()
 			s, a := newReviewerTestSession(t, server.URL)
-			got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "write_file"}}, map[string]any{"path": "main.go", "content": "package main"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+			got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "write_file"}}, map[string]any{"path": "main.go", "content": "package main"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 			if got.Decision != "ask" || calls.Load() != 1 {
 				t.Fatalf("failure did not ask once: %+v calls=%d", got, calls.Load())
 			}
@@ -202,9 +202,9 @@ func TestPermissionReviewerDropsStaleAndTimedOutDecisions(t *testing.T) {
 			s.cfg.Safety.AutoPermission.TimeoutSeconds = 1
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			done := make(chan agent.PermissionReview, 1)
+			done := make(chan turnloop.PermissionReview, 1)
 			go func() {
-				done <- s.permissionReviewer(a)(ctx, provider.ToolCall{Function: provider.FunctionCall{Name: "write_file"}}, map[string]any{"path": "main.go", "content": "package main"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+				done <- s.permissionReviewer(a)(ctx, provider.ToolCall{Function: provider.FunctionCall{Name: "write_file"}}, map[string]any{"path": "main.go", "content": "package main"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 			}()
 			select {
 			case <-arrived:
@@ -214,7 +214,7 @@ func TestPermissionReviewerDropsStaleAndTimedOutDecisions(t *testing.T) {
 			switch mode {
 			case "disable-reenable":
 				settings := ConfigToSettings(s.cfg)
-				app := types.AppSettings{Agents: settings.Agents, Safety: s.cfg.Safety}
+				app := setting.App{Agents: settings.Agents, Safety: s.cfg.Safety}
 				app.Safety.AutoPermission.Enabled = "off"
 				s.UpdateWorkspaceDefaults(app)
 				app.Safety.AutoPermission.Enabled = "on"
@@ -303,7 +303,7 @@ func TestCredentialValuesListSavedAccountSecretsOnly(t *testing.T) {
 }
 
 func TestDefaultReviewerInputBudgetAcceptsLargeMultiFilePatchWithoutTruncation(t *testing.T) {
-	settings := (types.AutoPermissionSettings{}).Normalized()
+	settings := (setting.AutoPermission{}).Normalized()
 	if settings.MaxInputBytes != 64<<10 {
 		t.Fatalf("default input budget=%d", settings.MaxInputBytes)
 	}
@@ -318,7 +318,7 @@ func TestDefaultReviewerInputBudgetAcceptsLargeMultiFilePatchWithoutTruncation(t
 // Review settings change, not at every unrelated settings save.
 func TestAutoReviewSettingsChangeWakesWaitingRequests(t *testing.T) {
 	s, _ := newReviewerTestSession(t, "http://127.0.0.1:1")
-	settings := types.AppSettings{Safety: s.cfg.Safety, Agents: types.AgentsSettings{}}
+	settings := setting.App{Safety: s.cfg.Safety, Agents: setting.Agents{}}
 	settings.Safety.AutoPermission.Enabled = "off"
 	s.UpdateWorkspaceDefaults(settings)
 
@@ -393,7 +393,7 @@ func TestPermissionReviewerUsesDecisionModelFromOllamaList(t *testing.T) {
 			s.cfg.Safety.AutoPermission.MaxAttempts = 1
 			s.cfg.Safety.AutoPermission.DenyMode = "ask"
 			got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}},
-				map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+				map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 			if got.Decision != tc.want || got.Reason == "" {
 				t.Fatalf("review=%+v, want %s", got, tc.want)
 			}
@@ -431,8 +431,8 @@ func TestPermissionReviewerInheritsWorkspaceErrandWithoutBorrowingSessionOverrid
 	workspaceProfile.Categories[CategoryErrand] = CategoryConfig{AccountID: "account", Model: "errand-model"}
 	profile, _ := activeProfileCfg(s.cfg)
 	profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "session-account", Model: "session-override"}
-	check := func() agent.PermissionReview {
-		return s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, map[string]any{"path": "test.txt"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+	check := func() turnloop.PermissionReview {
+		return s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, map[string]any{"path": "test.txt"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 	}
 	if got := check(); got.Decision != "allow" {
 		t.Fatalf("configured workspace Errand was not used: %+v", got)

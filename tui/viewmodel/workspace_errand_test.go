@@ -8,10 +8,10 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/provider"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -28,7 +28,7 @@ func TestWorkspaceErrandIsEnsuredOnceAndOpensFromHeader(t *testing.T) {
 		base.SessionsByAgent["errand-agent"] = &workspace.Session{
 			SessionID: "errand-session",
 			AgentID:   "errand-agent",
-			Settings:  &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}},
+			Settings:  &workspace.SessionSettingsState{Effective: setting.Settings{SessionMainAgent: "errand"}},
 		}
 		base.AgentMgr.AddOrchestrator("errand-agent", workspace.NewAgentState("errand-agent", nil, nil))
 	}
@@ -104,7 +104,7 @@ func TestWorkspaceErrandWaitsForQuietAndRestore(t *testing.T) {
 		base.SessionsByAgent["errand-agent"] = &workspace.Session{
 			SessionID: "errand-session",
 			AgentID:   "errand-agent",
-			Settings:  &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}},
+			Settings:  &workspace.SessionSettingsState{Effective: setting.Settings{SessionMainAgent: "errand"}},
 		}
 		base.AgentMgr.AddOrchestrator("errand-agent", workspace.NewAgentState("errand-agent", nil, nil))
 	}

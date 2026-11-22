@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // Regression: plain tool bodies used to character-wrap (HardWrap), which could
@@ -17,7 +17,7 @@ import (
 func TestPlainToolBodyWordWrapsAtWordBoundaries(t *testing.T) {
 	long := "func (p *LayoutPainter) paintRows(buf *Buffer) { zqx.TokenPair"
 	runless := strings.Repeat("x", 80) // no whitespace: exercises hard-break fallback
-	msg := types.ChatMessage{
+	msg := conversation.ChatMessage{
 		Role: "tool", ToolName: "execute_command", ToolStatus: "success",
 		ToolPreviewPhase: "done",
 		Content:          long + "\n" + runless,
@@ -55,7 +55,7 @@ func TestCollapsedToolPreviewWrapsInsideBand(t *testing.T) {
 		strings.Repeat("n", 50) + " tailtwo",
 		"final line here",
 	}, "\n")
-	msg := types.ChatMessage{
+	msg := conversation.ChatMessage{
 		Role: "tool", ToolName: "grep_files", ToolStatus: "success",
 		ToolPreviewPhase: "done", Content: content,
 	}

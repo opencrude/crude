@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/filetree"
 	"crude/tui/screens/shelltree"
 )
@@ -17,13 +17,13 @@ import (
 // treeRevealTraversal is shared by the interactive and shell-control routes.
 // Directory pages are installed before any ancestor is expanded or selected.
 type treeRevealTraversal struct {
-	model       *filetree.FileTreeModel
+	model       *filetree.Model
 	screen      *shelltree.Screen
 	paths       []string
 	directories []string
 }
 
-func newTreeRevealTraversal(model *filetree.FileTreeModel, screen *shelltree.Screen, paths []string) (treeRevealTraversal, error) {
+func newTreeRevealTraversal(model *filetree.Model, screen *shelltree.Screen, paths []string) (treeRevealTraversal, error) {
 	c := treeRevealTraversal{model: model, screen: screen}
 	root := model.RootPath()
 	seen := make(map[string]bool)

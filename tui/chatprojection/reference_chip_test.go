@@ -6,13 +6,13 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestRenderUserMessageStylesReferenceLabel(t *testing.T) {
 	const label = "[Pasted IMG1]"
-	message := types.ChatMessage{
-		Role:            types.RoleUser,
+	message := conversation.ChatMessage{
+		Role:            conversation.RoleUser,
 		Content:         label + " what is this?",
 		ReferenceLabels: []string{label},
 	}
@@ -25,7 +25,7 @@ func TestRenderUserMessageStylesReferenceLabel(t *testing.T) {
 
 func TestRenderUserMessageInfersLegacyReferenceLabel(t *testing.T) {
 	const label = "[Pasted Text File3]"
-	message := types.ChatMessage{Role: types.RoleUser, Content: "review " + label}
+	message := conversation.ChatMessage{Role: conversation.RoleUser, Content: "review " + label}
 	rendered := renderUserMessage(message, renderContext{contentWidth: 80}, true)
 	if len(rendered.native) != 1 {
 		t.Fatalf("native rows = %+v", rendered.native)
@@ -34,7 +34,7 @@ func TestRenderUserMessageInfersLegacyReferenceLabel(t *testing.T) {
 }
 
 func TestRenderPendingSteeringUsesCanonicalActivityDot(t *testing.T) {
-	message := types.ChatMessage{Role: types.RoleUser, Content: "include tests", PendingSteering: true}
+	message := conversation.ChatMessage{Role: conversation.RoleUser, Content: "include tests", PendingSteering: true}
 	for _, spinFrame := range []int{0, 400} {
 		rendered := renderUserMessage(message, renderContext{contentWidth: 80, spinFrame: spinFrame}, true)
 		if len(rendered.native) != 2 {
@@ -48,15 +48,15 @@ func TestRenderPendingSteeringUsesCanonicalActivityDot(t *testing.T) {
 }
 
 func TestRenderAssignmentIdentifiesMainAgentAndKeepsPrompt(t *testing.T) {
-	message := types.ChatMessage{
-		Role: types.RoleAssignment, Content: "# Assignment\n- Description: inspect lifecycle",
+	message := conversation.ChatMessage{
+		Role: conversation.RoleAssignment, Content: "# Assignment\n- Description: inspect lifecycle",
 	}
 	rendered := renderAssignmentMessage(message, renderContext{contentWidth: 80, innerW: 80}, false)
 	plain := strings.Join(rendered.lines, "\n")
 	if !strings.Contains(plain, "Main Agent Assignment") || !strings.Contains(plain, "inspect lifecycle") {
 		t.Fatalf("assignment render = %q", plain)
 	}
-	if messageParty(types.RoleAssignment) == messageParty(types.RoleAssistant) {
+	if messageParty(conversation.RoleAssignment) == messageParty(conversation.RoleAssistant) {
 		t.Fatal("assignment incorrectly suppresses the sub-agent's own response header")
 	}
 }

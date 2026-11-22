@@ -1,7 +1,8 @@
 package sessiondb
 
 import (
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"database/sql"
 	"encoding/json"
 )
@@ -64,11 +65,11 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 			ContextRetentionTokens *int   `json:"context_retention_tokens,omitempty"`
 			ServiceTier            string `json:"service_tier,omitempty"`
 		}
-		_ = types.DecodeStoredSettings([]byte(selection), &capabilities)
+		_ = setting.DecodeStored([]byte(selection), &capabilities)
 		override.AllowedTools, override.DeniedTools, override.SkillModes = capabilities.AllowedTools, capabilities.DeniedTools, capabilities.SkillModes
 		override.ContextRetentionTokens = capabilities.ContextRetentionTokens
 		override.ServiceTier = capabilities.ServiceTier
-		if !types.ValidThinkingLevel(override.ThinkingEffort) {
+		if !conversation.ValidThinkingLevel(override.ThinkingEffort) {
 			override.ThinkingEffort = ""
 		}
 		if override.Inherit != "main" && override.Inherit != "workspace" {
@@ -77,7 +78,7 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 		if override.ContextCompactionPercent != nil && (*override.ContextCompactionPercent < 0 || *override.ContextCompactionPercent > 100) {
 			override.ContextCompactionPercent = nil
 		}
-		if override.ContextRetentionTokens != nil && (*override.ContextRetentionTokens < types.MinContextRetentionTokens || *override.ContextRetentionTokens > types.MaxContextRetentionTokens) {
+		if override.ContextRetentionTokens != nil && (*override.ContextRetentionTokens < setting.MinContextRetentionTokens || *override.ContextRetentionTokens > setting.MaxContextRetentionTokens) {
 			override.ContextRetentionTokens = nil
 		}
 		switch override.ServiceTier {

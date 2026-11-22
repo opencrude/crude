@@ -77,7 +77,7 @@ func reproduceFragment(source, dst workspace.SessionReferences, fragment input.P
 // the very same attachment; another session receives its own copy.
 func reproduceReference(source, dst workspace.SessionReferences, ref sessiondb.Reference) (sessiondb.Reference, error) {
 	if source == dst {
-		if current, ok := dst.GetReference(ref.ID); ok && current.Active() {
+		if current, ok := dst.Reference(ref.ID); ok && current.Active() {
 			return current, nil
 		}
 	}

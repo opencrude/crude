@@ -22,8 +22,6 @@ type InteractiveOptions struct {
 	Login, TTY bool
 }
 
-type InteractiveResult = command.Result
-
 func utf8PrefixBoundary(raw string, limit int) int {
 	if limit >= len(raw) {
 		return len(raw)
@@ -50,7 +48,7 @@ func utf8SuffixBoundary(raw string, start int) int {
 	return start
 }
 
-func interactiveRetrieval(descriptor OutputDescriptor, info AsyncCmdInfo, firstOmitted int) string {
+func interactiveRetrieval(descriptor command.OutputDescriptor, info AsyncCmdInfo, firstOmitted int) string {
 	header := fmt.Sprintf("Command output: handle=%s status=%s total_bytes=%d", descriptor.Handle, descriptor.Status, descriptor.TotalBytes)
 	switch descriptor.Status {
 	case AsyncRunning:
@@ -78,39 +76,40 @@ func interactiveRetrieval(descriptor OutputDescriptor, info AsyncCmdInfo, firstO
 // StartInteractive runs exec_command. An empty Shell is the agent command
 // shell; Login starts a POSIX shell as a login shell. PowerShell never loads
 // the user's profile (see shellCommand).
-func (m *AsyncCommandManager) StartInteractive(ctx context.Context, opts InteractiveOptions, yield time.Duration, maxTokens int, options ...*CommandOptions) (InteractiveResult, error) {
+func (m *AsyncCommandManager) StartInteractive(ctx context.Context, opts InteractiveOptions, yield time.Duration, maxTokens int, options ...*CommandOptions) (command.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return InteractiveResult{}, err
+		return command.Result{}, err
 	}
 	uc, err := m.startUntracked(nil, opts.Command, opts.CWD, 0, &opts, firstCommandOptions(options))
 	if err != nil {
-		return InteractiveResult{}, err
+		return command.Result{}, err
 	}
 	// Handles are never reused. The numeric part is the native session_id.
 	handle := m.NextAutoHandle()
 	id, err := strconv.Atoi(strings.TrimPrefix(handle, "auto-"))
 	if err != nil {
 		uc.Kill()
-		return InteractiveResult{}, err
+		return command.Result{}, err
 	}
 	if _, err := m.Promote(uc, handle); err != nil {
 		uc.Kill()
-		return InteractiveResult{}, err
+		return command.Result{}, err
 	}
 	return m.interact(ctx, id, uc.state, "", yield, maxTokens)
 }
 
-func (m *AsyncCommandManager) WriteInteractive(ctx context.Context, id int, chars string, yield time.Duration, maxTokens int) (InteractiveResult, error) {
+// WriteInteractive sends text to a running interactive command and returns its output.
+func (m *AsyncCommandManager) WriteInteractive(ctx context.Context, id int, chars string, yield time.Duration, maxTokens int) (command.Result, error) {
 	m.mu.Lock()
 	state := m.commands[fmt.Sprintf("auto-%d", id)]
 	m.mu.Unlock()
 	if state == nil || state.input == nil {
-		return InteractiveResult{}, fmt.Errorf("unknown exec session %d", id)
+		return command.Result{}, fmt.Errorf("unknown exec session %d", id)
 	}
 	return m.interact(ctx, id, state, chars, yield, maxTokens)
 }
 
-func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *asyncCmdState, chars string, yield time.Duration, maxTokens int) (InteractiveResult, error) {
+func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *asyncCmdState, chars string, yield time.Duration, maxTokens int) (command.Result, error) {
 	start := time.Now()
 	select {
 	case state.interactionLease <- struct{}{}:
@@ -131,7 +130,7 @@ func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *async
 		select {
 		case err := <-written:
 			if err != nil {
-				return InteractiveResult{}, fmt.Errorf("write stdin: %w", err)
+				return command.Result{}, fmt.Errorf("write stdin: %w", err)
 			}
 		case <-ctx.Done():
 			state.killGroup()
@@ -154,7 +153,7 @@ func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *async
 	return interactiveResultSnapshot(id, state, start, maxTokens), nil
 }
 
-func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, maxTokens int) InteractiveResult {
+func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, maxTokens int) command.Result {
 	state.outputMu.Lock()
 	outputStart := state.outputCursor
 	outputEnd := state.output.Len()
@@ -167,15 +166,15 @@ func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, ma
 	if info.Status != AsyncRunning {
 		state.markSettleObserved()
 	}
-	descriptor := OutputDescriptor{
+	descriptor := command.OutputDescriptor{
 		Handle:     fmt.Sprintf("auto-%d", id),
 		Status:     info.Status,
 		TotalBytes: outputEnd,
 	}
 	if outputEnd > outputStart {
-		descriptor.ShownRanges = []OutputRange{{StartByte: outputStart, EndByte: outputEnd}}
+		descriptor.ShownRanges = []command.OutputRange{{StartByte: outputStart, EndByte: outputEnd}}
 	}
-	result := InteractiveResult{ExecutionID: command.ExecutionID(info.PID, info.StartedAt), Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, WallTimeSeconds: time.Since(start).Seconds(), Output: output, OutputDescriptor: descriptor, TimedOut: info.TimedOut, Uncertain: info.Uncertain}
+	result := command.Result{ExecutionID: command.ExecutionID(info.PID, info.StartedAt), Command: info.Command, CWD: info.CWD, PID: info.PID, Error: info.Error, WallTimeSeconds: time.Since(start).Seconds(), Output: output, OutputDescriptor: descriptor, TimedOut: info.TimedOut, Uncertain: info.Uncertain}
 	result.Cancelled = info.Status == AsyncKilled && !info.TimedOut
 	tokens := (utf8.RuneCountInString(output) + 3) / 4
 	firstOmitted := outputEnd
@@ -187,7 +186,7 @@ func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, ma
 		}
 		result.Output = base64.StdEncoding.EncodeToString([]byte(output[:shownEnd]))
 		result.OutputEncoding = "base64"
-		result.OutputDescriptor.ShownRanges = []OutputRange{{StartByte: outputStart, EndByte: outputStart + shownEnd}}
+		result.OutputDescriptor.ShownRanges = []command.OutputRange{{StartByte: outputStart, EndByte: outputStart + shownEnd}}
 		result.OutputDescriptor.OmittedBytes = len(output) - shownEnd
 		firstOmitted = outputStart + shownEnd
 	} else if maxTokens > 0 && len(output) > byteBudget {
@@ -195,7 +194,7 @@ func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, ma
 		tailStart := utf8SuffixBoundary(output, len(output)-(byteBudget-headEnd))
 		result.Output = output[:headEnd] + "\n... output truncated ...\n" + output[tailStart:]
 		result.OriginalTokenCount = tokens
-		result.OutputDescriptor.ShownRanges = []OutputRange{
+		result.OutputDescriptor.ShownRanges = []command.OutputRange{
 			{StartByte: outputStart, EndByte: outputStart + headEnd},
 			{StartByte: outputStart + tailStart, EndByte: outputEnd},
 		}

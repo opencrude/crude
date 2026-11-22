@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"crude/internal/terminalvt"
 	"crude/internal/testterminal"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestTerminalManagerCreateWriteClose(t *testing.T) {
@@ -142,7 +143,7 @@ func TestTerminalEnvironmentExpandsEnvReferences(t *testing.T) {
 	base[0] = "PATH=changed-after-attach"
 	separator := string(os.PathListSeparator)
 	command, args := testterminal.Command(t, "env", "PATH", "VIRTUAL_ENV", "UNKNOWN", "LITERAL", "COPY", "PEER", "INDIRECT", "OUTER_TERM", "TERM")
-	settings := ttypes.TerminalSettings{Shell: ttypes.TerminalShellCustom, Command: command, Args: args,
+	settings := setting.Terminal{Shell: setting.TerminalShellCustom, Command: command, Args: args,
 		Environment: map[string]string{
 			"PATH":        "${workspaceFolder}/.venv/bin" + separator + "${env:PATH}",
 			"VIRTUAL_ENV": "${workspaceFolder}/.venv",
@@ -158,7 +159,7 @@ func TestTerminalEnvironmentExpandsEnvReferences(t *testing.T) {
 		"VIRTUAL_ENV": root + "/.venv", "UNKNOWN": "beforeafter",
 		"LITERAL": "$PATH ${PATH} %PATH% ${command:test}", "COPY": "base-value",
 		"PEER": "override-value", "INDIRECT": "${workspaceFolder}",
-		"OUTER_TERM": "outer-terminal", "TERM": ttypes.GhosttyTermName,
+		"OUTER_TERM": "outer-terminal", "TERM": terminalvt.GhosttyTermName,
 	} {
 		if !strings.Contains(output, fmt.Sprintf("%s=[%s]", key, want)) {
 			t.Errorf("child did not receive %s=%q: %q", key, want, output)
@@ -193,7 +194,7 @@ func TestTerminalLoginArgumentsRespectAttachingEnvironment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := NewTerminalManager(t.TempDir())
 			manager.SetShellEnvironment(tc.env)
-			manager.SetSettings(ttypes.TerminalSettings{LoginShell: tc.choice, Args: []string{"user-argument"}})
+			manager.SetSettings(setting.Terminal{LoginShell: tc.choice, Args: []string{"user-argument"}})
 			output := terminalEnvironmentOutput(t, manager, TerminalCreateOpts{})
 			want := "ARGS=<user-argument>"
 			if tc.login {
@@ -297,7 +298,7 @@ func TestTerminalReattachUsesNewShellPathWithoutRebindingExistingPTY(t *testing.
 	sink := &terminalTestSink{events: make(chan struct{}, 1)}
 	manager.SetOutputSink(sink)
 	manager.SetShellEnvironment(oldEnv)
-	settings := ttypes.TerminalSettings{Args: []string{"-test.run=^TestTerminalShellPathFixtureProcess$"}}
+	settings := setting.Terminal{Args: []string{"-test.run=^TestTerminalShellPathFixtureProcess$"}}
 	manager.SetSettings(settings)
 
 	newTerminal := func() string {
@@ -345,7 +346,7 @@ func TestTerminalReattachUsesNewShellPathWithoutRebindingExistingPTY(t *testing.
 		t.Fatal(err)
 	}
 	waitOutput(first, "REPLIED=shell-7.6.7")
-	settings.Shell, settings.Command = ttypes.TerminalShellCustom, strings.TrimSuffix(name, ".exe")
+	settings.Shell, settings.Command = setting.TerminalShellCustom, strings.TrimSuffix(name, ".exe")
 	manager.SetSettings(settings)
 	waitOutput(newTerminal(), "STARTED=shell-7.7.0")
 	settings.Shell, settings.Command = id, ""

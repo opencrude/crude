@@ -2,7 +2,7 @@ package workspace
 
 import (
 	"context"
-	"crude/types"
+	"crude/types/setting"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,9 +20,9 @@ import (
 
 func TestSessionLifecycleWorkerDoesNotPublishCollections(t *testing.T) {
 	setTestHome(t)
-	ws := NewWorkspace(t.TempDir(), "history-model", "tester", types.Settings{}, nopLogger{})
+	ws := NewWorkspace(t.TempDir(), "history-model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := historyE2EConfig("http://127.0.0.1:1")
 	ws.SetBackendConfig(cfg, t.TempDir())
 	ws.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
@@ -65,7 +65,7 @@ func TestSessionLifecycleWorkerDoesNotPublishCollections(t *testing.T) {
 
 func TestSessionLifecycleCancellationDoesNotInstall(t *testing.T) {
 	setTestHome(t)
-	ws := NewWorkspace(t.TempDir(), "history-model", "tester", types.Settings{}, nopLogger{})
+	ws := NewWorkspace(t.TempDir(), "history-model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetBackendConfig(historyE2EConfig("http://127.0.0.1:1"), t.TempDir())
 	ws.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
@@ -121,9 +121,9 @@ func (l *historyWarningLogger) historyWarnings() []string {
 
 func historyLifecycleWorkspace(t *testing.T, root string, logger Logger) *Workspace {
 	t.Helper()
-	ws := NewWorkspace(root, "history-model", "tester", types.Settings{}, logger)
+	ws := NewWorkspace(root, "history-model", "tester", setting.Settings{}, logger)
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "on", MaxFileSizeMB: 10}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", MaxFileSizeMB: 10}})
 	if ws.HistoryService == nil || ws.LocalHistory == nil {
 		t.Fatal("Local History did not start")
 	}
@@ -182,9 +182,9 @@ func TestResumedSessionReceivesPendingRestoreNotification(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := historyE2EConfig(server.URL)
-	ws := NewWorkspace(project, "history-model", "tester", types.Settings{}, &testLogger{})
+	ws := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "on", UseGitIgnore: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
 	frontend, err := ws.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)

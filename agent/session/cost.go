@@ -3,7 +3,7 @@ package session
 import (
 	"sync"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 // ModelCost is a request-ledger projection for one model.
@@ -50,10 +50,4 @@ func (t *TokenTracker) Record(promptTokens, completionTokens int) {
 	if t.logger != nil {
 		t.logger.Debug("TOKENS", "real_usage", "prompt", promptTokens, "completion", completionTokens, "cumulative_prompt", cumulative)
 	}
-}
-
-func (t *TokenTracker) GetLastRealPromptTokens() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.LastRealPromptTokens
 }

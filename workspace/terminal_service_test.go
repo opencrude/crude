@@ -1,8 +1,8 @@
 package workspace
 
 import (
+	"crude/internal/terminalvt"
 	"crude/internal/testterminal"
-	"crude/terminalvt"
 	"errors"
 	"strings"
 	"sync"

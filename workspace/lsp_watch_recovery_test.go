@@ -6,26 +6,26 @@ import (
 	"strings"
 	"testing"
 
-	model "crude/types"
+	"crude/types/insight"
 )
 
 func TestProjectWatchLossAndRecovery(t *testing.T) {
 	m, r, root, producer := projectFixture(t)
-	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	m.SetProjectProducers([]insight.LSPProjectProducer{producer})
 	old := startedProject(t, m, r)
 	path := filepath.Join(root, "util.go")
-	old.emitUnopened(path, LSPDiagnostic{Message: "old problem", Severity: model.DiagError})
+	old.emitUnopened(path, insight.LSPDiagnostic{Message: "old problem", Severity: insight.DiagError})
 	m.SetProjectWatchReliable(false)
 	m.SetProjectWatchReliable(false)
 	batch, ok := m.FileDiagnostics(path)
-	if !ok || batch.State != model.InsightStale || len(batch.Diagnostics) != 1 {
+	if !ok || batch.State != insight.Stale || len(batch.Diagnostics) != 1 {
 		t.Fatalf("lost evidence after watch failure: %+v", batch)
 	}
 	if summary := m.ProjectInsights(); summary.DiagnosticsLimited == 0 || !strings.Contains(summary.CoverageDetail, "incomplete") {
 		t.Fatalf("watch failure not visible: %+v", summary)
 	}
 	old.emitUnopened(path)
-	if batch, _ = m.FileDiagnostics(path); batch.State != model.InsightStale || len(batch.Diagnostics) != 1 {
+	if batch, _ = m.FileDiagnostics(path); batch.State != insight.Stale || len(batch.Diagnostics) != 1 {
 		t.Fatalf("old callback replaced stale evidence: %+v", batch)
 	}
 	m.SetProjectWatchReliable(true)
@@ -40,10 +40,10 @@ func TestProjectWatchLossAndRecovery(t *testing.T) {
 		return clients[1].started && clients[1].unopened != nil
 	})
 	old.emitUnopened(path)
-	if batch, _ = m.FileDiagnostics(path); batch.State != model.InsightStale || len(batch.Diagnostics) != 1 {
+	if batch, _ = m.FileDiagnostics(path); batch.State != insight.Stale || len(batch.Diagnostics) != 1 {
 		t.Fatalf("retired callback replaced evidence: %+v", batch)
 	}
-	r.snapshot()[1].emitUnopened(path, LSPDiagnostic{Message: "new problem", Severity: model.DiagError})
+	r.snapshot()[1].emitUnopened(path, insight.LSPDiagnostic{Message: "new problem", Severity: insight.DiagError})
 	if batch, _ = m.FileDiagnostics(path); !batch.FromProjectCheck() || len(batch.Diagnostics) != 1 || batch.Diagnostics[0].Message != "new problem" {
 		t.Fatalf("replacement producer did not publish: %+v", batch)
 	}
@@ -68,7 +68,7 @@ func TestProjectWatchChangeDuringStartRestartsIndex(t *testing.T) {
 	gate := make(chan struct{})
 	r.startGate = gate
 	m.SetProjectWatchReliable(false)
-	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	m.SetProjectProducers([]insight.LSPProjectProducer{producer})
 	if len(r.snapshot()) != 0 {
 		t.Fatal("producer started while initial observation was unavailable")
 	}
@@ -87,7 +87,7 @@ func TestProjectWatchChangeDuringStartRestartsIndex(t *testing.T) {
 		return clients[1].started
 	})
 	first := r.snapshot()[0]
-	first.emitUnopened(path, LSPDiagnostic{Message: "obsolete"})
+	first.emitUnopened(path, insight.LSPDiagnostic{Message: "obsolete"})
 	if _, ok := m.FileDiagnostics(path); ok {
 		t.Fatal("initializing producer published after its index was invalidated")
 	}

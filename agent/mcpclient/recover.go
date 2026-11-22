@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"crude/retry"
+	"crude/internal/retry"
 	captypes "crude/types/capability"
 )
 

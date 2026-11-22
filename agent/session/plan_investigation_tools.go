@@ -12,10 +12,10 @@ import (
 	"slices"
 	"strings"
 
-	"crude/agent"
 	"crude/agent/codexio"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
 	"crude/types/command"
 	"crude/types/toolresult"
@@ -88,7 +88,7 @@ func (s *Session) executePlanInvestigationTool(ctx context.Context, sourceID, so
 		case "\x03":
 			// Do not inject a byte into a process's input. An ordinary pipe
 			// can treat that byte as code, rather than a terminal interrupt.
-			id := tools.GetIntArgAny(params, "session_id", 0)
+			id := tools.IntArgAny(params, "session_id", 0)
 			info, ok := s.asyncMgr.Check(fmt.Sprintf("auto-%d", id))
 			if !ok {
 				return investigationDenied(errors.New("the command session was not found"))
@@ -121,8 +121,8 @@ func (s *Session) mutatePlanInvestigation(ctx context.Context, root, tool string
 		resolved = make(map[string]any)
 	}
 	if tool == "apply_patch" {
-		input := tools.GetStrArg(params, "input", "")
-		if err := agent.CheckPatchPolicy(agent.PlanInvestigationPatchPolicy(), input); err != nil {
+		input := tools.StrArg(params, "input", "")
+		if err := turnloop.CheckPatchPolicy(turnloop.PlanInvestigationPatchPolicy(), input); err != nil {
 			return investigationDenied(err)
 		}
 		patch, err := codexio.Parse(input)
@@ -145,7 +145,7 @@ func (s *Session) mutatePlanInvestigation(ctx context.Context, root, tool string
 			keys = []string{"source", "destination"}
 		}
 		for _, key := range keys {
-			path, err := scopedInvestigationPath(root, tools.GetStrArg(params, key, ""), false)
+			path, err := scopedInvestigationPath(root, tools.StrArg(params, key, ""), false)
 			if err != nil {
 				return investigationDenied(err)
 			}
@@ -164,7 +164,7 @@ func (s *Session) mutatePlanInvestigation(ctx context.Context, root, tool string
 		return nil, nil
 	}}
 	result := tools.ExecuteWithJSONOptions(tool, resolved, s.exec, s.editor, false, s.logger, ctx, opts)
-	if agent.IsToolError(result.Content) {
+	if turnloop.IsToolError(result.Content) {
 		return result, errors.New(result.Content)
 	}
 	return result, nil
@@ -237,12 +237,12 @@ func (s *Session) routePlanCommand(ctx context.Context, sourceID, sourceRoot str
 	if tool == "exec_command" {
 		cmdKey, cwdKey = "cmd", "workdir"
 	}
-	line, dir := tools.GetStrArg(params, cmdKey, ""), tools.GetStrArg(params, cwdKey, "")
+	line, dir := tools.StrArg(params, cmdKey, ""), tools.StrArg(params, cwdKey, "")
 	route := planCommandRoute{line: line, cwdKey: cwdKey}
 	if line == "" {
 		return route, errors.New("supply a command to run")
 	}
-	if tools.GetStrArg(params, "sandbox_permissions", "") == "require_escalated" {
+	if tools.StrArg(params, "sandbox_permissions", "") == "require_escalated" {
 		return route, errors.New("not allowed in Plan mode: elevated command permissions")
 	}
 	policy := s.commandPolicy(tool, params)
@@ -289,12 +289,12 @@ func absoluteToolPath(root, value string) string {
 	return filepath.Join(root, value)
 }
 
-func (s *Session) planInvestigationHostRequest(ctx context.Context, sourceID, sourceRoot string, owner worktree.Owner, tool string, params map[string]any) (*agent.PlanInvestigationHostRequest, error) {
+func (s *Session) planInvestigationHostRequest(ctx context.Context, sourceID, sourceRoot string, owner worktree.Owner, tool string, params map[string]any) (*turnloop.PlanInvestigationHostRequest, error) {
 	route, err := s.routePlanCommand(ctx, sourceID, sourceRoot, owner, tool, params)
 	if err != nil || route.inspect != nil || route.consent == "allow" {
 		return nil, err
 	}
-	return &agent.PlanInvestigationHostRequest{Directory: route.cwd, Decide: func(decision string) error {
+	return &turnloop.PlanInvestigationHostRequest{Directory: route.cwd, Decide: func(decision string) error {
 		c, err := s.investigationCheckout(ctx, sourceID, owner)
 		if err != nil {
 			return err
@@ -350,11 +350,11 @@ func (s *Session) executePlanInvestigationCommand(ctx context.Context, sourceID,
 	case "exec_command":
 		return executeCodexCommand(ctx, s.asyncMgr, route.cwd, tool, runParams, s.commandPolicy(tool, runParams), opts)
 	case "async_execute_command":
-		handle := tools.GetStrArg(params, "handle", "")
+		handle := tools.StrArg(params, "handle", "")
 		if handle == "" {
 			return investigationDenied(errors.New("supply a handle for the background command"))
 		}
-		info, err := s.asyncMgr.Start(handle, route.line, route.cwd, tools.GetIntArgAny(params, "timeout_seconds", 0), opts)
+		info, err := s.asyncMgr.Start(handle, route.line, route.cwd, tools.IntArgAny(params, "timeout_seconds", 0), opts)
 		if err != nil {
 			return tools.ToolResult{}, err
 		}

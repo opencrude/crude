@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"crude/logger"
-	"crude/network"
+	"crude/internal/logger"
+	"crude/internal/network"
 )
 
 // OAuthCredentials holds tokens from an OAuth sign-in flow. Currently this is

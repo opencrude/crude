@@ -3,7 +3,7 @@ package editor
 import (
 	"testing"
 
-	model "crude/types"
+	"crude/types/insight"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,9 +19,9 @@ func TestLSPCompletionEditUnicodeImportAtomic(t *testing.T) {
 		callbacks++
 		require.Equal(t, e.Value(), text)
 	})
-	item := model.CompletionItem{
-		TextEdit:            &model.LSPTextEdit{Line: 1, Col: 6, EndLine: 1, EndCol: 8, NewText: "print(\"界😀\")"},
-		AdditionalTextEdits: []model.LSPTextEdit{{Line: 1, EndLine: 1, NewText: "import \"fmt\"\n"}},
+	item := insight.CompletionItem{
+		TextEdit:            &insight.LSPTextEdit{Line: 1, Col: 6, EndLine: 1, EndCol: 8, NewText: "print(\"界😀\")"},
+		AdditionalTextEdits: []insight.LSPTextEdit{{Line: 1, EndLine: 1, NewText: "import \"fmt\"\n"}},
 	}
 	require.NoError(t, e.ApplyCompletion(item))
 	after := "package main\nimport \"fmt\"\n\t😀日本.print(\"界😀\")\n"
@@ -39,9 +39,9 @@ func TestLSPCompletionEditUnicodeImportAtomic(t *testing.T) {
 
 func TestLSPCompletionEditMultilineAndFollowingEdit(t *testing.T) {
 	e := opsEditor(t, "main.go", "abc\ndef\nxyz")
-	require.NoError(t, e.ApplyCompletion(model.CompletionItem{
-		TextEdit:            &model.LSPTextEdit{Line: 0, Col: 1, EndLine: 1, EndCol: 2, NewText: "界\n\t😀"},
-		AdditionalTextEdits: []model.LSPTextEdit{{Line: 2, Col: 1, EndLine: 2, EndCol: 3, NewText: "!"}},
+	require.NoError(t, e.ApplyCompletion(insight.CompletionItem{
+		TextEdit:            &insight.LSPTextEdit{Line: 0, Col: 1, EndLine: 1, EndCol: 2, NewText: "界\n\t😀"},
+		AdditionalTextEdits: []insight.LSPTextEdit{{Line: 2, Col: 1, EndLine: 2, EndCol: 3, NewText: "!"}},
 	}))
 	require.Equal(t, "a界\n\t😀f\nx!", e.Value())
 	require.Equal(t, Position{Line: 1, Col: 6}, e.cursor)
@@ -55,12 +55,12 @@ func TestLSPCompletionPrefixUsesEditorIdentifierSemantics(t *testing.T) {
 	for _, tt := range []struct {
 		before string
 		col    int
-		item   model.CompletionItem
+		item   insight.CompletionItem
 		want   string
 	}{
-		{"obj.pr", 6, model.CompletionItem{InsertText: "print"}, "obj.print"},
-		{"\t😀.日_2suffix", 11, model.CompletionItem{Label: "日本"}, "\t😀.日本suffix"},
-		{"obj.", 4, model.CompletionItem{InsertText: "print"}, "obj.print"},
+		{"obj.pr", 6, insight.CompletionItem{InsertText: "print"}, "obj.print"},
+		{"\t😀.日_2suffix", 11, insight.CompletionItem{Label: "日本"}, "\t😀.日本suffix"},
+		{"obj.", 4, insight.CompletionItem{InsertText: "print"}, "obj.print"},
 	} {
 		t.Run(tt.before, func(t *testing.T) {
 			e := opsEditor(t, "main.go", tt.before)
@@ -72,21 +72,21 @@ func TestLSPCompletionPrefixUsesEditorIdentifierSemantics(t *testing.T) {
 }
 
 func TestLSPCompletionEditRejectsUnsafeWithoutEffects(t *testing.T) {
-	valid := model.LSPTextEdit{Line: 1, Col: 0, EndLine: 1, EndCol: 2, NewText: "print"}
+	valid := insight.LSPTextEdit{Line: 1, Col: 0, EndLine: 1, EndCol: 2, NewText: "print"}
 	for _, tt := range []struct {
 		name string
-		edit model.LSPTextEdit
+		edit insight.LSPTextEdit
 	}{
-		{"negative line", model.LSPTextEdit{Line: -1}},
-		{"negative column", model.LSPTextEdit{Col: -1}},
-		{"missing line", model.LSPTextEdit{Line: 3, EndLine: 3}},
-		{"past line end", model.LSPTextEdit{Col: 5, EndCol: 5}},
-		{"surrogate midpoint", model.LSPTextEdit{Col: 1, EndCol: 2}},
-		{"reversed range", model.LSPTextEdit{Line: 1, Col: 2, EndLine: 1, EndCol: 1}},
-		{"overlapping replacement", model.LSPTextEdit{Line: 1, Col: 1, EndLine: 1, EndCol: 2}},
-		{"insert in replacement", model.LSPTextEdit{Line: 1, Col: 1, EndLine: 1, EndCol: 1}},
-		{"same start insert", model.LSPTextEdit{Line: 1, EndLine: 1, NewText: "import"}},
-		{"invalid UTF8", model.LSPTextEdit{NewText: string([]byte{0xff})}},
+		{"negative line", insight.LSPTextEdit{Line: -1}},
+		{"negative column", insight.LSPTextEdit{Col: -1}},
+		{"missing line", insight.LSPTextEdit{Line: 3, EndLine: 3}},
+		{"past line end", insight.LSPTextEdit{Col: 5, EndCol: 5}},
+		{"surrogate midpoint", insight.LSPTextEdit{Col: 1, EndCol: 2}},
+		{"reversed range", insight.LSPTextEdit{Line: 1, Col: 2, EndLine: 1, EndCol: 1}},
+		{"overlapping replacement", insight.LSPTextEdit{Line: 1, Col: 1, EndLine: 1, EndCol: 2}},
+		{"insert in replacement", insight.LSPTextEdit{Line: 1, Col: 1, EndLine: 1, EndCol: 1}},
+		{"same start insert", insight.LSPTextEdit{Line: 1, EndLine: 1, NewText: "import"}},
+		{"invalid UTF8", insight.LSPTextEdit{NewText: string([]byte{0xff})}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			e := opsEditor(t, "main.go", "😀ab\npr")
@@ -95,7 +95,7 @@ func TestLSPCompletionEditRejectsUnsafeWithoutEffects(t *testing.T) {
 			callbacks := 0
 			e.SetOnContentChanged(func(_, _ string) { callbacks++ })
 			revision := e.buf.Revision()
-			err := e.ApplyCompletion(model.CompletionItem{TextEdit: &valid, AdditionalTextEdits: []model.LSPTextEdit{tt.edit}})
+			err := e.ApplyCompletion(insight.CompletionItem{TextEdit: &valid, AdditionalTextEdits: []insight.LSPTextEdit{tt.edit}})
 			require.Error(t, err)
 			require.Equal(t, "😀ab\npr", e.Value())
 			require.Equal(t, revision, e.buf.Revision())
@@ -107,8 +107,8 @@ func TestLSPCompletionEditRejectsUnsafeWithoutEffects(t *testing.T) {
 	}
 	t.Run("same position inserts", func(t *testing.T) {
 		e := opsEditor(t, "main.go", "pr")
-		insert := model.LSPTextEdit{NewText: "x"}
-		require.Error(t, e.ApplyCompletion(model.CompletionItem{TextEdit: &insert, AdditionalTextEdits: []model.LSPTextEdit{insert}}))
+		insert := insight.LSPTextEdit{NewText: "x"}
+		require.Error(t, e.ApplyCompletion(insight.CompletionItem{TextEdit: &insert, AdditionalTextEdits: []insight.LSPTextEdit{insert}}))
 		require.Equal(t, "pr", e.Value())
 	})
 }
@@ -118,15 +118,15 @@ func TestLSPCompletionEditNoopAndReadonly(t *testing.T) {
 	e.SetCursorPosition(0, 2)
 	callbacks := 0
 	e.SetOnContentChanged(func(_, _ string) { callbacks++ })
-	item := model.CompletionItem{TextEdit: &model.LSPTextEdit{EndCol: 5, NewText: "print"}}
+	item := insight.CompletionItem{TextEdit: &insight.LSPTextEdit{EndCol: 5, NewText: "print"}}
 	require.NoError(t, e.ApplyCompletion(item))
 	require.Equal(t, Position{Col: 2}, e.cursor)
 	require.Empty(t, e.buf.changes)
 	require.Zero(t, callbacks)
-	require.Error(t, e.ApplyCompletion(model.CompletionItem{}))
+	require.Error(t, e.ApplyCompletion(insight.CompletionItem{}))
 	require.Equal(t, "print", e.Value())
 	e.readOnly = true
-	require.Error(t, e.ApplyCompletion(model.CompletionItem{InsertText: "other"}))
+	require.Error(t, e.ApplyCompletion(insight.CompletionItem{InsertText: "other"}))
 	require.Equal(t, "print", e.Value())
 	require.Zero(t, callbacks)
 }
@@ -146,8 +146,8 @@ func TestLSPCursorEditCoordinatesUseActualTabWidth(t *testing.T) {
 
 func TestLSPCompletionEditCRLFAndCombiningBoundary(t *testing.T) {
 	e := opsEditor(t, "main.go", "a\r\néx")
-	require.Error(t, e.ApplyCompletion(model.CompletionItem{TextEdit: &model.LSPTextEdit{Col: 2, EndCol: 2, NewText: "!"}}))
-	require.NoError(t, e.ApplyCompletion(model.CompletionItem{TextEdit: &model.LSPTextEdit{Line: 1, Col: 1, EndLine: 1, EndCol: 2, NewText: "!"}}))
+	require.Error(t, e.ApplyCompletion(insight.CompletionItem{TextEdit: &insight.LSPTextEdit{Col: 2, EndCol: 2, NewText: "!"}}))
+	require.NoError(t, e.ApplyCompletion(insight.CompletionItem{TextEdit: &insight.LSPTextEdit{Line: 1, Col: 1, EndLine: 1, EndCol: 2, NewText: "!"}}))
 	require.Equal(t, "a\r\ne!x", e.Value())
 	e.Undo()
 	require.Equal(t, "a\r\néx", e.Value())
@@ -155,11 +155,11 @@ func TestLSPCompletionEditCRLFAndCombiningBoundary(t *testing.T) {
 
 func TestLSPDiagnosticNavigationValidatesBothSourceLinesAtomically(t *testing.T) {
 	e := opsEditor(t, "unicode.txt", "\t界é😀abc\r\nab\t界é😀XYZ\r\n")
-	valid := LSPDiagnostic{Line: 0, Col: 6, EndLine: 1, EndCol: 9}
+	valid := insight.LSPDiagnostic{Line: 0, Col: 6, EndLine: 1, EndCol: 9}
 	require.NoError(t, e.SetLSPDiagnosticPosition(valid))
 	require.Equal(t, Position{Col: 9}, e.cursor)
 	require.Equal(t, "abc\r\nab\t界é😀X", e.SelectedText())
-	for _, invalid := range []LSPDiagnostic{
+	for _, invalid := range []insight.LSPDiagnostic{
 		{Line: -1, EndLine: 1},
 		{Line: 0, Col: 5, EndLine: 1, EndCol: 9},  // start splits 😀 surrogate
 		{Line: 0, Col: 6, EndLine: 1, EndCol: 7},  // end splits different line's 😀
@@ -176,20 +176,20 @@ func TestLSPDiagnosticNavigationValidatesBothSourceLinesAtomically(t *testing.T)
 func TestLSPNavigationRangeIsStrictNonEditingCue(t *testing.T) {
 	before := "\t界é😀abc\r\nab\t界é😀XYZ\r\n"
 	e := opsEditor(t, "unicode.txt", before)
-	valid := model.LSPNavigationRange{
-		Start: model.LSPNavigationPosition{Line: 0, Character: 6},
-		End:   model.LSPNavigationPosition{Line: 1, Character: 9},
+	valid := insight.LSPNavigationRange{
+		Start: insight.LSPNavigationPosition{Line: 0, Character: 6},
+		End:   insight.LSPNavigationPosition{Line: 1, Character: 9},
 	}
 	require.NoError(t, e.SetLSPNavigationRange(valid))
 	require.Equal(t, Position{Col: 9}, e.cursor)
 	require.False(t, e.HasSelection())
 	require.Equal(t, &SearchMatch{Start: Position{Col: 9}, End: Position{Line: 1, Col: 10}}, e.landing)
 	require.Equal(t, before, e.Value())
-	for _, invalid := range []model.LSPNavigationRange{
-		{Start: model.LSPNavigationPosition{Line: -1}, End: valid.End},
-		{Start: model.LSPNavigationPosition{Character: 5}, End: valid.End},
-		{Start: valid.Start, End: model.LSPNavigationPosition{Line: 1, Character: 7}},
-		{Start: valid.Start, End: model.LSPNavigationPosition{Line: 1, Character: 12}},
+	for _, invalid := range []insight.LSPNavigationRange{
+		{Start: insight.LSPNavigationPosition{Line: -1}, End: valid.End},
+		{Start: insight.LSPNavigationPosition{Character: 5}, End: valid.End},
+		{Start: valid.Start, End: insight.LSPNavigationPosition{Line: 1, Character: 7}},
+		{Start: valid.Start, End: insight.LSPNavigationPosition{Line: 1, Character: 12}},
 		{Start: valid.End, End: valid.Start},
 	} {
 		state, cue := e.captureViewState(), *e.landing

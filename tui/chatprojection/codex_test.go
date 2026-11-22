@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestNativePatchPaintsBothFilesAndPartialFailure(t *testing.T) {
 	body := "```diff\n--- a/first.go\n+++ b/first.go\n@@ -1 +1 @@\n-old\n+new\n--- a/second.go\n+++ b/second.go\n@@ -0,0 +1 @@\n+second\n```\n"
 	for _, width := range []int{60, 160} {
 		for _, failed := range []bool{false, true} {
-			msg := types.ChatMessage{Role: types.RoleTool, ToolName: "apply_patch", ToolArgs: "first.go, second.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: "Success. Updated the following files:\nM first.go\nA second.go\n" + body}
+			msg := conversation.ChatMessage{Role: conversation.RoleTool, ToolName: "apply_patch", ToolArgs: "first.go, second.go", ToolStatus: "success", ToolPreviewPhase: "done", Content: "Success. Updated the following files:\nM first.go\nA second.go\n" + body}
 			if failed {
 				msg.ToolStatus = "error"
 				msg.ToolPreviewPhase = "error"

@@ -10,12 +10,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/agent"
 	"crude/agent/codexio"
 	"crude/agent/memory"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 )
 
 // Background memory job tuning. Everything here runs OFF the turn hotpath:
@@ -208,7 +208,7 @@ func observationsFromMessages(sessionID string, turn int, messages []provider.Ch
 		if call.Function.Name == "execute_command" && strings.HasPrefix(message.ContentString(), "Command still running after ") {
 			outcome = memory.OutcomeUnmeasured
 		}
-		if message.ToolError || agent.IsToolError(message.ContentString()) {
+		if message.ToolError || turnloop.IsToolError(message.ContentString()) {
 			outcome = memory.OutcomeFailed
 			summary = message.ContentString()
 			if strings.HasPrefix(strings.TrimSpace(message.ContentString()), "[cancelled]") {
@@ -353,7 +353,7 @@ func pathsFromToolArgs(arguments string) []string {
 func extractWatermarkKey(sessionID string) string { return "extract:" + sessionID }
 
 func (s *Session) extractWatermark(ctx context.Context, store *memory.Store, sessionID string) int {
-	raw, err := store.GetMeta(ctx, extractWatermarkKey(sessionID))
+	raw, err := store.Meta(ctx, extractWatermarkKey(sessionID))
 	if err != nil || raw == "" {
 		return 0
 	}
@@ -435,7 +435,7 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 	observations = memory.SelectExtractionObservations(observations)
 
 	previousSummary := ""
-	if summary, found, err := store.GetSessionSummary(ctx, sessionID); err == nil && found {
+	if summary, found, err := store.SessionSummary(ctx, sessionID); err == nil && found {
 		previousSummary = summary.Summary
 	}
 	existingTitles := s.existingMemoryTitles(ctx, store)
@@ -542,7 +542,7 @@ func (s *Session) memoryCompleter() (func(context.Context, string, string) (stri
 	if cfg == nil {
 		return nil, fmt.Errorf("session has no config")
 	}
-	category := cfg.GetMemoryCategory()
+	category := cfg.MemoryCategory()
 	if category.Enabled != nil && !*category.Enabled {
 		return nil, fmt.Errorf("memory agent is disabled")
 	}
@@ -552,7 +552,7 @@ func (s *Session) memoryCompleter() (func(context.Context, string, string) (stri
 	}
 	model := category.Model
 	return func(ctx context.Context, system, user string) (string, error) {
-		return agent.CompleteTextWithMaxOutput(ctx, p, model, rootprompt.MemoryAgentSystem(system, category.Instructions), user, category.ModelMaxOutput)
+		return turnloop.CompleteTextWithMaxOutput(ctx, p, model, rootprompt.MemoryAgentSystem(system, category.Instructions), user, category.ModelMaxOutput)
 	}, nil
 }
 
@@ -694,7 +694,7 @@ func (s *Session) runMemoryMaintenance(parent context.Context) {
 }
 
 func (s *Session) shouldRunLLMConsolidation(ctx context.Context, store *memory.Store) bool {
-	raw, err := store.GetMeta(ctx, "consolidate_last")
+	raw, err := store.Meta(ctx, "consolidate_last")
 	if err == nil && raw != "" {
 		var last int64
 		if _, err := fmt.Sscanf(raw, "%d", &last); err == nil {

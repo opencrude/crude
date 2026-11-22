@@ -10,6 +10,7 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -24,8 +25,8 @@ func TestCommandOutcomeVisualAcceptance(t *testing.T) {
 	app.width, app.height = 160, 40
 	app.AddOrchestrator("outcome-owner")
 	state := app.ws.AgentMgr().Get("outcome-owner").State
-	state.Messages.AppendMessage(workspace.Message{Role: "user", Content: "Verify background command completion."})
-	state.Messages.AppendMessage(workspace.Message{InternalID: "build-call", Role: "tool", ToolName: "async_execute_command",
+	state.Messages.AppendMessage(conversation.Message{Role: "user", Content: "Verify background command completion."})
+	state.Messages.AppendMessage(conversation.Message{InternalID: "build-call", Role: "tool", ToolName: "async_execute_command",
 		ToolCommand: "go build ./...", ToolStatus: "success", ToolPreviewPhase: "done"})
 	for _, info := range []command.Outcome{
 		{Handle: "settings-repro-build", Command: "go build ./...", PID: 41, Status: "completed", Duration: 4 * time.Second, ExitKnown: true, OutputBytes: 14},
@@ -57,7 +58,7 @@ func (m *commandOutcomeVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
-			m.subPaneProjections.GetExisting(m.ownerID).renderer.ToggleDisclosure("outcome-settings-repro-build")
+			m.subPaneProjections.Existing(m.ownerID).renderer.ToggleDisclosure("outcome-settings-repro-build")
 			return m, nil
 		case tea.KeyF9:
 			return m, tea.Quit

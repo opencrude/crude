@@ -16,9 +16,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/provider"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -129,7 +129,7 @@ func testMCPOrderedJourney(t *testing.T, child, enabled bool) {
 	}
 	defer owner.Close()
 	owner.SetWorkDir(root)
-	owner.SetCapabilities(runtime, agent.NewFileOwnership())
+	owner.SetCapabilities(runtime, turnloop.NewFileOwnership())
 	owner.SetYolo(true)
 	attachDelegationTestCollaboration(t, owner)
 	var runner *SubAgentRunner

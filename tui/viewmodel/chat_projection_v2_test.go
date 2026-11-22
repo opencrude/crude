@@ -6,15 +6,15 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/agent/turnloop"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/recovery"
 	"crude/workspace"
 )
@@ -29,7 +29,7 @@ func TestV2PublicationResetRefreshesRetainedChatAndNestedProjection(t *testing.T
 			snapshot := coreprotocol.WorkspaceSnapshot{ID: "w", Revision: 1,
 				Sessions: []coreprotocol.SessionSnapshot{{ID: "s", AgentID: "root"}},
 				Agents: []workspace.AgentSnapshot{{ID: "root", SessionID: "s", ConversationRevision: 1,
-					Messages: []workspace.Message{{InternalID: "m", Role: types.RoleAssistant, Content: "OLD CORE BODY"}, workspace.RecoveryMessage(oldRecovery)}}}}
+					Messages: []conversation.Message{{InternalID: "m", Role: conversation.RoleAssistant, Content: "OLD CORE BODY"}, workspace.RecoveryMessage(oldRecovery)}}}}
 			decode := func(s coreprotocol.WorkspaceSnapshot) coreprotocol.WorkspaceSnapshot {
 				t.Helper()
 				b, err := coreprotocol.Marshal(&s)
@@ -46,37 +46,37 @@ func TestV2PublicationResetRefreshesRetainedChatAndNestedProjection(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			conversation := view.AgentMgr.Get("root").State.Messages
+			transcript := view.AgentMgr.Get("root").State.Messages
 			registry := newSubPaneProjectionRegistry(theme.DefaultDark())
 			projection := registry.Get("root", workspace.PaneAgent)
 			projection.renderer.SetSize(80, 24)
 			projection.renderer.SetChatAreaBounds(0, 20)
-			registry.SyncFromWorkspace("root", conversation, false)
+			registry.SyncFromWorkspace("root", transcript, false)
 			rows, _, _ := projection.renderer.ExportMessageRows(80)
 			if !strings.Contains(strings.Join(rows[0].Lines, "\n"), "OLD CORE BODY") {
 				t.Fatalf("old fixture not painted: %+v", rows)
 			}
-			oldScroll, generation := projection.scroll, conversation.SourceGeneration()
+			oldScroll, generation := projection.scroll, transcript.SourceGeneration()
 			// A malformed candidate must not change either canonical or cache clocks.
 			bad := decode(snapshot)
 			bad.Agents[0].Messages[0].InternalID = ""
 			if err := view.InstallPublicationSnapshot(bad, newDomain); err == nil {
 				t.Fatal("invalid reset accepted")
 			}
-			if conversation.SourceGeneration() != generation {
+			if transcript.SourceGeneration() != generation {
 				t.Fatal("failed preflight advanced source generation")
 			}
-			snapshot.Agents[0].Messages = []workspace.Message{{InternalID: "m", Role: types.RoleAssistant, Content: "REPLACEMENT CORE BODY"}}
+			snapshot.Agents[0].Messages = []conversation.Message{{InternalID: "m", Role: conversation.RoleAssistant, Content: "REPLACEMENT CORE BODY"}}
 			if err := view.InstallPublicationSnapshot(decode(snapshot), newDomain); err != nil {
 				t.Fatal(err)
 			}
-			registry.SyncFromWorkspace("root", conversation, false)
+			registry.SyncFromWorkspace("root", transcript, false)
 			rows, _, _ = projection.renderer.ExportMessageRows(80)
 			text := strings.Join(rows[0].Lines, "\n")
 			if !strings.Contains(text, "REPLACEMENT CORE BODY") || strings.Contains(text, "OLD CORE") || len(rows) != 1 {
 				t.Fatalf("reset left stale painted facts: %+v", rows)
 			}
-			if conversation != view.AgentMgr.Get("root").State.Messages || conversation.Version() != 1 || conversation.SourceGeneration() <= generation || projection.scroll == oldScroll {
+			if transcript != view.AgentMgr.Get("root").State.Messages || transcript.Version() != 1 || transcript.SourceGeneration() <= generation || projection.scroll == oldScroll {
 				t.Fatal("reset lost identity/cursor or retained the old source interaction lifetime")
 			}
 			if got := view.AgentMgr.Get("root").State.RecoveryStatus(); got.ID != "" {
@@ -84,7 +84,7 @@ func TestV2PublicationResetRefreshesRetainedChatAndNestedProjection(t *testing.T
 			}
 			// Ordinary duplicate reconciliation retains caches and scroll lifetime.
 			version, scroll := projection.renderer.Version(), projection.scroll
-			registry.SyncFromWorkspace("root", conversation, false)
+			registry.SyncFromWorkspace("root", transcript, false)
 			if projection.renderer.Version() != version || projection.scroll != scroll {
 				t.Fatal("unchanged source invalidated presentation")
 			}
@@ -96,9 +96,9 @@ func TestV2PublicationResetRefreshesRetainedChatAndNestedProjection(t *testing.T
 // retained projection with a fresh hydrated one and assert actual attribution,
 // not only equality between two copies of the same helper's output.
 func TestV2PublicationMetadataOnlyUpdatesRepaintAttribution(t *testing.T) {
-	message := workspace.Message{InternalID: "peer", Role: types.RoleUser, Origin: provider.OriginPeer, Content: "Review exact evidence", Time: time.Unix(2000, 0),
+	message := conversation.Message{InternalID: "peer", Role: conversation.RoleUser, Origin: provider.OriginPeer, Content: "Review exact evidence", Time: time.Unix(2000, 0),
 		Collaboration: &provider.CollaborationAttribution{EventID: "e", SenderName: "Asha", RecipientNames: []string{"Blake"}, Kind: "peer_note", ArtifactID: "report", ArtifactRevision: 1}}
-	snapshot := coreprotocol.WorkspaceSnapshot{ID: "w", Revision: 1, Sessions: []coreprotocol.SessionSnapshot{{ID: "s", AgentID: "root"}}, Agents: []workspace.AgentSnapshot{{ID: "root", SessionID: "s", ConversationRevision: 1, Messages: []workspace.Message{message}}}}
+	snapshot := coreprotocol.WorkspaceSnapshot{ID: "w", Revision: 1, Sessions: []coreprotocol.SessionSnapshot{{ID: "s", AgentID: "root"}}, Agents: []workspace.AgentSnapshot{{ID: "root", SessionID: "s", ConversationRevision: 1, Messages: []conversation.Message{message}}}}
 	view, err := coreclient.NewWorkspaceView(nil, snapshot)
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestV2PublicationMetadataOnlyUpdatesRepaintAttribution(t *testing.T) {
 	sync()
 	_, _, _ = r.ExportMessageRows(100)
 	message.Collaboration = &provider.CollaborationAttribution{EventID: "e", SenderName: "Casey", RecipientNames: []string{"Drew"}, Kind: "work_request", ArtifactID: "report", ArtifactRevision: 2}
-	update := coreprotocol.WorkspaceUpdate{Changes: coreprotocol.AgentChangesResult{Revision: 2}, Conversations: []coreprotocol.ConversationUpdate{{AgentID: "root", Delta: workspace.ConversationDelta{BaseRevision: 1, Revision: 2, Upserts: []workspace.Message{message}}}}}
+	update := coreprotocol.WorkspaceUpdate{Changes: coreprotocol.AgentChangesResult{Revision: 2}, Conversations: []coreprotocol.ConversationUpdate{{AgentID: "root", Delta: workspace.ConversationDelta{BaseRevision: 1, Revision: 2, Upserts: []conversation.Message{message}}}}}
 	b, err := coreprotocol.Marshal(&update)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestV2PublicationMetadataOnlyUpdatesRepaintAttribution(t *testing.T) {
 	fresh := chatprojection.NewRenderer(theme.DefaultDark())
 	fresh.SetSize(100, 24)
 	fresh.SetChatAreaBounds(0, 20)
-	fresh.SyncMessages(ChatMessagesFromViews([]workspace.ChatMessageView{message}), 1, 0)
+	fresh.SyncMessages(ChatMessagesFromViews([]conversation.Message{message}), 1, 0)
 	hydrated, _, _ := fresh.ExportMessageRows(100)
 	assertSameRows(t, "metadata-only v2 update", rows[0], hydrated[0])
 	if r.Messages()[0].Collaboration.ArtifactRevision != 2 {
@@ -172,9 +172,9 @@ func TestV2ProducerEnvelopesAndSQLiteHydrationPaintIdentically(t *testing.T) {
 			app := newFullTestApp(t)
 			wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": {SessionID: "root", AgentID: "root"}}
 			app.AddOrchestrator("root")
-			events := append([]workspace.AgentEvent{{Type: "turn_started", Data: types.TurnIdentity{Generation: 1, ModelID: "model"}}}, tc.events...)
+			events := append([]workspace.AgentEvent{{Type: "turn_started", Data: conversation.TurnIdentity{Generation: 1, ModelID: "model"}}}, tc.events...)
 			for i, event := range events {
-				_, _ = app.Update(agent.AgentEvent{Type: event.Type, Data: event.Data, AgentID: "root", Identity: types.RuntimeEventIdentity{EventID: fmt.Sprint("event-", i), OwnerID: "root", AgentID: "root", RunID: "run", RuntimeEpoch: 1, Generation: 1, Sequence: uint64(i + 1)}})
+				_, _ = app.Update(turnloop.AgentEvent{Type: event.Type, Data: event.Data, AgentID: "root", Identity: conversation.RuntimeEventIdentity{EventID: fmt.Sprint("event-", i), OwnerID: "root", AgentID: "root", RunID: "run", RuntimeEpoch: 1, Generation: 1, Sequence: uint64(i + 1)}})
 			}
 			state := app.ws.AgentMgr().Get("root").State
 			for i := range 8 {
@@ -250,7 +250,7 @@ func TestV2ResetRepaintsMountedAppAndFilteredThinking(t *testing.T) {
 	state := app.ws.AgentMgr().Get("root").State
 	install := func(text string) {
 		t.Helper()
-		if err := state.Messages.InstallDelta(workspace.ConversationDelta{Reset: true, Revision: 1, Order: []string{"same"}, Upserts: []workspace.Message{{InternalID: "same", Role: types.RoleAssistant, Content: text, Time: time.Unix(2000, 0)}}}); err != nil {
+		if err := state.Messages.InstallDelta(workspace.ConversationDelta{Reset: true, Revision: 1, Order: []string{"same"}, Upserts: []conversation.Message{{InternalID: "same", Role: conversation.RoleAssistant, Content: text, Time: time.Unix(2000, 0)}}}); err != nil {
 			t.Fatal(err)
 		}
 		app.presentAgentReduction(workspace.AgentReduction{Accepted: true, EvidenceOnly: true, ChangedAgents: []string{"root"}})
@@ -269,7 +269,7 @@ func TestV2ResetRepaintsMountedAppAndFilteredThinking(t *testing.T) {
 	// independently from the complete-agent renderer's cursor.
 	resetThinking := func(text string) {
 		t.Helper()
-		if err := state.Messages.InstallDelta(workspace.ConversationDelta{Reset: true, Revision: 1, Order: []string{"thought"}, Upserts: []workspace.Message{{InternalID: "thought", Role: types.RoleThinking, Content: text, ThinkingActive: true, Time: time.Unix(2000, 0)}}}); err != nil {
+		if err := state.Messages.InstallDelta(workspace.ConversationDelta{Reset: true, Revision: 1, Order: []string{"thought"}, Upserts: []conversation.Message{{InternalID: "thought", Role: conversation.RoleThinking, Content: text, ThinkingActive: true, Time: time.Unix(2000, 0)}}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -279,14 +279,14 @@ func TestV2ResetRepaintsMountedAppAndFilteredThinking(t *testing.T) {
 	app.syncLocalThinking(app.subPaneProjections, pane)
 	resetThinking("SECOND THOUGHT SOURCE")
 	app.syncLocalThinking(app.subPaneProjections, pane)
-	projection := app.subPaneProjections.GetExisting(pane.ID)
+	projection := app.subPaneProjections.Existing(pane.ID)
 	if got := projection.renderer.Messages(); len(got) != 1 || got[0].Content != "SECOND THOUGHT SOURCE" {
 		t.Fatalf("filtered thought retained reset source: %+v", got)
 	}
 }
 
 func TestV2CommandOutcomeProjectionOwnsNestedOutput(t *testing.T) {
-	source := workspace.Message{Collaboration: &provider.CollaborationAttribution{Command: &command.Outcome{Handle: "build", Output: &command.Result{Output: "retained stderr"}}}}
+	source := conversation.Message{Collaboration: &provider.CollaborationAttribution{Command: &command.Outcome{Handle: "build", Output: &command.Result{Output: "retained stderr"}}}}
 	projected := chatMessageFromCanonical(source)
 	projected.Collaboration.Command.Output.Output = "changed observer"
 	if source.Collaboration.Command.Output.Output != "retained stderr" {

@@ -2,21 +2,16 @@ package workspace
 
 import (
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
-// ChatMessageView is the canonical presentation-neutral conversation message.
-// Live state and hydrated state therefore cross into every frontend through
-// the exact same contract.
-type ChatMessageView = ttypes.ConversationMessage
-
-func messageFromView(view ChatMessageView) Message {
-	return ttypes.CloneConversationMessage(view)
+func messageFromView(view conversation.Message) conversation.Message {
+	return conversation.CloneMessage(view)
 }
 
 // statusRowView is the transcript row of a session status change, identical
 // whether it arrives live or is hydrated from the session.
-func statusRowView(row sessiondb.StatusRow) ChatMessageView {
-	return ChatMessageView{InternalID: row.ID, Role: ttypes.RoleStatus, LifecyclePhase: row.Phase,
+func statusRowView(row sessiondb.StatusRow) conversation.Message {
+	return conversation.Message{InternalID: row.ID, Role: conversation.RoleStatus, LifecyclePhase: row.Phase,
 		LifecycleOperationID: row.ID, Content: row.Content, Time: row.CreatedAt}
 }

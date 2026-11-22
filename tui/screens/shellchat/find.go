@@ -10,7 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"crude/text/search"
+	"crude/text/textsearch"
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
 )

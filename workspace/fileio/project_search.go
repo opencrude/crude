@@ -2,8 +2,8 @@ package fileio
 
 import (
 	"context"
-	"crude/text/encoding"
-	"crude/text/search"
+	"crude/text/textencoding"
+	"crude/text/textsearch"
 	"fmt"
 	"io/fs"
 	"path"

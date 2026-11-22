@@ -5,7 +5,8 @@ import (
 	"context"
 	"crude/core"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"fmt"
 	"github.com/charmbracelet/x/ansi"
@@ -48,10 +49,10 @@ func installedRangeFixture(t *testing.T) (remoteJourneyShell, *editor.Editor, *c
 		retained = w
 		s := w.AppDefaults()
 		s.Editor.LineNumbers = true
-		s.LSP = types.DefaultLSPSettings()
+		s.LSP = setting.DefaultLSP()
 		s.LSP.AutoDetect = false
 		s.LSP.AutoComplete = false
-		s.LSP.Languages = map[string]types.LSPLanguageSettings{"c": {Enabled: true, Command: executable, Args: []string{"--background-index=false", "--clang-tidy=false", "--log=error"}, RootMarkers: []string{".clang-format"}}}
+		s.LSP.Languages = map[string]setting.LSPLanguage{"c": {Enabled: true, Command: executable, Args: []string{"--background-index=false", "--clang-tidy=false", "--log=error"}, RootMarkers: []string{".clang-format"}}}
 		w.SetAppDefaults(s)
 		grantSemanticFixture(t, w)
 	})
@@ -59,7 +60,7 @@ func installedRangeFixture(t *testing.T) (remoteJourneyShell, *editor.Editor, *c
 	ed := liveTestOpen(t, shell.app, source)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if _, _, err := retained.LSPMgr.ProbeHover(ctx, source, types.LSPSourcePosition{Line: 2, Column: 5}); err != nil {
+	if _, _, err := retained.LSPMgr.ProbeHover(ctx, source, insight.LSPSourcePosition{Line: 2, Column: 5}); err != nil {
 		t.Fatal(err)
 	}
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {

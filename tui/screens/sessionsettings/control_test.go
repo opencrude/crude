@@ -3,14 +3,14 @@ package sessionsettings
 import (
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 	"encoding/json"
 	"testing"
 )
 
 func TestControlRoleThinkingAndAuthority(t *testing.T) {
-	settings := types.Settings{Model: "initial", ThinkingEffort: "none", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "initial", ThinkingEffort: "none"}}}}
+	settings := setting.Settings{Model: "initial", ThinkingEffort: "none", Agents: setting.Agents{Categories: map[string]setting.Category{"default": {Model: "initial", ThinkingEffort: "none"}}}}
 	s := New(theme.DefaultDark(), settings, settings, nil)
 	s.SaveSnapshot()
 	h := ui.NewHost(theme.DefaultDark(), s)
@@ -44,11 +44,11 @@ func TestControlRoleThinkingAndAuthority(t *testing.T) {
 }
 
 func TestControlPickerFilterAndSelectionReachOwner(t *testing.T) {
-	settings := types.Settings{Model: "initial", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "initial"}}}}
+	settings := setting.Settings{Model: "initial", Agents: setting.Agents{Categories: map[string]setting.Category{"default": {Model: "initial"}}}}
 	s := New(theme.DefaultDark(), settings, settings, nil)
 	s.openRole("default")
 	s.openModelPicker()
-	s.models[sessionModelKey(s.currentProviderID(), s.currentAccountID())] = []types.ModelEntry{{ID: "chosen", Name: "Chosen"}, {ID: "other", Name: "Other"}}
+	s.models[sessionModelKey(s.currentProviderID(), s.currentAccountID())] = []setting.ModelEntry{{ID: "chosen", Name: "Chosen"}, {ID: "other", Name: "Other"}}
 	s.syncPickerList()
 	h := ui.NewHost(theme.DefaultDark(), s)
 	h.Resize(90, 20)

@@ -3,10 +3,10 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	settingsui "crude/tui/settings"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -59,7 +59,7 @@ func (m *App) applyPreferencesSaved(message preferencesSavedMsg) {
 	m.refreshAllSessionSettingsProjections()
 	if m.Feedback != nil {
 		label := "Application settings saved"
-		if message.result.Scope == types.SettingsScopeWorkspace {
+		if message.result.Scope == setting.ScopeWorkspace {
 			label = "Workspace settings saved"
 		}
 		m.Feedback.NotifyInfo(label)

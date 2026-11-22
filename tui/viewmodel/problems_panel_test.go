@@ -10,7 +10,7 @@ import (
 
 	"crude/tui/screens/problems"
 	"crude/tui/screens/termdock"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // The real shell mounts the Problems pane: grouped rows paint in the dock,
@@ -23,11 +23,11 @@ func TestProblemsPaneJourney(t *testing.T) {
 	openEditorTabs(t, app, "menu.go")
 	root := app.ws.RootPath()
 	main := filepath.Join(root, "cmd", "main.go")
-	app.lspFacts = map[string]types.InsightDiagnostics{main: {
+	app.lspFacts = map[string]insight.Diagnostics{main: {
 		ID: "journey-fact",
-		Diagnostics: []types.LSPDiagnostic{
-			{Line: 6, Col: 0, Severity: types.DiagWarning, Message: "unused value", Source: "vet"},
-			{Line: 2, Col: 4, Severity: types.DiagError, Message: "undefined: helper", Source: "compiler"},
+		Diagnostics: []insight.LSPDiagnostic{
+			{Line: 6, Col: 0, Severity: insight.DiagWarning, Message: "unused value", Source: "vet"},
+			{Line: 2, Col: 4, Severity: insight.DiagError, Message: "undefined: helper", Source: "compiler"},
 		},
 	}}
 	app.toggleWorkspacePanel(termdock.PanelProblems)

@@ -16,17 +16,17 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/agent"
 	"crude/agent/collaboration"
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
-	"crude/history"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
 	"crude/tui"
 	"crude/tui/viewmodel"
 	recoverytypes "crude/types/recovery"
@@ -49,7 +49,7 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 		}
 	}
 	cfg := FileConfigToSession(fc)
-	main := cfg.GetActiveDefaultCategory()
+	main := cfg.ActiveDefaultCategory()
 	model := strings.TrimSpace(os.Getenv("CRUDE_HYGIENE_MODEL"))
 	if model == "" {
 		model = main.Model
@@ -193,7 +193,7 @@ func TestLiveExecutionHygieneAutonomy(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		terminal, err = tui.Start(port, providerPresets(), history.New(), &appLogger{}, func(a *viewmodel.App) error { a.AddOrchestrator(created.OrchID); return nil })
+		terminal, err = tui.Start(port, providerPresets(), prompthistory.New(), &appLogger{}, func(a *viewmodel.App) error { a.AddOrchestrator(created.OrchID); return nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,8 +331,8 @@ func seedLiveParkedExecution(t *testing.T, ws *workspace.Workspace, cfg *session
 		t.Fatal(err)
 	}
 	owner, _ := json.Marshal(struct {
-		Spec agent.SubAgentSpec `json:"spec"`
-	}{agent.SubAgentSpec{ID: childID, Name: child.Name, Category: session.CategoryResearcher, Description: "Obsolete parked experiment", ParentID: agent.AgentID(parent.ID), AccountID: account, Model: model, Provider: providerID, Isolation: "worktree", ExecutionID: c.ID, ExecutionRoot: c.Root, ExecutionRunID: run.ID, Depth: 1}})
+		Spec turnloop.SubAgentSpec `json:"spec"`
+	}{turnloop.SubAgentSpec{ID: childID, Name: child.Name, Category: session.CategoryResearcher, Description: "Obsolete parked experiment", ParentID: turnloop.AgentID(parent.ID), AccountID: account, Model: model, Provider: providerID, Isolation: "worktree", ExecutionID: c.ID, ExecutionRoot: c.Root, ExecutionRunID: run.ID, Depth: 1}})
 	assignment := provider.NewTextMessage("user", "Obsolete parked experiment")
 	assignment.InternalID = "assignment-parked-child"
 	checkpoint := sessiondb.RecoveryCheckpoint{Status: recoverytypes.Status{ID: "parked-incident", AgentID: childID, Generation: 1, State: recoverytypes.NeedsAttention, StartedAt: time.Now(), UpdatedAt: time.Now(), Summary: "Parked obsolete experiment"}, PendingInput: provider.UserInput{InternalID: assignment.InternalID, Text: assignment.ContentString()}, InputAdmitted: true, Archive: []provider.ChatMessage{assignment}, ActiveContext: []provider.ChatMessage{assignment}, ContextOwnerID: childID, ContextGeneration: 1, ContextReason: "fixture_parked", OwnerData: owner}

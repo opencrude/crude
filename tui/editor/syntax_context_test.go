@@ -2,7 +2,7 @@ package editor
 
 import (
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crypto/sha256"
 	"fmt"
 	"strings"

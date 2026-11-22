@@ -1,8 +1,7 @@
-// Package filetree provides the file tree sidebar widget.
-//
 // This file resolves per-file Git status for the local file tree sidebar
 // through workspace.ReadGitStatus, the same authority the core uses, so
 // checkout line-ending conversion never reads as a modification.
+
 package filetree
 
 import (

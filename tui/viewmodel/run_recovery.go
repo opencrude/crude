@@ -4,7 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 type recoveryRetryResultMsg struct {
@@ -74,7 +74,7 @@ func (m *App) applyRecoveryCancelResult(result recoveryCancelResultMsg) {
 }
 
 func (m *App) openNetworkSettings() {
-	m.openSettings(types.SettingsScopeApplication)
+	m.openSettings(setting.ScopeApplication)
 	window := m.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	body := m.settingsSurface(window)
 	if body == nil {

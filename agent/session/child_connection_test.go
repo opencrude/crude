@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/agent"
+	"crude/agent/turnloop"
 )
 
 // categoryFieldRole classifies every CategoryConfig field. "provider" fields
@@ -58,9 +58,9 @@ func TestEveryCategorySettingIsClassifiedForChildProviders(t *testing.T) {
 }
 
 // fullChildSpec sets every provider-role setting to a distinct non-zero value.
-func fullChildSpec() agent.SubAgentSpec {
+func fullChildSpec() turnloop.SubAgentSpec {
 	temperature, topP := 0.25, 0.75
-	return agent.SubAgentSpec{
+	return turnloop.SubAgentSpec{
 		ID: "child", Category: CategoryCrafter, AccountID: "account", Model: "child-model",
 		ThinkingEffort: "high", ModelTemperature: &temperature, ModelTopP: &topP, ModelContextWindow: 123456,
 		ServiceTier: "fast",

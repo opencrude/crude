@@ -1,0 +1,35 @@
+name: Conventions
+
+# Folder, package, file and naming rules (docs/reference/code-layout.md) on
+# every push and pull request. The same checks run locally in the pre-push
+# hook (make hooks) and in make conventions.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  conventions:
+    name: Layout, names and lint
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/setup-native
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+      - name: Layout and names
+        run: make layout-check
+      - name: Lint
+        run: make lint
+      - name: Doc comments on new exported names
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: |
+          if [[ -z "$BASE" || "$BASE" =~ ^0+$ ]]; then BASE=origin/master; fi
+          make lint-new DOC_BASE="$BASE"

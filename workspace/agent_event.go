@@ -4,7 +4,7 @@ import (
 	"unicode/utf8"
 
 	"crude/agent/tools"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 // AgentEvent is the workspace-owned domain event produced by the backend
@@ -14,7 +14,7 @@ type AgentEvent struct {
 	Type     string
 	Data     any
 	AgentID  string
-	Identity ttypes.RuntimeEventIdentity
+	Identity conversation.RuntimeEventIdentity
 }
 
 // StaleAgentUpload identifies late upload callbacks after a request has begun

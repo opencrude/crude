@@ -44,7 +44,7 @@ func PaintConfigFromTheme(th *theme.Theme) PaintConfig {
 }
 
 // TreeItems projects visible file-tree nodes into ui.TreeItem values.
-func TreeItems(model *FileTreeModel) []ui.TreeItem {
+func TreeItems(model *Model) []ui.TreeItem {
 	if model == nil {
 		return nil
 	}
@@ -65,7 +65,7 @@ func TreeItems(model *FileTreeModel) []ui.TreeItem {
 }
 
 // NewTreeRowPainter returns a native cell-buffer row painter for file-tree rows.
-func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfig) ui.TreeRowPainter {
+func NewTreeRowPainter(model *Model, icons *IconResolver, cfg PaintConfig) ui.TreeRowPainter {
 	return func(buf *surface.CellBuffer, ox, oy, rowY, width int, item ui.TreeItem, st ui.TreeRowState, tokens *ui.TokenSet) {
 		node, _ := item.Payload.(*TreeNode)
 		if node == nil || buf == nil || tokens == nil {
@@ -388,7 +388,8 @@ func (c TreeViewportContext) PathAt(x int) string {
 	return ""
 }
 
-func ViewportContext(model *FileTreeModel, rows, width int, icons *IconResolver) TreeViewportContext {
+// ViewportContext describes the ancestor rows that a scrolled tree still shows above its first row.
+func ViewportContext(model *Model, rows, width int, icons *IconResolver) TreeViewportContext {
 	result := TreeViewportContext{width: width}
 	if model == nil {
 		return result
@@ -439,7 +440,7 @@ func ViewportContext(model *FileTreeModel, rows, width int, icons *IconResolver)
 }
 
 // BreadcrumbLine builds the sticky common-ancestor path for a scrolled tree.
-func BreadcrumbLine(model *FileTreeModel, width int) string {
+func BreadcrumbLine(model *Model, width int) string {
 	if model == nil {
 		return ""
 	}
@@ -447,7 +448,7 @@ func BreadcrumbLine(model *FileTreeModel, width int) string {
 }
 
 // BreadcrumbLineWithIcons uses the same icon policy as native tree rows.
-func BreadcrumbLineWithIcons(model *FileTreeModel, width int, icons *IconResolver) string {
+func BreadcrumbLineWithIcons(model *Model, width int, icons *IconResolver) string {
 	if model == nil {
 		return ""
 	}
@@ -455,7 +456,7 @@ func BreadcrumbLineWithIcons(model *FileTreeModel, width int, icons *IconResolve
 }
 
 // SyncScrollModel copies model scroll state into a ui.ScrollModel.
-func SyncScrollModel(model *FileTreeModel, scroll *ui.ScrollModel, viewport int) {
+func SyncScrollModel(model *Model, scroll *ui.ScrollModel, viewport int) {
 	if model == nil || scroll == nil {
 		return
 	}
@@ -466,7 +467,7 @@ func SyncScrollModel(model *FileTreeModel, scroll *ui.ScrollModel, viewport int)
 }
 
 // ApplyScrollToModel writes scroll model offset back to the file tree model.
-func ApplyScrollToModel(model *FileTreeModel, scroll *ui.ScrollModel) {
+func ApplyScrollToModel(model *Model, scroll *ui.ScrollModel) {
 	if model == nil || scroll == nil {
 		return
 	}

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"crude/agent/collaboration"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/workspace"
 )
 

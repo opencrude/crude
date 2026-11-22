@@ -14,9 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/lsp/action"
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspaction"
+	"crude/lsp/lspedit"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -27,7 +27,7 @@ const codeActionMaxSets = 4
 // canonical owner's immutable set; changing a returned summary grants nothing.
 type CodeActionSet struct {
 	ID, Digest          string
-	Boundary            types.InsightBoundary
+	Boundary            insight.Boundary
 	Start, End          int // exact source UTF-8 bytes, not editor display columns
 	Items               []CodeActionSummary
 	DiagnosticsIncluded int
@@ -58,7 +58,7 @@ func cloneCodeActionSet(in CodeActionSet) CodeActionSet {
 	return in
 }
 
-func (s *DocumentService) codeActionSourceLocked(owner document.Owner, source types.InsightSource) ([]byte, error) {
+func (s *DocumentService) codeActionSourceLocked(owner document.Owner, source insight.Source) ([]byte, error) {
 	if err := s.validateReviewedSourceLocked(owner, source); err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (s *DocumentService) pruneCodeActionSetsLocked() {
 // RequestLSPCodeActions is an explicit, current-document, edit-only discovery.
 // A null/empty response is scoped evidence at this source and selection, never a
 // conclusion about project cleanliness or code-action semantic completeness.
-func (w *Workspace) RequestLSPCodeActions(ctx context.Context, owner document.Owner, expected types.InsightSource, start, end int) (CodeActionSet, error) {
+func (w *Workspace) RequestLSPCodeActions(ctx context.Context, owner document.Owner, expected insight.Source, start, end int) (CodeActionSet, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil || w.LocalHistory == nil {
 		return CodeActionSet{}, errors.New("code actions require canonical source, language service and recoverable Local History")
 	}
@@ -194,7 +194,7 @@ func (w *Workspace) RequestLSPCodeActions(ctx context.Context, owner document.Ow
 
 // codeActionTargets admits only workspace-local ordinary text edits and file
 // creation. Resource operations other than create are refused as a whole.
-func (s *DocumentService) codeActionTargets(source types.InsightSource, wireVersion int, text string, edit *lspedit.WorkspaceEdit) ([]lspedit.DocumentEdit, error) {
+func (s *DocumentService) codeActionTargets(source insight.Source, wireVersion int, text string, edit *lspedit.WorkspaceEdit) ([]lspedit.DocumentEdit, error) {
 	if edit == nil || len(edit.Operations) == 0 {
 		return nil, errors.New("the action has no source changes")
 	}
@@ -262,9 +262,9 @@ func (s *DocumentService) codeActionTargets(source types.InsightSource, wireVers
 	return targets, nil
 }
 
-func (w *Workspace) executeCodeActionCommand(ctx context.Context, set *codeActionSet, item lspaction.Action) (types.LSPCommandResponse, error) {
+func (w *Workspace) executeCodeActionCommand(ctx context.Context, set *codeActionSet, item lspaction.Action) (insight.LSPCommandResponse, error) {
 	if item.Command == nil {
-		return types.LSPCommandResponse{}, errors.New("the action has no command")
+		return insight.LSPCommandResponse{}, errors.New("the action has no command")
 	}
 	return w.LSPMgr.ExecuteCodeActionCommand(ctx, set.view.Boundary, set.wire, item.Command.Name, item.Command.Arguments)
 }
@@ -287,7 +287,7 @@ func combineCommandWorkspaceEdits(raw [][]byte) (*lspedit.WorkspaceEdit, error) 
 	return combined, nil
 }
 
-func commandActionOutcome(response types.LSPCommandResponse) (message, url string) {
+func commandActionOutcome(response insight.LSPCommandResponse) (message, url string) {
 	if response.ShowDocument != nil && response.ShowDocument.URI != "" {
 		if isBrowserURL(response.ShowDocument.URI) {
 			url = response.ShowDocument.URI

@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -14,9 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/insight/governor"
-	"crude/types"
 	"crude/workspace"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
@@ -256,9 +257,9 @@ type semanticLSPClient struct {
 	mu          sync.Mutex
 	calls       []semanticLSPCall
 	edit        []byte
-	boundary    types.InsightBoundary
+	boundary    insight.Boundary
 	version     int
-	diagnostics []types.LSPDiagnostic
+	diagnostics []insight.LSPDiagnostic
 	admit       func() error
 }
 
@@ -272,24 +273,24 @@ type semanticLSPRuntime struct{ client *semanticLSPClient }
 
 // Keep real launch resolution, but resolve to the test image rather than a
 // server that may not be installed. The injected runtime never executes it.
-func semanticLSPFixtureSettings(t testing.TB) types.LSPSettings {
+func semanticLSPFixtureSettings(t testing.TB) setting.LSP {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := types.DefaultLSPSettings()
-	settings.Languages["go"] = types.LSPLanguageSettings{Enabled: true, Command: executable}
+	settings := setting.DefaultLSP()
+	settings.Languages["go"] = setting.LSPLanguage{Enabled: true, Command: executable}
 	return settings
 }
 
-func (r semanticLSPRuntime) NewClient(_ types.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
+func (r semanticLSPRuntime) NewClient(_ setting.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
 	r.client.mu.Lock()
 	r.client.admit = admit
 	r.client.mu.Unlock()
 	return r.client
 }
-func (*semanticLSPClient) OnDiagnostics(func(types.InsightDiagnosticPublication)) {}
+func (*semanticLSPClient) OnDiagnostics(func(insight.DiagnosticPublication)) {}
 func (c *semanticLSPClient) Start(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -304,24 +305,24 @@ func (c *semanticLSPClient) Start(ctx context.Context) error {
 }
 func (*semanticLSPClient) Stop() error           { return nil }
 func (*semanticLSPClient) Done() <-chan struct{} { return nil }
-func (c *semanticLSPClient) OpenFile(_ context.Context, _, _, _ string, boundary types.InsightBoundary) (int, error) {
+func (c *semanticLSPClient) OpenFile(_ context.Context, _, _, _ string, boundary insight.Boundary) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.boundary = boundary
 	c.version++
 	return c.version, nil
 }
-func (c *semanticLSPClient) UpdateFile(ctx context.Context, path, text string, boundary types.InsightBoundary) (int, error) {
+func (c *semanticLSPClient) UpdateFile(ctx context.Context, path, text string, boundary insight.Boundary) (int, error) {
 	return c.OpenFile(ctx, path, "", text, boundary)
 }
 func (*semanticLSPClient) CloseFile(context.Context, string)                      {}
 func (*semanticLSPClient) NotifySave(context.Context, string, string, int, bool)  {}
 func (*semanticLSPClient) NotifyWatchedFilesChanged(context.Context, string, int) {}
-func (c *semanticLSPClient) AwaitDiagnostics(context.Context, string) (types.InsightDiagnosticPublication, bool) {
+func (c *semanticLSPClient) AwaitDiagnostics(context.Context, string) (insight.DiagnosticPublication, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	v := c.version
-	return types.InsightDiagnosticPublication{Boundary: c.boundary, Sequence: 1, WireVersion: v, ReportedVersion: &v, Diagnostics: append([]types.LSPDiagnostic{}, c.diagnostics...)}, true
+	return insight.DiagnosticPublication{Boundary: c.boundary, Sequence: 1, WireVersion: v, ReportedVersion: &v, Diagnostics: append([]insight.LSPDiagnostic{}, c.diagnostics...)}, true
 }
 func (c *semanticLSPClient) record(path string, line, col int, name string, include bool) {
 	c.mu.Lock()
@@ -333,52 +334,52 @@ func (c *semanticLSPClient) count() int {
 	defer c.mu.Unlock()
 	return len(c.calls)
 }
-func (c *semanticLSPClient) RequestNavigation(_ context.Context, path, kind string, line, col int, include bool) (types.LSPNavigationResponse, error) {
+func (c *semanticLSPClient) RequestNavigation(_ context.Context, path, kind string, line, col int, include bool) (insight.LSPNavigationResponse, error) {
 	c.record(path, line, col, "", include)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return types.LSPNavigationResponse{Kind: kind, WireVersion: c.version,
+	return insight.LSPNavigationResponse{Kind: kind, WireVersion: c.version,
 		JSON: []byte(fmt.Sprintf(`[{"uri":%q,"range":{"start":{"line":2,"character":3},"end":{"line":4,"character":5}}}]`, c.targetURI))}, nil
 }
 func (c *semanticLSPClient) RequestHover(_ context.Context, path string, line, col int) (string, error) {
 	c.record(path, line, col, "", false)
 	return "hover **symbol**\nsecond line", nil
 }
-func (c *semanticLSPClient) RequestSignatureHelp(_ context.Context, path string, line, col int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+func (c *semanticLSPClient) RequestSignatureHelp(_ context.Context, path string, line, col int, trigger insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
 	c.record(path, line, col, "", false)
-	return types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0,
-		Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}, nil
+	return insight.LSPSignatureHelp{Signatures: []insight.LSPSignature{{Label: "call(value int)", ActiveParameter: 0,
+		Parameters: []insight.LSPSignatureParameter{{Label: "value int"}}}}}, nil
 }
-func (c *semanticLSPClient) RequestRename(_ context.Context, path string, line, col int, name string) (types.LSPRenameEdit, error) {
+func (c *semanticLSPClient) RequestRename(_ context.Context, path string, line, col int, name string) (insight.LSPRenameEdit, error) {
 	c.record(path, line, col, name, false)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return types.LSPRenameEdit{JSON: append([]byte(nil), c.edit...), WireVersion: c.version}, nil
+	return insight.LSPRenameEdit{JSON: append([]byte(nil), c.edit...), WireVersion: c.version}, nil
 }
-func (c *semanticLSPClient) RequestCodeActions(context.Context, string, int, int, int, int) (types.LSPCodeActionResponse, error) {
-	return types.LSPCodeActionResponse{}, context.Canceled
+func (c *semanticLSPClient) RequestCodeActions(context.Context, string, int, int, int, int) (insight.LSPCodeActionResponse, error) {
+	return insight.LSPCodeActionResponse{}, context.Canceled
 }
-func (c *semanticLSPClient) ResolveCodeAction(context.Context, string, int, []byte) (types.LSPCodeActionResponse, error) {
-	return types.LSPCodeActionResponse{}, context.Canceled
+func (c *semanticLSPClient) ResolveCodeAction(context.Context, string, int, []byte) (insight.LSPCodeActionResponse, error) {
+	return insight.LSPCodeActionResponse{}, context.Canceled
 }
-func (c *semanticLSPClient) RequestInlayHints(context.Context, string, types.LSPInlayRange) (types.LSPInlayResponse, error) {
-	return types.LSPInlayResponse{}, context.Canceled
+func (c *semanticLSPClient) RequestInlayHints(context.Context, string, insight.LSPInlayRange) (insight.LSPInlayResponse, error) {
+	return insight.LSPInlayResponse{}, context.Canceled
 }
-func (c *semanticLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (types.LSPInlayResponse, error) {
-	return types.LSPInlayResponse{}, context.Canceled
+func (c *semanticLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (insight.LSPInlayResponse, error) {
+	return insight.LSPInlayResponse{}, context.Canceled
 }
-func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int, trigger types.LSPCompletionContext) (types.LSPCompletionResponse, error) {
+func (c *semanticLSPClient) RequestCompletions(_ context.Context, path string, line, col int, trigger insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
 	c.record(path, line, col, "", false)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return types.LSPCompletionResponse{WireVersion: c.version, JSON: []byte(`[{"label":"complete","detail":"detail","documentation":"docs","kind":3,"insertText":"insert"}]`)}, nil
+	return insight.LSPCompletionResponse{WireVersion: c.version, JSON: []byte(`[{"label":"complete","detail":"detail","documentation":"docs","kind":3,"insertText":"insert"}]`)}, nil
 }
-func (c *semanticLSPClient) ResolveCompletion(context.Context, string, int, []byte) (types.LSPCompletionResponse, error) {
-	return types.LSPCompletionResponse{}, context.Canceled
+func (c *semanticLSPClient) ResolveCompletion(context.Context, string, int, []byte) (insight.LSPCompletionResponse, error) {
+	return insight.LSPCompletionResponse{}, context.Canceled
 }
-func (c *semanticLSPClient) RequestDocumentSymbols(_ context.Context, path string) []workspace.LSPSymbol {
+func (c *semanticLSPClient) RequestDocumentSymbols(_ context.Context, path string) []insight.LSPSymbol {
 	c.record(path, 0, 0, "", false)
-	return []workspace.LSPSymbol{{Name: "parent", Detail: "outline", Kind: 12, KindName: "function", Line: 1, Col: 2, EndLine: 9, EndCol: 10, Children: []workspace.LSPSymbol{{Name: "child", Line: 3, Col: 4, EndLine: 5, EndCol: 6}}}}
+	return []insight.LSPSymbol{{Name: "parent", Detail: "outline", Kind: 12, KindName: "function", Line: 1, Col: 2, EndLine: 9, EndCol: 10, Children: []insight.LSPSymbol{{Name: "child", Line: 3, Col: 4, EndLine: 5, EndCol: 6}}}}
 }
 
 func FuzzCoreLSPRequests(f *testing.F) {
@@ -411,7 +412,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 		if err := manager.SetAnalysisGovernor(g, "fuzz-workspace", "fuzz-generation"); err != nil {
 			t.Fatal(err)
 		}
-		manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
+		manager.SetAnalysisPolicy(setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}, identity)
 		docs := workspace.NewDocumentService(root, nil, manager)
 		defer docs.Close()
 		snapshot, err := docs.Open(document.Owner{ClientID: "fuzz", Epoch: 1}, path)
@@ -426,7 +427,7 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			t.Fatal("manager failed to admit fixture", err)
 		}
 		a := &actor{ws: &workspace.Workspace{RootPath: root, LSPMgr: manager, LiveDocuments: docs}}
-		source := types.InsightSource{Kind: "canonical", WorkspaceGeneration: snapshot.AnalysisGeneration, DocumentID: snapshot.ID, Lifetime: snapshot.AnalysisLifetime, Path: snapshot.Path, Revision: snapshot.Revision}
+		source := insight.Source{Kind: "canonical", WorkspaceGeneration: snapshot.AnalysisGeneration, DocumentID: snapshot.ID, Lifetime: snapshot.AnalysisLifetime, Path: snapshot.Path, Revision: snapshot.Revision}
 		methods := [...]string{coreprotocol.LSPNavigationMethod, coreprotocol.LSPNavigationMethod, coreprotocol.LSPRequestHover, coreprotocol.LSPRequestSignatureHelp, coreprotocol.LSPCompletionsMethod, coreprotocol.LSPRequestDocumentSymbols}
 		for i := 0; i < min(len(sequence)/2, gitLSPFuzzActions); i++ {
 			action, value := sequence[2*i]%8, sequence[2*i+1]
@@ -537,11 +538,11 @@ func FuzzCoreLSPRequests(f *testing.F) {
 			case 2:
 				want.Hover = "hover **symbol**\nsecond line"
 			case 3:
-				want.SignatureHelp = types.LSPSignatureHelp{Signatures: []types.LSPSignature{{Label: "call(value int)", ActiveParameter: 0, Parameters: []types.LSPSignatureParameter{{Label: "value int"}}}}}
+				want.SignatureHelp = insight.LSPSignatureHelp{Signatures: []insight.LSPSignature{{Label: "call(value int)", ActiveParameter: 0, Parameters: []insight.LSPSignatureParameter{{Label: "value int"}}}}}
 				// The manager, not the language fake, qualifies this semantic result.
 				want.SignatureHelp.Boundary = result.SignatureHelp.Boundary
 			case 5:
-				want.Symbols = []workspace.LSPSymbol{{Name: "parent", Detail: "outline", Kind: 12, KindName: "function", Line: 1, Col: 2, EndLine: 9, EndCol: 10, Children: []workspace.LSPSymbol{{Name: "child", Line: 3, Col: 4, EndLine: 5, EndCol: 6}}}}
+				want.Symbols = []insight.LSPSymbol{{Name: "parent", Detail: "outline", Kind: 12, KindName: "function", Line: 1, Col: 2, EndLine: 9, EndCol: 10, Children: []insight.LSPSymbol{{Name: "child", Line: 3, Col: 4, EndLine: 5, EndCol: 6}}}}
 			}
 			if !reflect.DeepEqual(result, want) {
 				t.Fatalf("typed query result changed: got %+v want %+v", result, want)
@@ -557,6 +558,6 @@ func FuzzCoreLSPRequests(f *testing.F) {
 	})
 }
 
-func (*semanticLSPClient) AssistanceCapabilities() types.LSPAssistanceCapabilities {
-	return types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
+func (*semanticLSPClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

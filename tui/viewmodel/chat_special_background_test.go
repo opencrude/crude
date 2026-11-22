@@ -9,27 +9,27 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/cell"
 	"crude/tui/ui"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
 
 func specialChatBackgroundCases() []struct {
 	name     string
-	messages []workspace.Message
+	messages []conversation.Message
 	expand   string
 	want     []string
 } {
 	return []struct {
 		name     string
-		messages []workspace.Message
+		messages []conversation.Message
 		expand   string
 		want     []string
 	}{
 		{
 			name: "peer message",
-			messages: []workspace.Message{{
-				InternalID: "peer", Role: ctypes.RoleUser, Origin: provider.OriginPeer,
+			messages: []conversation.Message{{
+				InternalID: "peer", Role: conversation.RoleUser, Origin: provider.OriginPeer,
 				Content: "Parser evidence is ready.",
 				Collaboration: &provider.CollaborationAttribution{
 					SenderID: "child", SenderName: "Asha", RecipientIDs: []string{"root"},
@@ -40,8 +40,8 @@ func specialChatBackgroundCases() []struct {
 		},
 		{
 			name: "send",
-			messages: []workspace.Message{{
-				InternalID: "send", Role: ctypes.RoleTool, ToolName: "agent_send", ToolStatus: ctypes.ToolStatusSuccess,
+			messages: []conversation.Message{{
+				InternalID: "send", Role: conversation.RoleTool, ToolName: "agent_send", ToolStatus: conversation.ToolStatusSuccess,
 				ToolInput: `{"recipient_ids":["child"],"kind":"note","body":"Please review parser ownership."}`,
 				Content:   `{"event":{"id":"note-1","sequence":1,"sender_id":"root","sender_name":"Rebecca","recipients":[{"id":"child","name":"Asha"}],"origin":"peer","kind":"peer_note","body":"Please review parser ownership."},"deliveries":[{"id":"delivery-1","recipient_id":"child","state":"pending","version":1}]}`,
 			}},
@@ -50,8 +50,8 @@ func specialChatBackgroundCases() []struct {
 		},
 		{
 			name: "board",
-			messages: []workspace.Message{{
-				InternalID: "board", Role: ctypes.RoleTool, ToolName: "board_read", ToolStatus: ctypes.ToolStatusSuccess,
+			messages: []conversation.Message{{
+				InternalID: "board", Role: conversation.RoleTool, ToolName: "board_read", ToolStatus: conversation.ToolStatusSuccess,
 				ToolInput: `{"since":0}`,
 				Content:   `{"events":[{"sender_name":"Asha","recipients":[{"id":"root","name":"Rebecca"}],"kind":"peer_reply","body":"Board evidence is ready."}],"cursor":1,"snapshot":1}`,
 			}},
@@ -60,16 +60,16 @@ func specialChatBackgroundCases() []struct {
 		},
 		{
 			name: "expanded thought",
-			messages: []workspace.Message{{
-				InternalID: "thought", Role: ctypes.RoleThinking, Content: "Thought evidence stays readable.",
+			messages: []conversation.Message{{
+				InternalID: "thought", Role: conversation.RoleThinking, Content: "Thought evidence stays readable.",
 			}},
 			expand: "thought",
 			want:   []string{"Thought", "Thought evidence"},
 		},
 		{
 			name: "summary",
-			messages: []workspace.Message{{
-				InternalID: "summary", Role: ctypes.RoleThinking, Content: "Summary evidence stays readable.",
+			messages: []conversation.Message{{
+				InternalID: "summary", Role: conversation.RoleThinking, Content: "Summary evidence stays readable.",
 				ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary},
 			}},
 			expand: "summary",
@@ -77,10 +77,10 @@ func specialChatBackgroundCases() []struct {
 		},
 		{
 			name: "mixed activity tree",
-			messages: []workspace.Message{
-				{InternalID: "read", Role: ctypes.RoleTool, ToolName: "read_file", ToolArgs: "ordinary.go", ToolStatus: ctypes.ToolStatusSuccess, Content: "ordinary evidence"},
-				{InternalID: "board", Role: ctypes.RoleTool, ToolName: "board_read", ToolStatus: ctypes.ToolStatusSuccess, ToolInput: `{"since":0}`, Content: `{"events":[{"sender_name":"Asha","kind":"peer_reply","body":"Grouped peer evidence."}]}`},
-				{InternalID: "thought", Role: ctypes.RoleThinking, Content: "Grouped thought evidence."},
+			messages: []conversation.Message{
+				{InternalID: "read", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "ordinary.go", ToolStatus: conversation.ToolStatusSuccess, Content: "ordinary evidence"},
+				{InternalID: "board", Role: conversation.RoleTool, ToolName: "board_read", ToolStatus: conversation.ToolStatusSuccess, ToolInput: `{"since":0}`, Content: `{"events":[{"sender_name":"Asha","kind":"peer_reply","body":"Grouped peer evidence."}]}`},
+				{InternalID: "thought", Role: conversation.RoleThinking, Content: "Grouped thought evidence."},
 			},
 			expand: "activity:read",
 			want:   []string{"Read workspace history", "Grouped peer evidence", "└─ ● Thought"},
@@ -100,13 +100,13 @@ func TestSpecialChatBlocksPaintFullWidthAndResumeIdentically(t *testing.T) {
 					app.ApplyThemePreset(preset)
 					app.AddOrchestrator("background-owner")
 					state := app.ws.AgentMgr().Get("background-owner").State
-					state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: "Regular chat before"})
+					state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: "Regular chat before"})
 					for _, message := range c.messages {
 						state.Messages.AppendMessage(message)
 					}
-					state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: "Regular chat after"})
+					state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: "Regular chat after"})
 					app.syncAgentMessages(state.ID, false)
-					renderer := app.subPaneProjections.GetExisting(state.ID).renderer
+					renderer := app.subPaneProjections.Existing(state.ID).renderer
 					if c.expand != "" {
 						renderer.ToggleDisclosure(c.expand)
 					}
@@ -137,7 +137,7 @@ func TestSpecialChatBlocksPaintFullWidthAndResumeIdentically(t *testing.T) {
 						wire := provider.NewTextMessage("assistant", snapshot.Content)
 						if err := sessiondb.AppendMessageWithMeta(database, state.ID, wire, 1, sessiondb.DisplayMeta{
 							SnapshotVersion: sessiondb.ConversationSnapshotVersion,
-							Snapshots:       []ctypes.ConversationMessage{snapshot},
+							Snapshots:       []conversation.Message{snapshot},
 						}); err != nil {
 							t.Fatal(err)
 						}
@@ -156,10 +156,10 @@ func TestSpecialChatBlocksPaintFullWidthAndResumeIdentically(t *testing.T) {
 					}
 					recovered.syncAgentMessages(state.ID, false)
 					if c.expand != "" {
-						recovered.subPaneProjections.GetExisting(state.ID).renderer.ToggleDisclosure(c.expand)
+						recovered.subPaneProjections.Existing(state.ID).renderer.ToggleDisclosure(c.expand)
 					}
 					if c.name == "mixed activity tree" {
-						recovered.subPaneProjections.GetExisting(state.ID).renderer.ToggleDisclosure("board")
+						recovered.subPaneProjections.Existing(state.ID).renderer.ToggleDisclosure("board")
 					}
 					recovered.paintShellFrame()
 					resumed := recovered.mainSurf.Buffer()
@@ -202,7 +202,7 @@ func TestLiveThinkingPaneBackgroundIncludesMargins(t *testing.T) {
 			if promoted {
 				trace = strings.Repeat(trace+"\n", 40)
 			}
-			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "thinking-owner", Type: "thinking",
+			app.handleAgentEvent(AgentEventMsg{AgentID: "thinking-owner", Type: "thinking",
 				Data: reasoning.Delta{Text: trace, Kind: reasoning.Raw}})
 			app.paintShellFrame()
 			state := app.ws.AgentMgr().Get("thinking-owner").State

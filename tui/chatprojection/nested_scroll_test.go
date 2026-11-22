@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestNestedPaneRowsRetainExactAncestry(t *testing.T) {
@@ -38,7 +38,7 @@ func TestNestedPaneRowsRetainExactAncestry(t *testing.T) {
 					}
 					return lines
 				})
-				r.AppendMessage(types.ChatMessage{InternalID: "nested", Role: types.RoleTool, SubPaneID: "child"})
+				r.AppendMessage(conversation.ChatMessage{InternalID: "nested", Role: conversation.RoleTool, SubPaneID: "child"})
 				snapshot := r.ExportMessageRowsSnapshot(width)
 				if !reflect.DeepEqual(snapshot.PaneLineMap, want) {
 					t.Fatalf("global map lost exact recursive rows:\ngot  %+v\nwant %+v", snapshot.PaneLineMap, want)
@@ -91,9 +91,9 @@ func TestNestedPaneSameHeightUpdateClearsReplacedTargets(t *testing.T) {
 		line.PaneInfo = PaneLineInfo{PaneID: leaf, LineIdx: 2, Ancestors: []PaneTarget{{PaneID: paneID, LineIdx: 0}}}
 		return []SubPaneLine{line}
 	})
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "one", Role: types.RoleTool, SubPaneID: "pane-one"},
-		{InternalID: "two", Role: types.RoleTool, SubPaneID: "pane-two"},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "one", Role: conversation.RoleTool, SubPaneID: "pane-one"},
+		{InternalID: "two", Role: conversation.RoleTool, SubPaneID: "pane-two"},
 	}, 1, 0)
 	first := r.ExportMessageRowsSnapshot(50)
 	before := renders["pane-two"]
@@ -110,9 +110,9 @@ func TestNestedPaneSameHeightUpdateClearsReplacedTargets(t *testing.T) {
 		t.Fatal("fixture did not keep height stable")
 	}
 	// Replace one pane placeholder with an equally tall ordinary message.
-	r.SyncMessages([]types.ChatMessage{
-		{InternalID: "one", Role: types.RoleTool, ToolName: "unknown_tool", ToolStatus: types.ToolStatusSuccess},
-		{InternalID: "two", Role: types.RoleTool, SubPaneID: "pane-two"},
+	r.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "one", Role: conversation.RoleTool, ToolName: "unknown_tool", ToolStatus: conversation.ToolStatusSuccess},
+		{InternalID: "two", Role: conversation.RoleTool, SubPaneID: "pane-two"},
 	}, 2, 0)
 	replaced := r.ExportMessageRowsSnapshot(50)
 	for i := 0; i < len(replaced.Rows[0].Lines); i++ {

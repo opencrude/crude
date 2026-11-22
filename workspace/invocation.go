@@ -9,7 +9,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // InvocationLifecycleOperation holds one captured selection, never workspace
@@ -83,7 +83,7 @@ func invocationConfig(base *session.Config, s InvocationSelection) (*session.Con
 			return &cfg, nil
 		}
 	}
-	main := cfg.GetActiveDefaultCategory()
+	main := cfg.ActiveDefaultCategory()
 	if s.APIKey != "" && s.AccountID == "" {
 		return nil, errors.New("--key requires an explicit --account")
 	}
@@ -209,15 +209,15 @@ func (op *InvocationLifecycleOperation) run(ctx context.Context) SessionLifecycl
 			backend := result.owner.backend
 			settings := backend.SettingsSnapshot()
 			if op.selection.AccountID != "" || op.selection.Model != "" || op.selection.APIKey != "" {
-				main := op.op.cfg.GetActiveDefaultCategory()
-				override := types.CategorySettings{}
+				main := op.op.cfg.ActiveDefaultCategory()
+				override := setting.Category{}
 				if op.selection.AccountID != "" || op.selection.APIKey != "" {
 					override.AccountID = main.AccountID
 				}
 				if op.selection.Model != "" {
 					override.Model = main.Model
 				}
-				settings.SessionOverrides = map[string]types.CategorySettings{session.CategoryDefault: override}
+				settings.SessionOverrides = map[string]setting.Category{session.CategoryDefault: override}
 			}
 			// Persist the role so the session keeps it across resume.
 			settings.SessionMainAgent = op.selection.MainAgent
@@ -239,7 +239,7 @@ func (op *InvocationLifecycleOperation) run(ctx context.Context) SessionLifecycl
 	snapshot := backend.SettingsSnapshots()
 	settings := snapshot.Effective
 	settings.SessionOverrides = snapshot.Overrides
-	main := op.op.cfg.GetActiveDefaultCategory()
+	main := op.op.cfg.ActiveDefaultCategory()
 	cat := settings.SessionOverrides[session.CategoryDefault]
 	// Preserve the resumed root's exact model/account when only instructions or
 	// provider validation were requested; workspace defaults are not resume truth.
@@ -261,7 +261,7 @@ func (op *InvocationLifecycleOperation) run(ctx context.Context) SessionLifecycl
 	}
 	cat.Inherit = ""
 	if settings.SessionOverrides == nil {
-		settings.SessionOverrides = make(map[string]types.CategorySettings)
+		settings.SessionOverrides = make(map[string]setting.Category)
 	}
 	settings.SessionMainAgent = ""
 	settings.SessionOverrides[session.CategoryDefault] = cat

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"math"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 )
 
 // executeClaimsTool owns claim-repair mutations that must share Session's
@@ -97,7 +97,7 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 			ExpectedVersions: versions, Paths: validated,
 		}
 		var repaired collaboration.UpdateClaimsResult
-		err = s.FileOwnership().CommitReplaceClaims(agent.AgentID(target.ID), target.Name, validated, func() error {
+		err = s.FileOwnership().CommitReplaceClaims(turnloop.AgentID(target.ID), target.Name, validated, func() error {
 			var commitErr error
 			repaired, commitErr = store.UpdateClaims(ctx, request)
 			return commitErr
@@ -108,7 +108,7 @@ func (s *Session) executeClaimsTool(ctx context.Context, actorID, name string, p
 		AgentID: actorID, RuntimeEpoch: runtimeEpoch, RunID: runID,
 		ExpectedRunVersion: runVersion, ExpectedVersions: versions, Paths: validated,
 	}
-	err = s.FileOwnership().CommitReplaceClaims(agent.AgentID(actorID), actor.Name, validated, func() error {
+	err = s.FileOwnership().CommitReplaceClaims(turnloop.AgentID(actorID), actor.Name, validated, func() error {
 		var commitErr error
 		result, commitErr = store.NarrowActiveClaims(ctx, request)
 		return commitErr

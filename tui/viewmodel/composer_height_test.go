@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -18,7 +19,7 @@ func TestComposerTallDraftPreservesChatAndBounds(t *testing.T) {
 			app.width, app.height = size[0], size[1]
 			app.AddOrchestrator("owner")
 			app.maybeHydrateComposerDraft()
-			app.ws.AgentMgr().Get("owner").State.Messages.AppendMessage(workspace.Message{
+			app.ws.AgentMgr().Get("owner").State.Messages.AppendMessage(conversation.Message{
 				Role: workspace.MessageRoleAssistant, Content: "The transcript must remain visible while drafting.",
 			})
 			app.syncAgentMessages("owner", false)

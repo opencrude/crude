@@ -7,18 +7,19 @@ import (
 	"testing"
 	"time"
 
-	model "crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
-func waitDiscoveryPlan(t *testing.T, m *LSPManager, after uint64, languages int) model.AssemblyPlan {
+func waitDiscoveryPlan(t *testing.T, m *LSPManager, after uint64, languages int) insight.AssemblyPlan {
 	t.Helper()
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	for {
 		_, changed := m.Changed()
 		plan := m.Assembly()
-		if plan.Generation > after && plan.State == model.AssemblyReady && len(plan.Languages) == languages {
+		if plan.Generation > after && plan.State == insight.AssemblyReady && len(plan.Languages) == languages {
 			return plan
 		}
 		select {
@@ -90,7 +91,7 @@ func TestAssemblyWatchBoundaryKeepsDiscoveryProgress(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				m.SetAnalysisPolicy(model.WorkspaceAnalysisSettings{Trust: model.AnalysisTrusted}, identity)
+				m.SetAnalysisPolicy(setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}, identity)
 			case "runtime":
 				m.SetRuntime(&lifecycleRuntime{})
 			case "root":
@@ -124,7 +125,7 @@ func TestAssemblyWatchDebouncesAndRejectsStaleDiscovery(t *testing.T) {
 	}
 	m.publishAssembly(context.Background(), staleDiscovery, first)
 	m.mu.Lock()
-	if m.discovery == staleDiscovery || m.assembly.State != model.AssemblyScanning {
+	if m.discovery == staleDiscovery || m.assembly.State != insight.AssemblyScanning {
 		m.mu.Unlock()
 		t.Fatal("pre-event scan reinstalled stale evidence during debounce")
 	}

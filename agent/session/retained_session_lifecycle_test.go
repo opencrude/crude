@@ -59,7 +59,7 @@ func TestRetainedSessionStopSendLifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			meta, err := sessiondb.GetMeta(db)
+			meta, err := sessiondb.LoadMeta(db)
 			if err != nil {
 				t.Fatal(err)
 			}

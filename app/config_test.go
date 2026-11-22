@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/history"
-	typesmodel "crude/types"
+	"crude/types/setting"
 )
 
 // setTestHome redirects the home directory to a temp dir for the duration of
@@ -61,26 +61,26 @@ func TestFileConfigRoundTrip(t *testing.T) {
 		},
 		TurnLogsEnabled: boolPtr(true),
 		Agents:          &session.AgentsConfig{Enabled: true, ActiveProfile: "default"},
-		Theme: &typesmodel.ThemeSettings{
+		Theme: &setting.Theme{
 			Preset:    "dark",
 			Bg:        "#0d1117",
 			Fg:        "#e6edf3",
 			Accent:    "#f0883e",
 			SubPaneBg: "#1c2333",
 		},
-		Editor: &typesmodel.EditorSettings{
+		Editor: &setting.Editor{
 			TabSize:       4,
 			WordWrap:      true,
 			LineNumbers:   true,
 			SyntaxTheme:   "catppuccin",
 			AutoSaveDelay: 1000,
 		},
-		LSP: &typesmodel.LSPSettings{
+		LSP: &setting.LSP{
 			Enabled:     true,
 			AutoDetect:  true,
 			Diagnostics: true,
 		},
-		UI: &typesmodel.UISettings{
+		UI: &setting.UI{
 			SidebarWidth:    30,
 			ShowHiddenFiles: boolPtr(false),
 			ShowIcons:       true,
@@ -227,7 +227,7 @@ func TestLineNumbersDefaultOnAndExplicitOffPersists(t *testing.T) {
 	before := FileConfigToAppSettings(FileConfig{})
 	after := before
 	after.Editor.LineNumbers = false
-	raw, err := typesmodel.PatchStoredSettings(nil, typesmodel.SettingsEdits(before, after))
+	raw, err := setting.PatchStored(nil, setting.Edits(before, after))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestApplyAppSettingsPersistsMultiAgentOff(t *testing.T) {
 
 func TestContextRetentionRoundTripsThroughFileConfig(t *testing.T) {
 	retention := 8_000
-	settings := typesmodel.AppSettings{Agents: typesmodel.AgentsSettings{Categories: map[string]typesmodel.CategorySettings{
+	settings := setting.App{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {ContextRetentionTokens: &retention},
 	}}}
 	var file FileConfig
@@ -274,10 +274,10 @@ func TestContextRetentionRoundTripsThroughFileConfig(t *testing.T) {
 }
 
 func TestSafetySettingsRoundTripThroughFileConfig(t *testing.T) {
-	settings := typesmodel.AppSettings{Safety: typesmodel.SafetySettings{
+	settings := setting.App{Safety: setting.Safety{
 		ConfirmAt: "network", UnknownCommandRisk: "project-write", ScriptExecutionRisk: "safe",
-		NotifyDangerous: "off", CommandRules: []typesmodel.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
-		AutoPermission: typesmodel.AutoPermissionSettings{
+		NotifyDangerous: "off", CommandRules: []setting.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
+		AutoPermission: setting.AutoPermission{
 			Enabled: "on", Provider: "openai", Model: "gpt-5-mini", DenyMode: "deny",
 			Instructions: "Never approve deployment commands.", TimeoutSeconds: 11,
 			MaxOutputTokens: 80, MaxInputBytes: 64 << 10,
@@ -448,16 +448,16 @@ func TestHistoryPath(t *testing.T) {
 	defer restore()
 
 	// HistoryPath moved to the history package (history.DefaultPath).
-	path := history.DefaultPath()
+	path := prompthistory.DefaultPath()
 	if path == "" {
 		t.Fatal("DefaultPath returned empty")
 	}
 }
 
 func TestLocalHistorySettingsFileConfigRoundTrip(t *testing.T) {
-	want := typesmodel.LocalHistorySettings{Enabled: "off", UseGitIgnore: "on", ExtraIgnorePatterns: []string{"vendor/"}, MaxFileSizeMB: 50, StorageBudgetMB: 512}
+	want := setting.LocalHistory{Enabled: "off", UseGitIgnore: "on", ExtraIgnorePatterns: []string{"vendor/"}, MaxFileSizeMB: 50, StorageBudgetMB: 512}
 	var fc FileConfig
-	ApplyAppSettingsToFileConfig(&fc, typesmodel.AppSettings{LocalHistory: want})
+	ApplyAppSettingsToFileConfig(&fc, setting.App{LocalHistory: want})
 	got := FileConfigToAppSettings(fc).LocalHistory
 	if got.Enabled != want.Enabled || got.MaxFileSizeMB != want.MaxFileSizeMB || len(got.ExtraIgnorePatterns) != 1 || got.StorageBudgetMB != want.StorageBudgetMB {
 		t.Fatalf("local history round trip=%+v", got)

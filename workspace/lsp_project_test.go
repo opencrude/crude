@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	model "crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
-func (c *lifecycleClient) OnUnopenedDiagnostics(fn func(string, model.InsightDiagnosticPublication)) {
+func (c *lifecycleClient) OnUnopenedDiagnostics(fn func(string, insight.DiagnosticPublication)) {
 	c.mu.Lock()
 	c.unopened = fn
 	c.mu.Unlock()
@@ -17,10 +18,10 @@ func (c *lifecycleClient) OnUnopenedDiagnostics(fn func(string, model.InsightDia
 
 // emitUnopened sends a server publication for a file that the client did not
 // open, as a project-scoped server does.
-func (c *lifecycleClient) emitUnopened(path string, ds ...LSPDiagnostic) {
+func (c *lifecycleClient) emitUnopened(path string, ds ...insight.LSPDiagnostic) {
 	c.mu.Lock()
 	c.sequence++
-	p := model.InsightDiagnosticPublication{Sequence: c.sequence, WireVersion: 1, Diagnostics: ds}
+	p := insight.DiagnosticPublication{Sequence: c.sequence, WireVersion: 1, Diagnostics: ds}
 	fn := c.unopened
 	c.mu.Unlock()
 	if fn != nil {
@@ -28,14 +29,14 @@ func (c *lifecycleClient) emitUnopened(path string, ds ...LSPDiagnostic) {
 	}
 }
 
-func projectFixture(t *testing.T) (*LSPManager, *lifecycleRuntime, string, model.LSPProjectProducer) {
+func projectFixture(t *testing.T) (*LSPManager, *lifecycleRuntime, string, insight.LSPProjectProducer) {
 	t.Helper()
 	m, r, root := lifecycleManager(t)
 	probeSources(t, m, root)
 	for _, name := range []string{"main.go", "util.go"} {
 		createFile(t, filepath.Join(root, name), "package main\n")
 	}
-	producer := model.LSPProjectProducer{Root: root, Spec: model.LSPServerSpec{Command: "project-check", Args: []string{"--stdio"}}}
+	producer := insight.LSPProjectProducer{Root: root, Spec: setting.LSPServerSpec{Command: "project-check", Args: []string{"--stdio"}}}
 	return m, r, root, producer
 }
 
@@ -59,7 +60,7 @@ func startedProject(t *testing.T, m *LSPManager, r *lifecycleRuntime) *lifecycle
 // shared facts that Problems and the status summary read.
 func TestProjectProducerReportsUnopenedFilesWithoutOpeningThem(t *testing.T) {
 	m, r, root, producer := projectFixture(t)
-	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	m.SetProjectProducers([]insight.LSPProjectProducer{producer})
 	client := startedProject(t, m, r)
 	if calls := client.snapshot(); len(calls) != 0 {
 		t.Fatalf("a project producer sent document traffic: %v", calls)
@@ -69,7 +70,7 @@ func TestProjectProducerReportsUnopenedFilesWithoutOpeningThem(t *testing.T) {
 	}
 
 	util := filepath.Join(root, "util.go")
-	client.emitUnopened(util, LSPDiagnostic{Line: 0, Col: 8, EndLine: 0, EndCol: 12, Message: "undefined: x", Severity: model.DiagError})
+	client.emitUnopened(util, insight.LSPDiagnostic{Line: 0, Col: 8, EndLine: 0, EndCol: 12, Message: "undefined: x", Severity: insight.DiagError})
 	batch, ok := m.FileDiagnostics(util)
 	if !ok || !batch.FromProjectCheck() || batch.HasExactSource() || len(batch.Diagnostics) != 1 {
 		t.Fatalf("project fact = %+v present=%v", batch, ok)
@@ -95,7 +96,7 @@ func TestProjectProducerReportsUnopenedFilesWithoutOpeningThem(t *testing.T) {
 	}
 
 	// Reports outside the project root are ignored.
-	client.emitUnopened(filepath.Join(filepath.Dir(root), "elsewhere.go"), LSPDiagnostic{Message: "outside"})
+	client.emitUnopened(filepath.Join(filepath.Dir(root), "elsewhere.go"), insight.LSPDiagnostic{Message: "outside"})
 	if _, ok := m.FileDiagnostics(filepath.Join(filepath.Dir(root), "elsewhere.go")); ok {
 		t.Fatal("a report outside the workspace was published")
 	}
@@ -103,10 +104,10 @@ func TestProjectProducerReportsUnopenedFilesWithoutOpeningThem(t *testing.T) {
 
 func TestOpenDocumentOwnsItsFileAndProducerRemovalClearsFacts(t *testing.T) {
 	m, r, root, producer := projectFixture(t)
-	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	m.SetProjectProducers([]insight.LSPProjectProducer{producer})
 	client := startedProject(t, m, r)
 	util := filepath.Join(root, "util.go")
-	client.emitUnopened(util, LSPDiagnostic{Message: "from the project"})
+	client.emitUnopened(util, insight.LSPDiagnostic{Message: "from the project"})
 	if batch, _ := m.FileDiagnostics(util); !batch.FromProjectCheck() {
 		t.Fatalf("project fact missing: %+v", batch)
 	}
@@ -117,13 +118,13 @@ func TestOpenDocumentOwnsItsFileAndProducerRemovalClearsFacts(t *testing.T) {
 	if batch, ok := m.FileDiagnostics(util); ok && batch.FromProjectCheck() {
 		t.Fatalf("the project view survived an open document: %+v", batch)
 	}
-	client.emitUnopened(util, LSPDiagnostic{Message: "late project report"})
+	client.emitUnopened(util, insight.LSPDiagnostic{Message: "late project report"})
 	if batch, ok := m.FileDiagnostics(util); ok && batch.FromProjectCheck() {
 		t.Fatalf("an unopened report replaced an open document's facts: %+v", batch)
 	}
 
 	main := filepath.Join(root, "main.go")
-	client.emitUnopened(main, LSPDiagnostic{Message: "main problem"})
+	client.emitUnopened(main, insight.LSPDiagnostic{Message: "main problem"})
 	if batch, _ := m.FileDiagnostics(main); !batch.FromProjectCheck() {
 		t.Fatalf("project fact missing for main.go: %+v", batch)
 	}
@@ -144,7 +145,7 @@ func TestProjectProducerRespectsTrustPauseAndRoot(t *testing.T) {
 	t.Cleanup(m.Close)
 	root := t.TempDir()
 	m.SetWorkspaceRoot(root)
-	m.SetProjectProducers([]model.LSPProjectProducer{{Root: root, Spec: model.LSPServerSpec{Command: "project-check"}}})
+	m.SetProjectProducers([]insight.LSPProjectProducer{{Root: root, Spec: setting.LSPServerSpec{Command: "project-check"}}})
 	time.Sleep(50 * time.Millisecond)
 	if len(r.snapshot()) != 0 {
 		t.Fatal("a project producer started in an untrusted folder")
@@ -153,12 +154,12 @@ func TestProjectProducerRespectsTrustPauseAndRoot(t *testing.T) {
 	m2, r2, root2, producer := projectFixture(t)
 	outside := producer
 	outside.Root = filepath.Dir(root2)
-	m2.SetProjectProducers([]model.LSPProjectProducer{outside})
+	m2.SetProjectProducers([]insight.LSPProjectProducer{outside})
 	if got := m2.ProjectProducers(); len(got) != 0 {
 		t.Fatalf("a producer outside the workspace was accepted: %+v", got)
 	}
 	m2.Stop()
-	m2.SetProjectProducers([]model.LSPProjectProducer{producer})
+	m2.SetProjectProducers([]insight.LSPProjectProducer{producer})
 	time.Sleep(50 * time.Millisecond)
 	if len(r2.snapshot()) != 0 {
 		t.Fatal("a project producer started while language servers were stopped")
@@ -174,14 +175,14 @@ func TestProjectProducerRespectsTrustPauseAndRoot(t *testing.T) {
 // Stop alone keeps the results visible as out of date.
 func TestRefreshReplacesTheStoppedServersProjectResults(t *testing.T) {
 	m, r, root, producer := projectFixture(t)
-	m.SetProjectProducers([]model.LSPProjectProducer{producer})
+	m.SetProjectProducers([]insight.LSPProjectProducer{producer})
 	first := startedProject(t, m, r)
 	util, main := filepath.Join(root, "util.go"), filepath.Join(root, "main.go")
-	first.emitUnopened(util, LSPDiagnostic{Message: "could not import crude/fileio", Severity: model.DiagError})
-	first.emitUnopened(main, LSPDiagnostic{Message: "still wrong", Severity: model.DiagError})
+	first.emitUnopened(util, insight.LSPDiagnostic{Message: "could not import crude/fileio", Severity: insight.DiagError})
+	first.emitUnopened(main, insight.LSPDiagnostic{Message: "still wrong", Severity: insight.DiagError})
 
 	m.Stop()
-	if batch, ok := m.FileDiagnostics(util); !ok || batch.State != model.InsightStale {
+	if batch, ok := m.FileDiagnostics(util); !ok || batch.State != insight.Stale {
 		t.Fatalf("stopped server's result = %+v present=%v; want it kept as out of date", batch, ok)
 	}
 	m.StartForWorkspace(root)
@@ -200,11 +201,11 @@ func TestRefreshReplacesTheStoppedServersProjectResults(t *testing.T) {
 		defer clients[2].mu.Unlock()
 		return clients[2].started && clients[2].unopened != nil
 	})
-	r.snapshot()[2].emitUnopened(main, LSPDiagnostic{Message: "still wrong", Severity: model.DiagError})
+	r.snapshot()[2].emitUnopened(main, insight.LSPDiagnostic{Message: "still wrong", Severity: insight.DiagError})
 	if _, ok := m.FileDiagnostics(util); ok {
 		t.Fatal("a result of the stopped server came back after Refresh")
 	}
-	if batch, ok := m.FileDiagnostics(main); !ok || batch.State == model.InsightStale || len(batch.Diagnostics) != 1 {
+	if batch, ok := m.FileDiagnostics(main); !ok || batch.State == insight.Stale || len(batch.Diagnostics) != 1 {
 		t.Fatalf("new server's result = %+v present=%v", batch, ok)
 	}
 	if summary := m.ProjectInsights(); summary.Errors != 1 || summary.FilesAffected != 1 {
@@ -231,9 +232,9 @@ func TestRefreshReplacesClosedDocumentAndReleasedProbeResults(t *testing.T) {
 				closeEditor(t, m, path)
 			}
 			first := runtime.snapshot()[0]
-			late := first.publication(path, []LSPDiagnostic{{Message: "late old error", Severity: model.DiagError}})
+			late := first.publication(path, []insight.LSPDiagnostic{{Message: "late old error", Severity: insight.DiagError}})
 			m.Stop()
-			if batch, ok := m.FileDiagnostics(path); !ok || batch.State != model.InsightStale {
+			if batch, ok := m.FileDiagnostics(path); !ok || batch.State != insight.Stale {
 				t.Fatalf("Stop lost out-of-date evidence: %+v, present=%v", batch, ok)
 			}
 			m.Refresh(root)
@@ -264,9 +265,9 @@ func TestRefreshKeepsLiveUnsavedDocumentUntilReplacementDiagnostics(t *testing.T
 		t.Fatalf("initial diagnostic: %+v, settled=%v, err=%v", before, settled, err)
 	}
 	first := runtime.snapshot()[0]
-	late := first.publication(path, []LSPDiagnostic{{Message: "retired error", Severity: model.DiagError}})
+	late := first.publication(path, []insight.LSPDiagnostic{{Message: "retired error", Severity: insight.DiagError}})
 	m.Refresh(root)
-	if retained, ok := m.FileDiagnostics(path); !ok || retained.ID != before.ID || retained.State != model.InsightStale {
+	if retained, ok := m.FileDiagnostics(path); !ok || retained.ID != before.ID || retained.State != insight.Stale {
 		t.Fatalf("Refresh discarded the live document's evidence: %+v, present=%v", retained, ok)
 	}
 	after, err := m.sources.Snapshot(source.ID)
@@ -281,7 +282,7 @@ func TestRefreshKeepsLiveUnsavedDocumentUntilReplacementDiagnostics(t *testing.T
 	if summary := m.ProjectInsights(); summary.Errors != 0 {
 		t.Fatalf("Problems kept an old error after replacement: %+v", summary)
 	}
-	second.emit(second.publication(path, []LSPDiagnostic{{Message: "current error", Severity: model.DiagError}}))
+	second.emit(second.publication(path, []insight.LSPDiagnostic{{Message: "current error", Severity: insight.DiagError}}))
 	if summary := m.ProjectInsights(); summary.Errors != 1 {
 		t.Fatalf("Refresh suppressed a new error: %+v", summary)
 	}

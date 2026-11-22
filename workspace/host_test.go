@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"testing"
 
-	"crude/buildinfo"
-	"crude/types"
+	"crude/internal/buildinfo"
+	"crude/internal/terminalvt"
 )
 
 func TestGhosttyVersionMatchesPin(t *testing.T) {
@@ -16,8 +16,8 @@ func TestGhosttyVersionMatchesPin(t *testing.T) {
 		ver  string
 		want bool
 	}{
-		{types.PinnedGhosttyVersion, true},
-		{types.PinnedGhosttyVersion + "-1", true},
+		{terminalvt.PinnedGhosttyVersion, true},
+		{terminalvt.PinnedGhosttyVersion + "-1", true},
 		{"1.3", true},
 		{"1.3.1", true},
 		{"1.2.0", false},
@@ -33,7 +33,7 @@ func TestGhosttyVersionMatchesPin(t *testing.T) {
 
 func TestDetectHostMultiplexer(t *testing.T) {
 	t.Setenv("TERM_PROGRAM", "ghostty")
-	t.Setenv("TERM_PROGRAM_VERSION", types.PinnedGhosttyVersion)
+	t.Setenv("TERM_PROGRAM_VERSION", terminalvt.PinnedGhosttyVersion)
 	t.Setenv("GHOSTTY_RESOURCES_DIR", "")
 	t.Setenv("TMUX", "/tmp/tmux-1000/default,1,0")
 	t.Setenv("ZELLIJ", "")
@@ -61,8 +61,8 @@ func TestPTYEnvironPinsGhostty(t *testing.T) {
 			got[k] = v
 		}
 	}
-	if got["TERM"] != types.GhosttyTermName {
-		t.Fatalf("TERM=%q want %q", got["TERM"], types.GhosttyTermName)
+	if got["TERM"] != terminalvt.GhosttyTermName {
+		t.Fatalf("TERM=%q want %q", got["TERM"], terminalvt.GhosttyTermName)
 	}
 	if got["TERM_PROGRAM"] != "crude" {
 		t.Fatalf("TERM_PROGRAM=%q", got["TERM_PROGRAM"])
@@ -97,12 +97,12 @@ func TestTerminfoDirMaterializesPinnedEntry(t *testing.T) {
 	if dir != wantDir {
 		t.Fatalf("TerminfoDir=%q want %q", dir, wantDir)
 	}
-	entry := filepath.Join(dir, "x", types.GhosttyTermName)
+	entry := filepath.Join(dir, "x", terminalvt.GhosttyTermName)
 	got, err := os.ReadFile(entry)
 	if err != nil {
 		t.Fatalf("read materialized entry: %v", err)
 	}
-	if !bytes.Equal(got, types.GhosttyTerminfoEntry) {
+	if !bytes.Equal(got, terminalvt.GhosttyTerminfoEntry) {
 		t.Fatal("materialized entry does not match the embedded pinned entry")
 	}
 
@@ -117,7 +117,7 @@ func TestTerminfoDirMaterializesPinnedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, types.GhosttyTerminfoEntry) {
+	if !bytes.Equal(got, terminalvt.GhosttyTerminfoEntry) {
 		t.Fatal("corrupt entry was not rewritten with the embedded pinned entry")
 	}
 

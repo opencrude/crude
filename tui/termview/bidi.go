@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/bidi"
 )
 

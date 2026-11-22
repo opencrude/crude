@@ -6,13 +6,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
 // heldSuggestion replaces "pr" on the first line with "print".
-var heldSuggestion = types.CompletionItem{Label: "print",
-	TextEdit: &types.LSPTextEdit{Line: 0, Col: 0, EndLine: 0, EndCol: 2, NewText: "print"}}
+var heldSuggestion = insight.CompletionItem{Label: "print",
+	TextEdit: &insight.LSPTextEdit{Line: 0, Col: 0, EndLine: 0, EndCol: 2, NewText: "print"}}
 
 // heldEditor accepts a suggestion under a hold and types x behind it, as a user
 // who presses Tab and keeps typing before the document owner answers.

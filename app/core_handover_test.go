@@ -15,8 +15,8 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/workspace"
 )
 

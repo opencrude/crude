@@ -14,7 +14,8 @@ import (
 
 	"crude/agent/toolstore"
 	"crude/insight/catalog"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
@@ -41,9 +42,9 @@ type projectToolSetupPreview struct {
 	expires          time.Time
 	quiet            bool
 	decisionHistory  string
-	full             types.ProjectToolReview
-	offered          types.ProjectToolReview
-	db               *WorkspaceDB
+	full             insight.ProjectToolReview
+	offered          insight.ProjectToolReview
+	db               *DB
 	manager          *LSPManager
 	policyGeneration uint64
 	catalog          *catalog.Catalog
@@ -132,29 +133,29 @@ func setupRandomID() (string, error) {
 // Review suppresses remembered choices during discovery. An explicit native
 // Set up tools action may review still-missing tools again, but never restores
 // effect authority from an earlier choice.
-func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner, request types.ProjectToolSetupRequest) (types.ProjectToolSetupReview, error) {
+func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner, request insight.ProjectToolSetupRequest) (insight.ProjectToolSetupReview, error) {
 	if request.LanguageID != "" && (!request.Explicit || request.AssemblyGeneration == 0) ||
 		request.LanguageID == "" && request.AssemblyGeneration != 0 {
-		return types.ProjectToolSetupReview{}, errors.New("select a tool from the current project before reviewing it")
+		return insight.ProjectToolSetupReview{}, errors.New("select a tool from the current project before reviewing it")
 	}
 	o.mu.Lock()
 	lifetime, err := o.lifetimeLocked(owner)
 	o.mu.Unlock()
 	if err != nil {
-		return types.ProjectToolSetupReview{}, err
+		return insight.ProjectToolSetupReview{}, err
 	}
 	ctx, done := setupOperationContext(ctx, lifetime)
 	defer done()
 	p, err := o.snapshot(ctx)
 	if err != nil {
-		return types.ProjectToolSetupReview{}, err
+		return insight.ProjectToolSetupReview{}, err
 	}
 	if request.LanguageID != "" && request.AssemblyGeneration != p.full.AssemblyGeneration {
-		return types.ProjectToolSetupReview{}, errors.New("the project tools changed; refresh the list and try again")
+		return insight.ProjectToolSetupReview{}, errors.New("the project tools changed; refresh the list and try again")
 	}
 	records, history, err := readProjectToolDecisions(ctx, p.db)
 	if err != nil {
-		return types.ProjectToolSetupReview{}, err
+		return insight.ProjectToolSetupReview{}, err
 	}
 	known := decidedProjectToolCandidates(records, p.full)
 	p.decisionHistory = history
@@ -163,10 +164,10 @@ func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner
 	if o.store != nil {
 		installed, _, err = o.store.List(ctx)
 		if err != nil {
-			return types.ProjectToolSetupReview{}, err
+			return insight.ProjectToolSetupReview{}, err
 		}
 	}
-	p.offered = types.CloneProjectToolReview(p.full)
+	p.offered = insight.CloneProjectToolReview(p.full)
 	p.offered.Items = nil
 	for _, item := range p.full.Items {
 		if request.LanguageID != "" && !slices.Contains(item.Languages, request.LanguageID) {
@@ -177,27 +178,27 @@ func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner
 		}
 	}
 	if request.LanguageID != "" && len(p.offered.Items) > 1 {
-		return types.ProjectToolSetupReview{}, errors.New("more than one tool matches this language; review project tools instead")
+		return insight.ProjectToolSetupReview{}, errors.New("more than one tool matches this language; review project tools instead")
 	}
 	p.offered.Token = ""
 	p.offered.Token = reviewHash(p.offered)
 	if err := currentDecisionReview(ctx, o.w, p.db, p.full.Project, p.manager, p.full); err != nil {
-		return types.ProjectToolSetupReview{}, err
+		return insight.ProjectToolSetupReview{}, err
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.closed || lifetime.ctx.Err() != nil || ctx.Err() != nil {
-		return types.ProjectToolSetupReview{}, document.ErrOwner
+		return insight.ProjectToolSetupReview{}, document.ErrOwner
 	}
 	o.expireLocked(time.Now())
 	// An active decision owns these needs until it settles.
 	for _, active := range o.active {
 		if active.full.Project == p.full.Project && active.full.RootIdentity == p.full.RootIdentity {
-			return types.ProjectToolSetupReview{Message: "Crude is setting up the project tools."}, nil
+			return insight.ProjectToolSetupReview{Message: "Crude is setting up the project tools."}, nil
 		}
 	}
 	if len(p.offered.Items) == 0 {
-		return types.ProjectToolSetupReview{Review: p.offered, Message: "There are no new tools to review."}, nil
+		return insight.ProjectToolSetupReview{Review: p.offered, Message: "There are no new tools to review."}, nil
 	}
 	for id, old := range o.pending {
 		if old.owner != owner {
@@ -211,20 +212,20 @@ func (o *ProjectToolSetupOwner) Review(ctx context.Context, owner document.Owner
 		delete(o.pending, id)
 	}
 	if len(o.pending) >= projectToolPreviewLimit {
-		return types.ProjectToolSetupReview{}, document.ErrLimit
+		return insight.ProjectToolSetupReview{}, document.ErrLimit
 	}
 	id, err := setupRandomID()
 	if err != nil {
-		return types.ProjectToolSetupReview{}, err
+		return insight.ProjectToolSetupReview{}, err
 	}
 	p.id, p.owner, p.lifetime, p.expires = id, owner, lifetime, time.Now().Add(projectToolPreviewTTL)
 	o.pending[id] = p
 	return setupPreviewView(p), nil
 }
 
-func setupPreviewView(p *projectToolSetupPreview) types.ProjectToolSetupReview {
-	return types.ProjectToolSetupReview{
-		ID: p.id, Review: types.CloneProjectToolReview(p.offered), NeedsDecision: true,
+func setupPreviewView(p *projectToolSetupPreview) insight.ProjectToolSetupReview {
+	return insight.ProjectToolSetupReview{
+		ID: p.id, Review: insight.CloneProjectToolReview(p.offered), NeedsDecision: true,
 		Quiet:   p.quiet,
 		Message: "Review the tools for this project.",
 	}
@@ -249,7 +250,7 @@ func (o *ProjectToolSetupOwner) snapshot(ctx context.Context) (*projectToolSetup
 	}
 	c := catalog.Current()
 	m.mu.Lock()
-	plan, policyGeneration := types.CloneAssemblyPlan(m.assembly), m.settingsGeneration
+	plan, policyGeneration := insight.CloneAssemblyPlan(m.assembly), m.settingsGeneration
 	m.mu.Unlock()
 	review, err := buildProjectToolReview(root, identity, plan, c, catalog.CurrentTargets())
 	if err != nil {
@@ -261,7 +262,7 @@ func (o *ProjectToolSetupOwner) snapshot(ctx context.Context) (*projectToolSetup
 	return &projectToolSetupPreview{db: db, manager: m, policyGeneration: policyGeneration, catalog: c, full: review}, nil
 }
 
-func decidedProjectToolCandidates(records []projectToolDecision, review types.ProjectToolReview) map[string]bool {
+func decidedProjectToolCandidates(records []projectToolDecision, review insight.ProjectToolReview) map[string]bool {
 	known := make(map[string]bool)
 	for _, record := range records {
 		if record.Review.Project == review.Project && record.Review.RootIdentity == review.RootIdentity {
@@ -273,7 +274,7 @@ func decidedProjectToolCandidates(records []projectToolDecision, review types.Pr
 	return known
 }
 
-func setupCandidateInstalled(item types.ProjectToolCandidate, tools []toolstore.Tool) bool {
+func setupCandidateInstalled(item insight.ProjectToolCandidate, tools []toolstore.Tool) bool {
 	if !item.Installable {
 		return false
 	}
@@ -286,9 +287,10 @@ func setupCandidateInstalled(item types.ProjectToolCandidate, tools []toolstore.
 	return false
 }
 
-func (o *ProjectToolSetupOwner) Decide(ctx context.Context, owner document.Owner, requestID, previewID string, selectedIDs []string) (types.ProjectToolSetupResult, error) {
+// Decide applies the selected code tools of a preview for one owner.
+func (o *ProjectToolSetupOwner) Decide(ctx context.Context, owner document.Owner, requestID, previewID string, selectedIDs []string) (insight.ProjectToolSetupResult, error) {
 	if err := ctx.Err(); err != nil {
-		return types.ProjectToolSetupResult{}, err
+		return insight.ProjectToolSetupResult{}, err
 	}
 	selected := append([]string(nil), selectedIDs...)
 	o.mu.Lock()
@@ -298,24 +300,24 @@ func (o *ProjectToolSetupOwner) Decide(ctx context.Context, owner document.Owner
 	if o.closed || p == nil || p.owner != owner || p.lifetime.ctx.Err() != nil ||
 		strings.TrimSpace(requestID) == "" || len(requestID) > 256 {
 		o.mu.Unlock()
-		return types.ProjectToolSetupResult{}, document.ErrOwner
+		return insight.ProjectToolSetupResult{}, document.ErrOwner
 	}
 	if _, used := o.requests[request]; used {
 		o.mu.Unlock()
-		return types.ProjectToolSetupResult{}, document.ErrRequest
+		return insight.ProjectToolSetupResult{}, document.ErrRequest
 	}
 	if _, err := decisionSelection(p.offered, selected); err != nil {
 		o.mu.Unlock()
-		return types.ProjectToolSetupResult{}, err
+		return insight.ProjectToolSetupResult{}, err
 	}
 	if len(o.requests) >= 128 {
 		o.mu.Unlock()
-		return types.ProjectToolSetupResult{}, document.ErrLimit
+		return insight.ProjectToolSetupResult{}, document.ErrLimit
 	}
 	for _, active := range o.active {
 		if active.full.Project == p.full.Project && active.full.RootIdentity == p.full.RootIdentity {
 			o.mu.Unlock()
-			return types.ProjectToolSetupResult{}, errors.New("project tools are already being set up")
+			return insight.ProjectToolSetupResult{}, errors.New("project tools are already being set up")
 		}
 	}
 	// Consume before the first effect. No audit row or hash can restore this
@@ -356,23 +358,23 @@ func (o *ProjectToolSetupOwner) Decide(ctx context.Context, owner document.Owner
 	}()
 	defer func() { p.cancel(); <-watching }()
 	if err := authority.validateReview(p.ctx); err != nil {
-		return types.ProjectToolSetupResult{}, err
+		return insight.ProjectToolSetupResult{}, err
 	}
 	_, history, err := readProjectToolDecisions(p.ctx, p.db)
 	if err != nil {
-		return types.ProjectToolSetupResult{}, err
+		return insight.ProjectToolSetupResult{}, err
 	}
 	if history != p.decisionHistory {
-		return types.ProjectToolSetupResult{}, errors.New("the project tool choices changed; review them again")
+		return insight.ProjectToolSetupResult{}, errors.New("the project tool choices changed; review them again")
 	}
 	work, err := o.w.PrepareProjectToolDecision(p.offered, selected, p.id, p.decisionHistory)
 	if err != nil {
-		return types.ProjectToolSetupResult{}, err
+		return insight.ProjectToolSetupResult{}, err
 	}
 	saved, err := work(p.ctx)
-	result := types.ProjectToolSetupResult{DecisionID: saved.ReceiptID}
+	result := insight.ProjectToolSetupResult{DecisionID: saved.ReceiptID}
 	for _, id := range selected {
-		result.Items = append(result.Items, types.ProjectToolSetupItem{ItemID: id, Message: "Crude did not try to install this tool.", Evaluation: toolEvaluationNotAttempted})
+		result.Items = append(result.Items, insight.ProjectToolSetupItem{ItemID: id, Message: "Crude did not try to install this tool.", Evaluation: toolEvaluationNotAttempted})
 	}
 	if err != nil {
 		return result, err
@@ -394,7 +396,7 @@ func (o *ProjectToolSetupOwner) Decide(ctx context.Context, owner document.Owner
 	result.Items = nil
 	used := false
 	for _, item := range results {
-		view := types.ProjectToolSetupItem{ItemID: item.ItemID, ToolID: item.Tool.ID, Message: item.Message, Attempted: item.Attempted, Evaluation: toolEvaluationNotAttempted}
+		view := insight.ProjectToolSetupItem{ItemID: item.ItemID, ToolID: item.Tool.ID, Message: item.Message, Attempted: item.Attempted, Evaluation: toolEvaluationNotAttempted}
 		var uncertain *toolstore.PublicationUnconfirmedError
 		view.Installed = item.Tool.ID != "" && !errors.As(item.Err, &uncertain)
 		if status := installer.status[item.ItemID]; status != "" {
@@ -465,7 +467,7 @@ func (a *projectToolSetupAuthority) validateReview(ctx context.Context) error {
 	if err := p.db.DB.QueryRowContext(ctx, `SELECT value FROM workspace_metadata WHERE key=?`, workspaceSettingsKey).Scan(&raw); err != nil {
 		return err
 	}
-	var overrides types.WorkspaceOverrides
+	var overrides setting.WorkspaceOverrides
 	if err := validateUniqueJSON([]byte(raw)); err != nil {
 		return err
 	}

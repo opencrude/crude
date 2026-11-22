@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 
@@ -25,7 +25,7 @@ func (r *Runtime) savedWorkspaceActivity(ctx context.Context) coreprotocol.Works
 		// after it returns. The callback does not wait on resource workers.
 		// The actor's attachment ID and the on-disk catalog ID are separate
 		// namespaces.
-		id := workspace.WorkspaceID(a.ws.RootPath)
+		id := workspace.ID(a.ws.RootPath)
 		// A successful inspect stored a fresh sample. A busy actor leaves the
 		// previous one, which is still the best available observation.
 		_ = a.inspect(readCtx, func() {

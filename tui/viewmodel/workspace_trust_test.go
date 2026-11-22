@@ -9,7 +9,7 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -17,7 +17,7 @@ func TestWorkspaceTrustPromptPaintAndEscGeneration(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		m := onboardingTestApp(t)
 		m.width, m.height = size[0], size[1]
-		m.Update(types.TickMsg{})
+		m.Update(TickMsg{})
 		window := m.overlayHost.Window(ui.OverlayWorkspaceTrust)
 		if window == nil {
 			t.Fatalf("trust prompt absent at %v", size)
@@ -45,12 +45,12 @@ func TestWorkspaceTrustPromptPaintAndEscGeneration(t *testing.T) {
 			t.Fatal("restricted choice was not focused")
 		}
 		m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-		m.Update(types.TickMsg{})
+		m.Update(TickMsg{})
 		if m.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) || !m.ws.LoadAppSettings().Analysis.DecisionNeeded() {
 			t.Fatal("Esc persisted a decision or asked twice")
 		}
 		m.workspaceSwitchGen.Add(1)
-		m.Update(types.TickMsg{})
+		m.Update(TickMsg{})
 		if !m.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 			t.Fatal("new generation did not ask again")
 		}
@@ -62,7 +62,7 @@ func TestWorkspaceTrustPaintsOnFirstSizedFrameWithoutSetupReminder(t *testing.T)
 		m := newFullTestApp(t)
 		wsOf(m).Logger = stubLogger{}
 		m.width, m.height = 0, 0
-		wsOf(m).SetAppDefaults(types.AppSettings{Onboarding: types.OnboardingSettings{AISetupReminderHidden: true}})
+		wsOf(m).SetAppDefaults(setting.App{Onboarding: setting.Onboarding{AISetupReminderHidden: true}})
 		m.Init()
 
 		m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
@@ -82,7 +82,7 @@ func TestWorkspaceTrustDoesNotStartOnLayoutAlone(t *testing.T) {
 	m := newFullTestApp(t)
 	wsOf(m).Logger = stubLogger{}
 	m.width, m.height = 0, 0
-	wsOf(m).SetAppDefaults(types.AppSettings{Onboarding: types.OnboardingSettings{AISetupReminderHidden: true}})
+	wsOf(m).SetAppDefaults(setting.App{Onboarding: setting.Onboarding{AISetupReminderHidden: true}})
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	if strings.Contains(m.View().RenderContent(), "Trust this folder?") {
 		t.Fatal("layout without shell startup opened a modal")
@@ -91,7 +91,7 @@ func TestWorkspaceTrustDoesNotStartOnLayoutAlone(t *testing.T) {
 
 func TestWorkspaceTrustSaveBusyAndFailureRetry(t *testing.T) {
 	m := onboardingTestApp(t)
-	m.Update(types.TickMsg{})
+	m.Update(TickMsg{})
 	cmd := m.activateWorkspaceTrust(1)
 	if cmd == nil || !m.onboarding.trust.prompt.busy {
 		t.Fatal("save was not started")
@@ -113,12 +113,12 @@ func TestWorkspaceTrustSaveBusyAndFailureRetry(t *testing.T) {
 func TestWorkspaceTrustWaitsForAISetupReminder(t *testing.T) {
 	m := onboardingTestApp(t)
 	loadOnboarding(t, m)
-	m.Update(types.TickMsg{})
+	m.Update(TickMsg{})
 	if !m.overlayHost.IsOpen(aiSetupReminderOverlay) || m.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 		t.Fatal("trust prompt displaced AI setup")
 	}
 	m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	m.Update(types.TickMsg{})
+	m.Update(TickMsg{})
 	if !m.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) || m.overlayHost.IsOpen(aiSetupReminderOverlay) {
 		t.Fatal("trust prompt did not follow AI setup")
 	}

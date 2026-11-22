@@ -1,18 +1,18 @@
 # Shell port
 
-> Status: Current — `shellport.Workspace` is the only runtime surface `tui/` consumes. `core/port/remote` is the connected CLI implementation; `shellport.Local` remains the in-process core/test adapter.
+> Status: Current — `shellport.Workspace` is the only runtime surface `tui/` consumes. `core/shellport/remote` is the connected CLI implementation; `shellport.Local` remains the in-process core/test adapter.
 
 `tui/viewmodel.App` used to embed `*workspace.Workspace`, so ~290 files reached
 runtime fields, services and methods directly. It now holds one
 `shellport.Workspace` (`App.ws`) and every former promoted access is an explicit
-call. The package `core/port/` imports `workspace/` and the other domain packages
+call. The package `core/shellport/` imports `workspace/` and the other domain packages
 for **data types only**; it never imports `tui/`. This document is the
 implementation inventory for the connected (`core/` RPC) adapter and its explicit remaining limits.
 
 ## Layout
 
 `shellport.Workspace` is a composition of cohesive sub-interfaces. Each file in
-`core/port/` holds one cohesive group and the remote implementation follows these same service seams:
+`core/shellport/` holds one cohesive group and the remote implementation follows these same service seams:
 
 | File | Sub-interface(s) | Concern |
 |------|------------------|---------|
@@ -48,7 +48,7 @@ implementation inventory for the connected (`core/` RPC) adapter and its explici
 ## Conventions
 
 `tui/startup/` uses the separate `Startup` port before a project workspace exists.
-The connected implementation is `core/port/remote/startup.go`.
+The connected implementation is `core/shellport/remote/startup.go`.
 Read [startup admission](core-client-protocol.md#startup-before-workspace-attachment) for ownership, operations, and limits.
 Attached shells read committed setup state through the same selected core.
 

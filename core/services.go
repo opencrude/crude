@@ -8,8 +8,9 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/memory"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/conversation"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -67,7 +68,7 @@ func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) 
 		// execution must not expose that root's unmanaged executables as its own.
 		manager := ws.LSPMgr
 		return serviceCall(request, func(ctx context.Context, in coreprotocol.ReadCodeToolInventoryRequest) (coreprotocol.ReadCodeToolInventoryResult, error) {
-			var plan types.AssemblyPlan
+			var plan insight.AssemblyPlan
 			if root == ws.RootPath && manager != nil {
 				plan = manager.Assembly()
 			}
@@ -410,7 +411,7 @@ func (a *actor) applyService(request coreprotocol.Request, result coreprotocol.R
 			if decodeRequest(request, &in) == nil {
 				a.changed([]string{in.AgentID})
 				var settled coreprotocol.AgentPlanSettleResult
-				if in.Settle.Action != types.PlanReviewFeedback && decode(result.Payload, &settled) == nil && settled.Error == "" {
+				if in.Settle.Action != conversation.PlanReviewFeedback && decode(result.Payload, &settled) == nil && settled.Error == "" {
 					a.enqueuePlanInvestigationCleanup(in.AgentID)
 				}
 			}

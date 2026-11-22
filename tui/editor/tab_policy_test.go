@@ -7,7 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 func TestTabPolicyPreservesLinkedSourceAndHistory(t *testing.T) {
@@ -21,7 +22,7 @@ func TestTabPolicyPreservesLinkedSourceAndHistory(t *testing.T) {
 	peer.SetCursorPosition(1, 6)
 	before := e.Revision()
 	for _, width := range []int{2, 8, 4, 2} {
-		e.SetPresentation(types.EditorSettings{TabSize: width, LineNumbers: true})
+		e.SetPresentation(setting.Editor{TabSize: width, LineNumbers: true})
 		wantStart, wantEnd := 6, 10
 		if width == 8 {
 			wantStart, wantEnd = 16, 20
@@ -41,12 +42,12 @@ func TestTabPolicyPreservesLinkedSourceAndHistory(t *testing.T) {
 		}
 	}
 	e.HandleEvent(tea.KeyPressMsg{Code: 'Z', Text: "Z"})
-	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 8, LineNumbers: true})
 	e.Undo()
 	if e.Value() != source || e.SelectedText() != "name" || e.CursorCol() != 20 {
 		t.Fatal("Undo restored old display columns", e.Value(), e.SelectedText(), e.CursorCol())
 	}
-	e.SetPresentation(types.EditorSettings{TabSize: 2, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 2, LineNumbers: true})
 	e.Redo()
 	if e.Value() != "\t界é\tZ\r\n\tother\r\n" || e.CursorCol() != 7 {
 		t.Fatal("Redo did not restore the same source caret", e.Value(), e.CursorCol())
@@ -60,11 +61,11 @@ func TestTabPolicyPreservesLinkedSourceAndHistory(t *testing.T) {
 func TestTabPolicyReprojectsSemanticAndInlineGeometry(t *testing.T) {
 	e := newInlayTestEditor(t, "\tfoo \t界")
 	e.SetCursorPosition(0, 5)
-	installTestInlays(t, e, types.LSPInlayHint{Index: 0, Position: types.LSPInlayPosition{Character: 1}, SourceByte: 1, Label: "hint", PaddingRight: true})
-	e.SetDiagnostics(testDiagnosticFacts(e, []LSPDiagnostic{{Line: 0, Col: 1, EndLine: 0, EndCol: 4, Severity: DiagError, Message: "source"}}))
+	installTestInlays(t, e, insight.LSPInlayHint{Index: 0, Position: insight.LSPInlayPosition{Character: 1}, SourceByte: 1, Label: "hint", PaddingRight: true})
+	e.SetDiagnostics(testDiagnosticFacts(e, []insight.LSPDiagnostic{{Line: 0, Col: 1, EndLine: 0, EndCol: 4, Severity: DiagError, Message: "source"}}))
 	e.SetQuery("foo")
 	for _, width := range []int{2, 8} {
-		e.SetPresentation(types.EditorSettings{TabSize: width, LineNumbers: true, RenderWhitespace: "all"})
+		e.SetPresentation(setting.Editor{TabSize: width, LineNumbers: true, RenderWhitespace: "all"})
 		if e.CursorCol() != width+1 {
 			t.Fatal("caret source changed", e.CursorCol())
 		}
@@ -91,7 +92,7 @@ func TestTabPolicyReprojectsSemanticAndInlineGeometry(t *testing.T) {
 	if err := e.SetGhostText(e.Revision(), start, "Extra"); err != nil {
 		t.Fatal(err)
 	}
-	e.SetPresentation(types.EditorSettings{TabSize: 2, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 2, LineNumbers: true})
 	if anchor, text, ok := e.GhostText(); !ok || anchor != start || text != "Extra" {
 		t.Fatal("geometry lost the current ghost", anchor, text, ok)
 	}
@@ -107,7 +108,7 @@ func TestTabPolicyRecoveryUsesSourceAnchors(t *testing.T) {
 	e.InsertRune('X')
 	e.SetCursorPosition(0, 9)
 	e.SetSelection(0, 4, 0, 9)
-	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 8, LineNumbers: true})
 	r, ok := e.ExportDocumentRecovery()
 	if !ok {
 		t.Fatal("missing unresolved draft")
@@ -121,7 +122,7 @@ func TestTabPolicyRecoveryUsesSourceAnchors(t *testing.T) {
 		t.Fatal(err)
 	}
 	next, _ := projectionEditor(t, "\tword")
-	next.SetPresentation(types.EditorSettings{TabSize: 2, LineNumbers: true})
+	next.SetPresentation(setting.Editor{TabSize: 2, LineNumbers: true})
 	if err = next.RestoreDocumentRecovery(decoded); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestTabPolicyNavigationSnapshotUsesSource(t *testing.T) {
 	e := loadEditorText(t, "navigation.txt", "\t界é\tname\n")
 	e.SetCursorPosition(0, 10)
 	place, scroll := e.Caret()
-	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 8, LineNumbers: true})
 	e.SetCursorPosition(0, 0)
 	e.RestoreCaret(place, scroll)
 	if e.CursorCol() != 18 {
@@ -158,7 +159,7 @@ func TestTabPolicyExternalHighlightsAndPointerUseSameGeometry(t *testing.T) {
 	e := loadEditorText(t, "pointer.txt", "\t界é\tword")
 	e.Search().Open = true
 	e.Search().Matches = []SearchMatch{{Start: Position{Col: 8}, End: Position{Col: 12}}}
-	e.SetPresentation(types.EditorSettings{TabSize: 2, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 2, LineNumbers: true})
 	if m := e.Search().Matches[0]; m.Start.Col != 6 || m.End.Col != 10 {
 		t.Fatal("preview match was not reprojected", m)
 	}
@@ -177,7 +178,7 @@ func TestTabPolicyExternalHighlightsAndPointerUseSameGeometry(t *testing.T) {
 func TestTabPolicyNativeIndentFallbackAndDetectedStyleStayDistinct(t *testing.T) {
 	for _, width := range []int{2, 8, 1, 32} {
 		e := loadEditorText(t, "new.txt", "x\r\n")
-		e.SetPresentation(types.EditorSettings{TabSize: width, LineNumbers: true})
+		e.SetPresentation(setting.Editor{TabSize: width, LineNumbers: true})
 		revision := e.Revision()
 		e.SetCursorPosition(1, 0)
 		e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -194,7 +195,7 @@ func TestTabPolicyNativeIndentFallbackAndDetectedStyleStayDistinct(t *testing.T)
 		}
 	}
 	e := loadEditorText(t, "detected.txt", "{\n  a\n}\n")
-	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 8, LineNumbers: true})
 	e.SetCursorPosition(1, 1)
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyTab})
 	if e.Value() != "{\n   a\n}\n" {

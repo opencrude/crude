@@ -1,8 +1,8 @@
 package editor
 
 import (
-	"crude/lsp/client"
-	model "crude/types"
+	"crude/lsp/lspclient"
+	"crude/types/insight"
 )
 
 type Position struct {
@@ -36,34 +36,26 @@ type diagSpan struct {
 }
 
 const (
-	DiagError   = model.DiagError
-	DiagWarning = model.DiagWarning
-	DiagInfo    = model.DiagInfo
-	DiagHint    = model.DiagHint
+	// DiagError is the error severity of a diagnostic.
+	DiagError = insight.DiagError
+	// DiagWarning is the warning severity of a diagnostic.
+	DiagWarning = insight.DiagWarning
+	// DiagInfo is the information severity of a diagnostic.
+	DiagInfo = insight.DiagInfo
+	// DiagHint is the hint severity of a diagnostic.
+	DiagHint = insight.DiagHint
 )
-
-// LSPStatus tracks the lifecycle state of the LSP connection for UI feedback.
-type LSPStatus = model.LSPStatus
 
 const (
-	LSPIdle      = model.LSPIdle
-	LSPStarting  = model.LSPStarting
-	LSPConnected = model.LSPConnected
-	LSPFailed    = model.LSPFailed
+	// LSPIdle means the language server is not running yet.
+	LSPIdle = insight.LSPIdle
+	// LSPStarting means the language server is starting.
+	LSPStarting = insight.LSPStarting
+	// LSPConnected means the language server is ready.
+	LSPConnected = insight.LSPConnected
+	// LSPFailed means the language server did not start.
+	LSPFailed = insight.LSPFailed
 )
-
-// LSPSymbol is a flat, viewmodel-friendly representation of a document symbol.
-// Mirrors LSP SymbolKind values (1=File, 2=Module, 3=Namespace, 4=Package,
-// 5=Class, 6=Method, 7=Property, 8=Field, 9=Constructor, 10=Enum, 11=Interface,
-// 12=Function, 13=Variable, 14=Constant, 15=String, 16=Number, 17=Boolean,
-// 18=Array, 19=Object, 20=Key, 21=Null, 22=EnumMember, 23=Struct, 24=Event,
-// 25=Operator, 26=TypeParameter).
-type LSPSymbol = model.LSPSymbol
-
-// ProjectInsights is the whole-project snapshot rendered in the bottom-left
-// status bar. It is independent of any single file; it reflects the state of
-// every file known to the LSPManager.
-type ProjectInsights = model.ProjectInsights
 
 // SymbolKindIcon returns a single-character icon suitable for an outline view.
 // Keeps the outline compact and scannable.
@@ -88,6 +80,3 @@ func SymbolKindIcon(kind int) string {
 
 // SymbolKindName names protocol symbol kinds for editor presentation.
 func SymbolKindName(kind int) string { return lspclient.SymbolKindName(kind) }
-
-type LSPDiagnostic = model.LSPDiagnostic
-type CompletionItem = model.CompletionItem

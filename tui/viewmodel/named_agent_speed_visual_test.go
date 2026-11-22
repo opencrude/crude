@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 // The capture uses the real session deck and keyboard. F9 exits only after
@@ -26,7 +26,7 @@ func TestNamedAgentSpeedVisualAcceptance(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	runtime := remoteJourneyRuntimeConfig(t, server.URL, func(cfg *session.Config) {
-		cfg.Agents.AgentProfiles["reviewer"] = types.AgentProfileSettings{Category: "researcher", Model: "review-model"}
+		cfg.Agents.AgentProfiles["reviewer"] = setting.AgentProfile{Category: "researcher", Model: "review-model"}
 	})
 	shell := newRemoteJourneyShell(t, runtime, t.TempDir())
 	remoteJourneyCreate(t, shell)

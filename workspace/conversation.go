@@ -6,7 +6,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/tools"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/types/recovery"
 )
@@ -20,10 +20,6 @@ const (
 	MessageRoleStatus     = "status"
 	MessageRoleAssignment = "assignment"
 )
-
-// Message is the shared canonical conversation state. Workspace owns live
-// mutation; sessiondb owns JSON persistence; the TUI only projects it.
-type Message = ttypes.ConversationMessage
 
 type TurnStatus struct {
 	Phase         string
@@ -53,24 +49,24 @@ type TurnStatus struct {
 // pane. It deliberately contains no rendering or interaction state.
 type Conversation struct {
 	brief            string
-	messages         []*Message
-	byID             map[string]*Message
-	toolTimelines    map[*Message]*toolTimeline
+	messages         []*conversation.Message
+	byID             map[string]*conversation.Message
+	toolTimelines    map[*conversation.Message]*toolTimeline
 	nextID           uint64
 	version          uint64
 	sourceGeneration uint64
-	turnIdentity     ttypes.TurnIdentity
+	turnIdentity     conversation.TurnIdentity
 	lastRecovery     recovery.Status
 	changeJournal    []conversationChange
 	pendingChange    conversationChange
 	// Only the currently growing row owns spare capacity, never every archived
 	// message. Builder.String publishes immutable prefixes without copying them.
-	textMessage *Message
+	textMessage *conversation.Message
 	textBuilder strings.Builder
 	// The current provider response's accepted assistant row survives lifecycle
 	// transitions (including recovery settlement) until a new request begins.
 	responseID      string
-	responseMessage *Message
+	responseMessage *conversation.Message
 }
 
 const toolPhaseMinDwell = 120 * time.Millisecond
@@ -87,8 +83,8 @@ type toolTimeline struct {
 
 func NewConversation() *Conversation {
 	return &Conversation{
-		byID:          make(map[string]*Message),
-		toolTimelines: make(map[*Message]*toolTimeline),
+		byID:          make(map[string]*conversation.Message),
+		toolTimelines: make(map[*conversation.Message]*toolTimeline),
 	}
 }
 
@@ -111,7 +107,7 @@ func (c *Conversation) SourceGeneration() uint64 {
 
 // BeginTurn installs the immutable identity for messages created by one
 // admitted backend turn. Older events cannot move attribution backward.
-func (c *Conversation) BeginTurn(identity ttypes.TurnIdentity) bool {
+func (c *Conversation) BeginTurn(identity conversation.TurnIdentity) bool {
 	if c == nil || identity.Generation == 0 || identity.ModelID == "" {
 		return false
 	}
@@ -129,7 +125,7 @@ func (c *Conversation) BeginTurn(identity ttypes.TurnIdentity) bool {
 // SwitchConnection replaces the active turn's connection (provider, account,
 // model) within the same generation, so messages after a parent's
 // request-boundary model change are attributed to the model that produced them.
-func (c *Conversation) SwitchConnection(identity ttypes.TurnIdentity) bool {
+func (c *Conversation) SwitchConnection(identity conversation.TurnIdentity) bool {
 	if c == nil || identity.ModelID == "" || identity.Generation == 0 || identity.Generation != c.turnIdentity.Generation {
 		return false
 	}
@@ -137,7 +133,7 @@ func (c *Conversation) SwitchConnection(identity ttypes.TurnIdentity) bool {
 	return true
 }
 
-func (c *Conversation) attributeTurn(message *Message) {
+func (c *Conversation) attributeTurn(message *conversation.Message) {
 	if c == nil || message == nil || message.ModelID != "" {
 		return
 	}
@@ -148,13 +144,14 @@ func (c *Conversation) attributeTurn(message *Message) {
 	message.ExecutionID = c.turnIdentity.ExecutionID
 }
 
-func (c *Conversation) Messages() []Message {
+// Messages returns detached copies of the transcript messages.
+func (c *Conversation) Messages() []conversation.Message {
 	if c == nil {
 		return nil
 	}
-	out := make([]Message, len(c.messages))
+	out := make([]conversation.Message, len(c.messages))
 	for i, message := range c.messages {
-		out[i] = ttypes.CloneConversationMessage(*message)
+		out[i] = conversation.CloneMessage(*message)
 	}
 	return out
 }
@@ -163,22 +160,23 @@ func (c *Conversation) Messages() []Message {
 func (c *Conversation) Empty() bool { return c == nil || len(c.messages) == 0 }
 
 // Message returns a detached copy of one current record.
-func (c *Conversation) Message(id string) (Message, bool) {
+func (c *Conversation) Message(id string) (conversation.Message, bool) {
 	if c == nil {
-		return Message{}, false
+		return conversation.Message{}, false
 	}
 	message := c.byID[id]
 	if message == nil {
-		return Message{}, false
+		return conversation.Message{}, false
 	}
-	return ttypes.CloneConversationMessage(*message), true
+	return conversation.CloneMessage(*message), true
 }
 
-func (c *Conversation) AppendMessage(message Message) string {
+// AppendMessage stores a copy of a message and returns its internal id.
+func (c *Conversation) AppendMessage(message conversation.Message) string {
 	if c == nil {
 		return ""
 	}
-	copy := ttypes.CloneConversationMessage(message)
+	copy := conversation.CloneMessage(message)
 	if message.Recovery != nil && (c.lastRecovery.ID == "" || !message.Recovery.UpdatedAt.Before(c.lastRecovery.UpdatedAt)) {
 		c.lastRecovery = *message.Recovery
 	}
@@ -201,7 +199,8 @@ func (c *Conversation) AppendMessage(message Message) string {
 	return copy.InternalID
 }
 
-func (c *Conversation) AppendMessageIfAbsent(message Message) bool {
+// AppendMessageIfAbsent stores a message only when its id is not present yet.
+func (c *Conversation) AppendMessageIfAbsent(message conversation.Message) bool {
 	if c == nil || message.InternalID == "" || c.byID[message.InternalID] != nil {
 		return false
 	}
@@ -220,7 +219,7 @@ func (c *Conversation) Brief() string {
 // insertMessage keeps unresolved human steering notes at the visual tail. Provider output
 // and lifecycle rows arriving after admission are inserted before those notes;
 // once a note is acknowledged, normal chronological appends resume after it.
-func (c *Conversation) insertMessage(message *Message) {
+func (c *Conversation) insertMessage(message *conversation.Message) {
 	c.pendingChange.structural = true
 	if message.PendingSteering {
 		c.messages = append(c.messages, message)
@@ -239,7 +238,7 @@ func (c *Conversation) insertMessage(message *Message) {
 	c.messages[insertAt] = message
 }
 
-func (c *Conversation) lastNonPending() *Message {
+func (c *Conversation) lastNonPending() *conversation.Message {
 	for i := len(c.messages) - 1; i >= 0; i-- {
 		if !c.messages[i].PendingSteering {
 			return c.messages[i]
@@ -273,13 +272,13 @@ func (c *Conversation) AcceptsStreamText(role, text string) bool {
 
 // ActiveThinking returns the current live thought without exporting the dense
 // transcript. Promoted thoughts live in their owning pane's Conversation.
-func (c *Conversation) ActiveThinking() (Message, bool) {
+func (c *Conversation) ActiveThinking() (conversation.Message, bool) {
 	if c != nil {
 		if last := c.lastNonPending(); last != nil && last.Role == MessageRoleThinking && last.ThinkingActive {
-			return ttypes.CloneConversationMessage(*last), true
+			return conversation.CloneMessage(*last), true
 		}
 	}
-	return Message{}, false
+	return conversation.Message{}, false
 }
 
 // SetLatestThinkingKind settles presentation metadata without moving the
@@ -307,7 +306,8 @@ func (c *Conversation) SetLatestThinkingKind(kind reasoning.Kind) bool {
 	return false
 }
 
-func (c *Conversation) AppendPendingSteering(message Message) string {
+// AppendPendingSteering stores a steering note that waits for confirmation.
+func (c *Conversation) AppendPendingSteering(message conversation.Message) string {
 	message.PendingSteering = true
 	return c.AppendMessage(message)
 }
@@ -334,7 +334,7 @@ func (c *Conversation) ConsumePendingSteering(id string) bool {
 
 // SettlePendingSteeringMessages settles matching notes in place. A locally
 // accepted send belongs to conversation context even when its execution ends.
-func (c *Conversation) SettlePendingSteeringMessages(ids []string) []Message {
+func (c *Conversation) SettlePendingSteeringMessages(ids []string) []conversation.Message {
 	if c == nil || len(ids) == 0 {
 		return nil
 	}
@@ -347,13 +347,13 @@ func (c *Conversation) SettlePendingSteeringMessages(ids []string) []Message {
 	if len(wanted) == 0 {
 		return nil
 	}
-	var settled []Message
+	var settled []conversation.Message
 	for _, message := range c.messages {
 		_, selected := wanted[message.InternalID]
 		if selected && message.Role == MessageRoleUser {
 			message.PendingSteering = false
 			c.changed(message)
-			settled = append(settled, ttypes.CloneConversationMessage(*message))
+			settled = append(settled, conversation.CloneMessage(*message))
 		}
 	}
 	if len(settled) > 0 {
@@ -402,7 +402,7 @@ func (c *Conversation) beginResponse(id string) {
 	}
 }
 
-func (c *Conversation) appendText(message *Message, text string) {
+func (c *Conversation) appendText(message *conversation.Message, text string) {
 	if c.textMessage != message {
 		c.textBuilder = strings.Builder{}
 		c.textBuilder.WriteString(message.Content)
@@ -455,7 +455,7 @@ func (c *Conversation) AppendReasoning(delta reasoning.Delta) {
 	}
 	display := reasoning.Display{}
 	content := display.Append("", delta)
-	c.AppendMessage(Message{
+	c.AppendMessage(conversation.Message{
 		Role:            MessageRoleThinking,
 		Content:         content,
 		ThinkingDisplay: display,
@@ -476,7 +476,7 @@ func (c *Conversation) EnsureAssistant() {
 	if last := c.lastNonPending(); last != nil && last.Role == MessageRoleAssistant {
 		return
 	}
-	c.AppendMessage(Message{
+	c.AppendMessage(conversation.Message{
 		Role: MessageRoleAssistant, Time: time.Now(),
 		ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
 		AccountID:  c.turnIdentity.AccountID,
@@ -496,7 +496,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	status.UploadedBytes = max(int64(0), min(status.TotalBytes, status.UploadedBytes))
 	message := c.activeTurnStatus(status.OperationID)
 	if message == nil {
-		message = &Message{
+		message = &conversation.Message{
 			InternalID:             c.nextMessageID(),
 			Role:                   MessageRoleStatus,
 			Time:                   time.Now(),
@@ -608,7 +608,7 @@ func (c *Conversation) ClearTurnStatus() {
 	}
 }
 
-func (c *Conversation) activeTurnStatus(operationID string) *Message {
+func (c *Conversation) activeTurnStatus(operationID string) *conversation.Message {
 	for index := len(c.messages) - 1; index >= 0; index-- {
 		if c.messages[index].Role == MessageRoleStatus && c.messages[index].LifecycleOperationID == operationID {
 			return c.messages[index]
@@ -617,7 +617,7 @@ func (c *Conversation) activeTurnStatus(operationID string) *Message {
 	return nil
 }
 
-func (c *Conversation) moveBeforePending(message *Message) {
+func (c *Conversation) moveBeforePending(message *conversation.Message) {
 	if len(c.messages) == 0 {
 		return
 	}
@@ -784,7 +784,7 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 		return
 	}
 
-	message = &Message{
+	message = &conversation.Message{
 		InternalID:        c.availableID(internalID),
 		Role:              MessageRoleTool,
 		Time:              time.Now(),
@@ -847,7 +847,7 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		return
 	}
 
-	message = &Message{
+	message = &conversation.Message{
 		InternalID:        c.availableID(internalID),
 		Role:              MessageRoleTool,
 		Content:           name + " " + argsCompact,
@@ -909,7 +909,7 @@ func (c *Conversation) SetToolRound(toolID, internalID, roundID string) {
 
 func (c *Conversation) MarkToolNotExecuted(toolID, internalID string) {
 	if msg := c.findTool(internalID, toolID); msg != nil {
-		msg.ToolStatus, msg.ToolPreviewPhase = "interrupted", ttypes.ToolPreviewDone
+		msg.ToolStatus, msg.ToolPreviewPhase = "interrupted", conversation.ToolPreviewDone
 		delete(c.toolTimelines, msg)
 		c.commitChange(msg)
 	}
@@ -928,7 +928,7 @@ func (c *Conversation) SetToolInput(toolID, internalID, input, scope string) {
 	}
 }
 
-func applyToolInput(message *Message, name string, data map[string]any) {
+func applyToolInput(message *conversation.Message, name string, data map[string]any) {
 	if message == nil {
 		return
 	}
@@ -1023,12 +1023,12 @@ func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string,
 	c.commitChange(message)
 }
 
-func (c *Conversation) startToolTimeline(message *Message) *toolTimeline {
+func (c *Conversation) startToolTimeline(message *conversation.Message) *toolTimeline {
 	if c == nil || message == nil {
 		return nil
 	}
 	if c.toolTimelines == nil {
-		c.toolTimelines = make(map[*Message]*toolTimeline)
+		c.toolTimelines = make(map[*conversation.Message]*toolTimeline)
 	}
 	if timeline := c.toolTimelines[message]; timeline != nil {
 		return timeline
@@ -1045,7 +1045,7 @@ func (c *Conversation) startToolTimeline(message *Message) *toolTimeline {
 	return timeline
 }
 
-func (c *Conversation) scheduleToolTransition(message *Message, preview, status string) {
+func (c *Conversation) scheduleToolTransition(message *conversation.Message, preview, status string) {
 	if preview == "" || message == nil {
 		return
 	}
@@ -1158,7 +1158,7 @@ func (c *Conversation) MarkError(reason string) {
 			c.commitChange(message)
 		}
 	}
-	c.AppendMessage(Message{
+	c.AppendMessage(conversation.Message{
 		Role: MessageRoleError, Content: reason, Time: time.Now(),
 		ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
 		AccountID:  c.turnIdentity.AccountID,
@@ -1172,7 +1172,7 @@ func (c *Conversation) Finish(content, reason, boundaryID string) {
 	}
 	c.ClearTurnStatus()
 	if reason == "cancelled" {
-		c.AppendMessage(Message{InternalID: boundaryID, Role: MessageRoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: boundaryID, Time: time.Now(), TurnGeneration: c.turnIdentity.Generation})
+		c.AppendMessage(conversation.Message{InternalID: boundaryID, Role: MessageRoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: boundaryID, Time: time.Now(), TurnGeneration: c.turnIdentity.Generation})
 		return
 	}
 	incomplete := reason != "" && reason != "completed"
@@ -1192,7 +1192,7 @@ func (c *Conversation) Finish(content, reason, boundaryID string) {
 			c.commitChange(last)
 			return
 		}
-		c.AppendMessage(Message{
+		c.AppendMessage(conversation.Message{
 			Role: MessageRoleAssistant, Content: content, Time: time.Now(),
 			ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
 			AccountID:  c.turnIdentity.AccountID,
@@ -1216,7 +1216,7 @@ func (c *Conversation) Finish(content, reason, boundaryID string) {
 			return
 		}
 	}
-	c.AppendMessage(Message{
+	c.AppendMessage(conversation.Message{
 		Role: MessageRoleAssistant, Incomplete: true, IncompleteReason: label, Time: time.Now(),
 		ExecutionID: c.turnIdentity.ExecutionID, TurnGeneration: c.turnIdentity.Generation,
 		AccountID:  c.turnIdentity.AccountID,
@@ -1241,9 +1241,9 @@ func (c *Conversation) availableID(candidate string) string {
 	return candidate
 }
 
-func (c *Conversation) index(message *Message) {
+func (c *Conversation) index(message *conversation.Message) {
 	if c.byID == nil {
-		c.byID = make(map[string]*Message)
+		c.byID = make(map[string]*conversation.Message)
 	}
 	c.byID[message.InternalID] = message
 	if message.ToolID != "" {
@@ -1251,7 +1251,7 @@ func (c *Conversation) index(message *Message) {
 	}
 }
 
-func (c *Conversation) findTool(internalID, toolID string) *Message {
+func (c *Conversation) findTool(internalID, toolID string) *conversation.Message {
 	if c == nil {
 		return nil
 	}
@@ -1278,7 +1278,7 @@ func (c *Conversation) HasToolMessage(toolID, internalID string) bool {
 	return c != nil && c.findTool(internalID, toolID) != nil
 }
 
-func (c *Conversation) bindToolID(message *Message, toolID string) {
+func (c *Conversation) bindToolID(message *conversation.Message, toolID string) {
 	if toolID == "" || message.ToolID != "" {
 		return
 	}
@@ -1288,7 +1288,7 @@ func (c *Conversation) bindToolID(message *Message, toolID string) {
 	}
 }
 
-func (c *Conversation) bindInternalID(message *Message, internalID string) {
+func (c *Conversation) bindInternalID(message *conversation.Message, internalID string) {
 	if message == nil || internalID == "" {
 		return
 	}
@@ -1298,7 +1298,7 @@ func (c *Conversation) bindInternalID(message *Message, internalID string) {
 	}
 }
 
-func (c *Conversation) promoteTurnStatusToTool(toolID, internalID, name string) *Message {
+func (c *Conversation) promoteTurnStatusToTool(toolID, internalID, name string) *conversation.Message {
 	message := c.activeTurnStatus("")
 	if message == nil {
 		return nil
@@ -1325,7 +1325,7 @@ func (c *Conversation) promoteTurnStatusToTool(toolID, internalID, name string) 
 	return message
 }
 
-func (c *Conversation) messageIndex(target *Message) int {
+func (c *Conversation) messageIndex(target *conversation.Message) int {
 	for index, message := range c.messages {
 		if message == target {
 			return index

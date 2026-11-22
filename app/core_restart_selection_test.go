@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"crude/core/port/remote"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
 	startuptui "crude/tui/startup"
 )
 

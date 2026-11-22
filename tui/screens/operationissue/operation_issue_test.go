@@ -5,7 +5,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"fmt"
 	"strings"
 	"testing"
@@ -32,7 +32,7 @@ func issueBufferText(buf *surface.CellBuffer) string {
 func TestRecoveryScreenPaintInteractionAndCompleteEvidence(t *testing.T) {
 	for _, width := range []int{28, 72} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			issue := types.OperationIssue{Title: "Session unavailable", Summary: "Crude remains usable while this session needs repair.", Detail: strings.Repeat("Exact diagnostic line.\n", 24) + "Final retained evidence.", Guidance: "Choose a valid account, then retry explicitly.", Target: types.RepairAccounts}
+			issue := statuscenter.OperationIssue{Title: "Session unavailable", Summary: "Crude remains usable while this session needs repair.", Detail: strings.Repeat("Exact diagnostic line.\n", 24) + "Final retained evidence.", Guidance: "Choose a valid account, then retry explicitly.", Target: statuscenter.RepairAccounts}
 			s := New(theme.DefaultDark(), issue, "Review accounts")
 			host := ui.NewHost(theme.DefaultDark(), s)
 			host.Resize(width, 10)

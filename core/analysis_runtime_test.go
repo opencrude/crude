@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/insight/governor"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -25,7 +25,7 @@ type countedAnalysisRuntime struct {
 	stopErr       error
 }
 
-func (r *countedAnalysisRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *countedAnalysisRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	r.constructions.Add(1)
 	client := (semanticLSPRuntime{r.engine}).NewClient(spec, root, admit)
 	if r.stopErr != nil {
@@ -56,10 +56,10 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	engines := make(map[string]*countedAnalysisRuntime)
 	fixtureLSP := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		w := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		engine := &countedAnalysisRuntime{engine: &semanticLSPClient{}}
 		w.LSPMgr.SetRuntime(engine)
-		w.SetAppDefaults(types.AppSettings{LSP: fixtureLSP})
+		w.SetAppDefaults(setting.App{LSP: fixtureLSP})
 		mu.Lock()
 		managers[root], engines[root] = w.LSPMgr, engine
 		mu.Unlock()
@@ -92,12 +92,12 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 		firstEngine.constructions.Load() != 0 || r.analysisGovernor.Snapshot().Counts.Reserved() != 0 {
 		t.Fatal("default-static editor/manual-start/probe path acquired external execution", err)
 	}
-	grant := coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{
+	grant := coreprotocol.WorkspacePreferencesRequest{Edits: []setting.Edit{
 		{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)},
 	}}
 	var saved coreprotocol.WorkspacePreferencesResult
 	one.call(t, attached[0].WorkspaceID, coreprotocol.WorkspaceOverridesSet, grant, &saved)
-	if saved.Effective.Analysis.Trust != types.AnalysisTrusted || saved.Overrides.AnalysisRootIdentity == "" {
+	if saved.Effective.Analysis.Trust != setting.AnalysisTrusted || saved.Overrides.AnalysisRootIdentity == "" {
 		t.Fatal("typed grant lost its native binding")
 	}
 	awaitCoreAnalysis(t, first, second, func() bool {
@@ -113,8 +113,8 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	// A persisted revoke cancels admission synchronously and positively joined
 	// retirement releases the exact lease, waking the peer without polling RPCs.
 	one.call(t, attached[0].WorkspaceID, coreprotocol.WorkspaceOverridesSet,
-		coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{{Path: []string{"analysis", "trust"}}}}, &saved)
-	if saved.Effective.Analysis.Trust != types.AnalysisUndecided || saved.Overrides.AnalysisRootIdentity != "" {
+		coreprotocol.WorkspacePreferencesRequest{Edits: []setting.Edit{{Path: []string{"analysis", "trust"}}}}, &saved)
+	if saved.Effective.Analysis.Trust != setting.AnalysisUndecided || saved.Overrides.AnalysisRootIdentity != "" {
 		t.Fatal("revoke/reset returned a residual execution grant")
 	}
 	awaitCoreAnalysis(t, first, second, func() bool {
@@ -129,7 +129,7 @@ func TestAnalysisCoreGovernorSpansWorkspacesAndTrustRevocation(t *testing.T) {
 	// Both shell observations agree on the same retained owner, not form drafts.
 	var settings coreprotocol.SettingsFetchResult
 	one.call(t, attached[0].WorkspaceID, coreprotocol.SettingsFetch, coreprotocol.Empty{}, &settings)
-	if settings.Application.Analysis.Trust != types.AnalysisUndecided || settings.Effective.Analysis.Trust != types.AnalysisUndecided {
+	if settings.Application.Analysis.Trust != setting.AnalysisUndecided || settings.Effective.Analysis.Trust != setting.AnalysisUndecided {
 		t.Fatal("revoked workspace projection inherited application execution")
 	}
 }
@@ -145,10 +145,10 @@ func TestAnalysisCoreCloseReportsAndRetainsUnverifiedAdmission(t *testing.T) {
 	var manager *workspace.LSPManager
 	fixtureLSP := semanticLSPFixtureSettings(t)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+		w := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 		manager = w.LSPMgr
 		manager.SetRuntime(engine)
-		w.SetAppDefaults(types.AppSettings{LSP: fixtureLSP})
+		w.SetAppDefaults(setting.App{LSP: fixtureLSP})
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
@@ -160,7 +160,7 @@ func TestAnalysisCoreCloseReportsAndRetainsUnverifiedAdmission(t *testing.T) {
 	client.call(t, "", coreprotocol.Attach, &coreprotocol.AttachRequest{Root: root}, &attached)
 	var saved coreprotocol.WorkspacePreferencesResult
 	client.call(t, attached.WorkspaceID, coreprotocol.WorkspaceOverridesSet,
-		coreprotocol.WorkspacePreferencesRequest{Edits: []types.SettingEdit{
+		coreprotocol.WorkspacePreferencesRequest{Edits: []setting.Edit{
 			{Path: []string{"analysis", "trust"}, After: json.RawMessage(`"trusted"`)},
 		}}, &saved)
 	var source document.Snapshot

@@ -7,27 +7,27 @@ import (
 	"crude/tui/ui"
 )
 
-func (app *App) captureToolView() {
-	if app.Tree == nil {
+func (m *App) captureToolView() {
+	if m.Tree == nil {
 		return
 	}
-	if app.toolLayout.Views == nil {
-		app.toolLayout.Views = make(map[string]ToolViewState)
+	if m.toolLayout.Views == nil {
+		m.toolLayout.Views = make(map[string]ToolViewState)
 	}
-	state := ToolViewState{Width: app.Tree.Width}
-	if app.activityList != nil && app.activityView != activityFiles {
-		list := app.activityList.ViewState()
+	state := ToolViewState{Width: m.Tree.Width}
+	if m.activityList != nil && m.activityView != activityFiles {
+		list := m.activityList.ViewState()
 		state.Filter, state.Selection, state.Offset = list.Filter, list.Selection, list.Offset
 	}
-	app.toolLayout.Views[app.activityView.ID()] = state
+	m.toolLayout.Views[m.activityView.ID()] = state
 }
 
-func (app *App) navigationActions(view activitybar.View) ui.ContextMenuSection {
+func (m *App) navigationActions(view activitybar.View) ui.ContextMenuSection {
 	if view == activityWorkspaces || view == activityRemotes {
-		return ui.ContextMenuSection{SectionLabel: "Navigation", Items: []ui.ContextMenuItem{{Label: "Reset navigation", Action: app.resetToolLayout}}}
+		return ui.ContextMenuSection{SectionLabel: "Navigation", Items: []ui.ContextMenuItem{{Label: "Reset navigation", Action: m.resetToolLayout}}}
 	}
-	pinned := slices.Contains(app.toolLayout.Rail, view.ID())
-	if app.toolLayout.Rail == nil {
+	pinned := slices.Contains(m.toolLayout.Rail, view.ID())
+	if m.toolLayout.Rail == nil {
 		pinned = true
 	}
 	label := "Unpin shortcut"
@@ -35,38 +35,38 @@ func (app *App) navigationActions(view activitybar.View) ui.ContextMenuSection {
 		label = "Pin shortcut"
 	}
 	return ui.ContextMenuSection{SectionLabel: "Navigation", Items: []ui.ContextMenuItem{
-		{Label: label, Action: func() { app.changeNavigation(view, 0) }},
-		{Label: "Move up", Disabled: !pinned, Action: func() { app.changeNavigation(view, -1) }},
-		{Label: "Move down", Disabled: !pinned, Action: func() { app.changeNavigation(view, 1) }},
-		{Label: "Reset navigation", Action: app.resetToolLayout},
+		{Label: label, Action: func() { m.changeNavigation(view, 0) }},
+		{Label: "Move up", Disabled: !pinned, Action: func() { m.changeNavigation(view, -1) }},
+		{Label: "Move down", Disabled: !pinned, Action: func() { m.changeNavigation(view, 1) }},
+		{Label: "Reset navigation", Action: m.resetToolLayout},
 	}}
 }
 
-func (app *App) changeNavigation(view activitybar.View, direction int) {
-	if app.toolLayout.Rail == nil {
-		app.toolLayout.Rail = DefaultToolLayout().Rail
+func (m *App) changeNavigation(view activitybar.View, direction int) {
+	if m.toolLayout.Rail == nil {
+		m.toolLayout.Rail = DefaultToolLayout().Rail
 	}
-	index := slices.Index(app.toolLayout.Rail, view.ID())
+	index := slices.Index(m.toolLayout.Rail, view.ID())
 	if direction == 0 {
 		if index < 0 {
-			app.toolLayout.Rail = append(app.toolLayout.Rail, view.ID())
+			m.toolLayout.Rail = append(m.toolLayout.Rail, view.ID())
 		} else {
-			app.toolLayout.Rail = slices.Delete(app.toolLayout.Rail, index, index+1)
+			m.toolLayout.Rail = slices.Delete(m.toolLayout.Rail, index, index+1)
 		}
 	} else if index >= 0 {
-		next := min(len(app.toolLayout.Rail)-1, max(0, index+direction))
-		app.toolLayout.Rail[index], app.toolLayout.Rail[next] = app.toolLayout.Rail[next], app.toolLayout.Rail[index]
+		next := min(len(m.toolLayout.Rail)-1, max(0, index+direction))
+		m.toolLayout.Rail[index], m.toolLayout.Rail[next] = m.toolLayout.Rail[next], m.toolLayout.Rail[index]
 	}
-	app.activityBar.SetOrder(app.toolLayout.Rail)
-	app.viewMemoryVersion++
-	app.startSourceControlMutation(app.queueViewMemorySave())
+	m.activityBar.SetOrder(m.toolLayout.Rail)
+	m.viewMemoryVersion++
+	m.startSourceControlMutation(m.queueViewMemorySave())
 }
 
-func (app *App) resetToolLayout() {
-	app.toolLayout = DefaultToolLayout()
-	app.workspacePanelHeights = make(map[string]int)
-	app.termDockHeight = defaultTermDockHeight
-	app.activityBar.SetOrder(app.toolLayout.Rail)
-	app.viewMemoryVersion++
-	app.startSourceControlMutation(app.queueViewMemorySave())
+func (m *App) resetToolLayout() {
+	m.toolLayout = DefaultToolLayout()
+	m.workspacePanelHeights = make(map[string]int)
+	m.termDockHeight = defaultTermDockHeight
+	m.activityBar.SetOrder(m.toolLayout.Rail)
+	m.viewMemoryVersion++
+	m.startSourceControlMutation(m.queueViewMemorySave())
 }

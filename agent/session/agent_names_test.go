@@ -387,7 +387,7 @@ func TestRootAgentNamePersistsAcrossResumeAndWorkspaceSessions(t *testing.T) {
 	if name == "" || !strings.Contains(s.systemPrompt(true), "Your name is "+name) {
 		t.Fatalf("root identity=%q", name)
 	}
-	meta, err := sessiondb.GetMeta(s.DB())
+	meta, err := sessiondb.LoadMeta(s.DB())
 	if err != nil || meta.AgentName.String != name {
 		t.Fatalf("persisted identity=%+v err=%v", meta, err)
 	}

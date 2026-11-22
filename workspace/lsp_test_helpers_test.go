@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"crude/insight/governor"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 )
 
@@ -29,6 +29,6 @@ func bindAnalysisRoot(t *testing.T, manager *LSPManager, root string) string {
 		t.Fatal(err)
 	}
 	manager.SetWorkspaceRoot(root)
-	manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
+	manager.SetAnalysisPolicy(setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}, identity)
 	return identity
 }

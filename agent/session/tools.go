@@ -7,11 +7,11 @@ import (
 	"slices"
 	"time"
 
-	"crude/agent"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/types/toolresult"
 	"crude/workspace/fileio"
 )
@@ -27,13 +27,13 @@ var asyncPromotionThreshold = 30 * time.Second
 func (s *Session) newToolFn(multiAgent bool) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	modalities := []string(nil)
 	if s.cfg != nil {
-		modalities = s.cfg.GetActiveDefaultCategory().ModelModalities
+		modalities = s.cfg.ActiveDefaultCategory().ModelModalities
 	}
 	return s.buildToolFn(multiAgent, s.provider, modalities)
 }
 
-func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []string) *agent.Agent {
-	a := agent.NewAgent(p, p.Model, s.logger)
+func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []string) *turnloop.Agent {
+	a := turnloop.NewAgent(p, p.Model, s.logger)
 	a.MediaReadPolicy = &tools.MediaReadPolicy{Model: p.Model, Standard: p.StandardID(), Modalities: slices.Clone(modalities)}
 	if s.cfg != nil {
 		a.CommandPolicy = safety.CommandPolicyFromSettings(s.cfg.Safety)
@@ -55,7 +55,7 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 	return a
 }
 
-func (s *Session) bindGuidanceCache(a *agent.Agent) {
+func (s *Session) bindGuidanceCache(a *turnloop.Agent) {
 	if s == nil || a == nil {
 		return
 	}
@@ -135,7 +135,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			if cwd == "" {
 				cwd = root
 			}
-			timeout := tools.GetIntArgAny(params, "timeout_seconds", 0)
+			timeout := tools.IntArgAny(params, "timeout_seconds", 0)
 			info, err := s.asyncMgr.Start(handle, command, cwd, timeout)
 			if err != nil {
 				return tools.ToolResult{}, fmt.Errorf("async_execute_command: %w", err)
@@ -168,8 +168,8 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			if handle == "" {
 				return tools.ToolResult{}, fmt.Errorf("read_async_output: missing 'handle'")
 			}
-			sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
-			maxBytes := tools.GetIntArgAny(params, "max_bytes", fileio.DefaultOutputChunkBytes)
+			sinceByte := tools.IntArgAny(params, "since_byte", 0)
+			maxBytes := tools.IntArgAny(params, "max_bytes", fileio.DefaultOutputChunkBytes)
 			page, err := s.asyncMgr.ReadOutputPage(handle, sinceByte, maxBytes)
 			if err != nil {
 				return tools.ToolResult{}, fmt.Errorf("read_async_output: %w", err)
@@ -177,7 +177,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 			return tools.ToolResult{Content: FormatCommandPage(page)}, nil
 
 		case "wait":
-			seconds := tools.GetFloatArgAny(params, "seconds", 0)
+			seconds := tools.FloatArgAny(params, "seconds", 0)
 			if seconds <= 0 {
 				return tools.ToolResult{}, fmt.Errorf("wait: seconds must be > 0")
 			}
@@ -236,7 +236,7 @@ func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Prov
 				return s.prepareHistoryMutation(ctx, receipt)
 			}
 			result := tools.ExecuteWithJSONOptions(tool, params, s.exec, s.editor, s.YoloEnabled(), s.logger, ctx, opts)
-			if agent.IsToolError(result.Content) {
+			if turnloop.IsToolError(result.Content) {
 				return result, fmt.Errorf("%s", result.Content)
 			}
 			return result, nil
@@ -344,7 +344,7 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	if cwd == "" {
 		cwd = s.WorkDir()
 	}
-	timeout := tools.GetIntArgAny(params, "timeout_seconds", -1)
+	timeout := tools.IntArgAny(params, "timeout_seconds", -1)
 	if timeout < 0 {
 		timeout = 60
 	}

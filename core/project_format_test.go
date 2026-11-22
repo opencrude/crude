@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -22,7 +22,7 @@ func TestProjectFormatBridgeFormatsSavedFiles(t *testing.T) {
 	if err := os.WriteFile(path, []byte("package bridge\n\nfunc  Run( )  int { return 1 }\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	a := &actor{ws: ws}
 	raw, err := testPayload(coreprotocol.ProjectFormatRequest{})

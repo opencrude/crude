@@ -722,7 +722,7 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 		if err := json.Unmarshal(raw, &block); err != nil {
 			return nil, fmt.Errorf("decode Anthropic content block %d: %w", index, err)
 		}
-		msg.ProviderItems = append(msg.ProviderItems, ProviderItem{
+		msg.ProviderItems = append(msg.ProviderItems, Item{
 			Standard: "anthropic", Type: block.Type, Data: bytes.Clone(raw),
 		})
 		switch block.Type {
@@ -1031,7 +1031,7 @@ func (d *anthropicStreamDecoder) stopBlock(index int) (StreamUpdate, error) {
 }
 
 func anthropicProviderItemUpdate(typ string, raw json.RawMessage) StreamUpdate {
-	return StreamUpdate{ProviderItems: []ProviderItem{{
+	return StreamUpdate{ProviderItems: []Item{{
 		Standard: "anthropic", Type: typ, Data: raw,
 	}}}
 }

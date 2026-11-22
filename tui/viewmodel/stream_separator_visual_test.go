@@ -9,9 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
-	"crude/workspace"
 )
 
 // Opt-in fixture for scripts/tuishot.sh with the compiled viewmodel test binary:
@@ -31,9 +30,9 @@ func TestStreamSeparatorVisualAcceptance(t *testing.T) {
 	app.ApplyThemePreset("dark")
 	app.AddOrchestrator("ling")
 	state := app.ws.AgentMgr().Get("ling").State
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleUser, Content: "Redesign the website."})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "Redesign the website."})
 	for i := range 40 {
-		state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant,
+		state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant,
 			Content: fmt.Sprintf("Earlier reply %d keeps **its wrapping** steady while a thought streams below; this sentence is long enough to reach the right edge.", i)})
 	}
 	app.syncAgentMessages(state.ID, false)
@@ -56,7 +55,7 @@ type streamSeparatorVisualModel struct {
 func (m *streamSeparatorVisualModel) Init() tea.Cmd { return tickCmd() }
 
 func (m *streamSeparatorVisualModel) event(typ string, data any) {
-	m.handleAgentEvent(ctypes.AgentEventMsg{AgentID: m.owner, Type: typ, Data: data})
+	m.handleAgentEvent(AgentEventMsg{AgentID: m.owner, Type: typ, Data: data})
 }
 
 func (m *streamSeparatorVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

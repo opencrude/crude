@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -16,11 +16,11 @@ import (
 // This retained observation is independent of catalog refresh: it never opens
 // a workspace or scans saved storage, and it runs only for visible consumers.
 type workspaceActivityReader interface {
-	ReadWorkspaceActivity(context.Context) (map[string]workspace.WorkspaceActivity, error)
+	ReadWorkspaceActivity(context.Context) (map[string]workspace.Activity, error)
 }
 
 type workspaceActivityState struct {
-	counts map[string]workspace.WorkspaceActivity
+	counts map[string]workspace.Activity
 	cancel context.CancelFunc
 	due    time.Time
 	seq    uint64
@@ -35,7 +35,7 @@ type workspaceActivityResultMsg struct {
 	owner      shellport.Workspace
 	generation uint64
 	seq        uint64
-	counts     map[string]workspace.WorkspaceActivity
+	counts     map[string]workspace.Activity
 	// failed reports a read that did not complete (for example a timeout
 	// while the core was busy). It is not an observation of zero activity.
 	failed bool
@@ -109,7 +109,7 @@ func (m *App) applyWorkspaceActivityResult(msg workspaceActivityResultMsg) {
 	}
 }
 
-func (m *App) installWorkspaceActivity(counts map[string]workspace.WorkspaceActivity) {
+func (m *App) installWorkspaceActivity(counts map[string]workspace.Activity) {
 	s := &m.workspaceActivity
 	s.counts = counts
 	s.rows = workspaceRowsCache{}

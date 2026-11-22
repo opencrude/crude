@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"crude/text/indent"
+	"crude/text/indentation"
 	"crude/workspace/document"
 )
 
@@ -249,7 +249,8 @@ func (pt *PieceTable) positionToOffset(pos Position) int {
 	return pt.lineOffsets[line] + VisualColToByteOffset(content, pos.Col, pt.tabSize)
 }
 
-func (pt *PieceTable) GetText(start, end Position) string {
+// Text returns the buffer text between two positions.
+func (pt *PieceTable) Text(start, end Position) string {
 	startOff := pt.positionToOffset(start)
 	endOff := pt.positionToOffset(end)
 	if startOff > endOff {

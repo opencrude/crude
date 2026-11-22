@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/types/setting"
 )
 
 // The cases and expected ranges are VS Code's own suites "Indentation
@@ -154,6 +154,6 @@ func TestIndentFoldCacheFollowsEdits(t *testing.T) {
 	e.Undo()
 	e.Undo()
 	check("undo")
-	e.SetPresentation(types.EditorSettings{TabSize: 2, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 2, LineNumbers: true})
 	check("tab width")
 }

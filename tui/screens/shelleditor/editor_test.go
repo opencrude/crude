@@ -11,7 +11,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/uitest"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -107,11 +107,11 @@ func TestScreenPaintsGutterDiagnosticsAndScrollbar(t *testing.T) {
 		t.Fatal(err)
 	}
 	version := 3
-	ed.SetDiagnostics(types.InsightDiagnostics{ID: "paint-batch", Boundary: types.InsightBoundary{
-		Source:  types.InsightSource{DocumentID: "canonical", Path: path, Revision: 19, WorkspaceGeneration: "workspace", Lifetime: "open", Kind: "canonical"},
-		Context: types.InsightContext{ID: "context", Generation: 1}, Producer: types.InsightProducer{Provider: "test-lsp", InstanceID: "server"},
-	}, WireVersion: version, ReportedVersion: &version, Binding: "exact-version", State: types.InsightCurrent,
-		Diagnostics: []editor.LSPDiagnostic{{Line: 3, Col: 1, EndLine: 3, EndCol: 2, Severity: editor.DiagError, Message: "boom"}}})
+	ed.SetDiagnostics(insight.Diagnostics{ID: "paint-batch", Boundary: insight.Boundary{
+		Source:  insight.Source{DocumentID: "canonical", Path: path, Revision: 19, WorkspaceGeneration: "workspace", Lifetime: "open", Kind: "canonical"},
+		Context: insight.Context{ID: "context", Generation: 1}, Producer: insight.Producer{Provider: "test-lsp", InstanceID: "server"},
+	}, WireVersion: version, ReportedVersion: &version, Binding: "exact-version", State: insight.Current,
+		Diagnostics: []insight.LSPDiagnostic{{Line: 3, Col: 1, EndLine: 3, EndCol: 2, Severity: editor.DiagError, Message: "boom"}}})
 
 	screen := shelleditor.New(theme.DefaultDark())
 	screen.Bind(ed)

@@ -7,7 +7,7 @@ import (
 
 	"crude/tui/ui"
 	"crude/tui/window"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -17,10 +17,10 @@ func TestThinkingTwoReadersShareOnlyCanonicalState(t *testing.T) {
 	state := workspace.NewAgentState("shared", nil, nil)
 	for _, app := range []*App{narrow, wide} {
 		app.ws.AgentMgr().AddOrchestrator(state.ID, state)
-		app.ws.PaneMgr().GetOrCreate(state.ID, workspace.PaneAgent, "Shared").Messages = state.Messages
+		app.ws.PaneMgr().Ensure(state.ID, workspace.PaneAgent, "Shared").Messages = state.Messages
 		app.subPaneProjections.Get(state.ID, workspace.PaneAgent)
 	}
-	state.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "prior history", Time: time.Now()})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "prior history", Time: time.Now()})
 	state.ApplyEvent(workspace.AgentEvent{AgentID: state.ID, Type: "thinking", Data: reasoning.Delta{Text: strings.Repeat("word ", 40), Kind: reasoning.Raw}})
 	thought, _ := state.Messages.ActiveThinking()
 	version := state.Messages.Version()
@@ -39,7 +39,7 @@ func TestThinkingTwoReadersShareOnlyCanonicalState(t *testing.T) {
 	for _, app := range []*App{narrow, wide} {
 		app.syncAgentMessages(state.ID, false)
 	}
-	if wide.subPaneProjections.GetExisting(state.ID).renderer.Messages()[1].Role != types.RoleThinking {
+	if wide.subPaneProjections.Existing(state.ID).renderer.Messages()[1].Role != conversation.RoleThinking {
 		t.Fatal("narrow reader changed wide reader's rows")
 	}
 	state.ApplyEvent(workspace.AgentEvent{AgentID: state.ID, Type: "thinking", Data: reasoning.Delta{Text: "LATEST-EVIDENCE", Kind: reasoning.Summary}})
@@ -55,7 +55,7 @@ func TestThinkingTwoReadersShareOnlyCanonicalState(t *testing.T) {
 		t.Fatal("rendering changed canonical version")
 	}
 	narrow.dropThinkingPresentation(state)
-	if got := narrow.subPaneProjections.GetExisting(state.ID).renderer.Messages()[1]; got.Role != types.RoleThinking || !strings.Contains(got.Content, "LATEST-EVIDENCE") {
+	if got := narrow.subPaneProjections.Existing(state.ID).renderer.Messages()[1]; got.Role != conversation.RoleThinking || !strings.Contains(got.Content, "LATEST-EVIDENCE") {
 		t.Fatal("drop without source change did not restore latest canonical thought")
 	}
 	state.ApplyEvent(workspace.AgentEvent{AgentID: state.ID, Type: "stream_token", Data: "reply"})
@@ -125,7 +125,7 @@ func TestThinkingLatchUsesExactSessionOrSyntheticRoot(t *testing.T) {
 
 func TestThinkingCompletedSyntheticPanePreservesSummary(t *testing.T) {
 	app := newFullTestApp(t)
-	pane := app.ws.PaneMgr().GetOrCreate("synthetic", workspace.PaneThinking, "Thinking")
+	pane := app.ws.PaneMgr().Ensure("synthetic", workspace.PaneThinking, "Thinking")
 	pane.TokenCount = 5200
 	pane.Collapse()
 	lines := app.subPaneProjections.Render(pane.ID, pane, 80, 5, 0, false)

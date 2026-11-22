@@ -17,8 +17,8 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/handover"
 	recoverytypes "crude/types/recovery"
 )
@@ -144,7 +144,7 @@ func TestGoalHandoverOwnerProvenanceAndSecretProjection(t *testing.T) {
 		{"plan", func(f *handoverFixture) { f.s.planMode.Store(true) }},
 		{"budget", func(f *handoverFixture) { f.s.goal.record.Goal.TokenBudget = 1; f.s.goal.record.Goal.TokensUsed = 1 }},
 		{"strike-limit", func(f *handoverFixture) { f.s.goal.emptyTurns = goalStrikeLimit }},
-		{"loop", func(f *handoverFixture) { f.s.loops = []types.Loop{{ID: "scheduled", Paused: false}} }},
+		{"loop", func(f *handoverFixture) { f.s.loops = []conversation.Loop{{ID: "scheduled", Paused: false}} }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newHandoverFixture(t)
@@ -306,7 +306,7 @@ func TestGoalHandoverOwnerInvalidationExpiryAndCancelPreserveUserControls(t *tes
 				t.Fatal("changed controls continued")
 			}
 			if test.name == "pause" {
-				if g, _ := f.s.Goal(); g.Status != types.GoalPaused || g.Reason != "user pause" {
+				if g, _ := f.s.Goal(); g.Status != conversation.GoalPaused || g.Reason != "user pause" {
 					t.Fatalf("pause lost: %+v", g)
 				}
 			}
@@ -359,7 +359,7 @@ func TestGoalHandoverOwnerInvalidationExpiryAndCancelPreserveUserControls(t *tes
 		if err != nil {
 			t.Fatal(err)
 		}
-		later.Goal.Status, later.Goal.Reason = types.GoalPaused, "newer durable user pause"
+		later.Goal.Status, later.Goal.Reason = conversation.GoalPaused, "newer durable user pause"
 		if err := sessiondb.SaveGoal(f.s.db, f.s.sessionID, later); err != nil {
 			t.Fatal(err)
 		}
@@ -367,7 +367,7 @@ func TestGoalHandoverOwnerInvalidationExpiryAndCancelPreserveUserControls(t *tes
 			t.Fatal("cancel overwrote a newer durable control preimage")
 		}
 		actual, _, err := sessiondb.LoadGoal(f.s.db, f.s.sessionID)
-		if err != nil || actual.Goal.Status != types.GoalPaused || actual.Goal.Reason != "newer durable user pause" {
+		if err != nil || actual.Goal.Status != conversation.GoalPaused || actual.Goal.Reason != "newer durable user pause" {
 			t.Fatalf("newer durable pause lost: %+v %v", actual, err)
 		}
 	})
@@ -532,7 +532,7 @@ func TestGoalHandoverOwnerColdReopenIsPassiveAfterConsumedCrash(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(resumed.Close)
-	if goal, _ := resumed.Goal(); !goal.Waiting || goal.Status != types.GoalActive {
+	if goal, _ := resumed.Goal(); !goal.Waiting || goal.Status != conversation.GoalActive {
 		t.Fatalf("cold reopen restarted goal: %+v", goal)
 	}
 	if _, ok := resumed.goalContinuation(); ok {
@@ -649,7 +649,7 @@ func TestGoalHandoverNaturalTerminalRealTurnAndNoDuplicateTurn(t *testing.T) {
 		select {
 		case event := <-sender.ch:
 			if event.typ == "goal" {
-				if g, ok := event.data.(types.Goal); ok && g.Waiting {
+				if g, ok := event.data.(conversation.Goal); ok && g.Waiting {
 					goto ready
 				}
 			}

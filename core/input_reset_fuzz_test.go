@@ -15,8 +15,8 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -24,15 +24,15 @@ const inputResetFuzzActions = 8
 
 // All connections are fixture-owned. Only the input target starts inference,
 // against its held loopback SSE response; settings never submits a model turn.
-func inputResetConfig(url string) (types.AppSettings, *session.Config) {
+func inputResetConfig(url string) (setting.App, *session.Config) {
 	off := false
-	app := types.AppSettings{
-		LocalHistory: types.LocalHistorySettings{Enabled: "off"},
+	app := setting.App{
+		LocalHistory: setting.LocalHistory{Enabled: "off"},
 		Accounts: map[string]provider.Account{"fixture": {
 			ID: "fixture", ProviderID: "openai", APIKey: "fixture-only",
 			Connection: provider.Template{Name: "Fixture", ProviderURL: url, APIStandard: "openai", AuthType: provider.AuthProtocol},
 		}},
-		Agents: types.AgentsSettings{ActiveProfile: "default", Categories: map[string]types.CategorySettings{
+		Agents: setting.Agents{ActiveProfile: "default", Categories: map[string]setting.Category{
 			"default": {AccountID: "fixture", Model: "parent-0", ContextRetentionTokens: coreprotocol.Ptr(1000)},
 		}},
 	}
@@ -203,12 +203,12 @@ func FuzzCoreInputAdmissionReceipts(f *testing.F) {
 	})
 }
 
-func inputResetEdit(path []string, value any) types.SettingEdit {
+func inputResetEdit(path []string, value any) setting.Edit {
 	raw, err := json.Marshal(value)
 	if err != nil {
 		panic(err) // All callers supply fixed scalar types.
 	}
-	return types.SettingEdit{Path: path, After: raw}
+	return setting.Edit{Path: path, After: raw}
 }
 
 func FuzzCoreSessionSettingsReset(f *testing.F) {
@@ -220,13 +220,13 @@ func FuzzCoreSessionSettingsReset(f *testing.F) {
 		r, root := featureRuntime(t, func(ws *workspace.Workspace) {
 			ws.SetAppDefaults(app)
 			ws.SetBackendConfig(cfg, t.TempDir())
-			ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
-				next := types.CloneAppSettings(app)
-				if err := types.ApplySettingsEdits(&next, edits); err != nil {
+			ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
+				next := setting.CloneApp(app)
+				if err := setting.ApplyEdits(&next, edits); err != nil {
 					return next, err
 				}
 				app = next
-				return types.CloneAppSettings(next), nil
+				return setting.CloneApp(next), nil
 			}
 		})
 		w := newResourceWire(t, r, "reset-owner")
@@ -278,7 +278,7 @@ func FuzzCoreSessionSettingsReset(f *testing.F) {
 		save := func(id string, n int) {
 			t.Helper()
 			overrideModel, overrideTokens, maxChildren = fmt.Sprintf("session-%d", n), 2000+n*100, n%5
-			edits := []types.SettingEdit{
+			edits := []setting.Edit{
 				inputResetEdit([]string{"overrides", "default", "Model"}, overrideModel),
 				inputResetEdit([]string{"overrides", "default", "context_retention_tokens"}, overrideTokens),
 				inputResetEdit([]string{"multi_agent"}, false),
@@ -308,7 +308,7 @@ func FuzzCoreSessionSettingsReset(f *testing.F) {
 				pinned = false
 			case 2:
 				parentModel, parentTokens = fmt.Sprintf("parent-%d", i+1), 3000+i*100
-				featureCall(t, w, ws, id, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{ProxyURL: coreprotocol.SecretString{Keep: true}, Edits: []types.SettingEdit{
+				featureCall(t, w, ws, id, coreprotocol.ApplicationPreferencesSave, coreprotocol.ApplicationPreferencesRequest{ProxyURL: coreprotocol.SecretString{Keep: true}, Edits: []setting.Edit{
 					inputResetEdit([]string{"agents", "Categories", "default", "Model"}, parentModel),
 					inputResetEdit([]string{"agents", "Categories", "default", "context_retention_tokens"}, parentTokens),
 				}}, &coreprotocol.ApplicationPreferencesResult{})
@@ -318,7 +318,7 @@ func FuzzCoreSessionSettingsReset(f *testing.F) {
 					t.Fatal("Reset acted on a different session owner")
 				}
 			case 4:
-				out := featureCall(t, w, ws, id, coreprotocol.SessionSettingsReset, coreprotocol.SessionSettingsMutationRequest{SessionID: created.SessionID, Edits: []types.SettingEdit{inputResetEdit([]string{"max_sub_agents"}, "wrong-type")}}, nil)
+				out := featureCall(t, w, ws, id, coreprotocol.SessionSettingsReset, coreprotocol.SessionSettingsMutationRequest{SessionID: created.SessionID, Edits: []setting.Edit{inputResetEdit([]string{"max_sub_agents"}, "wrong-type")}}, nil)
 				if out.Error == nil || out.Error.Code != "invalid_request" {
 					t.Fatal("Reset ignored invalid mutation payload")
 				}

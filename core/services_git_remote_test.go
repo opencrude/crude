@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -49,7 +49,7 @@ func TestGitRemoteAndConflictServicesOverCore(t *testing.T) {
 	write(ours, "ours\n")
 	coreGit(t, ours, "commit", "-am", "ours")
 
-	ws := workspace.NewWorkspace(ours, "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(ours, "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	if ws.Git == nil {
 		ws.Git = workspace.NewGitService(ours)

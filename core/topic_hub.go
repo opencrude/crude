@@ -1,7 +1,7 @@
 package core
 
 import (
-	"crude/core/wire"
+	"crude/core/corewire"
 	"sync"
 )
 

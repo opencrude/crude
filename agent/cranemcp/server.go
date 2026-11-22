@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"crude/agent/tools"
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"

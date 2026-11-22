@@ -11,8 +11,9 @@ import (
 
 	"crude/insight/catalog"
 	"crude/internal/fileuri"
-	"crude/lsp/client"
-	model "crude/types"
+	"crude/lsp/lspclient"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 func TestWindowsLaunchErrorUsesRuntimeMetadata(t *testing.T) {
@@ -54,16 +55,16 @@ func TestWindowsAssemblyResolvesUnknownPackageFromMetadata(t *testing.T) {
 	createFile(t, filepath.Join(root, "main.fxl"), "fixture")
 	t.Setenv("PATH", prefix)
 	t.Setenv("PATHEXT", ".CMD;.EXE")
-	settings := model.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	discovery := discoverProjectLanguages(t.Context(), root, settings)
-	resolve := func() model.AssemblyPlan {
-		return resolveAssembly(root, settings, discovery, func(spec model.LSPServerSpec, download *catalog.Download) (string, string, error) {
+	resolve := func() insight.AssemblyPlan {
+		return resolveAssembly(root, settings, discovery, func(spec setting.LSPServerSpec, download *catalog.Download) (string, string, error) {
 			return locateTool(t.Context(), spec, root, nil, download)
 		})
 	}
 	plan := resolve()
 	language, _ := assemblyLanguage(plan, "fixturelang")
-	if language.Status != model.ToolReady || language.Executable != script {
+	if language.Status != insight.ToolReady || language.Executable != script {
 		t.Fatalf("unknown package did not resolve to its own tool identity: %+v", language)
 	}
 	if err := os.Remove(node); err != nil {
@@ -71,7 +72,7 @@ func TestWindowsAssemblyResolvesUnknownPackageFromMetadata(t *testing.T) {
 	}
 	plan = resolve()
 	language, _ = assemblyLanguage(plan, "fixturelang")
-	if language.Status != model.ToolUnavailable || !strings.Contains(language.Reason, "Node.js") ||
+	if language.Status != insight.ToolUnavailable || !strings.Contains(language.Reason, "Node.js") ||
 		strings.Contains(plan.Message, "Install the missing servers") {
 		t.Fatalf("missing runtime was reported as a missing server: %+v", plan)
 	}
@@ -88,13 +89,13 @@ func TestWindowsAssemblyDoesNotOfferToReinstallAnUnsupportedScript(t *testing.T)
 	createFile(t, filepath.Join(prefix, "fixture-ls.cmd"), "@echo MUST NOT RUN")
 	t.Setenv("PATH", prefix)
 	t.Setenv("PATHEXT", ".CMD;.EXE")
-	settings := model.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	plan := resolveAssembly(root, settings, discoverProjectLanguages(t.Context(), root, settings),
-		func(spec model.LSPServerSpec, download *catalog.Download) (string, string, error) {
+		func(spec setting.LSPServerSpec, download *catalog.Download) (string, string, error) {
 			return locateTool(t.Context(), spec, root, nil, download)
 		})
 	language, _ := assemblyLanguage(plan, "fixturelang")
-	if language.Status != model.ToolUnavailable || language.Executable != "" ||
+	if language.Status != insight.ToolUnavailable || language.Executable != "" ||
 		!strings.Contains(language.Reason, "interpreter") || strings.Contains(language.Reason, "Install") {
 		t.Fatalf("unsupported script was reported as ready or absent: %+v", language)
 	}
@@ -108,12 +109,12 @@ func TestWindowsInstalledNPMServers(t *testing.T) {
 	for _, extension := range []string{".css", ".html", ".json"} {
 		t.Run(extension, func(t *testing.T) {
 			root := t.TempDir()
-			spec, ok := model.DefaultLSPSettings().ResolveServer(filepath.Join(root, "sample"+extension))
+			spec, ok := setting.DefaultLSP().ResolveServer(filepath.Join(root, "sample"+extension))
 			if !ok {
 				t.Fatal("catalog did not resolve a server")
 			}
 			path, source, err := locateTool(t.Context(), spec, root, nil, nil)
-			if err != nil || path == "" || source != model.ToolSourcePath {
+			if err != nil || path == "" || source != insight.ToolSourcePath {
 				t.Fatalf("installed tool not found: %q, %q: %v", path, source, err)
 			}
 			client := NewLSPRuntime().NewClient(spec, fileuri.FromPath(root), nil)

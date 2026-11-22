@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func newSettingsOperationWorkspace(t *testing.T) (*Workspace, *Session) {
 	t.Helper()
 	setTestHome(t)
-	w := NewWorkspace(t.TempDir(), "model", "tester", types.Settings{}, nopLogger{})
+	w := NewWorkspace(t.TempDir(), "model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(w.Close)
 	owner, err := w.CreateSession(workspaceToolRootConfig(), t.TempDir())
 	if err != nil {
@@ -59,7 +59,7 @@ func TestPreparedSessionSettingsRetainExactDraftAndOwner(t *testing.T) {
 	w.RegisterAgentRoot("root")
 	settings := owner.backend.SettingsSnapshot()
 	percent := 63
-	settings.SessionOverrides = map[string]types.CategorySettings{"default": {
+	settings.SessionOverrides = map[string]setting.Category{"default": {
 		AccountID: settings.AccountID, Model: "exact-model", AllowedTools: []string{"read_file"},
 		SkillModes: map[string]string{"procedure": "manual"}, ContextCompactionPercent: &percent,
 	}}
@@ -69,7 +69,7 @@ func TestPreparedSessionSettingsRetainExactDraftAndOwner(t *testing.T) {
 	}
 	category := settings.SessionOverrides["default"]
 	category.AllowedTools[0], category.SkillModes["procedure"], percent = "write_file", "disabled", 20
-	settings.SessionOverrides["default"] = types.CategorySettings{Model: "replaced"}
+	settings.SessionOverrides["default"] = setting.Category{Model: "replaced"}
 	result := operation.Run()
 	if result.Err != nil {
 		t.Fatal(result.Err)
@@ -122,7 +122,7 @@ func TestPreparedSessionSettingsRaceWithCloseDoesNotReadWorkspaceMaps(t *testing
 }
 
 func TestSessionSettingsProjectionDetachesNamedProfilePolicy(t *testing.T) {
-	source := types.Settings{Agents: types.AgentsSettings{AgentProfiles: map[string]types.AgentProfileSettings{
+	source := setting.Settings{Agents: setting.Agents{AgentProfiles: map[string]setting.AgentProfile{
 		"review": {SkillModes: map[string]string{"procedure": "manual"}},
 	}}}
 	projection := NewSessionSettingsState(source, source, nil)

@@ -11,8 +11,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	ttypes "crude/types"
-	"crude/workspace"
+	"crude/types/conversation"
 )
 
 func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.MessageRow) (*App, *shellchat.Screen) {
@@ -55,8 +54,8 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 	node.State.Thinking = false
 
 	for _, row := range rows {
-		app.appendActiveMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
+		app.appendActiveMessage(conversation.ChatMessage{
+			Role:    conversation.RoleAssistant,
 			Content: strings.Join(row.Lines, "\n"),
 			Time:    time.Unix(1, 0),
 		})
@@ -215,8 +214,8 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 
 		scroll.StickToBottom()
 		node := app.ws.AgentMgr().Get("agent")
-		node.State.Messages.AppendMessage(workspace.Message{
-			Role: ttypes.RoleAssistant, Content: "another chunk\nmore lines", Time: time.Now(),
+		node.State.Messages.AppendMessage(conversation.Message{
+			Role: conversation.RoleAssistant, Content: "another chunk\nmore lines", Time: time.Now(),
 		})
 		app.syncAgentMessages("agent", false)
 		_ = app.computeContentLayout()
@@ -243,8 +242,8 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 		}
 
 		node := app.ws.AgentMgr().Get("agent")
-		node.State.Messages.AppendMessage(workspace.Message{
-			Role: ttypes.RoleAssistant, Content: strings.Repeat("appended line\n", 8), Time: time.Now(),
+		node.State.Messages.AppendMessage(conversation.Message{
+			Role: conversation.RoleAssistant, Content: strings.Repeat("appended line\n", 8), Time: time.Now(),
 		})
 		app.syncAgentMessages("agent", false)
 		_ = app.computeContentLayout()

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/terminalvt"
-	"crude/types"
+	"crude/internal/terminalvt"
+	"crude/types/setting"
 )
 
 func reviveTestService(t *testing.T, path string) *TerminalService {
@@ -21,7 +21,7 @@ func reviveTestService(t *testing.T, path string) *TerminalService {
 		t.Skip("sh is required")
 	}
 	s, _ := testTerminalService(t)
-	s.manager.SetSettings(types.TerminalSettings{Shell: types.TerminalShellCustom, Command: sh, Args: []string{"-i"}})
+	s.manager.SetSettings(setting.Terminal{Shell: setting.TerminalShellCustom, Command: sh, Args: []string{"-i"}})
 	s.SetRevivalPath(path)
 	return s
 }

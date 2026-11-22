@@ -10,7 +10,7 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/prompt"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // Crude asks its workspace Errand for help through the collaboration journal:
@@ -44,7 +44,7 @@ func (s *attentionState) stop() {
 
 // attentionKey names one cause: the issue and its detail. A different detail
 // is a different cause and is raised again; a repeated one is not.
-func attentionKey(issue types.IssueSnapshot) string {
+func attentionKey(issue statuscenter.IssueSnapshot) string {
 	sum := sha256.Sum256([]byte(issue.ID + "\x00" + issue.Detail))
 	return "attention:" + hex.EncodeToString(sum[:])
 }
@@ -52,8 +52,8 @@ func attentionKey(issue types.IssueSnapshot) string {
 // errandReady reports whether the workspace Errand can take a notice now: it
 // runs, has no turn and waits for no answer. A turn that the user cancelled or
 // that failed waits for the user, not for Crude.
-func errandReady(status types.AgentStatusSnapshot) bool {
-	return !status.NeedsAction && (status.Phase == types.AgentIdle || status.Phase == types.AgentCompleted)
+func errandReady(status statuscenter.AgentStatusSnapshot) bool {
+	return !status.NeedsAction && (status.Phase == statuscenter.AgentIdle || status.Phase == statuscenter.AgentCompleted)
 }
 
 // evaluateAttention runs on the actor after a status, language-server or
@@ -106,8 +106,8 @@ func (a *actor) evaluateAttention(now time.Time) {
 // dueAttention returns the open Investigate issues that Errand was not told
 // about and that stayed unchanged for attentionRipe, most severe first and at
 // most attentionBatch, and how long until the next one ripens (0 for none).
-func dueAttention(now time.Time, issues []types.IssueSnapshot, sent map[string]bool) ([]types.IssueSnapshot, time.Duration) {
-	var due []types.IssueSnapshot
+func dueAttention(now time.Time, issues []statuscenter.IssueSnapshot, sent map[string]bool) ([]statuscenter.IssueSnapshot, time.Duration) {
+	var due []statuscenter.IssueSnapshot
 	var next time.Duration
 	for _, issue := range issues {
 		if !issue.Investigate || !issue.ResolvedAt.IsZero() || sent[attentionKey(issue)] {

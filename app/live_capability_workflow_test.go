@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"crude/agent"
+	"crude/agent/turnloop"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,8 +20,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	ttypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -49,12 +49,12 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 		if _, exists := profile.Categories[category]; !exists {
 			t.Fatalf("live capability category %q is not configured", category)
 		}
-		profile.Categories[session.CategoryDefault] = configured.GetCategoryConfig(category)
+		profile.Categories[session.CategoryDefault] = configured.CategoryConfig(category)
 		configured.Agents.Profiles[configured.Agents.ActiveProfile] = profile
 		fileConfig.Agents = &configured.Agents
 	}
 	cfg := FileConfigToSession(fileConfig)
-	main := cfg.GetActiveDefaultCategory()
+	main := cfg.ActiveDefaultCategory()
 	if main.AccountID == "" || main.Model == "" {
 		t.Skip("main agent account and model are not configured")
 	}
@@ -200,7 +200,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 		},
 	})
 	fileConfig.Capabilities = &capabilitySettings
-	fileConfig.Memory = &ttypes.MemorySettings{
+	fileConfig.Memory = &setting.Memory{
 		AutoRecall: "off", AutoExtract: "off", Consolidation: "off",
 	}
 	cfg = FileConfigToSession(fileConfig)
@@ -547,7 +547,7 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 
 func liveCapabilityWorkspace(t *testing.T, application *App, cfg *session.Config, project string) *workspace.Workspace {
 	t.Helper()
-	owner := workspace.NewWorkspace(project, cfg.GetActiveDefaultCategory().Model, session.ResolveUsername(), application.initialSettings(), &appLogger{})
+	owner := workspace.NewWorkspace(project, cfg.ActiveDefaultCategory().Model, session.ResolveUsername(), application.initialSettings(), &appLogger{})
 	application.configureWorkspace(owner)
 	t.Cleanup(owner.Close)
 	return owner
@@ -617,6 +617,6 @@ func liveCapabilityProofDir(t *testing.T) string {
 	return requested
 }
 
-func (s *liveCapabilitySender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *liveCapabilitySender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

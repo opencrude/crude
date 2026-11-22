@@ -7,10 +7,10 @@ import (
 	"sync"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/plan"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 func TestChildPlanActivityIsolatedRetainedAndRebound(t *testing.T) {
@@ -25,7 +25,7 @@ func TestChildPlanActivityIsolatedRetainedAndRebound(t *testing.T) {
 	}
 	root := s.PlanActivity()
 	paths := make(map[string]string)
-	makeChild := func(id string) *agent.SubAgentHandle {
+	makeChild := func(id string) *turnloop.SubAgentHandle {
 		t.Helper()
 		paths[id] = filepath.Join(t.TempDir(), id+".db")
 		db, err := sessiondb.OpenAndMigrate(paths[id])
@@ -36,10 +36,10 @@ func TestChildPlanActivityIsolatedRetainedAndRebound(t *testing.T) {
 		if err := sessiondb.Create(db, sessiondb.SessionMeta{ID: id}); err != nil {
 			t.Fatal(err)
 		}
-		return &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: agent.AgentID(id)}, SessionID: id, DB: db}
+		return &turnloop.SubAgentHandle{Spec: turnloop.SubAgentSpec{ID: turnloop.AgentID(id)}, SessionID: id, DB: db}
 	}
 	a, b := makeChild("a"), makeChild("b")
-	for _, h := range []*agent.SubAgentHandle{a, b} {
+	for _, h := range []*turnloop.SubAgentHandle{a, b} {
 		if _, err := r.executeSubAgentPlanningTool(h, "update_plan", params(h.SessionID+" work")); err != nil {
 			t.Fatal(err)
 		}
@@ -157,14 +157,14 @@ func TestChildPlanActivityPassiveResume(t *testing.T) {
 		}
 		if id == "child" {
 			store := plan.NewStore(db, id)
-			if _, _, err := store.Update(context.Background(), plan.UpdateRequest{PlanID: "p", Objective: "Child goal", Steps: []plan.PlanStep{{ID: "c", Description: "Child task", Status: plan.StepInProgress}}}); err != nil {
+			if _, _, err := store.Update(context.Background(), plan.UpdateRequest{PlanID: "p", Objective: "Child goal", Steps: []plan.Step{{ID: "c", Description: "Child task", Status: plan.StepInProgress}}}); err != nil {
 				t.Fatal(err)
 			}
 		}
 		if err := db.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if err := sessiondb.InsertSubAgentResult(s.db, sessiondb.SubAgentResultRow{ParentSessionID: s.sessionID, ChildSessionID: id, AgentID: id, Status: string(agent.SubAgentCompleted)}); err != nil {
+		if err := sessiondb.InsertSubAgentResult(s.db, sessiondb.SubAgentResultRow{ParentSessionID: s.sessionID, ChildSessionID: id, AgentID: id, Status: string(turnloop.SubAgentCompleted)}); err != nil {
 			t.Fatal(err)
 		}
 	}

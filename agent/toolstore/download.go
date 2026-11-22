@@ -12,7 +12,7 @@ import (
 	"os"
 	"time"
 
-	"crude/network"
+	"crude/internal/network"
 )
 
 const (

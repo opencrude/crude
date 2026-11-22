@@ -11,7 +11,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // persianChat paints one assistant message through the real chat renderer
@@ -23,7 +23,7 @@ func persianChat(t *testing.T, content string, width int) (*shellchat.Screen, *s
 	renderer := chatprojection.NewRenderer(th)
 	renderer.SetSize(width, 12)
 	renderer.SetChatAreaBounds(0, 12)
-	renderer.AppendMessage(types.ChatMessage{InternalID: "fa", Role: types.RoleAssistant, Content: content})
+	renderer.AppendMessage(conversation.ChatMessage{InternalID: "fa", Role: conversation.RoleAssistant, Content: content})
 	rows, _, height := renderer.ExportMessageRows(width)
 	screen := shellchat.New(th)
 	screen.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: width - 2*th.Spacing.PadLR, PadLR: th.Spacing.PadLR, Theme: th}})

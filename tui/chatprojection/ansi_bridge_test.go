@@ -13,7 +13,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // renderAssistantLines is a helper that renders an assistant message through
@@ -27,8 +27,8 @@ func renderAssistantLines(t *testing.T, content string, th *theme.Theme, width i
 	r.SetSize(width, 40)
 	r.SetChatAreaBounds(0, 40)
 	r.SetStreaming(false)
-	r.AppendMessage(types.ChatMessage{
-		Role:    types.RoleAssistant,
+	r.AppendMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: content,
 		Time:    time.Now(),
 	})
@@ -117,8 +117,8 @@ func TestStreamingCursorNative(t *testing.T) {
 	r.SetStreaming(true)
 	r.SetSpinFrame(0)
 	r.SetActiveTyping(true)
-	r.AppendMessage(types.ChatMessage{
-		Role:    types.RoleAssistant,
+	r.AppendMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: "Line one\nLine two",
 		Time:    time.Now(),
 	})
@@ -144,8 +144,8 @@ func TestSelectionAcrossWrappedMarkdownAndCopy(t *testing.T) {
 	r.SetChatAreaBounds(0, 40)
 	r.SetStreaming(false)
 	content := "# Title\n\nFirst paragraph line.\n\nSecond paragraph line."
-	r.AppendMessage(types.ChatMessage{
-		Role:    types.RoleAssistant,
+	r.AppendMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: content,
 		Time:    time.Now(),
 	})

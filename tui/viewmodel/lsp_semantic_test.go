@@ -6,22 +6,22 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
 type semanticCursorService struct {
 	shellport.LSPService
 	cursor         uint64
-	producer       types.InsightProducer
+	producer       insight.Producer
 	unsynchronized bool
 }
 
-func (s *semanticCursorService) ServerReady() bool                         { return true }
-func (s *semanticCursorService) ContextCursor() (string, uint64)           { return "semantic-owner", s.cursor }
-func (s *semanticCursorService) FileProducer(string) types.InsightProducer { return s.producer }
-func (s *semanticCursorService) FileSynchronized(types.InsightSource, uint64) bool {
+func (s *semanticCursorService) ServerReady() bool                    { return true }
+func (s *semanticCursorService) ContextCursor() (string, uint64)      { return "semantic-owner", s.cursor }
+func (s *semanticCursorService) FileProducer(string) insight.Producer { return s.producer }
+func (s *semanticCursorService) FileSynchronized(insight.Source, uint64) bool {
 	return !s.unsynchronized
 }
 
@@ -31,7 +31,7 @@ type semanticCursorWorkspace struct {
 }
 
 func (w *semanticCursorWorkspace) LSPMgr() shellport.LSPService { return w.service }
-func (*semanticCursorWorkspace) RequestLSPSemantic(context.Context, types.InsightSource, string, uint64, types.LSPSemanticRange) (types.LSPSemanticSet, error) {
+func (*semanticCursorWorkspace) RequestLSPSemantic(context.Context, insight.Source, string, uint64, insight.LSPSemanticRange) (insight.LSPSemanticSet, error) {
 	panic("barrier test must not send a request")
 }
 func (*semanticCursorWorkspace) ReleaseLSPSemantic(context.Context, string, uint64) error { return nil }
@@ -53,7 +53,7 @@ func TestSemanticAnswerWaitsForExactContextAndRetiresAfterChange(t *testing.T) {
 				t.Fatal(err)
 			}
 			original := app.ws
-			service := &semanticCursorService{LSPService: original.LSPMgr(), cursor: 7, producer: types.InsightProducer{InstanceID: "provider"}}
+			service := &semanticCursorService{LSPService: original.LSPMgr(), cursor: 7, producer: insight.Producer{InstanceID: "provider"}}
 			app.ws = &semanticCursorWorkspace{Workspace: original, service: service}
 			t.Cleanup(func() { app.resetSemanticTokens(); app.ws = original })
 			app.setFocusEditor()
@@ -64,11 +64,11 @@ func TestSemanticAnswerWaitsForExactContextAndRetiresAfterChange(t *testing.T) {
 				t.Fatal("semantic request not admitted")
 			}
 			r := v.request
-			set := types.LSPSemanticSet{Boundary: types.InsightBoundary{Source: r.source, Context: types.InsightContext{Generation: 8}, Producer: types.InsightProducer{InstanceID: "provider"}}, WireVersion: 1, ViewID: v.id, Sequence: r.sequence, Range: r.span, Full: true}
+			set := insight.LSPSemanticSet{Boundary: insight.Boundary{Source: r.source, Context: insight.Context{Generation: 8}, Producer: insight.Producer{InstanceID: "provider"}}, WireVersion: 1, ViewID: v.id, Sequence: r.sequence, Range: r.span, Full: true}
 			switch answer {
 			case "spans":
 				set.Types = []string{"function"}
-				set.Spans = []types.LSPSemanticSpan{{Start: 0, End: 1, Type: 0}}
+				set.Spans = []insight.LSPSemanticSpan{{Start: 0, End: 1, Type: 0}}
 			case "null":
 				set.Null = true
 			case "unsupported":
@@ -106,7 +106,7 @@ func TestSemanticProducerReplacementRetiresOldRequest(t *testing.T) {
 		t.Fatal("semantic view not prepared")
 	}
 	old := view.request
-	port.service.producer = types.InsightProducer{InstanceID: "replacement"}
+	port.service.producer = insight.Producer{InstanceID: "replacement"}
 	if cmd := app.startSemanticRequest(semanticDueMsg{owner: old}); cmd != nil {
 		t.Fatal("retired provider request started")
 	}
@@ -114,10 +114,10 @@ func TestSemanticProducerReplacementRetiresOldRequest(t *testing.T) {
 	if view.request == nil || view.request == old || old.ctx.Err() == nil || view.request.producer.InstanceID != "replacement" {
 		t.Fatal("replacement producer did not own a new request")
 	}
-	if cmd := app.handleSemanticResult(semanticResultMsg{owner: old, result: types.LSPSemanticSet{}}); cmd != nil || old.installed {
+	if cmd := app.handleSemanticResult(semanticResultMsg{owner: old, result: insight.LSPSemanticSet{}}); cmd != nil || old.installed {
 		t.Fatal("old provider answer was accepted")
 	}
-	port.service.producer = types.InsightProducer{}
+	port.service.producer = insight.Producer{}
 	app.syncSemanticTokens()
 	if view.request != nil || ed.Value() != "abc\n" || ed.Modified() {
 		t.Fatal("server loss retained colors or changed source")

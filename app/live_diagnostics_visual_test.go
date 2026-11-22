@@ -14,11 +14,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
-	"crude/history"
-	"crude/metrics"
+	"crude/agent/prompthistory"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
+	"crude/internal/metrics"
 	"crude/tui"
 	"crude/tui/viewmodel"
 	"crude/types/control"
@@ -61,7 +61,7 @@ func startLiveDiagnosticShell(t *testing.T, ctx context.Context, home, project, 
 	}
 	metrics.Start("shell")
 	if os.Getenv("CRUDE_VISUAL_DIAGNOSTICS") == "1" {
-		terminal, err := tui.Start(port, providerPresets(), history.New(), &appLogger{}, func(a *viewmodel.App) error {
+		terminal, err := tui.Start(port, providerPresets(), prompthistory.New(), &appLogger{}, func(a *viewmodel.App) error {
 			if orchID != "" {
 				a.AddOrchestrator(orchID)
 			}
@@ -77,7 +77,7 @@ func startLiveDiagnosticShell(t *testing.T, ctx context.Context, home, project, 
 		// Same production App, input routing, remote control handlers and replica
 		// lifecycle without a physical terminal. Never a fake diagnostic responder.
 		a := viewmodel.NewApp(port, providerPresets())
-		a.SetPromptHistory(history.New())
+		a.SetPromptHistory(prompthistory.New())
 		if orchID != "" {
 			a.AddOrchestrator(orchID)
 		}

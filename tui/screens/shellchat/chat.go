@@ -1,6 +1,3 @@
-// Package shellchat provides the native agent-chat message-list shell surface.
-//
-// PR6: chatprojection.Renderer exports message rows; shellchat owns scroll/selection/compose.
 package shellchat
 
 import (
@@ -14,8 +11,8 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ctypes "crude/types"
 	"crude/types/activity"
+	"crude/types/statuscenter"
 )
 
 const (
@@ -60,7 +57,7 @@ type Screen struct {
 	paintState        messagePaintState
 	width             int
 	height            int
-	activity          ctypes.AgentActivityView
+	activity          statuscenter.AgentActivityView
 	activitySet       bool
 	activityStrip     chatprojection.ActivityStrip
 	stripLineWidth    int
@@ -91,7 +88,8 @@ func (s *Screen) copyText(text string) tea.Cmd {
 // AgentID is the agent whose conversation this chat shows.
 func (s *Screen) AgentID() string { return s.agentID }
 
-func (s *Screen) SetActivity(activity ctypes.AgentActivityView) {
+// SetActivity stores the activity view that the chat screen shows.
+func (s *Screen) SetActivity(activity statuscenter.AgentActivityView) {
 	s.activity = activity
 	s.activitySet = true
 }
@@ -395,7 +393,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 
 	if evt.Kind == ui.EventCustom {
-		if _, ok := evt.Custom.(ctypes.SelectionTickMsg); ok {
+		if _, ok := evt.Custom.(SelectionTickMsg); ok {
 			return s.handleSelectionTick()
 		}
 	}

@@ -3,6 +3,8 @@ package workspace
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -18,8 +20,7 @@ import (
 
 	"crude/insight/facts"
 	"crude/insight/governor"
-	"crude/lsp/client"
-	ttypes "crude/types"
+	"crude/lsp/lspclient"
 	"crude/workspace/fileio"
 )
 
@@ -31,11 +32,11 @@ type lspClientState struct {
 	rootURI     string
 	cmd         string
 	args        []string
-	spec        ttypes.LSPServerSpec
-	status      LSPStatus
+	spec        setting.LSPServerSpec
+	status      insight.LSPStatus
 	err         string
 	client      LSPClient
-	assistance  ttypes.LSPAssistanceCapabilities
+	assistance  insight.LSPAssistanceCapabilities
 	teardownErr error
 	cancel      context.CancelFunc
 	closing     bool
@@ -56,12 +57,12 @@ type lspClientState struct {
 }
 
 type lspDocument struct {
-	source             ttypes.InsightSource
-	boundary           ttypes.InsightBoundary
+	source             insight.Source
+	boundary           insight.Boundary
 	wireVersion        int
 	syncedContext      uint64
 	syncPending        bool
-	pendingPublication *ttypes.InsightDiagnosticPublication
+	pendingPublication *insight.DiagnosticPublication
 	text               string
 	key                string
 	language           string
@@ -84,11 +85,11 @@ type lspClosedDocument struct {
 
 func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
 	m := &LSPManager{
-		logger: logger, settings: ttypes.DefaultLSPSettings(), runtime: defaultLSPRuntime{},
-		analysisSettings: ttypes.DefaultWorkspaceAnalysisSettings(), analysisIdentity: fileio.DirectoryIdentity,
+		logger: logger, settings: setting.DefaultLSP(), runtime: defaultLSPRuntime{},
+		analysisSettings: setting.DefaultWorkspaceAnalysis(), analysisIdentity: fileio.DirectoryIdentity,
 		states: make(map[string]*lspClientState), documents: make(map[string]*lspDocument),
 		updateTimers: make(map[string]*time.Timer), wake: make(chan struct{}, 1),
-		docSymbols: make(map[string][]LSPSymbol), stateChanged: make(chan struct{}), contextGeneration: 1,
+		docSymbols: make(map[string][]insight.LSPSymbol), stateChanged: make(chan struct{}), contextGeneration: 1,
 	}
 	if len(runtimes) > 0 {
 		m.runtime = runtimes[0]
@@ -151,14 +152,16 @@ func (m *LSPManager) setWorkspaceRootLocked(root string) {
 	m.requestAssemblyLocked()
 }
 
-func (m *LSPManager) Settings() ttypes.LSPSettings {
+// Settings returns a copy of the language server settings.
+func (m *LSPManager) Settings() setting.LSP {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return ttypes.CloneLSPSettings(m.settings)
+	return setting.CloneLSP(m.settings)
 }
 
-func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
-	settings = ttypes.NormalizeLSP(ttypes.CloneLSPSettings(settings))
+// SetSettings normalizes and applies new language server settings.
+func (m *LSPManager) SetSettings(settings setting.LSP) {
+	settings = setting.NormalizeLSP(setting.CloneLSP(settings))
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -217,7 +220,7 @@ func (m *LSPManager) SetSettings(settings ttypes.LSPSettings) {
 
 // Visibility/severity and request feature gates do not change a producer's
 // source or launch configuration. They must not restart it or restamp facts.
-func sameLSPProducerSettings(a, b ttypes.LSPSettings) bool {
+func sameLSPProducerSettings(a, b setting.LSP) bool {
 	// Quota changes govern new admission, never forcibly evict live producers.
 	a.MaxServers = b.MaxServers
 	a.Diagnostics, a.Completions, a.Hover, a.Definition = b.Diagnostics, b.Completions, b.Hover, b.Definition
@@ -640,9 +643,9 @@ func (m *LSPManager) startStateLocked(key string, state *lspClientState, stillWa
 	m.mu.Lock()
 	state.client = client
 	m.mu.Unlock()
-	client.OnDiagnostics(func(p ttypes.InsightDiagnosticPublication) { m.receiveDiagnostics(key, state, p) })
+	client.OnDiagnostics(func(p insight.DiagnosticPublication) { m.receiveDiagnostics(key, state, p) })
 	if unopened, ok := client.(lspUnopenedDiagnostics); ok {
-		unopened.OnUnopenedDiagnostics(func(path string, p ttypes.InsightDiagnosticPublication) {
+		unopened.OnUnopenedDiagnostics(func(path string, p insight.DiagnosticPublication) {
 			m.receiveUnopenedDiagnostics(key, state, path, p)
 		})
 	}
@@ -682,7 +685,7 @@ func (c *leasedLSPClient) Busy() bool {
 	return ok && busy.Busy()
 }
 
-func (c *leasedLSPClient) OnUnopenedDiagnostics(fn func(string, ttypes.InsightDiagnosticPublication)) {
+func (c *leasedLSPClient) OnUnopenedDiagnostics(fn func(string, insight.DiagnosticPublication)) {
 	if unopened, ok := c.LSPClient.(lspUnopenedDiagnostics); ok {
 		unopened.OnUnopenedDiagnostics(fn)
 	}
@@ -720,7 +723,7 @@ func (m *LSPManager) captureServerEvidenceLocked(state *lspClientState) {
 }
 
 func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPClient, err error) {
-	var assistance ttypes.LSPAssistanceCapabilities
+	var assistance insight.LSPAssistanceCapabilities
 	if err == nil && client != nil {
 		assistance = client.AssistanceCapabilities()
 	}
@@ -747,7 +750,7 @@ func (m *LSPManager) finishStart(key string, state *lspClientState, client LSPCl
 			m.retireLocked(state)
 		}
 	} else {
-		state.assistance = ttypes.CloneLSPAssistance(assistance)
+		state.assistance = insight.CloneLSPAssistance(assistance)
 		state.status, state.err, state.lastUsed = LSPConnected, "", time.Now()
 		state.restarting = false
 		m.captureServerEvidenceLocked(state)
@@ -856,7 +859,7 @@ func (m *LSPManager) cancelUpdatesLocked() {
 
 // OpenFile registers editor intent synchronously; no root probing or pipe I/O
 // runs here. Closing before initialization completes prevents a late didOpen.
-func (m *LSPManager) OpenFile(_ context.Context, source ttypes.InsightSource, text string) {
+func (m *LSPManager) OpenFile(_ context.Context, source insight.Source, text string) {
 	path := source.Path
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -875,7 +878,7 @@ func (m *LSPManager) OpenFile(_ context.Context, source ttypes.InsightSource, te
 		m.documents[path] = &lspDocument{text: text, source: source, revision: 1, editor: true}
 		// The open document now owns this file's facts. The project view of
 		// the file on disk gives way until the document closes again.
-		m.removeProjectFactsLocked(func(b ttypes.InsightBoundary) bool { return b.Source.Path == path })
+		m.removeProjectFactsLocked(func(b insight.Boundary) bool { return b.Source.Path == path })
 		m.advanceContextLocked("Canonical source view opened; dependent units need reanalysis.")
 	}
 	m.activeFilePath, m.lastEdit = path, time.Now()
@@ -1042,7 +1045,8 @@ func (m *LSPManager) dropDocumentLocked(path string, doc *lspDocument) {
 	}
 }
 
-func (m *LSPManager) QueueFileUpdate(source ttypes.InsightSource, text string) {
+// QueueFileUpdate records the new text of an open file for the next analysis.
+func (m *LSPManager) QueueFileUpdate(source insight.Source, text string) {
 	path := source.Path
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1275,7 +1279,7 @@ func (m *LSPManager) Refresh(root string) {
 	m.stopLocked()
 	clear(m.checkResults)
 	if m.sources != nil && m.sources.Insight != nil {
-		if m.sources.Insight.diagnostics.RemoveMatching(func(b ttypes.InsightBoundary) bool {
+		if m.sources.Insight.diagnostics.RemoveMatching(func(b insight.Boundary) bool {
 			return m.documents[b.Source.Path] == nil
 		}) > 0 {
 			m.bumpVersionLocked()
@@ -1361,7 +1365,7 @@ func (m *LSPManager) requestClientWithin(ctx context.Context, path string, limit
 // check through the same files again and start the server again, forever.
 func (m *LSPManager) clearServerDiagnosticsLocked(key string) {
 	if m.sources != nil && m.sources.Insight != nil {
-		m.sources.Insight.diagnostics.InvalidateMatching(func(b ttypes.InsightBoundary) bool {
+		m.sources.Insight.diagnostics.InvalidateMatching(func(b insight.Boundary) bool {
 			return isProjectFact(b) && !isCheckedFact(b) && b.Context.ID == key
 		}, "Language server stopped; retained results are out of date.")
 	}
@@ -1399,7 +1403,7 @@ func lspExitError(command string, restarting bool) string {
 		name, lspAutomaticRestarts+1, int(lspAutomaticRestartWindow/time.Minute))
 }
 
-func lspServerKey(root string, spec ttypes.LSPServerSpec) string {
+func lspServerKey(root string, spec setting.LSPServerSpec) string {
 	// A JS and a TS document share a process, but different args/env/settings do
 	// not. LanguageID is document metadata, never connection identity. Root
 	// markers are per language too: they only choose the root, which is
@@ -1464,7 +1468,7 @@ func (m *LSPManager) broadcastLocked() {
 // The assembly plan refines it: a server the plan found in the tool store
 // launches from there, and a server the plan found missing does not launch,
 // so the status can name the missing program.
-func (m *LSPManager) resolveServerLocked(path string) (ttypes.LSPServerSpec, bool) {
+func (m *LSPManager) resolveServerLocked(path string) (setting.LSPServerSpec, bool) {
 	settings := m.settings
 	settings.Enabled = true
 	spec, ok := settings.ResolveServer(path)
@@ -1473,7 +1477,7 @@ func (m *LSPManager) resolveServerLocked(path string) (ttypes.LSPServerSpec, boo
 	}
 	key := assemblyToolKey{spec.ServerID, spec.Command}
 	if _, missing := m.toolMissing[key]; missing {
-		return ttypes.LSPServerSpec{}, false
+		return setting.LSPServerSpec{}, false
 	}
 	if executable := m.toolPaths[key]; executable != "" {
 		spec.Command = executable

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -15,7 +15,7 @@ func TestWorkspaceReturnUpdatesDurableRecencyWithoutNewSession(t *testing.T) {
 	created := 0
 	rt, err := New(func(root string) (*workspace.Workspace, error) {
 		created++
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)

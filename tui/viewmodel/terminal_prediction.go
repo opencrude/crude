@@ -1,7 +1,7 @@
 package viewmodel
 
 import (
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/ui"
 	"crude/workspace"
 )

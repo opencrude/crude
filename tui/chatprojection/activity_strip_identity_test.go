@@ -3,8 +3,8 @@ package chatprojection
 import (
 	"testing"
 
-	"crude/types"
 	"crude/types/activity"
+	"crude/types/statuscenter"
 )
 
 // A connected shell's per-frame plan copy is the same source; a new revision
@@ -12,7 +12,7 @@ import (
 func TestActivitySourceComparesPlansByRevision(t *testing.T) {
 	plan := &activity.Plan{ID: "p", Revision: 3, Status: "active", Steps: []activity.Step{{Number: 1, Text: "a", Status: "pending"}}}
 	copied := *plan
-	a, b := types.AgentActivityView{Plan: plan}, types.AgentActivityView{Plan: &copied}
+	a, b := statuscenter.AgentActivityView{Plan: plan}, statuscenter.AgentActivityView{Plan: &copied}
 	if !sameActivitySource(a, b) {
 		t.Fatal("an equal-revision copy was treated as a new source")
 	}

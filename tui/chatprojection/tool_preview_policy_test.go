@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestCommandPreviewPreservesIndentationAndTail(t *testing.T) {
@@ -18,7 +18,7 @@ func TestCommandPreviewPreservesIndentationAndTail(t *testing.T) {
 		}
 		lines = append(lines, text)
 	}
-	msg := types.ChatMessage{
+	msg := conversation.ChatMessage{
 		Role: "tool", ToolName: "execute_command", ToolStatus: "success",
 		ToolPreviewPhase: "done", Content: strings.Join(lines, "\n"),
 	}
@@ -32,7 +32,7 @@ func TestCommandPreviewPreservesIndentationAndTail(t *testing.T) {
 }
 
 func TestToolPreviewDoesNotSynthesizeNarrowWidth(t *testing.T) {
-	msg := types.ChatMessage{
+	msg := conversation.ChatMessage{
 		Role: "tool", ToolName: "execute_command", ToolStatus: "success",
 		ToolPreviewPhase: "done", Content: "abcdefghijk",
 	}
@@ -53,8 +53,8 @@ func TestDisclosurePolicyUsesOnlyMeaningfulFamilies(t *testing.T) {
 		"agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control", "publish_report", "artifact_read", "agent_wait", "board_read",
 		"remember", "recall_memory", "update_memory", "forget_memory", "memory_feedback", "search_history",
 		"capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "mcp__docs__lookup"} {
-		msg := types.ChatMessage{InternalID: tool, Role: types.RoleTool, ToolName: tool, ToolStatus: "success", Content: "body"}
-		r.SyncMessages([]types.ChatMessage{msg}, version, 0)
+		msg := conversation.ChatMessage{InternalID: tool, Role: conversation.RoleTool, ToolName: tool, ToolStatus: "success", Content: "body"}
+		r.SyncMessages([]conversation.ChatMessage{msg}, version, 0)
 		version++
 		rows, _, _ := r.ExportMessageRows(80)
 		if len(rows) != 1 {
@@ -68,7 +68,7 @@ func TestDisclosurePolicyUsesOnlyMeaningfulFamilies(t *testing.T) {
 
 func TestToolContextShowsFullCommandAndGrepPattern(t *testing.T) {
 	command := "sed -i 's/very-long-old-expression/very-long-new-expression/' tui/ui/list.go"
-	cmd := types.ChatMessage{
+	cmd := conversation.ChatMessage{
 		Role: "tool", ToolName: "execute_command", ToolStatus: "success",
 		ToolPreviewPhase: "done", ToolCommand: command, Content: "(command completed with no output)",
 	}
@@ -93,7 +93,7 @@ func TestToolContextShowsFullCommandAndGrepPattern(t *testing.T) {
 	if strings.ReplaceAll(fullCommand, " ", "") != strings.ReplaceAll(command, " ", "") || !strings.Contains(commandRows, "sed -i") {
 		t.Fatalf("expanded full command missing: %#v", ml.lines)
 	}
-	grep := types.ChatMessage{
+	grep := conversation.ChatMessage{
 		Role: "tool", ToolName: "grep_files", ToolStatus: "success", ToolPreviewPhase: "done",
 		ToolInput: "func (f *FilterField) type FilterField", ToolScope: "tui/ui", Content: "1 match\ntui/ui/filter.go:1: match",
 	}

@@ -7,8 +7,9 @@ import (
 
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 func newAgentStatusEventWorkspace(t *testing.T) (*Workspace, *AgentNode) {
@@ -20,7 +21,7 @@ func newAgentStatusEventWorkspace(t *testing.T) (*Workspace, *AgentNode) {
 	return w, node
 }
 
-func requireAgentStatusPhase(t *testing.T, w *Workspace, id string, phase ttypes.AgentPhase, detail string, action bool) ttypes.AgentStatusSnapshot {
+func requireAgentStatusPhase(t *testing.T, w *Workspace, id string, phase statuscenter.AgentPhase, detail string, action bool) statuscenter.AgentStatusSnapshot {
 	t.Helper()
 	got, ok := w.Status.Agent(id)
 	if !ok || got.Phase != phase || got.Detail != detail || got.NeedsAction != action {
@@ -31,44 +32,44 @@ func requireAgentStatusPhase(t *testing.T, w *Workspace, id string, phase ttypes
 
 func TestApplyAgentStatusEventLifecycleAndRequestDetails(t *testing.T) {
 	w, node := newAgentStatusEventWorkspace(t)
-	identity := ttypes.TurnIdentity{Generation: 9, ModelID: "runtime-model", AccountID: "account", ProviderID: "provider"}
+	identity := conversation.TurnIdentity{Generation: 9, ModelID: "runtime-model", AccountID: "account", ProviderID: "provider"}
 	node.Model, node.State.TurnIdentity, node.State.Running = "configured-model", identity, true
 	apply := func(kind string, data any) {
 		w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: kind, Data: data})
 	}
 	apply("turn_started", identity)
-	got := requireAgentStatusPhase(t, w, node.ID, ttypes.AgentPreparing, "Preparing context", false)
+	got := requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentPreparing, "Preparing context", false)
 	if got.Ref.SessionID != "session" || got.Label != "Main Agent" || got.TurnGeneration != 9 || got.ModelID != "runtime-model" || got.AccountID != "account" || got.ProviderID != "provider" || got.StartedAt.IsZero() {
 		t.Fatalf("lost owner/request identity: %+v", got)
 	}
 	apply("phase", map[string]any{"name": "preparing", "request_id": "request-1", "provider": "Gateway", "uploaded_bytes": int64(32), "total_bytes": int64(128), "progress": 25})
-	got = requireAgentStatusPhase(t, w, node.ID, ttypes.AgentUploading, "Uploading context", false)
+	got = requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentUploading, "Uploading context", false)
 	if got.UploadedBytes != 32 || got.TotalBytes != 128 || !got.ProgressKnown || got.Progress != 25 {
 		t.Fatalf("upload telemetry lost: %+v", got)
 	}
 	apply("phase", map[string]any{"name": "waiting_provider", "request_id": "request-1", "provider": "Gateway"})
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentWaiting, "Waiting for Gateway", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentWaiting, "Waiting for Gateway", false)
 	ops := w.Status.Operations()
-	if len(ops) != 1 || ops[0].ID != "request-1" || ops[0].Owner.SessionID != "session" || ops[0].Progress != 32 || ops[0].Total != 128 || ops[0].Unit != "bytes" || ops[0].State != ttypes.OperationWaiting || !ops[0].Cancellable {
+	if len(ops) != 1 || ops[0].ID != "request-1" || ops[0].Owner.SessionID != "session" || ops[0].Progress != 32 || ops[0].Total != 128 || ops[0].Unit != "bytes" || ops[0].State != statuscenter.OperationWaiting || !ops[0].Cancellable {
 		t.Fatalf("request operation lost exact telemetry: %+v", ops)
 	}
 	apply("thinking", nil)
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentThinking, "Reasoning", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentThinking, "Reasoning", false)
 	apply("stream_token", "response")
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentResponding, "Receiving response", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentResponding, "Receiving response", false)
 	for _, kind := range []string{"tool_call_streaming", "tool_call", "tool_update", "tool_result"} {
 		apply(kind, map[string]any{"name": "execute_command", "args": `{"command":"printf exact"}`})
-		requireAgentStatusPhase(t, w, node.ID, ttypes.AgentTool, "Running execute_command", false)
+		requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentTool, "Running execute_command", false)
 	}
 	apply("phase", map[string]any{"name": "preparing", "request_id": "request-2"})
-	got = requireAgentStatusPhase(t, w, node.ID, ttypes.AgentPreparing, "Preparing context", false)
+	got = requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentPreparing, "Preparing context", false)
 	if got.ProgressKnown || got.UploadedBytes != 0 || got.TotalBytes != 0 {
 		t.Fatalf("new request retained previous upload: %+v", got)
 	}
 	apply("done", map[string]any{"reason": "cancelled"})
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentCancelled, "Cancelled", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentCancelled, "Cancelled", false)
 	for _, op := range w.Status.Operations() {
-		if op.State != ttypes.OperationSucceeded || op.EndedAt.IsZero() {
+		if op.State != statuscenter.OperationSucceeded || op.EndedAt.IsZero() {
 			t.Fatalf("done left request running: %+v", op)
 		}
 	}
@@ -83,7 +84,7 @@ func TestBackgroundSummaryStatusSettlesAndRejectsStaleProgress(t *testing.T) {
 	}
 	apply("old", "started")
 	apply("old", "discarded")
-	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "" || state.Phase != ttypes.AgentThinking {
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "" || state.Phase != statuscenter.AgentThinking {
 		t.Fatalf("discarded background work remained active: %+v", state)
 	}
 	apply("new", "started")
@@ -101,7 +102,7 @@ func TestBackgroundSummaryStatusSettlesAndRejectsStaleProgress(t *testing.T) {
 	apply("ready", "started")
 	apply("ready", "ready")
 	apply("ready", "progress")
-	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "ready" || state.Phase != ttypes.AgentThinking {
+	if state, _ := w.Status.Agent(node.ID); state.Checkpoint != "ready" || state.Phase != statuscenter.AgentThinking {
 		t.Fatalf("late progress replaced readiness or changed agent work: %+v", state)
 	}
 	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "context_compacted", Data: map[string]any{"request_id": "ready"}})
@@ -125,7 +126,7 @@ func TestCompletedChildDoesNotRetainBackgroundSummaryDetails(t *testing.T) {
 	}
 	w.ApplyAgentEvent(AgentEvent{AgentID: "child", Type: "sub_agent_completed", Data: map[string]string{"agent_id": "child", "status": "completed"}})
 	w.ApplyAgentEvent(AgentEvent{AgentID: "child", Type: "context_precompaction", Data: map[string]any{"phase": "progress", "request_id": "summary"}})
-	if state, _ := w.Status.Agent("child"); state.Checkpoint != "" || state.CheckpointDetail != "" || state.Phase != ttypes.AgentCompleted {
+	if state, _ := w.Status.Agent("child"); state.Checkpoint != "" || state.CheckpointDetail != "" || state.Phase != statuscenter.AgentCompleted {
 		t.Fatalf("terminal child retained or reopened background work: %+v", state)
 	}
 }
@@ -137,13 +138,13 @@ func TestApplyAgentStatusEventPermissionsUseFamilyPolicy(t *testing.T) {
 		w.ApplyAgentStatusEvent(AgentEvent{AgentID: child.ID, Type: kind, Data: data})
 	}
 	apply("blocking", map[string]string{"operation": "execute"})
-	got := requireAgentStatusPhase(t, w, child.ID, ttypes.AgentApproval, "Needs approval", true)
+	got := requireAgentStatusPhase(t, w, child.ID, statuscenter.AgentApproval, "Needs approval", true)
 	if got.Hidden || got.Ref.ParentID != root.ID || got.Ref.SessionID != "session" || got.Label != "Edward" {
 		t.Fatalf("core inventory lost its owner or acquired shell visibility: %+v", got)
 	}
 	for _, kind := range []string{"blocking_auto", "permission_resolved", "blocking_complete"} {
 		apply(kind, nil)
-		requireAgentStatusPhase(t, w, child.ID, ttypes.AgentTool, "Working", false)
+		requireAgentStatusPhase(t, w, child.ID, statuscenter.AgentTool, "Working", false)
 	}
 	if !w.SetYoloForAgent(root.ID, true) {
 		t.Fatal("could not update owning policy")
@@ -151,13 +152,13 @@ func TestApplyAgentStatusEventPermissionsUseFamilyPolicy(t *testing.T) {
 	// A different selected root must not supply this family's permission policy.
 	w.AgentMgr.AddOrchestrator("foreground", NewAgentState("foreground", nil, nil))
 	apply("confirmation", map[string]any{"operation": "execute"})
-	requireAgentStatusPhase(t, w, child.ID, ttypes.AgentTool, "Working", false)
-	apply("blocking", map[string]string{"operation": ttypes.PlanInvestigationHostOperation})
-	requireAgentStatusPhase(t, w, child.ID, ttypes.AgentApproval, "Needs approval", true)
+	requireAgentStatusPhase(t, w, child.ID, statuscenter.AgentTool, "Working", false)
+	apply("blocking", map[string]string{"operation": conversation.PlanInvestigationHostOperation})
+	requireAgentStatusPhase(t, w, child.ID, statuscenter.AgentApproval, "Needs approval", true)
 	apply("blocking", map[string]any{"operation": "questions"})
-	requireAgentStatusPhase(t, w, child.ID, ttypes.AgentQuestion, "Needs answer", true)
+	requireAgentStatusPhase(t, w, child.ID, statuscenter.AgentQuestion, "Needs answer", true)
 	apply("blocking_complete", nil)
-	requireAgentStatusPhase(t, w, child.ID, ttypes.AgentTool, "Working", false)
+	requireAgentStatusPhase(t, w, child.ID, statuscenter.AgentTool, "Working", false)
 }
 
 func TestApplyAgentStatusEventRecoveryAcknowledgementAndError(t *testing.T) {
@@ -170,20 +171,20 @@ func TestApplyAgentStatusEventRecoveryAcknowledgementAndError(t *testing.T) {
 		w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "recovery", Data: status})
 	}
 	applyRecovery()
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentNeedsAttention, "Check account", true)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentNeedsAttention, "Check account", true)
 	if issues := w.Status.Issues(); len(issues) != 1 || issues[0].Detail != "Exact diagnostic" {
 		t.Fatalf("missing actionable issue: %+v", issues)
 	}
 	status.State, status.Summary, status.RetryAt = recovery.Recovering, "Recovering", time.Now().Add(time.Minute)
 	applyRecovery()
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentRecovering, "Recovering", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentRecovering, "Recovering", false)
 	status.RetryAt = time.Time{}
 	applyRecovery()
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentPreparing, "Resuming run", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentPreparing, "Resuming run", false)
 	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentWaiting, "Waiting for provider", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentWaiting, "Waiting for provider", false)
 	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "thinking"})
-	before := requireAgentStatusPhase(t, w, node.ID, ttypes.AgentThinking, "Reasoning", false)
+	before := requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentThinking, "Reasoning", false)
 	stale := status
 	stale.State = recovery.NeedsAttention
 	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "recovery", Data: stale})
@@ -191,9 +192,9 @@ func TestApplyAgentStatusEventRecoveryAcknowledgementAndError(t *testing.T) {
 		t.Fatal("unaccepted recovery rewound current phase")
 	}
 	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "error", Data: "Exact provider failure"})
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentFailed, "Exact provider failure", false)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentFailed, "Exact provider failure", false)
 	for _, op := range w.Status.Operations() {
-		if op.State != ttypes.OperationFailed {
+		if op.State != statuscenter.OperationFailed {
 			t.Fatalf("error left request running: %+v", op)
 		}
 	}
@@ -222,7 +223,7 @@ func TestApplyAgentStatusEventSafetyAndMissingOwners(t *testing.T) {
 		t.Fatal("safety history replaced terminal status")
 	}
 	notices := w.Status.Notifications(false)
-	if len(notices) != 1 || notices[0].Detail != reason || notices[0].Severity != ttypes.SeverityCritical || len(w.Status.Issues()) != 0 {
+	if len(notices) != 1 || notices[0].Detail != reason || notices[0].Severity != statuscenter.SeverityCritical || len(w.Status.Issues()) != 0 {
 		t.Fatalf("safety lost exact evidence or became pending decision: %+v", notices)
 	}
 	if got := AgentToolDetail(map[string]any{"name": `{"private_id":"agent-8f21"}`}); got != "Running tool" {
@@ -236,7 +237,7 @@ func TestApplyAgentStatusEventSafetyAndMissingOwners(t *testing.T) {
 // late output of the finished turn, leaving the shell on "Preparing" forever.
 func TestPreflightRecoveryAfterACompletedTurnNeedsAttention(t *testing.T) {
 	w, node := newAgentStatusEventWorkspace(t)
-	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "turn_started", Data: conversation.TurnIdentity{Generation: 1, ModelID: "model"}})
 	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "stream_token", Data: "pong"})
 	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "done", Data: map[string]any{"content": "pong", "reason": "completed"}})
 	if node.State.IsActive() {
@@ -250,7 +251,7 @@ func TestPreflightRecoveryAfterACompletedTurnNeedsAttention(t *testing.T) {
 	if node.State.Recovery.ID != "incident" || !node.State.IsActive() {
 		t.Fatalf("agent state did not take the recovery: %+v active=%v", node.State.Recovery, node.State.IsActive())
 	}
-	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentNeedsAttention, "Recovery state could not be saved", true)
+	requireAgentStatusPhase(t, w, node.ID, statuscenter.AgentNeedsAttention, "Recovery state could not be saved", true)
 	// The finished turn's own late status stays rejected.
 	stale := status
 	stale.ID, stale.Generation = "stale", 1
@@ -263,7 +264,7 @@ func TestPreflightRecoveryAfterACompletedTurnNeedsAttention(t *testing.T) {
 // idle; they apply then, once, exactly as hydration paints the stored row.
 func TestSessionFactsApplyWhileTheAgentIsIdle(t *testing.T) {
 	w, node := newAgentStatusEventWorkspace(t)
-	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
+	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "turn_started", Data: conversation.TurnIdentity{Generation: 1, ModelID: "model"}})
 	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "done", Data: map[string]any{"content": "", "reason": "completed"}})
 	row := sessiondb.StatusRow{ID: "plan_mode_on:1", Phase: "plan_mode_on", Content: "Plan mode on.", CreatedAt: time.Unix(10, 0)}
 	for range 2 {
@@ -271,12 +272,12 @@ func TestSessionFactsApplyWhileTheAgentIsIdle(t *testing.T) {
 			t.Fatal("an idle agent dropped a status row")
 		}
 	}
-	goal := ttypes.Goal{ID: "g", Objective: "Ship it", Status: ttypes.GoalPaused}
+	goal := conversation.Goal{ID: "g", Objective: "Ship it", Status: conversation.GoalPaused}
 	w.ApplyAgentEvent(AgentEvent{AgentID: node.ID, Type: "goal", Data: goal})
-	if node.State.Goal == nil || node.State.Goal.Status != ttypes.GoalPaused {
+	if node.State.Goal == nil || node.State.Goal.Status != conversation.GoalPaused {
 		t.Fatalf("idle agent dropped the goal: %+v", node.State.Goal)
 	}
-	var rows []Message
+	var rows []conversation.Message
 	for _, message := range node.State.Messages.Messages() {
 		if message.LifecyclePhase == "plan_mode_on" {
 			rows = append(rows, message)

@@ -44,7 +44,7 @@ func TestYoloHeaderFollowsDisplayedAgentNotLastSession(t *testing.T) {
 			check(true)
 			// Descendants inherit the owning session's policy, not the shell's
 			// last root. Exercise the ordinary child-tab selection path.
-			pane := app.ws.PaneMgr().GetOrCreate("header-child", workspace.PaneAgent, "child")
+			pane := app.ws.PaneMgr().Ensure("header-child", workspace.PaneAgent, "child")
 			state := workspace.NewAgentState("header-child", pane.Messages, app.ws.Logger())
 			app.ws.AgentMgr().AddSubAgent("header-child", first, "Child", "model", "researcher", state)
 			app.ensureAgentProjection("header-child")

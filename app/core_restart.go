@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"crude/buildinfo"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
+	"crude/internal/buildinfo"
 	"crude/types/control"
 	"crude/types/handover"
 

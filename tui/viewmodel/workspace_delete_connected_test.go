@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"crude/core"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
-	"crude/internal/wirefault"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport/remote"
+	"crude/core/wirefault"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,7 +29,7 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 	// journeys. This test owns its catalog and must not scan those unrelated DBs.
 	t.Setenv("CRUDE_HOME", t.TempDir())
 	r, err := core.New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, noopLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -43,11 +43,11 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 	if err := old.app.CloseWorkspaceAttachment(); err != nil {
 		t.Fatal(err)
 	}
-	root, err := workspace.WorkspaceRoot()
+	root, err := workspace.Root()
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved := filepath.Join(root, workspace.WorkspaceID(project))
+	saved := filepath.Join(root, workspace.ID(project))
 	if err := os.WriteFile(filepath.Join(saved, "saved-evidence"), []byte("retained conversation evidence"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 	}
 	app := current.app
 	app.launcherScreen = nil // The sidebar remains usable during a live workflow.
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(project), ProjectDir: project, ProjectName: "unused"}}
+	app.workspaceInfos = []workspace.Info{{ID: workspace.ID(project), ProjectDir: project, ProjectName: "unused"}}
 	app.setActivity(activityWorkspaces, true)
 	app.paintShellFrame()
 	list, ok := app.rootHost.ScreenRect(activitylist.ListID)
@@ -129,7 +129,7 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 	}
 	found := false
 	for _, info := range app.workspaceInfos {
-		found = found || info.ID == workspace.WorkspaceID(project)
+		found = found || info.ID == workspace.ID(project)
 	}
 	if !found {
 		t.Fatalf("completed workspace catalog omitted restored workspace %s: %+v", project, app.workspaceInfos)
@@ -142,7 +142,7 @@ func TestConnectedWorkspaceDeleteRetiresUnusedActorAndUndo(t *testing.T) {
 
 func TestConnectedWorkspaceDeleteLostAcknowledgementChecksOriginalReceipt(t *testing.T) {
 	r, err := core.New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, noopLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestConnectedWorkspaceDeleteLostAcknowledgementChecksOriginalReceipt(t *tes
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	t.Cleanup(func() { app.StopAsyncIO(); _ = app.CloseWorkspaceAttachment() })
 	shell := remoteJourneyShell{app: app, fifo: fifo}
-	app.openWorkspaceDelete(launcher.WorkspaceEntry{ID: workspace.WorkspaceID(project), Path: project})
+	app.openWorkspaceDelete(launcher.WorkspaceEntry{ID: workspace.ID(project), Path: project})
 	p := app.overlayHost.Window(ui.OverlayWorkspaceDelete).Content.(*ui.WindowFrameWidget).Body().(*workspaceDeletePrompt)
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool { return p.actions.ActionEnabled("delete") })
 	ctx, cancel := context.WithCancel(t.Context())
@@ -202,7 +202,7 @@ func TestConnectedWorkspaceDeleteLostAcknowledgementChecksOriginalReceipt(t *tes
 	if p.deleted.RecoveryPath == "" || !p.actions.ActionEnabled("undo") || p.title.Text() != "Workspace deleted" {
 		t.Fatalf("receipt observation did not recover the original result: %s: %s", p.title.Text(), p.detail.Value())
 	}
-	root, err := workspace.WorkspaceRoot()
+	root, err := workspace.Root()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestConnectedWorkspaceDeleteLostAcknowledgementChecksOriginalReceipt(t *tes
 
 func TestConnectedWorkspaceDeletePeerBlockerAndExplicitReview(t *testing.T) {
 	r, err := core.New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, noopLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, noopLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestConnectedWorkspaceDeletePeerBlockerAndExplicitReview(t *testing.T) {
 	peer := newRemoteJourneyShell(t, r, project)
 	current := newRemoteJourneyShell(t, r, t.TempDir())
 	app := current.app
-	app.openWorkspaceDelete(launcher.WorkspaceEntry{ID: workspace.WorkspaceID(project), Path: project})
+	app.openWorkspaceDelete(launcher.WorkspaceEntry{ID: workspace.ID(project), Path: project})
 	p := app.overlayHost.Window(ui.OverlayWorkspaceDelete).Content.(*ui.WindowFrameWidget).Body().(*workspaceDeletePrompt)
 	remoteJourneyUntil(t, []remoteJourneyShell{peer, current}, func() bool { return p.actions.ActionEnabled("review") })
 	if p.actions.ActionEnabled("delete") || !strings.Contains(p.detail.Value(), "open in 1 view(s)") || !strings.Contains(p.detail.Value(), "Switch those views") {

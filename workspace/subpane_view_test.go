@@ -1,13 +1,14 @@
 package workspace
 
 import (
+	"crude/types/conversation"
 	"testing"
 	"time"
 )
 
 func TestSubPaneViewReturnsPlainData(t *testing.T) {
 	sp := NewSubPane("test", PaneAgent, "agent-1")
-	sp.Messages.AppendMessage(Message{Role: "assistant", Content: "hello", Time: time.Now()})
+	sp.Messages.AppendMessage(conversation.Message{Role: "assistant", Content: "hello", Time: time.Now()})
 	view := sp.View()
 	if view.Messages == nil {
 		t.Fatal("expected Messages pointer to be non-nil")
@@ -130,7 +131,7 @@ func TestSubPaneViewSummaryTokenFormatting(t *testing.T) {
 
 func TestSubPaneViewKeepsCanonicalToolMessages(t *testing.T) {
 	sp := NewSubPane("agent-1", PaneAgent, "my-agent")
-	sp.Messages.AppendMessage(Message{
+	sp.Messages.AppendMessage(conversation.Message{
 		Role:             "tool",
 		ToolName:         "read_file",
 		ToolArgs:         "main.go",
@@ -138,7 +139,7 @@ func TestSubPaneViewKeepsCanonicalToolMessages(t *testing.T) {
 		ToolPreviewPhase: "done",
 		Time:             time.Now(),
 	})
-	sp.Messages.AppendMessage(Message{
+	sp.Messages.AppendMessage(conversation.Message{
 		Role:             "tool",
 		ToolName:         "write_file",
 		ToolArgs:         "out.go",
@@ -159,7 +160,7 @@ func TestSubPaneViewKeepsCanonicalToolMessages(t *testing.T) {
 
 func TestSubPaneViewKeepsThinkingMessageSource(t *testing.T) {
 	sp := NewSubPane("think-1", PaneThinking, "Thinking")
-	sp.Messages.AppendMessage(Message{
+	sp.Messages.AppendMessage(conversation.Message{
 		Role:       "tool",
 		ToolName:   "read_file",
 		ToolStatus: "success",
@@ -174,7 +175,7 @@ func TestSubPaneViewKeepsThinkingMessageSource(t *testing.T) {
 
 func TestSubPaneViewThinkingFlag(t *testing.T) {
 	sp := NewSubPane("think-1", PaneThinking, "Thinking")
-	sp.Messages.AppendMessage(Message{
+	sp.Messages.AppendMessage(conversation.Message{
 		Role:           "thinking",
 		Content:        "pondering...",
 		ThinkingActive: true,
@@ -189,7 +190,7 @@ func TestSubPaneViewThinkingFlag(t *testing.T) {
 
 func TestSubPaneViewThinkingFlagFalse(t *testing.T) {
 	sp := NewSubPane("think-1", PaneThinking, "Thinking")
-	sp.Messages.AppendMessage(Message{
+	sp.Messages.AppendMessage(conversation.Message{
 		Role:           "thinking",
 		Content:        "done pondering",
 		ThinkingActive: false,

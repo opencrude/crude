@@ -125,7 +125,7 @@ class Observer:
             scratch = Path(tempfile.mkdtemp(prefix="core-observer-", dir=os.environ.get("CRUDE_TEMP_DIR")))
             binary = scratch / "observer"
             root = Path(__file__).resolve().parent.parent
-            build = subprocess.run(["go", "build", "-o", str(binary), "scripts/core_shell_observer.go"],
+            build = subprocess.run(["go", "build", "-o", str(binary), "./tools/coreshellobserver"],
                                    cwd=root, capture_output=True, text=True, timeout=180)
             if build.returncode:
                 raise RuntimeError("typed observer build failed: " + (build.stdout + build.stderr)[-8000:])

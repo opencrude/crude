@@ -15,10 +15,13 @@ import (
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/shellheader"
-	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/conversation"
+	"crude/types/insight"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -166,17 +169,17 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 			if active > 0 {
 				label = fmt.Sprintf("Loop · %d active", active)
 				goal, hasGoal := m.ws.GoalForAgent(agentID)
-				if m.ws.PlanModeForAgent(agentID) || hasGoal && goal.Status == ttypes.GoalActive {
+				if m.ws.PlanModeForAgent(agentID) || hasGoal && goal.Status == conversation.GoalActive {
 					label = fmt.Sprintf("Loop · %d waiting", active)
 				}
 			}
 			segments = append(segments, shellheader.Segment{Text: label, Role: ui.ColorAccent, Action: "loops", TargetID: target, Priority: 0})
 		}
 		if node := m.ws.AgentMgr().Get(agentID); node != nil {
-			usage, _ := m.ws.UsageSummary(node.ID, ttypes.UsageThisAgent)
+			usage, _ := m.ws.UsageSummary(node.ID, statuscenter.UsageThisAgent)
 			identity := m.ws.AgentModelIdentity(node.ID)
 			if model := firstNonempty(identity.ModelID, m.ModelName); model != "" {
-				if m.fastModeForAgent(node.ID) == ttypes.FastModeOn {
+				if m.fastModeForAgent(node.ID) == setting.FastModeOn {
 					model += " fast"
 				}
 				segments = append(segments, shellheader.Segment{Text: model, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 4})
@@ -215,19 +218,19 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 
 // The main agent owns the configured next-request tier. A child has its own
 // connection and must never borrow the root's indicator.
-func (m *App) fastModeForAgent(agentID string) ttypes.FastMode {
+func (m *App) fastModeForAgent(agentID string) setting.FastMode {
 	node := m.ws.AgentMgr().Get(agentID)
 	if node == nil || node.Parent != nil {
-		return ttypes.FastModeOff
+		return setting.FastModeOff
 	}
 	owner := m.ws.SessionForAgent(agentID)
 	if owner == nil || owner.Settings == nil {
-		return ttypes.FastModeOff
+		return setting.FastModeOff
 	}
 	return owner.Settings.Effective.FastMode
 }
 
-func agentHeaderUsageSegments(usage ttypes.UsageSummary, target string) []shellheader.Segment {
+func agentHeaderUsageSegments(usage statuscenter.UsageSummary, target string) []shellheader.Segment {
 	if usage.Requests == 0 {
 		return nil
 	}
@@ -248,7 +251,7 @@ func agentHeaderUsageSegments(usage ttypes.UsageSummary, target string) []shellh
 	return segments
 }
 
-func headerContextReport(usage ttypes.UsageSummary) string {
+func headerContextReport(usage statuscenter.UsageSummary) string {
 	text := preciseUsageValue(usage.ContextUsed)
 	if usage.ContextLimit.Known && usage.ContextLimit.Value > 0 {
 		text += "/" + preciseUsageValue(usage.ContextLimit)
@@ -298,7 +301,7 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 	if id := m.AgentView.ActiveID(); id != "" {
 		state, _ := m.ws.Status().Agent(id)
 		context = formatAgentState(state)
-		if usage, ok := m.ws.UsageSummary(id, ttypes.UsageThisAgent); ok {
+		if usage, ok := m.ws.UsageSummary(id, statuscenter.UsageThisAgent); ok {
 			parts := make([]string, 0, 2)
 			if usage.ContextUsed.Known && usage.ContextLimit.Known && usage.ContextLimit.Value > 0 {
 				percent := float64(usage.ContextUsed.Value) * 100 / float64(usage.ContextLimit.Value)
@@ -361,9 +364,9 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 	}
 	problemRole := diagnosticRole(insights.Errors, insights.Warnings)
 	switch insights.Language.State {
-	case ttypes.LanguageRestricted, ttypes.LanguageOff:
+	case insight.LanguageRestricted, insight.LanguageOff:
 		problemText += ": off"
-	case ttypes.LanguageFailed:
+	case insight.LanguageFailed:
 		problemText += ": error"
 		problemRole = ui.ColorError
 	}
@@ -434,11 +437,11 @@ func (m *App) footerHelpSegments() []shellfooter.Segment {
 				segments = append(segments, shellfooter.Segment{Text: "Plan · next turn", Role: ui.ColorAccent2, Priority: 0})
 			}
 			switch m.fastModeForAgent(agentID) {
-			case ttypes.FastModeOn:
+			case setting.FastModeOn:
 				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast", Role: ui.ColorAccent2, Priority: 0})
-			case ttypes.FastModeUnsupported:
+			case setting.FastModeUnsupported:
 				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast unsupported", Role: ui.ColorWarning, Priority: 0})
-			case ttypes.FastModeUnavailable:
+			case setting.FastModeUnavailable:
 				segments = append(segments, shellfooter.Segment{Text: "⚡ Fast unavailable", Role: ui.ColorWarning, Priority: 0})
 			}
 		}
@@ -468,7 +471,7 @@ func (m *App) backgroundAgentCounts() (working, needsAction int) {
 			needsAction++
 		}
 		switch status.Phase {
-		case ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting, ttypes.AgentCompacting, ttypes.AgentThinking, ttypes.AgentResponding, ttypes.AgentTool, ttypes.AgentChildren, ttypes.AgentRetrying, ttypes.AgentRecovering, ttypes.AgentCancelling:
+		case statuscenter.AgentPreparing, statuscenter.AgentUploading, statuscenter.AgentWaiting, statuscenter.AgentCompacting, statuscenter.AgentThinking, statuscenter.AgentResponding, statuscenter.AgentTool, statuscenter.AgentChildren, statuscenter.AgentRetrying, statuscenter.AgentRecovering, statuscenter.AgentCancelling:
 			working++
 		}
 	}
@@ -584,7 +587,7 @@ func (m *App) hintSegmentText(segment ui.HintSegment) string {
 	}
 }
 
-func headerCost(cost ttypes.CostValue) string {
+func headerCost(cost statuscenter.CostValue) string {
 	if !cost.Known {
 		return "Cost ?"
 	}
@@ -593,9 +596,9 @@ func headerCost(cost ttypes.CostValue) string {
 	}
 	prefix := ""
 	switch cost.Confidence {
-	case ttypes.ConfidenceEstimated:
+	case statuscenter.ConfidenceEstimated:
 		prefix = "~"
-	case ttypes.ConfidenceUpperBound:
+	case statuscenter.ConfidenceUpperBound:
 		prefix = "≤"
 	}
 	return fmt.Sprintf("%s$%.2f", prefix, cost.USD)
@@ -628,7 +631,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		}
 		state, found := m.ws.Status().Agent(node.ID)
 		if !found {
-			state = ttypes.AgentStatusSnapshot{Phase: ttypes.AgentIdle, Detail: "Idle", ModelID: node.Model}
+			state = statuscenter.AgentStatusSnapshot{Phase: statuscenter.AgentIdle, Detail: "Idle", ModelID: node.Model}
 		}
 		action, actionLabel := "agent:"+node.ID, "Switch to Tab"
 		if m.AgentView.IsHidden(node.ID) {
@@ -636,7 +639,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		} else if node.ID == activeAgent && m.EditorState.ActiveView == "" {
 			actionLabel = "Return to Tab"
 		}
-		agentUsage, hasUsage := m.ws.UsageSummary(node.ID, ttypes.UsageThisAgent)
+		agentUsage, hasUsage := m.ws.UsageSummary(node.ID, statuscenter.UsageThisAgent)
 		identity := m.ws.AgentModelIdentity(node.ID)
 		model := firstNonempty(identity.ModelID, "Model unavailable")
 		subtitle := model
@@ -739,14 +742,14 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		if warnings > 0 {
 			lines = append(lines, statusoverview.DetailLine{Label: "Warnings", Value: fmt.Sprintf("%d", warnings), Role: ui.ColorWarning})
 		}
-		actions := make([]ttypes.StatusAction, 0, 1)
+		actions := make([]statuscenter.Action, 0, 1)
 		if blame, ok := ed.BlameAtLine(ed.CursorLine()); ok {
 			lines = append(lines,
 				statusoverview.DetailLine{Label: "Blame", Value: ed.CursorBlameSummary(), Role: ui.ColorMuted},
 				statusoverview.DetailLine{Label: "Commit", Value: blame.Hash, Role: ui.ColorMuted},
 			)
 			if blame.Hash != "" && !blame.Uncommitted {
-				actions = append(actions, ttypes.StatusAction{ID: "copy:blame:" + blame.Hash, Label: "Copy blame commit", Enabled: true})
+				actions = append(actions, statuscenter.Action{ID: "copy:blame:" + blame.Hash, Label: "Copy blame commit", Enabled: true})
 			}
 		}
 		items = append(items, statusoverview.Item{
@@ -754,7 +757,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			Subtitle:      path,
 			Compact:       fmt.Sprintf("%d:%d · %d lines", ed.CursorLine()+1, ed.CursorCol()+1, ed.LineCount()),
 			Active:        path == m.EditorState.ActiveView,
-			Owner:         ttypes.ResourceRef{Kind: ttypes.ResourceEditor, ID: path},
+			Owner:         statuscenter.ResourceRef{Kind: statuscenter.ResourceEditor, ID: path},
 			Lines:         lines,
 			Actions:       actions,
 			PrimaryAction: "editor:" + path, PrimaryLabel: actionLabel, PrimaryEnabled: true,
@@ -778,7 +781,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 				ID: "terminal:" + terminal.ID, Label: terminal.DisplayName(), Summary: state + "  " + placement, Icon: ">_",
 				Subtitle: firstNonempty(terminal.CWD, placement),
 				Active:   terminal.Alive && m.termDock != nil && m.termDock.ActiveID() == terminal.ID,
-				Owner:    ttypes.ResourceRef{Kind: ttypes.ResourceTerminal, ID: terminal.ID},
+				Owner:    statuscenter.ResourceRef{Kind: statuscenter.ResourceTerminal, ID: terminal.ID},
 				Lines: []statusoverview.DetailLine{
 					{Label: "Placement", Value: placement, Role: ui.ColorFg},
 					{Label: "Process", Value: fmt.Sprintf("PID %d", terminal.PID), Role: ui.ColorMuted},
@@ -812,8 +815,8 @@ func usageTurns(count int, known bool) string {
 
 func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 	sections := make([]statusoverview.UsageSection, 0, 4)
-	var previous ttypes.UsageSummary
-	for _, scope := range []ttypes.UsageScope{ttypes.UsageThisAgent, ttypes.UsageSubtree, ttypes.UsageSession} {
+	var previous statuscenter.UsageSummary
+	for _, scope := range []statuscenter.UsageScope{statuscenter.UsageThisAgent, statuscenter.UsageSubtree, statuscenter.UsageSession} {
 		summary, ok := m.ws.UsageSummary(agentID, scope)
 		if !ok {
 			continue
@@ -837,7 +840,7 @@ func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 					identity += " / " + model.ProviderID
 				}
 				if model.AccountID != "" {
-					identity += " / " + ttypes.AccountName(accounts, model.AccountID)
+					identity += " / " + setting.AccountName(accounts, model.AccountID)
 				}
 				lines = append(lines, statusoverview.DetailLine{Value: identity, Role: ui.ColorFg}, statusoverview.DetailLine{Value: usageTurns(model.Turns, model.TurnsKnown) + " · " + usageCount(model.Requests, "request") + " · " + formatCost(model.Cost), Role: ui.ColorMuted})
 			}
@@ -868,7 +871,7 @@ func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 	return sections
 }
 
-func usageEquivalent(a, b ttypes.UsageSummary) bool {
+func usageEquivalent(a, b statuscenter.UsageSummary) bool {
 	return a.InputTotal == b.InputTotal && a.Output == b.Output && a.CacheRead == b.CacheRead && a.CacheWrite == b.CacheWrite && a.Reasoning == b.Reasoning && a.Cost == b.Cost && a.Requests == b.Requests
 }
 
@@ -907,7 +910,7 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 			},
 			PrimaryAction: ownerNavigation(notice.Owner), PrimaryLabel: ownerNavigationLabel(notice.Owner), PrimaryEnabled: notice.Owner.ID != "",
 			DisabledReason: "The originating resource is no longer open",
-			Actions:        append([]ttypes.StatusAction(nil), notice.Actions...),
+			Actions:        append([]statuscenter.Action(nil), notice.Actions...),
 		})
 	}
 	return items
@@ -996,7 +999,7 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		}
 		return nil
 	case action == "lsp:setup":
-		return m.requestProjectTools(ttypes.ProjectToolSetupRequest{Explicit: true}, nil)
+		return m.requestProjectTools(insight.ProjectToolSetupRequest{Explicit: true}, nil)
 	case action == "lsp:stop-all":
 		m.StopLSP()
 		return nil
@@ -1077,12 +1080,12 @@ func statusSummaryText(item statusoverview.Item) string {
 	return builder.String()
 }
 
-func formatAgentState(state ttypes.AgentStatusSnapshot) string {
+func formatAgentState(state statuscenter.AgentStatusSnapshot) string {
 	// The row reports the turn lifecycle, not token-by-token transport phases.
 	// Keep detailed tool/provider state in the expanded information.
 	switch state.Phase {
-	case ttypes.AgentOpening, ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting, ttypes.AgentCompacting,
-		ttypes.AgentThinking, ttypes.AgentResponding, ttypes.AgentTool, ttypes.AgentChildren:
+	case statuscenter.AgentOpening, statuscenter.AgentPreparing, statuscenter.AgentUploading, statuscenter.AgentWaiting, statuscenter.AgentCompacting,
+		statuscenter.AgentThinking, statuscenter.AgentResponding, statuscenter.AgentTool, statuscenter.AgentChildren:
 		if state.NeedsAction {
 			return firstNonempty(state.Detail, "Needs attention")
 		}
@@ -1099,24 +1102,24 @@ func formatAgentState(state ttypes.AgentStatusSnapshot) string {
 	return firstNonempty(label, "Idle")
 }
 
-func formatUsageValue(value ttypes.UsageValue) string {
+func formatUsageValue(value statuscenter.UsageValue) string {
 	if !value.Known {
 		return "Not reported"
 	}
 	label := compactNumber(value.Value)
 	switch value.Confidence {
-	case ttypes.ConfidenceEstimated:
+	case statuscenter.ConfidenceEstimated:
 		return "~" + label
-	case ttypes.ConfidencePartial:
+	case statuscenter.ConfidencePartial:
 		return label + " partial"
-	case ttypes.ConfidenceUpperBound:
+	case statuscenter.ConfidenceUpperBound:
 		return "≤ " + label
 	default:
 		return label
 	}
 }
 
-func formatContext(summary ttypes.UsageSummary) string {
+func formatContext(summary statuscenter.UsageSummary) string {
 	if !summary.ContextUsed.Known {
 		return "Not measured"
 	}
@@ -1128,12 +1131,12 @@ func formatContext(summary ttypes.UsageSummary) string {
 	return fmt.Sprintf("%s / %s · %.1f%%", used, preciseUsageValue(summary.ContextLimit), percent)
 }
 
-func preciseUsageValue(value ttypes.UsageValue) string {
+func preciseUsageValue(value statuscenter.UsageValue) string {
 	if !value.Known {
 		return "Not measured"
 	}
 	prefix := ""
-	if value.Confidence == ttypes.ConfidenceEstimated {
+	if value.Confidence == statuscenter.ConfidenceEstimated {
 		prefix = "~"
 	}
 	switch {
@@ -1146,7 +1149,7 @@ func preciseUsageValue(value ttypes.UsageValue) string {
 	}
 }
 
-func formatReasoning(summary ttypes.UsageSummary) string {
+func formatReasoning(summary statuscenter.UsageSummary) string {
 	value := formatUsageValue(summary.Reasoning)
 	if summary.Reasoning.Known && summary.ReasoningInOut {
 		value += " · included in output"
@@ -1154,14 +1157,14 @@ func formatReasoning(summary ttypes.UsageSummary) string {
 	return value
 }
 
-func formatCost(cost ttypes.CostValue) string {
+func formatCost(cost statuscenter.CostValue) string {
 	if !cost.Known {
 		if cost.USD > 0 {
 			return fmt.Sprintf(">= $%.4f known · partial", cost.USD)
 		}
 		return "Cost unavailable"
 	}
-	estimated := cost.Confidence == ttypes.ConfidenceEstimated || strings.Contains(cost.Source, "catalog")
+	estimated := cost.Confidence == statuscenter.ConfidenceEstimated || strings.Contains(cost.Source, "catalog")
 	if cost.USD > 0 && cost.USD < 0.01 {
 		if estimated {
 			return "<$0.01 estimated"
@@ -1178,20 +1181,20 @@ func formatCost(cost ttypes.CostValue) string {
 	return label
 }
 
-func usageScopeLabel(scope ttypes.UsageScope) string {
+func usageScopeLabel(scope statuscenter.UsageScope) string {
 	switch scope {
-	case ttypes.UsageSubtree:
+	case statuscenter.UsageSubtree:
 		return "With Children"
-	case ttypes.UsageSession:
+	case statuscenter.UsageSession:
 		return "Session"
-	case ttypes.UsageAuxiliary:
+	case statuscenter.UsageAuxiliary:
 		return "Auxiliary"
 	default:
 		return "This Agent"
 	}
 }
 
-func workspaceHealthSummary(insights ttypes.ProjectInsights) string {
+func workspaceHealthSummary(insights insight.ProjectInsights) string {
 	if insights.Errors > 0 || insights.Warnings > 0 {
 		parts := make([]string, 0, 2)
 		if insights.Errors > 0 {
@@ -1215,7 +1218,7 @@ func diagnosticCount(count int, noun string) string {
 	return fmt.Sprintf("%d %s", count, noun)
 }
 
-func editorDiagnosticCounts(diags []workspace.LSPDiagnostic) (errors, warnings int) {
+func editorDiagnosticCounts(diags []insight.LSPDiagnostic) (errors, warnings int) {
 	for _, diagnostic := range diags {
 		switch diagnostic.Severity {
 		case workspace.DiagError:
@@ -1227,33 +1230,33 @@ func editorDiagnosticCounts(diags []workspace.LSPDiagnostic) (errors, warnings i
 	return errors, warnings
 }
 
-func ownerNavigation(owner ttypes.ResourceRef) string {
+func ownerNavigation(owner statuscenter.ResourceRef) string {
 	switch owner.Kind {
-	case ttypes.ResourceAgent:
+	case statuscenter.ResourceAgent:
 		return "agent:" + owner.ID
-	case ttypes.ResourceEditor, ttypes.ResourceFile:
+	case statuscenter.ResourceEditor, statuscenter.ResourceFile:
 		return "editor:" + owner.ID
-	case ttypes.ResourceTerminal:
+	case statuscenter.ResourceTerminal:
 		return "terminal:" + owner.ID
 	default:
 		return ""
 	}
 }
 
-func ownerNavigationLabel(owner ttypes.ResourceRef) string {
+func ownerNavigationLabel(owner statuscenter.ResourceRef) string {
 	switch owner.Kind {
-	case ttypes.ResourceAgent:
+	case statuscenter.ResourceAgent:
 		return "Inspect Agent"
-	case ttypes.ResourceEditor, ttypes.ResourceFile:
+	case statuscenter.ResourceEditor, statuscenter.ResourceFile:
 		return "Open File"
-	case ttypes.ResourceTerminal:
+	case statuscenter.ResourceTerminal:
 		return "Focus Terminal"
 	default:
 		return ""
 	}
 }
 
-func contextRole(summary ttypes.UsageSummary) ui.SemanticColor {
+func contextRole(summary statuscenter.UsageSummary) ui.SemanticColor {
 	if !summary.ContextUsed.Known || !summary.ContextLimit.Known || summary.ContextLimit.Value <= 0 {
 		return ui.ColorMuted
 	}
@@ -1277,22 +1280,22 @@ func diagnosticRole(errors, warnings int) ui.SemanticColor {
 	return ui.ColorMuted
 }
 
-func severityRole(severity ttypes.StatusSeverity) ui.SemanticColor {
+func severityRole(severity statuscenter.Severity) ui.SemanticColor {
 	switch severity {
-	case ttypes.SeverityCritical, ttypes.SeverityError:
+	case statuscenter.SeverityCritical, statuscenter.SeverityError:
 		return ui.ColorError
-	case ttypes.SeverityWarning:
+	case statuscenter.SeverityWarning:
 		return ui.ColorWarning
 	default:
 		return ui.ColorFg
 	}
 }
 
-func severityIcon(severity ttypes.StatusSeverity) string {
+func severityIcon(severity statuscenter.Severity) string {
 	switch severity {
-	case ttypes.SeverityCritical, ttypes.SeverityError:
+	case statuscenter.SeverityCritical, statuscenter.SeverityError:
 		return "×"
-	case ttypes.SeverityWarning:
+	case statuscenter.SeverityWarning:
 		return "!"
 	default:
 		return "i"
@@ -1315,7 +1318,7 @@ func formatDuration(duration time.Duration) string {
 // noticeAge is the row's quiet trailing column: a compact age, marked when
 // unread or resolved. "Read" is the normal state and is not repeated per row;
 // the expanded detail keeps the exact time and read state.
-func noticeAge(notice ttypes.NotificationRecord, now time.Time) string {
+func noticeAge(notice statuscenter.NotificationRecord, now time.Time) string {
 	age := ui.RelativeAge(notice.UpdatedAt, now)
 	switch {
 	case !notice.ResolvedAt.IsZero():

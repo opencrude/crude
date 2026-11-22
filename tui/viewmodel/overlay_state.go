@@ -34,6 +34,4 @@ func (o *OverlayState) IsBlocking() bool               { return o.Blocking }
 func (o *OverlayState) SetYolo(v bool)                 { o.Yolo = v }
 func (o *OverlayState) IsYolo() bool                   { return o.Yolo }
 func (o *OverlayState) SetBlockedSessionID(id string)  { o.BlockedSessionID = id }
-func (o *OverlayState) GetBlockedSessionID() string    { return o.BlockedSessionID }
 func (o *OverlayState) SetSettingsCategory(cat string) { o.SettingsCategory = cat }
-func (o *OverlayState) GetSettingsCategory() string    { return o.SettingsCategory }

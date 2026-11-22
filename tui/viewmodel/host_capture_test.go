@@ -12,7 +12,6 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
-	ttypes "crude/types"
 )
 
 func openTestEditor(t *testing.T, app *App) string {
@@ -196,7 +195,7 @@ func TestKeyboardDismiss_CapturedSelectionClearsCaptureAndAutoScroll(t *testing.
 		t.Fatal("keyboard should end in-progress selection")
 	}
 
-	res := app.rootHandleFocus(shellchat.ScreenID, ttypes.SelectionTickMsg(time.Now()))
+	res := app.rootHandleFocus(shellchat.ScreenID, shellchat.SelectionTickMsg(time.Now()))
 	if res.Handled && scroll.Offset() != beforeOffset {
 		t.Fatalf("selection auto-scroll should be disarmed, offset=%d before=%d", scroll.Offset(), beforeOffset)
 	}

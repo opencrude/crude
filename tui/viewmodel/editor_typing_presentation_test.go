@@ -15,18 +15,19 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/surface"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestConnectedEditorTypingKeepsUnchangedPresentation(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
-			server := &immediateTreeDiagRuntime{diags: []workspace.LSPDiagnostic{{Line: 4, Col: 3, EndLine: 4, EndCol: 12, Severity: editor.DiagError, Message: "retained diagnostic"}}}
+			server := &immediateTreeDiagRuntime{diags: []insight.LSPDiagnostic{{Line: 4, Col: 3, EndLine: 4, EndCol: 12, Severity: editor.DiagError, Message: "retained diagnostic"}}}
 			runtime := remoteJourneyRuntime(t, "http://unused.invalid", func(w *workspace.Workspace) {
 				w.LSPMgr.SetRuntime(server)
 				settings := w.AppDefaults()
-				settings.LSP = types.DefaultLSPSettings()
+				settings.LSP = setting.DefaultLSP()
 				// This presentation journey checks the unchanged sidebar, not
 				// source-current tree counters (covered by the three-shell test).
 				settings.LSP.DiagInTree = false
@@ -48,7 +49,7 @@ func TestConnectedEditorTypingKeepsUnchangedPresentation(t *testing.T) {
 			// shared publication for typing-induced flicker.
 			remoteJourneyUntil(t, []remoteJourneyShell{one}, func() bool {
 				state, _ := ed.InsightStatus()
-				return state == types.InsightCurrent && len(ed.Diagnostics()) == 1
+				return state == insight.Current && len(ed.Diagnostics()) == 1
 			})
 			runAppCommand(t, app, app.drainEditorSyntaxCommands())
 			_, cmd := app.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})

@@ -2,7 +2,7 @@ package chatprojection
 
 import (
 	"crude/tui/cell"
-	"crude/types"
+	"crude/types/conversation"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,9 +10,9 @@ import (
 
 func TestActivitySingletonRoundsKeepUsefulRecentContext(t *testing.T) {
 	r := newActivityRenderer()
-	var messages []types.ChatMessage
+	var messages []conversation.ChatMessage
 	for i := range 9 {
-		messages = append(messages, types.ChatMessage{InternalID: fmt.Sprint(i), ToolRoundID: fmt.Sprint(i), Role: types.RoleTool, ToolName: "read_file", ToolArgs: fmt.Sprintf("file-%d.go", i), ToolStatus: types.ToolStatusSuccess})
+		messages = append(messages, conversation.ChatMessage{InternalID: fmt.Sprint(i), ToolRoundID: fmt.Sprint(i), Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: fmt.Sprintf("file-%d.go", i), ToolStatus: conversation.ToolStatusSuccess})
 	}
 	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
@@ -25,7 +25,7 @@ func TestActivitySingletonRoundsKeepUsefulRecentContext(t *testing.T) {
 	if !strings.Contains(text, "3 hidden") {
 		t.Fatalf("hidden evidence has no count: %s", text)
 	}
-	messages = append(messages, types.ChatMessage{InternalID: "pending", Role: types.RoleUser, PendingSteering: true, Content: "also check tests"})
+	messages = append(messages, conversation.ChatMessage{InternalID: "pending", Role: conversation.RoleUser, PendingSteering: true, Content: "also check tests"})
 	r.SyncMessages(messages, 2, 0)
 	rows, _, _ = r.ExportMessageRows(100)
 	if strings.Join(rows[0].Lines, "\n") != text {
@@ -40,7 +40,7 @@ func TestActivitySingletonRoundsKeepUsefulRecentContext(t *testing.T) {
 
 func TestActivityRetentionNeverSplitsRequestRound(t *testing.T) {
 	r := newActivityRenderer()
-	var messages []types.ChatMessage
+	var messages []conversation.ChatMessage
 	for i := range 12 {
 		round := "old"
 		if i >= 3 && i < 10 {
@@ -48,7 +48,7 @@ func TestActivityRetentionNeverSplitsRequestRound(t *testing.T) {
 		} else if i >= 10 {
 			round = fmt.Sprint(i)
 		}
-		messages = append(messages, types.ChatMessage{InternalID: fmt.Sprint(i), ToolRoundID: round, Role: types.RoleTool, ToolName: "read_file", ToolArgs: fmt.Sprintf("file-%02d.go", i), ToolStatus: types.ToolStatusSuccess})
+		messages = append(messages, conversation.ChatMessage{InternalID: fmt.Sprint(i), ToolRoundID: round, Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: fmt.Sprintf("file-%02d.go", i), ToolStatus: conversation.ToolStatusSuccess})
 	}
 	r.SyncMessages(messages, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
@@ -62,7 +62,7 @@ func TestActivityRetentionNeverSplitsRequestRound(t *testing.T) {
 
 func TestNewWorkDoesNotImmediatelyHideCompletedLeaves(t *testing.T) {
 	r := newActivityRenderer()
-	msgs := []types.ChatMessage{{InternalID: "one", Role: "tool", ToolName: "read_file", ToolArgs: "first.go", ToolStatus: "success"}, {InternalID: "two", Role: "tool", ToolName: "read_file", ToolArgs: "second.go", ToolStatus: "calling"}}
+	msgs := []conversation.ChatMessage{{InternalID: "one", Role: "tool", ToolName: "read_file", ToolArgs: "first.go", ToolStatus: "success"}, {InternalID: "two", Role: "tool", ToolName: "read_file", ToolArgs: "second.go", ToolStatus: "calling"}}
 	r.SyncMessages(msgs, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	text := strings.Join(rows[0].Lines, "\n")
@@ -73,7 +73,7 @@ func TestNewWorkDoesNotImmediatelyHideCompletedLeaves(t *testing.T) {
 
 func TestCancelledContentRemainsReadableWithoutStrikethrough(t *testing.T) {
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{{InternalID: "a", Role: "assistant", Content: "Completed investigation and useful partial findings", Incomplete: true, IncompleteReason: "cancelled"}, {InternalID: "t", Role: "tool", ToolName: "read_file", ToolArgs: "source.go", ToolStatus: types.ToolStatusCancelled}}, 1, 0)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "a", Role: "assistant", Content: "Completed investigation and useful partial findings", Incomplete: true, IncompleteReason: "cancelled"}, {InternalID: "t", Role: "tool", ToolName: "read_file", ToolArgs: "source.go", ToolStatus: conversation.ToolStatusCancelled}}, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
 	for _, row := range rows {
 		for _, line := range row.Native {
@@ -88,9 +88,9 @@ func TestCancelledContentRemainsReadableWithoutStrikethrough(t *testing.T) {
 
 func TestActivityRetainsTwoRequestRoundsUntilThirdArrives(t *testing.T) {
 	r := newActivityRenderer()
-	msgs := []types.ChatMessage{{InternalID: "one", ToolRoundID: "request-1", Role: "tool", ToolName: "read_file", ToolArgs: "first.go", ToolStatus: "success"}, {InternalID: "two", ToolRoundID: "request-2", Role: "tool", ToolName: "read_file", ToolArgs: "second.go", ToolStatus: "calling"}}
+	msgs := []conversation.ChatMessage{{InternalID: "one", ToolRoundID: "request-1", Role: "tool", ToolName: "read_file", ToolArgs: "first.go", ToolStatus: "success"}, {InternalID: "two", ToolRoundID: "request-2", Role: "tool", ToolName: "read_file", ToolArgs: "second.go", ToolStatus: "calling"}}
 	for i := range 4 {
-		msgs = append(msgs, types.ChatMessage{InternalID: fmt.Sprintf("sibling-%d", i), ToolRoundID: "request-2", Role: types.RoleTool, ToolName: "read_file", ToolStatus: types.ToolStatusSuccess})
+		msgs = append(msgs, conversation.ChatMessage{InternalID: fmt.Sprintf("sibling-%d", i), ToolRoundID: "request-2", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: conversation.ToolStatusSuccess})
 	}
 	r.SyncMessages(msgs, 1, 0)
 	rows, _, _ := r.ExportMessageRows(100)
@@ -98,14 +98,14 @@ func TestActivityRetainsTwoRequestRoundsUntilThirdArrives(t *testing.T) {
 		t.Fatal("previous round folded before a third request")
 	}
 	msgs[1].ToolStatus = "success"
-	msgs = append(msgs, types.ChatMessage{InternalID: "three", ToolRoundID: "request-3", Role: "tool", ToolName: "read_file", ToolArgs: "third.go", ToolStatus: "calling"})
+	msgs = append(msgs, conversation.ChatMessage{InternalID: "three", ToolRoundID: "request-3", Role: "tool", ToolName: "read_file", ToolArgs: "third.go", ToolStatus: "calling"})
 	r.SyncMessages(msgs, 2, 0)
 	rows, _, _ = r.ExportMessageRows(100)
 	text := strings.Join(rows[0].Lines, "\n")
 	if strings.Contains(text, "first.go") || !strings.Contains(text, "second.go") || !strings.Contains(text, "third.go") {
 		t.Fatalf("incorrect retained rounds: %s", text)
 	}
-	msgs = append(msgs, types.ChatMessage{InternalID: "four", ToolRoundID: "request-3", Role: "tool", ToolName: "read_file", ToolArgs: "fourth.go", ToolStatus: "calling"})
+	msgs = append(msgs, conversation.ChatMessage{InternalID: "four", ToolRoundID: "request-3", Role: "tool", ToolName: "read_file", ToolArgs: "fourth.go", ToolStatus: "calling"})
 	r.SyncMessages(msgs, 3, 0)
 	rows, _, _ = r.ExportMessageRows(100)
 	if !strings.Contains(strings.Join(rows[0].Lines, "\n"), "second.go") {
@@ -122,7 +122,7 @@ func TestActivityRetainsTwoRequestRoundsUntilThirdArrives(t *testing.T) {
 
 func TestStoppedBoundaryHasNoTranscriptGeometry(t *testing.T) {
 	r := newActivityRenderer()
-	r.SyncMessages([]types.ChatMessage{{InternalID: "stop", Role: types.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: "stop"}}, 1, 0)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "stop", Role: conversation.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: "stop"}}, 1, 0)
 	snapshot := r.ExportMessageRowsSnapshot(100)
 	if len(snapshot.Rows) != 0 || snapshot.ContentHeight != 0 || r.vl.ItemCount() != 0 {
 		t.Fatalf("redundant stop notice reserved transcript geometry: %+v", snapshot)

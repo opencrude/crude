@@ -3,22 +3,22 @@ package workspace
 import (
 	"testing"
 
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestWorkspaceSettingsOverlayDoesNotMutateAppDefaults(t *testing.T) {
 	setTestHome(t)
 	w := &Workspace{WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{}}
-	app := ttypes.AppSettings{
-		Theme:  ttypes.ThemeSettings{Preset: "dark"},
-		Editor: ttypes.EditorSettings{TabSize: 4, WordWrap: true},
+	app := setting.App{
+		Theme:  setting.Theme{Preset: "dark"},
+		Editor: setting.Editor{TabSize: 4, WordWrap: true},
 	}
-	ttypes.ApplyAppDefaults(&app)
+	setting.ApplyAppDefaults(&app)
 	w.SetAppDefaults(app)
 
 	working := app
 	working.Editor.TabSize = 8
-	if err := w.SaveWorkspaceSettings(ttypes.OverridesFromDiff(app, working)); err != nil {
+	if err := w.SaveWorkspaceSettings(setting.OverridesFromDiff(app, working)); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.AppDefaults().Editor.TabSize; got != 4 {
@@ -36,18 +36,18 @@ func TestWorkspaceSettingsOverlayDoesNotMutateAppDefaults(t *testing.T) {
 func TestWorkspaceCanExplicitlyDisableInheritedAutosave(t *testing.T) {
 	setTestHome(t)
 	w := &Workspace{WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{}}
-	app := ttypes.AppSettings{Editor: ttypes.EditorSettings{AutoSave: ttypes.AutoSaveAfterDelay, AutoSaveDelay: 900}}
-	ttypes.ApplyAppDefaults(&app)
+	app := setting.App{Editor: setting.Editor{AutoSave: setting.AutoSaveAfterDelay, AutoSaveDelay: 900}}
+	setting.ApplyAppDefaults(&app)
 	w.SetAppDefaults(app)
 	working := app
-	working.Editor.AutoSave = ttypes.AutoSaveOff
-	if err := w.SaveWorkspaceSettings(ttypes.OverridesFromDiff(app, working)); err != nil {
+	working.Editor.AutoSave = setting.AutoSaveOff
+	if err := w.SaveWorkspaceSettings(setting.OverridesFromDiff(app, working)); err != nil {
 		t.Fatal(err)
 	}
-	if got := w.LoadAppSettings().Editor.AutoSave; got != ttypes.AutoSaveOff {
+	if got := w.LoadAppSettings().Editor.AutoSave; got != setting.AutoSaveOff {
 		t.Fatalf("effective mode=%q", got)
 	}
-	if got := w.AppDefaults().Editor.AutoSave; got != ttypes.AutoSaveAfterDelay {
+	if got := w.AppDefaults().Editor.AutoSave; got != setting.AutoSaveAfterDelay {
 		t.Fatalf("app default mutated to %q", got)
 	}
 }
@@ -58,16 +58,16 @@ func TestWorkspaceCanExplicitlyDisableInheritedAutosave(t *testing.T) {
 func TestWorkspaceKeepsInheritingUntouchedAppSettings(t *testing.T) {
 	setTestHome(t)
 	w := &Workspace{WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{}}
-	app := ttypes.AppSettings{
-		Editor: ttypes.EditorSettings{TabSize: 4, Minimap: true},
-		LSP:    ttypes.DefaultLSPSettings(),
+	app := setting.App{
+		Editor: setting.Editor{TabSize: 4, Minimap: true},
+		LSP:    setting.DefaultLSP(),
 	}
-	ttypes.ApplyAppDefaults(&app)
+	setting.ApplyAppDefaults(&app)
 	w.SetAppDefaults(app)
 
 	working := app
 	working.Editor.TabSize = 2
-	if err := w.SaveWorkspaceSettings(ttypes.OverridesFromDiff(app, working)); err != nil {
+	if err := w.SaveWorkspaceSettings(setting.OverridesFromDiff(app, working)); err != nil {
 		t.Fatal(err)
 	}
 

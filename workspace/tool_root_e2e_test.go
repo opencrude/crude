@@ -6,7 +6,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestWorkspaceSwitchRebindsBackendToolRoot(t *testing.T) {
@@ -16,10 +16,10 @@ func TestWorkspaceSwitchRebindsBackendToolRoot(t *testing.T) {
 	rootA := t.TempDir()
 	rootB := t.TempDir()
 	cfg := workspaceToolRootConfig()
-	ws := NewWorkspace(rootA, "root-model", "tester", ttypes.Settings{}, &testLogger{})
+	ws := NewWorkspace(rootA, "root-model", "tester", setting.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetBackendConfig(cfg, home)
-	ws.SetAppDefaults(ttypes.AppSettings{Accounts: ws.AllAccounts()})
+	ws.SetAppDefaults(setting.App{Accounts: ws.AllAccounts()})
 
 	first, err := ws.CreateSession(cfg, home)
 	if err != nil {

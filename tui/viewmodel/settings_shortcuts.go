@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	settingsui "crude/tui/settings"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -22,7 +22,7 @@ type settingsShortcutResultMsg struct {
 	category   int
 }
 
-func (m *App) saveSettingsShortcut(scope types.SettingsScope, edits []types.SettingEdit, label string, reset *settingsui.Model, category int) tea.Cmd {
+func (m *App) saveSettingsShortcut(scope setting.Scope, edits []setting.Edit, label string, reset *settingsui.Model, category int) tea.Cmd {
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	run := owner.PreparePreferencesSave(scope, edits)
 	return func() tea.Msg {
@@ -67,8 +67,8 @@ func (m *App) applySettingsShortcut(msg settingsShortcutResultMsg) {
 	m.Feedback.NotifyInfo(msg.label)
 }
 
-func promotedSessionEdits(settings types.Settings) []types.SettingEdit {
-	var edits []types.SettingEdit
+func promotedSessionEdits(settings setting.Settings) []setting.Edit {
+	var edits []setting.Edit
 	for role, value := range settings.SessionOverrides {
 		name, isProfile := strings.CutPrefix(role, "profile/")
 		if isProfile {
@@ -109,16 +109,16 @@ func promotedSessionEdits(settings types.Settings) []types.SettingEdit {
 				path = []string{"agents", "agent_profiles", name, profileLeaf}
 			}
 			raw, _ := json.Marshal(field.value)
-			edits = append(edits, types.SettingEdit{Path: path, After: raw})
+			edits = append(edits, setting.Edit{Path: path, After: raw})
 		}
 	}
 	if settings.SessionMultiAgent != nil {
 		raw, _ := json.Marshal(*settings.SessionMultiAgent)
-		edits = append(edits, types.SettingEdit{Path: []string{"agents", "Enabled"}, After: raw})
+		edits = append(edits, setting.Edit{Path: []string{"agents", "Enabled"}, After: raw})
 	}
 	if settings.SessionMaxSubAgents != nil {
 		raw, _ := json.Marshal(*settings.SessionMaxSubAgents)
-		edits = append(edits, types.SettingEdit{Path: []string{"agents", "MaxConcurrent"}, After: raw})
+		edits = append(edits, setting.Edit{Path: []string{"agents", "MaxConcurrent"}, After: raw})
 	}
 	return edits
 }

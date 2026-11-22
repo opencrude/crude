@@ -3,7 +3,8 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/insight"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"crude/internal/fileuri"
-	"crude/types"
 	"crude/workspace/document"
 	"crude/workspace/localhistory"
 )
@@ -102,7 +102,7 @@ func (s *DocumentService) prepareDraftOverwrite(ctx context.Context, owner docum
 	preview := ReviewedEditPreview{
 		ID: "save-review-" + rand.Text(), Label: "Replace file",
 		Text:     fmt.Sprintf("%s\nEncoding: %s", filepath.ToSlash(rel), encoding.Label()),
-		Boundary: types.InsightBoundary{Source: s.analysisIdentityLocked(d)},
+		Boundary: insight.Boundary{Source: s.analysisIdentityLocked(d)},
 		Files: []ReviewedEditFile{{
 			Path: path, BeforeSHA256: reviewedHash(before), AfterSHA256: reviewedHash(after),
 			Mode: uint32(file.info.Mode()), BeforeBytes: len(before), AfterBytes: len(after),

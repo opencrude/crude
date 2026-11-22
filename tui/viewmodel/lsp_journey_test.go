@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"crude/tui/editor"
-	model "crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
@@ -36,7 +36,7 @@ func TestLSPCompletionReplacesPrefixAndRejectsLateOwners(t *testing.T) {
 	// canonical receipt. Connected snippet journeys cover the real author history.
 	local, _, standalone := lspJourneyEditor(t, "fmt.Pr")
 	standalone.SetCursorPosition(0, 6)
-	if err := standalone.ApplyCompletion(model.CompletionItem{Label: "Println", InsertText: "Println"}); err != nil {
+	if err := standalone.ApplyCompletion(insight.CompletionItem{Label: "Println", InsertText: "Println"}); err != nil {
 		t.Fatal(err)
 	}
 	local.adoptEditorSnippet(standalone)
@@ -51,7 +51,7 @@ func TestLSPCompletionReplacesPrefixAndRejectsLateOwners(t *testing.T) {
 	app, port := completionTestApp(t, 120, 40, "fmt.Pr")
 	ed := app.EditorState.Editor
 	ed.SetCursorPosition(0, 6)
-	port.set.Entries = []model.LSPCompletionEntry{{ID: "original-println", Insertion: model.CompletionItem{Label: "Println", InsertText: "Println"}}}
+	port.set.Entries = []insight.LSPCompletionEntry{{ID: "original-println", Insertion: insight.CompletionItem{Label: "Println", InsertText: "Println"}}}
 	completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 	if app.completion == nil || app.completion.screen == nil {
 		t.Fatal("completion did not render")
@@ -99,7 +99,7 @@ type renamePreviewPort struct {
 	calls  int
 }
 
-func (p *renamePreviewPort) PrepareLSPRename(context.Context, model.InsightSource, int, int, string) (workspace.ReviewedEditPreview, error) {
+func (p *renamePreviewPort) PrepareLSPRename(context.Context, insight.Source, int, int, string) (workspace.ReviewedEditPreview, error) {
 	return workspace.ReviewedEditPreview{}, errors.New("unexpected second prepare")
 }
 func (p *renamePreviewPort) ApplyReviewedEdit(_ context.Context, id, digest string) (workspace.ReviewedEditResult, error) {

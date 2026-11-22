@@ -14,19 +14,19 @@ import (
 	"crude/agent/hostshell"
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/network"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/internal/network"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestSettingsFetchRedactsAllCredentialContainers(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
-	ws.SetAppDefaults(types.AppSettings{
+	ws.SetAppDefaults(setting.App{
 		Accounts:     map[string]provider.Account{"one": {ID: "one", APIKey: "api-secret", Connection: provider.Template{Headers: map[string]string{"Authorization": "header-secret"}, ExtraBody: map[string]any{"token": "body-secret"}}}},
 		Network:      network.Settings{ProxyURL: "http://user:proxy-secret@localhost:8080?token=query-secret"},
 		Capabilities: captypes.Settings{Connections: map[string]captypes.ConnectionConfig{"mcp": {ID: "mcp", Environment: map[string]string{"KEY": "env-secret"}, Headers: map[string]string{"Authorization": "mcp-secret"}, Args: []string{"arg-secret"}}}},
@@ -58,7 +58,7 @@ func TestSettingsFetchRedactsAllCredentialContainers(t *testing.T) {
 }
 
 func TestSettingsFetchKeepsCapabilityOverridePresenceWhileRedacting(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	stored := `{"capabilities":{"removed_group":"private","connections":{"one":{"disabled":false,"url":"http://user:private@example.test/?token=private","headers":{"Authorization":"private"},"args":["private"],"removed_token":"private","timeout_seconds":"obsolete"},"removed":null},"sources":{"local":{"location":"https://user:private@example.test/?token=private"}}}}`
 	if err := ws.WorkspaceDB.SetSetting("workspace_settings", stored); err != nil {
@@ -75,14 +75,14 @@ func TestSettingsFetchKeepsCapabilityOverridePresenceWhileRedacting(t *testing.T
 	if !reflect.DeepEqual(have, want) {
 		t.Fatalf("redaction invented explicit fields or leaked secrets: %s", got.Overrides.Capabilities)
 	}
-	if ws.WorkspaceDB.GetSetting("workspace_settings") != stored {
+	if ws.WorkspaceDB.Setting("workspace_settings") != stored {
 		t.Fatal("reading settings rewrote the layer")
 	}
 }
 
 func TestSessionSettingsDTOCarriesOmittedFields(t *testing.T) {
 	disabled := false
-	value := publicSession(types.Settings{SessionMainAgent: "crafter", SessionMultiAgent: &disabled, SessionOverrides: map[string]types.CategorySettings{"root/crafter": {Model: "specific"}}, APIKey: "secret"})
+	value := publicSession(setting.Settings{SessionMainAgent: "crafter", SessionMultiAgent: &disabled, SessionOverrides: map[string]setting.Category{"root/crafter": {Model: "specific"}}, APIKey: "secret"})
 	raw, err := json.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
@@ -124,9 +124,9 @@ func TestAccountDraftSecretKeepIsExplicitAndDetached(t *testing.T) {
 }
 
 func TestDraftModelsChecksIdentityWithoutConfigRevision(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
-	ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {ID: "one", APIKey: "secret"}}})
+	ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": {ID: "one", APIKey: "secret"}}})
 	a := &actor{ws: ws}
 	raw, err := coreprotocol.Marshal(coreprotocol.Ptr(coreprotocol.AccountModelsRequest{AccountID: "one", Draft: &coreprotocol.AccountDraft{ID: "another"}}))
 	if err != nil {
@@ -173,9 +173,9 @@ func TestConfigProfilesProduceStableSettingsRevision(t *testing.T) {
 // Terminal shells are a fact of the core's machine; a remote shell must offer
 // the shells installed where its terminals will actually run.
 func TestSettingsFetchCarriesCoreHostTerminalShells(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
-	ws.SetAppDefaults(types.AppSettings{})
+	ws.SetAppDefaults(setting.App{})
 	a := &actor{ws: ws}
 	run, _, known := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: emptyPayload})
 	if !known {

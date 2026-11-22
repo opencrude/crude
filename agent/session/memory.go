@@ -12,7 +12,7 @@ import (
 	"crude/agent/memory"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/tools"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 // Recall defaults; overridable via memory settings (types.MemorySettings).
@@ -53,7 +53,7 @@ func (s *Session) SummaryTitle() string {
 func (s *Session) refreshMemorySummary(ctx context.Context, store *memory.Store) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	summary, found, err := store.GetSessionSummary(ctx, s.sessionID)
+	summary, found, err := store.SessionSummary(ctx, s.sessionID)
 	if err != nil || !found || s.MemoryStore() != store {
 		return
 	}
@@ -76,15 +76,15 @@ func (s *Session) MemoryStore() *memory.Store {
 }
 
 // memorySettings returns the effective memory configuration.
-func (s *Session) memorySettings() ttypes.MemorySettings {
+func (s *Session) memorySettings() setting.Memory {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.memorySettingsLocked()
 }
 
-func (s *Session) memorySettingsLocked() ttypes.MemorySettings {
+func (s *Session) memorySettingsLocked() setting.Memory {
 	if s.cfg == nil {
-		return ttypes.MemorySettings{}
+		return setting.Memory{}
 	}
 	settings := s.cfg.Memory
 	if settings.MemoryCategory.Enabled != nil && !*settings.MemoryCategory.Enabled {

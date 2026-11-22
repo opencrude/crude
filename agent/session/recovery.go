@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -276,11 +276,11 @@ func (s *Session) newRecoverySupervisor(
 	state *recoveryRunState,
 	initial *recoverytypes.Status,
 	sender EventSender,
-) (*agent.Supervisor, error) {
-	supervisor := agent.NewSupervisor(agentID, generation, initial)
+) (*turnloop.Supervisor, error) {
+	supervisor := turnloop.NewSupervisor(agentID, generation, initial)
 	slot := &recoverySlot{id: supervisor.IncidentID(), generation: generation, wake: make(chan struct{}, 1)}
 	supervisor.Wake = slot.wake
-	supervisor.Emit = func(event agent.AgentEvent) {
+	supervisor.Emit = func(event turnloop.AgentEvent) {
 		if status, ok := event.Data.(recoverytypes.Status); ok {
 			s.recoveryMu.Lock()
 			if current := s.recoverySlots[agentID]; current == slot {
@@ -335,7 +335,7 @@ func (s *Session) newRecoverySupervisor(
 	return supervisor, nil
 }
 
-func (s *Session) persistPendingRecovery(supervisor *agent.Supervisor) error {
+func (s *Session) persistPendingRecovery(supervisor *turnloop.Supervisor) error {
 	if supervisor == nil {
 		return nil
 	}
@@ -344,10 +344,10 @@ func (s *Session) persistPendingRecovery(supervisor *agent.Supervisor) error {
 
 // Retry the same accepted boundary, not the stochastic provider request or tool
 // round that produced it. This runs only on the owning off-UI execution thread.
-func persistRecoveryBoundary(ctx context.Context, supervisor *agent.Supervisor) error {
+func persistRecoveryBoundary(ctx context.Context, supervisor *turnloop.Supervisor) error {
 	for {
 		if err := supervisor.Persist(supervisor.CheckpointStatus()); err != nil {
-			if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+			if !supervisor.Await(ctx, turnloop.AttentionRecovery(turnloop.RecoveryFailureStorage, err)) {
 				return ctx.Err()
 			}
 			continue
@@ -594,7 +594,7 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		s.orchMu.Lock()
 		_, root := s.orchestrators[agentID]
 		s.orchMu.Unlock()
-		if goal, ok := s.Goal(); root && ok && goal.Status == ttypes.GoalActive {
+		if goal, ok := s.Goal(); root && ok && goal.Status == conversation.GoalActive {
 			_, _ = s.PauseGoal("Paused because the unfinished run was stopped. Resume it with /goal resume.")
 		}
 		if root {
@@ -655,7 +655,7 @@ func (s *Session) settleParkedRecovery(agentID, recoveryID string, generation ui
 			return nil
 		}
 		if runner := s.SubAgentRunner(); runner != nil {
-			if handle, ok := runner.Manager().GetActive(agent.AgentID(agentID)); ok {
+			if handle, ok := runner.Manager().Active(turnloop.AgentID(agentID)); ok {
 				handle.Cancel()
 				return nil
 			}
@@ -694,7 +694,7 @@ func (s *Session) settleParkedRecovery(agentID, recoveryID string, generation ui
 		}
 	}
 
-	var cancelledChild *agent.SubAgentResult
+	var cancelledChild *turnloop.SubAgentResult
 	cancelledStatus := checkpoint.Status
 	cancelledStatus.State = recoverytypes.Cancelled
 	cancelledStatus.RetryAt = time.Time{}
@@ -722,9 +722,9 @@ func (s *Session) settleParkedRecovery(agentID, recoveryID string, generation ui
 			string(owner.Spec.ID) != agentID {
 			return errors.New("the child task's owner record is unreadable")
 		}
-		result := agent.SubAgentResult{
+		result := turnloop.SubAgentResult{
 			AgentID: owner.Spec.ID, SessionID: agentID, Name: owner.Spec.Name,
-			Category: owner.Spec.Category, Status: agent.SubAgentCancelled,
+			Category: owner.Spec.Category, Status: turnloop.SubAgentCancelled,
 			HistoryMessageID: owner.Spec.HistoryMessageID,
 			Errors:           []string{"Cancelled explicitly while recovery was pending."},
 		}
@@ -736,7 +736,7 @@ func (s *Session) settleParkedRecovery(agentID, recoveryID string, generation ui
 		if err != nil {
 			return fmt.Errorf("open the child session database: %w", err)
 		}
-		handle := &agent.SubAgentHandle{
+		handle := &turnloop.SubAgentHandle{
 			DB: childDB, SessionID: agentID, Spec: owner.Spec,
 		}
 		checkpoint, err = publishStoppedChildRecovery(handle, checkpoint, cancelledStatus)
@@ -778,7 +778,7 @@ func (s *Session) settleParkedRecovery(agentID, recoveryID string, generation ui
 		if err := s.finalizeTurn(
 			archive, prefixLen, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)},
 			"", checkpoint.PendingInput.InternalID,
-			ttypes.TurnIdentity{Generation: generation}, active,
+			conversation.TurnIdentity{Generation: generation}, active,
 		); err != nil {
 			return fmt.Errorf("finalize the stopped turn: %w", err)
 		}
@@ -813,7 +813,7 @@ func (s *Session) settleParkedRecovery(agentID, recoveryID string, generation ui
 		if s.sender != nil {
 			s.sender.SendAgentEventWithID("sub_agent_completed", map[string]string{
 				"agent_id": agentID, "agent_name": cancelledChild.Name,
-				"category": cancelledChild.Category, "status": string(agent.SubAgentCancelled),
+				"category": cancelledChild.Category, "status": string(turnloop.SubAgentCancelled),
 			}, agentID)
 		}
 	}
@@ -855,7 +855,7 @@ func (s *Session) publishChildCancelled(agentID, recoveryID string) {
 	}
 }
 
-func publishStoppedChildRecovery(handle *agent.SubAgentHandle, checkpoint sessiondb.RecoveryCheckpoint, status recoverytypes.Status) (sessiondb.RecoveryCheckpoint, error) {
+func publishStoppedChildRecovery(handle *turnloop.SubAgentHandle, checkpoint sessiondb.RecoveryCheckpoint, status recoverytypes.Status) (sessiondb.RecoveryCheckpoint, error) {
 	agentID := string(handle.Spec.ID)
 	durable, open, err := sessiondb.LoadRecoveryCheckpoint(handle.DB, handle.SessionID, agentID)
 	if err != nil {

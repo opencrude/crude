@@ -14,8 +14,8 @@ import (
 
 	"crude/agent/collaboration"
 	"crude/agent/sessiondb"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/handover"
 	recoverytypes "crude/types/recovery"
 )
@@ -263,7 +263,7 @@ func (s *Session) handoverHasRecovery() bool {
 
 func (s *Session) handoverGoalEligibleLocked(waiting bool) bool {
 	g := s.goal.record
-	return s.goal.present && g.Goal.Status == types.GoalActive && g.Goal.Waiting == waiting && g.VerifierID == "" &&
+	return s.goal.present && g.Goal.Status == conversation.GoalActive && g.Goal.Waiting == waiting && g.VerifierID == "" &&
 		(g.Goal.TokenBudget <= 0 || g.Goal.TokensUsed < g.Goal.TokenBudget) &&
 		s.goal.emptyTurns < goalStrikeLimit && s.goal.failingTurns < goalStrikeLimit && s.goal.verifierFailures < goalStrikeLimit
 }
@@ -410,7 +410,7 @@ func (s *Session) ContinueGoalHandover(operationID, token, successorCohort, succ
 	}
 	s.admissionMu.Lock()
 	s.settingsOperationMu.Lock()
-	var published *types.Goal
+	var published *conversation.Goal
 	defer func() {
 		s.settingsOperationMu.Unlock()
 		s.admissionMu.Unlock()
@@ -525,7 +525,7 @@ func (s *Session) readyGoalHandover(source goalHandoverSource, settled collabora
 	}
 	s.admissionMu.Lock()
 	s.settingsOperationMu.Lock()
-	var published *types.Goal
+	var published *conversation.Goal
 	defer func() {
 		s.settingsOperationMu.Unlock()
 		s.admissionMu.Unlock()
@@ -617,7 +617,7 @@ func (s *Session) readyGoalHandoverLocked() bool {
 func (s *Session) goalAllowsIdleHandover() bool {
 	s.goalMu.Lock()
 	defer s.goalMu.Unlock()
-	return !s.goal.present || s.goal.record.Goal.Status != types.GoalActive || s.readyGoalHandoverLocked()
+	return !s.goal.present || s.goal.record.Goal.Status != conversation.GoalActive || s.readyGoalHandoverLocked()
 }
 
 // saveGoalWithHandoverLocked invalidates control changes in the same transaction

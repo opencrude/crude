@@ -133,8 +133,8 @@ func (reg *subPaneProjectionRegistry) Get(paneID string, paneType workspace.Pane
 	return p
 }
 
-// GetExisting returns the projection only if it already exists.
-func (reg *subPaneProjectionRegistry) GetExisting(paneID string) *subPaneProjection {
+// Existing returns the projection only if it already exists.
+func (reg *subPaneProjectionRegistry) Existing(paneID string) *subPaneProjection {
 	return reg.projections[paneID]
 }
 

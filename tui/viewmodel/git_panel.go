@@ -10,14 +10,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/gitdiff"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/tui/wm"
-	types "crude/types"
+	"crude/types/insight"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -163,8 +164,8 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 		if msg.commit != nil {
 			m.gitPanel.SetBusy("")
 		}
-		m.finishGitOperation(msg.gen, types.OperationFailed, msg.err.Error())
-		m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityError, Summary: "Source control failed", Detail: msg.err.Error()})
+		m.finishGitOperation(msg.gen, statuscenter.OperationFailed, msg.err.Error())
+		m.ws.Status().SetIssue(statuscenter.IssueSnapshot{ID: "git", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceGit, ID: m.ws.RootPath()}, Severity: statuscenter.SeverityError, Summary: "Source control failed", Detail: msg.err.Error()})
 		m.gitPanel.SetError(msg.err)
 		m.setGitChangesError(msg.err)
 		if m.Feedback != nil {
@@ -180,7 +181,7 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 		}
 		return m.prepareGitChangesIfVisible()
 	}
-	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
+	m.finishGitOperation(msg.gen, statuscenter.OperationSucceeded, "")
 	m.ws.Status().ResolveIssue("git")
 	m.presentGitSnapshot(msg.snapshot)
 	if msg.commit != nil {
@@ -199,7 +200,7 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 // A status read is evidence about the repository, not the outcome of an effect
 // that already completed. This rule is shared by local and remote Git actions.
 func (m *App) finishGitWithStatusError(msg sourceControlResultMsg) {
-	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
+	m.finishGitOperation(msg.gen, statuscenter.OperationSucceeded, "")
 	if msg.commit != nil {
 		m.gitPanel.CompleteCommit(*msg.commit)
 	}
@@ -207,7 +208,7 @@ func (m *App) finishGitWithStatusError(msg sourceControlResultMsg) {
 	err := fmt.Errorf("%s", detail)
 	m.gitPanel.SetError(err)
 	m.setGitChangesError(err)
-	m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityWarning, Summary: "Git status could not be refreshed", Detail: detail})
+	m.ws.Status().SetIssue(statuscenter.IssueSnapshot{ID: "git", Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceGit, ID: m.ws.RootPath()}, Severity: statuscenter.SeverityWarning, Summary: "Git status could not be refreshed", Detail: detail})
 }
 
 // presentGitSnapshot publishes one repository projection to every surface that
@@ -237,13 +238,13 @@ func (m *App) recordGitOperation(generation uint64, label string) {
 	if m.ws.Status() == nil {
 		return
 	}
-	m.ws.Status().SetOperation(types.OperationSnapshot{
-		ID: fmt.Sprintf("git:%d", generation), Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()},
-		Kind: "git", Label: label, State: types.OperationRunning, StartedAt: time.Now(), Cancellable: true,
+	m.ws.Status().SetOperation(statuscenter.OperationSnapshot{
+		ID: fmt.Sprintf("git:%d", generation), Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceGit, ID: m.ws.RootPath()},
+		Kind: "git", Label: label, State: statuscenter.OperationRunning, StartedAt: time.Now(), Cancellable: true,
 	})
 }
 
-func (m *App) finishGitOperation(generation uint64, state types.OperationState, errorText string) {
+func (m *App) finishGitOperation(generation uint64, state statuscenter.OperationState, errorText string) {
 	if m.ws.Status() == nil {
 		return
 	}
@@ -686,7 +687,7 @@ func (m *App) handleGitFileIntent(intent gitdiff.FileIntent) tea.Cmd {
 func (m *App) openFileAtLine(path string, line int) {
 	// Git/log/search locations are not diagnostic observations. They share the
 	// asynchronous destination-open primitive, not diagnostic source authority.
-	position := workspace.LSPDiagnostic{Line: max(0, line-1), EndLine: max(0, line-1)}
+	position := insight.LSPDiagnostic{Line: max(0, line-1), EndLine: max(0, line-1)}
 	if m.queueLiveNavigation(path, position) {
 		return
 	}

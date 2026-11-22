@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 type batchProbeClient struct {
@@ -16,12 +17,12 @@ type batchProbeClient struct {
 	release chan struct{}
 }
 
-func (c *batchProbeClient) AwaitDiagnostics(ctx context.Context, path string) (types.InsightDiagnosticPublication, bool) {
+func (c *batchProbeClient) AwaitDiagnostics(ctx context.Context, path string) (insight.DiagnosticPublication, bool) {
 	publication := c.publication(path, nil)
 	c.entered <- path
 	select {
 	case <-ctx.Done():
-		return types.InsightDiagnosticPublication{}, false
+		return insight.DiagnosticPublication{}, false
 	case <-c.release:
 		return publication, true
 	}
@@ -29,7 +30,7 @@ func (c *batchProbeClient) AwaitDiagnostics(ctx context.Context, path string) (t
 
 type batchProbeRuntime struct{ client *batchProbeClient }
 
-func (r batchProbeRuntime) NewClient(types.LSPServerSpec, string, func() error) LSPClient {
+func (r batchProbeRuntime) NewClient(setting.LSPServerSpec, string, func() error) LSPClient {
 	return r.client
 }
 
@@ -59,7 +60,7 @@ func TestProbeDiagnosticsMultipleFilesKeepTheirResults(t *testing.T) {
 	m, client, paths := batchProbeFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	done := make(chan []types.LSPDiagnosticsResult, 1)
+	done := make(chan []insight.LSPDiagnosticsResult, 1)
 	go func() { done <- m.ProbeDiagnosticsBatch(ctx, paths) }()
 	for range paths {
 		select {
@@ -106,7 +107,7 @@ func TestProbeDiagnosticsBatchRejectsChangedSourceOrAdmission(t *testing.T) {
 			m, client, paths := batchProbeFixture(t)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			done := make(chan []types.LSPDiagnosticsResult, 1)
+			done := make(chan []insight.LSPDiagnosticsResult, 1)
 			go func() { done <- m.ProbeDiagnosticsBatch(ctx, paths) }()
 			for range paths {
 				select {

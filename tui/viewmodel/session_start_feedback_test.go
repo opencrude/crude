@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -117,8 +117,8 @@ func TestStreamingCaretPaintsAfterTheLastToken(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 30
 	app.AddOrchestrator("first")
-	app.ws.AgentMgr().Get("first").State.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "check the prune"})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "stream_token", Data: "I am checking whether the history prune is the cause, then I will set it aside.\n\n"})
+	app.ws.AgentMgr().Get("first").State.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "check the prune"})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "stream_token", Data: "I am checking whether the history prune is the cause, then I will set it aside.\n\n"})
 	app.paintShellFrame()
 	buf := app.mainSurf.Buffer()
 	for y := 0; y < buf.Height(); y++ {
@@ -181,8 +181,8 @@ func (v *sessionStartCapture) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF5:
 			v.sessionLifecyclePending = false
 			v.AddOrchestrator("capture")
-			v.ws.AgentMgr().Get("capture").State.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "Why did the agent button freeze?"})
-			v.handleAgentEvent(types.AgentEventMsg{AgentID: "capture", Type: "stream_token", Data: "Local History retention held its only database connection, so the workspace waited. I will set it aside.\n\n"})
+			v.ws.AgentMgr().Get("capture").State.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "Why did the agent button freeze?"})
+			v.handleAgentEvent(AgentEventMsg{AgentID: "capture", Type: "stream_token", Data: "Local History retention held its only database connection, so the workspace waited. I will set it aside.\n\n"})
 			return v, nil
 		case tea.KeyF6:
 			v.caret = strings.Contains(bufferPlain(v.mainSurf.Buffer()), "set it aside.\u2588")

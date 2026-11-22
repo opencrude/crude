@@ -13,7 +13,7 @@ import (
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	types "crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -26,7 +26,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	app.ws.SessionsByAgent()["root"] = session
 	app.ws.AgentMgr().Get("root").Model = "glm-5.3"
-	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Label: "Main Agent", Phase: types.AgentIdle, Detail: "Idle", ModelID: "glm-5.3"})
+	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "root"}, Label: "Main Agent", Phase: statuscenter.AgentIdle, Detail: "Idle", ModelID: "glm-5.3"})
 	wsOf(app).RecordAgentUsage("root", map[string]any{
 		"model":      "glm-5.3",
 		"request_id": "root/1/1", "prompt": 71500, "completion": 177,
@@ -56,7 +56,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	if strings.Contains(header, "Reasoning") || strings.Contains(header, "Responding") {
 		t.Fatalf("header exposes low-level agent phase: %q", header)
 	}
-	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: types.AgentThinking, TotalBytes: 2 * 1024 * 1024})
+	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "root"}, Phase: statuscenter.AgentThinking, TotalBytes: 2 * 1024 * 1024})
 	app.paintShellFrame()
 	header = rowText(app, 0)
 	if !strings.Contains(header, "↑~71.5k/1.05M 7%") || strings.Contains(header, " MB") || strings.Contains(header, "last ctx") {
@@ -104,8 +104,8 @@ func TestAgentHeaderRetainsUploadSizeAfterProviderWaitTransition(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
 	app.AddOrchestrator("root")
-	app.syncAgentStatusEvent(types.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "preparing", "progress": 100, "uploaded_bytes": float64(2 * 1024 * 1024), "total_bytes": float64(2 * 1024 * 1024)}})
-	app.syncAgentStatusEvent(types.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
+	app.syncAgentStatusEvent(AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "preparing", "progress": 100, "uploaded_bytes": float64(2 * 1024 * 1024), "total_bytes": float64(2 * 1024 * 1024)}})
+	app.syncAgentStatusEvent(AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	app.paintShellFrame()
 	header := rowText(app, 0)
 	status, _ := app.ws.Status().Agent("root")
@@ -118,7 +118,7 @@ func TestAgentHeaderKeepsLifecycleAndPayloadInDetails(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
 	app.AddOrchestrator("root")
-	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: types.AgentThinking, TotalBytes: 2 * 1024 * 1024, StartedAt: time.Now().Add(-5 * time.Second), PhaseStartedAt: time.Now().Add(-2 * time.Second)})
+	wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "root"}, Phase: statuscenter.AgentThinking, TotalBytes: 2 * 1024 * 1024, StartedAt: time.Now().Add(-5 * time.Second), PhaseStartedAt: time.Now().Add(-2 * time.Second)})
 	app.paintShellFrame()
 	header := rowText(app, 0)
 	if strings.Contains(header, "Working") || strings.Contains(header, "Waiting") || strings.Contains(header, "Reasoning") || strings.Contains(header, " MB") {
@@ -129,8 +129,8 @@ func TestAgentHeaderKeepsLifecycleAndPayloadInDetails(t *testing.T) {
 			t.Fatalf("normal agent header segment uses bright foreground: %+v", segment)
 		}
 	}
-	for _, phase := range []types.AgentPhase{types.AgentApproval, types.AgentQuestion, types.AgentRetrying, types.AgentFailed, types.AgentCancelled} {
-		wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: phase})
+	for _, phase := range []statuscenter.AgentPhase{statuscenter.AgentApproval, statuscenter.AgentQuestion, statuscenter.AgentRetrying, statuscenter.AgentFailed, statuscenter.AgentCancelled} {
+		wsOf(app).Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "root"}, Phase: phase})
 		app.paintShellFrame()
 		header = rowText(app, 0)
 		for _, label := range []string{"Permission", "Answer", "Retrying", "Failed", "Terminated"} {
@@ -149,7 +149,7 @@ func TestBackgroundContextSummaryIsExplainedInDetailsNotHeader(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	app.AddOrchestrator("root")
-	app.syncAgentStatusEvent(types.AgentEventMsg{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": "summary-1"}})
+	app.syncAgentStatusEvent(AgentEventMsg{AgentID: "root", Type: "context_precompaction", Data: map[string]any{"phase": "started", "request_id": "summary-1"}})
 	app.paintShellFrame()
 	if header := rowText(app, 0); strings.Contains(header, "checkpoint") || strings.Contains(header, "summary") {
 		t.Fatalf("background maintenance leaked into telemetry header: %q", header)

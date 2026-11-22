@@ -11,11 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
-	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/findinfiles"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -38,7 +38,7 @@ func fileLinkApp(t *testing.T, width, height int) (*App, string) {
 	if err := os.WriteFile(path, []byte(fileLinkSource), 0600); err != nil {
 		t.Fatal(err)
 	}
-	app.appendActiveMessage(types.ChatMessage{InternalID: "files", Role: types.RoleAssistant,
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "files", Role: conversation.RoleAssistant,
 		Content: "Open `src/main.go:2:4`.\n\nسلام دنیا، این متن فارسی است.\n\nשלום עולם, mixed English 123."})
 	app.Input.SetInput(fileLinkDraft)
 	app.setFocusInput()
@@ -272,7 +272,7 @@ func TestChatFileAmbiguousReferenceOpensGoToFileWithoutChangingTheWorkspace(t *t
 	dirty.InsertRune('!')
 	app.Win.SwitchTo(0)
 	app.handleTabSwitch()
-	app.appendActiveMessage(types.ChatMessage{Role: types.RoleAssistant, InternalID: "ambiguous", Content: "Open `files.go:3`."})
+	app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, InternalID: "ambiguous", Content: "Open `files.go:3`."})
 	app.paintShellFrame()
 	before := captureChatLinkState(app)
 	send := func(msg tea.Msg) { _, cmd := app.Update(msg); runAppCommand(t, app, cmd) }
@@ -383,7 +383,7 @@ func TestChatFileMissingReferenceCreatesNoDocument(t *testing.T) {
 func TestChatWebLinkAsksBeforeOpening(t *testing.T) {
 	app, _ := fileLinkApp(t, 160, 40)
 	const target = "https://example.com/docs/a/very/long/path/that/a/table/would/shorten?with=query"
-	app.appendActiveMessage(types.ChatMessage{InternalID: "web", Role: types.RoleAssistant, Content: "Read [the guide](" + target + ")."})
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "web", Role: conversation.RoleAssistant, Content: "Read [the guide](" + target + ")."})
 	app.paintShellFrame()
 	buf := app.mainSurf.Buffer()
 	x, y, found := 0, 0, false
@@ -440,7 +440,7 @@ func TestPaintedReferenceUsesProducingCheckout(t *testing.T) {
 	if err := os.WriteFile(path, []byte("checkout-only\nsecond\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	app.appendActiveMessage(types.ChatMessage{Role: types.RoleAssistant, InternalID: "scoped", ExecutionID: "producer", Content: "Read `main.go:2`."})
+	app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, InternalID: "scoped", ExecutionID: "producer", Content: "Read `main.go:2`."})
 	x, y, ok := findPaintedLink(app, "main.go:2")
 	if !ok {
 		t.Fatal("no painted source reference")

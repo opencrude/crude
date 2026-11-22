@@ -5,17 +5,17 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestAssistantHeaderIsShownAfterThinking(t *testing.T) {
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(100, 30)
 	renderer.SetChatAreaBounds(0, 25)
-	renderer.SyncMessages([]types.ChatMessage{
-		{InternalID: "user", Role: types.RoleUser, Content: "so you say we group them?"},
-		{InternalID: "thinking", Role: types.RoleThinking, Content: "considering", TurnGeneration: 4, ProviderID: "ollama-cloud", ModelID: "kimi-k3"},
-		{InternalID: "assistant", Role: types.RoleAssistant, Content: "Yes, but with a specific shape.", TurnGeneration: 4, ProviderID: "ollama-cloud", ModelID: "kimi-k3"},
+	renderer.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "user", Role: conversation.RoleUser, Content: "so you say we group them?"},
+		{InternalID: "thinking", Role: conversation.RoleThinking, Content: "considering", TurnGeneration: 4, ProviderID: "ollama-cloud", ModelID: "kimi-k3"},
+		{InternalID: "assistant", Role: conversation.RoleAssistant, Content: "Yes, but with a specific shape.", TurnGeneration: 4, ProviderID: "ollama-cloud", ModelID: "kimi-k3"},
 	}, 1, 0)
 
 	_ = renderer.Render(100)
@@ -26,10 +26,10 @@ func TestAssistantContinuationAfterToolSuppressesDuplicateHeaderWithinTurn(t *te
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(100, 30)
 	renderer.SetChatAreaBounds(0, 25)
-	renderer.SyncMessages([]types.ChatMessage{
-		{InternalID: "assistant-1", Role: types.RoleAssistant, Content: "I will inspect it.", TurnGeneration: 4, ModelID: "kimi-k3"},
-		{InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "success", TurnGeneration: 4, ModelID: "kimi-k3"},
-		{InternalID: "assistant-2", Role: types.RoleAssistant, Content: "The result is correct.", TurnGeneration: 4, ModelID: "kimi-k3"},
+	renderer.SyncMessages([]conversation.ChatMessage{
+		{InternalID: "assistant-1", Role: conversation.RoleAssistant, Content: "I will inspect it.", TurnGeneration: 4, ModelID: "kimi-k3"},
+		{InternalID: "tool", Role: conversation.RoleTool, ToolName: "read_file", ToolStatus: "success", TurnGeneration: 4, ModelID: "kimi-k3"},
+		{InternalID: "assistant-2", Role: conversation.RoleAssistant, Content: "The result is correct.", TurnGeneration: 4, ModelID: "kimi-k3"},
 	}, 1, 0)
 
 	_ = renderer.Render(100)

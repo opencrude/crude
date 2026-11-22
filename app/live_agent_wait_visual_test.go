@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/history"
+	"crude/agent/prompthistory"
+	"crude/core/coreclient"
+	"crude/core/shellport/remote"
 	"crude/tui"
 	"crude/tui/viewmodel"
 )
@@ -28,7 +28,7 @@ func startLiveWaitVisual(t *testing.T, ctx context.Context, project, parent stri
 		t.Fatal("cannot connect visual shell to private wait core")
 	}
 	t.Cleanup(func() { _ = port.Close() })
-	terminal, err := tui.Start(port, providerPresets(), history.New(), &appLogger{}, func(a *viewmodel.App) error {
+	terminal, err := tui.Start(port, providerPresets(), prompthistory.New(), &appLogger{}, func(a *viewmodel.App) error {
 		a.AddOrchestrator(parent)
 		return nil
 	})

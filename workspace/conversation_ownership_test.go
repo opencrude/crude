@@ -6,11 +6,12 @@ import (
 
 	"crude/agent/provider"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
-func ownedMessageFixture() Message {
-	return Message{
+func ownedMessageFixture() conversation.Message {
+	return conversation.Message{
 		InternalID: "message", Role: MessageRoleUser, Content: "accepted text",
 		ReferenceLabels: []string{"attachment"},
 		Collaboration: &provider.CollaborationAttribution{
@@ -22,7 +23,7 @@ func ownedMessageFixture() Message {
 	}
 }
 
-func mutateMessageReferences(message Message) {
+func mutateMessageReferences(message conversation.Message) {
 	message.ReferenceLabels[0] = "changed attachment"
 	message.Collaboration.EventID = "changed event"
 	message.Collaboration.RecipientIDs[0] = "changed recipient"

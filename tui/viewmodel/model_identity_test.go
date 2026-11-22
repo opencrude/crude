@@ -4,7 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 func TestSavedModelIdentityUpdatesHeaderWithoutRewritingUsage(t *testing.T) {
@@ -18,7 +19,7 @@ func TestSavedModelIdentityUpdatesHeaderWithoutRewritingUsage(t *testing.T) {
 	wsOf(app).RecordAgentUsage(first, map[string]any{"request_outcome": "succeeded", "request_id": "old", "reported_at": int64(1), "model": old.ModelID, "provider": old.ProviderID, "account_id": old.AccountID, "turn_generation": uint64(1), "prompt": 200, "context_prompt": 200, "context_window": 1000, "cost": 0.2, "cost_known": true})
 	second := addBackendTestOrchestrator(t, app)
 	settings := backend.SettingsSnapshot()
-	settings.SessionOverrides = map[string]types.CategorySettings{"default": {AccountID: old.AccountID, Model: "replacement-model"}}
+	settings.SessionOverrides = map[string]setting.Category{"default": {AccountID: old.AccountID, Model: "replacement-model"}}
 	if err := wsOf(app).HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestSavedModelIdentityUpdatesHeaderWithoutRewritingUsage(t *testing.T) {
 		t.Fatalf("header retained previous model/context: %s", header)
 	}
 	wsOf(app).RecordAgentUsage(first, map[string]any{"request_outcome": "succeeded", "request_id": "new", "reported_at": int64(2), "model": "replacement-model", "provider": old.ProviderID, "account_id": old.AccountID, "turn_generation": uint64(2), "cost": 0.4, "cost_known": true})
-	usage, _ := app.ws.UsageSummary(first, types.UsageThisAgent)
+	usage, _ := app.ws.UsageSummary(first, statuscenter.UsageThisAgent)
 	if len(usage.Models) != 2 || usage.Requests != 2 || usage.Turns != 2 || usage.Cost.USD < 0.59 {
 		t.Fatalf("model change rewrote usage: %+v", usage)
 	}

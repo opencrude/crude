@@ -8,7 +8,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
@@ -16,7 +16,7 @@ func TestSummaryMarkdownFollowsThemeAndInvalidatesCachedPalette(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(100, 30)
 	r.SetChatAreaBounds(0, 20)
-	r.SyncMessages([]types.ChatMessage{{InternalID: "summary", Role: types.RoleThinking, Content: "**Sample** has Markdown emphasis", ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary}}}, 1, 0)
+	r.SyncMessages([]conversation.ChatMessage{{InternalID: "summary", Role: conversation.RoleThinking, Content: "**Sample** has Markdown emphasis", ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary}}}, 1, 0)
 	for _, light := range []bool{false, true, false} {
 		th := theme.DefaultDark()
 		if light {

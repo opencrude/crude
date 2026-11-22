@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"crude/tui/tools"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // disclosure.go owns the per-message disclosure (expand/collapse) state for
@@ -26,7 +26,7 @@ const (
 // disclosureState resolves the current disclosure mode for a message.
 // Explicit user toggles win; otherwise a deterministic default keeps live and
 // hydrated sessions rendering the same shape.
-func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
+func (r *Renderer) disclosureState(msg *conversation.ChatMessage) DisclosureState {
 	if msg == nil {
 		return DisclosureCollapsed
 	}
@@ -45,15 +45,15 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 //   - completed subpane placeholders collapse to the pane summary;
 //   - file changes and the current plan show their full body;
 //   - other settled tools and diagnostics show only their title until expanded.
-func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
+func (r *Renderer) defaultDisclosure(msg *conversation.ChatMessage) DisclosureState {
 	switch {
 	case isCommandOutcome(msg):
 		return DisclosureCollapsed
 	case msg.Recovery != nil:
 		return DisclosureCollapsed
-	case msg.Role == types.RoleError || settledCompaction(*msg):
+	case msg.Role == conversation.RoleError || settledCompaction(*msg):
 		return DisclosureCollapsed
-	case msg.Role == types.RoleThinking:
+	case msg.Role == conversation.RoleThinking:
 		if r.thinkingBodyOnly {
 			return DisclosureExpanded // the enclosing pane owns disclosure
 		}
@@ -66,7 +66,7 @@ func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 		return DisclosureCollapsed
 	case msg.SubPaneID != "":
 		return DisclosureCollapsed
-	case msg.Role == types.RoleTool:
+	case msg.Role == conversation.RoleTool:
 		if tools.IsPatchCardTool(msg.ToolName) || tools.IsPlanTool(msg.ToolName) && !r.planMessageSuperseded(msg) {
 			return DisclosureExpanded
 		}
@@ -78,10 +78,10 @@ func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 // A new plan snapshot changes the default view of earlier snapshots even when
 // their own bytes did not change. Only plan-source changes invalidate these
 // rows; ordinary tool streams and presentation ticks retain their caches.
-func (r *Renderer) invalidateRelatedPlanRows(messages []*types.ChatMessage, from int, changed map[string]bool) int {
+func (r *Renderer) invalidateRelatedPlanRows(messages []*conversation.ChatMessage, from int, changed map[string]bool) int {
 	plans := make(map[string]bool)
 	for _, msg := range messages[from:] {
-		if msg.Role == types.RoleTool && tools.IsPlanTool(msg.ToolName) {
+		if msg.Role == conversation.RoleTool && tools.IsPlanTool(msg.ToolName) {
 			if view, ok := parsePlanView(msg.Content); ok && view.ID != "" {
 				plans[view.ID] = true
 			}
@@ -92,7 +92,7 @@ func (r *Renderer) invalidateRelatedPlanRows(messages []*types.ChatMessage, from
 	}
 	first := from
 	for i, msg := range messages {
-		if msg.Role != types.RoleTool || !tools.IsPlanTool(msg.ToolName) {
+		if msg.Role != conversation.RoleTool || !tools.IsPlanTool(msg.ToolName) {
 			continue
 		}
 		if view, ok := parsePlanView(msg.Content); ok && plans[view.ID] {
@@ -129,7 +129,7 @@ func (r *Renderer) ToggleDisclosure(msgID string) {
 	r.expanded[msgID] = r.disclosureState(msg) != DisclosureExpanded
 	msg.CachedLines = nil
 	r.InvalidateItem(msgID)
-	if msg.Role == types.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() {
+	if msg.Role == conversation.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() {
 		r.syncActivityItems([]string{msgID}) // the hidden item enters/leaves the list
 		return
 	}
@@ -241,11 +241,11 @@ func (r *Renderer) pruneExpanded() {
 func (r *Renderer) ToggleLastDisclosure() {
 	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
 		msg := r.sync.Messages[i]
-		if msg.Role == types.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() {
+		if msg.Role == conversation.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() {
 			r.ToggleDisclosure(msg.InternalID)
 			return
 		}
-		if msg.Role != types.RoleStatus && (msg.Role != types.RoleAssistant || msg.Content != "") {
+		if msg.Role != conversation.RoleStatus && (msg.Role != conversation.RoleAssistant || msg.Content != "") {
 			break
 		}
 	}
@@ -255,7 +255,7 @@ func (r *Renderer) ToggleLastDisclosure() {
 			r.ToggleDisclosure(item.ID)
 			return
 		}
-		if msg, ok := item.Data.(*types.ChatMessage); ok && r.hasDisclosure(msg) {
+		if msg, ok := item.Data.(*conversation.ChatMessage); ok && r.hasDisclosure(msg) {
 			r.ToggleDisclosure(msg.InternalID)
 			return
 		}
@@ -263,7 +263,7 @@ func (r *Renderer) ToggleLastDisclosure() {
 }
 
 // hasDisclosure reports whether the message renders a toggle affordance.
-func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
+func (r *Renderer) hasDisclosure(msg *conversation.ChatMessage) bool {
 	if msg == nil {
 		return false
 	}
@@ -272,19 +272,19 @@ func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
 		return true
 	case msg.Recovery != nil:
 		return true
-	case msg.Role == types.RoleError:
+	case msg.Role == conversation.RoleError:
 		return msg.Content != ""
 	case settledCompaction(*msg):
 		return msg.Content != "" || msg.LifecycleBeforeTokens > 0
-	case msg.Role == types.RoleThinking:
+	case msg.Role == conversation.RoleThinking:
 		return msg.Content != "" && (msg.ThinkingDisplay.Kind.HasCompactPreview() || !msg.ThinkingActive && !msg.ThinkingInterrupted)
 	case msg.SubPaneID != "":
 		return true
-	case msg.Role == types.RoleTool && activityCommand(msg):
+	case msg.Role == conversation.RoleTool && activityCommand(msg):
 		return true
-	case msg.Role == types.RoleTool && msg.ToolName == "multi_tool_use.parallel":
+	case msg.Role == conversation.RoleTool && msg.ToolName == "multi_tool_use.parallel":
 		return msg.ToolInput != "" || msg.Content != ""
-	case msg.Role == types.RoleTool && (msg.Content != "" || msg.ToolInput != ""):
+	case msg.Role == conversation.RoleTool && (msg.Content != "" || msg.ToolInput != ""):
 		return toolSupportsDisclosure(msg.ToolName)
 	}
 	return false

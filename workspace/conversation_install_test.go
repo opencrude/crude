@@ -4,12 +4,13 @@ import (
 	"reflect"
 	"testing"
 
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
 func TestConversationInstallDeltaAtomicAndDetached(t *testing.T) {
 	c := NewConversation()
-	initial := ConversationDelta{Reset: true, Revision: 9, Order: []string{"one"}, Upserts: []Message{{InternalID: "one", Content: "first", ReferenceLabels: []string{"media"}}}}
+	initial := ConversationDelta{Reset: true, Revision: 9, Order: []string{"one"}, Upserts: []conversation.Message{{InternalID: "one", Content: "first", ReferenceLabels: []string{"media"}}}}
 	if err := c.InstallDelta(initial); err != nil {
 		t.Fatal(err)
 	}
@@ -19,10 +20,10 @@ func TestConversationInstallDeltaAtomicAndDetached(t *testing.T) {
 	}
 	before := c.Messages()
 	for _, delta := range []ConversationDelta{
-		{BaseRevision: 8, Revision: 10, Upserts: []Message{{InternalID: "one", Content: "stale"}}},
+		{BaseRevision: 8, Revision: 10, Upserts: []conversation.Message{{InternalID: "one", Content: "stale"}}},
 		{BaseRevision: 9, Revision: 10, Order: []string{"missing"}},
 		{BaseRevision: 9, Revision: 10, Order: []string{}},
-		{BaseRevision: 9, Revision: 10, Upserts: []Message{{InternalID: "new"}}},
+		{BaseRevision: 9, Revision: 10, Upserts: []conversation.Message{{InternalID: "new"}}},
 	} {
 		if err := c.InstallDelta(delta); err == nil {
 			t.Fatalf("accepted invalid delta: %+v", delta)
@@ -31,7 +32,7 @@ func TestConversationInstallDeltaAtomicAndDetached(t *testing.T) {
 			t.Fatal("invalid delta partially mutated mirror")
 		}
 	}
-	if err := c.InstallDelta(ConversationDelta{BaseRevision: 9, Revision: 10, Upserts: []Message{{InternalID: "one", Content: "next"}}}); err != nil {
+	if err := c.InstallDelta(ConversationDelta{BaseRevision: 9, Revision: 10, Upserts: []conversation.Message{{InternalID: "one", Content: "next"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if c.Messages()[0].Content != "next" || c.Version() != 10 {

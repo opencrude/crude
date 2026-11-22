@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 )
 
 const coreImagePrefix = "crude-core-"

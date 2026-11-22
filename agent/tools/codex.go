@@ -75,7 +75,7 @@ func WithModelCommands(defs []ToolDef, model string) []ToolDef {
 }
 
 func executeApplyPatch(ctx context.Context, params map[string]any, ed *fileio.Editor, opts *ToolOptions) ToolResult {
-	patch, err := codexio.Parse(GetStrArg(params, "input", ""))
+	patch, err := codexio.Parse(StrArg(params, "input", ""))
 	if err != nil {
 		return ToolResult{Content: "Error: " + err.Error()}
 	}
@@ -129,10 +129,10 @@ func executeApplyPatch(ctx context.Context, params map[string]any, ed *fileio.Ed
 		if err != nil {
 			fmt.Fprintf(&summary, "%s %s\n", kind, change.Path)
 		}
-		text, added, removed := diff.GenerateDiff(string(change.Before.Bytes), string(change.After.Bytes), change.Path)
+		text, added, removed := unidiff.GenerateDiff(string(change.Before.Bytes), string(change.After.Bytes), change.Path)
 		result.Added += added
 		result.Removed += removed
-		if !diff.IsEmptyDiff(text) {
+		if !unidiff.IsEmptyDiff(text) {
 			diffs.WriteString(text)
 			diffs.WriteByte('\n')
 		}

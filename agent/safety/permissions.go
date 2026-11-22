@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 type PermissionScope string

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -83,13 +83,13 @@ func TestRepeatedStopEndsIdleNotStopping(t *testing.T) {
 			accepted++
 		}
 	}
-	if state := agent(); state.Cancelling || state.Activity.Status.Phase == types.AgentCancelling {
+	if state := agent(); state.Cancelling || state.Activity.Status.Phase == statuscenter.AgentCancelling {
 		t.Fatalf("finished agent shows Stopping: cancelling=%v phase=%s detail=%q", state.Cancelling, state.Activity.Status.Phase, state.Activity.Status.Detail)
 	}
 	var status coreprotocol.StatusSnapshot
 	wire.call(t, ws, coreprotocol.StatusSnapshotMethod, coreprotocol.Empty{}, &status)
 	for _, a := range status.Agents {
-		if a.Ref.ID == created.OrchID && a.Phase == types.AgentCancelling {
+		if a.Ref.ID == created.OrchID && a.Phase == statuscenter.AgentCancelling {
 			t.Fatalf("status center shows Stopping for a finished agent: %+v", a)
 		}
 	}

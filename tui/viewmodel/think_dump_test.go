@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	ttypes "crude/types"
 	"crude/types/reasoning"
 )
 
@@ -19,12 +18,12 @@ func TestDumpThinkingPaneFullScreen(t *testing.T) {
 	agent := node.State
 	// Busy chat: pre-fill messages so the main chat itself scrolls.
 	fillAgentChat(app, "dump-agent", 5, "fill")
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "dump-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
+	app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "dump-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("not promoted")
 	}
 	for i := 0; i < 20; i++ {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "dump-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
+		app.handleAgentEvent(AgentEventMsg{Type: "thinking", AgentID: "dump-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
 	app.paintShellFrame()
 

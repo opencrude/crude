@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -296,7 +296,7 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 	orchestrator, request := intent.orchestrator, intent.request
 	var cfg *Config
 	if s.runtimeProfile != nil {
-		cfg = s.runtimeProfile.GetEffectiveConfig(intent.AgentID)
+		cfg = s.runtimeProfile.EffectiveConfig(intent.AgentID)
 	}
 	prepared, _ := s.prepareInput(context.WithoutCancel(ctx), input, cfg, orchestrator)
 	message := prepared.Message
@@ -312,7 +312,7 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		deltas = append(deltas, contextDelta(enrichment, meta, turn, createdAt, intent.AgentID))
 	}
 	checkpoint := sessiondb.RecoveryCheckpoint{
-		Status:       agent.NewSupervisor(intent.AgentID, request.generation, nil).CheckpointStatus(),
+		Status:       turnloop.NewSupervisor(intent.AgentID, request.generation, nil).CheckpointStatus(),
 		PendingInput: cloneUserInput(input), InputAdmitted: true, PlanningCycle: &cycle,
 		Archive:       append([]provider.ChatMessage(nil), s.msgs...),
 		ActiveContext: append([]provider.ChatMessage(nil), s.activeContext...),

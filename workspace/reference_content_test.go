@@ -89,7 +89,7 @@ func TestReferenceContentProjectionRemainsResponsiveDuringStorage(t *testing.T) 
 			}
 			projected := make(chan struct{})
 			go func() {
-				_, _ = store.GetReference(ref.ID)
+				_, _ = store.Reference(ref.ID)
 				store.ListReferences()
 				close(projected)
 			}()
@@ -143,7 +143,7 @@ func TestReferenceContentReadAndSaveFileComplete(t *testing.T) {
 	if string(data) != edited {
 		t.Fatal("backing file did not receive exact edit")
 	}
-	current, ok := store.GetReference(ref.ID)
+	current, ok := store.Reference(ref.ID)
 	if !ok {
 		t.Fatal("saved reference missing")
 	}
@@ -254,7 +254,7 @@ func TestReferenceContentPersistenceFailureRollsBackExactState(t *testing.T) {
 	if err := store.SaveReferenceContent(inline, "inline original", "inline edited"); err == nil {
 		t.Fatal("inline save unexpectedly survived injected DB failure")
 	}
-	current, _ := store.GetReference(inline.ID)
+	current, _ := store.Reference(inline.ID)
 	if current != inline {
 		t.Fatalf("inline in-memory state changed on failure: got %#v want %#v", current, inline)
 	}
@@ -269,7 +269,7 @@ func TestReferenceContentPersistenceFailureRollsBackExactState(t *testing.T) {
 	if string(data) != "file original" {
 		t.Fatalf("file rollback = %q, want exact original", data)
 	}
-	current, _ = store.GetReference(fileRef.ID)
+	current, _ = store.Reference(fileRef.ID)
 	if current != fileRef {
 		t.Fatalf("file metadata changed on failure: got %#v want %#v", current, fileRef)
 	}

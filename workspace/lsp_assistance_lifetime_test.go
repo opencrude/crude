@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -18,7 +18,7 @@ func TestCompletionReleaseBeforeAdmissionFencesEarlierSequences(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, seq := range []uint64{1, 3} {
-		if result, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "race", seq, 0, 1, types.LSPCompletionContext{}); err == nil {
+		if result, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "race", seq, 0, 1, insight.LSPCompletionContext{}); err == nil {
 			t.Fatal("released completion reached provider", result)
 		}
 	}
@@ -44,7 +44,7 @@ func TestCompletionReleaseBeforeAdmissionFencesEarlierSequences(t *testing.T) {
 		t.Fatal("newer release retained an old result")
 	}
 	for _, seq := range []uint64{5, 6} {
-		if result, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "race", seq, 0, 1, types.LSPCompletionContext{}); err == nil {
+		if result, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "race", seq, 0, 1, insight.LSPCompletionContext{}); err == nil {
 			t.Fatal("release ordering admitted an old completion", result)
 		}
 	}
@@ -109,7 +109,7 @@ func TestCompletionReplacementCountsProviderWorkUntilReturn(t *testing.T) {
 		workers.Add(1)
 		go func(n uint64) {
 			defer workers.Done()
-			_, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "one-view", n, 0, 1, types.LSPCompletionContext{})
+			_, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "one-view", n, 0, 1, insight.LSPCompletionContext{})
 			done <- err
 		}(seq)
 		select {
@@ -121,7 +121,7 @@ func TestCompletionReplacementCountsProviderWorkUntilReturn(t *testing.T) {
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		_, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "one-view", completionMaxViews+1, 0, 1, types.LSPCompletionContext{})
+		_, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "one-view", completionMaxViews+1, 0, 1, insight.LSPCompletionContext{})
 		done <- err
 	}()
 	select {
@@ -208,7 +208,7 @@ func TestCompletionReleasedSequenceCapacityIsRetryable(t *testing.T) {
 	if err := s.ReleaseLSPCompletions(f.owner, "new", 1); !errors.Is(err, ErrCompletionBusy) {
 		t.Fatal("release did not report full sequence table", err)
 	}
-	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "new", 1, 0, 1, types.LSPCompletionContext{}); !errors.Is(err, ErrCompletionBusy) {
+	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "new", 1, 0, 1, insight.LSPCompletionContext{}); !errors.Is(err, ErrCompletionBusy) {
 		t.Fatal("untracked request was admitted", err)
 	}
 	s.mu.Lock()
@@ -217,7 +217,7 @@ func TestCompletionReleasedSequenceCapacityIsRetryable(t *testing.T) {
 	if err := s.ReleaseLSPCompletions(f.owner, "new", 1); err != nil {
 		t.Fatal("release did not recover", err)
 	}
-	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "new", 1, 0, 1, types.LSPCompletionContext{}); err == nil {
+	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "new", 1, 0, 1, insight.LSPCompletionContext{}); err == nil {
 		t.Fatal("released sequence resurrected after capacity recovery")
 	}
 	if got := f.request(t, "[]", "new", 2, 0, 1); got.Sequence != 2 {
@@ -283,7 +283,7 @@ func TestCompletionReleasedSequenceSurvivesPeerRetainedReopen(t *testing.T) {
 	f.client.completionMu.Lock()
 	before := len(f.client.calls)
 	f.client.completionMu.Unlock()
-	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 2, 0, 1, types.LSPCompletionContext{}); err == nil {
+	if _, err := f.w.RequestLSPCompletions(t.Context(), f.owner, f.source, "view", 2, 0, 1, insight.LSPCompletionContext{}); err == nil {
 		t.Fatal("released completion revived after reopen")
 	}
 	f.client.completionMu.Lock()

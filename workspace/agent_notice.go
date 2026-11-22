@@ -4,7 +4,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/statuscenter"
 	"crude/workspace/fileio"
 )
 
@@ -24,7 +25,7 @@ type AgentNotice struct {
 	AgentID string `json:"agent_id,omitempty"`
 	// Identity preserves exact source-event identity when the producer has one.
 	// Bare service events are admitted once by the canonical actor, not shells.
-	Identity types.RuntimeEventIdentity `json:"identity,omitempty"`
+	Identity conversation.RuntimeEventIdentity `json:"identity,omitempty"`
 	// Reason explains an unavailable Responses continuation.
 	Reason string `json:"reason,omitempty"`
 	// Count and Titles describe memories saved from the session.
@@ -65,7 +66,7 @@ func (w *Workspace) ApplyAgentNotice(notice AgentNotice) {
 	if w == nil || w.Status == nil {
 		return
 	}
-	owner := types.ResourceRef{Kind: types.ResourceWorkspace, ID: w.RootPath}
+	owner := statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: w.RootPath}
 	var node *AgentNode
 	if notice.AgentID != "" {
 		if w.AgentMgr == nil {
@@ -76,17 +77,17 @@ func (w *Workspace) ApplyAgentNotice(notice AgentNotice) {
 		if node == nil || session == nil {
 			return
 		}
-		owner = types.ResourceRef{Kind: types.ResourceAgent, ID: notice.AgentID, SessionID: session.SessionID}
+		owner = statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: notice.AgentID, SessionID: session.SessionID}
 		if node.Parent != nil {
 			owner.ParentID = node.Parent.ID
 		}
 	}
-	if notice.Identity != (types.RuntimeEventIdentity{}) &&
+	if notice.Identity != (conversation.RuntimeEventIdentity{}) &&
 		(!notice.Identity.Valid() || notice.Identity.AgentID != notice.AgentID ||
 			!w.agentEventOwnerMatches(node, nil, notice.Identity)) {
 		return
 	}
-	n := types.NotificationRecord{Owner: owner}
+	n := statuscenter.NotificationRecord{Owner: owner}
 	switch notice.Type {
 	case NoticeAsyncCommandStatus:
 		if node != nil {
@@ -94,10 +95,10 @@ func (w *Workspace) ApplyAgentNotice(notice AgentNotice) {
 		}
 		return
 	case NoticeMemoryRankingUnavailable:
-		n.Severity, n.Source, n.Summary, n.Detail = types.SeverityWarning, "memory", "Memory ranking skipped.", notice.Reason
+		n.Severity, n.Source, n.Summary, n.Detail = statuscenter.SeverityWarning, "memory", "Memory ranking skipped.", notice.Reason
 	case NoticeAttachmentExcluded:
 		n.DedupKey = "attachment:" + notice.AgentID + ":" + notice.Reason
-		n.Severity, n.Source, n.Summary, n.Detail = types.SeverityWarning, "attachment", notice.Reason, notice.Reason
+		n.Severity, n.Source, n.Summary, n.Detail = statuscenter.SeverityWarning, "attachment", notice.Reason, notice.Reason
 	case NoticeResponseContinuationUnavailable:
 		n.Summary = "Responses delta unavailable: the endpoint returned no response ID; full uploads continue"
 		if notice.Reason == "response_not_stored" {
@@ -130,39 +131,39 @@ func (w *Workspace) ApplyAgentNotice(notice AgentNotice) {
 	}
 }
 
-func backgroundCommandID(owner types.ResourceRef, command fileio.AsyncCmdInfo) string {
+func backgroundCommandID(owner statuscenter.ResourceRef, command fileio.AsyncCmdInfo) string {
 	// Quote variable-length fields and normalize time to its instant: local
 	// timezone and monotonic-clock metadata are not execution identity.
 	key := fmt.Sprintf("%q:%q:%q:%d:%d", owner.ID, owner.SessionID, command.Handle, command.PID, command.StartedAt.UnixNano())
 	return fmt.Sprintf("command:%x", sha256.Sum256([]byte(key)))
 }
 
-func (c *StatusCenter) recordBackgroundCommands(owner types.ResourceRef, commands []fileio.AsyncCmdInfo) {
+func (c *StatusCenter) recordBackgroundCommands(owner statuscenter.ResourceRef, commands []fileio.AsyncCmdInfo) {
 	c.commandMu.Lock()
 	defer c.commandMu.Unlock()
 	previous := c.backgroundCommands[owner.ID]
-	current := make(map[string]types.OperationSnapshot, len(commands))
+	current := make(map[string]statuscenter.OperationSnapshot, len(commands))
 	for _, command := range commands {
 		if command.Handle == "" || command.PID <= 0 || command.StartedAt.IsZero() {
 			continue
 		}
-		state := types.OperationRunning
+		state := statuscenter.OperationRunning
 		switch command.Status {
 		case fileio.AsyncRunning:
 		case fileio.AsyncCompleted:
-			state = types.OperationSucceeded
+			state = statuscenter.OperationSucceeded
 		case fileio.AsyncFailed:
-			state = types.OperationFailed
+			state = statuscenter.OperationFailed
 		case fileio.AsyncKilled:
-			state = types.OperationCancelled
+			state = statuscenter.OperationCancelled
 		default:
 			continue
 		}
 		id := backgroundCommandID(owner, command)
-		op := types.OperationSnapshot{
+		op := statuscenter.OperationSnapshot{
 			ID: id, Owner: owner, Kind: "background-command", Label: command.Command,
 			State: state, StartedAt: command.StartedAt, EndedAt: command.EndedAt,
-			Error: command.Error, OutputRef: command.Handle, Cancellable: state == types.OperationRunning,
+			Error: command.Error, OutputRef: command.Handle, Cancellable: state == statuscenter.OperationRunning,
 		}
 		old, observed := previous[id]
 		if observed && (operationTerminal(old.State) || operationEquivalent(old, op)) {
@@ -171,12 +172,12 @@ func (c *StatusCenter) recordBackgroundCommands(owner types.ResourceRef, command
 		}
 		current[id] = op
 		c.SetOperation(op)
-		if state == types.OperationFailed {
-			c.notifyOnce(types.NotificationRecord{
+		if state == statuscenter.OperationFailed {
+			c.notifyOnce(statuscenter.NotificationRecord{
 				ID: id + ":failed", DedupKey: id + ":failed", Owner: owner,
-				Severity: types.SeverityError, Source: "background-command",
+				Severity: statuscenter.SeverityError, Source: "background-command",
 				Summary: "Background command failed", Detail: "Open the agent transcript for command details.",
-				Actions: []types.StatusAction{{ID: "status.switch", Label: "Inspect agent", Enabled: true}},
+				Actions: []statuscenter.Action{{ID: "status.switch", Label: "Inspect agent", Enabled: true}},
 			})
 		}
 	}
@@ -185,7 +186,7 @@ func (c *StatusCenter) recordBackgroundCommands(owner types.ResourceRef, command
 		return
 	}
 	if c.backgroundCommands == nil {
-		c.backgroundCommands = make(map[string]map[string]types.OperationSnapshot)
+		c.backgroundCommands = make(map[string]map[string]statuscenter.OperationSnapshot)
 	}
 	c.backgroundCommands[owner.ID] = current
 }

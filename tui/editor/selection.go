@@ -62,7 +62,7 @@ func (e *Editor) SelectedText() string {
 	if sLine == eLine && sCol == eCol {
 		return ""
 	}
-	return e.buf.GetText(Position{Line: sLine, Col: sCol}, Position{Line: eLine, Col: eCol})
+	return e.buf.Text(Position{Line: sLine, Col: sCol}, Position{Line: eLine, Col: eCol})
 }
 
 func (e *Editor) isSelected(line, col int) bool {

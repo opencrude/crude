@@ -3,8 +3,8 @@ package document
 
 import (
 	"bytes"
-	"crude/text/encoding"
-	"crude/text/indent"
+	"crude/text/indentation"
+	"crude/text/textencoding"
 	"errors"
 	"slices"
 	"strings"

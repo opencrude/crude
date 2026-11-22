@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/text/diff"
+	"crude/text/textdiff"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"

@@ -1,17 +1,16 @@
 package workspace
 
 import (
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
+	"crude/types/setting"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
-
-	ttypes "crude/types"
 )
 
 func TestTerminalSettingsStartConfiguredShellAndEnvironment(t *testing.T) {
-	settings := ttypes.TerminalSettings{Shell: ttypes.TerminalShellCustom, Command: "/bin/sh", Args: []string{"-c", `printf "VALUE=$CRUDE_TERMINAL_PROBE"; cat`}, Environment: map[string]string{"CRUDE_TERMINAL_PROBE": "from-settings"}}
+	settings := setting.Terminal{Shell: setting.TerminalShellCustom, Command: "/bin/sh", Args: []string{"-c", `printf "VALUE=$CRUDE_TERMINAL_PROBE"; cat`}, Environment: map[string]string{"CRUDE_TERMINAL_PROBE": "from-settings"}}
 	if runtime.GOOS == "windows" {
 		settings.Command, settings.Args = "cmd.exe", []string{"/q", "/k", "echo VALUE=%CRUDE_TERMINAL_PROBE%"}
 	}
@@ -55,7 +54,7 @@ func TestTerminalSettingsRejectMissingShellWithGuidance(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(service.CloseAll)
-	manager.SetSettings(ttypes.TerminalSettings{Shell: "definitely-not-a-shell"})
+	manager.SetSettings(setting.Terminal{Shell: "definitely-not-a-shell"})
 	if _, err := service.Create(TerminalCreateOpts{}); err == nil || !strings.Contains(err.Error(), "Settings › Terminal") {
 		t.Fatalf("missing shell error = %v", err)
 	}

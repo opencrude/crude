@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/textoverlay"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // The palette includes replaced revisions. The review bar always reads its own
@@ -26,7 +26,7 @@ func (m *App) browsePlanEvidence() tea.Cmd {
 	return m.planEvidenceMenu(agentID, review.Revisions)
 }
 
-func (m *App) planEvidenceMenu(agentID string, revisions []types.PlanRevision) tea.Cmd {
+func (m *App) planEvidenceMenu(agentID string, revisions []conversation.PlanRevision) tea.Cmd {
 	menu := &ui.ContextMenuState{Title: "Investigation evidence"}
 	owner, gen := m.ws, m.workspaceSwitchGen.Load()
 	for n := len(revisions) - 1; n >= 0; n-- {

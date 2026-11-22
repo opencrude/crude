@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -29,17 +29,17 @@ func TestProjectToolDecisionsInertApplicationWriters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = application.commitCorePreferences([]types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}}); err != nil {
+	if _, err = application.commitCorePreferences([]setting.Edit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(`6`)}}); err != nil {
 		t.Fatalf("ordinary preference blocked: %v", err)
 	}
 	for _, path := range [][]string{{"capabilities"}, {"capabilities", "project_tool_decisions"}, {"capabilities", "project_tool_decisions", "x"}} {
 		for _, value := range []json.RawMessage{nil, json.RawMessage(`{}`)} {
-			if _, err := application.commitCorePreferences([]types.SettingEdit{{Path: path, After: value}}); err == nil {
+			if _, err := application.commitCorePreferences([]setting.Edit{{Path: path, After: value}}); err == nil {
 				t.Fatalf("accepted authority write %v", path)
 			}
 		}
 	}
-	if err := SaveFileConfig(FileConfig{Editor: &types.EditorSettings{TabSize: 7}}); err != nil {
+	if err := SaveFileConfig(FileConfig{Editor: &setting.Editor{TabSize: 7}}); err != nil {
 		t.Fatalf("full config save blocked: %v", err)
 	}
 	stored := LoadFileConfig()
@@ -60,16 +60,16 @@ func TestPreparedCapabilityCommitAcceptsUnchangedDurableSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, &appLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, &appLogger{})
 	defer ws.Close()
 	application.configureWorkspace(ws)
 	if _, err := ws.CapabilitySnapshot(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var captured types.AppSettings
-	prepared, err := ws.PrepareCapabilities(func(_ context.Context, before, after types.AppSettings, scope captypes.Scope) (types.AppSettings, error) {
+	var captured setting.App
+	prepared, err := ws.PrepareCapabilities(func(_ context.Context, before, after setting.App, scope captypes.Scope) (setting.App, error) {
 		captured = before
-		return application.commitCorePreferences(types.SettingsEdits(before, after))
+		return application.commitCorePreferences(setting.Edits(before, after))
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestPreparedCapabilityCommitAcceptsUnchangedDurableSettings(t *testing.T) {
 	// A source edit is independent of theme, even from the earlier snapshot.
 	after := captured
 	after.Theme.Preset = "light"
-	if _, err := application.commitCorePreferences(types.SettingsEdits(captured, after)); err != nil {
+	if _, err := application.commitCorePreferences(setting.Edits(captured, after)); err != nil {
 		t.Fatalf("independent theme edit refused: %v", err)
 	}
 	if FileConfigToAppSettings(LoadFileConfig()).Capabilities.Sources[source.ID].Name != source.Name {

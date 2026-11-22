@@ -6,7 +6,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/shellchat"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 	"fmt"
 	"strings"
@@ -22,7 +22,7 @@ func TestLatestDenseHydratedWidthReflowPaintsTailAndPreservesOtherPaneAndDraft(t
 	app.Tree.Visible = false
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 180, Height: 40})
 	app.AddOrchestrator("other")
-	app.appendAgentMessage("other", types.ChatMessage{InternalID: "other-text", Role: types.RoleAssistant, Content: "OTHER PANE UNCHANGED"})
+	app.appendAgentMessage("other", conversation.ChatMessage{InternalID: "other-text", Role: conversation.RoleAssistant, Content: "OTHER PANE UNCHANGED"})
 	app.AddOrchestrator("owner")
 	// Enter through resume's authoritative snapshot converter, not fabricated rows.
 	stored := make([]sessiondb.MessageWithMeta, 150)
@@ -31,7 +31,7 @@ func TestLatestDenseHydratedWidthReflowPaintsTailAndPreservesOtherPaneAndDraft(t
 		if i == len(stored)-1 {
 			body += "\n\nACTUAL HYDRATED TAIL"
 		}
-		stored[i] = sessiondb.MessageWithMeta{Msg: provider.NewTextMessage("assistant", body), Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{{InternalID: fmt.Sprintf("saved-%d", i), Role: types.RoleAssistant, Content: body}}}}
+		stored[i] = sessiondb.MessageWithMeta{Msg: provider.NewTextMessage("assistant", body), Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: fmt.Sprintf("saved-%d", i), Role: conversation.RoleAssistant, Content: body}}}}
 	}
 	for _, msg := range ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(stored)) {
 		app.appendAgentMessage("owner", msg)
@@ -83,7 +83,7 @@ func TestLatestDenseHydratedWidthReflowPaintsTailAndPreservesOtherPaneAndDraft(t
 	if !strings.Contains(chatAreaText(app), "ACTUAL HYDRATED TAIL") || !screen.ScrollModel().AutoScroll() {
 		t.Fatal("Latest did not materialize and paint actual tail")
 	}
-	app.appendAgentMessage("owner", types.ChatMessage{InternalID: "stream-append", Role: types.RoleAssistant, Content: "SUBSEQUENT STREAM TAIL"})
+	app.appendAgentMessage("owner", conversation.ChatMessage{InternalID: "stream-append", Role: conversation.RoleAssistant, Content: "SUBSEQUENT STREAM TAIL"})
 	app.paintShellFrame()
 	if !strings.Contains(chatAreaText(app), "SUBSEQUENT STREAM TAIL") || !screen.ScrollModel().AutoScroll() {
 		t.Fatal("append lost following")
@@ -103,7 +103,7 @@ func TestLatestRemainsPaintedAcrossLiveTicks(t *testing.T) {
 	app.AddOrchestrator("owner")
 	app.ws.AgentMgr().Get("owner").State.Running = true
 	for i := range 12 {
-		app.appendAgentMessage("owner", types.ChatMessage{Role: types.RoleAssistant, Content: fmt.Sprintf("### Accepted result %d\n\nChecked state ownership and retained completed work. The draft stays untouched while browsing the plan and older messages.", i+1), Time: time.Now()})
+		app.appendAgentMessage("owner", conversation.ChatMessage{Role: conversation.RoleAssistant, Content: fmt.Sprintf("### Accepted result %d\n\nChecked state ownership and retained completed work. The draft stays untouched while browsing the plan and older messages.", i+1), Time: time.Now()})
 	}
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
 	app.paintShellFrame()
@@ -113,7 +113,7 @@ func TestLatestRemainsPaintedAcrossLiveTicks(t *testing.T) {
 		app.paintShellFrame()
 	}
 	for tick := range 20 {
-		_, _ = app.Update(types.TickMsg(time.Now().Add(time.Duration(tick) * time.Second)))
+		_, _ = app.Update(TickMsg(time.Now().Add(time.Duration(tick) * time.Second)))
 		app.paintShellFrame()
 		if !bufferContainsPlain(app.mainSurf.Buffer(), "Latest") {
 			s := app.chatScreen.ScrollModel()

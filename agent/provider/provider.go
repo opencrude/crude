@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 // Register the built-in wire protocols.
@@ -95,7 +95,7 @@ func (p *Provider) Protocol() Protocol {
 			return proto
 		}
 	}
-	if preset := GetPreset(p.ID); preset != nil {
+	if preset := LookupPreset(p.ID); preset != nil {
 		if proto, ok := ProtocolByID(preset.StandardID); ok {
 			return proto
 		}
@@ -129,7 +129,7 @@ func (p *Provider) SetStandardID(id string) error { return p.SetProtocolID(id) }
 
 // DefaultProtocolID returns the default protocol for a provider preset.
 func DefaultProtocolID(providerID string) string {
-	if preset := GetPreset(providerID); preset != nil {
+	if preset := LookupPreset(providerID); preset != nil {
 		if canonical, ok := canonicalProtocolID(preset.StandardID); ok {
 			return canonical
 		}
@@ -460,12 +460,12 @@ func (p *Provider) Validate() error {
 // a custom one is configured. The preset's protocol is applied as the
 // default wire format.
 func FromPreset(presetID, apiKey, customBaseURL string) *Provider {
-	preset := GetPreset(presetID)
+	preset := LookupPreset(presetID)
 	if preset == nil {
 		logIf(func(lg *logger.Logger) {
 			lg.Warn("PROVIDER", "unknown_preset", "requested", presetID, "fallback", "openrouter")
 		})
-		preset = GetPreset("openrouter")
+		preset = LookupPreset("openrouter")
 	}
 
 	template := CloneTemplate(builtinTemplates[preset.ID])

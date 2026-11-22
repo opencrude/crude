@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"crude/workspace"
 	"crude/workspace/document"
@@ -192,7 +192,7 @@ func TestControlDomainExactCheckoutAndNativeClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimed := []string{childPath, filepath.Join(c.Root, "new.txt"), filepath.Join(c.Root, "renamed.txt")}
-	if err := a.ws.FileOwnership.PreClaim(agent.AgentID(child.ID), child.Name, claimed); err != nil {
+	if err := a.ws.FileOwnership.PreClaim(turnloop.AgentID(child.ID), child.Name, claimed); err != nil {
 		t.Fatal(err)
 	}
 	call := func(command, execution string, input any) control.Result {

@@ -13,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/clientstate"
-	"crude/core/port"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -97,7 +97,7 @@ func TestConnectedWorkspaceSwitchRailDirtyDecisionsRetainCoreAndComposer(t *test
 	}
 	t.Cleanup(func() { two.app.ws.Terminals().Close(terminal.ID) })
 	app.setActivity(activityWorkspaces, true)
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ID: "target", ProjectName: "Target workspace", ProjectDir: target}}
+	app.workspaceInfos = []workspace.Info{{ID: "target", ProjectName: "Target workspace", ProjectDir: target}}
 	app.forceFrame()
 	if !strings.Contains(ansi.Strip(app.View().RenderContent()), "Target workspace") {
 		t.Fatal("rail catalog entry is not painted")

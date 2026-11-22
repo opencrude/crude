@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 )
 
 // externalReadPath is deliberately distinct from project authority. Only an

@@ -11,7 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // A native edit is not yet permission to query canonical source. Keep one small
@@ -21,11 +21,11 @@ import (
 // at actual execution, never on enqueue.
 type signatureHelpIntent struct {
 	editor               *editor.Editor
-	source               types.InsightSource
+	source               insight.Source
 	revision, generation uint64
 	line, col            int
 	deadline             time.Time
-	trigger              types.LSPSignatureContext
+	trigger              insight.LSPSignatureContext
 }
 
 func (m *App) signatureEditorOwnsInput(ed *editor.Editor) bool {
@@ -75,7 +75,7 @@ func (m *App) automaticSignatureActive(ed *editor.Editor) bool {
 		return false
 	}
 	source, _ := ed.CurrentInsightSource()
-	sameSource := func(owner *editor.Editor, generation uint64, previous types.InsightSource) bool {
+	sameSource := func(owner *editor.Editor, generation uint64, previous insight.Source) bool {
 		return owner == ed && generation == m.workspaceSwitchGen.Load() &&
 			previous.WorkspaceGeneration == source.WorkspaceGeneration &&
 			previous.DocumentID == source.DocumentID && previous.Lifetime == source.Lifetime &&
@@ -118,9 +118,9 @@ func (m *App) queueAutomaticSignatureHelp(ed *editor.Editor, character string) {
 		return
 	}
 	caps := service.AssistanceCapabilities(ed.FilePath())
-	trigger := types.LSPSignatureContext{Producer: caps.Producer, TriggerKind: types.LSPSignatureInvoked}
+	trigger := insight.LSPSignatureContext{Producer: caps.Producer, TriggerKind: insight.LSPSignatureInvoked}
 	if m.automaticSignatureActive(ed) {
-		trigger.TriggerKind = types.LSPSignatureContentChange
+		trigger.TriggerKind = insight.LSPSignatureContentChange
 		if intent := m.signatureHelpIntent; intent != nil && intent.trigger.Producer == caps.Producer {
 			trigger.IsRetrigger = intent.trigger.IsRetrigger
 			trigger.ActiveSignatureHelp = bytes.Clone(intent.trigger.ActiveSignatureHelp)
@@ -136,7 +136,7 @@ func (m *App) queueAutomaticSignatureHelp(ed *editor.Editor, character string) {
 		}
 	}
 	if character != "" && (slices.Contains(caps.SignatureTriggers, character) || trigger.IsRetrigger && slices.Contains(caps.SignatureRetriggers, character)) {
-		trigger.TriggerKind, trigger.TriggerCharacter = types.LSPSignatureTriggerCharacter, character
+		trigger.TriggerKind, trigger.TriggerCharacter = insight.LSPSignatureTriggerCharacter, character
 	}
 	m.closeSignatureHelp()
 	if !caps.SignatureHelp {
@@ -187,7 +187,7 @@ func (m *App) drainAutomaticSignatureHelp() tea.Cmd {
 	return m.requestSignatureHelp(true, intent.trigger)
 }
 
-func signatureHintText(help types.LSPSignatureHelp) string {
+func signatureHintText(help insight.LSPSignatureHelp) string {
 	if len(help.Signatures) == 0 || help.ActiveSignature < 0 || help.ActiveSignature >= len(help.Signatures) {
 		return ""
 	}

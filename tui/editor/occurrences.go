@@ -5,8 +5,8 @@ import (
 	"slices"
 	"sort"
 
-	"crude/lsp/edit"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/types/insight"
 )
 
 // occurrence is one passive mark of the symbol at the caret, in visual columns.
@@ -27,7 +27,7 @@ type occurrenceSpan struct {
 // SetOccurrences installs a validated answer for the exact source and caret
 // that requested it. Marks are presentation only: they never select, move the
 // caret or edit. They hide on the next edit or when the caret leaves them.
-func (e *Editor) SetOccurrences(result *types.LSPHighlights) error {
+func (e *Editor) SetOccurrences(result *insight.LSPHighlights) error {
 	if result == nil || !e.MatchesInsightSource(result.Boundary.Source) {
 		return errors.New("occurrences do not match the current source")
 	}
@@ -38,14 +38,14 @@ func (e *Editor) SetOccurrences(result *types.LSPHighlights) error {
 	// grapheme/tab geometry forward instead of rescanning every line for each
 	// occurrence. The shared strict UTF-16 source index still validates offsets.
 	type endpoint struct {
-		position types.LSPNavigationPosition
+		position insight.LSPNavigationPosition
 		index    int
 		end      bool
 	}
 	marks := make([]occurrence, len(result.Highlights))
 	points := make([]endpoint, 0, 2*len(marks))
 	for i, h := range result.Highlights {
-		marks[i].write = h.Kind == types.LSPHighlightWrite
+		marks[i].write = h.Kind == insight.LSPHighlightWrite
 		points = append(points, endpoint{position: h.Range.Start, index: i}, endpoint{position: h.Range.End, index: i, end: true})
 	}
 	sort.Slice(points, func(i, j int) bool {

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 func TestAgentInspectExplainsFinishedPeerWakeWithoutOpeningSession(t *testing.T) {
@@ -226,7 +226,7 @@ func TestAgentInspectChildContinuationLabelsAssignmentHistoryHonestly(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: agent.AgentID(child.ID)}, Agent: &agent.Agent{TurnGeneration: 1}, DB: s.db}
+	handle := &turnloop.SubAgentHandle{Spec: turnloop.SubAgentSpec{ID: turnloop.AgentID(child.ID)}, Agent: &turnloop.Agent{TurnGeneration: 1}, DB: s.db}
 	assignment := provider.NewTextMessage("user", "original child assignment")
 	first := provider.NewTextMessage("assistant", "accepted before continuation")
 	archive, active, deltas, err := childTerminalPublication(handle, []provider.ChatMessage{assignment, first}, []provider.ChatMessage{assignment, first}, time.Now())

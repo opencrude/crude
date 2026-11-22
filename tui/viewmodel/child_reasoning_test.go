@@ -9,7 +9,7 @@ import (
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -18,20 +18,20 @@ func TestChildRawReasoningStaysInItsPaneWhileParentHasCompactThinking(t *testing
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 40
 	app.AddOrchestrator("parent")
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "parent", Type: "turn_started", Data: types.TurnIdentity{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "parent", Type: "turn_started", Data: conversation.TurnIdentity{
 		Generation: 1, ProviderID: "gateway", AccountID: "parent-account", ModelID: "parent-model",
 	}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "parent", Type: "thinking", Data: reasoning.Delta{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "parent", Type: "thinking", Data: reasoning.Delta{
 		Text: "Parent summary", Kind: reasoning.Summary,
 	}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Researcher", "category": "researcher", "parent_id": "parent", "model": "child-model",
 	}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "turn_started", Data: types.TurnIdentity{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "turn_started", Data: conversation.TurnIdentity{
 		Generation: 1, ProviderID: "gateway", AccountID: "child-account", ModelID: "child-model",
 	}})
 	trace := strings.Repeat("Raw child investigation across the source.\n", 30)
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{
 		Text: trace, Kind: reasoning.InferredRaw,
 	}})
 
@@ -72,13 +72,13 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					app.AddOrchestrator("parent")
 					owner := "parent"
 					if child {
-						app.handleAgentEvent(types.AgentEventMsg{AgentID: "parent", Type: "thinking", Data: reasoning.Delta{Text: "Parent stays compact", Kind: reasoning.Summary}})
+						app.handleAgentEvent(AgentEventMsg{AgentID: "parent", Type: "thinking", Data: reasoning.Delta{Text: "Parent stays compact", Kind: reasoning.Summary}})
 						owner = "researcher"
-						app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "sub_agent_started", Data: map[string]string{
+						app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "sub_agent_started", Data: map[string]string{
 							"agent_id": owner, "agent_name": "Asha", "category": "researcher", "parent_id": "parent", "model": "opaque-served-model",
 						}})
 					}
-					app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "turn_started", Data: types.TurnIdentity{
+					app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "turn_started", Data: conversation.TurnIdentity{
 						Generation: 1, ProviderID: "gateway", AccountID: "owner-account", ModelID: "opaque-served-model",
 					}})
 					// Background children must promote before their tab is selected.
@@ -97,7 +97,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 							t.Fatal(err)
 						}
 						for _, delta := range update.Reasoning {
-							app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "thinking", Data: delta})
+							app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "thinking", Data: delta})
 						}
 					}
 					stream("**Inspecting ownership**\n\n")
@@ -152,9 +152,9 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 						}
 					}
 					if terminal == "failed" {
-						app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "error", Data: "connection interrupted"})
+						app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "error", Data: "connection interrupted"})
 					} else {
-						app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "done", Data: map[string]any{"reason": terminal}})
+						app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "done", Data: map[string]any{"reason": terminal}})
 					}
 					if app.ws.PaneMgr().Has(paneID) || app.subPaneProjections.Has(paneID) || app.thinkingPaneID(state) != "" {
 						t.Fatal("settled thought left a competing pane owner")
@@ -167,7 +167,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					if err := sessiondb.CreateSessionRow(db, owner); err != nil {
 						t.Fatal(err)
 					}
-					if err := sessiondb.AppendMessageWithMeta(db, owner, provider.NewTextMessage("assistant", ""), 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{thought}}); err != nil {
+					if err := sessiondb.AppendMessageWithMeta(db, owner, provider.NewTextMessage("assistant", ""), 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{thought}}); err != nil {
 						t.Fatal(err)
 					}
 					stored, err := sessiondb.LoadMessagesWithMeta(db)
@@ -191,8 +191,8 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					if !strings.Contains(visible, "MORE-EVIDENCE") || views[0].ThinkingDisplay.Kind != reasoning.Summary {
 						t.Fatalf("resume/disclosure lost the full classified trace: kind=%q rows=%d text=%q", views[0].ThinkingDisplay.Kind, len(rows), visible)
 					}
-					app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "turn_started", Data: types.TurnIdentity{Generation: 2, ProviderID: "another-wire", AccountID: "new-account", ModelID: "new-model"}})
-					app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "thinking", Data: reasoning.Delta{Text: "Short next block", Kind: reasoning.Summary, BlockID: "new-block"}})
+					app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "turn_started", Data: conversation.TurnIdentity{Generation: 2, ProviderID: "another-wire", AccountID: "new-account", ModelID: "new-model"}})
+					app.handleAgentEvent(AgentEventMsg{AgentID: owner, Type: "thinking", Data: reasoning.Delta{Text: "Short next block", Kind: reasoning.Summary, BlockID: "new-block"}})
 					// The session stays latched after it promoted one block, so a
 					// later short thought opens in its own pane instead of restarting
 					// inline. Only a settings change clears that choice.
@@ -209,13 +209,13 @@ func TestChildMeasuredRawReasoningPromotesAfterUsageArrives(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 40
 	app.AddOrchestrator("parent")
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Researcher", "parent_id": "parent", "model": "child-model",
 	}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "turn_started", Data: types.TurnIdentity{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "turn_started", Data: conversation.TurnIdentity{
 		Generation: 1, ProviderID: "gateway", AccountID: "child-account", ModelID: "child-model",
 	}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{
 		Text: strings.Repeat("unlabelled child trace.\n", 25), Kind: reasoning.Provisional,
 	}})
 	child := app.ws.AgentMgr().Get("child")

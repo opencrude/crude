@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -24,9 +26,8 @@ import (
 	"crude/agent/session"
 	"crude/agent/sessiondb"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 
@@ -246,9 +247,9 @@ Then use agent_wait for the exact child/run as needed, without polling. Read the
 // Tool entry may accompany changed agent metadata, or be a conversation-only
 // delta. Observe both published shapes, not a second runtime event consumer.
 func liveWaitExecuting(update coreprotocol.WorkspaceUpdate, parent string) bool {
-	executing := func(rows []workspace.Message) bool {
+	executing := func(rows []conversation.Message) bool {
 		for _, row := range rows {
-			if row.ToolName == "agent_wait" && row.ToolStatus == types.ToolStatusCalling {
+			if row.ToolName == "agent_wait" && row.ToolStatus == conversation.ToolStatusCalling {
 				return true
 			}
 		}
@@ -269,16 +270,16 @@ func liveWaitExecuting(update coreprotocol.WorkspaceUpdate, parent string) bool 
 
 func TestLiveAgentWaitExecutionGateObservesBothPublicationShapes(t *testing.T) {
 	for _, metadata := range []bool{false, true} {
-		for _, status := range []string{types.ToolStatusStreaming, types.ToolStatusCalling, types.ToolStatusSuccess} {
+		for _, status := range []string{conversation.ToolStatusStreaming, conversation.ToolStatusCalling, conversation.ToolStatusSuccess} {
 			for _, owner := range []string{"parent", "child"} {
 				update := coreprotocol.WorkspaceUpdate{}
-				delta := workspace.ConversationDelta{Upserts: []workspace.Message{{ToolName: "agent_wait", ToolStatus: status}}}
+				delta := workspace.ConversationDelta{Upserts: []conversation.Message{{ToolName: "agent_wait", ToolStatus: status}}}
 				if metadata {
 					update.Changes.Agents = []coreprotocol.AgentDelta{{State: workspace.AgentSnapshot{ID: owner}, Conversation: delta}}
 				} else {
 					update.Conversations = []coreprotocol.ConversationUpdate{{AgentID: owner, Delta: delta}}
 				}
-				if got, want := liveWaitExecuting(update, "parent"), owner == "parent" && status == types.ToolStatusCalling; got != want {
+				if got, want := liveWaitExecuting(update, "parent"), owner == "parent" && status == conversation.ToolStatusCalling; got != want {
 					t.Fatalf("metadata=%t status=%s owner=%s executing=%t want=%t", metadata, status, owner, got, want)
 				}
 			}
@@ -296,7 +297,7 @@ func liveWaitConfig(t *testing.T) FileConfig {
 	if err != nil {
 		t.Fatal("cannot read selected live wait configuration")
 	}
-	selected := FileConfigToSession(source).GetActiveDefaultCategory().AccountID
+	selected := FileConfigToSession(source).ActiveDefaultCategory().AccountID
 	if id := os.Getenv("CRUDE_WAIT_ACCOUNT"); id != "" {
 		selected = id
 	}
@@ -319,7 +320,7 @@ func liveWaitConfig(t *testing.T) FileConfig {
 			Categories: map[string]session.CategoryConfig{session.CategoryDefault: main, session.CategoryCrafter: child},
 		}},
 	}
-	memory := types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}
+	memory := setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}
 	// Deliberately rebuild, rather than retaining source.raw, unrelated accounts,
 	// profiles, skills, MCP registrations or credential-bearing log settings.
 	return FileConfig{
@@ -575,7 +576,7 @@ func requireLiveWaitVisible(t *testing.T, ctx context.Context, client *coreclien
 	if err := client.Call(ctx, workspaceID, coreprotocol.Snapshot, &coreprotocol.Empty{}, &snapshot); err != nil {
 		t.Fatal("cannot read full shell conversation snapshot")
 	}
-	var messages []workspace.Message
+	var messages []conversation.Message
 	for _, state := range snapshot.Agents {
 		if state.ID == recipient {
 			messages = state.Messages
@@ -675,7 +676,7 @@ func TestLiveAgentWaitConfigRestrictsAccountAndModel(t *testing.T) {
 	}
 	cfg := FileConfigToSession(filtered)
 	for _, category := range []string{session.CategoryDefault, session.CategoryCrafter} {
-		got := cfg.GetCategoryConfig(category)
+		got := cfg.CategoryConfig(category)
 		if got.AccountID != "selected" || got.Model != liveWaitModel || got.Inherit != "" {
 			t.Fatal("live parent/child connection was not fixed to selected account and exact model")
 		}

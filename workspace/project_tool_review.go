@@ -10,12 +10,12 @@ import (
 	"strings"
 
 	"crude/insight/catalog"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // BuildProjectToolReview describes missing project tools without installing
 // them. Its token fingerprints the preimage; it does not grant authority.
-func BuildProjectToolReview(project, rootIdentity string, plan types.AssemblyPlan) (types.ProjectToolReview, error) {
+func BuildProjectToolReview(project, rootIdentity string, plan insight.AssemblyPlan) (insight.ProjectToolReview, error) {
 	return buildProjectToolReview(project, rootIdentity, plan, catalog.Current(), catalog.CurrentTargets())
 }
 
@@ -39,20 +39,20 @@ func sortedUnique(values []string) []string {
 	return out
 }
 
-func buildProjectToolReview(project, rootIdentity string, plan types.AssemblyPlan, c *catalog.Catalog, targets []string) (types.ProjectToolReview, error) {
+func buildProjectToolReview(project, rootIdentity string, plan insight.AssemblyPlan, c *catalog.Catalog, targets []string) (insight.ProjectToolReview, error) {
 	if strings.TrimSpace(project) == "" || strings.TrimSpace(rootIdentity) == "" {
-		return types.ProjectToolReview{}, errors.New("project and root identity are required")
+		return insight.ProjectToolReview{}, errors.New("project and root identity are required")
 	}
-	if plan.State != types.AssemblyReady || plan.Limited || c == nil {
-		return types.ProjectToolReview{}, errors.New("a complete ready assembly plan is required")
+	if plan.State != insight.AssemblyReady || plan.Limited || c == nil {
+		return insight.ProjectToolReview{}, errors.New("a complete ready assembly plan is required")
 	}
-	review := types.ProjectToolReview{Project: project, RootIdentity: rootIdentity, AssemblyGeneration: plan.Generation}
+	review := insight.ProjectToolReview{Project: project, RootIdentity: rootIdentity, AssemblyGeneration: plan.Generation}
 	byIdentity := make(map[string]int)
 	for _, language := range plan.Languages {
-		if language.Status != types.ToolMissing {
+		if language.Status != insight.ToolMissing {
 			continue
 		}
-		item := types.ProjectToolCandidate{Package: language.Package, Command: language.Command}
+		item := insight.ProjectToolCandidate{Package: language.Package, Command: language.Command}
 		if pkg, ok := c.Package(language.Package); ok {
 			download, reason := pkg.DownloadFor(language.Command, targets)
 			if reason == "" {
@@ -85,7 +85,7 @@ func buildProjectToolReview(project, rootIdentity string, plan types.AssemblyPla
 		key := reviewHash(item)
 		if !item.Installable {
 			key = reviewHash(struct {
-				Item   types.ProjectToolCandidate
+				Item   insight.ProjectToolCandidate
 				Server string
 			}{item, language.ServerID})
 		}

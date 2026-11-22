@@ -8,19 +8,19 @@ import (
 	"crude/text/snippet"
 	"crude/tui/cell"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
-func lowProfileEntry(id, label, sortText string) types.LSPCompletionEntry {
-	return types.LSPCompletionEntry{ID: id, Insertion: types.CompletionItem{Label: label,
-		TextEdit: &types.LSPTextEdit{Line: 0, Col: 0, EndLine: 0, EndCol: 3, NewText: label}},
+func lowProfileEntry(id, label, sortText string) insight.LSPCompletionEntry {
+	return insight.LSPCompletionEntry{ID: id, Insertion: insight.CompletionItem{Label: label,
+		TextEdit: &insight.LSPTextEdit{Line: 0, Col: 0, EndLine: 0, EndCol: 3, NewText: label}},
 		Prefix: "pri", FilterText: label, SortText: sortText}
 }
 
 // automaticCompletionAfterTyping types "i" after "pr", acknowledges the edit
 // and lets the debounced automatic request answer with entries.
-func automaticCompletionAfterTyping(t *testing.T, entries ...types.LSPCompletionEntry) (*App, *completionTestPort) {
+func automaticCompletionAfterTyping(t *testing.T, entries ...insight.LSPCompletionEntry) (*App, *completionTestPort) {
 	t.Helper()
 	app, port := completionTestApp(t, 100, 32, "pr")
 	ed := app.EditorState.Editor
@@ -161,7 +161,7 @@ func TestTypingKeepsSuggestionsOnScreen(t *testing.T) {
 	narrowed := lowProfileEntry("println", "println", "b")
 	narrowed.Prefix, narrowed.Insertion.TextEdit.EndCol = "prin", 4
 	port.set.Boundary.Source, port.set.Boundary.Context.Generation, port.set.Col = source, 8, 4
-	port.set.Entries = []types.LSPCompletionEntry{narrowed}
+	port.set.Entries = []insight.LSPCompletionEntry{narrowed}
 	runAppCommand(t, app, cmd)
 	app.View()
 	if _, ghost, ok := ed.GhostText(); !ok || ghost != "tln" || app.overlayHost.IsOpen(ui.OverlayCompletion) {
@@ -174,14 +174,14 @@ func TestTypingKeepsSuggestionsOnScreen(t *testing.T) {
 }
 
 func TestRankCompletionsPrefersTypedPrefixAndDropsNoOps(t *testing.T) {
-	row := func(id, filter, sortText string) types.LSPCompletionEntry {
+	row := func(id, filter, sortText string) insight.LSPCompletionEntry {
 		e := lowProfileEntry(id, filter, sortText)
 		e.Prefix = "Pri"
 		return e
 	}
 	keyword := lowProfileEntry("keyword", "const", "0")
 	keyword.Prefix = "" // the server's edit does not cover the typed word
-	got := rankCompletions([]types.LSPCompletionEntry{
+	got := rankCompletions([]insight.LSPCompletionEntry{
 		row("fuzzy", "aPxrxi", "0"), row("lower", "print", "1"), row("exact", "Println", "2"),
 		row("same", "Pri", "3"), row("dup", "Println", "4"), keyword,
 	}, "Pri")
@@ -200,8 +200,8 @@ func TestRankCompletionsKeepsDistinctImportAndSnippetEdits(t *testing.T) {
 			first := lowProfileEntry("first", "private", "a")
 			second := lowProfileEntry("second", "private", "b")
 			if kind == "imports" {
-				first.Insertion.AdditionalTextEdits = []types.LSPTextEdit{{NewText: "import \"one\"\n"}}
-				second.Insertion.AdditionalTextEdits = []types.LSPTextEdit{{NewText: "import \"two\"\n"}}
+				first.Insertion.AdditionalTextEdits = []insight.LSPTextEdit{{NewText: "import \"one\"\n"}}
+				second.Insertion.AdditionalTextEdits = []insight.LSPTextEdit{{NewText: "import \"two\"\n"}}
 			} else {
 				text, plan, err := snippet.Parse("pri${1:vate}$0")
 				if err != nil || text != "private" {
@@ -211,7 +211,7 @@ func TestRankCompletionsKeepsDistinctImportAndSnippetEdits(t *testing.T) {
 			}
 			duplicate := first
 			duplicate.ID = "duplicate"
-			got := rankCompletions([]types.LSPCompletionEntry{first, second, duplicate}, "pri")
+			got := rankCompletions([]insight.LSPCompletionEntry{first, second, duplicate}, "pri")
 			if len(got) != 2 || got[0].ID != "first" || got[1].ID != "second" {
 				t.Fatalf("display deduplication lost a different source edit: %+v", got)
 			}
@@ -222,8 +222,8 @@ func TestRankCompletionsKeepsDistinctImportAndSnippetEdits(t *testing.T) {
 func TestAutomaticCompletionDoesNotGuessBetweenImportSources(t *testing.T) {
 	first, second := lowProfileEntry("one", "private", "a"), lowProfileEntry("two", "private", "b")
 	first.Documentation.Detail, second.Documentation.Detail = "package one", "package two"
-	first.Insertion.AdditionalTextEdits = []types.LSPTextEdit{{NewText: "import \"one\"\n"}}
-	second.Insertion.AdditionalTextEdits = []types.LSPTextEdit{{NewText: "import \"two\"\n"}}
+	first.Insertion.AdditionalTextEdits = []insight.LSPTextEdit{{NewText: "import \"one\"\n"}}
+	second.Insertion.AdditionalTextEdits = []insight.LSPTextEdit{{NewText: "import \"two\"\n"}}
 	app, _ := automaticCompletionAfterTyping(t, first, second)
 	if _, _, ok := app.EditorState.Editor.GhostText(); ok {
 		t.Fatal("inline text guessed an import source with the same completion name")

@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/sessionpicker"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"

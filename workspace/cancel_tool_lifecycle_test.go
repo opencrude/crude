@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 // Stop must settle the audit outcome, rather than replay dwell frames after the
@@ -54,7 +54,7 @@ func TestCancelSettlesQueuedToolResultsWithoutReplayingAnimation(t *testing.T) {
 	if state.IsActive() || c.HasPendingToolLifecycles() {
 		t.Fatal("late semantic evidence reactivated the stopped turn")
 	}
-	if !c.BeginTurn(ttypes.TurnIdentity{Generation: 2, ModelID: "next-model"}) {
+	if !c.BeginTurn(conversation.TurnIdentity{Generation: 2, ModelID: "next-model"}) {
 		t.Fatal("next turn rejected")
 	}
 	c.UpdateToolCall("next", "next", "read_file", "next.go")

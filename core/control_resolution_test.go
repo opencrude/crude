@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 )
 

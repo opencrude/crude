@@ -9,7 +9,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/tui/viewmodel"
+	"crude/types/setting"
 )
 
 func TestWatchConfigEmitsThemePreset(t *testing.T) {
@@ -21,7 +22,7 @@ func TestWatchConfigEmitsThemePreset(t *testing.T) {
 		t.Fatal(err)
 	}
 	fc := DefaultFileConfig()
-	fc.Theme = &types.ThemeSettings{Preset: "dark"}
+	fc.Theme = &setting.Theme{Preset: "dark"}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
@@ -33,14 +34,14 @@ func TestWatchConfigEmitsThemePreset(t *testing.T) {
 	}
 	defer stop()
 
-	fc.Theme = &types.ThemeSettings{Preset: "high-contrast"}
+	fc.Theme = &setting.Theme{Preset: "high-contrast"}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
 
 	select {
 	case msg := <-ch:
-		got, ok := msg.(types.ConfigReloadedMsg)
+		got, ok := msg.(viewmodel.ConfigReloadedMsg)
 		if !ok {
 			t.Fatalf("msg=%T", msg)
 		}
@@ -70,7 +71,7 @@ func TestWatchConfigSettlesAfterRapidWrites(t *testing.T) {
 
 	writePreset := func(preset string) {
 		fc := DefaultFileConfig()
-		fc.Theme = &types.ThemeSettings{Preset: preset}
+		fc.Theme = &setting.Theme{Preset: preset}
 		if err := SaveFileConfig(fc); err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +83,7 @@ func TestWatchConfigSettlesAfterRapidWrites(t *testing.T) {
 
 	select {
 	case msg := <-ch:
-		got, ok := msg.(types.ConfigReloadedMsg)
+		got, ok := msg.(viewmodel.ConfigReloadedMsg)
 		if !ok {
 			t.Fatalf("msg=%T", msg)
 		}
@@ -109,7 +110,7 @@ func TestWatchConfigSkipsInvalidJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	fc := DefaultFileConfig()
-	fc.Theme = &types.ThemeSettings{Preset: "light"}
+	fc.Theme = &setting.Theme{Preset: "light"}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func TestWatchConfigRecoversAfterInvalidThenValidWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	fc := DefaultFileConfig()
-	fc.Theme = &types.ThemeSettings{Preset: "dark"}
+	fc.Theme = &setting.Theme{Preset: "dark"}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
@@ -162,14 +163,14 @@ func TestWatchConfigRecoversAfterInvalidThenValidWrite(t *testing.T) {
 	case <-time.After(configWatchDebounce + 200*time.Millisecond):
 	}
 
-	fc.Theme = &types.ThemeSettings{Preset: "high-contrast"}
+	fc.Theme = &setting.Theme{Preset: "high-contrast"}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
 
 	select {
 	case msg := <-ch:
-		got, ok := msg.(types.ConfigReloadedMsg)
+		got, ok := msg.(viewmodel.ConfigReloadedMsg)
 		if !ok {
 			t.Fatalf("msg=%T", msg)
 		}
@@ -220,7 +221,7 @@ func TestWatchConfigRenameCreateEmitsReload(t *testing.T) {
 	cfgPath := ConfigPath()
 	tempPath := cfgPath + ".tmp"
 	fc := DefaultFileConfig()
-	fc.Theme = &types.ThemeSettings{Preset: "light"}
+	fc.Theme = &setting.Theme{Preset: "light"}
 	data, err := json.MarshalIndent(fc, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +235,7 @@ func TestWatchConfigRenameCreateEmitsReload(t *testing.T) {
 
 	select {
 	case msg := <-ch:
-		got, ok := msg.(types.ConfigReloadedMsg)
+		got, ok := msg.(viewmodel.ConfigReloadedMsg)
 		if !ok {
 			t.Fatalf("msg=%T", msg)
 		}

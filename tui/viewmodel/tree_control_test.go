@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 
 	"github.com/charmbracelet/x/ansi"

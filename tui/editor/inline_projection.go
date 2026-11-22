@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"crude/tui/rendering"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // InlineInsertion is display-only text at an exact source grapheme boundary.
@@ -96,7 +96,7 @@ func buildInlineProjectionWithGhost(tabW int, raw string, insertions []InlineIns
 		ordered = append(ordered, insertion{InlineInsertion: in})
 	}
 	if ghost != nil {
-		if !types.ValidEditorPredictionInsertion(ghost.Label) || ghost.PaddingLeft || ghost.PaddingRight {
+		if !insight.ValidEditorPredictionInsertion(ghost.Label) || ghost.PaddingLeft || ghost.PaddingRight {
 			return nil, errors.New("prediction must be bounded literal single-line text")
 		}
 		ordered = append(ordered, insertion{InlineInsertion: *ghost, ghost: true})

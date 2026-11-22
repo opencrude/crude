@@ -21,14 +21,16 @@ import (
 	"strings"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
 	"crude/agent/tools"
-	ttypes "crude/types"
+	"crude/agent/turnloop"
 	"crude/types/attachment"
+	"crude/types/conversation"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 // Bootstrap creates or resumes a backend session for this workspace.
@@ -102,7 +104,7 @@ func (w *Workspace) HydrateSession(sessionID string) {
 	w.installSessionHydration(frontend, views)
 }
 
-func (w *Workspace) prepareSessionHydration(frontend *Session) []ChatMessageView {
+func (w *Workspace) prepareSessionHydration(frontend *Session) []conversation.Message {
 	msgs := frontend.backend.MessagesWithMeta()
 	views := ConvertMessagesForDisplay(msgs)
 	views = w.hydrateRecoveryViews(views, frontend)
@@ -117,7 +119,7 @@ func (w *Workspace) prepareSessionHydration(frontend *Session) []ChatMessageView
 		if records, err := sessiondb.ListUsageRecords(db); err == nil {
 			frontend.usageMu.Lock()
 			frontend.usageRecords = make(map[string]sessiondb.UsageRecord, len(records))
-			frontend.usageCache = make(map[usageCacheKey]ttypes.UsageSummary)
+			frontend.usageCache = make(map[usageCacheKey]statuscenter.UsageSummary)
 			frontend.usageVersion++
 			for _, record := range records {
 				frontend.usageRecords[record.RequestID] = record
@@ -132,11 +134,11 @@ func (w *Workspace) prepareSessionHydration(frontend *Session) []ChatMessageView
 			}
 		}
 	}
-	slices.SortStableFunc(views, func(left, right ChatMessageView) int { return left.Time.Compare(right.Time) })
+	slices.SortStableFunc(views, func(left, right conversation.Message) int { return left.Time.Compare(right.Time) })
 	return views
 }
 
-func (w *Workspace) installSessionHydration(frontend *Session, views []ChatMessageView) {
+func (w *Workspace) installSessionHydration(frontend *Session, views []conversation.Message) {
 	node := w.RegisterAgentRoot(frontend.AgentID)
 	if node == nil || node.State == nil {
 		return
@@ -176,7 +178,7 @@ func (w *Workspace) HydrateSubAgents(parentID string) []string {
 
 type preparedSubAgent struct {
 	snapshot session.SubAgentSnapshot
-	views    []ChatMessageView
+	views    []conversation.Message
 }
 
 func prepareSubAgentViews(snapshots []session.SubAgentSnapshot) []preparedSubAgent {
@@ -186,7 +188,7 @@ func prepareSubAgentViews(snapshots []session.SubAgentSnapshot) []preparedSubAge
 		for _, record := range snapshot.Compactions {
 			views = append(views, compactionRecordView(record))
 		}
-		slices.SortStableFunc(views, func(left, right ChatMessageView) int { return left.Time.Compare(right.Time) })
+		slices.SortStableFunc(views, func(left, right conversation.Message) int { return left.Time.Compare(right.Time) })
 		prepared = append(prepared, preparedSubAgent{snapshot: snapshot, views: views})
 	}
 	return prepared
@@ -209,7 +211,7 @@ func (w *Workspace) installPreparedSubAgents(parentID string, frontendSession *S
 		if label == "" {
 			label = id
 		}
-		pane := w.PaneMgr.GetOrCreate(id, PaneAgent, label)
+		pane := w.PaneMgr.Ensure(id, PaneAgent, label)
 		paneViews := item.views
 		for _, view := range paneViews {
 			pane.Messages.AppendMessage(messageFromView(view))
@@ -222,7 +224,7 @@ func (w *Workspace) installPreparedSubAgents(parentID string, frontendSession *S
 				}
 				content += fmt.Sprintf("Report: %s · revision %d", result.ReportID, result.ReportRevision)
 			}
-			pane.Messages.AppendMessage(Message{Role: MessageRoleAssistant, Content: content, Time: time.Now()})
+			pane.Messages.AppendMessage(conversation.Message{Role: MessageRoleAssistant, Content: content, Time: time.Now()})
 		}
 		if result.DurationMs > 0 {
 			pane.StartTime = time.Now().Add(-time.Duration(result.DurationMs) * time.Millisecond)
@@ -270,7 +272,7 @@ func (w *Workspace) BackendSession(sessionID string) *session.Session {
 
 // HandleSettingsSaveForSession is the serialized, synchronous domain path.
 // UI callers prepare on their owner thread, run off-thread, then apply the result.
-func (w *Workspace) HandleSettingsSaveForSession(sessionID string, settings ttypes.Settings) error {
+func (w *Workspace) HandleSettingsSaveForSession(sessionID string, settings setting.Settings) error {
 	operation, err := w.PrepareSessionSettingsSave(sessionID, settings)
 	if err != nil {
 		return err
@@ -282,16 +284,16 @@ func (w *Workspace) HandleSettingsSaveForSession(sessionID string, settings ttyp
 
 // WorkspaceAgentDefaults returns the effective defaults shown by the
 // persistent settings dialog.
-func (w *Workspace) WorkspaceAgentDefaults() ttypes.AgentsSettings {
+func (w *Workspace) WorkspaceAgentDefaults() setting.Agents {
 	if w.sessionCfg == nil {
-		return ttypes.AgentsSettings{}
+		return setting.Agents{}
 	}
 	return session.ConfigToSettings(w.sessionCfg).Agents
 }
 
 // applyProviderSettings installs provider connection defaults without changing any
 // existing session's selected account. Persistence belongs to SaveAppSettings.
-func (w *Workspace) applyProviderSettings(settings ttypes.AppSettings) {
+func (w *Workspace) applyProviderSettings(settings setting.App) {
 	if w.sessionCfg == nil {
 		return
 	}
@@ -300,13 +302,13 @@ func (w *Workspace) applyProviderSettings(settings ttypes.AppSettings) {
 
 // HandleFetchModels lists models for an explicitly selected account. It never
 // borrows the active tab's credentials or another account's default.
-func (w *Workspace) HandleFetchModels(providerID, accountID, baseURL, standardID string) ([]ttypes.ModelEntry, error) {
+func (w *Workspace) HandleFetchModels(providerID, accountID, baseURL, standardID string) ([]setting.ModelEntry, error) {
 	return w.PrepareAccountModels(providerID, accountID, baseURL, standardID)()
 }
 
 // HandleCompactForAgent compacts only the session captured when the slash
 // command was submitted.
-func (w *Workspace) HandleCompactForAgent(agentID string) ttypes.CompactResultMsg {
+func (w *Workspace) HandleCompactForAgent(agentID string) conversation.CompactResultMsg {
 	prepared, result := w.PrepareCompactForAgent(agentID)
 	if prepared.Run == nil {
 		return result
@@ -316,22 +318,22 @@ func (w *Workspace) HandleCompactForAgent(agentID string) ttypes.CompactResultMs
 
 // PrepareCompactForAgent registers lifecycle ownership synchronously so the
 // TUI can paint and cancel the operation before its tea.Cmd begins I/O.
-func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedCompaction, ttypes.CompactResultMsg) {
+func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedCompaction, conversation.CompactResultMsg) {
 	const unavailable = "This agent has no open session. Context was not compacted."
 	if w == nil || w.AgentMgr == nil {
-		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: unavailable}
+		return session.PreparedCompaction{}, conversation.CompactResultMsg{Error: unavailable}
 	}
 	node := w.AgentMgr.Get(agentID)
 	if node == nil {
-		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: unavailable}
+		return session.PreparedCompaction{}, conversation.CompactResultMsg{Error: unavailable}
 	}
 	if node.Parent != nil {
-		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "Child agents compact their context automatically. Run /compact in the main agent tab."}
+		return session.PreparedCompaction{}, conversation.CompactResultMsg{Error: "Child agents compact their context automatically. Run /compact in the main agent tab."}
 	}
 	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
 		return sess.backend.PrepareCompaction(agentID)
 	}
-	return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: unavailable}
+	return session.PreparedCompaction{}, conversation.CompactResultMsg{Error: unavailable}
 }
 
 // humanName is how the human appears to people and agents: their username.
@@ -408,7 +410,7 @@ func (w *Workspace) CancelSubAgent(agentID string) {
 	}
 	runner := sess.backend.SubAgentRunner()
 	if runner != nil {
-		if handle, ok := runner.Manager().GetActive(agent.AgentID(agentID)); ok {
+		if handle, ok := runner.Manager().Active(turnloop.AgentID(agentID)); ok {
 			handle.Cancel()
 		}
 	}
@@ -471,12 +473,6 @@ func (w *Workspace) SubmitAgentInput(agentID string, input provider.UserInput) b
 	return false
 }
 
-type InputAdmissionStatus = session.InputAdmissionStatus
-type InputAdmissionErrorKind = session.InputAdmissionErrorKind
-type InputAdmissionIntent = session.InputAdmissionIntent
-type InputAdmissionReceipt = session.InputAdmissionReceipt
-type InputAdmissionResult = session.InputAdmissionResult
-
 const (
 	InputAdmissionAccepted            = session.InputAdmissionAccepted
 	InputAdmissionRejected            = session.InputAdmissionRejected
@@ -488,7 +484,7 @@ const (
 // PrepareAgentInputAdmission reserves an exact owner/generation without I/O.
 // Frontends call it while handling the submit gesture, then run the matching
 // commit in a command before projecting or clearing the accepted draft.
-func (w *Workspace) PrepareAgentInputAdmission(agentID string, input provider.UserInput, draftRevision uint64) (*InputAdmissionIntent, error) {
+func (w *Workspace) PrepareAgentInputAdmission(agentID string, input provider.UserInput, draftRevision uint64) (*session.InputAdmissionIntent, error) {
 	if w == nil || agentID == "" {
 		return nil, fmt.Errorf("input owner is unavailable")
 	}
@@ -500,14 +496,14 @@ func (w *Workspace) PrepareAgentInputAdmission(agentID string, input provider.Us
 }
 
 // CommitAgentInputAdmission performs the durable publication off the UI thread.
-func (w *Workspace) CommitAgentInputAdmission(ctx context.Context, intent *InputAdmissionIntent) InputAdmissionResult {
+func (w *Workspace) CommitAgentInputAdmission(ctx context.Context, intent *session.InputAdmissionIntent) session.InputAdmissionResult {
 	if w == nil || intent == nil {
-		return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: session.InputAdmissionPreLocalRejection,
+		return session.InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: session.InputAdmissionPreLocalRejection,
 			Err: fmt.Errorf("input admission intent is unavailable")}
 	}
 	frontend := w.SessionsByAgent[intent.AgentID]
 	if frontend == nil || frontend.backend == nil {
-		return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: session.InputAdmissionPreLocalRejection,
+		return session.InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: session.InputAdmissionPreLocalRejection,
 			Err: fmt.Errorf("input owner is unavailable")}
 	}
 	return frontend.backend.CommitInputAdmission(ctx, intent)
@@ -523,28 +519,28 @@ func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
 // AdmitAgentSteering distinguishes a confirmed no-effect refusal from an
 // unavailable/uncertain persistence result. Only the former permits the shell
 // to route an unchanged send gesture through ordinary input admission.
-func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput) (InputAdmissionReceipt, bool, error) {
+func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput) (session.InputAdmissionReceipt, bool, error) {
 	if w == nil || w.Collaboration == nil || agentID == "" || input.InternalID == "" {
-		return InputAdmissionReceipt{}, false, nil
+		return session.InputAdmissionReceipt{}, false, nil
 	}
 	participant, err := w.Collaboration.Agent(context.Background(), agentID)
 	if err != nil {
 		if errors.Is(err, collaboration.ErrNotFound) {
-			return InputAdmissionReceipt{}, false, nil
+			return session.InputAdmissionReceipt{}, false, nil
 		}
-		return InputAdmissionReceipt{}, false, err
+		return session.InputAdmissionReceipt{}, false, err
 	}
 	if participant.State != collaboration.AgentAvailable ||
 		participant.Presence != collaboration.RuntimeAttached ||
 		participant.CurrentRunID == "" {
-		return InputAdmissionReceipt{}, false, nil
+		return session.InputAdmissionReceipt{}, false, nil
 	}
 	run, err := w.Collaboration.Run(context.Background(), participant.CurrentRunID)
 	if err != nil {
-		return InputAdmissionReceipt{}, false, err
+		return session.InputAdmissionReceipt{}, false, err
 	}
 	if run.AgentID != agentID || run.RuntimeEpoch != participant.RuntimeEpoch || run.State.Terminal() {
-		return InputAdmissionReceipt{}, false, nil
+		return session.InputAdmissionReceipt{}, false, nil
 	}
 	references := []collaboration.Reference{{Kind: "history_message", ID: input.InternalID}}
 	for _, id := range input.ReferenceIDs {
@@ -554,7 +550,7 @@ func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput)
 	}
 	owner := w.sessionForAgent(agentID)
 	if owner == nil || owner.backend == nil {
-		return InputAdmissionReceipt{}, false, nil
+		return session.InputAdmissionReceipt{}, false, nil
 	}
 	published, err := owner.backend.PublishHumanSteering(context.Background(), agentID, collaboration.PublishRequest{
 		SenderID:       "human",
@@ -570,25 +566,25 @@ func (w *Workspace) AdmitAgentSteering(agentID string, input provider.UserInput)
 	})
 	if err != nil {
 		if errors.Is(err, collaboration.ErrUnavailable) {
-			return InputAdmissionReceipt{}, false, nil
+			return session.InputAdmissionReceipt{}, false, nil
 		}
-		return InputAdmissionReceipt{}, false, err
+		return session.InputAdmissionReceipt{}, false, err
 	}
 	if node := w.AgentMgr.Get(agentID); node != nil && node.State != nil {
 		var labels []string
 		if owner := w.SessionForAgent(agentID); owner != nil && owner.RefStore != nil {
 			for _, id := range input.ReferenceIDs {
-				if ref, ok := owner.RefStore.GetReference(id); ok && ref.Active() {
+				if ref, ok := owner.RefStore.Reference(id); ok && ref.Active() {
 					labels = append(labels, ref.DisplayName())
 				}
 			}
 		}
-		node.State.Messages.AppendMessageIfAbsent(Message{InternalID: input.InternalID,
+		node.State.Messages.AppendMessageIfAbsent(conversation.Message{InternalID: input.InternalID,
 			Role: MessageRoleUser, Origin: provider.OriginHumanSteering, Content: input.DisplayContent(),
 			ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: time.Now(), PendingSteering: true})
 		w.agentRevision++
 	}
-	return InputAdmissionReceipt{SessionID: owner.SessionID, AgentID: agentID, InputID: input.InternalID,
+	return session.InputAdmissionReceipt{SessionID: owner.SessionID, AgentID: agentID, InputID: input.InternalID,
 		OwnerEpoch: participant.RuntimeEpoch, AcceptedAt: published.Event.CreatedAt,
 		EventID: published.Event.ID, RunID: published.Event.RunID}, true, nil
 }
@@ -630,9 +626,9 @@ func (w *Workspace) ResolveConfirmation(agentID, blockID, choice string) bool {
 	if !pending || !prompt.AcceptsConfirmation(blockID, choice) {
 		return false
 	}
-	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+	return w.resolveAgentBlock(agentID, conversation.BlockResponse{
 		RequestID: blockID,
-		Outcome:   ttypes.BlockAnswered,
+		Outcome:   conversation.BlockAnswered,
 		Value:     choice,
 	})
 }
@@ -642,22 +638,22 @@ func (w *Workspace) ResolveConfirmation(agentID, blockID, choice string) bool {
 // rather than failing the whole response.
 func (w *Workspace) ResolveQuestion(agentID, blockID string, answers, questions map[string]string, cancelled bool) bool {
 	if cancelled {
-		return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+		return w.resolveAgentBlock(agentID, conversation.BlockResponse{
 			RequestID: blockID,
-			Outcome:   ttypes.BlockUserCancelled,
+			Outcome:   conversation.BlockUserCancelled,
 		})
 	}
 	text, ok := formatQuestionAnswers(answers, questions)
 	if !ok {
-		return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+		return w.resolveAgentBlock(agentID, conversation.BlockResponse{
 			RequestID: blockID,
-			Outcome:   ttypes.BlockValidationError,
+			Outcome:   conversation.BlockValidationError,
 			Detail:    "no questions were answered",
 		})
 	}
-	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+	return w.resolveAgentBlock(agentID, conversation.BlockResponse{
 		RequestID: blockID,
-		Outcome:   ttypes.BlockAnswered,
+		Outcome:   conversation.BlockAnswered,
 		Value:     text,
 	})
 }
@@ -691,14 +687,14 @@ func formatQuestionAnswers(answers, questions map[string]string) (string, bool) 
 // RejectQuestion reports a frontend validation failure without attributing it
 // to the user. The model receives actionable feedback and can retry the tool.
 func (w *Workspace) RejectQuestion(agentID, blockID, detail string) bool {
-	return w.resolveAgentBlock(agentID, ttypes.BlockResponse{
+	return w.resolveAgentBlock(agentID, conversation.BlockResponse{
 		RequestID: blockID,
-		Outcome:   ttypes.BlockValidationError,
+		Outcome:   conversation.BlockValidationError,
 		Detail:    detail,
 	})
 }
 
-func (w *Workspace) resolveAgentBlock(agentID string, response ttypes.BlockResponse) bool {
+func (w *Workspace) resolveAgentBlock(agentID string, response conversation.BlockResponse) bool {
 	if w == nil || w.AgentMgr == nil || response.RequestID == "" {
 		return false
 	}
@@ -745,12 +741,13 @@ func (w *Workspace) sessionForAgent(agentID string) *Session {
 }
 
 // RecordAgentUsage applies a request-keyed provider usage event to its owner.
-func (w *Workspace) RecordAgentUsage(agentID string, data any) (ttypes.UsageSummary, bool) {
+func (w *Workspace) RecordAgentUsage(agentID string, data any) (statuscenter.UsageSummary, bool) {
 	return w.recordAgentUsage(agentID, data)
 }
 
-func (w *Workspace) AgentUsage(agentID string) (ttypes.UsageSummary, bool) {
-	return w.UsageSummary(agentID, ttypes.UsageThisAgent)
+// AgentUsage returns the token usage of one agent.
+func (w *Workspace) AgentUsage(agentID string) (statuscenter.UsageSummary, bool) {
+	return w.UsageSummary(agentID, statuscenter.UsageThisAgent)
 }
 
 // ── Session List / Delete (workspace-scoped)
@@ -799,11 +796,11 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 	}
 	defer func() { _ = db.Close() }()
 
-	m, err := sessiondb.GetMeta(db)
+	m, err := sessiondb.LoadMeta(db)
 	if err != nil {
 		return r
 	}
-	totalCost, _ := sessiondb.GetCumulativeCost(db)
+	totalCost, _ := sessiondb.LoadCumulativeCost(db)
 	m.RoundCount, _ = sessiondb.CountAssistantRounds(db)
 	// Preserve the model/provider from the registry if the DB is empty.
 	if m.Model == "" {
@@ -861,7 +858,7 @@ func (w *Workspace) StartOrchestrator(sessionID string, sender session.EventSend
 
 // ── Message Conversion
 
-func compactionRecordView(record sessiondb.CompactionRecord) ChatMessageView {
+func compactionRecordView(record sessiondb.CompactionRecord) conversation.Message {
 	phase := "compaction_" + record.State
 	stageName := record.StageName
 	switch stageName {
@@ -878,7 +875,7 @@ func compactionRecordView(record sessiondb.CompactionRecord) ChatMessageView {
 	if !record.EndedAt.IsZero() {
 		timestamp = record.EndedAt
 	}
-	return ChatMessageView{
+	return conversation.Message{
 		InternalID:             record.OperationID,
 		Role:                   MessageRoleStatus,
 		Content:                record.Error,
@@ -908,7 +905,7 @@ func compactionRecordView(record sessiondb.CompactionRecord) ChatMessageView {
 // run the identical helper; otherwise a resumed session prints raw arguments
 // ("pattern: func main path: tui/tools") where the live row printed the label
 // ("func main" in tui/tools).
-func canonicalizeToolSnapshotForDisplay(snapshot *ChatMessageView) {
+func canonicalizeToolSnapshotForDisplay(snapshot *conversation.Message) {
 	if snapshot == nil || snapshot.Role != "tool" || snapshot.ToolArgs == "" {
 		return
 	}
@@ -920,8 +917,8 @@ func canonicalizeToolSnapshotForDisplay(snapshot *ChatMessageView) {
 
 // ConvertMessagesForDisplay converts persisted backend messages into the
 // workspace-owned view data consumed by frontends.
-func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageView {
-	var result []ChatMessageView
+func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []conversation.Message {
+	var result []conversation.Message
 
 	batchArgsByCallID := parallelBatchArguments(msgs)
 	retained := retainedAttachmentIdentities(msgs)
@@ -934,7 +931,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				}
 				snapshot.ReferenceLabels = append([]string(nil), snapshot.ReferenceLabels...)
 				snapshot.Attachments = slices.Clone(snapshot.Attachments)
-				if snapshot.Role == ttypes.RoleUser && len(snapshot.Attachments) == 0 {
+				if snapshot.Role == conversation.RoleUser && len(snapshot.Attachments) == 0 {
 					var exact []attachment.Target
 					for _, target := range retained[snapshot.InternalID] {
 						if slices.Contains(snapshot.ReferenceLabels, target.Label) && strings.Count(snapshot.Content, target.Label) == 1 {

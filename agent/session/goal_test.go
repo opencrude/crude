@@ -15,7 +15,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 type goalProviderCall struct {
@@ -153,7 +153,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 			t.Fatalf("verifier was offered %s", denied)
 		}
 	}
-	if goal, _ := s.Goal(); !goal.Verifying || goal.Status != types.GoalActive {
+	if goal, _ := s.Goal(); !goal.Verifying || goal.Status != conversation.GoalActive {
 		t.Fatalf("goal while verifying = %+v", goal)
 	}
 	afterClaim := next(rootCalls, "worker learns a verifier is checking")
@@ -170,7 +170,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		goal, _ := s.Goal()
-		if goal.Status == types.GoalComplete {
+		if goal.Status == conversation.GoalComplete {
 			if goal.Verifying || !strings.Contains(goal.Reason, "done.txt contains ok") {
 				t.Fatalf("completed goal = %+v", goal)
 			}
@@ -203,7 +203,7 @@ func TestGoalContinuesUntilAnIndependentVerifierConfirms(t *testing.T) {
 		t.Fatalf("goal continuation turns = %d, want only the one that did the work", n)
 	}
 	stored, ok, err := sessiondb.LoadGoal(s.db, s.sessionID)
-	if err != nil || !ok || stored.Goal.Status != types.GoalComplete || stored.VerifierID != "" {
+	if err != nil || !ok || stored.Goal.Status != conversation.GoalComplete || stored.VerifierID != "" {
 		t.Fatalf("stored goal = %+v ok=%v err=%v", stored, ok, err)
 	}
 	_ = store
@@ -251,7 +251,7 @@ func TestGoalStopPausesAndReopenWaits(t *testing.T) {
 	root.CancelTurn()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if goal, _ := s.Goal(); goal.Status == types.GoalPaused {
+		if goal, _ := s.Goal(); goal.Status == conversation.GoalPaused {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -275,11 +275,11 @@ func TestGoalStopPausesAndReopenWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	record, ok, err := sessiondb.LoadGoal(db, sessionID)
-	if err != nil || !ok || record.Goal.Status != types.GoalPaused {
+	if err != nil || !ok || record.Goal.Status != conversation.GoalPaused {
 		t.Fatalf("closing during a goal turn did not pause the goal: %+v %v", record, err)
 	}
 	// A crash leaves the goal active with no turn running.
-	record.Goal.Status, record.Goal.Reason = types.GoalActive, ""
+	record.Goal.Status, record.Goal.Reason = conversation.GoalActive, ""
 	if err := sessiondb.SaveGoal(db, sessionID, record); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestGoalStopPausesAndReopenWaits(t *testing.T) {
 	}
 	defer reopened.Close()
 	goal, ok := reopened.Goal()
-	if !ok || goal.Status != types.GoalActive || !goal.Waiting {
+	if !ok || goal.Status != conversation.GoalActive || !goal.Waiting {
 		t.Fatalf("reopened goal = %+v", goal)
 	}
 	if _, ok := reopened.goalContinuation(); ok {
@@ -375,14 +375,14 @@ func TestGoalStopsAtItsTokenBudget(t *testing.T) {
 	case <-time.After(1500 * time.Millisecond):
 	}
 	goal, _ := s.Goal()
-	if goal.Status != types.GoalBudgetLimited || goal.TokensUsed < 100 || !strings.Contains(goal.Reason, "token budget of 100") {
+	if goal.Status != conversation.GoalBudgetLimited || goal.TokensUsed < 100 || !strings.Contains(goal.Reason, "token budget of 100") {
 		t.Fatalf("goal after its budget = %+v", goal)
 	}
 	if _, err := s.ResumeGoal(); err == nil || !strings.Contains(err.Error(), "token budget") {
 		t.Fatalf("resume past the budget = %v", err)
 	}
 	stored, ok, err := sessiondb.LoadGoal(s.db, s.sessionID)
-	if err != nil || !ok || stored.Goal.Status != types.GoalBudgetLimited || stored.Goal.TokenBudget != 100 {
+	if err != nil || !ok || stored.Goal.Status != conversation.GoalBudgetLimited || stored.Goal.TokenBudget != 100 {
 		t.Fatalf("stored goal = %+v ok=%v err=%v", stored, ok, err)
 	}
 }
@@ -416,7 +416,7 @@ func TestGoalAccountingExcludesPlanTurnsAndKeepsMidTurnPolicy(t *testing.T) {
 	s.syncGoalPlanAccounting(nil)
 	addUsage("planning", 200)
 	s.enforceGoalBudget()
-	if goal, _ := s.Goal(); goal.TokensUsed != 45 || goal.Status != types.GoalActive {
+	if goal, _ := s.Goal(); goal.TokensUsed != 45 || goal.Status != conversation.GoalActive {
 		t.Fatalf("planning consumed the goal budget: %+v", goal)
 	}
 	if err := s.SetPlanMode(false); err != nil {
@@ -458,10 +458,10 @@ func TestGoalProviderRefusalBlocksWithExactReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	var goal types.Goal
+	var goal conversation.Goal
 	for {
 		goal, _ = s.Goal()
-		if goal.Status == types.GoalBlocked {
+		if goal.Status == conversation.GoalBlocked {
 			break
 		}
 		if time.Now().After(deadline) {

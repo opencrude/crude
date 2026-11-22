@@ -14,7 +14,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/window"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 func paneTabPoint(t *testing.T, app *App, tab window.TabID) (int, int) {
@@ -125,7 +125,7 @@ func paneResourceFixture(t *testing.T, app *App, kind window.ResourceKind) windo
 		return app.Win.ActiveTab().ID
 	case window.ResourceAgent:
 		app.AddOrchestrator("pane-target-agent")
-		app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "PANE_TARGET_TRANSCRIPT", Time: time.Unix(1, 0)})
+		app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: "PANE_TARGET_TRANSCRIPT", Time: time.Unix(1, 0)})
 		return app.Win.ActiveTab().ID
 	case window.ResourcePanel:
 		app.openPanelAsTab(termdock.PanelNotices)

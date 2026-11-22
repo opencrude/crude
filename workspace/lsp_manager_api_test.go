@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	model "crude/types"
+	"crude/types/insight"
 )
 
 func TestLSPManager_IsConfigured_FreshManager(t *testing.T) {
@@ -21,8 +21,8 @@ func TestLSPManager_AllDiagnostics_Empty(t *testing.T) {
 
 func TestLSPManager_AllDiagnostics_ReturnsCopy(t *testing.T) {
 	m, client, snapshot := diagnosticFixture(t)
-	client.emit(client.publication(snapshot.Path, []model.LSPDiagnostic{
-		{Line: 1, Col: 2, EndLine: 1, EndCol: 3, Severity: model.DiagError, Message: "boom"},
+	client.emit(client.publication(snapshot.Path, []insight.LSPDiagnostic{
+		{Line: 1, Col: 2, EndLine: 1, EndCol: 3, Severity: insight.DiagError, Message: "boom"},
 	}))
 	got := m.AllDiagnostics()
 	assert.Len(t, got, 1)
@@ -39,13 +39,13 @@ func TestLSPManager_AllDiagnostics_ReturnsCopy(t *testing.T) {
 
 func TestLSPManager_InvalidateDiagnosticsRetainsEvidence(t *testing.T) {
 	m, client, snapshot := diagnosticFixture(t)
-	client.emit(client.publication(snapshot.Path, []model.LSPDiagnostic{{Severity: model.DiagError, Message: "x"}}))
+	client.emit(client.publication(snapshot.Path, []insight.LSPDiagnostic{{Severity: insight.DiagError, Message: "x"}}))
 	before := requireDiagnostic(t, m, snapshot.Path, "x")
 	m.InvalidateFile(snapshot.Path)
 	after, ok := m.FileDiagnostics(snapshot.Path)
 	assert.True(t, ok)
 	assert.Equal(t, before.ID, after.ID)
-	assert.Equal(t, model.InsightStale, after.State)
+	assert.Equal(t, insight.Stale, after.State)
 	assert.False(t, after.HasExactSource())
 }
 
@@ -53,13 +53,13 @@ func TestLSPManager_Stop_ResetsState(t *testing.T) {
 	m := NewLSPManager(testLogger{})
 	// Simulate a server having been started and connected.
 	m.activeConnected = true
-	m.activeStatus = model.LSPConnected
+	m.activeStatus = insight.LSPConnected
 	m.activeError = "fake"
 
 	m.Stop()
 
 	assert.False(t, m.activeConnected, "Stop should reset activeConnected")
-	assert.Equal(t, model.LSPIdle, m.activeStatus, "Stop should reset status to LSPIdle")
+	assert.Equal(t, insight.LSPIdle, m.activeStatus, "Stop should reset status to LSPIdle")
 	assert.Empty(t, m.activeError, "Stop should clear error")
 	assert.Equal(t, 0, m.inflight, "Stop should reset in-flight count")
 	assert.False(t, m.syncing, "Stop should clear syncing flag")

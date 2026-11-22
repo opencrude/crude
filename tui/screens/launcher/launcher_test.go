@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func testScreen(t *testing.T, width, height int, workspaces []workspace.WorkspaceInfo) (*Screen, *ui.Host, *surface.CellBuffer) {
+func testScreen(t *testing.T, width, height int, workspaces []workspace.Info) (*Screen, *ui.Host, *surface.CellBuffer) {
 	t.Helper()
 	s := New(theme.DefaultDark())
 	current := "/projects/current"
@@ -47,7 +47,7 @@ func bufferText(buf *surface.CellBuffer) string {
 }
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
-	_, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2}})
+	_, h, buf := testScreen(t, 110, 16, []workspace.Info{{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2}})
 	h.Paint(buf)
 	text := bufferText(buf)
 	for _, label := range []string{"New Session", "New Workspace", "Recent workspaces", "alpha", "Skills", "MCP"} {
@@ -84,13 +84,13 @@ func TestLauncherCompositionKeepsOriginalActionsAndRightPane(t *testing.T) {
 func TestSetDataExcludesCurrentWorkspaceFromRecent(t *testing.T) {
 	s := New(theme.DefaultDark())
 	current := filepath.FromSlash("/projects/current")
-	s.SetData(current, []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(current), ProjectDir: current}, {ID: "other", ProjectDir: "/projects/other"}})
+	s.SetData(current, []workspace.Info{{ID: workspace.ID(current), ProjectDir: current}, {ID: "other", ProjectDir: "/projects/other"}})
 	if len(s.workspaces) != 1 || s.workspaces[0].Name != "other" {
 		t.Fatalf("recent=%+v", s.workspaces)
 	}
 }
 func TestWorkspaceNamesNeverShowOpaqueHashes(t *testing.T) {
-	_, _, buf := testScreen(t, 120, 30, []workspace.WorkspaceInfo{{ID: "84db4726b4a4528b", ProjectDir: "/projects/readable-name"}})
+	_, _, buf := testScreen(t, 120, 30, []workspace.Info{{ID: "84db4726b4a4528b", ProjectDir: "/projects/readable-name"}})
 	if text := bufferText(buf); !strings.Contains(text, "readable-name") || strings.Contains(text, "84db4726b4a4528b") {
 		t.Fatal(text)
 	}

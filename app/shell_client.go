@@ -14,18 +14,19 @@ import (
 	"github.com/gofrs/flock"
 
 	"crude/assets"
-	"crude/clientstate"
-	"crude/core/client"
-	"crude/core/port/remote"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/core/remoteconn"
-	"crude/core/wire"
-	"crude/desktopnotify"
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/core/shellport/remote"
+	"crude/internal/clientstate"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 	"crude/tui"
+	"crude/tui/desktopnotify"
 	startuptui "crude/tui/startup"
-	"crude/types"
+	"crude/types/statuscenter"
+	"crude/workspace"
 )
 
 // ErrClientProfileBusy is a safe refusal, never permission to displace a shell.
@@ -64,8 +65,8 @@ func invocationRoot(flags CLIFlags) (string, error) {
 	return os.Getwd()
 }
 
-func invocationSelection(flags CLIFlags) coreprotocol.InvocationSelection {
-	return coreprotocol.InvocationSelection{AccountID: flags.Account, Model: flags.Model,
+func invocationSelection(flags CLIFlags) workspace.InvocationSelection {
+	return workspace.InvocationSelection{AccountID: flags.Account, Model: flags.Model,
 		ProviderID: flags.Provider, APIKey: flags.APIKey, Instructions: flags.SystemPrompt}
 }
 
@@ -253,7 +254,7 @@ func runConnectedShellAttachment(home, root, resumeID, profile string, flags CLI
 		// The detached navigation session owns no workspace resources. Its
 		// close receipt can be lost even when the new attachment is ready.
 		// Keep that attachment and report the unconfirmed cleanup separately.
-		startupIssues = append(startupIssues, types.OperationIssue{
+		startupIssues = append(startupIssues, statuscenter.OperationIssue{
 			Title:  "The core did not confirm that the startup connection closed.",
 			Detail: "Your workspace is open. The core will release the old connection when it expires.",
 		})

@@ -12,7 +12,7 @@ import (
 
 	"crude/agent/codexio"
 	"crude/agent/provider"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestModelSwitchSwapsGPTPromptAndToolsOnRealRequests(t *testing.T) {
@@ -107,7 +107,7 @@ func TestModelSwitchSwapsGPTPromptAndToolsOnRealRequests(t *testing.T) {
 			settings := s.SettingsSnapshot()
 			settings.Model = model
 			settings.ProviderID = "openrouter"
-			settings.SessionOverrides = map[string]ttypes.CategorySettings{CategoryDefault: {Provider: "openrouter", Model: model, APIStandard: selection.protocol}}
+			settings.SessionOverrides = map[string]setting.Category{CategoryDefault: {Provider: "openrouter", Model: model, APIStandard: selection.protocol}}
 			if err := s.HandleSettingsSave(settings); err != nil {
 				t.Fatal(err)
 			}

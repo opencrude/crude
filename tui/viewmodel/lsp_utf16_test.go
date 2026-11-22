@@ -12,7 +12,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/screens/problems"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -33,7 +33,7 @@ func TestLiveUTF16NavigationAndPrivateFocus(t *testing.T) {
 	shell := newRemoteJourneyShell(t, runtime, root)
 	a := liveTestOpen(t, shell.app, source)
 	a.InsertRune('!')
-	wire := editor.LSPDiagnostic{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: editor.DiagError}
+	wire := insight.LSPDiagnostic{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: editor.DiagError}
 	shell.app.queueLiveNavigation(destination, wire)
 	if a.CursorLine() != 0 || a.CursorCol() != 1 || a.Value() != "!unsaved source" {
 		t.Fatal("asynchronous navigation moved or replaced old private editor")
@@ -53,7 +53,7 @@ func TestLiveUTF16NavigationAndPrivateFocus(t *testing.T) {
 		generation, _ := shell.app.ws.LSPMgr().DiagnosticCursor()
 		return generation == b.DocumentSnapshot().AnalysisGeneration && shell.app.ws.LSPMgr().ShowDiagnosticsInEditor()
 	})
-	b.SetDiagnostics(editorDiagnosticFacts(b, []editor.LSPDiagnostic{wire}))
+	b.SetDiagnostics(editorDiagnosticFacts(b, []insight.LSPDiagnostic{wire}))
 	b.SetCursorPosition(1, 10)
 	if !shell.app.jumpToNextError() || b.CursorCol() != 9 {
 		t.Fatalf("F8 did not reach the once-projected diagnostic: %d:%d (%s)", b.CursorLine(), b.CursorCol(), b.DiagnosticStatus())
@@ -116,7 +116,7 @@ func TestDiagnosticFirstErrorCanonicalUTF16Projection(t *testing.T) {
 	if err := ed.InstallDocument(snapshot); err != nil {
 		t.Fatal(err)
 	}
-	wire := []editor.LSPDiagnostic{{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: editor.DiagError}}
+	wire := []insight.LSPDiagnostic{{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: editor.DiagError}}
 	facts := editorDiagnosticFacts(ed, wire)
 	service.facts[ed.FilePath()] = facts
 	app.drainLSPDiagnostics()
@@ -135,7 +135,7 @@ func TestLiveDiagnosticsUTF16PublicationCachedOpenThreeShells(t *testing.T) {
 	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
 		t.Fatal(err)
 	}
-	wire := []editor.LSPDiagnostic{
+	wire := []insight.LSPDiagnostic{
 		{Line: 0, Col: 6, EndLine: 1, EndCol: 9, Severity: editor.DiagError, Message: "first Unicode error"},
 		{Line: 1, Col: 9, EndLine: 1, EndCol: 10, Severity: editor.DiagError, Message: "second Unicode error"},
 	}
@@ -159,13 +159,13 @@ func TestLiveDiagnosticsUTF16PublicationCachedOpenThreeShells(t *testing.T) {
 	shells = append(shells, three)
 	third := liveTestOpen(t, three.app, path) // new attachment's retained snapshot
 	editors := []*editor.Editor{first, second, third}
-	var previous types.InsightDiagnostics
+	var previous insight.Diagnostics
 	for publication := range 3 {
 		server.mu.Lock()
 		client := server.client
 		server.mu.Unlock()
 		// Different text ensures each publication has an observable state boundary.
-		next := append([]editor.LSPDiagnostic(nil), wire...)
+		next := append([]insight.LSPDiagnostic(nil), wire...)
 		next[0].Message += strings.Repeat("!", publication+1)
 		client.publishDiagnostics(next)
 		remoteJourneyUntil(t, shells, func() bool {

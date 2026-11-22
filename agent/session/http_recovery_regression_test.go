@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -294,8 +294,8 @@ func checkHTTPGatewayDisconnectRecovery(t *testing.T, owner string, stop bool) {
 	assertSessionSupervisedJourneyIdentities(t, first.snapshot, terminal)
 	assertHTTPRecoveryEffect(t, terminal.context.Messages, path, content, callID)
 	if owner == "child" && !stop {
-		result, found := runner.Manager().GetCompleted(agent.AgentID(ownerID))
-		if !found || result.Status != agent.SubAgentCompleted || result.ReportID == "" || result.ReportRevision != 1 {
+		result, found := runner.Manager().Completed(turnloop.AgentID(ownerID))
+		if !found || result.Status != turnloop.SubAgentCompleted || result.ReportID == "" || result.ReportRevision != 1 {
 			t.Fatalf("recovered child completed without mandatory report: %+v", result)
 		}
 		artifact, err := store.Artifact(ctx, result.ReportID, result.ReportRevision)

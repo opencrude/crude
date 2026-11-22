@@ -3,7 +3,7 @@ package session
 import (
 	"path/filepath"
 
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 )
 
 func SessionsRoot() (string, error) {

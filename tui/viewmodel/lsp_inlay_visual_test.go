@@ -18,10 +18,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -85,13 +86,13 @@ type inlayVisualModel struct {
 	tracePath      string
 	pids           []int
 	transcript     strings.Builder
-	source         types.InsightSource
+	source         insight.Source
 	revision       uint64
-	settings       types.LSPSettings
-	trust          types.WorkspaceAnalysisSettings
-	firstSet       types.LSPInlaySet
-	shownSet       types.LSPInlaySet
-	inspection     types.LSPInlayInspection
+	settings       setting.LSP
+	trust          setting.WorkspaceAnalysis
+	firstSet       insight.LSPInlaySet
+	shownSet       insight.LSPInlaySet
+	inspection     insight.LSPInlayInspection
 	inspectionErr  error
 	selectedReader *inlayInspectorState
 	readerSequence uint64
@@ -121,7 +122,7 @@ func runInlayVisual(t *testing.T, headless bool, width, height int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if types.DefaultLSPSettings().InlayHints {
+	if setting.DefaultLSP().InlayHints {
 		t.Fatal("new profiles must not opt into inlay hints by default")
 	}
 	home, root := t.TempDir(), t.TempDir()
@@ -138,10 +139,10 @@ func runInlayVisual(t *testing.T, headless bool, width, height int) {
 	coreRuntime := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(w *workspace.Workspace) {
 		retained = w
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
 		settings.LSP.InlayHints = true // Explicit fixture opt-in, not a product default.
-		language := types.LSPLanguageSettings{
+		language := setting.LSPLanguage{
 			Enabled: true, Command: executable, Args: []string{"serve", "-rpc.trace", "-logfile=" + tracePath},
 			RootMarkers: []string{"go.mod"},
 			Environment: map[string]string{
@@ -154,7 +155,7 @@ func runInlayVisual(t *testing.T, headless bool, width, height int) {
 		if err := json.Unmarshal([]byte(`{"gopls":{"hints":{"parameterNames":true,"assignVariableTypes":true}}}`), &language.Settings); err != nil {
 			t.Fatal(err)
 		}
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": language}
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": language}
 		w.SetAppDefaults(settings)
 		grantSemanticFixture(t, w)
 	})
@@ -412,7 +413,7 @@ func (m *inlayVisualModel) unchangedInlay() error {
 	return nil
 }
 
-func (m *inlayVisualModel) qualifiedInlay(v *controlVisualModel) (*types.LSPInlaySet, error) {
+func (m *inlayVisualModel) qualifiedInlay(v *controlVisualModel) (*insight.LSPInlaySet, error) {
 	view := v.inlayViews[v.EditorState.Editor]
 	if view == nil || view.hidden || view.request == nil {
 		return nil, fmt.Errorf("automatic visible-source request absent")
@@ -427,9 +428,9 @@ func (m *inlayVisualModel) qualifiedInlay(v *controlVisualModel) (*types.LSPInla
 	set := r.result
 	b := set.Boundary
 	owner, generation := v.ws.LSPMgr().ContextCursor()
-	if set.Answer != types.LSPInlayHints || set.ID == "" || len(set.Digest) != 64 || set.WireVersion <= 0 ||
+	if set.Answer != insight.LSPInlayHints || set.ID == "" || len(set.Digest) != 64 || set.WireVersion <= 0 ||
 		set.ViewID != view.id || set.Sequence != r.sequence || set.Range != r.span ||
-		set.Range.Start != (types.LSPInlayPosition{}) || set.Range.End != (types.LSPInlayPosition{Line: 8}) ||
+		set.Range.Start != (insight.LSPInlayPosition{}) || set.Range.End != (insight.LSPInlayPosition{Line: 8}) ||
 		b.Source != m.source || b.Source.Kind != "canonical" || b.Source.DocumentID == "" || b.Source.Lifetime == "" ||
 		b.Source.WorkspaceGeneration != owner || b.Context.Generation != generation || b.Context.ID == "" || b.Context.Root != m.root ||
 		b.Producer.Provider != m.executable || b.Producer.InstanceID == "" || b.Producer.ToolIdentity != "launch-config:"+b.Context.ID ||
@@ -445,7 +446,7 @@ func (m *inlayVisualModel) qualifiedInlay(v *controlVisualModel) (*types.LSPInla
 			if hint.Label != want.label {
 				continue
 			}
-			if found || hint.Position != (types.LSPInlayPosition{Line: want.line, Character: want.col}) ||
+			if found || hint.Position != (insight.LSPInlayPosition{Line: want.line, Character: want.col}) ||
 				!hint.HasKind || hint.Kind != want.kind || hint.PaddingLeft != want.left || hint.PaddingRight != want.right {
 				return nil, fmt.Errorf("literal provider label/anchor/kind/padding mismatch: %+v want=%+v", hint, want)
 			}
@@ -498,15 +499,15 @@ func (m *inlayVisualModel) originalInlayResponse(method string) (json.RawMessage
 	return raw, nil
 }
 
-func (m *inlayVisualModel) verifyOriginalInlays(set types.LSPInlaySet) error {
+func (m *inlayVisualModel) verifyOriginalInlays(set insight.LSPInlaySet) error {
 	raw, err := m.originalInlayResponse("textDocument/inlayHint")
 	if err != nil {
 		return err
 	}
 	var rows []struct {
-		Position                  types.LSPInlayPosition `json:"position"`
-		Label                     json.RawMessage        `json:"label"`
-		Kind                      int                    `json:"kind"`
+		Position                  insight.LSPInlayPosition `json:"position"`
+		Label                     json.RawMessage          `json:"label"`
+		Kind                      int                      `json:"kind"`
 		PaddingLeft, PaddingRight bool
 	}
 	if err := json.Unmarshal(raw, &rows); err != nil || len(rows) != 3 {
@@ -574,7 +575,7 @@ func (m *inlayVisualModel) observeInlay(phase int) error {
 				return fmt.Errorf("fixture has no acknowledged focused editor/ready real provider")
 			}
 			m.source, m.revision = source, ed.Revision()
-			m.settings = types.CloneLSPSettings(v.ws.LSPMgr().Settings())
+			m.settings = setting.CloneLSP(v.ws.LSPMgr().Settings())
 			m.trust = m.retained.LoadAppSettings().Analysis
 			set, err := m.qualifiedInlay(v)
 			if err != nil {
@@ -706,7 +707,7 @@ func (m *inlayVisualModel) observeInlay(phase int) error {
 		if phase == 8 {
 			label = "PALETTE_REFRESH"
 		}
-		var observed types.LSPInlaySet
+		var observed insight.LSPInlaySet
 		if err := m.await(func(v *controlVisualModel) error {
 			set, err := m.qualifiedInlay(v)
 			if err != nil {

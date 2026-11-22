@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/clientstate"
+	"crude/internal/clientstate"
 	"crude/workspace"
 )
 

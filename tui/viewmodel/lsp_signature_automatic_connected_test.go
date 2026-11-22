@@ -19,7 +19,8 @@ import (
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -47,11 +48,11 @@ type automaticSignatureClient struct {
 	owner *automaticSignatureRuntime
 }
 
-func (r *automaticSignatureRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *automaticSignatureRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	return &automaticSignatureClient{r.base.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
 
-func (c *automaticSignatureClient) RequestSignatureHelp(ctx context.Context, path string, line, col int, trigger types.LSPSignatureContext) (types.LSPSignatureHelp, error) {
+func (c *automaticSignatureClient) RequestSignatureHelp(ctx context.Context, path string, line, col int, trigger insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	d := c.docs[path]
@@ -63,21 +64,21 @@ func (c *automaticSignatureClient) RequestSignatureHelp(ctx context.Context, pat
 		<-r.release
 	}
 	if r.mode == "unsupported" {
-		return types.LSPSignatureHelp{}, errors.New("provider does not advertise signature help")
+		return insight.LSPSignatureHelp{}, errors.New("provider does not advertise signature help")
 	}
 	if r.mode == "empty" {
-		return types.LSPSignatureHelp{}, nil
+		return insight.LSPSignatureHelp{}, nil
 	}
 	if col < 13 {
-		return types.LSPSignatureHelp{}, nil // before the fixture's argument list
+		return insight.LSPSignatureHelp{}, nil // before the fixture's argument list
 	}
 	active := 0
 	if col >= 15 {
 		active = 1
 	}
-	return types.LSPSignatureHelp{Signatures: []types.LSPSignature{{
+	return insight.LSPSignatureHelp{Signatures: []insight.LSPSignature{{
 		Label: "join(first string, count int)", Documentation: "Independent connected provider evidence.",
-		ActiveParameter: active, Parameters: []types.LSPSignatureParameter{
+		ActiveParameter: active, Parameters: []insight.LSPSignatureParameter{
 			{Label: "first string", Documentation: "Text to repeat."},
 			{Label: "count int", Documentation: "Number of copies."},
 		},
@@ -126,9 +127,9 @@ func newAutomaticSignatureFixture(t *testing.T, mode string, blocked bool) autom
 		owned = w
 		w.LSPMgr.SetRuntime(engine)
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: mode != "missing", Command: executable, RootMarkers: []string{"go.mod"},
 		}}
 		w.SetAppDefaults(settings)
@@ -141,7 +142,7 @@ func newAutomaticSignatureFixture(t *testing.T, mode string, blocked bool) autom
 	f := automaticSignatureFixture{[]remoteJourneyShell{one, two}, []*editor.Editor{a, b}, owned, engine, path}
 	if mode != "missing" {
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		_, view, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 3, Column: 1})
+		_, view, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 3, Column: 1})
 		cancel()
 		if err != nil || view.Source.Kind != "canonical" || view.SourceText != automaticSignatureSource {
 			t.Fatalf("initial retained source synchronization: %+v %v", view, err)

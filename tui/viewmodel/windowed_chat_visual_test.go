@@ -14,8 +14,7 @@ import (
 	"crude/core/remoteconn"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	ctypes "crude/types"
-	"crude/workspace"
+	"crude/types/conversation"
 )
 
 // Isolated production UI for sequential scripts/tuishot.ps1 captures. F2 changes
@@ -30,15 +29,15 @@ func TestWindowedChatAndConnectionsVisualAcceptance(t *testing.T) {
 	app.remotes.snapshot = manager.snapshot
 	app.AddOrchestrator("background")
 	back := app.ws.AgentMgr().Get("background").State
-	back.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleUser, Origin: provider.OriginPeer,
+	back.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Origin: provider.OriginPeer,
 		Content:       strings.Repeat("Shaded peer evidence remains behind the floating chat.\n", 24),
 		Collaboration: &provider.CollaborationAttribution{SenderName: "Reviewer", Kind: "peer_reply"}})
 	app.syncAgentMessages(back.ID, false)
 	app.AddOrchestrator("window-chat")
 	state := app.ws.AgentMgr().Get("window-chat").State
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: "Ordinary text and its trailing padding stay on this window's background.\n\nBlank rows stay solid too."})
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleTool, ToolName: "read_file", ToolArgs: "parser.go", ToolStatus: ctypes.ToolStatusSuccess})
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleTool, ToolName: "update_plan", ToolStatus: ctypes.ToolStatusCalling, ToolInput: `{"plan":[{"step":"Check chat padding","status":"in_progress"}]}`})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant, Content: "Ordinary text and its trailing padding stay on this window's background.\n\nBlank rows stay solid too."})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "parser.go", ToolStatus: conversation.ToolStatusSuccess})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleTool, ToolName: "update_plan", ToolStatus: conversation.ToolStatusCalling, ToolInput: `{"plan":[{"step":"Check chat padding","status":"in_progress"}]}`})
 	app.syncAgentMessages(state.ID, false)
 	app.openAgentInWindow(state.ID)
 	model := &windowedChatVisualModel{App: app}

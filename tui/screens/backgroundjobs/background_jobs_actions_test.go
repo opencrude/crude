@@ -150,7 +150,7 @@ func TestBackgroundJobsClipsToActualViewport(t *testing.T) {
 	screen.SetJobs([]Job{{Handle: "long-command-handle", Command: "sleep 30", Status: "running", StartedAt: now}}, now)
 	for width := 1; width <= 160; width++ {
 		for height := 1; height <= 6; height++ {
-			host := ui.NewHost(theme.DefaultDark(), ui.NewInset("inset", ui.Insets{Left: 3, Top: 2, Right: 3, Bottom: 2}, screen))
+			host := ui.NewHost(theme.DefaultDark(), ui.NewInset("inset", theme.Insets{Left: 3, Top: 2, Right: 3, Bottom: 2}, screen))
 			host.Resize(width+6, height+4)
 			buffer := surface.NewCellBuffer(width+6, height+4)
 			buffer.Fill(cell.NewCell('~', cell.NoColor, cell.NoColor, 0))

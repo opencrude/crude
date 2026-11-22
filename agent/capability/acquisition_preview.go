@@ -14,17 +14,18 @@ import (
 	captypes "crude/types/capability"
 )
 
-func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope captypes.Scope, operation string) (captypes.AcquisitionPreview, error) {
+// PreviewAcquisition reports what an install would change and issues a review token.
+func (s *Service) PreviewAcquisition(ctx context.Context, id string, scope captypes.Scope, operation string) (captypes.AcquisitionPreview, error) {
 	if err := ctx.Err(); err != nil {
 		return captypes.AcquisitionPreview{}, err
 	}
 	if operation != "install" && operation != "update" || scope != captypes.ScopeApplication && scope != captypes.ScopeWorkspace {
 		return captypes.AcquisitionPreview{}, errors.New("select an install/update operation and application/workspace scope")
 	}
-	service.mu.RLock()
-	candidate, exists := service.candidates[id]
-	settings := captypes.Clone(service.settings)
-	service.mu.RUnlock()
+	s.mu.RLock()
+	candidate, exists := s.candidates[id]
+	settings := captypes.Clone(s.settings)
+	s.mu.RUnlock()
 	if !exists {
 		return captypes.AcquisitionPreview{}, errors.New("refresh Discover and inspect the exact source revision before installing or updating")
 	}
@@ -36,12 +37,12 @@ func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope
 		return captypes.AcquisitionPreview{}, err
 	}
 	if resolved.ArchiveURL != candidate.ArchiveURL || resolved.Entry.Version != candidate.Entry.Version || resolved.Subpath != candidate.Subpath {
-		service.mu.Lock()
-		if current, currentExists := service.candidates[id]; currentExists &&
+		s.mu.Lock()
+		if current, currentExists := s.candidates[id]; currentExists &&
 			current.Repository == candidate.Repository && current.SkillID == candidate.SkillID {
-			service.candidates[id] = resolved
+			s.candidates[id] = resolved
 		}
-		service.mu.Unlock()
+		s.mu.Unlock()
 		candidate = resolved
 	}
 	source, exists := settings.Sources[candidate.Entry.Source]
@@ -106,9 +107,10 @@ func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope
 	return preview, nil
 }
 
-func (service *Service) AcquireReviewed(ctx context.Context, preview captypes.AcquisitionPreview) (captypes.Settings, error) {
+// AcquireReviewed applies a preview only while the candidate still matches its token.
+func (s *Service) AcquireReviewed(ctx context.Context, preview captypes.AcquisitionPreview) (captypes.Settings, error) {
 	verify := func() error {
-		current, err := service.PreviewAcquisition(ctx, preview.ID, preview.Scope, preview.Operation)
+		current, err := s.PreviewAcquisition(ctx, preview.ID, preview.Scope, preview.Operation)
 		if err != nil {
 			return err
 		}
@@ -120,7 +122,7 @@ func (service *Service) AcquireReviewed(ctx context.Context, preview captypes.Ac
 	if err := verify(); err != nil {
 		return captypes.Settings{}, err
 	}
-	acquired, err := service.Acquire(ctx, preview.ID, preview.Scope)
+	acquired, err := s.Acquire(ctx, preview.ID, preview.Scope)
 	if err != nil {
 		return captypes.Settings{}, err
 	}

@@ -9,7 +9,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func newSettingsOperationSession(t *testing.T, enabled bool) *Session {
@@ -17,7 +17,7 @@ func newSettingsOperationSession(t *testing.T, enabled bool) *Session {
 	root := t.TempDir()
 	cfg := testConfig()
 	applySessionMultiAgent(cfg, enabled)
-	cfg.Agents.AgentProfiles["reviewer"] = AgentProfileConfig{Category: CategoryResearcher, AccountID: "account", Model: "review-model"}
+	cfg.Agents.AgentProfiles["reviewer"] = setting.AgentProfile{Category: CategoryResearcher, AccountID: "account", Model: "review-model"}
 	s, err := NewWithSessionDir("", cfg, root, root)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestToggleMultiAgentPreservesCurrentSessionSettings(t *testing.T) {
 			settings.SessionMainAgent = "profile/reviewer"
 			settings.TurnLogsEnabled = "off"
 			percent := 61
-			settings.SessionOverrides = map[string]types.CategorySettings{
+			settings.SessionOverrides = map[string]setting.Category{
 				CategoryDefault:         {AccountID: "account", Model: "current-main", DeniedTools: []string{"write_file"}},
 				CategoryCrafter:         {AccountID: "account", Model: "current-crafter", ThinkingEffort: "high", ContextCompactionPercent: &percent, AllowedTools: []string{"read_file"}, SkillModes: map[string]string{"skill": "manual"}},
 				"root/profile/reviewer": {AccountID: "account", DeniedTools: []string{"execute_command"}},
@@ -83,12 +83,12 @@ func TestToggleMultiAgentPreservesCurrentSessionSettings(t *testing.T) {
 func TestSettingsSnapshotRevisionTracksDefaultsAndReset(t *testing.T) {
 	s := newSettingsOperationSession(t, true)
 	before := s.SettingsSnapshots()
-	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: s.cfg.Accounts, Agents: before.Base.Agents})
+	s.UpdateWorkspaceDefaults(setting.App{Accounts: s.cfg.Accounts, Agents: before.Base.Agents})
 	updated := s.SettingsSnapshots()
 	if updated.Revision <= before.Revision {
 		t.Fatal("workspace update did not advance settings revision")
 	}
-	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: s.cfg.Accounts, Agents: updated.Base.Agents})
+	s.UpdateWorkspaceDefaults(setting.App{Accounts: s.cfg.Accounts, Agents: updated.Base.Agents})
 	adopted := s.SettingsSnapshots()
 	if adopted.Revision <= updated.Revision {
 		t.Fatal("workspace adoption did not advance settings revision")
@@ -171,7 +171,7 @@ func TestSettingsResetRemovesOverridesAndRestoresDefaults(t *testing.T) {
 	settings := s.SettingsSnapshot()
 	disabled := false
 	settings.SessionMainAgent, settings.SessionMultiAgent = "profile/reviewer", &disabled
-	settings.SessionOverrides = map[string]types.CategorySettings{
+	settings.SessionOverrides = map[string]setting.Category{
 		CategoryDefault:         {AccountID: "account", Model: "edited"},
 		CategoryCrafter:         {AccountID: "account", Model: "edited-crafter"},
 		"root/profile/reviewer": {AccountID: "account"},
@@ -201,7 +201,7 @@ func TestSettingsOperationsRejectAfterCloseWithoutMutation(t *testing.T) {
 	overrides := s.SessionOverridesSnapshot()
 	s.Close()
 	settings := before
-	settings.SessionOverrides = map[string]types.CategorySettings{CategoryDefault: {AccountID: "account", Model: "late"}}
+	settings.SessionOverrides = map[string]setting.Category{CategoryDefault: {AccountID: "account", Model: "late"}}
 	for _, operation := range []func() error{
 		func() error { _, err := s.SaveSettingsSnapshot(settings); return err },
 		func() error { return s.HandleSettingsSave(settings) },
@@ -221,7 +221,7 @@ func TestSettingsOperationsConcurrentSaveToggleClose(t *testing.T) {
 	s := newSettingsOperationSession(t, true)
 	settings := s.SettingsSnapshot()
 	settings.SessionOverrides = s.SessionOverridesSnapshot()
-	settings.SessionOverrides[CategoryDefault] = types.CategorySettings{AccountID: "account", Model: "concurrent-model"}
+	settings.SessionOverrides[CategoryDefault] = setting.Category{AccountID: "account", Model: "concurrent-model"}
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i := 0; i < 24; i++ {

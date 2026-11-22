@@ -8,13 +8,13 @@ import (
 	"testing"
 
 	"crude/agent/session"
-	textencoding "crude/text/encoding"
-	"crude/types"
+	"crude/text/textencoding"
+	"crude/types/conversation"
 )
 
 func TestPlanReviewDiskFallbackUsesEditorEncodingAndBounds(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "plan.md")
-	want := strings.Repeat("x", types.PlanReviewMaxPlanText) + "\n"
+	want := strings.Repeat("x", conversation.PlanReviewMaxPlanText) + "\n"
 	data, err := textencoding.EncodeText([]byte(want), textencoding.UTF16LE)
 	if err != nil {
 		t.Fatal(err)

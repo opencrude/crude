@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/history"
 )
 
 func TestRestorePromptRebindsCollidingLabelsAndPreservesBinary(t *testing.T) {
@@ -25,7 +25,7 @@ func TestRestorePromptRebindsCollidingLabelsAndPreservesBinary(t *testing.T) {
 	old := existing
 	old.ID, old.SessionID, old.Mime = "other-session-image", "source", "image/png"
 	text := "inspect " + old.DisplayName() + " and array[0]"
-	entry := history.Entry{Text: text, Attachments: []history.Attachment{{Start: 8, End: 8 + len([]rune(old.DisplayName())), Reference: old}}}
+	entry := prompthistory.Entry{Text: text, Attachments: []prompthistory.Attachment{{Start: 8, End: 8 + len([]rune(old.DisplayName())), Reference: old}}}
 	got, ids, err := store.RestorePrompt(entry)
 	if err != nil {
 		t.Fatal(err)
@@ -65,12 +65,12 @@ func TestRestorePromptLabelsCannotCollideWithLiteralProse(t *testing.T) {
 	}
 	store := NewReferenceStore("destination", t.TempDir(), nil)
 	old := sessiondb.Reference{ID: "source", Kind: sessiondb.KindPastedText, Label: "[source]", Content: "original"}
-	entry := history.Entry{Text: "[source] and literal " + generated.DisplayName(), Attachments: []history.Attachment{{Start: 0, End: 8, Reference: old}}}
+	entry := prompthistory.Entry{Text: "[source] and literal " + generated.DisplayName(), Attachments: []prompthistory.Attachment{{Start: 0, End: 8, Reference: old}}}
 	text, ids, err := store.RestorePrompt(entry)
 	if err != nil || len(ids) != 1 {
 		t.Fatalf("restore failed: %q %v %v", text, ids, err)
 	}
-	ref, ok := store.GetReference(ids[0])
+	ref, ok := store.Reference(ids[0])
 	if !ok || ref.DisplayName() == generated.DisplayName() || strings.Count(text, ref.DisplayName()) != 1 || !strings.Contains(text, "literal "+generated.DisplayName()) {
 		t.Fatalf("restored chip consumed literal prose: %q %+v", text, ref)
 	}

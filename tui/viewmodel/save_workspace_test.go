@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"testing"
 
-	"crude/core/protocol"
-	sessionsettings "crude/tui/screens/sessionsettings"
+	"crude/core/coreprotocol"
+	"crude/tui/screens/sessionsettings"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -27,23 +27,23 @@ func TestSaveAsWorkspacePromotesAgentSettings(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = wdb.Close() })
 	wsOf(app).WorkspaceDB = wdb
-	wsOf(app).SetAppDefaults(types.AppSettings{
+	wsOf(app).SetAppDefaults(setting.App{
 
-		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		Agents: setting.Agents{Categories: map[string]setting.Category{
 			"default": {Provider: "openrouter", Model: "old-model"},
 		}},
 	})
-	if err := wsOf(app).SaveWorkspaceSettings(types.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":8}`), LSP: json.RawMessage(`{"enabled":false}`)}); err != nil {
+	if err := wsOf(app).SaveWorkspaceSettings(setting.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":8}`), LSP: json.RawMessage(`{"enabled":false}`)}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Build a session settings screen with a new model for the main agent.
-	screen := sessionsettings.New(app.Theme, types.Settings{
+	screen := sessionsettings.New(app.Theme, setting.Settings{
 		ProviderID: "openai",
-		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		Agents: setting.Agents{Categories: map[string]setting.Category{
 			"default": {Provider: "openai", Model: "gpt-5.6", ThinkingEffort: "high"},
 		}},
-	}, types.Settings{}, map[string]types.CategorySettings{"default": {Model: "gpt-5.6", ThinkingEffort: "high"}})
+	}, setting.Settings{}, map[string]setting.Category{"default": {Model: "gpt-5.6", ThinkingEffort: "high"}})
 	owner := &workspace.Session{SessionID: "promotion-owner"}
 	app.sessionProjections = newSessionProjectionRegistry(app.Theme, app.clipboardCopyCommand)
 	app.sessionProjections.items[owner] = &sessionProjection{settings: screen}
@@ -73,31 +73,31 @@ func TestSaveAsWorkspaceIncludesExplicitMemoryAndLimitOnly(t *testing.T) {
 	limit := 2
 	enabled := false
 	code := false
-	stored := types.WorkspaceOverrides{Agents: json.RawMessage(`{"agent_profiles":{"kept":{"model":"custom"}}}`), Editor: json.RawMessage(`{"tab_size":8}`)}
-	settings := types.Settings{SessionMultiAgent: &enabled, SessionMaxSubAgents: &limit, SessionCodeIntelligence: &code, SessionOverrides: map[string]types.CategorySettings{"memory": {Model: "memory-only"}}}
-	if err := types.ApplySettingsEdits(&stored, promotedSessionEdits(settings)); err != nil {
+	stored := setting.WorkspaceOverrides{Agents: json.RawMessage(`{"agent_profiles":{"kept":{"model":"custom"}}}`), Editor: json.RawMessage(`{"tab_size":8}`)}
+	settings := setting.Settings{SessionMultiAgent: &enabled, SessionMaxSubAgents: &limit, SessionCodeIntelligence: &code, SessionOverrides: map[string]setting.Category{"memory": {Model: "memory-only"}}}
+	if err := setting.ApplyEdits(&stored, promotedSessionEdits(settings)); err != nil {
 		t.Fatal(err)
 	}
-	effective := types.MergeAppWorkspace(types.AppSettings{}, stored)
+	effective := setting.MergeAppWorkspace(setting.App{}, stored)
 	if effective.Agents.Enabled || effective.Agents.MaxConcurrent != 2 || effective.Memory.MemoryCategory.Model != "memory-only" || effective.Agents.AgentProfiles["kept"].Model != "custom" || len(stored.LSP) != 0 || string(stored.Editor) != `{"tab_size":8}` {
 		t.Fatal("promotion copied session-only state or erased neighbors")
 	}
 }
 
 func TestSaveAsWorkspacePromotesOnlyNamedAgentChoices(t *testing.T) {
-	app := types.AppSettings{Agents: types.AgentsSettings{AgentProfiles: map[string]types.AgentProfileSettings{
+	app := setting.App{Agents: setting.Agents{AgentProfiles: map[string]setting.AgentProfile{
 		"reviewer": {Category: "researcher", Model: "original", Instructions: "Keep"},
 		"other":    {Category: "crafter", ServiceTier: "priority"},
 	}}}
-	settings := types.Settings{Agents: app.Agents, SessionOverrides: map[string]types.CategorySettings{
+	settings := setting.Settings{Agents: app.Agents, SessionOverrides: map[string]setting.Category{
 		"profile/reviewer":      {Model: "changed", ServiceTier: "fast"},
 		"root/profile/reviewer": {Model: "root-only"},
 	}}
-	stored := types.WorkspaceOverrides{}
-	if err := types.ApplySettingsEdits(&stored, promotedSessionEdits(settings)); err != nil {
+	stored := setting.WorkspaceOverrides{}
+	if err := setting.ApplyEdits(&stored, promotedSessionEdits(settings)); err != nil {
 		t.Fatal(err)
 	}
-	effective := types.MergeAppWorkspace(app, stored)
+	effective := setting.MergeAppWorkspace(app, stored)
 	reviewer := effective.Agents.AgentProfiles["reviewer"]
 	if reviewer.Model != "changed" || reviewer.ServiceTier != "fast" || reviewer.Instructions != "Keep" {
 		t.Fatalf("promotion did not preserve the named agent: %+v", reviewer)

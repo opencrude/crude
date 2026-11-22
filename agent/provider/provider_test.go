@@ -69,7 +69,7 @@ func TestGetPreset_Found(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		p := GetPreset(tt.id)
+		p := LookupPreset(tt.id)
 		if p == nil {
 			t.Errorf("GetPreset(%q) returned nil", tt.id)
 			continue
@@ -81,7 +81,7 @@ func TestGetPreset_Found(t *testing.T) {
 }
 
 func TestGetPreset_NotFound(t *testing.T) {
-	p := GetPreset("nonexistent")
+	p := LookupPreset("nonexistent")
 	if p != nil {
 		t.Errorf("GetPreset(nonexistent) = %v, want nil", p)
 	}

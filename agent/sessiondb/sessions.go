@@ -99,7 +99,8 @@ func UpdateFirstPrompt(db *sql.DB, sessionID, prompt string) error {
 	return nil
 }
 
-func GetMeta(db *sql.DB) (SessionMeta, error) {
+// LoadMeta reads the session row and returns its metadata.
+func LoadMeta(db *sql.DB) (SessionMeta, error) {
 	var m SessionMeta
 	err := db.QueryRow(`
 		SELECT id, project_path, project_name, model, provider, account_id,
@@ -117,10 +118,10 @@ func GetMeta(db *sql.DB) (SessionMeta, error) {
 	return m, nil
 }
 
-// GetCumulativeCost derives the known cumulative USD amount from the
+// LoadCumulativeCost derives the known cumulative USD amount from the
 // authoritative request ledger. Requests with unavailable pricing are not
 // silently treated as known free calls.
-func GetCumulativeCost(db *sql.DB) (float64, error) {
+func LoadCumulativeCost(db *sql.DB) (float64, error) {
 	var totalCost float64
 	err := db.QueryRow(`
 		SELECT COALESCE(SUM(cost_usd), 0) FROM usage_requests WHERE cost_known=1

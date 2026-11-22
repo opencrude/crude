@@ -1,7 +1,9 @@
 package viewmodel
 
 import (
-	"crude/agent"
+	"crude/agent/turnloop"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,10 +17,9 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/clipboard"
+	"crude/internal/clipboard"
 	"crude/tui/screens/textoverlay"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -81,14 +82,14 @@ func TestLargeMultilinePasteBecomesAttachmentAcrossClipboardRoutes(t *testing.T)
 	}
 }
 
-type pastedTextJourneySender struct{ events chan types.AgentMsg }
+type pastedTextJourneySender struct{ events chan AgentMsg }
 
 func (s *pastedTextJourneySender) SendAgentEvent(typ string, data any) {
 	s.SendAgentEventWithID(typ, data, "")
 }
 
 func (s *pastedTextJourneySender) SendAgentEventWithID(typ string, data any, id string) {
-	s.events <- types.AgentMsg{Type: typ, Data: data, AgentID: id}
+	s.events <- AgentMsg{Type: typ, Data: data, AgentID: id}
 }
 
 func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
@@ -117,7 +118,7 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	wsOf(app).Logger = stubLogger{}
 	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
 	wsOf(app).SessionsByID, wsOf(app).SessionsByAgent = make(map[string]*workspace.Session), make(map[string]*workspace.Session)
-	wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	wsOf(app).SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := testAccountConfig()
 	account := cfg.Accounts["test"]
 	template := account.Connection
@@ -129,7 +130,7 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sender := &pastedTextJourneySender{events: make(chan types.AgentMsg, 512)}
+	sender := &pastedTextJourneySender{events: make(chan AgentMsg, 512)}
 	orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +164,7 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 			}
 		case <-requestTimer.C:
 			node := app.ws.AgentMgr().Get(orch.ID)
-			var messages []workspace.Message
+			var messages []conversation.Message
 			if node != nil && node.State != nil && node.State.Messages != nil {
 				messages = node.State.Messages.Messages()
 			}
@@ -222,8 +223,8 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 	if len(ids) != 2 {
 		t.Fatal("ordered paste attachments missing")
 	}
-	ref1, _ := app.RefStore().GetReference(ids[0])
-	ref2, _ := app.RefStore().GetReference(ids[1])
+	ref1, _ := app.RefStore().Reference(ids[0])
+	ref2, _ := app.RefStore().Reference(ids[1])
 	if ref1.Content != first || ref2.Content != second {
 		t.Fatal("paste order did not match the user's gestures")
 	}
@@ -246,7 +247,7 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 
 func TestPastedTextFileChipOpensCompleteEditableOverlayAndSaves(t *testing.T) {
 	app := newFullTestApp(t)
-	setAttachmentDestination(t, app, types.AttachmentOpenCrude)
+	setAttachmentDestination(t, app, setting.AttachmentOpenCrude)
 	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 80, 24
 	app.AddOrchestrator("paste-owner")
@@ -419,6 +420,6 @@ func TestLargeClipboardPasteCannotCrossDraftReplacement(t *testing.T) {
 	}
 }
 
-func (s *pastedTextJourneySender) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (s *pastedTextJourneySender) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

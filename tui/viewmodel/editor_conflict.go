@@ -9,8 +9,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/clientstate"
-	"crude/core/port"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
 	"crude/tui/editor"
 	"crude/tui/screens/diffview"
 	"crude/tui/theme"

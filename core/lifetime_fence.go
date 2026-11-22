@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -21,7 +21,7 @@ func (r *Runtime) reserveIdle(ctx context.Context, purpose workspace.IdlePurpose
 	}
 	storage, ok := workspace.TryIdleStorageLease()
 	if !ok {
-		return nil, types.IdleSettling("saved workspace catalog or storage operation is still running")
+		return nil, conversation.IdleSettling("saved workspace catalog or storage operation is still running")
 	}
 	releases = append(releases, storage)
 	for _, a := range r.actors() {
@@ -31,7 +31,7 @@ func (r *Runtime) reserveIdle(ctx context.Context, purpose workspace.IdlePurpose
 		err := a.inspect(ctx, func() {
 			name = a.ws.RootPath
 			if a.idleFenced || a.retiring || a.controlWorkers.Load() != 0 || len(a.subscribers) != 0 || a.inFlight != 0 || a.lifecycle || len(a.settingsQueue) != 0 || len(a.controlQueue) != 0 || len(a.commands) != 0 || len(a.ingress) != 0 || len(a.jobs) != 0 || len(a.documentReleases) != 0 {
-				refusal = types.IdleSettling("views, queued commands or workspace operations are still finishing")
+				refusal = conversation.IdleSettling("views, queued commands or workspace operations are still finishing")
 				return
 			}
 			var local []func()
@@ -44,7 +44,7 @@ func (r *Runtime) reserveIdle(ctx context.Context, purpose workspace.IdlePurpose
 				u, ok := lane.beginIdleLease()
 				if !ok {
 					rollback()
-					refusal = types.IdleSettling("resource operation is still running")
+					refusal = conversation.IdleSettling("resource operation is still running")
 					return
 				}
 				local = append(local, u)

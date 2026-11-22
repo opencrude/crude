@@ -16,10 +16,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -185,11 +185,11 @@ func TestGitCompletedCommitAndPushSurviveStatusReadFailure(t *testing.T) {
 		t.Fatal("successful commit left its committed draft in the field")
 	}
 	operations := center.Operations()
-	if len(operations) != 1 || operations[0].State != types.OperationSucceeded {
+	if len(operations) != 1 || operations[0].State != statuscenter.OperationSucceeded {
 		t.Fatalf("status read error changed the actual commit outcome: %+v", operations)
 	}
 	issues := app.ws.Status().Issues()
-	if len(issues) != 1 || issues[0].Severity != types.SeverityWarning ||
+	if len(issues) != 1 || issues[0].Severity != statuscenter.SeverityWarning ||
 		strings.Contains(issues[0].Summary, "Source control failed") ||
 		!strings.Contains(issues[0].Detail, "Committed 1 file") {
 		t.Fatalf("post-commit read failure has no truthful next step: %+v", issues)
@@ -211,14 +211,14 @@ func TestGitCompletedCommitAndPushSurviveStatusReadFailure(t *testing.T) {
 		t.Fatalf("the commit did not reach the real remote: %+v %v", received, err)
 	}
 	for _, operation := range center.Operations() {
-		if operation.State != types.OperationSucceeded {
+		if operation.State != statuscenter.OperationSucceeded {
 			t.Fatalf("a post-push read error changed the actual effect outcome: %+v", operation)
 		}
 	}
 	if app.gitPanel.RemoteBusy() != "" || app.gitPanel.Message() != "Keep this next draft" {
 		t.Fatal("the post-push read failure stranded the action or consumed the next draft")
 	}
-	if issues := app.ws.Status().Issues(); len(issues) != 1 || issues[0].Severity != types.SeverityWarning ||
+	if issues := app.ws.Status().Issues(); len(issues) != 1 || issues[0].Severity != statuscenter.SeverityWarning ||
 		!strings.Contains(issues[0].Detail, "Pushed") {
 		t.Fatalf("post-push evidence failure was not distinguished from a failed push: %+v", issues)
 	}

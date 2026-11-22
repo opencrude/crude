@@ -3,10 +3,10 @@
 > Status: Current reference for the in-app terminal (libghostty-vt PTY engine).
 
 Crude embeds a terminal multiplexer in the TUI. Each session is a PTY whose
-environment is pinned to **Ghostty 1.3.0** (`types.PinnedGhosttyVersion`,
+environment is pinned to **Ghostty 1.3.0** (`terminalvt.PinnedGhosttyVersion`,
 `TERM=xterm-ghostty`). The renderer identifies itself as `TERM_PROGRAM=crude`,
 not Ghostty. Emulation is **libghostty-vt** at the commit in
-`third_party/libghostty-vt/GHOSTTY_PIN`, linked through a narrow presentation-neutral cgo adapter in `terminalvt/`.
+`third_party/libghostty-vt/GHOSTTY_PIN`, linked through a narrow presentation-neutral cgo adapter in `internal/terminalvt/`.
 `CGO_ENABLED=0` builds compile a stub that returns an error from
 `terminalvt.New`; they do not keep a hand-written parser.
 
@@ -20,8 +20,8 @@ Bootstrap: `scripts/bootstrap_libghostty.sh` (Zig 0.16.x under `~/tools`,
 
 Advertising `TERM=xterm-ghostty` requires a resolvable terminfo entry in
 every child. The pinned entry is generated from the `GHOSTTY_PIN` commit,
-compiled with `tic -x`, committed under `types/terminfo/`, and embedded via
-`types/ghostty_terminfo.go`. At PTY start:
+compiled with `tic -x`, committed under `internal/terminalvt/terminfo/`, and embedded via
+`internal/terminalvt/ghostty_terminfo.go`. At PTY start:
 
 1. `workspace.TerminfoDir()` materializes the compiled entry at
    `~/.crude/terminfo/x/xterm-ghostty` (`CRUDE_TERMINFO_DIR` overrides).
@@ -539,7 +539,7 @@ panel. Hide only changes presentation and is never a substitute for close.
 |-------|------|
 | `workspace.TerminalManager` | PTY process lifecycle and bounded asynchronous I/O |
 | `workspace.TerminalService` | One VT engine/reply owner, metadata, exact controller leases, deduplicated input and dirty detached rows |
-| `terminalvt/` | Neutral libghostty-vt engine, dirty-row reuse, packed dictionary/repeat rows, encoding and effects; no TUI imports |
+| `internal/terminalvt/` | Neutral libghostty-vt engine, dirty-row reuse, packed dictionary/repeat rows, encoding and effects; no TUI imports |
 | `tui/termview` | Client-local row cache, scroll, selection/copy and snapshot painting |
 | `tui/screens/shellterm` | Immutable projection reader; key/paste/mouse/resize intents + Float/Dock/Close |
 | `tui/screens/termdock` | Workspace bottom-panel host, resize handle, compact numbered terminal tabs, shared header controls, and retained PTY mounting |

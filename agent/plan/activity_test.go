@@ -9,7 +9,7 @@ import (
 func TestActivitySnapshotTracksCommittedPlanAndResume(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	p, _, err := s.Update(ctx, UpdateRequest{PlanID: "plan", Objective: "Fix activity", Status: StatusActive, Steps: []PlanStep{{ID: "one", Description: "Inspect", Status: StepCompleted}, {ID: "two", Description: "Implement", Status: StepInProgress}, {ID: "three", Description: "Verify", Status: StepPending}}})
+	p, _, err := s.Update(ctx, UpdateRequest{PlanID: "plan", Objective: "Fix activity", Status: StatusActive, Steps: []Step{{ID: "one", Description: "Inspect", Status: StepCompleted}, {ID: "two", Description: "Implement", Status: StepInProgress}, {ID: "three", Description: "Verify", Status: StepPending}}})
 	if err != nil {
 		t.Fatal(err)
 	}

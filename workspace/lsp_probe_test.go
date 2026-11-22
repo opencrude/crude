@@ -11,7 +11,8 @@ import (
 	"testing"
 	"time"
 
-	model "crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -41,8 +42,8 @@ func probeEditor(t *testing.T, manager *LSPManager, path, text string) {
 	}
 }
 
-func editorDisabledSettings() model.LSPSettings {
-	settings := model.DefaultLSPSettings()
+func editorDisabledSettings() setting.LSP {
+	settings := setting.DefaultLSP()
 	settings.Enabled = false
 	return settings
 }
@@ -135,10 +136,10 @@ func TestProbeRespectsHumanStopAndFeatureGates(t *testing.T) {
 		t.Fatal("probe restarted servers the human stopped")
 	}
 	m.StartForWorkspace(root)
-	settings := model.DefaultLSPSettings()
+	settings := setting.DefaultLSP()
 	settings.References = false
 	m.SetSettings(settings)
-	if _, _, err := m.ProbeNavigation(t.Context(), path, model.LSPNavigationReferences, model.LSPSourcePosition{}, true); err == nil || !strings.Contains(err.Error(), "Navigation is turned off") {
+	if _, _, err := m.ProbeNavigation(t.Context(), path, insight.LSPNavigationReferences, insight.LSPSourcePosition{}, true); err == nil || !strings.Contains(err.Error(), "Navigation is turned off") {
 		t.Fatalf("gated references = %v", err)
 	}
 	if _, _, _, err := m.ProbeDiagnostics(t.Context(), filepath.Join(root, "notes.unknownext")); err == nil || !strings.Contains(err.Error(), "no enabled language server") {
@@ -160,7 +161,7 @@ func TestProbeNavigationKindsAndAnswersWhileEditorDisabled(t *testing.T) {
 				f.client.navMu.Unlock()
 				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 				defer cancel()
-				result, view, err := m.ProbeNavigation(ctx, f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: "y"}, kind == "references")
+				result, view, err := m.ProbeNavigation(ctx, f.path, kind, insight.LSPSourcePosition{Line: 1, Symbol: "y"}, kind == "references")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -205,10 +206,10 @@ func TestProbeNavigationDefinitionFamilyAndReferencesGates(t *testing.T) {
 			t.Run(enabled+"/"+kind, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 				defer cancel()
-				result, _, err := f.w.LSPMgr.ProbeNavigation(ctx, f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: "y"}, kind == "references")
+				result, _, err := f.w.LSPMgr.ProbeNavigation(ctx, f.path, kind, insight.LSPSourcePosition{Line: 1, Symbol: "y"}, kind == "references")
 				allowed := (kind == "references") == (enabled == "references")
 				if allowed && (err != nil || result.Answer != "empty") ||
-					!allowed && (err == nil || !reflect.DeepEqual(result, model.LSPNavigation{})) {
+					!allowed && (err == nil || !reflect.DeepEqual(result, insight.LSPNavigation{})) {
 					t.Fatalf("gate %s kind %s: %+v err=%v", enabled, kind, result, err)
 				}
 			})
@@ -240,16 +241,16 @@ func TestProbeNavigationErrorsNeverReturnAbsence(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 				defer cancel()
-				result, _, err := f.w.LSPMgr.ProbeNavigation(ctx, f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: symbol}, failure == "include-declaration")
-				if err == nil || !reflect.DeepEqual(result, model.LSPNavigation{}) {
+				result, _, err := f.w.LSPMgr.ProbeNavigation(ctx, f.path, kind, insight.LSPSourcePosition{Line: 1, Symbol: symbol}, failure == "include-declaration")
+				if err == nil || !reflect.DeepEqual(result, insight.LSPNavigation{}) {
 					t.Fatalf("error became absence: %+v err=%v", result, err)
 				}
 			})
 		}
 	}
 	for _, kind := range []string{"typeDefinition", "Definition", "unknown"} {
-		result, _, err := f.w.LSPMgr.ProbeNavigation(t.Context(), f.path, kind, model.LSPSourcePosition{Line: 1, Symbol: "y"}, false)
-		if err == nil || !reflect.DeepEqual(result, model.LSPNavigation{}) {
+		result, _, err := f.w.LSPMgr.ProbeNavigation(t.Context(), f.path, kind, insight.LSPSourcePosition{Line: 1, Symbol: "y"}, false)
+		if err == nil || !reflect.DeepEqual(result, insight.LSPNavigation{}) {
 			t.Fatalf("unrecognized kind %q returned answer: %+v err=%v", kind, result, err)
 		}
 	}
@@ -272,7 +273,7 @@ func TestProbeReportsStartFailureImmediately(t *testing.T) {
 
 type failingRuntime struct{}
 
-func (failingRuntime) NewClient(model.LSPServerSpec, string, func() error) LSPClient {
+func (failingRuntime) NewClient(setting.LSPServerSpec, string, func() error) LSPClient {
 	return &failingClient{reapableClient{done: make(chan struct{})}}
 }
 
@@ -287,15 +288,15 @@ type probeSyncClient struct {
 	mu          sync.Mutex
 	text        string
 	opened      bool
-	boundary    model.InsightBoundary
+	boundary    insight.Boundary
 	version     int
-	publication model.InsightDiagnosticPublication
+	publication insight.DiagnosticPublication
 	entered     chan string
 	release     chan struct{}
 	closed      chan struct{}
 }
 
-func (c *probeSyncClient) send(ctx context.Context, operation, text string, boundary model.InsightBoundary) (int, error) {
+func (c *probeSyncClient) send(ctx context.Context, operation, text string, boundary insight.Boundary) (int, error) {
 	c.entered <- operation + ":" + text
 	select {
 	case <-c.release:
@@ -307,17 +308,17 @@ func (c *probeSyncClient) send(ctx context.Context, operation, text string, boun
 	c.boundary = boundary
 	c.version++
 	v := c.version
-	c.publication = model.InsightDiagnosticPublication{Boundary: boundary, Sequence: uint64(v), WireVersion: v, ReportedVersion: &v,
-		Diagnostics: []LSPDiagnostic{{Message: text, Severity: model.DiagError}}}
+	c.publication = insight.DiagnosticPublication{Boundary: boundary, Sequence: uint64(v), WireVersion: v, ReportedVersion: &v,
+		Diagnostics: []insight.LSPDiagnostic{{Message: text, Severity: insight.DiagError}}}
 	c.mu.Unlock()
 	return v, nil
 }
 
-func (c *probeSyncClient) OpenFile(ctx context.Context, _, _, text string, boundary model.InsightBoundary) (int, error) {
+func (c *probeSyncClient) OpenFile(ctx context.Context, _, _, text string, boundary insight.Boundary) (int, error) {
 	return c.send(ctx, "open", text, boundary)
 }
 
-func (c *probeSyncClient) UpdateFile(ctx context.Context, _, text string, boundary model.InsightBoundary) (int, error) {
+func (c *probeSyncClient) UpdateFile(ctx context.Context, _, text string, boundary insight.Boundary) (int, error) {
 	return c.send(ctx, "change", text, boundary)
 }
 
@@ -330,18 +331,18 @@ func (c *probeSyncClient) CloseFile(context.Context, string) {
 	}
 }
 
-func (c *probeSyncClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
+func (c *probeSyncClient) AwaitDiagnostics(context.Context, string) (insight.DiagnosticPublication, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.opened {
-		return model.InsightDiagnosticPublication{}, false
+		return insight.DiagnosticPublication{}, false
 	}
 	return c.publication, true
 }
 
 type probeSyncRuntime struct{ client *probeSyncClient }
 
-func (r probeSyncRuntime) NewClient(model.LSPServerSpec, string, func() error) LSPClient {
+func (r probeSyncRuntime) NewClient(setting.LSPServerSpec, string, func() error) LSPClient {
 	return r.client
 }
 

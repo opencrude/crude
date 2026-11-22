@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"crude/agent/worktree"
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"

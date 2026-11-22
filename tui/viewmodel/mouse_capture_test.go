@@ -15,7 +15,7 @@ import (
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -50,8 +50,8 @@ func setupCapturedChatSelection(t *testing.T, app *App, viewportH int, rows []ch
 
 	}
 	for _, row := range rows {
-		app.appendActiveMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
+		app.appendActiveMessage(conversation.ChatMessage{
+			Role:    conversation.RoleAssistant,
 			Content: strings.Join(row.Lines, "\n"),
 			Time:    time.Now(),
 		})
@@ -223,7 +223,7 @@ func TestDispatchMouseMotion_CapturedSelectionAutoScrollOutsideViewport(t *testi
 	}
 
 	msg := cmd()
-	tick, ok := msg.(ttypes.SelectionTickMsg)
+	tick, ok := msg.(shellchat.SelectionTickMsg)
 	if !ok {
 		t.Fatalf("expected SelectionTickMsg, got %T", msg)
 	}
@@ -270,7 +270,7 @@ func TestDispatchMouseMotion_CapturedChatDoesNotDuplicateSidebar(t *testing.T) {
 	}
 }
 
-func setupScrollableSidebarCapture(t *testing.T, app *App) (*ui.Host, *filetree.FileTreeModel, int) {
+func setupScrollableSidebarCapture(t *testing.T, app *App) (*ui.Host, *filetree.Model, int) {
 	t.Helper()
 	dir := t.TempDir()
 	for i := 0; i < 40; i++ {
@@ -316,8 +316,8 @@ func setupCapturedChatScrollbar(t *testing.T, app *App, viewportH int, rows []ch
 
 	}
 	for _, row := range rows {
-		app.appendActiveMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleAssistant,
+		app.appendActiveMessage(conversation.ChatMessage{
+			Role:    conversation.RoleAssistant,
 			Content: strings.Join(row.Lines, "\n\n"),
 			Time:    time.Now(),
 		})
@@ -398,9 +398,9 @@ func TestDispatchMouseRelease_CapturedLauncherOutsideRegion(t *testing.T) {
 	app.Tree = NewTreeState(nil, 30)
 	app.Tree.Visible = false
 
-	workspaces := make([]workspace.WorkspaceInfo, 8)
+	workspaces := make([]workspace.Info, 8)
 	for i := range workspaces {
-		workspaces[i] = workspace.WorkspaceInfo{
+		workspaces[i] = workspace.Info{
 			ProjectName: fmt.Sprintf("workspace-%02d", i),
 			ProjectDir:  fmt.Sprintf("/tmp/workspace-%02d", i),
 		}

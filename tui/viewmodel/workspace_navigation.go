@@ -3,7 +3,7 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
@@ -26,7 +26,7 @@ func (m *App) applyWorkspaceListing(msg launcherWorkspacesMsg) {
 	if msg.Err != nil {
 		m.workspaceListError = launcher.LoadErrorText(msg.Err)
 	} else {
-		m.workspaceInfos = append([]workspace.WorkspaceInfo(nil), msg.Infos...)
+		m.workspaceInfos = append([]workspace.Info(nil), msg.Infos...)
 	}
 	if m.launcherScreen != nil && msg.Screen == m.launcherScreen {
 		m.launcherScreen.FinishLoad(msg.Cwd, msg.Infos, msg.Err)
@@ -41,7 +41,7 @@ func (m *App) applyWorkspaceListing(msg launcherWorkspacesMsg) {
 // state. Activity installation invalidates it. The per-frame sidebar bind
 // reuses rows instead of formatting every path, badge and tooltip again.
 type workspaceRowsCache struct {
-	first     *workspace.WorkspaceInfo
+	first     *workspace.Info
 	size      int
 	root, err string
 	loading   bool
@@ -61,7 +61,7 @@ func (m *App) workspaceRootMatches(path string) bool {
 func (m *App) workspaceSidebarItems() []ui.ListItem {
 	state := &m.workspaceActivity
 	root := m.ws.RootPath()
-	var first *workspace.WorkspaceInfo
+	var first *workspace.Info
 	if len(m.workspaceInfos) != 0 {
 		first = &m.workspaceInfos[0]
 	}
@@ -82,7 +82,7 @@ func (m *App) workspaceSidebarItems() []ui.ListItem {
 		}
 		summary := state.counts[info.ID]
 		items = append(items, ui.ListItem{ID: sidebarItemWorkspacePrefix + info.ProjectDir,
-			Label: workspace.WorkspaceDisplayName(info), Detail: detail, Subtitle: info.ShortPath(), Active: current,
+			Label: workspace.DisplayName(info), Detail: detail, Subtitle: info.ShortPath(), Active: current,
 			SearchText: info.ProjectDir, Trailing: launcher.WorkspaceBadges(summary), Tooltip: launcher.WorkspaceTooltip(info.ProjectDir, summary)})
 	}
 	if m.workspaceListError != "" {
@@ -144,7 +144,7 @@ func (m *App) openWorkspacePathSwitcher() tea.Cmd {
 			detail = "current"
 		}
 		items = append(items, ui.ContextMenuItem{
-			Label: workspace.WorkspaceDisplayName(info), Detail: detail, Disabled: current,
+			Label: workspace.DisplayName(info), Detail: detail, Disabled: current,
 			Action: func() {
 				if valid() {
 					m.runDetachedAsyncCmd(m.launcherOpenFolder(path))
@@ -171,7 +171,7 @@ func (m *App) buildWorkspaceSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuS
 	if item, hit := m.activityItemAtMouse(mouse); hit {
 		for _, info := range m.workspaceInfos {
 			if item.ID == sidebarItemWorkspacePrefix+info.ProjectDir {
-				entry := launcher.WorkspaceEntry{ID: info.ID, Name: workspace.WorkspaceDisplayName(info), Path: info.ProjectDir, SessionCount: info.SessionCount}
+				entry := launcher.WorkspaceEntry{ID: info.ID, Name: workspace.DisplayName(info), Path: info.ProjectDir, SessionCount: info.SessionCount}
 				menu = m.workspaceResourceMenu(entry)
 				break
 			}

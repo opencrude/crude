@@ -8,12 +8,12 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestInvocationConfigCapturesAndIsolatesCredentials(t *testing.T) {
 	base := historyE2EConfig("http://127.0.0.1:1")
-	main := base.GetActiveDefaultCategory()
+	main := base.ActiveDefaultCategory()
 	account := base.Accounts[main.AccountID]
 	base.AccountManager = provider.NewAccountManager(base.Accounts, nil)
 	selection := InvocationSelection{AccountID: account.ID, ProviderID: account.ProviderID, Model: "invocation-model", APIKey: "write-only-secret", Instructions: "additional instructions"}
@@ -21,7 +21,7 @@ func TestInvocationConfigCapturesAndIsolatesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := cfg.GetActiveDefaultCategory()
+	got := cfg.ActiveDefaultCategory()
 	if got.Model != "invocation-model" || !strings.Contains(got.Instructions, selection.Instructions) || got.AccountID == main.AccountID {
 		t.Fatalf("selection not isolated: %+v", got)
 	}
@@ -29,7 +29,7 @@ func TestInvocationConfigCapturesAndIsolatesCredentials(t *testing.T) {
 	if !ok || bound.APIKey != selection.APIKey {
 		t.Fatal("saved manager overrode ephemeral key")
 	}
-	if base.GetActiveDefaultCategory().Model != main.Model {
+	if base.ActiveDefaultCategory().Model != main.Model {
 		t.Fatal("changed shared profile")
 	}
 	if _, ok := base.AccountManager.Account(got.AccountID); ok {
@@ -45,16 +45,16 @@ func TestInvocationConfigCapturesAndIsolatesCredentials(t *testing.T) {
 		}
 	}
 	fresh, err := invocationConfig(base, InvocationSelection{AccountID: "new", APIKey: "secret", ProviderID: "openai", Model: "model"})
-	if err != nil || fresh.GetActiveDefaultCategory().AccountID == "new" {
+	if err != nil || fresh.ActiveDefaultCategory().AccountID == "new" {
 		t.Fatalf("new ephemeral account: %v", err)
 	}
 }
 
 func TestInvocationLifecycleSelectionAndLiveRefusal(t *testing.T) {
 	setTestHome(t)
-	w := NewWorkspace(t.TempDir(), "history-model", "tester", types.Settings{}, nopLogger{})
+	w := NewWorkspace(t.TempDir(), "history-model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(w.Close)
-	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	w.SetBackendConfig(historyE2EConfig("http://127.0.0.1:1"), t.TempDir())
 	w.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
 	op, err := w.PrepareInvocationSession("", InvocationSelection{Model: "chosen-model", Instructions: "extra"})
@@ -72,7 +72,7 @@ func TestInvocationLifecycleSelectionAndLiveRefusal(t *testing.T) {
 	if w.BackendSession(created.SessionID).ModelName() != "chosen-model" {
 		t.Fatal("new session ignored selector")
 	}
-	if w.sessionCfg.GetActiveDefaultCategory().Model == "chosen-model" {
+	if w.sessionCfg.ActiveDefaultCategory().Model == "chosen-model" {
 		t.Fatal("invocation changed peer defaults")
 	}
 	if _, err := w.PrepareInvocationSession(created.SessionID, InvocationSelection{Model: "other"}); err == nil {
@@ -92,8 +92,8 @@ func TestInvocationColdResumeSelection(t *testing.T) {
 	setTestHome(t)
 	root, home := t.TempDir(), os.Getenv("HOME")
 	makeWorkspace := func() *Workspace {
-		w := NewWorkspace(root, "history-model", "tester", types.Settings{}, nopLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		w := NewWorkspace(root, "history-model", "tester", setting.Settings{}, nopLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		w.SetBackendConfig(historyE2EConfig("http://127.0.0.1:1"), home)
 		w.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
 		return w
@@ -138,13 +138,13 @@ func TestInvocationColdResumeValidatesRetainedProvider(t *testing.T) {
 	setTestHome(t)
 	root, home := t.TempDir(), os.Getenv("HOME")
 	cfg := historyE2EConfig("http://127.0.0.1:1")
-	main := cfg.GetActiveDefaultCategory()
+	main := cfg.ActiveDefaultCategory()
 	other := cfg.Accounts[main.AccountID]
 	other.ID, other.ProviderID = "retained-account", "retained-provider"
 	cfg.Accounts[other.ID] = other
 	makeWorkspace := func() *Workspace {
-		w := NewWorkspace(root, "history-model", "tester", types.Settings{}, nopLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		w := NewWorkspace(root, "history-model", "tester", setting.Settings{}, nopLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		w.SetBackendConfig(cfg, home)
 		w.SetEventSender(&historyE2ESender{events: make(chan historyE2EEvent, 1024)})
 		return w

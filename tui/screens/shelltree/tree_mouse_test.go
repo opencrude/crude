@@ -19,7 +19,7 @@ import (
 // flatFileFixture builds a workspace with the given file names directly under
 // the root (no nested directories), so clicking a row never toggles directory
 // expansion and the visible-node list stays stable across clicks.
-func flatFileFixture(t *testing.T, names ...string) *filetree.FileTreeModel {
+func flatFileFixture(t *testing.T, names ...string) *filetree.Model {
 	t.Helper()
 	dir := t.TempDir()
 	for _, n := range names {
@@ -32,7 +32,7 @@ func flatFileFixture(t *testing.T, names ...string) *filetree.FileTreeModel {
 
 // nestedScrollFixture puts the files in a subdirectory so a sticky breadcrumb
 // still has an ancestor to name after the workspace root row is omitted.
-func nestedScrollFixture(t *testing.T, names ...string) *filetree.FileTreeModel {
+func nestedScrollFixture(t *testing.T, names ...string) *filetree.Model {
 	t.Helper()
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "nested")
@@ -51,7 +51,7 @@ func nestedScrollFixture(t *testing.T, names ...string) *filetree.FileTreeModel 
 
 // treeMouseHost mounts the shelltree screen as the Host root, mirroring
 // setupTreeHost in tree_contract_test.go.
-func treeMouseHost(t *testing.T, model *filetree.FileTreeModel) *ui.Host {
+func treeMouseHost(t *testing.T, model *filetree.Model) *ui.Host {
 	t.Helper()
 	screen := shelltree.New(theme.DefaultDark(), model)
 	host := ui.NewHost(theme.DefaultDark(), screen)
@@ -61,7 +61,7 @@ func treeMouseHost(t *testing.T, model *filetree.FileTreeModel) *ui.Host {
 	return host
 }
 
-func cursorBase(model *filetree.FileTreeModel) string {
+func cursorBase(model *filetree.Model) string {
 	idx := model.CursorIndex()
 	nodes := model.VisibleNodes()
 	if idx < 0 || idx >= len(nodes) {
@@ -191,7 +191,7 @@ func (w *slotWrapper) Layout(_ ui.LayoutContext, r ui.Rect) {
 // toggles its expansion and changes the visible list.
 func TestTreeMouseClickRealShellGeometry(t *testing.T) {
 	names := []string{"a.go", "b.go", "c.go", "d.go"}
-	clickAt := func(screenY int) (*filetree.FileTreeModel, string) {
+	clickAt := func(screenY int) (*filetree.Model, string) {
 		model := flatFileFixture(t, names...)
 		model.EnterFilterMode()
 		screen := shelltree.New(theme.DefaultDark(), model)

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 )
 
 // FuzzTerminalLeaseStateMachine covers service leases, not session/network resume.

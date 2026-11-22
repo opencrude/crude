@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"crude/buildinfo"
-	"crude/logger"
+	"crude/internal/buildinfo"
+	"crude/internal/logger"
 )
 
 type committedWriteError struct{ err error }

@@ -12,7 +12,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 	"crude/workspace"
 )
@@ -39,7 +39,7 @@ func TestConnectedCompletedTurnIdleKeepsTranscriptPaintRetained(t *testing.T) {
 	app.View()
 	group := app.mainPanes.groups[app.Win.ActiveGroup()]
 	for range 4 {
-		_, _ = app.Update(types.TickMsg(time.Now()))
+		_, _ = app.Update(TickMsg(time.Now()))
 		view := app.View()
 		stats := app.rootHost.LastPaintStats()
 		if stats.Full || stats.Cells >= group.chat.W*group.chat.H {
@@ -75,7 +75,7 @@ func TestIdleClockRetainsStaticTranscriptAndPresentsCaret(t *testing.T) {
 			app.SpinFrame = ui.CursorActivityHoldMS + ui.CursorBlinkHalfPeriodMS
 			app.Input.SetSpinFrame(app.SpinFrame)
 			app.subPaneProjections.TickAll(app.SpinFrame)
-			app.invalidateMessageRegions(types.TickMsg(time.Now()))
+			app.invalidateMessageRegions(TickMsg(time.Now()))
 			view := app.View()
 			stats := app.rootHost.LastPaintStats()
 			if stats.Full || stats.Cells >= group.chat.W*group.chat.H {
@@ -116,7 +116,7 @@ func TestIdleFrameSensitiveRowStillPresents(t *testing.T) {
 	wsOf(app).Logger = stubLogger{}
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	app.AddOrchestrator("idle-cursor")
-	app.appendActiveMessage(types.ChatMessage{InternalID: "answer", Role: types.RoleAssistant, Content: "Retained answer"})
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "answer", Role: conversation.RoleAssistant, Content: "Retained answer"})
 	app.View()
 	// Keep the session idle; renderer-owned clock sensitivity is deliberately
 	// independent of anyAgentAnimating and must still invalidate its screen.
@@ -125,12 +125,12 @@ func TestIdleFrameSensitiveRowStillPresents(t *testing.T) {
 	app.View()
 	group := app.mainPanes.groups[app.Win.ActiveGroup()]
 	// A status/recovery row is likewise frame-sensitive while the agent is idle.
-	app.appendActiveMessage(types.ChatMessage{InternalID: "status", Role: types.RoleStatus, Recovery: &recovery.Status{ID: "status", State: recovery.Recovering, RetryAt: time.UnixMilli(30000), Summary: "Retrying provider"}})
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "status", Role: conversation.RoleStatus, Recovery: &recovery.Status{ID: "status", State: recovery.Recovering, RetryAt: time.UnixMilli(30000), Summary: "Retrying provider"}})
 	app.forceFrame()
 	app.View()
 	app.SpinFrame = 2000
 	app.subPaneProjections.TickAll(app.SpinFrame)
-	app.invalidateMessageRegions(types.TickMsg(time.Now()))
+	app.invalidateMessageRegions(TickMsg(time.Now()))
 	view := app.View()
 	if app.rootHost.LastPaintStats().Cells < group.chat.W*group.chat.H {
 		t.Fatal("frame-sensitive idle row was not painted")
@@ -154,7 +154,7 @@ func BenchmarkIdlePresentedFrame(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		app.Update(types.TickMsg(time.Now()))
+		app.Update(TickMsg(time.Now()))
 		app.View()
 	}
 }
@@ -170,7 +170,7 @@ func BenchmarkAnimatedPresentedFrame(b *testing.B) {
 	for _, msg := range seedBudgetSession(200, 0) {
 		app.appendActiveMessage(msg)
 	}
-	app.appendActiveMessage(types.ChatMessage{InternalID: "status", Role: types.RoleStatus, Recovery: &recovery.Status{ID: "status", State: recovery.Recovering, RetryAt: time.Now().Add(time.Hour), Summary: "Retrying provider"}})
+	app.appendActiveMessage(conversation.ChatMessage{InternalID: "status", Role: conversation.RoleStatus, Recovery: &recovery.Status{ID: "status", State: recovery.Recovering, RetryAt: time.Now().Add(time.Hour), Summary: "Retrying provider"}})
 	app.paintShellFrame()
 	settleHistory(b, app)
 	app.View()
@@ -180,7 +180,7 @@ func BenchmarkAnimatedPresentedFrame(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		frame++
-		app.Update(types.TickMsg(start.Add(time.Duration(frame) * 16 * time.Millisecond)))
+		app.Update(TickMsg(start.Add(time.Duration(frame) * 16 * time.Millisecond)))
 		app.View()
 	}
 	b.ReportMetric(float64(app.rootHost.LastPaintStats().Cells), "cells/frame")

@@ -19,12 +19,13 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/core"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -40,7 +41,7 @@ const renameConnectedRaw = `{"documentChanges":[
 type renameConnectedDocument struct {
 	version  int
 	text     string
-	boundary types.InsightBoundary
+	boundary insight.Boundary
 }
 
 type renameConnectedRuntime struct {
@@ -58,7 +59,7 @@ type renameConnectedClient struct {
 	docs  map[string]renameConnectedDocument // guarded by owner.mu, per client
 }
 
-func (r *renameConnectedRuntime) NewClient(_ types.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
+func (r *renameConnectedRuntime) NewClient(_ setting.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c := &renameConnectedClient{noopLSPClient: noopLSPClient{admit: admit}, owner: r, docs: make(map[string]renameConnectedDocument)}
@@ -66,7 +67,7 @@ func (r *renameConnectedRuntime) NewClient(_ types.LSPServerSpec, _ string, admi
 	return c
 }
 
-func (c *renameConnectedClient) sync(path, text string, boundary types.InsightBoundary) (int, error) {
+func (c *renameConnectedClient) sync(path, text string, boundary insight.Boundary) (int, error) {
 	c.owner.mu.Lock()
 	defer c.owner.mu.Unlock()
 	d := c.docs[path]
@@ -76,29 +77,29 @@ func (c *renameConnectedClient) sync(path, text string, boundary types.InsightBo
 	return d.version, nil
 }
 
-func (c *renameConnectedClient) OpenFile(_ context.Context, path, _, text string, boundary types.InsightBoundary) (int, error) {
+func (c *renameConnectedClient) OpenFile(_ context.Context, path, _, text string, boundary insight.Boundary) (int, error) {
 	return c.sync(path, text, boundary)
 }
 
-func (c *renameConnectedClient) UpdateFile(_ context.Context, path, text string, boundary types.InsightBoundary) (int, error) {
+func (c *renameConnectedClient) UpdateFile(_ context.Context, path, text string, boundary insight.Boundary) (int, error) {
 	return c.sync(path, text, boundary)
 }
 
-func (c *renameConnectedClient) RequestRename(_ context.Context, path string, line, col int, name string) (types.LSPRenameEdit, error) {
+func (c *renameConnectedClient) RequestRename(_ context.Context, path string, line, col int, name string) (insight.LSPRenameEdit, error) {
 	r := c.owner
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls++
 	main, peer := c.docs[r.main], c.docs[r.peer]
 	if path != r.main || line != 2 || col != 4 || name != "new" || main.text != renameConnectedMain || peer.text != renameConnectedPeer {
-		return types.LSPRenameEdit{}, fmt.Errorf("unexpected provider input: %s %d:%d %q; source=%q peer=%q", path, line, col, name, main.text, peer.text)
+		return insight.LSPRenameEdit{}, fmt.Errorf("unexpected provider input: %s %d:%d %q; source=%q peer=%q", path, line, col, name, main.text, peer.text)
 	}
 	uri := func(path string) string {
 		return strconv.Quote(fileuri.FromPath(path))
 	}
 	raw := strings.NewReplacer("$MAIN_VERSION", strconv.Itoa(main.version), "$PEER_VERSION", strconv.Itoa(peer.version),
 		"$MAIN", uri(r.main), "$PEER", uri(r.peer)).Replace(r.raw)
-	return types.LSPRenameEdit{JSON: []byte(raw), WireVersion: main.version}, nil
+	return insight.LSPRenameEdit{JSON: []byte(raw), WireVersion: main.version}, nil
 }
 
 type renameConnectedFixture struct {
@@ -128,9 +129,9 @@ func newRenameConnectedFixture(t *testing.T, raw string, missingHistory bool) re
 		owned = w
 		w.LSPMgr.SetRuntime(engine) // generic language-engine seam; no subprocess
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {
 			Enabled: true, Command: executable, RootMarkers: []string{"go.mod"},
 		}}
 		w.SetAppDefaults(settings)
@@ -156,7 +157,7 @@ func newRenameConnectedFixture(t *testing.T, raw string, missingHistory bool) re
 	// entry into OpenFile or a sleep guessed to cover the debounce.
 	for _, path := range []string{engine.peer, engine.main} {
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-		_, view, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 3, Column: 1})
+		_, view, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 3, Column: 1})
 		cancel()
 		if err != nil || view.Source.Kind != "canonical" || view.SourceText == "" {
 			t.Fatalf("canonical LSP synchronization: %+v %v", view, err)

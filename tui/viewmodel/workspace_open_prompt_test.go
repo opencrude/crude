@@ -22,7 +22,7 @@ func TestWorkspaceNavigationConsentAndLauncherJourney(t *testing.T) {
 	app.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
 	app.launcherScreen = nil // live workflow removed home
 	app.setActivity(activityWorkspaces, true)
-	app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: target, ProjectName: "destination"}}
+	app.workspaceInfos = []workspace.Info{{ProjectDir: target, ProjectName: "destination"}}
 	app.paintShellFrame()
 	r, _ := app.rootHost.ScreenRect(activitylist.ListID)
 	// Navigation is one click into exact-destination consent, never a switch
@@ -154,7 +154,7 @@ func TestWorkspaceEntryPointsShareExactConsent(t *testing.T) {
 			wsOf(app).Logger = stubLogger{}
 			app.width, app.height = 120, 35
 			target := t.TempDir()
-			app.workspaceInfos = []workspace.WorkspaceInfo{{ProjectDir: target, ProjectName: "target"}}
+			app.workspaceInfos = []workspace.Info{{ProjectDir: target, ProjectName: "target"}}
 			app.launcherScreen.SetData(app.ws.RootPath(), app.workspaceInfos)
 			app.paintShellFrame()
 			switch entry {

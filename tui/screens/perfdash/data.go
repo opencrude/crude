@@ -1,8 +1,8 @@
 package perfdash
 
 import (
-	"crude/metrics"
-	"crude/perfdata"
+	"crude/internal/metrics"
+	"crude/internal/perfdata"
 )
 
 type Data perfdata.Data

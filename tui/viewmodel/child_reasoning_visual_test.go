@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
@@ -36,7 +36,7 @@ func TestChildReasoningVisualAcceptance(t *testing.T) {
 		if err := db.QueryRowContext(t.Context(), "SELECT provider_items FROM messages WHERE length(reasoning_content)>0 ORDER BY length(reasoning_content) DESC LIMIT 1").Scan(&items); err != nil {
 			t.Fatal(err)
 		}
-		var recorded []provider.ProviderItem
+		var recorded []provider.Item
 		if err := json.Unmarshal(items, &recorded); err != nil {
 			t.Fatal(err)
 		}
@@ -65,17 +65,17 @@ func TestChildReasoningVisualAcceptance(t *testing.T) {
 	app.width, app.height = 160, 40
 	app.AddOrchestrator("parent")
 	app.ws.AgentMgr().Get("parent").Label = "Rebecca"
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "parent", Type: "thinking", Data: reasoning.Delta{Text: "Reviewing the researchers' findings", Kind: reasoning.Summary}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "parent", Type: "thinking", Data: reasoning.Delta{Text: "Reviewing the researchers' findings", Kind: reasoning.Summary}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Asha sub Rebecca", "category": "researcher", "parent_id": "parent", "model": "recorded-researcher",
 	}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "turn_started", Data: types.TurnIdentity{Generation: 1, ProviderID: "gateway", AccountID: "recorded-account", ModelID: "recorded-researcher"}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "turn_started", Data: conversation.TurnIdentity{Generation: 1, ProviderID: "gateway", AccountID: "recorded-account", ModelID: "recorded-researcher"}})
 	for remaining := trace; remaining != ""; {
 		end := min(240, len(remaining))
 		for end < len(remaining) && !utf8.RuneStart(remaining[end]) {
 			end--
 		}
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: remaining[:end], Kind: display.Kind, BlockID: display.BlockID}})
+		app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: remaining[:end], Kind: display.Kind, BlockID: display.BlockID}})
 		remaining = remaining[end:]
 	}
 	child := app.ws.AgentMgr().Get("child").State
@@ -111,10 +111,10 @@ func (m *childReasoningVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.switchToAgentView("child")
 			return m, nil
 		case tea.KeyF4:
-			m.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: "\n\nLatest evidence continues in the same pane.", Kind: m.display.Kind, BlockID: m.display.BlockID}})
+			m.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: "\n\nLatest evidence continues in the same pane.", Kind: m.display.Kind, BlockID: m.display.BlockID}})
 			return m, nil
 		case tea.KeyF5:
-			m.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "done", Data: map[string]any{"reason": "completed"}})
+			m.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "done", Data: map[string]any{"reason": "completed"}})
 			return m, nil
 		case tea.KeyF9:
 			return m, tea.Quit

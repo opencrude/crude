@@ -10,7 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/screens/termdock"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 // Exercise the real dock and footer in a dedicated tuishot terminal. F2 opens
@@ -22,7 +22,7 @@ func TestDenseNoticesVisualAcceptance(t *testing.T) {
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
 	for i := range 153 {
-		app.ws.Status().Notify(types.NotificationRecord{Summary: fmt.Sprintf("Workspace notice %03d", i+1)})
+		app.ws.Status().Notify(statuscenter.NotificationRecord{Summary: fmt.Sprintf("Workspace notice %03d", i+1)})
 	}
 	model := &noticeHistoryVisual{App: app}
 	p := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
@@ -49,7 +49,7 @@ func (m *noticeHistoryVisual) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF3:
 			m.opened = strings.Contains(bufferPlain(m.mainSurf.Buffer()), "Workspace notice 153") && m.ws.Status().UnreadCount() == 0
 			m.toggleWorkspacePanel(termdock.PanelNotices)
-			m.ws.Status().Notify(types.NotificationRecord{Summary: "New while hidden"})
+			m.ws.Status().Notify(statuscenter.NotificationRecord{Summary: "New while hidden"})
 			return m, nil
 		case tea.KeyF9:
 			m.reopened = strings.Contains(bufferPlain(m.mainSurf.Buffer()), "New while hidden") && m.ws.Status().UnreadCount() == 0

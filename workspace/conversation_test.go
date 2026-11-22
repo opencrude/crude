@@ -5,33 +5,33 @@ import (
 	"testing"
 	"time"
 
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
 func TestConversationKeepsImmutableIdentityPerTurnDerivedMessage(t *testing.T) {
-	conversation := NewConversation()
-	first := ttypes.TurnIdentity{Generation: 1, ProviderID: "provider-a", AccountID: "personal", ModelID: "model-a"}
-	if !conversation.BeginTurn(first) {
+	transcript := NewConversation()
+	first := conversation.TurnIdentity{Generation: 1, ProviderID: "provider-a", AccountID: "personal", ModelID: "model-a"}
+	if !transcript.BeginTurn(first) {
 		t.Fatal("first turn identity was rejected")
 	}
-	conversation.AppendThinking("reasoning")
-	conversation.UpdateToolCall("tool-a", "internal-a", "read_file", "a.go")
-	conversation.EnsureAssistant()
-	conversation.AppendToken("first answer")
+	transcript.AppendThinking("reasoning")
+	transcript.UpdateToolCall("tool-a", "internal-a", "read_file", "a.go")
+	transcript.EnsureAssistant()
+	transcript.AppendToken("first answer")
 
-	second := ttypes.TurnIdentity{Generation: 2, ProviderID: "provider-a", AccountID: "work", ModelID: "model-b"}
-	if !conversation.BeginTurn(second) {
+	second := conversation.TurnIdentity{Generation: 2, ProviderID: "provider-a", AccountID: "work", ModelID: "model-b"}
+	if !transcript.BeginTurn(second) {
 		t.Fatal("second turn identity was rejected")
 	}
-	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "continue"})
-	conversation.EnsureAssistant()
-	conversation.AppendToken("second answer")
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "continue"})
+	transcript.EnsureAssistant()
+	transcript.AppendToken("second answer")
 
-	if conversation.BeginTurn(first) {
+	if transcript.BeginTurn(first) {
 		t.Fatal("stale turn identity moved attribution backward")
 	}
-	messages := conversation.Messages()
+	messages := transcript.Messages()
 	for _, message := range messages[:3] {
 		if message.Role == MessageRoleThinking || message.Role == MessageRoleTool || message.Role == MessageRoleAssistant {
 			if message.ModelID != "model-a" || message.ProviderID != "provider-a" || message.AccountID != "personal" || message.TurnGeneration != 1 {
@@ -46,7 +46,7 @@ func TestConversationKeepsImmutableIdentityPerTurnDerivedMessage(t *testing.T) {
 }
 
 func TestMessageContainsNoPresentationCacheFields(t *testing.T) {
-	typeOfMessage := reflect.TypeOf(Message{})
+	typeOfMessage := reflect.TypeOf(conversation.Message{})
 	for _, name := range []string{"CachedLines", "CursorLine", "StreamCompletedLines", "StreamCompletedLen", "SessionPickerSessions"} {
 		if _, ok := typeOfMessage.FieldByName(name); ok {
 			t.Fatalf("workspace Message contains TUI presentation field %s", name)
@@ -55,16 +55,16 @@ func TestMessageContainsNoPresentationCacheFields(t *testing.T) {
 }
 
 func TestConversationStreamingLifecycle(t *testing.T) {
-	conversation := NewConversation()
-	agent := NewAgentState("agent", conversation, &testLogger{})
-	identity := ttypes.TurnIdentity{Generation: 3, ProviderID: "ollama-cloud", ModelID: "kimi-k3"}
+	transcript := NewConversation()
+	agent := NewAgentState("agent", transcript, &testLogger{})
+	identity := conversation.TurnIdentity{Generation: 3, ProviderID: "ollama-cloud", ModelID: "kimi-k3"}
 
 	agent.ApplyEvent(AgentEvent{Type: "turn_started", AgentID: "agent", Data: identity})
 	agent.ApplyEvent(AgentEvent{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "considering"}})
 	agent.ApplyEvent(AgentEvent{Type: "stream_token", AgentID: "agent", Data: "hello"})
 	agent.Tick(1)
 
-	messages := conversation.Messages()
+	messages := transcript.Messages()
 	if len(messages) != 2 {
 		t.Fatalf("message count = %d, want 2", len(messages))
 	}
@@ -82,16 +82,16 @@ func TestConversationStreamingLifecycle(t *testing.T) {
 }
 
 func TestConversationToolLifecycle(t *testing.T) {
-	conversation := NewConversation()
-	conversation.UpdateToolStreaming("tool-1", "internal-1", "read_file", map[string]any{
+	transcript := NewConversation()
+	transcript.UpdateToolStreaming("tool-1", "internal-1", "read_file", map[string]any{
 		"target":            "main.go",
 		"content_lines_int": 12,
 	})
-	conversation.UpdateToolCall("tool-1", "internal-1", "read_file", "main.go")
-	conversation.SetToolPermTag("tool-1", "internal-1", "allowed")
-	conversation.UpdateToolResult("tool-1", "internal-1", "read_file", "contents", false, 20, 0, 0)
+	transcript.UpdateToolCall("tool-1", "internal-1", "read_file", "main.go")
+	transcript.SetToolPermTag("tool-1", "internal-1", "allowed")
+	transcript.UpdateToolResult("tool-1", "internal-1", "read_file", "contents", false, 20, 0, 0)
 
-	messages := conversation.Messages()
+	messages := transcript.Messages()
 	if len(messages) != 1 {
 		t.Fatalf("message count = %d, want 1", len(messages))
 	}
@@ -100,122 +100,122 @@ func TestConversationToolLifecycle(t *testing.T) {
 		t.Fatalf("atomic tool skipped preparing: %#v", message)
 	}
 	firstTick := time.Now().Add(time.Second)
-	if !conversation.AdvanceToolLifecycles(firstTick) {
+	if !transcript.AdvanceToolLifecycles(firstTick) {
 		t.Fatal("tool did not advance to doing")
 	}
-	message = conversation.Messages()[0]
+	message = transcript.Messages()[0]
 	if message.ToolPreviewPhase != "streaming" || message.ToolStatus == "success" {
 		t.Fatalf("atomic tool skipped doing: %#v", message)
 	}
-	if !conversation.AdvanceToolLifecycles(firstTick.Add(time.Second)) {
+	if !transcript.AdvanceToolLifecycles(firstTick.Add(time.Second)) {
 		t.Fatal("tool did not advance to done")
 	}
-	message = conversation.Messages()[0]
+	message = transcript.Messages()[0]
 	if message.ToolStatus != "success" || message.ToolPreviewPhase != "done" || message.Content != "contents" || message.PermTag != "allowed" {
 		t.Fatalf("unexpected tool message: %#v", message)
 	}
 }
 
 func TestConversationSnapshotDoesNotExposeMutableState(t *testing.T) {
-	conversation := NewConversation()
-	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "original"})
+	transcript := NewConversation()
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "original"})
 
-	snapshot := conversation.Messages()
+	snapshot := transcript.Messages()
 	snapshot[0].Content = "mutated"
 
-	if got := conversation.Messages()[0].Content; got != "original" {
+	if got := transcript.Messages()[0].Content; got != "original" {
 		t.Fatalf("snapshot mutation changed conversation: %q", got)
 	}
 }
 
 func TestConversationFinishCancelledPreservesContentAndAppendsStop(t *testing.T) {
-	conversation := NewConversation()
-	conversation.AppendMessage(Message{Role: MessageRoleAssistant, Content: "partial"})
-	conversation.Finish("", "cancelled", "stop")
+	transcript := NewConversation()
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleAssistant, Content: "partial"})
+	transcript.Finish("", "cancelled", "stop")
 
-	message := conversation.Messages()[0]
-	if message.Incomplete || message.Content != "partial" || len(conversation.Messages()) != 2 || conversation.Messages()[1].LifecyclePhase != "stopped" {
+	message := transcript.Messages()[0]
+	if message.Incomplete || message.Content != "partial" || len(transcript.Messages()) != 2 || transcript.Messages()[1].LifecyclePhase != "stopped" {
 		t.Fatalf("unexpected cancelled message: %#v", message)
 	}
 }
 
 func TestConversationThinkingRetainsIdentityAndPosition(t *testing.T) {
-	conversation := NewConversation()
-	conversation.BeginTurn(ttypes.TurnIdentity{Generation: 2, ModelID: "model", ProviderID: "provider"})
-	conversation.AppendThinking("private reasoning")
-	original := conversation.Messages()[0]
-	conversation.AppendThinking(" continued")
-	conversation.MarkAllThinkingDone()
-	conversation.AppendMessage(Message{Role: MessageRoleTool, ToolName: "read_file"})
-	got := conversation.Messages()
+	transcript := NewConversation()
+	transcript.BeginTurn(conversation.TurnIdentity{Generation: 2, ModelID: "model", ProviderID: "provider"})
+	transcript.AppendThinking("private reasoning")
+	original := transcript.Messages()[0]
+	transcript.AppendThinking(" continued")
+	transcript.MarkAllThinkingDone()
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleTool, ToolName: "read_file"})
+	got := transcript.Messages()
 	if len(got) != 2 || got[0].InternalID != original.InternalID || got[0].Content != "private reasoning continued" || got[0].ThinkingActive || got[0].SubPaneID != "" || got[0].ModelID != "model" {
 		t.Fatalf("canonical reasoning lost identity or content: %+v", got)
 	}
 }
 
 func TestConversationNewThinkingDoesNotExtendSettledBlock(t *testing.T) {
-	conversation := NewConversation()
-	conversation.AppendThinking("first block")
-	conversation.MarkAllThinkingDone()
-	first := conversation.Messages()[0]
-	conversation.AppendThinking("second block")
-	messages := conversation.Messages()
+	transcript := NewConversation()
+	transcript.AppendThinking("first block")
+	transcript.MarkAllThinkingDone()
+	first := transcript.Messages()[0]
+	transcript.AppendThinking("second block")
+	messages := transcript.Messages()
 	if len(messages) != 2 || !reflect.DeepEqual(messages[0], first) || !messages[1].ThinkingActive || messages[1].InternalID == first.InternalID {
 		t.Fatalf("new reasoning overwrote settled evidence: %+v", messages)
 	}
 }
 
 func TestTurnStatusStaysLastAcrossSteeringAndTransformsInPlace(t *testing.T) {
-	conversation := NewConversation()
-	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "start"})
-	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing", Progress: 25})
-	statusID := conversation.Messages()[1].InternalID
-	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "human steering: include tests"})
+	transcript := NewConversation()
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "start"})
+	transcript.UpdateTurnStatus(TurnStatus{Phase: "preparing", Progress: 25})
+	statusID := transcript.Messages()[1].InternalID
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "human steering: include tests"})
 
-	messages := conversation.Messages()
+	messages := transcript.Messages()
 	if len(messages) != 3 || messages[1].Content != "human steering: include tests" || messages[2].Role != MessageRoleStatus {
 		t.Fatalf("human steering did not stay before live status: %#v", messages)
 	}
-	conversation.UpdateToolStreaming("tool-1", "internal-1", "read_file", map[string]any{"target": "main.go"})
-	messages = conversation.Messages()
+	transcript.UpdateToolStreaming("tool-1", "internal-1", "read_file", map[string]any{"target": "main.go"})
+	messages = transcript.Messages()
 	if len(messages) != 3 || messages[2].Role != MessageRoleTool || messages[2].InternalID != statusID || messages[2].ToolID != "tool-1" {
 		t.Fatalf("status did not transform in place after human steering: %#v", messages)
 	}
 }
 
 func TestPendingSteeringSettlementRetainsEveryLocallyAcceptedMessage(t *testing.T) {
-	conversation := NewConversation()
-	consumed := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "keep me"})
-	cancelled := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "keep stopped note"})
-	if !conversation.ConsumePendingSteering(consumed) {
+	transcript := NewConversation()
+	consumed := transcript.AppendPendingSteering(conversation.Message{Role: MessageRoleUser, Content: "keep me"})
+	cancelled := transcript.AppendPendingSteering(conversation.Message{Role: MessageRoleUser, Content: "keep stopped note"})
+	if !transcript.ConsumePendingSteering(consumed) {
 		t.Fatal("consumed human steering was not resolved")
 	}
-	if settled := conversation.SettlePendingSteeringIDs([]string{cancelled}); settled != 1 {
+	if settled := transcript.SettlePendingSteeringIDs([]string{cancelled}); settled != 1 {
 		t.Fatalf("settled=%d, want 1", settled)
 	}
-	messages := conversation.Messages()
+	messages := transcript.Messages()
 	if len(messages) != 2 || messages[0].Content != "keep me" || messages[1].Content != "keep stopped note" || messages[0].PendingSteering || messages[1].PendingSteering {
 		t.Fatalf("canonical messages=%#v", messages)
 	}
 }
 
 func TestPendingSteeringStaysAfterProviderOutputUntilAcknowledged(t *testing.T) {
-	conversation := NewConversation()
-	conversation.UpdateTurnStatus(TurnStatus{Phase: "waiting_provider"})
-	pendingID := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "include tests"})
-	conversation.UpdateToolStreaming("tool-1", "internal-1", "write_file", map[string]any{
+	transcript := NewConversation()
+	transcript.UpdateTurnStatus(TurnStatus{Phase: "waiting_provider"})
+	pendingID := transcript.AppendPendingSteering(conversation.Message{Role: MessageRoleUser, Content: "include tests"})
+	transcript.UpdateToolStreaming("tool-1", "internal-1", "write_file", map[string]any{
 		"target": "main.go", "content_lines_int": 3,
 	})
 
-	messages := conversation.Messages()
+	messages := transcript.Messages()
 	if len(messages) != 2 || messages[0].Role != MessageRoleTool || !messages[1].PendingSteering || messages[1].InternalID != pendingID {
 		t.Fatalf("pending human steering was not pinned after live output: %#v", messages)
 	}
-	if !conversation.ConsumePendingSteering(pendingID) {
+	if !transcript.ConsumePendingSteering(pendingID) {
 		t.Fatal("pending human steering acknowledgement was rejected")
 	}
-	conversation.AppendMessage(Message{Role: MessageRoleAssistant, Content: "now I saw it"})
-	messages = conversation.Messages()
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleAssistant, Content: "now I saw it"})
+	messages = transcript.Messages()
 	if len(messages) != 3 || messages[1].InternalID != pendingID || messages[1].PendingSteering || messages[2].Role != MessageRoleAssistant {
 		t.Fatalf("acknowledged human steering did not rejoin chronology: %#v", messages)
 	}
@@ -223,7 +223,7 @@ func TestPendingSteeringStaysAfterProviderOutputUntilAcknowledged(t *testing.T) 
 
 func TestStreamCompletionWithQueuedTailDoesNotDuplicateAnswer(t *testing.T) {
 	c := NewConversation()
-	c.AppendPendingSteering(Message{InternalID: "next", Role: MessageRoleUser, Content: "next prompt"})
+	c.AppendPendingSteering(conversation.Message{InternalID: "next", Role: MessageRoleUser, Content: "next prompt"})
 	c.EnsureAssistant()
 	c.AppendToken("one accepted answer")
 	c.Finish("one accepted answer", "completed", "")
@@ -234,50 +234,50 @@ func TestStreamCompletionWithQueuedTailDoesNotDuplicateAnswer(t *testing.T) {
 }
 
 func TestSteeringAdmissionMovesAboveTurnIndicatorAndRejectedNotesReturn(t *testing.T) {
-	conversation := NewConversation()
-	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
-	first := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "first"})
-	second := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "second"})
-	if !conversation.ConsumePendingSteering(first) {
+	transcript := NewConversation()
+	transcript.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
+	first := transcript.AppendPendingSteering(conversation.Message{Role: MessageRoleUser, Content: "first"})
+	second := transcript.AppendPendingSteering(conversation.Message{Role: MessageRoleUser, Content: "second"})
+	if !transcript.ConsumePendingSteering(first) {
 		t.Fatal("first upload was not acknowledged")
 	}
-	messages := conversation.Messages()
+	messages := transcript.Messages()
 	if len(messages) != 3 || messages[0].InternalID != first || messages[0].PendingSteering || messages[1].Role != MessageRoleStatus || messages[2].InternalID != second || !messages[2].PendingSteering {
 		t.Fatalf("upload handoff did not move note above indicator: %+v", messages)
 	}
-	settled := conversation.SettlePendingSteeringMessages([]string{first, second})
-	if len(settled) != 2 || settled[0].Content != "first" || settled[1].Content != "second" || len(conversation.Messages()) != 3 {
-		t.Fatalf("stopped upload did not retain both notes in order: %+v, remaining %+v", settled, conversation.Messages())
+	settled := transcript.SettlePendingSteeringMessages([]string{first, second})
+	if len(settled) != 2 || settled[0].Content != "first" || settled[1].Content != "second" || len(transcript.Messages()) != 3 {
+		t.Fatalf("stopped upload did not retain both notes in order: %+v, remaining %+v", settled, transcript.Messages())
 	}
 }
 
 func TestAttachSubPanePromotesExistingSubAgentToolWithoutDuplicate(t *testing.T) {
-	conversation := NewConversation()
-	conversation.UpdateToolCall("tool-1", "internal-1", "agent_start", "category: researcher description: survey")
-	if !conversation.AttachSubPaneToTool("tool-1", "child-1", "Lily — survey") {
+	transcript := NewConversation()
+	transcript.UpdateToolCall("tool-1", "internal-1", "agent_start", "category: researcher description: survey")
+	if !transcript.AttachSubPaneToTool("tool-1", "child-1", "Lily — survey") {
 		t.Fatal("active sub-agent tool row was not promoted")
 	}
-	conversation.UpdateToolResult("tool-1", "internal-1", "agent_start", "completed", false, 0, 0, 0)
+	transcript.UpdateToolResult("tool-1", "internal-1", "agent_start", "completed", false, 0, 0, 0)
 	now := time.Now().Add(time.Second)
-	conversation.AdvanceToolLifecycles(now)
-	conversation.AdvanceToolLifecycles(now.Add(time.Second))
-	messages := conversation.Messages()
+	transcript.AdvanceToolLifecycles(now)
+	transcript.AdvanceToolLifecycles(now.Add(time.Second))
+	messages := transcript.Messages()
 	if len(messages) != 1 || messages[0].SubPaneID != "child-1" || messages[0].ToolProgressLabel != "Lily — survey" || messages[0].ToolStatus == "calling" {
 		t.Fatalf("promoted sub-agent lifecycle = %+v", messages)
 	}
 }
 
 func TestAttachSubPaneCorrelatesParallelCallsAndRejectsUnmatched(t *testing.T) {
-	conversation := NewConversation()
-	conversation.UpdateToolCall("first", "first-id", "agent_start", "survey")
-	conversation.UpdateToolCall("second", "second-id", "agent_start", "implement")
-	if conversation.AttachSubPaneToTool("missing", "ghost", "ghost") ||
-		!conversation.AttachSubPaneToTool("first", "child-a", "Lily — survey") ||
-		!conversation.AttachSubPaneToTool("second", "child-b", "Jane — implement") ||
-		conversation.AttachSubPaneToTool("first", "child-c", "duplicate") {
+	transcript := NewConversation()
+	transcript.UpdateToolCall("first", "first-id", "agent_start", "survey")
+	transcript.UpdateToolCall("second", "second-id", "agent_start", "implement")
+	if transcript.AttachSubPaneToTool("missing", "ghost", "ghost") ||
+		!transcript.AttachSubPaneToTool("first", "child-a", "Lily — survey") ||
+		!transcript.AttachSubPaneToTool("second", "child-b", "Jane — implement") ||
+		transcript.AttachSubPaneToTool("first", "child-c", "duplicate") {
 		t.Fatal("failed to correlate children by exact tool call IDs")
 	}
-	msgs := conversation.Messages()
+	msgs := transcript.Messages()
 	if len(msgs) != 2 || msgs[0].SubPaneID != "child-a" || msgs[1].SubPaneID != "child-b" {
 		t.Fatalf("parallel child links crossed: %+v", msgs)
 	}
@@ -297,15 +297,15 @@ func TestCancellingTurnStatusRejectsLateProviderPhase(t *testing.T) {
 }
 
 func TestMarkAllThinkingDoneRecordsDuration(t *testing.T) {
-	conversation := NewConversation()
-	conversation.AppendMessage(Message{
+	transcript := NewConversation()
+	transcript.AppendMessage(conversation.Message{
 		Role:           MessageRoleThinking,
 		Content:        "reasoning",
 		Time:           time.Now().Add(-3 * time.Second),
 		ThinkingActive: true,
 	})
-	conversation.MarkAllThinkingDone()
-	messages := conversation.Messages()
+	transcript.MarkAllThinkingDone()
+	messages := transcript.Messages()
 	if len(messages) != 1 {
 		t.Fatalf("message count = %d, want 1", len(messages))
 	}
@@ -318,22 +318,22 @@ func TestMarkAllThinkingDoneRecordsDuration(t *testing.T) {
 	}
 	// Repeated MarkAllThinkingDone calls must not recompute the duration.
 	first := msg.ThinkingDuration
-	conversation.MarkAllThinkingDone()
-	if got := conversation.Messages()[0].ThinkingDuration; got != first {
+	transcript.MarkAllThinkingDone()
+	if got := transcript.Messages()[0].ThinkingDuration; got != first {
 		t.Fatalf("duration recomputed on second call: %v -> %v", first, got)
 	}
 }
 
 func TestMarkAllThinkingInterruptedRecordsDuration(t *testing.T) {
-	conversation := NewConversation()
-	conversation.AppendMessage(Message{
+	transcript := NewConversation()
+	transcript.AppendMessage(conversation.Message{
 		Role:           MessageRoleThinking,
 		Content:        "reasoning",
 		Time:           time.Now().Add(-2 * time.Second),
 		ThinkingActive: true,
 	})
-	conversation.MarkAllThinkingInterrupted()
-	msg := conversation.Messages()[0]
+	transcript.MarkAllThinkingInterrupted()
+	msg := transcript.Messages()[0]
 	if !msg.ThinkingInterrupted {
 		t.Fatalf("thinking block not interrupted: %#v", msg)
 	}
@@ -343,25 +343,25 @@ func TestMarkAllThinkingInterruptedRecordsDuration(t *testing.T) {
 }
 
 func TestCompactionOperationRowsSurviveTurnCleanupAndRemainIDScoped(t *testing.T) {
-	conversation := NewConversation()
-	conversation.UpdateTurnStatus(TurnStatus{
+	transcript := NewConversation()
+	transcript.UpdateTurnStatus(TurnStatus{
 		Phase: "compaction_extracting", OperationID: "compact-a", StageName: "Capturing state",
 		StageIndex: 3, Completed: 2, StageCount: 4,
 	})
-	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
-	conversation.ClearTurnStatus()
-	messages := conversation.Messages()
+	transcript.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
+	transcript.ClearTurnStatus()
+	messages := transcript.Messages()
 	if len(messages) != 1 || messages[0].LifecycleOperationID != "compact-a" || messages[0].LifecycleStageName != "Capturing state" {
 		t.Fatalf("durable operation row was consumed with turn status: %+v", messages)
 	}
-	conversation.UpdateTurnStatus(TurnStatus{
+	transcript.UpdateTurnStatus(TurnStatus{
 		Phase: "compaction_completed", OperationID: "compact-a", Completed: 4, StageCount: 4,
 		BeforeTokens: 155955, AfterTokens: 10476,
 	})
-	conversation.UpdateTurnStatus(TurnStatus{
+	transcript.UpdateTurnStatus(TurnStatus{
 		Phase: "compaction_preparing", OperationID: "compact-b", StageCount: 4,
 	})
-	messages = conversation.Messages()
+	messages = transcript.Messages()
 	if len(messages) != 2 || messages[0].LifecyclePhase != "compaction_completed" || messages[1].LifecycleOperationID != "compact-b" {
 		t.Fatalf("operation IDs did not retain independent rows: %+v", messages)
 	}
@@ -401,15 +401,15 @@ func TestAgentStateCompactionRetryAndCancellationRemainOneQuietBoundary(t *testi
 }
 
 func TestCompletedCompactionStaysInNaturalFlowAndThinkingChunksCoalesceAfterIt(t *testing.T) {
-	conversation := NewConversation()
-	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "compact this"})
-	conversation.UpdateTurnStatus(TurnStatus{
+	transcript := NewConversation()
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "compact this"})
+	transcript.UpdateTurnStatus(TurnStatus{
 		Phase: "compaction_completed", OperationID: "compact-1", Completed: 4, StageCount: 4,
 	})
-	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "continue after compact"})
-	conversation.AppendThinking("first ")
-	conversation.AppendThinking("second")
-	messages := conversation.Messages()
+	transcript.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "continue after compact"})
+	transcript.AppendThinking("first ")
+	transcript.AppendThinking("second")
+	messages := transcript.Messages()
 	if len(messages) != 4 {
 		t.Fatalf("messages=%+v", messages)
 	}
@@ -438,8 +438,8 @@ func TestAutomaticCompactionFailureDoesNotAppendDuplicateErrorRow(t *testing.T) 
 
 func TestCancellationDoesNotMarkPreviousTurnIncomplete(t *testing.T) {
 	c := NewConversation()
-	c.AppendMessage(Message{InternalID: "old", Role: MessageRoleAssistant, Content: "Prior turn completed"})
-	c.AppendMessage(Message{InternalID: "new", Role: MessageRoleUser, Content: "New request"})
+	c.AppendMessage(conversation.Message{InternalID: "old", Role: MessageRoleAssistant, Content: "Prior turn completed"})
+	c.AppendMessage(conversation.Message{InternalID: "new", Role: MessageRoleUser, Content: "New request"})
 	c.Finish("", "cancelled", "stop")
 	msgs := c.Messages()
 	if msgs[0].Incomplete {

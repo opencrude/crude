@@ -37,7 +37,7 @@ const (
 type WorkspaceEntry struct {
 	ID, Name, Path, DisplayPath string
 	SessionCount                int
-	activity                    workspace.WorkspaceActivity
+	activity                    workspace.Activity
 	badges                      ui.RowBadges
 }
 type Item struct {
@@ -197,7 +197,9 @@ func (s *Screen) BeginLoad(cwd string) {
 		s.filterOn = true
 	}
 }
-func (s *Screen) FinishLoad(cwd string, infos []workspace.WorkspaceInfo, err error) {
+
+// FinishLoad ends the workspace load and shows either the entries or the failure.
+func (s *Screen) FinishLoad(cwd string, infos []workspace.Info, err error) {
 	s.loading = false
 	s.rule.SetActive(false)
 	if err != nil {
@@ -207,7 +209,9 @@ func (s *Screen) FinishLoad(cwd string, infos []workspace.WorkspaceInfo, err err
 	s.loadError = ""
 	s.SetData(cwd, infos)
 }
-func (s *Screen) SetData(cwd string, infos []workspace.WorkspaceInfo) {
+
+// SetData lists the saved workspaces around the current directory.
+func (s *Screen) SetData(cwd string, infos []workspace.Info) {
 	selectedPath := s.SelectedWorkspacePath()
 	s.cwd, s.cwdDisplay = cwd, cwd
 	s.workspaces = nil
@@ -217,7 +221,7 @@ func (s *Screen) SetData(cwd string, infos []workspace.WorkspaceInfo) {
 			continue
 		}
 		s.workspaces = append(s.workspaces, WorkspaceEntry{
-			ID: w.ID, Name: workspace.WorkspaceDisplayName(w), Path: w.ProjectDir, DisplayPath: w.ShortPath(), SessionCount: w.SessionCount,
+			ID: w.ID, Name: workspace.DisplayName(w), Path: w.ProjectDir, DisplayPath: w.ShortPath(), SessionCount: w.SessionCount,
 		})
 	}
 	for i, w := range s.workspaces {
@@ -231,7 +235,7 @@ func (s *Screen) SetData(cwd string, infos []workspace.WorkspaceInfo) {
 
 // SetWorkspaceActivity changes badges only. The existing virtual list keeps
 // the same resources, focus, query, and scroll geometry.
-func (s *Screen) SetWorkspaceActivity(activity map[string]workspace.WorkspaceActivity) bool {
+func (s *Screen) SetWorkspaceActivity(activity map[string]workspace.Activity) bool {
 	changed := false
 	for i := range s.workspaces {
 		row := &s.workspaces[i]

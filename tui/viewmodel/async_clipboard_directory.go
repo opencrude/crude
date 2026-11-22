@@ -13,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/sessiondb"
-	"crude/clipboard"
-	"crude/core/port"
+	"crude/core/shellport"
+	"crude/internal/clipboard"
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	filepickerscreen "crude/tui/screens/filepicker"

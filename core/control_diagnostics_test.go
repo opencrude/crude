@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"crude/agent/collaboration"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/internal/wiretest"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/wiretest"
 	"crude/types/control"
+	"crude/types/insight"
 	"crude/types/inspect"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -100,7 +102,7 @@ func TestDiagnosticTypedUnattachedRPCAndOwnerBounds(t *testing.T) {
 
 func TestDiagnosticExternalGatewaySurvivesBlockedCurrentActor(t *testing.T) {
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, t.TempDir()+"/receipts.db")
 	if err != nil {
 		t.Fatal(err)
@@ -182,14 +184,14 @@ func TestDiagnosticExternalGatewaySurvivesBlockedCurrentActor(t *testing.T) {
 
 func TestDiagnosticWorkspaceDenseGatewayPreservesCanonicalStatusAndRevision(t *testing.T) {
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
-		action := types.StatusAction{ID: "OMIT_ACTION_PAYLOAD", Label: strings.Repeat("action payload ", 9000), Enabled: true}
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{})
+		action := statuscenter.Action{ID: "OMIT_ACTION_PAYLOAD", Label: strings.Repeat("action payload ", 9000), Enabled: true}
 		for i := range 73 {
-			ws.Status.SetIssue(types.IssueSnapshot{ID: fmt.Sprintf("dense-issue-%03d", i), Summary: fmt.Sprintf("Canonical diagnostic %d", i), Detail: strings.Repeat("bounded owner detail ", 190), Actions: []types.StatusAction{action}})
+			ws.Status.SetIssue(statuscenter.IssueSnapshot{ID: fmt.Sprintf("dense-issue-%03d", i), Summary: fmt.Sprintf("Canonical diagnostic %d", i), Detail: strings.Repeat("bounded owner detail ", 190), Actions: []statuscenter.Action{action}})
 		}
-		ws.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "status-agent"}, Label: strings.Repeat("oversized label ", 9000), Phase: types.AgentIdle, Checkpoint: strings.Repeat("checkpoint ", 9000), CheckpointDetail: strings.Repeat("checkpoint detail ", 9000)})
-		ws.Status.SetOperation(types.OperationSnapshot{ID: "status-operation", Label: strings.Repeat("oversized operation ", 9000), State: types.OperationRunning, OutputRef: "OMIT_OUTPUT_REFERENCE", Actions: []types.StatusAction{action}})
-		ws.Status.Notify(types.NotificationRecord{ID: "preserve-unread", Summary: "Must remain unread", Source: "diagnostic-fixture"})
+		ws.Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "status-agent"}, Label: strings.Repeat("oversized label ", 9000), Phase: statuscenter.AgentIdle, Checkpoint: strings.Repeat("checkpoint ", 9000), CheckpointDetail: strings.Repeat("checkpoint detail ", 9000)})
+		ws.Status.SetOperation(statuscenter.OperationSnapshot{ID: "status-operation", Label: strings.Repeat("oversized operation ", 9000), State: statuscenter.OperationRunning, OutputRef: "OMIT_OUTPUT_REFERENCE", Actions: []statuscenter.Action{action}})
+		ws.Status.Notify(statuscenter.NotificationRecord{ID: "preserve-unread", Summary: "Must remain unread", Source: "diagnostic-fixture"})
 		return ws, nil
 	}, t.TempDir()+"/receipts.db")
 	if err != nil {
@@ -216,10 +218,10 @@ func TestDiagnosticWorkspaceDenseGatewayPreservesCanonicalStatusAndRevision(t *t
 	for {
 		_, changed := a.ws.LSPMgr.Changed()
 		plan := a.ws.LSPMgr.Assembly()
-		if plan.State == types.AssemblyReady {
+		if plan.State == insight.AssemblyReady {
 			break
 		}
-		if plan.State == types.AssemblyFailed {
+		if plan.State == insight.AssemblyFailed {
 			t.Fatal("fixture assembly failed:", plan.Message)
 		}
 		select {
@@ -274,7 +276,7 @@ func TestDiagnosticWorkspaceDenseGatewayPreservesCanonicalStatusAndRevision(t *t
 	snapshot := page.SnapshotID
 	for {
 		for _, record := range page.Records {
-			var issue types.IssueSnapshot
+			var issue statuscenter.IssueSnapshot
 			if err := json.Unmarshal(record.Value, &issue); err != nil || issue.ID != record.ID || !strings.HasPrefix(issue.Summary, "Canonical diagnostic ") || seen[issue.ID] || len(issue.Actions) != 0 || !strings.Contains(string(record.Value), `"action_count":1`) || strings.Contains(string(record.Value), "OMIT_ACTION_PAYLOAD") {
 				t.Fatalf("lost/duplicated canonical issue: %+v (%v)", record, err)
 			}
@@ -382,7 +384,7 @@ func TestDiagnosticTypedStalledActorPartialDoesNotAuthorizeDrain(t *testing.T) {
 
 func TestDiagnosticIndependentAdmissionJoinsWorkspaceRetirement(t *testing.T) {
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, t.TempDir()+"/receipts.db")
 	if err != nil {
 		t.Fatal(err)
@@ -434,11 +436,11 @@ func TestDiagnosticWorkspaceProblemsReadsClosedFactsInBoundedPages(t *testing.T)
 	client.muWatch.Unlock()
 	for i := range 15 {
 		path := filepath.Join(root, fmt.Sprintf("closed-%02d.fixture", i))
-		ds := []types.LSPDiagnostic{{Line: 2, Col: 4, EndLine: 2, EndCol: 5, Message: strings.Repeat("server message ", 500), Severity: types.DiagError, Code: "E42", Source: "fixture-checker"}}
+		ds := []insight.LSPDiagnostic{{Line: 2, Col: 4, EndLine: 2, EndCol: 5, Message: strings.Repeat("server message ", 500), Severity: insight.DiagError, Code: "E42", Source: "fixture-checker"}}
 		for j := range 8 {
-			ds = append(ds, types.LSPDiagnostic{Line: j, EndLine: j, EndCol: 1, Severity: types.DiagWarning, Message: "warning", Code: "W1", Source: "fixture-checker"})
+			ds = append(ds, insight.LSPDiagnostic{Line: j, EndLine: j, EndCol: 1, Severity: insight.DiagWarning, Message: "warning", Code: "W1", Source: "fixture-checker"})
 		}
-		publish(path, types.InsightDiagnosticPublication{Diagnostics: ds})
+		publish(path, insight.DiagnosticPublication{Diagnostics: ds})
 	}
 	before := w.LSPMgr.Version()
 	var store inspect.Store
@@ -528,7 +530,7 @@ func TestDiagnosticWorkspaceLSPIncludesProgressAndBoundedServerEvidence(t *testi
 type diagnosticEvidenceRuntime struct{ base workspace.LSPRuntime }
 type diagnosticEvidenceClient struct{ workspace.LSPClient }
 
-func (r diagnosticEvidenceRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r diagnosticEvidenceRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	return diagnosticEvidenceClient{r.base.NewClient(spec, root, admit)}
 }
 func (diagnosticEvidenceClient) Evidence() []string {
@@ -550,7 +552,7 @@ func TestDiagnosticWorkspaceLSPReadsBoundedLiveEvidence(t *testing.T) {
 		if record.Kind != "lsp" {
 			continue
 		}
-		var health types.LSPServerHealth
+		var health statuscenter.LSPServerHealth
 		if err := json.Unmarshal(record.Value, &health); err != nil {
 			t.Fatal(err)
 		}

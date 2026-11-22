@@ -12,7 +12,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // textRow returns the text area of one painted row: between the gutter and
@@ -228,7 +229,7 @@ func TestEditorKeepsRightToLeftStringsAndCommentsInPlace(t *testing.T) {
 // its right-to-left phrases in left-to-right order, so a reader of the
 // sentence meets its parts backwards.
 func TestEditorDefaultShowsRightToLeftProseInSentenceOrder(t *testing.T) {
-	if got := (types.EditorSettings{}).TextDirectionOrDefault(); got != types.EditorTextDirectionByLine {
+	if got := (setting.Editor{}).TextDirectionOrDefault(); got != setting.EditorTextDirectionByLine {
 		t.Fatalf("default line direction is %q", got)
 	}
 	ed := loadEditorText(t, "notes.typ", "\u05d0\u05d1 Active SLAM \u05d2\u05d3\n")
@@ -408,7 +409,7 @@ func TestEditorBidiWrappedRowsAndInlayHits(t *testing.T) {
 		t.Fatalf("wrapped row hit %+v", p)
 	}
 	ed = newInlayTestEditor(t, "אבגדהוזח ABCDEFGHIJKLMNOP")
-	installTestInlays(t, ed, types.LSPInlayHint{SourceByte: 4, Position: types.LSPInlayPosition{Character: 2}, Label: "HINT", Index: 0})
+	installTestInlays(t, ed, insight.LSPInlayHint{SourceByte: 4, Position: insight.LSPInlayPosition{Character: 2}, Label: "HINT", Index: 0})
 	w := ed.GutterWidth() + 26
 	paintEditor(ed, w, 6)
 	ed.HandleEvent(tea.MouseWheelMsg{Button: tea.MouseWheelRight})
@@ -488,7 +489,7 @@ func TestSemanticRecolorDoesNotReorderProse(t *testing.T) {
 	}
 	check()
 	set := semanticFixtureSet(ed)
-	set.Spans = []types.LSPSemanticSpan{{Start: 0, End: len(text), Type: 0}}
+	set.Spans = []insight.LSPSemanticSpan{{Start: 0, End: len(text), Type: 0}}
 	if err := ed.SetSemanticTokens(&set); err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 // Sequential scripts/tuishot.sh journey: type /fast twice, capturing the
@@ -39,7 +40,7 @@ func TestFastModeVisualAcceptance(t *testing.T) {
 	shell.app.Tree.Visible = false
 	runAppCommand(t, shell.app, shell.app.submitPreparedInput(id, provider.PlainInput("Please review the current implementation."), shell.app.Input.DraftRevision()))
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
-		return shell.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return shell.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	shell.app.setFocusInput()
 	model := &fastModeVisualModel{App: shell.app, t: t, id: id}
@@ -74,9 +75,9 @@ func (m *fastModeVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	_, cmd := m.App.Update(msg)
 	if result, ok := msg.(selectedSessionSettingsResult); ok && result.result.Err == nil {
 		if owner := m.ws.SessionForAgent(m.id); owner != nil && owner.Settings != nil {
-			if owner.Settings.Effective.FastMode == types.FastModeOn {
+			if owner.Settings.Effective.FastMode == setting.FastModeOn {
 				m.on = true
-			} else if m.on && owner.Settings.Effective.FastMode == types.FastModeOff {
+			} else if m.on && owner.Settings.Effective.FastMode == setting.FastModeOff {
 				m.off = true
 			}
 		}

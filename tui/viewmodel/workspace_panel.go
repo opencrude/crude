@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"crude/tui/screens/problems"
-	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -136,41 +136,41 @@ func defaultWorkspacePanelHeight(panelID string) int {
 	return defaultTermDockHeight
 }
 
-func (app *App) hideWorkspacePanel() {
-	if app.termDock != nil {
-		app.termDock.ClosePanel()
+func (m *App) hideWorkspacePanel() {
+	if m.termDock != nil {
+		m.termDock.ClosePanel()
 	}
-	app.setTermDockFocused(false)
+	m.setTermDockFocused(false)
 }
 
-func (app *App) openTerminalPicker() {
-	manager := app.termMgr()
+func (m *App) openTerminalPicker() {
+	manager := m.termMgr()
 	if manager == nil {
 		return
 	}
-	items := []ui.ContextMenuItem{{Label: "New terminal", Action: func() { app.startSourceControlMutation(app.openNewTerminal()) }}}
-	for _, terminal := range app.terminalInfos() {
+	items := []ui.ContextMenuItem{{Label: "New terminal", Action: func() { m.startSourceControlMutation(m.openNewTerminal()) }}}
+	for _, terminal := range m.terminalInfos() {
 		id := terminal.ID
 		placement := "Docked"
-		if app.terminalPlacement(terminal.ID) == workspace.TerminalFloating {
+		if m.terminalPlacement(terminal.ID) == workspace.TerminalFloating {
 			placement = "Floating"
-		} else if app.terminalPlacement(terminal.ID) == workspace.TerminalTab {
+		} else if m.terminalPlacement(terminal.ID) == workspace.TerminalTab {
 			placement = "Tab"
 		}
-		items = append(items, ui.ContextMenuItem{Label: terminal.DisplayName(), Detail: placement, Action: func() { app.focusTerminal(id) }})
+		items = append(items, ui.ContextMenuItem{Label: terminal.DisplayName(), Detail: placement, Action: func() { m.focusTerminal(id) }})
 	}
 	menu := &ui.ContextMenuState{Title: "Terminals", Sections: []ui.ContextMenuSection{{Items: items}}}
 	// The menu opens at its button in the panel header, or at the footer's
 	// Terminals item when the panel is hidden.
-	if anchor, ok := app.screenRectOf(ui.NewID(termdock.HeaderID, "terminal.picker")); ok && !anchor.Empty() {
-		app.openMenuFor(anchor, menu)
+	if anchor, ok := m.screenRectOf(ui.NewID(termdock.HeaderID, "terminal.picker")); ok && !anchor.Empty() {
+		m.openMenuFor(anchor, menu)
 		return
 	}
-	if anchor, ok := app.footerSegmentRect("terminals"); ok {
-		app.openMenuFor(anchor, menu)
+	if anchor, ok := m.footerSegmentRect("terminals"); ok {
+		m.openMenuFor(anchor, menu)
 		return
 	}
-	app.openContextMenuState(tea.Mouse{X: max(0, app.width-30), Y: max(app.shellTopRow(), app.height-app.chromeBottomRows()-len(items)-3)}, menu)
+	m.openContextMenuState(tea.Mouse{X: max(0, m.width-30), Y: max(m.shellTopRow(), m.height-m.chromeBottomRows()-len(items)-3)}, menu)
 }
 
 func workspacePanelID(view statusoverview.ViewID) string {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/alecthomas/chroma/v2"
 
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -18,9 +18,9 @@ import (
 // source-edit path, not through the store directly.
 
 // parseTokensState ports the VS Code helper of the same name.
-func parseTokensState(state []string) (string, []types.LSPSemanticSpan) {
+func parseTokensState(state []string) (string, []insight.LSPSemanticSpan) {
 	var text []string
-	var spans []types.LSPSemanticSpan
+	var spans []insight.LSPSemanticSpan
 	offset := 0
 	for _, line := range state {
 		lineText, start := "", 0
@@ -43,7 +43,7 @@ func parseTokensState(state []string) (string, []types.LSPSemanticSpan) {
 			lineText += line[start:first]
 			tokenStart := offset + len(lineText)
 			lineText += line[first+1 : second]
-			spans = append(spans, types.LSPSemanticSpan{Start: tokenStart, End: offset + len(lineText)})
+			spans = append(spans, insight.LSPSemanticSpan{Start: tokenStart, End: offset + len(lineText)})
 			start = second + 1
 		}
 		lineText += line[start:]
@@ -85,7 +85,7 @@ func testTokensAdjustment(t *testing.T, initial []string, edits []vsRange, texts
 	text, spans := parseTokensState(initial)
 	e := newInlayTestEditor(t, text)
 	source, _ := e.CurrentInsightSource()
-	if err := e.SetSemanticTokens(&types.LSPSemanticSet{Boundary: types.InsightBoundary{Source: source}, ViewID: "store", Sequence: 1, Full: true, Types: []string{"variable"}, Spans: spans}); err != nil {
+	if err := e.SetSemanticTokens(&insight.LSPSemanticSet{Boundary: insight.Boundary{Source: source}, ViewID: "store", Sequence: 1, Full: true, Types: []string{"variable"}, Spans: spans}); err != nil {
 		t.Fatal(err)
 	}
 	e.buf.ensureCache()

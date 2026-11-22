@@ -6,10 +6,10 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/core/port"
-	"crude/retry"
+	"crude/core/shellport"
+	"crude/internal/retry"
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // One private view owns only current presentation and its cancellable request.
@@ -28,25 +28,25 @@ type semanticViewState struct {
 type semanticRequest struct {
 	view               *semanticViewState
 	port               shellport.SemanticTokens
-	source             types.InsightSource
+	source             insight.Source
 	revision           uint64
-	producer           types.InsightProducer
+	producer           insight.Producer
 	contextOwner       string
 	contextGeneration  uint64
 	first, last        int
-	span               types.LSPSemanticRange
+	span               insight.LSPSemanticRange
 	sequence           uint64
 	ctx                context.Context
 	cancel             context.CancelFunc
 	started, installed bool
 	busyAttempts       int
-	result             *types.LSPSemanticSet
+	result             *insight.LSPSemanticSet
 	err                error
 }
 type semanticDueMsg struct{ owner *semanticRequest }
 type semanticResultMsg struct {
 	owner  *semanticRequest
-	result types.LSPSemanticSet
+	result insight.LSPSemanticSet
 	err    error
 }
 type semanticReleasedMsg struct{ err error }
@@ -186,7 +186,7 @@ func (m *App) syncSemanticTokens() tea.Cmd {
 			ctx, cancel := context.WithCancel(base)
 			view.sequence++
 			r = &semanticRequest{view: view, port: port, source: source, revision: view.editor.Revision(), producer: producer, contextOwner: contextOwner, contextGeneration: contextGeneration, first: first, last: last, sequence: view.sequence, ctx: ctx, cancel: cancel,
-				span: types.LSPSemanticRange{Start: types.LSPSemanticPosition{Line: first}, End: types.LSPSemanticPosition{Line: last, Character: -1}}}
+				span: insight.LSPSemanticRange{Start: insight.LSPSemanticPosition{Line: first}, End: insight.LSPSemanticPosition{Line: last, Character: -1}}}
 			view.request = r
 			view.retained, view.port = true, port
 			commands = append(commands, tea.Tick(180*time.Millisecond, func(time.Time) tea.Msg { return semanticDueMsg{r} }))

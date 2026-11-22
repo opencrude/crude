@@ -9,7 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -87,7 +86,7 @@ func (m *promptFamilyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyF10:
 			m.switchToAgentView(m.alpha)
 			m.ws.AgentMgr().Get(m.alpha).State.Messages.UpdateToolCall("visual-deny", "visual-deny", "edit_file", "main.go")
-			m.handleAgentEvent(types.AgentEventMsg{AgentID: m.alpha, Type: "blocking", Data: map[string]string{
+			m.handleAgentEvent(AgentEventMsg{AgentID: m.alpha, Type: "blocking", Data: map[string]string{
 				"block_id": "visual-deny", "operation": "Update", "tool": "edit_file", "target": "main.go",
 				"question": "Allow this Update operation on main.go?", "reason": "The edit_file tool modifies files on disk",
 			}})
@@ -100,7 +99,7 @@ func (m *promptFamilyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				{Type: "tool_result", Data: map[string]any{"internal_id": "visual-deny", "tool_id": "visual-deny", "name": "edit_file", "result": "The user denied this edit. No file was changed.", "error": "true"}},
 				{Type: "phase", Data: map[string]any{"name": "waiting_provider", "provider": "Local fixture"}},
 			} {
-				m.handleAgentEvent(types.AgentEventMsg{AgentID: m.alpha, Type: event.Type, Data: event.Data})
+				m.handleAgentEvent(AgentEventMsg{AgentID: m.alpha, Type: event.Type, Data: event.Data})
 			}
 			return m, nil
 		case tea.KeyF3:

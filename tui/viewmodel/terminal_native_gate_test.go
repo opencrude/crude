@@ -25,17 +25,17 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/agent/prompthistory"
 	"crude/agent/session"
-	"crude/buildinfo"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/port/remote"
-	"crude/core/wire"
-	"crude/history"
+	"crude/core/coreclient"
+	"crude/core/corewire"
+	"crude/core/shellport"
+	"crude/core/shellport/remote"
+	"crude/internal/buildinfo"
 	"crude/tui/perf"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -49,11 +49,11 @@ func TestTerminalNativeGateCoreHelper(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rt, err := core.New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "terminal-gate", types.Settings{}, nil)
-		ws.SetAppDefaults(types.AppSettings{
-			LocalHistory: types.LocalHistorySettings{Enabled: "off"},
-			Memory:       types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},
-			Terminal: types.TerminalSettings{Shell: types.TerminalShellCustom,
+		ws := workspace.NewWorkspace(root, "", "terminal-gate", setting.Settings{}, nil)
+		ws.SetAppDefaults(setting.App{
+			LocalHistory: setting.LocalHistory{Enabled: "off"},
+			Memory:       setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"},
+			Terminal: setting.Terminal{Shell: setting.TerminalShellCustom,
 				Command: os.Getenv("CRUDE_TERMINAL_GATE_PYTHON"),
 				Args:    []string{os.Getenv("CRUDE_TERMINAL_GATE_SCRIPT"), "--child"}, LoginShell: "off"},
 		})
@@ -343,7 +343,7 @@ func TestTerminalNativeGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := NewApp(port, nil)
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	t.Cleanup(func() {
 		app.StopAsyncIO()
 		if err := app.CloseWorkspaceAttachment(); err != nil {

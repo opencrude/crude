@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -21,7 +21,7 @@ func TestDeckFormPaintsThroughRootHost(t *testing.T) {
 	app.launcherScreen = nil
 	session := &workspace.Session{
 		SessionID: "session",
-		Settings:  workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil),
+		Settings:  workspace.NewSessionSettingsState(setting.Settings{}, setting.Settings{}, nil),
 	}
 	selectDeckSession(t, app, session, "agent")
 	app.openSessionSettings()

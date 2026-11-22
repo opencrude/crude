@@ -8,11 +8,11 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestRoleAccountPickerListsOnlyAccountsAndPinsSelection(t *testing.T) {
-	st := types.Settings{ProviderID: "openrouter", AccountID: "home", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "home", Model: "home-model"}}}}
+	st := setting.Settings{ProviderID: "openrouter", AccountID: "home", Agents: setting.Agents{Categories: map[string]setting.Category{"default": {Provider: "openrouter", AccountID: "home", Model: "home-model"}}}}
 	screen := New(theme.DefaultDark(), st, st, nil)
 
 	screen.ConfigureAccounts(map[string]provider.Account{"home": {ID: "home", ProviderID: "openrouter", Label: "Home", APIKey: "h", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openrouter", Label: "Work", APIKey: "w", Connection: provider.DefaultTemplates()["openrouter"]}, "other": {ID: "other", ProviderID: "openai", Label: "Team", APIKey: "o", Connection: provider.DefaultTemplates()["openai"]}})
@@ -53,7 +53,7 @@ func TestRoleAccountPickerListsOnlyAccountsAndPinsSelection(t *testing.T) {
 }
 
 func TestRoleModelsIgnoreStaleAccountAndMissingAccountFailsClosed(t *testing.T) {
-	st := types.Settings{ProviderID: "openrouter", AccountID: "a", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "a"}}}}
+	st := setting.Settings{ProviderID: "openrouter", AccountID: "a", Agents: setting.Agents{Categories: map[string]setting.Category{"default": {Provider: "openrouter", AccountID: "a"}}}}
 	screen := New(theme.DefaultDark(), st, st, nil)
 
 	screen.ConfigureAccounts(map[string]provider.Account{"a": {ID: "a", ProviderID: "openrouter", Label: "A", Connection: provider.DefaultTemplates()["openrouter"]}, "b": {ID: "b", ProviderID: "openrouter", Label: "B", Connection: provider.DefaultTemplates()["openrouter"]}})
@@ -62,13 +62,13 @@ func TestRoleModelsIgnoreStaleAccountAndMissingAccountFailsClosed(t *testing.T) 
 	screen.applyProviderToEffective("b")
 	screen.openRole("default")
 	screen.openModelPicker()
-	screen.ApplyModelsForAccount("openrouter", request.AccountID, request.Generation, []types.ModelEntry{{ID: "old"}})
+	screen.ApplyModelsForAccount("openrouter", request.AccountID, request.Generation, []setting.ModelEntry{{ID: "old"}})
 	if len(screen.models[sessionModelKey("openrouter", "b")]) != 0 {
 		t.Fatal("models from A entered B")
 	}
 	screen.ConfigureAccounts(map[string]provider.Account{"a": {ID: "a", ProviderID: "openrouter", Label: "A", Connection: provider.DefaultTemplates()["openrouter"]}})
 	screen.openRole("default")
-	if got := screen.formModel.Field(fieldProvider).Description; got != types.RemovedAccountName {
+	if got := screen.formModel.Field(fieldProvider).Description; got != setting.RemovedAccountName {
 		t.Fatalf("missing explicit account redirected: %q", got)
 	}
 	if cmd := screen.openModelPicker(); cmd != nil {

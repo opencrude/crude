@@ -791,7 +791,7 @@ Tea's update goroutine (the tab-close hang).
 
 - `powernap` is vendored (`third_party/powernap`) with a `TransportWrap` hook in
   `ClientConfig`; `lspclient.LSPIntegration.Start` installs `lspPipeMonitor`
-  (`lsp/client/lsp_pipe.go`).
+  (`lsp/lspclient/lsp_pipe.go`).
 - `asyncPipeWriter.Write` only enqueues a copy; one dedicated writer goroutine
   performs pipe writes in FIFO order. The queue is byte-bounded
   (`lspWriteQueueCap`); a stalled server trips the cap and the jsonrpc2
@@ -837,7 +837,7 @@ Tea's update goroutine (the tab-close hang).
   identity; unsupported/failed exit observation is unproven cleanup. Windows
   starts suspended, assigns the retained Job before resume, joins the leader
   and checks Job membership reaches zero. See the exact
-  [fork lifetime limits](../../third_party/powernap/README.md): groups are not
+  [fork lifetime limits](../../third_party/powernap/CRUDE.md): groups are not
   a sandbox and cannot prove absence of deliberately escaped descendants.
   Native Windows/macOS acceptance remains open.
 - A start that fails because the executable is missing reports "`<cmd>` is not
@@ -848,7 +848,7 @@ Tea's update goroutine (the tab-close hang).
   `RestartServer`, which re-resolves the command on the next start, so
   installing the server and choosing Retry is enough.
 - `LSPIntegration.WithServerEnv` supplies explicit launch choices over one
-  positive OS/toolchain inheritance policy in `lsp/client/lsp_environment.go`.
+  positive OS/toolchain inheritance policy in `lsp/lspclient/lsp_environment.go`.
   Arbitrary ambient variables, including unknown provider credentials, agent
   sockets, proxy credentials, loader options and tool-execution flags, are not
   inherited. Ambient PATH keeps only absolute directories outside the lexical
@@ -858,7 +858,7 @@ Tea's update goroutine (the tab-close hang).
   before Trust admission; the existing transport owner resolves the executable
   immediately before construction from that complete table, never ambient PATH.
   Missing executables retain Retry guidance. The
-  [fork environment contract](../../third_party/powernap/README.md#complete-analyzer-environment)
+  [fork environment contract](../../third_party/powernap/CRUDE.md#complete-analyzer-environment)
   defines bounds, native search and Windows SystemRoot requirements.
   Explicit human choices can intentionally contain sensitive values; no raw
   environment or environment fingerprint is published. This is minimization,
@@ -885,7 +885,7 @@ Tea's update goroutine (the tab-close hang).
   use global settings; invalid or outside-root scope URIs return null.
   Preparation detaches caller maps and refuses invalid/ambiguous bindings before
   launch admission. URI matching is lexical, not native filesystem identity or
-  permission. The [fork contract](../../third_party/powernap/README.md#launch-bound-configuration)
+  permission. The [fork contract](../../third_party/powernap/CRUDE.md#launch-bound-configuration)
   defines encoded request/table/response bounds. Selecting and populating these
   bindings from a retained project model remains open.
   The initial [retained artifact owner](project-context.md) now supplies bounded,
@@ -902,7 +902,7 @@ Tea's update goroutine (the tab-close hang).
   when no holder remains. Probes are allowed when the session's agent code
   intelligence is on and workspace execution Trust permits them even if editor
   LSP is off; a user-paused server refuses both. Probe results are plain data
-  (`types.LSPProbeView`), never editor state.
+  (`insight.LSPProbeView`), never editor state.
   Probe readiness is published only after the transport has installed the exact
   captured document revision. An edit during the send remains pending; replaced
   document/server/client owners cannot publish a stale ready state. Releasing the
@@ -1481,7 +1481,7 @@ reconstruction from display DTOs. Only exact versioned, nonlimited, strictly
 validated source ranges matching the requested range are forwarded. Absent,
 unversioned, stale, malformed or overbound evidence is omitted with a reason;
 the request still carries `diagnostics: []`. The pinned
-[`jsonrpc2` request decoder](../../third_party/jsonrpc2/README.md) preserves raw
+[`jsonrpc2` request decoder](../../third_party/jsonrpc2/CRUDE.md) preserves raw
 params before notification dispatch rather than erasing duplicate/invalid-string
 evidence or opaque number spelling. Consumer bounds do not limit its initial
 frame allocation or establish native CPU/RSS containment.
@@ -1915,7 +1915,7 @@ listing and the disk-view path above, one file at a time:
   core. A file whose server is not running waits until the computer has the
   server's memory hint (`lsp.server_memory_mb`) free. **Always** turns these
   three waits off, like the Windows `DisableBackoff` policy; typing and agent
-  requests still come first. `sysload/` owns the measurements; it reads power
+  requests still come first. `internal/sysload/` owns the measurements; it reads power
   from `/sys/class/power_supply` (Linux) or `GetSystemPowerStatus` (Windows).
   macOS power is not read, so battery power does not pause the check there.
 - **Crude's own work is not the computer's load.** After each file the check
@@ -1963,7 +1963,7 @@ listing and the disk-view path above, one file at a time:
 The assembly service (`workspace/lsp_assembly.go`) plans the project's code
 intelligence from data. It runs no project code.
 
-1. **Discovery.** A bounded listing of file names (`third_party/pathwalk`, two
+1. **Discovery.** A bounded listing of file names (`third_party/fastwalk`, two
    workers, at most 100,000 entries) counts files per language through the
    [catalog](code-intelligence-catalog.md) and custom languages. Hidden,
    dependency and build folders use the standard browser exclusions; symbolic
@@ -1978,7 +1978,7 @@ intelligence from data. It runs no project code.
    server program implicitly. Explicit environment choices use the same launch
    policy as startup. A script counts as ready only when its full hosted launch,
    including the native interpreter, resolves.
-3. **Plan.** One `types.AssemblyPlan` per workspace: each language with its
+3. **Plan.** One `insight.AssemblyPlan` per workspace: each language with its
    file count and an example file, server, program, source, status (ready, not
    installed, cannot start, off, no known server), checked scope and a plain reason. The manager
    publishes it in its snapshot (`Assembly()` on the shell port) and the control API's

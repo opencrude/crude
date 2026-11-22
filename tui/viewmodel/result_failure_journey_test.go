@@ -18,7 +18,8 @@ import (
 	"crude/agent/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -26,7 +27,7 @@ import (
 // model request, live App ingress, SQLite snapshot and cold renderer must agree.
 // In particular, a failed edit must not show its repair hint even on expansion.
 func TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume(t *testing.T) {
-	var visualLive, visualResumed [][]types.ChatMessage
+	var visualLive, visualResumed [][]conversation.ChatMessage
 	for _, scenario := range []struct{ parallel, repeat bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
 		parallel, repeat := scenario.parallel, scenario.repeat
 		t.Run(fmt.Sprintf("parallel=%v/repeat=%v", parallel, repeat), func(t *testing.T) {
@@ -83,7 +84,7 @@ func TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume(t *testing.T) {
 			wsOf(app).RootPath, wsOf(app).WorkspaceDir = project, t.TempDir()
 			wsOf(app).SessionsByID = make(map[string]*workspace.Session)
 			wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
-			wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+			wsOf(app).SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 			cfg := testAccountConfig()
 			if parallel {
 				profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
@@ -103,7 +104,7 @@ func TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume(t *testing.T) {
 			defer wsOf(app).CloseAllSessions()
 			backend := app.ws.BackendSession(owner.SessionID)
 			backend.SetYolo(true) // only the test's isolated workspace
-			sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
+			sender := &recoveryJourneySender{events: make(chan AgentMsg, 512)}
 			orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 			if err != nil {
 				t.Fatal(err)
@@ -161,10 +162,10 @@ func TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume(t *testing.T) {
 			}
 			live := ChatMessagesFromViews(state.Messages.Messages())
 			resumed := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(saved))
-			onlyTools := func(messages []types.ChatMessage) []types.ChatMessage {
-				var tools []types.ChatMessage
+			onlyTools := func(messages []conversation.ChatMessage) []conversation.ChatMessage {
+				var tools []conversation.ChatMessage
 				for _, message := range messages {
-					if message.Role == types.RoleTool {
+					if message.Role == conversation.RoleTool {
 						tools = append(tools, message)
 					}
 				}
@@ -189,7 +190,7 @@ func TestRealFileFailuresKeepHintsPrivateAndMatchAfterResume(t *testing.T) {
 				}
 			}
 			for _, width := range []int{80, 160} {
-				render := func(messages []types.ChatMessage) *chatprojection.Renderer {
+				render := func(messages []conversation.ChatMessage) *chatprojection.Renderer {
 					r := chatprojection.NewRenderer(theme.DefaultDark())
 					r.SetSize(width, 24)
 					r.SetChatAreaBounds(0, 20)

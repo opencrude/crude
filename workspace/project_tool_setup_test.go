@@ -22,8 +22,9 @@ import (
 
 	"crude/agent/toolstore"
 	"crude/insight/catalog"
-	"crude/network"
-	"crude/types"
+	"crude/internal/network"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -122,10 +123,10 @@ func setupServiceFixture(t *testing.T) (*Workspace, *ProjectToolSetupOwner, *set
 	w.LSPMgr.SetRuntime(&lifecycleRuntime{})
 	trustAnalysis(t, w.LSPMgr, w.RootPath)
 	w.LSPMgr.mu.Lock()
-	w.LSPMgr.assembly.Languages = []types.AssemblyLanguage{
-		{ID: "a", ServerID: "a", Sample: filepath.Join(w.RootPath, "main.setup-a"), Status: types.ToolMissing, Package: "setup-alpha", Command: "serve"},
-		{ID: "b", ServerID: "b", Sample: filepath.Join(w.RootPath, "main.setup-b"), Status: types.ToolMissing, Package: "setup-beta", Command: "serve"},
-		{ID: "c", ServerID: "c", Status: types.ToolMissing, Package: "setup-unknown", Command: "serve"},
+	w.LSPMgr.assembly.Languages = []insight.AssemblyLanguage{
+		{ID: "a", ServerID: "a", Sample: filepath.Join(w.RootPath, "main.setup-a"), Status: insight.ToolMissing, Package: "setup-alpha", Command: "serve"},
+		{ID: "b", ServerID: "b", Sample: filepath.Join(w.RootPath, "main.setup-b"), Status: insight.ToolMissing, Package: "setup-beta", Command: "serve"},
+		{ID: "c", ServerID: "c", Status: insight.ToolMissing, Package: "setup-unknown", Command: "serve"},
 	}
 	w.LSPMgr.mu.Unlock()
 	s := &setupStoreFake{}
@@ -135,16 +136,16 @@ func setupServiceFixture(t *testing.T) (*Workspace, *ProjectToolSetupOwner, *set
 	return w, o, s, document.Owner{ClientID: "native-shell", Epoch: 1}
 }
 
-func setupReview(t *testing.T, o *ProjectToolSetupOwner, owner document.Owner) types.ProjectToolSetupReview {
+func setupReview(t *testing.T, o *ProjectToolSetupOwner, owner document.Owner) insight.ProjectToolSetupReview {
 	t.Helper()
-	r, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{})
+	r, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return r
 }
 
-func setupInstallable(r types.ProjectToolSetupReview) []string {
+func setupInstallable(r insight.ProjectToolSetupReview) []string {
 	var ids []string
 	for _, item := range r.Review.Items {
 		if item.Installable {
@@ -188,7 +189,7 @@ func TestProjectToolSetupDeclinePersistsAcrossReopenAndOnlyNewNeedAppears(t *tes
 	w.LSPMgr.assemblyRequested++
 	w.LSPMgr.assembly.Generation = w.LSPMgr.assemblyRequested
 	w.LSPMgr.assembly.Languages = append(w.LSPMgr.assembly.Languages,
-		types.AssemblyLanguage{ID: "new", ServerID: "new", Status: types.ToolMissing, Package: "setup-new", Command: "new"})
+		insight.AssemblyLanguage{ID: "new", ServerID: "new", Status: insight.ToolMissing, Package: "setup-new", Command: "new"})
 	w.LSPMgr.mu.Unlock()
 	next := setupReview(t, reopened, owner)
 	if !next.NeedsDecision || !next.Quiet || len(next.Review.Items) != 1 || next.Review.Items[0].Package != "setup-new" {
@@ -247,25 +248,25 @@ func TestProjectToolSetupPreviewBoundsAndDetachedOwner(t *testing.T) {
 	_, o, _, owner := setupServiceFixture(t)
 	for epoch := uint64(1); epoch <= projectToolPreviewLimit; epoch++ {
 		owner.Epoch = epoch
-		if _, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{}); err != nil {
+		if _, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	owner.Epoch++
-	if _, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{}); !errors.Is(err, document.ErrLimit) {
+	if _, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{}); !errors.Is(err, document.ErrLimit) {
 		t.Fatalf("preview bound: %v", err)
 	}
 	owner.Epoch = 1
 	o.Detach(owner)
-	if _, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{}); !errors.Is(err, document.ErrOwner) {
+	if _, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{}); !errors.Is(err, document.ErrOwner) {
 		t.Fatalf("detached owner reviewed tools: %v", err)
 	}
 	owner.Epoch = projectToolPreviewLimit + 1
-	if _, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{}); err != nil {
+	if _, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{}); err != nil {
 		t.Fatalf("detach did not release preview: %v", err)
 	}
 	o.Close()
-	if _, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{}); !errors.Is(err, document.ErrOwner) {
+	if _, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{}); !errors.Is(err, document.ErrOwner) {
 		t.Fatalf("closed owner reviewed tools: %v", err)
 	}
 }
@@ -306,8 +307,8 @@ func TestProjectToolSetupPartialFailureAccountsSuccessfulToolAndDoesNotLoop(t *t
 	if installed != 1 {
 		t.Fatalf("wrong installed outcomes: %+v", result)
 	}
-	awaitAssembly(t, w.LSPMgr, func(p types.AssemblyPlan) bool {
-		return p.Generation > original.Generation && p.State == types.AssemblyReady
+	awaitAssembly(t, w.LSPMgr, func(p insight.AssemblyPlan) bool {
+		return p.Generation > original.Generation && p.State == insight.AssemblyReady
 	})
 	// Simulate a reopen that discovers the failed candidate again. Saved
 	// approvals suppress the automatic question, but never start another worker.
@@ -363,7 +364,7 @@ func TestProjectToolSetupRevocationStopsDownloadAndLateEffects(t *testing.T) {
 			case "cancel":
 				cancel()
 			case "trust":
-				w.LSPMgr.SetAnalysisPolicy(types.DefaultWorkspaceAnalysisSettings(), "")
+				w.LSPMgr.SetAnalysisPolicy(setting.DefaultWorkspaceAnalysis(), "")
 			case "assembly":
 				w.LSPMgr.mu.Lock()
 				w.LSPMgr.assemblyRequested++
@@ -460,7 +461,7 @@ func TestProjectToolSetupExplicitRetryAfterOfflineNeedsNewDecision(t *testing.T)
 	if automatic := setupReview(t, o, owner); automatic.NeedsDecision || len(s.requests) != 1 {
 		t.Fatalf("offline attempt repeated automatically: %+v", automatic)
 	}
-	retry, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{Explicit: true})
+	retry, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil || !retry.NeedsDecision || retry.ID == initial.ID || len(retry.Review.Items) != 3 {
 		t.Fatalf("explicit retry did not offer a fresh review: %+v %v", retry, err)
 	}
@@ -490,7 +491,7 @@ func TestProjectToolSetupSingleToolReviewKeepsOtherChoicesUntouched(t *testing.T
 		t.Fatal("fixture has no second tool")
 	}
 	generation := w.LSPMgr.Assembly().Generation
-	request := types.ProjectToolSetupRequest{Explicit: true, LanguageID: "a", AssemblyGeneration: generation}
+	request := insight.ProjectToolSetupRequest{Explicit: true, LanguageID: "a", AssemblyGeneration: generation}
 	targeted, err := o.Review(t.Context(), owner, request)
 	if err != nil || !targeted.NeedsDecision || len(targeted.Review.Items) != 1 || targeted.Review.Items[0].Package != "setup-alpha" {
 		t.Fatalf("single tool review: %+v %v", targeted, err)
@@ -525,12 +526,12 @@ func TestProjectToolSetupExplicitPreviewInvalidatedByOtherShellHistory(t *testin
 	if _, err := o.Decide(t.Context(), owner, "decline", initial.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	older, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{Explicit: true})
+	older, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil || !older.NeedsDecision {
 		t.Fatalf("explicit review: %+v %v", older, err)
 	}
 	otherOwner := document.Owner{ClientID: "other-shell", Epoch: 1}
-	other, err := o.Review(t.Context(), otherOwner, types.ProjectToolSetupRequest{Explicit: true})
+	other, err := o.Review(t.Context(), otherOwner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +546,7 @@ func TestProjectToolSetupExplicitPreviewInvalidatedByOtherShellHistory(t *testin
 	if len(s.requests) != 0 || len(decisionsFromDB(t, w.WorkspaceDB)) != 2 {
 		t.Fatal("stale history caused a decision or installation")
 	}
-	fresh, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{Explicit: true})
+	fresh, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil || !fresh.NeedsDecision || fresh.ID == older.ID {
 		t.Fatalf("history change did not create a new preview: %+v %v", fresh, err)
 	}
@@ -553,12 +554,12 @@ func TestProjectToolSetupExplicitPreviewInvalidatedByOtherShellHistory(t *testin
 
 func TestProjectToolSetupExplicitChoicesCannotRunSimultaneously(t *testing.T) {
 	_, o, s, owner := setupServiceFixture(t)
-	first, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{Explicit: true})
+	first, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherOwner := document.Owner{ClientID: "other-shell", Epoch: 1}
-	second, err := o.Review(t.Context(), otherOwner, types.ProjectToolSetupRequest{Explicit: true})
+	second, err := o.Review(t.Context(), otherOwner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -593,7 +594,7 @@ func TestProjectToolSetupExplicitChoicesCannotRunSimultaneously(t *testing.T) {
 	if _, err := o.Decide(t.Context(), otherOwner, "second", second.ID, setupInstallable(second)[:1]); err == nil {
 		t.Fatal("another shell started a simultaneous project decision")
 	}
-	activeReview, err := o.Review(t.Context(), otherOwner, types.ProjectToolSetupRequest{Explicit: true})
+	activeReview, err := o.Review(t.Context(), otherOwner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil || activeReview.NeedsDecision {
 		t.Fatalf("explicit review offered an active decision: %+v %v", activeReview, err)
 	}
@@ -615,7 +616,7 @@ func TestProjectToolSetupConcurrentSettingsAndCanceledDecision(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := saveWorkspacePreferences(w.WorkspaceDB, w.AppDefaults(), []types.SettingEdit{
+		_, err := saveWorkspacePreferences(w.WorkspaceDB, w.AppDefaults(), []setting.Edit{
 			{Path: []string{"editor", "tab_size"}, After: json.RawMessage("7")},
 		}, "", predictionPreferenceBinding{})
 		done <- err
@@ -762,7 +763,7 @@ func TestProjectToolSetupRealCatalogInstallAndSharedStoreReopen(t *testing.T) {
 		t.Fatalf("Not now repeated automatically: %+v", automatic)
 	}
 	initialID := r.ID
-	r, err = o.Review(t.Context(), owner, types.ProjectToolSetupRequest{Explicit: true})
+	r, err = o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil || !r.NeedsDecision || r.ID == initialID {
 		t.Fatalf("Set up tools did not create a fresh review: %+v %v", r, err)
 	}
@@ -798,11 +799,11 @@ func TestProjectToolSetupRealCatalogInstallAndSharedStoreReopen(t *testing.T) {
 	if len(records) != 2 || len(records[0].Selected) != 0 || len(records[1].Selected) != 1 || len(records[1].Rejected) != 2 {
 		t.Fatalf("mixed approval/refusal: %+v", records)
 	}
-	awaitAssembly(t, w.LSPMgr, func(p types.AssemblyPlan) bool {
-		return p.Generation > r.Review.AssemblyGeneration && p.State == types.AssemblyReady
+	awaitAssembly(t, w.LSPMgr, func(p insight.AssemblyPlan) bool {
+		return p.Generation > r.Review.AssemblyGeneration && p.State == insight.AssemblyReady
 	})
 	// Even an explicit review must never offer the successfully installed tool.
-	remaining, err := o.Review(t.Context(), owner, types.ProjectToolSetupRequest{Explicit: true})
+	remaining, err := o.Review(t.Context(), owner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -833,8 +834,8 @@ func TestProjectToolSetupRealCatalogInstallAndSharedStoreReopen(t *testing.T) {
 	}
 	w2, _ := decisionFixture(t)
 	w2.LSPMgr.mu.Lock()
-	w2.LSPMgr.assembly.Languages = []types.AssemblyLanguage{
-		{ID: "other", ServerID: "other", Status: types.ToolMissing, Package: "setup-alpha", Command: "serve"},
+	w2.LSPMgr.assembly.Languages = []insight.AssemblyLanguage{
+		{ID: "other", ServerID: "other", Status: insight.ToolMissing, Package: "setup-alpha", Command: "serve"},
 	}
 	w2.LSPMgr.mu.Unlock()
 	o2 := NewProjectToolSetupOwner(w2, reopened)
@@ -842,7 +843,7 @@ func TestProjectToolSetupRealCatalogInstallAndSharedStoreReopen(t *testing.T) {
 	if got := setupReview(t, o2, owner); got.NeedsDecision || len(got.Review.Items) != 0 {
 		t.Fatalf("installed shared artifact prompted again: %+v", got)
 	}
-	explicit, err := o2.Review(t.Context(), owner, types.ProjectToolSetupRequest{Explicit: true})
+	explicit, err := o2.Review(t.Context(), owner, insight.ProjectToolSetupRequest{Explicit: true})
 	if err != nil || explicit.NeedsDecision || len(explicit.Review.Items) != 0 {
 		t.Fatalf("explicit review offered an installed shared artifact: %+v %v", explicit, err)
 	}

@@ -1,13 +1,13 @@
 package viewmodel
 
 import (
-	"crude/internal/wiretest"
+	"crude/core/wiretest"
 	"encoding/json"
 	"fmt"
 	"testing"
 
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/types/control"

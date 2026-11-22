@@ -2,7 +2,7 @@ package app
 
 import (
 	"crude/agent/provider"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 	"reflect"
 	"testing"
@@ -26,7 +26,7 @@ func TestAccountConnectionChangesAreAtomicAndIndependent(t *testing.T) {
 	after := provider.CloneAccount(before)
 	after.Connection.ProviderURL = "https://new.example/v1"
 	after.Connection.Protocol = &provider.ProtocolSettings{Store: boolPtr(false)}
-	if err := ws.SaveAccountChange(types.AccountChange{ID: after.ID, ProviderID: after.ProviderID, Before: &before, After: &after}); err != nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: after.ID, ProviderID: after.ProviderID, Before: &before, After: &after}); err != nil {
 		t.Fatal(err)
 	}
 	if err := ws.SaveAppSettings(opened); err != nil {
@@ -38,7 +38,7 @@ func TestAccountConnectionChangesAreAtomicAndIndependent(t *testing.T) {
 	}
 	latest := provider.CloneAccount(before)
 	latest.Connection.ProviderURL = "https://last-explicit.example/v1"
-	if err := ws.SaveAccountChange(types.AccountChange{ID: latest.ID, ProviderID: latest.ProviderID, Before: &before, After: &latest}); err != nil {
+	if err := ws.SaveAccountChange(setting.AccountChange{ID: latest.ID, ProviderID: latest.ProviderID, Before: &before, After: &latest}); err != nil {
 		t.Fatal(err)
 	}
 	if got := LoadFileConfig().Accounts["work"]; got.Connection.ProviderURL != latest.Connection.ProviderURL || !reflect.DeepEqual(got.Connection.Protocol, after.Connection.Protocol) {

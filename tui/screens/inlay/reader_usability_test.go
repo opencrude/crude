@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -15,8 +15,8 @@ func TestInlayReaderShowsUsefulDetailsWithoutInternalEvidence(t *testing.T) {
 	for _, size := range [][2]int{{100, 24}, {60, 16}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			r := fixture()
-			r.Hints[0].Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: "Number of items to process."}
-			r.Hints[0].Parts[0].Tooltip = types.LSPInlayMarkup{Present: true, Form: "markup", Kind: "plaintext", Value: "The item count."}
+			r.Hints[0].Tooltip = insight.LSPInlayMarkup{Present: true, Form: "string", Value: "Number of items to process."}
+			r.Hints[0].Parts[0].Tooltip = insight.LSPInlayMarkup{Present: true, Form: "markup", Kind: "plaintext", Value: "The item count."}
 			s := New(nil)
 			s.SetResult(r)
 			host := mount(s, size[0], size[1])
@@ -56,7 +56,7 @@ func TestInlayReaderShowsUsefulDetailsWithoutInternalEvidence(t *testing.T) {
 }
 
 func TestInlayReaderEmptyAndFailureStatesHaveUsefulMessages(t *testing.T) {
-	for _, answer := range []string{types.LSPInlayNull, types.LSPInlayEmpty, types.LSPInlayUnsupported} {
+	for _, answer := range []string{insight.LSPInlayNull, insight.LSPInlayEmpty, insight.LSPInlayUnsupported} {
 		t.Run(answer, func(t *testing.T) {
 			r := fixture()
 			r.Answer = answer
@@ -65,7 +65,7 @@ func TestInlayReaderEmptyAndFailureStatesHaveUsefulMessages(t *testing.T) {
 			s.SetResult(r)
 			host := mount(s, 60, 16)
 			shown := paint(host, 60, 16)
-			if answer == types.LSPInlayUnsupported {
+			if answer == insight.LSPInlayUnsupported {
 				if !strings.Contains(shown, "does not support inlay hints") {
 					t.Fatal(shown)
 				}
@@ -101,7 +101,7 @@ func TestInlayReaderSizesForContentAndMakesOverflowReachable(t *testing.T) {
 	host := mount(s, 60, 8)
 	assertInspect(t, key(host, tea.KeyEnter), s, 7, false)
 	in := inspection(r, 0)
-	in.Hint.Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("More useful information.\n", 30) + "Final useful detail."}
+	in.Hint.Tooltip = insight.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("More useful information.\n", 30) + "Final useful detail."}
 	s.SetInspection(in)
 	host.MarkLayout()
 	host.Focus(TextID)
@@ -123,7 +123,7 @@ func TestInlayReaderScrollbarAndWheelShareNativeViewport(t *testing.T) {
 	host := mount(s, 60, 8)
 	assertInspect(t, key(host, tea.KeyEnter), s, 7, false)
 	in := inspection(r, 0)
-	in.Hint.Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("Explanatory line.\n", 50) + "END OF HINT"}
+	in.Hint.Tooltip = insight.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("Explanatory line.\n", 50) + "END OF HINT"}
 	s.SetInspection(in)
 	host.MarkLayout()
 	host.Layout()
@@ -185,7 +185,7 @@ func BenchmarkInlayReaderStableLayout(b *testing.B) {
 			host := mount(s, 60, 8)
 			key(host, tea.KeyEnter)
 			in := inspection(r, 0)
-			in.Hint.Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("Explanatory line for the item.\n", tc.lines)}
+			in.Hint.Tooltip = insight.LSPInlayMarkup{Present: true, Form: "string", Value: strings.Repeat("Explanatory line for the item.\n", tc.lines)}
 			s.SetInspection(in)
 			host.MarkLayout()
 			host.Layout()
@@ -247,7 +247,7 @@ func TestInlayReaderEscapesBidiControlsWithoutBreakingEmoji(t *testing.T) {
 	r.Hints[0].Label = "name\u202eX"
 	r.Hints[0].LabelIsParts = false
 	r.Hints[0].Parts = nil
-	r.Hints[0].Tooltip = types.LSPInlayMarkup{Present: true, Form: "string", Value: "help \u2066safe\u2069 👩‍💻"}
+	r.Hints[0].Tooltip = insight.LSPInlayMarkup{Present: true, Form: "string", Value: "help \u2066safe\u2069 👩‍💻"}
 	s := New(nil)
 	s.SetResult(r)
 	host := mount(s, 80, 20)

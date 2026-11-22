@@ -9,9 +9,10 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/activity"
+	"crude/types/conversation"
 	"crude/types/reasoning"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -20,11 +21,11 @@ func TestActivityStripShowsUploadThenOwningThinkingInsteadOfPrompt(t *testing.T)
 		app := newFullTestApp(t)
 		app.width, app.height = width, 40
 		app.AddOrchestrator("first")
-		app.ws.AgentMgr().Get("first").State.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "check grep without echoing my prompt"})
+		app.ws.AgentMgr().Get("first").State.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "check grep without echoing my prompt"})
 		app.paintShellFrame()
 		activityY := app.chatRect.Y + app.chatRect.H - 1
 
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "phase", Data: map[string]any{
+		app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "phase", Data: map[string]any{
 			"name": "preparing", "request_id": "request-1", "progress": 42,
 			"uploaded_bytes": int64(43008), "total_bytes": int64(102400),
 		}})
@@ -33,7 +34,7 @@ func TestActivityStripShowsUploadThenOwningThinkingInsteadOfPrompt(t *testing.T)
 		if !strings.Contains(line, "↑ 42 KB / 100 KB · 42%") || strings.Contains(line, "check grep") {
 			t.Fatalf("width=%d upload strip=%q", width, line)
 		}
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
+		app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
 			Text: "**Assessing line lengths**", Kind: reasoning.Summary, BlockID: "first",
 		}})
 		app.paintShellFrame()
@@ -41,12 +42,12 @@ func TestActivityStripShowsUploadThenOwningThinkingInsteadOfPrompt(t *testing.T)
 		if !strings.Contains(line, "Assessing line lengths") || strings.Contains(line, "**") || strings.Contains(line, "check grep") || strings.Contains(line, "42 KB") {
 			t.Fatalf("width=%d first thought=%q", width, line)
 		}
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "phase", Data: map[string]any{"name": "preparing", "request_id": "request-1", "progress": 90, "uploaded_bytes": int64(90000), "total_bytes": int64(102400)}})
+		app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "phase", Data: map[string]any{"name": "preparing", "request_id": "request-1", "progress": 90, "uploaded_bytes": int64(90000), "total_bytes": int64(102400)}})
 		app.paintShellFrame()
 		if got := shellBufferRow(app, activityY); !strings.Contains(got, "Assessing line lengths") {
 			t.Fatalf("late upload callback replaced reasoning: %s", got)
 		}
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
+		app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
 			Text: "**Checking hidden files**", Kind: reasoning.Summary, BlockID: "second",
 		}})
 		app.paintShellFrame()
@@ -54,7 +55,7 @@ func TestActivityStripShowsUploadThenOwningThinkingInsteadOfPrompt(t *testing.T)
 		if !strings.Contains(line, "Checking hidden files") || strings.Contains(line, "Assessing line lengths") {
 			t.Fatalf("width=%d newer thought=%q", width, line)
 		}
-		app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "stream_token", Data: "Answer"})
+		app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "stream_token", Data: "Answer"})
 		app.paintShellFrame()
 		if line = shellBufferRow(app, activityY); strings.Contains(line, "Checking hidden files") || strings.Contains(line, "check grep") {
 			t.Fatalf("width=%d stale thought after response=%q", width, line)
@@ -67,8 +68,8 @@ func TestStoppedAgentPlanStripPaintRemainsStatic(t *testing.T) {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			app := newFullTestApp(t)
 			app.AddOrchestrator("agent")
-			app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "turn_started", Data: types.TurnIdentity{Generation: 1}})
-			app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "thinking", Data: reasoning.Delta{Text: "Refining the activity strip", Kind: reasoning.Summary}})
+			app.handleAgentEvent(AgentEventMsg{AgentID: "agent", Type: "turn_started", Data: conversation.TurnIdentity{Generation: 1}})
+			app.handleAgentEvent(AgentEventMsg{AgentID: "agent", Type: "thinking", Data: reasoning.Delta{Text: "Refining the activity strip", Kind: reasoning.Summary}})
 			p := &activity.Plan{ID: "plan", Status: "active", Total: 3, Objective: "Refine the activity strip without losing the retained plan",
 				Current: []activity.Step{{Number: 1, Status: "in_progress", Text: "Smooth the light sweep"}},
 				Next:    &activity.Step{Number: 2, Text: "Check the stopped plan and goal presentation"}}
@@ -99,7 +100,7 @@ func TestStoppedAgentPlanStripPaintRemainsStatic(t *testing.T) {
 			if !reflect.DeepEqual(stopping, paint(8000)) {
 				t.Fatal("strip moved while waiting for cancellation acknowledgement")
 			}
-			app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "done", Data: map[string]any{"reason": "cancelled"}})
+			app.handleAgentEvent(AgentEventMsg{AgentID: "agent", Type: "done", Data: map[string]any{"reason": "cancelled"}})
 			stopped := paint(8100)
 			for _, frame := range []int{8116, 14100, 20100, 40000} {
 				if !reflect.DeepEqual(stopped, paint(frame)) {
@@ -123,13 +124,13 @@ func TestActivityStripDoesNotCompactRawOrUnclassifiedThinking(t *testing.T) {
 	app.AddOrchestrator("first")
 	app.AddOrchestrator("second")
 	app.paintShellFrame()
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
 		Text: strings.Repeat("**Investigating grep**\n\n", 28), Kind: reasoning.Raw,
 	}})
 	if app.thinkingPaneID(app.ws.AgentMgr().Get("first").State) == "" {
 		t.Fatal("fixture did not promote the raw thinking pane")
 	}
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
 		Text: "**Clarifying hidden file behavior**", Kind: reasoning.Raw,
 	}})
 	app.paintShellFrame()
@@ -146,7 +147,7 @@ func TestActivityStripDoesNotCompactRawOrUnclassifiedThinking(t *testing.T) {
 	if pane := app.Get(app.thinkingPaneID(app.ws.AgentMgr().Get("first").State)); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "Investigating grep") {
 		t.Fatal("full thinking train was lost from the promoted pane")
 	}
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{Text: " unknown gateway trace"}})
+	app.handleAgentEvent(AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{Text: " unknown gateway trace"}})
 	app.paintShellFrame()
 	if line = shellBufferRow(app, y); strings.Contains(line, "unknown gateway trace") {
 		t.Fatalf("unclassified thinking incorrectly received summary treatment: %q", line)
@@ -157,12 +158,12 @@ func TestAgentActivityStripHasStableGeometryAndPaintOnlyTide(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("agent")
 	state := app.ws.AgentMgr().Get("agent").State
-	state.Messages.AppendMessage(workspace.Message{InternalID: "static", Role: workspace.MessageRoleAssistant, Content: "static body"})
+	state.Messages.AppendMessage(conversation.Message{InternalID: "static", Role: workspace.MessageRoleAssistant, Content: "static body"})
 	state.Messages.AppendReasoning(reasoning.Delta{Text: "Inspecting the actual state", Kind: reasoning.Summary})
 	state.Running = true
 	state.TurnIdentity.Generation = 3
 	app.syncAgentMessages("agent", false)
-	status := types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "agent"}, Phase: types.AgentThinking, Detail: "Reasoning"}
+	status := statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: "agent"}, Phase: statuscenter.AgentThinking, Detail: "Reasoning"}
 	wsOf(app).Status.SetAgent(status)
 	app.SpinFrame = 0
 	app.paintShellFrame()
@@ -191,16 +192,16 @@ func TestAgentActivityStripHasStableGeometryAndPaintOnlyTide(t *testing.T) {
 		t.Fatal("light tide did not change painted ink")
 	}
 	viewport := app.chatScreen.ScrollModel().Viewport()
-	for _, phase := range []types.AgentPhase{types.AgentTool, types.AgentWaiting, types.AgentCancelled, types.AgentIdle} {
+	for _, phase := range []statuscenter.AgentPhase{statuscenter.AgentTool, statuscenter.AgentWaiting, statuscenter.AgentCancelled, statuscenter.AgentIdle} {
 		status.Phase, status.Detail = phase, string(phase)
 		wsOf(app).Status.SetAgent(status)
-		state.Running = phase != types.AgentCancelled && phase != types.AgentIdle
+		state.Running = phase != statuscenter.AgentCancelled && phase != statuscenter.AgentIdle
 		app.paintShellFrame()
 		if app.chatScreen.ScrollModel().Viewport() != viewport || renderer.ExportMessageRowsSnapshot(app.chatReflowInnerW).ContentHeight != before.ContentHeight {
 			t.Fatalf("phase %s moved the page", phase)
 		}
 		label := string(phase)
-		if phase == types.AgentCancelled {
+		if phase == statuscenter.AgentCancelled {
 			label = "Stopped"
 		}
 		if !strings.Contains(shellBufferRow(app, y), label) {

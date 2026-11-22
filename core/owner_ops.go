@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"crude/types"
+	"crude/types/setting"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 )
 
 // executeOwner serves cheap, in-memory operations on the actor goroutine, the
@@ -145,7 +145,7 @@ func (a *actor) announceSettings(method string) {
 
 // ApplyAppDefaults republishes committed application defaults on every
 // retained workspace's actor and tells its shells to refresh settings.
-func (r *Runtime) ApplyAppDefaults(ctx context.Context, settings types.AppSettings) error {
+func (r *Runtime) ApplyAppDefaults(ctx context.Context, settings setting.App) error {
 	var errs []error
 	for _, a := range r.actors() {
 		if err := a.inspect(ctx, func() {

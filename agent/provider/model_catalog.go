@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/network"
-	"crude/retry"
+	"crude/internal/network"
+	"crude/internal/retry"
 
 	_ "modernc.org/sqlite"
 )

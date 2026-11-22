@@ -16,7 +16,8 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/insight/predictioncontext"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
@@ -115,19 +116,19 @@ func newSuggestionFixture(t *testing.T, text string, answer func(string) string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := predictionRuntimePolicy{settings: types.WorkspacePredictionSettings{Mode: types.PredictionType, HourlyTokenLimit: 100000},
+	policy := predictionRuntimePolicy{settings: setting.WorkspacePrediction{Mode: setting.PredictionType, HourlyTokenLimit: 100000},
 		rootIdentity: root, grant: "grant", consented: completer.ConnectionIdentity, completer: completer}
 	service.Configure(policy)
 	return &suggestionFixture{service: service, docs: docs, owner: owner, id: snapshot.ID, server: fake, policy: policy}
 }
 
-func (f *suggestionFixture) request(t *testing.T, caret int) (types.EditorPredictionResult, error) {
+func (f *suggestionFixture) request(t *testing.T, caret int) (insight.EditorPredictionResult, error) {
 	t.Helper()
 	f.docs.mu.Lock()
 	source := f.docs.analysisIdentityLocked(f.docs.docs[f.id])
 	f.docs.mu.Unlock()
 	f.seq++
-	return f.service.Request(t.Context(), f.owner, types.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: f.seq, Caret: caret})
+	return f.service.Request(t.Context(), f.owner, insight.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: f.seq, Caret: caret})
 }
 
 func (f *suggestionFixture) edit(t *testing.T, start, end int, text string) {
@@ -157,7 +158,7 @@ func TestSuggestionInsertsMultipleLinesAndReusesTheAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := "sum := 0\n\tfor _, x := range xs {\n\t\tsum += x\n\t}\n\treturn sum"
-	if first.Kind != types.PredictionInsert || first.Start != caret || first.End != caret || first.Text != want {
+	if first.Kind != insight.PredictionInsert || first.Start != caret || first.End != caret || first.Text != want {
 		t.Fatalf("result = %+v", first)
 	}
 	if first.Stages.ModelUS <= 0 || first.Stages.TotalUS < first.Stages.ModelUS || first.CacheHit {
@@ -188,7 +189,7 @@ func TestSuggestionJumpsToTheNextUseAfterARename(t *testing.T) {
 	}
 	current := "total := load()\nlog(count)\nsave(count)\n"
 	logUse := strings.Index(current, "count")
-	if first.Kind != types.PredictionEdit || first.Start != logUse || first.End != logUse+len("count") || first.Text != "total" {
+	if first.Kind != insight.PredictionEdit || first.Start != logUse || first.End != logUse+len("count") || first.Text != "total" {
 		t.Fatalf("first = %+v", first)
 	}
 	if !strings.Contains(f.server.inputs[0], "-count\n+total") || !strings.Contains(f.server.inputs[0], "by the programmer") {
@@ -245,14 +246,14 @@ func TestSuggestionRefusesOffCappedAndSensitiveWithoutEgress(t *testing.T) {
 	if _, err := f.request(t, 1); err == nil || !strings.Contains(err.Error(), "hourly limit") {
 		t.Fatalf("capped: %v", err)
 	}
-	policy.settings.Mode = types.PredictionAsk
+	policy.settings.Mode = setting.PredictionAsk
 	policy.settings.HourlyTokenLimit = 100000
 	f.service.Configure(policy)
 	f.docs.mu.Lock()
 	source := f.docs.analysisIdentityLocked(f.docs.docs[f.id])
 	f.docs.mu.Unlock()
 	f.seq++
-	if _, err := f.service.Request(t.Context(), f.owner, types.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: f.seq, Caret: 1, Automatic: true}); err == nil {
+	if _, err := f.service.Request(t.Context(), f.owner, insight.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: f.seq, Caret: 1, Automatic: true}); err == nil {
 		t.Fatal("When I ask answered an automatic request")
 	}
 	policy.consented = "another connection"
@@ -283,7 +284,7 @@ func TestSuggestionOlderSequenceIsRefused(t *testing.T) {
 	f.docs.mu.Lock()
 	source := f.docs.analysisIdentityLocked(f.docs.docs[f.id])
 	f.docs.mu.Unlock()
-	if _, err := f.service.Request(t.Context(), f.owner, types.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: 3, Caret: 1}); err == nil {
+	if _, err := f.service.Request(t.Context(), f.owner, insight.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: 3, Caret: 1}); err == nil {
 		t.Fatal("an older sequence was answered")
 	}
 }
@@ -329,14 +330,14 @@ func TestSuggestionPublicationRefusesChangedSource(t *testing.T) {
 	f.docs.mu.Lock()
 	source := f.docs.analysisIdentityLocked(f.docs.docs[f.id])
 	f.docs.mu.Unlock()
-	request := types.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: 1, Caret: 1}
+	request := insight.EditorPredictionRequest{Source: source, ViewID: "editor", Sequence: 1, Caret: 1}
 	ctx, job, policy, err := f.service.begin(t.Context(), f.owner, request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.service.finish(f.owner, request, job)
 	f.edit(t, 0, 3, "new")
-	got, err := f.service.publish(ctx, f.owner, request, job, policy, types.EditorPredictionResult{Text: "obsolete"}, time.Now(), false)
+	got, err := f.service.publish(ctx, f.owner, request, job, policy, insight.EditorPredictionResult{Text: "obsolete"}, time.Now(), false)
 	if err == nil || !got.Empty() {
 		t.Fatalf("changed source published: %+v %v", got, err)
 	}

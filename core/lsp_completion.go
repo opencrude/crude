@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 	"crude/workspace/document"
 )

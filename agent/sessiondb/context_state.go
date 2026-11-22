@@ -479,7 +479,7 @@ func HydrateMessageIdentities(db *sql.DB, sessionID string, messages []MessageWi
 			identity.Message.ReasoningDetails = []json.RawMessage{}
 		}
 		if !identity.NilProviderItems && identity.Message.ProviderItems == nil {
-			identity.Message.ProviderItems = []provider.ProviderItem{}
+			identity.Message.ProviderItems = []provider.Item{}
 		}
 		decoded[i] = identity.Message
 	})

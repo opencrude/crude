@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"crude/insight/governor"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/fileio"
 )
@@ -22,19 +23,19 @@ type watchFixtureClient struct {
 	*semanticLSPClient
 	muWatch sync.Mutex
 	path    string
-	publish func(string, types.InsightDiagnosticPublication)
+	publish func(string, insight.DiagnosticPublication)
 	seq     uint64
 	opened  int
 	events  chan string
 }
 
-func (c *watchFixtureClient) OnUnopenedDiagnostics(fn func(string, types.InsightDiagnosticPublication)) {
+func (c *watchFixtureClient) OnUnopenedDiagnostics(fn func(string, insight.DiagnosticPublication)) {
 	c.muWatch.Lock()
 	c.publish = fn
 	c.muWatch.Unlock()
 }
 
-func (c *watchFixtureClient) OpenFile(ctx context.Context, path, language, text string, boundary types.InsightBoundary) (int, error) {
+func (c *watchFixtureClient) OpenFile(ctx context.Context, path, language, text string, boundary insight.Boundary) (int, error) {
 	c.muWatch.Lock()
 	c.opened++
 	c.muWatch.Unlock()
@@ -56,7 +57,7 @@ type watchMultiRuntime struct {
 	clients []*watchFixtureClient
 }
 
-func (r *watchMultiRuntime) NewClient(_ types.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
+func (r *watchMultiRuntime) NewClient(_ setting.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
 	c := &watchFixtureClient{semanticLSPClient: &semanticLSPClient{admit: admit}, path: r.path, events: make(chan string, 4096)}
 	r.mu.Lock()
 	r.clients = append(r.clients, c)
@@ -85,9 +86,9 @@ func watchAwait(t *testing.T, what string, ready func() bool) {
 func watchManagerFixture(t *testing.T, root, path string) (*workspace.Workspace, *watchMultiRuntime) {
 	t.Helper()
 	setCoreTestHome(t, t.TempDir())
-	w := workspace.NewWorkspace(root, "test", "tester", types.Settings{}, coreTestLogger{})
+	w := workspace.NewWorkspace(root, "test", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(w.Close)
-	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	r := &watchMultiRuntime{path: path}
 	m := w.LSPMgr
 	m.SetRuntime(r)
@@ -105,7 +106,7 @@ func watchManagerFixture(t *testing.T, root, path string) (*workspace.Workspace,
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
+	m.SetAnalysisPolicy(setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}, identity)
 	// These tests supply the producer directly. Starting assembly here races
 	// that producer with watch-recovery discovery, which correctly replaces it.
 	// The installed-server recovery test covers discovery plus native watching.
@@ -113,7 +114,7 @@ func watchManagerFixture(t *testing.T, root, path string) (*workspace.Workspace,
 }
 
 func installWatchProducer(m *workspace.LSPManager, root string) {
-	m.SetProjectProducers([]types.LSPProjectProducer{{Root: root, Spec: types.LSPServerSpec{Command: "fixture-server", DiagnosticScope: types.CoverageProject}}})
+	m.SetProjectProducers([]insight.LSPProjectProducer{{Root: root, Spec: setting.LSPServerSpec{Command: "fixture-server", DiagnosticScope: insight.CoverageProject}}})
 }
 
 func TestWatchGapFencesInflightCallbackFromReplacement(t *testing.T) {
@@ -267,7 +268,7 @@ func TestWatchRootLossRemainsUnreliable(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "nested", "edit"), []byte("x"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			watchAwait(t, "stale diagnostics", func() bool { f, ok := m.FileDiagnostics(path); return ok && f.State == types.InsightStale })
+			watchAwait(t, "stale diagnostics", func() bool { f, ok := m.FileDiagnostics(path); return ok && f.State == insight.Stale })
 			watch.Close()
 			close(states)
 			for v := range states {
@@ -284,16 +285,16 @@ func TestWatchRootLossRemainsUnreliable(t *testing.T) {
 
 func (c *watchFixtureClient) check() {
 	content, err := os.ReadFile(c.path)
-	var diagnostics []types.LSPDiagnostic
+	var diagnostics []insight.LSPDiagnostic
 	if err == nil && strings.Contains(string(content), "ERROR") {
-		diagnostics = []types.LSPDiagnostic{{Severity: types.DiagError, Message: "fixture error"}}
+		diagnostics = []insight.LSPDiagnostic{{Severity: insight.DiagError, Message: "fixture error"}}
 	}
 	c.muWatch.Lock()
 	c.seq++
 	publish, sequence := c.publish, c.seq
 	c.muWatch.Unlock()
 	if publish != nil {
-		publish(c.path, types.InsightDiagnosticPublication{
+		publish(c.path, insight.DiagnosticPublication{
 			Sequence: sequence, WireVersion: 1, Diagnostics: diagnostics,
 		})
 	}
@@ -301,7 +302,7 @@ func (c *watchFixtureClient) check() {
 
 type watchFixtureRuntime struct{ client *watchFixtureClient }
 
-func (r watchFixtureRuntime) NewClient(_ types.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
+func (r watchFixtureRuntime) NewClient(_ setting.LSPServerSpec, _ string, admit func() error) workspace.LSPClient {
 	r.client.mu.Lock()
 	r.client.admit = admit
 	r.client.mu.Unlock()
@@ -317,8 +318,8 @@ func TestRetainedCoreRefreshesUnopenedDiagnosticAfterDiskReplacement(t *testing.
 	}
 	client := &watchFixtureClient{semanticLSPClient: &semanticLSPClient{}, path: path}
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "test", "tester", types.Settings{}, coreTestLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		w := workspace.NewWorkspace(root, "test", "tester", setting.Settings{}, coreTestLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		w.LSPMgr.SetRuntime(watchFixtureRuntime{client})
 		return w, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
@@ -346,7 +347,7 @@ func TestRetainedCoreRefreshesUnopenedDiagnosticAfterDiskReplacement(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.SetAnalysisPolicy(types.WorkspaceAnalysisSettings{Trust: types.AnalysisTrusted}, identity)
+	manager.SetAnalysisPolicy(setting.WorkspaceAnalysis{Trust: setting.AnalysisTrusted}, identity)
 
 	// Let initial discovery settle before installing this independent producer.
 	await := func(what string, ready func() bool) {
@@ -360,9 +361,9 @@ func TestRetainedCoreRefreshesUnopenedDiagnosticAfterDiskReplacement(t *testing.
 		}
 		t.Fatalf("timed out waiting for %s; assembly=%+v; policy=%+v", what, manager.Assembly(), manager.AnalysisPolicy())
 	}
-	await("assembly", func() bool { return manager.Assembly().State == types.AssemblyReady })
-	manager.SetProjectProducers([]types.LSPProjectProducer{{
-		Root: root, Spec: types.LSPServerSpec{Command: "fixture-server", DiagnosticScope: types.CoverageProject},
+	await("assembly", func() bool { return manager.Assembly().State == insight.AssemblyReady })
+	manager.SetProjectProducers([]insight.LSPProjectProducer{{
+		Root: root, Spec: setting.LSPServerSpec{Command: "fixture-server", DiagnosticScope: insight.CoverageProject},
 	}})
 	await("project server", func() bool {
 		connected, _, _ := manager.Status()

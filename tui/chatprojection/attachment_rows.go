@@ -6,15 +6,15 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/attachment"
+	"crude/types/conversation"
 	"unicode/utf8"
 )
 
 // Protect source spans before Markdown changes source positions. Private-use
 // markers are chosen outside the authored text, never parsed from labels in the
 // rendered output. One marker per source rune retains wrapping geometry.
-func attachmentSource(msg types.ChatMessage) (string, map[rune]attachment.Target) {
+func attachmentSource(msg conversation.ChatMessage) (string, map[rune]attachment.Target) {
 	if len(msg.Attachments) == 0 && len(msg.ReferenceLabels) == 0 {
 		return msg.Content, nil
 	}

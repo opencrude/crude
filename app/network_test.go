@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/network"
-	"crude/types"
+	"crude/internal/network"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -31,7 +31,7 @@ func TestNetworkPreferencesRoundTripAndPublishOnlyAfterPersistence(t *testing.T)
 	settings.Network.ProxyURL = "socks5h://user:private@localhost:1080"
 	settings.Network.NoProxy = "localhost,10.0.0.0/8"
 	settings.Network.TLSMinimumVersion = network.TLSMinimumVersion13
-	run := owner.PreparePreferencesSave(types.SettingsScopeApplication, types.SettingsEdits(owner.AppDefaults(), settings))
+	run := owner.PreparePreferencesSave(setting.ScopeApplication, setting.Edits(owner.AppDefaults(), settings))
 	result := run()
 	if result.Err != nil {
 		t.Fatal(result.Err)
@@ -50,7 +50,7 @@ func TestNetworkPreferencesRoundTripAndPublishOnlyAfterPersistence(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failed := owner.PreparePreferencesSave(types.SettingsScopeApplication, types.SettingsEdits(owner.AppDefaults(), invalid))()
+	failed := owner.PreparePreferencesSave(setting.ScopeApplication, setting.Edits(owner.AppDefaults(), invalid))()
 	if failed.Err == nil {
 		t.Fatal("unreadable certificate material was persisted")
 	}

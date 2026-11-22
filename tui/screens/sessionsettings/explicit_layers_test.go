@@ -3,12 +3,12 @@ package sessionsettings
 import (
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"testing"
 )
 
 func TestUntouchedSessionFormDoesNotCreateOverrides(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Enabled: true, Categories: map[string]types.CategorySettings{"default": {Model: "main"}, "crafter": {Model: "parent-crafter", ThinkingEffort: "high"}}}}
+	base := setting.Settings{Agents: setting.Agents{Enabled: true, Categories: map[string]setting.Category{"default": {Model: "main"}, "crafter": {Model: "parent-crafter", ThinkingEffort: "high"}}}}
 	s := New(theme.DefaultDark(), base, base, nil)
 	if got := s.ToSettings(); got.SessionMultiAgent != nil || len(got.SessionEdits) != 0 {
 		t.Fatal("reading form pins inherited fields")
@@ -21,7 +21,7 @@ func TestUntouchedSessionFormDoesNotCreateOverrides(t *testing.T) {
 }
 
 func TestSessionResetDiscardsDraftWithoutTreatingItAsStored(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Enabled: true, Categories: map[string]types.CategorySettings{"default": {Model: "parent"}}}}
+	base := setting.Settings{Agents: setting.Agents{Enabled: true, Categories: map[string]setting.Category{"default": {Model: "parent"}}}}
 	s := New(theme.DefaultDark(), base, base, nil)
 	s.formModel.SetValue(fieldCodeIntelligence, ui.StringValue("on"))
 	if len(s.ToSettings().SessionEdits) == 0 {

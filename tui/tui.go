@@ -6,23 +6,24 @@ import (
 	"sync"
 	"time"
 
-	"crude/agent"
-	"crude/clientstate"
-	"crude/core/port"
-	"crude/crashlog"
+	"crude/agent/turnloop"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
+	"crude/internal/crashlog"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/history"
+	"crude/agent/prompthistory"
 
 	"crude/agent/sessiondb"
 	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/viewmodel"
-	roottypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
-	"crude/workspace"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 // TUI is the terminal UI layer. It holds the Bubble Tea program and
@@ -66,7 +67,7 @@ type programMessagePump struct {
 const agentVisualDeliveryInterval = time.Second / 60
 
 type pendingAgentDelta struct {
-	event  roottypes.AgentMsg
+	event  viewmodel.AgentMsg
 	chunks []string
 	size   int
 }
@@ -107,12 +108,12 @@ func coalescePendingAgentDelta(tail *list.Element, msg tea.Msg) bool {
 	if tail == nil {
 		return false
 	}
-	next, ok := msg.(roottypes.AgentMsg)
+	next, ok := msg.(viewmodel.AgentMsg)
 	if !ok {
 		return false
 	}
 	switch previous := tail.Value.(type) {
-	case roottypes.AgentMsg:
+	case viewmodel.AgentMsg:
 		if previous.AgentID != next.AgentID || previous.Type != next.Type {
 			return false
 		}
@@ -234,7 +235,7 @@ func (p *programMessagePump) run() {
 }
 
 func isAgentVisualUpdate(msg tea.Msg) bool {
-	event, ok := msg.(roottypes.AgentMsg)
+	event, ok := msg.(viewmodel.AgentMsg)
 	if !ok {
 		return false
 	}
@@ -251,8 +252,6 @@ func isAgentVisualUpdate(msg tea.Msg) bool {
 func (t *TUI) AddOrchestrator(orchID string) {
 	t.app.AddOrchestrator(orchID)
 }
-
-var global *TUI
 
 // StartOption configures shell-local state before the program's first frame.
 type StartOption func(*viewmodel.App) error
@@ -293,7 +292,7 @@ func WithRemoteManager(manager shellport.RemoteManager, initialBackend string) S
 // The workspace must already be initialized. The app layer is responsible
 // for setting workspace callbacks (OnNewSession, OnResumeSession) before
 // calling Start.
-func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.Store, lg interface {
+func Start(ws shellport.Workspace, presets []setting.ProviderPreset, prompts *prompthistory.Store, lg interface {
 	Info(tag, msg string, pairs ...any)
 	Warn(tag, msg string, pairs ...any)
 	Error(tag, msg string, pairs ...any)
@@ -311,7 +310,6 @@ func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.St
 			return nil, err
 		}
 	}
-	global = t
 	// Force UV to use the same grapheme-width method as Crude layout and
 	// surface packing. See ../../docs/reference/terminal-width.md.
 	observer := perf.NewLoopObserver()
@@ -402,38 +400,40 @@ func (t *TUI) SendAgentEvent(typ string, data any) {
 }
 
 func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
-	t.send(roottypes.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
+	t.send(viewmodel.AgentMsg(viewmodel.AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
 }
 
 // SendAgentEventEnvelope preserves the backend's exact owner/run/epoch/
 // generation/sequence identity through the FIFO. The viewmodel never infers
 // semantic ownership from payload maps or the currently selected tab.
-func (t *TUI) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (t *TUI) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	t.send(event)
 }
 
 func (t *TUI) SetError(err string) {
-	t.send(roottypes.ErrorMsg(err))
+	t.send(viewmodel.ErrorMsg(err))
 }
 
 // ShowOperationIssue sends recovery context through the same FIFO owner path
 // as other application events; callers never mutate frontend/workspace queues.
-func (t *TUI) ShowOperationIssue(issue roottypes.OperationIssue) {
-	t.send(roottypes.OperationIssueMsg{Issue: issue})
+func (t *TUI) ShowOperationIssue(issue statuscenter.OperationIssue) {
+	t.send(statuscenter.OperationIssueMsg{Issue: issue})
 }
 
-func (t *TUI) ResumeStartupSession(id string) { t.send(roottypes.ResumeStartupMsg{SessionID: id}) }
+// ResumeStartupSession asks the shell to resume a session at startup.
+func (t *TUI) ResumeStartupSession(id string) { t.send(statuscenter.ResumeStartupMsg{SessionID: id}) }
 
 func (t *TUI) UpdateModelName(name string) {
-	t.send(roottypes.UpdateModelMsg(name))
+	t.send(viewmodel.UpdateModelMsg(name))
 }
 
-func (t *TUI) HydrateMessages(msgs []workspace.ChatMessageView) {
-	t.send(roottypes.HistoryMessagesMsg(viewmodel.ChatMessagesFromViews(msgs)))
+// HydrateMessages sends stored transcript messages into the shell.
+func (t *TUI) HydrateMessages(msgs []conversation.Message) {
+	t.send(viewmodel.HistoryMessagesMsg(viewmodel.ChatMessagesFromViews(msgs)))
 }
 
 func (t *TUI) OpenSettings() {
-	t.send(roottypes.OpenSettingsMsg{})
+	t.send(viewmodel.OpenSettingsMsg{})
 }
 
 func (t *TUI) send(msg tea.Msg) {
@@ -452,8 +452,4 @@ func (t *TUI) ApplyThemePreset(preset string) {
 		return
 	}
 	t.app.ApplyThemePreset(preset)
-}
-
-func GetGlobal() *TUI {
-	return global
 }

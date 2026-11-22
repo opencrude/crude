@@ -36,22 +36,22 @@ func gitReviewResource(scope, commit string) window.Resource {
 	return window.Resource{Kind: window.ResourceGitReview, ID: "changes:" + scope}
 }
 
-func (app *App) activeGitReview() *gitReviewView {
-	if app.Win == nil {
+func (m *App) activeGitReview() *gitReviewView {
+	if m.Win == nil {
 		return nil
 	}
-	if tab := app.Win.ActiveTab(); tab != nil && tab.Resource.Kind == window.ResourceGitReview {
-		return app.gitReviews[tab.ID]
+	if tab := m.Win.ActiveTab(); tab != nil && tab.Resource.Kind == window.ResourceGitReview {
+		return m.gitReviews[tab.ID]
 	}
 	return nil
 }
 
-func (app *App) isGitReviewActive() bool { return app.activeGitReview() != nil }
+func (m *App) isGitReviewActive() bool { return m.activeGitReview() != nil }
 
 // gitReviewForScreen maps an action's screen back to its live tab.
-func (app *App) gitReviewForScreen(screen *gitreview.Screen) *gitReviewView {
-	for _, view := range app.gitReviews {
-		if view.screen == screen && app.Win.IndexOf(view.tab) >= 0 {
+func (m *App) gitReviewForScreen(screen *gitreview.Screen) *gitReviewView {
+	for _, view := range m.gitReviews {
+		if view.screen == screen && m.Win.IndexOf(view.tab) >= 0 {
 			return view
 		}
 	}
@@ -59,21 +59,21 @@ func (app *App) gitReviewForScreen(screen *gitreview.Screen) *gitReviewView {
 }
 
 // openGitReviewTab activates (or creates) the tab for a resource and its screen.
-func (app *App) openGitReviewTab(resource window.Resource, title string) *gitReviewView {
+func (m *App) openGitReviewTab(resource window.Resource, title string) *gitReviewView {
 	returnTab := window.TabID(0)
-	if active := app.Win.ActiveTab(); active != nil && active.Resource.Kind != window.ResourceGitReview {
+	if active := m.Win.ActiveTab(); active != nil && active.Resource.Kind != window.ResourceGitReview {
 		returnTab = active.ID
 	}
-	tab := app.Win.OpenResource(resource, title, true)
-	if app.gitReviews == nil {
-		app.gitReviews = make(map[window.TabID]*gitReviewView)
+	tab := m.Win.OpenResource(resource, title, true)
+	if m.gitReviews == nil {
+		m.gitReviews = make(map[window.TabID]*gitReviewView)
 	}
-	view := app.gitReviews[tab.ID]
+	view := m.gitReviews[tab.ID]
 	if view == nil {
-		screen := gitreview.NewWithID(app.Theme, ui.ComponentID(fmt.Sprintf("%s/%d", gitreview.ScreenPrefix, tab.ID)))
-		screen.SetFocusHandler(app.rootHost.Focus)
+		screen := gitreview.NewWithID(m.Theme, ui.ComponentID(fmt.Sprintf("%s/%d", gitreview.ScreenPrefix, tab.ID)))
+		screen.SetFocusHandler(m.rootHost.Focus)
 		view = &gitReviewView{tab: tab.ID, returnTab: returnTab, screen: screen}
-		app.gitReviews[tab.ID] = view
+		m.gitReviews[tab.ID] = view
 	} else if returnTab != 0 {
 		view.returnTab = returnTab
 	}
@@ -82,17 +82,17 @@ func (app *App) openGitReviewTab(resource window.Resource, title string) *gitRev
 
 // activateGitReviewTab focuses the review document, making room on short
 // terminals where the dock would leave only a few readable rows.
-func (app *App) activateGitReviewTab(view *gitReviewView) {
-	app.FocusStack.Clear()
-	if app.gitPanelOpen() && app.reviewRowsBesideDock() < gitReviewMinRows {
+func (m *App) activateGitReviewTab(view *gitReviewView) {
+	m.FocusStack.Clear()
+	if m.gitPanelOpen() && m.reviewRowsBesideDock() < gitReviewMinRows {
 		// The review is what was asked for; the pill brings the dock back.
-		app.hideWorkspacePanel()
+		m.hideWorkspacePanel()
 	}
-	app.setTermDockFocused(false)
-	app.setSessionDeckFocused(false)
-	app.handleTabSwitch()
-	if app.rootHost != nil {
-		app.rootHost.Focus(view.screen.DocumentID())
+	m.setTermDockFocused(false)
+	m.setSessionDeckFocused(false)
+	m.handleTabSwitch()
+	if m.rootHost != nil {
+		m.rootHost.Focus(view.screen.DocumentID())
 	}
 }
 
@@ -100,25 +100,25 @@ func (app *App) activateGitReviewTab(view *gitReviewView) {
 const gitReviewMinRows = 14
 
 // reviewRowsBesideDock estimates the main-area rows left while the dock is open.
-func (app *App) reviewRowsBesideDock() int {
-	return app.height - app.shellTopRow() - app.chromeBottomRows() - app.termDockHeight
+func (m *App) reviewRowsBesideDock() int {
+	return m.height - m.shellTopRow() - m.chromeBottomRows() - m.termDockHeight
 }
 
 // openGitReview opens the working-change review for scope ("" = every
 // change, a folder, or one file) in its own tab, revealing a change key.
-func (app *App) openGitReview(scope, reveal string) tea.Cmd {
+func (m *App) openGitReview(scope, reveal string) tea.Cmd {
 	scope = strings.Trim(scope, "/")
 	title := "Changes"
 	if scope != "" {
 		name, _ := gitdiff.SplitPath(scope)
 		title = "Changes · " + name
 	}
-	view := app.openGitReviewTab(gitReviewResource(scope, ""), title)
+	view := m.openGitReviewTab(gitReviewResource(scope, ""), title)
 	var files []gitdiff.File
 	branch := ""
-	if app.gitPanel != nil {
-		files = app.gitPanel.PreparedList()
-		branch = app.gitPanel.Snapshot().Branch
+	if m.gitPanel != nil {
+		files = m.gitPanel.PreparedList()
+		branch = m.gitPanel.Snapshot().Branch
 	}
 	view.screen.SetScope(scope)
 	view.screen.ShowChanges(files, branch)
@@ -126,35 +126,35 @@ func (app *App) openGitReview(scope, reveal string) tea.Cmd {
 	if reveal != "" && view.screen.Reveal(reveal) {
 		view.reveal = ""
 	}
-	if app.gitPanel != nil {
-		view.screen.SetLoading(app.gitPanel.PreparationPending())
-		if err := app.gitPanel.PreparationError(); err != "" {
+	if m.gitPanel != nil {
+		view.screen.SetLoading(m.gitPanel.PreparationPending())
+		if err := m.gitPanel.PreparationError(); err != "" {
 			view.screen.SetError(fmt.Errorf("%s", err))
 		}
 	}
-	app.activateGitReviewTab(view)
-	return app.refreshSourceControl()
+	m.activateGitReviewTab(view)
+	return m.refreshSourceControl()
 }
 
 // openGitFileReview opens one changed file in its own tab.
-func (app *App) openGitFileReview(change workspace.GitChange) tea.Cmd {
-	return app.openGitReview(change.Path, gitdiff.ChangeKey(change))
+func (m *App) openGitFileReview(change workspace.GitChange) tea.Cmd {
+	return m.openGitReview(change.Path, gitdiff.ChangeKey(change))
 }
 
 // openGitCommitReview opens one commit, read-only, in its own tab.
-func (app *App) openGitCommitReview(commit workspace.GitCommitSummary) tea.Cmd {
-	view := app.openGitReviewTab(gitReviewResource("", commit.Hash), "Commit "+commit.ShortHash)
+func (m *App) openGitCommitReview(commit workspace.GitCommitSummary) tea.Cmd {
+	view := m.openGitReviewTab(gitReviewResource("", commit.Hash), "Commit "+commit.ShortHash)
 	view.commit = commit.Hash
 	view.screen.ShowCommit(workspace.GitCommitEvidence{Commit: commit}, nil)
 	view.screen.SetLoading(true)
-	app.activateGitReviewTab(view)
-	return app.inspectGitCommitInto(commit, view)
+	m.activateGitReviewTab(view)
+	return m.inspectGitCommitInto(commit, view)
 }
 
 // showPreparedGitChanges hands the shared prepared set to every open
 // working-change tab; commit tabs keep their own evidence.
-func (app *App) showPreparedGitChanges(files []gitdiff.File, branch string) {
-	for _, view := range app.gitReviews {
+func (m *App) showPreparedGitChanges(files []gitdiff.File, branch string) {
+	for _, view := range m.gitReviews {
 		if view.commit != "" {
 			continue
 		}
@@ -166,12 +166,12 @@ func (app *App) showPreparedGitChanges(files []gitdiff.File, branch string) {
 }
 
 // gitChangeReviewOpen reports whether any tab shows working changes.
-func (app *App) gitChangeReviewOpen() bool {
-	if app.Win == nil {
+func (m *App) gitChangeReviewOpen() bool {
+	if m.Win == nil {
 		return false
 	}
-	for _, view := range app.gitReviews {
-		if view.commit == "" && app.Win.IndexOf(view.tab) >= 0 {
+	for _, view := range m.gitReviews {
+		if view.commit == "" && m.Win.IndexOf(view.tab) >= 0 {
 			return true
 		}
 	}
@@ -179,66 +179,66 @@ func (app *App) gitChangeReviewOpen() bool {
 }
 
 // closeGitReview closes one review tab and returns to the tab it came from.
-func (app *App) closeGitReview(id window.TabID) {
-	if cancel := app.gitEvidenceCancel[id]; cancel != nil {
+func (m *App) closeGitReview(id window.TabID) {
+	if cancel := m.gitEvidenceCancel[id]; cancel != nil {
 		cancel()
-		delete(app.gitEvidenceCancel, id)
+		delete(m.gitEvidenceCancel, id)
 	}
-	view := app.gitReviews[id]
+	view := m.gitReviews[id]
 	if view != nil {
 		view.screen.Document().StopSearch()
 	}
-	wasActive := app.Win.ActiveTab() != nil && app.Win.ActiveTab().ID == id
-	delete(app.gitReviews, id)
+	wasActive := m.Win.ActiveTab() != nil && m.Win.ActiveTab().ID == id
+	delete(m.gitReviews, id)
 	if view != nil {
-		app.cancelOrphanedComparisonGeometry(view.screen.Document().SourceGeometry())
+		m.cancelOrphanedComparisonGeometry(view.screen.Document().SourceGeometry())
 	}
-	app.Win.CloseTabByID(id)
+	m.Win.CloseTabByID(id)
 	if wasActive && view != nil {
-		if index := app.Win.IndexOf(view.returnTab); index >= 0 {
-			app.Win.SwitchTo(index)
+		if index := m.Win.IndexOf(view.returnTab); index >= 0 {
+			m.Win.SwitchTo(index)
 		}
 	}
-	app.handleTabSwitch()
-	app.FocusStack.Clear()
+	m.handleTabSwitch()
+	m.FocusStack.Clear()
 }
 
 // returnFromGitReview leaves the review for the tab it was opened from,
 // keeping the review tab open.
-func (app *App) returnFromGitReview(view *gitReviewView) {
-	if app.Win == nil || view == nil {
+func (m *App) returnFromGitReview(view *gitReviewView) {
+	if m.Win == nil || view == nil {
 		return
 	}
-	if index := app.Win.IndexOf(view.returnTab); index >= 0 {
-		app.Win.SwitchTo(index)
+	if index := m.Win.IndexOf(view.returnTab); index >= 0 {
+		m.Win.SwitchTo(index)
 	} else {
-		app.Win.Prev()
+		m.Win.Prev()
 	}
-	app.handleTabSwitch()
-	app.FocusStack.Clear()
+	m.handleTabSwitch()
+	m.FocusStack.Clear()
 }
 
 // handleGitReviewScreenAction routes the actions a review screen emits with
 // itself as payload.
-func (app *App) handleGitReviewScreenAction(action ui.Action) (tea.Cmd, bool) {
+func (m *App) handleGitReviewScreenAction(action ui.Action) (tea.Cmd, bool) {
 	screen, ok := action.Payload.(*gitreview.Screen)
 	if !ok {
 		return nil, false
 	}
-	view := app.gitReviewForScreen(screen)
+	view := m.gitReviewForScreen(screen)
 	if view == nil {
 		return nil, true
 	}
 	switch action.ID {
 	case gitreview.ActionReturn:
-		app.returnFromGitReview(view)
+		m.returnFromGitReview(view)
 	case gitreview.ActionOpenAll:
-		return app.openGitReview("", ""), true
+		return m.openGitReview("", ""), true
 	case gitreview.ActionRefresh:
 		if view.commit != "" {
-			return app.inspectGitCommitInto(workspace.GitCommitSummary{Hash: view.commit, ShortHash: shortHash(view.commit)}, view), true
+			return m.inspectGitCommitInto(workspace.GitCommitSummary{Hash: view.commit, ShortHash: shortHash(view.commit)}, view), true
 		}
-		return app.refreshSourceControl(), true
+		return m.refreshSourceControl(), true
 	}
 	return nil, true
 }

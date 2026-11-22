@@ -13,8 +13,8 @@ import (
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/logger"
-	ttypes "crude/types"
+	"crude/internal/logger"
+	"crude/types/conversation"
 	"crude/types/toolresult"
 )
 
@@ -214,7 +214,7 @@ func TestFinalizeTurnPersistsActiveContextSeparatelyFromFullArchive(t *testing.T
 		provider.NewTextMessage("assistant", "answer"),
 	}
 	agentMessages := append([]provider.ChatMessage{provider.NewTextMessage("system", "base")}, active...)
-	if err := s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", ttypes.TurnIdentity{}, active); err != nil {
+	if err := s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", conversation.TurnIdentity{}, active); err != nil {
 		t.Fatal(err)
 	}
 	state, ok, err := sessiondb.LoadContextState(db, "session", "session")
@@ -365,7 +365,7 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 	if err := s.finalizeTurn(
 		agentMessages, len(context),
 		&displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)},
-		"new answer", "msg-2", ttypes.TurnIdentity{},
+		"new answer", "msg-2", conversation.TurnIdentity{},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 		answer.InternalID = fmt.Sprintf("follow-up-%d", round)
 		archive = append(archive, answer)
 		active := append(append([]provider.ChatMessage(nil), s.activeContext...), answer)
-		if err := s.finalizeTurn(archive, prefix, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, answer.ContentString(), answer.InternalID, ttypes.TurnIdentity{}, active); err != nil {
+		if err := s.finalizeTurn(archive, prefix, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, answer.ContentString(), answer.InternalID, conversation.TurnIdentity{}, active); err != nil {
 			t.Fatalf("retained checkpoint blocked ordinary follow-up %d: %v", round, err)
 		}
 	}
@@ -434,7 +434,7 @@ func TestFinalizeTurnPersistsHumanSteeringDisplayProjection(t *testing.T) {
 		Role:            "user",
 		Content:         provider.TextContent(rootprompt.HumanSteeringPrefix() + "please include tests"),
 	}
-	if err := s.finalizeTurn([]provider.ChatMessage{steering}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{}); err != nil {
+	if err := s.finalizeTurn([]provider.ChatMessage{steering}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", conversation.TurnIdentity{}); err != nil {
 		t.Fatal(err)
 	}
 	messages := s.MessagesWithMeta()

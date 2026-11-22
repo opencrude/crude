@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/third_party/pathwalk"
+	"crude/third_party/fastwalk"
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/surface"
@@ -27,8 +27,8 @@ func TestAsyncSearchFilterArrowKeysNavigateProjection(t *testing.T) {
 	model, paths := treeFixture(t)
 	screen := New(theme.DefaultDark(), model)
 	matches := []filetree.PathMatch{
-		{Entry: pathwalk.Entry{Path: paths.main, Relative: filepath.ToSlash("main.go"), Name: "main.go"}},
-		{Entry: pathwalk.Entry{Path: paths.util, Relative: filepath.ToSlash("pkg/util.go"), Name: "util.go"}},
+		{Entry: fastwalk.Entry{Path: paths.main, Relative: filepath.ToSlash("main.go"), Name: "main.go"}},
+		{Entry: fastwalk.Entry{Path: paths.util, Relative: filepath.ToSlash("pkg/util.go"), Name: "util.go"}},
 	}
 	screen.filter.field.SetValue("go")
 	if !screen.ApplyPathSearch("go", matches) || screen.searchModel == nil {

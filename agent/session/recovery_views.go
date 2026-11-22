@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"slices"
 
-	"crude/agent"
 	"crude/agent/sessiondb"
+	"crude/agent/turnloop"
 )
 
 // PendingSubAgentSnapshots exposes parked/passively restored child work without
@@ -30,7 +30,7 @@ func (s *Session) PendingSubAgentSnapshots() []SubAgentSnapshot {
 		}
 		status := checkpoint.Status
 		snapshot := SubAgentSnapshot{
-			Result: agent.SubAgentResult{AgentID: owner.Spec.ID, SessionID: string(owner.Spec.ID),
+			Result: turnloop.SubAgentResult{AgentID: owner.Spec.ID, SessionID: string(owner.Spec.ID),
 				Name: owner.Spec.Name, Category: owner.Spec.Category},
 			Model: owner.Spec.Model, Recovery: &status,
 		}

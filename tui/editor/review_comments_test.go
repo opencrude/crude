@@ -12,7 +12,8 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
@@ -46,7 +47,7 @@ func TestReviewCardsPlaceStackAndActivateWithoutMovingCaret(t *testing.T) {
 	for _, wrap := range []bool{false, true} {
 		t.Run(fmt.Sprint(wrap), func(t *testing.T) {
 			e := newInlayTestEditor(t, source)
-			e.SetPresentation(types.EditorSettings{TabSize: 4, LineNumbers: true, WordWrap: wrap})
+			e.SetPresentation(setting.Editor{TabSize: 4, LineNumbers: true, WordWrap: wrap})
 			first := reviewTestComment("first", source, "bcd", "First")
 			second := reviewTestComment("second", source, "nop", "Second")
 			second.Muted = true
@@ -411,7 +412,7 @@ func BenchmarkReviewCommentsWarmPaint(b *testing.B) {
 				line := fmt.Sprintf("Step %05d: use a canary to validate the change before deployment.\n", i)
 				src.WriteString(line)
 				if i%max(1, count/100) == 0 {
-					comments = append(comments, ReviewComment{ID: fmt.Sprint(i), Anchor: types.TextAnchor{Start: n, End: n + 10, Exact: line[:10]}, Body: "Add a success check before declaring this complete."})
+					comments = append(comments, ReviewComment{ID: fmt.Sprint(i), Anchor: conversation.TextAnchor{Start: n, End: n + 10, Exact: line[:10]}, Body: "Add a success check before declaring this complete."})
 				}
 			}
 			e := newInlayTestEditor(b, src.String())

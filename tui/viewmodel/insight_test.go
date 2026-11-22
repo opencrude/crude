@@ -7,11 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -38,7 +38,7 @@ func TestInsightThreeRenderedShellsEditAuthorUndoAndSave(t *testing.T) {
 	shared := func(want string) bool {
 		for i, ed := range editors {
 			state, _ := ed.InsightStatus()
-			if ed.Value() != want || state != types.InsightCurrent || shells[i].app.liveEditors[ed].sync {
+			if ed.Value() != want || state != insight.Current || shells[i].app.liveEditors[ed].sync {
 				return false
 			}
 		}
@@ -93,7 +93,7 @@ func TestInsightPreMountAckAndStaleWorkspaceFence(t *testing.T) {
 	valid := true
 	message := shellport.DocumentInsightMsg{
 		Owner: app.ws,
-		View:  types.DocumentInsight{DocumentID: "not-mounted-yet", Generation: "core", Version: 1, Revision: 1, State: types.InsightPending},
+		View:  insight.DocumentInsight{DocumentID: "not-mounted-yet", Generation: "core", Version: 1, Revision: 1, State: insight.Pending},
 		Valid: func() bool { return valid },
 		Done: func(err error) {
 			if err != nil {
@@ -139,7 +139,7 @@ func TestInsightCoverageDoesNotMeanNoCompilerErrors(t *testing.T) {
 	ed := liveTestOpen(t, shell.app, path)
 	remoteJourneyUntil(t, []remoteJourneyShell{shell}, func() bool {
 		state, _ := ed.InsightStatus()
-		return state == types.InsightUnsupported
+		return state == insight.Unsupported
 	})
 	shell.app.View()
 	_, metrics, _ := shell.app.activeHeaderContext()

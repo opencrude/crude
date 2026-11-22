@@ -1,11 +1,11 @@
-package diff
+package unidiff
 
 import (
 	"strings"
 	"sync"
 	"time"
 
-	"crude/logger"
+	"crude/internal/logger"
 
 	"github.com/aymanbagabas/go-udiff"
 )

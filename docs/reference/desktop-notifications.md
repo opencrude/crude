@@ -18,7 +18,7 @@ longer true.
 
 | Concern | Owner |
 |---|---|
-| Delivery: show, replace, withdraw, click | `desktopnotify/` (one `Center` per shell process) |
+| Delivery: show, replace, withdraw, click | `tui/desktopnotify/` (one `Center` per shell process) |
 | Which shell notifies | `core/presence.go`, published on `state.presence` |
 | What is news, the message text, banner or quiet update | `tui/viewmodel/desktop_notices.go` |
 | The user's choice | `ui.desktop_notifications` setting |
@@ -155,7 +155,7 @@ shell cannot notify, it shows an in-app notice that says why and what to do.
 
 ### Windows
 
-`desktopnotify/toast_windows.go` and `winrt_windows.go` call the Windows
+`tui/desktopnotify/backend_windows.go` and `winrt_windows.go` call the Windows
 Runtime toast API directly through `combase.dll`, without cgo, PowerShell or
 generated projections. Interface IDs and method slots come from the Windows
 SDK headers `winrt/windows.ui.notifications.h` and
@@ -183,7 +183,7 @@ SDK headers `winrt/windows.ui.notifications.h` and
 
 ### Linux
 
-`desktopnotify/freedesktop_linux.go` speaks the
+`tui/desktopnotify/backend_linux.go` speaks the
 [Desktop Notifications Specification 1.2](https://specifications.freedesktop.org/notification-spec/latest/)
 over the session bus with `github.com/godbus/dbus/v5`. GNOME, KDE Plasma,
 Xfce, Cinnamon, dunst, mako and swaync implement it.
@@ -203,7 +203,7 @@ Xfce, Cinnamon, dunst, mako and swaync implement it.
 
 ### macOS
 
-Not implemented. `desktopnotify/darwin.go` returns `ErrUnsupported` and holds
+Not implemented. `tui/desktopnotify/backend_darwin.go` returns `ErrUnsupported` and holds
 the plan: `UNUserNotificationCenter` needs a signed application bundle, so the
 backend must live in a small signed helper bundle with the same three
 operations (show with replace by key, withdraw by key, click by key). Do not
@@ -236,5 +236,5 @@ use `osascript display notification`: it shows Script Editor as the sender.
 - `tui/viewmodel/desktop_notices_test.go`: baseline, seen news, election,
   settle, cooldown, withdraw, idle, click, workspace switch, kind switches,
   sound and away delay.
-- `tui/settings/notifications_test.go`: page position, defaults stored as
+- `tui/screens/settingspages/notifications_test.go`: page position, defaults stored as
   nothing, round trip, master switch, away range, page reset ownership.

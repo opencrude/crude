@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"crude/agent/provider"
-	"crude/core/port"
+	"crude/core/shellport"
 )
 
 // Exercise the complete product path: composer admission binds its shell, the

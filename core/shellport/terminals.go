@@ -1,0 +1,84 @@
+package shellport
+
+import (
+	"context"
+
+	"crude/internal/terminalvt"
+	"crude/workspace"
+)
+
+// TerminalHost exposes the in-app PTY services.
+type TerminalHost interface {
+	// Terminals owns parser and reply state; nil until EnsureTerminals.
+	Terminals() TerminalService
+	// EnsureTerminals creates the terminal service on first use (error when no PTY manager exists).
+	EnsureTerminals() (TerminalService, error)
+	// TermMgr owns PTY sessions; nil when unavailable.
+	TermMgr() TerminalManager
+}
+
+// TerminalService owns the one parser and reply state for every PTY.
+type TerminalService interface {
+	Acquire(id string, owner workspace.TerminalController) (workspace.TerminalLease, error)
+	// AcquireFromAbsent claims control for input typed in this window: it
+	// also replaces a controller whose window lost its connection.
+	AcquireFromAbsent(id string, owner workspace.TerminalController) (workspace.TerminalLease, error)
+	// TakeOver is the explicit "Take input control" choice: it also replaces
+	// a controller in another window. Acquire never does.
+	TakeOver(id string, owner workspace.TerminalController) (workspace.TerminalLease, error)
+	Close(id string)
+	Clear(lease workspace.TerminalLease) error
+	Create(opts workspace.TerminalCreateOpts) (workspace.TerminalInfo, error)
+	Detach(owner workspace.TerminalController)
+	Focus(lease workspace.TerminalLease, focused bool) error
+	Key(lease workspace.TerminalLease, key terminalvt.Key) error
+	Mouse(lease workspace.TerminalLease, mouse terminalvt.Mouse) error
+	Paste(lease workspace.TerminalLease, data []byte) error
+	Rename(lease workspace.TerminalLease, name string) error
+	Resize(lease workspace.TerminalLease, cols, rows int) error
+	// Rows returns a detached bounded page; start=-1 requests the active grid.
+	Rows(id string, request terminalvt.RowRequest) (workspace.TerminalProjection, error)
+}
+
+// TerminalInventoryBarrier is supplied by asynchronous connected replicas.
+// AwaitInventory waits off Update for a post-call inventory to be installed by
+// the owning UI. Create alone is a committed resource receipt, not publication
+// application. Synchronous local managers need no barrier.
+type TerminalInventoryBarrier interface {
+	AwaitInventory(context.Context) error
+}
+
+// StreamingTerminals owns asynchronous grid publication and nonblocking ordered
+// input admission. Unlike Rows, StartGrid performs no I/O on the caller thread.
+type StreamingTerminals interface {
+	StartGrid(id string)
+	SetViewport(id string, request terminalvt.RowRequest)
+	SendInput(workspace.TerminalInput) error
+	// ApplyTerminalFrame validates exact stream ownership and installs replica
+	// caches on Update. It may supply the latest authoritative error rollback.
+	// Rejection must leave both the message and replica unchanged.
+	ApplyTerminalFrame(*TerminalFrameMsg) error
+}
+
+// TerminalFrameMsg is installed on the shell's Update thread, never by the
+// subscription worker. Service identity fences workspace switches.
+type TerminalFrameMsg struct {
+	Prediction *workspace.TerminalProjection // optional local ink, never acknowledged as PTY output
+	Service    TerminalService
+	ID         string
+	Projection workspace.TerminalProjection
+	Err        error
+	// Frame is the service's opaque stream-generation/input owner token.
+	Frame any
+	// Applied is a buffered, one-result application receipt. Update sends nil
+	// only after installation; stale/closed owners receive cancellation instead.
+	Applied chan<- error
+}
+
+// TerminalManager owns the PTY sessions.
+type TerminalManager interface {
+	// Get returns one session snapshot.
+	Get(id string) (workspace.TerminalInfo, bool)
+	// List returns terminals in creation order.
+	List() []workspace.TerminalInfo
+}

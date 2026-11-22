@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 
-	"crude/search"
+	"crude/agent/websearch"
 	captypes "crude/types/capability"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -23,8 +23,8 @@ type tool struct {
 }
 
 type webClient struct {
-	*search.Client
-	methods func() []search.Method
+	*websearch.Client
+	methods func() []websearch.Method
 }
 
 // defaultFetchPage is the paging granularity Crude uses for bounded reads
@@ -42,7 +42,7 @@ var serverTools = []tool{
 			`"max_results":{"type":"integer","description":"Results to return (1-10; default 6)"}` +
 			`},"required":["query"]}`,
 		run: func(ctx context.Context, client webClient, args map[string]any) (string, error) {
-			var methods []search.Method
+			var methods []websearch.Method
 			if client.methods != nil {
 				methods = client.methods()
 			}
@@ -74,7 +74,7 @@ var serverTools = []tool{
 			`"max_results":{"type":"integer","description":"Papers to return (1-10; default 5)"}` +
 			`},"required":["query"]}`,
 		run: func(ctx context.Context, _ webClient, args map[string]any) (string, error) {
-			return search.ArxivSearch(ctx, stringArg(args, "query"), boundedArg(args, "max_results", 5, 10))
+			return websearch.ArxivSearch(ctx, stringArg(args, "query"), boundedArg(args, "max_results", 5, 10))
 		},
 	},
 }
@@ -90,8 +90,8 @@ func New(lookup func(string) string, maxResultBytes int) (*mcp.Server, map[strin
 // NewWithSearchMethods adds the server owner's account search methods. Each
 // search snapshots them as it starts; tool arguments cannot reach or change
 // them.
-func NewWithSearchMethods(lookup func(string) string, maxResultBytes int, methods func() []search.Method) (*mcp.Server, map[string]captypes.Effect) {
-	client := webClient{Client: search.New(lookup), methods: methods}
+func NewWithSearchMethods(lookup func(string) string, maxResultBytes int, methods func() []websearch.Method) (*mcp.Server, map[string]captypes.Effect) {
+	client := webClient{Client: websearch.New(lookup), methods: methods}
 	// Reserve the enclosing MCP and neutral result fields, not just the JSON
 	// string. The ordinary MCP projection applies to built-ins too.
 	client.SetResultBudget(max(1, maxResultBytes-4096))
@@ -122,7 +122,7 @@ func NewWithSearchMethods(lookup func(string) string, maxResultBytes int, method
 					return nil, err
 				}
 				result := errorResult(err.Error())
-				if _, failed := errors.AsType[*search.ProvidersFailed](err); failed {
+				if _, failed := errors.AsType[*websearch.ProvidersFailed](err); failed {
 					result.Meta = mcp.Meta{captypes.WebSearchOutage: true}
 				}
 				return result, nil

@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -210,16 +210,16 @@ func (m *App) notifyDisk(kind diskNoticeKind, eds []*editor.Editor) {
 	for i, ed := range eds {
 		names[i], paths[i] = ed.BaseTitle(), ed.FilePath()
 	}
-	severity := types.SeverityWarning
+	severity := statuscenter.SeverityWarning
 	if kind == diskNoticeMerged {
-		severity = types.SeverityInfo
+		severity = statuscenter.SeverityInfo
 	}
 	// One file names its editor, so the notice opens it.
-	owner := types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.ws.RootPath()}
+	owner := statuscenter.ResourceRef{Kind: statuscenter.ResourceWorkspace, ID: m.ws.RootPath()}
 	if len(eds) == 1 {
-		owner = types.ResourceRef{Kind: types.ResourceEditor, ID: paths[0]}
+		owner = statuscenter.ResourceRef{Kind: statuscenter.ResourceEditor, ID: paths[0]}
 	}
-	center.Notify(types.NotificationRecord{
+	center.Notify(statuscenter.NotificationRecord{
 		DedupKey: fmt.Sprintf("disk:%d:%s", kind, strings.Join(paths, "\x00")),
 		Owner:    owner, Severity: severity, Source: "editor",
 		Summary: diskNoticeText(kind, names), Detail: strings.Join(relativePaths(m.ws.RootPath(), paths), "\n"),

@@ -9,9 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -120,7 +120,7 @@ func FuzzAppFrameState(f *testing.F) {
 				app.Update(tea.KeyPressMsg{Code: key, Text: string(key)})
 				service.prediction = nil
 			case 3:
-				app.Update(types.TickMsg(time.UnixMilli(1_700_000_000_000 + int64(step)*400)))
+				app.Update(TickMsg(time.UnixMilli(1_700_000_000_000 + int64(step)*400)))
 			case 4:
 				sizes := [][2]int{{80, 30}, {120, 40}, {64, 24}, {100, 32}, {48, 20}}
 				size := sizes[variant%len(sizes)]
@@ -157,7 +157,7 @@ func FuzzAppFrameState(f *testing.F) {
 			case 9:
 				app.ApplyThemePreset([]string{"dark", "light"}[variant%2])
 			case 10:
-				app.appendActiveMessage(types.ChatMessage{Role: types.RoleAssistant,
+				app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant,
 					Content: fmt.Sprintf("frame fuzz append %d: 界 é", step), InternalID: fmt.Sprintf("frame-fuzz-%d", step)})
 				// Direct chat append bypasses the normal agent-message Update.
 				app.rootHost.MarkPaint()

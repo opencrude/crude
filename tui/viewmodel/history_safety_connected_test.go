@@ -9,9 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/types/control"

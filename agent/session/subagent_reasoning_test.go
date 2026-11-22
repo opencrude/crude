@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/safety"
+	"crude/agent/turnloop"
 	"crude/types/reasoning"
 )
 
@@ -79,7 +79,7 @@ func TestSubAgentClassifiesItsOwnFlattenedReasoningDuringToolLoop(t *testing.T) 
 	defer runner.SessionCancel()
 	sender := &liveSubAgentSender{}
 	runner.SetSender(sender)
-	handle, err := runner.launchSubAgent(context.Background(), agent.SubAgentSpec{
+	handle, err := runner.launchSubAgent(context.Background(), turnloop.SubAgentSpec{
 		ID: "child", Name: "researcher", Category: CategoryResearcher, Isolation: "shared",
 		Description: "Inspect the source", ParentID: "parent", Policy: safety.ReadOnlyPolicy(),
 	}, "")
@@ -87,7 +87,7 @@ func TestSubAgentClassifiesItsOwnFlattenedReasoningDuringToolLoop(t *testing.T) 
 		t.Fatal(err)
 	}
 	runner.Wait()
-	if results := runner.Manager().CompletedResults(); len(results) != 1 || results[0].Status != agent.SubAgentCompleted || results[0].ReportID == "" {
+	if results := runner.Manager().CompletedResults(); len(results) != 1 || results[0].Status != turnloop.SubAgentCompleted || results[0].ReportID == "" {
 		t.Fatalf("child did not complete with its real final report: %+v", results)
 	}
 	if requests.Load() != 4 || handle.Agent.ReasoningContentKind != reasoning.InferredRaw {

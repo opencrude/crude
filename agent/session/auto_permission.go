@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"crude/agent"
 	rootprompt "crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/safety"
-	"crude/types"
+	"crude/agent/turnloop"
 	"crude/types/accounting"
+	"crude/types/setting"
 )
 
-func (s *Session) bindAgentPermissionPolicy(a *agent.Agent) {
+func (s *Session) bindAgentPermissionPolicy(a *turnloop.Agent) {
 	if s == nil || a == nil {
 		return
 	}
@@ -42,7 +42,7 @@ func (s *Session) permissionPolicyChanged() <-chan struct{} {
 
 // publishPermissionPolicyLocked wakes waiting permission requests when the
 // effective Auto Review settings changed. Requires s.mu.
-func (s *Session) publishPermissionPolicyLocked(before types.AutoPermissionSettings) {
+func (s *Session) publishPermissionPolicyLocked(before setting.AutoPermission) {
 	if s.cfg == nil || s.permissionReviewSettingsLocked() == before {
 		return
 	}
@@ -56,9 +56,9 @@ func (s *Session) publishPermissionPolicyLocked(before types.AutoPermissionSetti
 
 // Every root and child owns an independent reviewer instance. There is no
 // lifetime call cap or result cache: each exact call receives a fresh review.
-func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
-	return func(ctx context.Context, tc provider.ToolCall, params map[string]any, risk safety.CommandRisk, emit func(agent.AgentEvent)) agent.PermissionReview {
-		ask := agent.PermissionReview{Decision: "ask"}
+func (s *Session) permissionReviewer(a *turnloop.Agent) turnloop.PermissionReviewer {
+	return func(ctx context.Context, tc provider.ToolCall, params map[string]any, risk safety.CommandRisk, emit func(turnloop.AgentEvent)) turnloop.PermissionReview {
+		ask := turnloop.PermissionReview{Decision: "ask"}
 		s.mu.Lock()
 		cfg := copyConfig(s.cfg)
 		settings := s.permissionReviewSettingsLocked()
@@ -68,13 +68,13 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 			return ask
 		}
 		if settings.Model == "" || settings.AccountID == "" {
-			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review needs a connection. Set up Errand or choose an account and model for Auto Review."}
+			return turnloop.PermissionReview{Decision: "ask", Reason: "Auto Review needs a connection. Set up Errand or choose an account and model for Auto Review."}
 		}
-		unresolved := func(reason string) agent.PermissionReview {
+		unresolved := func(reason string) turnloop.PermissionReview {
 			if settings.UnresolvedMode == "deny" {
-				return agent.PermissionReview{Decision: "deny", Reason: reason}
+				return turnloop.PermissionReview{Decision: "deny", Reason: reason}
 			}
-			return agent.PermissionReview{Decision: "ask", Reason: reason}
+			return turnloop.PermissionReview{Decision: "ask", Reason: reason}
 		}
 		// Existing human grants keep their normal path and incur no review
 		// request. Returning ask lets the authoritative permission store
@@ -96,9 +96,9 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 			}
 			return unresolved("Auto Review did not check this request: " + kindErr.Error())
 		}
-		var review agent.PermissionReview
+		var review turnloop.PermissionReview
 		var ok bool
-		if kind == types.ModelTypeDecision {
+		if kind == setting.ModelTypeDecision {
 			review, ok = runPermissionDecisionAttempts(ctx, cfg, settings, payload)
 		} else {
 			review, ok = runPermissionReviewAttempts(ctx, cfg, settings, rootprompt.PermissionReviewSystem(settings.Instructions), payload, a, emit)
@@ -130,43 +130,43 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 		}
 		reason := strings.TrimSpace(review.Reason)
 		if review.Decision == "deny" && settings.DenyMode != "deny" {
-			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review recommends Deny: " + reason}
+			return turnloop.PermissionReview{Decision: "ask", Reason: "Auto Review recommends Deny: " + reason}
 		}
 		if review.Decision == "ask" && settings.UnresolvedMode == "deny" {
 			if reason == "" {
 				reason = "Automatic reviewer was uncertain; the operation was not executed."
 			}
-			return agent.PermissionReview{Decision: "deny", Reason: reason}
+			return turnloop.PermissionReview{Decision: "deny", Reason: reason}
 		}
 		if review.Decision == "ask" {
-			return agent.PermissionReview{Decision: "ask", Reason: "Auto Review was not sure: " + reason}
+			return turnloop.PermissionReview{Decision: "ask", Reason: "Auto Review was not sure: " + reason}
 		}
 		return review
 	}
 }
 
-func runPermissionReviewAttempts(ctx context.Context, cfg *Config, settings types.AutoPermissionSettings, prompt string, payload []byte, a *agent.Agent, emit func(agent.AgentEvent)) (agent.PermissionReview, bool) {
+func runPermissionReviewAttempts(ctx context.Context, cfg *Config, settings setting.AutoPermission, prompt string, payload []byte, a *turnloop.Agent, emit func(turnloop.AgentEvent)) (turnloop.PermissionReview, bool) {
 	for attempt := 0; attempt < settings.MaxAttempts; attempt++ {
 		if ctx.Err() != nil {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 		p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort, ServiceTier: settings.ServiceTier})
 		if err != nil {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 		// Review requests never inherit arbitrary template extras. Every transport
 		// control below comes from the persisted Auto Review Agent settings.
 		p.SetExtraBody(nil)
 		format := settings.ResponseFormat
-		if format == types.AutoPermissionFormatAuto {
-			format = types.AutoPermissionFormatPrompt
+		if format == setting.AutoPermissionFormatAuto {
+			format = setting.AutoPermissionFormatPrompt
 			if attempt == 0 && p.Protocol() != nil && p.Protocol().Info().ID == "openai" {
-				format = types.AutoPermissionFormatJSONSchema
+				format = setting.AutoPermissionFormatJSONSchema
 			}
 		}
 		extra, supported := permissionReviewExtraBody(p, format)
 		if !supported {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 		p.SetExtraBody(extra)
 		p.SetDialSettings(provider.DialSettings{MaxAttempts: 1, RequestTimeoutSeconds: settings.TimeoutSeconds, ConnectTimeoutSeconds: settings.TimeoutSeconds})
@@ -195,15 +195,15 @@ func runPermissionReviewAttempts(ctx context.Context, cfg *Config, settings type
 			return review, true
 		}
 		if ctx.Err() != nil || (attemptErr != nil && !errors.Is(attemptErr, context.DeadlineExceeded)) {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 	}
-	return agent.PermissionReview{}, false
+	return turnloop.PermissionReview{}, false
 }
 
 // resolvePermissionModelType uses the explicit model type, or the account's
 // model list when the type is Automatic.
-func resolvePermissionModelType(ctx context.Context, cfg *Config, settings types.AutoPermissionSettings) (string, error) {
+func resolvePermissionModelType(ctx context.Context, cfg *Config, settings setting.AutoPermission) (string, error) {
 	p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model})
 	if err != nil {
 		return "", err
@@ -220,16 +220,16 @@ const permissionAllowConfidence = 0.9
 // runPermissionDecisionAttempts asks a typed decision model one choice
 // question. It shares the attempt and timeout limits of the chat review and
 // never falls back to chat.
-func runPermissionDecisionAttempts(ctx context.Context, cfg *Config, settings types.AutoPermissionSettings, payload []byte) (agent.PermissionReview, bool) {
+func runPermissionDecisionAttempts(ctx context.Context, cfg *Config, settings setting.AutoPermission, payload []byte) (turnloop.PermissionReview, bool) {
 	instructions, criteria := rootprompt.PermissionDecisionQuestion(settings.Instructions)
 	question := map[string]provider.DecisionQuestion{"decision": {Type: "choice", Instructions: instructions, Criteria: criteria}}
 	for attempt := 0; attempt < settings.MaxAttempts; attempt++ {
 		if ctx.Err() != nil {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 		p, err := cfg.providerForCategory(CategoryConfig{AccountID: settings.AccountID, Model: settings.Model})
 		if err != nil {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 		p.SetExtraBody(nil)
 		p.SetDialSettings(provider.DialSettings{MaxAttempts: 1, RequestTimeoutSeconds: settings.TimeoutSeconds, ConnectTimeoutSeconds: settings.TimeoutSeconds})
@@ -241,36 +241,36 @@ func runPermissionDecisionAttempts(ctx context.Context, cfg *Config, settings ty
 			return permissionDecisionReview(answers["decision"]), true
 		}
 		if ctx.Err() != nil || (attemptErr != nil && !errors.Is(attemptErr, context.DeadlineExceeded)) {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 	}
-	return agent.PermissionReview{}, false
+	return turnloop.PermissionReview{}, false
 }
 
-func permissionDecisionReview(answer provider.DecisionAnswer) agent.PermissionReview {
+func permissionDecisionReview(answer provider.DecisionAnswer) turnloop.PermissionReview {
 	percent := func(label string) int { return int(answer.Probabilities[label]*100 + 0.5) }
 	switch {
 	case answer.Refused:
-		return agent.PermissionReview{Decision: "ask", Reason: "The decision model did not answer."}
+		return turnloop.PermissionReview{Decision: "ask", Reason: "The decision model did not answer."}
 	case answer.Choice == "allow" && answer.Probabilities["allow"] >= permissionAllowConfidence:
-		return agent.PermissionReview{Decision: "allow", Reason: fmt.Sprintf("The decision model is %d%% sure that this is safe.", percent("allow"))}
+		return turnloop.PermissionReview{Decision: "allow", Reason: fmt.Sprintf("The decision model is %d%% sure that this is safe.", percent("allow"))}
 	case answer.Choice == "deny":
-		return agent.PermissionReview{Decision: "deny", Reason: fmt.Sprintf("The decision model is %d%% sure that this is unsafe.", percent("deny"))}
+		return turnloop.PermissionReview{Decision: "deny", Reason: fmt.Sprintf("The decision model is %d%% sure that this is unsafe.", percent("deny"))}
 	default:
-		return agent.PermissionReview{Decision: "ask", Reason: fmt.Sprintf("The decision model is only %d%% sure that this is safe.", percent("allow"))}
+		return turnloop.PermissionReview{Decision: "ask", Reason: fmt.Sprintf("The decision model is only %d%% sure that this is safe.", percent("allow"))}
 	}
 }
 
 func permissionReviewExtraBody(p *provider.Provider, format string) (map[string]any, bool) {
 	switch format {
-	case types.AutoPermissionFormatPrompt:
+	case setting.AutoPermissionFormatPrompt:
 		return nil, true
-	case types.AutoPermissionFormatJSONSchema, types.AutoPermissionFormatJSONObject:
+	case setting.AutoPermissionFormatJSONSchema, setting.AutoPermissionFormatJSONObject:
 		if p == nil || p.Protocol() == nil || p.Protocol().Info().ID != "openai" {
 			return nil, false
 		}
 	}
-	if format == types.AutoPermissionFormatJSONObject {
+	if format == setting.AutoPermissionFormatJSONObject {
 		return map[string]any{"response_format": map[string]any{"type": "json_object"}}, true
 	}
 	return map[string]any{"response_format": map[string]any{
@@ -291,13 +291,13 @@ func permissionReviewExtraBody(p *provider.Provider, format string) (map[string]
 	}}, true
 }
 
-func permissionReviewResponse(response *provider.ChatResponse, requestErr error) (agent.PermissionReview, bool) {
+func permissionReviewResponse(response *provider.ChatResponse, requestErr error) (turnloop.PermissionReview, bool) {
 	if requestErr != nil || response == nil || response.Error != nil || len(response.Choices) != 1 {
-		return agent.PermissionReview{}, false
+		return turnloop.PermissionReview{}, false
 	}
 	choice := response.Choices[0]
 	if len(choice.Message.ToolCalls) > 0 || !permissionReviewFinished(choice.FinishReason) {
-		return agent.PermissionReview{}, false
+		return turnloop.PermissionReview{}, false
 	}
 	return parsePermissionReview(choice.Message.ContentString())
 }
@@ -375,17 +375,17 @@ func (c *Config) credentialValues() []string {
 	return values
 }
 
-func parsePermissionReview(text string) (agent.PermissionReview, bool) {
+func parsePermissionReview(text string) (turnloop.PermissionReview, bool) {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "```") {
 		lineEnd := strings.IndexByte(text, '\n')
 		closeAt := strings.LastIndex(text, "```")
 		if lineEnd < 0 || closeAt <= lineEnd || strings.TrimSpace(text[closeAt+3:]) != "" {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 		label := strings.TrimSpace(text[3:lineEnd])
 		if label != "" && !strings.EqualFold(label, "json") {
-			return agent.PermissionReview{}, false
+			return turnloop.PermissionReview{}, false
 		}
 		text = strings.TrimSpace(text[lineEnd+1 : closeAt])
 	}
@@ -396,18 +396,18 @@ func parsePermissionReview(text string) (agent.PermissionReview, bool) {
 	decoder := json.NewDecoder(strings.NewReader(text))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&wire) != nil || decoder.Decode(new(any)) != io.EOF {
-		return agent.PermissionReview{}, false
+		return turnloop.PermissionReview{}, false
 	}
 	if wire.Decision != "allow" && wire.Decision != "deny" && wire.Decision != "ask" {
-		return agent.PermissionReview{}, false
+		return turnloop.PermissionReview{}, false
 	}
 	if strings.TrimSpace(wire.Reason) == "" || len(wire.Reason) > 512 {
-		return agent.PermissionReview{}, false
+		return turnloop.PermissionReview{}, false
 	}
-	return agent.PermissionReview{Decision: wire.Decision, Reason: wire.Reason}, true
+	return turnloop.PermissionReview{Decision: wire.Decision, Reason: wire.Reason}, true
 }
 
-func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *provider.ChatUsage, succeeded bool, emit func(agent.AgentEvent)) {
+func emitPermissionReviewUsage(a *turnloop.Agent, p *provider.Provider, usage *provider.ChatUsage, succeeded bool, emit func(turnloop.AgentEvent)) {
 	outcome := accounting.Failed
 	if succeeded {
 		outcome = accounting.Succeeded
@@ -415,7 +415,7 @@ func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *prov
 	normalized := usage.Normalized()
 	cached := normalized.PromptTokensCached
 	price, known, source := p.RequestPriceKnown(p.Model, normalized.ServiceTier)
-	emit(agent.AgentEvent{Type: "usage", Data: map[string]any{
+	emit(turnloop.AgentEvent{Type: "usage", Data: map[string]any{
 		"request_outcome": string(outcome),
 		"request_id":      fmt.Sprintf("permission-review-%s", newMessageID()), "request_kind": "permission_review",
 		"provider": p.ID, "account_id": p.AccountID, "model": p.Model, "turn_generation": a.TurnGeneration, "reported_at": time.Now().UnixNano(),

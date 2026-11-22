@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 	"strings"
 	"testing"
@@ -16,7 +16,7 @@ func TestLSPAdvertisedCompletionCharacters(t *testing.T) {
 		t.Run(test.key, func(t *testing.T) {
 			app, port := completionTestApp(t, 100, 32, "unit")
 			port.service.aggregateNotReady = true // another shell may focus a file with no ready server
-			port.service.assistance = &types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{":", "@"}}
+			port.service.assistance = &insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{":", "@"}}
 			ed := app.EditorState.Editor
 			completionTestKey(t, app, tea.KeyPressMsg{Code: []rune(test.key)[0], Text: test.key})
 			if got := app.completionIntent != nil; got != test.want {
@@ -45,7 +45,7 @@ func TestLSPAdvertisedSignatureCharacters(t *testing.T) {
 		t.Run(test.key, func(t *testing.T) {
 			app, service := signatureTestApp(t, 100)
 			service.aggregateNotReady = true
-			service.assistance = &types.LSPAssistanceCapabilities{SignatureHelp: true, SignatureTriggers: []string{"?"}}
+			service.assistance = &insight.LSPAssistanceCapabilities{SignatureHelp: true, SignatureTriggers: []string{"?"}}
 			ed := app.EditorState.Editor
 			ed.SetCursorPosition(0, len(ed.Value()))
 			completionTestKey(t, app, tea.KeyPressMsg{Code: []rune(test.key)[0], Text: test.key})
@@ -79,7 +79,7 @@ func TestSignatureRetriggerKeepsOriginalAnswerAndUsesAdvertisedCharacter(t *test
 	service.answer.Boundary.Source, _ = ed.CurrentInsightSource()
 	original := []byte(`{"signatures":[{"label":"join(first string, count int)","documentation":{"kind":"markdown","value":"**Original**"}}],"activeSignature":0}`)
 	service.answer.Original = original
-	service.assistance = &types.LSPAssistanceCapabilities{SignatureHelp: true, SignatureTriggers: []string{"("}, SignatureRetriggers: []string{";"}}
+	service.assistance = &insight.LSPAssistanceCapabilities{SignatureHelp: true, SignatureTriggers: []string{"("}, SignatureRetriggers: []string{";"}}
 	_, cmd := app.Update(struct{}{})
 	runAppCommand(t, app, cmd)
 	if !app.overlayHost.IsOpen(signatureHelpID) {
@@ -88,9 +88,9 @@ func TestSignatureRetriggerKeepsOriginalAnswerAndUsesAdvertisedCharacter(t *test
 	for i, key := range []string{"x", ";"} {
 		completionTestKey(t, app, tea.KeyPressMsg{Code: []rune(key)[0], Text: key})
 		intent := app.signatureHelpIntent
-		want := types.LSPSignatureContentChange
+		want := insight.LSPSignatureContentChange
 		if key == ";" {
-			want = types.LSPSignatureTriggerCharacter
+			want = insight.LSPSignatureTriggerCharacter
 		}
 		if intent == nil || !intent.trigger.IsRetrigger || intent.trigger.TriggerKind != want || string(intent.trigger.ActiveSignatureHelp) != string(original) {
 			t.Fatalf("new argument lost original signature context: %+v", intent)
@@ -114,7 +114,7 @@ func TestSignatureRetriggerKeepsOriginalAnswerAndUsesAdvertisedCharacter(t *test
 
 func TestPendingCompletionDoesNotInheritReplacementServer(t *testing.T) {
 	app, port := completionTestApp(t, 100, 32, "unit")
-	port.service.assistance = &types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{":"}, Producer: types.InsightProducer{InstanceID: "old"}}
+	port.service.assistance = &insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{":"}, Producer: insight.Producer{InstanceID: "old"}}
 	completionTestKey(t, app, tea.KeyPressMsg{Code: ':', Text: ":"})
 	if app.completionIntent == nil {
 		t.Fatal("no pending intent")
@@ -163,7 +163,7 @@ func TestSignaturePendingRetriggerPreservesOriginalContext(t *testing.T) {
 func TestExplicitAssistanceSurvivesCapabilityPublicationLag(t *testing.T) {
 	t.Run("completion", func(t *testing.T) {
 		app, port := completionTestApp(t, 100, 32, "pr")
-		port.service.assistance = &types.LSPAssistanceCapabilities{} // source is acknowledged; its capability topic has not arrived
+		port.service.assistance = &insight.LSPAssistanceCapabilities{} // source is acknowledged; its capability topic has not arrived
 		completionTestKey(t, app, tea.KeyPressMsg{Code: ' ', Mod: tea.ModCtrl})
 		if len(port.requests) != 1 || !strings.Contains(completionPaintedText(app), "duplicate") {
 			t.Fatal("Ctrl+Space was discarded before the authoritative LSP request")
@@ -171,7 +171,7 @@ func TestExplicitAssistanceSurvivesCapabilityPublicationLag(t *testing.T) {
 	})
 	t.Run("parameters", func(t *testing.T) {
 		app, service := signatureTestApp(t, 100)
-		service.assistance = &types.LSPAssistanceCapabilities{}
+		service.assistance = &insight.LSPAssistanceCapabilities{}
 		completionTestKey(t, app, tea.KeyPressMsg{Code: 'i', Mod: tea.ModAlt})
 		if service.calls.Load() != 1 || !strings.Contains(signaturePaintedText(app), "join(first string,") {
 			t.Fatal("Alt+I was discarded before the authoritative LSP request")
@@ -187,7 +187,7 @@ func TestAutomaticCompletionWaitsForInitializingFileCapabilities(t *testing.T) {
 		t.Run(test.key, func(t *testing.T) {
 			app, port := completionTestApp(t, 100, 32, test.before)
 			ed := app.EditorState.Editor
-			port.service.assistance = &types.LSPAssistanceCapabilities{}
+			port.service.assistance = &insight.LSPAssistanceCapabilities{}
 			completionTestKey(t, app, tea.KeyPressMsg{Code: []rune(test.key)[0], Text: test.key})
 			if app.completionIntent == nil || len(port.requests) != 0 {
 				t.Fatal("typing while the file server initializes lost its one pending intent")
@@ -203,7 +203,7 @@ func TestAutomaticCompletionWaitsForInitializingFileCapabilities(t *testing.T) {
 			if app.completionIntent == nil || len(port.requests) != 0 {
 				t.Fatal("source acknowledgement consumed intent before server capabilities arrived")
 			}
-			port.service.assistance = &types.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{":"}, Producer: types.InsightProducer{InstanceID: "initialized"}}
+			port.service.assistance = &insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{":"}, Producer: insight.Producer{InstanceID: "initialized"}}
 			port.set.Boundary.Producer = port.service.assistance.Producer
 			_, cmd = app.Update(struct{}{})
 			runAppCommand(t, app, cmd)

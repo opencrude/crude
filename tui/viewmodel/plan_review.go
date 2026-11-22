@@ -10,14 +10,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	shellport "crude/core/port"
+	"crude/core/shellport"
 	"crude/text/anchor"
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/screens/decision"
 	"crude/tui/ui"
 	"crude/tui/window"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -55,7 +55,7 @@ const (
 // comments, so an editor rebuilds its cards only when they change.
 type planDocument struct {
 	agentID  string
-	revision types.PlanRevision
+	revision conversation.PlanRevision
 	latest   int
 	print    uint64
 }
@@ -115,13 +115,13 @@ func (m *App) planReviewChanged() {
 
 // latestPlanRevision is the newest revision of the session whose main agent
 // is agentID.
-func (m *App) latestPlanRevision(agentID string) (types.PlanRevision, bool) {
+func (m *App) latestPlanRevision(agentID string) (conversation.PlanRevision, bool) {
 	if m.ws == nil || agentID == "" {
-		return types.PlanRevision{}, false
+		return conversation.PlanRevision{}, false
 	}
 	review, ok := m.ws.PlanReviewForAgent(agentID)
 	if !ok {
-		return types.PlanRevision{}, false
+		return conversation.PlanRevision{}, false
 	}
 	return review.Latest()
 }
@@ -160,12 +160,12 @@ func (m *App) planReviewChrome(v *mainPaneView, tab window.TabID, ed *editor.Edi
 	switch {
 	// The buttons keep their room first; the message is short so that it
 	// still fits beside all four in an 80-column pane.
-	case revision.Outcome == types.PlanOutcomeReplaced:
+	case revision.Outcome == conversation.PlanOutcomeReplaced:
 		setBar(fmt.Sprintf("Revision %d. Revision %d replaced it.", revision.Number, doc.latest), ui.ColorMuted,
 			ui.ActionBarButton{Label: fmt.Sprintf("Open revision %d", doc.latest), Action: actionPlanOpenLatest, Enabled: true, Variant: ui.VariantSecondary})
-	case revision.Outcome == types.PlanOutcomeImplemented:
+	case revision.Outcome == conversation.PlanOutcomeImplemented:
 		setBar(fmt.Sprintf("Revision %d. This session implements it.", revision.Number), ui.ColorMuted)
-	case revision.Outcome == types.PlanOutcomeNewSession:
+	case revision.Outcome == conversation.PlanOutcomeNewSession:
 		setBar(fmt.Sprintf("Revision %d. A new session implements it.", revision.Number), ui.ColorMuted)
 	case revision.NewSessionID != "":
 		setBar("Check that the new session received the plan.", ui.ColorAccent,
@@ -261,18 +261,18 @@ func (m *App) handlePlanReviewAction(action ui.Action) (tea.Cmd, bool) {
 	}
 	switch action.ID {
 	case actionPlanEvidence:
-		return m.planEvidenceMenu(doc.agentID, []types.PlanRevision{doc.revision}), true
+		return m.planEvidenceMenu(doc.agentID, []conversation.PlanRevision{doc.revision}), true
 	case actionPlanOpenLatest:
 		return m.openPlanRevision(doc.agentID, doc.latest), true
 	case actionPlanComment:
 		m.focusEditorFor(ed)
 		return m.addPlanComment(ed), true
 	case actionPlanSend, actionPlanRevise:
-		return m.settlePlanReview(doc.agentID, doc.revision.Number, types.PlanReviewFeedback), true
+		return m.settlePlanReview(doc.agentID, doc.revision.Number, conversation.PlanReviewFeedback), true
 	case actionPlanImplement:
-		return m.settlePlanReview(doc.agentID, doc.revision.Number, types.PlanReviewImplement), true
+		return m.settlePlanReview(doc.agentID, doc.revision.Number, conversation.PlanReviewImplement), true
 	case actionPlanNewSession:
-		return m.settlePlanReview(doc.agentID, doc.revision.Number, types.PlanReviewNewSession), true
+		return m.settlePlanReview(doc.agentID, doc.revision.Number, conversation.PlanReviewNewSession), true
 	}
 	return nil, true
 }
@@ -398,7 +398,7 @@ func (m *App) reviewLatestPlan() tea.Cmd {
 
 // settleActivePlan settles the plan in the focused editor, else the newest
 // plan of the active session.
-func (m *App) settleActivePlan(action types.PlanReviewAction) tea.Cmd {
+func (m *App) settleActivePlan(action conversation.PlanReviewAction) tea.Cmd {
 	if doc, ok := m.planDocumentOf(m.EditorState.Editor); ok {
 		return m.settlePlanReview(doc.agentID, doc.revision.Number, action)
 	}
@@ -426,7 +426,7 @@ type planCommentEditedMsg struct {
 	owner      shellport.Workspace
 	generation uint64
 	agentID    string
-	edit       types.PlanCommentEdit
+	edit       conversation.PlanCommentEdit
 	err        error
 	editor     *editor.Editor
 }
@@ -456,12 +456,12 @@ func (m *App) addPlanComment(ed *editor.Editor) tea.Cmd {
 			end = len(text)
 		}
 	}
-	if end-start > types.PlanCommentMaxQuote {
+	if end-start > conversation.PlanCommentMaxQuote {
 		m.Feedback.NotifyInfo("The selection is too long for a comment. Select less text.")
 		return nil
 	}
 	quote := anchor.Capture(text, start, end)
-	m.openPlanCommentPrompt(ed, doc, types.PlanComment{ID: newPlanCommentID(), Anchor: quote}, types.PlanCommentAdd)
+	m.openPlanCommentPrompt(ed, doc, conversation.PlanComment{ID: newPlanCommentID(), Anchor: quote}, conversation.PlanCommentAdd)
 	return nil
 }
 
@@ -484,7 +484,7 @@ func (m *App) editPlanComment(ed *editor.Editor, id string) tea.Cmd {
 			m.Feedback.NotifyInfo(fmt.Sprintf("Plan revision %d is closed. Comment on revision %d.", doc.revision.Number, doc.latest))
 			return nil
 		}
-		m.openPlanCommentPrompt(ed, doc, comment, types.PlanCommentUpdate)
+		m.openPlanCommentPrompt(ed, doc, comment, conversation.PlanCommentUpdate)
 		return nil
 	}
 	return nil
@@ -492,14 +492,14 @@ func (m *App) editPlanComment(ed *editor.Editor, id string) tea.Cmd {
 
 // openPlanCommentPrompt edits one comment in the shared editor text prompt,
 // anchored at the caret. A failed save reopens it with the typed text.
-func (m *App) openPlanCommentPrompt(ed *editor.Editor, doc planDocument, comment types.PlanComment, op types.PlanCommentOp) {
+func (m *App) openPlanCommentPrompt(ed *editor.Editor, doc planDocument, comment conversation.PlanComment, op conversation.PlanCommentOp) {
 	title, prompt := "Add comment", "On "+quotePreview(comment.Anchor.Exact)+"."
-	if op == types.PlanCommentUpdate {
+	if op == conversation.PlanCommentUpdate {
 		title, prompt = "Edit comment", "On "+quotePreview(comment.Anchor.Exact)+". Leave it empty to delete it."
 	}
 	if comment.Anchor.Exact == "" {
 		prompt = strings.TrimPrefix(prompt, "On "+quotePreview("")+". ")
-		if op == types.PlanCommentAdd {
+		if op == conversation.PlanCommentAdd {
 			prompt = "On an empty line."
 		}
 	}
@@ -509,13 +509,13 @@ func (m *App) openPlanCommentPrompt(ed *editor.Editor, doc planDocument, comment
 	agentID, revision := doc.agentID, doc.revision.Number
 	m.openEditorTextPrompt(ui.TextPromptComment, title, prompt, comment.Body, func(value string) error {
 		body := strings.TrimSpace(value)
-		edit := types.PlanCommentEdit{Revision: revision, Op: op, Comment: comment}
+		edit := conversation.PlanCommentEdit{Revision: revision, Op: op, Comment: comment}
 		switch {
-		case body == "" && op == types.PlanCommentAdd:
+		case body == "" && op == conversation.PlanCommentAdd:
 			return fmt.Errorf("type a comment, or press Esc to cancel")
 		case body == "":
-			edit.Op = types.PlanCommentDelete
-		case len(body) > types.PlanCommentMaxBody:
+			edit.Op = conversation.PlanCommentDelete
+		case len(body) > conversation.PlanCommentMaxBody:
 			return fmt.Errorf("the comment is too long. Make it shorter")
 		}
 		edit.Comment.Body = body
@@ -527,7 +527,7 @@ func (m *App) openPlanCommentPrompt(ed *editor.Editor, doc planDocument, comment
 	})
 }
 
-func (m *App) sendPlanCommentEdit(agentID string, edit types.PlanCommentEdit, ed *editor.Editor) tea.Cmd {
+func (m *App) sendPlanCommentEdit(agentID string, edit conversation.PlanCommentEdit, ed *editor.Editor) tea.Cmd {
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		return planCommentEditedMsg{owner: owner, generation: generation, agentID: agentID, edit: edit, editor: ed,
@@ -542,9 +542,9 @@ func (m *App) applyPlanCommentEdited(msg planCommentEditedMsg) tea.Cmd {
 	m.planReviewChanged()
 	if msg.err == nil {
 		switch msg.edit.Op {
-		case types.PlanCommentAdd:
+		case conversation.PlanCommentAdd:
 			m.Feedback.NotifyInfo("Comment added")
-		case types.PlanCommentDelete:
+		case conversation.PlanCommentDelete:
 			m.Feedback.NotifyInfo("Comment deleted")
 		default:
 			m.Feedback.NotifyInfo("Comment changed")
@@ -553,7 +553,7 @@ func (m *App) applyPlanCommentEdited(msg planCommentEditedMsg) tea.Cmd {
 	}
 	m.Feedback.NotifyError("The comment was not saved. " + sentence(msg.err.Error()))
 	// Keep the typed text: reopen the prompt with it.
-	if doc, ok := m.planDocumentOf(msg.editor); ok && msg.edit.Op != types.PlanCommentDelete && doc.revision.Open() {
+	if doc, ok := m.planDocumentOf(msg.editor); ok && msg.edit.Op != conversation.PlanCommentDelete && doc.revision.Open() {
 		op := msg.edit.Op
 		m.openPlanCommentPrompt(msg.editor, doc, msg.edit.Comment, op)
 	}
@@ -622,7 +622,7 @@ type planSettledMsg struct {
 	sequence           uint64
 	agentID            string
 	destinationAgentID string
-	settle             types.PlanReviewSettle
+	settle             conversation.PlanReviewSettle
 	err                error
 }
 
@@ -637,12 +637,12 @@ func runPlanReviewSettlement(msg planSettledMsg) tea.Cmd {
 // what the user sees in an open editor; without one the core uses the
 // document or file it owns. A changed plan is also saved, so the file holds
 // the text the user approved.
-func (m *App) settlePlanReview(agentID string, number int, action types.PlanReviewAction) tea.Cmd {
-	settle := types.PlanReviewSettle{Revision: number, Action: action}
+func (m *App) settlePlanReview(agentID string, number int, action conversation.PlanReviewAction) tea.Cmd {
+	settle := conversation.PlanReviewSettle{Revision: number, Action: action}
 	var save tea.Cmd
 	if review, ok := m.ws.PlanReviewForAgent(agentID); ok {
 		if revision, ok := review.Revision(number); ok {
-			if action == types.PlanReviewNewSession {
+			if action == conversation.PlanReviewNewSession {
 				settle.DestinationSessionID = revision.NewSessionID
 			}
 			if views := m.documentViews(revision.Path); settle.DestinationSessionID == "" && len(views) > 0 && views[0].Editor.IsOpen() {
@@ -656,7 +656,7 @@ func (m *App) settlePlanReview(agentID string, number int, action types.PlanRevi
 	}
 	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	msg := planSettledMsg{owner: owner, generation: generation, agentID: agentID, settle: settle}
-	if action == types.PlanReviewNewSession {
+	if action == conversation.PlanReviewNewSession {
 		return tea.Batch(save, m.openPlanDestination(msg))
 	}
 	return tea.Batch(save, runPlanReviewSettlement(msg))
@@ -666,7 +666,7 @@ func (m *App) applyPlanSettled(msg planSettledMsg) tea.Cmd {
 	if msg.owner != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
 		return nil
 	}
-	if msg.settle.Action == types.PlanReviewNewSession {
+	if msg.settle.Action == conversation.PlanReviewNewSession {
 		if !m.sessionLifecyclePending || msg.sequence != m.sessionLifecycleSequence {
 			return nil
 		}
@@ -675,16 +675,16 @@ func (m *App) applyPlanSettled(msg planSettledMsg) tea.Cmd {
 	m.planReviewChanged()
 	if msg.err != nil {
 		m.Feedback.NotifyError(sentence(msg.err.Error()))
-		if msg.settle.Action == types.PlanReviewNewSession {
+		if msg.settle.Action == conversation.PlanReviewNewSession {
 			m.reofferPlanDecision(msg)
 		}
 		return nil
 	}
 	m.closePlanDecision(msg.agentID)
 	switch msg.settle.Action {
-	case types.PlanReviewNewSession:
+	case conversation.PlanReviewNewSession:
 		m.AddOrchestrator(msg.destinationAgentID)
-	case types.PlanReviewImplement:
+	case conversation.PlanReviewImplement:
 		// The core sent the message with the settlement.
 		m.Feedback.NotifyInfo("Plan approved. Plan mode is off.")
 	default:
@@ -720,7 +720,7 @@ func (m *App) offerPlanReview(agentID string, generation uint64) {
 }
 
 // showPlanDecision opens or refreshes the docked plan decision.
-func (m *App) showPlanDecision(agentID string, revision types.PlanRevision) {
+func (m *App) showPlanDecision(agentID string, revision conversation.PlanRevision) {
 	spec, data := planDecisionSpec(revision)
 	projection := m.activeSessionProjection()
 	if projection == nil {
@@ -742,7 +742,7 @@ func (m *App) showPlanDecision(agentID string, revision types.PlanRevision) {
 
 // planDecisionSpec builds the decision for an open revision. Comments that
 // are not sent must go to the agent before the plan can be implemented.
-func planDecisionSpec(revision types.PlanRevision) (decision.Spec, string) {
+func planDecisionSpec(revision conversation.PlanRevision) (decision.Spec, string) {
 	pending := revision.PendingComments()
 	spec := decision.Spec{
 		Purpose: "implement_plan", Title: "Implement this plan?", ReadingLayout: true,
@@ -822,15 +822,15 @@ func (m *App) resolvePlanDecision(agentID, data string, msg decision.ResultMsg) 
 	case planChoiceReview:
 		return m.openPlanRevision(agentID, number)
 	case planChoiceNewSession:
-		return m.settlePlanReview(agentID, number, types.PlanReviewNewSession)
+		return m.settlePlanReview(agentID, number, conversation.PlanReviewNewSession)
 	}
 	if mode == planDecisionSend {
-		return m.settlePlanReview(agentID, number, types.PlanReviewFeedback)
+		return m.settlePlanReview(agentID, number, conversation.PlanReviewFeedback)
 	}
 	if mode == planDecisionCheck {
-		return m.settlePlanReview(agentID, number, types.PlanReviewNewSession)
+		return m.settlePlanReview(agentID, number, conversation.PlanReviewNewSession)
 	}
-	return m.settlePlanReview(agentID, number, types.PlanReviewImplement)
+	return m.settlePlanReview(agentID, number, conversation.PlanReviewImplement)
 }
 
 // planReviewMenuSection is the editor menu's plan section: comment commands
@@ -848,15 +848,15 @@ func (m *App) planReviewMenuSection(ed *editor.Editor, doc planDocument) ui.Cont
 	}
 	agentID, number := doc.agentID, doc.revision.Number
 	if len(doc.revision.Evidence) > 0 {
-		items = append(items, ui.ContextMenuItem{Label: "Review investigation evidence", Action: func() { m.runDetachedAsyncCmd(m.planEvidenceMenu(agentID, []types.PlanRevision{doc.revision})) }})
+		items = append(items, ui.ContextMenuItem{Label: "Review investigation evidence", Action: func() { m.runDetachedAsyncCmd(m.planEvidenceMenu(agentID, []conversation.PlanRevision{doc.revision})) }})
 	}
 	if open && doc.revision.PendingComments() > 0 {
 		items = append(items, ui.ContextMenuItem{Label: "Send comments", Action: func() {
-			m.runDetachedAsyncCmd(m.settlePlanReview(agentID, number, types.PlanReviewFeedback))
+			m.runDetachedAsyncCmd(m.settlePlanReview(agentID, number, conversation.PlanReviewFeedback))
 		}})
 	} else if open {
 		items = append(items, ui.ContextMenuItem{Label: "Implement this plan", Action: func() {
-			m.runDetachedAsyncCmd(m.settlePlanReview(agentID, number, types.PlanReviewImplement))
+			m.runDetachedAsyncCmd(m.settlePlanReview(agentID, number, conversation.PlanReviewImplement))
 		}})
 	}
 	return ui.ContextMenuSection{SectionLabel: "Plan review", Items: items}

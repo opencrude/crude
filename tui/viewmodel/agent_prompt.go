@@ -1,7 +1,8 @@
 package viewmodel
 
 import (
-	"crude/core/port"
+	"crude/core/shellport"
+	"crude/types/conversation"
 	"fmt"
 	"strings"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"crude/tui/screens/question"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -55,7 +55,7 @@ func (s *agentPromptState) panelID() string {
 }
 
 func (m *App) enqueueAgentConfirmation(req agentPromptRequest) {
-	if req.operation != types.PlanInvestigationHostOperation && m.agentYoloEnabled(req.agentID) {
+	if req.operation != conversation.PlanInvestigationHostOperation && m.agentYoloEnabled(req.agentID) {
 		return
 	}
 	m.enqueueAgentPrompt(req)
@@ -102,7 +102,7 @@ func (m *App) refreshConfirmationChoices(state *agentPromptState, force bool) bo
 	if state == nil || state.confirmation == nil {
 		return false
 	}
-	offer := state.request.operation != types.PlanInvestigationHostOperation && m.autoReviewSetupAvailable(state.request.risk)
+	offer := state.request.operation != conversation.PlanInvestigationHostOperation && m.autoReviewSetupAvailable(state.request.risk)
 	if !force && offer == state.offerAutoReview {
 		return false
 	}
@@ -141,7 +141,7 @@ func (m *App) openNextAgentPrompt() {
 			m.removeAgentPrompt(state)
 			continue
 		}
-		if state.request.kind == agentPromptConfirmation && state.request.operation != types.PlanInvestigationHostOperation && m.agentYoloEnabled(state.request.agentID) {
+		if state.request.kind == agentPromptConfirmation && state.request.operation != conversation.PlanInvestigationHostOperation && m.agentYoloEnabled(state.request.agentID) {
 			m.ws.ResolveConfirmation(state.request.agentID, state.request.blockID, "allow")
 			m.removeAgentPrompt(state)
 			continue
@@ -259,7 +259,7 @@ func (m *App) promptForScreen(target any) *agentPromptState {
 func (m *App) openAgentConfirmationPrompt(state *agentPromptState) {
 	req := state.request
 	operation := req.operation
-	if operation == types.PlanInvestigationHostOperation {
+	if operation == conversation.PlanInvestigationHostOperation {
 		operation = ""
 	}
 	detail := strings.Join(nonemptyPromptParts(
@@ -268,7 +268,7 @@ func (m *App) openAgentConfirmationPrompt(state *agentPromptState) {
 		promptPart("Folder", req.directory), promptPart("Risk", req.risk), promptPart("Reason", req.reason), promptPart("Suggestion", req.suggestion),
 		promptPart("Auto Review", req.autoReview),
 	), "\n")
-	if req.operation == types.PlanInvestigationHostOperation {
+	if req.operation == conversation.PlanInvestigationHostOperation {
 		detail = strings.Join(nonemptyPromptParts(
 			promptPart("Agent", m.promptOwnerLabel(state.request.agentID)),
 			state.confirmation.Details().HostDetails(),
@@ -372,7 +372,7 @@ func (m *App) resolveAgentConfirmationChoice(choice int) {
 // action vocabulary so its button variants read like the docked screen.
 func confirmChoiceActionID(choiceID string) string {
 	switch choiceID {
-	case confirmation.ChoiceAllow, types.PlanInvestigationHostAllow:
+	case confirmation.ChoiceAllow, conversation.PlanInvestigationHostAllow:
 		return ui.ConfirmActionYes
 	case confirmation.ChoiceAlways:
 		return ui.ConfirmActionSave

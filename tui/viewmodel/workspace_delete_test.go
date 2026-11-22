@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/tui/screens/launcher"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 
 	tea "charm.land/bubbletea/v2"
@@ -38,7 +38,7 @@ func TestWorkspaceDeleteMenuPreviewCancelDeleteAndUndo(t *testing.T) {
 	wsOf(app).RootPath = t.TempDir()
 	app.width, app.height = 130, 36
 	app.Tree = &TreeState{}
-	app.launcherScreen.SetData(app.ws.RootPath(), []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(project), ProjectDir: project}})
+	app.launcherScreen.SetData(app.ws.RootPath(), []workspace.Info{{ID: workspace.ID(project), ProjectDir: project}})
 	app.paintShellFrame()
 	messages := make(chan tea.Msg, 4)
 	restore := installDetachedMessageSinkForTest(app, func(msg tea.Msg) { messages <- msg })
@@ -138,7 +138,7 @@ func TestWorkspaceDeleteFeedbackAndNarrowResize(t *testing.T) {
 	}
 	frame := app.overlayHost.Window(ui.OverlayWorkspaceDelete).Content.(*ui.WindowFrameWidget)
 	p := frame.Body().(*workspaceDeletePrompt)
-	app.applyWorkspaceDeletePreview(workspaceDeletePreviewMsg{target: p, plan: workspace.WorkspaceDeletion{Issue: &types.OperationIssue{
+	app.applyWorkspaceDeletePreview(workspaceDeletePreviewMsg{target: p, plan: workspace.Deletion{Issue: &statuscenter.OperationIssue{
 		Title: "Workspace is in use", Summary: "This workspace is open in 2 views.", Detail: "Deleting it would disconnect those views.", Guidance: "Switch those views to another workspace or close them.",
 	}}})
 	frame.Host().Resize(78, 16)

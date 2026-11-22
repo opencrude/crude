@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -24,7 +24,7 @@ func TestToolPathVisualAcceptance(t *testing.T) {
 	app := newWorkspaceSwitchLifecycleApp(t, root)
 	app.AddOrchestrator("path-visual")
 	state := app.ws.AgentMgr().Get("path-visual").State
-	state.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "Inspect the parser and show the exact retained evidence."})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleUser, Content: "Inspect the parser and show the exact retained evidence."})
 	for _, tc := range []struct {
 		id, name string
 		args     map[string]string
@@ -64,7 +64,7 @@ func (m *toolPathVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
-			m.subPaneProjections.GetExisting(m.owner).renderer.ToggleDisclosure("read")
+			m.subPaneProjections.Existing(m.owner).renderer.ToggleDisclosure("read")
 			return m, nil
 		case tea.KeyF9:
 			return m, tea.Quit

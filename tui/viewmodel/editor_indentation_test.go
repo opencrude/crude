@@ -2,9 +2,9 @@ package viewmodel
 
 import (
 	"context"
-	"crude/clientstate"
-	"crude/core/port"
-	"crude/text/indent"
+	"crude/core/shellport"
+	"crude/internal/clientstate"
+	"crude/text/indentation"
 	"crude/tui/editor"
 	"crude/tui/screens/shellheader"
 	"crude/tui/theme"

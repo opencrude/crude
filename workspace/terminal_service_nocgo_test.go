@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
+	"crude/internal/terminalvt"
 	"crude/internal/testterminal"
-	"crude/terminalvt"
 )
 
 func TestTerminalServicePreparationUnavailableCleansPTY(t *testing.T) {

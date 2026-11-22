@@ -18,10 +18,10 @@ func updateCodexPlan(ctx context.Context, store *plan.Store, sessionID string, p
 			Step   string          `json:"step"`
 			Status plan.StepStatus `json:"status"`
 		} `json:"plan"`
-		Explanation string          `json:"explanation"`
-		Objective   string          `json:"objective"`
-		Status      plan.PlanStatus `json:"status"`
-		Replace     bool            `json:"replace"`
+		Explanation string      `json:"explanation"`
+		Objective   string      `json:"objective"`
+		Status      plan.Status `json:"status"`
+		Replace     bool        `json:"replace"`
 	}
 	data, err := json.Marshal(params)
 	if err != nil {
@@ -68,7 +68,7 @@ func updateCodexPlan(ctx context.Context, store *plan.Store, sessionID string, p
 			}
 		}
 		used[id] = true
-		req.Steps = append(req.Steps, plan.PlanStep{ID: id, Description: step.Step, Status: step.Status})
+		req.Steps = append(req.Steps, plan.Step{ID: id, Description: step.Step, Status: step.Status})
 		complete = complete && step.Status == plan.StepCompleted
 	}
 	if len(input.Plan) == 0 {

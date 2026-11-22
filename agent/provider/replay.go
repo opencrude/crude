@@ -131,8 +131,9 @@ func FilterReplayMessages(messages []ChatMessage, tools []ToolDef, current *Prov
 	return result
 }
 
-func StampProviderItems(items []ProviderItem, current *Provider, model, prefixHash string) []ProviderItem {
-	result := make([]ProviderItem, len(items))
+// StampProviderItems copies items and stamps the current replay scope, model and prefix hash.
+func StampProviderItems(items []Item, current *Provider, model, prefixHash string) []Item {
+	result := make([]Item, len(items))
 	for index, item := range items {
 		result[index] = cloneProviderItem(item)
 		result[index].ReplayScope = current.ReplayScope()
@@ -142,7 +143,7 @@ func StampProviderItems(items []ProviderItem, current *Provider, model, prefixHa
 	return result
 }
 
-func cloneProviderItem(item ProviderItem) ProviderItem {
+func cloneProviderItem(item Item) Item {
 	copy := item
 	copy.Data = append(json.RawMessage(nil), item.Data...)
 	return copy

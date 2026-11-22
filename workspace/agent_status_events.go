@@ -5,14 +5,15 @@ import (
 	"time"
 
 	"crude/agent/tools"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 // StoppingStatus is the one presentation of an agent whose Stop is in
 // progress, shared by the core reducer and a shell's optimistic Stop.
-func StoppingStatus(status ttypes.AgentStatusSnapshot) ttypes.AgentStatusSnapshot {
-	status.Phase, status.Detail, status.NeedsAction = ttypes.AgentCancelling, "Stopping", false
+func StoppingStatus(status statuscenter.AgentStatusSnapshot) statuscenter.AgentStatusSnapshot {
+	status.Phase, status.Detail, status.NeedsAction = statuscenter.AgentCancelling, "Stopping", false
 	return status
 }
 
@@ -30,7 +31,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 	}
 	previous, _ := center.Agent(evt.AgentID)
 	snapshot := previous
-	snapshot.Ref = ttypes.ResourceRef{Kind: ttypes.ResourceAgent, ID: evt.AgentID}
+	snapshot.Ref = statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: evt.AgentID}
 	if session := w.SessionForAgent(evt.AgentID); session != nil {
 		snapshot.Ref.SessionID = session.SessionID
 	}
@@ -101,7 +102,7 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 
 	switch evt.Type {
 	case "sub_agent_started":
-		snapshot.Phase, snapshot.Detail = ttypes.AgentOpening, "Opening"
+		snapshot.Phase, snapshot.Detail = statuscenter.AgentOpening, "Opening"
 		snapshot.StartedAt = snapshot.UpdatedAt
 	case "sub_agent_completed":
 		// A child owns its preparation slot only for this assignment. Unlike a
@@ -114,16 +115,16 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		snapshot.ReadOnly, snapshot.NeedsAction = true, false
 		snapshot.Phase, snapshot.Detail = agentTerminalPhase(result)
 	case "connection_changed":
-		if identity, ok := evt.Data.(ttypes.TurnIdentity); ok && identity.Generation == snapshot.TurnGeneration {
+		if identity, ok := evt.Data.(conversation.TurnIdentity); ok && identity.Generation == snapshot.TurnGeneration {
 			snapshot.ProviderID, snapshot.ModelID = identity.ProviderID, identity.ModelID
 			snapshot.AccountID = identity.AccountID
 		}
 	case "turn_started":
-		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentPreparing, "Preparing context", false
+		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentPreparing, "Preparing context", false
 		snapshot.RequestID = ""
 		snapshot.StartedAt = snapshot.UpdatedAt
 		snapshot.UploadedBytes, snapshot.TotalBytes, snapshot.ProgressKnown = 0, 0, false
-		if identity, ok := evt.Data.(ttypes.TurnIdentity); ok {
+		if identity, ok := evt.Data.(conversation.TurnIdentity); ok {
 			snapshot.TurnGeneration = identity.Generation
 			snapshot.ProviderID, snapshot.ModelID = identity.ProviderID, identity.ModelID
 			snapshot.AccountID = identity.AccountID
@@ -145,22 +146,22 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 			snapshot.ProgressKnown = true
 		}
 		if phase.Phase == "waiting_provider" {
-			snapshot.Phase, snapshot.Detail = ttypes.AgentWaiting, "Waiting for provider"
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentWaiting, "Waiting for provider"
 			if phase.Provider != "" {
 				snapshot.Detail = "Waiting for " + phase.Provider
 			}
 		} else if phase.Progress > 0 || phase.UploadedBytes > 0 {
-			snapshot.Phase, snapshot.Detail = ttypes.AgentUploading, "Uploading context"
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentUploading, "Uploading context"
 		} else {
-			snapshot.Phase, snapshot.Detail = ttypes.AgentPreparing, "Preparing context"
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentPreparing, "Preparing context"
 		}
 		center.SetOperation(agentRequestOperation(snapshot))
 	case "thinking":
-		snapshot.Phase, snapshot.Detail = ttypes.AgentThinking, "Reasoning"
+		snapshot.Phase, snapshot.Detail = statuscenter.AgentThinking, "Reasoning"
 	case "stream_token":
-		snapshot.Phase, snapshot.Detail = ttypes.AgentResponding, "Receiving response"
+		snapshot.Phase, snapshot.Detail = statuscenter.AgentResponding, "Receiving response"
 	case "tool_call_streaming", "tool_call", "tool_update", "tool_result":
-		snapshot.Phase, snapshot.Detail = ttypes.AgentTool, AgentToolDetail(evt.Data)
+		snapshot.Phase, snapshot.Detail = statuscenter.AgentTool, AgentToolDetail(evt.Data)
 	case "blocking", "confirmation":
 		operation := ""
 		switch data := evt.Data.(type) {
@@ -170,34 +171,34 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 			operation = data["operation"]
 		}
 		if operation == "question" || operation == "questions" {
-			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentQuestion, "Needs answer", true
-		} else if operation == ttypes.PlanInvestigationHostOperation || !w.YoloForAgent(evt.AgentID) {
-			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentApproval, "Needs approval", true
+			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentQuestion, "Needs answer", true
+		} else if operation == conversation.PlanInvestigationHostOperation || !w.YoloForAgent(evt.AgentID) {
+			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentApproval, "Needs approval", true
 		} else {
-			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentTool, "Working", false
+			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentTool, "Working", false
 		}
 	case "blocking_auto", "permission_resolved", "blocking_complete":
-		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentTool, "Working", false
+		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentTool, "Working", false
 	case "question":
-		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentQuestion, "Needs answer", true
+		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentQuestion, "Needs answer", true
 	case "safety_alert":
 		detail := "Command safety warning"
-		severity := ttypes.SeverityWarning
+		severity := statuscenter.SeverityWarning
 		if values, ok := evt.Data.(map[string]any); ok {
 			if reason, _ := values["reason"].(string); reason != "" {
 				detail = reason
 			}
 			if risk, _ := values["risk"].(string); risk == "blocked" {
-				severity = ttypes.SeverityCritical
+				severity = statuscenter.SeverityCritical
 			}
 		}
 		// This event records a command assessment, not a pending decision or
 		// an agent phase. Permission prompts own NeedsAction; Notices retains
 		// the warning without replacing subsequent work or terminal status.
-		center.Notify(ttypes.NotificationRecord{DedupKey: "safety:" + evt.AgentID, Owner: snapshot.Ref, Severity: severity, Source: "safety", Summary: detail, Detail: detail})
+		center.Notify(statuscenter.NotificationRecord{DedupKey: "safety:" + evt.AgentID, Owner: snapshot.Ref, Severity: severity, Source: "safety", Summary: detail, Detail: detail})
 		return
 	case "retry":
-		snapshot.Phase, snapshot.Detail = ttypes.AgentRetrying, "Retrying provider request"
+		snapshot.Phase, snapshot.Detail = statuscenter.AgentRetrying, "Retrying provider request"
 		if values, ok := evt.Data.(map[string]any); ok {
 			backoff, _ := values["backoff"].(float64)
 			snapshot.RetryAt = time.Now().Add(time.Duration(backoff * float64(time.Second)))
@@ -214,46 +215,46 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		switch status.State {
 		case recovery.Recovering:
 			if status.RetryAt.IsZero() {
-				snapshot.Phase, snapshot.Detail = ttypes.AgentPreparing, "Resuming run"
+				snapshot.Phase, snapshot.Detail = statuscenter.AgentPreparing, "Resuming run"
 			} else {
-				snapshot.Phase = ttypes.AgentRecovering
+				snapshot.Phase = statuscenter.AgentRecovering
 			}
 			center.ResolveIssue("agent:" + evt.AgentID)
 		case recovery.NeedsAttention:
-			snapshot.Phase = ttypes.AgentNeedsAttention
+			snapshot.Phase = statuscenter.AgentNeedsAttention
 		case recovery.Interrupted:
-			snapshot.Phase = ttypes.AgentInterrupted
+			snapshot.Phase = statuscenter.AgentInterrupted
 		case recovery.Recovered:
-			snapshot.Phase = ttypes.AgentPreparing
+			snapshot.Phase = statuscenter.AgentPreparing
 			center.ResolveIssue("agent:" + evt.AgentID)
 		case recovery.Cancelled:
-			snapshot.Phase = ttypes.AgentCancelled
+			snapshot.Phase = statuscenter.AgentCancelled
 			center.ResolveIssue("agent:" + evt.AgentID)
 		case recovery.Continued:
-			snapshot.Phase = ttypes.AgentPreparing
+			snapshot.Phase = statuscenter.AgentPreparing
 			center.ResolveIssue("agent:" + evt.AgentID)
 		case recovery.Failed:
-			snapshot.Phase = ttypes.AgentFailed
+			snapshot.Phase = statuscenter.AgentFailed
 			center.ResolveIssue("agent:" + evt.AgentID)
 		}
 		if snapshot.NeedsAction {
-			actions := []ttypes.StatusAction{
+			actions := []statuscenter.Action{
 				{ID: "agent.retry", Label: "Continue run", Enabled: true},
 				{ID: "status.switch", Label: "Inspect agent", Enabled: true},
 			}
-			center.SetIssue(ttypes.IssueSnapshot{
-				ID: "agent:" + evt.AgentID, Owner: snapshot.Ref, Severity: ttypes.SeverityWarning,
+			center.SetIssue(statuscenter.IssueSnapshot{
+				ID: "agent:" + evt.AgentID, Owner: snapshot.Ref, Severity: statuscenter.SeverityWarning,
 				Summary: snapshot.Label + " needs attention", Detail: status.Detail, Actions: actions,
 			})
-			center.Notify(ttypes.NotificationRecord{
+			center.Notify(statuscenter.NotificationRecord{
 				DedupKey: "agent-recovery:" + status.ID, Owner: snapshot.Ref,
-				Severity: ttypes.SeverityWarning, Source: "recovery",
+				Severity: statuscenter.SeverityWarning, Source: "recovery",
 				Summary: snapshot.Label + " needs attention", Detail: "Open the agent transcript for the reason and run controls.",
 				Actions: actions,
 			})
 		}
 	case "context_compaction_started", "context_compaction_stage", "context_compaction_retrying", "context_compaction_committing":
-		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentCompacting, "Compacting context", false
+		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentCompacting, "Compacting context", false
 		if values, ok := evt.Data.(map[string]any); ok {
 			if id, _ := values["request_id"].(string); id != "" && id != snapshot.RequestID {
 				snapshot.StartedAt = snapshot.UpdatedAt
@@ -277,9 +278,9 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 		// Automatic compaction resumes the same turn; the next request may
 		// update its phase. Manual compaction ends as a separate operation.
 		if node.State != nil && node.State.IsActive() {
-			snapshot.Phase, snapshot.Detail = ttypes.AgentPreparing, "Preparing context"
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentPreparing, "Preparing context"
 		} else {
-			snapshot.Phase = ttypes.AgentCompactionResult
+			snapshot.Phase = statuscenter.AgentCompactionResult
 			switch evt.Type {
 			case "context_compacted":
 				snapshot.Detail = "Context compacted"
@@ -295,54 +296,54 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 			reason, _ = values["reason"].(string)
 		}
 		if reason == "cancelled" {
-			snapshot.Phase, snapshot.Detail = ttypes.AgentCancelled, "Cancelled"
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentCancelled, "Cancelled"
 		} else {
-			snapshot.Phase, snapshot.Detail = ttypes.AgentCompleted, "Completed"
+			snapshot.Phase, snapshot.Detail = statuscenter.AgentCompleted, "Completed"
 		}
 		snapshot.NeedsAction = false
-		center.FinishOperations(evt.AgentID, ttypes.OperationSucceeded, "")
+		center.FinishOperations(evt.AgentID, statuscenter.OperationSucceeded, "")
 	case "error":
 		detail := fmt.Sprint(evt.Data)
-		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentFailed, detail, false
-		center.FinishOperations(evt.AgentID, ttypes.OperationFailed, detail)
-		center.SetIssue(ttypes.IssueSnapshot{
-			ID: "agent:" + evt.AgentID, Owner: snapshot.Ref, Severity: ttypes.SeverityError,
+		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = statuscenter.AgentFailed, detail, false
+		center.FinishOperations(evt.AgentID, statuscenter.OperationFailed, detail)
+		center.SetIssue(statuscenter.IssueSnapshot{
+			ID: "agent:" + evt.AgentID, Owner: snapshot.Ref, Severity: statuscenter.SeverityError,
 			Summary: snapshot.Label + " failed", Detail: detail,
 		})
-		center.Notify(ttypes.NotificationRecord{
+		center.Notify(statuscenter.NotificationRecord{
 			DedupKey: "agent-failure:" + evt.AgentID, Owner: snapshot.Ref,
-			Severity: ttypes.SeverityError, Source: "agent", Summary: snapshot.Label + " failed", Detail: "Open the agent transcript for details.",
-			Actions: []ttypes.StatusAction{{ID: "status.switch", Label: "Inspect agent", Enabled: true}},
+			Severity: statuscenter.SeverityError, Source: "agent", Summary: snapshot.Label + " failed", Detail: "Open the agent transcript for details.",
+			Actions: []statuscenter.Action{{ID: "status.switch", Label: "Inspect agent", Enabled: true}},
 		})
 	}
 	center.SetAgent(snapshot)
 }
 
-func agentTerminalPhase(status string) (ttypes.AgentPhase, string) {
+func agentTerminalPhase(status string) (statuscenter.AgentPhase, string) {
 	switch status {
 	case "cancelled":
-		return ttypes.AgentCancelled, "Cancelled"
+		return statuscenter.AgentCancelled, "Cancelled"
 	case "failed", "error", "crashed", "failed_error", "failed_timeout", "failed_quota", "failed_policy":
-		return ttypes.AgentFailed, "Failed"
+		return statuscenter.AgentFailed, "Failed"
 	default:
-		return ttypes.AgentCompleted, "Completed"
+		return statuscenter.AgentCompleted, "Completed"
 	}
 }
 
-func agentRequestOperation(snapshot ttypes.AgentStatusSnapshot) ttypes.OperationSnapshot {
+func agentRequestOperation(snapshot statuscenter.AgentStatusSnapshot) statuscenter.OperationSnapshot {
 	id := snapshot.RequestID
 	if id == "" {
 		id = fmt.Sprintf("agent-request:%s:%d", snapshot.Ref.ID, snapshot.TurnGeneration)
 	}
-	state := ttypes.OperationRunning
-	if snapshot.Phase == ttypes.AgentWaiting {
-		state = ttypes.OperationWaiting
+	state := statuscenter.OperationRunning
+	if snapshot.Phase == statuscenter.AgentWaiting {
+		state = statuscenter.OperationWaiting
 	}
-	return ttypes.OperationSnapshot{
+	return statuscenter.OperationSnapshot{
 		ID: id, Owner: snapshot.Ref, Kind: "provider-request", Label: snapshot.Detail,
 		State: state, Progress: snapshot.UploadedBytes, Total: snapshot.TotalBytes, Unit: "bytes",
 		StartedAt: snapshot.StartedAt, Cancellable: true,
-		Actions: []ttypes.StatusAction{{ID: "agent.cancel", Label: "Cancel", Enabled: true}},
+		Actions: []statuscenter.Action{{ID: "agent.cancel", Label: "Cancel", Enabled: true}},
 	}
 }
 

@@ -25,7 +25,7 @@ func TestMessageRoundTripPreservesProtocolContinuationData(t *testing.T) {
 		{
 			Role:    "assistant",
 			Content: provider.TextContent(""),
-			ProviderItems: []provider.ProviderItem{{
+			ProviderItems: []provider.Item{{
 				Standard: "anthropic",
 				Type:     "thinking",
 				Data:     json.RawMessage(`{"type":"thinking","thinking":"reason","signature":"sig"}`),
@@ -102,7 +102,7 @@ func TestReplaceMessagesRejectsInvalidProviderMetadata(t *testing.T) {
 	_, err = ReplaceMessages(db, "session", []provider.ChatMessage{{
 		Role:    "assistant",
 		Content: provider.TextContent(""),
-		ProviderItems: []provider.ProviderItem{{
+		ProviderItems: []provider.Item{{
 			Standard: "anthropic", Type: "thinking", Data: json.RawMessage(`{`),
 		}},
 	}}, []int{1})

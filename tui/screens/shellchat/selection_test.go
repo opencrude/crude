@@ -9,7 +9,7 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestShellChatTextSelectionCopy(t *testing.T) {
@@ -209,7 +209,7 @@ func TestCollapsedMultilineDisclosureClickAndDrag(t *testing.T) {
 // Exercise the actual plan projection, not only hand-built rows. Both live and
 // hydrated plans open expanded and toggle from their continuation and step lines.
 func TestRenderedPlanEveryLineToggles(t *testing.T) {
-	message := types.ChatMessage{InternalID: "plan", Role: types.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: `{"id":"plan-1","revision":1,"objective":"A deliberately long objective that wraps across several rows of a narrow transcript","status":"active","steps":[{"id":"one","description":"First item","status":"completed"},{"id":"two","description":"Current item with detailed evidence that should be displayed when expanded","status":"in_progress"}]}`}
+	message := conversation.ChatMessage{InternalID: "plan", Role: conversation.RoleTool, ToolName: "update_plan", ToolStatus: "success", ToolPreviewPhase: "done", Content: `{"id":"plan-1","revision":1,"objective":"A deliberately long objective that wraps across several rows of a narrow transcript","status":"active","steps":[{"id":"one","description":"First item","status":"completed"},{"id":"two","description":"Current item with detailed evidence that should be displayed when expanded","status":"in_progress"}]}`}
 	for _, hydrated := range []bool{false, true} {
 		th := theme.DefaultDark()
 		const width = 42
@@ -217,7 +217,7 @@ func TestRenderedPlanEveryLineToggles(t *testing.T) {
 		r.SetSize(width, 30)
 		r.SetChatAreaBounds(0, 30)
 		if hydrated {
-			r.SyncMessages([]types.ChatMessage{message}, 1, 0)
+			r.SyncMessages([]conversation.ChatMessage{message}, 1, 0)
 		} else {
 			r.AppendMessage(message)
 		}

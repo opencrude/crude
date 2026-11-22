@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"sync"
 
-	"crude/agent"
 	"crude/agent/capability"
 	"crude/agent/collaboration"
 	"crude/agent/session"
-	"crude/logger"
+	"crude/agent/turnloop"
+	"crude/internal/logger"
+	"crude/types/conversation"
 	"crude/workspace/localhistory"
 )
 
@@ -24,13 +25,13 @@ type SessionLifecycleOperation struct {
 	root, directory, home, sessionID, instanceID string
 	cfg                                          *session.Config
 	logger                                       Logger
-	database                                     *WorkspaceDB
+	database                                     *DB
 	collaboration                                *collaboration.Store
 	capabilities                                 *capability.Service
 	executions                                   *ExecutionService
 	lsp                                          *LSPManager
 	documents                                    *DocumentService
-	claims                                       *agent.FileOwnership
+	claims                                       *turnloop.FileOwnership
 	sender                                       session.EventSender
 	history                                      *LocalHistoryService
 	historyErr                                   error
@@ -57,7 +58,7 @@ type SessionLifecycleOperation struct {
 type SessionLifecycleResult struct {
 	Err             error
 	owner           *Session
-	views           []ChatMessageView
+	views           []conversation.Message
 	children        []preparedSubAgent
 	cold            bool
 	agentID         string
@@ -78,7 +79,7 @@ type SessionLifecycleResult struct {
 type lifecycleEventGate struct {
 	mu       sync.Mutex
 	sender   session.EventSender
-	events   []agent.AgentEvent
+	events   []turnloop.AgentEvent
 	open     bool
 	overflow bool
 }
@@ -87,9 +88,9 @@ func (g *lifecycleEventGate) SendAgentEvent(kind string, data any) {
 	g.SendAgentEventWithID(kind, data, "")
 }
 func (g *lifecycleEventGate) SendAgentEventWithID(kind string, data any, id string) {
-	g.SendAgentEventEnvelope(agent.AgentEvent{Type: kind, Data: data, AgentID: id})
+	g.SendAgentEventEnvelope(turnloop.AgentEvent{Type: kind, Data: data, AgentID: id})
 }
-func (g *lifecycleEventGate) SendAgentEventEnvelope(event agent.AgentEvent) {
+func (g *lifecycleEventGate) SendAgentEventEnvelope(event turnloop.AgentEvent) {
 	g.mu.Lock()
 	if !g.open {
 		if len(g.events) == 1024 {

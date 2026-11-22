@@ -10,10 +10,10 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/core"
-	coreclient "crude/core/client"
-	coreprotocol "crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -29,19 +29,19 @@ func TestRemovingAnAccountReleasesEverySettingThatUsesIt(t *testing.T) {
 			"keep":  {ID: "keep", Label: "Example account", APIKey: "fixture-key", ProviderID: "custom", Connection: provider.Template{APIStandard: "openai", ProviderURL: "https://example.invalid/v1"}},
 		},
 		Agents: &session.AgentsConfig{Enabled: true, ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {Categories: map[string]session.CategoryConfig{
-			"default":          {AccountID: "keep", Model: "main-model"},
-			"crafter":          {AccountID: removed, Model: "other-model", Enabled: &on, Description: "Builds"},
-			types.ErrandRoleID: {AccountID: removed, Model: "errand-model"},
+			"default":            {AccountID: "keep", Model: "main-model"},
+			"crafter":            {AccountID: removed, Model: "other-model", Enabled: &on, Description: "Builds"},
+			setting.ErrandRoleID: {AccountID: removed, Model: "errand-model"},
 		}}},
-			AgentProfiles: map[string]session.AgentProfileConfig{"reviewer": {Category: "researcher", AccountID: removed, Model: "other-model"}},
-			Suggestions:   types.SuggestionSettings{AccountID: removed, Model: "fim", TimeoutSeconds: 4},
+			AgentProfiles: map[string]setting.AgentProfile{"reviewer": {Category: "researcher", AccountID: removed, Model: "other-model"}},
+			Suggestions:   setting.Suggestion{AccountID: removed, Model: "fim", TimeoutSeconds: 4},
 		},
-		Editor: &types.EditorSettings{TabSize: 2},
-		Memory: &types.MemorySettings{
-			Ranker:         types.MemoryRankerSettings{Enabled: "on", AccountID: removed, Model: "example-decider", TopK: 3},
-			MemoryCategory: types.CategorySettings{AccountID: removed, Model: "memory-model", Instructions: "Be brief."},
+		Editor: &setting.Editor{TabSize: 2},
+		Memory: &setting.Memory{
+			Ranker:         setting.MemoryRanker{Enabled: "on", AccountID: removed, Model: "example-decider", TopK: 3},
+			MemoryCategory: setting.Category{AccountID: removed, Model: "memory-model", Instructions: "Be brief."},
 		},
-		Safety: &types.SafetySettings{AutoPermission: types.AutoPermissionSettings{Enabled: "on", AccountID: removed, Provider: "ollama-cloud", Model: "example-decider", ThinkingEffort: "low"}},
+		Safety: &setting.Safety{AutoPermission: setting.AutoPermission{Enabled: "on", AccountID: removed, Provider: "ollama-cloud", Model: "example-decider", ThinkingEffort: "low"}},
 		Capabilities: &captypes.Settings{WebSearchRoutes: []captypes.WebSearchRoute{
 			{ID: "r1", Account: removed}, {ID: "r2", Account: "keep", Model: "search-model"},
 		}},
@@ -74,14 +74,14 @@ func TestRemovingAnAccountReleasesEverySettingThatUsesIt(t *testing.T) {
 			&coreprotocol.AccountChangeRequest{ID: removed, RemovalPreview: preview}, &coreprotocol.AccountView{})
 	}
 	stale := FileConfigToAppSettings(fc)
-	stale.Memory.Ranker = types.MemoryRankerSettings{}
-	if err := remove(types.AccountRemovalPreview(stale, removed)); err == nil || !strings.Contains(err.Error(), "account uses changed") {
+	stale.Memory.Ranker = setting.MemoryRanker{}
+	if err := remove(setting.AccountRemovalPreview(stale, removed)); err == nil || !strings.Contains(err.Error(), "account uses changed") {
 		t.Fatalf("stale removal preview was accepted: %v", err)
 	}
 	if _, ok := LoadFileConfig().Accounts[removed]; !ok {
 		t.Fatal("a refused removal mutated the account")
 	}
-	if err := remove(types.AccountRemovalPreview(FileConfigToAppSettings(fc), removed)); err != nil {
+	if err := remove(setting.AccountRemovalPreview(FileConfigToAppSettings(fc), removed)); err != nil {
 		t.Fatal(err)
 	}
 

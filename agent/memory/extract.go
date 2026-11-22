@@ -157,7 +157,7 @@ type ExtractionBatch struct {
 }
 
 func (st *Store) KnowledgeGeneration(ctx context.Context) (int64, error) {
-	raw, err := st.GetMeta(ctx, "knowledge_generation")
+	raw, err := st.Meta(ctx, "knowledge_generation")
 	if err != nil || raw == "" {
 		return 0, err
 	}

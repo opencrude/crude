@@ -11,7 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 	"crude/tui/cell"
 	"crude/tui/filetree"
 	"crude/tui/rendering"
@@ -22,7 +22,7 @@ import (
 	"crude/tui/screens/shellheader"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
-	ctypes "crude/types"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -591,7 +591,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	screen.SetAgentID(agentID)
 	pad, inner := boundedContentGeometry(rect.W, m.Theme.Spacing.PadLR)
 	layout := contentLayout{ContentW: rect.W, InnerW: inner, PadLR: pad}
-	projection := m.subPaneProjections.GetExisting(agentID)
+	projection := m.subPaneProjections.Existing(agentID)
 	if projection == nil {
 		return
 	}
@@ -622,7 +622,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		// The submitted draft awaits the core's receipt. The chat status strip
 		// owns that state; the composer only dims the exact pending draft.
 		activity.Active = true
-		activity.Status.Phase, activity.Status.Detail = ctypes.AgentSending, ""
+		activity.Status.Phase, activity.Status.Detail = statuscenter.AgentSending, ""
 	}
 	if node := m.ws.AgentMgr().Get(agentID); node != nil && m.thinkingPaneID(node.State) != "" {
 		activity.Thinking, activity.ThinkingID = "", ""

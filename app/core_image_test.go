@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"crude/buildinfo"
+	"crude/internal/buildinfo"
 )
 
 // Two callers can both observe a missing image before either finishes copying.

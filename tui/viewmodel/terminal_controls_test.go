@@ -13,7 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"golang.org/x/term"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shellterm"

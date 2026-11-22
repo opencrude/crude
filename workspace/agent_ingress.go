@@ -6,10 +6,12 @@ import (
 	"time"
 
 	"crude/agent/provider"
-	"crude/types"
+	"crude/agent/session"
 	"crude/types/attachment"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 // AgentReduction describes a committed change, not another event to reduce.
@@ -38,11 +40,11 @@ func (w *Workspace) RegisterAgentRoot(id string) *AgentNode {
 	if node != nil && node.State != nil {
 		return node
 	}
-	conversation := NewConversation()
+	transcript := NewConversation()
 	if w.PaneMgr != nil {
-		conversation = w.PaneMgr.GetOrCreate(id, PaneAgent, id).Messages
+		transcript = w.PaneMgr.Ensure(id, PaneAgent, id).Messages
 	}
-	state := NewAgentState(id, conversation, w.Logger)
+	state := NewAgentState(id, transcript, w.Logger)
 	if node == nil {
 		node = w.AgentMgr.AddOrchestrator(id, state)
 	} else {
@@ -83,7 +85,7 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 	if structuralStart && node != nil && (node.Parent == nil || node.Parent != parent) {
 		return result
 	}
-	identified := evt.Identity != (types.RuntimeEventIdentity{})
+	identified := evt.Identity != (conversation.RuntimeEventIdentity{})
 	if identified && (!evt.Identity.Valid() || evt.Identity.AgentID != evt.AgentID ||
 		!w.agentEventOwnerMatches(node, parent, evt.Identity)) {
 		return result
@@ -96,15 +98,15 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		if label == "" {
 			label = evt.AgentID
 		}
-		conversation := NewConversation()
+		transcript := NewConversation()
 		if w.PaneMgr != nil {
-			pane := w.PaneMgr.GetOrCreate(evt.AgentID, PaneAgent, SubAgentActivityLabel(label, data["category"], ""))
-			conversation, pane.Status = pane.Messages, "running"
+			pane := w.PaneMgr.Ensure(evt.AgentID, PaneAgent, SubAgentActivityLabel(label, data["category"], ""))
+			transcript, pane.Status = pane.Messages, "running"
 		}
-		state := NewAgentState(evt.AgentID, conversation, w.Logger)
+		state := NewAgentState(evt.AgentID, transcript, w.Logger)
 		node = w.AgentMgr.AddSubAgent(evt.AgentID, parent.ID, label, data["model"], data["category"], state)
 		if assignment := data["prompt"]; assignment != "" {
-			conversation.AppendMessage(Message{Role: MessageRoleAssignment, Content: assignment, Time: time.Now()})
+			transcript.AppendMessage(conversation.Message{Role: MessageRoleAssignment, Content: assignment, Time: time.Now()})
 		}
 		result.Added = true
 		if parent.State != nil && parent.State.Messages != nil &&
@@ -212,7 +214,7 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		if node.Parent == nil || node.Parent.State == nil || data["question"] == "" {
 			return result
 		}
-		node.Parent.State.Messages.AppendMessage(Message{Role: MessageRoleTool,
+		node.Parent.State.Messages.AppendMessage(conversation.Message{Role: MessageRoleTool,
 			Content: fmt.Sprintf("[%s:%s] asks: %s", node.Category, node.Label, data["question"]), Time: time.Now()})
 		result.ChangedAgents = append(result.ChangedAgents, node.Parent.ID)
 	default:
@@ -246,7 +248,7 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 	return result
 }
 
-func (w *Workspace) agentEventOwnerMatches(node, parent *AgentNode, id types.RuntimeEventIdentity) bool {
+func (w *Workspace) agentEventOwnerMatches(node, parent *AgentNode, id conversation.RuntimeEventIdentity) bool {
 	if node != nil && node.Parent != nil || node == nil && parent != nil {
 		return id.OwnerID == id.AgentID // child session identity is allocated with its exact agent ID
 	}
@@ -334,7 +336,7 @@ func (w *Workspace) RejectAgentRecoveryCancellation(id, incident string) {
 
 // AppendAgentMessages admits neutral evidence and optionally normalizes a cold
 // stopped transcript. UI projection helpers cannot mutate Conversation directly.
-func (w *Workspace) AppendAgentMessages(id string, messages []Message, stopped bool) bool {
+func (w *Workspace) AppendAgentMessages(id string, messages []conversation.Message, stopped bool) bool {
 	if w == nil || w.AgentMgr == nil || len(messages) == 0 {
 		return false
 	}
@@ -386,24 +388,24 @@ type AgentSnapshot struct {
 	ID, ParentID, SessionID, Label, Model, Category     string
 	Streaming, Thinking, Running, Cancelling, Completed bool
 	Status                                              string
-	TurnIdentity                                        types.TurnIdentity
-	RuntimeIdentity                                     types.RuntimeEventIdentity
+	TurnIdentity                                        conversation.TurnIdentity
+	RuntimeIdentity                                     conversation.RuntimeEventIdentity
 	ReasoningMode                                       reasoning.Kind
 	Recovery                                            recovery.Status
 	Yolo                                                bool
 	PlanMode                                            bool
 	// Goal is the main agent's session goal; children have none.
-	Goal *types.Goal
+	Goal *conversation.Goal
 	// PlanReview is present only on a main agent with proposals.
-	PlanReview           *types.PlanReview
-	Loops                []types.Loop
+	PlanReview           *conversation.PlanReview
+	Loops                []conversation.Loop
 	ActiveCompaction     TurnStatus
 	LastTokenTime        time.Time
-	Messages             []Message
+	Messages             []conversation.Message
 	ConversationRevision uint64
 	Prompt               *AgentPrompt
-	Usage                types.UsageSummary
-	Activity             types.AgentActivityView
+	Usage                statuscenter.UsageSummary
+	Activity             statuscenter.AgentActivityView
 }
 
 type AgentWorkspaceSnapshot struct {
@@ -485,14 +487,14 @@ func (w *Workspace) snapshotAgent(node *AgentNode, includeMessages bool) AgentSn
 		}
 		snapshot.Activity.Plan = &plan
 	}
-	snapshot.Usage, _ = w.UsageSummary(node.ID, types.UsageThisAgent)
+	snapshot.Usage, _ = w.UsageSummary(node.ID, statuscenter.UsageThisAgent)
 	snapshot.Usage.Models = slices.Clone(snapshot.Usage.Models)
 	return snapshot
 }
 
 // ApplyAgentInputAdmission commits the visible accepted input on the same owner
 // as runtime output. Only the originating client consumes its draft afterward.
-func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, result InputAdmissionResult, input provider.UserInput, labels []string) bool {
+func (w *Workspace) ApplyAgentInputAdmission(intent *session.InputAdmissionIntent, result session.InputAdmissionResult, input provider.UserInput, labels []string) bool {
 	if w != nil && w.AgentMgr != nil && intent != nil && result.Status == InputAdmissionQueued {
 		receipt := result.Receipt
 		node := w.AgentMgr.Get(intent.AgentID)
@@ -526,7 +528,7 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, resul
 		return false
 	}
 	state := node.State
-	if !state.Messages.AppendMessageIfAbsent(Message{InternalID: receipt.InputID, Role: MessageRoleUser,
+	if !state.Messages.AppendMessageIfAbsent(conversation.Message{InternalID: receipt.InputID, Role: MessageRoleUser,
 		Origin: input.EffectiveOrigin(), Content: input.DisplayContent(), ReferenceLabels: labels, Attachments: inputAttachmentTargets(owner, input), Time: receipt.AcceptedAt}) {
 		return true
 	}
@@ -544,7 +546,7 @@ func inputAttachmentTargets(owner *Session, input provider.UserInput) []attachme
 	}
 	var selected []attachment.Target
 	for _, id := range input.ReferenceIDs {
-		if ref, ok := owner.RefStore.GetReference(id); ok && ref.Active() && ref.SessionID == owner.SessionID {
+		if ref, ok := owner.RefStore.Reference(id); ok && ref.Active() && ref.SessionID == owner.SessionID {
 			selected = append(selected, attachment.Target{ReferenceID: ref.ID, Label: ref.DisplayName()})
 		}
 	}
@@ -553,6 +555,6 @@ func inputAttachmentTargets(owner *Session, input provider.UserInput) []attachme
 
 // queuedInputMessage is the pending row for a prompt waiting in the durable
 // queue. Admission consumes the pending mark in place, keeping one identity.
-func queuedInputMessage(id string, input provider.UserInput, at time.Time) Message {
-	return Message{InternalID: id, Role: MessageRoleUser, Origin: input.EffectiveOrigin(), Content: input.DisplayContent(), Time: at, PendingSteering: true}
+func queuedInputMessage(id string, input provider.UserInput, at time.Time) conversation.Message {
+	return conversation.Message{InternalID: id, Role: MessageRoleUser, Origin: input.EffectiveOrigin(), Content: input.DisplayContent(), Time: at, PendingSteering: true}
 }

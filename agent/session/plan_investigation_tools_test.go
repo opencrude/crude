@@ -14,8 +14,8 @@ import (
 
 	"crude/agent/tools"
 	"crude/agent/worktree"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/conversation"
 	"crude/types/toolresult"
 	"crude/workspace/fileio"
 )
@@ -182,7 +182,7 @@ func TestPlanInvestigationCommandRoutesUseOneExactPermissionAndRealEvidence(t *t
 	}
 	review, ok := s.PlanReview()
 	if !ok || len(review.Revisions) != 1 || len(review.Revisions[0].Evidence) != 4 ||
-		review.Revisions[0].Evidence[3].Status != types.PlanEvidenceInconclusive {
+		review.Revisions[0].Evidence[3].Status != conversation.PlanEvidenceInconclusive {
 		t.Fatalf("exact command receipts did not reach the revision: %+v", review)
 	}
 }
@@ -240,7 +240,7 @@ func TestPlanInvestigationAsyncHoldsCheckoutUntilCancellationEvidence(t *testing
 		t.Fatalf("the settled command retained the checkout lease: %v", err)
 	}
 	journal, err := s.loadInvestigationEvidenceJournal(ctx)
-	if err != nil || len(journal.Entries) != 1 || journal.Entries[0].Ref.Status != types.PlanEvidenceInterrupted {
+	if err != nil || len(journal.Entries) != 1 || journal.Entries[0].Ref.Status != conversation.PlanEvidenceInterrupted {
 		t.Fatalf("the actual cancellation was not retained: %+v: %v", journal, err)
 	}
 }

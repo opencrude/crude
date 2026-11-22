@@ -12,11 +12,11 @@ import (
 	"crude/tui/screens/confirmation"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
-	"crude/tui/settings"
+	"crude/tui/screens/settingspages"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	ttypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -63,7 +63,7 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := chatprojection.NewRenderer(th)
-	sp := app.ws.PaneMgr().GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	sp := app.ws.PaneMgr().Ensure("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
 	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
@@ -79,7 +79,7 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := chatprojection.NewRenderer(th)
-	sp := app.ws.PaneMgr().GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	sp := app.ws.PaneMgr().Ensure("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
 	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
@@ -641,7 +641,7 @@ func TestPreparedInputStopLateAcceptedReceiptCannotReactivate(t *testing.T) {
 	app.applyInputAdmission(message)
 	count := 0
 	for _, row := range state.Messages.Messages() {
-		if row.Role == ttypes.RoleUser && row.Content == "submitted draft" {
+		if row.Role == conversation.RoleUser && row.Content == "submitted draft" {
 			count++
 		}
 	}
@@ -761,16 +761,16 @@ func TestRejectedSteeringKeepsDraftAndDoesNotFabricateHumanEvidence(t *testing.T
 
 func TestCollaborationDeliverySettlementClearsPendingStatus(t *testing.T) {
 	app := newFullTestApp(t)
-	conversation := workspace.NewConversation()
-	first := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "first"})
-	second := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "second"})
-	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	transcript := workspace.NewConversation()
+	first := transcript.AppendPendingSteering(conversation.Message{Role: workspace.MessageRoleUser, Content: "first"})
+	second := transcript.AppendPendingSteering(conversation.Message{Role: workspace.MessageRoleUser, Content: "second"})
+	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", transcript, nil))
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_admitted", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
-	if got := conversation.PendingSteeringCount(); got != 1 {
+	if got := transcript.PendingSteeringCount(); got != 1 {
 		t.Fatalf("pending human steering count=%d want 1", got)
 	}
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": second}})
-	if got := conversation.PendingSteeringCount(); got != 0 {
+	if got := transcript.PendingSteeringCount(); got != 0 {
 		t.Fatalf("pending human steering count=%d want 0", got)
 	}
 }
@@ -781,21 +781,21 @@ func TestStoppedSteeringSettlesInChatWithoutTouchingNewDraft(t *testing.T) {
 	other := workspace.NewSession("other", t.TempDir(), nil, nil)
 	app.ActiveSession = owner
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"agent": owner}
-	conversation := workspace.NewConversation()
-	first := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "first note"})
-	second := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "second note"})
-	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	transcript := workspace.NewConversation()
+	first := transcript.AppendPendingSteering(conversation.Message{Role: workspace.MessageRoleUser, Content: "first note"})
+	second := transcript.AppendPendingSteering(conversation.Message{Role: workspace.MessageRoleUser, Content: "second note"})
+	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", transcript, nil))
 	app.Input.SetInput("newer draft")
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": second}})
 	if got := app.Input.Value(); got != "newer draft" {
 		t.Fatalf("stopped delivery changed newer draft = %q", got)
 	}
-	if messages := conversation.Messages(); len(messages) != 2 || messages[0].Content != "first note" || messages[1].Content != "second note" || messages[0].PendingSteering || messages[1].PendingSteering {
+	if messages := transcript.Messages(); len(messages) != 2 || messages[0].Content != "first note" || messages[1].Content != "second note" || messages[0].PendingSteering || messages[1].PendingSteering {
 		t.Fatalf("stopped notes not retained as settled context: %+v", messages)
 	}
 
-	third := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "background note"})
+	third := transcript.AppendPendingSteering(conversation.Message{Role: workspace.MessageRoleUser, Content: "background note"})
 	app.ActiveSession = other
 	app.Input.SetInput("other session draft")
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": third}})
@@ -814,9 +814,9 @@ func TestCancelledPendingSteeringSettlesInPlaceAndIsIdempotent(t *testing.T) {
 	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
 	app.ActiveSession = owner
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"agent": owner}
-	conversation := workspace.NewConversation()
-	id := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "cancel me"})
-	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	transcript := workspace.NewConversation()
+	id := transcript.AppendPendingSteering(conversation.Message{Role: workspace.MessageRoleUser, Content: "cancel me"})
+	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", transcript, nil))
 	app.Input.SetInput("typed while waiting")
 	clear := workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": id}}
 	app.handleAgentDomainEvent(clear)
@@ -824,7 +824,7 @@ func TestCancelledPendingSteeringSettlesInPlaceAndIsIdempotent(t *testing.T) {
 	if got := app.Input.Value(); got != "typed while waiting" {
 		t.Fatalf("cancel settlement changed draft: %q", got)
 	}
-	if got := conversation.PendingSteeringCount(); got != 0 {
+	if got := transcript.PendingSteeringCount(); got != 0 {
 		t.Fatalf("cancel left %d blinking notes", got)
 	}
 }
@@ -865,7 +865,7 @@ func TestAddOrchestratorKeepsExistingSessionReachable(t *testing.T) {
 
 func TestHandleAgentEventDropsUnknownOrchestrator(t *testing.T) {
 	app := newFullTestApp(t)
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "done", AgentID: "stale", Data: "done"})
+	app.handleAgentEvent(AgentEventMsg{Type: "done", AgentID: "stale", Data: "done"})
 	if app.ws.AgentMgr().Get("stale") != nil {
 		t.Fatal("stale event created an orchestrator without live channels")
 	}
@@ -1155,7 +1155,7 @@ func TestFlatDraggableSettingsAndFilePickerWindows(t *testing.T) {
 		t.Fatal("workspace settings should use ui.WindowFrame chrome")
 	}
 	framed := settingsWindow.Content.(*ui.WindowFrameWidget)
-	if _, ok := framed.Body().(*settings.WorkspaceSettingsSurface); !ok {
+	if _, ok := framed.Body().(*settingspages.WorkspaceSettingsSurface); !ok {
 		t.Fatal("workspace settings should use the native structured shell")
 	}
 }

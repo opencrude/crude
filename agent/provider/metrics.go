@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"crude/metrics"
+	"crude/internal/metrics"
 )
 
 // Model request series, keyed by model so a slow provider is named.

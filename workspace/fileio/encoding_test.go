@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"crude/text/encoding"
+	"crude/text/textencoding"
 )
 
 func TestEncodedFileReadPatchWriteSearchAndPreview(t *testing.T) {

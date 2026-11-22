@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"crude/types/conversation"
 	"crude/types/reasoning"
 )
 
@@ -57,7 +58,7 @@ func TestConversationStreamMalformedAtomic(t *testing.T) {
 	for _, name := range []string{"gap", "overlap", "overflow", "missing", "duplicate", "conflict", "reset", "same-revision", "bad-utf8", "reasoning-index"} {
 		t.Run(name, func(t *testing.T) {
 			c := NewConversation()
-			c.AppendMessage(Message{InternalID: "a", Role: MessageRoleAssistant, Content: "abc"})
+			c.AppendMessage(conversation.Message{InternalID: "a", Role: MessageRoleAssistant, Content: "abc"})
 			d := ConversationDelta{BaseRevision: 1, Revision: 2, Appends: []ConversationTextAppend{{InternalID: "a", Offset: 3, Text: "def"}}}
 			switch name {
 			case "gap":
@@ -71,7 +72,7 @@ func TestConversationStreamMalformedAtomic(t *testing.T) {
 			case "duplicate":
 				d.Appends = append(d.Appends, d.Appends[0])
 			case "conflict":
-				d.Upserts = []Message{{InternalID: "a", Content: "replacement"}}
+				d.Upserts = []conversation.Message{{InternalID: "a", Content: "replacement"}}
 			case "reset":
 				d.Reset, d.Order = true, []string{"a"}
 			case "same-revision":
@@ -94,7 +95,7 @@ func TestConversationStreamMalformedAtomic(t *testing.T) {
 
 func TestConversationConflictingDuplicateAndStaleAppend(t *testing.T) {
 	c := NewConversation()
-	c.AppendMessage(Message{InternalID: "a", Role: MessageRoleAssistant, Content: "abc"})
+	c.AppendMessage(conversation.Message{InternalID: "a", Role: MessageRoleAssistant, Content: "abc"})
 	d := ConversationDelta{BaseRevision: 1, Revision: 2, Appends: []ConversationTextAppend{{InternalID: "a", Offset: 3, Text: "def"}}}
 	if err := c.InstallDelta(d); err != nil {
 		t.Fatal(err)
@@ -192,7 +193,7 @@ func FuzzConversationMalformedTextOffset(f *testing.F) {
 			text = text[:4096]
 		}
 		c := NewConversation()
-		c.AppendMessage(Message{InternalID: "a", Role: MessageRoleAssistant, Content: "abc"})
+		c.AppendMessage(conversation.Message{InternalID: "a", Role: MessageRoleAssistant, Content: "abc"})
 		d := ConversationDelta{BaseRevision: 1, Revision: 2, Appends: []ConversationTextAppend{{InternalID: "a", Offset: offset, Text: text}}}
 		before := c.Messages()
 		err := c.InstallDelta(d)
@@ -258,7 +259,7 @@ func TestConversationRandomStructuralStream(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		switch random.IntN(5) {
 		case 0:
-			c.AppendMessage(Message{Role: MessageRoleUser, Content: "next"})
+			c.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "next"})
 		case 1:
 			c.AppendThinking("thought")
 		default:
@@ -286,7 +287,7 @@ func TestConversationReplicaJournalFeedsExactLocalReaders(t *testing.T) {
 	for i := 0; i < 2000; i++ {
 		switch random.IntN(6) {
 		case 0:
-			c.AppendMessage(Message{Role: MessageRoleUser, Content: "next"})
+			c.AppendMessage(conversation.Message{Role: MessageRoleUser, Content: "next"})
 		case 1:
 			c.AppendThinking("thought")
 		case 2:

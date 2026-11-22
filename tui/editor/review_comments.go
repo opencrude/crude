@@ -13,13 +13,13 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // ReviewComment is a display-only comment supplied by the editor's owner.
 type ReviewComment struct {
 	ID     string
-	Anchor types.TextAnchor
+	Anchor conversation.TextAnchor
 	Body   string
 	Status string
 	Muted  bool

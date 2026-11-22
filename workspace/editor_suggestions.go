@@ -6,13 +6,14 @@ import (
 	"path/filepath"
 
 	"crude/insight/textindex"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace/document"
 )
 
 // installSuggestions creates the text index and the suggestion service for a
 // project. The core starts the index; nothing here reads the disk.
-func (w *Workspace) installSuggestions(root string, db *WorkspaceDB) {
+func (w *Workspace) installSuggestions(root string, db *DB) {
 	w.TextIndex = textindex.New(root, 0)
 	w.suggestions = nil
 	if db == nil || w.LiveDocuments == nil {
@@ -40,14 +41,14 @@ func (w *Workspace) closeSuggestions() {
 
 // configureSuggestions binds the effective workspace choice and the current
 // connection. It runs on the workspace owner and does no I/O.
-func (w *Workspace) configureSuggestions(effective types.AppSettings) {
+func (w *Workspace) configureSuggestions(effective setting.App) {
 	if w.suggestions == nil {
 		return
 	}
 	overrides := w.LoadWorkspaceOverrides()
 	policy := predictionRuntimePolicy{settings: effective.Prediction, rootIdentity: overrides.PredictionRootIdentity,
 		grant: overrides.PredictionGrantID, consented: overrides.PredictionConnectionIdentity}
-	if effective.Prediction.Mode != types.PredictionOff {
+	if effective.Prediction.Mode != setting.PredictionOff {
 		if w.sessionCfg == nil {
 			policy.completerErr = errors.New("the Errand connection is not ready")
 		} else {
@@ -61,9 +62,9 @@ var errSuggestionsUnavailable = errors.New("suggestions are not available in thi
 
 // RequestEditorSuggestion answers one editor suggestion request off the
 // workspace owner. An empty result means there is nothing to show.
-func (w *Workspace) RequestEditorSuggestion(ctx context.Context, owner document.Owner, request types.EditorPredictionRequest) (types.EditorPredictionResult, error) {
+func (w *Workspace) RequestEditorSuggestion(ctx context.Context, owner document.Owner, request insight.EditorPredictionRequest) (insight.EditorPredictionResult, error) {
 	if w == nil || w.suggestions == nil {
-		return types.EditorPredictionResult{}, errSuggestionsUnavailable
+		return insight.EditorPredictionResult{}, errSuggestionsUnavailable
 	}
 	return w.suggestions.Request(ctx, owner, request)
 }
@@ -78,9 +79,9 @@ func (w *Workspace) ReleaseEditorSuggestion(owner document.Owner, viewID string,
 
 // EditorSuggestionStatus returns the suggestion status, refreshing the hourly
 // meter first. It reads the ledger and must run off the workspace owner.
-func (w *Workspace) EditorSuggestionStatus(ctx context.Context) types.EditorPredictionStatus {
+func (w *Workspace) EditorSuggestionStatus(ctx context.Context) insight.EditorPredictionStatus {
 	if w == nil || w.suggestions == nil {
-		return types.EditorPredictionStatus{Reason: "Suggestions are not available in this workspace."}
+		return insight.EditorPredictionStatus{Reason: "Suggestions are not available in this workspace."}
 	}
 	_ = w.suggestions.RefreshMeter(ctx)
 	return w.suggestions.Snapshot()
@@ -89,7 +90,7 @@ func (w *Workspace) EditorSuggestionStatus(ctx context.Context) types.EditorPred
 // RecentEdits returns up to limit recent edits in one file (all files when
 // path is empty), newest last, with authors relative to owner. Paths are
 // workspace-relative with forward slashes.
-func (w *Workspace) RecentEdits(owner document.Owner, path string, limit int) []types.RecentEdit {
+func (w *Workspace) RecentEdits(owner document.Owner, path string, limit int) []insight.RecentEdit {
 	if w == nil || w.LiveDocuments == nil {
 		return nil
 	}

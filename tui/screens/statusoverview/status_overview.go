@@ -11,7 +11,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/statuscenter"
 )
 
 type ViewID string
@@ -59,7 +59,7 @@ type Item struct {
 	Icon     string
 	Header   bool
 	Active   bool
-	Owner    ttypes.ResourceRef
+	Owner    statuscenter.ResourceRef
 	Lines    []DetailLine
 	Usage    []UsageSection
 	// ActivateAction makes this a command row instead of a disclosure row.
@@ -70,7 +70,7 @@ type Item struct {
 	DisabledReason     string
 	NotificationID     string
 	NotificationUnread bool
-	Actions            []ttypes.StatusAction
+	Actions            []statuscenter.Action
 }
 
 type Projection struct {

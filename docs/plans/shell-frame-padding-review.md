@@ -6,7 +6,7 @@
 
 ## Shipped summary (context)
 
-- `types.ThemeSettings` carries `PadTop/PadBottom/PadLeft/PadRight *int`
+- `setting.Theme` carries `PadTop/PadBottom/PadLeft/PadRight *int`
   (`pad_top` / `pad_bottom` / `pad_left` / `pad_right`, `omitempty`). Nil =
   inherit default. Default is **0 on every side** — padding is opt-in, the
   shell renders edge to edge. Accessors `PadXOrDefault()` treat nil/negative
@@ -28,7 +28,7 @@
   `ApplyThemePreset` (`applyThemeFrame`, which loads effective workspace
   settings) — covers startup, settings save, cancel, workspace switch, and
   config.json hot reload.
-- Tests: `types/theme_frame_test.go`, `tui/settings/frame_pad_test.go`,
+- Tests: `types/setting/theme_frame_test.go`, `tui/screens/settingspages/frame_pad_test.go`,
   `tui/viewmodel/frame_insets_test.go`.
 
 ## Review findings — fixed during review (kept for the record)
@@ -115,7 +115,7 @@ today is `update.go` (`SaveMsg`/`CancelMsg`). Audit all
 `ui.OverlayWorkspaceSettings` close paths and route them through a shared
 `closeSettings()` that calls `clearFramePreview()`. Candidates found:
 `app.go:503` (openSettings close-before-open), `view.go:728` (window close
-route), `popupmouse.go:90`.
+route), `popup_mouse.go:90`.
 
 ### O4. `framePreview` reads the form, not the validated state (low)
 

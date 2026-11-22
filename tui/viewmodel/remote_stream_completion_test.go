@@ -13,8 +13,9 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 // Exercise the real supervisor, persistence, core publisher, wire installer and
@@ -72,7 +73,7 @@ func TestRemoteRecoveredStreamCompletionMatchesColdResume(t *testing.T) {
 			}
 			found := false
 			for _, row := range state.Messages.Messages() {
-				found = found || row.Role == types.RoleAssistant && row.Content == streamParityAnswer
+				found = found || row.Role == conversation.RoleAssistant && row.Content == streamParityAnswer
 			}
 			if !found {
 				return false
@@ -82,15 +83,15 @@ func TestRemoteRecoveredStreamCompletionMatchesColdResume(t *testing.T) {
 	})
 	release.Do(func() { close(finish) })
 	remoteJourneyUntil(t, shells, func() bool {
-		return one.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted &&
-			two.app.ws.AgentActivity(id).Status.Phase == types.AgentCompleted
+		return one.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted &&
+			two.app.ws.AgentActivity(id).Status.Phase == statuscenter.AgentCompleted
 	})
 	check := func(app *App, agentID string) {
 		t.Helper()
 		state := app.ws.AgentMgr().Get(agentID).State
 		var answers []string
 		for _, row := range state.Messages.Messages() {
-			if row.Role == types.RoleAssistant {
+			if row.Role == conversation.RoleAssistant {
 				answers = append(answers, row.Content)
 			}
 		}

@@ -20,11 +20,12 @@ import (
 	"crude/agent/provider"
 	"crude/agent/session"
 	"crude/agent/sessiondb"
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/port/remote"
+	"crude/core/coreclient"
+	"crude/core/shellport"
+	"crude/core/shellport/remote"
 	"crude/text/anchor"
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -73,8 +74,8 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 	home := t.TempDir()
 	setCoreTestHome(t, home)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		w := workspace.NewWorkspace(root, "model", "tester", types.Settings{}, coreTestLogger{})
-		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
+		w := workspace.NewWorkspace(root, "model", "tester", setting.Settings{}, coreTestLogger{})
+		w.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}, Memory: setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
 		off := false
 		cfg := &session.Config{Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {
 			MultiAgent: &off, Categories: map[string]session.CategoryConfig{
@@ -153,9 +154,9 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		}
 		return result.Receipt.TurnGeneration
 	}
-	waitReview := func(number int, generation uint64) types.PlanRevision {
+	waitReview := func(number int, generation uint64) conversation.PlanRevision {
 		t.Helper()
-		var revision types.PlanRevision
+		var revision conversation.PlanRevision
 		pump("turn completion", func(applied shellport.ReplicaApplied) bool {
 			for _, reduction := range applied.Reductions {
 				if done := reduction.Effects.Done; done != nil && done.AgentID == agentID && done.Reason == "completed" {
@@ -171,10 +172,10 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		})
 		return revision
 	}
-	localRead := func() types.PlanReview {
+	localRead := func() conversation.PlanReview {
 		t.Helper()
 		a := deletionActor(t, r, port.WorkspaceID())
-		var review types.PlanReview
+		var review conversation.PlanReview
 		var ok bool
 		inspectDeletionActor(t, a, func() { review, ok = shellport.Local(a.ws).PlanReviewForAgent(agentID) })
 		if !ok {
@@ -197,7 +198,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		t.Fatalf("open plan in editor: text=%q, %v", doc.Text, err)
 	}
 	quoteStart := strings.Index(string(doc.Text), "Check the exit status.")
-	edit := types.PlanCommentEdit{Revision: first.Number, Op: types.PlanCommentAdd, Comment: types.PlanComment{
+	edit := conversation.PlanCommentEdit{Revision: first.Number, Op: conversation.PlanCommentAdd, Comment: conversation.PlanComment{
 		ID: "check-errors", Body: "Also check errors.", Anchor: anchor.Capture(string(doc.Text), quoteStart, len(doc.Text)-1),
 	}}
 	if err := port.EditPlanComment(agentID, edit); err != nil {
@@ -211,7 +212,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 	if local, _ := localRead().Latest(); local.PendingComments() != 1 {
 		t.Fatalf("local port lost the remote comment: %+v", local)
 	}
-	if _, err := port.SettlePlanReview(agentID, types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewImplement}); err == nil ||
+	if _, err := port.SettlePlanReview(agentID, conversation.PlanReviewSettle{Revision: 1, Action: conversation.PlanReviewImplement}); err == nil ||
 		err.Error() != "Send or delete the comments first." {
 		t.Fatalf("implementation did not refuse a pending comment: %v", err)
 	}
@@ -233,7 +234,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		WHEN NEW.key = 'queued_inputs' BEGIN SELECT RAISE(ABORT, 'test admission failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := port.SettlePlanReview(agentID, types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewFeedback}); err == nil {
+	if _, err := port.SettlePlanReview(agentID, conversation.PlanReviewSettle{Revision: 1, Action: conversation.PlanReviewFeedback}); err == nil {
 		t.Fatal("shell accepted a review whose input could not be admitted")
 	}
 	failed, _ := localRead().Latest()
@@ -244,7 +245,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 	if _, err := backend.DB().Exec(`DROP TRIGGER block_review_input`); err != nil {
 		t.Fatal(err)
 	}
-	out, err := port.SettlePlanReview(agentID, types.PlanReviewSettle{Revision: 1, Action: types.PlanReviewFeedback})
+	out, err := port.SettlePlanReview(agentID, conversation.PlanReviewSettle{Revision: 1, Action: conversation.PlanReviewFeedback})
 	if err != nil || !strings.Contains(html.UnescapeString(out.Text), "+"+unsaved) ||
 		!strings.Contains(out.Display, `Line 4: "Check the exit status." Also check errors.`) {
 		t.Fatalf("settlement did not use the canonical unsaved plan: %+v, %v", out, err)
@@ -266,7 +267,7 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 		t.Fatal("shell did not show the user-facing review summary")
 	}
 
-	approval, err := port.SettlePlanReview(agentID, types.PlanReviewSettle{Revision: 2, Action: types.PlanReviewImplement})
+	approval, err := port.SettlePlanReview(agentID, conversation.PlanReviewSettle{Revision: 2, Action: conversation.PlanReviewImplement})
 	if err != nil || approval.Text != "Implement the plan." || approval.Display != "" {
 		t.Fatalf("unopened revision did not use its file: %+v, %v", approval, err)
 	}
@@ -281,11 +282,11 @@ func TestCorePlanReviewMirrorsCompletionAndCanonicalEditorFeedback(t *testing.T)
 	pump("approved revision and Plan mode off", func(_ shellport.ReplicaApplied) bool {
 		review, _ := port.PlanReviewForAgent(agentID)
 		latest, _ := review.Latest()
-		return latest.Outcome == types.PlanOutcomeImplemented && !port.PlanModeForAgent(agentID)
+		return latest.Outcome == conversation.PlanOutcomeImplemented && !port.PlanModeForAgent(agentID)
 	})
 	local := localRead()
-	if len(local.Revisions) != 2 || local.Revisions[0].Outcome != types.PlanOutcomeReplaced || local.Revisions[0].PendingComments() != 0 ||
-		local.Revisions[1].Outcome != types.PlanOutcomeImplemented {
+	if len(local.Revisions) != 2 || local.Revisions[0].Outcome != conversation.PlanOutcomeReplaced || local.Revisions[0].PendingComments() != 0 ||
+		local.Revisions[1].Outcome != conversation.PlanOutcomeImplemented {
 		t.Fatalf("local review lost outcomes: %+v", local)
 	}
 }

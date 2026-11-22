@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"crude/agent/worktree"
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	"crude/types/control"
 	"crude/workspace"
 )

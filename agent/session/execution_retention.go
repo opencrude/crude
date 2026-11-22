@@ -212,7 +212,7 @@ func (s *Session) adoptExecutionRecovery(id, agentID, incident string, generatio
 		json.Unmarshal(checkpoint.OwnerData, &owner) != nil || string(owner.Spec.ID) != agentID || owner.Spec.ExecutionID != id || owner.Spec.ExecutionRunID == "" {
 		return fail()
 	}
-	meta, err := sessiondb.GetMeta(db)
+	meta, err := sessiondb.LoadMeta(db)
 	if err != nil || meta.ID != agentID || meta.ParentSessionID.String != s.sessionID {
 		return fail()
 	}

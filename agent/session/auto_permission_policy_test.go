@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/safety"
+	"crude/agent/turnloop"
 )
 
 func TestReviewerOptInScopeAndExistingGrantSpendNothing(t *testing.T) {
@@ -32,7 +32,7 @@ func TestReviewerOptInScopeAndExistingGrantSpendNothing(t *testing.T) {
 			case "granted":
 				s.permStore.GrantAlways(safety.OpUpdate, "edit_file", "main.go")
 			}
-			got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(agent.AgentEvent) {})
+			got := s.permissionReviewer(a)(t.Context(), provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}, map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}, safety.RiskProjectWrite, func(turnloop.AgentEvent) {})
 			if got.Decision != "ask" {
 				t.Fatalf("ineligible decision=%+v", got)
 			}
@@ -61,18 +61,18 @@ func TestReviewerUnresolvedDenyModeNeverRequiresHumanInput(t *testing.T) {
 	s.cfg.Safety.AutoPermission.UnresolvedMode = "deny"
 	call := provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}
 	params := map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}
-	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "unclear") {
+	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "unclear") {
 		t.Fatalf("model ask did not fail closed without a human: %+v", got)
 	}
 
 	mode = "malformed"
-	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "valid answer") {
+	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "valid answer") {
 		t.Fatalf("exhausted review did not fail closed without a human: %+v", got)
 	}
 
 	before := calls.Load()
 	command := provider.ToolCall{Function: provider.FunctionCall{Name: "execute_command"}}
-	if got := s.permissionReviewer(a)(t.Context(), command, map[string]any{"command": "curl https://example.com"}, safety.RiskNetwork, func(agent.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "valid answer") {
+	if got := s.permissionReviewer(a)(t.Context(), command, map[string]any{"command": "curl https://example.com"}, safety.RiskNetwork, func(turnloop.AgentEvent) {}); got.Decision != "deny" || !strings.Contains(got.Reason, "valid answer") {
 		t.Fatalf("failed unknown/network review did not fail closed: %+v", got)
 	}
 	if calls.Load() != before+1 {
@@ -92,7 +92,7 @@ func TestReviewerDenialModeHasNoConcurrentLifetimeCap(t *testing.T) {
 	call := provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}
 	params := map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}
 	s.cfg.Safety.AutoPermission.DenyMode = "ask"
-	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "ask" {
+	if got := s.permissionReviewer(a)(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "ask" {
 		t.Fatal("default denied review did not ask human")
 	}
 	s.cfg.Safety.AutoPermission.DenyMode = "deny"
@@ -102,7 +102,7 @@ func TestReviewerDenialModeHasNoConcurrentLifetimeCap(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 16; i++ {
 		wg.Go(func() {
-			if got := review(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision == "deny" {
+			if got := review(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision == "deny" {
 				denials.Add(1)
 			}
 		})
@@ -123,25 +123,25 @@ func TestRootAndChildReviewersRemainIndependentWithoutLifetimeCaps(t *testing.T)
 	defer server.Close()
 
 	s, root := newReviewerTestSession(t, server.URL)
-	child := &agent.Agent{AgentID: "child", Depth: 1, TurnGeneration: 1}
+	child := &turnloop.Agent{AgentID: "child", Depth: 1, TurnGeneration: 1}
 	rootReview := s.permissionReviewer(root)
 	childReview := s.permissionReviewer(child)
 	call := provider.ToolCall{Function: provider.FunctionCall{Name: "edit_file"}}
 	params := map[string]any{"path": "main.go", "old_string": "old", "new_string": "new"}
-	if got := rootReview(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "allow" {
+	if got := rootReview(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "allow" {
 		t.Fatalf("root review=%+v", got)
 	}
-	if got := childReview(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "allow" {
+	if got := childReview(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "allow" {
 		t.Fatalf("child review=%+v", got)
 	}
-	if got := rootReview(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "allow" {
+	if got := rootReview(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "allow" {
 		t.Fatalf("second root review=%+v", got)
 	}
-	if got := childReview(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "allow" {
+	if got := childReview(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "allow" {
 		t.Fatalf("second child review=%+v", got)
 	}
 	child.TurnGeneration++
-	if got := childReview(t.Context(), call, params, safety.RiskProjectWrite, func(agent.AgentEvent) {}); got.Decision != "allow" {
+	if got := childReview(t.Context(), call, params, safety.RiskProjectWrite, func(turnloop.AgentEvent) {}); got.Decision != "allow" {
 		t.Fatalf("new child turn did not receive a fresh budget: %+v", got)
 	}
 	if calls.Load() != 5 {
@@ -154,18 +154,18 @@ func TestYoloPolicyIsInheritedByOneSessionTreeOnly(t *testing.T) {
 	second := &Session{}
 	first.SetYolo(true)
 	second.SetYolo(false)
-	firstRoot, firstChild := &agent.Agent{}, &agent.Agent{Depth: 1}
-	secondRoot, secondChild := &agent.Agent{}, &agent.Agent{Depth: 1}
+	firstRoot, firstChild := &turnloop.Agent{}, &turnloop.Agent{Depth: 1}
+	secondRoot, secondChild := &turnloop.Agent{}, &turnloop.Agent{Depth: 1}
 	first.bindAgentPermissionPolicy(firstRoot)
 	first.bindAgentPermissionPolicy(firstChild)
 	second.bindAgentPermissionPolicy(secondRoot)
 	second.bindAgentPermissionPolicy(secondChild)
-	for name, live := range map[string]*agent.Agent{"first root": firstRoot, "first child": firstChild} {
+	for name, live := range map[string]*turnloop.Agent{"first root": firstRoot, "first child": firstChild} {
 		if live.YoloMode == nil || !live.YoloMode() || live.PermissionReviewer == nil {
 			t.Fatalf("%s did not inherit first session policy", name)
 		}
 	}
-	for name, live := range map[string]*agent.Agent{"second root": secondRoot, "second child": secondChild} {
+	for name, live := range map[string]*turnloop.Agent{"second root": secondRoot, "second child": secondChild} {
 		if live.YoloMode == nil || live.YoloMode() || live.PermissionReviewer == nil {
 			t.Fatalf("%s did not inherit second session policy", name)
 		}

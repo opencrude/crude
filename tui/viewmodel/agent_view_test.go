@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"crude/core/port"
-	ttypes "crude/types"
+	"crude/core/shellport"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -32,7 +32,7 @@ func TestAgentViewIndependentShellNavigationPreservesSharedLifecycle(t *testing.
 	for _, node := range manager.AllNodes() {
 		before[node.ID] = *node.State
 	}
-	owner.Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "review"}, Phase: ttypes.AgentCompleted})
+	owner.Status.SetAgent(statuscenter.AgentStatusSnapshot{Ref: statuscenter.ResourceRef{ID: "review"}, Phase: statuscenter.AgentCompleted})
 	left.AgentView.SetActive("root")
 	right.AgentView.SetActive("review")
 	left.MinimizeAgent("sibling")

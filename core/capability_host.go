@@ -7,7 +7,7 @@ import (
 	"errors"
 	"sync"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
 )
 

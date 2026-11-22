@@ -4,12 +4,12 @@ import (
 	"testing"
 
 	"crude/tui/editor"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestPathlessEditorNeverSchedulesOrRequestsAutomaticSave(t *testing.T) {
-	for _, mode := range []types.AutoSaveMode{types.AutoSaveAfterDelay, types.AutoSaveEditorFocusChange, types.AutoSaveTerminalFocusLoss} {
+	for _, mode := range []setting.AutoSaveMode{setting.AutoSaveAfterDelay, setting.AutoSaveEditorFocusChange, setting.AutoSaveTerminalFocusLoss} {
 		for _, connected := range []bool{false, true} {
 			t.Run(string(mode)+"/connected="+map[bool]string{false: "false", true: "true"}[connected], func(t *testing.T) {
 				app := newAutosaveTestApp(t)
@@ -23,7 +23,7 @@ func TestPathlessEditorNeverSchedulesOrRequestsAutomaticSave(t *testing.T) {
 					state = &liveEditorState{}
 					app.liveEditors = map[*editor.Editor]*liveEditorState{ed: state}
 				}
-				app.applyEditorSettings(types.EditorSettings{AutoSave: mode, AutoSaveDelay: 1})
+				app.applyEditorSettings(setting.Editor{AutoSave: mode, AutoSaveDelay: 1})
 				app.onEditorContentChanged(ed, "", "")
 				for _, reason := range []workspace.DocumentSaveReason{workspace.DocumentSaveAfterDelay, workspace.DocumentSaveFocusOut} {
 					if cmd := app.requestEditorSave(ed, reason, false); cmd != nil {

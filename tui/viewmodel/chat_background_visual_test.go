@@ -8,7 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -25,22 +25,22 @@ func TestChatBackgroundVisualAcceptance(t *testing.T) {
 	app.width, app.height = 160, 40
 	app.AddOrchestrator("background-owner")
 	state := app.ws.AgentMgr().Get("background-owner").State
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant,
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant,
 		Content: "Regular replies stay on the chat background. Special elements form distinct full-width bands."})
 	for _, c := range specialChatBackgroundCases()[:3] {
 		for _, message := range c.messages {
 			state.Messages.AppendMessage(message)
 		}
 	}
-	pane := app.ws.PaneMgr().GetOrCreate("visual-child", workspace.PaneAgent, "Asha · Researcher")
-	pane.Messages.AppendMessage(workspace.Message{
-		Role: ctypes.RoleTool, ToolName: "read_file", ToolArgs: "parser.go", ToolStatus: ctypes.ToolStatusSuccess,
+	pane := app.ws.PaneMgr().Ensure("visual-child", workspace.PaneAgent, "Asha · Researcher")
+	pane.Messages.AppendMessage(conversation.Message{
+		Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "parser.go", ToolStatus: conversation.ToolStatusSuccess,
 	})
 	app.subPaneProjections.Get(pane.ID, pane.Type)
 	app.subPaneProjections.SyncFromWorkspace(pane.ID, pane.Messages, false)
-	state.Messages.AppendMessage(workspace.Message{InternalID: "spawn", Role: ctypes.RoleTool, SubPaneID: pane.ID})
+	state.Messages.AppendMessage(conversation.Message{InternalID: "spawn", Role: conversation.RoleTool, SubPaneID: pane.ID})
 	app.syncAgentMessages(state.ID, false)
-	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "thinking",
+	app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "thinking",
 		Data: reasoning.Delta{Kind: reasoning.Raw,
 			Text: strings.Repeat("Inspect the exact source and retained evidence before choosing the authoritative owner.\n", 40)}})
 	model := &chatBackgroundVisualModel{App: app, ownerID: state.ID}
@@ -63,7 +63,7 @@ func (m *chatBackgroundVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
-			m.subPaneProjections.GetExisting(m.ownerID).renderer.ToggleDisclosure("board")
+			m.subPaneProjections.Existing(m.ownerID).renderer.ToggleDisclosure("board")
 			return m, nil
 		case tea.KeyF3:
 			m.light = !m.light
@@ -74,11 +74,11 @@ func (m *chatBackgroundVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ApplyThemePreset(preset)
 			return m, nil
 		case tea.KeyF4:
-			m.handleAgentEvent(ctypes.AgentEventMsg{AgentID: m.ownerID, Type: "done",
+			m.handleAgentEvent(AgentEventMsg{AgentID: m.ownerID, Type: "done",
 				Data: map[string]any{"reason": "completed"}})
-			renderer := m.subPaneProjections.GetExisting(m.ownerID).renderer
+			renderer := m.subPaneProjections.Existing(m.ownerID).renderer
 			for _, message := range m.ws.AgentMgr().Get(m.ownerID).State.Messages.Messages() {
-				if message.Role == ctypes.RoleThinking {
+				if message.Role == conversation.RoleThinking {
 					renderer.ToggleDisclosure(message.InternalID)
 				}
 			}

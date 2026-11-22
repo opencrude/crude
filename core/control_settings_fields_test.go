@@ -4,9 +4,9 @@ import (
 	"context"
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 	"encoding/json"
 	"fmt"
@@ -36,7 +36,7 @@ func TestAgentSpeedSchemaDoesNotConstrainAccountProtocolTiers(t *testing.T) {
 
 func TestControlSessionExactRoleModelPersists(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	cfg := &session.Config{Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "openai", APIKey: "retained-secret", Connection: provider.Template{Name: "test", AuthType: provider.AuthBearer, APIStandard: "openai", ProviderURL: "https://example.com"}}}, Agents: session.AgentsConfig{ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {Categories: map[string]session.CategoryConfig{"default": {AccountID: "one", Model: "initial"}, "crafter": {AccountID: "one", Model: "crafter-old"}}}}}}
 	owner, err := ws.CreateSession(cfg, t.TempDir())
@@ -68,7 +68,7 @@ func TestControlSessionExactRoleModelPersists(t *testing.T) {
 
 func TestControlSessionNamedAgentSpeedSetAndReset(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	cfg := &session.Config{
 		Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "openai", APIKey: "secret", Connection: provider.Template{Name: "test", AuthType: provider.AuthBearer, APIStandard: "openai", ProviderURL: "https://example.com"}}},
@@ -77,7 +77,7 @@ func TestControlSessionNamedAgentSpeedSetAndReset(t *testing.T) {
 			Profiles: map[string]session.ProfileConfig{"default": {Categories: map[string]session.CategoryConfig{
 				"default": {AccountID: "one", Model: "main"}, "researcher": {AccountID: "one", Model: "role"},
 			}}},
-			AgentProfiles: map[string]types.AgentProfileSettings{"reviewer": {Category: "researcher", Model: "review", ServiceTier: "standard"}},
+			AgentProfiles: map[string]setting.AgentProfile{"reviewer": {Category: "researcher", Model: "review", ServiceTier: "standard"}},
 		},
 	}
 	owner, err := ws.CreateSession(cfg, t.TempDir())
@@ -122,14 +122,14 @@ func TestControlSessionNamedAgentSpeedSetAndReset(t *testing.T) {
 }
 
 func TestControlFieldsProgressiveRedactedExact(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
-	app := types.AppSettings{}
-	types.ApplyAppDefaults(&app)
-	app.Agents.Categories = types.DefaultAgentRoleCategories()
-	app.Agents.AgentProfiles = map[string]types.AgentProfileSettings{}
+	app := setting.App{}
+	setting.ApplyAppDefaults(&app)
+	app.Agents.Categories = setting.DefaultAgentRoleCategories()
+	app.Agents.AgentProfiles = map[string]setting.AgentProfile{}
 	for i := 0; i < 25; i++ {
-		app.Agents.AgentProfiles[fmt.Sprintf("profile-%02d", i)] = types.AgentProfileSettings{Model: "model", Instructions: "lower-priority overlay"}
+		app.Agents.AgentProfiles[fmt.Sprintf("profile-%02d", i)] = setting.AgentProfile{Model: "model", Instructions: "lower-priority overlay"}
 	}
 	ws.SetAppDefaults(app)
 	a := &actor{ws: ws}
@@ -187,10 +187,10 @@ func TestControlFieldsProgressiveRedactedExact(t *testing.T) {
 
 func TestControlWorkspaceFalseResetSQLiteAndMap(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
-	app := types.AppSettings{}
-	types.ApplyAppDefaults(&app)
+	app := setting.App{}
+	setting.ApplyAppDefaults(&app)
 	app.Editor.WordWrap = true
 	ws.SetAppDefaults(app)
 	a := &actor{ws: ws}
@@ -226,8 +226,8 @@ func TestControlWorkspaceFalseResetSQLiteAndMap(t *testing.T) {
 }
 
 func TestControlFieldEnumsAndMapAssignment(t *testing.T) {
-	app := types.AppSettings{}
-	types.ApplyAppDefaults(&app)
+	app := setting.App{}
+	setting.ApplyAppDefaults(&app)
 	for path, raw := range map[string]string{"editor.syntax_theme": `"bogus"`, "editor.render_whitespace": `"bogus"`, "terminal.placement": `"bogus"`, "theme.preset": `"bogus"`, "ui.context_help": `"bogus"`, "theme.pad_left": `-1`} {
 		if err := controlSetField(&app, path, json.RawMessage(raw)); err != nil {
 			t.Fatal(err)

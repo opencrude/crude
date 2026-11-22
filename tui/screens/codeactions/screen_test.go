@@ -10,7 +10,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace"
 )
 
@@ -18,9 +18,9 @@ func actionFixture() workspace.CodeActionSet {
 	return workspace.CodeActionSet{
 		ID: "actions-original", Digest: strings.Repeat("a", 64), Start: 4, End: 7,
 		DiagnosticsIncluded: 1, DiagnosticsDetail: "original diagnostics from exact versioned publication",
-		Boundary: types.InsightBoundary{
-			Source:  types.InsightSource{Kind: "canonical", DocumentID: "original-document", Revision: 19},
-			Context: types.InsightContext{Generation: 23, UnknownInputs: []string{"original-unknown-build-context"}},
+		Boundary: insight.Boundary{
+			Source:  insight.Source{Kind: "canonical", DocumentID: "original-document", Revision: 19},
+			Context: insight.Context{Generation: 23, UnknownInputs: []string{"original-unknown-build-context"}},
 		},
 		Items: []workspace.CodeActionSummary{
 			{Index: 0, Title: "Fix exact literal", Kind: "quickfix", CanReview: true, HasPreferred: true, Preferred: true},

@@ -15,7 +15,7 @@ import (
 	"crude/agent/sessiondb"
 )
 
-// WorkspaceDB manages the workspace-level SQLite database. Unlike session
+// DB manages the workspace-level SQLite database. Unlike session
 // databases (which store per-conversation data), the workspace database
 // stores project-scoped metadata that persists across sessions:
 //
@@ -25,7 +25,7 @@ import (
 //
 // The workspace DB is separate from session DBs to keep the data model
 // clean: a workspace contains many sessions, each with their own DB.
-type WorkspaceDB struct {
+type DB struct {
 	DB         *sql.DB
 	Path       string
 	Dir        string
@@ -48,8 +48,8 @@ type WorkspaceDB struct {
 //	~/.crude/workspaces/<hash>/workspace.db
 //
 // If the database doesn't exist, it's created and the schema is migrated.
-func OpenWorkspaceDB(projectDir string) (*WorkspaceDB, error) {
-	dbPath, err := WorkspaceDBPath(projectDir)
+func OpenWorkspaceDB(projectDir string) (*DB, error) {
+	dbPath, err := DBPath(projectDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace db path: %w", err)
 	}
@@ -68,7 +68,7 @@ func OpenWorkspaceDB(projectDir string) (*WorkspaceDB, error) {
 // RecordAccess is the durable workspace-recency owner. Session creation,
 // background agents, metadata scans and ordinary DB opens are not access.
 // Concurrent attachments cannot rewind a more recent timestamp.
-func (wdb *WorkspaceDB) RecordAccess(ctx context.Context, at time.Time) error {
+func (wdb *DB) RecordAccess(ctx context.Context, at time.Time) error {
 	if wdb == nil || wdb.DB == nil {
 		return nil
 	}
@@ -81,7 +81,7 @@ func (wdb *WorkspaceDB) RecordAccess(ctx context.Context, at time.Time) error {
 }
 
 // openWorkspaceDBAt opens a workspace DB at an explicit path.
-func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
+func openWorkspaceDBAt(dbPath string) (*DB, error) {
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create workspace dir: %w", err)
@@ -103,7 +103,7 @@ func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
 		return nil, fmt.Errorf("migrate memory schema: %w", err)
 	}
 
-	wdb := &WorkspaceDB{
+	wdb := &DB{
 		DB:     db,
 		Path:   dbPath,
 		Dir:    dir,
@@ -192,14 +192,14 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 	return nil
 }
 
-// GetSetting retrieves a workspace-level setting by key.
+// Setting retrieves a workspace-level setting by key.
 // Returns empty string if not found.
-func (wdb *WorkspaceDB) GetSetting(key string) string {
-	return wdb.GetSettingContext(context.Background(), key)
+func (wdb *DB) Setting(key string) string {
+	return wdb.SettingContext(context.Background(), key)
 }
 
-// GetSettingContext is GetSetting with a context-bound query.
-func (wdb *WorkspaceDB) GetSettingContext(ctx context.Context, key string) string {
+// SettingContext is GetSetting with a context-bound query.
+func (wdb *DB) SettingContext(ctx context.Context, key string) string {
 	if key == workspaceSettingsKey {
 		return wdb.committedSettingsRow()
 	}
@@ -211,7 +211,7 @@ func (wdb *WorkspaceDB) GetSettingContext(ctx context.Context, key string) strin
 
 // SetSetting stores a workspace-level setting as a key-value pair.
 // Updates the timestamp on every write.
-func (wdb *WorkspaceDB) SetSetting(key, value string) error {
+func (wdb *DB) SetSetting(key, value string) error {
 	if key == workspaceSettingsKey {
 		wdb.settingsWriteMu.Lock()
 		defer wdb.settingsWriteMu.Unlock()
@@ -227,7 +227,7 @@ func (wdb *WorkspaceDB) SetSetting(key, value string) error {
 	return err
 }
 
-func (wdb *WorkspaceDB) committedSettingsRow() string {
+func (wdb *DB) committedSettingsRow() string {
 	if row := wdb.settingsRow.Load(); row != nil {
 		return *row
 	}
@@ -236,7 +236,7 @@ func (wdb *WorkspaceDB) committedSettingsRow() string {
 
 // publishSettingsRow is called at startup or with settingsWriteMu held, only
 // after SQL has committed. Never acquire the writer mutex from a read path.
-func (wdb *WorkspaceDB) publishSettingsRow(value string) {
+func (wdb *DB) publishSettingsRow(value string) {
 	wdb.settingsRow.Store(&value)
 }
 
@@ -245,7 +245,7 @@ func (wdb *WorkspaceDB) publishSettingsRow(value string) {
 // Returns a non-nil error when the INSERT fails. Callers must log/surface the
 // error but must not treat it as fatal for session creation; the session DB
 // remains the source of truth.
-func (wdb *WorkspaceDB) RegisterSession(sessionID, projectPath, projectName, model, provider string) error {
+func (wdb *DB) RegisterSession(sessionID, projectPath, projectName, model, provider string) error {
 	if wdb == nil || wdb.DB == nil {
 		return fmt.Errorf("workspace db not open")
 	}
@@ -271,7 +271,7 @@ func (wdb *WorkspaceDB) RegisterSession(sessionID, projectPath, projectName, mod
 
 // ForgetSession removes the registry row and name of a session whose storage
 // no longer exists because it was pruned as empty.
-func (wdb *WorkspaceDB) ForgetSession(sessionID string) error {
+func (wdb *DB) ForgetSession(sessionID string) error {
 	if wdb == nil || wdb.DB == nil {
 		return fmt.Errorf("workspace db not open")
 	}
@@ -289,7 +289,7 @@ func (wdb *WorkspaceDB) ForgetSession(sessionID string) error {
 }
 
 // CloseSession marks a session as closed in the workspace registry.
-func (wdb *WorkspaceDB) CloseSession(sessionID string) error {
+func (wdb *DB) CloseSession(sessionID string) error {
 	_, err := wdb.DB.Exec(`
 		UPDATE workspace_sessions SET closed_at = ? WHERE session_id = ?
 	`, time.Now().UnixNano(), sessionID)
@@ -299,7 +299,7 @@ func (wdb *WorkspaceDB) CloseSession(sessionID string) error {
 // UpdateSessionMeta updates the live session metadata for a given session.
 // This is called periodically to keep the workspace registry in sync with
 // the per-session database.
-func (wdb *WorkspaceDB) UpdateSessionMeta(sessionID string, turnCount, messageCount int, firstPrompt, lastPrompt string, totalCost float64) error {
+func (wdb *DB) UpdateSessionMeta(sessionID string, turnCount, messageCount int, firstPrompt, lastPrompt string, totalCost float64) error {
 	_, err := wdb.DB.Exec(`
 		UPDATE workspace_sessions SET
 			turn_count = ?, message_count = ?,
@@ -314,7 +314,7 @@ func (wdb *WorkspaceDB) UpdateSessionMeta(sessionID string, turnCount, messageCo
 // session cost only. This is the push path: the workspace already tracks
 // SessionCost in memory (updated by RecordAgentUsage) and pushes it here
 // without re-opening the per-session database.
-func (wdb *WorkspaceDB) UpdateSessionCost(sessionID string, totalCost float64) error {
+func (wdb *DB) UpdateSessionCost(sessionID string, totalCost float64) error {
 	_, err := wdb.DB.Exec(`
 		UPDATE workspace_sessions SET total_cost = ? WHERE session_id = ?
 	`, totalCost, sessionID)
@@ -323,7 +323,7 @@ func (wdb *WorkspaceDB) UpdateSessionCost(sessionID string, totalCost float64) e
 
 // ListSessions returns available sessions registered in this workspace, most
 // recent first. Rows marked db_missing are excluded (see MarkSessionDBMissing).
-func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
+func (wdb *DB) ListSessions() ([]sessiondb.SessionMeta, error) {
 	rows, err := wdb.DB.Query(`
 		SELECT session_id, project_dir, project_name, model, provider,
 		       created_at, closed_at, message_count, turn_count,
@@ -356,7 +356,7 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 // MarkSessionDBMissing sets or clears the db_missing flag on a registry row.
 // missing=true excludes the row from ListSessions without deleting it;
 // missing=false restores the row when the session DB reappears.
-func (wdb *WorkspaceDB) MarkSessionDBMissing(sessionID string, missing bool) error {
+func (wdb *DB) MarkSessionDBMissing(sessionID string, missing bool) error {
 	if wdb == nil || wdb.DB == nil {
 		return fmt.Errorf("workspace db not open")
 	}
@@ -379,7 +379,7 @@ func (wdb *WorkspaceDB) MarkSessionDBMissing(sessionID string, missing bool) err
 // mirrors the values into the workspace registry. Used at session close and
 // during enrichment. For live cost updates during a running session, prefer
 // UpdateSessionCost (the push path) to avoid re-opening the session DB.
-func (wdb *WorkspaceDB) SyncSessionMeta(projectDir, sessionID string) error {
+func (wdb *DB) SyncSessionMeta(projectDir, sessionID string) error {
 	if wdb == nil || wdb.DB == nil {
 		return nil
 	}
@@ -403,12 +403,12 @@ func (wdb *WorkspaceDB) SyncSessionMeta(projectDir, sessionID string) error {
 // merged row back to the workspace_sessions registry. Split out so tests can
 // exercise the read/write contract without going through the workspace
 // folder layout.
-func (wdb *WorkspaceDB) syncSessionMetaFromDB(sdb *sql.DB, sessionID string) error {
-	meta, err := sessiondb.GetMeta(sdb)
+func (wdb *DB) syncSessionMetaFromDB(sdb *sql.DB, sessionID string) error {
+	meta, err := sessiondb.LoadMeta(sdb)
 	if err != nil {
 		return err
 	}
-	totalCost, err := sessiondb.GetCumulativeCost(sdb)
+	totalCost, err := sessiondb.LoadCumulativeCost(sdb)
 	if err != nil {
 		return err
 	}
@@ -420,14 +420,15 @@ func (wdb *WorkspaceDB) syncSessionMetaFromDB(sdb *sql.DB, sessionID string) err
 }
 
 // Close shuts down the workspace database, flushing any pending writes.
-func (wdb *WorkspaceDB) Close() error {
+func (wdb *DB) Close() error {
 	if wdb.DB != nil {
 		return wdb.DB.Close()
 	}
 	return nil
 }
 
-func (wdb *WorkspaceDB) SetAgentName(sessionID, name string) error {
+// SetAgentName stores the display name of an agent in a session.
+func (wdb *DB) SetAgentName(sessionID, name string) error {
 	if name == "" {
 		return nil
 	}

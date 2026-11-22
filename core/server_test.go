@@ -10,9 +10,9 @@ import (
 
 	"github.com/tinylib/msgp/msgp"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/workspace"
 )
 

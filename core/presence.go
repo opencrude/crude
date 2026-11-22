@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/core/protocol"
+	"crude/core/coreprotocol"
 )
 
 // shellPresence is the latest report of one attached shell. changed is the

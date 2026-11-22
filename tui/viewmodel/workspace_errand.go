@@ -7,8 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/provider"
-	"crude/retry"
-	"crude/types"
+	"crude/internal/retry"
+	"crude/types/statuscenter"
 	"crude/workspace"
 )
 
@@ -59,15 +59,15 @@ func (m *App) agentLabel(node *workspace.AgentNode) string {
 func (m *App) agentStatus(id string) string {
 	activity := m.ws.AgentActivity(id)
 	switch activity.Status.Phase {
-	case types.AgentApproval, types.AgentQuestion:
+	case statuscenter.AgentApproval, statuscenter.AgentQuestion:
 		return "needs an answer"
-	case types.AgentFailed, types.AgentNeedsAttention, types.AgentInterrupted:
+	case statuscenter.AgentFailed, statuscenter.AgentNeedsAttention, statuscenter.AgentInterrupted:
 		return "needs attention"
-	case types.AgentCancelled:
+	case statuscenter.AgentCancelled:
 		return "stopped"
-	case types.AgentCompleted:
+	case statuscenter.AgentCompleted:
 		return "finished"
-	case types.AgentCancelling:
+	case statuscenter.AgentCancelling:
 		return "stopping"
 	}
 	if activity.Active {

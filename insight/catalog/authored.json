@@ -1,5 +1,5 @@
 {
-  "note": "Crude-authored overlay for the code-intelligence catalog. It holds facts that no upstream source provides, and choices that keep earlier Crude behavior. internal/catalogimport applies it after the upstream data. Every entry needs a note that says why it exists.",
+  "note": "Crude-authored overlay for the code-intelligence catalog. It holds facts that no upstream source provides, and choices that keep earlier Crude behavior. tools/catalogimport applies it after the upstream data. Every entry needs a note that says why it exists.",
   "languages": {
     "go": {
       "note": "Earlier Crude root rules: a go.work file takes precedence over a nearer go.mod. Formatter: gofmt reads stdin and writes stdout, the same output as the go/format package Crude used before. Region markers: VS Code's built-in language configuration folding.markers (microsoft/vscode extensions/go/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174, MIT). Folding uses them for regions that ignore indentation. Smart Enter and indentation: brackets, onEnterRules and indentationRules copied without pattern rewrites from microsoft/vscode extensions/go/language-configuration.json at e608ca420ca76f4bfc2cfbff02538d66242e8174 (MIT; SHA-256 ca804e575bd47ec0981e7e30c0d027d3ecfa3e1a4b3cad567d21768cd0aed5a7).",

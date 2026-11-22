@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"crude/tui/filetree"
-	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -144,7 +143,7 @@ func TestRepositoryEventReconcilesHeaderWithoutOpeningPanel(t *testing.T) {
 	// Settle the burst: the tick loop is what starts the read.
 	app.gitSnapshotEventAt = time.Now().Add(-gitSnapshotIdleDelay)
 	app.gitSnapshotBurstAt = app.gitSnapshotEventAt
-	if _, _ = app.Update(ttypes.TickMsg(time.Now())); app.gitReadsInFlight != 1 {
+	if _, _ = app.Update(TickMsg(time.Now())); app.gitReadsInFlight != 1 {
 		t.Fatalf("in-flight Git reads = %d, want the reconcile read started by the tick", app.gitReadsInFlight)
 	}
 

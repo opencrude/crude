@@ -5,15 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"crude/tui/settings"
+	"crude/tui/screens/settingspages"
 	"crude/tui/theme"
-	"crude/tui/ui"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 // setTestFrame writes the frame insets directly onto the app theme.
 func setTestFrame(app *App, top, right, bottom, left int) {
-	app.Theme.Spacing.Frame = ui.Insets{Top: top, Right: right, Bottom: bottom, Left: left}
+	app.Theme.Spacing.Frame = theme.Insets{Top: top, Right: right, Bottom: bottom, Left: left}
 }
 
 // TestFrameInsetsShiftShellGeometry verifies the whole shell re-insets: the
@@ -87,7 +86,7 @@ func TestApplyFramePreviewLiveReInsets(t *testing.T) {
 	before := app.computeLayout().ChatAreaTop
 
 	five := 5
-	app.applyFramePreview(settings.FramePreviewMsg{
+	app.applyFramePreview(settingspages.FramePreviewMsg{
 		Top: &five, Bottom: &five, Left: &five, Right: &five,
 	})
 	if got := app.computeLayout().ChatAreaTop; got != before+5 {
@@ -115,7 +114,7 @@ func TestApplyFramePreviewReplacesNotAdds(t *testing.T) {
 	// The settings model sends the full seeded frame: top stays 2, left is
 	// edited to 4.
 	two, four := 2, 4
-	app.applyFramePreview(settings.FramePreviewMsg{
+	app.applyFramePreview(settingspages.FramePreviewMsg{
 		Top: &two, Left: &four,
 	})
 
@@ -142,7 +141,7 @@ func TestApplyFramePreviewBlankFieldMeansZero(t *testing.T) {
 	// User clears the top field: the message carries nil for top and the
 	// model's seeded values for the rest.
 	zero := 0
-	app.applyFramePreview(settings.FramePreviewMsg{
+	app.applyFramePreview(settingspages.FramePreviewMsg{
 		Top: nil, Bottom: &zero, Left: &zero, Right: &zero,
 	})
 	if got := app.frameInsets().Top; got != 0 {
@@ -197,8 +196,8 @@ func TestHeaderRightRunStaysInsidePaddedSlot(t *testing.T) {
 func TestThemeFrameFromWorkspaceSettings(t *testing.T) {
 	app := newFullTestApp(t)
 	two, three, one, four := 2, 3, 1, 4
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{
-		Theme: ttypes.ThemeSettings{PadTop: &two, PadBottom: &three, PadLeft: &one, PadRight: &four},
+	wsOf(app).SetAppDefaults(setting.App{
+		Theme: setting.Theme{PadTop: &two, PadBottom: &three, PadLeft: &one, PadRight: &four},
 	})
 	app.ApplyThemePreset("dark")
 	frame := app.Theme.Spacing.Frame
@@ -226,8 +225,8 @@ func TestThemeFrameDefaultsWhenUnset(t *testing.T) {
 func TestFramePadClamped(t *testing.T) {
 	app := newFullTestApp(t)
 	huge := 100
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{
-		Theme: ttypes.ThemeSettings{PadTop: &huge},
+	wsOf(app).SetAppDefaults(setting.App{
+		Theme: setting.Theme{PadTop: &huge},
 	})
 	app.ApplyThemePreset("dark")
 	if got := app.frameTopRow(); got != 20 {
@@ -242,7 +241,7 @@ func TestFramePadClamped(t *testing.T) {
 // frame (zero insets) so every theme rebuild includes the field.
 func TestThemeSpacingDefaults(t *testing.T) {
 	th := theme.DefaultDark()
-	if th.Spacing.Frame != (ui.Insets{}) {
+	if th.Spacing.Frame != (theme.Insets{}) {
 		t.Fatalf("default frame=%+v, want zero insets", th.Spacing.Frame)
 	}
 }

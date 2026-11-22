@@ -11,11 +11,11 @@ import (
 	"io"
 	"slices"
 
-	"crude/agent"
 	"crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	captypes "crude/types/capability"
 	"crude/types/control"
 	"crude/types/toolresult"
@@ -72,7 +72,7 @@ func controlDescriptorAllowed(policy safety.Policy, descriptor control.Descripto
 
 // bindAgentControl retains the admitted shell identity for the complete turn and
 // its children. The runtime rechecks the actual caller/run and target at effects.
-func (s *Session) bindAgentControl(ctx context.Context, live *agent.Agent, target *control.Target) {
+func (s *Session) bindAgentControl(ctx context.Context, live *turnloop.Agent, target *control.Target) {
 	s.mu.Lock()
 	runtime := s.controlRuntime
 	s.mu.Unlock()
@@ -213,7 +213,7 @@ func (s *Session) bindAgentControl(ctx context.Context, live *agent.Agent, targe
 	_ = ctx // Lifetime is carried by call contexts and exact runtime run checks.
 }
 
-func (s *Session) controlCaller(ctx context.Context, live *agent.Agent) (control.Caller, error) {
+func (s *Session) controlCaller(ctx context.Context, live *turnloop.Agent) (control.Caller, error) {
 	store := s.CollaborationStore()
 	if store == nil || live.RunID == "" {
 		return control.Caller{}, errors.New("workspace collaboration is required for Crude control")
@@ -229,12 +229,12 @@ func (s *Session) controlCaller(ctx context.Context, live *agent.Agent) (control
 	return control.Caller{Kind: control.AgentCaller, AgentID: string(live.AgentID), RunID: live.RunID}, nil
 }
 
-func (s *Session) controlToolSelected(live *agent.Agent, name string) bool {
+func (s *Session) controlToolSelected(live *turnloop.Agent, name string) bool {
 	if live.Depth > 0 {
 		if s.subAgentSup == nil {
 			return false
 		}
-		if handle, ok := s.subAgentSup.Manager().GetActive(live.AgentID); ok {
+		if handle, ok := s.subAgentSup.Manager().Active(live.AgentID); ok {
 			return !slices.Contains(handle.Spec.DeniedTools, name) && (len(handle.Spec.AllowedTools) == 0 || slices.Contains(handle.Spec.AllowedTools, name))
 		}
 		return false
@@ -243,9 +243,9 @@ func (s *Session) controlToolSelected(live *agent.Agent, name string) bool {
 	cfg := copyConfig(s.cfg)
 	s.mu.Unlock()
 	if s.runtimeProfile != nil {
-		cfg = s.runtimeProfile.GetEffectiveConfig(string(live.AgentID))
+		cfg = s.runtimeProfile.EffectiveConfig(string(live.AgentID))
 	}
-	category := cfg.GetActiveDefaultCategory()
+	category := cfg.ActiveDefaultCategory()
 	return !slices.Contains(category.DeniedTools, name) && (len(category.AllowedTools) == 0 || slices.Contains(category.AllowedTools, name))
 }
 

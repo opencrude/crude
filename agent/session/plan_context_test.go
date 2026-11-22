@@ -22,7 +22,7 @@ func TestHumanTurnReceivesCanonicalPlanAfterCompaction(t *testing.T) {
 	}
 	_, _, err = store.Update(ctx, plan.UpdateRequest{
 		PlanID: "current", Objective: "Repair the user's workflow", Status: plan.StatusActive,
-		Steps: []plan.PlanStep{{ID: "inspect", Description: "Inspect compaction", Status: plan.StepCompleted},
+		Steps: []plan.Step{{ID: "inspect", Description: "Inspect compaction", Status: plan.StepCompleted},
 			{ID: "verify", Description: "Run build and lint", Status: plan.StepInProgress}},
 	})
 	if err != nil {
@@ -40,8 +40,8 @@ func TestHumanTurnReceivesCanonicalPlanAfterCompaction(t *testing.T) {
 		t.Fatalf("bad plan context: %q", text)
 	}
 	var snapshot struct {
-		ID    string          `json:"id"`
-		Steps []plan.PlanStep `json:"steps"`
+		ID    string      `json:"id"`
+		Steps []plan.Step `json:"steps"`
 	}
 	if err := json.Unmarshal([]byte(text[start:start+end]), &snapshot); err != nil {
 		t.Fatal(err)

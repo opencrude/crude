@@ -80,7 +80,7 @@ func TestEstimateMessageTokensDoesNotDoubleCountProtocolMetadata(t *testing.T) {
 		Role:             "assistant",
 		Content:          PartsContent([]ContentPart{{Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64,abc"}}}),
 		ReasoningContent: "private reasoning",
-		ProviderItems: []ProviderItem{{
+		ProviderItems: []Item{{
 			Standard: "anthropic", Type: "thinking",
 			Data: json.RawMessage(`{"type":"thinking","thinking":"private reasoning","signature":"sig"}`),
 		}},

@@ -11,9 +11,9 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"crude/lsp/edit"
-	"crude/lsp/semantic"
-	"crude/types"
+	"crude/lsp/lspedit"
+	"crude/lsp/lspsemantic"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -24,15 +24,15 @@ var ErrSemanticBusy = errors.New("semantic request capacity is occupied")
 // SemanticTokenClient is optional: unsupported transports never need a dummy
 // implementation and do not cause a second language-server process.
 type SemanticTokenClient interface {
-	RequestSemanticTokens(context.Context, string, string, string, types.LSPSemanticRange) (types.LSPSemanticResponse, error)
+	RequestSemanticTokens(context.Context, string, string, string, insight.LSPSemanticRange) (insight.LSPSemanticResponse, error)
 }
 type semanticBase struct {
-	boundary types.InsightBoundary
+	boundary insight.Boundary
 	result   lspsemantic.Result
-	support  types.LSPSemanticSupport
+	support  insight.LSPSemanticSupport
 }
 type semanticView struct {
-	source   types.InsightSource
+	source   insight.Source
 	sequence uint64
 	expires  time.Time
 	cancel   context.CancelFunc
@@ -97,15 +97,15 @@ func (s *DocumentService) ReleaseLSPSemantic(owner document.Owner, view string, 
 // RequestLSPSemantic qualifies every answer against an acknowledged source and
 // active owner. The core retains only bounded delta bases per view, and cancels
 // older sequences before dispatch. A result ID never comes from a shell.
-func (w *Workspace) RequestLSPSemantic(ctx context.Context, owner document.Owner, source types.InsightSource, view string, sequence uint64, span types.LSPSemanticRange) (types.LSPSemanticSet, error) {
+func (w *Workspace) RequestLSPSemantic(ctx context.Context, owner document.Owner, source insight.Source, view string, sequence uint64, span insight.LSPSemanticRange) (insight.LSPSemanticSet, error) {
 	if w == nil || w.LiveDocuments == nil || w.LSPMgr == nil {
-		return types.LSPSemanticSet{}, errors.New("semantic colors need shared source and a language server")
+		return insight.LSPSemanticSet{}, errors.New("semantic colors need shared source and a language server")
 	}
 	if !validLSPView(view, sequence) {
-		return types.LSPSemanticSet{}, errors.New("invalid semantic view or sequence")
+		return insight.LSPSemanticSet{}, errors.New("invalid semantic view or sequence")
 	}
 	if err := ctx.Err(); err != nil {
-		return types.LSPSemanticSet{}, err
+		return insight.LSPSemanticSet{}, err
 	}
 	s := w.LiveDocuments
 	key := inlayViewKey{owner, view}
@@ -129,7 +129,7 @@ func (w *Workspace) RequestLSPSemantic(ctx context.Context, owner document.Owner
 
 	if err != nil {
 		s.mu.Unlock()
-		return types.LSPSemanticSet{}, err
+		return insight.LSPSemanticSet{}, err
 	}
 	text = bytes.Clone(text)
 	// Use one cancellation owner for both the caller and the view. A release
@@ -161,22 +161,22 @@ func (w *Workspace) RequestLSPSemantic(ctx context.Context, owner document.Owner
 	}()
 	result, nextBase, err := w.LSPMgr.semanticTokens(request, source, span, string(text), base)
 	if err != nil {
-		return types.LSPSemanticSet{}, err
+		return insight.LSPSemanticSet{}, err
 	}
 	fence, err := w.LSPMgr.semanticFence(result.Boundary, result.WireVersion, formattingGate, "semantic colors")
 	if err != nil {
-		return types.LSPSemanticSet{}, err
+		return insight.LSPSemanticSet{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.semanticViews[key] != entry || request.Err() != nil {
-		return types.LSPSemanticSet{}, context.Canceled
+		return insight.LSPSemanticSet{}, context.Canceled
 	}
 	if _, err := s.readOnlyLSPSourceLocked(owner, source); err != nil {
-		return types.LSPSemanticSet{}, err
+		return insight.LSPSemanticSet{}, err
 	}
 	if err := fence(); err != nil {
-		return types.LSPSemanticSet{}, err
+		return insight.LSPSemanticSet{}, err
 	}
 	retained := 0
 	for k, v := range s.semanticViews {
@@ -192,11 +192,11 @@ func (w *Workspace) RequestLSPSemantic(ctx context.Context, owner document.Owner
 	return result, nil
 }
 
-func (m *LSPManager) semanticTokens(ctx context.Context, source types.InsightSource, span types.LSPSemanticRange, text string, base *semanticBase) (types.LSPSemanticSet, *semanticBase, error) {
+func (m *LSPManager) semanticTokens(ctx context.Context, source insight.Source, span insight.LSPSemanticRange, text string, base *semanticBase) (insight.LSPSemanticSet, *semanticBase, error) {
 	if !m.featureOn(formattingGate) {
-		return types.LSPSemanticSet{}, nil, errors.New("semantic colors need enabled Code Intelligence")
+		return insight.LSPSemanticSet{}, nil, errors.New("semantic colors need enabled Code Intelligence")
 	}
-	var result types.LSPSemanticSet
+	var result insight.LSPSemanticSet
 	var next *semanticBase
 	err := m.trackInflight(func() error {
 		if err := m.awaitSynchronized(ctx, source.Path); err != nil {
@@ -210,7 +210,7 @@ func (m *LSPManager) semanticTokens(ctx context.Context, source types.InsightSou
 		m.mu.Lock()
 		doc := m.documents[filepath.Clean(source.Path)]
 		wire := 0
-		var boundary types.InsightBoundary
+		var boundary insight.Boundary
 		if doc != nil && doc.opened && !doc.syncPending {
 			wire, boundary = doc.wireVersion, doc.boundary
 			boundary.Context.UnknownInputs = slices.Clone(boundary.Context.UnknownInputs)
@@ -223,7 +223,7 @@ func (m *LSPManager) semanticTokens(ctx context.Context, source types.InsightSou
 		if err != nil {
 			return err
 		}
-		result = types.LSPSemanticSet{Boundary: boundary, WireVersion: wire, Range: span}
+		result = insight.LSPSemanticSet{Boundary: boundary, WireVersion: wire, Range: span}
 		provider, ok := client.(SemanticTokenClient)
 		if !ok {
 			result.Unsupported = true
@@ -348,9 +348,9 @@ func (m *LSPManager) semanticTokens(ctx context.Context, source types.InsightSou
 		for i, name := range legend.Types {
 			indices[name] = i
 		}
-		result.Spans = make([]types.LSPSemanticSpan, len(spans))
+		result.Spans = make([]insight.LSPSemanticSpan, len(spans))
 		for i, s := range spans {
-			result.Spans[i] = types.LSPSemanticSpan{Start: s.Start, End: s.End, Type: indices[s.Type], Modifiers: s.Modifiers}
+			result.Spans[i] = insight.LSPSemanticSpan{Start: s.Start, End: s.End, Type: indices[s.Type], Modifiers: s.Modifiers}
 		}
 		if result.Full && !raw.Null && raw.ID != "" {
 			next = &semanticBase{boundary: boundary, result: raw, support: support.Support}
@@ -358,7 +358,7 @@ func (m *LSPManager) semanticTokens(ctx context.Context, source types.InsightSou
 		return fence()
 	})
 	if err != nil {
-		return types.LSPSemanticSet{}, nil, err
+		return insight.LSPSemanticSet{}, nil, err
 	}
 	return result, next, ctx.Err()
 }

@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/provider"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 )
 
 func TestAgentMediaPolicyRetainsExactRootSnapshot(t *testing.T) {
@@ -73,7 +73,7 @@ func TestChildNativeMediaDispatchPreservesExplicitDisabledSnapshot(t *testing.T)
 	})
 	p := provider.FromPreset("openai-chat", "fixture", "http://127.0.0.1:9")
 	p.Model = "child-proxy"
-	handle := &agent.SubAgentHandle{Agent: agent.NewAgent(p, p.Model, s.logger)}
+	handle := &turnloop.SubAgentHandle{Agent: turnloop.NewAgent(p, p.Model, s.logger)}
 	// The parent's image-capable result proves the fixture is real and admissible;
 	// the child must still use its own immutable, explicit-empty role snapshot.
 	parent, err := s.buildToolFnAtRoot(false, p, []string{provider.ModalityImage}, root)(t.Context(), "read_file", map[string]any{"path": "child.png"})
@@ -81,7 +81,7 @@ func TestChildNativeMediaDispatchPreservesExplicitDisabledSnapshot(t *testing.T)
 		t.Fatalf("image-capable native parent read=%#v err=%v", parent, err)
 	}
 	for _, modalities := range [][]string{{provider.ModalityImage}, {}} {
-		spec := agent.SubAgentSpec{ID: "child", Policy: safety.ReadOnlyPolicy(), ModelModalities: modalities}
+		spec := turnloop.SubAgentSpec{ID: "child", Policy: safety.ReadOnlyPolicy(), ModelModalities: modalities}
 		result, err := runner.buildProxiedToolFn(spec, nil, handle)(t.Context(), "read_file", map[string]any{"path": "child.png"})
 		if len(modalities) == 0 {
 			if err == nil || len(result.Attachments) != 0 || !strings.Contains(result.Content, `model "child-proxy" does not advertise image input`) {
@@ -168,7 +168,7 @@ func TestDelegatedAgentMediaPolicyUsesChildSnapshot(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("real child request did not start")
 			}
-			handle, exists := runner.Manager().GetActive(agent.AgentID(identity.AgentID))
+			handle, exists := runner.Manager().Active(turnloop.AgentID(identity.AgentID))
 			if !exists || handle.Agent == nil || handle.Agent.MediaReadPolicy == nil {
 				t.Fatal("actual launched child has no media snapshot")
 			}

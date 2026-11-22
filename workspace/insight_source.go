@@ -3,7 +3,8 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
+	"crude/types/insight"
 	"crypto/rand"
 	"errors"
 	"io"
@@ -11,7 +12,6 @@ import (
 	"path/filepath"
 	"sync/atomic"
 
-	"crude/types"
 	"crude/workspace/document"
 	"crude/workspace/fileio"
 )
@@ -25,17 +25,17 @@ type analysisSourceLease struct {
 	snapshot  document.Snapshot
 	disk      os.FileInfo
 	released  atomic.Bool
-	ref       types.InsightSource
+	ref       insight.Source
 }
 
-func (s *DocumentService) analysisIdentityLocked(d *liveDocument) types.InsightSource {
+func (s *DocumentService) analysisIdentityLocked(d *liveDocument) insight.Source {
 	if s.Insight == nil {
-		return types.InsightSource{}
+		return insight.Source{}
 	}
 	if d.snapshot.AnalysisGeneration != s.Insight.generation || d.snapshot.AnalysisLifetime == "" {
 		d.snapshot.AnalysisGeneration, d.snapshot.AnalysisLifetime = s.Insight.generation, rand.Text()
 	}
-	return types.InsightSource{WorkspaceGeneration: d.snapshot.AnalysisGeneration,
+	return insight.Source{WorkspaceGeneration: d.snapshot.AnalysisGeneration,
 		Lifetime: d.snapshot.AnalysisLifetime, DocumentID: d.snapshot.ID, Path: d.snapshot.Path,
 		Revision: d.snapshot.Revision, Kind: "canonical"}
 }
@@ -110,7 +110,7 @@ func (s *DocumentService) acquireAnalysisSource(ctx context.Context, path string
 		return source, err
 	}
 	return &analysisSourceLease{documents: s, disk: info,
-		ref: types.InsightSource{WorkspaceGeneration: s.Insight.generation,
+		ref: insight.Source{WorkspaceGeneration: s.Insight.generation,
 			DocumentID: path, Path: path, Lifetime: rand.Text(), Revision: 1, Kind: "disk"},
 		snapshot: document.Snapshot{ID: path, Path: path, Revision: 1, Text: text, DiskExists: true}}, nil
 }

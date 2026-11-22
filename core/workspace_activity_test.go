@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -30,7 +30,7 @@ func TestSavedWorkspaceActivityObservesDetachedWorkWithoutOpeningColdProjects(t 
 	author, authorID := topicResourceConnection(t, runtime, root, "activity-author")
 	observer, observerID := topicResourceConnection(t, runtime, observerRoot, "activity-observer")
 	view := &coreclient.WorkspaceView{Client: observer, ID: observerID}
-	rootID, coldID := workspace.WorkspaceID(root), workspace.WorkspaceID(coldRoot)
+	rootID, coldID := workspace.ID(root), workspace.ID(coldRoot)
 	read := func(wantAgents, wantTerminals, wantEdits int) {
 		t.Helper()
 		counts, err := view.ReadWorkspaceActivity(t.Context())
@@ -46,7 +46,7 @@ func TestSavedWorkspaceActivityObservesDetachedWorkWithoutOpeningColdProjects(t 
 			!got.Unsaved.Observed || got.Unsaved.Value != wantEdits {
 			t.Fatalf("workspace activity = %+v, want observed (%d, %d, %d)", got, wantAgents, wantTerminals, wantEdits)
 		}
-		if current := counts[workspace.WorkspaceID(observerRoot)]; !current.Unsaved.Observed || current.Unsaved.Value != 0 {
+		if current := counts[workspace.ID(observerRoot)]; !current.Unsaved.Observed || current.Unsaved.Value != 0 {
 			t.Fatalf("background activity leaked into the attached workspace: %+v", current)
 		}
 	}

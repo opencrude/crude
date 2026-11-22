@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/agent/collaboration"
 	"crude/agent/safety"
 	"crude/agent/tools"
+	"crude/agent/turnloop"
 	"crude/types/toolresult"
 )
 
@@ -37,10 +37,10 @@ func TestChildPolicyRefusalsKeepHintsPrivateAndCannotPerformEffects(t *testing.T
 		return tools.ToolResult{}, nil
 	})
 	policy := safety.ReadOnlyPolicy()
-	live := agent.NewAgent(nil, "policy-test", s.logger)
+	live := turnloop.NewAgent(nil, "policy-test", s.logger)
 	live.Policy = policy
-	handle := &agent.SubAgentHandle{Agent: live}
-	fn := runner.buildProxiedToolFn(agent.SubAgentSpec{ID: "child", PolicyName: "read-only", Policy: policy}, nil, handle)
+	handle := &turnloop.SubAgentHandle{Agent: live}
+	fn := runner.buildProxiedToolFn(turnloop.SubAgentSpec{ID: "child", PolicyName: "read-only", Policy: policy}, nil, handle)
 	for _, test := range []struct {
 		tool   string
 		params map[string]any

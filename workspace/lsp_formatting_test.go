@@ -2,19 +2,19 @@ package workspace
 
 import (
 	"context"
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 	"errors"
 	"reflect"
 	"testing"
 )
 
-func (c *navigationClient) RequestRangeFormatting(_ context.Context, path string, _ types.LSPFormattingSpan, _ types.LSPFormattingOptions) (types.LSPFormattingResponse, error) {
+func (c *navigationClient) RequestRangeFormatting(_ context.Context, path string, _ insight.LSPFormattingSpan, _ insight.LSPFormattingOptions) (insight.LSPFormattingResponse, error) {
 	c.mu.Lock()
 	wire := c.versions[path]
 	c.mu.Unlock()
 	c.navMu.Lock()
-	out := types.LSPFormattingResponse{WireVersion: wire + c.wireDelta, JSON: []byte(c.raw), Unsupported: c.unsupported}
+	out := insight.LSPFormattingResponse{WireVersion: wire + c.wireDelta, JSON: []byte(c.raw), Unsupported: c.unsupported}
 	err, entered, release := c.err, c.entered, c.release
 	c.navMu.Unlock()
 	if entered != nil {
@@ -31,7 +31,7 @@ func TestRangeFormattingQualifiedPlanAndStrictBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := types.LSPFormattingRequest{Source: f.source, Ranges: []types.LSPFormattingSpan{{Start: 0, End: 8}}, Options: types.LSPFormattingOptions{TabSize: 4, InsertSpaces: true}}
+	in := insight.LSPFormattingRequest{Source: f.source, Ranges: []insight.LSPFormattingSpan{{Start: 0, End: 8}}, Options: insight.LSPFormattingOptions{TabSize: 4, InsertSpaces: true}}
 	for _, tc := range []struct {
 		raw string
 		bad bool
@@ -45,7 +45,7 @@ func TestRangeFormattingQualifiedPlanAndStrictBoundaries(t *testing.T) {
 		f.client.raw = tc.raw
 		result, err := f.w.RequestSelectionFormatting(t.Context(), f.owner, in)
 		if tc.bad {
-			if err == nil || !reflect.DeepEqual(result, types.LSPFormattingResult{}) {
+			if err == nil || !reflect.DeepEqual(result, insight.LSPFormattingResult{}) {
 				t.Fatal("invalid result exposed a plan", tc.raw, result, err)
 			}
 			continue
@@ -62,7 +62,7 @@ func TestRangeFormattingQualifiedPlanAndStrictBoundaries(t *testing.T) {
 	f.unchanged(t, before)
 	f.client.wireDelta = 1
 	f.client.raw = "[]"
-	if out, err := f.w.RequestSelectionFormatting(t.Context(), f.owner, in); !errors.Is(err, document.ErrRevision) || !reflect.DeepEqual(out, types.LSPFormattingResult{}) {
+	if out, err := f.w.RequestSelectionFormatting(t.Context(), f.owner, in); !errors.Is(err, document.ErrRevision) || !reflect.DeepEqual(out, insight.LSPFormattingResult{}) {
 		t.Fatal("wrong wire version accepted", out, err)
 	}
 	f.client.wireDelta = 0
@@ -78,8 +78,8 @@ func TestRangeFormattingQualifiedPlanAndStrictBoundaries(t *testing.T) {
 }
 func TestRangeFormattingRejectsInvalidSourceSelections(t *testing.T) {
 	text := "a😀=1;\r\nz"
-	for _, ranges := range [][]types.LSPFormattingSpan{nil, {{Start: 1, End: 1}}, {{Start: 2, End: 5}}, {{Start: 0, End: 8}, {Start: 7, End: 8}}, {{Start: 0, End: 9}}, {{Start: 0, End: 200}}, make([]types.LSPFormattingSpan, 257)} {
-		if err := validateFormattingRanges(text, types.LSPFormattingRequest{Ranges: ranges, Options: types.LSPFormattingOptions{TabSize: 4}}); err == nil {
+	for _, ranges := range [][]insight.LSPFormattingSpan{nil, {{Start: 1, End: 1}}, {{Start: 2, End: 5}}, {{Start: 0, End: 8}, {Start: 7, End: 8}}, {{Start: 0, End: 9}}, {{Start: 0, End: 200}}, make([]insight.LSPFormattingSpan, 257)} {
+		if err := validateFormattingRanges(text, insight.LSPFormattingRequest{Ranges: ranges, Options: insight.LSPFormattingOptions{TabSize: 4}}); err == nil {
 			t.Fatal("invalid ranges accepted", ranges)
 		}
 	}

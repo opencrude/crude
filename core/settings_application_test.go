@@ -4,9 +4,9 @@ import (
 	"context"
 	"crude/agent/capability"
 	"crude/agent/provider"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 	"crude/workspace"
 	"reflect"
 	"strings"
@@ -14,17 +14,17 @@ import (
 )
 
 func TestPreparedAccountCommitKeepsSecretsAndPublishesOnlyOnApply(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	before := provider.Account{ID: "one", ProviderID: "provider", Label: "Before", APIKey: "private-key"}
-	ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": before}})
+	ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": before}})
 	calls := 0
-	ws.OnAppAccountCommit = func(change types.AccountChange) (types.AppSettings, error) {
+	ws.OnAppAccountCommit = func(change setting.AccountChange) (setting.App, error) {
 		calls++
 		if change.Before.APIKey != "private-key" || change.After.APIKey != "private-key" {
 			t.Fatal("private preimage or explicit keep lost")
 		}
-		return types.AppSettings{Accounts: map[string]provider.Account{"one": *change.After}}, nil
+		return setting.App{Accounts: map[string]provider.Account{"one": *change.After}}, nil
 	}
 	a := &actor{ws: ws}
 	input := coreprotocol.AccountChangeRequest{ID: "one", After: &coreprotocol.AccountDraft{ID: "one", ProviderID: "provider", Label: "After", APIKey: coreprotocol.SecretString{Keep: true}}}
@@ -54,16 +54,16 @@ func TestPreparedAccountCommitKeepsSecretsAndPublishesOnlyOnApply(t *testing.T) 
 }
 
 func TestPreparedAccountRemovalNeedsNoConfigRevision(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
-	ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {ID: "one"}}})
+	ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": {ID: "one"}}})
 	called := false
-	ws.OnAppAccountCommit = func(change types.AccountChange) (types.AppSettings, error) {
+	ws.OnAppAccountCommit = func(change setting.AccountChange) (setting.App, error) {
 		called = true
 		if change.ID != "one" || change.After != nil {
 			t.Fatal("wrong account action")
 		}
-		return types.AppSettings{}, nil
+		return setting.App{}, nil
 	}
 	a := &actor{ws: ws}
 	run, _, _ := a.prepareApplicationSettings(coreprotocol.Request{Method: coreprotocol.AccountChange, Payload: mustTestPayload(coreprotocol.AccountChangeRequest{ID: "one"})})
@@ -73,7 +73,7 @@ func TestPreparedAccountRemovalNeedsNoConfigRevision(t *testing.T) {
 }
 
 func TestPreparedPreferencesPublishesPrivateSnapshotAndKeepsProxy(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	before := ws.AppDefaults()
 	before.Network.ProxyURL = "http://user:private-proxy@localhost:8000"
@@ -81,12 +81,12 @@ func TestPreparedPreferencesPublishesPrivateSnapshotAndKeepsProxy(t *testing.T) 
 	before = ws.AppDefaults()
 	a := &actor{ws: ws}
 	fetched := fetchSettingsForTest(t, a)
-	next := types.CloneAppSettings(fetched.Application)
+	next := setting.CloneApp(fetched.Application)
 	next.Theme.Preset = "changed"
-	input := coreprotocol.ApplicationPreferencesRequest{Edits: types.SettingsEdits(fetched.Application, next), ProxyURL: coreprotocol.SecretString{Keep: true}}
-	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+	input := coreprotocol.ApplicationPreferencesRequest{Edits: setting.Edits(fetched.Application, next), ProxyURL: coreprotocol.SecretString{Keep: true}}
+	ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 		next := ws.AppDefaults()
-		if err := types.ApplySettingsEdits(&next, edits); err != nil {
+		if err := setting.ApplyEdits(&next, edits); err != nil {
 			return next, err
 		}
 		if next.Network.ProxyURL != before.Network.ProxyURL {
@@ -127,20 +127,20 @@ func fetchSettingsForTest(t *testing.T, a *actor) coreprotocol.SettingsFetchResu
 }
 
 func TestFetchedAccountLabelOnlyKeepsEndpointBytes(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	before := provider.Account{ID: "one", ProviderID: "custom", Label: "before", APIKey: "sentinel", Connection: provider.Template{ProviderURL: "https://example.com/api?token=sentinel", Headers: map[string]string{"Authorization": "sentinel"}, ExtraBody: map[string]any{"key": "sentinel"}}}
-	ws.SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": before}})
+	ws.SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": before}})
 	a := &actor{ws: ws}
 	fetched := fetchSettingsForTest(t, a)
 	view := fetched.Accounts["one"]
-	ws.OnAppAccountCommit = func(change types.AccountChange) (types.AppSettings, error) {
+	ws.OnAppAccountCommit = func(change setting.AccountChange) (setting.App, error) {
 		after := *change.After
 		after.Label = before.Label
 		if !reflect.DeepEqual(after, before) {
 			t.Fatalf("label-only edit changed private bytes: %+v", after)
 		}
-		return types.AppSettings{Accounts: map[string]provider.Account{"one": *change.After}}, nil
+		return setting.App{Accounts: map[string]provider.Account{"one": *change.After}}, nil
 	}
 	in := coreprotocol.AccountChangeRequest{ID: "one", After: &coreprotocol.AccountDraft{ID: view.ID, ProviderID: view.ProviderID, Label: "after", Connection: view.Connection, Endpoint: coreprotocol.SecretString{Keep: true}, APIKey: coreprotocol.SecretString{Keep: true}, Headers: coreprotocol.SecretMap{Keep: true}, ExtraBody: coreprotocol.SecretObject{Keep: true}}}
 	raw, _ := testPayload(in)
@@ -156,7 +156,7 @@ func TestFetchedAccountLabelOnlyKeepsEndpointBytes(t *testing.T) {
 }
 
 func TestCapabilityFetchedSecretKeepRoundtrip(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	before := ws.AppDefaults()
 	conn := captypes.ConnectionConfig{ID: "one", Name: "before", Transport: "http", URL: "https://example.com/mcp?token=sentinel", Environment: map[string]string{"KEY": "sentinel"}, Headers: map[string]string{"Authorization": "sentinel"}, SecretRefs: map[string]string{"KEY": "sentinel"}, CredentialRef: "sentinel", Args: []string{"sentinel"}, Scope: captypes.ScopeApplication}
@@ -174,9 +174,9 @@ func TestCapabilityFetchedSecretKeepRoundtrip(t *testing.T) {
 	if err := ws.Capabilities.Configure(context.Background(), ws.LoadAppSettings().Capabilities); err != nil {
 		t.Fatal(err)
 	}
-	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+	ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 		next := ws.AppDefaults()
-		err := types.ApplySettingsEdits(&next, edits)
+		err := setting.ApplyEdits(&next, edits)
 		return next, err
 	}
 	a := &actor{ws: ws}

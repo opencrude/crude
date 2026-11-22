@@ -8,8 +8,8 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
 // accountSearchRunner resolves a search method's account at each call from
@@ -54,7 +54,7 @@ func (runner accountSearchRunner) Observation(route captypes.WebSearchRoute) (ca
 // owners. It validates and stages one search method change in Application
 // settings without a probe or a search. The provider checks the account
 // again at each search.
-func applyWebSearchRoute(working *types.AppSettings, action captypes.Action) error {
+func applyWebSearchRoute(working *setting.App, action captypes.Action) error {
 	if action.Scope != captypes.ScopeApplication {
 		return errors.New("change search methods in Application Settings")
 	}
@@ -125,10 +125,10 @@ func validWebSearchRoute(accounts map[string]provider.Account, route captypes.We
 
 // publishWebSearchRoutes tells a retained capability service about committed
 // Application search methods without reconfiguring connections.
-func (workspace *Workspace) publishWebSearchRoutes(routes []captypes.WebSearchRoute) {
-	workspace.capabilityMu.RLock()
-	defer workspace.capabilityMu.RUnlock()
-	if workspace.Capabilities != nil {
-		workspace.Capabilities.SetPublishedWebSearchRoutes(routes)
+func (w *Workspace) publishWebSearchRoutes(routes []captypes.WebSearchRoute) {
+	w.capabilityMu.RLock()
+	defer w.capabilityMu.RUnlock()
+	if w.Capabilities != nil {
+		w.Capabilities.SetPublishedWebSearchRoutes(routes)
 	}
 }

@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"crude/core/protocol"
-	"crude/retry"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/internal/retry"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -340,7 +340,7 @@ func reserveStopLease(ctx context.Context, reserve func() (func(), error)) (func
 	deadline := time.Now().Add(stopSettleWindow)
 	for {
 		release, err := reserve()
-		if err == nil || !errors.Is(err, types.ErrIdleSettling) || !time.Now().Before(deadline) {
+		if err == nil || !errors.Is(err, conversation.ErrIdleSettling) || !time.Now().Before(deadline) {
 			return release, err
 		}
 		if err := retry.Wait(ctx, 50*time.Millisecond); err != nil {

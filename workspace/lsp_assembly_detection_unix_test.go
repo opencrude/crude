@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	model "crude/types"
+	"crude/types/setting"
 	"golang.org/x/sys/unix"
 )
 
@@ -22,7 +22,7 @@ func TestAssemblyDiscoveryIgnoreFIFODoesNotWaitForWriter(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	done := make(chan *assemblyDiscovery, 1)
-	go func() { done <- discoverProjectLanguages(ctx, root, model.DefaultLSPSettings()) }()
+	go func() { done <- discoverProjectLanguages(ctx, root, setting.DefaultLSP()) }()
 	select {
 	case found := <-done:
 		if found.err != nil || found.languages["go"] == nil {
@@ -48,7 +48,7 @@ func TestAssemblyDiscoveryUnreadableSubtreeIsNotComplete(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	found := discoverProjectLanguages(context.Background(), root, model.DefaultLSPSettings())
+	found := discoverProjectLanguages(context.Background(), root, setting.DefaultLSP())
 	if found.err == nil {
 		t.Fatalf("unreadable subtree claimed complete discovery: %+v", found)
 	}

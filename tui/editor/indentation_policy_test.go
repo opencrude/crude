@@ -2,8 +2,8 @@ package editor
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/text/indent"
-	"crude/types"
+	"crude/text/indentation"
+	"crude/types/setting"
 	"testing"
 )
 
@@ -11,7 +11,7 @@ func TestIndentationChoicesPreserveSourceAndSharedGeometry(t *testing.T) {
 	e := loadEditorText(t, "policy.txt", "\tword\n  text\n")
 	peer := e.NewLinkedView()
 	defer peer.Close()
-	e.SetPresentation(types.EditorSettings{TabSize: 4, IndentStyle: indentation.Spaces, IndentSize: 4})
+	e.SetPresentation(setting.Editor{TabSize: 4, IndentStyle: indentation.Spaces, IndentSize: 4})
 	e.SetCursorPosition(0, 8)
 	e.SetSelection(0, 4, 0, 8)
 	revision := e.Revision()

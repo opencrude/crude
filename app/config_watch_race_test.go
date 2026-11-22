@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/types/setting"
 )
 
 // TestWatchConfigConcurrentStopAndReload exercises fsnotify callback + stop
@@ -23,7 +23,7 @@ func TestWatchConfigConcurrentStopAndReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	fc := DefaultFileConfig()
-	fc.Theme = &types.ThemeSettings{Preset: "dark"}
+	fc.Theme = &setting.Theme{Preset: "dark"}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestWatchConfigConcurrentStopAndReload(t *testing.T) {
 	}
 
 	// One deterministic valid write so strict load emits before concurrent churn.
-	fc.Theme = &types.ThemeSettings{Preset: "light"}
+	fc.Theme = &setting.Theme{Preset: "light"}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestWatchConfigConcurrentStopAndReload(t *testing.T) {
 			defer wg.Done()
 			cfg := LoadFileConfig()
 			if cfg.Theme == nil {
-				cfg.Theme = &types.ThemeSettings{}
+				cfg.Theme = &setting.Theme{}
 			}
 			if n%2 == 0 {
 				cfg.Theme.Preset = "light"

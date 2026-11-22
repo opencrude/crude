@@ -1,8 +1,8 @@
 package session
 
 import (
-	"crude/agent"
 	"crude/agent/safety"
+	"crude/agent/turnloop"
 	"crude/agent/worktree"
 	"path/filepath"
 	"testing"
@@ -13,12 +13,12 @@ func TestExecutionAutoRequiresServiceAndExplicitSharedKeepsRoot(t *testing.T) {
 	s.SetWorkDir(t.TempDir())
 	r := &SubAgentRunner{session: s}
 	for _, mode := range []string{"", string(worktree.Auto), string(worktree.Isolated), "invalid"} {
-		spec := agent.SubAgentSpec{Isolation: mode}
+		spec := turnloop.SubAgentSpec{Isolation: mode}
 		if err := r.prepareChildExecution(t.Context(), &spec, "run"); err == nil {
 			t.Fatalf("mode %q silently shared", mode)
 		}
 	}
-	spec := agent.SubAgentSpec{Isolation: string(worktree.Shared), FileOwnership: []string{"owned.go"}}
+	spec := turnloop.SubAgentSpec{Isolation: string(worktree.Shared), FileOwnership: []string{"owned.go"}}
 	if err := r.prepareChildExecution(t.Context(), &spec, "run"); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestExecutionAutoRequiresServiceAndExplicitSharedKeepsRoot(t *testing.T) {
 }
 
 func TestExecutionDefaultClassifiesSelectedIndependentWriters(t *testing.T) {
-	base := agent.SubAgentSpec{ParentID: "parent", Category: agent.CatCrafter, Policy: agent.ComposePolicy(safety.DefaultPolicy(), "no-delete", agent.CatCrafter), Model: "fixture"}
+	base := turnloop.SubAgentSpec{ParentID: "parent", Category: turnloop.CatCrafter, Policy: turnloop.ComposePolicy(safety.DefaultPolicy(), "no-delete", turnloop.CatCrafter), Model: "fixture"}
 	if !childIndependentWriter(base) {
 		t.Fatal("delegated writer not isolated by auto")
 	}

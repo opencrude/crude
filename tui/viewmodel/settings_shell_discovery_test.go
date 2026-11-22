@@ -11,9 +11,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	settingsui "crude/tui/settings"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -39,7 +39,7 @@ func TestConnectedSettingsShellDiscoveryKeepsOpenDraftAndSave(t *testing.T) {
 			t.Setenv("SHELL", "")
 			root := t.TempDir()
 			core := remoteJourneyRuntime(t, "http://127.0.0.1:1", func(ws *workspace.Workspace) {
-				if err := ws.SaveWorkspaceSettings(types.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":8}`)}); err != nil {
+				if err := ws.SaveWorkspaceSettings(setting.WorkspaceOverrides{Editor: json.RawMessage(`{"tab_size":8}`)}); err != nil {
 					t.Error(err)
 				}
 			})

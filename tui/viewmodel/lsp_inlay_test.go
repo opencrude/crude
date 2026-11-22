@@ -9,26 +9,26 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
 type inlayCursorService struct {
 	shellport.LSPService
 	cursor         uint64
-	producer       *types.InsightProducer
+	producer       *insight.Producer
 	unsynchronized bool
 }
 
 func (s *inlayCursorService) ServerReady() bool { return true }
-func (s *inlayCursorService) FileProducer(string) types.InsightProducer {
+func (s *inlayCursorService) FileProducer(string) insight.Producer {
 	if s.producer != nil {
 		return *s.producer
 	}
-	return types.InsightProducer{InstanceID: "independent-provider"}
+	return insight.Producer{InstanceID: "independent-provider"}
 }
-func (s *inlayCursorService) FileSynchronized(types.InsightSource, uint64) bool {
+func (s *inlayCursorService) FileSynchronized(insight.Source, uint64) bool {
 	return !s.unsynchronized
 }
 func (s *inlayCursorService) InlayHintsState() (bool, uint64) {
@@ -44,10 +44,10 @@ type inlayCursorWorkspace struct {
 }
 
 func (w *inlayCursorWorkspace) LSPMgr() shellport.LSPService { return w.service }
-func (*inlayCursorWorkspace) RequestLSPInlayHints(context.Context, types.InsightSource, string, uint64, types.LSPInlayRange) (types.LSPInlaySet, error) {
+func (*inlayCursorWorkspace) RequestLSPInlayHints(context.Context, insight.Source, string, uint64, insight.LSPInlayRange) (insight.LSPInlaySet, error) {
 	panic("context barrier test must deliver only its independently constructed result")
 }
-func (*inlayCursorWorkspace) InspectLSPInlayHint(context.Context, string, string, int, bool) (types.LSPInlayInspection, error) {
+func (*inlayCursorWorkspace) InspectLSPInlayHint(context.Context, string, string, int, bool) (insight.LSPInlayInspection, error) {
 	panic("context barrier test must never dispatch original-object inspection")
 }
 func (*inlayCursorWorkspace) ReleaseLSPInlayHints(context.Context, string, uint64) error {
@@ -84,15 +84,15 @@ func TestInlayEveryAnswerWaitsForTheOriginalContextCursor(t *testing.T) {
 				t.Fatal("original view did not enter read-only loading")
 			}
 			r := s.request
-			result := types.LSPInlaySet{ID: "independent-result", Digest: strings.Repeat("a", 64),
+			result := insight.LSPInlaySet{ID: "independent-result", Digest: strings.Repeat("a", 64),
 				ViewID: r.view.id, Sequence: r.sequence, WireVersion: 2, Range: r.span,
-				Boundary: types.InsightBoundary{Source: r.source,
-					Context:  types.InsightContext{Generation: 8},
-					Producer: types.InsightProducer{InstanceID: "independent-provider"}},
+				Boundary: insight.Boundary{Source: r.source,
+					Context:  insight.Context{Generation: 8},
+					Producer: insight.Producer{InstanceID: "independent-provider"}},
 				Answer: answer, ExpiresAt: time.Now().Add(time.Minute)}
 			if answer == "hints" {
-				result.Hints = []types.LSPInlayHint{{Index: 0, SourceByte: 1,
-					Position: types.LSPInlayPosition{Line: 0, Character: 1}, Label: "TYPE"}}
+				result.Hints = []insight.LSPInlayHint{{Index: 0, SourceByte: 1,
+					Position: insight.LSPInlayPosition{Line: 0, Character: 1}, Label: "TYPE"}}
 			}
 			app.handleInlayResult(inlayResultMsg{owner: r, result: result})
 			app.syncInlayHints()
@@ -149,7 +149,7 @@ func TestInlayWaitsForSynchronizedFileAndRetiresReplacedProducer(t *testing.T) {
 	port.service.unsynchronized = false
 	app.syncInlayHints()
 	first = view.request
-	replacement := types.InsightProducer{InstanceID: "replacement"}
+	replacement := insight.Producer{InstanceID: "replacement"}
 	port.service.producer = &replacement
 	if cmd := app.startInlayRequest(inlayDueMsg{owner: first}); cmd != nil {
 		t.Fatal("old provider request started")
@@ -158,7 +158,7 @@ func TestInlayWaitsForSynchronizedFileAndRetiresReplacedProducer(t *testing.T) {
 	if view.request == nil || view.request == first || first.ctx.Err() == nil || view.request.producer != replacement {
 		t.Fatal("new provider did not own a new request")
 	}
-	lost := types.InsightProducer{}
+	lost := insight.Producer{}
 	port.service.producer = &lost
 	app.syncInlayHints()
 	if view.request != nil || ed.HasInlayProjection() || ed.Value() != "abc\n" || ed.Modified() {
@@ -176,9 +176,9 @@ func TestInlayProjectionFailureExplainsRetryWithoutInternalData(t *testing.T) {
 		t.Fatal("inlay inspector did not open")
 	}
 	r := s.request
-	r.result = &types.LSPInlaySet{ID: "result", Digest: strings.Repeat("a", 64), ViewID: r.view.id, Sequence: r.sequence, Range: r.span, WireVersion: 1,
-		Boundary: types.InsightBoundary{Source: r.source, Context: types.InsightContext{Generation: r.contextGeneration}, Producer: r.producer},
-		Answer:   types.LSPInlayHints, ExpiresAt: time.Now().Add(time.Minute), Hints: []types.LSPInlayHint{{Index: 0, SourceByte: 1, Position: types.LSPInlayPosition{Line: 0, Character: 1}, Label: "hint"}}}
+	r.result = &insight.LSPInlaySet{ID: "result", Digest: strings.Repeat("a", 64), ViewID: r.view.id, Sequence: r.sequence, Range: r.span, WireVersion: 1,
+		Boundary: insight.Boundary{Source: r.source, Context: insight.Context{Generation: r.contextGeneration}, Producer: r.producer},
+		Answer:   insight.LSPInlayHints, ExpiresAt: time.Now().Add(time.Minute), Hints: []insight.LSPInlayHint{{Index: 0, SourceByte: 1, Position: insight.LSPInlayPosition{Line: 0, Character: 1}, Label: "hint"}}}
 	r.installed = true
 	r.err = errors.New("internal source-byte projection secret")
 	app.updateInlayInspector(r)

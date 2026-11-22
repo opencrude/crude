@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"crude/core"
-	"crude/core/client"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/internal/testhome"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -208,11 +208,11 @@ func (c *lostReply) CallWith(ctx context.Context, workspace, method string, in c
 
 func TestSDKCoreDomainAndExactShell(t *testing.T) {
 	r, err := core.New(func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, logger{})
-		ws.SetAppDefaults(types.AppSettings{Editor: types.EditorSettings{WordWrap: true, TabSize: 4}})
-		ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+		ws := workspace.NewWorkspace(root, "", "tester", setting.Settings{}, logger{})
+		ws.SetAppDefaults(setting.App{Editor: setting.Editor{WordWrap: true, TabSize: 4}})
+		ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 			next := ws.AppDefaults()
-			err := types.ApplySettingsEdits(&next, edits)
+			err := setting.ApplyEdits(&next, edits)
 			return next, err
 		}
 		return ws, nil
@@ -251,8 +251,8 @@ func TestSDKCoreDomainAndExactShell(t *testing.T) {
 	}
 	get := outcome(t, call(t, c, "crude_control", map[string]any{"command": "settings.get", "arguments": map[string]any{"scope": "application"}}))
 	var settings struct {
-		Revision string            `json:"application_revision"`
-		Settings types.AppSettings `json:"application"`
+		Revision string      `json:"application_revision"`
+		Settings setting.App `json:"application"`
 	}
 	if err := json.Unmarshal(get.Output, &settings); err != nil {
 		t.Fatal(err)
@@ -276,7 +276,7 @@ func TestSDKCoreDomainAndExactShell(t *testing.T) {
 		t.Fatalf("mutation: %#v", changed)
 	}
 	after := outcome(t, call(t, c, "crude_control", map[string]any{"command": "settings.get", "arguments": map[string]any{"scope": "application"}}))
-	settings.Settings = types.AppSettings{}
+	settings.Settings = setting.App{}
 	if err := json.Unmarshal(after.Output, &settings); err != nil || settings.Settings.Editor.WordWrap || settings.Settings.Editor.TabSize != 4 {
 		t.Fatalf("wrong domain state: %s %v", after.Output, err)
 	}

@@ -23,7 +23,7 @@ BENCH_GOOS="$(go env GOOS)"
 # the same samples and ceilings whether or not evidence is requested.
 if [[ -n "${BENCH_EVIDENCE:-}" ]]; then
   revision="$(git rev-parse HEAD)"
-  cohort="$(sed -n 's/^const ProtocolBuild = "\([0-9a-f]*\)"$/\1/p' buildinfo/cohort_gen.go)"
+  cohort="$(sed -n 's/^const ProtocolBuild = "\([0-9a-f]*\)"$/\1/p' internal/buildinfo/cohort_gen.go)"
   [[ ${#cohort} -eq 64 ]]
   tree_state=clean
   if [[ -n "$(git status --porcelain)" ]]; then tree_state=modified; fi
@@ -126,7 +126,7 @@ run_bench '^BenchmarkSnippetTypingDense$/^lines20000$/^mirrors(8|64)$/^paint(fal
 run_bench '^Benchmark(CompletionLeadingStopsDense|OccurrenceProjectionLongLine)$' ./tui/editor
 run_bench '^Benchmark(CompletionNormalization|HighlightNormalizationLongLine)$' ./workspace
 run_bench '^BenchmarkInlayReaderStableLayout$' ./tui/screens/inlay
-run_bench '^BenchmarkSemantic(DecodeDense|ParseDense)$' ./lsp/semantic
+run_bench '^BenchmarkSemantic(DecodeDense|ParseDense)$' ./lsp/lspsemantic
 # These restore a dense source outside each measured stage. Duration calibration
 # otherwise selects excessive fixture work without collecting a better sample.
 BENCHTIME=100x run_bench '^BenchmarkSemanticEditingDense$' ./tui/editor
@@ -134,7 +134,7 @@ run_bench '^BenchmarkEditorMixedDirectionPan$' ./tui/editor
 run_bench '^BenchmarkWrapped(EditorWorkload|RowPreparation)$' ./tui/editor
 BENCHTIME=100x run_bench '^BenchmarkMultipleCaret(Workload|Stages)$' ./tui/editor
 run_bench '^Benchmark(EditorOrientation|MinimapRebuild)$' ./tui/editor
-run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./syntax
+run_bench '^BenchmarkNativeSyntax(Preparation|Incremental|ColdSession)$' ./insight/syntax
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkTextTidePaint$' ./tui/chatprojection
 run_bench '^BenchmarkMixedMarkdown' ./tui/chatprojection
@@ -151,7 +151,7 @@ run_bench '^BenchmarkGitDiffLongLine(Paint|FarRightPaint)$' ./tui/screens/gitdif
 run_bench '^BenchmarkOpenIndexedHistory$' ./workspace/localhistory
 run_bench '^BenchmarkPublishContext(ReplaceUnrelatedArchiveHistory|RecoveryImage)$' ./agent/sessiondb
 run_bench '^BenchmarkDenseRecoverySnapshot$' ./agent/session
-run_bench '^Benchmark(DenseNoticeFooterReads|TickPreferenceReads)$' ./core/port/remote
+run_bench '^Benchmark(DenseNoticeFooterReads|TickPreferenceReads)$' ./core/shellport/remote
 run_bench '^Benchmark(CheckpointAppend_560Msgs|RecoveryCheckpoint_(560|2000)Msgs)$' ./agent/sessiondb
 run_bench '^BenchmarkSessionDatabaseStartup$' ./agent/sessiondb
 run_bench '^BenchmarkEstimateMultipartImage$' ./agent/provider

@@ -30,13 +30,13 @@ func taskKey(actor captypes.RuntimeActor) string {
 	return actorKey(actor) + "\x00" + actor.RunID + fmt.Sprintf("/%d/%d", actor.RuntimeEpoch, actor.TurnGeneration) + "\x00" + actor.ExecutionRoot + "\x00" + actor.WorkspaceID + shell
 }
 
-func (service *Service) taskAccess(actor captypes.RuntimeActor, config captypes.ConnectionConfig, name string) (captypes.ToolGrant, bool) {
-	service.mu.RLock()
-	defer service.mu.RUnlock()
-	if actor.RunID == "" || service.runs[actorKey(actor)] != taskKey(actor) {
+func (s *Service) taskAccess(actor captypes.RuntimeActor, config captypes.ConnectionConfig, name string) (captypes.ToolGrant, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if actor.RunID == "" || s.runs[actorKey(actor)] != taskKey(actor) {
 		return captypes.ToolGrant{}, false
 	}
-	grant, ok := service.taskGrants[taskKey(actor)][config.ID+"\x00"+name]
+	grant, ok := s.taskGrants[taskKey(actor)][config.ID+"\x00"+name]
 	return grant.Grant, ok && reflect.DeepEqual(grant.Connection, config)
 }
 
@@ -46,8 +46,8 @@ func previewToken(value any) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func (service *Service) recordAuthorization(ctx context.Context, actor captypes.RuntimeActor, origin, phase, token string, evidence any) error {
-	if service.db == nil {
+func (s *Service) recordAuthorization(ctx context.Context, actor captypes.RuntimeActor, origin, phase, token string, evidence any) error {
+	if s.db == nil {
 		return errors.New("capability authorization audit storage is unavailable")
 	}
 	// Audit facts bind authorization without retaining externally authored schema
@@ -69,12 +69,12 @@ func (service *Service) recordAuthorization(ctx context.Context, actor captypes.
 	if err != nil {
 		return err
 	}
-	_, err = service.db.ExecContext(ctx, `INSERT INTO capability_authorizations(owner_id,session_id,run_id,origin,phase,token,evidence,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+	_, err = s.db.ExecContext(ctx, `INSERT INTO capability_authorizations(owner_id,session_id,run_id,origin,phase,token,evidence,created_at) VALUES(?,?,?,?,?,?,?,?)`,
 		actor.ID, actor.SessionID, actor.RunID, origin, phase, token, string(encoded), time.Now().UnixMilli())
 	return err
 }
 
-func (service *Service) connectActor(ctx context.Context, actor captypes.RuntimeActor, config captypes.ConnectionConfig, settings captypes.Settings, manual bool) error {
+func (s *Service) connectActor(ctx context.Context, actor captypes.RuntimeActor, config captypes.ConnectionConfig, settings captypes.Settings, manual bool) error {
 	if config.Disabled {
 		return errors.New("MCP connection is disabled")
 	}
@@ -88,12 +88,12 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 		}
 	}
 	if config.Transport != "stdio" || manual {
-		return service.actorClients(actor).Connect(ctx, config.ID)
+		return s.actorClients(actor).Connect(ctx, config.ID)
 	}
 	if !actorAllows(actor, "capability_activate", captypes.EffectExecute) {
 		return errors.New("local MCP host execution exceeds the agent effect ceiling")
 	}
-	clients := service.actorClients(actor)
+	clients := s.actorClients(actor)
 	// Reconfiguration disconnects a changed connection, so a live session runs
 	// this exact configuration. Reusing it launches nothing; tool access still
 	// requires its own grants.
@@ -103,11 +103,11 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 		}
 	}
 	if !config.LaunchApproved {
-		if err := service.authorizeLaunch(ctx, actor, config, settings); err != nil {
+		if err := s.authorizeLaunch(ctx, actor, config, settings); err != nil {
 			return err
 		}
 	}
-	prepared, err := service.prepareLaunch(ctx, config)
+	prepared, err := s.prepareLaunch(ctx, config)
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 		err = clients.ConnectAuthorized(ctx, config.ID, config)
 	}
 	if err == nil {
-		service.markPrepared(prepared)
+		s.markPrepared(prepared)
 	}
 	return err
 }
@@ -126,11 +126,11 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 // authorization survives a failed connection or a package preparation in the
 // same run, so retrying does not ask again; a new run or any configuration,
 // policy, source or actor change requires a fresh authorization.
-func (service *Service) authorizeLaunch(ctx context.Context, actor captypes.RuntimeActor, config captypes.ConnectionConfig, settings captypes.Settings) error {
+func (s *Service) authorizeLaunch(ctx context.Context, actor captypes.RuntimeActor, config captypes.ConnectionConfig, settings captypes.Settings) error {
 	preview := captypes.LaunchPreview{Connection: config, Actor: actor, Token: launchToken(config, settings, actor)}
-	service.mu.RLock()
-	previous := service.launches[taskKey(actor)][config.ID]
-	service.mu.RUnlock()
+	s.mu.RLock()
+	previous := s.launches[taskKey(actor)][config.ID]
+	s.mu.RUnlock()
 	if actor.RunID != "" && previous == preview.Token {
 		return nil
 	}
@@ -149,10 +149,10 @@ func (service *Service) authorizeLaunch(ctx context.Context, actor captypes.Runt
 		return errors.New("MCP task launch requires an active run identity")
 	}
 	request := &captypes.LaunchApprovalRequired{Preview: preview}
-	if err := service.recordAuthorization(ctx, actor, origin, "launch", preview.Token, request.Evidence()); err != nil {
+	if err := s.recordAuthorization(ctx, actor, origin, "launch", preview.Token, request.Evidence()); err != nil {
 		return err
 	}
-	service.grantLaunch(actor, config.ID, preview.Token)
+	s.grantLaunch(actor, config.ID, preview.Token)
 	return nil
 }
 
@@ -167,28 +167,29 @@ func launchToken(config captypes.ConnectionConfig, settings captypes.Settings, a
 	}{config, settings.Acquisition, settings.Sources[config.Source], actor})
 }
 
-func (service *Service) grantLaunch(actor captypes.RuntimeActor, id, token string) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	if service.launches[taskKey(actor)] == nil {
-		service.launches[taskKey(actor)] = make(map[string]string)
+func (s *Service) grantLaunch(actor captypes.RuntimeActor, id, token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.launches[taskKey(actor)] == nil {
+		s.launches[taskKey(actor)] = make(map[string]string)
 	}
-	service.launches[taskKey(actor)][id] = token
+	s.launches[taskKey(actor)][id] = token
 }
 
-func (service *Service) SetRuntimeAuthority(authority captypes.RuntimeAuthority) {
-	service.mu.Lock()
-	defer service.mu.Unlock()
-	service.authority = authority
+// SetRuntimeAuthority records the authority that later runtime calls are checked against.
+func (s *Service) SetRuntimeAuthority(authority captypes.RuntimeAuthority) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authority = authority
 }
 
-func (service *Service) validateRuntime(ctx context.Context, actor captypes.RuntimeActor) error {
+func (s *Service) validateRuntime(ctx context.Context, actor captypes.RuntimeActor) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	service.mu.RLock()
-	authority, closed := service.authority, service.closed
-	service.mu.RUnlock()
+	s.mu.RLock()
+	authority, closed := s.authority, s.closed
+	s.mu.RUnlock()
 	if closed {
 		return errors.New("capability service is closed")
 	}
@@ -200,56 +201,57 @@ func (service *Service) validateRuntime(ctx context.Context, actor captypes.Runt
 	return nil
 }
 
-func (service *Service) actorClients(actor captypes.RuntimeActor) actorClient {
-	local := service.localActorClients(actor)
-	service.mu.RLock()
+func (s *Service) actorClients(actor captypes.RuntimeActor) actorClient {
+	local := s.localActorClients(actor)
+	s.mu.RLock()
 	shell := false
-	for _, config := range service.settings.Connections {
+	for _, config := range s.settings.Connections {
 		shell = shell || config.Host == "shell"
 	}
-	service.mu.RUnlock()
+	s.mu.RUnlock()
 	if !shell {
 		return local
 	}
-	return &routedClient{s: service, actor: actor, local: local}
+	return &routedClient{s: s, actor: actor, local: local}
 }
 
-func (service *Service) localActorClients(actor captypes.RuntimeActor) *mcpclient.Manager {
-	if actor.ExecutionRoot == "" || actor.ExecutionRoot == service.root {
-		return service.clients
+func (s *Service) localActorClients(actor captypes.RuntimeActor) *mcpclient.Manager {
+	if actor.ExecutionRoot == "" || actor.ExecutionRoot == s.root {
+		return s.clients
 	}
-	service.mu.Lock()
-	defer service.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	key := taskKey(actor)
-	clients := service.executionClients[key]
+	clients := s.executionClients[key]
 	if clients == nil {
-		clients = service.newMCPManager(actor.ExecutionRoot)
-		clients.SetCredentialDirectory(filepath.Join(filepath.Dir(service.cache), "credentials"))
-		clients.Configure(service.settings.Connections)
-		service.executionClients[key] = clients
+		clients = s.newMCPManager(actor.ExecutionRoot)
+		clients.SetCredentialDirectory(filepath.Join(filepath.Dir(s.cache), "credentials"))
+		clients.Configure(s.settings.Connections)
+		s.executionClients[key] = clients
 	}
 	return clients
 }
 
-func (service *Service) actorSnapshot(actor captypes.RuntimeActor) captypes.Snapshot {
-	snapshot := service.snapshot()
-	snapshot.Connections = service.actorClients(actor).States()
+func (s *Service) actorSnapshot(actor captypes.RuntimeActor) captypes.Snapshot {
+	snapshot := s.snapshot()
+	snapshot.Connections = s.actorClients(actor).States()
 	return snapshot
 }
 
-func (service *Service) RevokeRun(actor captypes.RuntimeActor) {
-	service.revokeHostRun(actor)
-	service.mu.Lock()
+// RevokeRun drops the grants, launches and clients that belong to one actor's run.
+func (s *Service) RevokeRun(actor captypes.RuntimeActor) {
+	s.revokeHostRun(actor)
+	s.mu.Lock()
 	key := taskKey(actor)
-	delete(service.taskGrants, key)
-	delete(service.launches, key)
-	delete(service.hostStates, key)
-	if service.runs[actorKey(actor)] == key {
-		delete(service.runs, actorKey(actor))
+	delete(s.taskGrants, key)
+	delete(s.launches, key)
+	delete(s.hostStates, key)
+	if s.runs[actorKey(actor)] == key {
+		delete(s.runs, actorKey(actor))
 	}
-	clients := service.executionClients[key]
-	delete(service.executionClients, key)
-	service.mu.Unlock()
+	clients := s.executionClients[key]
+	delete(s.executionClients, key)
+	s.mu.Unlock()
 	if clients != nil {
 		clients.Close()
 	}

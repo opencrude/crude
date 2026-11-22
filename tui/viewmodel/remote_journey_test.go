@@ -18,16 +18,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/agent/prompthistory"
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/clientstate"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/port/remote"
-	"crude/history"
+	"crude/core/coreclient"
+	"crude/core/shellport"
+	"crude/core/shellport/remote"
+	"crude/internal/clientstate"
 	questionscreen "crude/tui/screens/question"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -76,7 +76,7 @@ func newRemoteJourneyShell(t *testing.T, runtime *core.Runtime, root string) rem
 		t.Fatal(err)
 	}
 	app := NewApp(port, nil)
-	app.SetPromptHistory(history.New())
+	app.SetPromptHistory(prompthistory.New())
 	fifo := make(chan any, 1024)
 	registerLiveTestFIFO(t, app, fifo)
 	app.eventBus.SetSink(remoteJourneySink{fifo})
@@ -157,8 +157,8 @@ func remoteJourneyRuntimeConfig(t *testing.T, endpoint string, configureConfig f
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
 			return nil, fmt.Errorf("invalid destination %s", root)
 		}
-		ws := workspace.NewWorkspace(root, "test-model", "tester", types.Settings{}, nil)
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
+		ws := workspace.NewWorkspace(root, "test-model", "tester", setting.Settings{}, nil)
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}, Memory: setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
 		agents := session.DefaultAgentsConfig()
 		off := false
 		profile := agents.Profiles["default"]
@@ -169,7 +169,7 @@ func remoteJourneyRuntimeConfig(t *testing.T, endpoint string, configureConfig f
 		for _, apply := range configure {
 			apply(ws)
 		}
-		cfg := &session.Config{Agents: agents, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
+		cfg := &session.Config{Agents: agents, Memory: setting.Memory{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}
 		if configureConfig != nil {
 			configureConfig(cfg)
 		}
@@ -179,7 +179,7 @@ func remoteJourneyRuntimeConfig(t *testing.T, endpoint string, configureConfig f
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runtime.SetPromptHistory(history.New(), filepath.Join(home, "history.json")); err != nil {
+	if err := runtime.SetPromptHistory(prompthistory.New(), filepath.Join(home, "history.json")); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

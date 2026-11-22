@@ -9,10 +9,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/syntax"
+	"crude/insight/syntax"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/syntaxdata"
 	"crude/workspace/document"
 )
 
@@ -22,7 +23,7 @@ import (
 type flashFixture struct {
 	t        *testing.T
 	e        *Editor
-	language syntax.LanguageID
+	language syntaxdata.LanguageID
 	version  uint64
 	sequence uint64
 	// semanticFirst delivers the provider's colors before the core's syntax.
@@ -84,8 +85,8 @@ func (f *flashFixture) publishSyntax() {
 		f.t.Fatal(err)
 	}
 	f.version++
-	f.e.InstallDocumentInsight(types.DocumentInsight{DocumentID: snapshot.ID, Path: snapshot.Path, Revision: snapshot.Revision,
-		Generation: "flash-core", Version: f.version, State: types.InsightCurrent, Syntax: &result})
+	f.e.InstallDocumentInsight(insight.DocumentInsight{DocumentID: snapshot.ID, Path: snapshot.Path, Revision: snapshot.Revision,
+		Generation: "flash-core", Version: f.version, State: insight.Current, Syntax: &result})
 }
 
 func (f *flashFixture) publishSemantic() {
@@ -96,9 +97,9 @@ func (f *flashFixture) publishSemantic() {
 		f.t.Fatal("acknowledged source is not ready for semantic colors")
 	}
 	f.sequence++
-	set := types.LSPSemanticSet{Boundary: types.InsightBoundary{Source: source}, ViewID: "flash", Sequence: f.sequence, Types: []string{"variable"}}
+	set := insight.LSPSemanticSet{Boundary: insight.Boundary{Source: source}, ViewID: "flash", Sequence: f.sequence, Types: []string{"variable"}}
 	for _, m := range flashIdentifier.FindAllIndex(snapshot.Text, -1) {
-		set.Spans = append(set.Spans, types.LSPSemanticSpan{Start: m[0], End: m[1], Type: 0})
+		set.Spans = append(set.Spans, insight.LSPSemanticSpan{Start: m[0], End: m[1], Type: 0})
 	}
 	if err := f.e.SetSemanticTokens(&set); err != nil {
 		f.t.Fatal(err)

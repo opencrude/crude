@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/types/setting"
 	"crude/workspace"
 	"crude/workspace/document"
 )
@@ -59,8 +59,8 @@ func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
 	setCoreTestHome(t, t.TempDir())
 	root, journal := t.TempDir(), filepath.Join(t.TempDir(), "receipts.db")
 	factory := func(root string) (*workspace.Workspace, error) {
-		ws := workspace.NewWorkspace(root, "", "acceptance", types.Settings{}, coreTestLogger{})
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		ws := workspace.NewWorkspace(root, "", "acceptance", setting.Settings{}, coreTestLogger{})
+		ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 		return ws, nil
 	}
 	r, err := New(factory, journal)

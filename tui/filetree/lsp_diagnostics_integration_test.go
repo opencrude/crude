@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
 )
 
 // The tree owns counters only. Canonical source qualification belongs to the
@@ -21,16 +21,16 @@ func TestSharedDiagnosticProjectionRetainsTreePathsAndExpansion(t *testing.T) {
 	}
 	tree := NewFileTreeModel(root)
 	v := 7
-	makeFact := func(id, path string, severities ...int) types.InsightDiagnostics {
-		ds := make([]types.LSPDiagnostic, 0, len(severities))
+	makeFact := func(id, path string, severities ...int) insight.Diagnostics {
+		ds := make([]insight.LSPDiagnostic, 0, len(severities))
 		for _, severity := range severities {
-			ds = append(ds, types.LSPDiagnostic{Severity: severity})
+			ds = append(ds, insight.LSPDiagnostic{Severity: severity})
 		}
-		return types.InsightDiagnostics{ID: id, Binding: "exact-version", WireVersion: 7, ReportedVersion: &v, State: types.InsightProvisional,
-			Boundary: types.InsightBoundary{Source: types.InsightSource{Path: path}, Context: types.InsightContext{UnknownInputs: []string{"Build graph unknown"}}}, Diagnostics: ds}
+		return insight.Diagnostics{ID: id, Binding: "exact-version", WireVersion: 7, ReportedVersion: &v, State: insight.Provisional,
+			Boundary: insight.Boundary{Source: insight.Source{Path: path}, Context: insight.Context{UnknownInputs: []string{"Build graph unknown"}}}, Diagnostics: ds}
 	}
-	snapshot := shellport.LSPDiagnosticSnapshot{Generation: "canonical-workspace", Version: 1, Diagnostics: map[string]types.InsightDiagnostics{
-		a: makeFact("fact-a", a, types.DiagError), b: makeFact("fact-b", b, types.DiagWarning, types.DiagHint), deep: makeFact("fact-deep", deep, types.DiagError),
+	snapshot := shellport.LSPDiagnosticSnapshot{Generation: "canonical-workspace", Version: 1, Diagnostics: map[string]insight.Diagnostics{
+		a: makeFact("fact-a", a, insight.DiagError), b: makeFact("fact-b", b, insight.DiagWarning, insight.DiagHint), deep: makeFact("fact-deep", deep, insight.DiagError),
 	}}
 	var consumer shellport.LSPDiagnosticConsumer
 	project := func(snapshot shellport.LSPDiagnosticSnapshot) {
@@ -39,9 +39,9 @@ func TestSharedDiagnosticProjectionRetainsTreePathsAndExpansion(t *testing.T) {
 			if fact.HasExactSource() {
 				for _, d := range fact.Diagnostics {
 					switch d.Severity {
-					case types.DiagError:
+					case insight.DiagError:
 						errs++
-					case types.DiagWarning:
+					case insight.DiagWarning:
 						warns++
 					default:
 						hints++
@@ -73,7 +73,7 @@ func TestSharedDiagnosticProjectionRetainsTreePathsAndExpansion(t *testing.T) {
 	// Stop keeps stale evidence in Problems, but a stale source is not a current
 	// file-tree badge. The fact itself is never cleared or rewritten by the tree.
 	stale := snapshot.Diagnostics[a]
-	stale.State = types.InsightStale
+	stale.State = insight.Stale
 	snapshot.Diagnostics[a] = stale
 	snapshot.Version++
 	project(snapshot)

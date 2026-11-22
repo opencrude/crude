@@ -881,8 +881,8 @@ func (st *Store) JournalForMemory(ctx context.Context, memoryID string, limit in
 	return entries, rows.Err()
 }
 
-// GetMeta returns a memory_meta value ("" when unset).
-func (st *Store) GetMeta(ctx context.Context, key string) (string, error) {
+// Meta returns a memory_meta value ("" when unset).
+func (st *Store) Meta(ctx context.Context, key string) (string, error) {
 	var value string
 	err := st.db.QueryRowContext(ctx,
 		`SELECT value FROM memory_meta WHERE key = ?`, key).Scan(&value)

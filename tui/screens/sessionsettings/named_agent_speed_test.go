@@ -7,16 +7,16 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestNamedAgentsAppearAndCanSetSessionSpeed(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{
-		Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{
+		Categories: map[string]setting.Category{
 			"default":    {Model: "main"},
 			"researcher": {Model: "role-model", ServiceTier: "standard"},
 		},
-		AgentProfiles: map[string]types.AgentProfileSettings{
+		AgentProfiles: map[string]setting.AgentProfile{
 			"reviewer": {Category: "researcher", Model: "review-model"},
 			"writer":   {Category: "crafter", Model: "writer-model"},
 		},
@@ -62,7 +62,7 @@ func TestNamedAgentsAppearAndCanSetSessionSpeed(t *testing.T) {
 }
 
 func TestSessionBuiltInAgentHasSpeedControl(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Model: "main"},
 	}}}
 	screen := New(theme.DefaultDark(), base, base, nil)
@@ -78,14 +78,14 @@ func TestSessionBuiltInAgentHasSpeedControl(t *testing.T) {
 }
 
 func TestNamedAgentRowsTrackRefreshedCatalog(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+	base := setting.Settings{Agents: setting.Agents{Categories: map[string]setting.Category{
 		"default": {Model: "main"},
 	}}}
 	screen := New(theme.DefaultDark(), base, base, nil)
 	if screen.formModel.Field("profile/reviewer") != nil {
 		t.Fatal("absent agent appeared in settings")
 	}
-	base.Agents.AgentProfiles = map[string]types.AgentProfileSettings{
+	base.Agents.AgentProfiles = map[string]setting.AgentProfile{
 		"reviewer": {Category: "researcher", Model: "review"},
 	}
 	screen.SetInheritance(base, base, nil)
@@ -100,9 +100,9 @@ func TestNamedAgentRowsTrackRefreshedCatalog(t *testing.T) {
 }
 
 func TestNamedAgentSpeedSurvivesModelPickerNavigation(t *testing.T) {
-	base := types.Settings{Agents: types.AgentsSettings{
-		Categories: map[string]types.CategorySettings{"researcher": {Model: "role"}},
-		AgentProfiles: map[string]types.AgentProfileSettings{
+	base := setting.Settings{Agents: setting.Agents{
+		Categories: map[string]setting.Category{"researcher": {Model: "role"}},
+		AgentProfiles: map[string]setting.AgentProfile{
 			"reviewer": {Category: "researcher", Model: "first"},
 		},
 	}}
@@ -124,9 +124,9 @@ func TestNamedAgentSpeedSurvivesModelPickerNavigation(t *testing.T) {
 }
 
 func TestMemorySpeedOnlyShowsInheritedModel(t *testing.T) {
-	base := types.Settings{
-		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "main"}}},
-		Memory: types.MemorySettings{MemoryCategory: types.CategorySettings{ServiceTier: "fast"}},
+	base := setting.Settings{
+		Agents: setting.Agents{Categories: map[string]setting.Category{"default": {Model: "main"}}},
+		Memory: setting.Memory{MemoryCategory: setting.Category{ServiceTier: "fast"}},
 	}
 	screen := New(theme.DefaultDark(), base, base, nil)
 	screen.openRole("memory")

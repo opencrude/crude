@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/protocol"
-	"crude/core/wire"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
 	"crude/workspace"
 )
 

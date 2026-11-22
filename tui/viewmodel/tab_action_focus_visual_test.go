@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -49,7 +50,7 @@ func (m *tabActionFocusVisualModel) openTabs() {
 		node := m.ws.AgentMgr().Get(id)
 		node.Label = id
 		if len(node.State.Messages.Messages()) == 0 {
-			node.State.Messages.AppendMessage(workspace.Message{
+			node.State.Messages.AppendMessage(conversation.Message{
 				Role: workspace.MessageRoleAssistant, Content: "Closing an agent tab minimizes it without stopping its work. The remaining content receives keyboard focus, not the tab strip.",
 			})
 		}

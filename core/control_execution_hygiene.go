@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"crude/internal/fileuri"
+	"crude/types/statuscenter"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 
 	"crude/agent/session"
 	"crude/agent/worktree"
-	"crude/types"
 	"crude/workspace"
 )
 
@@ -45,8 +45,8 @@ func (a *actor) preparePlanInvestigationCleanup(agentID string) func(context.Con
 			}
 			err := discardClosedPlanInvestigation(ctx, service, check, sessionID, id)
 			if err != nil && ctx.Err() == nil && status != nil {
-				status.Notify(types.NotificationRecord{
-					Severity: types.SeverityWarning,
+				status.Notify(statuscenter.NotificationRecord{
+					Severity: statuscenter.SeverityWarning,
 					Source:   "Plan mode",
 					DedupKey: "plan-investigation-retained:" + id,
 					Summary:  "Plan investigation retained",

@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"crude/internal/fileuri"
-	model "crude/types"
+	"crude/types/setting"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp"
 )
 
 func TestDefaultLSPRuntimeConstructionIsInert(t *testing.T) {
-	client := (defaultLSPRuntime{}).NewClient(model.LSPServerSpec{
+	client := (defaultLSPRuntime{}).NewClient(setting.LSPServerSpec{
 		Command:               "nonexistent-lsp-server-12345",
 		Args:                  []string{"--stdio"},
 		Environment:           map[string]string{"CRUDE_LSP_TEST": "1"},
@@ -37,9 +37,9 @@ func TestDefaultLSPRuntimeConstructionIsInert(t *testing.T) {
 
 func TestDefaultLSPRuntimeForwardsRootBoundConfiguration(t *testing.T) {
 	admissions := 0
-	client := (defaultLSPRuntime{}).NewClient(model.LSPServerSpec{
+	client := (defaultLSPRuntime{}).NewClient(setting.LSPServerSpec{
 		Command: "never-construct-this-program",
-		ConfigurationScopes: []model.LSPConfigurationScope{{
+		ConfigurationScopes: []setting.LSPConfigurationScope{{
 			URI: "file:///foreign/module", Settings: map[string]any{"engine": "must-not-launch"},
 		}},
 	}, fileuri.FromPath(t.TempDir()), func() error { admissions++; return nil })
@@ -56,7 +56,7 @@ func TestDefaultLSPRuntimeForwardsRootBoundConfiguration(t *testing.T) {
 
 func TestDefaultLSPRuntimeRefusesUnsafeEnvironmentBeforeAdmission(t *testing.T) {
 	admissions := 0
-	client := (defaultLSPRuntime{}).NewClient(model.LSPServerSpec{
+	client := (defaultLSPRuntime{}).NewClient(setting.LSPServerSpec{
 		Command: "never-construct-this-program", Environment: map[string]string{"PATH": "."},
 	}, fileuri.FromPath(t.TempDir()), func() error { admissions++; return nil })
 	if err := client.Start(t.Context()); !errors.Is(err, lsp.ErrProcessEnvironment) {

@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	ttypes "crude/types"
+	"crude/types/insight"
+	"crude/types/statuscenter"
 )
 
 // Language-server issues are derived on the core from the one LSP owner, so
@@ -29,33 +30,33 @@ func SyncLSPIssues(center *StatusCenter, manager *LSPManager) {
 	syncLSPIssuesFrom(center, append(manager.ServerHealthSnapshots(), manager.retainedResultHealth()...), manager.Assembly())
 }
 
-func syncLSPIssuesFrom(center *StatusCenter, servers []ttypes.LSPServerHealth, plan ttypes.AssemblyPlan) {
+func syncLSPIssuesFrom(center *StatusCenter, servers []statuscenter.LSPServerHealth, plan insight.AssemblyPlan) {
 	open := make(map[string]bool)
 	for _, issue := range append(lspIssues(servers), lspCommandIssues(plan)...) {
 		open[issue.ID] = true
 		center.SetIssue(issue)
 	}
 	for _, issue := range center.Issues() {
-		if issue.Owner.Kind == ttypes.ResourceLSP && issue.ResolvedAt.IsZero() && !open[issue.ID] {
+		if issue.Owner.Kind == statuscenter.ResourceLSP && issue.ResolvedAt.IsZero() && !open[issue.ID] {
 			center.ResolveIssue(issue.ID)
 		}
 	}
 }
 
-func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
-	var out []ttypes.IssueSnapshot
+func lspIssues(servers []statuscenter.LSPServerHealth) []statuscenter.IssueSnapshot {
+	var out []statuscenter.IssueSnapshot
 	for _, server := range servers {
-		owner := ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}
+		owner := statuscenter.ResourceRef{Kind: statuscenter.ResourceLSP, ID: server.ID}
 		if server.Error != "" && !server.Restarting {
-			out = append(out, ttypes.IssueSnapshot{
-				ID: lspIssuePrefix + server.ID, Owner: owner, Severity: ttypes.SeverityError,
+			out = append(out, statuscenter.IssueSnapshot{
+				ID: lspIssuePrefix + server.ID, Owner: owner, Severity: statuscenter.SeverityError,
 				Summary: server.Name + " failed", Detail: server.Error, Investigate: true,
-				Actions: []ttypes.StatusAction{{ID: "lsp:restart", Label: "Retry", Enabled: true}},
+				Actions: []statuscenter.Action{{ID: "lsp:restart", Label: "Retry", Enabled: true}},
 			})
 		}
 		if message := strings.TrimSpace(server.ErrorMessage); message != "" && server.Error == "" {
-			out = append(out, ttypes.IssueSnapshot{
-				ID: lspMessageIssuePrefix + server.ID, Owner: owner, Severity: ttypes.SeverityWarning,
+			out = append(out, statuscenter.IssueSnapshot{
+				ID: lspMessageIssuePrefix + server.ID, Owner: owner, Severity: statuscenter.SeverityWarning,
 				Summary: server.Name + " reported a problem", Detail: message, Investigate: true,
 			})
 		}
@@ -64,8 +65,8 @@ func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
 			// while Crude checks files; the issue must stay the same report so
 			// that it settles and the workspace Errand hears about it once.
 			// diagnostics.workspace shows the current counts.
-			out = append(out, ttypes.IssueSnapshot{
-				ID: lspResultsIssuePrefix + server.ID, Owner: owner, Severity: ttypes.SeverityWarning,
+			out = append(out, statuscenter.IssueSnapshot{
+				ID: lspResultsIssuePrefix + server.ID, Owner: owner, Severity: statuscenter.SeverityWarning,
 				Summary:     server.Name + " reports errors in many of the files it checked",
 				Detail:      "Errors in at least one in five checked files often mean that the server cannot find the project's headers, modules or build settings.",
 				Investigate: true,
@@ -82,8 +83,8 @@ func lspIssues(servers []ttypes.LSPServerHealth) []ttypes.IssueSnapshot {
 // the user's code and asks only about the first. The rule applies only to
 // servers whose closed files Crude checks, because a server that reports the
 // project itself sends results only for files with problems.
-func lspResultsSuspect(server ttypes.LSPServerHealth) bool {
-	return server.Error == "" && server.Scope == ttypes.CoverageOpenFiles &&
+func lspResultsSuspect(server statuscenter.LSPServerHealth) bool {
+	return server.Error == "" && server.Scope == insight.CoverageOpenFiles &&
 		server.FilesAffected > 0 && server.FilesAffected*5 >= server.FilesTracked
 }
 
@@ -92,20 +93,20 @@ func lspResultsSuspect(server ttypes.LSPServerHealth) bool {
 // removed. A catalog server that is not installed is a setup choice, not a
 // problem, so it raises nothing here. An installed but unlaunchable catalog
 // tool is a problem and keeps its actionable launch cause.
-func lspCommandIssues(plan ttypes.AssemblyPlan) []ttypes.IssueSnapshot {
-	var out []ttypes.IssueSnapshot
+func lspCommandIssues(plan insight.AssemblyPlan) []statuscenter.IssueSnapshot {
+	var out []statuscenter.IssueSnapshot
 	for _, language := range plan.Languages {
-		if language.Status != ttypes.ToolUnavailable &&
-			(language.Status != ttypes.ToolMissing || language.Source != ttypes.ToolSourceSettings) {
+		if language.Status != insight.ToolUnavailable &&
+			(language.Status != insight.ToolMissing || language.Source != insight.ToolSourceSettings) {
 			continue
 		}
 		summary := fmt.Sprintf("%s server %s is not installed", language.Name, filepath.Base(language.Command))
-		if language.Status == ttypes.ToolUnavailable {
+		if language.Status == insight.ToolUnavailable {
 			summary = fmt.Sprintf("%s server %s cannot start", language.Name, filepath.Base(language.Command))
 		}
-		out = append(out, ttypes.IssueSnapshot{
-			ID: lspCommandIssuePrefix + language.ID, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: lspCommandIssuePrefix + language.ID},
-			Severity: ttypes.SeverityWarning, Investigate: true,
+		out = append(out, statuscenter.IssueSnapshot{
+			ID: lspCommandIssuePrefix + language.ID, Owner: statuscenter.ResourceRef{Kind: statuscenter.ResourceLSP, ID: lspCommandIssuePrefix + language.ID},
+			Severity: statuscenter.SeverityWarning, Investigate: true,
 			Summary: summary,
 			Detail:  language.Reason,
 		})

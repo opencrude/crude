@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // The editor's own path against a real server. A search asked while the
@@ -39,7 +40,7 @@ func TestEditorNavigationWaitsForRealServerAfterStartAndRestart(t *testing.T) {
 	probeSources(t, m, root)
 	m.SetWorkspaceRoot(root)
 	trustAnalysis(t, m, root)
-	m.SetSettings(types.DefaultLSPSettings())
+	m.SetSettings(setting.DefaultLSP())
 	m.StartForWorkspace(root)
 	editorSource(t, m, main, "package probe\n\nvar x int = Answer() + 1\n")
 
@@ -48,7 +49,7 @@ func TestEditorNavigationWaitsForRealServerAfterStartAndRestart(t *testing.T) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 		defer cancel()
-		refs, err := m.RequestNavigation(ctx, main, types.LSPNavigationReferences, 2, 12, true)
+		refs, err := m.RequestNavigation(ctx, main, insight.LSPNavigationReferences, 2, 12, true)
 		if err != nil || len(refs.Targets) != 2 {
 			t.Fatalf("%s: references = %+v err=%v health=%+v", label, refs.Targets, err, m.ServerHealthSnapshots())
 		}

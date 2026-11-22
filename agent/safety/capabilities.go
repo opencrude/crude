@@ -3,7 +3,7 @@ package safety
 import (
 	"sync"
 
-	"crude/logger"
+	"crude/internal/logger"
 )
 
 var (

@@ -8,24 +8,24 @@ import (
 	"testing"
 
 	"crude/insight/facts"
-	"crude/types"
+	"crude/types/insight"
 )
 
-func boundary() types.InsightBoundary {
-	return types.InsightBoundary{
-		Source: types.InsightSource{WorkspaceGeneration: "workspace-1", DocumentID: "doc-1",
+func boundary() insight.Boundary {
+	return insight.Boundary{
+		Source: insight.Source{WorkspaceGeneration: "workspace-1", DocumentID: "doc-1",
 			Path: "/project/main.go", Lifetime: "open-1", Revision: 1, Kind: "canonical"},
-		Context:  types.InsightContext{ID: "module-linux", Root: "/project", Generation: 1},
-		Producer: types.InsightProducer{InstanceID: "server-1", Provider: "gopls", ToolIdentity: "gopls@v1"},
+		Context:  insight.Context{ID: "module-linux", Root: "/project", Generation: 1},
+		Producer: insight.Producer{InstanceID: "server-1", Provider: "gopls", ToolIdentity: "gopls@v1"},
 	}
 }
 
-func publication(b types.InsightBoundary, sequence uint64) types.InsightDiagnosticPublication {
+func publication(b insight.Boundary, sequence uint64) insight.DiagnosticPublication {
 	v := 7 // LSP versions need not equal canonical revisions.
-	return types.InsightDiagnosticPublication{
+	return insight.DiagnosticPublication{
 		Boundary: b, Sequence: sequence, WireVersion: 7, ReportedVersion: &v,
-		Diagnostics: []types.LSPDiagnostic{{Line: 2, Col: 3, EndLine: 2, EndCol: 5,
-			Message: "undefined: missing", Severity: types.DiagWarning, Source: "compiler", Code: "undefined"}},
+		Diagnostics: []insight.LSPDiagnostic{{Line: 2, Col: 3, EndLine: 2, EndCol: 5,
+			Message: "undefined: missing", Severity: insight.DiagWarning, Source: "compiler", Code: "undefined"}},
 	}
 }
 
@@ -38,14 +38,14 @@ func store(t *testing.T, documents, diagnostics int) *facts.Store {
 	return s
 }
 
-func observe(t *testing.T, s *facts.Store, b types.InsightBoundary) {
+func observe(t *testing.T, s *facts.Store, b insight.Boundary) {
 	t.Helper()
 	if err := s.Observe(b); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func publish(t *testing.T, s *facts.Store, p types.InsightDiagnosticPublication) types.InsightDiagnostics {
+func publish(t *testing.T, s *facts.Store, p insight.DiagnosticPublication) insight.Diagnostics {
 	t.Helper()
 	a, err := s.Publish(p)
 	if err != nil {
@@ -54,7 +54,7 @@ func publish(t *testing.T, s *facts.Store, p types.InsightDiagnosticPublication)
 	return a
 }
 
-func snapshot(t *testing.T, s *facts.Store, id string) types.InsightDiagnostics {
+func snapshot(t *testing.T, s *facts.Store, id string) insight.Diagnostics {
 	t.Helper()
 	a, ok := s.Snapshot(id)
 	if !ok {
@@ -64,23 +64,23 @@ func snapshot(t *testing.T, s *facts.Store, id string) types.InsightDiagnostics 
 }
 
 func TestExactBoundaryFencesWithoutRelabeling(t *testing.T) {
-	changes := map[string]func(*types.InsightBoundary){
-		"equal-text ABA revision": func(b *types.InsightBoundary) { b.Source.Revision = 3 },
-		"close reopen":            func(b *types.InsightBoundary) { b.Source.Lifetime = "open-2" },
-		"rename":                  func(b *types.InsightBoundary) { b.Source.Path = "/project/renamed.go" },
-		"workspace replacement":   func(b *types.InsightBoundary) { b.Source.WorkspaceGeneration = "workspace-2" },
-		"disk lease": func(b *types.InsightBoundary) {
+	changes := map[string]func(*insight.Boundary){
+		"equal-text ABA revision": func(b *insight.Boundary) { b.Source.Revision = 3 },
+		"close reopen":            func(b *insight.Boundary) { b.Source.Lifetime = "open-2" },
+		"rename":                  func(b *insight.Boundary) { b.Source.Path = "/project/renamed.go" },
+		"workspace replacement":   func(b *insight.Boundary) { b.Source.WorkspaceGeneration = "workspace-2" },
+		"disk lease": func(b *insight.Boundary) {
 			b.Source.Kind, b.Source.Lifetime = "disk", "lease-2"
 		},
-		"context generation": func(b *types.InsightBoundary) { b.Context.Generation = 2 },
-		"context identity":   func(b *types.InsightBoundary) { b.Context.ID = "module-windows" },
-		"context root":       func(b *types.InsightBoundary) { b.Context.Root = "/other-project" },
-		"unknown input":      func(b *types.InsightBoundary) { b.Context.UnknownInputs = []string{"generated header"} },
-		"server replacement same provider": func(b *types.InsightBoundary) {
+		"context generation": func(b *insight.Boundary) { b.Context.Generation = 2 },
+		"context identity":   func(b *insight.Boundary) { b.Context.ID = "module-windows" },
+		"context root":       func(b *insight.Boundary) { b.Context.Root = "/other-project" },
+		"unknown input":      func(b *insight.Boundary) { b.Context.UnknownInputs = []string{"generated header"} },
+		"server replacement same provider": func(b *insight.Boundary) {
 			b.Producer.InstanceID = "server-2"
 		},
-		"tool replacement": func(b *types.InsightBoundary) { b.Producer.ToolIdentity = "gopls@v2" },
-		"provider":         func(b *types.InsightBoundary) { b.Producer.Provider = "other" },
+		"tool replacement": func(b *insight.Boundary) { b.Producer.ToolIdentity = "gopls@v2" },
+		"provider":         func(b *insight.Boundary) { b.Producer.Provider = "other" },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
@@ -91,7 +91,7 @@ func TestExactBoundaryFencesWithoutRelabeling(t *testing.T) {
 			change(&next)
 			observe(t, s, next)
 			stale := snapshot(t, s, "doc-1")
-			if stale.State != types.InsightStale || stale.ID != first.ID ||
+			if stale.State != insight.Stale || stale.ID != first.ID ||
 				!reflect.DeepEqual(stale.Boundary, old) ||
 				!reflect.DeepEqual(stale.Diagnostics, first.Diagnostics) {
 				t.Fatalf("old provenance or warning was lost: %#v", stale)
@@ -104,7 +104,7 @@ func TestExactBoundaryFencesWithoutRelabeling(t *testing.T) {
 			if fresh.ID == first.ID || !reflect.DeepEqual(fresh.Boundary, next) {
 				t.Fatalf("new publication identity/provenance missing: %#v", fresh)
 			}
-			if len(next.Context.UnknownInputs) > 0 && fresh.State == types.InsightCurrent {
+			if len(next.Context.UnknownInputs) > 0 && fresh.State == insight.Current {
 				t.Fatal("unknown context became current")
 			}
 		})
@@ -150,20 +150,20 @@ func TestPendingProvisionalEmptyAndInvalidatedAreDistinct(t *testing.T) {
 		t.Fatal("publication without authority accepted")
 	}
 	observe(t, s, b)
-	if pending := snapshot(t, s, "doc-1"); pending.ID != "" || pending.State != types.InsightPending {
+	if pending := snapshot(t, s, "doc-1"); pending.ID != "" || pending.State != insight.Pending {
 		t.Fatalf("pending presented as observed answer: %#v", pending)
 	}
 	p := publication(b, 1)
 	p.ReportedVersion, p.Diagnostics = nil, nil
 	unverified := publish(t, s, p)
-	if unverified.ID == "" || unverified.State != types.InsightProvisional ||
+	if unverified.ID == "" || unverified.State != insight.Provisional ||
 		unverified.Binding != "unversioned" || unverified.ReportedVersion != nil {
 		t.Fatalf("unversioned empty became clean/current: %#v", unverified)
 	}
 	p = publication(b, 2)
 	p.Diagnostics = nil
 	empty := publish(t, s, p)
-	if empty.ID == "" || empty.ID == unverified.ID || empty.State != types.InsightCurrent ||
+	if empty.ID == "" || empty.ID == unverified.ID || empty.State != insight.Current ||
 		empty.Binding != "exact-version" || empty.Diagnostics == nil || len(empty.Diagnostics) != 0 {
 		t.Fatalf("explicit observed zero was lost: %#v", empty)
 	}
@@ -172,14 +172,14 @@ func TestPendingProvisionalEmptyAndInvalidatedAreDistinct(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := snapshot(t, s, "doc-1")
-		if got.ID != empty.ID || got.State != types.InsightStale || got.Detail != reason {
+		if got.ID != empty.ID || got.State != insight.Stale || got.Detail != reason {
 			t.Fatalf("failure erased or relabeled old answer: %#v", got)
 		}
 		if _, err := s.Publish(publication(b, 3)); !errors.Is(err, facts.ErrBoundary) {
 			t.Fatal("invalidated boundary accepted")
 		}
 		observe(t, s, b)
-		if snapshot(t, s, "doc-1").State != types.InsightStale {
+		if snapshot(t, s, "doc-1").State != insight.Stale {
 			t.Fatal("Observe made retained facts current without a publication")
 		}
 	}
@@ -196,7 +196,7 @@ func TestRepeatedInactiveInvalidationPreservesFirstStaleEvidence(t *testing.T) {
 		t.Fatal("Stop did not immediately retire the diagnostic answer")
 	}
 	stopped, version := snapshot(t, s, "doc-1"), s.Version()
-	if stopped.State != types.InsightStale || stopped.HasExactSource() || len(stopped.Diagnostics) != 1 {
+	if stopped.State != insight.Stale || stopped.HasExactSource() || len(stopped.Diagnostics) != 1 {
 		t.Fatal("Stop hid evidence or left it current", stopped)
 	}
 	// Joined process teardown may finish between two shells' snapshot reads.
@@ -224,7 +224,7 @@ func TestRepeatedInactiveInvalidationPreservesFirstStaleEvidence(t *testing.T) {
 	if err := s.Invalidate("doc-1", "The resumed producer failed."); err != nil {
 		t.Fatal(err)
 	}
-	if after := snapshot(t, s, "doc-1"); after.ID != stopped.ID || after.Detail != "The resumed producer failed." || after.State != types.InsightStale {
+	if after := snapshot(t, s, "doc-1"); after.ID != stopped.ID || after.Detail != "The resumed producer failed." || after.State != insight.Stale {
 		t.Fatal("a new active boundary lost its failure or revived old evidence", after)
 	}
 }
@@ -251,7 +251,7 @@ func TestBoundsRetainWarningsAndExposeLimits(t *testing.T) {
 	p := publication(b, 2)
 	p.Diagnostics = append(p.Diagnostics, p.Diagnostics[0])
 	limited, err := s.Publish(p)
-	if !errors.Is(err, facts.ErrLimit) || limited.State != types.InsightLimited ||
+	if !errors.Is(err, facts.ErrLimit) || limited.State != insight.Limited ||
 		!limited.Limited || limited.ID != first.ID ||
 		!reflect.DeepEqual(limited.Diagnostics, first.Diagnostics) {
 		t.Fatalf("budget rejection lost warnings/limit: %#v, %v", limited, err)
@@ -275,26 +275,26 @@ func TestBoundsRetainWarningsAndExposeLimits(t *testing.T) {
 	zero := store(t, 1, 0)
 	observe(t, zero, b)
 	if got, err := zero.Publish(publication(b, 1)); !errors.Is(err, facts.ErrLimit) ||
-		got.ID != "" || got.State != types.InsightLimited {
+		got.ID != "" || got.State != insight.Limited {
 		t.Fatal("capacity before first batch looked clean")
 	}
 	p = publication(b, 2)
 	p.Diagnostics, p.Limited = nil, true
-	if got := publish(t, zero, p); got.State != types.InsightLimited || !got.Limited {
+	if got := publish(t, zero, p); got.State != insight.Limited || !got.Limited {
 		t.Fatal("producer's limited empty batch became current")
 	}
 }
 
 func TestValidationSeverityAndWireCoordinates(t *testing.T) {
-	invalid := map[string]func(*types.LSPDiagnostic){
-		"negative severity": func(d *types.LSPDiagnostic) { d.Severity = -1 },
-		"unknown severity":  func(d *types.LSPDiagnostic) { d.Severity = 5 },
-		"negative line":     func(d *types.LSPDiagnostic) { d.Line = -1 },
-		"negative column":   func(d *types.LSPDiagnostic) { d.Col = -1 },
-		"negative end":      func(d *types.LSPDiagnostic) { d.EndCol = -1 },
-		"reversed lines":    func(d *types.LSPDiagnostic) { d.EndLine = 1 },
-		"reversed columns":  func(d *types.LSPDiagnostic) { d.EndCol = 2 },
-		"invalid utf8":      func(d *types.LSPDiagnostic) { d.Message = "\xff" },
+	invalid := map[string]func(*insight.LSPDiagnostic){
+		"negative severity": func(d *insight.LSPDiagnostic) { d.Severity = -1 },
+		"unknown severity":  func(d *insight.LSPDiagnostic) { d.Severity = 5 },
+		"negative line":     func(d *insight.LSPDiagnostic) { d.Line = -1 },
+		"negative column":   func(d *insight.LSPDiagnostic) { d.Col = -1 },
+		"negative end":      func(d *insight.LSPDiagnostic) { d.EndCol = -1 },
+		"reversed lines":    func(d *insight.LSPDiagnostic) { d.EndLine = 1 },
+		"reversed columns":  func(d *insight.LSPDiagnostic) { d.EndCol = 2 },
+		"invalid utf8":      func(d *insight.LSPDiagnostic) { d.Message = "\xff" },
 	}
 	for name, change := range invalid {
 		t.Run(name, func(t *testing.T) {
@@ -317,28 +317,28 @@ func TestValidationSeverityAndWireCoordinates(t *testing.T) {
 	p.Diagnostics[0].Severity = 0
 	p.Diagnostics[0].Message = "😀 undefined"
 	got := publish(t, s, p)
-	if got.Diagnostics[0].Severity != types.DiagError || p.Diagnostics[0].Severity != 0 ||
+	if got.Diagnostics[0].Severity != insight.DiagError || p.Diagnostics[0].Severity != 0 ||
 		got.Diagnostics[0].Col != 3 || got.Diagnostics[0].EndCol != 5 {
 		t.Fatal("omitted severity not normalized once or wire columns converted")
 	}
 	p = publication(b, 2)
 	p.Diagnostics[0].Message = strings.Repeat("x", facts.MaxTextBytes+1)
 	if got, err := s.Publish(p); !errors.Is(err, facts.ErrLimit) ||
-		got.State != types.InsightLimited || got.Diagnostics[0].Message != "😀 undefined" {
+		got.State != insight.Limited || got.Diagnostics[0].Message != "😀 undefined" {
 		t.Fatal("oversized finding silently truncated or erased old result")
 	}
 }
 
 func TestBoundaryValidation(t *testing.T) {
-	invalid := []func(*types.InsightBoundary){
-		func(b *types.InsightBoundary) { b.Source.Kind = "syntax" },
-		func(b *types.InsightBoundary) { b.Source.Revision = 0 },
-		func(b *types.InsightBoundary) { b.Source.Lifetime = "" },
-		func(b *types.InsightBoundary) { b.Producer.InstanceID = "" },
-		func(b *types.InsightBoundary) { b.Context.Generation = 0 },
-		func(b *types.InsightBoundary) { b.Context.Root = "\xff" },
-		func(b *types.InsightBoundary) { b.Source.Path = strings.Repeat("p", facts.MaxIdentityBytes+1) },
-		func(b *types.InsightBoundary) { b.Context.UnknownInputs = make([]string, facts.MaxUnknownInputs+1) },
+	invalid := []func(*insight.Boundary){
+		func(b *insight.Boundary) { b.Source.Kind = "syntax" },
+		func(b *insight.Boundary) { b.Source.Revision = 0 },
+		func(b *insight.Boundary) { b.Source.Lifetime = "" },
+		func(b *insight.Boundary) { b.Producer.InstanceID = "" },
+		func(b *insight.Boundary) { b.Context.Generation = 0 },
+		func(b *insight.Boundary) { b.Context.Root = "\xff" },
+		func(b *insight.Boundary) { b.Source.Path = strings.Repeat("p", facts.MaxIdentityBytes+1) },
+		func(b *insight.Boundary) { b.Context.UnknownInputs = make([]string, facts.MaxUnknownInputs+1) },
 	}
 	for i, change := range invalid {
 		s, b := store(t, 1, 4), boundary()
@@ -355,7 +355,7 @@ func TestDetachedInputsOutputsAndConcurrentAccess(t *testing.T) {
 	observe(t, s, b)
 	p := publication(b, 1)
 	first := publish(t, s, p)
-	if first.State != types.InsightProvisional || first.Binding != "exact-version" {
+	if first.State != insight.Provisional || first.Binding != "exact-version" {
 		t.Fatal("unknown context became complete/current")
 	}
 	// Mutate every caller-owned nested value only after calls return.
@@ -423,21 +423,21 @@ func TestMatchingInvalidationAndRemovalAreScopedAndReleaseCapacity(t *testing.T)
 	observe(t, s, project)
 	publish(t, s, publication(project, 1))
 
-	if !s.InvalidateMatching(func(b types.InsightBoundary) bool { return b.Source.Kind != "disk" }, "editor context changed") {
+	if !s.InvalidateMatching(func(b insight.Boundary) bool { return b.Source.Kind != "disk" }, "editor context changed") {
 		t.Fatal("matching invalidation changed nothing")
 	}
 	got, _ := s.Snapshot(project.Source.DocumentID)
-	if got.State == types.InsightStale {
+	if got.State == insight.Stale {
 		t.Fatal("invalidation reached a fact owned by another producer")
 	}
-	if editorFact, _ := s.Snapshot(editor.Source.DocumentID); editorFact.State != types.InsightStale {
+	if editorFact, _ := s.Snapshot(editor.Source.DocumentID); editorFact.State != insight.Stale {
 		t.Fatalf("matching fact was not invalidated: %+v", editorFact)
 	}
 
 	// The store holds one diagnostic in total. Removal must release the slot
 	// and the diagnostic budget, so a new producer fact fits again.
 	version := s.Version()
-	if n := s.RemoveMatching(func(b types.InsightBoundary) bool { return b.Context.ID == "project-check" }); n != 1 {
+	if n := s.RemoveMatching(func(b insight.Boundary) bool { return b.Context.ID == "project-check" }); n != 1 {
 		t.Fatalf("removed %d entries, want 1", n)
 	}
 	if s.Version() == version {
@@ -446,7 +446,7 @@ func TestMatchingInvalidationAndRemovalAreScopedAndReleaseCapacity(t *testing.T)
 	if _, ok := s.Snapshot(project.Source.DocumentID); ok {
 		t.Fatal("removed fact is still visible")
 	}
-	if n := s.RemoveMatching(func(types.InsightBoundary) bool { return false }); n != 0 {
+	if n := s.RemoveMatching(func(insight.Boundary) bool { return false }); n != 0 {
 		t.Fatal("removal without a match changed the store")
 	}
 	other := project
@@ -461,7 +461,7 @@ func TestContextSummaryAndCapacityReserve(t *testing.T) {
 	s, b := store(t, 3, 4), boundary()
 	observe(t, s, b)
 	p := publication(b, 1)
-	p.Diagnostics = []types.LSPDiagnostic{{Message: "error", Severity: types.DiagError}, {Message: "warning", Severity: types.DiagWarning}}
+	p.Diagnostics = []insight.LSPDiagnostic{{Message: "error", Severity: insight.DiagError}, {Message: "warning", Severity: insight.DiagWarning}}
 	if !s.CanPublishWithReserve(p, 1, 1, 1024) {
 		t.Fatal("small result did not fit reserve")
 	}
@@ -480,7 +480,7 @@ func TestContextSummaryAndCapacityReserve(t *testing.T) {
 		t.Fatal(usage)
 	}
 	p = publication(b, 2)
-	p.Diagnostics = []types.LSPDiagnostic{{Message: "a"}, {Message: "b"}}
+	p.Diagnostics = []insight.LSPDiagnostic{{Message: "a"}, {Message: "b"}}
 	if s.CanPublishWithReserve(p, 1, 1, 1024) {
 		t.Fatal("publication consumed diagnostic reserve")
 	}

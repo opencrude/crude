@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/text/indent"
+	"crude/text/indentation"
 	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
 )

@@ -6,7 +6,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
 	"crude/workspace/document"
 	"encoding/json"
 	"fmt"
@@ -99,7 +99,7 @@ func TestMultipleMotionKeepsEachGoalAcrossShortLinesAndWidths(t *testing.T) {
 	}
 	e.Undo()
 	anchors := e.SourceSelections()
-	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 8, LineNumbers: true})
 	if !reflect.DeepEqual(anchors, e.SourceSelections()) {
 		t.Fatal("geometry changed multi-caret source offsets")
 	}
@@ -484,7 +484,7 @@ func TestMultipleVerticalGoalsResetWithTabGeometry(t *testing.T) {
 	e.HandleEvent(tea.MouseClickMsg{X: e.GutterWidth() + 6, Y: 2, Button: tea.MouseLeft, Mod: tea.ModAlt})
 	e.HandleEvent(tea.MouseReleaseMsg{X: e.GutterWidth() + 6, Y: 2, Button: tea.MouseLeft})
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyDown})
-	e.SetPresentation(types.EditorSettings{TabSize: 8, LineNumbers: true})
+	e.SetPresentation(setting.Editor{TabSize: 8, LineNumbers: true})
 	e.HandleEvent(tea.KeyPressMsg{Code: tea.KeyDown})
 	e.HandleEvent(tea.PasteMsg{Content: "X"})
 	lines := strings.Split(source, "\n")

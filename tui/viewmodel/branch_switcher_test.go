@@ -193,7 +193,7 @@ func TestHeaderWorkspacePathClickOpensWorkspaceSwitcher(t *testing.T) {
 	app.width, app.height = 120, 28
 	root := t.TempDir()
 	wsOf(app).RootPath = root
-	app.workspaceInfos = []workspace.WorkspaceInfo{
+	app.workspaceInfos = []workspace.Info{
 		{ProjectDir: root, ProjectName: "current"},
 		{ProjectDir: filepath.Join(t.TempDir(), "other"), ProjectName: "other"},
 	}

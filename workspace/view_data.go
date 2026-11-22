@@ -49,3 +49,27 @@ type TabView struct {
 	Pinned       bool
 	Active       bool
 }
+
+// Mode is the shell interaction mode that a view model reports for overlays.
+type Mode int
+
+// Shell interaction modes.
+const (
+	ModeChat Mode = iota
+	ModeTextOverlay
+	ModeFilePicker
+)
+
+// ModeName returns the log name of a mode.
+func ModeName(m Mode) string {
+	switch m {
+	case ModeChat:
+		return "chat"
+	case ModeTextOverlay:
+		return "text-overlay"
+	case ModeFilePicker:
+		return "file-picker"
+	default:
+		return "unknown"
+	}
+}

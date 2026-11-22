@@ -13,7 +13,7 @@ import (
 
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestAutoPermissionRealTurnWritesAndPersistsReviewProvenance(t *testing.T) {
@@ -39,7 +39,7 @@ func TestAutoPermissionRealTurnWritesAndPersistsReviewProvenance(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := modelAttributionConfig(server.URL, "main-model")
-	cfg.Safety.AutoPermission = types.AutoPermissionSettings{Enabled: "on", Provider: "openrouter", AccountID: "account", Model: "review-model"}
+	cfg.Safety.AutoPermission = setting.AutoPermission{Enabled: "on", Provider: "openrouter", AccountID: "account", Model: "review-model"}
 	home, directory, root := t.TempDir(), t.TempDir(), t.TempDir()
 	s, err := NewWithSessionDir("review-e2e", cfg, home, directory)
 	if err != nil {

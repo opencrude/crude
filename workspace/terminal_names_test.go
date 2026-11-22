@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"crude/internal/terminalvt"
 	"crude/internal/testterminal"
-	"crude/terminalvt"
 )
 
 func TestTerminalServiceRenameAndClearKeepProcessModesAndLeaseFences(t *testing.T) {

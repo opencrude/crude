@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/prompt"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // "Finish this change" sends the user's recent edits in the file to the chat
@@ -23,7 +23,7 @@ const finishChangeEdits = 12
 type finishChangeMsg struct {
 	generation uint64
 	path, name string
-	edits      []types.RecentEdit
+	edits      []insight.RecentEdit
 	err        error
 }
 
@@ -83,10 +83,10 @@ func (m *App) applyFinishChange(msg finishChangeMsg) []tea.Cmd {
 
 // finishChangeDiff renders the user's own edits, oldest first, as a small
 // unified-style diff.
-func finishChangeDiff(edits []types.RecentEdit) string {
-	var own []types.RecentEdit
+func finishChangeDiff(edits []insight.RecentEdit) string {
+	var own []insight.RecentEdit
 	for _, e := range edits {
-		if e.Author == types.RecentEditYou {
+		if e.Author == insight.RecentEditYou {
 			own = append(own, e)
 		}
 	}

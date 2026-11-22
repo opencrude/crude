@@ -3,11 +3,12 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"context"
-	"crude/lsp/edit"
-	"crude/text/indent"
+	"crude/lsp/lspedit"
+	"crude/text/indentation"
 	"crude/tui/editor"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 	"encoding/json"
 	"fmt"
@@ -20,8 +21,8 @@ import (
 
 type formatCall struct {
 	Text    string
-	Span    types.LSPFormattingSpan
-	Options types.LSPFormattingOptions
+	Span    insight.LSPFormattingSpan
+	Options insight.LSPFormattingOptions
 }
 type selectionFormattingRuntime struct {
 	base        renameConnectedRuntime
@@ -36,10 +37,10 @@ type selectionFormattingClient struct {
 	owner *selectionFormattingRuntime
 }
 
-func (r *selectionFormattingRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *selectionFormattingRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	return &selectionFormattingClient{r.base.NewClient(spec, root, admit).(*renameConnectedClient), r}
 }
-func (c *selectionFormattingClient) RequestRangeFormatting(_ context.Context, path string, span types.LSPFormattingSpan, options types.LSPFormattingOptions) (types.LSPFormattingResponse, error) {
+func (c *selectionFormattingClient) RequestRangeFormatting(_ context.Context, path string, span insight.LSPFormattingSpan, options insight.LSPFormattingOptions) (insight.LSPFormattingResponse, error) {
 	r := c.owner
 	r.base.mu.Lock()
 	d := c.docs[path]
@@ -55,17 +56,17 @@ func (c *selectionFormattingClient) RequestRangeFormatting(_ context.Context, pa
 	if raw == "" {
 		sl, sc, err := lspedit.Position(d.text, span.Start)
 		if err != nil {
-			return types.LSPFormattingResponse{}, err
+			return insight.LSPFormattingResponse{}, err
 		}
 		el, ec, err := lspedit.Position(d.text, span.End)
 		if err != nil {
-			return types.LSPFormattingResponse{}, err
+			return insight.LSPFormattingResponse{}, err
 		}
 		text := strings.ReplaceAll(d.text[span.Start:span.End], "=", " = ")
 		body, _ := json.Marshal([]any{map[string]any{"range": map[string]any{"start": map[string]int{"line": sl, "character": sc}, "end": map[string]int{"line": el, "character": ec}}, "newText": text}})
 		raw = string(body)
 	}
-	return types.LSPFormattingResponse{WireVersion: d.version, JSON: []byte(raw), Unsupported: unsupported}, nil
+	return insight.LSPFormattingResponse{WireVersion: d.version, JSON: []byte(raw), Unsupported: unsupported}, nil
 }
 func newSelectionFormattingFixture(t *testing.T, text string) ([]remoteJourneyShell, []*editor.Editor, *selectionFormattingRuntime, string) {
 	t.Helper()
@@ -83,10 +84,10 @@ func newSelectionFormattingFixture(t *testing.T, text string) ([]remoteJourneySh
 		w.LSPMgr.SetRuntime(engine)
 		s := w.AppDefaults()
 		s.Editor.LineNumbers = true
-		s.LSP = types.DefaultLSPSettings()
+		s.LSP = setting.DefaultLSP()
 		s.LSP.AutoComplete = false
 		s.LSP.AutoDetect = false
-		s.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
+		s.LSP.Languages = map[string]setting.LSPLanguage{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
 		w.SetAppDefaults(s)
 		grantSemanticFixture(t, w)
 	})
@@ -94,7 +95,7 @@ func newSelectionFormattingFixture(t *testing.T, text string) ([]remoteJourneySh
 	eds := []*editor.Editor{liveTestOpen(t, shells[0].app, path), liveTestOpen(t, shells[1].app, path)}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, types.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
+	if _, _, err := owned.LSPMgr.ProbeHover(ctx, path, insight.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
 		t.Fatal(err)
 	}
 	remoteJourneyUntil(t, shells, func() bool {
@@ -136,7 +137,7 @@ func TestSelectionFormattingConnectedKeyMenuControlAndUndo(t *testing.T) {
 			engine.base.mu.Lock()
 			calls := append([]formatCall(nil), engine.calls...)
 			engine.base.mu.Unlock()
-			if len(calls) != 1 || calls[0].Text != source || calls[0].Span != (types.LSPFormattingSpan{Start: 10, End: 17}) || calls[0].Options != (types.LSPFormattingOptions{TabSize: 2, InsertSpaces: true}) {
+			if len(calls) != 1 || calls[0].Text != source || calls[0].Span != (insight.LSPFormattingSpan{Start: 10, End: 17}) || calls[0].Options != (insight.LSPFormattingOptions{TabSize: 2, InsertSpaces: true}) {
 				t.Fatal("wrong source/range/indent options", calls)
 			}
 			renameConnectedKey(t, shells[0], tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})

@@ -10,8 +10,8 @@ func TestOpaqueReplayRequiresProviderScopeAndExactPrefix(t *testing.T) {
 	other := &Provider{ID: "other-provider", BaseURL: "https://other.example", StandardName: "anthropic"}
 	tools := []ToolDef{{Type: "function", Function: FunctionDef{Name: "read_file"}}}
 	prefix := []ChatMessage{NewTextMessage("system", "stable"), NewTextMessage("user", "inspect")}
-	item := ProviderItem{Standard: "anthropic", Type: "redacted_thinking", Data: json.RawMessage(`{"type":"redacted_thinking","data":"opaque"}`)}
-	stamped := StampProviderItems([]ProviderItem{item}, producer, "claude-a", RequestPrefixHash(prefix, tools))
+	item := Item{Standard: "anthropic", Type: "redacted_thinking", Data: json.RawMessage(`{"type":"redacted_thinking","data":"opaque"}`)}
+	stamped := StampProviderItems([]Item{item}, producer, "claude-a", RequestPrefixHash(prefix, tools))
 	assistant := NewTextMessage("assistant", "visible")
 	assistant.ProviderItems = stamped
 	assistant.ReasoningContent = "provider reasoning summary"
@@ -40,8 +40,8 @@ func TestOpaqueReplayRequiresProviderScopeAndExactPrefix(t *testing.T) {
 func TestOpaqueReplayLetsProviderDecideModelCompatibility(t *testing.T) {
 	providerConfig := &Provider{ID: "openai", BaseURL: "https://api.openai.com/v1", StandardName: "openai-responses"}
 	prefix := []ChatMessage{NewTextMessage("user", "work")}
-	item := ProviderItem{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{"type":"reasoning","encrypted_content":"ciphertext"}`)}
-	stamped := StampProviderItems([]ProviderItem{item}, providerConfig, "gpt-family-a", RequestPrefixHash(prefix, nil))
+	item := Item{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{"type":"reasoning","encrypted_content":"ciphertext"}`)}
+	stamped := StampProviderItems([]Item{item}, providerConfig, "gpt-family-a", RequestPrefixHash(prefix, nil))
 	assistant := NewTextMessage("assistant", "done")
 	assistant.ProviderItems = stamped
 	assistant.ReplayScope, assistant.ReplaySourceModel, assistant.ReplayPrefixHash = providerConfig.ReplayScope(), "gpt-family-a", RequestPrefixHash(prefix, nil)
@@ -60,7 +60,7 @@ func TestNewConnectionReplayWarmsAfterColdTransition(t *testing.T) {
 			current := Provider{ID: old.ID, BaseURL: old.BaseURL, StandardName: old.StandardName}
 			prefix := []ChatMessage{NewTextMessage("system", "stable"), NewTextMessage("user", "work")}
 			prior := NewTextMessage("assistant", "old result")
-			prior.ProviderItems = StampProviderItems([]ProviderItem{{Standard: "anthropic", Type: "thinking", Data: json.RawMessage(`{"type":"thinking","thinking":"trace","signature":"old-signature"}`)}}, old, "model", RequestPrefixHash(prefix, tools))
+			prior.ProviderItems = StampProviderItems([]Item{{Standard: "anthropic", Type: "thinking", Data: json.RawMessage(`{"type":"thinking","thinking":"trace","signature":"old-signature"}`)}}, old, "model", RequestPrefixHash(prefix, tools))
 			prior.ReplayScope, prior.ReplayPrefixHash = old.ReplayScope(), RequestPrefixHash(prefix, tools)
 			history := append(prefix, prior, NewTextMessage("user", "next"))
 			currentTools := tools
@@ -80,7 +80,7 @@ func TestNewConnectionReplayWarmsAfterColdTransition(t *testing.T) {
 			}
 			fresh := NewTextMessage("assistant", "new result")
 			fresh.ReplayScope, fresh.ReplayPrefixHash = current.ReplayScope(), RequestPrefixHash(projected, currentTools)
-			fresh.ProviderItems = StampProviderItems([]ProviderItem{{Standard: current.ProtocolID(), Type: "reasoning", Data: json.RawMessage(`{"type":"reasoning","encrypted_content":"new-valid-replay"}`)}}, &current, "model", fresh.ReplayPrefixHash)
+			fresh.ProviderItems = StampProviderItems([]Item{{Standard: current.ProtocolID(), Type: "reasoning", Data: json.RawMessage(`{"type":"reasoning","encrypted_content":"new-valid-replay"}`)}}, &current, "model", fresh.ReplayPrefixHash)
 			history = append(history, fresh, NewTextMessage("user", "steady request"))
 			warm := FilterReplayMessages(history, currentTools, &current)
 			if len(warm[4].ProviderItems) != 1 || string(warm[4].ProviderItems[0].Data) != string(fresh.ProviderItems[0].Data) {
@@ -101,7 +101,7 @@ func BenchmarkFilterReplayMessagesDense(b *testing.B) {
 	for index := 0; index < 1000; index++ {
 		message := NewTextMessage("assistant", "stable visible response")
 		prefix := hasher.value()
-		message.ProviderItems = StampProviderItems([]ProviderItem{{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)}}, providerConfig, "gpt-family", prefix)
+		message.ProviderItems = StampProviderItems([]Item{{Standard: "openai-responses", Type: "reasoning", Data: json.RawMessage(`{"type":"reasoning","encrypted_content":"opaque"}`)}}, providerConfig, "gpt-family", prefix)
 		message.ReplayScope, message.ReplaySourceModel, message.ReplayPrefixHash = providerConfig.ReplayScope(), "gpt-family", prefix
 		history = append(history, message)
 		hasher.add(message)

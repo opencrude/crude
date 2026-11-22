@@ -21,10 +21,11 @@ import (
 	"crude/agent/prompt"
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 )
 
 // These journeys run the real shell, the framed core, the suggestion service
@@ -124,7 +125,7 @@ func newSuggestionJourney(t *testing.T, text string, answer func(string) string)
 	j.ed = liveTestOpen(t, j.app, path)
 	// Answer the first-open trust question with its safe default
 	// (restricted mode); suggestions do not need trust.
-	j.update(types.TickMsg{})
+	j.update(TickMsg{})
 	if j.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) {
 		j.key(tea.KeyPressMsg{Code: tea.KeyEnter})
 		j.until("trust question answered", func() bool { return !j.app.overlayHost.IsOpen(ui.OverlayWorkspaceTrust) })
@@ -214,7 +215,7 @@ func (j *suggestionJourney) until(what string, condition func() bool) {
 
 // turnOn chooses a mode from the Errand footer menu and answers the consent
 // question with Enter, as the user does.
-func (j *suggestionJourney) turnOn(mode types.EditorPredictionMode) {
+func (j *suggestionJourney) turnOn(mode setting.EditorPredictionMode) {
 	j.t.Helper()
 	j.app.chooseSuggestionMode(mode)
 	if j.app.suggest.consent == nil || !j.app.overlayHost.IsOpen(suggestionConsentOverlay) {
@@ -246,7 +247,7 @@ func (j *suggestionJourney) shown() (editor.Suggestion, bool) {
 	return j.ed.GhostSuggestion()
 }
 
-func (j *suggestionJourney) status() types.EditorPredictionStatus {
+func (j *suggestionJourney) status() insight.EditorPredictionStatus {
 	j.t.Helper()
 	port := j.app.ws.(shellport.Suggestions)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -266,7 +267,7 @@ var askSuggestionKey = tea.KeyPressMsg{Code: '\\', Mod: tea.ModAlt}
 func TestConnectedSuggestionAskTabFollowAndDismiss(t *testing.T) {
 	j := newSuggestionJourney(t, "count := load()\nlog(count)\nsave(count)\nend()\n",
 		suggestionRewrite(func(region string) string { return strings.ReplaceAll(region, "(count)", "(total)") }))
-	j.turnOn(types.PredictionAsk)
+	j.turnOn(setting.PredictionAsk)
 	j.caret(0, 0)
 	for range len("count") {
 		j.key(tea.KeyPressMsg{Code: tea.KeyDelete})
@@ -327,7 +328,7 @@ func TestConnectedSuggestionAskTabFollowAndDismiss(t *testing.T) {
 // cancelled at the model server, and nothing is shown afterwards.
 func TestConnectedSuggestionCaretMoveCancelsTheRunningRequest(t *testing.T) {
 	j := newSuggestionJourney(t, "func main() {\n\t\n}\n", suggestionRewrite(func(region string) string { return region }))
-	j.turnOn(types.PredictionType)
+	j.turnOn(setting.PredictionType)
 	j.model.hold.Store(true)
 	j.caret(1, 0)
 	j.key(tea.KeyPressMsg{Code: tea.KeyEnd})
@@ -354,7 +355,7 @@ func TestConnectedSuggestionFocusLossAndDismissalMemory(t *testing.T) {
 		suggestionRewrite(func(region string) string {
 			return strings.Replace(region, "sum\n", "sum := 0\n", 1)
 		}))
-	j.turnOn(types.PredictionType)
+	j.turnOn(setting.PredictionType)
 	j.caret(1, 0)
 	j.key(tea.KeyPressMsg{Code: tea.KeyEnd}) // after the tab
 	j.typeText("sum")

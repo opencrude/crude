@@ -7,8 +7,8 @@
 
 Settings is used rarely and in a hurry. Every page therefore has the same shape,
 every value reads as a sentence, and nothing asks the reader to know a wire
-format. The reference implementation is `tui/settings/surface.go` (anatomy),
-`tui/ui/form_field.go` (controls) and `tui/settings/language_server_catalog.go`
+format. The reference implementation is `tui/screens/settingspages/surface.go` (anatomy),
+`tui/ui/form_field.go` (controls) and `tui/screens/settingspages/language_server_catalog.go`
 (a list → detail page).
 
 ## Page anatomy

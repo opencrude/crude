@@ -19,7 +19,7 @@ func TestOpenAIResponsesRequestEncodesConversationItems(t *testing.T) {
 			{
 				Role:    "assistant",
 				Content: TextContent(""),
-				ProviderItems: []ProviderItem{{
+				ProviderItems: []Item{{
 					Standard: "openai-responses", Type: "reasoning", Data: reasoning,
 				}},
 				ToolCalls: []ToolCall{{

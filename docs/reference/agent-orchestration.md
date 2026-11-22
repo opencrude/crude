@@ -197,4 +197,4 @@ above motivate policy, not a guarantee of universal automatic isolation.
   request via `Agent.RequestBoundary` (emitting `connection_changed` so the UI
   and message attribution follow), a stopped child keeps it for `continue`.
   A different model drops the previous model's capability/sampling overrides.
-  `types.ThinkingLevels` is the one effort ladder for settings and tools.
+  `conversation.ThinkingLevels` is the one effort ladder for settings and tools.

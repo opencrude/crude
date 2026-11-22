@@ -9,7 +9,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/insight"
 )
 
 func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
@@ -157,7 +157,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			if row.index != 0 {
 				break
 			}
-			lineSev = types.HighestDiagnosticSeverity(lineSev, d.severity)
+			lineSev = insight.HighestDiagnosticSeverity(lineSev, d.severity)
 			if lineSev == DiagError {
 				break
 			}
@@ -463,7 +463,7 @@ func diagSeverityAtCol(diags []diagSpan, col int) int {
 	severity := 0
 	for _, d := range diags {
 		if col >= d.startCol && col < d.endCol {
-			severity = types.HighestDiagnosticSeverity(severity, d.severity)
+			severity = insight.HighestDiagnosticSeverity(severity, d.severity)
 			if severity == DiagError {
 				break
 			}

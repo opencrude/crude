@@ -13,12 +13,13 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
 	"crude/types/accounting"
 	"crude/types/control"
+	"crude/types/conversation"
 	"crude/types/inspect"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -26,7 +27,7 @@ func TestPromptHistoryGatewayFindsModelAndReadsOriginalHumanText(t *testing.T) {
 	const original = "My first prompt to the reviewer."
 	long := strings.Repeat("a", 4095) + "🌱\x00" + strings.Repeat("تعليق\n", 100)
 	r, err := New(func(root string) (*workspace.Workspace, error) {
-		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
+		return workspace.NewWorkspace(root, "", "tester", setting.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +72,7 @@ func TestPromptHistoryGatewayFindsModelAndReadsOriginalHumanText(t *testing.T) {
 			m.InternalID, m.Origin, m.Visibility = id, origin, visibility
 			_, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{SessionID: a.SessionID, AgentID: a.SessionID, RuntimeAgentID: a.ID,
 				ExpectedRevision: uint64(turn - 1), Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{{Message: m,
-					Meta:    sessiondb.DisplayMeta{TurnGeneration: uint64(turn), ContextOnly: visibility != provider.VisibilityConversation, Snapshots: []types.ConversationMessage{{Role: "user", Content: text}}},
+					Meta:    sessiondb.DisplayMeta{TurnGeneration: uint64(turn), ContextOnly: visibility != provider.VisibilityConversation, Snapshots: []conversation.Message{{Role: "user", Content: text}}},
 					AgentID: a.ID, Turn: turn, CreatedAt: time.Now().UnixNano()}}}})
 			if err != nil {
 				t.Fatal(err)

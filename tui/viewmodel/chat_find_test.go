@@ -13,7 +13,7 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	ttypes "crude/types"
+	"crude/types/conversation"
 )
 
 // findChatApp shows a chat of numbered messages; two of them carry "needle".
@@ -25,11 +25,11 @@ func findChatApp(t *testing.T) (*App, *shellchat.Screen) {
 	}
 	app, screen := setupChatRoutingApp(t, 10, rows)
 	app.Input.ClearInput()
-	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "the Needle is in the haystack", Time: time.Unix(2, 0)})
+	app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: "the Needle is in the haystack", Time: time.Unix(2, 0)})
 	for i := 0; i < 30; i++ {
-		app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: fmt.Sprintf("filler reply %d", i), Time: time.Unix(3+int64(i), 0)})
+		app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: fmt.Sprintf("filler reply %d", i), Time: time.Unix(3+int64(i), 0)})
 	}
-	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "one more needle at the end", Time: time.Unix(100, 0)})
+	app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: "one more needle at the end", Time: time.Unix(100, 0)})
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	// Keep history incomplete at first paint. Counter tests must observe the
@@ -291,7 +291,7 @@ func TestChatFindFinishesHistoryThatAResizeLeftUndrawn(t *testing.T) {
 	renderer.MaterializeClock = steppingMaterializeClock()
 	for i := 0; i < 60; i++ {
 		text := fmt.Sprintf("reply %d about the viewport and the scroll model", i)
-		app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: text, Time: time.Unix(10+int64(i), 0)})
+		app.appendActiveMessage(conversation.ChatMessage{Role: conversation.RoleAssistant, Content: text, Time: time.Unix(10+int64(i), 0)})
 	}
 	app.paintShellFrame()
 	app.width = 100 // the terminal was resized: a width-only reflow

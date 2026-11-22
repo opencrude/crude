@@ -18,7 +18,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/provider"
 	"crude/agent/sessiondb"
-	ttypes "crude/types"
+	"crude/types/setting"
 )
 
 func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
@@ -40,9 +40,9 @@ func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	workspace := NewWorkspace(project, "model", "user", ttypes.Settings{}, &testLogger{})
+	workspace := NewWorkspace(project, "model", "user", setting.Settings{}, &testLogger{})
 	defer workspace.Close()
-	workspace.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+	workspace.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := historyE2EConfig(server.URL)
 
 	first, err := workspace.CreateSession(cfg, home)
@@ -167,15 +167,15 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	workspace := NewWorkspace(project, "model", "user", ttypes.Settings{}, &testLogger{})
+	workspace := NewWorkspace(project, "model", "user", setting.Settings{}, &testLogger{})
 	defer workspace.Close()
-	workspace.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+	workspace.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := historyE2EConfig(server.URL)
 	// Force real background extraction to overlap the assertions. Memory
 	// normally inherits the main model, so counting every provider request
 	// as an agent turn made this test fail when maintenance ran.
 	cfg.Memory.ExtractEveryTurns = 1
-	cfg.Memory.MemoryCategory = ttypes.CategorySettings{AccountID: "test-account", Model: memoryModel}
+	cfg.Memory.MemoryCategory = setting.Category{AccountID: "test-account", Model: memoryModel}
 	frontend, err := workspace.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
@@ -401,9 +401,9 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 	}))
 	defer server.Close()
 
-	owner := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	owner := NewWorkspace(project, "history-model", "tester", setting.Settings{}, &testLogger{})
 	defer owner.Close()
-	owner.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+	owner.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	cfg := historyE2EConfig(server.URL)
 
 	coordinatorSession, err := owner.CreateSession(cfg, home)

@@ -9,8 +9,9 @@ import (
 
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
+	"crude/types/statuscenter"
 )
 
 func TestExpandedRecoveryKeepsDiagnosticsReadableAndHydrationIdentical(t *testing.T) {
@@ -32,12 +33,12 @@ func TestExpandedRecoveryKeepsDiagnosticsReadableAndHydrationIdentical(t *testin
 					// physical column; its complete evidence remains copyable.
 					status.Detail = strings.Repeat("Full diagnostic content. ", 20) + "Diagnostic-tail"
 				}
-				live := types.ChatMessage{InternalID: status.ID, Role: types.RoleStatus, Time: status.StartedAt, Recovery: &status}
+				live := conversation.ChatMessage{InternalID: status.ID, Role: conversation.RoleStatus, Time: status.StartedAt, Recovery: &status}
 				encoded, err := json.Marshal(live)
 				if err != nil {
 					t.Fatal(err)
 				}
-				var hydrated types.ChatMessage
+				var hydrated conversation.ChatMessage
 				if err := json.Unmarshal(encoded, &hydrated); err != nil {
 					t.Fatal(err)
 				}
@@ -78,7 +79,7 @@ func TestRecoveryAcknowledgedAttemptIsStaticBoundary(t *testing.T) {
 	renderer.SetSize(100, 30)
 	renderer.SetChatAreaBounds(0, 30)
 	status.RetryAt = time.UnixMilli(30000)
-	renderer.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, Recovery: &status}}, 1, 0)
+	renderer.SyncMessages([]conversation.ChatMessage{{InternalID: status.ID, Role: conversation.RoleStatus, Recovery: &status}}, 1, 0)
 	renderer.ToggleDisclosure(status.ID)
 	renderer.SetSpinFrame(800)
 	before := renderer.ExportMessageRowsSnapshot(100)
@@ -87,7 +88,7 @@ func TestRecoveryAcknowledgedAttemptIsStaticBoundary(t *testing.T) {
 	}
 	resumed := status
 	resumed.RetryAt = time.Time{}
-	renderer.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, Recovery: &resumed}}, 2, 0)
+	renderer.SyncMessages([]conversation.ChatMessage{{InternalID: status.ID, Role: conversation.RoleStatus, Recovery: &resumed}}, 2, 0)
 	first := renderer.ExportMessageRowsSnapshot(100)
 	if len(first.Rows) != 1 || !strings.Contains(first.Rows[0].Lines[1], "Run resumed") {
 		t.Fatalf("acknowledged attempt still claims recovery: %+v", first.Rows)
@@ -109,11 +110,11 @@ func TestRecoveryAcknowledgedAttemptIsStaticBoundary(t *testing.T) {
 	if !strings.Contains(strings.Join(first.Rows[0].Lines, "\n"), status.Detail) {
 		t.Fatal("resuming lost the retained diagnostic")
 	}
-	data, err := json.Marshal(types.ChatMessage{InternalID: resumed.ID, Role: types.RoleStatus, Recovery: &resumed})
+	data, err := json.Marshal(conversation.ChatMessage{InternalID: resumed.ID, Role: conversation.RoleStatus, Recovery: &resumed})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var hydrated types.ChatMessage
+	var hydrated conversation.ChatMessage
 	if err := json.Unmarshal(data, &hydrated); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestRecoveryDefaultsCompactWithCountdownBlinkAndExpandableEvidence(t *testi
 		RetryAt: time.UnixMilli(62000), Summary: "Connection failed",
 		Detail: "the actual DNS failure and retained diagnostic tail",
 	}
-	renderer.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, Recovery: &status}}, 1, 0)
+	renderer.SyncMessages([]conversation.ChatMessage{{InternalID: status.ID, Role: conversation.RoleStatus, Recovery: &status}}, 1, 0)
 	renderer.SetSpinFrame(1000)
 	rows, _, _ := renderer.ExportMessageRows(100)
 	if len(rows) != 1 || len(rows[0].Lines) != 2 || !rows[0].Toggle ||
@@ -171,10 +172,10 @@ func TestRecoveryDefaultsCompactWithCountdownBlinkAndExpandableEvidence(t *testi
 
 func TestRecoveryStripDoesNotAnimateAttentionOrEchoDiagnostics(t *testing.T) {
 	th := theme.DefaultDark()
-	for _, phase := range []types.AgentPhase{types.AgentNeedsAttention, types.AgentInterrupted} {
+	for _, phase := range []statuscenter.AgentPhase{statuscenter.AgentNeedsAttention, statuscenter.AgentInterrupted} {
 		var strip ActivityStrip
-		strip.Update(types.AgentActivityView{
-			Active: true, Status: types.AgentStatusSnapshot{Phase: phase, NeedsAction: true},
+		strip.Update(statuscenter.AgentActivityView{
+			Active: true, Status: statuscenter.AgentStatusSnapshot{Phase: phase, NeedsAction: true},
 			Recovery: recovery.Status{ID: "incident", State: recovery.NeedsAttention, Detail: "private verbose diagnostic"},
 		}, 80, th, ui.NewTokenSet(th))
 		first, later := strip.Line(1000), strip.Line(9000)
@@ -186,13 +187,13 @@ func TestRecoveryStripDoesNotAnimateAttentionOrEchoDiagnostics(t *testing.T) {
 
 func TestRecoverySummaryAndActionChangesInvalidateRetainedRows(t *testing.T) {
 	syncer := NewMessageSync()
-	first := types.ChatMessage{InternalID: "incident", Role: types.RoleStatus, Recovery: &recovery.Status{ID: "incident", Summary: "old"}}
-	_, _ = syncer.SyncMessages([]types.ChatMessage{first}, 1, 0)
+	first := conversation.ChatMessage{InternalID: "incident", Role: conversation.RoleStatus, Recovery: &recovery.Status{ID: "incident", Summary: "old"}}
+	_, _ = syncer.SyncMessages([]conversation.ChatMessage{first}, 1, 0)
 	changed := first
 	status := *first.Recovery
 	status.Action = "Continue run"
 	changed.Recovery = &status
-	result, _ := syncer.SyncMessages([]types.ChatMessage{changed}, 2, 0)
+	result, _ := syncer.SyncMessages([]conversation.ChatMessage{changed}, 2, 0)
 	if len(result.ChangedIDs) != 1 || result.ChangedIDs[0] != "incident" {
 		t.Fatalf("recovery action-only delta failed to invalidate painted rows: %+v", result)
 	}
@@ -213,7 +214,7 @@ func benchmarkExpandedRecoveryClock(b *testing.B, paragraphs int) {
 	status := recovery.Status{ID: "incident", AgentID: "owner", Generation: 1,
 		State: recovery.Recovering, RetryAt: time.UnixMilli(300000),
 		Detail: strings.Repeat("Accepted diagnostic evidence stays cached across clock updates.\n", paragraphs)}
-	renderer.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, Recovery: &status}}, 1, 0)
+	renderer.SyncMessages([]conversation.ChatMessage{{InternalID: status.ID, Role: conversation.RoleStatus, Recovery: &status}}, 1, 0)
 	renderer.ToggleDisclosure(status.ID)
 	renderer.SetSpinFrame(1000)
 	_, _, _ = renderer.ExportMessageRows(100)

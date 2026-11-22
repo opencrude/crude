@@ -8,9 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/client"
-	"crude/core/port"
+	"crude/core/coreclient"
 	"crude/core/projectpath"
+	"crude/core/shellport"
 	"crude/tui/screens/filepicker"
 )
 

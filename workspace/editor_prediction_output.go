@@ -9,7 +9,7 @@ import (
 
 	"crude/agent/prompt"
 	"crude/insight/predictioncontext"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // suggestionHunk is one change, in canonical byte offsets of the text that
@@ -156,24 +156,24 @@ func refineHunk(c predictioncontext.Context, base int, oldText, newText string) 
 }
 
 // classifySuggestion names how the shell shows one hunk.
-func classifySuggestion(text []byte, caret int, h suggestionHunk) types.EditorPredictionKind {
+func classifySuggestion(text []byte, caret int, h suggestionHunk) insight.EditorPredictionKind {
 	if h.start == caret && h.end == caret {
-		return types.PredictionInsert
+		return insight.PredictionInsert
 	}
 	caretLine := bytes.Count(text[:caret], []byte{'\n'})
 	first := bytes.Count(text[:h.start], []byte{'\n'})
 	last := first + bytes.Count(text[h.start:h.end], []byte{'\n'})
 	if first <= caretLine+1 && last >= caretLine-1 {
-		return types.PredictionEdit
+		return insight.PredictionEdit
 	}
-	return types.PredictionJump
+	return insight.PredictionJump
 }
 
 // checkSuggestion drops hunks that the user would not want to see: invalid
 // text, a repeat of the code after the caret, or a reversal of the user's
 // own latest edit in this file.
-func checkSuggestion(text []byte, caret int, h suggestionHunk, own []types.RecentEdit) bool {
-	if h.start < 0 || h.end < h.start || h.end > len(text) || !types.ValidEditorPredictionText(h.text) {
+func checkSuggestion(text []byte, caret int, h suggestionHunk, own []insight.RecentEdit) bool {
+	if h.start < 0 || h.end < h.start || h.end > len(text) || !insight.ValidEditorPredictionText(h.text) {
 		return false
 	}
 	removed := string(text[h.start:h.end])
@@ -206,11 +206,11 @@ const suggestionAgentWindow = 10 * time.Second
 
 // agentBusy reports whether h touches lines of rel that another author
 // changed within the window. Lines are 1-based in the text after each edit.
-func agentBusy(text []byte, h suggestionHunk, rel string, edits []types.RecentEdit, now time.Time) bool {
+func agentBusy(text []byte, h suggestionHunk, rel string, edits []insight.RecentEdit, now time.Time) bool {
 	first := 1 + bytes.Count(text[:h.start], []byte{'\n'})
 	last := first + bytes.Count(text[h.start:h.end], []byte{'\n'})
 	for _, e := range edits {
-		if e.Author == types.RecentEditYou || e.Path != rel || now.Sub(time.Unix(e.Unix, 0)) > suggestionAgentWindow {
+		if e.Author == insight.RecentEditYou || e.Path != rel || now.Sub(time.Unix(e.Unix, 0)) > suggestionAgentWindow {
 			continue
 		}
 		end := e.Line + strings.Count(e.Inserted, "\n")

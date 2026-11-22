@@ -84,9 +84,9 @@ func (s *GitService) CompareChanges(ctx context.Context, changes []GitChange) ([
 
 // StagedPaths is the exact set of repository paths a commit would record,
 // sorted. It is what the Git panel displays and what CommitStaged verifies.
-func (snapshot GitSnapshot) StagedPaths() []string {
+func (s GitSnapshot) StagedPaths() []string {
 	var paths []string
-	for _, change := range snapshot.Changes {
+	for _, change := range s.Changes {
 		if change.Area == GitAreaStaged {
 			paths = append(paths, change.Path)
 		}

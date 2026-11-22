@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"crude/agent/safety"
+	"crude/types/command"
 	"crude/workspace/fileio"
 )
 
@@ -34,7 +35,7 @@ func codexOutputContractCommand() (string, string) {
 func TestExecuteCodexCommandCancellationReturnsPartialEvidenceWithoutSyntheticExit(t *testing.T) {
 	mgr := fileio.NewAsyncCommandManager()
 	defer mgr.CloseAndWait()
-	command, shell := codexOutputContractCommand()
+	commandLine, shell := codexOutputContractCommand()
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	// Wait for both streams in the command manager, not just child startup:
@@ -66,7 +67,7 @@ func TestExecuteCodexCommandCancellationReturnsPartialEvidenceWithoutSyntheticEx
 		}
 	}()
 	toolResult, err := executeCodexCommand(ctx, mgr, t.TempDir(), "exec_command", map[string]any{
-		"cmd": command, "shell": shell, "login": false, "yield_time_ms": 5000,
+		"cmd": commandLine, "shell": shell, "login": false, "yield_time_ms": 5000,
 	}, safety.DefaultCommandPolicy())
 	if readyErr := <-ready; readyErr != nil {
 		t.Fatal(readyErr)
@@ -74,7 +75,7 @@ func TestExecuteCodexCommandCancellationReturnsPartialEvidenceWithoutSyntheticEx
 	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "exited with code -1") {
 		t.Fatalf("error=%v content=%s", err, toolResult.Content)
 	}
-	var result fileio.InteractiveResult
+	var result command.Result
 	if unmarshalErr := json.Unmarshal([]byte(toolResult.Content), &result); unmarshalErr != nil {
 		t.Fatal(unmarshalErr)
 	}

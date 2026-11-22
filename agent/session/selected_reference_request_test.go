@@ -138,7 +138,7 @@ func TestPreparedInputEnrichmentReachesLocallyAdmittedRequestExactlyOnce(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := plans.Update(t.Context(), plan.UpdateRequest{PlanID: "selected-plan", Objective: "selection verification", Status: plan.StatusActive, Steps: []plan.PlanStep{{ID: "verify", Description: "retained plan datum", Status: plan.StepInProgress}}}); err != nil {
+	if _, _, err := plans.Update(t.Context(), plan.UpdateRequest{PlanID: "selected-plan", Objective: "selection verification", Status: plan.StatusActive, Steps: []plan.Step{{ID: "verify", Description: "retained plan datum", Status: plan.StepInProgress}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.asyncMgr.Start("selected-runtime", "exit 0", project, 0); err != nil {

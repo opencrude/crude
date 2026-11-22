@@ -12,7 +12,7 @@ import (
 	"time"
 	"unsafe"
 
-	"crude/terminalvt"
+	"crude/internal/terminalvt"
 
 	"golang.org/x/sys/windows"
 )

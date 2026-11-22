@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestProposedPlanRendersAsTitledSectionWithoutTags(t *testing.T) {
@@ -27,7 +27,7 @@ func TestPlanTagsAbsentWithoutRoomForMarkdown(t *testing.T) {
 		r := NewRenderer(theme.DefaultDark())
 		r.SetSize(23, 24)
 		r.SetChatAreaBounds(0, 24)
-		r.AppendMessage(types.ChatMessage{InternalID: "proposal", Role: types.RoleAssistant, Content: text})
+		r.AppendMessage(conversation.ChatMessage{InternalID: "proposal", Role: conversation.RoleAssistant, Content: text})
 		r.SetStreaming(live)
 		rows, _, _ := r.ExportMessageRows(23)
 		var lines []string

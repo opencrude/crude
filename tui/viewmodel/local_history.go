@@ -12,13 +12,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/client"
-	"crude/core/port"
-	"crude/core/protocol"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/core/shellport"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	ttypes "crude/types"
+	"crude/types/setting"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
 )
@@ -236,7 +236,7 @@ func (m *App) captureHistoryCmd() tea.Cmd {
 		return historyOperationMsg{Label: "Local history snapshot created"}
 	}
 }
-func historySnapshotOptions(settings ttypes.LocalHistorySettings) localhistory.SnapshotOptions {
+func historySnapshotOptions(settings setting.LocalHistory) localhistory.SnapshotOptions {
 	return localhistory.SnapshotOptions{
 		DisableGitIgnore:    !settings.UseGitIgnoreValue(),
 		ExtraIgnorePatterns: append([]string(nil), settings.ExtraIgnorePatterns...),

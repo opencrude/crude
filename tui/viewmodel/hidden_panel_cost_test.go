@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/core/port"
+	"crude/core/shellport"
 	"crude/tui/screens/termdock"
-	"crude/types"
+	"crude/types/statuscenter"
 )
 
 type noticeHistoryReadCounter struct {
@@ -16,7 +16,7 @@ type noticeHistoryReadCounter struct {
 	reads int
 }
 
-func (c *noticeHistoryReadCounter) Notifications(dismissed bool) []types.NotificationRecord {
+func (c *noticeHistoryReadCounter) Notifications(dismissed bool) []statuscenter.NotificationRecord {
 	c.reads++
 	return c.StatusService.Notifications(dismissed)
 }
@@ -32,8 +32,8 @@ func TestTickReadsNoticeHistoryOnlyForVisiblePanel(t *testing.T) {
 	app := newFullTestApp(t)
 	status := &noticeHistoryReadCounter{StatusService: app.ws.Status()}
 	app.ws = &noticeHistoryPort{app.ws, status}
-	status.Notify(types.NotificationRecord{Summary: "Saved notice"})
-	app.handleTick(types.TickMsg(time.Now()))
+	status.Notify(statuscenter.NotificationRecord{Summary: "Saved notice"})
+	app.handleTick(TickMsg(time.Now()))
 	if status.reads != 0 {
 		t.Fatalf("hidden Notices read full history %d times on tick", status.reads)
 	}
@@ -43,9 +43,9 @@ func TestTickReadsNoticeHistoryOnlyForVisiblePanel(t *testing.T) {
 		t.Fatalf("opening Notices did not read and acknowledge current history")
 	}
 	app.toggleWorkspacePanel(termdock.PanelNotices)
-	status.Notify(types.NotificationRecord{Summary: "Another notice"})
+	status.Notify(statuscenter.NotificationRecord{Summary: "Another notice"})
 	status.reads = 0
-	app.handleTick(types.TickMsg(time.Now()))
+	app.handleTick(TickMsg(time.Now()))
 	if status.reads != 0 || status.UnreadCount() != 1 {
 		t.Fatalf("hidden history read or acknowledged: reads=%d unread=%d", status.reads, status.UnreadCount())
 	}
@@ -54,12 +54,12 @@ func TestTickReadsNoticeHistoryOnlyForVisiblePanel(t *testing.T) {
 func BenchmarkTickHiddenNotices(b *testing.B) {
 	app := newFullTestApp(b)
 	for i := range 153 {
-		app.ws.Status().Notify(types.NotificationRecord{Summary: fmt.Sprintf("Notice %d", i)})
+		app.ws.Status().Notify(statuscenter.NotificationRecord{Summary: fmt.Sprintf("Notice %d", i)})
 	}
 	b.ReportAllocs()
 	for b.Loop() {
 		// Sample the refresh tick, not the cheap ticks between clock updates.
 		app.workspacePanelLastSecond = 0
-		app.handleTick(types.TickMsg(time.Now()))
+		app.handleTick(TickMsg(time.Now()))
 	}
 }

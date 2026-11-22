@@ -14,7 +14,7 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -27,22 +27,22 @@ func TestPromotedThoughtsJoinActivityAcrossRequests(t *testing.T) {
 			app.AddOrchestrator("activity-owner")
 			app.AddOrchestrator("other-tab") // completion must target the owner, not the selected tab
 			state := app.ws.AgentMgr().Get("activity-owner").State
-			renderer := app.subPaneProjections.GetExisting(state.ID).renderer
+			renderer := app.subPaneProjections.Existing(state.ID).renderer
 			renderer.SetSize(width, 40)
 			renderer.SetChatAreaBounds(0, 30)
 			for round := range 8 {
-				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "thinking", Data: reasoning.Delta{Text: thinkingLines(40)}})
+				app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "thinking", Data: reasoning.Delta{Text: thinkingLines(40)}})
 				if app.thinkingPaneID(state) == "" {
 					t.Fatal("fixture did not exercise real thinking promotion")
 				}
 				id := fmt.Sprintf("read-%d", round)
-				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "tool_call", Data: map[string]any{
+				app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "tool_call", Data: map[string]any{
 					"tool_id": id, "internal_id": id, "request_id": id, "name": "read_file", "args": fmt.Sprintf(`{"path":"file-%d.go"}`, round),
 				}})
-				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "tool_result", Data: map[string]any{
+				app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "tool_result", Data: map[string]any{
 					"tool_id": id, "internal_id": id, "name": "read_file", "result": "package fixture",
 				}})
-				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "phase", Data: map[string]any{"name": "waiting_provider", "provider": "Custom"}})
+				app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "phase", Data: map[string]any{"name": "waiting_provider", "provider": "Custom"}})
 				rows, _, _ := renderer.ExportMessageRows(width)
 				if len(rows) != 1 || !strings.HasPrefix(rows[0].ID, "activity:") {
 					var text []string
@@ -57,13 +57,13 @@ func TestPromotedThoughtsJoinActivityAcrossRequests(t *testing.T) {
 			if app.AgentView.ActiveID() != state.ID {
 				t.Fatal("owner tab did not restore")
 			}
-			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "done", Data: map[string]any{"reason": "completed"}})
+			app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "done", Data: map[string]any{"reason": "completed"}})
 			var thoughts []string
 			for _, message := range state.Messages.Messages() {
 				if message.SubPaneID != "" {
 					t.Fatalf("completed thinking still owns a pane boundary: %+v", message)
 				}
-				if message.Role == ctypes.RoleThinking {
+				if message.Role == conversation.RoleThinking {
 					thoughts = append(thoughts, message.InternalID)
 				}
 			}
@@ -88,7 +88,7 @@ func TestPromotedThoughtsJoinActivityAcrossRequests(t *testing.T) {
 			}
 			for _, snapshot := range state.Messages.Messages() {
 				wire := provider.NewTextMessage("assistant", snapshot.Content)
-				if err := sessiondb.AppendMessageWithMeta(db, state.ID, wire, 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{snapshot}}); err != nil {
+				if err := sessiondb.AppendMessageWithMeta(db, state.ID, wire, 1, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{snapshot}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -149,9 +149,9 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 		t.Run(event.name, func(t *testing.T) {
 			app := newFullTestApp(t)
 			app.AddOrchestrator("parent")
-			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: "start", Data: map[string]string{"parent_id": "parent", "agent_name": "Child"}})
+			app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "start", Data: map[string]string{"parent_id": "parent", "agent_name": "Child"}})
 			state := app.ws.AgentMgr().Get("child").State
-			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: thinkingLines(40)}})
+			app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: thinkingLines(40)}})
 			paneID := app.thinkingPaneID(state)
 			if paneID == "" {
 				t.Fatal("nested thought not promoted")
@@ -159,13 +159,13 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 			if event.name == "cancel" {
 				app.cancelAgentTurn("child")
 			} else {
-				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: event.name, Data: event.data})
+				app.handleAgentEvent(AgentEventMsg{AgentID: "child", Type: event.name, Data: event.data})
 			}
 			if app.thinkingPaneID(state) != "" || app.ws.PaneMgr().Has(paneID) || app.subPaneProjections.Has(paneID) {
 				t.Fatal("settled nested thought left a pane boundary")
 			}
 			thought := state.Messages.Messages()[0]
-			if thought.Role != ctypes.RoleThinking || thought.ThinkingActive || thought.ThinkingInterrupted != event.interrupted || thought.Content != thinkingLines(40) {
+			if thought.Role != conversation.RoleThinking || thought.ThinkingActive || thought.ThinkingInterrupted != event.interrupted || thought.Content != thinkingLines(40) {
 				t.Fatalf("incorrect restored thought: %+v", thought)
 			}
 		})
@@ -175,14 +175,14 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 func TestCompletedPaneAndActivityShareOneSpacer(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	child := app.ws.PaneMgr().GetOrCreate("finished-child", workspace.PaneAgent, "Finished child")
+	child := app.ws.PaneMgr().Ensure("finished-child", workspace.PaneAgent, "Finished child")
 	app.subPaneProjections.Get(child.ID, child.Type)
 	child.Collapse()
 	state := app.ws.AgentMgr().Get("root").State
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleTool, SubPaneID: child.ID})
-	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleTool, SubPaneID: child.ID})
+	state.Messages.AppendMessage(conversation.Message{Role: conversation.RoleAssistant})
 	for _, id := range []string{"one", "two"} {
-		state.Messages.AppendMessage(workspace.Message{InternalID: id, Role: ctypes.RoleTool, ToolName: "read_file", ToolArgs: id + ".go", ToolStatus: ctypes.ToolStatusSuccess})
+		state.Messages.AppendMessage(conversation.Message{InternalID: id, Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: id + ".go", ToolStatus: conversation.ToolStatusSuccess})
 	}
 	app.syncAgentMessages("root", false)
 	for _, width := range []int{160, 80, 160} {
@@ -210,10 +210,10 @@ func TestCompletedPaneAndActivityShareOneSpacer(t *testing.T) {
 func TestActivityTreeCommandClickAndEmptyEnvelopeRecovery(t *testing.T) {
 	const command = "echo alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
 	conv := workspace.NewConversation()
-	conv.AppendMessage(workspace.Message{InternalID: "reply:progress", Role: "assistant", Content: "Checking.", Time: time.Unix(1, 0)})
-	conv.AppendMessage(workspace.Message{InternalID: "empty", Role: "assistant", Time: time.Unix(2, 0)})
-	conv.AppendMessage(workspace.Message{InternalID: "read", Role: "tool", ToolName: "read_file", ToolArgs: "one.go", ToolStatus: "success", Content: "file", Time: time.Unix(3, 0)})
-	conv.AppendMessage(workspace.Message{InternalID: "command", Role: "tool", ToolName: "execute_command", ToolCommand: command, ToolStatus: "success", Content: "PASS", Time: time.Unix(4, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "reply:progress", Role: "assistant", Content: "Checking.", Time: time.Unix(1, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "empty", Role: "assistant", Time: time.Unix(2, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "read", Role: "tool", ToolName: "read_file", ToolArgs: "one.go", ToolStatus: "success", Content: "file", Time: time.Unix(3, 0)})
+	conv.AppendMessage(conversation.Message{InternalID: "command", Role: "tool", ToolName: "execute_command", ToolCommand: command, ToolStatus: "success", Content: "PASS", Time: time.Unix(4, 0)})
 	live, _ := chatMessagesFromConversation(conv)
 
 	db := sessiondb.OpenAndMigrateAt(t.TempDir())
@@ -228,10 +228,10 @@ func TestActivityTreeCommandClickAndEmptyEnvelopeRecovery(t *testing.T) {
 		{Role: "tool", ToolCallID: "command", Content: provider.TextContent("PASS")},
 	}
 	metas := []sessiondb.DisplayMeta{
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{InternalID: "reply:progress", Role: "assistant", Content: "Checking.", Time: time.Unix(1, 0)}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: "reply:progress", Role: "assistant", Content: "Checking.", Time: time.Unix(1, 0)}}},
 		{SnapshotVersion: sessiondb.ConversationSnapshotVersion},
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{InternalID: "read", Role: "tool", ToolName: "read_file", ToolArgs: "one.go", ToolStatus: "success", Content: "file", Time: time.Unix(3, 0)}}},
-		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{InternalID: "command", Role: "tool", ToolName: "execute_command", ToolCommand: command, ToolStatus: "success", Content: "PASS", Time: time.Unix(4, 0)}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: "read", Role: "tool", ToolName: "read_file", ToolArgs: "one.go", ToolStatus: "success", Content: "file", Time: time.Unix(3, 0)}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []conversation.Message{{InternalID: "command", Role: "tool", ToolName: "execute_command", ToolCommand: command, ToolStatus: "success", Content: "PASS", Time: time.Unix(4, 0)}}},
 	}
 	if _, err := sessiondb.ReplaceMessagesWithMeta(db, "root", wire, []int{1, 1, 1, 1}, metas); err != nil {
 		t.Fatal(err)
@@ -295,7 +295,7 @@ func TestCompactToolStyleAndBlinkUseSharedTitles(t *testing.T) {
 	reg := newSubPaneProjectionRegistry(theme.DefaultDark())
 	sp := workspace.NewSubPane("child", workspace.PaneAgent, "child")
 	p := reg.Get(sp.ID, sp.Type)
-	messages := []ctypes.ChatMessage{{InternalID: "tool", Role: ctypes.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolStatus: ctypes.ToolStatusCalling, ToolPreviewPhase: ctypes.ToolPreviewStreaming}}
+	messages := []conversation.ChatMessage{{InternalID: "tool", Role: conversation.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolStatus: conversation.ToolStatusCalling, ToolPreviewPhase: conversation.ToolPreviewStreaming}}
 	p.renderer.SyncMessages(messages, 1, 0)
 	reg.renderAgentCompact(sp.ID, sp, sp.View(), 48, 6, 0, false)
 	if !strings.Contains(p.compactToolLines[0].PlainText(), "●") {
@@ -308,8 +308,8 @@ func TestCompactToolStyleAndBlinkUseSharedTitles(t *testing.T) {
 	if p.compactToolLines[0].Native.Spans[2].Role != ui.ColorToolTitle || p.compactToolLines[0].Native.Spans[3].Role != ui.ColorToolOperand {
 		t.Fatal("compact list bypassed semantic title roles")
 	}
-	messages[0].ToolStatus = ctypes.ToolStatusSuccess
-	messages[0].ToolPreviewPhase = ctypes.ToolPreviewDone
+	messages[0].ToolStatus = conversation.ToolStatusSuccess
+	messages[0].ToolPreviewPhase = conversation.ToolPreviewDone
 	p.renderer.SyncMessages(messages, 2, 0)
 	reg.renderAgentCompact(sp.ID, sp, sp.View(), 48, 6, 0, false)
 	cached := &p.compactToolLines[0]

@@ -3,7 +3,7 @@ package workspace
 import (
 	"bytes"
 	"context"
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crypto/sha256"
 	"errors"
 	"fmt"

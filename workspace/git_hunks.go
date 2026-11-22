@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"crude/text/diff"
-	"crude/text/encoding"
+	"crude/text/textdiff"
+	"crude/text/textencoding"
 	"crude/workspace/fileio"
 	"crude/workspace/localhistory"
 
@@ -120,8 +120,8 @@ func (s *GitService) UnstageHunk(ctx context.Context, comparison GitComparison, 
 
 // DiscardGitHunk reverts one hunk of a tracked working-tree file on disk after
 // capturing a mandatory Local History snapshot. Any newer change aborts.
-func (workspace *Workspace) DiscardGitHunk(ctx context.Context, comparison GitComparison, hunk GitHunkRange) (string, error) {
-	if workspace.LocalHistory == nil || workspace.Git == nil || comparison.Fingerprint == "" {
+func (w *Workspace) DiscardGitHunk(ctx context.Context, comparison GitComparison, hunk GitHunkRange) (string, error) {
+	if w.LocalHistory == nil || w.Git == nil || comparison.Fingerprint == "" {
 		return "", errors.New("discard requires the repository and the Local History recovery store")
 	}
 	if comparison.Area != GitAreaWorking || comparison.Historical || !comparison.BeforePresent || !comparison.AfterPresent || comparison.OriginalPath != "" || comparison.Binary {
@@ -136,7 +136,7 @@ func (workspace *Workspace) DiscardGitHunk(ctx context.Context, comparison GitCo
 		return "", err
 	}
 	defer unlock()
-	service := workspace.Git
+	service := w.Git
 	if err := service.lock(ctx); err != nil {
 		return "", err
 	}
@@ -163,7 +163,7 @@ func (workspace *Workspace) DiscardGitHunk(ctx context.Context, comparison GitCo
 	if err := verify(); err != nil {
 		return "", err
 	}
-	safety, err := workspace.LocalHistory.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before Git hunk discard: " + comparison.Path, IncludePaths: []string{comparison.Path}, DisableGitIgnore: true, MaxFileSize: gitComparisonLimit})
+	safety, err := w.LocalHistory.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before Git hunk discard: " + comparison.Path, IncludePaths: []string{comparison.Path}, DisableGitIgnore: true, MaxFileSize: gitComparisonLimit})
 	if err != nil {
 		return "", err
 	}

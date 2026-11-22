@@ -11,17 +11,17 @@ import (
 	"time"
 
 	"crude/agent/capability"
-	"crude/types"
 	captypes "crude/types/capability"
+	"crude/types/setting"
 )
 
-func assertSettingsRowMatchesSQL(t *testing.T, db *WorkspaceDB) {
+func assertSettingsRowMatchesSQL(t *testing.T, db *DB) {
 	t.Helper()
 	var stored string
 	if err := db.DB.QueryRow(`SELECT value FROM workspace_metadata WHERE key = ?`, workspaceSettingsKey).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
-	if got := db.GetSetting(workspaceSettingsKey); got != stored {
+	if got := db.Setting(workspaceSettingsKey); got != stored {
 		t.Fatalf("committed projection %q differs from SQL %q", got, stored)
 	}
 }
@@ -29,7 +29,7 @@ func assertSettingsRowMatchesSQL(t *testing.T, db *WorkspaceDB) {
 func TestSettingsProjectionReadsAndPreparationBypassHeldDatabase(t *testing.T) {
 	db := openTestWorkspaceDB(t)
 	w := &Workspace{WorkspaceDB: db, Logger: testLogger{}}
-	w.SetAppDefaults(types.AppSettings{})
+	w.SetAppDefaults(setting.App{})
 	if err := db.SetSetting(workspaceSettingsKey, `{"editor":{"tab_size":7},"capabilities":{"skills":{"x":null}}}`); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestSettingsProjectionReadsAndPreparationBypassHeldDatabase(t *testing.T) {
 		_ = w.EffectiveAppSettings()
 		_ = w.AppDefaults()
 		_ = w.WorkspaceAgentDefaults()
-		_ = w.PreparePreferencesSave(types.SettingsScopeWorkspace, nil)
+		_ = w.PreparePreferencesSave(setting.ScopeWorkspace, nil)
 		_ = w.PrepareCapabilityOverlayCommit(captypes.Action{})
 		_, err := w.PrepareCapabilities(nil)
 		overrides := w.LoadWorkspaceOverrides()
@@ -65,7 +65,7 @@ func TestSettingsProjectionReadsAndPreparationBypassHeldDatabase(t *testing.T) {
 		if string(w.LoadWorkspaceOverrides().Editor) != `{"tab_size":7}` {
 			err = fmt.Errorf("read projection aliases committed bytes")
 		}
-		if db.GetSettingContext(context.Background(), workspaceSettingsKey) == "" {
+		if db.SettingContext(context.Background(), workspaceSettingsKey) == "" {
 			err = fmt.Errorf("committed row unavailable")
 		}
 		done <- err
@@ -103,7 +103,7 @@ func TestSettingsProjectionStartupAndReplacementDB(t *testing.T) {
 	if !w.LoadWorkspaceOverrides().IsEmpty() {
 		t.Fatal("replacement DB inherited the previous owner's projection")
 	}
-	if reopened.GetSetting(workspaceSettingsKey) != original {
+	if reopened.Setting(workspaceSettingsKey) != original {
 		t.Fatal("replacement changed original owner")
 	}
 }
@@ -112,7 +112,7 @@ func TestSettingsProjectionConcurrentCommitsPreserveSparseNeighbors(t *testing.T
 	db := openTestWorkspaceDB(t)
 	root := t.TempDir()
 	w := &Workspace{WorkspaceDB: db, RootPath: root, Logger: testLogger{}}
-	w.SetAppDefaults(types.AppSettings{Capabilities: captypes.Settings{
+	w.SetAppDefaults(setting.App{Capabilities: captypes.Settings{
 		Sources:     map[string]captypes.SourceConfig{"local": {ID: "local", Kind: "local", Location: root, Trusted: true}},
 		Acquisition: captypes.AcquisitionSettings{Mode: "automatic"},
 	}})
@@ -148,9 +148,9 @@ func TestSettingsProjectionConcurrentCommitsPreserveSparseNeighbors(t *testing.T
 			var err error
 			switch i % 3 {
 			case 0:
-				_, err = saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(fmt.Sprint(i + 1))}}, "", predictionPreferenceBinding{})
+				_, err = saveWorkspacePreferences(db, base, []setting.Edit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage(fmt.Sprint(i + 1))}}, "", predictionPreferenceBinding{})
 			case 1:
-				after := types.CloneAppSettings(base)
+				after := setting.CloneApp(base)
 				after.Capabilities.Sources[id] = captypes.SourceConfig{ID: id, Location: root, Scope: captypes.ScopeWorkspace}
 				_, err = commit(t.Context(), base, after, captypes.ScopeWorkspace)
 			case 2:
@@ -179,7 +179,7 @@ func TestSettingsProjectionConcurrentCommitsPreserveSparseNeighbors(t *testing.T
 		}
 	}
 	// A later addressed explicit value wins, even when equal to the parent.
-	if _, err := saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("4")}}, "", predictionPreferenceBinding{}); err != nil {
+	if _, err := saveWorkspacePreferences(db, base, []setting.Edit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("4")}}, "", predictionPreferenceBinding{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := string(w.LoadWorkspaceOverrides().Editor); got != `{"tab_size":4}` {
@@ -202,7 +202,7 @@ func TestSettingsProjectionConcurrentCommitsPreserveSparseNeighbors(t *testing.T
 func TestSettingsProjectionFailedWritesNeverPublish(t *testing.T) {
 	db := openTestWorkspaceDB(t)
 	w := &Workspace{WorkspaceDB: db, RootPath: t.TempDir(), Logger: testLogger{}}
-	w.SetAppDefaults(types.AppSettings{Capabilities: captypes.Settings{
+	w.SetAppDefaults(setting.App{Capabilities: captypes.Settings{
 		Connections: map[string]captypes.ConnectionConfig{"custom": {ID: "custom", Transport: "http", URL: "https://example.test", Scope: captypes.ScopeWorkspace}},
 	}})
 	const original = `{"editor":{"tab_size":6}}`
@@ -217,23 +217,23 @@ func TestSettingsProjectionFailedWritesNeverPublish(t *testing.T) {
 		t.Fatalf("direct write did not reach rejecting storage: %v", err)
 	}
 	base := w.LoadAppSettings()
-	if _, err := saveWorkspacePreferences(db, base, []types.SettingEdit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("2")}}, "", predictionPreferenceBinding{}); err == nil || !strings.Contains(err.Error(), "test rejection") {
+	if _, err := saveWorkspacePreferences(db, base, []setting.Edit{{Path: []string{"editor", "tab_size"}, After: json.RawMessage("2")}}, "", predictionPreferenceBinding{}); err == nil || !strings.Contains(err.Error(), "test rejection") {
 		t.Fatalf("preference write did not reach rejecting storage: %v", err)
 	}
-	after := types.CloneAppSettings(base)
+	after := setting.CloneApp(base)
 	after.Capabilities.Sources["x"] = captypes.SourceConfig{ID: "x", Location: w.RootPath, Scope: captypes.ScopeWorkspace}
 	if _, err := w.PrepareCapabilityOverlayCommit(captypes.Action{})(t.Context(), base, after, captypes.ScopeWorkspace); err == nil || !strings.Contains(err.Error(), "test rejection") {
 		t.Fatalf("capability overlay write did not reach rejecting storage: %v", err)
 	}
 	// Existing custom connections do not need acquisition source approval.
-	after = types.CloneAppSettings(base)
+	after = setting.CloneApp(base)
 	connection := after.Capabilities.Connections["custom"]
 	connection.Grants = map[string]captypes.ToolGrant{"read": {Effect: captypes.EffectRead, Scope: "public", Fingerprint: "schema"}}
 	after.Capabilities.Connections["custom"] = connection
 	if _, err := newCapabilityRegistrationStore(w).CommitRegistration(t.Context(), "custom", base.Capabilities, after.Capabilities); err == nil || !strings.Contains(err.Error(), "test rejection") {
 		t.Fatalf("registration write did not reach rejecting storage: %v", err)
 	}
-	if db.GetSetting(workspaceSettingsKey) != original {
+	if db.Setting(workspaceSettingsKey) != original {
 		t.Fatal("failed write published uncommitted bytes")
 	}
 	assertSettingsRowMatchesSQL(t, db)

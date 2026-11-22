@@ -10,8 +10,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
-	model "crude/types"
+	"crude/core/shellport"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -31,9 +32,9 @@ func newRealShellApp(t *testing.T) (*App, *workspace.Workspace) {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ws := workspace.NewWorkspace(dir, "openrouter", "test", model.Settings{}, regressionLogger{})
+	ws := workspace.NewWorkspace(dir, "openrouter", "test", setting.Settings{}, regressionLogger{})
 	ws.SetBackendConfig(testAccountConfig(), home)
-	ws.SetAppDefaults(model.AppSettings{Accounts: ws.AllAccounts()})
+	ws.SetAppDefaults(setting.App{Accounts: ws.AllAccounts()})
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
 	app := NewApp(shellport.Local(ws), nil)
@@ -57,18 +58,18 @@ type noopLSPRuntime struct{}
 
 type noopLSPClient struct{ admit func() error }
 
-func (noopLSPRuntime) NewClient(_ model.LSPServerSpec, _ string, startAdmission func() error) workspace.LSPClient {
+func (noopLSPRuntime) NewClient(_ setting.LSPServerSpec, _ string, startAdmission func() error) workspace.LSPClient {
 	return noopLSPClient{admit: startAdmission}
 }
 
-func (noopLSPClient) OnDiagnostics(func(model.InsightDiagnosticPublication)) {}
-func (c noopLSPClient) Start(context.Context) error                          { return c.admit() }
-func (noopLSPClient) Stop() error                                            { return nil }
-func (noopLSPClient) Done() <-chan struct{}                                  { return nil }
-func (noopLSPClient) OpenFile(context.Context, string, string, string, model.InsightBoundary) (int, error) {
+func (noopLSPClient) OnDiagnostics(func(insight.DiagnosticPublication)) {}
+func (c noopLSPClient) Start(context.Context) error                     { return c.admit() }
+func (noopLSPClient) Stop() error                                       { return nil }
+func (noopLSPClient) Done() <-chan struct{}                             { return nil }
+func (noopLSPClient) OpenFile(context.Context, string, string, string, insight.Boundary) (int, error) {
 	return 1, nil
 }
-func (noopLSPClient) UpdateFile(context.Context, string, string, model.InsightBoundary) (int, error) {
+func (noopLSPClient) UpdateFile(context.Context, string, string, insight.Boundary) (int, error) {
 	return 1, nil
 }
 func (noopLSPClient) CloseFile(context.Context, string)                     {}
@@ -76,38 +77,38 @@ func (noopLSPClient) NotifySave(context.Context, string, string, int, bool) {}
 func (noopLSPClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
 func (noopLSPClient) SyncFileFromDisk(context.Context, string, int) {}
-func (noopLSPClient) RequestNavigation(context.Context, string, string, int, int, bool) (model.LSPNavigationResponse, error) {
-	return model.LSPNavigationResponse{}, context.Canceled
+func (noopLSPClient) RequestNavigation(context.Context, string, string, int, int, bool) (insight.LSPNavigationResponse, error) {
+	return insight.LSPNavigationResponse{}, context.Canceled
 }
-func (noopLSPClient) RequestDocumentSymbols(context.Context, string) []workspace.LSPSymbol {
+func (noopLSPClient) RequestDocumentSymbols(context.Context, string) []insight.LSPSymbol {
 	return nil
 }
 func (noopLSPClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (noopLSPClient) RequestSignatureHelp(context.Context, string, int, int, model.LSPSignatureContext) (model.LSPSignatureHelp, error) {
-	return model.LSPSignatureHelp{}, nil
+func (noopLSPClient) RequestSignatureHelp(context.Context, string, int, int, insight.LSPSignatureContext) (insight.LSPSignatureHelp, error) {
+	return insight.LSPSignatureHelp{}, nil
 }
-func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (model.LSPRenameEdit, error) {
-	return model.LSPRenameEdit{}, nil
+func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (insight.LSPRenameEdit, error) {
+	return insight.LSPRenameEdit{}, nil
 }
-func (noopLSPClient) RequestCodeActions(context.Context, string, int, int, int, int) (model.LSPCodeActionResponse, error) {
-	return model.LSPCodeActionResponse{}, context.Canceled
+func (noopLSPClient) RequestCodeActions(context.Context, string, int, int, int, int) (insight.LSPCodeActionResponse, error) {
+	return insight.LSPCodeActionResponse{}, context.Canceled
 }
-func (noopLSPClient) ResolveCodeAction(context.Context, string, int, []byte) (model.LSPCodeActionResponse, error) {
-	return model.LSPCodeActionResponse{}, context.Canceled
+func (noopLSPClient) ResolveCodeAction(context.Context, string, int, []byte) (insight.LSPCodeActionResponse, error) {
+	return insight.LSPCodeActionResponse{}, context.Canceled
 }
-func (noopLSPClient) RequestInlayHints(context.Context, string, model.LSPInlayRange) (model.LSPInlayResponse, error) {
-	return model.LSPInlayResponse{}, context.Canceled
+func (noopLSPClient) RequestInlayHints(context.Context, string, insight.LSPInlayRange) (insight.LSPInlayResponse, error) {
+	return insight.LSPInlayResponse{}, context.Canceled
 }
-func (noopLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (model.LSPInlayResponse, error) {
-	return model.LSPInlayResponse{}, context.Canceled
+func (noopLSPClient) ResolveInlayHint(context.Context, string, int, []byte) (insight.LSPInlayResponse, error) {
+	return insight.LSPInlayResponse{}, context.Canceled
 }
-func (noopLSPClient) RequestCompletions(context.Context, string, int, int, model.LSPCompletionContext) (model.LSPCompletionResponse, error) {
-	return model.LSPCompletionResponse{}, context.Canceled
+func (noopLSPClient) RequestCompletions(context.Context, string, int, int, insight.LSPCompletionContext) (insight.LSPCompletionResponse, error) {
+	return insight.LSPCompletionResponse{}, context.Canceled
 }
-func (noopLSPClient) ResolveCompletion(context.Context, string, int, []byte) (model.LSPCompletionResponse, error) {
-	return model.LSPCompletionResponse{}, context.Canceled
+func (noopLSPClient) ResolveCompletion(context.Context, string, int, []byte) (insight.LSPCompletionResponse, error) {
+	return insight.LSPCompletionResponse{}, context.Canceled
 }
 
 // clickLastTabClose clicks the close glyph of the LAST tab through the real
@@ -193,7 +194,7 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	if n := countNonBlankGlyphs(app.mainSurf.Buffer()); n < 50 {
 		t.Fatalf("launcher frame after close too sparse: %d glyphs", n)
 	}
-	_, _ = app.handleTick(model.TickMsg(time.Now()))
+	_, _ = app.handleTick(TickMsg(time.Now()))
 	_ = app.View()
 }
 
@@ -269,10 +270,10 @@ func TestEditorLastTabCloseSwitchesToLauncher(t *testing.T) {
 	t.Log("editor last-tab close OK")
 }
 
-func (noopLSPClient) AwaitDiagnostics(context.Context, string) (model.InsightDiagnosticPublication, bool) {
-	return model.InsightDiagnosticPublication{}, true
+func (noopLSPClient) AwaitDiagnostics(context.Context, string) (insight.DiagnosticPublication, bool) {
+	return insight.DiagnosticPublication{}, true
 }
 
-func (noopLSPClient) AssistanceCapabilities() model.LSPAssistanceCapabilities {
-	return model.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
+func (noopLSPClient) AssistanceCapabilities() insight.LSPAssistanceCapabilities {
+	return insight.LSPAssistanceCapabilities{Completion: true, CompletionTriggers: []string{"."}, SignatureHelp: true, SignatureTriggers: []string{"(", ","}}
 }

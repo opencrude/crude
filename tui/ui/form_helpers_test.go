@@ -4,7 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/conversation"
+	"crude/types/setting"
 )
 
 func TestTextFieldStateCommitsInitialValue(t *testing.T) {
@@ -102,8 +103,8 @@ func TestThinkingFieldStateSharesCanonicalLevels(t *testing.T) {
 	if f.Label != "Thinking level" {
 		t.Fatalf("label=%q want canonical Thinking level", f.Label)
 	}
-	if len(f.Options) != len(types.ThinkingLevels) {
-		t.Fatalf("options=%d want %d canonical levels", len(f.Options), len(types.ThinkingLevels))
+	if len(f.Options) != len(conversation.ThinkingLevels) {
+		t.Fatalf("options=%d want %d canonical levels", len(f.Options), len(conversation.ThinkingLevels))
 	}
 	if f.Placeholder != "Provider default" {
 		t.Fatalf("placeholder=%q", f.Placeholder)
@@ -111,14 +112,14 @@ func TestThinkingFieldStateSharesCanonicalLevels(t *testing.T) {
 }
 
 func TestProviderOptionsPreservesPresetMetadata(t *testing.T) {
-	options := ProviderOptions([]types.ProviderPreset{{ID: "groq", Name: "Groq", HelpText: "Fast inference"}})
+	options := ProviderOptions([]setting.ProviderPreset{{ID: "groq", Name: "Groq", HelpText: "Fast inference"}})
 	if len(options) != 1 || options[0].ID != "groq" || options[0].Label != "Groq" || options[0].Detail != "Fast inference" {
 		t.Fatalf("options=%+v", options)
 	}
 }
 
 func TestModelOptionsFallsBackToIDAndFormatsContext(t *testing.T) {
-	options := ModelOptions([]types.ModelEntry{
+	options := ModelOptions([]setting.ModelEntry{
 		{ID: "llama-3.3-70b", Name: "Llama 3.3 70B", ContextWindow: 131072},
 		{ID: "mystery-model"},
 	})
@@ -134,7 +135,7 @@ func TestModelOptionsFallsBackToIDAndFormatsContext(t *testing.T) {
 }
 
 func TestModelOptionsShowsPriceAndCapabilities(t *testing.T) {
-	options := ModelOptions([]types.ModelEntry{{
+	options := ModelOptions([]setting.ModelEntry{{
 		ID: "model", InputPrice: 0.000002, OutputPrice: 0.000008,
 		Modalities: []string{"image", "pdf"}, SupportsTools: true,
 	}})

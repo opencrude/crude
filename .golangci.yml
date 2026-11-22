@@ -11,6 +11,20 @@ linters:
     - staticcheck
     - unused
     - errcheck
+    - revive
+  settings:
+    staticcheck:
+      # The default checks plus ST1003 (MixedCaps and initialisms) and ST1016
+      # (one receiver name per type), see docs/reference/code-layout.md.
+      checks: ["all", "-ST1000", "-ST1020", "-ST1021", "-ST1022"]
+    revive:
+      # Naming rules from docs/reference/code-layout.md. Package and file
+      # rules are in tools/layoutcheck.
+      rules:
+        - name: var-naming
+        - name: receiver-naming
+        - name: import-alias-naming
+        - name: redundant-import-alias
   exclusions:
     generated: lax
     presets:

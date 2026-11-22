@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"crude/agent"
+	"crude/agent/turnloop"
 	"crude/tui/chatprojection"
-	ctypes "crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -25,8 +25,8 @@ func TestParallelPreparationKeepsPlacementWhileArgumentsStream(t *testing.T) {
 				if prior {
 					groupID = "activity:prior-a"
 					for _, id := range []string{"prior-a", "prior-b"} {
-						state.Messages.AppendMessage(workspace.Message{InternalID: id, Role: ctypes.RoleTool,
-							ToolName: "read_file", ToolArgs: id + ".go", ToolStatus: ctypes.ToolStatusSuccess, Content: "package fixture"})
+						state.Messages.AppendMessage(conversation.Message{InternalID: id, Role: conversation.RoleTool,
+							ToolName: "read_file", ToolArgs: id + ".go", ToolStatus: conversation.ToolStatusSuccess, Content: "package fixture"})
 					}
 				}
 				app.syncAgentMessages(state.ID, false)
@@ -56,7 +56,7 @@ func TestParallelPreparationKeepsPlacementWhileArgumentsStream(t *testing.T) {
 					{"second partial name", first + `,{"recipient_name":"grep`, "src/first.go", 1, true},
 					{"second arguments streaming", first + `,{"recipient_name":"grep_files","parameters":{"pattern":"needle`, "needle", 2, false},
 				} {
-					preview := agent.ExtractPreview("batch", "multi_tool_use.parallel", step.args, nil)
+					preview := turnloop.ExtractPreview("batch", "multi_tool_use.parallel", step.args, nil)
 					data := map[string]any{"tool_id": "batch", "internal_id": "batch", "request_id": "request",
 						"name": "multi_tool_use.parallel", "args": step.args, "tool_est_tokens": 1}
 					if preview.Params["tool_uses"] != nil {
@@ -66,7 +66,7 @@ func TestParallelPreparationKeepsPlacementWhileArgumentsStream(t *testing.T) {
 						}
 						data["batch_input"] = string(input)
 					}
-					app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "tool_call_streaming", Data: data})
+					app.handleAgentEvent(AgentEventMsg{AgentID: state.ID, Type: "tool_call_streaming", Data: data})
 					painted := paint()
 					rows, _, _ := app.activeMessageList().ExportMessageRows(app.chatReflowInnerW)
 					wantRows, wantLeaves := 0, step.children
@@ -95,7 +95,7 @@ func TestParallelPreparationKeepsPlacementWhileArgumentsStream(t *testing.T) {
 					previous = painted
 				}
 				args := first + `,{"recipient_name":"grep_files","parameters":{"pattern":"needle","path":"src"}}]}`
-				for _, event := range []ctypes.AgentEventMsg{
+				for _, event := range []AgentEventMsg{
 					{Type: "tool_call", Data: map[string]any{"tool_id": "batch", "internal_id": "batch", "name": "multi_tool_use.parallel", "args": args}},
 					{Type: "tool_call_streaming", Data: map[string]any{"tool_id": "batch", "internal_id": "batch", "name": "multi_tool_use.parallel", "content": `{"results":[{"recipient_name":"read_file","phase":"running"},null]}`}},
 					{Type: "tool_result", Data: map[string]any{"tool_id": "batch", "internal_id": "batch", "name": "multi_tool_use.parallel", "result": `{"results":[{"recipient_name":"read_file","result":"package fixture"},{"recipient_name":"grep_files","result":"one match"}]}`}},

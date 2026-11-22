@@ -7,21 +7,21 @@ import (
 	"reflect"
 	"testing"
 
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreprotocol"
 	"crude/types/control"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestControlSettingsApplicationCaptureCommitApply(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
-	before := types.AppSettings{Editor: types.EditorSettings{WordWrap: true, TabSize: 4}}
+	before := setting.App{Editor: setting.Editor{WordWrap: true, TabSize: 4}}
 	ws.SetAppDefaults(before)
 	commits := 0
-	ws.OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+	ws.OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 		next := ws.AppDefaults()
-		if err := types.ApplySettingsEdits(&next, edits); err != nil {
+		if err := setting.ApplyEdits(&next, edits); err != nil {
 			return next, err
 		}
 		commits++
@@ -60,12 +60,12 @@ func TestControlSettingsApplicationCaptureCommitApply(t *testing.T) {
 }
 
 func TestErrandCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	ws.SessionsByAgent["errand"] = &workspace.Session{AgentID: "errand",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}}}
+		Settings: &workspace.SessionSettingsState{Effective: setting.Settings{SessionMainAgent: "errand"}}}
 	ws.SessionsByAgent["main"] = &workspace.Session{AgentID: "main",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{}}}
+		Settings: &workspace.SessionSettingsState{Effective: setting.Settings{}}}
 	a := &actor{ws: ws}
 	command := filepath.Join(t.TempDir(), "language-server.exe")
 	for _, agentID := range []string{"main", "errand"} {
@@ -104,7 +104,7 @@ func TestErrandCanConfigureLSPWithoutGivingOtherAgentsAuthority(t *testing.T) {
 }
 
 func TestControlSettingsRejectAuthorityAndInvalidLeaves(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	defer ws.Close()
 	a := &actor{ws: ws}
 	for _, path := range []string{"accounts.one", "network.proxy_url", "agents", "safety.confirm_at", "capabilities", "terminal.environment", "value.APIKey"} {
@@ -115,12 +115,12 @@ func TestControlSettingsRejectAuthorityAndInvalidLeaves(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{`"false"`, `null`, `{"unknown":true}`} {
-		value := types.AppSettings{}
+		value := setting.App{}
 		if err := controlSetField(&value, "editor.word_wrap", json.RawMessage(raw)); err == nil {
 			t.Fatalf("invalid bool accepted: %s", raw)
 		}
 	}
-	value := types.AppSettings{}
+	value := setting.App{}
 	if err := controlSetField(&value, "editor.WordWrap", json.RawMessage(`false`)); err == nil {
 		t.Fatal("case alias accepted")
 	}
@@ -137,7 +137,7 @@ func TestControlSessionRootPinResetPreservesOtherRoleFields(t *testing.T) {
 	initial := backend.SettingsSnapshots()
 	value := initial.Effective
 	value.SessionMainAgent = "crafter"
-	value.SessionOverrides = map[string]types.CategorySettings{
+	value.SessionOverrides = map[string]setting.Category{
 		"default":      {AccountID: "one", Model: "neighbor"},
 		"root/crafter": {AccountID: "one", Model: "pinned", ThinkingEffort: "high"},
 	}
@@ -212,13 +212,13 @@ func TestControlSessionCodeIntelligenceSetAndReset(t *testing.T) {
 }
 
 func TestErrandOwnsSettingOnlyAtWorkspaceScope(t *testing.T) {
-	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", setting.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(types.AppSettings{Terminal: types.TerminalSettings{Environment: map[string]string{"PATH": "app-value"}}})
+	ws.SetAppDefaults(setting.App{Terminal: setting.Terminal{Environment: map[string]string{"PATH": "app-value"}}})
 	ws.SessionsByAgent["errand"] = &workspace.Session{AgentID: "errand",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{SessionMainAgent: "errand"}}}
+		Settings: &workspace.SessionSettingsState{Effective: setting.Settings{SessionMainAgent: "errand"}}}
 	ws.SessionsByAgent["main"] = &workspace.Session{AgentID: "main",
-		Settings: &workspace.SessionSettingsState{Effective: types.Settings{}}}
+		Settings: &workspace.SessionSettingsState{Effective: setting.Settings{}}}
 	a := &actor{ws: ws}
 	for _, scope := range []string{"workspace", "application", "session", ""} {
 		for _, caller := range []control.Caller{

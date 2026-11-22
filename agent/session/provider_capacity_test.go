@@ -14,8 +14,8 @@ func TestCategoryProvidersKeepDefaultAndErrandCapacities(t *testing.T) {
 	profile.Categories[CategoryErrand] = CategoryConfig{AccountID: "personal", Model: model, ModelContextWindow: 128_000}
 	cfg.Agents.Profiles["default"] = profile
 
-	mainCategory := cfg.GetActiveDefaultCategory()
-	errandCategory := cfg.GetCategoryConfig(CategoryErrand)
+	mainCategory := cfg.ActiveDefaultCategory()
+	errandCategory := cfg.CategoryConfig(CategoryErrand)
 	main, err := cfg.providerForCategory(mainCategory)
 	if err != nil {
 		t.Fatal(err)

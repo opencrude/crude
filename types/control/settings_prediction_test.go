@@ -3,8 +3,8 @@ package control_test
 import (
 	"testing"
 
-	"crude/types"
 	"crude/types/control"
+	"crude/types/setting"
 )
 
 func TestPredictionConsentIsHumanAuthorityAtEverySettingsBoundary(t *testing.T) {
@@ -18,13 +18,13 @@ func TestPredictionConsentIsHumanAuthorityAtEverySettingsBoundary(t *testing.T) 
 			t.Fatalf("ordinary control operation could change prediction authority at %q", path)
 		}
 	}
-	before := types.AppSettings{Prediction: types.DefaultWorkspacePredictionSettings()}
-	after := types.CloneAppSettings(before)
-	after.Prediction = types.WorkspacePredictionSettings{Mode: types.PredictionAsk, HourlyTokenLimit: 4200}
+	before := setting.App{Prediction: setting.DefaultWorkspacePrediction()}
+	after := setting.CloneApp(before)
+	after.Prediction = setting.WorkspacePrediction{Mode: setting.PredictionAsk, HourlyTokenLimit: 4200}
 	if !control.SettingsChangesAuthority(before, after, "") || !control.SettingsChangesAuthority(after, before, "") {
 		t.Fatal("container save/reset bypassed prediction's human-only boundary")
 	}
-	after = types.CloneAppSettings(before)
+	after = setting.CloneApp(before)
 	after.Editor.TabSize = 7
 	if control.SettingsChangesAuthority(before, after, "") {
 		t.Fatal("ordinary editor preference acquired prediction authority classification")

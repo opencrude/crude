@@ -9,13 +9,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/core/port"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/toolsetup"
-	settingsui "crude/tui/settings"
 	"crude/tui/ui"
-	"crude/types"
 	"crude/types/control"
+	"crude/types/insight"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 	"crude/workspace"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -56,11 +58,11 @@ func TestProjectToolsCloseButtonClosesWithoutDeciding(t *testing.T) {
 
 type projectToolsTestPort struct {
 	shellport.Workspace
-	settings   types.AppSettings
-	preview    types.ProjectToolSetupReview
+	settings   setting.App
+	preview    insight.ProjectToolSetupReview
 	reads      int
 	explicit   []bool
-	selections []types.ProjectToolSetupRequest
+	selections []insight.ProjectToolSetupRequest
 	choices    [][]string
 	roles      []string
 	onEnsure   func()
@@ -87,42 +89,42 @@ func (p *projectToolsTestPort) EnsureErrandSession() *workspace.NewSessionResult
 	return p.NewAgentSessionAs("errand")
 }
 
-func (p *projectToolsTestPort) AnalysisSettings() types.WorkspaceAnalysisSettings {
+func (p *projectToolsTestPort) AnalysisSettings() setting.WorkspaceAnalysis {
 	return p.settings.Analysis
 }
-func (p *projectToolsTestPort) LoadAppSettings() types.AppSettings { return p.settings }
-func (p *projectToolsTestPort) ReviewProjectTools(ctx context.Context, selection types.ProjectToolSetupRequest) (types.ProjectToolSetupReview, error) {
+func (p *projectToolsTestPort) LoadAppSettings() setting.App { return p.settings }
+func (p *projectToolsTestPort) ReviewProjectTools(ctx context.Context, selection insight.ProjectToolSetupRequest) (insight.ProjectToolSetupReview, error) {
 	if err := ctx.Err(); err != nil {
-		return types.ProjectToolSetupReview{}, err
+		return insight.ProjectToolSetupReview{}, err
 	}
 	p.reads++
 	p.explicit = append(p.explicit, selection.Explicit)
 	p.selections = append(p.selections, selection)
 	return p.preview, nil
 }
-func (p *projectToolsTestPort) DecideProjectTools(ctx context.Context, id string, selected []string) (types.ProjectToolSetupResult, error) {
+func (p *projectToolsTestPort) DecideProjectTools(ctx context.Context, id string, selected []string) (insight.ProjectToolSetupResult, error) {
 	if err := ctx.Err(); err != nil {
-		return types.ProjectToolSetupResult{}, err
+		return insight.ProjectToolSetupResult{}, err
 	}
 	if id != p.preview.ID {
-		return types.ProjectToolSetupResult{}, fmt.Errorf("foreign preview")
+		return insight.ProjectToolSetupResult{}, fmt.Errorf("foreign preview")
 	}
 	p.choices = append(p.choices, append([]string(nil), selected...))
-	return types.ProjectToolSetupResult{DecisionID: "decision", Message: "Your tool choice was saved."}, nil
+	return insight.ProjectToolSetupResult{DecisionID: "decision", Message: "Your tool choice was saved."}, nil
 }
 
 func projectToolsTestApp(t *testing.T, width, height int) (*App, *projectToolsTestPort) {
 	t.Helper()
 	app := newFullTestApp(t)
 	wsOf(app).Logger = stubLogger{}
-	port := &projectToolsTestPort{Workspace: app.ws, settings: app.ws.LoadAppSettings(), preview: types.ProjectToolSetupReview{
+	port := &projectToolsTestPort{Workspace: app.ws, settings: app.ws.LoadAppSettings(), preview: insight.ProjectToolSetupReview{
 		ID: "native-preview", NeedsDecision: true,
-		Review: types.ProjectToolReview{Project: app.ws.RootPath(), Token: "reviewed", Items: []types.ProjectToolCandidate{
+		Review: insight.ProjectToolReview{Project: app.ws.RootPath(), Token: "reviewed", Items: []insight.ProjectToolCandidate{
 			{ID: "server", Package: "fixture-server", Version: "v1", URL: "https://example.invalid/server.zip",
 				File: "server.zip", Command: "fixture-server", Installable: true, Licenses: []string{"MIT"}},
 		}},
 	}}
-	port.settings.Analysis.Trust = types.AnalysisTrusted
+	port.settings.Analysis.Trust = setting.AnalysisTrusted
 	app.ws = port
 	app.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return app, port
@@ -200,11 +202,11 @@ func TestProjectToolsNativeJourneySafeDefaultAndHumanOnlyConsent(t *testing.T) {
 func TestProjectToolsQuietAndStaleReviewsNeverInterruptOrInstall(t *testing.T) {
 	app, port := projectToolsTestApp(t, 100, 30)
 	port.preview.Quiet = true
-	runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+	runAppCommand(t, app, app.requestProjectTools(insight.ProjectToolSetupRequest{}, nil))
 	if app.overlayHost.IsOpen(projectToolsOverlay) || len(port.choices) != 0 {
 		t.Fatal("new candidate interrupted editing or installed without a decision")
 	}
-	cmd := app.requestProjectTools(types.ProjectToolSetupRequest{Explicit: true}, nil)
+	cmd := app.requestProjectTools(insight.ProjectToolSetupRequest{Explicit: true}, nil)
 	message := cmd()
 	app.workspaceSwitchGen.Add(1)
 	app.handleProjectToolsMessage(message)
@@ -220,8 +222,8 @@ func TestProjectToolsQuietAndStaleReviewsNeverInterruptOrInstall(t *testing.T) {
 func TestProjectToolsNoticeIsOnePersistentActionPerToolSet(t *testing.T) {
 	app, port := projectToolsTestApp(t, 100, 30)
 	port.preview.Quiet = true
-	notices := func() []types.NotificationRecord {
-		var out []types.NotificationRecord
+	notices := func() []statuscenter.NotificationRecord {
+		var out []statuscenter.NotificationRecord
 		for _, notice := range app.ws.Status().Notifications(true) {
 			if notice.Source == "code-intelligence" {
 				out = append(out, notice)
@@ -232,7 +234,7 @@ func TestProjectToolsNoticeIsOnePersistentActionPerToolSet(t *testing.T) {
 	for edit := range 3 {
 		port.preview.Review.AssemblyGeneration = uint64(edit + 1)
 		port.preview.Review.Token = fmt.Sprintf("after-edit-%d", edit)
-		runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+		runAppCommand(t, app, app.requestProjectTools(insight.ProjectToolSetupRequest{}, nil))
 	}
 	got := notices()
 	if len(got) != 1 {
@@ -257,14 +259,14 @@ func TestProjectToolsNoticeIsOnePersistentActionPerToolSet(t *testing.T) {
 	app.ws.Status().Dismiss(notice.ID)
 	app.projectTools.notified = ""
 	port.preview.Review.Token = "after-restart"
-	runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+	runAppCommand(t, app, app.requestProjectTools(insight.ProjectToolSetupRequest{}, nil))
 	if got := notices(); len(got) != 1 || !got[0].Dismissed {
 		t.Fatalf("a dismissed notice came back: %+v", got)
 	}
 
 	// A new tool is new information.
-	port.preview.Review.Items = append(port.preview.Review.Items, types.ProjectToolCandidate{ID: "second", Package: "second-server", Languages: []string{"lua"}})
-	runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+	port.preview.Review.Items = append(port.preview.Review.Items, insight.ProjectToolCandidate{ID: "second", Package: "second-server", Languages: []string{"lua"}})
+	runAppCommand(t, app, app.requestProjectTools(insight.ProjectToolSetupRequest{}, nil))
 	if got := notices(); len(got) != 2 || got[0].Dismissed || !strings.Contains(got[0].Detail, "second-server (lua)") {
 		t.Fatalf("a new set of tools raised no new notice: %+v", got)
 	}
@@ -278,7 +280,7 @@ func TestProjectToolsCloseAndUnavailableReview(t *testing.T) {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			app, port := projectToolsTestApp(t, size[0], size[1])
 			for _, closeWithX := range []bool{true, false} {
-				runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{Explicit: true}, nil))
+				runAppCommand(t, app, app.requestProjectTools(insight.ProjectToolSetupRequest{Explicit: true}, nil))
 				window := app.overlayHost.Window(projectToolsOverlay)
 				if window == nil {
 					t.Fatal("review did not open")
@@ -301,10 +303,10 @@ func TestProjectToolsCloseAndUnavailableReview(t *testing.T) {
 
 			// A tool that Crude cannot download itself is still a real choice:
 			// Errand finds another way to get it, so the review offers it.
-			port.preview.Review.Items = []types.ProjectToolCandidate{
+			port.preview.Review.Items = []insight.ProjectToolCandidate{
 				{ID: "manager", Package: "manager-only", Reason: "Install it yourself, then check again."},
 			}
-			runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{}, nil))
+			runAppCommand(t, app, app.requestProjectTools(insight.ProjectToolSetupRequest{}, nil))
 			if !app.overlayHost.IsOpen(projectToolsOverlay) || len(port.choices) != 0 {
 				t.Fatal("a tool that only Errand can get was not offered, or a choice was submitted")
 			}
@@ -327,9 +329,9 @@ func TestProjectToolsMixedSelectionMountedJourney(t *testing.T) {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			app, port := projectToolsTestApp(t, size[0], size[1])
 			port.preview.Review.Items = append(port.preview.Review.Items,
-				types.ProjectToolCandidate{ID: "second", Package: "second-server", Version: "v2", URL: "https://example.invalid/second.zip", Command: "second", Installable: true},
-				types.ProjectToolCandidate{ID: "missing", Package: "missing-server", Reason: "Install this tool yourself, then check again."})
-			runAppCommand(t, app, app.requestProjectTools(types.ProjectToolSetupRequest{Explicit: true}, nil))
+				insight.ProjectToolCandidate{ID: "second", Package: "second-server", Version: "v2", URL: "https://example.invalid/second.zip", Command: "second", Installable: true},
+				insight.ProjectToolCandidate{ID: "missing", Package: "missing-server", Reason: "Install this tool yourself, then check again."})
+			runAppCommand(t, app, app.requestProjectTools(insight.ProjectToolSetupRequest{Explicit: true}, nil))
 			window := app.overlayHost.Window(projectToolsOverlay)
 			if window == nil {
 				t.Fatal("review did not open")
@@ -480,7 +482,7 @@ func projectToolsSettingsMessage(t *testing.T, body *settingsui.WorkspaceSetting
 
 func TestProjectToolsCarriesExactSingleToolRequest(t *testing.T) {
 	app, port := projectToolsTestApp(t, 80, 24)
-	selection := types.ProjectToolSetupRequest{Explicit: true, LanguageID: "fixture", AssemblyGeneration: 23}
+	selection := insight.ProjectToolSetupRequest{Explicit: true, LanguageID: "fixture", AssemblyGeneration: 23}
 	runAppCommand(t, app, app.requestProjectTools(selection, nil))
 	if len(port.selections) != 1 || port.selections[0] != selection || !app.overlayHost.IsOpen(projectToolsOverlay) {
 		t.Fatalf("single-tool request lost its scope: %+v", port.selections)
@@ -500,7 +502,7 @@ func TestProjectToolsReadyTickActuallyRunsNativeReview(t *testing.T) {
 			manager.RefreshAssembly()
 			deadline := time.NewTimer(5 * time.Second)
 			defer deadline.Stop()
-			for manager.Assembly().State != types.AssemblyReady {
+			for manager.Assembly().State != insight.AssemblyReady {
 				select {
 				case <-deadline.C:
 					t.Fatal("project discovery did not become ready")
@@ -517,7 +519,7 @@ func TestProjectToolsReadyTickActuallyRunsNativeReview(t *testing.T) {
 					for _, child := range msg {
 						deliver(child)
 					}
-				case types.TickMsg:
+				case TickMsg:
 					// A clock result belongs to the next frame, not this
 					// single-generation review acceptance.
 				case projectToolsReviewedMsg:
@@ -525,7 +527,7 @@ func TestProjectToolsReadyTickActuallyRunsNativeReview(t *testing.T) {
 					deliver(next)
 				}
 			}
-			_, cmd := app.Update(types.TickMsg(time.Now()))
+			_, cmd := app.Update(TickMsg(time.Now()))
 			if port.reads != 0 {
 				t.Fatal("the native review ran synchronously on Update")
 			}

@@ -11,7 +11,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 	"crude/types/recovery"
 )
 
@@ -22,7 +22,7 @@ func TestRecoveryRetryClickDisclosureAndDragUseSharedHost(t *testing.T) {
 	renderer.SetChatAreaBounds(0, 20)
 	status := recovery.Status{ID: "incident", AgentID: "owner", Generation: 7,
 		State: recovery.Recovering, RetryAt: time.UnixMilli(30000), Detail: "actual diagnostic"}
-	renderer.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, Recovery: &status}}, 1, 0)
+	renderer.SyncMessages([]conversation.ChatMessage{{InternalID: status.ID, Role: conversation.RoleStatus, Recovery: &status}}, 1, 0)
 	renderer.SetSpinFrame(1000)
 	rows, _, _ := renderer.ExportMessageRows(100)
 	screen := New(th)

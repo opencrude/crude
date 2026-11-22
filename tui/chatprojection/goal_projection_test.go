@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // Goal tools answer the model in JSON. During a long goal run the transcript
@@ -31,20 +31,20 @@ func TestGoalToolRowsRenderGoalNotJSON(t *testing.T) {
 			[]string{"Created goal", "Ship it"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := types.ChatMessage{InternalID: "goal", ToolID: "call", Role: types.RoleTool, ToolName: tc.tool, ToolInput: tc.input, Content: tc.content, ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone}
+			msg := conversation.ChatMessage{InternalID: "goal", ToolID: "call", Role: conversation.RoleTool, ToolName: tc.tool, ToolInput: tc.input, Content: tc.content, ToolStatus: conversation.ToolStatusSuccess, ToolPreviewPhase: conversation.ToolPreviewDone}
 			batchInput, _ := json.Marshal(map[string]any{"tool_uses": []any{map[string]any{"recipient_name": tc.tool, "parameters": json.RawMessage(tc.input)}}})
 			batchBody, _ := json.Marshal(map[string]any{"results": []any{map[string]any{"recipient_name": tc.tool, "result": tc.content}}})
-			children := parallelMessages(&types.ChatMessage{InternalID: "batch", ToolID: "batch-call", Role: types.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: string(batchInput), Content: string(batchBody), ToolStatus: types.ToolStatusSuccess})
+			children := parallelMessages(&conversation.ChatMessage{InternalID: "batch", ToolID: "batch-call", Role: conversation.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: string(batchInput), Content: string(batchBody), ToolStatus: conversation.ToolStatusSuccess})
 			if len(children) != 1 {
 				t.Fatal("missing batch leaf")
 			}
 			encoded, _ := json.Marshal(msg)
-			var hydrated types.ChatMessage
+			var hydrated conversation.ChatMessage
 			if err := json.Unmarshal(encoded, &hydrated); err != nil {
 				t.Fatal(err)
 			}
 			var baseline []string
-			for _, candidate := range []types.ChatMessage{msg, hydrated, *children[0]} {
+			for _, candidate := range []conversation.ChatMessage{msg, hydrated, *children[0]} {
 				for _, disclosure := range []DisclosureState{DisclosureCollapsed, DisclosureExpanded} {
 					rows := renderToolMessageLines(candidate, theme.DefaultDark(), 100, 100, 100, 0, 24, "done", disclosure)
 					text := strings.Join(rows.lines, "\n")

@@ -14,7 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"crude/types"
+	"crude/types/insight"
 )
 
 const (
@@ -34,10 +34,10 @@ var (
 )
 
 type entry struct {
-	boundary    types.InsightBoundary
+	boundary    insight.Boundary
 	active      bool
 	sequence    uint64
-	answer      types.InsightDiagnostics
+	answer      insight.Diagnostics
 	weight      int
 	publishedAt time.Time
 }
@@ -79,7 +79,7 @@ func (s *Store) Usage() Usage {
 // CanPublishWithReserve checks the exact replacement weight without changing
 // the store. The coordinator serializes its background publication with other
 // writers; this observation is not a reservation or an authority grant.
-func (s *Store) CanPublishWithReserve(p types.InsightDiagnosticPublication, documents, diagnostics, bytes int) bool {
+func (s *Store) CanPublishWithReserve(p insight.DiagnosticPublication, documents, diagnostics, bytes int) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	e := s.documents[p.Boundary.Source.DocumentID]
@@ -109,7 +109,7 @@ func (s *Store) ContextSummaries() map[string]ContextSummary {
 	files := make(map[string]map[string]bool)
 	for _, e := range s.documents {
 		a := e.answer
-		if a.ID == "" || a.State == types.InsightStale {
+		if a.ID == "" || a.State == insight.Stale {
 			continue
 		}
 		id, path := a.Boundary.Context.ID, a.Boundary.Source.Path
@@ -126,14 +126,14 @@ func (s *Store) ContextSummaries() map[string]ContextSummary {
 		}
 		for _, d := range a.Diagnostics {
 			switch d.Severity {
-			case types.DiagError:
+			case insight.DiagError:
 				summary.Errors++
 				affected = true
-			case types.DiagWarning:
+			case insight.DiagWarning:
 				summary.Warnings++
-			case types.DiagInfo:
+			case insight.DiagInfo:
 				summary.Information++
-			case types.DiagHint:
+			case insight.DiagHint:
 				summary.Hints++
 			}
 		}
@@ -167,7 +167,7 @@ func New(maxDocuments, maxDiagnostics int) (*Store, error) {
 // Lifetime/producer tokens must never be reused; revisions and context generations
 // must advance under their authority. Arbitrary rollback/reinstallation through
 // Observe is not guarded by an unbounded history of retired boundaries.
-func (s *Store) Observe(b types.InsightBoundary) error {
+func (s *Store) Observe(b insight.Boundary) error {
 	if err := validateBoundary(b); err != nil {
 		return err
 	}
@@ -178,14 +178,14 @@ func (s *Store) Observe(b types.InsightBoundary) error {
 		if len(s.documents) >= s.maxDocuments {
 			return ErrLimit
 		}
-		answer := types.InsightDiagnostics{Boundary: b, State: types.InsightPending}
+		answer := insight.Diagnostics{Boundary: b, State: insight.Pending}
 		weight := boundaryWeight(b) + answerWeight(answer)
 		if s.retainedBytes+weight > MaxRetainedBytes {
 			return ErrLimit
 		}
 		s.documents[b.Source.DocumentID] = &entry{
 			boundary: cloneBoundary(b), active: true,
-			answer: types.InsightDiagnostics{Boundary: cloneBoundary(b), State: types.InsightPending},
+			answer: insight.Diagnostics{Boundary: cloneBoundary(b), State: insight.Pending},
 			weight: weight,
 		}
 		s.retainedBytes += weight
@@ -195,7 +195,7 @@ func (s *Store) Observe(b types.InsightBoundary) error {
 	if !equalBoundary(e.boundary, b) {
 		answer := e.answer
 		if answer.ID == "" {
-			answer = types.InsightDiagnostics{Boundary: b, State: types.InsightPending}
+			answer = insight.Diagnostics{Boundary: b, State: insight.Pending}
 		}
 		weight := boundaryWeight(b) + answerWeight(answer)
 		if s.retainedBytes-e.weight+weight > MaxRetainedBytes {
@@ -207,9 +207,9 @@ func (s *Store) Observe(b types.InsightBoundary) error {
 		e.boundary = cloneBoundary(b)
 		e.sequence = 0
 		if e.answer.ID == "" {
-			e.answer = types.InsightDiagnostics{Boundary: cloneBoundary(b), State: types.InsightPending}
+			e.answer = insight.Diagnostics{Boundary: cloneBoundary(b), State: insight.Pending}
 		} else {
-			e.answer.State = types.InsightStale
+			e.answer.State = insight.Stale
 			e.answer.Detail = "source, context or producer boundary changed"
 		}
 	}
@@ -221,12 +221,12 @@ func (s *Store) Observe(b types.InsightBoundary) error {
 // never replaces prior diagnostics with an empty or truncated set. Capacity
 // rejection marks the retained view limited, keeps its original provenance, and
 // consumes the sequence so an older batch cannot undo the limit observation.
-func (s *Store) Publish(p types.InsightDiagnosticPublication) (types.InsightDiagnostics, error) {
+func (s *Store) Publish(p insight.DiagnosticPublication) (insight.Diagnostics, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.documents[p.Boundary.Source.DocumentID]
 	if !ok || !e.active || !equalBoundary(e.boundary, p.Boundary) {
-		return types.InsightDiagnostics{}, ErrBoundary
+		return insight.Diagnostics{}, ErrBoundary
 	}
 	if p.Sequence == 0 || p.Sequence <= e.sequence {
 		return cloneAnswer(e.answer), ErrSequence
@@ -241,32 +241,32 @@ func (s *Store) Publish(p types.InsightDiagnosticPublication) (types.InsightDiag
 	if err != nil {
 		if errors.Is(err, ErrLimit) {
 			e.sequence = p.Sequence
-			e.answer.State = types.InsightLimited
+			e.answer.State = insight.Limited
 			e.answer.Limited = true
 			e.answer.Detail = err.Error()
 			s.version++
 		}
 		return cloneAnswer(e.answer), err
 	}
-	answer := types.InsightDiagnostics{
+	answer := insight.Diagnostics{
 		ID: rand.Text(), Boundary: cloneBoundary(p.Boundary), Sequence: p.Sequence,
-		WireVersion: p.WireVersion, Binding: "unversioned", State: types.InsightProvisional,
-		Detail: p.Detail, Diagnostics: append([]types.LSPDiagnostic{}, p.Diagnostics...), Limited: p.Limited,
+		WireVersion: p.WireVersion, Binding: "unversioned", State: insight.Provisional,
+		Detail: p.Detail, Diagnostics: append([]insight.LSPDiagnostic{}, p.Diagnostics...), Limited: p.Limited,
 	}
 	if p.ReportedVersion != nil {
 		v := *p.ReportedVersion
 		answer.ReportedVersion = &v
 		answer.Binding = "exact-version"
 		if len(p.Boundary.Context.UnknownInputs) == 0 {
-			answer.State = types.InsightCurrent
+			answer.State = insight.Current
 		}
 	}
 	if p.Limited {
-		answer.State = types.InsightLimited
+		answer.State = insight.Limited
 	}
 	for i := range answer.Diagnostics {
 		if answer.Diagnostics[i].Severity == 0 {
-			answer.Diagnostics[i].Severity = types.DiagError
+			answer.Diagnostics[i].Severity = insight.DiagError
 		}
 	}
 	s.diagnosticCount += len(answer.Diagnostics) - len(e.answer.Diagnostics)
@@ -302,13 +302,13 @@ func invalidateEntry(e *entry, reason string) bool {
 		return false
 	}
 	e.active = false
-	e.answer.State, e.answer.Detail = types.InsightStale, reason
+	e.answer.State, e.answer.Detail = insight.Stale, reason
 	return true
 }
 
 // InvalidateSource is the bounded identity-only canonical mutation path. It
 // never exports or copies the retained diagnostic payload.
-func (s *Store) InvalidateSource(source types.InsightSource) bool {
+func (s *Store) InvalidateSource(source insight.Source) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e := s.documents[source.DocumentID]
@@ -345,7 +345,7 @@ func (s *Store) InvalidateAll(reason string) bool {
 // InvalidateMatching retires only entries whose boundary matches. It lets a
 // coordinator invalidate one producer's facts without touching facts that a
 // different authority owns.
-func (s *Store) InvalidateMatching(match func(types.InsightBoundary) bool, reason string) bool {
+func (s *Store) InvalidateMatching(match func(insight.Boundary) bool, reason string) bool {
 	if len(reason) > MaxReasonBytes || !utf8.ValidString(reason) {
 		reason = "Diagnostic context invalidated; the producer reason exceeded its bounded status field."
 	}
@@ -367,7 +367,7 @@ func (s *Store) InvalidateMatching(match func(types.InsightBoundary) bool, reaso
 // capacity. Use it only when the producer that owns the facts retires them,
 // for example when a project check stops or an open document replaces the
 // project view of the same file. It returns the number of removed entries.
-func (s *Store) RemoveMatching(match func(types.InsightBoundary) bool) int {
+func (s *Store) RemoveMatching(match func(insight.Boundary) bool) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	removed := 0
@@ -386,7 +386,7 @@ func (s *Store) RemoveMatching(match func(types.InsightBoundary) bool) int {
 	return removed
 }
 
-func boundaryWeight(b types.InsightBoundary) int {
+func boundaryWeight(b insight.Boundary) int {
 	n := 256 + len(b.Source.WorkspaceGeneration) + len(b.Source.DocumentID) + len(b.Source.Path) + len(b.Source.Lifetime) +
 		len(b.Context.ID) + len(b.Context.Root) + len(b.Producer.InstanceID) + len(b.Producer.Provider) + len(b.Producer.ToolIdentity)
 	for _, v := range b.Context.UnknownInputs {
@@ -395,7 +395,7 @@ func boundaryWeight(b types.InsightBoundary) int {
 	return n
 }
 
-func publicationWeight(p types.InsightDiagnosticPublication) int {
+func publicationWeight(p insight.DiagnosticPublication) int {
 	n := 512 + MaxReasonBytes + boundaryWeight(p.Boundary) + max(0, len(p.Detail)-MaxReasonBytes)
 	for _, d := range p.Diagnostics {
 		n += 96 + len(d.Message) + len(d.Source) + len(d.Code)
@@ -403,13 +403,13 @@ func publicationWeight(p types.InsightDiagnosticPublication) int {
 	return n
 }
 
-func answerWeight(a types.InsightDiagnostics) int {
-	return publicationWeight(types.InsightDiagnosticPublication{Boundary: a.Boundary, Detail: a.Detail, Diagnostics: a.Diagnostics})
+func answerWeight(a insight.Diagnostics) int {
+	return publicationWeight(insight.DiagnosticPublication{Boundary: a.Boundary, Detail: a.Detail, Diagnostics: a.Diagnostics})
 }
 
 // SnapshotPath reads one retained answer without exporting every document.
 // Paths are presentation keys; document identity remains the primary key.
-func (s *Store) SnapshotPath(path string) (types.InsightDiagnostics, bool) {
+func (s *Store) SnapshotPath(path string) (insight.Diagnostics, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, e := range s.documents {
@@ -417,25 +417,26 @@ func (s *Store) SnapshotPath(path string) (types.InsightDiagnostics, bool) {
 			return cloneAnswer(e.answer), true
 		}
 	}
-	return types.InsightDiagnostics{}, false
+	return insight.Diagnostics{}, false
 }
 
-func (s *Store) Snapshot(documentID string) (types.InsightDiagnostics, bool) {
+// Snapshot returns the diagnostics stored for one document.
+func (s *Store) Snapshot(documentID string) (insight.Diagnostics, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	e, ok := s.documents[documentID]
 	if !ok {
-		return types.InsightDiagnostics{}, false
+		return insight.Diagnostics{}, false
 	}
 	return cloneAnswer(e.answer), true
 }
 
 // All returns detached snapshots ordered by document ID, including pending and
 // stale entries. It does not compute unqualified project diagnostic totals.
-func (s *Store) All() []types.InsightDiagnostics {
+func (s *Store) All() []insight.Diagnostics {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	out := make([]types.InsightDiagnostics, 0, len(s.documents))
+	out := make([]insight.Diagnostics, 0, len(s.documents))
 	for _, e := range s.documents {
 		out = append(out, cloneAnswer(e.answer))
 	}
@@ -445,12 +446,12 @@ func (s *Store) All() []types.InsightDiagnostics {
 	return out
 }
 
-func cloneBoundary(b types.InsightBoundary) types.InsightBoundary {
+func cloneBoundary(b insight.Boundary) insight.Boundary {
 	b.Context.UnknownInputs = slices.Clone(b.Context.UnknownInputs)
 	return b
 }
 
-func cloneAnswer(a types.InsightDiagnostics) types.InsightDiagnostics {
+func cloneAnswer(a insight.Diagnostics) insight.Diagnostics {
 	a.Boundary = cloneBoundary(a.Boundary)
 	a.Diagnostics = slices.Clone(a.Diagnostics)
 	if a.ReportedVersion != nil {
@@ -460,7 +461,7 @@ func cloneAnswer(a types.InsightDiagnostics) types.InsightDiagnostics {
 	return a
 }
 
-func equalBoundary(a, b types.InsightBoundary) bool {
+func equalBoundary(a, b insight.Boundary) bool {
 	return a.Source == b.Source && a.Producer == b.Producer &&
 		a.Context.ID == b.Context.ID && a.Context.Root == b.Context.Root &&
 		a.Context.Generation == b.Context.Generation &&
@@ -477,7 +478,7 @@ func boundedString(v string, limit int) error {
 	return nil
 }
 
-func validateBoundary(b types.InsightBoundary) error {
+func validateBoundary(b insight.Boundary) error {
 	if b.Source.Revision == 0 || b.Context.Generation == 0 ||
 		(b.Source.Kind != "canonical" && b.Source.Kind != "disk") {
 		return fmt.Errorf("%w: source kind or generation", ErrInvalid)
@@ -503,7 +504,7 @@ func validateBoundary(b types.InsightBoundary) error {
 	return nil
 }
 
-func validatePublication(p types.InsightDiagnosticPublication, available int) error {
+func validatePublication(p insight.DiagnosticPublication, available int) error {
 	if len(p.Diagnostics) > available {
 		return ErrLimit
 	}
@@ -511,7 +512,7 @@ func validatePublication(p types.InsightDiagnosticPublication, available int) er
 		return err
 	}
 	for _, d := range p.Diagnostics {
-		if d.Severity < 0 || d.Severity > types.DiagHint ||
+		if d.Severity < 0 || d.Severity > insight.DiagHint ||
 			d.Line < 0 || d.Col < 0 || d.EndLine < d.Line || d.EndCol < 0 ||
 			(d.EndLine == d.Line && d.EndCol < d.Col) {
 			return fmt.Errorf("%w: severity or range", ErrInvalid)

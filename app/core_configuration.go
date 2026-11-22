@@ -3,8 +3,8 @@ package app
 import (
 	"crude/agent/provider"
 	"crude/agent/session"
-	"crude/network"
-	ttypes "crude/types"
+	"crude/internal/network"
+	"crude/types/setting"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -14,7 +14,7 @@ import (
 
 // commitCoreAccount writes this account's explicit changes without replaying
 // untouched credentials or other accounts.
-func (a *App) commitCoreAccount(change ttypes.AccountChange) (ttypes.AppSettings, error) {
+func (a *App) commitCoreAccount(change setting.AccountChange) (setting.App, error) {
 	var updated FileConfig
 	err := a.accounts.Commit(func(_ map[string]provider.Account) (map[string]provider.Account, error) {
 		a.configMu.Lock()
@@ -39,7 +39,7 @@ func (a *App) commitCoreAccount(change ttypes.AccountChange) (ttypes.AppSettings
 				if !exists {
 					return fmt.Errorf("account was removed; add an account to configure it again")
 				}
-				if err := ttypes.ApplySettingsEdits(&latest, ttypes.SettingsEdits(*change.Before, *change.After)); err != nil {
+				if err := setting.ApplyEdits(&latest, setting.Edits(*change.Before, *change.After)); err != nil {
 					return err
 				}
 				change.After = &latest
@@ -74,7 +74,7 @@ func (a *App) commitCoreAccount(change ttypes.AccountChange) (ttypes.AppSettings
 		return updated.Accounts, nil
 	})
 	if err != nil {
-		return ttypes.AppSettings{}, err
+		return setting.App{}, err
 	}
 	a.notifyDefaultsChanged()
 	return detachedCoreSettings(updated), nil
@@ -85,18 +85,18 @@ func (a *App) commitCoreAccount(change ttypes.AccountChange) (ttypes.AppSettings
 // account has.
 func releaseStoredAccount(current *FileConfig, id string, preview string) error {
 	before := FileConfigToAppSettings(*current)
-	if preview != "" && preview != ttypes.AccountRemovalPreview(before, id) {
+	if preview != "" && preview != setting.AccountRemovalPreview(before, id) {
 		return fmt.Errorf("account uses changed; review them and try again")
 	}
 	before.Accounts = nil
-	after := ttypes.CloneAppSettings(before)
-	if ttypes.ReleaseAccount(&after, id) {
-		if err := applyPreferenceEdits(current, after, ttypes.SettingsEdits(before, after)); err != nil {
+	after := setting.CloneApp(before)
+	if setting.ReleaseAccount(&after, id) {
+		if err := applyPreferenceEdits(current, after, setting.Edits(before, after)); err != nil {
 			return err
 		}
 		// The preference patch now owns the stored bytes, so the account
 		// leaves them in the same patch.
-		raw, err := ttypes.PatchStoredSettings(current.raw, []ttypes.SettingEdit{{Path: []string{"accounts", id}}})
+		raw, err := setting.PatchStored(current.raw, []setting.Edit{{Path: []string{"accounts", id}}})
 		if err != nil {
 			return err
 		}
@@ -141,20 +141,20 @@ func (a *App) reloadFileConfiguration() error {
 
 // commitCorePreferences commits only the changed fields against latest disk data.
 // Accounts and capability entities keep their independent exact transactions.
-func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSettings, error) {
-	if err := ttypes.ValidateProjectToolDecisionEdits(edits); err != nil {
-		return ttypes.AppSettings{}, err
+func (a *App) commitCorePreferences(edits []setting.Edit) (setting.App, error) {
+	if err := setting.ValidateProjectToolDecisionEdits(edits); err != nil {
+		return setting.App{}, err
 	}
-	if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
-		return ttypes.AppSettings{}, err
+	if err := setting.ValidateAnalysisEdits(setting.ScopeApplication, edits); err != nil {
+		return setting.App{}, err
 	}
-	if err := ttypes.ValidatePredictionSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
-		return ttypes.AppSettings{}, err
+	if err := setting.ValidatePredictionEdits(setting.ScopeApplication, edits); err != nil {
+		return setting.App{}, err
 	}
 	if len(edits) == 0 {
 		return a.committedDefaults(), nil
 	}
-	networkChanged := slices.ContainsFunc(edits, func(e ttypes.SettingEdit) bool { return len(e.Path) > 0 && e.Path[0] == "network" })
+	networkChanged := slices.ContainsFunc(edits, func(e setting.Edit) bool { return len(e.Path) > 0 && e.Path[0] == "network" })
 	var updated FileConfig
 	err := a.accounts.Commit(func(_ map[string]provider.Account) (map[string]provider.Account, error) {
 		a.configMu.Lock()
@@ -169,7 +169,7 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 		updated, err = updateFileConfig(func(current *FileConfig) error {
 			actual := FileConfigToAppSettings(*current)
 			actual.Accounts = nil
-			if err := ttypes.ApplySettingsEdits(&actual, edits); err != nil {
+			if err := setting.ApplyEdits(&actual, edits); err != nil {
 				return err
 			}
 			if networkChanged {
@@ -198,11 +198,11 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 		return updated.Accounts, nil
 	})
 	if err != nil {
-		return ttypes.AppSettings{}, err
+		return setting.App{}, err
 	}
 	if networkChanged {
 		if err := network.ConfigureDefault(FileConfigToAppSettings(updated).Network); err != nil {
-			return ttypes.AppSettings{}, err
+			return setting.App{}, err
 		}
 	}
 	a.notifyDefaultsChanged()
@@ -211,14 +211,14 @@ func (a *App) commitCorePreferences(edits []ttypes.SettingEdit) (ttypes.AppSetti
 
 // applyPreferenceEdits maps the neutral preference fields onto the file's single
 // stored definition. It never serializes resolved/default values for neighbors.
-func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits []ttypes.SettingEdit) error {
-	if err := ttypes.ValidateProjectToolDecisionEdits(edits); err != nil {
+func applyPreferenceEdits(current *FileConfig, desired setting.App, edits []setting.Edit) error {
+	if err := setting.ValidateProjectToolDecisionEdits(edits); err != nil {
 		return err
 	}
-	if err := ttypes.ValidateAnalysisSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
+	if err := setting.ValidateAnalysisEdits(setting.ScopeApplication, edits); err != nil {
 		return err
 	}
-	if err := ttypes.ValidatePredictionSettingEdits(ttypes.SettingsScopeApplication, edits); err != nil {
+	if err := setting.ValidatePredictionEdits(setting.ScopeApplication, edits); err != nil {
 		return err
 	}
 	raw, err := json.Marshal(current)
@@ -228,7 +228,7 @@ func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits
 	if len(current.raw) != 0 {
 		raw = current.raw
 	}
-	var stored []ttypes.SettingEdit
+	var stored []setting.Edit
 	for _, edit := range edits {
 		path := slices.Clone(edit.Path)
 		if len(path) == 0 || path[0] == "accounts" {
@@ -257,25 +257,25 @@ func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits
 		}
 		value := edit.After
 		if len(edit.Path) == 3 && edit.Path[0] == "agents" && edit.Path[1] == "Categories" && value != nil {
-			var category ttypes.CategorySettings
+			var category setting.Category
 			if err := json.Unmarshal(value, &category); err != nil {
 				return err
 			}
 			cfg := &session.Config{Agents: session.DefaultAgentsConfig()}
-			session.ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{edit.Path[2]: category}})
+			session.ApplyWorkspaceAgentDefaults(cfg, setting.Agents{Categories: map[string]setting.Category{edit.Path[2]: category}})
 			value, err = json.Marshal(cfg.Agents.Profiles[cfg.Agents.ActiveProfile].Categories[edit.Path[2]])
 			if err != nil {
 				return err
 			}
 		}
-		stored = append(stored, ttypes.SettingEdit{Path: path, After: value})
+		stored = append(stored, setting.Edit{Path: path, After: value})
 	}
-	raw, err = ttypes.PatchStoredSettings(raw, stored)
+	raw, err = setting.PatchStored(raw, stored)
 	if err != nil {
 		return err
 	}
 	next := FileConfig{}
-	if err := ttypes.DecodeStoredSettings(raw, &next); err != nil {
+	if err := setting.DecodeStored(raw, &next); err != nil {
 		return err
 	}
 	next.raw = raw
@@ -284,7 +284,7 @@ func applyPreferenceEdits(current *FileConfig, desired ttypes.AppSettings, edits
 }
 
 func categoryStoredName(name string) string {
-	t := reflect.TypeFor[ttypes.CategorySettings]()
+	t := reflect.TypeFor[setting.Category]()
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		jsonName := strings.Split(field.Tag.Get("json"), ",")[0]
@@ -312,15 +312,15 @@ func (a *App) notifyDefaultsChanged() {
 }
 
 // committedDefaults is the current durable application snapshot.
-func (a *App) committedDefaults() ttypes.AppSettings {
+func (a *App) committedDefaults() setting.App {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	return detachedCoreSettings(a.fc)
 }
 
-func detachedCoreSettings(value FileConfig) ttypes.AppSettings {
+func detachedCoreSettings(value FileConfig) setting.App {
 	raw, _ := json.Marshal(FileConfigToAppSettings(value))
-	var out ttypes.AppSettings
+	var out setting.App
 	_ = json.Unmarshal(raw, &out)
 	return out
 }

@@ -19,7 +19,7 @@ import (
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 
-	"crude/types"
+	"crude/types/conversation"
 )
 
 // contextBytes is how much text before and after the quote an anchor keeps.
@@ -38,12 +38,12 @@ const (
 
 // Capture anchors the range [start, end) of text. Offsets are clamped to the
 // text and moved back to rune boundaries.
-func Capture(text string, start, end int) types.TextAnchor {
+func Capture(text string, start, end int) conversation.TextAnchor {
 	start, end = clamp(text, start), clamp(text, end)
 	if end < start {
 		start, end = end, start
 	}
-	return types.TextAnchor{
+	return conversation.TextAnchor{
 		Start:  start,
 		End:    end,
 		Exact:  text[start:end],
@@ -63,7 +63,7 @@ type Result struct {
 }
 
 // Resolve finds the anchored range in text.
-func Resolve(text string, a types.TextAnchor) Result {
+func Resolve(text string, a conversation.TextAnchor) Result {
 	hint := clamp(text, a.Start)
 	if a.Exact == "" {
 		// A position-only anchor, such as a comment on an empty line.
@@ -79,7 +79,7 @@ func Resolve(text string, a types.TextAnchor) Result {
 	return Result{Start: hint, End: max(hint, end)}
 }
 
-func bestExact(text string, a types.TextAnchor, hint int) (int, bool) {
+func bestExact(text string, a conversation.TextAnchor, hint int) (int, bool) {
 	best, bestScore := -1, -1.0
 	for from, count := 0, 0; from <= len(text) && count < maxCandidates; count++ {
 		index := strings.Index(text[from:], a.Exact)
@@ -99,7 +99,7 @@ func bestExact(text string, a types.TextAnchor, hint int) (int, bool) {
 // contextScore follows Hypothesis' matchQuote scoring for an exact quote:
 // how much of the expected context surrounds this occurrence, plus a small
 // preference for the occurrence nearest the hint.
-func contextScore(text string, a types.TextAnchor, at, hint int) float64 {
+func contextScore(text string, a conversation.TextAnchor, at, hint int) float64 {
 	prefix, suffix := 1.0, 1.0
 	if a.Prefix != "" {
 		before := text[max(0, at-len(a.Prefix)):at]

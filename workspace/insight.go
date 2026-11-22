@@ -8,8 +8,9 @@ import (
 	"sync"
 
 	"crude/insight/facts"
-	"crude/syntax"
-	"crude/types"
+	"crude/insight/syntax"
+	"crude/types/insight"
+	"crude/types/syntaxdata"
 	"crude/workspace/document"
 )
 
@@ -22,7 +23,7 @@ const insightSpanLimit = 64 << 10 // bounded wire projection, not semantic cover
 const insightResultBudget = 16 << 20
 
 type insightEntry struct {
-	view        types.DocumentInsight
+	view        insight.DocumentInsight
 	queued      bool
 	cancel      context.CancelFunc
 	subscribers map[chan struct{}]bool
@@ -49,7 +50,7 @@ type InsightService struct {
 	diagnosticSummaryEnabled bool
 	diagnosticSummaryFloor   string
 	diagnosticSummaryCached  bool
-	diagnosticSummary        types.ProjectInsights
+	diagnosticSummary        insight.ProjectInsights
 }
 
 func newInsightService(documents *DocumentService) *InsightService {
@@ -87,7 +88,7 @@ func (s *InsightService) publishLocked(entry *insightEntry) {
 	}
 }
 
-func insightWeight(view types.DocumentInsight) int {
+func insightWeight(view insight.DocumentInsight) int {
 	if view.Syntax == nil {
 		return 0
 	}
@@ -134,9 +135,9 @@ func (s *InsightService) observeLocked(d *liveDocument) {
 		entry.cancel()
 	}
 	s.bytes -= insightWeight(entry.view)
-	entry.view = types.DocumentInsight{DocumentID: id, Path: path, Revision: revision, Generation: s.generation, State: types.InsightPending}
+	entry.view = insight.DocumentInsight{DocumentID: id, Path: path, Revision: revision, Generation: s.generation, State: insight.Pending}
 	if _, supported := syntax.LanguageForPath(path); !supported {
-		entry.view.State = types.InsightUnsupported
+		entry.view.State = insight.Unsupported
 		entry.view.Detail = "No bundled native grammar; lexical highlighting is separate from project intelligence."
 	} else if !entry.queued {
 		entry.queued = true
@@ -169,7 +170,7 @@ func (s *InsightService) Subscribe(owner document.Owner, id string) (<-chan stru
 	}, nil
 }
 
-func cloneInsight(view types.DocumentInsight) types.DocumentInsight {
+func cloneInsight(view insight.DocumentInsight) insight.DocumentInsight {
 	if view.Syntax != nil {
 		result := *view.Syntax
 		result.Spans = slices.Clone(result.Spans)
@@ -182,22 +183,22 @@ func cloneInsight(view types.DocumentInsight) types.DocumentInsight {
 }
 
 // Snapshot is an explicit bounded read, not a post-edit polling contract.
-func (s *InsightService) Snapshot(owner document.Owner, id string) (types.DocumentInsight, error) {
+func (s *InsightService) Snapshot(owner document.Owner, id string) (insight.DocumentInsight, error) {
 	s.documents.mu.Lock()
 	defer s.documents.mu.Unlock()
 	if _, err := s.documents.owned(owner, id); err != nil {
-		return types.DocumentInsight{}, err
+		return insight.DocumentInsight{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.entries[id]
 	if entry == nil || s.ctx.Err() != nil {
-		return types.DocumentInsight{}, context.Canceled
+		return insight.DocumentInsight{}, context.Canceled
 	}
 	return cloneInsight(entry.view), nil
 }
 
-func (s *InsightService) source(view types.DocumentInsight) ([]byte, bool) {
+func (s *InsightService) source(view insight.DocumentInsight) ([]byte, bool) {
 	s.documents.mu.Lock()
 	defer s.documents.mu.Unlock()
 	d := s.documents.docs[view.DocumentID]
@@ -244,7 +245,7 @@ func (s *InsightService) run() {
 				continue
 			}
 			entry.queued = false
-			if entry.view.State != types.InsightPending {
+			if entry.view.State != insight.Pending {
 				s.mu.Unlock()
 				continue
 			}
@@ -259,7 +260,7 @@ func (s *InsightService) run() {
 				cancel()
 				continue
 			}
-			var result syntax.Result
+			var result syntaxdata.Result
 			var err error
 			source, current := s.source(view)
 			if current && ctx.Err() == nil {
@@ -290,16 +291,16 @@ func (s *InsightService) run() {
 			// completion after edits, rename, close/reopen or workspace teardown.
 			if current && ctx.Err() == nil && s.entries[id] == entry &&
 				entry.view.Revision == view.Revision && entry.view.Path == view.Path {
-				entry.view.State = types.InsightCurrent
+				entry.view.State = insight.Current
 				switch {
 				case err != nil:
-					entry.view.State, entry.view.Detail = types.InsightFailed, err.Error()
+					entry.view.State, entry.view.Detail = insight.Failed, err.Error()
 					if errors.Is(err, syntax.ErrLimit) {
-						entry.view.State = types.InsightLimited
+						entry.view.State = insight.Limited
 					}
 				case len(result.Spans) > insightSpanLimit ||
-					s.bytes+insightWeight(types.DocumentInsight{Syntax: &result}) > insightResultBudget:
-					entry.view.State = types.InsightLimited
+					s.bytes+insightWeight(insight.DocumentInsight{Syntax: &result}) > insightResultBudget:
+					entry.view.State = insight.Limited
 					entry.view.Detail = "Native syntax projection exceeds the workspace result budget."
 				default:
 					entry.view.Syntax = &result

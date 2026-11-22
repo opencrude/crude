@@ -6,8 +6,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/screens/backgroundjobs"
-	"crude/types"
 	"crude/types/command"
+	"crude/types/statuscenter"
 	"crude/workspace/fileio"
 )
 
@@ -24,12 +24,12 @@ func (m *App) terminateBackgroundJob(request backgroundjobs.TerminateRequest) te
 		return nil
 	}
 	status := m.ws.Status()
-	resource := types.ResourceRef{Kind: types.ResourceAgent, ID: job.OwnerID, SessionID: owner.SessionID}
+	resource := statuscenter.ResourceRef{Kind: statuscenter.ResourceAgent, ID: job.OwnerID, SessionID: owner.SessionID}
 	return func() tea.Msg {
 		if err := terminate(); err != nil {
 			if status != nil {
-				status.Notify(types.NotificationRecord{
-					Owner: resource, Severity: types.SeverityWarning,
+				status.Notify(statuscenter.NotificationRecord{
+					Owner: resource, Severity: statuscenter.SeverityWarning,
 					Source: "background-command", Summary: fmt.Sprintf("Command %q was not terminated", job.Handle), Detail: err.Error(),
 				})
 			}
@@ -46,11 +46,11 @@ func (m *App) revealBackgroundJob(request backgroundjobs.RevealRequest) {
 	if projection == nil || projection.backgroundJobs != request.Target {
 		return
 	}
-	sub := m.subPaneProjections.GetExisting(job.OwnerID)
+	sub := m.subPaneProjections.Existing(job.OwnerID)
 	if sub == nil {
 		m.ensureAgentProjection(job.OwnerID)
 		m.syncAgentMessages(job.OwnerID, false)
-		sub = m.subPaneProjections.GetExisting(job.OwnerID)
+		sub = m.subPaneProjections.Existing(job.OwnerID)
 	}
 	if sub == nil || sub.renderer == nil {
 		return

@@ -128,7 +128,8 @@ func (pm *PaneManager) Get(id string) *SubPane {
 	return pm.panes[id]
 }
 
-func (pm *PaneManager) GetOrCreate(id string, paneType PaneType, title string) *SubPane {
+// Ensure returns the pane with an id and creates it when it is missing.
+func (pm *PaneManager) Ensure(id string, paneType PaneType, title string) *SubPane {
 	if p, ok := pm.panes[id]; ok {
 		return p
 	}
@@ -166,3 +167,13 @@ func (pm *PaneManager) Panes() map[string]*SubPane {
 func (pm *PaneManager) PaneOrder() []string {
 	return pm.paneOrder
 }
+
+// PaneType distinguishes subpane variants. Only PaneAgent gets background color
+// applied in view.go; PaneThinking (the thinking indicator) has no background.
+type PaneType string
+
+// Subpane variants.
+const (
+	PaneThinking PaneType = "thinking"
+	PaneAgent    PaneType = "agent"
+)

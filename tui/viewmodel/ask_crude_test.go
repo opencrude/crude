@@ -61,7 +61,7 @@ func askComposerRef(t *testing.T, app *App) sessiondb.Reference {
 	if len(ids) != 1 {
 		t.Fatalf("composer references = %v, want one; draft %q", ids, app.Input.Value())
 	}
-	ref, ok := app.RefStore().GetReference(ids[0])
+	ref, ok := app.RefStore().Reference(ids[0])
 	if !ok {
 		t.Fatal("composer chip has no reference in the chat's session")
 	}

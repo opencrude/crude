@@ -15,9 +15,9 @@ STAMP="${PREFIX}/.crude-pin"
 TERM_NAME="xterm-ghostty"
 TIDB="${PREFIX}/share/terminfo"
 # Compiled entry + source are embedded into the binary via go:embed (see
-# types/ghostty_terminfo.go), so a copy is materialized next to the packages
+# internal/terminalvt/ghostty_terminfo.go), so a copy is materialized next to the packages
 # that reference it. The files are pinned build artifacts and are committed.
-EMBED="${ROOT}/types/terminfo"
+EMBED="${ROOT}/internal/terminalvt/terminfo"
 
 need_zig() {
   if command -v zig >/dev/null 2>&1; then
@@ -141,5 +141,5 @@ ZIG
 
   # Prove the compiled entry resolves in isolation before declaring success.
   TERMINFO="${TIDB}" infocmp -x "${TERM_NAME}" >/dev/null
-  echo "installed pinned terminfo at ${TIDB}/x/${TERM_NAME} (embed copy in types/terminfo)"
+  echo "installed pinned terminfo at ${TIDB}/x/${TERM_NAME} (embed copy in internal/terminalvt/terminfo)"
 fi

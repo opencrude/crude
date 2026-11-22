@@ -10,9 +10,9 @@ import (
 	"testing/synctest"
 	"time"
 
-	"crude/core/protocol"
-	"crude/core/wire"
-	"crude/types"
+	"crude/core/coreprotocol"
+	"crude/core/corewire"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -46,13 +46,13 @@ type ownershipFuzzStartup struct {
 func (*ownershipFuzzStartup) StartupSnapshot(context.Context) (coreprotocol.StartupSnapshot, error) {
 	return coreprotocol.StartupSnapshot{}, nil
 }
-func (s *ownershipFuzzStartup) SaveStartup(context.Context, []types.SettingEdit) (types.OnboardingSettings, error) {
+func (s *ownershipFuzzStartup) SaveStartup(context.Context, []setting.Edit) (setting.Onboarding, error) {
 	<-s.release
 	s.effects.Add(1)
-	return types.OnboardingSettings{}, nil
+	return setting.Onboarding{}, nil
 }
-func (*ownershipFuzzStartup) ReadStartupSettings(context.Context) (types.AppSettings, error) {
-	return types.AppSettings{}, nil
+func (*ownershipFuzzStartup) ReadStartupSettings(context.Context) (setting.App, error) {
+	return setting.App{}, nil
 }
 
 func FuzzCoreSessionOwnership(f *testing.F) {

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"crude/agent/prompthistory"
 	"crude/agent/sessiondb"
-	"crude/core/protocol"
-	"crude/history"
+	"crude/core/coreprotocol"
 	"crude/workspace"
 )
 
@@ -164,7 +164,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 			if in.Create != nil || !validDigest(in.OriginalDigest) || in.Size > coreprotocol.ReferenceUploadMaxBytes {
 				return nil, errors.New("exact replacement preimage is required")
 			}
-			ref, ok := store.GetReference(in.ID)
+			ref, ok := store.Reference(in.ID)
 			if !ok || !ref.Active() || ref.SessionID != in.SessionID || in.Revision == "" || in.Revision != entityRevision(ref) {
 				return nil, errors.New("replacement reference changed")
 			}
@@ -215,7 +215,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 		if err := u.file.Sync(); err != nil {
 			return nil, err
 		}
-		data, err := history.ReadAttachment(u.file.Name())
+		data, err := prompthistory.ReadAttachment(u.file.Name())
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +232,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 		}
 		referenceCommandMu.Lock()
 		defer referenceCommandMu.Unlock()
-		ref, ok := store.GetReference(u.input.ID)
+		ref, ok := store.Reference(u.input.ID)
 		if !ok || !ref.Active() || ref.SessionID != in.SessionID || entityRevision(ref) != u.input.Revision {
 			return nil, errors.New("replacement reference changed")
 		}
@@ -246,7 +246,7 @@ func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, wo
 		if err := store.SaveReferenceContent(ref, original, string(data)); err != nil {
 			return nil, err
 		}
-		updated, _ := store.GetReference(ref.ID)
+		updated, _ := store.Reference(ref.ID)
 		return wire(referenceView(updated)), nil
 	}
 	return nil, errors.New("unknown upload operation")

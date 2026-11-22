@@ -16,9 +16,9 @@ import (
 	"crude/agent/session"
 	"crude/agent/sessiondb"
 	"crude/core"
-	"crude/core/client"
-	"crude/core/protocol"
-	"crude/types"
+	"crude/core/coreclient"
+	"crude/core/coreprotocol"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -34,7 +34,7 @@ func TestLiveAgentInspectionIsPassiveAndSelfExplanatory(t *testing.T) {
 	}
 	cfg := FileConfigToSession(fc)
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
-	main := cfg.GetActiveDefaultCategory()
+	main := cfg.ActiveDefaultCategory()
 	if model := os.Getenv("CRUDE_INSPECTION_MODEL"); model != "" {
 		main.Model = model
 	}
@@ -106,8 +106,8 @@ func TestLiveAgentInspectionIsPassiveAndSelfExplanatory(t *testing.T) {
 	answer.InternalID, answer.ReasoningContent = "mara-final", "PRIVATE_REASONING_NEVER_VISIBLE"
 	stamp := time.Now().UnixNano()
 	if _, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{SessionID: peer.SessionID, AgentID: peer.SessionID, RuntimeAgentID: peer.ID, Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{
-		{Message: input, Turn: 9, AgentID: peer.ID, CreatedAt: stamp, Meta: sessiondb.DisplayMeta{TurnGeneration: 9, Snapshots: []types.ConversationMessage{{Role: "user", Content: notice.Event.Body}}}},
-		{Message: answer, Turn: 9, AgentID: peer.ID, CreatedAt: stamp, Meta: sessiondb.DisplayMeta{TurnGeneration: 9, Snapshots: []types.ConversationMessage{{Role: "thinking", Content: answer.ReasoningContent}, {Role: "assistant", Content: answer.ContentString()}}}},
+		{Message: input, Turn: 9, AgentID: peer.ID, CreatedAt: stamp, Meta: sessiondb.DisplayMeta{TurnGeneration: 9, Snapshots: []conversation.Message{{Role: "user", Content: notice.Event.Body}}}},
+		{Message: answer, Turn: 9, AgentID: peer.ID, CreatedAt: stamp, Meta: sessiondb.DisplayMeta{TurnGeneration: 9, Snapshots: []conversation.Message{{Role: "thinking", Content: answer.ReasoningContent}, {Role: "assistant", Content: answer.ContentString()}}}},
 	}}}); err != nil {
 		t.Fatal(err)
 	}

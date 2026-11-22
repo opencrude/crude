@@ -2,8 +2,8 @@ package core
 
 import (
 	"context"
-	"crude/core/protocol"
-	"crude/text/encoding"
+	"crude/core/coreprotocol"
+	"crude/text/textencoding"
 	"crude/workspace/fileio"
 	"errors"
 )

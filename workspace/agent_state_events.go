@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"crude/agent/tools"
+	"crude/types/conversation"
 	"crude/types/toolresult"
 )
 
@@ -260,7 +261,7 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, effe
 				if replyID == "" {
 					replyID = toolID
 				}
-				target.AppendMessage(Message{InternalID: "reply:" + replyID, Role: role,
+				target.AppendMessage(conversation.Message{InternalID: "reply:" + replyID, Role: role,
 					Content: SanitizeForTerminal(result), Time: time.Now(),
 					TurnGeneration: target.turnIdentity.Generation, AccountID: target.turnIdentity.AccountID,
 					ProviderID: target.turnIdentity.ProviderID, ModelID: target.turnIdentity.ModelID})
@@ -268,7 +269,7 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, effe
 			return
 		}
 		if !target.HasToolMessage(toolID, internalID) && result != "" {
-			target.AppendMessage(Message{InternalID: internalID, Role: MessageRoleTool,
+			target.AppendMessage(conversation.Message{InternalID: internalID, Role: MessageRoleTool,
 				ToolID: toolID, ToolName: name, Content: SanitizeForTerminal(result), Time: time.Now(),
 				TurnGeneration: target.turnIdentity.Generation, AccountID: target.turnIdentity.AccountID,
 				ProviderID: target.turnIdentity.ProviderID, ModelID: target.turnIdentity.ModelID})

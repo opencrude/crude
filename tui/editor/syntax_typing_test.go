@@ -1,7 +1,7 @@
 package editor
 
 import (
-	"crude/text/encoding"
+	"crude/text/textencoding"
 	"crypto/sha256"
 	"fmt"
 	"strings"

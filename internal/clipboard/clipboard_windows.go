@@ -1,0 +1,193 @@
+//go:build windows
+
+package clipboard
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+	"unicode/utf16"
+	"unsafe"
+
+	"crude/internal/logger"
+)
+
+var (
+	user32   = syscall.MustLoadDLL("user32")
+	kernel32 = syscall.MustLoadDLL("kernel32")
+
+	openClipboard    = user32.MustFindProc("OpenClipboard")
+	closeClipboard   = user32.MustFindProc("CloseClipboard")
+	emptyClipboard   = user32.MustFindProc("EmptyClipboard")
+	getClipboardData = user32.MustFindProc("GetClipboardData")
+	setClipboardData = user32.MustFindProc("SetClipboardData")
+
+	gLock   = kernel32.MustFindProc("GlobalLock")
+	gUnlock = kernel32.MustFindProc("GlobalUnlock")
+	gAlloc  = kernel32.MustFindProc("GlobalAlloc")
+	gFree   = kernel32.MustFindProc("GlobalFree")
+	memMove = kernel32.MustFindProc("RtlMoveMemory")
+)
+
+const (
+	cFmtUnicodeText = uintptr(13)
+	gmemMoveable    = uintptr(0x0002)
+)
+
+func openClipboardWithRetry() error {
+	const maxRetries = 10
+	for i := 0; i < maxRetries; i++ {
+		r, _, _ := openClipboard.Call(0)
+		if r != 0 {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	logIf(func(lg *logger.Logger) { lg.Warn("CLIPBOARD", "open_retry_exhausted", "retries", maxRetries) })
+	return fmt.Errorf("failed to open clipboard after retries")
+}
+
+func read(t Format) ([]byte, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read", "format", t) })
+
+	if t == FmtImage {
+		return readImage()
+	}
+	if t != FmtText {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read_unsupported", "format", t) })
+		return nil, errUnsupported
+	}
+
+	if err := openClipboardWithRetry(); err != nil {
+		return nil, err
+	}
+	defer func() { _, _, _ = closeClipboard.Call() }()
+
+	return readText()
+}
+
+func readImage() ([]byte, error) {
+	file, err := os.CreateTemp("", "crude-clipboard-*.png")
+	if err != nil {
+		return nil, err
+	}
+	path := file.Name()
+	_ = file.Close()
+	defer os.Remove(path)
+
+	escapedPath := strings.ReplaceAll(path, "'", "''")
+	script := "Add-Type -AssemblyName System.Windows.Forms; " +
+		"Add-Type -AssemblyName System.Drawing; " +
+		"$image = [Windows.Forms.Clipboard]::GetImage(); " +
+		"if ($null -eq $image) { exit 2 }; " +
+		"$image.Save('" + escapedPath + "', [Drawing.Imaging.ImageFormat]::Png)"
+	cmd := exec.Command(
+		"powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", script,
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		logIf(func(lg *logger.Logger) {
+			lg.Debug("CLIPBOARD", "win_read_image_failed", "error", err.Error(), "output", string(output))
+		})
+		return nil, errUnavailable
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return nil, errUnavailable
+	}
+	return data, nil
+}
+
+func readText() ([]byte, error) {
+	hMem, _, _ := getClipboardData.Call(cFmtUnicodeText)
+	if hMem == 0 {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read_no_data") })
+		return nil, errUnavailable
+	}
+
+	p, _, _ := gLock.Call(hMem)
+	if p == 0 {
+		logIf(func(lg *logger.Logger) { lg.Warn("CLIPBOARD", "win_read_lock_failed") })
+		return nil, errUnavailable
+	}
+	defer func() { _, _, _ = gUnlock.Call(hMem) }()
+
+	const maxChars = 1 << 20
+	var ptr *uint16
+	*(*uintptr)(unsafe.Pointer(&ptr)) = p
+	buf := unsafe.Slice(ptr, maxChars)
+
+	n := 0
+	for buf[n] != 0 {
+		n++
+	}
+
+	result := []byte(string(utf16.Decode(buf[:n])))
+	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_read_ok", "chars", n, "bytes", len(result)) })
+	return result, nil
+}
+
+func write(t Format, buf []byte) (bool, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if t != FmtText {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_write_unsupported", "format", t) })
+		return false, errUnsupported
+	}
+
+	if err := openClipboardWithRetry(); err != nil {
+		return false, err
+	}
+	defer func() { _, _, _ = closeClipboard.Call() }()
+
+	r, _, err := emptyClipboard.Call()
+	if r == 0 {
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_clear_failed", "error", err.Error()) })
+		return false, fmt.Errorf("failed to clear clipboard: %w", err)
+	}
+
+	if len(buf) == 0 {
+		logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_write_empty") })
+		return true, nil
+	}
+
+	s, err := syscall.UTF16FromString(string(buf))
+	if err != nil {
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_utf16_failed", "error", err.Error()) })
+		return false, fmt.Errorf("failed to convert string: %w", err)
+	}
+
+	hMem, _, err := gAlloc.Call(gmemMoveable, uintptr(len(s)*2))
+	if hMem == 0 {
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_alloc_failed", "error", err.Error()) })
+		return false, fmt.Errorf("failed to alloc memory: %w", err)
+	}
+
+	p, _, err := gLock.Call(hMem)
+	if p == 0 {
+		_, _, _ = gFree.Call(hMem)
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_lock_failed", "error", err.Error()) })
+		return false, fmt.Errorf("failed to lock memory: %w", err)
+	}
+
+	_, _, _ = memMove.Call(p, uintptr(unsafe.Pointer(&s[0])), uintptr(len(s)*2))
+
+	_, _, _ = gUnlock.Call(hMem)
+
+	v, _, err := setClipboardData.Call(cFmtUnicodeText, hMem)
+	if v == 0 {
+		_, _, _ = gFree.Call(hMem)
+		logIf(func(lg *logger.Logger) { lg.Error("CLIPBOARD", "win_write_set_failed", "error", err.Error()) })
+		return false, fmt.Errorf("failed to set clipboard data: %w", err)
+	}
+
+	logIf(func(lg *logger.Logger) { lg.Debug("CLIPBOARD", "win_write_ok", "bytes", len(buf)) })
+	return true, nil
+}

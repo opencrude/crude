@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/types"
+	"crude/types/conversation"
 	"crude/workspace"
 )
 
@@ -13,7 +13,7 @@ func TestResponsesContinuationFailureIsVisibleAndDeduplicated(t *testing.T) {
 	app.AddOrchestrator("root")
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": {SessionID: "session", AgentID: "root"}}
 	event := workspace.AgentEvent{Type: "response_continuation_unavailable", AgentID: "root", Data: map[string]any{"reason": "response_not_stored"}}
-	event.Identity = types.RuntimeEventIdentity{EventID: "response-policy", OwnerID: "session", AgentID: "root", RuntimeEpoch: 1, Generation: 1, Sequence: 1}
+	event.Identity = conversation.RuntimeEventIdentity{EventID: "response-policy", OwnerID: "session", AgentID: "root", RuntimeEpoch: 1, Generation: 1, Sequence: 1}
 	notice, ok := workspace.NoticeFromEvent(event)
 	if !ok {
 		t.Fatal("continuation event did not produce a service notice")

@@ -10,7 +10,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
@@ -36,12 +37,12 @@ type highlightConnectedClient struct {
 	engine *highlightConnectedRuntime
 }
 
-func (r *highlightConnectedRuntime) NewClient(spec types.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
+func (r *highlightConnectedRuntime) NewClient(spec setting.LSPServerSpec, root string, admit func() error) workspace.LSPClient {
 	base := r.renameConnectedRuntime.NewClient(spec, root, admit).(*renameConnectedClient)
 	return &highlightConnectedClient{renameConnectedClient: base, engine: r}
 }
 
-func (c *highlightConnectedClient) RequestDocumentHighlights(_ context.Context, path string, line, col int) (types.LSPHighlightResponse, error) {
+func (c *highlightConnectedClient) RequestDocumentHighlights(_ context.Context, path string, line, col int) (insight.LSPHighlightResponse, error) {
 	r := c.engine
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -51,7 +52,7 @@ func (c *highlightConnectedClient) RequestDocumentHighlights(_ context.Context, 
 	if line == 2 && col >= 4 && col <= 9 || line == 4 && (col >= 17 && col <= 22 || col >= 35 && col <= 40) {
 		answer = highlightConnectedAnswer
 	}
-	return types.LSPHighlightResponse{WireVersion: doc.version, JSON: []byte(answer)}, nil
+	return insight.LSPHighlightResponse{WireVersion: doc.version, JSON: []byte(answer)}, nil
 }
 
 func (r *highlightConnectedRuntime) callCount() int {
@@ -85,9 +86,9 @@ func TestConnectedOccurrencesFollowTheRestingCaretOnly(t *testing.T) {
 		owned = w
 		w.LSPMgr.SetRuntime(engine)
 		settings := w.AppDefaults()
-		settings.LSP = types.DefaultLSPSettings()
+		settings.LSP = setting.DefaultLSP()
 		settings.LSP.AutoDetect, settings.LSP.AutoComplete = false, false
-		settings.LSP.Languages = map[string]types.LSPLanguageSettings{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
+		settings.LSP.Languages = map[string]setting.LSPLanguage{"go": {Enabled: true, Command: executable, RootMarkers: []string{"go.mod"}}}
 		w.SetAppDefaults(settings)
 		grantSemanticFixture(t, w)
 	})
@@ -96,7 +97,7 @@ func TestConnectedOccurrencesFollowTheRestingCaretOnly(t *testing.T) {
 	a, b := liveTestOpen(t, one.app, engine.main), liveTestOpen(t, two.app, engine.main)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, _, err := owned.LSPMgr.ProbeHover(ctx, engine.main, types.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
+	if _, _, err := owned.LSPMgr.ProbeHover(ctx, engine.main, insight.LSPSourcePosition{Line: 1, Column: 1}); err != nil {
 		t.Fatal("fixture source did not synchronize", err)
 	}
 	remoteJourneyUntil(t, shells, func() bool { return one.app.ws.LSPMgr().ServerReady() && two.app.ws.LSPMgr().ServerReady() })

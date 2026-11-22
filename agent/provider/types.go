@@ -376,7 +376,7 @@ type ChatMessage struct {
 	ReasoningDetails  []json.RawMessage   `json:"reasoning_details,omitempty"`
 	ReasoningDuration time.Duration       `json:"reasoning_duration,omitempty"`
 	ReasoningDisplay  reasoning.Display   `json:"reasoning_display,omitempty"`
-	ProviderItems     []ProviderItem      `json:"provider_items,omitempty"`
+	ProviderItems     []Item              `json:"provider_items,omitempty"`
 	ReplayScope       string              `json:"replay_scope,omitempty"`
 	ReplaySourceModel string              `json:"replay_source_model,omitempty"`
 	ReplayPrefixHash  string              `json:"replay_prefix_hash,omitempty"`
@@ -494,10 +494,10 @@ func canonicalToolName(name string) string {
 	return name
 }
 
-// ProviderItem preserves protocol-specific response items that must be sent
+// Item preserves protocol-specific response items that must be sent
 // back unchanged on a later request. Examples include OpenAI reasoning items
 // and Anthropic signed thinking blocks.
-type ProviderItem struct {
+type Item struct {
 	Standard    string          `json:"standard"`
 	Type        string          `json:"type"`
 	Data        json.RawMessage `json:"data"`
@@ -555,7 +555,7 @@ type StreamUpdate struct {
 	ToolCalls          []ToolCallDelta
 	FinishReason       string
 	Usage              *TokenUsage
-	ProviderItems      []ProviderItem
+	ProviderItems      []Item
 	ContinuationID     string
 	ContinuationReason string
 	Done               bool

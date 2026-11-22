@@ -10,11 +10,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent/provider"
-	"crude/core/port"
-	settingsui "crude/tui/settings"
+	"crude/core/shellport"
+	settingsui "crude/tui/screens/settingspages"
 	"crude/tui/surface"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/setting"
+	"crude/types/statuscenter"
 )
 
 func onboardingTestApp(t *testing.T) *App {
@@ -57,12 +58,12 @@ func TestOnboardingReminderNativeActionsAndEscDefersOnce(t *testing.T) {
 		m := onboardingTestApp(t)
 		m.width, m.height = size[0], size[1]
 		writes := 0
-		wsOf(m).OnAppPreferencesCommit = func([]types.SettingEdit) (types.AppSettings, error) {
+		wsOf(m).OnAppPreferencesCommit = func([]setting.Edit) (setting.App, error) {
 			writes++
-			return types.AppSettings{}, nil
+			return setting.App{}, nil
 		}
 		loadOnboarding(t, m)
-		m.Update(types.TickMsg{})
+		m.Update(TickMsg{})
 		painted := paintOnboarding(t, m)
 		for _, want := range []string{"No AI account is configured.", "Do not show this again", "OK"} {
 			if !strings.Contains(painted, want) {
@@ -81,7 +82,7 @@ func TestOnboardingReminderNativeActionsAndEscDefersOnce(t *testing.T) {
 			t.Fatal("reminder allowed outside activation")
 		}
 		m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-		m.Update(types.TickMsg{})
+		m.Update(TickMsg{})
 		if m.overlayHost.IsOpen(aiSetupReminderOverlay) || writes != 0 || m.onboardingCmd() != nil {
 			t.Fatal("Esc persisted suppression or showed twice in one launch")
 		}
@@ -105,7 +106,7 @@ func TestOnboardingReminderDefersAndRejectsStaleReads(t *testing.T) {
 		t.Fatal("reminder opened before shell geometry")
 	}
 	m.width = 100
-	m.pendingOperationIssues = []types.OperationIssue{{Title: "Startup repair"}}
+	m.pendingOperationIssues = []statuscenter.OperationIssue{{Title: "Startup repair"}}
 	m.maybeShowAISetupReminder()
 	if m.onboarding.shown {
 		t.Fatal("reminder displaced startup repair")
@@ -135,9 +136,9 @@ func TestOnboardingReminderHiddenAccountsAndReadErrorsStayQuiet(t *testing.T) {
 			m := onboardingTestApp(t)
 			switch reason {
 			case "hidden":
-				wsOf(m).SetAppDefaults(types.AppSettings{Onboarding: types.OnboardingSettings{AISetupReminderHidden: true}})
+				wsOf(m).SetAppDefaults(setting.App{Onboarding: setting.Onboarding{AISetupReminderHidden: true}})
 			case "account":
-				wsOf(m).SetAppDefaults(types.AppSettings{Accounts: map[string]provider.Account{"one": {ID: "one"}}})
+				wsOf(m).SetAppDefaults(setting.App{Accounts: map[string]provider.Account{"one": {ID: "one"}}})
 			}
 			cmd := m.onboardingCmd()
 			msg := cmd().(onboardingLoadedMsg)
@@ -159,15 +160,15 @@ func TestOnboardingReminderHiddenAccountsAndReadErrorsStayQuiet(t *testing.T) {
 func TestOnboardingReminderSuppressionFailureAndRetry(t *testing.T) {
 	m := onboardingTestApp(t)
 	writes := 0
-	wsOf(m).OnAppPreferencesCommit = func(edits []types.SettingEdit) (types.AppSettings, error) {
+	wsOf(m).OnAppPreferencesCommit = func(edits []setting.Edit) (setting.App, error) {
 		writes++
 		if len(edits) != 1 || !reflect.DeepEqual(edits[0].Path, []string{"onboarding", "ai_setup_reminder_hidden"}) || string(edits[0].After) != "true" {
 			t.Fatal("suppression wrote unrelated preferences", edits)
 		}
 		if writes == 1 {
-			return types.AppSettings{}, errors.New("disk full")
+			return setting.App{}, errors.New("disk full")
 		}
-		return types.AppSettings{Onboarding: types.OnboardingSettings{AISetupReminderHidden: true}}, nil
+		return setting.App{Onboarding: setting.Onboarding{AISetupReminderHidden: true}}, nil
 	}
 	loadOnboarding(t, m)
 	m.maybeShowAISetupReminder()
@@ -204,17 +205,17 @@ func TestOnboardingReminderSuppressionFailureAndRetry(t *testing.T) {
 
 type freshOnboardingPort struct {
 	shellport.Workspace
-	settings types.AppSettings
+	settings setting.App
 	reads    int
 	err      error
 }
 
-func (p *freshOnboardingPort) RefreshOnboarding(context.Context) (types.AppSettings, error) {
+func (p *freshOnboardingPort) RefreshOnboarding(context.Context) (setting.App, error) {
 	p.reads++
-	return types.CloneAppSettings(p.settings), p.err
+	return setting.CloneApp(p.settings), p.err
 }
 
-func (p *freshOnboardingPort) ApplyOnboarding(settings types.AppSettings) {
+func (p *freshOnboardingPort) ApplyOnboarding(settings setting.App) {
 	if underlying := shellport.Unwrap(p.Workspace); underlying != nil {
 		underlying.SetAppDefaults(settings)
 	}
@@ -232,9 +233,9 @@ func TestOnboardingRechecksBeforeQueuedReminderAndOK(t *testing.T) {
 			}
 			// Another shell committed an account. No publication has reached this
 			// shell; the explicit read must win over the old no-account snapshot.
-			port.settings = types.AppSettings{Accounts: map[string]provider.Account{"other": {ID: "other", ProviderID: "openai", Label: "Other", Connection: provider.DefaultTemplates()["openai"]}}}
+			port.settings = setting.App{Accounts: map[string]provider.Account{"other": {ID: "other", ProviderID: "openai", Label: "Other", Connection: provider.DefaultTemplates()["openai"]}}}
 			if timing == "queued" {
-				handled, cmd := m.handleOnboardingMessage(types.TickMsg{})
+				handled, cmd := m.handleOnboardingMessage(TickMsg{})
 				if handled || cmd == nil {
 					t.Fatal("queued reminder did not request committed state")
 				}
@@ -270,7 +271,7 @@ func TestOnboardingOKTracksOnlyItsAccountAndForwardsMainAgentFetch(t *testing.T)
 	}
 	model := body.Model()
 	account := provider.Account{ID: "new", ProviderID: "openai", Label: "New account", APIKey: "secret", Connection: provider.DefaultTemplates()["openai"]}
-	result := settingsui.AccountChangeResultMsg{Target: model, Change: types.AccountChange{ID: "new", ProviderID: "openai", After: &account}, Settings: types.AppSettings{Accounts: map[string]provider.Account{"new": account}}, WorkspaceGeneration: m.workspaceSwitchGen.Load()}
+	result := settingsui.AccountChangeResultMsg{Target: model, Change: setting.AccountChange{ID: "new", ProviderID: "openai", After: &account}, Settings: setting.App{Accounts: map[string]provider.Account{"new": account}}, WorkspaceGeneration: m.workspaceSwitchGen.Load()}
 	failed := result
 	failed.Err = errors.New("disk full")
 	if m.continueOnboardingAccount(failed) != nil || m.onboarding.setupModel != model {
@@ -357,7 +358,7 @@ func TestOnboardingLateSuppressionDoesNotPublishAcrossWorkspaceBoundary(t *testi
 
 func TestOnboardingExplicitSetupWithAccountsSkipsAddAndKeepsDraft(t *testing.T) {
 	m := onboardingTestApp(t)
-	wsOf(m).SetAppDefaults(types.AppSettings{Onboarding: types.OnboardingSettings{AISetupReminderHidden: true}, Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "openai", Label: "One", Connection: provider.DefaultTemplates()["openai"]}}})
+	wsOf(m).SetAppDefaults(setting.App{Onboarding: setting.Onboarding{AISetupReminderHidden: true}, Accounts: map[string]provider.Account{"one": {ID: "one", ProviderID: "openai", Label: "One", Connection: provider.DefaultTemplates()["openai"]}}})
 	m.openAISetup()
 	window := m.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	body := m.settingsSurface(window)
@@ -404,7 +405,7 @@ func TestOnboardingAccountCommitSurvivesFailedFollowUpRead(t *testing.T) {
 	}
 	request := submit.Cmd().(settingsui.AccountChangeMsg)
 	writes := 0
-	wsOf(m).OnAppAccountChange = func(types.AccountChange) error {
+	wsOf(m).OnAppAccountChange = func(setting.AccountChange) error {
 		writes++
 		return nil
 	}

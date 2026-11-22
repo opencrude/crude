@@ -504,8 +504,9 @@ After approval, use this intake procedure:
 2. Record the exact upstream commit ID in the internal package documentation.
 3. Audit the copied source and tests before editing.
 4. Copy only the directory-walking implementation and relevant tests into
-   `third_party/pathwalk/`.
-5. Rename the Go package from `fastwalk` to `pathwalk`.
+   `third_party/fastwalk/`.
+5. Keep the upstream package name `fastwalk` (folder names in `third_party`
+   match their upstream project; see [code layout](../reference/code-layout.md#third-party)).
 6. Rewrite package references and internal imports to Crude-owned paths.
 7. Remove examples and APIs not required by this plan.
 8. Preserve the upstream MIT `LICENSE`.
@@ -521,7 +522,7 @@ repository, pinned commit, local modifications, and both applicable licenses.
 Proposed layout:
 
 ```text
-third_party/pathwalk/
+third_party/fastwalk/
 ├── walk.go
 ├── config.go
 ├── dirent.go
@@ -723,7 +724,7 @@ service or equivalent cohesive owner with neutral contracts for:
 
 - Root validation.
 - Shallow directory listing.
-- Recursive path discovery through `third_party/pathwalk`.
+- Recursive path discovery through `third_party/fastwalk`.
 - Discovery cancellation.
 - Ranking cancellation.
 - Request generation.
@@ -746,7 +747,7 @@ query
 ```
 
 Every result is dropped unless all ownership fields still match. The picker
-screen never calls `os.ReadDir`, `filepath.WalkDir`, or `pathwalk.Walk` from
+screen never calls `os.ReadDir`, `filepath.WalkDir`, or `fastwalk.Walk` from
 `Update` or `Paint`.
 
 ## Persistent File Tree Integration
@@ -779,7 +780,7 @@ Changes forbidden by this plan:
 
 | Layer | Ownership |
 |-------|-----------|
-| `third_party/pathwalk` | Bounded recursive path enumeration only |
+| `third_party/fastwalk` | Bounded recursive path enumeration only |
 | `workspace` | Browser requests, path validation, cancellation, generations, catalogs, result publication |
 | `tui/filetree` | Tree nodes, projection, row paint, icons, cursor, hover, selection, scrolling |
 | `tui/screens/filepicker` | Existing skeleton, breadcrumb, search field, mode configuration, summary, actions |

@@ -9,7 +9,7 @@ import (
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
-	"crude/types"
+	"crude/types/conversation"
 )
 
 func TestBlankNativeSpacerIsPaintable(t *testing.T) {
@@ -29,8 +29,8 @@ func TestBlankNativeSpacerIsPaintable(t *testing.T) {
 	}
 
 	// Plain assistant body with an embedded blank line stays native (mdRenderer nil).
-	plain := renderAssistantMessage(types.ChatMessage{
-		Role:    types.RoleAssistant,
+	plain := renderAssistantMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: "alpha\n\nomega",
 		Time:    time.Now(),
 	}, ctx, true)
@@ -53,8 +53,8 @@ func TestBlankNativeSpacerIsPaintable(t *testing.T) {
 	}
 	ctx.mdRenderer = md
 	ctx.tokens = ui.NewTokenSet(th)
-	rich := renderAssistantMessage(types.ChatMessage{
-		Role:    types.RoleAssistant,
+	rich := renderAssistantMessage(conversation.ChatMessage{
+		Role:    conversation.RoleAssistant,
 		Content: "# Heading\n\nparagraph",
 		Time:    time.Now(),
 	}, ctx, true)

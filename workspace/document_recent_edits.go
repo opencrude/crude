@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"crude/types"
+	"crude/types/insight"
 	"crude/workspace/document"
 )
 
@@ -131,34 +131,34 @@ func utf8Start(b byte) bool { return b&0xC0 != 0x80 }
 // RecentEdits returns up to limit recent edits, newest last. Author is
 // relative to owner: the owner's own edits are "you". Paths are relative to
 // the workspace root with forward slashes.
-func (s *DocumentService) RecentEdits(owner document.Owner, limit int) []types.RecentEdit {
+func (s *DocumentService) RecentEdits(owner document.Owner, limit int) []insight.RecentEdit {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.recentEditsLocked(owner, limit, "")
 }
 
-func (s *DocumentService) recentEditsLocked(owner document.Owner, limit int, path string) []types.RecentEdit {
+func (s *DocumentService) recentEditsLocked(owner document.Owner, limit int, path string) []insight.RecentEdit {
 	if limit <= 0 {
 		return nil
 	}
-	out := make([]types.RecentEdit, 0, min(limit, len(s.recentEdits)))
+	out := make([]insight.RecentEdit, 0, min(limit, len(s.recentEdits)))
 	for i := len(s.recentEdits) - 1; i >= 0 && len(out) < limit; i-- {
 		e := s.recentEdits[i]
 		if path != "" && e.path != path {
 			continue
 		}
-		author := types.RecentEditOther
+		author := insight.RecentEditOther
 		switch e.author {
 		case "":
-			author = types.RecentEditDisk
+			author = insight.RecentEditDisk
 		case owner.ClientID:
-			author = types.RecentEditYou
+			author = insight.RecentEditYou
 		}
 		rel := e.path
 		if r, err := filepath.Rel(s.root, e.path); err == nil && !strings.HasPrefix(r, "..") {
 			rel = filepath.ToSlash(r)
 		}
-		out = append(out, types.RecentEdit{Path: rel, Line: e.line, Removed: e.removed, Inserted: e.inserted, Author: author, Unix: e.unix})
+		out = append(out, insight.RecentEdit{Path: rel, Line: e.line, Removed: e.removed, Inserted: e.inserted, Author: author, Unix: e.unix})
 	}
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]

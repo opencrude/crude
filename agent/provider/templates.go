@@ -235,13 +235,14 @@ type Preset struct {
 func PresetList() []Preset {
 	presets := make([]Preset, 0, len(builtinTemplateOrder))
 	for _, id := range builtinTemplateOrder {
-		preset := GetPreset(id)
+		preset := LookupPreset(id)
 		presets = append(presets, *preset)
 	}
 	return presets
 }
 
-func GetPreset(id string) *Preset {
+// LookupPreset returns a built-in provider preset by id, or nil when the id is unknown.
+func LookupPreset(id string) *Preset {
 	template, ok := builtinTemplates[id]
 	if !ok {
 		return nil

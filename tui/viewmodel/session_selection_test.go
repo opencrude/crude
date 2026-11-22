@@ -3,14 +3,14 @@ package viewmodel
 import (
 	"testing"
 
-	"crude/core/port"
-	"crude/types"
+	"crude/core/shellport"
+	"crude/types/setting"
 	"crude/workspace"
 )
 
 func TestShellSessionSelectionDoesNotChangeAnotherShell(t *testing.T) {
-	one := &workspace.Session{SessionID: "one", AgentID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{Model: "model-one"}, types.Settings{}, nil)}
-	two := &workspace.Session{SessionID: "two", AgentID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{Model: "model-two"}, types.Settings{}, nil)}
+	one := &workspace.Session{SessionID: "one", AgentID: "first", Settings: workspace.NewSessionSettingsState(setting.Settings{Model: "model-one"}, setting.Settings{}, nil)}
+	two := &workspace.Session{SessionID: "two", AgentID: "second", Settings: workspace.NewSessionSettingsState(setting.Settings{Model: "model-two"}, setting.Settings{}, nil)}
 	owner := &workspace.Workspace{
 		Sessions:        []*workspace.Session{one, two},
 		SessionsByID:    map[string]*workspace.Session{"one": one, "two": two},
@@ -45,7 +45,7 @@ func TestSelectedSettingsResultCannotOverwriteAnotherSession(t *testing.T) {
 	second := app.ws.SessionsByAgent()[secondID]
 	app.ActiveSession = second
 	app.ModelName = "second-model"
-	app.LastSettings = types.Settings{Model: "second-model"}
+	app.LastSettings = setting.Settings{Model: "second-model"}
 	operation, err := app.ws.PrepareMultiAgentToggle(first.SessionID)
 	if err != nil {
 		t.Fatal(err)

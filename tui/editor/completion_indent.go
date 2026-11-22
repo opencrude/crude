@@ -6,16 +6,16 @@ import (
 	"slices"
 	"strings"
 
-	"crude/lsp/completion"
+	"crude/lsp/lspcompletion"
 	"crude/text/snippet"
-	"crude/types"
+	"crude/types/insight"
 )
 
 // adjustCompletionInsertion derives the one primary insertion from the current
 // cursor and file policy. The request's additional edits remain literal and in
 // their original coordinates. Snippet syntax is reparsed only after verifying it
 // still expands to the retained original text and exact initial placeholder plan.
-func (e *Editor) adjustCompletionInsertion(original string, item types.CompletionItem) (string, *types.CompletionSnippet, error) {
+func (e *Editor) adjustCompletionInsertion(original string, item insight.CompletionItem) (string, *insight.CompletionSnippet, error) {
 	source := original
 	if item.Snippet != nil {
 		text, plan, err := snippet.Parse(item.SnippetSource)
@@ -153,7 +153,7 @@ type completionStopIndent struct {
 	seen, blocked bool
 }
 
-func completionLeadingStops(text string, plan *types.CompletionSnippet, prefix []byte, style indentStyle) map[int]completionStopIndent {
+func completionLeadingStops(text string, plan *insight.CompletionSnippet, prefix []byte, style indentStyle) map[int]completionStopIndent {
 	stops := make(map[int]completionStopIndent, len(plan.Occurrences))
 	base := LineVisualWidth(prefix, style.tabSize)
 	offset, col := 0, base

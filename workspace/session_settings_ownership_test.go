@@ -6,17 +6,17 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"crude/types"
+	"crude/types/setting"
 )
 
 func TestSessionForAgentReturnsExactSettingsOwner(t *testing.T) {
 	one := &Session{
 		SessionID: "one", AgentID: "agent-one",
-		Settings: NewSessionSettingsState(types.Settings{Model: "model-one"}, types.Settings{}, nil),
+		Settings: NewSessionSettingsState(setting.Settings{Model: "model-one"}, setting.Settings{}, nil),
 	}
 	two := &Session{
 		SessionID: "two", AgentID: "agent-two",
-		Settings: NewSessionSettingsState(types.Settings{Model: "model-two"}, types.Settings{}, nil),
+		Settings: NewSessionSettingsState(setting.Settings{Model: "model-two"}, setting.Settings{}, nil),
 	}
 	ws := &Workspace{
 		Sessions:        []*Session{one, two},
@@ -48,9 +48,9 @@ func TestOpenAgentSessionRetainsRuntimeWithoutImplicitOwner(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
-	ws := NewWorkspace(t.TempDir(), "history-model", "tester", types.Settings{}, nopLogger{})
+	ws := NewWorkspace(t.TempDir(), "history-model", "tester", setting.Settings{}, nopLogger{})
 	t.Cleanup(ws.Close)
-	ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	ws.SetAppDefaults(setting.App{LocalHistory: setting.LocalHistory{Enabled: "off"}})
 	ws.SetBackendConfig(historyE2EConfig(server.URL), t.TempDir())
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
 	ws.SetEventSender(sender)

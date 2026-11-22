@@ -6,7 +6,7 @@
 
 Standardized 2026-08-28 after the confirm-prompt redesign. The reference
 implementation is `tui/ui/confirm_frame.go` (confirms) and
-`tui/ui/textprompt_frame.go` (text prompts).
+`tui/ui/text_prompt_frame.go` (text prompts).
 
 ## Chrome — WindowFrame only
 

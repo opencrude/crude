@@ -1,19 +1,19 @@
 package editor
 
 import (
-	"crude/syntax"
-	"crude/types"
+	"crude/types/insight"
+	"crude/types/syntaxdata"
 	"github.com/alecthomas/chroma/v2"
 	"sort"
 )
 
 // Structural editing uses only an exact, completed source result. Mapped ink is
 // useful while typing but is not authority to move or rewrite source ranges.
-func (e *Editor) structuralSource() (*syntax.Result, *syntaxDocument) {
+func (e *Editor) structuralSource() (*syntaxdata.Result, *syntaxDocument) {
 	e.finishSyntax()
 	if e.canonicalSyntaxSource() {
 		view, p := e.canonicalInsight, e.documentProjection
-		if view != nil && view.State == types.InsightCurrent && view.Syntax != nil && view.Path == e.filePath && view.Revision == p.snapshot.Revision && view.Syntax.Revision == view.Revision {
+		if view != nil && view.State == insight.Current && view.Syntax != nil && view.Path == e.filePath && view.Revision == p.snapshot.Revision && view.Syntax.Revision == view.Revision {
 			return view.Syntax, nil
 		}
 	}
@@ -27,7 +27,7 @@ func structuralExcluded(kind chroma.TokenType) bool {
 	return kind.InCategory(chroma.Comment) || kind.InSubCategory(chroma.String)
 }
 
-func (e *Editor) structuralRanges() ([]syntax.Range, []syntax.Bracket) {
+func (e *Editor) structuralRanges() ([]syntaxdata.Range, []syntaxdata.Bracket) {
 	if native, lexical := e.structuralSource(); native != nil {
 		return native.Selections, native.Brackets
 	} else if lexical != nil {
