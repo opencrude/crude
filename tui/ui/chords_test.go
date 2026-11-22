@@ -220,6 +220,46 @@ func TestNormalizeKeyMsgKeepsShortcutsOnEveryLayout(t *testing.T) {
 	}
 }
 
+// Kitty keyboard protocol terminals report keypad keys as separate keys.
+// Numpad Enter must submit like Enter, Num Lock-off keypad arrows must move,
+// and keypad digits must stay the digits the layout typed.
+func TestNormalizeKeyMsgTreatsKeypadKeysAsMainKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   tea.KeyPressMsg
+		want tea.KeyPressMsg
+	}{
+		{"enter", tea.KeyPressMsg{Code: tea.KeyKpEnter}, tea.KeyPressMsg{Code: tea.KeyEnter}},
+		{"enter with num lock", tea.KeyPressMsg{Code: tea.KeyKpEnter, BaseCode: tea.KeyKpEnter, Mod: tea.ModNumLock}, tea.KeyPressMsg{Code: tea.KeyEnter}},
+		{"shift+enter", tea.KeyPressMsg{Code: tea.KeyKpEnter, Mod: tea.ModShift}, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}},
+		{"ctrl+enter", tea.KeyPressMsg{Code: tea.KeyKpEnter, Mod: tea.ModCtrl}, tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl}},
+		{"arrow", tea.KeyPressMsg{Code: tea.KeyKpLeft}, tea.KeyPressMsg{Code: tea.KeyLeft}},
+		{"page down", tea.KeyPressMsg{Code: tea.KeyKpPgDown, Mod: tea.ModShift}, tea.KeyPressMsg{Code: tea.KeyPgDown, Mod: tea.ModShift}},
+		{"delete", tea.KeyPressMsg{Code: tea.KeyKpDelete}, tea.KeyPressMsg{Code: tea.KeyDelete}},
+		{"digit", tea.KeyPressMsg{Code: tea.KeyKp7, Text: "7"}, tea.KeyPressMsg{Code: '7', Text: "7"}},
+		{"ctrl+digit", tea.KeyPressMsg{Code: tea.KeyKp1, Mod: tea.ModCtrl}, tea.KeyPressMsg{Code: '1', Mod: tea.ModCtrl}},
+		{"layout decimal", tea.KeyPressMsg{Code: tea.KeyKpDecimal, Text: ","}, tea.KeyPressMsg{Code: ',', Text: ","}},
+		{"plus", tea.KeyPressMsg{Code: tea.KeyKpPlus, Text: "+"}, tea.KeyPressMsg{Code: '+', Text: "+"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := NormalizeKeyMsg(tc.in).(tea.KeyPressMsg)
+			if !ok {
+				t.Fatal("normalized message is not a key press")
+			}
+			if tea.Key(got) != tea.Key(tc.want) || got.String() != tc.want.String() {
+				t.Fatalf("key = %+v (%q), want %+v (%q)", tea.Key(got), got.String(), tea.Key(tc.want), tc.want.String())
+			}
+		})
+	}
+	release, ok := NormalizeKeyMsg(tea.KeyReleaseMsg{Code: tea.KeyKpEnter}).(tea.KeyReleaseMsg)
+	if !ok || release.Code != tea.KeyEnter {
+		t.Fatalf("release = %+v, want enter", release)
+	}
+	if !MatchesShortcut(NormalizeKeyMsg(tea.KeyPressMsg{Code: tea.KeyKpEnter, Mod: tea.ModCtrl}).(tea.KeyPressMsg), CommitChord) {
+		t.Fatal("Ctrl+numpad Enter does not commit like Ctrl+Enter")
+	}
+}
+
 func TestNormalizeKeyMsgDoesNotTurnAltGrTextIntoAnEditorShortcut(t *testing.T) {
 	key := tea.KeyPressMsg{Code: 'ø', BaseCode: 'o', Text: "ø", Mod: tea.ModCtrl | tea.ModAlt}
 	got := NormalizeKeyMsg(key).(tea.KeyPressMsg)

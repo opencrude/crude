@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"unicode"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -67,7 +68,8 @@ func KeyboardEnhancements() tea.KeyboardEnhancements {
 //   - a shortcut without text and with a non-ASCII printable key (Ctrl+ش
 //     on a Persian layout) uses the reported US-layout key (Ctrl+A);
 //   - an ASCII layout key stays as typed (Ctrl+A on AZERTY stays Ctrl+A),
-//     and the alternate code is dropped so that String agrees with Code.
+//     and the alternate code is dropped so that String agrees with Code;
+//   - a keypad key becomes its main-block key (numpad Enter is Enter).
 func NormalizeKeyMsg(msg tea.Msg) tea.Msg {
 	switch k := msg.(type) {
 	case tea.KeyPressMsg:
@@ -88,6 +90,18 @@ func normalizeKey(k tea.Key) (tea.Key, bool) {
 		k.Mod &^= lockModifiers
 		changed = true
 	}
+	if main, ok := keypadKeys[k.Code]; ok {
+		// A printable keypad key keeps the character the layout reported
+		// (the decimal key types "," on many layouts).
+		if r, size := utf8.DecodeRuneInString(k.Text); unicode.IsPrint(main) && size > 0 && size == len(k.Text) && unicode.IsPrint(r) {
+			main = r
+		}
+		if k.BaseCode == k.Code {
+			k.BaseCode = 0
+		}
+		k.Code = main
+		changed = true
+	}
 	if k.BaseCode != 0 && k.BaseCode != k.Code {
 		if k.Text == "" && k.Mod&shortcutModifiers != 0 && nonASCIIPrintable(k.Code) && asciiKey(k.BaseCode) {
 			k.Code = unicode.ToLower(k.BaseCode)
@@ -97,6 +111,21 @@ func normalizeKey(k tea.Key) (tea.Key, bool) {
 		changed = true
 	}
 	return k, changed
+}
+
+// keypadKeys maps keypad keys to the main-block keys they stand for. The
+// kitty keyboard protocol reports every keypad key as a separate key, so
+// without this numpad Enter, the Num Lock-off arrows and Ctrl+numpad digits
+// match nothing. The embedded terminal encodes main-block keys only.
+var keypadKeys = map[rune]rune{
+	tea.KeyKpEnter: tea.KeyEnter, tea.KeyKpBegin: tea.KeyBegin,
+	tea.KeyKpUp: tea.KeyUp, tea.KeyKpDown: tea.KeyDown, tea.KeyKpLeft: tea.KeyLeft, tea.KeyKpRight: tea.KeyRight,
+	tea.KeyKpPgUp: tea.KeyPgUp, tea.KeyKpPgDown: tea.KeyPgDown, tea.KeyKpHome: tea.KeyHome, tea.KeyKpEnd: tea.KeyEnd,
+	tea.KeyKpInsert: tea.KeyInsert, tea.KeyKpDelete: tea.KeyDelete,
+	tea.KeyKp0: '0', tea.KeyKp1: '1', tea.KeyKp2: '2', tea.KeyKp3: '3', tea.KeyKp4: '4',
+	tea.KeyKp5: '5', tea.KeyKp6: '6', tea.KeyKp7: '7', tea.KeyKp8: '8', tea.KeyKp9: '9',
+	tea.KeyKpEqual: '=', tea.KeyKpMultiply: '*', tea.KeyKpPlus: '+', tea.KeyKpComma: ',',
+	tea.KeyKpMinus: '-', tea.KeyKpDecimal: '.', tea.KeyKpDivide: '/', tea.KeyKpSep: ',',
 }
 
 // SymbolShortcutFallback gives the shell a second candidate for an ASCII

@@ -129,3 +129,73 @@ func TestRetentionBudgetIgnoresReusableMetadataSpace(t *testing.T) {
 		}
 	}
 }
+
+// The index keeps only which paths each snapshot contains, clustered by
+// snapshot. A full copy of every entry per snapshot grew a real store to
+// 787 MB and made retention hold the store's only connection for 16 s or more.
+// Many snapshots of a large tree must stay small, and pruning must remove
+// their index rows.
+func TestSnapshotIndexStaysProportionalToSnapshots(t *testing.T) {
+	store, workspace := newTestStore(t)
+	ctx := context.Background()
+	const files, snapshots = 2000, 30
+	for i := range files {
+		writeTestFile(t, workspace, fmt.Sprintf("tree/dir-%02d/file-with-a-realistic-name-%04d.go", i%40, i), []byte("same\n"), 0o644)
+	}
+	for i := range snapshots {
+		writeTestFile(t, workspace, "tree/changing.txt", []byte(fmt.Sprintf("revision %d\n", i)), 0o644)
+		if _, err := store.Snapshot(ctx, SnapshotOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metadataBytes := func() int64 {
+		t.Helper()
+		var pages, free, size int64
+		if err := store.db.QueryRow(`PRAGMA page_count`).Scan(&pages); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.db.QueryRow(`PRAGMA freelist_count`).Scan(&free); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.db.QueryRow(`PRAGMA page_size`).Scan(&size); err != nil {
+			t.Fatal(err)
+		}
+		return (pages - free) * size
+	}
+	var links int64
+	if err := store.db.QueryRow(`SELECT count(*) FROM history_snapshot_paths`).Scan(&links); err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(snapshots * (files + 1)); links < want {
+		t.Fatalf("indexed %d snapshot paths, want at least %d", links, want)
+	}
+	// About 60,000 snapshot paths. Full entry rows took about 550 bytes per
+	// snapshot path in the real store: over 30 MiB for this history.
+	if used := metadataBytes(); used > 3<<20 {
+		t.Fatalf("snapshot index uses %d bytes for %d snapshot paths", used, links)
+	}
+	records, err := store.FileHistory("tree/changing.txt", 100)
+	if err != nil || len(records) != snapshots {
+		t.Fatalf("file history = %d records, %v; want %d", len(records), err, snapshots)
+	}
+	if _, err := store.Prune(ctx, RetentionPolicy{MaxSnapshots: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT count(*) FROM history_snapshot_paths`).Scan(&links); err != nil {
+		t.Fatal(err)
+	}
+	latest, err := store.Timeline(0)
+	if err != nil || len(latest) != 1 {
+		t.Fatalf("retention kept %d snapshots, %v; want 1", len(latest), err)
+	}
+	manifest, err := store.LoadManifest(latest[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if links != int64(len(manifest.Entries)) {
+		t.Fatalf("pruned snapshots left %d index rows; the kept snapshot has %d paths", links, len(manifest.Entries))
+	}
+	if records, err := store.FileHistory("tree/changing.txt", 100); err != nil || len(records) != 1 {
+		t.Fatalf("file history after retention = %d records, %v; want 1", len(records), err)
+	}
+}

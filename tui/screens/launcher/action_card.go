@@ -62,13 +62,16 @@ func (a *launcherAction) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.Paint
 	}
 	buf.WriteString(x, y+3, bl+strings.Repeat(h, r.W-2)+br, border, cell.NoColor, 0)
 	innerW := r.W - 4
-	label, detail := a.title, a.detail
+	label, detail, hint := a.title, a.detail, "enter ↵"
 	if a.kind == ItemNewSession {
 		label = sparkleFrame(a.owner.frame) + label
 		detail = a.owner.cwdDisplay
+		if a.owner.starting {
+			label, detail, hint = ui.ActivityDot(a.owner.frame)+" Starting session", "Please wait. The session opens when it is ready.", ""
+		}
 	}
 	buf.WriteString(x+2, y+1, rendering.TruncateLine(label, innerW), title, cell.NoColor, cell.AttrBold)
-	hint := rendering.TruncateLine("enter ↵", innerW)
+	hint = rendering.TruncateLine(hint, innerW)
 	hintW := rendering.VisibleWidth(hint)
 	detail = rendering.TruncateLine(detail, max(0, innerW-hintW-1))
 	spacerW := max(0, innerW-rendering.VisibleWidth(detail)-hintW)

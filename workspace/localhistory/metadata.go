@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 func (s *Store) recoverManifestIndex() error {
@@ -92,19 +93,19 @@ CREATE TABLE IF NOT EXISTS history_snapshots (
   logical_bytes INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_history_snapshots_time ON history_snapshots(created_at DESC);
-CREATE TABLE IF NOT EXISTS history_snapshot_entries (
-  snapshot_id TEXT NOT NULL REFERENCES history_snapshots(snapshot_id) ON DELETE CASCADE,
-  path TEXT NOT NULL,
-  entry_type TEXT NOT NULL,
-  mode INTEGER NOT NULL,
-  hash TEXT NOT NULL DEFAULT '',
-  size INTEGER NOT NULL DEFAULT 0,
-  symlink_target TEXT NOT NULL DEFAULT '',
-  hardlink_target TEXT NOT NULL DEFAULT '',
-  special_mode TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY(snapshot_id,path)
+CREATE TABLE IF NOT EXISTS history_index_paths (
+  path_id INTEGER PRIMARY KEY,
+  path TEXT NOT NULL UNIQUE
 );
-CREATE INDEX IF NOT EXISTS idx_history_entries_path ON history_snapshot_entries(path,snapshot_id);
+CREATE TABLE IF NOT EXISTS history_snapshot_keys (
+  seq INTEGER PRIMARY KEY,
+  snapshot_id TEXT NOT NULL UNIQUE REFERENCES history_snapshots(snapshot_id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS history_snapshot_paths (
+  snapshot_seq INTEGER NOT NULL REFERENCES history_snapshot_keys(seq) ON DELETE CASCADE,
+  path_id INTEGER NOT NULL,
+  PRIMARY KEY(snapshot_seq,path_id)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS history_retained_snapshots (
   reference TEXT PRIMARY KEY,
   snapshot_id TEXT NOT NULL REFERENCES history_snapshots(snapshot_id) ON DELETE RESTRICT
@@ -202,12 +203,6 @@ CREATE TABLE IF NOT EXISTS history_retention_runs (
 	if err != nil {
 		return fmt.Errorf("localhistory: migrate metadata: %w", err)
 	}
-	if err := ensureMetadataColumn(db, "history_snapshot_entries", "hardlink_target", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := ensureMetadataColumn(db, "history_snapshot_entries", "special_mode", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
 	for _, column := range []struct{ table, name, ddl string }{
 		{"history_agent_operations", "status", "TEXT NOT NULL DEFAULT 'prepared'"},
 		{"history_restore_plans", "session_id", "TEXT NOT NULL DEFAULT ''"},
@@ -259,6 +254,12 @@ func ensureMetadataColumn(db *sql.DB, table, name, ddl string) error {
 	return err
 }
 
+// recordSnapshot indexes a saved manifest. The content-addressed manifest is
+// the authority for every entry; the index keeps only which paths a snapshot
+// contains, as small integer rows clustered by snapshot. Recording appends one
+// contiguous range and retention deletes one, so neither scales with the
+// whole history. A full copy of every entry per snapshot made the metadata
+// hundreds of megabytes and held the store for seconds.
 func (s *Store) recordSnapshot(manifest Manifest) error {
 	var logical int64
 	for _, entry := range manifest.Entries {
@@ -277,20 +278,74 @@ func (s *Store) recordSnapshot(manifest Manifest) error {
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO history_snapshot_entries(snapshot_id,path,entry_type,mode,hash,size,symlink_target,hardlink_target,special_mode) VALUES(?,?,?,?,?,?,?,?,?)`)
+	key, err := tx.Exec(`INSERT OR IGNORE INTO history_snapshot_keys(snapshot_id) VALUES(?)`, manifest.ID)
 	if err != nil {
 		return err
 	}
-	for path, entry := range manifest.Entries {
-		if _, err := stmt.Exec(manifest.ID, path, string(entry.Type), entry.Mode, entry.Hash, entry.Size, entry.SymlinkTarget, entry.HardlinkTarget, entry.SpecialMode); err != nil {
-			_ = stmt.Close()
-			return err
-		}
+	if added, err := key.RowsAffected(); err != nil {
+		return err
+	} else if added == 0 {
+		// Indexed snapshots are immutable; never replay their paths.
+		return tx.Commit()
 	}
-	if err := stmt.Close(); err != nil {
+	seq, err := key.LastInsertId()
+	if err != nil {
+		return err
+	}
+	if err := insertSnapshotPaths(tx, seq, manifest.Entries); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// insertSnapshotPaths links every path in one statement per batch. JSON text
+// carries only valid UTF-8 exactly; any other path name is linked on its own.
+func insertSnapshotPaths(tx *sql.Tx, seq int64, entries map[string]Entry) error {
+	batch := make([]string, 0, len(entries))
+	var exact []string
+	for path := range entries {
+		if utf8.ValidString(path) {
+			batch = append(batch, path)
+		} else {
+			exact = append(exact, path)
+		}
+	}
+	linked := int64(0)
+	if len(batch) > 0 {
+		encoded, err := json.Marshal(batch)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO history_index_paths(path) SELECT value FROM json_each(?)`, string(encoded)); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`INSERT INTO history_snapshot_paths(snapshot_seq,path_id)
+SELECT ?,p.path_id FROM json_each(?) j JOIN history_index_paths p ON p.path=j.value`, seq, string(encoded))
+		if err != nil {
+			return err
+		}
+		if linked, err = result.RowsAffected(); err != nil {
+			return err
+		}
+	}
+	for _, path := range exact {
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO history_index_paths(path) VALUES(?)`, path); err != nil {
+			return err
+		}
+		result, err := tx.Exec(`INSERT INTO history_snapshot_paths(snapshot_seq,path_id) SELECT ?,path_id FROM history_index_paths WHERE path=?`, seq, path)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		linked += n
+	}
+	if linked != int64(len(entries)) {
+		return fmt.Errorf("localhistory: indexed %d of %d snapshot paths", linked, len(entries))
+	}
+	return nil
 }
 
 func (s *Store) Timeline(limit int) ([]SnapshotRecord, error) {
@@ -336,7 +391,12 @@ func (s *Store) FileHistory(path string, limit int) ([]SnapshotRecord, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	rows, err := s.db.Query(`SELECT s.snapshot_id,s.parent_snapshot_id,s.created_at,s.kind,s.label,s.logical_bytes FROM history_snapshots s JOIN history_snapshot_entries e ON e.snapshot_id=s.snapshot_id WHERE e.path=? ORDER BY s.created_at DESC,s.rowid DESC LIMIT ?`, path, limit)
+	rows, err := s.db.Query(`SELECT s.snapshot_id,s.parent_snapshot_id,s.created_at,s.kind,s.label,s.logical_bytes
+FROM history_index_paths p
+JOIN history_snapshot_paths e ON e.path_id=p.path_id
+JOIN history_snapshot_keys k ON k.seq=e.snapshot_seq
+JOIN history_snapshots s ON s.snapshot_id=k.snapshot_id
+WHERE p.path=? ORDER BY s.created_at DESC,s.rowid DESC LIMIT ?`, path, limit)
 	if err != nil {
 		return nil, err
 	}

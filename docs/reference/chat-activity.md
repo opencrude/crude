@@ -178,6 +178,13 @@ started, and a reply made of them would be a blank gap that splits parallel
 reads out of their group. The projection treats a hydrated whitespace-only
 reply the same way as an empty envelope: no row and no group boundary.
 
+The live typing caret follows the last streamed character. It takes the first
+padding cell after the last source span of the last row that shows source text,
+so a completed paragraph padded to the block width, an open code fence's Copy
+row or a blank spacer never moves it to the far edge or to an empty row. Live
+reasoning drops trailing line breaks for the same reason. A right-to-left row
+keeps the caret at its logical end, beside the content.
+
 A nested pane scrollbar belongs to the pane rows. When a thinking pane starts
 or stops overflowing, only that pane re-renders at its narrower body width;
 every other row keeps its width, wrapping and cached render. Only the main chat

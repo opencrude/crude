@@ -14,6 +14,13 @@ shell and editor shortcuts, an alternate symbol is a fallback only when the
 logical symbol has no matching action. This does not change typed text or
 rewrite an ASCII symbol sent to a focused terminal.
 
+Keypad keys act as their main-block keys: numpad Enter is Enter (also with
+Shift, Ctrl or Alt), the Num Lock-off keypad arrows, Home, End, Page Up/Down,
+Insert and Delete move and edit like the main keys, and keypad digits and
+operators are the characters the layout reports. The kitty keyboard protocol
+reports them as separate keys; `ui.NormalizeKeyMsg` maps them once at key
+ingress for every program, matcher and focused terminal.
+
 Crude Window (Ghostty) and Kitty report the alternate key. Alacritty does
 not report the US-layout key for non-Latin shortcuts. Use Crude Window or
 Kitty if you need those shortcuts without switching layouts. A terminal

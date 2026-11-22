@@ -149,6 +149,11 @@ func (s *LocalHistoryService) KeepBeforeDelete(ctx context.Context, rel string) 
 	if s.store == nil || !settings.EnabledValue() {
 		return nil
 	}
+	// A delete waits for this copy, so it takes the store from maintenance.
+	s.mu.Lock()
+	s.beginWorkLocked()
+	s.mu.Unlock()
+	defer s.endWork()
 	opts := historyOptions(settings, "safety", "Before delete: "+rel, "")
 	if _, err := s.store.SnapshotSubtree(ctx, opts, rel); err != nil {
 		return fmt.Errorf("local history could not keep a copy of %s, so it was not deleted: %w", rel, err)
@@ -428,15 +433,20 @@ func (s *LocalHistoryService) BeginMessage(ctx context.Context, sessionID, messa
 	if !enabled {
 		return session.ErrHistoryDisabled
 	}
-	if _, exists, err := s.store.MessageScope(sessionID, messageID); err != nil {
-		return err
-	} else if exists {
-		return session.ErrHistoryRecorded
-	}
+	// Work takes the store from maintenance before its first query; a
+	// retention pass must not delay the turn while it holds the store.
 	s.activityMu.RLock()
 	s.mu.Lock()
 	s.beginWorkLocked()
 	s.mu.Unlock()
+	if _, exists, err := s.store.MessageScope(sessionID, messageID); err != nil || exists {
+		s.endWork()
+		s.activityMu.RUnlock()
+		if err != nil {
+			return err
+		}
+		return session.ErrHistoryRecorded
+	}
 	if err := s.openScope(ctx, settings, sessionID, messageID); err != nil {
 		s.endWork()
 		s.activityMu.RUnlock()

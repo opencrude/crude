@@ -551,7 +551,7 @@ func TestSafetyProtectionMissingOrCorruptOriginalEvidence(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "entry":
-					protectionExec(t, store, `UPDATE history_snapshot_entries SET mode=0 WHERE snapshot_id=?`, manifest.ID)
+					protectionExec(t, store, `DELETE FROM history_snapshot_paths WHERE snapshot_seq=(SELECT seq FROM history_snapshot_keys WHERE snapshot_id=?)`, manifest.ID)
 				default:
 					hash := manifest.Entries["review.txt"].Hash
 					path, err := objectPath(store.root, "files", hash, ".json")

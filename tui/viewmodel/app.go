@@ -162,32 +162,36 @@ type App struct {
 	// while the automatic Errand open held the slot; it starts when that open
 	// settles. A new attachment discards it with the Errand state.
 	sessionLifecycleAfterErrand func() tea.Cmd
-	composerDraftErr            error
-	composerDraftOwners         map[*workspace.Session]*composerDraftOwner
-	composerDraftWrites         sync.WaitGroup
-	composerDraftStopping       atomic.Bool
-	pendingInputAdmissions      map[*workspace.InputAdmissionIntent]struct{}
-	referenceOverlay            *referenceOverlayState
-	attachmentOpen              *attachmentOpenState
-	terminalImages              terminalImageState
-	pixelMotion                 pixelMotionState
-	imageResidency              imageResidency
-	imagePlacements             []tea.ImagePlacement
-	pastedTextRequests          []pastedTextStoredMsg
-	DirtyPromptPath             string
-	DirtyPromptChoice           int
-	operationIssue              *operationIssueOwner
-	pendingOperationIssues      []roottypes.OperationIssue
-	settingsPrompt              *settingsPromptState
-	capabilityOperations        map[uint64]capabilityOperation
-	capabilityPicker            *capabilityPickerOwner
-	capabilitySnapshotCancel    context.CancelFunc
-	capabilitySnapshotSequence  uint64
-	launcherCapabilityCancel    context.CancelFunc
-	launcherCapabilitySequence  uint64
-	launcherCapabilityAt        time.Time
-	agentPrompt                 *agentPromptState
-	agentPrompts                []*agentPromptState
+	// sessionRequestedAt is when the user asked for the session that is still
+	// opening; sessionWaitNoticed is the request already told to wait.
+	sessionRequestedAt         time.Time
+	sessionWaitNoticed         uint64
+	composerDraftErr           error
+	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
+	composerDraftWrites        sync.WaitGroup
+	composerDraftStopping      atomic.Bool
+	pendingInputAdmissions     map[*workspace.InputAdmissionIntent]struct{}
+	referenceOverlay           *referenceOverlayState
+	attachmentOpen             *attachmentOpenState
+	terminalImages             terminalImageState
+	pixelMotion                pixelMotionState
+	imageResidency             imageResidency
+	imagePlacements            []tea.ImagePlacement
+	pastedTextRequests         []pastedTextStoredMsg
+	DirtyPromptPath            string
+	DirtyPromptChoice          int
+	operationIssue             *operationIssueOwner
+	pendingOperationIssues     []roottypes.OperationIssue
+	settingsPrompt             *settingsPromptState
+	capabilityOperations       map[uint64]capabilityOperation
+	capabilityPicker           *capabilityPickerOwner
+	capabilitySnapshotCancel   context.CancelFunc
+	capabilitySnapshotSequence uint64
+	launcherCapabilityCancel   context.CancelFunc
+	launcherCapabilitySequence uint64
+	launcherCapabilityAt       time.Time
+	agentPrompt                *agentPromptState
+	agentPrompts               []*agentPromptState
 	// pendingTabClose holds the tabs still to close after a bulk close
 	// ("Close others" / "Close to the right") stopped at a dirty buffer and
 	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close

@@ -265,13 +265,35 @@ func buildThinkingBodyLine(line string, firstLine bool, spinFrame int, active, i
 	return PaintLine{Spans: spans}
 }
 
-func appendBlockCursor(pl PaintLine, frame int, activeTyping bool) PaintLine {
-	spans := append([]RowSpan{}, pl.Spans...)
-	if activeTyping || ui.BlinkOn(frame) {
-		spans = append(spans, RowSpan{Text: "█", Role: ui.ColorAccent})
-	} else {
-		spans = append(spans, RowSpan{Text: " ", Role: ui.ColorFg})
+// insertBlockCursor inserts the streaming caret before span at. When layout
+// padding follows, the caret replaces its first cell, so the row keeps its
+// width and background.
+func insertBlockCursor(pl PaintLine, at, frame int, activeTyping bool) PaintLine {
+	caret := RowSpan{Text: "█", Role: ui.ColorAccent}
+	if !activeTyping && !ui.BlinkOn(frame) {
+		caret = RowSpan{Text: " ", Role: ui.ColorFg}
 	}
-	pl.Spans = spans
+	at = max(0, min(at, len(pl.Spans)))
+	spans := make([]RowSpan, 0, len(pl.Spans)+2)
+	spans = append(spans, pl.Spans[:at]...)
+	rest := pl.Spans[at:]
+	if len(rest) > 0 && isLayoutPadding(rest[0]) {
+		pad := rest[0]
+		caret.BgRole, caret.BgSet, caret.BGColor, caret.BGSet = pad.BgRole, pad.BgSet, pad.BGColor, pad.BGSet
+		spans = append(spans, caret)
+		if pad.Text = pad.Text[1:]; pad.Text != "" {
+			spans = append(spans, pad)
+		}
+		rest = rest[1:]
+	} else {
+		spans = append(spans, caret)
+	}
+	pl.Spans = append(spans, rest...)
 	return pl
+}
+
+// isLayoutPadding reports a span that only fills the row: spaces with no
+// source, link or action.
+func isLayoutPadding(span RowSpan) bool {
+	return span.Text != "" && strings.Trim(span.Text, " ") == "" && !span.Copy.Valid() && span.Link == nil && span.Action == nil
 }

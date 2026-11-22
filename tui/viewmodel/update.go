@@ -813,6 +813,7 @@ func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	now := time.Now()
 	spinFrame := int(now.UnixMilli())
 	m.SpinFrame = spinFrame
+	m.noticeSlowSessionStart(now)
 	m.drainTreeDeleteProgress()
 	m.Input.SetSpinFrame(spinFrame)
 	m.refreshSessionBackgroundJobs(now)
@@ -931,7 +932,7 @@ func (m *App) wantsFastTick() bool {
 			return true
 		}
 	}
-	if m.launcherScreen != nil && m.launcherScreen.Loading() && m.launcherHostVisible() {
+	if m.launcherScreen != nil && (m.launcherScreen.Loading() || m.launcherScreen.SessionStarting()) && m.launcherHostVisible() {
 		return true
 	}
 	if m.activityListLoading() && m.sidebarHostVisible() {

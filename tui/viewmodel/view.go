@@ -737,7 +737,8 @@ func (m *App) configureLauncherScreen() {
 		return
 	}
 	m.launcherScreen.SetRegistry(m.actionRegistry)
-	if m.launcherScreen.SetAnimation(m.SpinFrame, time.Since(m.LastInteractionTime).Seconds()) {
+	starting := m.launcherScreen.SetSessionStarting(m.userSessionStarting())
+	if m.launcherScreen.SetAnimation(m.SpinFrame, time.Since(m.LastInteractionTime).Seconds()) || starting {
 		// Visible clock-driven ink is a source mutation even when a terminal
 		// owns input. Do not rely on the focused-caret clock damage path.
 		m.rootHost.MarkComponentPaint(m.launcherScreen.ID())

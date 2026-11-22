@@ -23,17 +23,41 @@ type messageLines struct {
 	frameSensitive bool
 }
 
+// withCursor places the streaming caret right after the last streamed text,
+// like a typing caret after the last character. Rendered rows are padded to
+// the block width and may end in chrome (an open code fence's Copy row, a
+// blank spacer). The caret takes the first padding cell after the last source
+// span of the last row with source text; appending it after the padding left
+// it at the far edge of the row. Rows without source text keep the old place.
 func (ml messageLines) withCursor(cursorIdx, spinFrame int, activeTyping bool) messageLines {
 	if cursorIdx < 0 || cursorIdx >= len(ml.lines) {
 		return ml
 	}
+	row, at := cursorIdx, len(ml.native[cursorIdx].Spans)
+	for i := cursorIdx; i >= 0 && ml.native[i].SourceAware; i-- {
+		if end := sourceTextEnd(ml.native[i]); end > 0 {
+			row, at = i, end
+			break
+		}
+	}
 	out := ml
 	out.frameSensitive = out.frameSensitive || !activeTyping
 	out.native = append([]PaintLine(nil), ml.native...)
-	out.native[cursorIdx] = appendBlockCursor(ml.native[cursorIdx], spinFrame, activeTyping)
+	out.native[row] = insertBlockCursor(ml.native[row], at, spinFrame, activeTyping)
 	out.lines = append([]string(nil), ml.lines...)
-	out.lines[cursorIdx] = out.native[cursorIdx].PlainText()
+	out.lines[row] = out.native[row].PlainText()
 	return out
+}
+
+// sourceTextEnd returns the span index after the last span that shows source
+// text, or 0 when the row has none.
+func sourceTextEnd(pl PaintLine) int {
+	for i := len(pl.Spans) - 1; i >= 0; i-- {
+		if span := pl.Spans[i]; span.Copy.Valid() && strings.TrimSpace(span.Text) != "" {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 type renderContext struct {
@@ -346,6 +370,10 @@ func ThinkingOverflowWidth(innerW int) int {
 	return max(1, innerW-messageBodyChromeWidth)
 }
 
+// thinkingBody drops trailing line breaks. They painted as empty body rows,
+// which left the live caret on a blank row below the last thought.
+func thinkingBody(content string) string { return strings.TrimRight(content, "\r\n") }
+
 func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	if msg.ThinkingDisplay.Kind.HasCompactPreview() {
 		return renderThinkingSummary(msg, ctx)
@@ -353,7 +381,7 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 	var ml messageLines
 	ml.frameSensitive = msg.ThinkingActive
 	if ctx.thinkingBodyOnly {
-		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+		wrapped := rendering.WrapText(thinkingBody(msg.Content), ctx.contentWidth)
 		for _, line := range wrapped {
 			pl := buildThinkingBodyLine(line, false, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
 			ml.lines = append(ml.lines, pl.PlainText())
@@ -390,7 +418,7 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 		if ctx.disclosure != DisclosureExpanded {
 			return ml
 		}
-		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+		wrapped := rendering.WrapText(thinkingBody(msg.Content), ctx.contentWidth)
 		for _, line := range wrapped {
 			pl := buildThinkingBodyLine(line, false, ctx.spinFrame, false, msg.ThinkingInterrupted)
 			ml.lines = append(ml.lines, pl.PlainText())
@@ -425,7 +453,7 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 	ml.lines = append(ml.lines, header.PlainText())
 	ml.native = append(ml.native, header)
 
-	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
+	wrapped := rendering.WrapText(thinkingBody(msg.Content), ctx.contentWidth)
 	for _, line := range wrapped {
 		pl := buildThinkingBodyLine(line, false, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
 		ml.lines = append(ml.lines, pl.PlainText())

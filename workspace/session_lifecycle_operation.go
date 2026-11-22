@@ -14,6 +14,7 @@ import (
 	"crude/agent/collaboration"
 	"crude/agent/session"
 	"crude/logger"
+	"crude/workspace/localhistory"
 )
 
 // SessionLifecycleOperation captures resources on the serialized workspace owner.
@@ -65,6 +66,11 @@ type SessionLifecycleResult struct {
 	expectedAgentID string
 	// errandSessionID is the exact session recorded as the workspace's Errand.
 	errandSessionID string
+	// pendingRestores are Local History restore notifications this resumed
+	// session never received. The worker reads them: retention can hold the
+	// history store for seconds, and the installing owner must not wait on it.
+	pendingRestores    []localhistory.RestoreResult
+	pendingRestoresErr error
 }
 
 // Cold runtimes may announce retained recovery immediately. Keep that evidence
@@ -221,6 +227,7 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 			}
 		}
 		create := op.sessionID == ""
+		resumed := false
 		if !create {
 			path, pathErr := SessionDBPath(op.root, op.sessionID)
 			if pathErr != nil {
@@ -229,12 +236,13 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 			}
 			if _, statErr := os.Stat(path); statErr == nil {
 				backend, err = session.ResumeSessionWithDir(path, op.cfg, op.home, root)
+				resumed = err == nil && op.fork == nil
 				if err == nil && op.rememberRole != "" && backend.SettingsSnapshot().SessionMainAgent != op.rememberRole {
 					// The saved session now belongs to a different root role.
 					// Keep that user choice and make the missing role session.
 					backend.Close()
 					backend, err = nil, nil
-					create = true
+					create, resumed = true, false
 				}
 			} else if op.createIfMissing && errors.Is(statErr, os.ErrNotExist) {
 				create = true
@@ -309,6 +317,11 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		if op.sessionID == "" || op.fork != nil {
 			_ = op.database.SetAgentName(owner.SessionID, backend.AgentName())
 		}
+		// Restore notifications belong to an existing session ID. A created or
+		// forked session has none, so it never touches the history store.
+		if resumed && op.history != nil {
+			result.pendingRestores, result.pendingRestoresErr = op.history.PendingRestoreNotifications(owner.SessionID)
+		}
 	}
 	result.owner = owner
 	result.expectedAgentID = op.expectedAgentID
@@ -375,7 +388,7 @@ func (w *Workspace) installSessionLifecycle(result SessionLifecycleResult) {
 		// authoritative owner; Run does not invoke callbacks over workspace maps.
 		w.bindSessionHistory(owner.backend)
 		owner.backend.StartMemoryMaintenance()
-		w.deliverPendingHistoryNotifications(owner.SessionID)
+		w.deliverPendingHistoryNotifications(owner.SessionID, result.pendingRestores, result.pendingRestoresErr)
 		w.noteRegistryErr("session_register_failed", result.registryErr)
 	}
 }

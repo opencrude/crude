@@ -190,11 +190,16 @@ func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult)
 	return nil
 }
 
-func (w *Workspace) deliverPendingHistoryNotifications(sessionID string) {
-	if w == nil || w.HistoryService == nil || sessionID == "" {
-		return
+// deliverPendingHistoryNotifications installs the restore notifications the
+// session lifecycle worker read. It runs on the serialized workspace owner, so
+// it never queries the Local History store itself: retention can hold the
+// store's only connection for seconds.
+func (w *Workspace) deliverPendingHistoryNotifications(sessionID string, pending []localhistory.RestoreResult, readErr error) {
+	err := readErr
+	if err == nil {
+		err = w.appendHistoryRestoreEvents(pending)
 	}
-	if err := w.retryPendingHistoryNotifications(sessionID); err != nil {
+	if err != nil {
 		w.Logger.Warn("HISTORY", "notification_delivery_failed", "session_id", sessionID, "error", err.Error())
 	}
 }
@@ -207,6 +212,10 @@ func (w *Workspace) retryPendingHistoryNotifications(sessionID string) error {
 	if err != nil {
 		return err
 	}
+	return w.appendHistoryRestoreEvents(results)
+}
+
+func (w *Workspace) appendHistoryRestoreEvents(results []localhistory.RestoreResult) error {
 	for _, result := range results {
 		if err := w.AppendHistoryRestoreEvent(result); err != nil {
 			return fmt.Errorf("deliver restore notification %s: %w", result.PlanID, err)
